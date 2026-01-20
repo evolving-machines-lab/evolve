@@ -9,13 +9,15 @@
     "packages/sdk-py/bridge"
   ],
   "scripts": {
-    "build": "npm run build --workspaces",
-    "build:python-bridge": "cd packages/sdk-py/bridge && npm run build",
+    "build": "npm run build:e2b && npm run build:sdk && npm run build:bridge",
+    "build:e2b": "npm run build --workspace=@evolvingmachines/e2b",
+    "build:sdk": "npm run build --workspace=@evolvingmachines/sdk",
+    "build:bridge": "npm run build --workspace=evolve-sdk-python-bridge",
     "test:ts": "npm run test --workspace=@evolvingmachines/sdk",
     "test:ts:unit": "npm run test:unit --workspace=@evolvingmachines/sdk",
     "test:ts:integration": "npm run test:integration --workspace=@evolvingmachines/sdk",
-    "test:py:unit": "npm run build:python-bridge && cd packages/sdk-py && python -m pytest tests/unit -v",
-    "test:py:integration": "npm run build:python-bridge && cd packages/sdk-py && python -m pytest tests/integration -v"
+    "test:py:unit": "npm run build:bridge && cd packages/sdk-py && python -m pytest tests/unit -v",
+    "test:py:integration": "npm run build:bridge && cd packages/sdk-py && python -m pytest tests/integration -v"
   },
   "devDependencies": {
     "tsx": "^4.20.5",
