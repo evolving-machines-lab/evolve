@@ -1,0 +1,57 @@
+{
+  "title": "Signal Desktop",
+  "summary": "In December 2015, Open Whisper Systems (now Signal Foundation) announced Signal Desktop, a beta Chrome app for desktop messaging that synced with the Signal Android app. The app was end-to-end encrypted and free. The article announced Chrome-only support initially, with iOS support \"for now\" only on Android-linked devices. The discussion centered on concerns about the Chrome limitation, Android-only linking, browser-based security implications, and whether this was a misguided approach compared to native desktop apps. Some commenters praised the multi-device synchronization vision, while others questioned using Chrome for encrypted communications and speculated about decentralized alternatives.",
+  "what_happened": "Signal Desktop proved to be a major success and is still actively maintained today. Against the skeptics' predictions, the Chrome app decision was temporary\u2014Signal transitioned to a native Electron app architecture which provided better performance and security. iOS linking support was added and improved substantially. Signal became one of the most widely-used encrypted messaging apps globally, achieving mainstream adoption (especially after WhatsApp's 2021 privacy policy backlash drove users to Signal). The multi-device support architecture became a key differentiator. Regarding other predictions: decentralized messengers discussed in comments (Tox, Ring, etc.) never achieved significant adoption; Telegram remained popular but controversially maintained weaker default encryption; and native apps proved better than Chrome apps for desktop messaging. Signal's funding model through nonprofits and grants (Freedom of the Press Foundation, Shuttleworth Foundation) remained stable. Most technical concerns about Chrome were eventually made moot by moving away from it.",
+  "most_prescient": {
+    "user": "lewisl9029",
+    "reason": "Correctly predicted that decentralized messaging architectures face insurmountable UX challenges (offline messaging, contact discovery) that prevent adoption, and that centralized systems are the practical necessity. This person even built their own decentralized messenger prototype and reached exactly these conclusions. This proved prophetic\u201410 years later, no truly decentralized messenger achieved mainstream adoption despite multiple attempts (Ring/Jami, Tox, Briar, etc.), while Signal's centralized architecture with strong crypto became the gold standard."
+  },
+  "most_wrong": {
+    "user": "Sephr",
+    "reason": "Criticized Signal Desktop for being 'remote control' of the phone rather than a standalone app, claiming this was inadequate compared to Apple's offerings. This fundamentally misunderstood Signal's architecture at the time. More importantly, their core complaint\u2014that Signal should work standalone without the phone\u2014reflected a misunderstanding of the actual trade-offs. Signal eventually implemented robust standalone desktop support, but the 'phone as secure enclave' approach was actually defensible at the time. The broader wrong prediction was that this architectural choice would limit Signal's success\u2014it didn't."
+  },
+  "notable_aspects": "1. The prescience of moxie's response about hiring iOS developers\u2014iOS support did eventually come, and Signal invested heavily in iOS development. 2. The comment about moxie's revolutionary namesakes (Maria Kolenkina, Vera Zasulich, Nestor Makhno) sparked amusing political discussion about Signal's ethos, which has remained consistent. 3. The prescient concern about Chrome's security proved somewhat valid but was sidestpped by moving to Electron rather than native code. 4. Comments about Google Analytics and Chrome surveillance were speculative at the time but foreshadowed later privacy concerns that informed the move away from Chrome. 5. The discussion about Chrome being the 'new OS' proved somewhat accurate\u2014though desktop apps moved away from Chrome apps specifically. 6. The invite queue system with referral bonuses that frustrated commenters was abandoned, showing Signal listened to user feedback. 7. Commenters discussing PRISM and NSA surveillance in 2015 were operating in the immediate post-Snowden era; these concerns remain relevant but context has shifted.",
+  "grades": {
+    "Sephr": {
+      "grade": "C-",
+      "rationale": "Made valid criticisms about the 'remote control' architecture but fundamentally underestimated Signal's ability to deliver. The architectural concerns were temporary, and Signal's eventual solution proved elegant. The prediction of limited success was very wrong."
+    },
+    "lewisl9029": {
+      "grade": "A+",
+      "rationale": "Demonstrated rare technical depth and prescience by correctly identifying the fundamental tension in decentralized systems (offline messaging, contact discovery) and explaining why centralized systems remain superior for practical adoption. Backed up argument with their own research building a decentralized messenger. This analysis held up perfectly over 10 years."
+    },
+    "kuschku": {
+      "grade": "D",
+      "rationale": "Made several skeptical claims about Chrome being 'spyware' and expressing paranoia about Google Analytics exfiltrating chat history. While healthy skepticism about surveillance is warranted, the specific technical claims were speculative and overstated. The broader concern about Chrome proved partially valid but was solved differently than predicted (leaving Chrome entirely rather than using Chromium)."
+    },
+    "j_s": {
+      "grade": "B+",
+      "rationale": "Accurately described Signal's pragmatic approach of prioritizing usability over perfect security to expand the user base. This characterization proved prescient\u2014Signal's success came from being 'good enough' security that normal people could actually use, not from being perfect for cryptographers."
+    },
+    "tptacek": {
+      "grade": "A",
+      "rationale": "Consistently made technically accurate points comparing Signal favorably to Telegram, noting Signal's superior track record on cryptographic security and metadata protection. Also correctly identified decentralized messaging as an unsolved research problem. These judgments aged very well."
+    },
+    "moxie": {
+      "grade": "A",
+      "rationale": "Made the telling comment that Telegram stores plaintext transcripts server-side by default while Signal doesn't, making it fundamentally incompatible with the goal of preventing mass surveillance. This comparison proved to be the exact right framing and held up over the decade as Signal's competitive advantage."
+    },
+    "hackuser": {
+      "grade": "C",
+      "rationale": "Raised legitimate concerns about Chrome's trustworthiness for encrypted communications. The concern was understandable at the time, but proved to be less critical than feared because Signal moved away from Chrome. The comment assumed the Chrome architecture was permanent and fundamental, rather than a temporary beta choice."
+    },
+    "newman314": {
+      "grade": "B",
+      "rationale": "Articulated the ideal of combining Signal's encryption with Ricochet's P2P architecture and burner-like identities. While the vision was reasonable, it proved to be impossible to achieve in practice, confirming the later insights about decentralization's UX problems. Still, the idealism was understandable even if not practical."
+    },
+    "jmnicolas": {
+      "grade": "D+",
+      "rationale": "Made blanket statements about PRISM making Signal's encryption pointless because it runs on 'PRISM program' devices (Chrome, Android, iOS). This reflects misunderstanding of PRISM's actual scope and how encryption protects against mass surveillance even when running on surveillance-capable devices. The argument proves to be more fearmongering than technically sound."
+    },
+    "acdha": {
+      "grade": "B+",
+      "rationale": "Provided measured, technically accurate pushback against PRISM-based fearmongering, explaining that PRISM is a specific legal tool for accessing stored data, not unlimited surveillance capability. Also noted that the NSA's separate exploit development suggests they can't simply force companies to break encryption. This nuanced take aged well."
+    }
+  },
+  "score": 8
+}

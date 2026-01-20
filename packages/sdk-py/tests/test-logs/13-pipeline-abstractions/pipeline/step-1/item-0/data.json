@@ -1,0 +1,8 @@
+{
+  "propertyName": "Consolidated Properties",
+  "tenantConcentrationRisk": "low",
+  "leaseRolloverRisk": "medium",
+  "rentCollectionRisk": "medium",
+  "overallRiskScore": 5,
+  "reasoning": "The property has a well-diversified tenant base consisting of high-credit luxury brands, with the top five tenants accounting for only 19.1% of total monthly rent, indicating low concentration risk. However, there is a significant lease rollover of 23.1% within the next 12 months, which creates moderate renewal risk. Additionally, a substantial number of units (approx. 22) are currently paying $0 rent. While many are flagged as 'SNO' (Signed Not Occupied), suggesting future revenue or temporary concessions for luxury build-outs, this results in an 'economic vacancy' that is higher than the physical vacancy of 3.4%. The combination of high-quality tenancy but elevated near-term rollover and significant rent abatements results in a moderate overall risk score of 5."
+}

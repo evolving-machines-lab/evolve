@@ -1,0 +1,15 @@
+{
+  "passed": false,
+  "reasoning": "Max verification retries exceeded",
+  "verifyMeta": {
+    "operationId": "c82f15021a438ccb",
+    "operation": "verify",
+    "tag": "rentroll-map-0-vr1-verifier",
+    "sandboxId": "",
+    "swarmName": "rentroll",
+    "attempts": 2,
+    "pipelineRunId": "041128113dd90abe",
+    "pipelineStepIndex": 0
+  },
+  "attempts": 2
+}

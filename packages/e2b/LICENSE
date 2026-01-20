@@ -1,0 +1,24 @@
+EVOLVE SDK PROPRIETARY SOFTWARE LICENSE
+
+Copyright (c) 2026 Swarmlink, Inc. All rights reserved.
+
+BETA EVALUATION LICENSE
+
+The Evolve SDK is provided for evaluation and beta testing purposes only.
+
+PERMITTED:
+- Install Evolve SDK via npm/PyPI for evaluation and development
+- Build applications using the Evolve SDK during the beta period
+- Deploy applications using the Evolve SDK to production
+
+PROHIBITED:
+- Redistribute the Evolve SDK itself
+- Reverse engineer, decompile, or extract source code from the SDK
+- Create derivative works of the Evolve SDK
+- Use Evolve SDK in competing products or services
+
+NO WARRANTY. THIS SOFTWARE IS PROVIDED "AS IS" FOR BETA EVALUATION.
+
+This license may be revised upon general availability.
+
+For licensing inquiries, contact: brandomagnani@evolvingmachines.ai

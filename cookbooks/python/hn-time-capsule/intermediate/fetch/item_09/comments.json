@@ -1,0 +1,802 @@
+[
+  {
+    "id": 10664868,
+    "author": "hedgehog",
+    "text": "Note: Android only.\nEdit: In the sense that it only works with the Android version of the app.",
+    "points": null,
+    "created_at": "2015-12-02T18:40:07.000Z",
+    "depth": 0
+  },
+  {
+    "id": 10664900,
+    "author": "pc86",
+    "text": "Which is funny considering they are using a MacBook (with Photoshopped screen) as a promotional image.",
+    "points": null,
+    "created_at": "2015-12-02T18:44:52.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10664912,
+    "author": "zellyn",
+    "text": "I believe you link to your phone, and that part is Android only.",
+    "points": null,
+    "created_at": "2015-12-02T18:46:51.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10666938,
+    "author": "hysan",
+    "text": "But why does the app appear with the wrong window decorations? It looks like the app is using the window decorations and title font from Xubuntu.",
+    "points": null,
+    "created_at": "2015-12-03T00:29:29.000Z",
+    "depth": 3
+  },
+  {
+    "id": 10664918,
+    "author": "liotier",
+    "text": "I found myself thinking \"WFT - this is Chrome, not desktop and with an Android dependency at that !\" and then realizing that it may be time to question my assumptions about \"desktop\" meaning Linux/Windows/Macintosh",
+    "points": null,
+    "created_at": "2015-12-02T18:47:27.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10665014,
+    "author": "mtgx",
+    "text": "In this case \"Chrome-only\" means Windows, Mac, and Linux support.",
+    "points": null,
+    "created_at": "2015-12-02T18:59:50.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10665726,
+    "author": "kuschku",
+    "text": "No, it means \"Support for people on Windows, Mac and x64 Linux who installed spyware\".",
+    "points": null,
+    "created_at": "2015-12-02T20:53:48.000Z",
+    "depth": 3
+  },
+  {
+    "id": 10664943,
+    "author": "zmanian",
+    "text": "Android only on the sense that the ability to provisions two device keys with one account is Android only. OWS is hiring iOS devs to implement more pieces of this.",
+    "points": null,
+    "created_at": "2015-12-02T18:51:06.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10665056,
+    "author": "newman314",
+    "text": "Yeah, I was disappointed to discover this a while back when I tried to provision an iPad to use the same account as the iPhone. The failure mode is horrible too, in that messages will just go into the ether. I apparently missed a whole bunch of messages until I deleted Signal off the iPad and reinstalled on the iPhone.",
+    "points": null,
+    "created_at": "2015-12-02T19:06:27.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10664993,
+    "author": "Veratyr",
+    "text": "Also note that the multi device support only supports multiple desktop clients and not multi-mobile. If you have multiple phones or a tablet you're out of luck.",
+    "points": null,
+    "created_at": "2015-12-02T18:58:00.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10664995,
+    "author": "skywhopper",
+    "text": "It runs on your desktop/laptop but to link up with your Signal identity on your phone, your phone has to be Android (\"for now\").",
+    "points": null,
+    "created_at": "2015-12-02T18:58:19.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10664951,
+    "author": "thecoffman",
+    "text": "Shame that its Android only. Was really looking forward to giving this a try!",
+    "points": null,
+    "created_at": "2015-12-02T18:52:28.000Z",
+    "depth": 0
+  },
+  {
+    "id": 10664974,
+    "author": "moxie",
+    "text": "For now!  We're hiring, if you know anyone that wants to help us speed up iOS development: https://whispersystems.org/workworkwork/",
+    "points": null,
+    "created_at": "2015-12-02T18:55:48.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10666146,
+    "author": "Sephr",
+    "text": "Why tie it to a phone at all? Why not have this Chrome app work standalone? Apple's messaging app uses end-to-end encryption and it can be routed to multiple devices. I would expect Signal to strive to attain parity with Apple's offerings. Also, the naming of this app is pretty disingenuous. This app should be called \"Signal Remote\", since it's not running the actual Signal comms on my desktop, it's remotely controlling Signal on my phone.",
+    "points": null,
+    "created_at": "2015-12-02T21:56:27.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10666294,
+    "author": "haffenloher",
+    "text": "Nope, I think you misunderstood something. Your phone does not need to be online for the desktop app to work.",
+    "points": null,
+    "created_at": "2015-12-02T22:22:27.000Z",
+    "depth": 3
+  },
+  {
+    "id": 10664962,
+    "author": "jmnicolas",
+    "text": "> Signal Desktop is a Chrome app which links with your [Android] phone,[...] Unless your \"adversary\" is not the NSA, I wonder what's the point of encrypting your communications when those coms are taking place on technologies (iOS, Android, Chrome) from companies that are members of the Prism program.",
+    "points": null,
+    "created_at": "2015-12-02T18:53:54.000Z",
+    "depth": 0
+  },
+  {
+    "id": 10665149,
+    "author": "acdha",
+    "text": "1. Billions of people live in countries which do not have jurisdiction over Apple, Google, etc. 2. You should learn more about PRISM before spreading FUD about its victims. I'm strongly critical of the NSA's actions but for all of their abuse, PRISM is not the bogeyman you're making it out to be: \u201cThe PRISM program collects stored internet communications based on demands made to internet companies such as Google Inc. under Section 702 of the FISA Amendments Act of 2008 to turn over any data that match court-approved search terms\u201d https://en.wikipedia.org/wiki/PRISM_%28surveillance_program%...",
+    "points": null,
+    "created_at": "2015-12-02T19:18:45.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10665432,
+    "author": "59hhllhbhvc7",
+    "text": "> 1. Billions of people live in countries which do not have jurisdiction over Apple, Google, etc. Alternatively, you could say that billions of people live in countries with no restrictions on espionage of these companies, and with no recourse. Has NK faced justice for the Sony hack? Has the US faced justice for taps of overseas cables? No on both counts. If anything, having your country be a member of PRISM grants you as a citizen greater protection over how that data is used against you by that government.",
+    "points": null,
+    "created_at": "2015-12-02T20:05:40.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10665495,
+    "author": "SeldomSoup",
+    "text": "> court-approved Remember, this a secret court, whose judges are likely highly biased in favor the government, with secret proceedings where only the NSA gets to make a case. Not exactly a legitimate safeguard. I also have reservations about the grandparent comment, but PRISM is still pretty awful.",
+    "points": null,
+    "created_at": "2015-12-02T20:14:56.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10665514,
+    "author": "acdha",
+    "text": "Again, I'm not defending them in any way but all we know about the program is that it allows the kangaroo courts to order searches of information stored on those servers. We have no reason to believe it includes the ability to e.g. compel Google to ship a compromised version of Chrome to a specific user and the fact that the NSA has an entire program to develop and deploy rookits supports that interpretation since it's far more expensive than just asking the company to do it for you.",
+    "points": null,
+    "created_at": "2015-12-02T20:18:28.000Z",
+    "depth": 3
+  },
+  {
+    "id": 10664987,
+    "author": "chadk",
+    "text": "All good with the Android, but disappointed this is Chrome. You would think they would have a FF plugin by now!",
+    "points": null,
+    "created_at": "2015-12-02T18:57:31.000Z",
+    "depth": 0
+  },
+  {
+    "id": 10665036,
+    "author": "mtgx",
+    "text": "It's easier to build Chrome apps, and they are also more secure. It's one of the reasons Mozilla is trying to move away from the add-on model and adopt WebExtensions. When it does that we should start seeing Chrome/Firefox apps appear likely at the same time. It's why I hope Mozilla dismisses the backlash against the switch because some people can't live without their \"deep\" themes.",
+    "points": null,
+    "created_at": "2015-12-02T19:02:50.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10665722,
+    "author": "kuschku",
+    "text": "It\u2019s not just \"deep themes\". What if I want thumbnails of tabs on hover? What if I want the browser UI to be colored in the theme color of the current webpage (similar to chrome mobile)? I can do that today with FF. I can\u2019t do that with WebExtensions.",
+    "points": null,
+    "created_at": "2015-12-02T20:52:53.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10664990,
+    "author": "aw3c2",
+    "text": "This is a Chrome app. I miss the days of native apps. :(",
+    "points": null,
+    "created_at": "2015-12-02T18:57:47.000Z",
+    "depth": 0
+  },
+  {
+    "id": 10665033,
+    "author": "AdmiralAsshat",
+    "text": "A native app would certainly have its advantages, although it would require putting pre-compiled binaries up for Windows, OSX, and various Linux distros. By contrast, making it a Chrome app allows it to run on any OS that supports Chrome, including Chromebooks. So I understand the decision. But I'm primarily a Firefox user, so a native app or at least an FF add-on would personally be preferable to me.",
+    "points": null,
+    "created_at": "2015-12-02T19:02:29.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10665041,
+    "author": "lucidstack",
+    "text": "True. Although, I don't understand why it has to be a Chrome app. Why not just a NW.js app? Maybe for the whole \"connect with your phone\" functionality? Perhaps somebody could shed some light on this?",
+    "points": null,
+    "created_at": "2015-12-02T19:03:29.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10665197,
+    "author": "lewisl9029",
+    "text": "My guess is it uses Chrome's Native Client [1] for crypto. It's understandable why they might want to do this at this point in time, because the only other way to use native code for crypto in the browser is through the the Web Crypto API [2], which is still very young and implementations aren't very consistent across browsers yet anyways. [1] https://developer.chrome.com/native-client [2] http://www.w3.org/TR/WebCryptoAPI/",
+    "points": null,
+    "created_at": "2015-12-02T19:26:17.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10665710,
+    "author": "kuschku",
+    "text": "So, effectively, they use native code anyway, but make debugging worse for users? Great...",
+    "points": null,
+    "created_at": "2015-12-02T20:51:41.000Z",
+    "depth": 3
+  },
+  {
+    "id": 10665009,
+    "author": "AdmiralAsshat",
+    "text": "Any plans to make a Firefox add-on?",
+    "points": null,
+    "created_at": "2015-12-02T18:59:23.000Z",
+    "depth": 0
+  },
+  {
+    "id": 10665027,
+    "author": "mtgx",
+    "text": "I assume it doesn't have video support yet. Any chance it will within a year?",
+    "points": null,
+    "created_at": "2015-12-02T19:01:19.000Z",
+    "depth": 0
+  },
+  {
+    "id": 10665068,
+    "author": "rmchugh",
+    "text": "Loving moxie's namedropping of oldschool revolutionaries: Maria (Masha) Alexandrovna Kolenkina was a Russian socialist revolutionary from a merchant family in Temzhuk, a small town on the Sea of Azov. (1850-1926)\nVera Ivanovna Zasulich was a Russian Menshevik writer and revolutionary. (1849-1919)\nNestor Ivanovych Makhno or Bat'ko Makhno was a Ukrainian anarcho-communist revolutionary and the commander of an independent anarchist army in Ukraine during the Russian Civil War of 1917\u20131922. (1888-1934)\n(all above from Wikipedia)",
+    "points": null,
+    "created_at": "2015-12-02T19:07:25.000Z",
+    "depth": 0
+  },
+  {
+    "id": 10666685,
+    "author": "interrupt13",
+    "text": "Oldschool Communist revolutionaries, to be exact.  Yeah, it's no mystery where Moxie's politics lie given those allusions and the not-a-company company, eat together, do push ups together, open salary policies.",
+    "points": null,
+    "created_at": "2015-12-02T23:35:31.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10666894,
+    "author": "oldmanjay",
+    "text": "Fortunately for most of the human population, the politics of the author of the software we use isn't really a consideration.",
+    "points": null,
+    "created_at": "2015-12-03T00:18:26.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10669252,
+    "author": "Grue3",
+    "text": "I'm sure most people wouldn't use software created by Nazis. Considering Communism has arguably worse track record, I would definitely avoid any software created by its proponents if it's at all possible.",
+    "points": null,
+    "created_at": "2015-12-03T12:43:47.000Z",
+    "depth": 3
+  },
+  {
+    "id": 10669303,
+    "author": "DanBC",
+    "text": "> I'm sure most people wouldn't use software created by Nazis Best selling car of all time; star of several (very popular) movies: http://www.bbc.com/culture/story/20130830-the-nazi-car-we-ca...",
+    "points": null,
+    "created_at": "2015-12-03T12:58:57.000Z",
+    "depth": 4
+  },
+  {
+    "id": 10672441,
+    "author": "rmchugh",
+    "text": "I think Moxie is a (left-wing) anarchist with more than a smattering of Crimethinc.",
+    "points": null,
+    "created_at": "2015-12-03T20:40:53.000Z",
+    "depth": 4
+  },
+  {
+    "id": 10666936,
+    "author": "tedks",
+    "text": "Reading Moxie's early stories it is indeed no mystery where his politics lie, and it's certainly not \"old-school communist.\"",
+    "points": null,
+    "created_at": "2015-12-03T00:29:19.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10665080,
+    "author": "kristofferR",
+    "text": "Why make it a Chrome app instead of a node-webkit app?",
+    "points": null,
+    "created_at": "2015-12-02T19:08:40.000Z",
+    "depth": 0
+  },
+  {
+    "id": 10665105,
+    "author": "moloch",
+    "text": "nw.js is somewhat concerning from a security standpoint, you're always one XSS vulnerability away for arbitrary code execution.",
+    "points": null,
+    "created_at": "2015-12-02T19:12:38.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10665371,
+    "author": "fiatjaf",
+    "text": "Because doing that requires you to almost download and run a different Chrome.",
+    "points": null,
+    "created_at": "2015-12-02T19:53:50.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10665087,
+    "author": "codemac",
+    "text": "The join the beta button isn't working? I click and nothing happens. I looked at the page source, but then I realized I don't know how the fuck javascript works.",
+    "points": null,
+    "created_at": "2015-12-02T19:09:41.000Z",
+    "depth": 0
+  },
+  {
+    "id": 10665137,
+    "author": "spiznnx",
+    "text": "the button only worked in chrome, not firefox for me",
+    "points": null,
+    "created_at": "2015-12-02T19:16:18.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10665195,
+    "author": "jedahan",
+    "text": "same, sigh",
+    "points": null,
+    "created_at": "2015-12-02T19:25:40.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10665162,
+    "author": "frayesto",
+    "text": "Also make sure an ad/popup blocker isn't shooting it down? I think it's using a third party system to run the invites.",
+    "points": null,
+    "created_at": "2015-12-02T19:20:11.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10665118,
+    "author": "sigmar",
+    "text": "I don't understand why it prompts me to invite other people after putting me in line. Why would I email/tweet my friends to join this service if it isn't even ready for me? Seems rude to bother a friend with joining an internet line just so that I can get a better position in the line. I love signal on android and have been looking forward to this, kind of rubs me the wrong way when I'm put in \"line\"",
+    "points": null,
+    "created_at": "2015-12-02T19:13:56.000Z",
+    "depth": 0
+  },
+  {
+    "id": 10665142,
+    "author": "frayesto",
+    "text": "The app is still in beta testing. I think this is their way to drum up support. Forces all the die-hards who want in to try and get some people interested. An app like this is only as useful as the number of people who use it.",
+    "points": null,
+    "created_at": "2015-12-02T19:17:07.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10665636,
+    "author": "JshWright",
+    "text": "Invite them to... not use it? That seems like a solid way to turn people off from using a service, not a way get them excited about it.",
+    "points": null,
+    "created_at": "2015-12-02T20:40:29.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10666136,
+    "author": "jegutman",
+    "text": "I don't feel strongly about the practice either way, but you're also indirectly prioritizing users who are most willing to share the product.  So they're hoping their early users are also those most willing to spread.  The \"connectors\" of the products ecosystem.",
+    "points": null,
+    "created_at": "2015-12-02T21:55:04.000Z",
+    "depth": 3
+  },
+  {
+    "id": 10666189,
+    "author": "JshWright",
+    "text": "You're prioritizing users who are willing to spam their friends about a product they can't even use. I would be _far_ more likely to tell my friends about the product if I could actually use it and be able to vouch for it (as I have with the mobile version of TextSecure/Signal). Forcing me to get my friends to visit a page where they will find out about an application they can't even use is just annoying.",
+    "points": null,
+    "created_at": "2015-12-02T22:03:35.000Z",
+    "depth": 4
+  },
+  {
+    "id": 10666845,
+    "author": "Tyr42",
+    "text": "Ya, but it could go the way of Wave by not actually having people use it too.",
+    "points": null,
+    "created_at": "2015-12-03T00:09:25.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10665922,
+    "author": "kazazes",
+    "text": "In the same vein, the signup form allows you to trivially tell who and roughly when someone has signed up for the beta.",
+    "points": null,
+    "created_at": "2015-12-02T21:21:40.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10667414,
+    "author": "JshWright",
+    "text": "> kind of rubs me the wrong way when I'm put in \"line\" Made even more fun by the fact that unless you spam your friends with a useless link, you get to watch the number of people ahead of you climb. I started out at ~600, and now I'm at ~1200.",
+    "points": null,
+    "created_at": "2015-12-03T02:45:50.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10667848,
+    "author": "lockyc",
+    "text": "I think it might be related to a restriction google groups has ( https://twitter.com/liliakai/status/672219521654980608 )\n    \"Waiting for Signal Desktop beta access? Know any googlers who can lift the 100-person daily limit on google group invites?\"",
+    "points": null,
+    "created_at": "2015-12-03T05:01:41.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10665139,
+    "author": "leonhandreke",
+    "text": "Why incentivize spamming my friends with links before I've even seen the app, only to refer them to a waiting line? Sure, launch day momentum and all that, but I wish that as an entity that wants to be \"the good guys\", they can find a way to gain a broader audience for their app based on the app itself, not the buzz around it. On a sidenote, does anyone know who funds their full-timers? https://whispersystems.org/workworkwork/ says they're not VC funded. But then who pays them?",
+    "points": null,
+    "created_at": "2015-12-02T19:16:37.000Z",
+    "depth": 0
+  },
+  {
+    "id": 10665155,
+    "author": "frayesto",
+    "text": "They are part of the [Freedom of the Press foundation]( https://freedom.press/ ) and have grants from the Shuttleworth foundation https://en.wikipedia.org/wiki/Open_Whisper_Systems#Funding http://www.knightfoundation.org/grants/201499909/ https://www.shuttleworthfoundation.org/fellows/moxie-marlins...",
+    "points": null,
+    "created_at": "2015-12-02T19:19:32.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10665201,
+    "author": "guelo",
+    "text": "The buzz about a chat app is more important than the app itself. The usefulness of the app is proportional to the size of the social network. The most difficult thing to build and the most valuable part of a chat app is the social network. WhatsApp wasn't worth $19 billion because of the quality of the software. Buzz, marketing, promotion, virality, user aquisition in general, are the most important thing for Signal to be working on.",
+    "points": null,
+    "created_at": "2015-12-02T19:26:46.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10665190,
+    "author": "gue5t",
+    "text": "Why are all these encrypted chat programs (Signal, Telegram, &c.) still centralized and not TOR-style onion-routed?",
+    "points": null,
+    "created_at": "2015-12-02T19:24:26.000Z",
+    "depth": 0
+  },
+  {
+    "id": 10665225,
+    "author": "newman314",
+    "text": "Agreed. As I mentioned in a previous thread, my idealized program is Signal+Ricochet.im+Burner-like resettable identity endpoints across desktop and mobile.",
+    "points": null,
+    "created_at": "2015-12-02T19:31:08.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10665243,
+    "author": "Strom",
+    "text": "Maybe because an excellent centralized encrypted chat doesn't exist yet. All options, including Signal, have lots of problems. Some chat apps are great, but really questionable security. Other apps have seemingly great security, but really questionable chat experience. After this duo problem of chat+encryption has been done well, we can start looking into adding additional problems like centralization.",
+    "points": null,
+    "created_at": "2015-12-02T19:33:26.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10665394,
+    "author": "lewisl9029",
+    "text": "As much as I agree with your overall sentiment, the sad truth is that centralized architectures enable many of the UX affordances that users take for granted today in a modern chat app, many of which are much more difficult, sometimes simply impossible, to implement in a decentralized architecture (think features like automatic contact discovery, offline messaging, etc). Without some of these affordances, a chat app has simply has no chance of gaining widespread adoption in such a competitive landscape. This is why it is very difficult to justify pouring any significant resources into building a decentralized chat app, because too few people will ever end up using it to justify the investment. For what it's worth, I am the author of a decentralized messaging app myself [1], and have spent a lot of time thinking about stuff like this, and eventually reached this unfortunate conclusion and decided to leave the project at the prototype stage. [1] http://toc.im/",
+    "points": null,
+    "created_at": "2015-12-02T19:56:28.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10665505,
+    "author": "deanclatworthy",
+    "text": "What kind of things are impossible?",
+    "points": null,
+    "created_at": "2015-12-02T20:16:29.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10665616,
+    "author": "lewisl9029",
+    "text": "The two features I mentioned, automatic contact discovery and robust offline messaging, are examples of features that I have concluded to be impossible to build without some degree of centralization (there are probably more, but those two were the only ones I could recall off the top of my head). Though it is certainly possible that I simply haven't put enough thought into it. Toc's original goal was to be a decentralized messaging app that makes no compromises in terms of UX compared to a centralized messaging app. Toc managed to tackle decentralized cross platform sync, but to this day I still have no idea how to approach automatic contact discovery and robust offline messaging.",
+    "points": null,
+    "created_at": "2015-12-02T20:36:35.000Z",
+    "depth": 3
+  },
+  {
+    "id": 10665832,
+    "author": "qrmn",
+    "text": "Automatic contact discovery is tricky, but the beginnings of one potential solution is I think explored in agl's Pond, using pairings on BN curves?: https://pond.imperialviolet.org/ To a point, so is offline messaging. Distributed datastores in general do that kind of thing - there are old implementations over Freenet in particular, and GNUnet as well and other things I think. The robust part is harder: if the client is offline, where's the disk space coming from? Volunteers' (nodes') cache? That needs to be opaque, and so do lookups. What's to stop spammers flooding the network? (Spam, and denial-of-service in general, is a Hard problem to deal with in general even in distributed systems.) They're not among the hardest problems. Pseudonymity is a huge challenge as the latency gets lower against traffic correlation attacks, and a secure messenger is most definitely up against the kind of threat model that can and will try to pull those off in the wild. Perhaps mixing high and low-latency traffic may help, although it's going to need to be very carefully analysed how much (I believe I2P's design can do that, although I'm not sure if jrand0m ever implemented it in the router).",
+    "points": null,
+    "created_at": "2015-12-02T21:10:19.000Z",
+    "depth": 4
+  },
+  {
+    "id": 10672208,
+    "author": "lewisl9029",
+    "text": "Yes those are definitely not the hardest problems in this space. I was only referring to UX-related features in my original post (i.e. rather than the much more tricky privacy and security related ones), ones that I couldn't figure out how to actually implement in the context of a client-side web app. Impossible was probably too strong of a word to express that. Thank you for all the interesting ideas and resources though! They'll definitely come in handy when I eventually revisit this space when I have more time later on.",
+    "points": null,
+    "created_at": "2015-12-03T20:07:11.000Z",
+    "depth": 5
+  },
+  {
+    "id": 10665745,
+    "author": "qrmn",
+    "text": "Impossible is a strong word - one prefers to reserve that for provably doomed problems like DRM - but several common, simple paradigms do present an unexpected technical challenge, or even an open research problem, or need to be expressed slightly differently to be practical, in a distributed, privacy-preserving, untrusted-server kind of model. For example, paraphrasing quite a lot - uniqueness of names requires ordering; ordering probably requires consensus; consensus has a Sybil problem for which some kind of countermeasure is needed.  So a namespacing problem that seems simple, and is simple in a centralised/trusted context, may only be practical to solve with a blockchain-like structure with a computationally-heavy proof-of-work in a distributed trust architecture.  Even that may still be vulnerable to attacks from someone who can outcompute the rest of the network: and a Nation State Adversary (as a friend snarkily puts it) may actually have enough budget to try that.  There may be another way, but maybe not another way that satisfies all the security requirements or that would survive an attack.  And there are still other niches you need to worry about, like homoglyph attacks. That's a long way to go just to make sure that there aren't two ~bobs!  So you end up thinking, maybe it's better to find another way that ~alice knows she's talking to the right ~bob?  Then you have rephrased your security problem as more of a UX problem: how do I try to avoid impersonation? - which is perhaps more practical to solve another way. [Edit: Also, now your users won't have to fight over who gets to take ~bob first. This may or may not be an advantage, depending on how you feel about username exclusivity.] It's going to require a lot of hard work to solve this type of problem comprehensively; in the meantime, Signal does more or less the best we can do practically right now, and there's a lot of value in a practical solution that's best-in-class, works and millions of people can just pick up and use now.",
+    "points": null,
+    "created_at": "2015-12-02T20:56:51.000Z",
+    "depth": 3
+  },
+  {
+    "id": 10665465,
+    "author": "tptacek",
+    "text": "Because that's still an unsolved research problem. Rogaway mentions it, in some detail, in his recent paper: https://news.ycombinator.com/item?id=10655418",
+    "points": null,
+    "created_at": "2015-12-02T20:09:38.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10665527,
+    "author": "fweespeech",
+    "text": "> Why are all these encrypted chat programs (Signal, Telegram, &c.) still centralized and not TOR-style onion-routed? https://blog.torproject.org/blog/tor-messenger-beta-chat-ove... > Tor Messenger builds on the networks you are familiar with, so that you can continue communicating in a way your contacts are willing and able to do. This has traditionally been in a client-server model, meaning that your metadata (specifically the relationships between contacts) can be logged by the server. However, your route to the server will be hidden because you are communicating over Tor. That is essentially what happens with Signal and every other service as well. No metadata, truly anonymous communication between trusted parties is an unsolved research problem.",
+    "points": null,
+    "created_at": "2015-12-02T20:21:38.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10665632,
+    "author": "leni536",
+    "text": "What about Ring and Tox? https://tox.chat/ https://ring.cx/ AFAIK both offers p2p communication and discovery. I don't think that they are entirely tor compatible though, maybe if you only use the chat part.",
+    "points": null,
+    "created_at": "2015-12-02T20:39:25.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10667261,
+    "author": "Nutomic",
+    "text": "I'm currently working on a decentralized instant messenger Ensichat [1] which does exactly that. Right now, it only works over Bluetooth, but internet support will be coming very soon! But as others have mentioned, many problems become really difficult in a decentralized application, most importantly offline messaging. [1] https://github.com/Nutomic/ensichat",
+    "points": null,
+    "created_at": "2015-12-03T02:04:56.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10665196,
+    "author": "hackuser",
+    "text": "> Signal Desktop is a Chrome app That surprises me. I don't trust Chrome for confidentiality; I assume it collects data for Google and I don't know that it protects my data from others. If Chrome isn't trustworthy for confidentiality, it would seem to fatally cripple the security of Signal Desktop. However, I believe the people at Whisper Systems would see that obvious flaw so I suspect that I'm misunderstanding something - what is it?",
+    "points": null,
+    "created_at": "2015-12-02T19:25:48.000Z",
+    "depth": 0
+  },
+  {
+    "id": 10665266,
+    "author": "j_s",
+    "text": "Whisper Systems has a track record of prioritizing 'good enough' ease-of-use ahead of 'perfect' security as a practical way of expanding its user base. Edit: Tried to word the above most neutrally; I believe this approach has both pros and cons.",
+    "points": null,
+    "created_at": "2015-12-02T19:37:02.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10665280,
+    "author": "frayesto",
+    "text": "moxie has stated previously someplace that the goals are 1. Simple encryption for everyone to prevent mass data collection\n2. Prevent targeted collection for the crypto enthusiasts The main focus is on step 1. now and they are doing a great job at it. It's slow like anything new, but I managed to convince my parents to switch so that means it's working!",
+    "points": null,
+    "created_at": "2015-12-02T19:39:21.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10665335,
+    "author": "hackuser",
+    "text": "> 1. Simple encryption for everyone to prevent mass data collection Google might be the second biggest mass data collector, after the U.S. government. Using Chrome, one of Google's tools of collection (if I understand correctly), wouldn't seem to further that goal.",
+    "points": null,
+    "created_at": "2015-12-02T19:48:06.000Z",
+    "depth": 3
+  },
+  {
+    "id": 10665442,
+    "author": "kingkilr",
+    "text": "Can you articulate a _specific_ threat model under which this extension fails to protect against mass data collection by Google? Or is this idle speculation.",
+    "points": null,
+    "created_at": "2015-12-02T20:06:20.000Z",
+    "depth": 4
+  },
+  {
+    "id": 10665692,
+    "author": "kuschku",
+    "text": "Google adds Google Analytics to their browser, to automatically report what a user does in Chrome apps, and \"accidentally\" your whole chat history ends up on Google\u2019s servers? This is not an unrealistic example.",
+    "points": null,
+    "created_at": "2015-12-02T20:49:48.000Z",
+    "depth": 5
+  },
+  {
+    "id": 10665959,
+    "author": "finnn",
+    "text": "last time I checked Google Analytics doesn't record anything like that kind of data.",
+    "points": null,
+    "created_at": "2015-12-02T21:26:51.000Z",
+    "depth": 6
+  },
+  {
+    "id": 10666038,
+    "author": "kuschku",
+    "text": "It records where you click, and when. \"Accidentally\" logging keys is possible, as Google can modify the content of the JS on request \u2013 for example, in case of being served an NSL, Google can be forced to modify the JS to log that.",
+    "points": null,
+    "created_at": "2015-12-02T21:40:22.000Z",
+    "depth": 7
+  },
+  {
+    "id": 10666305,
+    "author": "linkregister",
+    "text": "Run Chromium, problem solved.",
+    "points": null,
+    "created_at": "2015-12-02T22:23:31.000Z",
+    "depth": 8
+  },
+  {
+    "id": 10667230,
+    "author": "driverdan",
+    "text": "> Google adds Google Analytics to their browser Source?",
+    "points": null,
+    "created_at": "2015-12-03T01:54:19.000Z",
+    "depth": 6
+  },
+  {
+    "id": 10668863,
+    "author": "kuschku",
+    "text": "Someone asked for a hypothetical way Google could, in the future, get the data. As you are doing automated updates, Google can just add Analytics to the browser, and even publish it as something \"good\".",
+    "points": null,
+    "created_at": "2015-12-03T10:28:37.000Z",
+    "depth": 7
+  },
+  {
+    "id": 10666855,
+    "author": "devit",
+    "text": "The threat is that Google (perhaps forced by the NSA, perhaps only for some users) modifies Chrome to include code that logs all keystrokes or specifically detects the Signal extension (or standalone app if Chrome is also installed) and uploads the plaintext of all messages to Google or to the NSA. In other words, you have to trust Google to not insert such a trojan by itself and to not bow down to the U.S. government should it try to secretly force Google to do so. You also have to trust that their security is good enough to prevent third parties from covertly performing such a feat. That's not say that Google should not be trusted or should be trusted less than other parties, but that's the threat.",
+    "points": null,
+    "created_at": "2015-12-03T00:10:43.000Z",
+    "depth": 5
+  },
+  {
+    "id": 10665526,
+    "author": "thatcat",
+    "text": "The android app already requires Google content manager to be installed, which is probably why the beta is android only. so its no different from the mobile app really.",
+    "points": null,
+    "created_at": "2015-12-02T20:21:36.000Z",
+    "depth": 4
+  },
+  {
+    "id": 10665368,
+    "author": "sz4kerto",
+    "text": "> Whisper Systems has a track record of prioritizing 'good enough' ease-of-use ahead of 'perfect' security Why is Telegram always under for their flawed security challenge despite the good-enough track record then? They also have perfect usability, native apps, 3rd party clients, etc. If the security is not the first priority then Signal isn't very attractive compared to the competition I think.",
+    "points": null,
+    "created_at": "2015-12-02T19:53:23.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10665451,
+    "author": "tptacek",
+    "text": "Signal doesn't have a history of cryptographic flaws and metadata leakage, and Telegram does. The equivalence you're drawing here is false. Here's an example, from adc and Juliano Rizzo, who co-discovered the TLS BEAST and CRIME vulnerabilities: http://www.alexrad.me/discourse/a-264-attack-on-telegram-and...",
+    "points": null,
+    "created_at": "2015-12-02T20:07:51.000Z",
+    "depth": 3
+  },
+  {
+    "id": 10665544,
+    "author": "sz4kerto",
+    "text": "I'm not drawing an equivalence at all (not saying that Telegram and Signal are equivalently insecure or flawed, etc.) -- I was only asking why would Signal make any compromise on security if that is their main selling point (and probably the only one). I don't think that releasing a Chrome app is a good strategy considering the audience (but I don't know for sure, they probably have a better overview of their user base). I could have compared it to Threema as well, actually.",
+    "points": null,
+    "created_at": "2015-12-02T20:23:41.000Z",
+    "depth": 4
+  },
+  {
+    "id": 10665571,
+    "author": "tptacek",
+    "text": "I don't concede that Signal has made any security compromises. That was someone else. If you care about security, use Signal. If you care about UX, and Threema has a better UX, use Threema. Threema is a closed-source system that apparently relies on Nacl. That is a much better answer than the one Telegram can give, but it still leaves a whole lot of questions unanswered. There's a lot that can go wrong in the layers above Nacl.",
+    "points": null,
+    "created_at": "2015-12-02T20:29:05.000Z",
+    "depth": 5
+  },
+  {
+    "id": 10665464,
+    "author": "MikeKusold",
+    "text": "Telegram is closed source so we can't verify that they implemented encryption properly, and only Secret Chats have the messages encrypted. https://telegram.org/faq#q-so-how-do-you-encrypt-data",
+    "points": null,
+    "created_at": "2015-12-02T20:09:28.000Z",
+    "depth": 3
+  },
+  {
+    "id": 10665557,
+    "author": "jhasse",
+    "text": "The end to end encryption is open source.",
+    "points": null,
+    "created_at": "2015-12-02T20:26:19.000Z",
+    "depth": 4
+  },
+  {
+    "id": 10666163,
+    "author": "tptacek",
+    "text": "The server is published?",
+    "points": null,
+    "created_at": "2015-12-02T21:59:56.000Z",
+    "depth": 5
+  },
+  {
+    "id": 10666267,
+    "author": "jhasse",
+    "text": "No, that's not relevant for the end to end encryption though.",
+    "points": null,
+    "created_at": "2015-12-02T22:17:37.000Z",
+    "depth": 6
+  },
+  {
+    "id": 10665570,
+    "author": "leni536",
+    "text": "I thought the Telegram client is open-source, it's even on F-droid. The server side being open or closed source is meaningless: 1. In Telegram's threat model the servers are not trusted. 2. You can't verify server side code anyway.",
+    "points": null,
+    "created_at": "2015-12-02T20:28:13.000Z",
+    "depth": 4
+  },
+  {
+    "id": 10666649,
+    "author": "toupeira",
+    "text": "The Telegram client can just barely be considered Open Source, see the discussion at https://github.com/DrKLO/Telegram/pull/76",
+    "points": null,
+    "created_at": "2015-12-02T23:26:09.000Z",
+    "depth": 5
+  },
+  {
+    "id": 10666667,
+    "author": "leni536",
+    "text": "F-droid builds those parts separately from source. > The official source code of the app contains binary blobs, so this tracks a fork which builds those from source. Hence, versions might become available with a certain lag. https://f-droid.org/repository/browse/?fdid=org.telegram.mes...",
+    "points": null,
+    "created_at": "2015-12-02T23:31:05.000Z",
+    "depth": 6
+  },
+  {
+    "id": 10665483,
+    "author": "j_s",
+    "text": "despite [Telegram's] good-enough track record You may have missed parts of their track record; part of the problem is that Telegram tends to hide these types of things in its past: \"Telegram protocol defeated. Authors are going to modify crypto-algorithm\" https://news.ycombinator.com/item?id=6948742",
+    "points": null,
+    "created_at": "2015-12-02T20:13:14.000Z",
+    "depth": 3
+  },
+  {
+    "id": 10665490,
+    "author": "fweespeech",
+    "text": "Telegram has a tendency to mislead [intentionally or not] about the quality of its security. Signal is pretty up front about being \"good enough\" security.",
+    "points": null,
+    "created_at": "2015-12-02T20:14:11.000Z",
+    "depth": 3
+  },
+  {
+    "id": 10665541,
+    "author": "moxie",
+    "text": "Signal's objective is to make mass surveillance impossible.  Telegram stores the entire plaintext transcript of every user's entire conversation history server side by default, so if that's the objective, Telegram is definitely not \"good enough.\"  Just the opposite, there's nothing worse.",
+    "points": null,
+    "created_at": "2015-12-02T20:23:26.000Z",
+    "depth": 3
+  },
+  {
+    "id": 10665272,
+    "author": "mahyarm",
+    "text": "I think more accurately, it's a standalone app that runs on the chrome runtime. You get windows, osx, linux & chrome os all at once. The chromebook is touted as the secure desktop for the non-technical user. You can take the app and make your own standalone runtime version if you want and audit / test your standalone version to make sure it's only communicating with open whisper systems.",
+    "points": null,
+    "created_at": "2015-12-02T19:38:00.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10665277,
+    "author": "air",
+    "text": "Can't you run it under Chromium then?",
+    "points": null,
+    "created_at": "2015-12-02T19:39:01.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10666269,
+    "author": "haffenloher",
+    "text": "You can! No problem with that.",
+    "points": null,
+    "created_at": "2015-12-02T22:18:03.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10665212,
+    "author": "tdkl",
+    "text": "Since when are browser apps \"desktop\" apps ?",
+    "points": null,
+    "created_at": "2015-12-02T19:29:14.000Z",
+    "depth": 0
+  }
+]

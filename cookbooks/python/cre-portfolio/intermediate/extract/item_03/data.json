@@ -1,0 +1,1468 @@
+{
+  "property_name": "Premiere Properties Portfolio",
+  "as_of_date": "2026-01-06",
+  "total_units": 126,
+  "total_sf": 394750.0,
+  "buildings": [
+    {
+      "building_name": "Harbourview Building -",
+      "tenants": [
+        {
+          "tenant_name": "Casa di Firenze",
+          "unit": "110-210",
+          "sf": 4460.0,
+          "lease_start": "2020-07-01",
+          "lease_end": "2030-03-31",
+          "monthly_rent": 62753.0,
+          "annual_rent": 752752.0,
+          "rent_psf": 168.84,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Boutique Ambre",
+          "unit": "108-208",
+          "sf": 5320.0,
+          "lease_start": "2017-11-20",
+          "lease_end": "2027-10-31",
+          "monthly_rent": 66800.0,
+          "annual_rent": 800676.0,
+          "rent_psf": 150.4,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Atelier Beaumont",
+          "unit": "109-209",
+          "sf": 2616.0,
+          "lease_start": "2021-06-30",
+          "lease_end": "2026-06-29",
+          "monthly_rent": 17209.0,
+          "annual_rent": 209440.0,
+          "rent_psf": 80.0,
+          "status": "occupied"
+        }
+      ]
+    },
+    {
+      "building_name": "Riverfront Complex -",
+      "tenants": [
+        {
+          "tenant_name": "Casa Elegante",
+          "unit": "2,104,202,204",
+          "sf": 7076.0,
+          "lease_start": "2023-10-01",
+          "lease_end": "3510-01-31",
+          "monthly_rent": 8.0,
+          "annual_rent": 1964838.0,
+          "rent_psf": 0.0,
+          "status": "occupied"
+        }
+      ]
+    },
+    {
+      "building_name": "Creekside Pavilion -",
+      "tenants": [
+        {
+          "tenant_name": "Villa Cristal",
+          "unit": "101,102",
+          "sf": 10368.0,
+          "lease_start": "2024-06-25",
+          "lease_end": "2039-06-30",
+          "monthly_rent": 69829.0,
+          "annual_rent": 829120.0,
+          "rent_psf": 80.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Ch\u00e2teau Ivoire",
+          "unit": "301",
+          "sf": 4200.0,
+          "lease_start": "2023-10-18",
+          "lease_end": "2028-10-31",
+          "monthly_rent": 15180.0,
+          "annual_rent": 180000.0,
+          "rent_psf": 42.86,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Galerie Premiere",
+          "unit": "203A",
+          "sf": 1173.0,
+          "lease_start": "2024-06-01",
+          "lease_end": "2025-05-31",
+          "monthly_rent": 2500.0,
+          "annual_rent": 30000.0,
+          "rent_psf": 25.58,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Galerie Emeraude",
+          "unit": "201,202,400",
+          "sf": 25112.0,
+          "lease_start": "2023-02-01",
+          "lease_end": "2028-01-31",
+          "monthly_rent": 27318.0,
+          "annual_rent": 327818.0,
+          "rent_psf": 13.05,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Maison Velours",
+          "unit": "204-S",
+          "sf": 0.0,
+          "lease_start": "1999-01-01",
+          "lease_end": "1998-01-31",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Villa Bronzo",
+          "unit": "100,205",
+          "sf": 22694.0,
+          "lease_start": "2022-09-30",
+          "lease_end": "2032-04-30",
+          "monthly_rent": 117241.0,
+          "annual_rent": 1406886.0,
+          "rent_psf": 61.99,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Maison \u00c9toile",
+          "unit": "302,303",
+          "sf": 0.0,
+          "lease_start": "2015-01-01",
+          "lease_end": "2000-12-31",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Atelier Soleil",
+          "unit": "203",
+          "sf": 1200.0,
+          "lease_start": "2023-09-04",
+          "lease_end": "2025-09-03",
+          "monthly_rent": 3411.0,
+          "annual_rent": 40937.0,
+          "rent_psf": 34.11,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Vacant",
+          "unit": "",
+          "sf": 0.0,
+          "lease_start": "",
+          "lease_end": "",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "vacant"
+        },
+        {
+          "tenant_name": "Vacant",
+          "unit": "",
+          "sf": 0.0,
+          "lease_start": "",
+          "lease_end": "",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "vacant"
+        }
+      ]
+    },
+    {
+      "building_name": "Parkside Commons -",
+      "tenants": [
+        {
+          "tenant_name": "Atelier Blanc",
+          "unit": "300",
+          "sf": 3011.0,
+          "lease_start": "2023-03-01",
+          "lease_end": "2028-02-29",
+          "monthly_rent": 12922.0,
+          "annual_rent": 155066.0,
+          "rent_psf": 51.5,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Palazzo Verde",
+          "unit": "117",
+          "sf": 0.0,
+          "lease_start": "2021-07-03",
+          "lease_end": "2026-07-02",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Casa Platino",
+          "unit": "107",
+          "sf": 1680.0,
+          "lease_start": "2023-09-01",
+          "lease_end": "2028-08-31",
+          "monthly_rent": 35000.0,
+          "annual_rent": 420000.0,
+          "rent_psf": 250.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Villa Luna",
+          "unit": "121",
+          "sf": 2347.0,
+          "lease_start": "2023-07-01",
+          "lease_end": "2026-06-30",
+          "monthly_rent": 13691.0,
+          "annual_rent": 164292.0,
+          "rent_psf": 70.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Boutique Saphir",
+          "unit": "700",
+          "sf": 3002.0,
+          "lease_start": "2023-03-22",
+          "lease_end": "2026-03-31",
+          "monthly_rent": 16706.0,
+          "annual_rent": 200467.0,
+          "rent_psf": 66.78,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Villa Serena",
+          "unit": "105",
+          "sf": 0.0,
+          "lease_start": "2025-05-30",
+          "lease_end": "2032-05-31",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Maison Royale",
+          "unit": "400",
+          "sf": 3016.0,
+          "lease_start": "2024-06-01",
+          "lease_end": "2028-05-31",
+          "monthly_rent": 12567.0,
+          "annual_rent": 150800.0,
+          "rent_psf": 50.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Ch\u00e2teau Rose",
+          "unit": "500",
+          "sf": 3004.0,
+          "lease_start": "2023-01-15",
+          "lease_end": "2026-01-31",
+          "monthly_rent": 19425.0,
+          "annual_rent": 233100.0,
+          "rent_psf": 77.6,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Casa Marbre",
+          "unit": "200",
+          "sf": 3031.0,
+          "lease_start": "2022-06-01",
+          "lease_end": "2029-05-31",
+          "monthly_rent": 8650.0,
+          "annual_rent": 103799.0,
+          "rent_psf": 34.25,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Ch\u00e2teau Bleu",
+          "unit": "105",
+          "sf": 1680.0,
+          "lease_start": "2020-03-01",
+          "lease_end": "2025-02-28",
+          "monthly_rent": 7426.0,
+          "annual_rent": 89116.0,
+          "rent_psf": 53.05,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Galerie Moderne",
+          "unit": "111,115",
+          "sf": 2439.0,
+          "lease_start": "2017-06-22",
+          "lease_end": "2029-06-30",
+          "monthly_rent": 9898.0,
+          "annual_rent": 118779.0,
+          "rent_psf": 48.7,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Maison Diamant",
+          "unit": "101",
+          "sf": 2977.0,
+          "lease_start": "2019-06-21",
+          "lease_end": "2029-12-31",
+          "monthly_rent": 15793.0,
+          "annual_rent": 189516.0,
+          "rent_psf": 63.66,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Galerie Jade",
+          "unit": "103",
+          "sf": 2613.0,
+          "lease_start": "2023-11-02",
+          "lease_end": "2030-11-01",
+          "monthly_rent": 32663.0,
+          "annual_rent": 391950.0,
+          "rent_psf": 150.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Ch\u00e2teau Noir",
+          "unit": "109",
+          "sf": 2695.0,
+          "lease_start": "2023-11-01",
+          "lease_end": "2026-10-31",
+          "monthly_rent": 16170.0,
+          "annual_rent": 194040.0,
+          "rent_psf": 72.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Boutique Celeste",
+          "unit": "119",
+          "sf": 2614.0,
+          "lease_start": "2024-03-01",
+          "lease_end": "2026-02-28",
+          "monthly_rent": 13000.0,
+          "annual_rent": 156000.0,
+          "rent_psf": 59.68,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Vacant",
+          "unit": "",
+          "sf": 0.0,
+          "lease_start": "",
+          "lease_end": "",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "vacant"
+        }
+      ]
+    },
+    {
+      "building_name": "Valleybrook Plaza -",
+      "tenants": [
+        {
+          "tenant_name": "Palazzo Oro",
+          "unit": "OP130,OP230",
+          "sf": 4524.0,
+          "lease_start": "2024-01-29",
+          "lease_end": "2031-01-31",
+          "monthly_rent": 75300.0,
+          "annual_rent": 903600.0,
+          "rent_psf": 199.73,
+          "status": "occupied"
+        }
+      ]
+    },
+    {
+      "building_name": "Oceanview Tower -",
+      "tenants": []
+    },
+    {
+      "building_name": "Foresthill Complex -",
+      "tenants": [
+        {
+          "tenant_name": "Boutique Azure",
+          "unit": "116,216",
+          "sf": 5191.0,
+          "lease_start": "2017-12-01",
+          "lease_end": "2028-01-31",
+          "monthly_rent": 51928.0,
+          "annual_rent": 623134.0,
+          "rent_psf": 120.04,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Ch\u00e2teau Argent",
+          "unit": "114,214",
+          "sf": 3691.0,
+          "lease_start": "2018-09-27",
+          "lease_end": "2034-09-30",
+          "monthly_rent": 10.0,
+          "annual_rent": 4243284.0,
+          "rent_psf": 0.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Boutique Margaux",
+          "unit": "ROOFTOP",
+          "sf": 0.0,
+          "lease_start": "2023-12-01",
+          "lease_end": "2039-01-31",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Palazzo Corallo",
+          "unit": "112,212",
+          "sf": 6442.0,
+          "lease_start": "2017-12-04",
+          "lease_end": "2028-12-31",
+          "monthly_rent": 69662.0,
+          "annual_rent": 835940.0,
+          "rent_psf": 129.76,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Vacant",
+          "unit": "",
+          "sf": 0.0,
+          "lease_start": "",
+          "lease_end": "",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "vacant"
+        }
+      ]
+    },
+    {
+      "building_name": "Hillcrest Pavilion -",
+      "tenants": [
+        {
+          "tenant_name": "Villa Opale",
+          "unit": "301-C",
+          "sf": 225.0,
+          "lease_start": "2023-10-03",
+          "lease_end": "2024-08-30",
+          "monthly_rent": 2813.0,
+          "annual_rent": 33750.0,
+          "rent_psf": 150.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Maison Laurent",
+          "unit": "110,210",
+          "sf": 0.0,
+          "lease_start": "2024-08-28",
+          "lease_end": "2029-07-31",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Palazzo Rossi",
+          "unit": "302-S",
+          "sf": 1322.0,
+          "lease_start": "2022-02-01",
+          "lease_end": "2025-01-31",
+          "monthly_rent": 16525.0,
+          "annual_rent": 198300.0,
+          "rent_psf": 150.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Atelier Perle",
+          "unit": "310-S",
+          "sf": 293.0,
+          "lease_start": "2023-09-01",
+          "lease_end": "2025-08-31",
+          "monthly_rent": 3331.0,
+          "annual_rent": 39972.0,
+          "rent_psf": 136.42,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Atelier Soie",
+          "unit": "301-B",
+          "sf": 225.0,
+          "lease_start": "2023-06-01",
+          "lease_end": "2025-05-31",
+          "monthly_rent": 2897.0,
+          "annual_rent": 34763.0,
+          "rent_psf": 154.5,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Ch\u00e2teau Rose",
+          "unit": "314-S,316-S",
+          "sf": 641.0,
+          "lease_start": "2017-10-16",
+          "lease_end": "2027-11-30",
+          "monthly_rent": 6734.0,
+          "annual_rent": 80805.0,
+          "rent_psf": 126.06,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Maison \u00c9toile",
+          "unit": "312-S",
+          "sf": 278.0,
+          "lease_start": "2022-12-01",
+          "lease_end": "2024-11-30",
+          "monthly_rent": 2317.0,
+          "annual_rent": 27800.0,
+          "rent_psf": 100.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Boutique Ambre",
+          "unit": "301-D",
+          "sf": 0.0,
+          "lease_start": "2023-09-08",
+          "lease_end": "2026-10-07",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Atelier Blanc",
+          "unit": "106",
+          "sf": 2370.0,
+          "lease_start": "2021-06-07",
+          "lease_end": "2028-06-30",
+          "monthly_rent": 14813.0,
+          "annual_rent": 177750.0,
+          "rent_psf": 75.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Galerie Moderne",
+          "unit": "107,207",
+          "sf": 0.0,
+          "lease_start": "2023-11-03",
+          "lease_end": "2033-10-31",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Casa Platino",
+          "unit": "201A",
+          "sf": 1103.0,
+          "lease_start": "2022-05-01",
+          "lease_end": "2032-04-30",
+          "monthly_rent": 6365.0,
+          "annual_rent": 76385.0,
+          "rent_psf": 69.25,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Boutique Celeste",
+          "unit": "109,209",
+          "sf": 3030.0,
+          "lease_start": "2024-06-01",
+          "lease_end": "2034-01-31",
+          "monthly_rent": 50500.0,
+          "annual_rent": 606000.0,
+          "rent_psf": 200.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Villa Serena",
+          "unit": "103,203",
+          "sf": 3367.0,
+          "lease_start": "2020-09-01",
+          "lease_end": "2030-08-31",
+          "monthly_rent": 33504.0,
+          "annual_rent": 402053.0,
+          "rent_psf": 119.41,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Galerie Emeraude",
+          "unit": "101,201",
+          "sf": 3849.0,
+          "lease_start": "2022-05-01",
+          "lease_end": "2033-01-31",
+          "monthly_rent": 24056.0,
+          "annual_rent": 288675.0,
+          "rent_psf": 75.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Maison Royale",
+          "unit": "102,202",
+          "sf": 3152.0,
+          "lease_start": "2014-12-27",
+          "lease_end": "2034-12-31",
+          "monthly_rent": 68624.0,
+          "annual_rent": 823483.0,
+          "rent_psf": 261.26,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Ch\u00e2teau Bleu",
+          "unit": "105,205,305",
+          "sf": 8582.0,
+          "lease_start": "2015-03-31",
+          "lease_end": "2030-03-31",
+          "monthly_rent": 117800.0,
+          "annual_rent": 1413601.0,
+          "rent_psf": 164.72,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Casa Elegante",
+          "unit": "108,208",
+          "sf": 2398.0,
+          "lease_start": "2015-01-02",
+          "lease_end": "2034-12-31",
+          "monthly_rent": 30726.0,
+          "annual_rent": 368716.0,
+          "rent_psf": 153.76,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Vacant",
+          "unit": "",
+          "sf": 0.0,
+          "lease_start": "",
+          "lease_end": "",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "vacant"
+        },
+        {
+          "tenant_name": "Vacant",
+          "unit": "",
+          "sf": 0.0,
+          "lease_start": "",
+          "lease_end": "",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "vacant"
+        },
+        {
+          "tenant_name": "Vacant",
+          "unit": "",
+          "sf": 0.0,
+          "lease_start": "",
+          "lease_end": "",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "vacant"
+        }
+      ]
+    },
+    {
+      "building_name": "Southridge Commons -",
+      "tenants": [
+        {
+          "tenant_name": "Atelier Soleil",
+          "unit": "1",
+          "sf": 5384.0,
+          "lease_start": "2015-10-15",
+          "lease_end": "2035-01-31",
+          "monthly_rent": 51534.0,
+          "annual_rent": 618406.0,
+          "rent_psf": 114.86,
+          "status": "occupied"
+        }
+      ]
+    },
+    {
+      "building_name": "Mountainside Center -",
+      "tenants": [
+        {
+          "tenant_name": "Boutique Azure",
+          "unit": "LA105",
+          "sf": 626.0,
+          "lease_start": "2022-03-23",
+          "lease_end": "2025-03-31",
+          "monthly_rent": 8.0,
+          "annual_rent": 1054856.0,
+          "rent_psf": 0.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Palazzo Verde",
+          "unit": "LA106",
+          "sf": 987.0,
+          "lease_start": "2020-11-13",
+          "lease_end": "2028-10-31",
+          "monthly_rent": 4635.0,
+          "annual_rent": 55620.0,
+          "rent_psf": 56.35,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Atelier Perle",
+          "unit": "LA103A,LA103B",
+          "sf": 103.0,
+          "lease_start": "2022-09-01",
+          "lease_end": "2024-07-10",
+          "monthly_rent": 15000.0,
+          "annual_rent": 876.0,
+          "rent_psf": 876.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Palazzo Rubino",
+          "unit": "LA101",
+          "sf": 10180.0,
+          "lease_start": "2018-11-01",
+          "lease_end": "2028-10-31",
+          "monthly_rent": 101379.0,
+          "annual_rent": 1216553.0,
+          "rent_psf": 119.5,
+          "status": "occupied"
+        }
+      ]
+    },
+    {
+      "building_name": "Westgate Tower -",
+      "tenants": [
+        {
+          "tenant_name": "Villa Cristal",
+          "unit": "302A",
+          "sf": 477.0,
+          "lease_start": "2023-11-13",
+          "lease_end": "2024-10-31",
+          "monthly_rent": 5963.0,
+          "annual_rent": 71550.0,
+          "rent_psf": 150.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Ch\u00e2teau Noir",
+          "unit": "310",
+          "sf": 1432.0,
+          "lease_start": "2022-08-01",
+          "lease_end": "2027-07-31",
+          "monthly_rent": 8771.0,
+          "annual_rent": 105252.0,
+          "rent_psf": 73.5,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Maison Velours",
+          "unit": "105,205",
+          "sf": 6323.0,
+          "lease_start": "2022-08-01",
+          "lease_end": "2027-07-31",
+          "monthly_rent": 36634.0,
+          "annual_rent": 439607.0,
+          "rent_psf": 69.53,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Galerie Lumi\u00e8re",
+          "unit": "302B",
+          "sf": 800.0,
+          "lease_start": "2024-01-31",
+          "lease_end": "2035-01-31",
+          "monthly_rent": 7500.0,
+          "annual_rent": 90000.0,
+          "rent_psf": 112.5,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Galerie Premiere",
+          "unit": "301",
+          "sf": 2111.0,
+          "lease_start": "2019-11-01",
+          "lease_end": "2027-10-31",
+          "monthly_rent": 11576.0,
+          "annual_rent": 138915.0,
+          "rent_psf": 65.81,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Casa Dorada",
+          "unit": "202",
+          "sf": 7783.0,
+          "lease_start": "2021-11-01",
+          "lease_end": "2031-10-31",
+          "monthly_rent": 32417.0,
+          "annual_rent": 389000.0,
+          "rent_psf": 49.98,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Palazzo Oro",
+          "unit": "303",
+          "sf": 1820.0,
+          "lease_start": "2021-01-01",
+          "lease_end": "2026-01-31",
+          "monthly_rent": 7583.0,
+          "annual_rent": 90997.0,
+          "rent_psf": 50.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Palazzo Rossi",
+          "unit": "101,102",
+          "sf": 8902.0,
+          "lease_start": "2023-07-01",
+          "lease_end": "2028-06-30",
+          "monthly_rent": 83333.0,
+          "annual_rent": 1000001.0,
+          "rent_psf": 112.33,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Galerie Jade",
+          "unit": "309",
+          "sf": 1263.0,
+          "lease_start": "2023-07-01",
+          "lease_end": "2028-06-30",
+          "monthly_rent": 5263.0,
+          "annual_rent": 63150.0,
+          "rent_psf": 50.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Atelier Soie",
+          "unit": "104,204",
+          "sf": 5842.0,
+          "lease_start": "2022-10-15",
+          "lease_end": "2027-10-31",
+          "monthly_rent": 35000.0,
+          "annual_rent": 420000.0,
+          "rent_psf": 71.89,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Maison Diamant",
+          "unit": "103,203",
+          "sf": 7384.0,
+          "lease_start": "2023-01-15",
+          "lease_end": "2026-01-14",
+          "monthly_rent": 41340.0,
+          "annual_rent": 496080.0,
+          "rent_psf": 67.18,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Vacant",
+          "unit": "",
+          "sf": 0.0,
+          "lease_start": "",
+          "lease_end": "",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "vacant"
+        }
+      ]
+    },
+    {
+      "building_name": "Northfield Plaza -",
+      "tenants": [
+        {
+          "tenant_name": "Casa di Firenze",
+          "unit": "100",
+          "sf": 15000.0,
+          "lease_start": "2024-02-01",
+          "lease_end": "2029-01-31",
+          "monthly_rent": 110500.0,
+          "annual_rent": 1326000.0,
+          "rent_psf": 88.4,
+          "status": "occupied"
+        }
+      ]
+    },
+    {
+      "building_name": "Meadowbrook Hall -",
+      "tenants": [
+        {
+          "tenant_name": "Boutique Saphir",
+          "unit": "PC107",
+          "sf": 1020.0,
+          "lease_start": "2014-12-19",
+          "lease_end": "2035-05-31",
+          "monthly_rent": 18156.0,
+          "annual_rent": 217876.0,
+          "rent_psf": 213.6,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Ch\u00e2teau Ivoire",
+          "unit": "145,245",
+          "sf": 4167.0,
+          "lease_start": "2021-12-01",
+          "lease_end": "2026-11-30",
+          "monthly_rent": 50073.0,
+          "annual_rent": 600881.0,
+          "rent_psf": 144.2,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Casa Marbre",
+          "unit": "135",
+          "sf": 2147.0,
+          "lease_start": "2022-09-01",
+          "lease_end": "2025-08-31",
+          "monthly_rent": 14728.0,
+          "annual_rent": 176741.0,
+          "rent_psf": 82.32,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Ch\u00e2teau Argent",
+          "unit": "210",
+          "sf": 1030.0,
+          "lease_start": "2018-11-28",
+          "lease_end": "2028-11-30",
+          "monthly_rent": 11382.0,
+          "annual_rent": 136588.0,
+          "rent_psf": 132.61,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Boutique Margaux",
+          "unit": "211,PC111",
+          "sf": 1936.0,
+          "lease_start": "2021-05-11",
+          "lease_end": "2024-08-30",
+          "monthly_rent": 24200.0,
+          "annual_rent": 290400.0,
+          "rent_psf": 150.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Villa Bronzo",
+          "unit": "225",
+          "sf": 0.0,
+          "lease_start": "2024-07-31",
+          "lease_end": "2029-07-31",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Maison Laurent",
+          "unit": "PC110",
+          "sf": 0.0,
+          "lease_start": "2024-10-13",
+          "lease_end": "2030-01-31",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Villa Opale",
+          "unit": "PC121,PC221",
+          "sf": 0.0,
+          "lease_start": "2025-12-11",
+          "lease_end": "2036-01-31",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Palazzo Corallo",
+          "unit": "127,227",
+          "sf": 3286.0,
+          "lease_start": "2014-12-01",
+          "lease_end": "2035-05-31",
+          "monthly_rent": 46450.0,
+          "annual_rent": 557404.0,
+          "rent_psf": 169.63,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Villa Luna",
+          "unit": "143,243",
+          "sf": 4536.0,
+          "lease_start": "2015-01-09",
+          "lease_end": "2035-01-31",
+          "monthly_rent": 50733.0,
+          "annual_rent": 608801.0,
+          "rent_psf": 134.22,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Galerie Lumi\u00e8re",
+          "unit": "123,223,323",
+          "sf": 10595.0,
+          "lease_start": "2015-02-10",
+          "lease_end": "2025-02-28",
+          "monthly_rent": 87284.0,
+          "annual_rent": 1047413.0,
+          "rent_psf": 98.86,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Maison Velours",
+          "unit": "124",
+          "sf": 785.0,
+          "lease_start": "2022-12-01",
+          "lease_end": "2029-11-30",
+          "monthly_rent": 3254.0,
+          "annual_rent": 39050.0,
+          "rent_psf": 49.75,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Boutique Margaux",
+          "unit": "202,PC102",
+          "sf": 1850.0,
+          "lease_start": "2021-06-01",
+          "lease_end": "2026-05-31",
+          "monthly_rent": 18963.0,
+          "annual_rent": 227550.0,
+          "rent_psf": 123.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Casa Elegante",
+          "unit": "142,242",
+          "sf": 0.0,
+          "lease_start": "2024-09-01",
+          "lease_end": "2024-12-31",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Ch\u00e2teau Bleu",
+          "unit": "PC117",
+          "sf": 0.0,
+          "lease_start": "2023-04-01",
+          "lease_end": "2024-08-31",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Villa Cristal",
+          "unit": "PC108",
+          "sf": 0.0,
+          "lease_start": "2023-03-01",
+          "lease_end": "2025-02-28",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Maison Laurent",
+          "unit": "119,219",
+          "sf": 6976.0,
+          "lease_start": "2021-01-01",
+          "lease_end": "2031-12-31",
+          "monthly_rent": 58722.0,
+          "annual_rent": 704663.0,
+          "rent_psf": 101.01,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Boutique Celeste",
+          "unit": "139",
+          "sf": 5339.0,
+          "lease_start": "2020-10-01",
+          "lease_end": "2028-01-31",
+          "monthly_rent": 22913.0,
+          "annual_rent": 274958.0,
+          "rent_psf": 51.5,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Boutique Azure",
+          "unit": "146,246",
+          "sf": 4913.0,
+          "lease_start": "2014-12-12",
+          "lease_end": "2025-01-31",
+          "monthly_rent": 53437.0,
+          "annual_rent": 641245.0,
+          "rent_psf": 130.52,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Casa Platino",
+          "unit": "PC103",
+          "sf": 1020.0,
+          "lease_start": "2014-12-04",
+          "lease_end": "2025-01-31",
+          "monthly_rent": 17745.0,
+          "annual_rent": 212945.0,
+          "rent_psf": 208.77,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Galerie Moderne",
+          "unit": "125",
+          "sf": 1198.0,
+          "lease_start": "2014-12-19",
+          "lease_end": "2035-05-31",
+          "monthly_rent": 9904.0,
+          "annual_rent": 118850.0,
+          "rent_psf": 99.21,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Palazzo Rubino",
+          "unit": "144,244",
+          "sf": 4422.0,
+          "lease_start": "2014-12-12",
+          "lease_end": "2025-01-11",
+          "monthly_rent": 48082.0,
+          "annual_rent": 576983.0,
+          "rent_psf": 130.48,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Galerie Emeraude",
+          "unit": "130,230,330",
+          "sf": 10244.0,
+          "lease_start": "2015-04-09",
+          "lease_end": "2035-03-31",
+          "monthly_rent": 73122.0,
+          "annual_rent": 877463.0,
+          "rent_psf": 85.66,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Villa Serena",
+          "unit": "217,PC117",
+          "sf": 0.0,
+          "lease_start": "2025-01-29",
+          "lease_end": "2035-01-31",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Atelier Soie",
+          "unit": "137,OUTDR1",
+          "sf": 0.0,
+          "lease_start": "2023-06-01",
+          "lease_end": "2026-05-31",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Atelier Blanc",
+          "unit": "211,PC111",
+          "sf": 0.0,
+          "lease_start": "2024-12-28",
+          "lease_end": "2031-12-31",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Ch\u00e2teau Noir",
+          "unit": "241",
+          "sf": 9292.0,
+          "lease_start": "2018-02-22",
+          "lease_end": "2032-12-31",
+          "monthly_rent": 39305.0,
+          "annual_rent": 471659.0,
+          "rent_psf": 50.76,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Villa Opale",
+          "unit": "215,PC115",
+          "sf": 5390.0,
+          "lease_start": "2014-12-13",
+          "lease_end": "2024-11-30",
+          "monthly_rent": 58607.0,
+          "annual_rent": 703287.0,
+          "rent_psf": 130.48,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Ch\u00e2teau Argent",
+          "unit": "131,231",
+          "sf": 4262.0,
+          "lease_start": "2022-07-01",
+          "lease_end": "2032-06-30",
+          "monthly_rent": 44396.0,
+          "annual_rent": 532750.0,
+          "rent_psf": 125.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Atelier Beaumont",
+          "unit": "328",
+          "sf": 2305.0,
+          "lease_start": "2014-12-19",
+          "lease_end": "2025-05-31",
+          "monthly_rent": 12539.0,
+          "annual_rent": 150470.0,
+          "rent_psf": 65.28,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Casa Dorada",
+          "unit": "201,PC101",
+          "sf": 2545.0,
+          "lease_start": "2015-01-19",
+          "lease_end": "2035-05-31",
+          "monthly_rent": 40668.0,
+          "annual_rent": 488014.0,
+          "rent_psf": 191.75,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Maison Diamant",
+          "unit": "142,242",
+          "sf": 0.0,
+          "lease_start": "2025-07-04",
+          "lease_end": "2035-07-31",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Casa di Firenze",
+          "unit": "133,225",
+          "sf": 6981.0,
+          "lease_start": "2021-08-25",
+          "lease_end": "2031-08-24",
+          "monthly_rent": 31250.0,
+          "annual_rent": 375000.0,
+          "rent_psf": 72.41,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Boutique Saphir",
+          "unit": "239",
+          "sf": 1748.0,
+          "lease_start": "2023-09-01",
+          "lease_end": "2026-08-31",
+          "monthly_rent": 4370.0,
+          "annual_rent": 52440.0,
+          "rent_psf": 30.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Boutique Ambre",
+          "unit": "PC109",
+          "sf": 1050.0,
+          "lease_start": "2014-12-12",
+          "lease_end": "2025-01-31",
+          "monthly_rent": 18265.0,
+          "annual_rent": 219177.0,
+          "rent_psf": 208.74,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Ch\u00e2teau Rose",
+          "unit": "203",
+          "sf": 804.0,
+          "lease_start": "2023-10-04",
+          "lease_end": "2025-01-31",
+          "monthly_rent": 3541.0,
+          "annual_rent": 42493.0,
+          "rent_psf": 53.05,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Villa Luna",
+          "unit": "126",
+          "sf": 1323.0,
+          "lease_start": "2014-12-19",
+          "lease_end": "2035-05-31",
+          "monthly_rent": 23272.0,
+          "annual_rent": 279260.0,
+          "rent_psf": 211.08,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Galerie Premiere",
+          "unit": "129,229,329",
+          "sf": 4711.0,
+          "lease_start": "2014-12-12",
+          "lease_end": "2034-11-30",
+          "monthly_rent": 55800.0,
+          "annual_rent": 669604.0,
+          "rent_psf": 142.14,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Villa Bronzo",
+          "unit": "208",
+          "sf": 804.0,
+          "lease_start": "2021-12-01",
+          "lease_end": "2026-03-31",
+          "monthly_rent": 5521.0,
+          "annual_rent": 66250.0,
+          "rent_psf": 82.4,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Palazzo Corallo",
+          "unit": "128,228",
+          "sf": 4715.0,
+          "lease_start": "2016-09-28",
+          "lease_end": "2027-05-31",
+          "monthly_rent": 71976.0,
+          "annual_rent": 863711.0,
+          "rent_psf": 183.18,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Palazzo Oro",
+          "unit": "216,PC116",
+          "sf": 4595.0,
+          "lease_start": "2015-02-01",
+          "lease_end": "2032-01-31",
+          "monthly_rent": 61221.0,
+          "annual_rent": 734649.0,
+          "rent_psf": 159.88,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Casa Marbre",
+          "unit": "118,218",
+          "sf": 3694.0,
+          "lease_start": "2024-05-04",
+          "lease_end": "2029-05-31",
+          "monthly_rent": 92350.0,
+          "annual_rent": 1108200.0,
+          "rent_psf": 300.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Vacant",
+          "unit": "",
+          "sf": 0.0,
+          "lease_start": "",
+          "lease_end": "",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "vacant"
+        },
+        {
+          "tenant_name": "Vacant",
+          "unit": "",
+          "sf": 0.0,
+          "lease_start": "",
+          "lease_end": "",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "vacant"
+        },
+        {
+          "tenant_name": "Vacant",
+          "unit": "",
+          "sf": 0.0,
+          "lease_start": "",
+          "lease_end": "",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "vacant"
+        },
+        {
+          "tenant_name": "Vacant",
+          "unit": "",
+          "sf": 0.0,
+          "lease_start": "",
+          "lease_end": "",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "vacant"
+        },
+        {
+          "tenant_name": "Vacant",
+          "unit": "",
+          "sf": 0.0,
+          "lease_start": "",
+          "lease_end": "",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "vacant"
+        },
+        {
+          "tenant_name": "Vacant",
+          "unit": "",
+          "sf": 0.0,
+          "lease_start": "",
+          "lease_end": "",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "vacant"
+        },
+        {
+          "tenant_name": "Vacant",
+          "unit": "",
+          "sf": 0.0,
+          "lease_start": "",
+          "lease_end": "",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "vacant"
+        }
+      ]
+    },
+    {
+      "building_name": "Eastbrook Center -",
+      "tenants": [
+        {
+          "tenant_name": "Atelier Perle",
+          "unit": "100,200,300",
+          "sf": 22439.0,
+          "lease_start": "2017-04-17",
+          "lease_end": "2027-04-16",
+          "monthly_rent": 123507.0,
+          "annual_rent": 1482086.0,
+          "rent_psf": 66.05,
+          "status": "occupied"
+        }
+      ]
+    },
+    {
+      "building_name": "Stonegate Hall -",
+      "tenants": [
+        {
+          "tenant_name": "Maison Royale",
+          "unit": "160-260",
+          "sf": 7200.0,
+          "lease_start": "2023-10-28",
+          "lease_end": "2034-01-31",
+          "monthly_rent": 1995600.0,
+          "annual_rent": 277.0,
+          "rent_psf": 0.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Vacant",
+          "unit": "",
+          "sf": 0.0,
+          "lease_start": "",
+          "lease_end": "",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "vacant"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,221 @@
+{
+  "property_name": "Financial District Tower, Los Angeles",
+  "as_of_date": "2024-03-31",
+  "total_sf": 1432866.0,
+  "occupied_sf": 1140801.0,
+  "vacant_sf": 292065.0,
+  "occupancy_rate": 0.7962,
+  "tenant_count": 87,
+  "annual_base_rent": 34410346.2,
+  "avg_rent_psf": 30.16,
+  "walt_years": 6.05,
+  "largest_tenant": "Onyx Engineering LLC",
+  "largest_tenant_pct": 0.0309,
+  "rollover_12mo_sf": 199619.0,
+  "rollover_12mo_pct": 0.175,
+  "rollover_24mo_sf": 242836.0,
+  "rollover_24mo_pct": 0.2129,
+  "near_term_expirations": [
+    {
+      "tenant_name": "Horizon Partners Inc.",
+      "sf": 922.0,
+      "annual_rent": 2400.0,
+      "expiration_date": "2024-10-31"
+    },
+    {
+      "tenant_name": "Amber Analytics Corp",
+      "sf": 962.0,
+      "annual_rent": 11890.32,
+      "expiration_date": "2024-11-30"
+    },
+    {
+      "tenant_name": "Nova Financial Services",
+      "sf": 0.0,
+      "annual_rent": 0.0,
+      "expiration_date": "2024-11-30"
+    },
+    {
+      "tenant_name": "Prism Technology Corp",
+      "sf": 0.0,
+      "annual_rent": 4639.2,
+      "expiration_date": "2024-11-30"
+    },
+    {
+      "tenant_name": "Prism Technology Corp",
+      "sf": 0.0,
+      "annual_rent": 4639.2,
+      "expiration_date": "2024-11-30"
+    },
+    {
+      "tenant_name": "Prism Technology Corp",
+      "sf": 0.0,
+      "annual_rent": 4639.2,
+      "expiration_date": "2024-11-30"
+    },
+    {
+      "tenant_name": "Prism Technology Corp",
+      "sf": 0.0,
+      "annual_rent": 4639.2,
+      "expiration_date": "2024-11-30"
+    },
+    {
+      "tenant_name": "Prism Technology Corp",
+      "sf": 0.0,
+      "annual_rent": 4639.2,
+      "expiration_date": "2024-11-30"
+    },
+    {
+      "tenant_name": "Onyx Engineering LLC",
+      "sf": 741.0,
+      "annual_rent": 9336.6,
+      "expiration_date": "2024-12-31"
+    },
+    {
+      "tenant_name": "Ruby Consulting Partners",
+      "sf": 4347.0,
+      "annual_rent": 0.0,
+      "expiration_date": "2024-12-31"
+    },
+    {
+      "tenant_name": "Ruby Consulting Partners",
+      "sf": 2003.0,
+      "annual_rent": 0.0,
+      "expiration_date": "2024-12-31"
+    },
+    {
+      "tenant_name": "Jade Ventures LLC",
+      "sf": 289.0,
+      "annual_rent": 0.0,
+      "expiration_date": "2024-12-31"
+    },
+    {
+      "tenant_name": "Jade Ventures LLC",
+      "sf": 2383.0,
+      "annual_rent": 12000.0,
+      "expiration_date": "2024-12-31"
+    },
+    {
+      "tenant_name": "Redwood Investments LLC",
+      "sf": 967.0,
+      "annual_rent": 28806.96,
+      "expiration_date": "2024-12-31"
+    },
+    {
+      "tenant_name": "Onyx Engineering LLC",
+      "sf": 2720.0,
+      "annual_rent": 29920.08,
+      "expiration_date": "2024-12-31"
+    },
+    {
+      "tenant_name": "Onyx Engineering LLC",
+      "sf": 17217.0,
+      "annual_rent": 189387.0,
+      "expiration_date": "2024-12-31"
+    },
+    {
+      "tenant_name": "Ruby Consulting Partners",
+      "sf": 1054.0,
+      "annual_rent": 0.0,
+      "expiration_date": "2024-12-31"
+    },
+    {
+      "tenant_name": "Onyx Engineering LLC",
+      "sf": 8051.0,
+      "annual_rent": 88560.96,
+      "expiration_date": "2024-12-31"
+    },
+    {
+      "tenant_name": "Onyx Engineering LLC",
+      "sf": 18566.0,
+      "annual_rent": 204225.96,
+      "expiration_date": "2024-12-31"
+    },
+    {
+      "tenant_name": "Ruby Consulting Partners",
+      "sf": 1764.0,
+      "annual_rent": 0.0,
+      "expiration_date": "2024-12-31"
+    },
+    {
+      "tenant_name": "Onyx Engineering LLC",
+      "sf": 800.0,
+      "annual_rent": 9600.0,
+      "expiration_date": "2024-12-31"
+    },
+    {
+      "tenant_name": "Onyx Engineering LLC",
+      "sf": 27097.0,
+      "annual_rent": 894201.0,
+      "expiration_date": "2024-12-31"
+    },
+    {
+      "tenant_name": "Onyx Engineering LLC",
+      "sf": 27097.0,
+      "annual_rent": 894201.0,
+      "expiration_date": "2024-12-31"
+    },
+    {
+      "tenant_name": "Onyx Engineering LLC",
+      "sf": 27090.0,
+      "annual_rent": 893970.0,
+      "expiration_date": "2024-12-31"
+    },
+    {
+      "tenant_name": "Onyx Engineering LLC",
+      "sf": 27707.0,
+      "annual_rent": 914331.0,
+      "expiration_date": "2024-12-31"
+    },
+    {
+      "tenant_name": "Onyx Engineering LLC",
+      "sf": 27707.0,
+      "annual_rent": 1063233.84,
+      "expiration_date": "2024-12-31"
+    },
+    {
+      "tenant_name": "Citrine Capital LLC",
+      "sf": 0.0,
+      "annual_rent": 0.0,
+      "expiration_date": "2025-01-31"
+    },
+    {
+      "tenant_name": "COGECO Pinnacle Solutions Corp",
+      "sf": 135.0,
+      "annual_rent": 0.0,
+      "expiration_date": "2025-01-31"
+    },
+    {
+      "tenant_name": "Keystone Management Co.",
+      "sf": 22314.0,
+      "annual_rent": 12000.0,
+      "expiration_date": "2025-06-30"
+    },
+    {
+      "tenant_name": "Garnet Financial LLC",
+      "sf": 1821.0,
+      "annual_rent": 77610.96,
+      "expiration_date": "2025-07-31"
+    },
+    {
+      "tenant_name": "Garnet Financial LLC",
+      "sf": 9088.0,
+      "annual_rent": 387330.6,
+      "expiration_date": "2025-07-31"
+    },
+    {
+      "tenant_name": "Citrine Capital LLC",
+      "sf": 20.0,
+      "annual_rent": 0.0,
+      "expiration_date": "2025-11-30"
+    },
+    {
+      "tenant_name": "Azure Cloud Systems",
+      "sf": 9974.0,
+      "annual_rent": 188286.96,
+      "expiration_date": "2025-12-31"
+    }
+  ],
+  "risk_flags": [
+    "High vacancy (>15%)"
+  ]
+}

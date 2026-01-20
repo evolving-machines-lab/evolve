@@ -1,0 +1,54 @@
+{
+  "title": "The Cannons on the B-29 Bomber",
+  "summary": "A Popular Mechanics article about the B-29 Superfortress bomber, highlighting its advanced engineering features, particularly its remote-controlled defensive turrets and early fire control computers. The article traces the B-29's troubled development, production challenges in Kansas, initial failures with high-altitude precision bombing (due to the then-unknown jet stream), and eventual success under Curtis LeMay's strategy shift to low-altitude incendiary firebombing. The HN discussion delved into technical details: the effectiveness of bomber defensive weapons, overclaimed kill statistics, mechanical fire control systems, and tangential discussions about Bradley fighting vehicles, Star Wars accuracy, and historical naval gunnery.",
+  "what_happened": "The B-29 program cost $3 billion (comparable to the Manhattan Project) and encountered severe technical difficulties. Initial high-altitude precision bombing campaigns failed dramatically due to jet stream winds of 150-200 mph that hadn't been discovered yet. When Curtis LeMay took command in January 1945, he stripped most defensive weapons (keeping only tail guns) to increase payload, and switched to low-altitude nighttime firebombing using napalm. This proved devastatingly effective: the March 9, 1945 Tokyo firebombing (Operation Meetinghouse) with 279 B-29s killed an estimated 100,000 civilians, making it the single deadliest air raid in history. Two B-29s carried the atomic bombs to Hiroshima and Nagasaki in August 1945. Over the war, B-29s flew 20,000 sorties and dropped 200,000 tons of bombs. Post-war analysis showed that B-29 gunner claims of 914 fighter kills were significantly overclaimed—actual Japanese losses were roughly one-third of claimed figures. The B-29 became the technological foundation for the post-WWII Air Force and was copied by the Soviets.",
+  "most_prescient": {
+    "user": "cstross",
+    "reason": "Correctly noted that Curtis LeMay ordered defensive guns stripped from B-29s (except tail position) to save weight and increase range/speed/bomb load. This was historically accurate and demonstrated understanding that the elaborate defensive systems were ultimately abandoned for tactical effectiveness. LeMay did exactly this in early 1945, proving guns were ineffective enough to remove entirely."
+  },
+  "most_wrong": {
+    "user": "Kurtz79",
+    "reason": "Uncritically quoted a wartime claim about one B-29 crew fighting off 79 fighters and downing 7 during a June 1945 bombing run. Multiple commenters correctly challenged this as wartime propaganda—Japan had few trained pilots, resources were exhausted, and the Hiroshima bombing two months later encountered no fighter opposition. Post-war verification showed claimed kills were vastly overclaimed (roughly 3:1 ratio of claims to actual losses)."
+  },
+  "notable_aspects": "The thread went on fascinating tangents: extensive discussion of mechanical fire control computers and optical rangefinding systems in WWII; a detailed Star Wars analysis about why the Millennium Falcon had manual gun stations (derailed by Lucas's fantasy aesthetic); comparative military vehicle design (Bradley vs. Namer vs. Merkava tanks); and the value of teaching troops compass navigation over GPS. The 'Pentagon Wars' movie about Bradley development got a mention. There was also genuine expertise in the thread—someone noted that B-29 engines initially had magnesium that would catch fire and burn wings off, and others provided detailed links to museum fire control computer diagrams and MIT papers. The discussion showed how engineering history spawns rabbit holes into adjacent military technology.",
+  "grades": {
+    "cstross": {
+      "grade": "A",
+      "rationale": "Provided historically accurate information about LeMay's tactical decisions to strip defensive armament, correctly citing Wikipedia and understanding the strategic shift that made the B-29 truly devastating."
+    },
+    "rangibaby": {
+      "grade": "B+",
+      "rationale": "Healthy skepticism of wartime propaganda claims about 79 fighters fought. Correct reasoning about Japan's resource exhaustion and pilot losses by late war. Made good point about not taking wartime press at face value."
+    },
+    "hydrogen18": {
+      "grade": "B",
+      "rationale": "Reasonable interpretation that Japanese might have thought Hiroshima bomber was a reconnaissance plane. Shows good historical reasoning but somewhat speculative. The actual reason for lack of interception is still somewhat debated historically."
+    },
+    "alricb": {
+      "grade": "B+",
+      "rationale": "Correctly identified that B-29 had .50 caliber machine guns, not true cannons (20mm+). Made valid observation that defensive guns were generally ineffective and bomber resources would be better spent removing them—which is exactly what happened."
+    },
+    "Blackthorn": {
+      "grade": "A-",
+      "rationale": "Called out the '79 fighters' claim as propaganda bullshit, referenced specific documentary sources (Clash of Wings), and attempted to provide actual statistics about B-29 fighter losses. Showed good critical thinking about wartime overclaiming."
+    },
+    "Tloewald": {
+      "grade": "B-",
+      "rationale": "Mentioned recorded instances of B-29 shooting down 14 fighters, but this needs verification against overclaiming patterns. Made some good comparative points about B-17 vs. fighter effectiveness, but didn't acknowledge the overclaiming problem in detail."
+    },
+    "Pinckney": {
+      "grade": "A",
+      "rationale": "Provided crucial historical context about kill overclaiming ratios (5:1 or more), gave specific example of 91st and 306th Bomb Groups claiming 63 kills but only 2 confirmed. This directly undermines the '79 fighters' claim and represents solid historical analysis."
+    },
+    "madaxe_again": {
+      "grade": "B+",
+      "rationale": "Correctly noted that firing control computers existed long before B-29s—they were used for naval artillery and rankeepers. Good pushback against the article's implied novelty of the technology."
+    },
+    "rodgerd": {
+      "grade": "A-",
+      "rationale": "Made sophisticated argument that heavy bombers with defensive guns were dogma despite being ineffective, pointing to Mosquito as superior alternative. Correctly identified the path dependence and institutional resistance to better designs."
+    }
+  },
+  "score": 8,
+  "rationale_for_score": "This is a fascinating historical retrospective because the article is technically excellent but the 10-year-old comments reveal how wartime propaganda claims persist in popular history. The most compelling aspect is watching commenters wrestle with verification: some accepted wartime '79 fighters' claims, while others correctly identified them as propaganda. The shift to firebombing under LeMay—from a billion-dollar failure to world-changing devastation—is a genuinely important historical turning point that the article captures well. The tangents into fire control computers and military vehicle design show this was a genuinely engaged technical audience. The revelation that B-29 defensive claims were massively overclaimed (3:1 ratio) is the kind of hindsight validation that makes retrospectives valuable. However, the score isn't higher because the original article is primarily a Popular Mechanics feature (well-written but not presenting novel analysis) and the discussion, while technically competent, didn't have access to detailed post-war verification data that later emerged about overclaiming. It's a solid B-grade retrospective—well-informed readers correctly identified propaganda, but the topic itself is more 'interesting historical footnote' than 'predictions that completely missed or nailed the future.'"
+}

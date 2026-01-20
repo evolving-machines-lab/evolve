@@ -1,0 +1,57 @@
+{
+  "title": "Metabase: Why we picked Clojure",
+  "summary": "In December 2015, Metabase founder Reiichhardt published an article explaining why the team chose Clojure for building their open-source business intelligence platform, arguing that Clojure offers superior readability and writability compared to Java through reduced verbosity, freedom from \"Kingdom of Nouns\" (excessive wrapper classes), powerful macros, and dynamic typing. The discussion featured 183 comments debating language choices with major themes: Java vs. Clojure readability, the role of static typing, whether Erlang/Elixir would have been better choices, concerns about Clojure's learning curve and error messages, and technical arguments about DSLs and AST manipulation.",
+  "what_happened": "Metabase thrived as a Clojure-based product. By 2026, the company has achieved remarkable success: 98 million downloads, used by 30,000+ companies across 200 countries, $43M in total funding ($30M Series B in 2021 led by Insight Partners), $13.4M in revenue as of July 2025, and a 122-person team. Metabase remains one of the top open-source business intelligence platforms, with active development in Clojure continuing into 2026. The choice of Clojure proved particularly well-suited for query language and AST manipulation, core to the product. The team never abandoned Clojure despite early skepticism about the language's ecosystem maturity.",
+  "most_prescient": {
+    "user": "jerf",
+    "reason": "Correctly identified that Clojure (as a Lisp language) has fundamental advantages for AST manipulation and query language implementation\u2014exactly what Metabase needed. Unlike most commenters focused on readability arguments, jerf recognized the technical strength for Metabase's core use case: 'Both the Lisp series of languages (which Clojure is in) and the ML series of languages have wildly better stories for dealing with AST manipulation.' This architectural insight proved prescient as Metabase's query engine became a key differentiator."
+  },
+  "most_wrong": {
+    "user": "devundef",
+    "reason": "Called Clojure 'a horrible language to work with,' predicting unmaintainability due to steep learning curve, poor error reporting, and team knowledge issues. Wrote: 'Clojure does not fit my brain' and warned that no one at their company could fix Clojure code. Metabase proved the opposite: the language has been maintained successfully by a growing team for 10 years, attracting new developers, and remains the company's core technology through 2026."
+  },
+  "notable_aspects": "1) TlRobinson's insider perspective as a Metabase developer defending Java interop as a feature rather than bug showed early team confidence in their choice. 2) The debate over Erlang/Elixir highlighted that evaluators missed Clojure's Java ecosystem access, which became critical for database drivers. 3) Comments comparing Clojure to 'Kingdom of Nouns' Java became prophetic\u2014this architectural clarity remained valuable as the company scaled. 4) The discussion accurately predicted Clojure would require reading Java docs but treated it as acceptable, which proved true. 5) SlowmovingTarget's philosophical insight about 'data-oriented' vs 'object-oriented' thinking proved reflective of why Clojure excelled at query language implementation.",
+  "grades": {
+    "jerf": {
+      "grade": "A+",
+      "rationale": "Perfect technical prediction. Identified the core strength (AST manipulation for Lisps) that would drive Metabase's success. Not swayed by general language debates; understood the specific problem domain."
+    },
+    "slowmovintarget": {
+      "grade": "A",
+      "rationale": "Recognized that persistent data structures and data-oriented thinking (vs object-oriented) were fundamental advantages. This insight proved crucial to Metabase's architecture holding up at scale."
+    },
+    "tlrobinson": {
+      "grade": "B+",
+      "rationale": "As a Metabase developer, provided insider confidence that Java interop was a feature. Showed the team understood the trade-offs. However, limited to one comment, so less comprehensive perspective."
+    },
+    "a-saleh": {
+      "grade": "B",
+      "rationale": "Balanced assessment comparing Java and Clojure trade-offs. Correctly identified missing type-checking as a trade-off but valued REPL and DSL capabilities. Nuanced but no specific predictions about success."
+    },
+    "j-pb": {
+      "grade": "B-",
+      "rationale": "17 substantive comments comparing Java and Clojure syntax/semantics in detail. Technically sound arguments about functional programming and language design, but ultimately focused on readability debates that didn't predict business success."
+    },
+    "dragonwriter": {
+      "grade": "B-",
+      "rationale": "Defended Clojure's design philosophy and libraries thoughtfully. However, many comments were defensive rather than predictive of actual outcomes."
+    },
+    "dkersten": {
+      "grade": "C+",
+      "rationale": "Engaged in substantive syntax debates, particularly about functional programming abstractions. Technically sound but didn't contribute unique predictive insights about Metabase's trajectory."
+    },
+    "kisstheblade": {
+      "grade": "C",
+      "rationale": "Made valid points about Java's readability and tooling advantages, but this represented the 'losing' perspective in hindsight. Did express frustration that Metabase's authors 'couldn't articulate any actual problems with Java.'"
+    },
+    "biokoda": {
+      "grade": "C-",
+      "rationale": "Suggested Erlang/Elixir would be better fits based on criteria listed. Overlooked that Clojure's Java interop solved the database driver maturity concerns that made Erlang allegedly superior. Partially right about criteria gaps but wrong about implications."
+    },
+    "devundef": {
+      "grade": "F",
+      "rationale": "Maximally wrong. Called Clojure unmaintainable, predicted team knowledge issues would doom projects written in it, and stated the language doesn't fit developer brains. Metabase scaled to 122 people and $13.4M revenue using Clojure as core technology."
+    }
+  },
+  "score": 8
+}

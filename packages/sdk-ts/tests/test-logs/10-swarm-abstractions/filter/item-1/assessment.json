@@ -1,0 +1,8 @@
+{
+  "propertyName": "Consolidated Properties",
+  "tenantConcentrationRisk": "low",
+  "leaseRolloverRisk": "high",
+  "rentCollectionRisk": "medium",
+  "overallRiskScore": 6,
+  "reasoning": "The property demonstrates a well-diversified tenant base with the top five tenants accounting for only 18.64% of total monthly rent, and no single tenant exceeding 5% concentration. however, lease rollover risk is high, with 24.18% of the property's income (approx. $839k/month) derived from leases that are either currently expired or expiring within the next 12 months. specifically, 17.7% of rent is from tenants already past their lease expiration date as of December 2025, including major luxury brands like Harry Winston and Dior. rent collection risk is rated medium due to 19 occupied units reporting zero monthly rent (including Tiffany & Co. and Yves Saint Laurent), which may indicate extended abatement periods or atypical lease structures, alongside the administrative risk posed by the high volume of holdover tenants."
+}

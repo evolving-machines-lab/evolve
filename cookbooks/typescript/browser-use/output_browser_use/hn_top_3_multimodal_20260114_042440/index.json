@@ -1,0 +1,101 @@
+{
+  "started_at": "20260114_042440",
+  "count": 3,
+  "results": [
+    {
+      "rank": 1,
+      "status": "success",
+      "data": {
+        "rank": 1,
+        "page": 1,
+        "position_on_page": 1,
+        "title": "There's a ridiculous amount of tech in a disposable vape",
+        "hn_item_id": "46591810",
+        "hn_item_url": "https://news.ycombinator.com/item?id=46591810",
+        "outbound_url": "https://blog.jgc.org/2026/01/theres-ridiculous-amount-of-tech-in.html",
+        "final_url": "https://blog.jgc.org/2026/01/theres-ridiculous-amount-of-tech-in.html",
+        "points": 67,
+        "comments": 29,
+        "summary": "John Graham-Cumming discovered a discarded 'Fizzy Max III 60K Rechargeable Disposable Vape' in a park and disassembled it, revealing surprisingly sophisticated technology inside: USB-C charging, a small display showing battery and fluid percentages, dual circuit boards, an 800 mAh lithium-polymer battery, three transistors, and a microprocessor. The device features three microphones that detect sucking at six different positions to activate heating elements in separate fluid chambers, creating six flavor combinations. The article highlights the irony that a 'disposable' product contains substantial electronic components meant for recycling rather than landfills, and the Hacker News discussion explores themes of electronic waste, regulatory loopholes in nicotine restrictions, and potential solutions like manufacturer take-back programs.",
+        "screenshots": [
+          "screenshots/post_001/01_main.png",
+          "screenshots/post_001/02_key_visual.png",
+          "screenshots/post_001/03_additional.png"
+        ],
+        "actions": [
+          "Navigated to https://news.ycombinator.com/news?p=1",
+          "Extracted rank 1 post data: title, HN item ID (46591810), points (67), comments (29), outbound URL",
+          "Clicked through to article at https://blog.jgc.org/2026/01/theres-ridiculous-amount-of-tech-in.html",
+          "Reviewed HN discussion thread at https://news.ycombinator.com/item?id=46591810",
+          "Navigated to blog article with pyppeteer automation",
+          "Captured three screenshots showing article content, vape disassembly, and technical details",
+          "Extracted article content including technical specifications",
+          "Created markdown summary with embedded screenshots",
+          "Compiled all data into structured JSON output"
+        ],
+        "error": null
+      }
+    },
+    {
+      "rank": 2,
+      "status": "error",
+      "data": {
+        "rank": 2,
+        "page": 1,
+        "position_on_page": 2,
+        "title": "A 40-line fix eliminated a 400x performance gap",
+        "hn_item_id": "46609630",
+        "hn_item_url": "https://news.ycombinator.com/item?id=46609630",
+        "outbound_url": "https://questdb.com/blog/jvm-current-thread-user-time/",
+        "final_url": "https://questdb.com/blog/jvm-current-thread-user-time/",
+        "points": 184,
+        "comments": 38,
+        "summary": "# A 40-Line Fix Eliminated a 400x Performance Gap\n\n**Source:** https://questdb.com/blog/jvm-current-thread-user-time/\n\n## Overview\n\nJaromir Hamala from QuestDB analyzed an OpenJDK commit that dramatically improved the performance of `ThreadMXBean.getCurrentThreadUserTime()` by replacing inefficient `/proc` file parsing with a single system call.\n\n## The Problem\n\n### Original Implementation\n\nThe old code in `os_linux.cpp` retrieved thread CPU time by:\n\n1. Opening `/proc/self/task/<tid>/stat`\n2. Reading the file into a buffer\n3. Parsing through a complex format where command names could contain parentheses\n4. Using `sscanf()` to extract fields 13 and 14\n5. Converting clock ticks to nanoseconds\n\nThe original bug report from 2018 stated: *\"getCurrentThreadUserTime is 30x-400x slower than getCurrentThreadCpuTime\"*\n\n### Why the Performance Gap?\n\nThe `/proc` approach involved multiple syscalls, VFS machinery, kernel-side string formatting, and userspace parsing. In contrast, `getCurrentThreadCpuTime()` used a single `clock_gettime()` call with minimal overhead.\n\n## The Linux Kernel Bit Hack\n\nThe fix exploited a stable but undocumented Linux kernel feature. Since kernel 2.6.12, `clockid_t` values encode clock type information in specific bits:\n\n- **Bit 2**: Thread vs. process clock\n- **Bits 1-0**: Clock type (00=PROF, 01=VIRT for user-time-only, 10=SCHED for total)\n\nBy obtaining a `clockid` via `pthread_getcpuclockid()` and flipping bits to `01` (VIRT), the code requests user-time-only measurements rather than total CPU time.\n\n## The Solution\n\nThe new implementation:\n\n```cpp\nstatic bool get_thread_clockid(Thread* thread, clockid_t* clockid, bool total) {\n  int rc = pthread_getcpuclockid(thread->osthread()->pthread_id(), clockid);\n  if (rc != 0) return false;\n\n  if (!total) {\n    *clockid = (*clockid & ~CLOCK_TYPE_MASK) | CPUCLOCK_VIRT;\n  }\n  return true;\n}\n```\n\nReplaced approximately 40 lines of `/proc` parsing with a direct kernel call, requiring no file I/O or complex parsing.\n\n## Performance Results\n\n### Before Fix\n- Average: 11.186 microseconds per operation\n- Median: ~10.27 microseconds\n\n### After Fix\n- Average: 0.279 microseconds per operation\n- Median: ~0.31 microseconds\n\nThis represents a **40x improvement** in latency. CPU profiling showed syscalls were eliminated in favor of direct kernel function calls.\n\n## Further Optimization\n\nAnalysis revealed the kernel has a fast-path when PID=0 is encoded in the `clockid`, skipping radix tree lookups. By manually constructing the entire `clockid` rather than using `pthread_getcpuclockid()`, an additional **13% improvement** was achieved, reducing average time to 70.8 nanoseconds.\n\n## Key Insights\n\n- **Read kernel source**: POSIX defines portability; kernel internals reveal optimization opportunities\n- **Revisit assumptions**: The `/proc` approach made sense historically but became suboptimal\n- **Stability matters**: The Linux bit encoding remained unchanged for 20+ years, making it safe to rely upon\n\n## Impact\n\nThe change landed December 3, 2025, just before JDK 26's feature freeze. Users of `ThreadMXBean.getCurrentThreadUserTime()` in JDK 26 (releasing March 2026) gain a free 30-400x performance improvement.",
+        "screenshots": [
+          "01_main.png",
+          "02_key_visual.png",
+          "03_additional.png"
+        ],
+        "actions": [
+          "navigated to Hacker News front page (page 1)",
+          "extracted rank 2 post metadata (title, HN item ID, points, comments)",
+          "followed outbound URL to questdb.com blog post",
+          "captured final URL after navigation",
+          "extracted and summarized full article content",
+          "prepared screenshots in output/screenshots/post_002/"
+        ],
+        "error": null
+      }
+    },
+    {
+      "rank": 3,
+      "status": "success",
+      "data": {
+        "rank": 3,
+        "page": 1,
+        "position_on_page": 3,
+        "title": "ASCII Clouds",
+        "hn_item_id": "46611507",
+        "hn_item_url": "https://news.ycombinator.com/item?id=46611507",
+        "outbound_url": "https://caidan.dev/portfolio/ascii_clouds/",
+        "final_url": "https://caidan.dev/portfolio/ascii_clouds/",
+        "points": 45,
+        "comments": 9,
+        "summary": "ASCII Clouds is a creative visual project that generates ASCII art representations of clouds using procedural generation techniques. The website features an interactive visualization where users can adjust multiple parameters in real-time to customize cloud generation, including cell size, wave amplitude, wave speed, noise intensity, and time speed. The project demonstrates an innovative approach to creating organic, flowing patterns from discrete ASCII characters using Perlin noise and wave functions combined.",
+        "screenshots": [
+          "output/screenshots/post_003/01_main.png",
+          "output/screenshots/post_003/02_key_visual.png",
+          "output/screenshots/post_003/03_additional.png"
+        ],
+        "actions": [
+          "Navigated to https://news.ycombinator.com/news?p=1",
+          "Extracted rank 3 post information",
+          "Clicked on post title to access content",
+          "Captured 3 screenshots of the ASCII Clouds visualization",
+          "Generated markdown summary with embedded screenshots"
+        ],
+        "error": null
+      }
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "rank": 3,
+  "page": 1,
+  "position_on_page": 3,
+  "title": "RTX 5090 and Raspberry Pi: Can it game?",
+  "hn_item_id": "46558148",
+  "hn_item_url": "https://news.ycombinator.com/item?id=46558148",
+  "outbound_url": "https://scottjg.com/posts/2026-01-08-crappy-computer-showdown/",
+  "final_url": "https://scottjg.com/posts/2026-01-08-crappy-computer-showdown/",
+  "points": 149,
+  "comments": 60,
+  "summary": "Scott's blog post explores an ambitious experiment connecting an NVIDIA RTX 5090 graphics card to a Raspberry Pi to test gaming performance on ARM-based systems. The post documents the hardware setup, technical challenges with ARM GPU driver compatibility, and community-provided solutions. The author successfully demonstrates GPU acceleration on ARM single-board computers, overcoming memory alignment and DMA coherence issues through driver patches. Key findings show that while unconventional, high-end GPU gaming is achievable on budget Raspberry Pi platforms, representing an important proof of concept for GPU computing on ARM architectures.",
+  "screenshots": [
+    "screenshots/post_003/01_main.png",
+    "screenshots/post_003/02_key_visual.png",
+    "screenshots/post_003/03_additional.png"
+  ],
+  "actions": [
+    "Navigated to https://news.ycombinator.com/news?p=1",
+    "Located and extracted rank 3 post information from HN listing",
+    "Clicked on post title to open article",
+    "Captured screenshots of main content, hardware components, and technical results",
+    "Generated markdown summary with embedded screenshots"
+  ],
+  "error": null
+}

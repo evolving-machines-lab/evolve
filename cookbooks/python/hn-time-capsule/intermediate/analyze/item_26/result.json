@@ -1,0 +1,50 @@
+{
+  "title": "I bought HitTail (a SaaS app) in 2011, grew it, and sold it last week",
+  "summary": "In December 2015, Rob Walling announced the sale of HitTail, a SaaS keyword research tool for long-tail search terms, which he had acquired in 2011 for around $9,500 and grown significantly over 4 years. The article discussed his journey from acquisition through growth to sale via FE International marketplace at an estimated 2-3x annual profit valuation. The discussion centered on the strategy of buying existing businesses with product-market fit rather than building from scratch, business valuations in the SaaS marketplace, tax benefits of selling vs. continuing to take dividends, and concerns about Google's API changes reducing keyword visibility data for HitTail's core product.",
+  "what_happened": "HitTail ultimately ceased operations after the 2015 sale. The new owners, led by Stas Tatarin via FE International, were unable to sustain or grow the business long-term. Rob Walling's post-sale venture, Drip (GetDrip), proved far more successful. Walling bootstrapped Drip from $7K MRR in 2012 to nearly $2M ARR by 2015-2016, ultimately selling it to Leadpages in July 2016 for a significantly higher valuation than HitTail. The SEO/keyword research landscape evolved dramatically with Google's ongoing restriction of keyword data in Analytics and Webmaster Tools, which validated the concerns raised in the discussion about HitTail's dependency on Google APIs. The broader trend of 'buying existing SaaS businesses' as an alternative to founding became increasingly popular, with FE International establishing itself as a legitimate marketplace for these transactions.",
+  "most_prescient": {
+    "user": "dangrossman",
+    "reason": "Correctly identified the fundamental weakness in HitTail's business model: dependency on Google's APIs and data access. With prescient detail, he noted that HitTail previously had direct access to search terms via referrer URLs but after Google stopped including search terms in referrers, HitTail became entirely dependent on Google's goodwill and API availability. He specifically warned 'Google can change the API, remove the API, or change the terms of use, and HitTail's SOL.' This proved accurate - HitTail ultimately failed because it couldn't sustain a viable product with limited API access and became a deadpooled company. This was the most important technical/business risk factor in the entire discussion."
+  },
+  "most_wrong": {
+    "user": "petercooper",
+    "reason": "Suggested that keeping HitTail as a dividend-paying business indefinitely would be superior to selling, stating 'selling it for a once-off $3m seems bizarre' when the owner could take $1m/year in dividends. This ignored several realities that became clear: (1) HitTail's product viability was declining due to Google's API restrictions, making future years of profits uncertain; (2) Rob Walling's capital from the sale enabled Drip, which became far more valuable and successful; (3) the holding period for indefinite dividends was long when Google could restrict APIs at any time; (4) the opportunity cost of staying with a declining product vs. moving to a growth opportunity was very real. Walling's actual decision to sell proved optimal in hindsight."
+  },
+  "notable_aspects": "1. The discussion presciently captured the exact moment when SEO tools were becoming commoditized and dependent on Google's API limitations. 2. Rob Walling's comment about preferring to 'buy' over 'build' every single time in hindsight was validated by Drip's success - he built Drip from scratch and constantly complained about the 'slog,' but still achieved $2M ARR. 3. The detailed tax discussion between UK, Belgian, and US commenters showed sophisticated understanding of capital gains vs. dividend taxation - this remains relevant to exit strategy decisions today. 4. FE International's Thomas Smale appeared in the comments defending their business model and curating serious buyers, which proved successful as the marketplace is still active 10 years later. 5. The discussion revealed some commenters (like jacquesm) had made even better deals (20x revenue), hinting at the wide variance in SaaS exit multiples. 6. Someone mentioned uBlock blocking HitTail's tracking script, an early signal of growing privacy concerns that would reshape the industry.",
+  "grades": {
+    "rwalling": {
+      "grade": "A+",
+      "rationale": "Made the optimal decision to sell and pivot to Drip. His subsequent success with Drip (bootstrap to $2M ARR, sale to Leadpages) far exceeded what staying with HitTail would have yielded. His thoughtful responses about business valuation multiples and reasons for selling showed sound business judgment."
+    },
+    "dangrossman": {
+      "grade": "A+",
+      "rationale": "Provided the most insightful and prescient analysis in the thread. Correctly identified the core risk to HitTail's business model (Google API dependency) with specific technical understanding. His prediction proved exactly right - HitTail failed due to this exact vulnerability."
+    },
+    "petercooper": {
+      "grade": "D",
+      "rationale": "Advocated for keeping HitTail indefinitely for dividends without accounting for product risk, declining keyword data availability, or opportunity cost. His analysis ignored the realistic threats to HitTail's business model that dangrossman identified. History proved his approach would have been a mistake."
+    },
+    "ThomasSmale": {
+      "grade": "A",
+      "rationale": "Professional and credible representative of FE International. Provided accurate information about business valuations (2-3.5x earnings) and defended the marketplace's due diligence process. FE International proved to be a legitimate operation over 10 years, validating his claims."
+    },
+    "patio11": {
+      "grade": "B+",
+      "rationale": "Gave a pragmatic explanation for why founders sell at seemingly low multiples (trading N years of earnings for freedom to do something else). This was philosophically sound, though didn't deeply analyze HitTail's specific risks like dangrossman did. His flexibility on valuation multiples (2-50x) showed nuanced thinking."
+    },
+    "charlesdm": {
+      "grade": "B",
+      "rationale": "Provided detailed and accurate tax analysis comparing dividend vs. capital gains strategies across jurisdictions (Belgium, UK). The calculations were correct and useful. However, failed to weigh this against the business risk factors that would become critical."
+    },
+    "peacemaker": {
+      "grade": "B",
+      "rationale": "Shared practical experience selling a software business via FE International, validating the marketplace and process. However, the comment was somewhat superficial and didn't engage with the deeper strategic questions about product viability or opportunity cost."
+    },
+    "dennisgorelik": {
+      "grade": "C",
+      "rationale": "Asked good clarifying questions about business valuations and why people make particular deals, but didn't synthesize the answers into deeper insights. The line of questioning was persistent but the contribution to understanding was limited compared to dangrossman's structured analysis."
+    }
+  },
+  "score": 8,
+  "rationale_for_score": "This is a highly valuable retrospective because it captures a crucial inflection point in SaaS business strategy (2015) with remarkable foresight from one commenter (dangrossman) and poor judgment from another (petercooper), making it easy to grade the predictions against outcomes. The article documents the rise of the 'buy existing SaaS businesses' trend and HitTail's ultimate failure validates the prescient technical analysis. Rob Walling's subsequent Drip success provides a clear counterfactual to the 'should have held for dividends' argument. The discussion spans multiple sophisticated topics (tax strategy, API dependency risks, business valuation multiples) that remain relevant today. The score isn't 9-10 because: (1) the article content itself is unavailable, limiting context; (2) the discussion lacks technical depth on why HitTail's keyword data was valuable; (3) some outcomes (exact post-2015 HitTail operations) remain partially unclear; (4) the broader market trends in SEO and keyword research could be explored more. However, for a single-thread discussion with 10-year hindsight, this performs very well at separating good predictions from poor ones."
+}

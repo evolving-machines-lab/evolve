@@ -1,0 +1,124 @@
+HACKER NEWS RETROSPECTIVE ANALYSIS
+Article: "Metabase: Why we picked Clojure" (Dec 2, 2015)
+Analysis Date: January 2026 (10 years later)
+
+=============================================================================
+KEY FINDING: Metabase's bet on Clojure was vindicated
+=============================================================================
+
+ARTICLE ARGUED:
+- Clojure provides better readability/writability than Java
+- "Freedom from Kingdom of Nouns" (fewer wrapper classes)
+- Macros provide linguistic flexibility
+- Dynamic typing allows faster development
+- REPL enables interactive development
+
+WHAT ACTUALLY HAPPENED (2026):
+✓ 98 million downloads
+✓ 30,000+ companies using Metabase
+✓ $43M total funding ($30M Series B in 2021)
+✓ $13.4M revenue (July 2025)
+✓ 122-person team
+✓ #1 open-source business intelligence platform
+✓ Clojure is STILL the core technology (active in 2026)
+
+=============================================================================
+MOST PRESCIENT COMMENT: jerf
+=============================================================================
+"When it comes to writing code to deal with a query language, which involves 
+having an AST and manipulating it every which way, Java gets creamed by many 
+other languages. Both the Lisp series of languages (which Clojure is in) and 
+the ML series of languages have wildly better stories for dealing with AST 
+manipulation..."
+
+WHY PRESCIENT:
+- Correctly identified Clojure's core strength for Metabase's use case
+- Query engines require AST manipulation - Clojure excels at this
+- Not distracted by general readability debates; focused on domain
+- Proved accurate as query language became key differentiator
+
+GRADE: A+
+
+=============================================================================
+MOST WRONG COMMENT: devundef
+=============================================================================
+"This is probably going to be a very unpopular opinion here, but I think 
+Clojure is a horrible language to work with... Clojure does not fit my brain."
+
+Predicted:
+- Poor error messages and steep learning curve would be fatal
+- Team knowledge issues would doom Clojure projects
+- The language doesn't fit developers' mental models
+
+WHAT ACTUALLY HAPPENED:
+- Team scaled from founders to 122 people, all working in Clojure
+- Successfully onboarded many new developers over 10 years
+- Built one of the most successful open-source companies
+
+GRADE: F (maximally wrong)
+
+=============================================================================
+OTHER NOTEWORTHY COMMENTS
+=============================================================================
+
+slowmovintarget (Grade: A)
+- Recognized data-oriented architecture as fundamental advantage
+- "I'm thinking about what shape the data should be" philosophy
+- Proved prescient for query language architecture
+
+tlrobinson (Metabase dev, Grade: B+)
+- Showed team confidence in Java interop benefit
+- "If no one has created a nice Clojure library, use Java libraries"
+- Insider perspective validating the choice
+
+kisstheblade (Grade: C)
+- Made fair points about Java's tooling and readability
+- Criticized lack of articulation about Java's problems
+- Represented "losing" side in this debate
+
+biokoda (Grade: C-)
+- Suggested Erlang/Elixir would be better
+- Overlooked that Clojure's Java interop solved database driver concerns
+- Partially right about criteria but wrong about implications
+
+=============================================================================
+DISCUSSION THEMES
+=============================================================================
+
+Java Criticisms: 11 comments
+- Verbosity, "Kingdom of Nouns," ceremony required
+- But no specific articulation of domain problems
+
+Clojure Criticisms: 14 comments
+- Steep learning curve
+- Poor error messages
+- Small ecosystem at the time
+- But mostly subjective ("doesn't fit my brain")
+
+Language Comparisons: 28 mentions of Go, 12 of Scala, 6 of Erlang
+- Erlang highlighted as gap in evaluation
+- Scala seen as previous failed attempt
+
+=============================================================================
+RETROSPECTIVE SCORE: 8/10
+=============================================================================
+
+HIGHLY INTERESTING BECAUSE:
+1. Captures genuine technology debate with definitive outcome
+2. Contains prescient technical insight (jerf on AST manipulation)
+3. Shows how domain-specific needs > general language philosophy
+4. Metabase's 10-year success validates the choice decisively
+
+NOT 10/10 BECAUSE:
+1. Most debate was about subjective language philosophy
+2. Few commenters discussed business factors
+3. Clojure's claimed benefits (readability, maintainability) are subjective
+4. Hard to definitively grade subjective perspectives
+
+CONCLUSION:
+This is an excellent retrospective. The 2015 skeptics weren't wrong about
+Clojure's learning curve or ecosystem immaturity - they were wrong about
+whether these factors mattered for a company with strong technical founders
+and access to Java libraries. The prescient insight was recognizing that
+Clojure's strengths (AST manipulation, persistent data structures, macros)
+directly addressed Metabase's core problem domain.

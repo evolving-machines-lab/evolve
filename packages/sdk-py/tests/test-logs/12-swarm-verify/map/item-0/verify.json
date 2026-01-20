@@ -1,0 +1,12 @@
+{
+  "passed": true,
+  "reasoning": "The worker's extraction is highly accurate. All 35 unit entries from the PDF rows were captured, including unit numbers, tenant names, square footage, and monthly rent. Vacant units were correctly handled as requested ('VACANT' for tenant name, 0.0 for rent). Dates were correctly formatted to YYYY-MM-DD. The property name '2941' was correctly identified from the summary page. The extracted square footage for vacant units (51,055 SF) matches the summary perfectly. The slight discrepancy in total occupied square footage (45 SF difference from summary) is likely due to the source document's internal calculations or minor typos, as the worker's extracted values match the text in the unit columns exactly (e.g., Unit 110's rent confirms 7,306 SF). The output strictly follows the provided schema.",
+  "attempts": 1,
+  "verifyMeta": {
+    "run_id": "6ada70276001b4ea",
+    "operation": "verify",
+    "tag": "rentroll-verify-map-0-verify",
+    "sandbox_id": "isxbmfba7og0gdbmb81j9",
+    "attempts": 1
+  }
+}

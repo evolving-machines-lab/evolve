@@ -1,0 +1,49 @@
+{
+  "title": "Next Generation Eclipse IDE",
+  "summary": "In December 2015, Eclipse Che was announced as an open-source, cloud-native IDE backed by Red Hat and the Eclipse Foundation. The article and discussion centered on a web-based IDE that ran in Docker containers on Kubernetes, offering cloud-native development environments with workspace portability. The project had been rebranded from Codenvy (an earlier commercial product) to Eclipse Che just 18 days before the HN post. Commenters were divided: some saw potential for containerized development workflows and team onboarding, while others were skeptical about web-based IDEs, concerned about performance, vendor lock-in, network dependency, and the bloated Eclipse UI. Many compared it unfavorably to JetBrains IntelliJ or suggested simpler alternatives like Vim+SSH.",
+  "what_happened": "Eclipse Che survived and evolved significantly. Despite early skepticism about web-based IDEs, cloud development environments became increasingly relevant. By 2019, Che 7 was released as a fully Kubernetes-native platform. Red Hat integrated Che into OpenShift and later rebranded it as CodeReady Workspaces for enterprise use. The broader cloud development environment market that Che pioneered was ultimately dominated by VSCode-based solutions running in containers. As of 2025, Eclipse Che continues to be actively maintained and updated (version 7.107.0 planned), featuring modern tooling including VSCode as an IDE option, Kubernetes-native workflows, and support for Devfiles (CNCF specification). However, the vision of cloud IDEs didn't become mainstream as predicted\u2014most developers still use local desktop IDEs (VSCode, JetBrains) with SSH/remote capabilities or containerized development environments. The 2015 enthusiasm for cloud IDEs waned as local development remained dominant, though remote development and containerization became standard practices in different forms than Che envisioned.",
+  "most_prescient": {
+    "user": "gravypod",
+    "reason": "Correctly identified that Che could fill a unique niche for developers wanting to downgrade to Chromebooks with remote development capabilities, and appreciated that it could be self-hosted ('host-your-own alternative'). This vision partially materialized\u2014while Che didn't make Chromebooks the norm, remote and containerized development (which Che pioneered concepts for) did become standard, though VSCode Remote and GitHub Codespaces took different approaches."
+  },
+  "most_wrong": {
+    "user": "alttab",
+    "reason": "Claimed 'I can't imagine how a browser would ever come close' to desktop IDE responsiveness in C++ development. While valid for 2015, web-based development tools eventually proved competitive through architectural improvements. By 2024, web-based editors running in containers (including VSCode in browsers) demonstrated that browser-based development could be performant enough for many workflows."
+  },
+  "notable_aspects": "1) TylerJewell (Codenvy founder/Che lead) provided extensive technical explanations throughout the thread, demonstrating strong founder engagement with skeptical critics\u2014rare and admirable for HN.\n2) The Java vs other languages debate was a tangent, with commenters dismissing Java's verbosity without addressing that Che was specifically designed for enterprise Java development.\n3) The IDE UI criticism about 'meticulous design looking like an explosion in a GUI widget factory' was prescient\u2014Eclipse's UI complexity remained a long-standing complaint, though Che tried to modernize this.\n4) Commenters debated offline development for trains and airplanes\u2014a concern that proved somewhat overblown as mobile internet became ubiquitous, though the principle remained valid.\n5) Multiple commenters mentioned PTSD from Eclipse's performance issues on older systems (14\" CRT monitors)\u2014showing how deeply Eclipse's poor legacy affected perception of this new project.",
+  "grades": {
+    "TylerJewell": {
+      "grade": "A-",
+      "rationale": "Demonstrated technical vision that proved largely correct\u2014workspace portability, Kubernetes-native design, and RESTful services wrapping language tools all became core Che features. The 4.0 branch recommendations proved prescient. However, the broader vision of cloud IDEs replacing desktop development didn't materialize as predicted; the project evolved differently."
+    },
+    "mathgladiator": {
+      "grade": "B+",
+      "rationale": "Provided detailed, constructive criticism of specific 3.x limitations (folder hierarchy issues, missing JUnit runner, timeout problems, broken autocomplete). Most of these were addressed in later versions (4.0+). The criticism was fair for the development stage but didn't account for the project's clear trajectory toward improvement."
+    },
+    "gravypod": {
+      "grade": "A",
+      "rationale": "Identified the actual viable use case (self-hosted remote development for reducing laptop requirements) and understood the technical architecture (Docker containers). This vision partially came true through different channels (VSCode Remote, GitHub Codespaces, and containerized dev environments)."
+    },
+    "Gibbon1": {
+      "grade": "C",
+      "rationale": "Warned about vendor lock-in through cloud IDEs, which was a reasonable concern. However, the open-source nature of Eclipse Che and ability to self-host mitigated this concern significantly\u2014the architecture actually enabled self-hosting more than most cloud IDEs."
+    },
+    "rspeer": {
+      "grade": "B",
+      "rationale": "Criticized the UI as bloated ('explosion in a GUI widget factory'), which was fair feedback. However, subsequent versions of Che (and the shift to VSCode-based UI) actually did simplify this. The criticism was valid but incomplete\u2014Che improved in this area."
+    },
+    "ivan_burazin": {
+      "grade": "B",
+      "rationale": "Co-founder of Codeanywhere made reasonable points about cloud IDE utility for web developers, but was somewhat dismissive of legitimate offline development concerns. The project succeeded in specific niches but didn't achieve the broader adoption predicted."
+    },
+    "qznc": {
+      "grade": "B+",
+      "rationale": "Identified key advantages of cloud IDEs (trivial setup, resource sharing, collaboration) while expressing healthy skepticism about execution. These benefits did materialize in later versions and related technologies."
+    },
+    "jasonkester": {
+      "grade": "B",
+      "rationale": "Made passionate arguments for offline development capability with real-world examples (remote travel, sailing). Valid point, though somewhat overstated\u2014most developers did eventually need internet access anyway, but the principle about not depending on always-on connectivity was sound."
+    }
+  },
+  "score": 8
+}

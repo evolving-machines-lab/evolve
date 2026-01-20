@@ -1,0 +1,425 @@
+[
+  {
+    "author": "dennisnedry",
+    "text": "Perhaps there needs to be more studies done on the effect of gravity and human health? Conversely, are there other things in our air (pollutants) that are in fact causing slower aging when on Earth?",
+    "points": null,
+    "created_at": "2015-12-01T23:57:46.000Z",
+    "depth": 0,
+    "replies": [
+      {
+        "author": "caio1982",
+        "text": "Well, as to your first question, that's exactly the purpose of https://www.nasa.gov/content/one-year-crew",
+        "points": null,
+        "created_at": "2015-12-02T17:57:13.000Z",
+        "depth": 1,
+        "replies": []
+      }
+    ]
+  },
+  {
+    "author": "eveningcoffee",
+    "text": "I like the comment from petero:Perhaps the effect is due to lack of grounding.",
+    "points": null,
+    "created_at": "2015-12-01T23:59:23.000Z",
+    "depth": 0,
+    "replies": []
+  },
+  {
+    "author": "kayadx83",
+    "text": "This is interesting. You feel gravity less when you are in fluids. Does this mean all babies feel gravity differently because we all experience different amounts of fluid in the womb (not to mention the variations in baby sizes)? The impact is probably miniscule but I wonder if it has any effect on development of babies in the womb.",
+    "points": null,
+    "created_at": "2015-12-02T13:55:09.000Z",
+    "depth": 0,
+    "replies": [
+      {
+        "author": "amelius",
+        "text": "I guess you feel it less only because the support (pressure) is distributed more evenly along your skin. Inside your body, almost everything is fluid, so there it does not matter much, I'd say.",
+        "points": null,
+        "created_at": "2015-12-02T17:47:07.000Z",
+        "depth": 1,
+        "replies": []
+      },
+      {
+        "author": "hydrogen18",
+        "text": "How exactly do you think buoyancy works? It's not like its anti-gravity anymore than the chair I'm sitting in is.",
+        "points": null,
+        "created_at": "2015-12-02T18:39:51.000Z",
+        "depth": 1,
+        "replies": []
+      }
+    ]
+  },
+  {
+    "author": "username3",
+    "text": "Certain bacteria in bodies die in space?",
+    "points": null,
+    "created_at": "2015-12-02T15:59:50.000Z",
+    "depth": 0,
+    "replies": [
+      {
+        "author": "dogma1138",
+        "text": "If they absorbed sufficient radiation to kill that much bacteria they would be dead a week later. If you get a dose high enough to give you \"radiation high\" you are a goner.",
+        "points": null,
+        "created_at": "2015-12-02T16:35:58.000Z",
+        "depth": 1,
+        "replies": []
+      }
+    ]
+  },
+  {
+    "author": "dogma1138",
+    "text": "So the dawn of the 20th century radium spas are going to make a come back? https://en.wikipedia.org/wiki/History_of_radiation_therapy#J...",
+    "points": null,
+    "created_at": "2015-12-02T16:19:29.000Z",
+    "depth": 0,
+    "replies": []
+  },
+  {
+    "author": "taconacho",
+    "text": "Is there a citation for the following claim? I've never heard of such a thing:\"But then more results started coming back. Not only do astronauts come back with weak muscles and frail bones\u2026 But they also suffer from skin thinning, atherosclerosis (stiffer arteries), resistance to insulin and they suffer from loss of vision due to cataracts many years earlier than expected given their chronological age. These symptoms look a lot like skin aging, cardiovascular aging, age-related diabetes and so forth. In fact, it is pretty accurate to say that astronauts age at an accelerated rate.\"",
+    "points": null,
+    "created_at": "2015-12-02T16:51:54.000Z",
+    "depth": 0,
+    "replies": [
+      {
+        "author": "kbenson",
+        "text": "There's a slew of references (\"further reading\") listed at the bottom, some of them look like they are the source of at least some of these claims.",
+        "points": null,
+        "created_at": "2015-12-02T17:07:09.000Z",
+        "depth": 1,
+        "replies": []
+      },
+      {
+        "author": "danesparza",
+        "text": "In addition to the references in the article, Wikipedia (surprisingly) has a nice article on the effects of spaceflight on the human body (with all sorts of references): https://en.wikipedia.org/wiki/Effect_of_spaceflight_on_the_h...",
+        "points": null,
+        "created_at": "2015-12-02T17:12:17.000Z",
+        "depth": 1,
+        "replies": [
+          {
+            "author": "taconacho",
+            "text": "Looks like my mistake was in thinking that the stated effects were occurring after astronauts had returned to Earth. At least that's what the title sounds like. If these symptoms only apply to humans while they are in a weightless environment then it sounds very much like sedentary disease (aka sitting disease). Even rigorous exercise routines can't fully match the effects of gravity on the human body.",
+            "points": null,
+            "created_at": "2015-12-02T17:30:42.000Z",
+            "depth": 2,
+            "replies": []
+          }
+        ]
+      },
+      {
+        "author": "toomuchtodo",
+        "text": "They're not aging at an accelerated rate, they're exhibiting similar symptoms of aging from their microgravity environment (weak muscles, frail bones) and from there being no shielding from cosmic rays (cataracts).",
+        "points": null,
+        "created_at": "2015-12-02T17:28:22.000Z",
+        "depth": 1,
+        "replies": [
+          {
+            "author": "bdamm",
+            "text": "Perhaps we could conclude that cosmic rays cause increased rate of aging. Actually, it seems pretty obvious really, that a body healing itself from radiation damage would \"age\" more quickly. Doesn't every cell division increase the cost of further cell divisions through mutations? And isn't there actually a mechanism to ultimately shut down cell division i.e. Telomere breakdown?",
+            "points": null,
+            "created_at": "2015-12-02T17:41:52.000Z",
+            "depth": 2,
+            "replies": [
+              {
+                "author": "CydeWeys",
+                "text": "The linked article does a good job of refuting this hypothesis. There are radiation workers on Earth who receive regular, higher doses than what astronauts receive, and are not subject to these effects. It really is the weightlessness doing it, not the slightly higher ambient radiation.",
+                "points": null,
+                "created_at": "2015-12-02T19:36:14.000Z",
+                "depth": 3,
+                "replies": [
+                  {
+                    "author": "dbrannan",
+                    "text": "Would we live longer if gravity was higher than 9.81 m/s2? I think it might be difficult to actually test this, but it is a fun question.",
+                    "points": null,
+                    "created_at": "2015-12-02T19:46:31.000Z",
+                    "depth": 4,
+                    "replies": [
+                      {
+                        "author": "Goronmon",
+                        "text": "I would assume that stronger gravity would just come along with a different set of health issues (joint and muscle problems dealing with more stress, heart would be affected having to work harder to pump blood, etc).",
+                        "points": null,
+                        "created_at": "2015-12-02T20:03:22.000Z",
+                        "depth": 5,
+                        "replies": []
+                      },
+                      {
+                        "author": "vinceguidry",
+                        "text": "If you take any complex system out of the environment it evolved to survive in, it won't work as well. Doesn't matter which knob you tweak, it won't be the environment it evolved in. There will just be a different set of failures.",
+                        "points": null,
+                        "created_at": "2015-12-02T20:16:51.000Z",
+                        "depth": 5,
+                        "replies": [
+                          {
+                            "author": "ZeroFries",
+                            "text": "Is this necessarily true? I can see how it would often be true, in general, but don't see how it's necessary. For example, animals in captivity can often live longer. Lifespan and quality of life are decent enough proxies for \"working well\".",
+                            "points": null,
+                            "created_at": "2015-12-02T21:26:40.000Z",
+                            "depth": 6,
+                            "replies": [
+                              {
+                                "author": "vinceguidry",
+                                "text": "I don't think it's absolutely true, the general case you referred to is as strong as I intended the assertion to be.",
+                                "points": null,
+                                "created_at": "2015-12-02T21:43:19.000Z",
+                                "depth": 7,
+                                "replies": []
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "author": "toomuchtodo",
+                    "text": "Cosmic rays have enough energy to travel through the atmosphere and damage the sight of commercial pilots. Its not a leap to think that the exposure is significantly higher in orbit.http://news.bbc.co.uk/2/hi/health/4131232.stmhttp://www.ncbi.nlm.nih.gov/pubmed/16087845",
+                    "points": null,
+                    "created_at": "2015-12-02T19:49:01.000Z",
+                    "depth": 4,
+                    "replies": []
+                  },
+                  {
+                    "author": "choicewords",
+                    "text": "While the quantity might be just a higher, cosmic ray can arrive with more energy than particle accelerator can produce. I can imagine our bodies might not be able to handle healing from those types of events.",
+                    "points": null,
+                    "created_at": "2015-12-02T21:50:20.000Z",
+                    "depth": 4,
+                    "replies": [
+                      {
+                        "author": "toomuchtodo",
+                        "text": "At those energy levels, those particles are ripping through DNA like a bullet.",
+                        "points": null,
+                        "created_at": "2015-12-02T22:05:35.000Z",
+                        "depth": 5,
+                        "replies": []
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "author": "mtdewcmu",
+                "text": "I seem to remember from anatomy and physiology that most body cells don't really divide, the exception being epithelial cells, which are constantly being produced and shedding. So I'm not sure that DNA damage would tend to get propagated by cell division, at least in adults.",
+                "points": null,
+                "created_at": "2015-12-02T20:16:07.000Z",
+                "depth": 3,
+                "replies": []
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "author": "mmastrac",
+    "text": "Cache since it appears to be dead: http://webcache.googleusercontent.com/search?q=cache:SYsBpU-...",
+    "points": null,
+    "created_at": "2015-12-02T16:52:06.000Z",
+    "depth": 0,
+    "replies": []
+  },
+  {
+    "author": "jimrandomh",
+    "text": "Maybe there's a diet-related problem? Astronaut food has some pretty intense constraints that Earth food doesn't, and has almost certainly been optimized according to the false discoveries of the field of nutrition. They should have a few people with different contrarian positions look over the food logs, and see if there's anything really wrong there.",
+    "points": null,
+    "created_at": "2015-12-02T17:05:10.000Z",
+    "depth": 0,
+    "replies": [
+      {
+        "author": "pc86",
+        "text": "> false discoveries of the field of nutritionI would love to hear about some of these.",
+        "points": null,
+        "created_at": "2015-12-02T18:25:18.000Z",
+        "depth": 1,
+        "replies": [
+          {
+            "author": "Evgeny",
+            "text": "My guess is that he meant things like \"fat makes you fat and causes heart disease\", or \"fruit juice is good for you\", or \"margarine is better for you than butter\" or \"meat causes cancer\" etc.",
+            "points": null,
+            "created_at": "2015-12-03T09:54:31.000Z",
+            "depth": 2,
+            "replies": [
+              {
+                "author": "jimrandomh",
+                "text": "Yes, these are all examples or tentative examples of the sort of thing I'm talking about. (I don't know much about what they're eating up on the ISS, though, so I don't know if they're applicable.)",
+                "points": null,
+                "created_at": "2015-12-04T05:11:26.000Z",
+                "depth": 3,
+                "replies": []
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "author": "S_A_P",
+    "text": "Sounds to me that its related to the \"exercise\" related to living in 1G. I wonder if the air mixture oxidizes the body more quickly as well.",
+    "points": null,
+    "created_at": "2015-12-02T17:32:28.000Z",
+    "depth": 0,
+    "replies": []
+  },
+  {
+    "author": "LordKano",
+    "text": "Maybe it's attributed to the rigorousness of the selection process but I have noticed the longevity of so many astronauts.John Glenn, Neil Armstrong, Buzz Aldrin, Michael Collins and Edgar Mitchell all lived beyond the average life expectancy of American males born when they were born.Our bodies have incredibly complex feedback loops and we evolved here, with a constant 1G of gravity.It's not surprising to me that exposure to Zero-G can have long lasting and unexpected consequences.",
+    "points": null,
+    "created_at": "2015-12-02T17:47:54.000Z",
+    "depth": 0,
+    "replies": [
+      {
+        "author": "Retric",
+        "text": "Selection bias. Life expectancy at birth has little impact when astronauts are all selected much latter in life.At the extreme edge, the average age of people in nursing homes is much older than life expectancy at birth. That does not mean nursing homes are good for you.",
+        "points": null,
+        "created_at": "2015-12-02T18:02:21.000Z",
+        "depth": 1,
+        "replies": [
+          {
+            "author": "LordKano",
+            "text": "I certainly concede the possibility.People who are healthiest in their mid to late 30s being more likely to live into old age than those who are not is a plausible explanation for what I have observed.",
+            "points": null,
+            "created_at": "2015-12-02T18:08:35.000Z",
+            "depth": 2,
+            "replies": [
+              {
+                "author": "Retric",
+                "text": "I think we are talking past each other. People who are alive at 30 can't die at 5, but people at birth could die at 5. So, just by being 30+ or 60+ a populations life expectancy increases. Which is why actuarial tables include ages.So, to see if Astronauts are living unusually longer than other people you need to look at life expectancy's of people who where 30 around 1960's.Now, they might sill be living longer than that group. But, it does not seem like that's the comparison your making.",
+                "points": null,
+                "created_at": "2015-12-02T18:17:44.000Z",
+                "depth": 3,
+                "replies": [
+                  {
+                    "author": "nilkn",
+                    "text": "https://www.ssa.gov/oact/STATS/table4c6.htmlThis suggests a life expectancy of ~78 years old for someone 30 years old today. Of course, as you stated, we'd really need statistics for someone who was 30 years old in the 60s.John Glenn, Neil Armstrong, Buzz Aldrin, Michael Collins and Edgar Mitchell are all at least several years beyond 78, with Glenn at an impressive 94.By the way, the life expectancy at birth in that table is 76, so evidently reaching age 30 doesn't actually count for as much as I thought it would.",
+                    "points": null,
+                    "created_at": "2015-12-02T18:21:52.000Z",
+                    "depth": 4,
+                    "replies": [
+                      {
+                        "author": "Retric",
+                        "text": "https://xkcd.com/893/4 of the 12 people that walked on the moon have already died. If you look at the people who have not died by age X, there life expectancy is going to be based on that age.PS: As to reaching age X, http://www.businessinsider.com/social-security-life-table-ch... A 30 year old male has a ~25% chance of reaching 90. But, these sample sizes are tiny so that does not mean much.",
+                        "points": null,
+                        "created_at": "2015-12-02T18:25:02.000Z",
+                        "depth": 5,
+                        "replies": [
+                          {
+                            "author": "lordnacho",
+                            "text": "> https://xkcd.com/893/It's sad that they don't need a model of arrivals. I would like to at least hope that someone will walk on the moon before 2035.",
+                            "points": null,
+                            "created_at": "2015-12-02T19:51:33.000Z",
+                            "depth": 6,
+                            "replies": []
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "author": "aqme28",
+            "text": "Also selection bias another wayThese are astronauts the commenter remembers. To be accurate, check against all astronauts from that time period.",
+            "points": null,
+            "created_at": "2015-12-02T19:10:26.000Z",
+            "depth": 2,
+            "replies": []
+          }
+        ]
+      },
+      {
+        "author": "ceejayoz",
+        "text": "> John Glenn, Neil Armstrong, Buzz Aldrin, Michael Collins and Edgar Mitchell all lived beyond the average life expectancy of American males born when they were born.I'd imagine astronauts are more likely than the overall population to have good healthcare, good pensions, etc. Helps live longer.",
+        "points": null,
+        "created_at": "2015-12-02T18:18:11.000Z",
+        "depth": 1,
+        "replies": []
+      }
+    ]
+  },
+  {
+    "author": "zeristor",
+    "text": "I attended a talk [1] in which the made a case for the a British manned space programme as another angle on investigating ageing [2]. Radiation, boneloss, and a number of aspects. Ironically my memory of the talk is fading...[1] http://www.bis-space.com/2014/03/04/12501/uk-space-life-and-...[2] http://www.ukspacelabs.co.uk/about/5-strategy-r-d-themes",
+    "points": null,
+    "created_at": "2015-12-02T18:35:14.000Z",
+    "depth": 0,
+    "replies": []
+  },
+  {
+    "author": "pcl",
+    "text": "They are also followed medically more closely than just about anyone on Earth: they don\u2019t indulge in regular fast foodI wonder what they mean by that. Are astronauts explicitly banned from eating fast food, and somehow monitored? Or are they just less likely to eat fast food, since they pay close attention to their fitness and health?",
+    "points": null,
+    "created_at": "2015-12-02T19:34:23.000Z",
+    "depth": 0,
+    "replies": [
+      {
+        "author": "derekp7",
+        "text": "As far as I know, they haven't installed a McDonald's module on the ISS yet.",
+        "points": null,
+        "created_at": "2015-12-02T20:05:24.000Z",
+        "depth": 1,
+        "replies": []
+      }
+    ]
+  },
+  {
+    "author": "stephengoodwin",
+    "text": "On the reverse side, I've always wondered if being in a weightless environment makes your muscles feel great[0], since they aren't working against gravity. Over the years, gravity can create lots of problems for posture, which is why swimming (which lessen the effects of gravity) feels great.[0] I'm using \"Feel\" in a relative context, since muscle weakness/wasting will not feel good once you're back in a non-weightless environment.",
+    "points": null,
+    "created_at": "2015-12-02T20:46:30.000Z",
+    "depth": 0,
+    "replies": [
+      {
+        "author": "kbutler",
+        "text": "My experience with swimming is that the drag from the resistant medium outweighs the perceived \"lift\" from buoyancy.I expect the disorientation, nausea, etc., would outweigh any short term muscle-feel effects. For how weightlessness feels: http://science.howstuffworks.com/weightlessness2.htm",
+        "points": null,
+        "created_at": "2015-12-02T22:34:53.000Z",
+        "depth": 1,
+        "replies": []
+      }
+    ]
+  },
+  {
+    "author": "jostmey",
+    "text": "One hypothesis: Solar and cosmic ionizing radiation ?",
+    "points": null,
+    "created_at": "2015-12-02T20:55:15.000Z",
+    "depth": 0,
+    "replies": []
+  },
+  {
+    "author": "Joof",
+    "text": "Microgravity is like alcohol; it effects so many systems in your body that it's really difficult to pin down exactly what is causing problems where.I imagine this question won't be seriously answered until we have an artificial gravity system.",
+    "points": null,
+    "created_at": "2015-12-02T21:30:27.000Z",
+    "depth": 0,
+    "replies": []
+  },
+  {
+    "author": "bizarref00l",
+    "text": "It seems strange aging also affects other things. http://www.japantimes.co.jp/news/2014/04/11/national/sakura-...",
+    "points": null,
+    "created_at": "2015-12-02T22:13:10.000Z",
+    "depth": 0,
+    "replies": []
+  },
+  {
+    "author": "thieving_magpie",
+    "text": "I love this sentence, cracks me up:\"They are also followed medically more closely than just about anyone on Earth: they don\u2019t indulge in regular fast food.\"",
+    "points": null,
+    "created_at": "2015-12-03T00:38:14.000Z",
+    "depth": 0,
+    "replies": []
+  },
+  {
+    "author": "tullianus",
+    "text": "I'll repost the comment I made over there:Have you guys heard about the entire field of study that is aerospace medicine? I\u2019m taking a course on it this semester (I\u2019m a masters student in aerospace engineering)\u2013let me summarize some of the problems that your body goes through during space travel.Humans spend about 70% of their time either standing or sitting. That means the human body is optimized for a hydrostatic pressure gradient like the one illustrated here (http://wiki.sdstate.edu/@api/deki/files/999/=1-BP_Change.png). Blood pressure is much higher at your feet than at your head. In space, however, there is no gravity to produce this gradient, so the cardiovascular system equalizes its pressure. That\u2019s why astronauts suffer from \u201cpuffy face\u201d (higher-than-usual fluid pressures in head) and \u201cchicken legs\u201d (lower-than-usual fluid pressures in legs). In their first couple days in space, astronauts lose about 1L of leg volume from each leg.The CV system relies on internal pressure sensors to figure out how to operate, and the new pressure distribution confuses it. Astronauts lose a lot of blood plasma\u2013it sort of ends up absorbed into the surrounding tissues. This increases the relative concentration of red blood cells, which triggers the body to slow down production of new ones. Also, the heart atrophies because it doesn\u2019t need to pump as hard to move liquid around the body.When you come back from space, your body needs to rapidly readapt from microgravity to one gee. It is not very good at doing that. That\u2019s why 63% of astronauts are unable to stand for ten minutes straight just after their return from short-duration space missions (see video: https://www.youtube.com/watch?v=TPDST7EePXQ).There are other problems: the cells that are constantly building and destroying your bones fall out of alignment when you\u2019re in microgravity, causing astronauts\u2019 bones to change structure in a way that looks a lot like accelerated aging. Why? Not clear, but possibly related to the lack of repeated loading, as happens when you stand/walk in normal gravity. Astronauts end up with huge concentrations of calcium in their blood, which causes kidney stones. Astronauts in space average around 4 hours of sleep per night, and very few of them eat enough calories to maintain their body weight, so they lose muscle mass.Aerospace medicine is about half medical studies of astronauts and half studies of people on earth. It turns out that you can make most of these body changes happen by having people lie on their backs with the bed tilted down six degrees (head downward). Fascinating field. If you want to know more, I recommend the textbook \u201cSpace Physiology\u201d by Jay Buckey (amazon link here: http://smile.amazon.com/Space-Physiology-Jay-C-Buckey/dp/019...).",
+    "points": null,
+    "created_at": "2015-12-03T07:02:49.000Z",
+    "depth": 0,
+    "replies": []
+  }
+]

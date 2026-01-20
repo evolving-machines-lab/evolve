@@ -1,0 +1,12 @@
+[Article Content Unavailable]
+
+The source article at http://blog.hittail.com/2015/12/meet-the-new-hittail-team.html could not be retrieved. The website is blocking automated requests, and the article is not available through the Internet Archive (web.archive.org).
+
+Article metadata is available in meta.json:
+- Title: "I bought HitTail (a SaaS app) in 2011, grew it, and sold it last week"
+- Author: rwalling
+- Points: 106
+- Comment count: 58
+- HN URL: https://news.ycombinator.com/item?id=10657769
+
+The discussion thread with 58 comments is available in comments.json.

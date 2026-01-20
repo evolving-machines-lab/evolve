@@ -1,0 +1,30 @@
+{
+  "rank": 1,
+  "page": 1,
+  "position_on_page": 1,
+  "title": "There's a ridiculous amount of tech in a disposable vape",
+  "hn_item_id": "46591810",
+  "hn_item_url": "https://news.ycombinator.com/item?id=46591810",
+  "outbound_url": "https://blog.jgc.org/2026/01/theres-ridiculous-amount-of-tech-in.html",
+  "final_url": "https://blog.jgc.org/2026/01/theres-ridiculous-amount-of-tech-in.html",
+  "points": 67,
+  "comments": 29,
+  "summary": "John Graham-Cumming discovered a discarded 'Fizzy Max III 60K Rechargeable Disposable Vape' in a park and disassembled it, revealing surprisingly sophisticated technology inside: USB-C charging, a small display showing battery and fluid percentages, dual circuit boards, an 800 mAh lithium-polymer battery, three transistors, and a microprocessor. The device features three microphones that detect sucking at six different positions to activate heating elements in separate fluid chambers, creating six flavor combinations. The article highlights the irony that a 'disposable' product contains substantial electronic components meant for recycling rather than landfills, and the Hacker News discussion explores themes of electronic waste, regulatory loopholes in nicotine restrictions, and potential solutions like manufacturer take-back programs.",
+  "screenshots": [
+    "screenshots/post_001/01_main.png",
+    "screenshots/post_001/02_key_visual.png",
+    "screenshots/post_001/03_additional.png"
+  ],
+  "actions": [
+    "Navigated to https://news.ycombinator.com/news?p=1",
+    "Extracted rank 1 post data: title, HN item ID (46591810), points (67), comments (29), outbound URL",
+    "Clicked through to article at https://blog.jgc.org/2026/01/theres-ridiculous-amount-of-tech-in.html",
+    "Reviewed HN discussion thread at https://news.ycombinator.com/item?id=46591810",
+    "Navigated to blog article with pyppeteer automation",
+    "Captured three screenshots showing article content, vape disassembly, and technical details",
+    "Extracted article content including technical specifications",
+    "Created markdown summary with embedded screenshots",
+    "Compiled all data into structured JSON output"
+  ],
+  "error": null
+}

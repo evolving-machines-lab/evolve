@@ -1,0 +1,24 @@
+{
+  "name": "evolve-sdk-composio-cookbook",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "tsx agent.ts"
+  },
+  "dependencies": {
+    "@composio/core": "latest",
+    "@evolvingmachines/sdk": "latest",
+    "boxen": "latest",
+    "chalk": "latest",
+    "cli-spinners": "latest",
+    "dotenv": "latest",
+    "ink": "latest",
+    "log-update": "latest",
+    "marked": "latest",
+    "marked-terminal": "latest",
+    "tsx": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest"
+  }
+}

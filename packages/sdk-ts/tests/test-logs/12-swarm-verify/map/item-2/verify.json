@@ -1,0 +1,12 @@
+{
+  "passed": true,
+  "reasoning": "The worker accurately extracted all 214 units listed in the rent roll PDF, matching the document's own summary count. Crucially, the worker followed the specific feedback to prioritize the 'Area LSF' column for square footage, as indicated by the report's 'PSF Calc By? LSF' header. For example, unit D100 was correctly recorded with 53,250 sq ft (LSF) rather than 56,593 sq ft (RSF). Dates were correctly formatted as YYYY-MM-DD, and vacant units were appropriately labeled 'VACANT' with null values for lease dates. Monthly rent values were also extracted accurately from the correct column.",
+  "attempts": 2,
+  "verifyMeta": {
+    "runId": "57602cfb98d87c33",
+    "operation": "verify",
+    "tag": "rentroll-map-2-vr1-verifier-72547883cd215298",
+    "sandboxId": "i09y056vwv501liiqykck",
+    "attempts": 2
+  }
+}

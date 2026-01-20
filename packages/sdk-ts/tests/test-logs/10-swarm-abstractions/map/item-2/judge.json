@@ -1,0 +1,11 @@
+{
+  "winnerIndex": 0,
+  "reasoning": "Candidate 0 is selected as the winner because it provides more accurate and complete data extraction compared to Candidate 1. Specifically, Candidate 0 correctly captured the full rent amounts, including cents (e.g., unit 1125 is $13,520.05 in Candidate 0 and the PDF, but truncated to $13,520.0 in Candidate 1). Additionally, Candidate 0 extracted full tenant names, whereas Candidate 1 truncated them (e.g., unit 4025 'Milord & Associates and Killedjian Law Corporation' was truncated to 'Milord & Associates and' in Candidate 1). Both candidates correctly extracted all 214 units, followed the requested date format (YYYY-MM-DD), and correctly identified vacant units. Candidate 0's superior precision in financial data and string extraction makes it the better solution.",
+  "judgeMeta": {
+    "runId": "ed61802ed11d3130",
+    "operation": "bestof-judge",
+    "tag": "rentroll-map-2-bestof-judge-acebdccbf391ae6c",
+    "sandboxId": "izyfwrp29rcckkerzk221",
+    "candidateCount": 2
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "passed": false,
+  "reasoning": "Max verification retries exceeded",
+  "attempts": 2,
+  "verifyMeta": {
+    "run_id": "6ada70276001b4ea",
+    "operation": "verify",
+    "tag": "rentroll-verify-map-1-r1-verify",
+    "sandbox_id": "",
+    "attempts": 2
+  }
+}

@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"019bb860-d708-7cb3-baef-3d11ac6ab149"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"The image shows a dark-themed Markdown/documentation page titled “E2B SDK: Sandbox Reconnection & Process Management” with an overview and a “Connect to Sandbox” section including a TypeScript code snippet."}}
+{"type":"turn.completed","usage":{"input_tokens":321138,"cached_input_tokens":240768,"output_tokens":1803}}

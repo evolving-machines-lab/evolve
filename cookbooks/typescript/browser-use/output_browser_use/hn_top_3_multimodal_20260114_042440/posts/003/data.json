@@ -1,0 +1,26 @@
+{
+  "rank": 3,
+  "page": 1,
+  "position_on_page": 3,
+  "title": "ASCII Clouds",
+  "hn_item_id": "46611507",
+  "hn_item_url": "https://news.ycombinator.com/item?id=46611507",
+  "outbound_url": "https://caidan.dev/portfolio/ascii_clouds/",
+  "final_url": "https://caidan.dev/portfolio/ascii_clouds/",
+  "points": 45,
+  "comments": 9,
+  "summary": "ASCII Clouds is a creative visual project that generates ASCII art representations of clouds using procedural generation techniques. The website features an interactive visualization where users can adjust multiple parameters in real-time to customize cloud generation, including cell size, wave amplitude, wave speed, noise intensity, and time speed. The project demonstrates an innovative approach to creating organic, flowing patterns from discrete ASCII characters using Perlin noise and wave functions combined.",
+  "screenshots": [
+    "output/screenshots/post_003/01_main.png",
+    "output/screenshots/post_003/02_key_visual.png",
+    "output/screenshots/post_003/03_additional.png"
+  ],
+  "actions": [
+    "Navigated to https://news.ycombinator.com/news?p=1",
+    "Extracted rank 3 post information",
+    "Clicked on post title to access content",
+    "Captured 3 screenshots of the ASCII Clouds visualization",
+    "Generated markdown summary with embedded screenshots"
+  ],
+  "error": null
+}

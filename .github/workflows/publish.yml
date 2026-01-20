@@ -1,0 +1,262 @@
+name: Publish Packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: 'Release type'
+        required: true
+        type: choice
+        options:
+          - dev
+          - stable
+        default: 'dev'
+      version_bump:
+        description: 'Version bump (stable only)'
+        required: false
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: 'patch'
+      dry_run:
+        description: 'Dry run (build only, no publish)'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python build tools
+        run: pip install build twine
+
+      - name: Install dependencies
+        run: npm ci
+
+      # =======================================================================
+      # GUARDS
+      # =======================================================================
+
+      - name: Block stable release from non-main branch
+        if: inputs.release_type == 'stable' && github.ref_name != 'main'
+        run: |
+          echo "::error::Stable releases can only be published from the main branch"
+          echo "Current branch: ${{ github.ref_name }}"
+          echo "Use 'dev' release type for non-main branches"
+          exit 1
+
+      # =======================================================================
+      # VERSION CALCULATION
+      # =======================================================================
+
+      - name: Get current version
+        id: current
+        run: |
+          VERSION=$(grep '"version"' package.json | head -1 | sed 's/.*"version": "\(.*\)".*/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Current version: $VERSION"
+
+      - name: Calculate new version
+        id: version
+        run: |
+          CURRENT="${{ steps.current.outputs.version }}"
+          BRANCH="${{ github.ref_name }}"
+          RELEASE_TYPE="${{ inputs.release_type }}"
+          BUMP="${{ inputs.version_bump }}"
+          DATE=$(date +%Y%m%d)
+          SHA=$(git rev-parse --short HEAD)
+          COMMIT_COUNT=$(git rev-list --count HEAD)
+
+          if [[ "$RELEASE_TYPE" == "stable" ]]; then
+            # Stable release: bump version
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+            case "$BUMP" in
+              major) NEW_VERSION="$((MAJOR + 1)).0.0" ;;
+              minor) NEW_VERSION="$MAJOR.$((MINOR + 1)).0" ;;
+              patch) NEW_VERSION="$MAJOR.$MINOR.$((PATCH + 1))" ;;
+            esac
+            NPM_TAG="latest"
+            PY_VERSION="$NEW_VERSION"
+          else
+            # Dev release: use branch name as tag (sanitized)
+            # vaibhav/skills → vaibhav-skills, fix-bug-123 → fix-bug-123
+            SANITIZED=$(echo "$BRANCH" | tr '[:upper:]/' '[:lower:]-' | tr -cs 'a-z0-9-' '-' | sed 's/^-//;s/-$//')
+
+            # Prevent collision with reserved tags
+            if [[ "$SANITIZED" == "latest" || "$SANITIZED" == "next" ]]; then
+              NPM_TAG="${SANITIZED}-dev"
+            else
+              NPM_TAG="$SANITIZED"
+            fi
+
+            NEW_VERSION="${CURRENT}-${NPM_TAG}.${DATE}.${SHA}"
+            # PyPI uses different format - commit count for PEP 440 compliance (numeric only)
+            PY_VERSION="${CURRENT}.dev${COMMIT_COUNT}"
+          fi
+
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "npm_tag=$NPM_TAG" >> $GITHUB_OUTPUT
+          echo "py_version=$PY_VERSION" >> $GITHUB_OUTPUT
+          echo "release_type=$RELEASE_TYPE" >> $GITHUB_OUTPUT
+
+          echo "========================================"
+          echo "Release Type: $RELEASE_TYPE"
+          echo "Branch: $BRANCH"
+          echo "New Version: $NEW_VERSION"
+          echo "npm Tag: $NPM_TAG"
+          echo "PyPI Version: $PY_VERSION"
+          echo "========================================"
+
+      # =======================================================================
+      # UPDATE VERSIONS
+      # =======================================================================
+
+      - name: Update versions in all files
+        run: |
+          VERSION="${{ steps.version.outputs.new_version }}"
+          PY_VERSION="${{ steps.version.outputs.py_version }}"
+
+          # Update root package.json
+          sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" package.json
+
+          # Update TypeScript SDK
+          sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" packages/sdk-ts/package.json
+
+          # Update E2B package
+          sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" packages/e2b/package.json
+
+          # Update Python package (pyproject.toml) - use PY_VERSION for PyPI compatibility
+          sed -i "s/^version = \".*\"/version = \"$PY_VERSION\"/" packages/sdk-py/pyproject.toml
+
+          # Update Python __version__
+          sed -i "s/__version__ = '.*'/__version__ = '$PY_VERSION'/" packages/sdk-py/evolve/__init__.py
+
+          # Update Python bridge package.json
+          sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" packages/sdk-py/bridge/package.json
+
+          # Sync package-lock.json with updated versions
+          npm install --package-lock-only
+
+          echo "Updated all version files"
+
+      # =======================================================================
+      # BUILD
+      # =======================================================================
+
+      - name: Build all packages
+        run: npm run build
+
+      # =======================================================================
+      # PUBLISH
+      # =======================================================================
+
+      - name: Publish @evolvingmachines/e2b to npm
+        if: inputs.dry_run != true
+        run: |
+          cd packages/e2b
+          npm publish --access public --tag ${{ steps.version.outputs.npm_tag }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @evolvingmachines/sdk to npm
+        if: inputs.dry_run != true
+        run: |
+          cd packages/sdk-ts
+          npm publish --access public --tag ${{ steps.version.outputs.npm_tag }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Build Python package
+        run: |
+          cd packages/sdk-py
+          rm -rf dist/ build/ *.egg-info
+          python -m build
+
+      - name: Publish to PyPI
+        if: inputs.dry_run != true
+        run: |
+          cd packages/sdk-py
+          twine upload dist/*
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+
+      - name: Dry run summary
+        if: inputs.dry_run == true
+        run: |
+          echo "::notice::DRY RUN - No packages were published"
+          echo "Would have published:"
+          echo "  - @evolvingmachines/e2b@${{ steps.version.outputs.new_version }} (tag: ${{ steps.version.outputs.npm_tag }})"
+          echo "  - @evolvingmachines/sdk@${{ steps.version.outputs.new_version }} (tag: ${{ steps.version.outputs.npm_tag }})"
+          echo "  - evolve-sdk==${{ steps.version.outputs.py_version }} (PyPI)"
+
+      # =======================================================================
+      # POST-PUBLISH (stable only)
+      # =======================================================================
+
+      - name: Commit and tag (stable releases only)
+        if: inputs.release_type == 'stable' && inputs.dry_run != true
+        run: |
+          VERSION="${{ steps.version.outputs.new_version }}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Only add version files - not everything
+          git add \
+            package.json \
+            package-lock.json \
+            packages/sdk-ts/package.json \
+            packages/e2b/package.json \
+            packages/sdk-py/pyproject.toml \
+            packages/sdk-py/evolve/__init__.py \
+            packages/sdk-py/bridge/package.json
+
+          git commit -m "Release v$VERSION"
+          git tag "v$VERSION"
+          git push origin ${{ github.ref_name }}
+          git push origin "v$VERSION"
+
+      - name: Summary
+        run: |
+          NPM_TAG="${{ steps.version.outputs.npm_tag }}"
+          NPM_VERSION="${{ steps.version.outputs.new_version }}"
+          PY_VERSION="${{ steps.version.outputs.py_version }}"
+
+          echo "## Published Packages" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Package | Version | Install Command |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|---------|-----------------|" >> $GITHUB_STEP_SUMMARY
+
+          if [[ "${{ inputs.release_type }}" == "stable" ]]; then
+            echo "| @evolvingmachines/e2b | $NPM_VERSION | \`npm install @evolvingmachines/e2b\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| @evolvingmachines/sdk | $NPM_VERSION | \`npm install @evolvingmachines/sdk\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| evolve-sdk (PyPI) | $PY_VERSION | \`pip install evolve-sdk\` |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| @evolvingmachines/e2b | $NPM_VERSION | \`npm install @evolvingmachines/e2b@$NPM_TAG\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| @evolvingmachines/sdk | $NPM_VERSION | \`npm install @evolvingmachines/sdk@$NPM_TAG\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| evolve-sdk (PyPI) | $PY_VERSION | \`pip install evolve-sdk==$PY_VERSION\` |" >> $GITHUB_STEP_SUMMARY
+          fi

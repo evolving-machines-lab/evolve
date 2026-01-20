@@ -1,0 +1,5 @@
+{
+  "passed": true,
+  "reasoning": "The worker's output perfectly meets all the verification criteria. 1) All 214 units (87 occupied and 127 vacant) shown in the PDF's summary were extracted, with a total count of 214 in the JSON. 2) All lease start and end dates are correctly formatted as YYYY-MM-DD or set to null for vacant units. 3) Square footage and monthly rent values are numeric and match the 'Area RSF' (or 'Area LSF' when RSF is zero) and 'Monthly Rent' columns in the PDF respectively. Tenant names for vacant units are correctly set to 'VACANT' as instructed.",
+  "attempts": 1
+}

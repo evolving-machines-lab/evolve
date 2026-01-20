@@ -1,0 +1,1072 @@
+[
+  {
+    "id": 46518131,
+    "author": "analogpixel",
+    "text": "So this is the 4th+ article I&#x27;ve seen on using a VPN to vibe code on your phone.  Would an email interface to Claude code work better?<p>- Email Claude to start the coding<p>- Claude emails you with any thing it needs acked on.<p>- you reply back to emails telling it what to do.<p>- maybe Claude can run your program and send back screen shots.<p>seems easier then getting a vpn working.  What is the downside to using email?",
+    "points": 0,
+    "created_at": 1767731094,
+    "children": [
+      {
+        "id": 46521281,
+        "author": "plagiarist",
+        "text": "I&#x27;d rather have an DM interface and each task has its own little icon or face. You still have to set up one of the text servers and also do VPN but if you&#x27;re already vibe coding that stuff why not make it more pleasant than TUI on your phone?",
+        "points": 0,
+        "created_at": 1767748600,
+        "children": []
+      },
+      {
+        "id": 46519037,
+        "author": "runjake",
+        "text": "<i>&gt; Would an email interface to Claude code work better?</i><p>No.<p><i>&gt; What is the downside to using email?</i><p>Email is clunky and feedback is not immediate.<p><i>&gt; seems easier then getting a vpn working.</i><p>Tailscale is easy for a dev to get going and very reliable. The author uses the Termius SSH app with Mosh, so it keeps the same SSH session going across device sleeps and disconnects. Tmux is helpful, too.<p>I do exactly what the author is doing, except I use a $5 Linode VPS, instead of a Mac at home.<p>He doesn&#x27;t seem to be credited on this page, but I believe Pieter Levels (@levelsio) actually popularized this scheme. The author documents a nearly identical scheme.",
+        "points": 0,
+        "created_at": 1767734783,
+        "children": [
+          {
+            "id": 46520454,
+            "author": "stavros",
+            "text": "I&#x27;m fairly sure that levelsio didn&#x27;t popularize SSHing into a computer from your phone to run a program. We were all doing it before LLMs.",
+            "points": 0,
+            "created_at": 1767742549,
+            "children": [
+              {
+                "id": 46521252,
+                "author": "runjake",
+                "text": "By \u201cthis scheme\u201d I meant combining these several technologies for vibe coding on an iPhone with Claude Code. It\u2019s been a bit of a viral meme on X this week.",
+                "points": 0,
+                "created_at": 1767748362,
+                "children": []
+              },
+              {
+                "id": 46520682,
+                "author": "bigfishrunning",
+                "text": "I agree, I&#x27;m failing to see what&#x27;s novel here... Running an ssh client from a phone has been a thing forever",
+                "points": 0,
+                "created_at": 1767743896,
+                "children": [
+                  {
+                    "id": 46521046,
+                    "author": "mr_toad",
+                    "text": "RDP clients as well.",
+                    "points": 0,
+                    "created_at": 1767746803,
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "id": 46520776,
+                "author": "elemdos",
+                "text": "New ideas build on existing ideas. He said SSH into a computer <i>to run Claude Code on that computer</i>.",
+                "points": 0,
+                "created_at": 1767744513,
+                "children": [
+                  {
+                    "id": 46520918,
+                    "author": "stavros",
+                    "text": "Yeah, I&#x27;ve never read anything levelsio wrote and I sshed into my computer to run Claude Code five minutes after I installed Claude Code and had to leave the house for a bit.<p>It&#x27;s not such a crazy idea.",
+                    "points": 0,
+                    "created_at": 1767745762,
+                    "children": []
+                  },
+                  {
+                    "id": 46521215,
+                    "author": "ehnto",
+                    "text": "The whole point to SSH into a computer is to run the programs on it.",
+                    "points": 0,
+                    "created_at": 1767748064,
+                    "children": []
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": 46519402,
+            "author": "godelski",
+            "text": "While I don&#x27;t use the AI part I have a very similar scheme and it is one of the reasons I encourage people to live in the terminal.<p>The idea is to create a modern &quot;terminal&quot;[0]<p>My main computer is a Macbook Air, which I carry around with me. It&#x27;s purpose is for: internet, using Microsoft products when I&#x27;m forced to, Zoom&#x2F;meetings, and SSH (or Mosh).<p>Most of my work is <i>not</i> done on this Macbook, instead I use it mostly as a terminal. I have a desktop that&#x27;s sitting behind my TV so that it can <i>be</i> my TV and gaming system (yeah I know Monitor &gt; TV. I&#x27;m a filthy casual and I don&#x27;t care). I have a mouse connected to that computer and instead of using a keyboard I use ydotool (Wayland xdotool) with a shortcut on my iPhone or a script on my android phone or from my Macbook. I don&#x27;t have to get up from the couch and I don&#x27;t need a clunky wireless keyboard to clutter my livingroom.<p>Additionally I have a few pis and an old android phone with Tailscale installed on them. That&#x27;s come in handy before as a machine&#x27;s been disconnected and so I couldn&#x27;t ssh from outside. Also makes it really easy to do a jump if you want to keep a machine off Tailscale or you don&#x27;t have full control (like my 3D printer).<p>This setup is very natural feeling if you live in the terminal. I actually started doing this when I started doing HPC work. In a setting like that you&#x27;re never sitting in front of the computer you&#x27;re doing most of your work on so it kinda clicked &quot;why was I restricting myself outside work?&quot; Plus there&#x27;s the side benefits of I always have access to my media, tools, and other stuff. You can do exactly the same thing with a phone but I like having a keyboard and the air is very lightweight and has a long battery life. Any netbook would have done the job tbh.<p>[0] There&#x27;s a reason they&#x27;re called &quot;terminal <i>emulator</i>s&quot; rather than just &quot;terminals&quot;.",
+            "points": 0,
+            "created_at": 1767736397,
+            "children": [
+              {
+                "id": 46520451,
+                "author": "mkoubaa",
+                "text": "Things are trending this way. I call it the PC counter-revolution.",
+                "points": 0,
+                "created_at": 1767742538,
+                "children": []
+              },
+              {
+                "id": 46519610,
+                "author": "fragmede",
+                "text": "If you&#x27;ve got a Mac in the mix, you should be aware that it can use an Apple TV as a monitor, so you can have a wireless extended desktop to anything that takes HDMI.",
+                "points": 0,
+                "created_at": 1767737705,
+                "children": [
+                  {
+                    "id": 46519805,
+                    "author": "godelski",
+                    "text": "Are there any benefits besides a nice GUI? I&#x27;m fairly comfortable with my linux desktop as an interface. TBH the most frustrating part is the iPhone shortcut app I made which I strongly believe is less about me and more than Apple is actively trying to be annoying (I recently had an update that required a minor change because the dictionaries in Shortcuts is idiotic)<p>Also, I heard that you can install Tailscale on it[0], so that can act as a gateway which is nice.<p>[0] <a href=\"https:&#x2F;&#x2F;tailscale.com&#x2F;kb&#x2F;1280&#x2F;appletv\" rel=\"nofollow\">https:&#x2F;&#x2F;tailscale.com&#x2F;kb&#x2F;1280&#x2F;appletv</a>",
+                    "points": 0,
+                    "created_at": 1767738982,
+                    "children": []
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": 46520431,
+            "author": "deanputney",
+            "text": "It wouldn&#x27;t shock me if multiple people came up with this idea independently. I&#x27;ve certainly experimented with it over the last couple years.",
+            "points": 0,
+            "created_at": 1767742421,
+            "children": []
+          }
+        ]
+      },
+      {
+        "id": 46519056,
+        "author": "khy",
+        "text": "I&#x27;ve been using Claude Code in their iOS app (on a Pro account). I just point it at my GitHub repo, and tell it to work on one of the issues I created. It required very little setup beyond what I did for Claude Code CLI.",
+        "points": 0,
+        "created_at": 1767734873,
+        "children": []
+      },
+      {
+        "id": 46519524,
+        "author": "Flere-Imsaho",
+        "text": "Email might work, however if you&#x27;re a Telegram user you could write a bot that runs on your home system that runs the cli commands on your behalf and then sends the output as a response to you.  No need to open up any ports on your router.",
+        "points": 0,
+        "created_at": 1767737221,
+        "children": [
+          {
+            "id": 46521083,
+            "author": "durch",
+            "text": "I&#x27;ve replied with this in another comment, but this seems more pertinent ;)<p>Thats exactly the approach I took with <a href=\"https:&#x2F;&#x2F;github.com&#x2F;cloud-atlas-ai&#x2F;miranda\" rel=\"nofollow\">https:&#x2F;&#x2F;github.com&#x2F;cloud-atlas-ai&#x2F;miranda</a>, Telegram bot, PR is the human review point, tests + CodeRabbit catch most issues.<p>Bot intercepts Claude&#x27;s AskUserQuestion calls via a hook, sends me an inline keyboard, injects my answer back into the session. Claude keeps working, PR still happens\u2014but I can unblock it from my phone in 5 seconds instead of rejecting a PR based on a wrong guess.",
+            "points": 0,
+            "created_at": 1767747055,
+            "children": []
+          },
+          {
+            "id": 46521007,
+            "author": "dogline",
+            "text": "I have custom scripts I use at home to keep track of various personal data, assisted by an LLM.  The idea of using Telegram as a way to have a global, quick, and personal interface from my phone or tablet, is perfect and easy to set up.<p>Claude is making it easier to have bespoke data and dashboards for anything.  We&#x27;re going to make a lot of them, for all reasons.  I&#x27;ve also made apps with Django interfaces, but quick, global interfaces are going to become in demand.",
+            "points": 0,
+            "created_at": 1767746444,
+            "children": []
+          },
+          {
+            "id": 46519877,
+            "author": "gonzaloalvarez",
+            "text": "I didn\u2019t know until I read this comment, but this is exactly what I want. A telegram bot with Claude on the other side and GitHub app to check out the code",
+            "points": 0,
+            "created_at": 1767739316,
+            "children": []
+          },
+          {
+            "id": 46520387,
+            "author": "electroglyph",
+            "text": "Cloudflare worker would work, too",
+            "points": 0,
+            "created_at": 1767742181,
+            "children": []
+          }
+        ]
+      },
+      {
+        "id": 46518331,
+        "author": "LTL_FTC",
+        "text": "I have read of people doing remote coding with clause but through having Claude create pull request. The user then looks through the requests, and either approves or sends it back with edits. Seems like a good way to interact with Claude code, especially once one sets up a test suite and those proposed pull requests have proven not to regress.",
+        "points": 0,
+        "created_at": 1767731888,
+        "children": [
+          {
+            "id": 46520430,
+            "author": "durch",
+            "text": "Same approach here. PR is the human review point, tests + CodeRabbit catch most issues -&gt; <a href=\"https:&#x2F;&#x2F;github.com&#x2F;cloud-atlas-ai&#x2F;miranda\" rel=\"nofollow\">https:&#x2F;&#x2F;github.com&#x2F;cloud-atlas-ai&#x2F;miranda</a>.<p>The gap I wanted to fill: when Claude is genuinely uncertain (&quot;JWT or sessions?&quot; &quot;Breaking change or not?&quot;), it either guesses wrong or punts to the PR description where you can&#x27;t easily respond.<p>Built a Telegram bot that intercepts Claude&#x27;s AskUserQuestion calls via a hook, sends me an inline keyboard, injects my answer back into the session. Claude keeps working, PR still happens\u2014but I can unblock it from my phone in 5 seconds instead of rejecting a PR based on a wrong guess.<p>Works in tandem with a bunch of other LLM enhancers I&#x27;ve built, they&#x27;re linked in the README or that repo",
+            "points": 0,
+            "created_at": 1767742412,
+            "children": []
+          },
+          {
+            "id": 46519927,
+            "author": "magospietato",
+            "text": "This is how I do mobile device coding. Android terminal w. git and gh installed and authenticated. Claude manages the feature branching and PR process; I review the PR in the GitHub mobile app.",
+            "points": 0,
+            "created_at": 1767739613,
+            "children": []
+          },
+          {
+            "id": 46518960,
+            "author": "johnmaguire",
+            "text": "This pretty much sounds like my dream vibe coding dashboard - basically a personal Github populated by AI agents I can assign tasks to. Does this exist yet? Or can something like gitea be setup to behave this way?",
+            "points": 0,
+            "created_at": 1767734430,
+            "children": [
+              {
+                "id": 46519511,
+                "author": "harlanlewis",
+                "text": "In terms of issue tracking and agentic &quot;developers&quot;, with a mobile focus -<p>You can connect Linear to Cursor&#x27;s web agent, which makes Linear issues assignable to the agent directly and kicks off Cursor&#x27;s take on remote coding agent. You can then guide it further via Cursor&#x27;s web chat.<p>If Claude Code on iOS supported Linear MCP (as it does on desktop), you can run a similar issue handoff to agent to issue update workflow, albeit without direct issue assignment to the agent &quot;user&quot;. Easy to use labels aka tags for agent assignment tracking, as well.<p>For my hobby projects, I&#x27;ve been using Linear + agentFlavorOfTheMonth quite happily this way. I imagine Github issues, Asana, whatever could be wired up in place of Linear.",
+                "points": 0,
+                "created_at": 1767737105,
+                "children": []
+              },
+              {
+                "id": 46519625,
+                "author": "fragmede",
+                "text": "Gastown, by Steve Yeggs is that, via tmux. It&#x27;s rather opinionated and still in development, but it&#x27;s worth a look if that&#x27;s what you&#x27;re looking for.",
+                "points": 0,
+                "created_at": 1767737791,
+                "children": [
+                  {
+                    "id": 46521066,
+                    "author": "durch",
+                    "text": "Steve Yegge is building awesome things in this space, but I&#x27;ve found them too heavy, started using bd when it was small, but now its trying to do too much IMO, so made a clone, tailored to my use case -&gt; <a href=\"https:&#x2F;&#x2F;github.com&#x2F;cloud-atlas-ai&#x2F;ba\" rel=\"nofollow\">https:&#x2F;&#x2F;github.com&#x2F;cloud-atlas-ai&#x2F;ba</a>",
+                    "points": 0,
+                    "created_at": 1767746938,
+                    "children": []
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 46518281,
+        "author": "gempir",
+        "text": "Why not use a browser?<p>OpenCode has a webUI, you can simply host that on your machine at home and VPN to it.<p><a href=\"https:&#x2F;&#x2F;opencode.ai&#x2F;docs&#x2F;server&#x2F;\" rel=\"nofollow\">https:&#x2F;&#x2F;opencode.ai&#x2F;docs&#x2F;server&#x2F;</a> (sadly no screenshots, but its a pretty good GUI, looks like their desktop app)",
+        "points": 0,
+        "created_at": 1767731658,
+        "children": [
+          {
+            "id": 46520246,
+            "author": "tailspin2019",
+            "text": "From that page:<p>&gt; The opencode serve command runs a headless HTTP server that exposes an OpenAPI endpoint\u2026<p>Unless I missed it, there\u2019s no mention of a web UI?",
+            "points": 0,
+            "created_at": 1767741406,
+            "children": [
+              {
+                "id": 46520557,
+                "author": "odie5533",
+                "text": "`opencode web` runs the web ui. It&#x27;s very good.",
+                "points": 0,
+                "created_at": 1767743112,
+                "children": []
+              }
+            ]
+          },
+          {
+            "id": 46518572,
+            "author": "pmarreck",
+            "text": "You need tmux to be able to resume the same session from anywhere, mosh-server to make ssh resilient to sketchy mobile connections, and blink shell <a href=\"https:&#x2F;&#x2F;blink.sh&#x2F;\" rel=\"nofollow\">https:&#x2F;&#x2F;blink.sh&#x2F;</a> to have a high quality iOS shell with a mosh and ssh client built right in to resume at any time.<p>Far more resilient and performant than a web client.",
+            "points": 0,
+            "created_at": 1767732894,
+            "children": [
+              {
+                "id": 46520885,
+                "author": "einsteinx2",
+                "text": "&gt; and blink shell <a href=\"https:&#x2F;&#x2F;blink.sh&#x2F;\" rel=\"nofollow\">https:&#x2F;&#x2F;blink.sh&#x2F;</a> to have a high quality iOS shell with a mosh and ssh client built right in to resume at any time<p>I really like Termius, have you tried it? I think I tested out Blink when I was trying various SSH&#x2F;shell apps and\nchose Termius over it, but it\u2019s been so long now that I completely forget why.<p>EDIT: does Blink give you a local shell as well like vs only SSH&#x2F;mosh?",
+                "points": 0,
+                "created_at": 1767745408,
+                "children": []
+              },
+              {
+                "id": 46518630,
+                "author": "gempir",
+                "text": "Well the beauty is the logic lives on the server. The client is just a client.<p>If it disconnects you just reload the page. It can work just fine in the background because it\u2019s not running on your phone.<p>Just like you can refresh the ChatGPT website, but OpenCode lives on your pc at home, not OpenAI servers.",
+                "points": 0,
+                "created_at": 1767733108,
+                "children": [
+                  {
+                    "id": 46518722,
+                    "author": "pmarreck",
+                    "text": "yes but I&#x27;ve never seen a terminal interface embedded in a browser that is as good as a native terminal app interface, and blink shell has been well worth the upfront cost to me (way better than Termius, which was suggested in the writeup)",
+                    "points": 0,
+                    "created_at": 1767733520,
+                    "children": [
+                      {
+                        "id": 46520498,
+                        "author": "kovek",
+                        "text": "Is it easy to move the text cursor around in the text input in blink shell?",
+                        "points": 0,
+                        "created_at": 1767742759,
+                        "children": []
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": 46519431,
+                "author": "alentodorov",
+                "text": "tried tmux but realized claude&#x2F;gemini&#x2F;codex&#x27;s --resume works great and have since started using a single chat for all small work projects",
+                "points": 0,
+                "created_at": 1767736647,
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 46518765,
+        "author": "jscheel",
+        "text": "I\u2019ve been doing some of this through a term on my phone, but it honestly sucks. Other interfaces (telegram, web ui, email) are gonna be much better experiences on your phone.",
+        "points": 0,
+        "created_at": 1767733680,
+        "children": []
+      },
+      {
+        "id": 46518367,
+        "author": "8note",
+        "text": "ive tried slack before, but a challenge is how well you can get results returned back in a way where you can actually see what it did and give proper next steps<p>getting a PR back and being able to put comments on it is fine, but ive had middling success getting qcli at least to actually match the comments with the code that was commented on. i get the sense that there isnt any training with the comments inlined well on a diff:&#x2F;<p>it doesnt have to be a vpn though, i was on an oauth webbrowser terminal, and things like coder[0] let you run vscode on the browser, including on your phone browser. there&#x27;s also happy coder[1] which i tried using to connect between the new builtin android linux vm, and skip all the remote stuff entirely, but the phone would inevitably kill the terminal runbing claude, killing the whole thing. you can currently just run claude from your phone in that, which only has the problem that when the vm crashes, all you can do is wipe the partition.<p>[0] <a href=\"https:&#x2F;&#x2F;coder.com&#x2F;\" rel=\"nofollow\">https:&#x2F;&#x2F;coder.com&#x2F;</a>\n[1] <a href=\"https:&#x2F;&#x2F;happy.engineering&#x2F;\" rel=\"nofollow\">https:&#x2F;&#x2F;happy.engineering&#x2F;</a>",
+        "points": 0,
+        "created_at": 1767732042,
+        "children": []
+      },
+      {
+        "id": 46520740,
+        "author": "aqme28",
+        "text": "I code from my phone via GitHub and the Claude actions plugin.",
+        "points": 0,
+        "created_at": 1767744327,
+        "children": []
+      },
+      {
+        "id": 46518153,
+        "author": "educasean",
+        "text": "I see no downsides. Seems like an actually useful udea.",
+        "points": 0,
+        "created_at": 1767731175,
+        "children": [
+          {
+            "id": 46518172,
+            "author": "9dev",
+            "text": "that would be <i>perfect</i>.",
+            "points": 0,
+            "created_at": 1767731239,
+            "children": [
+              {
+                "id": 46518215,
+                "author": "rbergamini27",
+                "text": "This is genius! The tailscale vpn was stupid easy to setup (I&#x27;m a near novice and figured it out). An email interface with progress updates would be even better than doom coding.",
+                "points": 0,
+                "created_at": 1767731430,
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 46520514,
+        "author": "slashdave",
+        "text": "E-mail is not secure (sent in plain text)",
+        "points": 0,
+        "created_at": 1767742838,
+        "children": [
+          {
+            "id": 46520690,
+            "author": "bigfishrunning",
+            "text": "Unless you set up pgp in your email client...",
+            "points": 0,
+            "created_at": 1767743963,
+            "children": []
+          }
+        ]
+      },
+      {
+        "id": 46518209,
+        "author": "scottbez1",
+        "text": "I\u2019d love this, if only for improved diff reviews possible compared to a terminal window! Would also work better for intermittent connectivity.",
+        "points": 0,
+        "created_at": 1767731383,
+        "children": []
+      },
+      {
+        "id": 46518219,
+        "author": "darknavi",
+        "text": "&gt; What is the downside to using email?<p>Make sure you authenticate somehow to prevent external abuse.",
+        "points": 0,
+        "created_at": 1767731451,
+        "children": [
+          {
+            "id": 46518273,
+            "author": "Natfan",
+            "text": "then run the mail servers locally?",
+            "points": 0,
+            "created_at": 1767731640,
+            "children": []
+          }
+        ]
+      },
+      {
+        "id": 46519034,
+        "author": "aghilmort",
+        "text": "interesting. email. Simple multiple sessions support to reply vs tabbing here there get threaded. clever<p>with vpn vps if want to interact? how would that work?",
+        "points": 0,
+        "created_at": 1767734765,
+        "children": []
+      },
+      {
+        "id": 46518275,
+        "author": "ralfhn",
+        "text": "or text messages? Could be more convenient to reply to a text",
+        "points": 0,
+        "created_at": 1767731643,
+        "children": []
+      },
+      {
+        "id": 46518419,
+        "author": "ZenoArrow",
+        "text": "It&#x27;s amazing to me this is called coding at all. Who knew all project managers and business analysts coming up with business requirements were actually just coding gods sent from the future.",
+        "points": 0,
+        "created_at": 1767732286,
+        "children": []
+      },
+      {
+        "id": 46518462,
+        "author": "j45",
+        "text": "Email is funny - maybe as a backup.  Prompting is chatting.",
+        "points": 0,
+        "created_at": 1767732499,
+        "children": []
+      },
+      {
+        "id": 46518343,
+        "author": "calvinmorrison",
+        "text": "How about leveraging the git email workflow? hey - Claudio submitted a patchset",
+        "points": 0,
+        "created_at": 1767731953,
+        "children": []
+      },
+      {
+        "id": 46518468,
+        "author": "yieldcrv",
+        "text": "Inspiring me to do this in Telegram<p>\u201cWhy not Telegram\u201d<p>all the crypto bros are already there, and maybe some e-commerce",
+        "points": 0,
+        "created_at": 1767732506,
+        "children": []
+      },
+      {
+        "id": 46518530,
+        "author": "pmarreck",
+        "text": "&gt; seems easier then getting a vpn working<p>it could not possibly be easier to get Tailscale up and running on your mac or linux machine, install tmux and mosh on your mac or linux machine, connect to it with Blink Shell <a href=\"https:&#x2F;&#x2F;blink.sh&#x2F;\" rel=\"nofollow\">https:&#x2F;&#x2F;blink.sh&#x2F;</a> on your iOS device that you&#x27;ve also installed tailscale to, and start vibe-coding from anywhere, on a performant, resilient, instantly resumable terminal connection.<p>seriously, it&#x27;s a game-changer",
+        "points": 0,
+        "created_at": 1767732738,
+        "children": [
+          {
+            "id": 46518958,
+            "author": "mulmen",
+            "text": "But I already have email.",
+            "points": 0,
+            "created_at": 1767734420,
+            "children": []
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": 46519851,
+    "author": "magospietato",
+    "text": "I&#x27;m using the Android terminal and Claude Code to vibecode on the go. Or rather, as a fairly boring father of two, when I&#x27;m tied up in the necessary chores of family life - cooking and cleaning. Nothing as complicated as this - just Claude Code and a fairly standard Linux dev term, but it&#x27;s remarkable.<p>Over the recent break, across four or five sessions, I wrote a set of prompts around ~500 words in total.<p>The result was Claude scanning my network for active ports using nmap, fuzzing those ports with cURL, documenting its findings, self-directing web searches for API&#x2F;SDK docs for my Hue bridge and ancient Samsung TV, then building a set of scripts to control my lighting system and a fully functional HTML+JS remote for my TV.<p>The most entertaining part was Claude prompting _me_ to pop into the living room and press the button on the Hue bridge so it could fetch an API key.<p>The most valuable part? The understanding I gained secondary to generative act. I now understand the button on a Hue bridge literally just tells the device to issue a new API key at the next request. I understand how Entertainment mode works, and why. I understand how Samsung SmartThings is mediated via websockets - and just how insecure decade old Samsung TVs are.<p>Around 500 words to gain all this? I hate to buy into the hype, but it feels inflectional.",
+    "points": 0,
+    "created_at": 1767739214,
+    "children": []
+  },
+  {
+    "id": 46518036,
+    "author": "functionmouse",
+    "text": "&gt; What You&#x27;ll Need<p>&gt; A Computer running 24&#x2F;7 with Internet Connection<p>&gt; A Smartphone<p>&gt; A Claude Pro subscription<p>Or.. just install Termux and do it the same way you do it anywhere else?",
+    "points": 0,
+    "created_at": 1767730679,
+    "children": [
+      {
+        "id": 46518054,
+        "author": "b40d-48b2-979e",
+        "text": "Termux with a 10-keyless BT keyboard in bed was a comfy way to solve AOC problems considering it released at midnight in my timezone.",
+        "points": 0,
+        "created_at": 1767730764,
+        "children": [
+          {
+            "id": 46518246,
+            "author": "rbergamini27",
+            "text": "This comment taught me about Termux. Good to know!",
+            "points": 0,
+            "created_at": 1767731539,
+            "children": [
+              {
+                "id": 46521240,
+                "author": "ijustlovemath",
+                "text": "Make sure you install it via FDroid. Also grab Termux:API to be able to write little apps with bash scripts. Here&#x27;s one I did which gives a notification based interface to Pandora: <a href=\"https:&#x2F;&#x2F;github.com&#x2F;ijustlovemath&#x2F;pbr\" rel=\"nofollow\">https:&#x2F;&#x2F;github.com&#x2F;ijustlovemath&#x2F;pbr</a>",
+                "points": 0,
+                "created_at": 1767748286,
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 46520132,
+        "author": "ludocode",
+        "text": "I just use ConnectBot to ssh to my house. It runs tmux and vim well, especially with a little pocket-size folding bluetooth keyboard to go with it.",
+        "points": 0,
+        "created_at": 1767740770,
+        "children": []
+      },
+      {
+        "id": 46518217,
+        "author": "katsura",
+        "text": "And what&#x27;s the recommendation for iOS? Because, as it turns out, the Termux app on the App Store is not the same as the one on the Play Store, just uses the same name.",
+        "points": 0,
+        "created_at": 1767731435,
+        "children": [
+          {
+            "id": 46518344,
+            "author": "hhh",
+            "text": "use blink <a href=\"https:&#x2F;&#x2F;apps.apple.com&#x2F;nl&#x2F;app&#x2F;blink-shell-build-code&#x2F;id1594898306?l=en-GB\">https:&#x2F;&#x2F;apps.apple.com&#x2F;nl&#x2F;app&#x2F;blink-shell-build-code&#x2F;id15948...</a>",
+            "points": 0,
+            "created_at": 1767731956,
+            "children": [
+              {
+                "id": 46518398,
+                "author": "raddan",
+                "text": "Or shellfish. [1]<p>[1] <a href=\"https:&#x2F;&#x2F;secureshellfish.app&#x2F;\" rel=\"nofollow\">https:&#x2F;&#x2F;secureshellfish.app&#x2F;</a>",
+                "points": 0,
+                "created_at": 1767732180,
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 46518056,
+        "author": null,
+        "text": "",
+        "points": 0,
+        "created_at": 1767730765,
+        "children": []
+      },
+      {
+        "id": 46518975,
+        "author": "zingar",
+        "text": "Hang on, is Claude running on your phone&#x2F;tablet and installing large dev dependencies right there? Or which parts of this stack are you replacing with termux?",
+        "points": 0,
+        "created_at": 1767734492,
+        "children": [
+          {
+            "id": 46520392,
+            "author": "kurtis_reed",
+            "text": "Yeah, everything runs on the phone",
+            "points": 0,
+            "created_at": 1767742215,
+            "children": []
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": 46520736,
+    "author": "elemdos",
+    "text": "Being able to \u201ccode\u201d from your phone really feels like a huge change; it never took before because coding from your phone was miserable, but if you\u2019re just coding by having a conversation then it might even be better to do it from your phone. I don\u2019t know what that leads to, but it\u2019s let me fix bugs from bed and build an MVP while moving, so I can\u2019t complain.<p>For anyone looking for a more integrated and <i>smaller</i> approach, I built an open source app builder + runtime: <a href=\"https:&#x2F;&#x2F;github.com&#x2F;tinykit-studio&#x2F;tinykit\" rel=\"nofollow\">https:&#x2F;&#x2F;github.com&#x2F;tinykit-studio&#x2F;tinykit</a><p>Basically gives you a Lovable-like app builder with built-in services (database&#x2F;files&#x2F;auth&#x2F;email&#x2F;payments&#x2F;etc), content and design fields, and a code editor. Code is a single Svelte 5 file, and you can build&#x2F;host unlimited apps on one server. And the server is just node + PocketBase, so runs easy on a $2 VPS. And LLM is BYOKey.",
+    "points": 0,
+    "created_at": 1767744297,
+    "children": [
+      {
+        "id": 46521275,
+        "author": "insane_dreamer",
+        "text": "Typing on the phone is terrible. Could work with good speech to text though",
+        "points": 0,
+        "created_at": 1767748574,
+        "children": []
+      }
+    ]
+  },
+  {
+    "id": 46520735,
+    "author": "shepherdjerred",
+    "text": "I&#x27;ve been working on something similar: <a href=\"https:&#x2F;&#x2F;github.com&#x2F;shepherdjerred&#x2F;monorepo&#x2F;tree&#x2F;main&#x2F;packages&#x2F;clauderon\" rel=\"nofollow\">https:&#x2F;&#x2F;github.com&#x2F;shepherdjerred&#x2F;monorepo&#x2F;tree&#x2F;main&#x2F;package...</a><p>Essentially you run a server on some machine. Sessions are created in Docker containers, K8s pods, or via Zellij (an app similar to tmux).<p>You can:<p>- Directly attach to sessions via Docker attach (built-in via a TUI). You get a normal Claude Code experience, but multiplexed. The switcher&#x2F;UI shows you the status of Claude and the PR (pushed, merge conflicts, CI status, review status, etc.)<p>- Manage sessions via a web UI. Connect to Claude Code directly via your browser. You have access to the usual Claude Code terminal or a native chat view.<p>- Manage sessions via an app. You have access to a native chat view.<p>It achieves isolation via Git worktrees + a proxy so that containers have access to zero credentials (there aren&#x27;t even any Claude code creds in the container), which allows you to more safely use bypass all permissions mode.<p>This works better for me that Claude Code on Web because I have control over the environment Claude is running in. I can give it any Docker image I want, I can have it connect to my local network, etc.<p>It&#x27;s still a WIP (the core bits are there, but it&#x27;s not polished yet), but I&#x27;m hoping it provides a friendlier UX with a similar goal for what the OP has in mind.",
+    "points": 0,
+    "created_at": 1767744293,
+    "children": []
+  },
+  {
+    "id": 46517974,
+    "author": "chankstein38",
+    "text": "If you&#x27;re on Android and can download QPython, it works just fine and has for years.  This seems way overcomplicated, it depends on a remote computer that&#x27;s on 24&#x2F;7?  Ick.",
+    "points": 0,
+    "created_at": 1767730434,
+    "children": [
+      {
+        "id": 46518561,
+        "author": "PopePompus",
+        "text": "Also, if your Android phone is a Pixel, you can run the recently added Terminal app, which runs a plain vanilla Debian distribution within a VM. So you then have a pocketable Linux machine to develop code on.   Not only does Python run on it, you can install the entire Anaconda Python suite.",
+        "points": 0,
+        "created_at": 1767732838,
+        "children": [
+          {
+            "id": 46518916,
+            "author": "gloxkiqcza",
+            "text": "Wow, that\u2019s cool! I wonder whether one day Apple is going to allow something like this with headless \u201cmacOS\u201d VM on iPadOS to make it a viable local development platform.",
+            "points": 0,
+            "created_at": 1767734235,
+            "children": []
+          },
+          {
+            "id": 46519502,
+            "author": "cess11",
+            "text": "Why would that be preferable to Termux?",
+            "points": 0,
+            "created_at": 1767737056,
+            "children": [
+              {
+                "id": 46519844,
+                "author": "PopePompus",
+                "text": "Because, wonderful as Termux is, it has a very nonstandard filesystem layout, so installation scripts for something like Anaconda will not run without extensive modifications. And Termux has no access to &#x2F;proc, &#x2F;dev etc., so lots of utilities fail. Since Terminal provides a full Linux VM, all programs that will run on Linux just work as expected.",
+                "points": 0,
+                "created_at": 1767739163,
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 46518268,
+        "author": "rbergamini27",
+        "text": "Sadly I&#x27;m an iPhone kid - and yeah the 24&#x2F;7 computer running is not ideal. It&#x27;s been nice building on the server that I&#x27;m using to host the app, but then again I could just run the Dockerfiles via QPython and push the code via git?",
+        "points": 0,
+        "created_at": 1767731630,
+        "children": []
+      }
+    ]
+  },
+  {
+    "id": 46518312,
+    "author": "zahlman",
+    "text": "Historically I had thought there was a pendulum swing between using local computing resources vs. having a dumb terminal to access something remotely.<p>But now instead of swinging back to local resources, apparently we&#x27;re proposing to <i>add a second layer</i> of remote access (phone -&gt; computer -&gt; Claude servers).",
+    "points": 0,
+    "created_at": 1767731790,
+    "children": [
+      {
+        "id": 46519478,
+        "author": "godelski",
+        "text": "In the last 5 years I pretty much fully migrated to my laptop being a terminal for other machines. I more use it like a local machine in HPC: web browsing, word processing, scripting. Anything serious is done remotely. But I also live in the terminal and so realistically what&#x27;s the difference? 99% of the time the result is that I get to use a &quot;big&quot; computer without having to carry it around.<p>FWIW, I&#x27;m not a big fan of AI coding. I use AI (including LLMs) and I am an AI researcher, but the vibe coding just hasn&#x27;t clicked despite constant efforts. I guess it can make more sense to do it if you&#x27;re programming from your phone because while normally typing isn&#x27;t the bottleneck it definitely is on the phone (or at least far less comfortable)",
+        "points": 0,
+        "created_at": 1767736898,
+        "children": [
+          {
+            "id": 46519938,
+            "author": "wolfgang000",
+            "text": "Same setup as mine, I have an OpenVPN server running in my router, and my main PC has wake-on-lan and a KVM as a backup to turn it on and off.<p>I have an old used Dell Latitude that I use as a pseudo thin client. I ssh into my PC, and everything just works.<p>I really like this setup because I only have one environment, so everything is there, and I don&#x27;t have to install anything in the laptop",
+            "points": 0,
+            "created_at": 1767739695,
+            "children": [
+              {
+                "id": 46520469,
+                "author": "godelski",
+                "text": "<p><pre><code>  &gt; I really like this setup because I only have one environment, so everything is there, and I don&#x27;t have to install anything in the laptop\n</code></pre>\nYeah that&#x27;s one of my favorite parts. Same about living in the terminal. I can be effective anywhere nearly instantly. I carry everything around in my dotfiles and keep it small (keep the .git folder small and don&#x27;t add anything except text files)[0].<p>On that note, one thing I highly recommend to people is to add some visual clues to tell you which machine you&#x27;re on. I use starship and have a few indicators but I also have some PS1 exports that I&#x27;ve used in the past or use in new tmp instances (I <i>HIGHLY</i> recommend also doing this for when you&#x27;re using the root account). It can get confusing when you have different tabs on different machines and it is easy to mistake which one you&#x27;re on.<p>[0] I also recommend keeping notes there if you like writing in markdown. Files are so tiny that it&#x27;s worth having them. It&#x27;s benefited me more times than I can count.",
+                "points": 0,
+                "created_at": 1767742628,
+                "children": []
+              }
+            ]
+          },
+          {
+            "id": 46519680,
+            "author": "zahlman",
+            "text": "My desktop is 11 years old, but I still feel like it does so much that I wouldn&#x27;t want any cloud services <i>except</i> for AI. (And there&#x27;s no way this thing would handle a useful local model, but I&#x27;m also really not very enthused about the kind of data sharing involved in remote AI use.)",
+            "points": 0,
+            "created_at": 1767738148,
+            "children": [
+              {
+                "id": 46519741,
+                "author": "godelski",
+                "text": "I mean the power of the work machine really depends on what your needs are. Definitely should adapt to whatever your needs are.<p><pre><code>  &gt; And there&#x27;s no way this thing would handle a useful local model\n</code></pre>\nSo if you have a setup like mine then it is fairly trivial to incorporate that (or anything else). Either way you&#x27;ll need a machine that can do the local AI though. Either that is on your &quot;work machine&quot; or you run the AI on a separate machine. You could even rent a machine and as long as you add it to your Tailscale network then you&#x27;re connected.<p>I strongly suggest having a workhorse machine and then let other devices be your terminal into it. Your terminals can be very cheap (or an old machine) or as suggested, your phone.",
+                "points": 0,
+                "created_at": 1767738608,
+                "children": [
+                  {
+                    "id": 46520180,
+                    "author": "zahlman",
+                    "text": "I appreciate the thought, but advice like this is completely irrelevant to my current circumstances (and personal principles) and would be very expensive (respectively, emotionally unpleasant) to implement.",
+                    "points": 0,
+                    "created_at": 1767741040,
+                    "children": [
+                      {
+                        "id": 46520397,
+                        "author": "godelski",
+                        "text": "Just trying to help given that you responded. I&#x27;m happy to help you find solutions but the constraints might be too much, unfortunately. If you don&#x27;t have a machine that can run local AI and don&#x27;t have the funds to buy one then frankly it just isn&#x27;t in the cards. But hey, if you don&#x27;t want to use AI or at least willing to use non-local then the setup probably doesn&#x27;t require you to spend a dime.",
+                        "points": 0,
+                        "created_at": 1767742251,
+                        "children": []
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 46519203,
+        "author": "bonesss",
+        "text": "Hey, come on, it could be better: you could have hundreds of employees venting directly to chat logs held by Microsoft detailing all your internal politics, planning, customer acquisition strategies, code, integrations desires, excel sheets, emails, and projects.<p>Nothing could possibly go wrong, those guys are always 100% trustworthy and reliable, contracts and NDAs with them are ironclad and easily enforceable\u2026 \u2026 o_o",
+        "points": 0,
+        "created_at": 1767735515,
+        "children": []
+      }
+    ]
+  },
+  {
+    "id": 46517799,
+    "author": "Aldipower",
+    "text": "Coding on a phone really isn&#x27;t something new. With tmux a lot of people created crazy things directly on their phone. In some countries this even is the only possibility to code at all, because there are no laptops.<p>The example use case images are very funny though! :-)",
+    "points": 0,
+    "created_at": 1767729658,
+    "children": [
+      {
+        "id": 46517971,
+        "author": "epolanski",
+        "text": "Which countries in the world don&#x27;t sell laptops?",
+        "points": 0,
+        "created_at": 1767730421,
+        "children": [
+          {
+            "id": 46517984,
+            "author": "robertfw",
+            "text": "there are going to be quite a lot of places where getting a laptop is a considerable expense",
+            "points": 0,
+            "created_at": 1767730503,
+            "children": [
+              {
+                "id": 46519386,
+                "author": "epolanski",
+                "text": "Why does it have to be a laptop, and why does it need to be new?<p>There aren&#x27;t that many places in 2025 where getting a phone with internet is significantly cheaper than getting some scrappy laptop or desktop.",
+                "points": 0,
+                "created_at": 1767736269,
+                "children": [
+                  {
+                    "id": 46520960,
+                    "author": "basisword",
+                    "text": "&gt;&gt; There aren&#x27;t that many places in 2025 where getting a phone with internet is significantly cheaper than getting some scrappy laptop or desktop.<p>No, but it&#x27;s not a choice between a phone and a laptop. You NEED a phone. So you use what you&#x27;ve got. I&#x27;ve done work helping developers in less developed countries and you frequently find they&#x27;re sending screenshots of code they&#x27;ve written on phones.",
+                    "points": 0,
+                    "created_at": 1767746068,
+                    "children": []
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": 46519045,
+            "author": "gmueckl",
+            "text": "There are countries where the market for PCs and laptops is really tiny and the stores sell them at markups compared to US&#x2F;European prices. Many of these countries are low wage countries, too, so these markups have a big impact on affordability.",
+            "points": 0,
+            "created_at": 1767734822,
+            "children": [
+              {
+                "id": 46519335,
+                "author": null,
+                "text": "",
+                "points": 0,
+                "created_at": 1767736007,
+                "children": []
+              }
+            ]
+          },
+          {
+            "id": 46517985,
+            "author": "guywithahat",
+            "text": "I assume he means people are too poor to have multiple devices, and if you only have one it&#x27;s probably a phone. That said I&#x27;m dubious anyone who only has a phone is doing meaningful coding",
+            "points": 0,
+            "created_at": 1767730507,
+            "children": [
+              {
+                "id": 46518191,
+                "author": "fataleszumittag",
+                "text": "There is this guy: <a href=\"https:&#x2F;&#x2F;github.com&#x2F;OXY2DEV&#x2F;markview.nvim&#x2F;issues&#x2F;216#issuecomment-2522199537\" rel=\"nofollow\">https:&#x2F;&#x2F;github.com&#x2F;OXY2DEV&#x2F;markview.nvim&#x2F;issues&#x2F;216#issuecom...</a>. I haven\u2018t used his plugin, but it seems quite popular (+3k stars). I guess ergonomics don\u2018t matter so much yet when you are young..",
+                "points": 0,
+                "created_at": 1767731316,
+                "children": [
+                  {
+                    "id": 46518437,
+                    "author": "guywithahat",
+                    "text": "Huh, makes you wonder if it&#x27;s actually doing it on his phone or if he has a keyboard and maybe dock and monitor he attaches it to. I suppose my original comment was too broad, there was a point not too long ago when everyone wanted to replace their laptop with their phone. Samsung even let you dual boot linux from your phone with DeX",
+                    "points": 0,
+                    "created_at": 1767732383,
+                    "children": []
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": 46520570,
+    "author": "999900000999",
+    "text": "My flow is GitHub issues+ GitHub Copilot+ Web Deployments from GitHub actions.<p>I can just ask GitHub to fix something from the mobile app, and then set it to build on PR merge. It works most of the time, but you&#x27;d have to be absolutely wacky to do it in production or with any code you actually care about",
+    "points": 0,
+    "created_at": 1767743192,
+    "children": []
+  },
+  {
+    "id": 46517853,
+    "author": "cliffaust",
+    "text": "I remember when I started learning coding, and didn&#x27;t have a computer. I literally used to use my phone to write code - terrible experience, but I was determined",
+    "points": 0,
+    "created_at": 1767729844,
+    "children": [
+      {
+        "id": 46518003,
+        "author": "mattlutze",
+        "text": "I remember having some kind of a shell app on my iPod Touch in college and needing to run and find wifi a few times to troubleshoot something at a job I was student working at.<p>They were fun times :D",
+        "points": 0,
+        "created_at": 1767730566,
+        "children": []
+      },
+      {
+        "id": 46517979,
+        "author": "wahnfrieden",
+        "text": "I wrote C with a compiler running on my Palm Pilot well before smartphones existed yet",
+        "points": 0,
+        "created_at": 1767730466,
+        "children": []
+      },
+      {
+        "id": 46518061,
+        "author": "gxs",
+        "text": "Luckily I think in this day and age it\u2019d be more viable and not as miserable as an experience - dare I say more accessible<p>You can connect an external keyboard to your phone and if you can swing getting a cheap IPS panel that displays text clearly enough, you\u2019d have a working set up<p>Anyway, kudos to you, I love reading stories about determination",
+        "points": 0,
+        "created_at": 1767730772,
+        "children": []
+      },
+      {
+        "id": 46517935,
+        "author": "esafak",
+        "text": "Imagine doing that on a time share system through a rotary phone...",
+        "points": 0,
+        "created_at": 1767730256,
+        "children": [
+          {
+            "id": 46518434,
+            "author": "themadturk",
+            "text": "It wasn&#x27;t coding, but tech support...I was on vacation from my law office IT job. All I had was my PalmPilot, the clip-on modem, and my sister&#x27;s landline phone system. I spent 2-3 hours one day exchanging email with my firm&#x27;s law librarian (the only other semi-technical person in the firm) troubleshooting some odd network problem. We got it done, but it was torture, tapping out messages with the Palm&#x27;s stylus.",
+            "points": 0,
+            "created_at": 1767732363,
+            "children": []
+          }
+        ]
+      },
+      {
+        "id": 46517871,
+        "author": "fragmede",
+        "text": "I remember when I started learning coding. I didn&#x27;t have the Internet. It was also terrible and I was also determined.",
+        "points": 0,
+        "created_at": 1767729910,
+        "children": [
+          {
+            "id": 46518050,
+            "author": "Bridged7756",
+            "text": "When I started learning coding I had to write my C code on paper and have it sent by mule to the nearby city where the only computer in the area existed. Only a week later I would hear back the result of my programs.",
+            "points": 0,
+            "created_at": 1767730743,
+            "children": [
+              {
+                "id": 46518449,
+                "author": "raddan",
+                "text": "I assume you\u2019re joking, but I have a Cuban acquaintance who actually did something like this. He did everything on paper and even won a national coding competition without ever having actually used a computer. Of course, as soon as he had the opportunity to leave Cuba, he left for good.",
+                "points": 0,
+                "created_at": 1767732430,
+                "children": []
+              },
+              {
+                "id": 46518247,
+                "author": "CalRobert",
+                "text": "I vaguely recall a service in the 90&#x27;s where you&#x27;d write HTML on paper and mail it to them and they would make a website for you...",
+                "points": 0,
+                "created_at": 1767731546,
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 46518141,
+        "author": "Bridged7756",
+        "text": "When I started learning coding, we had to run 50 kilometers through dense jungle, fight Jaguars and jump over snakes, to get to the only computer in the region. I saw a lot of friends die during the daily journey. The teacher was a shaman too, very knowledgeable on C. He would teach us rituals and stuff.",
+        "points": 0,
+        "created_at": 1767731134,
+        "children": [
+          {
+            "id": 46518196,
+            "author": "9dev",
+            "text": "That&#x27;s cute! I had to cross the Dari\u00e9n in both directions to get there!",
+            "points": 0,
+            "created_at": 1767731332,
+            "children": []
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": 46520561,
+    "author": "kovek",
+    "text": "I recommend <a href=\"https:&#x2F;&#x2F;happy.engineering&#x2F;\" rel=\"nofollow\">https:&#x2F;&#x2F;happy.engineering&#x2F;</a> . It is very easy to set up. I can have an instance in a container which contains my repository and lots of packages&#x2F;binaries necessary for the work. I can then use the different binaries to run commands in the container. I was able to easily do `ls -la` in the container and email that to myself, all done from my phone. You can also connect it to applescript and whatnot in order to send sms messages, or you can connect to whatsapp. I was able to make it extract the top 5 headlines on hacker news, get the top ideas being discussed in the comments for each submission, and send all of that into my Apple Reminders for me to read on my phone.<p>No VPN needed.",
+    "points": 0,
+    "created_at": 1767743139,
+    "children": [
+      {
+        "id": 46520650,
+        "author": "kovek",
+        "text": "I&#x27;m looking at Opencode and it might be better because it allows you to abort a task. VPN needed.",
+        "points": 0,
+        "created_at": 1767743720,
+        "children": []
+      }
+    ]
+  },
+  {
+    "id": 46518574,
+    "author": "twism",
+    "text": "I use a bespoke hacker software keyboard (ctrl&#x2F;meta&#x2F;custom keys for GNU screen and emacs) and also bespoke SSH client (fork of the original irssiconnectbot) for years.<p>My phone is the original Pixel Fold. You would think I use it unfolded but the passport form factor lends itself to be almost as productive folded that I use it that way most of the time. Unfolded it&#x27;s just a bit better experience (bigger keys &#x2F; more display real estate&#x2F; more characters per line&#x2F; etc).<p>With that said I&#x27;m looking forward to the Click Communicator: <a href=\"https:&#x2F;&#x2F;clicks.tech&#x2F;communicator\" rel=\"nofollow\">https:&#x2F;&#x2F;clicks.tech&#x2F;communicator</a><p>I&#x27;ve also been meaning to write about my setup and open sourcing my tools.<p>Oh. Writing clojure helps due to the terseness of the language. Not sure it would be a pleasant experience writing something like Java with the 80 character line limit I try to impose on myself",
+    "points": 0,
+    "created_at": 1767732904,
+    "children": []
+  },
+  {
+    "id": 46520460,
+    "author": "mands",
+    "text": "I&#x27;ve seen this concept a few times recently and am interested.<p>However, what&#x27;s the benefit over just using the &quot;Claude Code for Web&quot; feature built into the Claude Code mobile app?<p>It clones your repo into a VM which has a bunch of dev tools installed, you can install additional packages, set env vars, and then prompt it remotely. The sessions can be continued from the web and desktop apps, and it can even be &quot;teleported&quot; into the terminal app when back at a laptop&#x2F;desktop.<p>Would be great to understand what the differences &#x2F; advantages of OP approach are.",
+    "points": 0,
+    "created_at": 1767742566,
+    "children": [
+      {
+        "id": 46520839,
+        "author": "elemdos",
+        "text": "I feel like there\u2019s something special about connecting to a server to build and deploying on the same server. Claude Code on the web lets you connect to a repo, test the code, and deploy it, but then you have to host the app and data somewhere else to take it live. IMO the ideal is doing everything in one place and it seems like a lot of dev tools are going in that direction too (v0, val town, deno deploy).",
+        "points": 0,
+        "created_at": 1767745028,
+        "children": []
+      },
+      {
+        "id": 46520749,
+        "author": "not_ai",
+        "text": "I\u2019ve only used web codex version but everything about it was slower than what\u2019s described here, broken flows, more rate limited and impossible to \u201chuman in the loop\u201d before a PR.",
+        "points": 0,
+        "created_at": 1767744361,
+        "children": []
+      }
+    ]
+  },
+  {
+    "id": 46518355,
+    "author": "parliament32",
+    "text": "&gt; A Claude Pro subscription<p>&quot;Doom Slopping&quot; might be more fitting.",
+    "points": 0,
+    "created_at": 1767731997,
+    "children": [
+      {
+        "id": 46518513,
+        "author": "rbergamini27",
+        "text": "Exactly",
+        "points": 0,
+        "created_at": 1767732672,
+        "children": []
+      }
+    ]
+  },
+  {
+    "id": 46520446,
+    "author": "kator",
+    "text": "I use Terminus with Zellij and keep about 8 sessions going with a combination of Claude and Codex, and once in a while, Gemini.  It&#x27;s great when you&#x27;re sitting in a docotor&#x27;s office lobby bored out of your skull and when you get back to your desk you just join the session and it&#x27;s all right there.",
+    "points": 0,
+    "created_at": 1767742482,
+    "children": []
+  },
+  {
+    "id": 46519025,
+    "author": "dminor",
+    "text": "If you have GitHub copilot you can create github issues and assign them to copilot. All you need is a browser.",
+    "points": 0,
+    "created_at": 1767734741,
+    "children": []
+  },
+  {
+    "id": 46519472,
+    "author": "hmokiguess",
+    "text": "I really want to use and like this, but I feel like I need a different UX &#x2F; UI for my phone. I think adoption of this development workflow at large is going to be a design challenge more than a setup&#x2F;devops one.",
+    "points": 0,
+    "created_at": 1767736865,
+    "children": []
+  },
+  {
+    "id": 46518261,
+    "author": "skybrian",
+    "text": "I&#x27;m using exe.dev for something like this. Well, from a laptop, but others have done it from their phone.<p>I&#x27;d link to a blog post about my setup, but I&#x27;m still writing it. Here&#x27;s someone else&#x27;s blog post:<p><a href=\"https:&#x2F;&#x2F;commaok.xyz&#x2F;ai&#x2F;just-in-time-software&#x2F;\" rel=\"nofollow\">https:&#x2F;&#x2F;commaok.xyz&#x2F;ai&#x2F;just-in-time-software&#x2F;</a>",
+    "points": 0,
+    "created_at": 1767731600,
+    "children": []
+  },
+  {
+    "id": 46520089,
+    "author": "not_ai",
+    "text": "This can be done not just with Claude but also with codex and gemeni cli. Well technically anything that has a cli interface.<p>I run both gemeni (fee) and codex (paid), with tmux thrown in to switch between phone and laptop. Laptop runs vscode with ssh to my server but I could also use the web version of vscode.",
+    "points": 0,
+    "created_at": 1767740542,
+    "children": []
+  },
+  {
+    "id": 46518110,
+    "author": "cons0le",
+    "text": "We need to take this idea further. Instead of &quot;remote first&quot;, I&#x27;m waiting for the first company that will bodly declare &quot;you can do all your work on your phone&quot;.<p>I&#x27;m tired of lugging my laptop around. Let me work from the beach with my phone and ar glasses.",
+    "points": 0,
+    "created_at": 1767730980,
+    "children": [
+      {
+        "id": 46518292,
+        "author": "rbergamini27",
+        "text": "Please hire me when you make this happen! The tinkering started because I wanted to go outside to code but sitting with your laptop in the park is too strange.",
+        "points": 0,
+        "created_at": 1767731714,
+        "children": [
+          {
+            "id": 46518560,
+            "author": "cons0le",
+            "text": "I&#x27;ve used this for a decade and still use it. Easy compatibility with tmux, can ssh, use llm, etc.<p><a href=\"https:&#x2F;&#x2F;github.com&#x2F;fandreuz&#x2F;TUI-ConsoleLauncher\" rel=\"nofollow\">https:&#x2F;&#x2F;github.com&#x2F;fandreuz&#x2F;TUI-ConsoleLauncher</a>",
+            "points": 0,
+            "created_at": 1767732831,
+            "children": []
+          },
+          {
+            "id": 46518915,
+            "author": "vaylian",
+            "text": "&gt; sitting with your laptop in the park is too strange.<p>Why should that be strange?",
+            "points": 0,
+            "created_at": 1767734235,
+            "children": []
+          }
+        ]
+      },
+      {
+        "id": 46518939,
+        "author": "adhamsalama",
+        "text": "Just install Termux and you&#x27;re good to go.",
+        "points": 0,
+        "created_at": 1767734354,
+        "children": []
+      }
+    ]
+  }
+]

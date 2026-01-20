@@ -1,0 +1,21 @@
+{
+  "title": "Automatically instrumenting Flask views with StatsD",
+  "summary": "A 2015 blog post by Steinn (a developer at Takumi, formerly of QuizUp) discussing automatic instrumentation of Flask web views using StatsD for metrics collection. The post describes middleware and context manager approaches to automatically emit StatsD timing metrics from Flask views without manually adding decorators to every endpoint. The author credits Jökull Sólberg (CTO of QuizUp, now founder of Takumi) with the original technique. Despite the technical merit, the article received no comments on Hacker News.",
+  "what_happened": "Over the next 10 years, StatsD remained foundational to monitoring but evolved within a broader observability ecosystem. By 2026, StatsD is still widely adopted as an industry standard protocol for metrics collection, supported by virtually all major monitoring platforms (Datadog, New Relic, Instana, etc.). However, the landscape shifted toward unified observability platforms that combine metrics, traces, logs, and AI-powered analytics (Datadog, Dynatrace, SigNoz). OpenTelemetry emerged as a more comprehensive standard that incorporates StatsD alongside distributed tracing. Flask remained popular but faced competition from FastAPI, which gained significant traction post-2020. Regarding the companies mentioned: Datadog (mentioned as the author's monitoring service) became a massive success story, IPO'ing in 2019 at $8.7B and growing to a $46.79B market cap by 2026. QuizUp, the game that demonstrated the scale that Flask could handle (1M users in a week), shut down in 2016 after NBC canceled its TV show deal, and the company was acquired by Glu Mobile for $7.5M. Takumi, the influencer platform where this blog post was written, survived and continued operating, targeting £25M+ revenue in 2026 with plans for a strategic exit.",
+  "most_prescient": {
+    "user": "No comments",
+    "reason": "The article received zero comments on Hacker News, so there were no commenters to evaluate. However, the article itself was prescient in advocating for automatic metrics instrumentation, which became a core principle of modern observability platforms and APM tools."
+  },
+  "most_wrong": {
+    "user": "No comments",
+    "reason": "Without any comments, there were no predictions to be proven wrong. The post's technical approach remains valid, though it foreshadowed a shift toward even more automated observability solutions."
+  },
+  "notable_aspects": "This is a fascinating retrospective despite having zero comments. The article is written from a moment in tech history with significant hindsight implications: (1) The author proudly mentions launching Takumi on November 11, 2015, and that company would survive and thrive while QuizUp (their previous employer and source of pride for tech choices) would shut down within a year. (2) Datadog, mentioned casually as their monitoring service, became a $46.79B company by 2026, one of the most successful SaaS exits. (3) The technical stack choices (Flask + Python + StatsD) proved durable - while alternatives emerged, these technologies remain relevant 11 years later. (4) The article demonstrates the culture of metrics-driven development at emerging startups, a practice that became industry standard by 2026. (5) The author's note 'I have a nagging suspicion I'll discover some unpaid price for this magic' was prophetic in a way - the future did bring more sophisticated observability requirements, though the basic approach remained sound.",
+  "grades": {
+    "author_steinn": {
+      "grade": "A+",
+      "rationale": "The technical implementation described proved sound and prescient. The middleware approach became a best practice pattern widely adopted in monitoring infrastructure. Steinn worked at two companies that represent divergent outcomes - QuizUp's spectacular rise and failure, and Takumi's sustained growth - demonstrating solid technical judgment independent of business outcomes. The code and approach described were practical and ahead of the curve."
+    }
+  },
+  "score": 9
+}

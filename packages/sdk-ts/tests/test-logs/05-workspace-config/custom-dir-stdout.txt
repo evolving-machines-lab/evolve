@@ -1,0 +1,8 @@
+{"type":"init","timestamp":"2025-12-17T21:04:25.674Z","session_id":"aa34da63-3fa5-4334-b0a7-5b5e07acda30","model":"gemini-3-flash-preview"}
+{"type":"message","timestamp":"2025-12-17T21:04:25.675Z","role":"user","content":"What is your current working directory? Use pwd command."}
+{"type":"tool_use","timestamp":"2025-12-17T21:04:26.943Z","tool_name":"run_shell_command","tool_id":"run_shell_command-1766005466943-f5d4bdd41d5f5","parameters":{"command":"pwd","description":"Get the current working directory."}}
+{"type":"tool_result","timestamp":"2025-12-17T21:04:27.124Z","tool_id":"run_shell_command-1766005466943-f5d4bdd41d5f5","status":"success","output":"/home/user/custom-workspace"}
+{"type":"tool_use","timestamp":"2025-12-17T21:04:28.679Z","tool_name":"write_file","tool_id":"write_file-1766005468679-4aaa6cea02d83","parameters":{"content":"/home/user/custom-workspace\n","file_path":"output/cwd.txt"}}
+{"type":"tool_result","timestamp":"2025-12-17T21:04:28.752Z","tool_id":"write_file-1766005468679-4aaa6cea02d83","status":"success"}
+{"type":"message","timestamp":"2025-12-17T21:04:30.065Z","role":"assistant","content":"/home/user/custom-workspace","delta":true}
+{"type":"result","timestamp":"2025-12-17T21:04:30.078Z","status":"success","stats":{"total_tokens":18228,"input_tokens":18036,"output_tokens":51,"duration_ms":4404,"tool_calls":2}}

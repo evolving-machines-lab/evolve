@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+.venv/
+__pycache__/
+*.egg-info/
+
+# Build outputs
+dist/
+build/
+*.pyc
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test artifacts
+.pytest_cache/
+coverage/
+.nyc_output/
+
+# Lock files (keep package-lock.json for reproducible builds)
+uv.lock

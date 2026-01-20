@@ -1,0 +1,4 @@
+{"type":"init","timestamp":"2025-12-17T21:05:48.318Z","session_id":"571e5d16-f275-4fc2-9028-80cb2fa76d0b","model":"gemini-3-flash-preview"}
+{"type":"message","timestamp":"2025-12-17T21:05:48.319Z","role":"user","content":"Say hello briefly"}
+{"type":"message","timestamp":"2025-12-17T21:05:50.645Z","role":"assistant","content":"Hello. I'm ready to assist you with your project in `/home/user/workspace`. What's your first command?","delta":true}
+{"type":"result","timestamp":"2025-12-17T21:05:50.674Z","status":"success","stats":{"total_tokens":6059,"input_tokens":5920,"output_tokens":27,"duration_ms":2356,"tool_calls":0}}

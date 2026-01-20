@@ -1,0 +1,11 @@
+{
+  "winnerIndex": 0,
+  "reasoning": "Candidate 0 provided more complete data, particularly regarding square footage. It correctly captured square footage from the LSF column when the RSF column was zero (e.g., units COGECO and MSC2), whereas Candidate 1 reported 0.0 in those cases. Candidate 0 also accurately transcribed unit numbers like 'STG10-1', which Candidate 1 truncated to 'STG10'. Both candidates followed the requested date format and rent accuracy requirements.",
+  "judgeMeta": {
+    "run_id": "5e244a9a3185eb82",
+    "operation": "bestof-judge",
+    "tag": "rentroll-map-2-bestof-judge",
+    "sandbox_id": "iyn08668j5p4zpfzbr1lh",
+    "candidate_count": 2
+  }
+}

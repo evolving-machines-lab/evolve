@@ -1,0 +1,23 @@
+{
+    "name": "evolve-sdk-quickstart",
+    "type": "module",
+    "scripts": {
+        "01": "npx tsx 01-hello-agent.ts",
+        "02": "npx tsx 02-streaming.ts",
+        "03": "npx tsx 03-mcp-chrome.ts",
+        "04": "npx tsx 04-multi-turn.ts",
+        "05": "npx tsx 05-structured-output.ts",
+        "06": "npx tsx 06-map-verify.ts",
+        "07": "npx tsx 07-map-bestof.ts",
+        "08": "npx tsx 08-map-filter-reduce.ts"
+    },
+    "dependencies": {
+        "@evolvingmachines/sdk": "latest",
+        "dotenv": "^16.0.0",
+        "zod": "^3.23.0"
+    },
+    "devDependencies": {
+        "@types/node": "^22.0.0",
+        "typescript": "^5.0.0"
+    }
+}

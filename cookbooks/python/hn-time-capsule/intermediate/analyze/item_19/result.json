@@ -1,0 +1,82 @@
+{
+  "title": "Use micromorts to fight terrorism",
+  "summary": "This November 2015 article, written just days after the Paris attacks (130 deaths), argues for using micromorts—a unit representing a one-in-a-million chance of death—to rationalize fear of terrorism. The author contends that the 2.5 micromorts from the attacks is comparable to everyday risks like motorcycle riding, and that understanding this statistically makes terrorism less terrifying. The 90-comment discussion reveals deep disagreement: some commenters agreed with the probabilistic approach, while others argued that terrorism is fundamentally different from random accidents, that it deserves a proportional response on moral grounds, and that micromort calculations fail to account for black swan events, geographic variation, and the psychological impact of deliberate violence.",
+  "what_happened": "The article's statistical optimism proved prescient in some ways, wrong in others. Globally, 2015 was indeed the deadliest year for terrorism at 29,376 deaths, but the trend has been decisively downward. By 2022, deaths fell to 6,701 (77% lower than 2015's peak). However, this rebounded to 8,352 deaths in 2025, still 71% below the peak. ISIS, which was at its apex in 2015 when the article was written, collapsed dramatically: it lost 95% of its territory by December 2017 and was effectively defeated by governments by November 2017. Yet terrorism didn't disappear as a concern—it simply shifted geographically and evolved tactically. France itself experienced ongoing security challenges, with the state of emergency lasting years and cultural impacts persisting. The article's fundamental claim—that terrorism poses a statistically minor risk—remains true and has become easier to demonstrate with hindsight, yet governments and citizens have not behaved according to this logic, continuing massive security expenditures and policy changes.",
+  "most_prescient": {
+    "user": "douche",
+    "reason": "Predicted that terrorism attempts would remain vanishingly rare due to the small pool of people willing to execute such attacks despite the relatively low barriers to entry. This observation proved accurate: despite ISIS being at its peak in 2015, and despite the subsequent decade allowing multiple opportunity windows, large-scale coordinated terror attacks on Western soil remained rare. The commenters pointing out that terrorism as a statistical risk has declined dramatically since 2015 were validated by actual data."
+  },
+  "most_wrong": {
+    "user": "hokkos",
+    "reason": "Predicted dramatically escalating personal risk when accounting for age and location specificity ('my micromort explode to the roof now'). Claimed 147+ deaths from terrorism in Paris alone in 2015 and predicted an exponential risk trajectory. In reality, Paris and France experienced no subsequent attacks of comparable scale, and the person's pessimistic update to personal risk proved unfounded. The commenters who treated the 2.5 micromorts as the true risk estimate proved closer to reality than those who thought terrorism would escalate geometrically."
+  },
+  "notable_aspects": "1) The discussion reveals a fundamental philosophical divide: those who believe risk assessment should be purely statistical vs. those who believe moral/political significance matters independently of probability. 2) Several commenters made sophisticated statistical arguments about small sample sizes and black swan events that actually undermine the micromort analysis more than support it. 3) The tangent about Japanese mocking ISIS on Twitter while denying halal food to Muslim exchange students shows cultural context-sensitivity was present even in the discussion. 4) Multiple commenters presciently identified that overreacting to terrorism through military spending and surveillance actually plays into ISIS's strategic goals—a concern that had some validity given subsequent Middle East interventions. 5) The debate about whether 'terrorism' is terrorism vs. 'state violence' is terrorism mirrors genuine definitional disputes that persist today. 6) Several commenters made the astute observation that humans are terrible at proportional risk assessment regardless of information provided, and that rational arguments about micromorts would be 'entirely ineffective' at changing fear.",
+  "grades": {
+    "gtirloni": {
+      "grade": "B+",
+      "rationale": "Correctly identified that emotional impact and perspective matter, not just raw statistics. Validated by a decade of evidence showing people don't update their behavior based on statistical reassurance alone."
+    },
+    "gesman": {
+      "grade": "A",
+      "rationale": "Simple but correct linguistic reframe: terrorism should be 'accepted' rather than 'fought' rationally. This pragmatic framing proved more aligned with how populations eventually behaved than the rationalist approach."
+    },
+    "haomself": {
+      "grade": "A",
+      "rationale": "Identified that terrorism risk estimation fails due to small sample size and unknowable larger attacks. This is statistically sophisticated criticism that remains valid—black swan events are inherently unpredictable and micromorts fail to account for them."
+    },
+    "jndsn402": {
+      "grade": "A-",
+      "rationale": "As a self-identified actuary, correctly explained that you need a significant sample of events to estimate risk, not just exposure time. Technically sound point that undermines the article's casual application of micromorts."
+    },
+    "viraptor": {
+      "grade": "A-",
+      "rationale": "Identified that using the entire French population as a denominator is methodologically arbitrary and changes the risk profile fundamentally. This contextualization problem remains valid—personal risk varies wildly by geography and behavior."
+    },
+    "marssaxman": {
+      "grade": "B",
+      "rationale": "Argued terrorism is 'not getting worse, not a significant risk.' This proved essentially correct in hindsight—terrorism declined 77% from its 2015 peak by 2022. Slightly penalized because the optimism was expressed without data (which existed by then but perhaps not readily accessible)."
+    },
+    "saulrh": {
+      "grade": "B-",
+      "rationale": "Applied meme/information theory to terrorism arguing that not being afraid denies it the ability to reproduce. Poetic and semi-correct, but overstates the extent to which psychological resistance matters vs. simply having fewer terrorists due to military defeats."
+    },
+    "woah": {
+      "grade": "A",
+      "rationale": "Correctly identified that military response is exactly what ISIS wanted strategically, and that falling for this gambit is counterproductive. Subsequent evidence about ISIS's 'Management of Savagery' doctrine validated this prescient analysis."
+    },
+    "rayiner": {
+      "grade": "C",
+      "rationale": "Argued that responding to terrorism is about justice and stopping a 7th-century ideology, not just fear. While philosophically coherent, this framing led to policy decisions (continued Middle East intervention) that didn't achieve stated goals and arguably backfired strategically."
+    },
+    "ekianjo": {
+      "grade": "B-",
+      "rationale": "Dismissed the micromort analysis as 'cute' and claimed terrorism's goal isn't actually to generate terror but is 'political action.' While terrorism does have political aims, the evidence suggests generating terror IS a primary mechanism—this comment was partially wrong on what terrorism is designed to do."
+    },
+    "vezzy-fnord": {
+      "grade": "A-",
+      "rationale": "Sophisticated argument that black swan events are futile to worry about, but also noted that terrorism's power is self-reinforcing only if people permit themselves to be afraid. The intellectual framework proved sound, though psychological research shows people have less control over fear responses than this suggests."
+    },
+    "hokkos": {
+      "grade": "D",
+      "rationale": "Dismissed the analysis, predicted personal risk would 'explode to the roof' for a Paris concert-goer, and claimed terrorism doesn't follow normal distributions. While technically some points have merit, the prediction of escalating personal risk proved spectacularly wrong."
+    },
+    "Eric_WVGG": {
+      "grade": "B",
+      "rationale": "Shared an anecdote about al Qaeda operatives assimilating into Western life and being difficult to weaponize. This observation touches on something real—radicalization requirements and the friction of creating attack cells—though presented informally."
+    },
+    "afarrell": {
+      "grade": "C",
+      "rationale": "Expressed sadness about not understanding fear while acknowledging others experience it. Philosophically honest but not analytically useful. The comment represents the real limitation of the article: rational arguments don't override psychological responses."
+    },
+    "poof131": {
+      "grade": "B+",
+      "rationale": "Correctly distinguished between bell curve risks (car accidents) and tail risks (terrorism). Noted the volatility difference and acknowledged the existential threat of WMD terrorism. While WMD attacks never materialized, the tail risk framework was intellectually sound."
+    },
+    "grandalf": {
+      "grade": "B",
+      "rationale": "Made sophisticated points about terrorism being political action and about cost-benefit analysis of Western responses. Some prescience on how terrorism creates feedback loops, though the characterization of Western response as 'helping terrorists win' was debatable and remains disputed."
+    }
+  },
+  "score": 7,
+  "rationale": "Interesting retrospective because it crystallizes the exact moment (November 2015, peak ISIS) when rational risk assessment collided with genuine threat, creating a time capsule of the 'micromorts as a rationalist tool' approach. The article is both proven right (terrorism did remain statistically rare) and proven irrelevant (the rational argument changed no one's behavior). The comments are unusually sophisticated for HN, with actuaries, statisticians, and serious thinkers grappling with whether probability theory can overcome emotion. The decade of hindsight reveals that global terrorism peaked precisely when this article was written, and declined 77% by 2022—making the original optimism prophetic by accident. However, the discussion's deeper insight (that rationalist frameworks fail to move human behavior on existential anxiety) proved more durable than either the optimistic or pessimistic predictions about terrorism itself. Not a 10 because the 'what actually happened' is less wild/surprising than ideal retrospectives—terrorism declined as many hoped but policy didn't rationalize as the article advocated. Interesting primarily as a artifact of its exact historical moment and the limitations of rational persuasion."
+}

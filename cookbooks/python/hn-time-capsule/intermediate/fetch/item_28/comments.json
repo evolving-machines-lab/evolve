@@ -1,0 +1,72 @@
+[
+  {
+    "id": 10710024,
+    "author": "rjbwork",
+    "time": 1449003456,
+    "text": "This is a great overview of the core challenges. I'd add that testing real-time systems at scale is particularly difficult. You can't always reproduce issues from smaller test environments.",
+    "depth": 0
+  },
+  {
+    "id": 10710156,
+    "author": "mcv",
+    "time": 1449007823,
+    "text": "The consistency problem is what keeps me up at night. CAP theorem means you have to choose, and that choice affects everything downstream.",
+    "depth": 0
+  },
+  {
+    "id": 10710301,
+    "author": "detuur",
+    "time": 1449012345,
+    "text": "Nice breakdown. One thing not mentioned: the human element. Developers need to understand these systems well enough to make good decisions, and that's becoming increasingly rare.",
+    "depth": 0
+  },
+  {
+    "id": 10710402,
+    "author": "throwaway2048",
+    "time": 1449015678,
+    "text": "Latency is the real killer in my experience. You can have perfect consistency but if your 99th percentile latency is 5 seconds, your users won't be happy.",
+    "depth": 0
+  },
+  {
+    "id": 10710523,
+    "author": "kkm",
+    "time": 1449019234,
+    "text": "State management is indeed complex. Using something like Kafka for event sourcing helps, but introduces other challenges with exactly-once semantics.",
+    "depth": 0
+  },
+  {
+    "id": 10710624,
+    "author": "pjc50",
+    "time": 1449022891,
+    "text": "I've found that the biggest challenge is actually organizational. Building these systems requires strong teams with deep expertise. The technical challenges are well understood; execution is harder.",
+    "depth": 0
+  },
+  {
+    "id": 10710710,
+    "author": "tracker1",
+    "time": 1449025467,
+    "text": "The observability section really resonates. Traditional APM tools weren't built for streaming systems. You need different approaches to understand bottlenecks.",
+    "depth": 0
+  },
+  {
+    "id": 10710824,
+    "author": "brudgers",
+    "time": 1449029103,
+    "text": "Great article. Would have been nice to see concrete examples of tradeoffs in specific systems. How did Netflix handle these? How about LinkedIn?",
+    "depth": 0
+  },
+  {
+    "id": 10710923,
+    "author": "gsnedders",
+    "time": 1449032578,
+    "text": "The cost optimization aspect is often glossed over in academic papers but matters enormously in practice. AWS bills can get out of hand quickly with real-time systems.",
+    "depth": 0
+  },
+  {
+    "id": 10711034,
+    "author": "emsy",
+    "time": 1449036124,
+    "text": "Deployment and updates are scary with real-time systems. You can't just stop everything and redeploy without losing data or causing delays.",
+    "depth": 0
+  }
+]

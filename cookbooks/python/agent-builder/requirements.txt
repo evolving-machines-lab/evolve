@@ -1,0 +1,6 @@
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+python-dotenv>=1.0.0
+websockets>=12.0
+evolve-sdk

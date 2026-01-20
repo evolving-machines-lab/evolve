@@ -1,0 +1,57 @@
+{
+  "title": "Leaving the Mac App Store",
+  "summary": "In December 2015, Bohemian Coding (makers of Sketch) announced they were leaving the Mac App Store, citing slow app review (1+ week), sandboxing limitations that restrict features, lack of upgrade pricing, and overall poor customer experience compared to the iOS App Store. The thread of 401 comments on Hacker News debated Apple's broader strategy for macOS, the viability of the App Store model for professional software, and concerns about platform restrictions becoming like iOS.",
+  "what_happened": "Sketch's decision to leave the Mac App Store proved prescient and strategically sound. The company went on to become the dominant UI/UX design tool through the late 2010s. However, their Mac-only positioning became a critical vulnerability. Figma, launched in 2016 as a web-based collaborative design tool, captured the market by offering cross-platform accessibility and real-time collaboration. By 2023, Figma had grown to 90% of designer usage while Sketch's share collapsed to 4.5%. Despite this, Sketch survived and maintained a dedicated user base, particularly among Mac-native teams. Sketch is still actively maintained in 2025 with regular updates. Apple's Mac App Store never improved significantly and remains a broken ecosystem that many professional developers avoid. The broader concern in the thread about Apple restricting macOS like iOS has NOT come to pass - macOS remains open to external apps.",
+  "most_prescient": {
+    "user": "milen",
+    "reason": "Accurately predicted the mass exodus of professional developers from the Mac App Store. Milen correctly identified that flagship apps leaving (like Sketch) signaled permanent damage to the ecosystem and that Apple's lack of action over years meant developers would lose faith. The prophecy that 'no one would waste time with the MAS' came true, and milen correctly foresaw the 'fool me twice' effect where even if Apple fixed it, developers wouldn't return. This analysis proved prophetic given how thoroughly the Mac App Store failed in the following decade."
+  },
+  "most_wrong": {
+    "user": "eveningcoffee",
+    "reason": "Spent multiple comments arguing Apple would likely restrict compiler execution on macOS like iOS, seeing it as a natural evolution. By 2026, this has definitively not happened - macOS remains fundamentally open, you can still freely compile and run arbitrary code, and there's been no movement toward iOS-like restrictions despite Apple's control over both platforms. Even the thread's other commenters, who questioned this prediction at the time, were proven correct. This represents a fundamental misunderstanding of Apple's actual strategy and the value they see in maintaining macOS as a different category than iOS."
+  },
+  "notable_aspects": "1) The thread is dominated by tangential debate about Apple's iOS browser engine restrictions and WebKit limitations - shows how broader antitrust concerns shaped narrative. 2) Multiple commenters dismissed Linux as a viable alternative, yet 2025 desktop Linux remains niche. 3) 'api' user provided exceptionally prescient analysis about market dynamics pulling toward managed platforms, correctly predicting iOS-like restrictions *might* come but showing intellectual humility about uncertainty. 4) The discussion of trial versions and upgrade pricing as fundamental business model issues proved to be about business model innovation more than platform restrictions - SaaS subscription models ended up solving this differently. 5) Comments from 2015 barely mention Figma (it was founded that very year), yet this new competitor would prove far more disruptive than App Store restrictions.",
+  "grades": {
+    "milen": {
+      "grade": "A+",
+      "rationale": "Provided comprehensive, prophetic analysis of the Mac App Store's systemic failures and correctly predicted developer exodus and permanent loss of trust. Every major claim proved accurate."
+    },
+    "jbob2000": {
+      "grade": "A",
+      "rationale": "Succinctly and accurately captured the turning point where alternatives became easier than the App Store. Simple but correct prediction about the future of distribution."
+    },
+    "kalleboo": {
+      "grade": "A-",
+      "rationale": "Correctly identified the trial version and pricing friction as fatal flaws. The diagnosis was accurate though the prediction lacked detail about how business models would eventually adapt."
+    },
+    "eveningcoffee": {
+      "grade": "D",
+      "rationale": "Spent multiple comments predicting macOS would restrict compilers like iOS. This was fundamentally wrong - Apple maintained the openness distinction between platforms. Shows overconfidence in predictions about Apple's strategy."
+    },
+    "api": {
+      "grade": "B+",
+      "rationale": "Made thoughtful predictions about market dynamics and the risk of iOS-like restrictions, but hedged appropriately with uncertainty. Mostly correct about platform trends but too pessimistic about open source and showed lack of confidence in own analysis."
+    },
+    "nicksergeant": {
+      "grade": "A-",
+      "rationale": "Correctly predicted that app store reliability issues and app verification problems would drive developers away. This came true as demonstrated by numerous departures."
+    },
+    "ChuckMcM": {
+      "grade": "B",
+      "rationale": "Noted that the top comments 'really nail it' - showed good judgment about which analyses were sound, though didn't make strong independent predictions."
+    },
+    "lmm": {
+      "grade": "C",
+      "rationale": "Predicted Apple would restrict running code through expensive certificates and dev licenses. While Apple did introduce code signing requirements, this didn't restrict developers from running arbitrary code. Partially right but oversimplified the actual outcome."
+    },
+    "song": {
+      "grade": "B-",
+      "rationale": "Worried Apple would restrict external apps entirely. This concern was not unfounded given iOS, but proved overly alarmist - Apple maintained macOS openness while iOS remained restricted, validating the platform distinction."
+    },
+    "tdkl": {
+      "grade": "C+",
+      "rationale": "Noted Apple's software quality issues and questioned whether Apple had become just a hardware company. Partially true - Apple has struggled with software quality on Mac, though they remain very software-focused overall."
+    }
+  },
+  "score": 8
+}

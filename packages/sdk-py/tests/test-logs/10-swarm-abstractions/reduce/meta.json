@@ -1,0 +1,12 @@
+{
+  "run_id": "fe6f04c0b838b7ec",
+  "operation": "reduce",
+  "tag": "rentroll-reduce",
+  "sandbox_id": "i4awctidnd2vaeiihg05o",
+  "input_count": 3,
+  "input_indices": [
+    0,
+    1,
+    2
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "rank": 2,
+  "page": 1,
+  "position_on_page": 2,
+  "title": "JavaScript Demos in 140 Characters",
+  "hn_item_id": "46557489",
+  "hn_item_url": "https://news.ycombinator.com/item?id=46557489",
+  "outbound_url": "https://beta.dwitter.net/top/year",
+  "final_url": "https://beta.dwitter.net/top/year",
+  "points": 181,
+  "comments": 40,
+  "summary": "A popular Hacker News post featuring JavaScript demonstrations created using Dwitter.net, a platform dedicated to showcasing tiny JavaScript programs limited to 140 characters. The post generated significant community interest with 181 points and 40 comments, highlighting the creative potential of JavaScript when developers are constrained by strict character limits. The demonstrations showcase stunning visual animations and generative art created with minimal code, appealing to developers interested in code golf, creative coding, and JavaScript capabilities.",
+  "screenshots": [
+    "screenshots/post_002/01_main.png",
+    "screenshots/post_002/02_key_visual.png",
+    "screenshots/post_002/03_additional.png"
+  ],
+  "actions": [
+    "Navigated to https://news.ycombinator.com/news?p=1",
+    "Located rank 2 post: 'JavaScript Demos in 140 Characters'",
+    "Clicked on the post title",
+    "Visited https://beta.dwitter.net/top/year",
+    "Captured screenshots of main content and visual elements",
+    "Extracted post metadata (title, points, comments, HN ID)",
+    "Returned to HN listing and verified all details"
+  ],
+  "error": null
+}

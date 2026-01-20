@@ -1,0 +1,9 @@
+{"type":"init","timestamp":"2025-12-17T20:59:38.576Z","session_id":"a5fb82eb-7553-4e9c-87da-2cbf0af52795","model":"gemini-3-flash-preview"}
+{"type":"message","timestamp":"2025-12-17T20:59:38.577Z","role":"user","content":"Create a file called session-test.txt with the text 'Turn 1: Session started'. Remember this for later."}
+{"type":"tool_use","timestamp":"2025-12-17T20:59:40.491Z","tool_name":"write_file","tool_id":"write_file-1766005180491-06a3f6f3e0d03","parameters":{"file_path":"output/session-test.txt","content":"Turn 1: Session started"}}
+{"type":"tool_use","timestamp":"2025-12-17T20:59:40.515Z","tool_name":"save_memory","tool_id":"save_memory-1766005180515-9110a4d6e804f","parameters":{"fact":"I created a file called session-test.txt in the output directory with the text 'Turn 1: Session started'."}}
+{"type":"tool_result","timestamp":"2025-12-17T20:59:40.795Z","tool_id":"write_file-1766005180491-06a3f6f3e0d03","status":"success"}
+{"type":"tool_result","timestamp":"2025-12-17T20:59:40.801Z","tool_id":"save_memory-1766005180515-9110a4d6e804f","status":"success","output":"Okay, I've remembered that: \"I created a file called session-test.txt in the output directory with the text 'Turn 1: Session started'.\""}
+{"type":"message","timestamp":"2025-12-17T20:59:41.931Z","role":"assistant","content":"The file `output/session-test.txt` has been created with the text '","delta":true}
+{"type":"message","timestamp":"2025-12-17T20:59:41.940Z","role":"assistant","content":"Turn 1: Session started', and I have recorded this action in my long-term memory.","delta":true}
+{"type":"result","timestamp":"2025-12-17T20:59:41.960Z","status":"success","stats":{"total_tokens":12277,"input_tokens":11989,"output_tokens":95,"duration_ms":3384,"tool_calls":2}}
