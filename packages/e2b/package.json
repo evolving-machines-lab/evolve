@@ -9,10 +9,10 @@
     "evolve-sdk",
     "orchestration"
   ],
-  "homepage": "https://github.com/evolvingmachines/evolve",
+  "homepage": "https://github.com/evolving-machines-lab/evolve",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/evolvingmachines/evolve.git"
+    "url": "git+https://github.com/evolving-machines-lab/evolve.git"
   },
   "type": "module",
   "main": "dist/index.cjs",

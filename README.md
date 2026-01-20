@@ -21,7 +21,7 @@
 Add the [`evolve-dev`](skills/evolve-dev/SKILL.md) SKILL to your favorite coding agent and start building with Evolve SDK:
 
 ```bash
-git clone https://github.com/evolvingmachines/evolve.git
+git clone https://github.com/evolving-machines-lab/evolve.git
 cp -r evolve/skills/evolve-dev ~/.claude/skills/       # Claude Code
 cp -r evolve/skills/evolve-dev ~/.codex/skills/        # Codex
 cp -r evolve/skills/evolve-dev ~/.gemini/skills/       # Gemini CLI
@@ -100,7 +100,7 @@ Check out the [documentation](./docs) and [cookbooks](./cookbooks).
 
 ## Reporting Bugs
 
-We welcome your feedback. File a [GitHub issue](https://github.com/evolvingmachines/evolve/issues) to report bugs or request features.
+We welcome your feedback. File a [GitHub issue](https://github.com/evolving-machines-lab/evolve/issues) to report bugs or request features.
 
 ## License
 

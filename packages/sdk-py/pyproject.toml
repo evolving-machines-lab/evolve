@@ -35,8 +35,8 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/evolvingmachines/evolve"
-Repository = "https://github.com/evolvingmachines/evolve"
+Homepage = "https://github.com/evolving-machines-lab/evolve"
+Repository = "https://github.com/evolving-machines-lab/evolve"
 
 [tool.setuptools]
 include-package-data = true

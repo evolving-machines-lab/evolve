@@ -1,16 +1,10 @@
-.PHONY: install build build-dev build-prod package verify-bridge test clean
+.PHONY: install build package verify-bridge test clean
 
 install:
 	pip install -e ".[dev]"
 
 build:
-	cd bridge && npm install && npm run build:prod
-
-build-dev:
-	cd bridge && npm install && npm run build:dev
-
-build-prod:
-	cd bridge && npm install && npm run build:prod
+	cd bridge && npm install && npm run build
 
 package: verify-bridge
 	python -m build
@@ -18,7 +12,7 @@ package: verify-bridge
 verify-bridge:
 	@if [ ! -f bridge/dist/bridge.bundle.cjs ]; then \
 		echo "❌ Bridge bundle not found at bridge/dist/bridge.bundle.cjs"; \
-		echo "   Run 'make build-prod' or 'npm run build:python-bridge' from project root first."; \
+		echo "   Run 'make build' or 'npm run build:python-bridge' from project root first."; \
 		exit 1; \
 	fi
 	@echo "✓ Bridge bundle verified"

@@ -12,7 +12,7 @@ import { Template } from 'e2b'
 //   - Qwen Code (@qwen-code/qwen-code)
 //   - ACP adapters for Claude and Codex
 //   - Google Chrome for browser automation
-//   - Skills cloned from github.com/evolvingmachines/evolve
+//   - Skills cloned from github.com/evolving-machines-lab/evolve
 //
 // To rebuild: npm run build (or ./build.sh)
 // =============================================================================
@@ -69,7 +69,7 @@ export const template = Template()
   // Skills
   // ---------------------------------------------------------------------------
   // Clone skills from evolve OSS repo (sparse checkout for skills/ only)
-  .runCmd('git clone --depth 1 --filter=blob:none --sparse https://github.com/evolvingmachines/evolve.git /tmp/evolve && cd /tmp/evolve && git sparse-checkout set skills && mv skills/* ~/.evolve/skills/ && rm -rf /tmp/evolve')
+  .runCmd('git clone --depth 1 --filter=blob:none --sparse https://github.com/evolving-machines-lab/evolve.git /tmp/evolve && cd /tmp/evolve && git sparse-checkout set skills && mv skills/* ~/.evolve/skills/ && rm -rf /tmp/evolve')
 
   // Enable Gemini experimental skills
   .runCmd('echo \'{"experimental":{"skills":true}}\' > ~/.gemini/settings.json')

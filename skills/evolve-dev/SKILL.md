@@ -8,7 +8,7 @@ description: |
 
 Run terminal-based AI agents in secure sandboxes with built-in observability.
 
-> **Repo:** https://github.com/evolvingmachines/evolve — cookbooks in `cookbooks/`, skills in `skills/`
+> **Repo:** https://github.com/evolving-machines-lab/evolve — cookbooks in `cookbooks/`, skills in `skills/`
 
 ## SDK Choice
 

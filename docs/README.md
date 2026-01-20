@@ -59,7 +59,7 @@ Sign up at [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai
 
 ### 4. Learn more
 
-Check out the [documentation](https://github.com/evolvingmachines/evolve/tree/main/docs) and [cookbooks](https://github.com/evolvingmachines/evolve/tree/main/cookbooks).
+Check out the [documentation](https://github.com/evolving-machines-lab/evolve/tree/main/docs) and [cookbooks](https://github.com/evolving-machines-lab/evolve/tree/main/cookbooks).
 
 ## Support + Talk with Founders
 
@@ -69,7 +69,7 @@ Check out the [documentation](https://github.com/evolvingmachines/evolve/tree/ma
 
 ## Reporting Bugs
 
-We welcome your feedback. File a [GitHub issue](https://github.com/evolvingmachines/evolve/issues) to report bugs or request features.
+We welcome your feedback. File a [GitHub issue](https://github.com/evolving-machines-lab/evolve/issues) to report bugs or request features.
 
 ## License
 

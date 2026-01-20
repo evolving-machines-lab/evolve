@@ -123,14 +123,14 @@ class BridgeManager:
             raise BridgeBuildError(
                 "Bridge build failed: Node.js not found in PATH.\n"
                 "Evolve requires Node.js 18+ to run the TypeScript bridge.\n"
-                "Install from https://nodejs.org/ or run 'make build-dev' manually from packages/sdk-py/."
+                "Install from https://nodejs.org/ or run 'make build' manually from packages/sdk-py/."
             )
 
         if not shutil.which('npm'):
             raise BridgeBuildError(
                 "Bridge build failed: npm not found in PATH.\n"
                 "npm is usually installed with Node.js - check your Node.js installation.\n"
-                "Alternatively, run 'make build-dev' manually from packages/sdk-py/."
+                "Alternatively, run 'make build' manually from packages/sdk-py/."
             )
 
         logger.info("First run: building Node.js bridge...")
@@ -150,11 +150,11 @@ class BridgeManager:
                 )
             )
 
-            # Build bridge (dev mode for readable debugging)
+            # Build bridge
             await loop.run_in_executor(
                 None,
                 lambda: subprocess.run(
-                    ['npm', 'run', 'build:dev'],
+                    ['npm', 'run', 'build'],
                     cwd=bridge_dir,
                     check=True,
                     capture_output=True,
@@ -166,7 +166,7 @@ class BridgeManager:
             raise BridgeBuildError(
                 f"Bridge build failed during npm execution.\n"
                 f"Error: {e.stderr}\n"
-                f"Try running 'make build-dev' or 'make build-prod' manually from packages/sdk-py/ to see the full error."
+                f"Try running 'make build' manually from packages/sdk-py/ to see the full error."
             ) from e
 
     async def stop(self):
