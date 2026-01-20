@@ -1,0 +1,50 @@
+{
+  "title": "Faking the TCP Handshake",
+  "summary": "In late 2015, Luc Gommans and Raoul Houkes published research from Fontys University showing a protocol-level attack that allows spoofing TCP connections by brute-forcing the 32-bit sequence number space. The attack exploits two design quirks: TCP's dual use of sequence numbers for both reliability and security, and the fact that incorrect sequence numbers don't terminate connections. The discussion thread was skeptical, with experienced security researchers arguing the attack was not new (dating back to 1990s session hijacking and Kevin Mitnick's exploits), that egress filtering would prevent it, and that it had no practical value in the real world. The authors demonstrated a working proof-of-concept requiring ~120GB of traffic and ~17 minutes with 1Gbps bandwidth.",
+  "what_happened": "The 2015 research proved correct but was initially underestimated. For nearly a decade, TCP spoofing remained largely academic. However, in 2024—exactly 9 years later—researchers at CISPA Helmholtz Center presented a major breakthrough at IEEE Symposium on Security and Privacy: they solved the problem of reliably transmitting payloads AFTER the spoofed handshake, which had been the limiting factor. They discovered a TCP stack weakness reducing the search space to as few as four guesses, and developed 'feedback-guided' spoofing techniques that leak the server's ISN through TCP SYN cookies and application-specific channels. This transformed TCP spoofing from impractical brute-force to a credible threat against systems relying on IP-based authentication (firewalls, IP whitelists, database network auth, spam filtering). The lesson that Gommans drew in 2015—'use TLS, not IP-based trust'—became increasingly relevant as organizations realized IP filtering alone was insufficient.",
+  "most_prescient": {
+    "user": "AnthonyMouse",
+    "reason": "Correctly identified the fundamental flaw in relying on egress filtering as a defense: it's a 'tragedy of the commons' problem where individual networks can't protect themselves if any network lacks filtering, and at internet core levels filtering is practically impossible. This perfectly predicted why IP-based defenses would ultimately fail against determined attackers."
+  },
+  "most_wrong": {
+    "user": "tptacek",
+    "reason": "Explicitly stated that TCP spoofing is 'essentially an academic concept' and that 'even if you could do it in milliseconds, it wouldn't be very useful.' The 2024 research directly proved this wrong by making TCP spoofing practical and useful against real systems, making this one of the most dramatically incorrect predictions in the thread."
+  },
+  "notable_aspects": "1) The author Luc Gommans was only 21 years old at the time of publication, which some commenters pointed out condescendingly. He responded maturely to harsh criticism.\n2) The research triggered interesting meta-discussion about what constitutes a 'new' security finding—is it discovering it independently, or discovering a variant that's practically exploitable?\n3) Multiple commenters referenced Kevin Mitnick's 1994 attack on Tsutomu Shimomura as proof the concept was old, making an interesting connection to 1990s hacking history.\n4) The dismissal of the research as 'dumb bruteforcing' and 'not practical' was ironic given that 2024 research would transform the exact same techniques into practical exploits.\n5) The thread showed the tension between academic security research and network-level defenses—several commenters believed network operators had already solved this problem, which turned out to be only partially true.",
+  "grades": {
+    "tptacek": {
+      "grade": "C-",
+      "rationale": "While correct that spoofing wasn't entirely new (good historical context), failed spectacularly on practical feasibility assessment. Underestimated the relevance of the research and was contradicted by 2024 developments. The authoritative tone of his misguided conclusion is particularly notable."
+    },
+    "armitron": {
+      "grade": "C",
+      "rationale": "Correct that the attack is naive/elementary, and right about egress filtering being deployed. However, wrong about the practical conclusion—assumed this meant the attack would never matter. Dismissive tone without acknowledging the research's pedagogical value."
+    },
+    "fulafel": {
+      "grade": "A",
+      "rationale": "Prescient defense of the research against unfair dismissal, perfectly identifying why IP-based defenses are fundamentally unreliable. The SMTP analogy was spot-on about why filtering at the source cannot be the primary defense."
+    },
+    "AnthonyMouse": {
+      "grade": "A+",
+      "rationale": "Made the most important correct prediction: identified that egress filtering cannot be a reliable defense at internet scale due to collective action problems. This insight perfectly explains why 2024 research found TCP spoofing became exploitable."
+    },
+    "jacquesm": {
+      "grade": "A-",
+      "rationale": "Correctly noted that anti-spoof measures are only effective 'at the edge' and packets are 'routed with abandon' in the core. This prescient observation directly foreshadowed the 2024 findings about feasibility."
+    },
+    "wtbob": {
+      "grade": "B+",
+      "rationale": "Identified the key insight that 'what's new is how easily exploitable' it is, suggesting that practical feasibility was the real contribution. This was prescient about where the research's value lay."
+    },
+    "laumars": {
+      "grade": "B",
+      "rationale": "Took a balanced, fair approach in defending the research's value even if not entirely novel. Correct that security research shouldn't be dismissed just for being incremental, though didn't predict future impact."
+    },
+    "lgommans": {
+      "grade": "A",
+      "rationale": "The author defended his research maturely despite harsh criticism from experienced security researchers. His claim that he found no prior work on brute-forcing the full ISN space turned out to be vindicated by 2024 research validating the practical angle."
+    }
+  },
+  "score": 9,
+  "rationale_for_score": "This is a fascinating retrospective because it captures the exact moment when an academic security finding was dismissed as impractical, only to be vindicated 9 years later. The thread contains genuine predictive power from commenters who understood that IP-based defenses scale poorly, contrasted with confident dismissals from security experts who were completely wrong. The fact that the core attack technique remained essentially unchanged while practical feasibility improved dramatically through research is compelling. The author was young and humble despite criticism, making the retrospective personally interesting. The only reason this isn't a perfect 10 is that the 2024 developments happened too recently to see full real-world impact, though signs suggest it matters significantly."
+}

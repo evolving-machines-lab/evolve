@@ -1,0 +1,10 @@
+{"type":"init","timestamp":"2025-12-19T06:13:40.201Z","session_id":"4d3f267d-0480-4a08-a26a-e0a2d5dd4fd3","model":"gemini-3-flash-preview"}
+{"type":"message","timestamp":"2025-12-19T06:13:40.203Z","role":"user","content":"Create a JSON file at output/result.json with exactly this structure:\n{\n  \"name\": \"test-item\",\n  \"count\": 42,\n  \"success\": true\n}\nMake sure the file is valid JSON."}
+{"type":"tool_use","timestamp":"2025-12-19T06:13:42.585Z","tool_name":"write_file","tool_id":"write_file-1766124822585-138211ceeec77","parameters":{"file_path":"output/result.json","content":"{\n  \"name\": \"test-item\",\n  \"count\": 42,\n  \"success\": true\n}"}}
+{"type":"tool_result","timestamp":"2025-12-19T06:13:42.779Z","tool_id":"write_file-1766124822585-138211ceeec77","status":"success"}
+{"type":"tool_use","timestamp":"2025-12-19T06:13:44.006Z","tool_name":"read_file","tool_id":"read_file-1766124824006-dc1ee50bb6ee","parameters":{"file_path":"output/result.json"}}
+{"type":"tool_result","timestamp":"2025-12-19T06:13:44.031Z","tool_id":"read_file-1766124824006-dc1ee50bb6ee","status":"success","output":""}
+{"type":"message","timestamp":"2025-12-19T06:13:45.415Z","role":"assistant","content":"The file `output/result.json` has been created with the following content:\n\n","delta":true}
+{"type":"message","timestamp":"2025-12-19T06:13:45.427Z","role":"assistant","content":"```json\n{\n  \"name\": \"test-item\",\n  \"count\": 42,\n  \"success\": true\n}\n","delta":true}
+{"type":"message","timestamp":"2025-12-19T06:13:45.464Z","role":"assistant","content":"```","delta":true}
+{"type":"result","timestamp":"2025-12-19T06:13:45.484Z","status":"success","stats":{"total_tokens":19008,"input_tokens":18740,"output_tokens":110,"duration_ms":5283,"tool_calls":2}}

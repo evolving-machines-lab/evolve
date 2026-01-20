@@ -1,0 +1,676 @@
+[
+  {
+    "id": 10661583,
+    "author": "sargun",
+    "text": "This seems wrong to me. This was the state of the art ~3 years ago. Now, I feel like all of the machines should be provisioned already with an OS, and a basic image, and a orchestration system like CoreOS / Mesos / Docker should specialize them.IMHO, requiring hardware, or the entire machine should be exception, not the rule.",
+    "points": null,
+    "time": "2015-12-02T07:51:15.000Z",
+    "children": [
+      {
+        "id": 10661594,
+        "author": "packetized",
+        "text": "Wait, why? Are you advocating for the use of an abstraction layer where there isn't always a business case for using one?",
+        "points": null,
+        "time": "2015-12-02T07:54:04.000Z",
+        "children": []
+      },
+      {
+        "id": 10661634,
+        "author": "detaro",
+        "text": "Just because you use Containers/VMs for most of your apps doesn't mean that the lower levels don't need attention: installing OSes in the first place, hardware testing (both initially and to identify defects later), ...And for important fileservers and databases you're going to run on specific hardware for a long time.",
+        "points": null,
+        "time": "2015-12-02T08:10:19.000Z",
+        "children": []
+      },
+      {
+        "id": 10661642,
+        "author": "kbar13",
+        "text": "you realize the cloud runs on hardware right. machines don't magically come with everything installed and configured.",
+        "points": null,
+        "time": "2015-12-02T08:12:09.000Z",
+        "children": []
+      },
+      {
+        "id": 10661665,
+        "author": "ownagefool",
+        "text": "Even if you were going to run CoreOS or Mesos on the machine, you'd still manage it booting your specific image, which you can change, rather than trusting the pre-installed dell verion and managing that relationship.Now there's probably some room for debate on whether these guys job should just be outsourced to Amazon, but github has some pretty good uptime and they seem to know what they're doing, thus they've probably already won that debate.",
+        "points": null,
+        "time": "2015-12-02T08:19:46.000Z",
+        "children": []
+      },
+      {
+        "id": 10661677,
+        "author": "lwhalen",
+        "text": "Sometimes you have a workload that really isn't a fit for virtualization/containers/whatever the latest Rails hotness is, at all, and you just need to throw a couple of cargo trailers of insanely massively-spec'd servers at the problem. In those cases, your 'old school' server provisioning toolkit had better be on-point.It's easy to forget just how ridiculously powerful bare iron is these days. Go to Dell.com and see how much RAM you can cram into a U or three or four today in 2015. Or see how many IOPS a modern NetApp or Symmetrix (EMC) can push with 'flashcache' or million-dollar SSDs. It is ridiculous, and while a lot of those platforms are meant for 'building your own private cloud', etc, there's a non-trivial amount of workloads/projects where bare-iron is the best tool for the job.",
+        "points": null,
+        "time": "2015-12-02T08:22:51.000Z",
+        "children": [
+          {
+            "id": 10661823,
+            "author": "icebraining",
+            "text": "Containers are just a namespacing tool, though; you're still running on bare metal (well, bare Linux). Docker in particular runs on AuFS, which is slow, but other containerization tools just use a chroot.",
+            "points": null,
+            "time": "2015-12-02T09:07:08.000Z",
+            "children": [
+              {
+                "id": 10662187,
+                "author": "vidarh",
+                "text": "Docker can run on any number of things, include btrfs and overlayfs+ext4, as well as devicemapper. E.g. CoreOS defaults to overlayfs.",
+                "points": null,
+                "time": "2015-12-02T10:47:08.000Z",
+                "children": []
+              }
+            ]
+          },
+          {
+            "id": 10662335,
+            "author": "mariusmg",
+            "text": ">Sometimes you have a workload that really isn't a fit for virtualizationYeah, any serious I/O load is unsuited for virtualization.",
+            "points": null,
+            "time": "2015-12-02T11:28:49.000Z",
+            "children": [
+              {
+                "id": 10662530,
+                "author": "devonkim",
+                "text": "A lot of other latency-sensitive applications tend to have so many adverse performance conditions (that can usually be remediated with a lot of blood sweat and tears) under virtualization that it becomes easier to just go bare metal and deal with physical infrastructure overhead.",
+                "points": null,
+                "time": "2015-12-02T12:29:47.000Z",
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 10661743,
+        "author": "mverwijs",
+        "text": "I'm surprised everyone is still installing to disk. In 2008/2009, we had a POC where we ran the OS from memory after booting over PXE. * boot a live image into memory * point LXD/RKT/Docker to /containers * ... * profit!",
+        "points": null,
+        "time": "2015-12-02T08:40:59.000Z",
+        "children": [
+          {
+            "id": 10661797,
+            "author": "iofj",
+            "text": "The big issue I'm having with that is that it involves trusting vendors to get network boot right. Especially when it comes to the looping part of \"loop until DHCP gets a response\" it becomes a problem. One of the cheap vendor tries 30 times and then goes to a boot failed screen after trying the disk.Also, 1 time out of a 4-5000 or so network boot fails. Not sure why.",
+            "points": null,
+            "time": "2015-12-02T08:58:23.000Z",
+            "children": [
+              {
+                "id": 10662162,
+                "author": "vidarh",
+                "text": "If you have IPMI on the server this doesn't become such a big problem - you can reasonably trigger resets/reboots if it's not up after a given amount of time.",
+                "points": null,
+                "time": "2015-12-02T10:40:08.000Z",
+                "children": [
+                  {
+                    "id": 10670315,
+                    "author": "iofj",
+                    "text": "We buy the cheapest server that meets our needs, and buy it in somewhat larger quantities (often double what was originally envisioned for less than was originally budgeted). Much more efficient.But it does mean no IPMI. However I built a small circuit that sits on a power cable that can interrupt said power cable with a relais that sits on a bus plugged into our server, so we can do the reboot thing.I've been meaning to redo that power cable circuit using wifi as the linking technology, now that we have esp8266 available.",
+                    "points": null,
+                    "time": "2015-12-03T16:05:42.000Z",
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "id": 10662632,
+                "author": "mverwijs",
+                "text": "That's where iLO comes in. iLO is horrible, but you can ssh to it and set all manner of stuff.When we didn't have PXE, we had a script that told iLO to boot from CD, and that the CD was located at http://something/bootme.iso. iLO would always have network, and would pass the .iso magically to the server as device to boot from.",
+                "points": null,
+                "time": "2015-12-02T12:57:08.000Z",
+                "children": []
+              }
+            ]
+          },
+          {
+            "id": 10661879,
+            "author": "bcantrill",
+            "text": "For whatever it's worth, SmartDataCenter, Joyent's open source SmartOS-based system for operating a cloud[1], does exactly this[2] -- and (as explained in an old but still technically valid video[3]) we have found it to be a huge, huge win. And we even made good on the Docker piece when we used SDC as the engine behind Triton[4] -- and have found it all to be every bit as potent as you suggest![5][1] https://github.com/joyent/sdc[2] https://github.com/joyent/sdc/blob/master/docs/developer-gui...[3] https://www.youtube.com/watch?v=ieGWbo94geE[4] https://www.joyent.com/blog/triton-docker-and-the-best-of-al...[5] https://www.joyent.com/blog/spin-up-a-docker-dev-test-enviro...",
+            "points": null,
+            "time": "2015-12-02T09:24:05.000Z",
+            "children": []
+          },
+          {
+            "id": 10662853,
+            "author": "vidarh",
+            "text": "CoreOS lets you do this if you PXE boot. It will then by default run entirely out of RAM.",
+            "points": null,
+            "time": "2015-12-02T13:46:11.000Z",
+            "children": []
+          }
+        ]
+      },
+      {
+        "id": 10662100,
+        "author": "jon-wood",
+        "text": "I built something similar for a managed hosting provider ~10 years ago. That doesn't make it any less useful now, and this does a ton more than our tool did, far more elegantly.At some point someone needs to manage the actual hardware, whether that's you, or a middleman, and when you're handling hundreds or even thousands of devices its just not practical without automation.",
+        "points": null,
+        "time": "2015-12-02T10:25:36.000Z",
+        "children": []
+      },
+      {
+        "id": 10663025,
+        "author": "jssjr",
+        "text": "GitHub's physical infrastructure team doesn't dictate what technologies our engineers can run on our hardware. We are interested in providing reliable server resources in a easily consumable manner. If someone wants to provision hardware to run docker containers or similar, that's great!We may eventually offer higher order infrastructure or platform services internally, but it's not our current focus.",
+        "points": null,
+        "time": "2015-12-02T14:19:20.000Z",
+        "children": []
+      }
+    ]
+  },
+  {
+    "id": 10661606,
+    "author": "alpb",
+    "text": "> We've hacked together a Ruby script that retrieves a console screenshot via IPMI and checks the color in the image to determine if we've hit a failure or not.That's pretty funny yet sounds a lot familiar to many of us as every now and then we all do these sort of nasty hacks.",
+    "points": null,
+    "time": "2015-12-02T07:59:11.000Z",
+    "children": [
+      {
+        "id": 10661621,
+        "author": "markild",
+        "text": "Also probably a lot better than to make MemTest86 do all sorts of network stuff.",
+        "points": null,
+        "time": "2015-12-02T08:05:25.000Z",
+        "children": []
+      },
+      {
+        "id": 10661716,
+        "author": "versteegen",
+        "text": "Yikes, having attended a computer vision conference last week, that sort of apporach is actually starting to sound reasonable and intelligent!",
+        "points": null,
+        "time": "2015-12-02T08:35:23.000Z",
+        "children": []
+      },
+      {
+        "id": 10661780,
+        "author": "shanselman",
+        "text": "Ya, I came here to talk about that line as well. The whole article was interesting, but that line stood out as a pretty surprising hack for 2015.",
+        "points": null,
+        "time": "2015-12-02T08:52:46.000Z",
+        "children": []
+      },
+      {
+        "id": 10662849,
+        "author": "osxrand",
+        "text": "Hah! I wrote a script a few months back and had to solve an issue of figuring out the state of a program running under wine, and that was my solution (to not in ruby, just a quick bash script). I was pretty happy with the results but if felt like an incredibly crude way to solve the problem, now I read that this is being used at much higher levels than I'll get to, maybe it's not so bad :)",
+        "points": null,
+        "time": "2015-12-02T13:46:07.000Z",
+        "children": []
+      },
+      {
+        "id": 10663179,
+        "author": "SEJeff",
+        "text": "Vs just buying opengear console servers and something like conserver to get the actual text via serial like most large Unix environments (every job I've worked at) do. Then you can just scrape the text.",
+        "points": null,
+        "time": "2015-12-02T14:44:25.000Z",
+        "children": [
+          {
+            "id": 10664650,
+            "author": "FireBeyond",
+            "text": "Right, this surprised me. They're doing IPMI, so why not SOL (Serial over LAN) to get the raw stream?Actually, on second thoughts, I'm not surprised so much. I've read many threads on Supermicro IPMI and people's frustration with it (reliant on outdated Java, and hacked together wrappers over VNC) that make it seem like a deliberate choice to obfuscate things -just- enough to make other tools difficult.",
+            "points": null,
+            "time": "2015-12-02T18:08:42.000Z",
+            "children": [
+              {
+                "id": 10665420,
+                "author": "SEJeff",
+                "text": "No a career building those types of tools taught me SoL is garbage from most vendors. Cray, Dell, and HP are (arguably) best with mostly reliable SoL, but they still are awful. If you paste a buffer too big into a SoL session, the dell DRAC will freeze, so you have to kill and restart the serial connection. If you have > 1000 machines, hardware serial is the best thing to do for management, in addition to IPMI for power management.",
+                "points": null,
+                "time": "2015-12-02T20:03:11.000Z",
+                "children": []
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": 10661724,
+    "author": "mverwijs",
+    "text": "We did something similar at Optiver. * boot a custom live cd (a la Knoppix) over PXE * Live CD places node into database if it doesn't exist yet, using dmidecode to find serialnumbers and such * Live Cd keeps querying database for instructions * Engineer adds a profile to the node in the database * Live Cd slices up disk to match the profile * Live Cd fetches a tarball of the base OS from an URL and throws it on the metal. Runs grub setup. Reboots. Tumblr did something like this with http://tumblr.github.io/collins/.",
+    "points": null,
+    "time": "2015-12-02T08:37:08.000Z",
+    "children": [
+      {
+        "id": 10662262,
+        "author": "defect",
+        "text": "Also checkout https://github.com/Tumblr/genesis which does sort of the same thing as the PXE image GitHub writes about.",
+        "points": null,
+        "time": "2015-12-02T11:08:10.000Z",
+        "children": []
+      },
+      {
+        "id": 10662370,
+        "author": "voltagex_",
+        "text": "Hey cool so what I'm fiddling around with in iPXE isn't completely obsolete in the age of Docker and disposable VMs.",
+        "points": null,
+        "time": "2015-12-02T11:41:05.000Z",
+        "children": [
+          {
+            "id": 10662753,
+            "author": "mverwijs",
+            "text": "Well, no. But IMHO, iron is only do-able if you have enough of it. This I learned the hard way at my previous contract, where we only had a handful of servers and all of them production.When you want to automate your complete infra, including rolling out hardware, you need hardware to develop and test on. Entropy of life will ensure that exactly that moment you need to reinstall that PostgreSQL slave from scratch, the PXE server is unreachable, or the server has a different diskcontroller, or an iLO certificate expired. Or something stupid.Test your code. And for Ops this means: machines that are solely for the testing pleasure of Ops. No other function.",
+            "points": null,
+            "time": "2015-12-02T13:20:25.000Z",
+            "children": [
+              {
+                "id": 10666824,
+                "author": "voltagex_",
+                "text": "In a perfect world you'd have a Dev, Staging and Prod PXE server, but reality says you're not going to be able to get signoff to run that many.",
+                "points": null,
+                "time": "2015-12-03T00:03:25.000Z",
+                "children": [
+                  {
+                    "id": 10667018,
+                    "author": "mverwijs",
+                    "text": "But that is perfectly fine! That only means that you cannot have an automated install procedure that the company can rely on. There is really nothing wrong with a little manual labour at this stage. Do not spend weeks and weeks on automating this without having the environment to test your code.",
+                    "points": null,
+                    "time": "2015-12-03T00:54:50.000Z",
+                    "children": []
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": 10662830,
+            "author": "vidarh",
+            "text": "Even those machines running Docker and disposable VMs still need to run on something.I've got systems PXE booting to CoreOS where everything else runs in Docker containers (even the odd KVM VM).",
+            "points": null,
+            "time": "2015-12-02T13:40:55.000Z",
+            "children": []
+          }
+        ]
+      },
+      {
+        "id": 10662731,
+        "author": "mpdehaan2",
+        "text": "I did something sort of similar with Live CD images for booting hardware not on a PXE network in Cobbler. It could also register machines seen then first time by making system records for them.https://github.com/cobbler/cobblerWhat is interesting in this article in particular are the auto-firmware upgrade state transitions, which seem pretty neat.The chat bot is I guess neat, but if a lot of people are using the cloud that could be a hard way to get status.",
+        "points": null,
+        "time": "2015-12-02T13:17:20.000Z",
+        "children": []
+      },
+      {
+        "id": 10662755,
+        "author": "invertedohm",
+        "text": "Kind of amazing that the state of the art in this area hasn't changed in nearly 10 years. The marketing angle is funny as well - everything has to be a cloud now. I think I used to call what we built at Optiver a \"private cloud\" but \"Metal Cloud\" is nicely buzzwordy as well.PS - Hi Marty, unknown nick here but I'm sure you can figure out who I am. :D",
+        "points": null,
+        "time": "2015-12-02T13:20:28.000Z",
+        "children": []
+      },
+      {
+        "id": 10662800,
+        "author": "jsjohnst",
+        "text": "Actually there's heavy overlap in functionality if you include other Tumblr things with Collins like Phil, Genesis, and Configrr.Collins - asset managementPhil - ipxe booting based on Collins stateGenesis - base hardware configuration (firmware, bios, raid, etc), burnin, kickstartConfigrr - state / config management",
+        "points": null,
+        "time": "2015-12-02T13:32:02.000Z",
+        "children": []
+      }
+    ]
+  },
+  {
+    "id": 10661802,
+    "author": "seanhandley",
+    "text": "Sounds a lot like http://theforeman.org/",
+    "points": null,
+    "time": "2015-12-02T08:59:28.000Z",
+    "children": []
+  },
+  {
+    "id": 10661940,
+    "author": "A_Beer_Clinked",
+    "text": "Can anybody with experience of using Openstack Ironic[1] in this space comment on advantages of rolling your own liek GitHub?[1] https://wiki.openstack.org/wiki/Ironic",
+    "points": null,
+    "time": "2015-12-02T09:46:24.000Z",
+    "children": [
+      {
+        "id": 10662084,
+        "author": "detaro",
+        "text": "If you are not running OpenStack otherwise I'd say maintaining it is way to much effort to get relatively basic functionality. They also would still need custom work for asset databases, the memory checks, so they don't gain much.",
+        "points": null,
+        "time": "2015-12-02T10:22:28.000Z",
+        "children": []
+      },
+      {
+        "id": 10663575,
+        "author": "mariojv",
+        "text": "The OnMetal [1] team at Rackspace uses OpenStack Ironic.It's saved us a lot of engineering time and let us offer the same interface as our VMs for provisioning baremetal machines with OpenStack Nova.[1] http://www.rackspace.com/en-us/cloud/servers/onmetal",
+        "points": null,
+        "time": "2015-12-02T15:42:36.000Z",
+        "children": []
+      },
+      {
+        "id": 10663813,
+        "author": "dmourati",
+        "text": "A consultant from Ubuntu called Ironic a \"still birth\" and said its name was indicative of its fit with the rest of OpenStack. His team used MaaS which I gather serves most of the same purpose:https://maas.ubuntu.com/",
+        "points": null,
+        "time": "2015-12-02T16:16:16.000Z",
+        "children": [
+          {
+            "id": 10665215,
+            "author": "stephenr",
+            "text": "Breaking news: A consultant for a company trash talks an open source competitor.",
+            "points": null,
+            "time": "2015-12-02T19:29:52.000Z",
+            "children": []
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": 10661983,
+    "author": "stephenr",
+    "text": "These lines seem odd to me, maybe it's just the wording:> [gPanel] Deploying DNS via Heaven... > hubot is deploying dns/master (deadbeef) to production. > hubot's production deployment of dns/master (deadbeef) is done! (6s)Is this just an IMO odd use of the word \"deploying\" or does a DNS change really mean building and deploying a new package/image?",
+    "points": null,
+    "time": "2015-12-02T09:56:57.000Z",
+    "children": [
+      {
+        "id": 10662011,
+        "author": "jcrawfordor",
+        "text": "I've always thought of 'deploy' as a generic term for pushing any change to production. I think this is pretty typical - e.g. you deploy your application, even if that just means updating some files.",
+        "points": null,
+        "time": "2015-12-02T10:03:09.000Z",
+        "children": []
+      },
+      {
+        "id": 10662043,
+        "author": "_yy",
+        "text": "They probably manage DNS in a Git repository/using Puppet, so deploying may be quite literal. I see no issue with that.",
+        "points": null,
+        "time": "2015-12-02T10:13:20.000Z",
+        "children": [
+          {
+            "id": 10662055,
+            "author": "mrmondo",
+            "text": "We do this, it works well do us with 200-300 servers.",
+            "points": null,
+            "time": "2015-12-02T10:16:04.000Z",
+            "children": []
+          }
+        ]
+      },
+      {
+        "id": 10662208,
+        "author": "vidarh",
+        "text": "I deploy public DNS via new images. Image builds are fast, and our DNS changes rarely. When DNS changes frequently I wouldn't recommend it, though. Our internal DNS is using SkyDNS2 (backed by Etcd) instead, because that changes frequently (service registrations etc. as vms are started/stopped). But for the public DNS we like having the one DNS change => one git commit => one Docker image mapping to see who/why/when DNS changed.",
+        "points": null,
+        "time": "2015-12-02T10:52:10.000Z",
+        "children": []
+      },
+      {
+        "id": 10663540,
+        "author": "samlambert",
+        "text": "We can deploy DNS like an app. If we want to add hostnames manually we do it in git and deploy the DNS \"app\" via hubot.",
+        "points": null,
+        "time": "2015-12-02T15:37:00.000Z",
+        "children": []
+      }
+    ]
+  },
+  {
+    "id": 10661994,
+    "author": "castell",
+    "text": "The Hubot workflow sounds interesting. It seems more and more DevOps prefer it.Has someone first hand experience with such Hubot usage? Do you prefer such commands or would you want to write more informal short sentences?",
+    "points": null,
+    "time": "2015-12-02T10:00:12.000Z",
+    "children": [
+      {
+        "id": 10662009,
+        "author": "Rockslide",
+        "text": "There was also a talk titled \"Chatops\" about this specific thing if you want to learn more: https://www.youtube.com/watch?v=NST3u-GjjFw",
+        "points": null,
+        "time": "2015-12-02T10:02:53.000Z",
+        "children": []
+      },
+      {
+        "id": 10662082,
+        "author": "jon-wood",
+        "text": "I'm somewhat split. There's definite value in having a shared history of what people have done, but I prefer that to take the form of command line tools pushing status updates to Hipchat or whatever. You lose so much convineance by pretending Hipchat's chat box is a terminal, everything from command history to being able to quickly iterate over the contents of a file or set environment variables.",
+        "points": null,
+        "time": "2015-12-02T10:22:12.000Z",
+        "children": [
+          {
+            "id": 10662236,
+            "author": "glenngillen",
+            "text": "One of the most compelling aspects of it for me isn't so much the shared history, but just visibility of what people have done. It's a really effective way of transferring knowledge of how things are done. You can easily drop into the room and watch play-by-play how a given task is done.",
+            "points": null,
+            "time": "2015-12-02T10:59:03.000Z",
+            "children": [
+              {
+                "id": 10663415,
+                "author": "greggyb",
+                "text": "If this is the goal, why not just have a script export the shell's history to a chat channel?To me, a wiki would be even better, because you could retroactively include expository comments along with the command history.",
+                "points": null,
+                "time": "2015-12-02T15:18:48.000Z",
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 10662338,
+        "author": "ktt",
+        "text": "Unfortunately most of the material on ChatOps currently covers only how to get Hubot to display cat pictures or other trivia [1]. Maybe it's because each company should create their own \"chat API\" but I'd also like to hear some real, inside \"war stories\".Does anyone knows what app does GitHub use for chats? Looks like a simple and elegant UI over Basecamp.[1]: http://hubot-script-catalog.herokuapp.com/",
+        "points": null,
+        "time": "2015-12-02T11:29:09.000Z",
+        "children": [
+          {
+            "id": 10662991,
+            "author": "tehbeard",
+            "text": "Going off Hubot's sourcecode, I'd guess campfire.",
+            "points": null,
+            "time": "2015-12-02T14:13:26.000Z",
+            "children": []
+          }
+        ]
+      },
+      {
+        "id": 10663755,
+        "author": "q3k",
+        "text": "Semi-off-topic, but I am genuinely scared by giving a chat bot full root access to your infrastructure. This just doesn't seem like a mature enough, AAA-enabled channel. Especially when there's a third party (HipChat/Slack/...) involved.",
+        "points": null,
+        "time": "2015-12-02T16:08:17.000Z",
+        "children": []
+      }
+    ]
+  },
+  {
+    "id": 10662233,
+    "author": "ymse",
+    "text": "Hardware provisioning is a dying art. I would love to see a modern-day xCAT[0] clone that's easy to install and configure and with proper multi-platform support. Foreman is half-way there, but AFAIK doesn't do BMC provisioning and discovery, which is a big deal.0: https://github.com/xcat2/xcat-core/blob/master/docs/source/i...",
+    "points": null,
+    "time": "2015-12-02T10:58:04.000Z",
+    "children": [
+      {
+        "id": 10663679,
+        "author": "eLobato",
+        "text": "Foreman does discovery [1] (PXE, PXE-less, segmented networks, through bootdisk) and handles BMC, I wrote the API in fact :)http://theforeman.org/plugins/foreman_discovery/4.1/index.ht...Maybe you were not aware because it's a plugin, we kind of have that problem in the Foreman community, plugins are not as visible as they should and they can contain key features.",
+        "points": null,
+        "time": "2015-12-02T15:57:06.000Z",
+        "children": []
+      }
+    ]
+  },
+  {
+    "id": 10662761,
+    "author": "dorfsmay",
+    "text": "Not as detailled on the tooling, but it sows how much hardware they use, Stackoverflow did a blog post on their datacentres move:http://blog.serverfault.com/2015/03/",
+    "points": null,
+    "time": "2015-12-02T13:21:57.000Z",
+    "children": []
+  },
+  {
+    "id": 10662906,
+    "author": "ptype",
+    "text": "Why would a company like GitHub choose Ubuntu over Debian? The LTS policy?",
+    "points": null,
+    "time": "2015-12-02T13:56:01.000Z",
+    "children": [
+      {
+        "id": 10662932,
+        "author": "wtbob",
+        "text": "I too would be interested in the answer. From my perspective, Debian is the server Linux distro par excellence, and in my experience the folks who choose Ubuntu have been devs who don't actually use Linux (e.g., the sorts who develop on a Mac or in a VM rather than on a personal Linux system). It's not really fair to Ubuntu, which is decent enough in its own way, but I tend to consider the choice of Ubuntu to be a bit of an architecture smell.I'm honestly interested in what the valid reasons to prefer Ubuntu over Debian (particularly on the server side) are.",
+        "points": null,
+        "time": "2015-12-02T14:01:18.000Z",
+        "children": [
+          {
+            "id": 10663166,
+            "author": "stephenr",
+            "text": "I agree with the main point you're trying to make, but the suggested examples you provide don't always hold true.I'm pretty dedicated to Debian on the server, a good part of my business is providing infrastructure support and setup, and I work from a MacBook Pro.",
+            "points": null,
+            "time": "2015-12-02T14:42:38.000Z",
+            "children": []
+          },
+          {
+            "id": 10663254,
+            "author": "avar",
+            "text": "Some choose it because Ubuntu, unlike Debian, has a guaranteed timely release cycle, and unlike Debian they have formalized LTS.",
+            "points": null,
+            "time": "2015-12-02T14:55:30.000Z",
+            "children": [
+              {
+                "id": 10664114,
+                "author": "Jgrubb",
+                "text": "This is why I choose Ubuntu.",
+                "points": null,
+                "time": "2015-12-02T17:00:42.000Z",
+                "children": []
+              }
+            ]
+          },
+          {
+            "id": 10663742,
+            "author": "q3k",
+            "text": "Newer packages, sane LTS policy, easier to get non-free firmware/drivers going (as in, the default CD comes with them), seemingly more support from third parties.They're both pretty awful due to their automagic(al tendency to break down in mysterious ways), but if I have to choose, I'll go with Ubuntu.Disclaimer: My main box runs Gentoo and I own no Mac machines, if that changes anything in your vision of Ubuntu users.",
+            "points": null,
+            "time": "2015-12-02T16:06:01.000Z",
+            "children": [
+              {
+                "id": 10664383,
+                "author": "zeveb",
+                "text": "> Newer packages, sane LTS policyThose two are in opposition: Debian (generally) has new-enough packages, but it's stable, which is what one wants on a server system. Meanwhile, Debian's LTS story is better than Ubuntu's: just upgrade, and know it will work.> easier to get non-free firmware/driversBut how often is that needed for server systems? And of course, there're the ethical & engineering issues with using proprietary software in the first place.> seemingly more support from third partiesThere is that, but if we all wanted more support from third parties, we'd have stuck with Windows, no?> They're both pretty awful due to their automagic(al tendency to break down in mysterious ways)I've not experienced that with Debian in a long time. I used to have issues with Ubuntu, but I don't think that they were generally all that bad. Better than what I used to experience with Macs and Windows back in the 90s, anyway.",
+                "points": null,
+                "time": "2015-12-02T17:32:04.000Z",
+                "children": [
+                  {
+                    "id": 10664740,
+                    "author": "FireBeyond",
+                    "text": "\"stable\". \"new-enough\"This is a leading word. As is a lot of that paragraph. For many tools some companies use, Debian certainly is NOT \"new-enough\" with many package choices. Nor is Ubuntu inherently NOT \"stable\" - and still trails a little behind the leading edge. As for upgrades, I've watched many a server upgrade seamlessly from 10.04 LTS to 12.04 to 14.04. I'm sure there can be and has been many a person, many a thread who've not had seamless experiences. But the same applies for Debian - heck, even the release manual has a section entitled \"How To Recover A Broken System\" with reference to system upgrades.\"non-free firmware/drivers\"How often needed? In this article alone, IPMI, BMC, RAID, BIOS.\"And of course, there're the ethical & engineering issues\"This is a derailment. What exactly are the ethical issues for a closed source company in using other proprietary software?I'm by no means an Ubuntu fanatic. It has its share of issues, absolutely. I have everything from FreeBSD to Debian to RHEL to OmniOS to administer, and they all have strengths and weaknesses.",
+                    "points": null,
+                    "time": "2015-12-02T18:21:06.000Z",
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "id": 10664896,
+                "author": "scott_karana",
+                "text": "Drivers are definitely a big deal on desktops, but for servers?...",
+                "points": null,
+                "time": "2015-12-02T18:44:06.000Z",
+                "children": [
+                  {
+                    "id": 10682052,
+                    "author": "q3k",
+                    "text": "There's a lot of exotic hardware on servers (enterprise RAID controllers, converged and 10GbE NICs, SAN HBAs, IPMI configuration utilities...).",
+                    "points": null,
+                    "time": "2015-12-05T15:04:09.000Z",
+                    "children": []
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 10665379,
+        "author": "otterley",
+        "text": "A better question, in my mind, is why they'd choose Ubuntu over CentOS or RHEL, since they're running on Dell hardware, and Kickstart is far, far superior to Debian/Ubuntu's PXE install (and preseeding is awful to configure). My org went through a lot of pain because of this choice (which preceded me) and I'd hate for anyone to go through what I went through.Also Dell's maintenance tooling barely works on Ubuntu at all; they don't even officially support their OpenManage stack on it. And forget about online firmware upgrades.",
+        "points": null,
+        "time": "2015-12-02T19:54:26.000Z",
+        "children": [
+          {
+            "id": 10668967,
+            "author": "stephenr",
+            "text": "> why they'd choose Ubuntu over CentOS or RHELMaybe they'd actually used them before.CentOS is a turd of a distribution, I'm certain the only reason it has any marketshare is because it's the only supported \"free\" OS for cPanel/WHM which a lot of web hosts provide for non-technical customers.",
+            "points": null,
+            "time": "2015-12-03T11:04:43.000Z",
+            "children": [
+              {
+                "id": 10669441,
+                "author": "Jgrubb",
+                "text": "I personally think it gets share with hosts because it never updates anything so it's less work for them to maintain (which I can't hate on).",
+                "points": null,
+                "time": "2015-12-03T13:34:40.000Z",
+                "children": []
+              },
+              {
+                "id": 10672411,
+                "author": "otterley",
+                "text": "> CentOS is a turd of a distributionWhat's the matter with it?",
+                "points": null,
+                "time": "2015-12-03T20:36:39.000Z",
+                "children": []
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": 10663236,
+    "author": "danesparza",
+    "text": "I've known about Hubot for a while.But did anybody else see Hubot with a Santa hat and think that was adorable? Because I did.",
+    "points": null,
+    "time": "2015-12-02T14:52:39.000Z",
+    "children": []
+  },
+  {
+    "id": 10663788,
+    "author": "grandalf",
+    "text": "This is pretty cool but is there really that much benefit to doing this? What size IT staff do the savings justify? Does that change if you use Amazon's market-driven options like spot pricing and capacity planning discounts?",
+    "points": null,
+    "time": "2015-12-02T16:12:53.000Z",
+    "children": [
+      {
+        "id": 10664588,
+        "author": "scott_karana",
+        "text": "The equivalent of a M4.x10large running 24/7, which would cost $1814/month, costs about $400-$500/month lease from Dell or HP.There are other costs, like cooling, power, peering, networking gear, colocation/building costs, having spare parts on hand, paying sysadmins, et cetera, that are going to vary based on your requirements and region.",
+        "points": null,
+        "time": "2015-12-02T17:59:25.000Z",
+        "children": []
+      }
+    ]
+  },
+  {
+    "id": 10664299,
+    "author": "amalag",
+    "text": "Is this also done remotely by gPanel?>Once we've gathered all the information we need about the machine, we enter configuring, where we assign a static IP address to the IPMI interface and tweak our BIOS settings. From there we move to firmware_upgrade where we update FCB, BMC, BIOS, RAID, and any other firmware we'd like to manage on the system.",
+    "points": null,
+    "time": "2015-12-02T17:23:56.000Z",
+    "children": [
+      {
+        "id": 10664675,
+        "author": "FireBeyond",
+        "text": "In theory it should be if you have a tightly controlled hardware process (and in this case, Dell, who is used to selling servers configured to initially PXE boot, etc), and you have some 'expect/send' scripting in place.",
+        "points": null,
+        "time": "2015-12-02T18:12:26.000Z",
+        "children": [
+          {
+            "id": 10665655,
+            "author": "amalag",
+            "text": "I was not aware you can control BIOS settings, BIOS upgrades and configuring IPMI remotely like that.EDIT - looks like it is straightforward if you control the IPMI locally. So the software would send commands to do it locally.",
+            "points": null,
+            "time": "2015-12-02T20:43:19.000Z",
+            "children": []
+          }
+        ]
+      }
+    ]
+  }
+]

@@ -1,0 +1,11 @@
+{
+  "winnerIndex": 1,
+  "reasoning": "Judge failed to provide reasoning",
+  "judgeMeta": {
+    "runId": "ed61802ed11d3130",
+    "operation": "bestof-judge",
+    "tag": "rentroll-map-0-bestof-judge-r1-5f3d658f534977fc",
+    "sandboxId": "iz3h3eqe58pxvxmzlomnm",
+    "candidateCount": 2
+  }
+}

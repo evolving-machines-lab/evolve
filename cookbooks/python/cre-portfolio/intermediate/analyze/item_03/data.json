@@ -1,0 +1,141 @@
+{
+  "property_name": "Premiere Properties Portfolio",
+  "as_of_date": "2026-01-06",
+  "total_sf": 394750.0,
+  "occupied_sf": 394750.0,
+  "vacant_sf": 0.0,
+  "occupancy_rate": 1.0,
+  "tenant_count": 92,
+  "annual_base_rent": 43413404.0,
+  "avg_rent_psf": 109.98,
+  "walt_years": 71.44,
+  "largest_tenant": "Ch\u00e2teau Argent",
+  "largest_tenant_pct": 0.0977,
+  "rollover_12mo_sf": 34051.0,
+  "rollover_12mo_pct": 0.0863,
+  "rollover_24mo_sf": 82874.0,
+  "rollover_24mo_pct": 0.2099,
+  "near_term_expirations": [
+    {
+      "tenant_name": "Maison Diamant",
+      "sf": 7384.0,
+      "annual_rent": 496080.0,
+      "expiration_date": "2026-01-14"
+    },
+    {
+      "tenant_name": "Ch\u00e2teau Rose",
+      "sf": 3004.0,
+      "annual_rent": 233100.0,
+      "expiration_date": "2026-01-31"
+    },
+    {
+      "tenant_name": "Palazzo Oro",
+      "sf": 1820.0,
+      "annual_rent": 90997.0,
+      "expiration_date": "2026-01-31"
+    },
+    {
+      "tenant_name": "Boutique Celeste",
+      "sf": 2614.0,
+      "annual_rent": 156000.0,
+      "expiration_date": "2026-02-28"
+    },
+    {
+      "tenant_name": "Boutique Saphir",
+      "sf": 3002.0,
+      "annual_rent": 200467.0,
+      "expiration_date": "2026-03-31"
+    },
+    {
+      "tenant_name": "Villa Bronzo",
+      "sf": 804.0,
+      "annual_rent": 66250.0,
+      "expiration_date": "2026-03-31"
+    },
+    {
+      "tenant_name": "Boutique Margaux",
+      "sf": 1850.0,
+      "annual_rent": 227550.0,
+      "expiration_date": "2026-05-31"
+    },
+    {
+      "tenant_name": "Atelier Beaumont",
+      "sf": 2616.0,
+      "annual_rent": 209440.0,
+      "expiration_date": "2026-06-29"
+    },
+    {
+      "tenant_name": "Villa Luna",
+      "sf": 2347.0,
+      "annual_rent": 164292.0,
+      "expiration_date": "2026-06-30"
+    },
+    {
+      "tenant_name": "Boutique Saphir",
+      "sf": 1748.0,
+      "annual_rent": 52440.0,
+      "expiration_date": "2026-08-31"
+    },
+    {
+      "tenant_name": "Ch\u00e2teau Noir",
+      "sf": 2695.0,
+      "annual_rent": 194040.0,
+      "expiration_date": "2026-10-31"
+    },
+    {
+      "tenant_name": "Ch\u00e2teau Ivoire",
+      "sf": 4167.0,
+      "annual_rent": 600881.0,
+      "expiration_date": "2026-11-30"
+    },
+    {
+      "tenant_name": "Atelier Perle",
+      "sf": 22439.0,
+      "annual_rent": 1482086.0,
+      "expiration_date": "2027-04-16"
+    },
+    {
+      "tenant_name": "Palazzo Corallo",
+      "sf": 4715.0,
+      "annual_rent": 863711.0,
+      "expiration_date": "2027-05-31"
+    },
+    {
+      "tenant_name": "Ch\u00e2teau Noir",
+      "sf": 1432.0,
+      "annual_rent": 105252.0,
+      "expiration_date": "2027-07-31"
+    },
+    {
+      "tenant_name": "Maison Velours",
+      "sf": 6323.0,
+      "annual_rent": 439607.0,
+      "expiration_date": "2027-07-31"
+    },
+    {
+      "tenant_name": "Boutique Ambre",
+      "sf": 5320.0,
+      "annual_rent": 800676.0,
+      "expiration_date": "2027-10-31"
+    },
+    {
+      "tenant_name": "Galerie Premiere",
+      "sf": 2111.0,
+      "annual_rent": 138915.0,
+      "expiration_date": "2027-10-31"
+    },
+    {
+      "tenant_name": "Atelier Soie",
+      "sf": 5842.0,
+      "annual_rent": 420000.0,
+      "expiration_date": "2027-10-31"
+    },
+    {
+      "tenant_name": "Ch\u00e2teau Rose",
+      "sf": 641.0,
+      "annual_rent": 80805.0,
+      "expiration_date": "2027-11-30"
+    }
+  ],
+  "risk_flags": []
+}

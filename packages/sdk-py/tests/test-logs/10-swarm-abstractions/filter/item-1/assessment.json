@@ -1,0 +1,8 @@
+{
+  "propertyName": "Consolidated Properties",
+  "tenantConcentrationRisk": "low",
+  "leaseRolloverRisk": "high",
+  "rentCollectionRisk": "high",
+  "overallRiskScore": 8.0,
+  "reasoning": "The property features a prestigious, well-diversified tenant base (no single tenant > 5% of revenue), which mitigates concentration risk. However, it faces severe operational and cash flow headwinds. Analysis reveals that 17.72% of the total monthly rent ($615,026) is derived from leases that have already expired as of December 2025, suggesting a high volume of holdover tenants and potential management lapses. Including the 6.46% set to expire in the next 12 months, total rollover risk reaches 24.18%. Additionally, 23 occupied units (including major brands like YSL and Tiffany & Co.) are currently reporting $0 monthly rent, likely due to 'Signed No Occupancy' (SNO) status or extensive rent abatements. This combination of expired leases and significant non-paying occupancy creates substantial uncertainty regarding near-term income stability."
+}

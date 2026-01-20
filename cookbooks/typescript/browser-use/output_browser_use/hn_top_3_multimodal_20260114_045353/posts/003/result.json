@@ -1,0 +1,28 @@
+{
+  "rank": 3,
+  "page": 1,
+  "position_on_page": 3,
+  "title": "A 40-line fix eliminated a 400x performance gap",
+  "hn_item_id": "46609630",
+  "hn_item_url": "https://news.ycombinator.com/item?id=46609630",
+  "outbound_url": "https://questdb.com/blog/jvm-current-thread-user-time/",
+  "final_url": "https://questdb.com/blog/jvm-current-thread-user-time/",
+  "points": 190,
+  "comments": 38,
+  "summary": "An OpenJDK performance optimization that dramatically improved thread CPU time measurement on Linux systems through a clever 40-line fix. The new implementation uses direct clock_gettime() syscall with bit manipulation instead of parsing /proc filesystem, achieving 30x-400x performance improvement with latency reduced from ~11 microseconds to ~279 nanoseconds per operation. Available in JDK 26.",
+  "screenshots": [
+    "screenshots/post_003/01_main.png",
+    "screenshots/post_003/02_key_visual.png",
+    "screenshots/post_003/03_additional.png"
+  ],
+  "actions": [
+    "Navigated to https://news.ycombinator.com/news?p=1",
+    "Located rank 3 post with title 'A 40-line fix eliminated a 400x performance gap'",
+    "Extracted HN metadata: 46609630, 190 points, 38 comments",
+    "Clicked on post title link",
+    "Visited questdb.com article about JVM performance optimization",
+    "Captured 3 key screenshots of the content",
+    "Analyzed article content discussing OpenJDK ThreadMXBean improvements"
+  ],
+  "error": null
+}

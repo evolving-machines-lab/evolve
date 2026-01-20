@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "evolve-sdk"
+version = "0.1.62"
+description = "Pythonic SDK for multi-agent orchestration in E2B sandboxes"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "Proprietary Beta Evaluation License - See LICENSE file"}
+authors = [
+    {name = "Swarmlink, Inc.", email = "brandomagnani@evolvingmachines.ai"}
+]
+keywords = ["ai", "agents", "sandbox", "e2b", "orchestration", "codex", "claude", "gemini", "evolve-sdk"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: Other/Proprietary License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+# No Python runtime dependencies - uses bundled Node.js bridge
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/evolvingmachines/evolve"
+Repository = "https://github.com/evolvingmachines/evolve"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["evolve*", "bridge"]
+exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+# Only include bundled bridge (no source files)
+bridge = ["dist/bridge.bundle.cjs"]
+# Include prompt templates (in subdirectories)
+evolve = ["prompts/agent_md/*.md", "prompts/user/*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"

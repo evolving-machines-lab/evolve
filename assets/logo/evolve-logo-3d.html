@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+  <style>
+    body {
+      background: #0d1117;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+    }
+    .logo {
+      position: relative;
+      font-size: 100px;
+      font-weight: bold;
+      font-family: 'Press Start 2P', cursive;
+      letter-spacing: 6px;
+      transform: scaleY(1.4);
+      padding: 20px 30px;
+    }
+    /* Layer 4: Drop shadow (deepest) */
+    .shadow {
+      position: absolute;
+      color: #1a1a2e;
+      transform: translate(9px, 9px);
+      z-index: 1;
+    }
+    /* Layer 3: Side extrusion */
+    .side {
+      position: absolute;
+      color: #3d3d5c;
+      transform: translate(6px, 6px);
+      z-index: 2;
+    }
+    /* Layer 2: Top bevel */
+    .bevel {
+      position: absolute;
+      color: #6b6b8a;
+      transform: translate(3px, 3px);
+      z-index: 3;
+    }
+    /* Layer 1: Front face (gradient) - metallic chrome */
+    .front {
+      position: relative;
+      background: linear-gradient(90deg, #c0c0c0 0%, #e8e8e8 25%, #a8a8a8 50%, #d4d4d4 75%, #b8c6db 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      z-index: 4;
+    }
+  </style>
+</head>
+<body>
+  <div class="logo">
+    <span class="shadow">EVOLVE</span>
+    <span class="side">EVOLVE</span>
+    <span class="bevel">EVOLVE</span>
+    <span class="front">EVOLVE</span>
+  </div>
+</body>
+</html>

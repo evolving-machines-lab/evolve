@@ -1,0 +1,101 @@
+{
+  "property_name": "Harborview Retail Center",
+  "as_of_date": "2024-03-01",
+  "total_units": 7,
+  "total_sf": 101859.0,
+  "buildings": [
+    {
+      "building_name": null,
+      "tenants": [
+        {
+          "tenant_name": "Harbor Seafood Market",
+          "unit": "101RA",
+          "sf": 7955.0,
+          "lease_start": "2024-01-01",
+          "lease_end": "2033-12-31",
+          "monthly_rent": 216666.67,
+          "annual_rent": 2599999.04,
+          "rent_psf": 326.88,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Vacant",
+          "unit": "202",
+          "sf": 2904.0,
+          "lease_start": "",
+          "lease_end": "",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "vacant"
+        },
+        {
+          "tenant_name": "Moonlight Cinema",
+          "unit": "102RC",
+          "sf": 3231.0,
+          "lease_start": "2008-08-01",
+          "lease_end": "2029-06-25",
+          "monthly_rent": 257125.0,
+          "annual_rent": 3085500.0,
+          "rent_psf": 120.72,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Vacant",
+          "unit": "201",
+          "sf": 22322.0,
+          "lease_start": "",
+          "lease_end": "",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "vacant"
+        },
+        {
+          "tenant_name": "Coastal Coffee Co.",
+          "unit": "104",
+          "sf": 1989.0,
+          "lease_start": "2023-04-01",
+          "lease_end": "2024-09-30",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Vacant",
+          "unit": "103RD",
+          "sf": 6425.0,
+          "lease_start": "",
+          "lease_end": "",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "vacant"
+        },
+        {
+          "tenant_name": "Vacant",
+          "unit": "A",
+          "sf": 20687.0,
+          "lease_start": "",
+          "lease_end": "",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "vacant"
+        },
+        {
+          "tenant_name": "Vacant",
+          "unit": "B",
+          "sf": 18727.0,
+          "lease_start": "",
+          "lease_end": "",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "vacant"
+        }
+      ]
+    }
+  ]
+}

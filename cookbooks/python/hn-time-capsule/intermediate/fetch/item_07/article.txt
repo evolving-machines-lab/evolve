@@ -1,0 +1,147 @@
+Home | Eclipse Che
+
+logo-eclipseche
+ Features
+ How it Works
+ Extend
+ Â 
+
+ Docs
+ Blog
+
+ ð
+
+Run your favorite IDE on Kubernetes
+
+		Create a workspace from a Git repository or sample
+
+		Start Now
+
+ Develop
+
+	 Enjoy Development Again
+
+	 Spend your time coding, not configuring your laptop
+
+		Easy
+		 Quick onboarding.
+
+				A browser is the only requirement.
+
+			 Click on a link and start coding
+
+			 Automated git setup
+
+			 Run your application on Kubernetes with no pain
+
+		Fast
+		 Gain time.
+
+				No setup required.
+
+			 Switch branch or project opening a new browser tab
+
+			 Faster dependencies download from within the cloud.
+
+		Cloud Native
+		 Repeatable, software defined, development environments.
+
+				Access the Kubernetes API from the IDE
+
+			 Test your application in a prod-like environment
+
+ Choose
+
+		 Same Code, different IDE
+
+		 Swap the IDE as you would change your sunglasses
+
+	 Visual Studio Code
+
+			 Visual Studio Code
+
+			A fast and modern code editor built on top of Visual Studio Code Open Source. Configured to run in Kubernetes Pods.
+
+		JetBrains
+
+			 Jetbrains IDEs
+
+			The IDEs for professional developers run with JetBrains Projector and deployed on Kubernetes.
+
+ Open
+
+			Software defined development environments
+
+			 The Devfile format is used to define development workspaces
+
+				 Versioned with code
+
+					An Open Format
+
+				 The Devfile is a CNCF project contributed by Red Hat, AWS and JetBrains.
+
+	 Try
+
+Try Eclipse Che online
+
+Using the online service hosted by Red Hat.
+
+ Java
+
+ Go
+
+ Python
+
+ React
+
+ dot-net
+
+ Django
+
+ Quarkus
+
+ Spring
+
+ Angular
+
+ Svelte
+
+ Laravel
+
+ MongoDB
+ node-dot-js
+
+	Or install it on your Kubernetes cluster
+
+Deploy Eclipse Che on your public or private Kubernetes clusters
+
+	Discover
+
+		 Read more about Eclipse Che with Blog Posts
+
+logo-eclipseche
+ Run your favorite IDE on Kubernetes
+
+ GET STARTED
+ Documentation
+ Try
+ Install
+
+ ECLIPSE CHE
+ Features
+ Blog
+
+ COMMUNITY
+ Get involved
+ Join Community Slack
+ Chat
+ Mailing List
+
+ ECLIPSE FOUNDATION
+ About Eclipse Foundation
+ Privacy Policy
+ Terms of Use
+ Eclipse Public License
+ Legal Resources
+
+ Â© 2023 Eclipse Che

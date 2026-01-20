@@ -1,0 +1,23 @@
+{
+  "name": "evolve-sdk-python-bridge",
+  "version": "0.1.62",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "npm run build:deps && tsc && node bundle.mjs",
+    "build:deps": "cd ../../../ && npm run build --workspace=@evolvingmachines/e2b --workspace=@evolvingmachines/sdk",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@evolvingmachines/e2b": "file:../../e2b",
+    "@evolvingmachines/sdk": "file:../../sdk-ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.18",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.8.3"
+  }
+}

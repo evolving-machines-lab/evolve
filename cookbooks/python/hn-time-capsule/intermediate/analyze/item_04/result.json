@@ -1,0 +1,16 @@
+{
+  "title": "Unikernel on Google Compute Engine",
+  "summary": "Ray Tsang's November 2015 article demonstrates running OSv (an open-source unikernel supporting Java) on Google Compute Engine, specifically deploying a Tomcat application. The article serves as a practical guide showing how unikernels—minimal operating systems running a single application—could be deployed on cloud infrastructure. It highlights the appeal of unikernels: lightweight, fast boot times, and streamlined deployments. However, there were no comments on this article, suggesting limited discussion of the topic at the time.",
+  "what_happened": "Unikernels did not achieve mainstream adoption by 2025, despite their promise. OSv, while still maintained (with Waldemar Kozaczuk leading development), remained a niche technology. However, there has been renewed interest starting around 2024. Key developments: (1) MirageOS continued development with major improvements like OCaml 5 support and new Unikraft backend integration. (2) Unikraft, a Linux Foundation project, gained traction and attracted venture funding ($6M seed round from Vercel). (3) Prisma adopted unikernels for their serverless Postgres offering, providing a real production use case. (4) Academic research in 2024 showed unikernels are promising for edge computing and serverless use cases, though they still lag Linux microVMs in stability. (5) The main barriers remained orchestration complexity, lack of mature tooling compared to containers/Kubernetes, and build complexity. As of 2025, unikernels are experiencing a 'comeback' narrative, but remain specialized solutions rather than mainstream cloud infrastructure, used primarily in edge, IoT, and performance-critical scenarios.",
+  "most_prescient": {
+    "user": "N/A",
+    "reason": "No comments were submitted on this article, so there are no commenters to evaluate for prescience or accuracy."
+  },
+  "most_wrong": {
+    "user": "N/A",
+    "reason": "No comments were submitted on this article, so there are no commenters to evaluate for being wrong."
+  },
+  "notable_aspects": "The article is a straightforward technical tutorial from 2015, before the cloud industry's major pivot toward containers and Kubernetes dominance. It's notable that unikernels never became the 'future of cloud' that some advocates predicted, yet the fundamental ideas remain sound and have found niche applications. The lack of any discussion/comments on this 2015 article is itself notable—it suggests that even on Hacker News, interest in unikernels was minimal at the time. In hindsight, the article's focus on OSv supporting Java reflects an attempt to make unikernels more accessible to enterprise developers, but Docker's momentum and container ecosystem won out. The 2024-2025 resurgence is driven by different motivations (serverless edge computing, extreme resource optimization) rather than as a general-purpose cloud computing platform.",
+  "grades": {},
+  "score": 4
+}

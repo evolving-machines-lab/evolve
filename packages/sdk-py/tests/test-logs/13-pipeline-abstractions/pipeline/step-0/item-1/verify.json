@@ -1,0 +1,5 @@
+{
+  "passed": true,
+  "reasoning": "The worker's output is highly accurate and follows the required schema. All buildings (Bridge North, Bridge South, Buick, City View Garage, Collins, Hermes, Jade, 28L, KVA, Laverne, Lee, Newton, Palm Court, Penny Lane, and Twery) are represented. The worker extracted 132 units, which matches a manual count of visible rows in the PDF (the PDF summary total of 133 appears to be an internal discrepancy or accounts for a non-visible entry). Dates are correctly formatted as YYYY-MM-DD, and rent and square footage values are numeric and align with the document. Vacant units are correctly labeled as 'VACANT'.",
+  "attempts": 1
+}

@@ -1,0 +1,8 @@
+{
+  "propertyName": "BofA Plaza-Off, Los Angeles",
+  "tenantConcentrationRisk": "high",
+  "leaseRolloverRisk": "high",
+  "rentCollectionRisk": "medium",
+  "overallRiskScore": 7.0,
+  "reasoning": "The property exhibits high tenant concentration, with the top three tenants (The Capital Group Companies, Bank of America, N.A., and Sheppard, Mullin, Richter) accounting for over 70% of the total monthly rent. Lease rollover risk is high because Sheppard Mullin (15.3% of rent) has leases that technically expired in December 2024, and other significant leases (Wells Fargo, AT&T) expire within the next 12 months. Additionally, there is a high vacancy rate with several full floors (approx. 150,000+ SF) unoccupied, and some existing leases (e.g., American Contemporary Ballet) are significantly below market rates, though major long-term tenants provide some stability."
+}

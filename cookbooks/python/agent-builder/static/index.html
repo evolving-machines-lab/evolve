@@ -1,0 +1,1316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent Builder</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #FAF9F7;
+            --bg-secondary: #F5F4F0;
+            --bg-card: #FFFFFF;
+            --bg-dark: #1A1915;
+            --text-primary: #1A1915;
+            --text-secondary: #6B6963;
+            --text-muted: #9B9890;
+            --accent: #D97757;
+            --accent-hover: #C46544;
+            --accent-light: #FDF4F1;
+            --purple: #9B8AFB;
+            --purple-light: #F3F1FF;
+            --success: #10A37F;
+            --success-light: #E8F7F3;
+            --error: #DC4A3D;
+            --error-light: #FEF2F1;
+            --border: #E8E6E1;
+            --border-light: #F0EEE9;
+            --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
+            --shadow-md: 0 4px 12px rgba(0,0,0,0.06);
+            --shadow-lg: 0 8px 24px rgba(0,0,0,0.08);
+            --radius-sm: 6px;
+            --radius-md: 10px;
+            --radius-lg: 14px;
+            --sidebar-width: 280px;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* Main Layout */
+        .app-container {
+            display: flex;
+            height: 100vh;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-card);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+        }
+
+        .sidebar-header {
+            padding: 20px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-weight: 600;
+            font-size: 18px;
+            color: var(--text-primary);
+            margin-bottom: 16px;
+        }
+
+        .logo-icon {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, var(--accent) 0%, var(--purple) 100%);
+            border-radius: var(--radius-sm);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 16px;
+        }
+
+        .new-chat-btn {
+            width: 100%;
+            padding: 12px 16px;
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: var(--radius-md);
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            transition: background 0.15s;
+        }
+
+        .new-chat-btn:hover { background: var(--accent-hover); }
+
+        .sidebar-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px;
+        }
+
+        .history-section {
+            margin-bottom: 20px;
+        }
+
+        .history-label {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+            padding: 8px 12px;
+        }
+
+        .history-item {
+            padding: 12px 14px;
+            border-radius: var(--radius-md);
+            cursor: pointer;
+            transition: all 0.15s;
+            margin-bottom: 4px;
+        }
+
+        .history-item:hover { background: var(--bg-secondary); }
+        .history-item.active { background: var(--accent-light); border: 1px solid var(--accent); }
+
+        .history-item-title {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-primary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            margin-bottom: 4px;
+        }
+
+        .history-item-meta {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .history-item-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+        }
+
+        .status-dot.completed { background: var(--success); }
+        .status-dot.running { background: var(--accent); animation: pulse 1.5s infinite; }
+        .status-dot.failed { background: var(--error); }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* Chat Area */
+        .chat-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px;
+        }
+
+        .message {
+            max-width: 900px;
+            margin: 0 auto 24px;
+        }
+
+        .message-user {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 20px;
+        }
+
+        .message-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+
+        .message-avatar {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .message-avatar.user { background: var(--purple-light); color: var(--purple); }
+        .message-avatar.agent { background: var(--accent-light); color: var(--accent); }
+
+        .message-role {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-secondary);
+        }
+
+        .message-content {
+            font-size: 15px;
+            line-height: 1.7;
+            color: var(--text-primary);
+        }
+
+        .message-files {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+        .message-file-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            background: var(--purple-light);
+            color: var(--purple);
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .message-agent {
+            background: var(--bg-secondary);
+            border-radius: var(--radius-lg);
+            padding: 20px;
+        }
+
+        /* Results Panel */
+        .results-panel {
+            background: var(--bg-card);
+            border-top: 1px solid var(--border);
+            max-height: 50vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .results-panel.collapsed { max-height: 48px; }
+
+        .results-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 20px;
+            border-bottom: 1px solid var(--border);
+            cursor: pointer;
+        }
+
+        .results-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .results-toggle {
+            background: none;
+            border: none;
+            cursor: pointer;
+            color: var(--text-muted);
+            font-size: 18px;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 4px;
+            padding: 8px 16px;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .tab {
+            padding: 8px 16px;
+            border: none;
+            background: transparent;
+            border-radius: var(--radius-sm);
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.15s;
+            font-family: inherit;
+        }
+
+        .tab:hover { color: var(--text-primary); background: var(--bg-card); }
+        .tab.active { background: var(--accent); color: white; }
+
+        .tab-content {
+            flex: 1;
+            overflow: auto;
+            padding: 16px;
+        }
+
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; }
+
+        /* Visualization */
+        .viz-iframe {
+            width: 100%;
+            height: 400px;
+            border: none;
+            border-radius: var(--radius-md);
+            background: white;
+        }
+
+        /* Files Grid */
+        .files-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 16px;
+        }
+
+        .file-card {
+            background: var(--bg-primary);
+            border-radius: var(--radius-md);
+            border: 1px solid var(--border);
+            overflow: hidden;
+        }
+
+        .file-card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 14px;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .file-card-name {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .file-icon {
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--purple-light);
+            color: var(--purple);
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        .file-card-actions { display: flex; gap: 4px; }
+
+        .icon-btn {
+            width: 28px;
+            height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            cursor: pointer;
+            color: var(--text-secondary);
+            font-size: 12px;
+            transition: all 0.15s;
+        }
+
+        .icon-btn:hover { background: var(--bg-card); color: var(--accent); border-color: var(--accent); }
+
+        .file-card-content {
+            padding: 12px 14px;
+            max-height: 200px;
+            overflow: auto;
+        }
+
+        .file-preview {
+            font-family: 'SF Mono', Monaco, Consolas, monospace;
+            font-size: 11px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-break: break-all;
+            color: var(--text-secondary);
+        }
+
+        /* Log */
+        .log-content {
+            background: var(--bg-dark);
+            border-radius: var(--radius-md);
+            padding: 16px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'SF Mono', Monaco, Consolas, monospace;
+            font-size: 12px;
+            line-height: 1.8;
+            color: #E8E6E1;
+        }
+
+        .log-entry { padding: 2px 0; }
+        .log-time { color: var(--text-muted); margin-right: 12px; }
+
+        /* Chat Input */
+        .chat-input-container {
+            padding: 16px 24px 24px;
+            background: var(--bg-primary);
+            border-top: 1px solid var(--border);
+        }
+
+        .chat-input-wrapper {
+            max-width: 900px;
+            margin: 0 auto;
+            display: flex;
+            gap: 12px;
+            align-items: flex-end;
+        }
+
+        .chat-input-box {
+            flex: 1;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 12px 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .chat-input {
+            width: 100%;
+            border: none;
+            background: transparent;
+            font-size: 15px;
+            font-family: inherit;
+            resize: none;
+            outline: none;
+            min-height: 24px;
+            max-height: 150px;
+        }
+
+        .chat-input::placeholder { color: var(--text-muted); }
+
+        .chat-input-actions {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .file-upload-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            background: var(--bg-secondary);
+            border: 1px dashed var(--border);
+            border-radius: var(--radius-sm);
+            color: var(--text-secondary);
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .file-upload-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+        .options-row {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            color: var(--text-secondary);
+            cursor: pointer;
+        }
+
+        .checkbox-label input {
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+        }
+
+        .reconnect-banner {
+            background: var(--error-light);
+            border: 1px solid var(--error);
+            color: var(--error);
+            padding: 12px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 14px;
+        }
+
+        .reconnect-banner button {
+            background: var(--error);
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            font-size: 13px;
+        }
+
+        .send-btn {
+            width: 44px;
+            height: 44px;
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: var(--radius-md);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            transition: background 0.15s;
+        }
+
+        .send-btn:hover { background: var(--accent-hover); }
+        .send-btn:disabled { background: var(--text-muted); cursor: not-allowed; }
+
+        /* Empty State */
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            padding: 40px;
+            text-align: center;
+        }
+
+        .empty-state-icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+            opacity: 0.3;
+        }
+
+        .empty-state-title {
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 8px;
+        }
+
+        .empty-state-text {
+            font-size: 15px;
+            color: var(--text-muted);
+            max-width: 400px;
+        }
+
+        /* Processing Indicator */
+        .processing-indicator {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 16px 20px;
+            background: var(--accent-light);
+            border-radius: var(--radius-md);
+            margin-bottom: 16px;
+        }
+
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .processing-text {
+            font-size: 14px;
+            color: var(--accent);
+            font-weight: 500;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .sidebar { display: none; }
+            .chat-input-wrapper { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <div class="logo-icon">A</div>
+                    <span>Agent Builder</span>
+                </div>
+                <button class="new-chat-btn" onclick="newChat()">
+                    <span>+</span> New Agent
+                </button>
+            </div>
+            <div class="sidebar-content">
+                <div class="history-section" id="historySection">
+                    <div class="history-label">Recent</div>
+                    <div id="historyList"></div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Chat Area -->
+            <div class="chat-area">
+                <div class="chat-messages" id="chatMessages">
+                    <div class="empty-state" id="emptyState">
+                        <div class="empty-state-icon">&#129302;</div>
+                        <div class="empty-state-title">Build AI-Powered Apps</div>
+                        <div class="empty-state-text">
+                            Describe what you want to build, upload files for context, and watch the agent create it with beautiful visualizations.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Results Panel -->
+                <div class="results-panel" id="resultsPanel" style="display: none;">
+                    <div class="results-header" onclick="toggleResultsPanel()">
+                        <span class="results-title">
+                            <span>&#128194;</span> Results
+                        </span>
+                        <button class="results-toggle" id="resultsToggle">&#9650;</button>
+                    </div>
+                    <div class="tabs">
+                        <button class="tab active" data-tab="viz" onclick="switchTab('viz')">Visualization</button>
+                        <button class="tab" data-tab="files" onclick="switchTab('files')">Raw Files</button>
+                        <button class="tab" data-tab="log" onclick="switchTab('log')">Agent Log</button>
+                    </div>
+                    <div class="tab-content">
+                        <div class="tab-panel active" id="vizPanel">
+                            <iframe class="viz-iframe" id="vizIframe" sandbox="allow-scripts allow-downloads allow-same-origin"></iframe>
+                        </div>
+                        <div class="tab-panel" id="filesPanel">
+                            <div class="files-grid" id="filesGrid"></div>
+                        </div>
+                        <div class="tab-panel" id="logPanel">
+                            <div class="log-content" id="logContent"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chat Input -->
+            <div class="chat-input-container">
+                <div class="chat-input-wrapper">
+                    <div class="chat-input-box">
+                        <textarea
+                            class="chat-input"
+                            id="chatInput"
+                            placeholder="Describe what you want to build, or ask to modify the current agent..."
+                            rows="1"
+                            onkeydown="handleInputKeydown(event)"
+                        ></textarea>
+                        <div class="chat-input-actions">
+                            <div class="options-row">
+                                <div>
+                                    <input type="file" id="fileInput" multiple style="display: none;" onchange="handleFileSelect(event)">
+                                    <label class="file-upload-btn" for="fileInput">
+                                        <span>&#128206;</span> Add files
+                                    </label>
+                                    <span id="fileCount"></span>
+                                </div>
+                                <label class="checkbox-label" title="Skip visualization to get results faster">
+                                    <input type="checkbox" id="skipVizCheckbox">
+                                    Fast mode (skip viz)
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                    <button class="send-btn" id="sendBtn" onclick="sendMessage()">
+                        &#10148;
+                    </button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // State
+        let currentJobId = null;
+        let jobs = {}; // job_id -> job data
+        let uploadedFiles = [];
+        let ws = null;
+        let messages = []; // conversation history for current job
+        let isProcessing = false;
+        let reconnectAttempts = 0;
+        let pollInterval = null;
+        const MAX_RECONNECT_ATTEMPTS = 3;
+
+        // Initialize
+        loadJobHistory();
+
+        // Auto-resize textarea
+        const chatInput = document.getElementById('chatInput');
+        chatInput.addEventListener('input', () => {
+            chatInput.style.height = 'auto';
+            chatInput.style.height = Math.min(chatInput.scrollHeight, 150) + 'px';
+        });
+
+        // File handling
+        function handleFileSelect(event) {
+            const files = Array.from(event.target.files);
+            files.forEach(file => {
+                if (!uploadedFiles.find(f => f.name === file.name)) {
+                    uploadedFiles.push(file);
+                }
+            });
+            updateFileCount();
+        }
+
+        function updateFileCount() {
+            const count = document.getElementById('fileCount');
+            if (uploadedFiles.length > 0) {
+                count.textContent = `${uploadedFiles.length} file(s) attached`;
+                count.style.marginLeft = '8px';
+                count.style.color = 'var(--purple)';
+                count.style.fontSize = '13px';
+            } else {
+                count.textContent = '';
+            }
+        }
+
+        // Input handling
+        function handleInputKeydown(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                sendMessage();
+            }
+        }
+
+        // Send message
+        async function sendMessage() {
+            const input = document.getElementById('chatInput');
+            const prompt = input.value.trim();
+            if (!prompt || isProcessing) return;
+
+            isProcessing = true;
+            document.getElementById('sendBtn').disabled = true;
+
+            // Hide empty state
+            document.getElementById('emptyState').style.display = 'none';
+
+            // Add user message
+            addMessage('user', prompt, uploadedFiles.map(f => f.name));
+
+            // Clear input
+            input.value = '';
+            input.style.height = 'auto';
+
+            try {
+                // Check if this is a follow-up or new job
+                const isFollowUp = currentJobId && jobs[currentJobId]?.status === 'completed';
+                const skipViz = document.getElementById('skipVizCheckbox').checked;
+
+                // Create job
+                const formData = new FormData();
+                formData.append('prompt', prompt);
+                formData.append('skip_visualization', skipViz);
+
+                if (isFollowUp) {
+                    formData.append('parent_job_id', currentJobId);
+                }
+
+                uploadedFiles.forEach(file => {
+                    formData.append('files', file);
+                });
+
+                const response = await fetch('/api/jobs', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+                currentJobId = data.job_id;
+
+                // Initialize job in local state
+                jobs[currentJobId] = {
+                    job_id: currentJobId,
+                    prompt: prompt,
+                    status: 'pending',
+                    created_at: new Date().toISOString(),
+                    messages: [...messages],
+                    files: uploadedFiles.map(f => f.name)
+                };
+
+                // Clear uploaded files
+                uploadedFiles = [];
+                updateFileCount();
+                document.getElementById('fileInput').value = '';
+
+                // Update history
+                updateHistoryList();
+
+                // Add processing indicator
+                addProcessingIndicator();
+
+                // Connect to WebSocket
+                connectWebSocket(currentJobId);
+
+            } catch (error) {
+                console.error('Error:', error);
+                addMessage('agent', `Error: ${error.message}`);
+                isProcessing = false;
+                document.getElementById('sendBtn').disabled = false;
+            }
+        }
+
+        // WebSocket
+        function connectWebSocket(jobId) {
+            reconnectAttempts = 0;
+            doConnect(jobId);
+        }
+
+        function doConnect(jobId) {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${window.location.host}/ws/${jobId}`);
+
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+                reconnectAttempts = 0;
+                hideReconnectBanner();
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                handleWSMessage(data);
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+
+            ws.onclose = (event) => {
+                console.log('WebSocket closed', event.code);
+                // If still processing and not a normal close, try to reconnect or poll
+                if (isProcessing && event.code !== 1000) {
+                    if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                        reconnectAttempts++;
+                        console.log(`Reconnecting... attempt ${reconnectAttempts}`);
+                        updateProcessingStatus(`Connection lost. Reconnecting (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+                        setTimeout(() => doConnect(jobId), 2000);
+                    } else {
+                        // Switch to polling
+                        showReconnectBanner();
+                        startPolling(jobId);
+                    }
+                }
+            };
+        }
+
+        function handleWSMessage(data) {
+            if (data.type === 'ping') {
+                // Keepalive ping, just ignore
+                return;
+            } else if (data.type === 'progress') {
+                updateProcessingStatus(data.message);
+                addLogEntry(data.message);
+            } else if (data.type === 'complete') {
+                stopPolling();
+                onJobComplete(data.job);
+            } else if (data.type === 'error') {
+                stopPolling();
+                removeProcessingIndicator();
+                addMessage('agent', `Error: ${data.error}`);
+                jobs[currentJobId].status = 'failed';
+                updateHistoryList();
+                isProcessing = false;
+                document.getElementById('sendBtn').disabled = false;
+            }
+        }
+
+        // Polling fallback
+        function startPolling(jobId) {
+            console.log('Starting polling fallback...');
+            updateProcessingStatus('Connection lost. Polling for results...');
+            pollInterval = setInterval(() => checkJobStatus(jobId), 5000);
+        }
+
+        function stopPolling() {
+            if (pollInterval) {
+                clearInterval(pollInterval);
+                pollInterval = null;
+            }
+            hideReconnectBanner();
+        }
+
+        async function checkJobStatus(jobId) {
+            try {
+                const response = await fetch(`/api/jobs/${jobId}`);
+                const job = await response.json();
+
+                if (job.status === 'completed') {
+                    stopPolling();
+                    onJobComplete({
+                        job_id: jobId,
+                        status: 'completed',
+                        raw_files: job.raw_files,
+                        has_visualization: job.has_visualization
+                    });
+                } else if (job.status === 'failed') {
+                    stopPolling();
+                    removeProcessingIndicator();
+                    addMessage('agent', `Error: ${job.error || 'Job failed'}`);
+                    jobs[currentJobId].status = 'failed';
+                    updateHistoryList();
+                    isProcessing = false;
+                    document.getElementById('sendBtn').disabled = false;
+                } else {
+                    // Still running, update status
+                    const lastProgress = job.progress?.[job.progress.length - 1];
+                    if (lastProgress) {
+                        updateProcessingStatus(lastProgress);
+                    }
+                }
+            } catch (error) {
+                console.error('Polling error:', error);
+            }
+        }
+
+        function showReconnectBanner() {
+            let banner = document.getElementById('reconnectBanner');
+            if (!banner) {
+                banner = document.createElement('div');
+                banner.id = 'reconnectBanner';
+                banner.className = 'reconnect-banner';
+                banner.innerHTML = `
+                    <span>Connection lost. Polling for results...</span>
+                    <button onclick="manualReconnect()">Retry Connection</button>
+                `;
+                document.querySelector('.chat-area').prepend(banner);
+            }
+            banner.style.display = 'flex';
+        }
+
+        function hideReconnectBanner() {
+            const banner = document.getElementById('reconnectBanner');
+            if (banner) banner.style.display = 'none';
+        }
+
+        function manualReconnect() {
+            if (currentJobId) {
+                stopPolling();
+                reconnectAttempts = 0;
+                doConnect(currentJobId);
+            }
+        }
+
+        // Job completion
+        async function onJobComplete(job) {
+            removeProcessingIndicator();
+
+            // Update job state
+            jobs[currentJobId] = {
+                ...jobs[currentJobId],
+                ...job,
+                status: 'completed'
+            };
+
+            // Add agent response
+            const fileCount = job.raw_files?.length || 0;
+            let responseText = `I've completed your request and generated ${fileCount} file(s).`;
+            if (job.has_visualization) {
+                responseText += ' Check the visualization below for a visual summary.';
+            }
+            addMessage('agent', responseText);
+
+            // Show results panel
+            showResultsPanel(job);
+
+            // Update history
+            updateHistoryList();
+            saveJobHistory();
+
+            isProcessing = false;
+            document.getElementById('sendBtn').disabled = false;
+        }
+
+        // Messages
+        function addMessage(role, content, files = []) {
+            messages.push({ role, content, files, time: new Date().toISOString() });
+            renderMessages();
+        }
+
+        function renderMessages() {
+            const container = document.getElementById('chatMessages');
+            const emptyState = document.getElementById('emptyState');
+
+            if (messages.length === 0) {
+                if (emptyState) emptyState.style.display = 'flex';
+                return;
+            }
+
+            if (emptyState) emptyState.style.display = 'none';
+
+            let html = '';
+            messages.forEach(msg => {
+                if (msg.role === 'user') {
+                    html += `
+                        <div class="message message-user">
+                            <div class="message-header">
+                                <div class="message-avatar user">U</div>
+                                <span class="message-role">You</span>
+                            </div>
+                            <div class="message-content">${escapeHtml(msg.content)}</div>
+                            ${msg.files?.length ? `
+                                <div class="message-files">
+                                    ${msg.files.map(f => `<span class="message-file-tag">&#128206; ${f}</span>`).join('')}
+                                </div>
+                            ` : ''}
+                        </div>
+                    `;
+                } else {
+                    html += `
+                        <div class="message message-agent">
+                            <div class="message-header">
+                                <div class="message-avatar agent">A</div>
+                                <span class="message-role">Agent</span>
+                            </div>
+                            <div class="message-content">${escapeHtml(msg.content)}</div>
+                        </div>
+                    `;
+                }
+            });
+
+            container.innerHTML = html;
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function addProcessingIndicator() {
+            const container = document.getElementById('chatMessages');
+            const indicator = document.createElement('div');
+            indicator.id = 'processingIndicator';
+            indicator.className = 'processing-indicator';
+            indicator.innerHTML = `
+                <div class="spinner"></div>
+                <span class="processing-text" id="processingText">Starting agent...</span>
+            `;
+            container.appendChild(indicator);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function updateProcessingStatus(message) {
+            const text = document.getElementById('processingText');
+            if (text) {
+                text.textContent = message;
+            }
+        }
+
+        function removeProcessingIndicator() {
+            const indicator = document.getElementById('processingIndicator');
+            if (indicator) indicator.remove();
+        }
+
+        // Results Panel
+        function showResultsPanel(job) {
+            const panel = document.getElementById('resultsPanel');
+            if (!panel) return;
+            panel.style.display = 'flex';
+
+            // Load visualization
+            if (job.has_visualization) {
+                document.getElementById('vizIframe').src = `/api/jobs/${job.job_id}/visualization`;
+            }
+
+            // Load files
+            loadFiles(job.job_id, job.raw_files || []);
+
+            // Render log
+            renderLog();
+        }
+
+        function toggleResultsPanel() {
+            const panel = document.getElementById('resultsPanel');
+            const toggle = document.getElementById('resultsToggle');
+            panel.classList.toggle('collapsed');
+            toggle.textContent = panel.classList.contains('collapsed') ? '▼' : '▲';
+        }
+
+        async function loadFiles(jobId, fileNames) {
+            const grid = document.getElementById('filesGrid');
+            grid.innerHTML = '';
+
+            for (const filename of fileNames) {
+                try {
+                    const response = await fetch(`/api/jobs/${jobId}/files/${filename}`);
+                    const data = await response.json();
+                    grid.appendChild(createFileCard(filename, data.content, data.content_type));
+                } catch (error) {
+                    console.error(`Error loading file ${filename}:`, error);
+                }
+            }
+        }
+
+        function createFileCard(filename, base64Content, contentType) {
+            const card = document.createElement('div');
+            card.className = 'file-card';
+
+            const ext = filename.split('.').pop().toLowerCase();
+            const iconMap = { 'json': '{ }', 'csv': '&#128202;', 'txt': '&#128196;', 'md': '&#128203;', 'html': '&#127760;', 'py': '&#128013;' };
+
+            card.innerHTML = `
+                <div class="file-card-header">
+                    <div class="file-card-name">
+                        <div class="file-icon">${iconMap[ext] || '&#128196;'}</div>
+                        <span>${filename}</span>
+                    </div>
+                    <div class="file-card-actions">
+                        <button class="icon-btn" onclick="copyFile('${filename}', this)" title="Copy">&#128203;</button>
+                        <button class="icon-btn" onclick="downloadFile('${filename}', this)" title="Download">&#8595;</button>
+                    </div>
+                </div>
+                <div class="file-card-content">
+                    <pre class="file-preview">${renderFilePreview(base64Content, contentType)}</pre>
+                </div>
+            `;
+            card.dataset.content = base64Content;
+            card.dataset.contentType = contentType;
+            return card;
+        }
+
+        function renderFilePreview(base64Content, contentType) {
+            if (contentType?.startsWith('image/')) return '[Image]';
+            try {
+                const content = atob(base64Content);
+                return escapeHtml(content.length > 1000 ? content.substring(0, 1000) + '...' : content);
+            } catch { return '[Unable to preview]'; }
+        }
+
+        // Log
+        let logEntries = [];
+
+        function addLogEntry(message) {
+            const time = new Date().toLocaleTimeString('en-US', { hour12: false });
+            logEntries.push({ time, message });
+        }
+
+        function renderLog() {
+            document.getElementById('logContent').innerHTML = logEntries.map(e =>
+                `<div class="log-entry"><span class="log-time">${e.time}</span>${escapeHtml(e.message)}</div>`
+            ).join('');
+        }
+
+        // Tabs
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tabName));
+            document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === tabName + 'Panel'));
+        }
+
+        // History
+        function loadJobHistory() {
+            try {
+                const saved = localStorage.getItem('agentBuilderJobs');
+                if (saved) jobs = JSON.parse(saved);
+                updateHistoryList();
+            } catch (e) { console.error('Error loading history:', e); }
+        }
+
+        function saveJobHistory() {
+            try {
+                localStorage.setItem('agentBuilderJobs', JSON.stringify(jobs));
+            } catch (e) { console.error('Error saving history:', e); }
+        }
+
+        function updateHistoryList() {
+            const list = document.getElementById('historyList');
+            const sortedJobs = Object.values(jobs).sort((a, b) =>
+                new Date(b.created_at) - new Date(a.created_at)
+            );
+
+            list.innerHTML = sortedJobs.map(job => `
+                <div class="history-item ${job.job_id === currentJobId ? 'active' : ''}" onclick="loadJob('${job.job_id}')">
+                    <div class="history-item-title">${escapeHtml(job.prompt?.substring(0, 40) || 'Untitled')}...</div>
+                    <div class="history-item-meta">
+                        <span class="history-item-status">
+                            <span class="status-dot ${job.status || 'pending'}"></span>
+                            ${job.status || 'pending'}
+                        </span>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function loadJob(jobId) {
+            currentJobId = jobId;
+            const job = jobs[jobId];
+            if (!job) return;
+
+            messages = job.messages || [];
+            if (messages.length === 0 && job.prompt) {
+                messages.push({ role: 'user', content: job.prompt, files: job.files || [] });
+            }
+
+            logEntries = [];
+            renderMessages();
+            updateHistoryList();
+
+            if (job.status === 'completed') {
+                showResultsPanel(job);
+            } else {
+                document.getElementById('resultsPanel').style.display = 'none';
+            }
+        }
+
+        function newChat() {
+            currentJobId = null;
+            messages = [];
+            logEntries = [];
+            uploadedFiles = [];
+            updateFileCount();
+            document.getElementById('fileInput').value = '';
+            document.getElementById('chatInput').value = '';
+            document.getElementById('emptyState').style.display = 'flex';
+            document.getElementById('chatMessages').innerHTML = '';
+            document.getElementById('chatMessages').appendChild(document.getElementById('emptyState') || createEmptyState());
+            document.getElementById('resultsPanel').style.display = 'none';
+            updateHistoryList();
+        }
+
+        function createEmptyState() {
+            const div = document.createElement('div');
+            div.id = 'emptyState';
+            div.className = 'empty-state';
+            div.innerHTML = `
+                <div class="empty-state-icon">&#129302;</div>
+                <div class="empty-state-title">Build AI-Powered Apps</div>
+                <div class="empty-state-text">Describe what you want to build, upload files for context, and watch the agent create it with beautiful visualizations.</div>
+            `;
+            return div;
+        }
+
+        // File actions
+        function copyFile(filename, btn) {
+            const card = btn.closest('.file-card');
+            if (card?.dataset.content) {
+                navigator.clipboard.writeText(atob(card.dataset.content));
+            }
+        }
+
+        function downloadFile(filename, btn) {
+            const card = btn.closest('.file-card');
+            if (card?.dataset.content) {
+                const blob = new Blob([atob(card.dataset.content)], { type: card.dataset.contentType });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                a.click();
+                URL.revokeObjectURL(url);
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text || '';
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,39 @@
+{
+  "property_name": "Metropolitan Business Center",
+  "as_of_date": "2023-09-30",
+  "total_sf": 350075.0,
+  "occupied_sf": 312965.0,
+  "vacant_sf": 37110.0,
+  "occupancy_rate": 0.893994144111976,
+  "tenant_count": 28,
+  "annual_base_rent": 11117834.67,
+  "avg_rent_psf": 35.524210918153784,
+  "walt_years": 5.842446410575094,
+  "largest_tenant": "Garnet Financial LLC",
+  "largest_tenant_pct": 0.08824930475423233,
+  "rollover_12mo_sf": 3861.0,
+  "rollover_12mo_pct": 0.012336842777946416,
+  "rollover_24mo_sf": 13806.0,
+  "rollover_24mo_pct": 0.04411355902417203,
+  "near_term_expirations": [
+    {
+      "tenant_name": "Quantum Dynamics Inc.",
+      "sf": 0.0,
+      "annual_rent": 0.0,
+      "expiration_date": "2023-03-01"
+    },
+    {
+      "tenant_name": "Citrine Capital LLC",
+      "sf": 3861.0,
+      "annual_rent": 186797.4,
+      "expiration_date": "2023-11-30"
+    },
+    {
+      "tenant_name": "Garnet Financial LLC",
+      "sf": 9945.0,
+      "annual_rent": 420772.92,
+      "expiration_date": "2025-04-30"
+    }
+  ],
+  "risk_flags": []
+}

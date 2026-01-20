@@ -1,0 +1,6 @@
+{"type":"init","timestamp":"2025-12-17T21:07:38.619Z","session_id":"483e71a4-1beb-4aab-87bd-4624f361e0e5","model":"gemini-3-flash-preview"}
+{"type":"message","timestamp":"2025-12-17T21:07:38.621Z","role":"user","content":"Create a file called test.txt with 'hello' in it. Use the write_file tool or equivalent."}
+{"type":"tool_use","timestamp":"2025-12-17T21:07:40.368Z","tool_name":"write_file","tool_id":"write_file-1766005660368-3811ce0f4a657","parameters":{"content":"hello","file_path":"output/test.txt"}}
+{"type":"tool_result","timestamp":"2025-12-17T21:07:40.671Z","tool_id":"write_file-1766005660368-3811ce0f4a657","status":"success"}
+{"type":"message","timestamp":"2025-12-17T21:07:42.714Z","role":"assistant","content":"I have created the file `output/test.txt` with the content 'hello'.","delta":true}
+{"type":"result","timestamp":"2025-12-17T21:07:42.726Z","status":"success","stats":{"total_tokens":12124,"input_tokens":11918,"output_tokens":35,"duration_ms":4107,"tool_calls":1}}

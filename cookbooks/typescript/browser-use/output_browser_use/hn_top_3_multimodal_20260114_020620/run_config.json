@@ -1,0 +1,7 @@
+{
+  "started_at": "20260114_020620",
+  "count": 3,
+  "concurrency": 4,
+  "mcp_server": "browser-use",
+  "target": "https://news.ycombinator.com/news"
+}

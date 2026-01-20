@@ -1,0 +1,50 @@
+{
+  "title": "The Cannons on the B-29 Bomber",
+  "summary": "A Popular Mechanics article about the B-29 Superfortress bomber from 2015, focusing on its innovative fire control system with remote-controlled turrets and computerized targeting. The discussion covers the aircraft's technical sophistication, its role in WWII, and debates about the actual effectiveness of its defensive weapons systems. The discussion spans technical details of gunnery computers, the importance of the jet stream discovery, Curtis LeMay's tactical innovations, and comparisons to other bombers and military vehicles.",
+  "what_happened": "The B-29's technical innovations, particularly its computerized fire control systems and pressurized cabin, did indeed become foundational for modern strategic aircraft. The article's claims about the aircraft's capabilities were largely accurate. However, the defensive cannon system proved less important than initially believed—LeMay's later decision to strip guns from B-29s (except tail guns) to maximize bomb load proved more effective. The B-29 successfully served as the platform for the atomic bombs on Hiroshima and Nagasaki, fundamentally ending WWII. The aircraft's design directly influenced postwar strategic bombers and the KC-97 tanker. The jet stream discovery was genuine and profoundly changed bombing tactics. Over a decade later (2025), the B-29's legacy is cemented as a revolutionary platform that established modern strategic bombing doctrine, though its defensive systems were less effective than emphasized in wartime propaganda.",
+  "most_prescient": {
+    "user": "cstross",
+    "reason": "Immediately recognized that Curtis LeMay's removal of guns (except tail position) and emphasis on lightweight, high-payload designs proved more effective operationally. This prescient observation directly contradicted the article's emphasis on defensive weaponry and matched what actually became standard doctrine—LeMay's low-altitude night firebombing proved far more successful than high-altitude precision bombing with full defensive armament."
+  },
+  "most_wrong": {
+    "user": "rangibaby",
+    "reason": "Initially dismissed the B-29 as mere 'linkbait' with unclear significance. While appropriately skeptical of wartime propaganda claims (like the '79 fighter planes' incident), rangibaby failed to recognize the B-29's genuine historical importance as a gateway aircraft that modernized the U.S. Air Force and established postwar strategic bombing doctrine—a claim validated by historians and operational history over the following decade."
+  },
+  "notable_aspects": "The discussion reveals strong HN commenter knowledge about WWII technical history. Several commenters expertly explain stadiametric rangefinding, coincidence rangefinders, and mechanical fire control computers—sophisticated technical depth. The discussion of 'kill claims' overcounting is particularly insightful, with Pinckney citing 5:1 or higher ratios of claimed vs. confirmed kills. A fun tangent discusses how the B-29's remote turrets would have been useful on the Millennium Falcon, with geeky references to TIE Fighter video game mechanics. The discussion also veers productively into comparisons of bomber doctrine (Mosquito vs. heavies, B-17 tactics) and even modern military vehicle design (Bradley Fighting Vehicle).",
+  "grades": {
+    "cstross": {
+      "grade": "A+",
+      "rationale": "Provided accurate historical fact that LeMay ordered guns stripped from B-29s starting February 1945 (except tail gun) to save weight and increase range/bomb load. This proved operationally decisive and directly contradicted the article's emphasis on defensive systems. Demonstrated deep knowledge of real historical outcomes."
+    },
+    "alricb": {
+      "grade": "A",
+      "rationale": "Correctly identified that the B-29 carried .50 machine guns, not true cannons (20mm+), and astutely noted that defensive guns on bombers were minimally useful—a perspective validated by LeMay's later tactical decisions. Sound technical and strategic understanding."
+    },
+    "Blackthorn": {
+      "grade": "A-",
+      "rationale": "Correctly identified the jet stream as a critical factor in the B-29's initial failure, noting it cost 74 fighters lost compared to massive attrition from weather and mechanical failures. Cited 'Clash of Wings' documentary as source. Appropriately skeptical of wartime propaganda about combat effectiveness."
+    },
+    "hydrogen18": {
+      "grade": "B+",
+      "rationale": "Made reasonable inference that Japanese didn't intercept the Hiroshima bomber thinking it was reconnaissance. Showed good tactical understanding, though this was speculative rather than sourced. The reasoning was sound but not definitively proven."
+    },
+    "Tloewald": {
+      "grade": "B",
+      "rationale": "Provided legitimate historical evidence of B-29 downing fighters and MiGs in Korea, and correctly noted Japanese pilot quality declined during war. However, didn't account for kill claim overcounting and somewhat conflated aggregate statistics without acknowledging confirmation ratios."
+    },
+    "rangibaby": {
+      "grade": "C",
+      "rationale": "Appropriately skeptical of wartime propaganda and the '79 fighter planes' claim, correctly noting resource scarcity on Japan's side. However, dismissed the article prematurely without recognizing the B-29's genuine historical significance as a gateway aircraft that shaped postwar strategic aviation."
+    },
+    "WalterBright": {
+      "grade": "B+",
+      "rationale": "Shared credible first-hand account through family experience (B-17 navigator father), describing realistic Luftwaffe tactics (checking tail gunner alertness, head-on attacks). Anecdotal evidence was consistent with documented tactics, though not generalizable."
+    },
+    "Pinckney": {
+      "grade": "A",
+      "rationale": "Provided crucial context about systematic kill claim overcounting during WWII, citing 5:1+ ratios and specific examples (91st and 306th Bomb Groups claiming 63 destroyed but only 2 confirmed). This fundamentally undermines wartime propaganda and represents sound historical methodology."
+    }
+  },
+  "score": 8,
+  "rationale": "This is a genuinely interesting retrospective because it sits at the intersection of technical achievement, historical myth-busting, and operational reality. The article celebrates the B-29's innovative defensive systems, but the discussion correctly identifies that Curtis LeMay's decision to strip most defensive armament proved more operationally effective—a genuine case of engineering elegance losing to battlefield pragmatism. The jet stream discovery revelation is fascinating and well-documented. The commenters demonstrate sophisticated knowledge about WWII aviation, fire control systems, and bombing doctrine. The discussion also productively explores related topics (kill claim overcounting, comparative bomber design, mechanical computing). However, it's not a perfect 10 because the article itself was somewhat misframed in its emphasis on defensive cannon systems, and the discussion doesn't fully grapple with the moral dimensions of the firebombing campaign that LeMay pioneered."
+}

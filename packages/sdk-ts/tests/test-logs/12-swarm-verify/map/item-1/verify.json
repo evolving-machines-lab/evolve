@@ -1,0 +1,12 @@
+{
+  "passed": true,
+  "reasoning": "The worker successfully extracted all units from the Consolidated Properties rent roll PDF with high accuracy. A comparison between the worker's JSON output and the document's content (via OCR) reveals that the worker was thorough, including all buildings and vacant units. Key data points such as lease dates, square footage, and monthly rent were precisely captured. Notably, the worker showed high attention to detail by resolving internal discrepancies in the document's rent columns—for instance, calculating the monthly rent as 1/12th of the yearly rent or based on the square footage rate when the monthly column was rounded or imprecise. All dates were correctly formatted to YYYY-MM-DD, and vacant units were correctly identified as 'VACANT' for the tenant name as per the instructions.",
+  "attempts": 1,
+  "verifyMeta": {
+    "runId": "57602cfb98d87c33",
+    "operation": "verify",
+    "tag": "rentroll-map-1-verifier-er1-da17449df943b3b5",
+    "sandboxId": "ijrfhze3qfho9lyrznbd6",
+    "attempts": 1
+  }
+}

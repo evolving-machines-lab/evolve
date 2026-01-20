@@ -1,0 +1,45 @@
+{
+  "title": "Launching a Mac App and Becoming the Top Paid App Globally",
+  "summary": "In November 2015, Denys Zhadanov from Readdle (a Ukrainian software company) published an in-depth article about their journey launching PDF Expert for Mac, which became the #1 paid app on the Mac App Store globally. Readdle is a bootstrapped, profitable company that had built a successful iOS business over 8 years with 45 million users across 8 apps. The article outlines their decision to expand to Mac, their business model (paid upfront at $19.99, planned to rise to $60-70), distribution strategy (both App Store and direct website), trial mechanics (7-day full-featured trial), and 9 marketing steps including positioning, video, email, App Store editorial coordination, cross-promotion with a Free App of the Week on iOS, and press relations. The discussion thread focused on competition philosophy (Thiel's monopoly advice vs. Slack's success in competitive spaces), business model choices, trial mechanics, update mechanisms for non-MAS apps, pricing justification, and the accessibility of Apple's developer relationships at WWDC.",
+  "what_happened": "Readdle remained an independent, bootstrapped company that continued to grow profitably. PDF Expert became a successful product but evolved significantly: it moved from a one-time purchase model ($19.99/$60-70) to a subscription model ($80/year as of 2025). The company expanded Spark from iOS to become a major cross-platform email client with AI features, which became their flagship product. By 2025, Readdle serves over 30 million users across multiple products. Spark evolved with AI writing assistants and team collaboration features. Unlike many startups in 2015, Readdle never took venture capital and proved that the bootstrapped, profitable business model works long-term. The Mac App Store became less dominant as a distribution channel over the decade, but Readdle successfully distributed both through the store and directly. Readdle received acquisition offers but remained independent, valuing control and company culture over investor returns. The company invested heavily in R&D and maintained product quality as a differentiator.",
+  "most_prescient": {
+    "user": "commenter comparing Readdle to Slack/Thiel's monopoly advice",
+    "reason": "This commenter correctly predicted that Slack (which competed in an existing space with established competitors like email and IRC) would become valuable despite Thiel's advice to avoid competition. The comment noted 'creating an extremely valuable business doesn't require doing something entirely new.' This proved prescient: Slack became incredibly valuable, and Readdle also succeeded in a competitive PDF space by making a better product. This insight challenged Silicon Valley orthodoxy and turned out to be correct\u2014many of the most successful startups in the 2010s-2020s competed in existing markets (Stripe, Figma, Notion) rather than creating entirely new ones."
+  },
+  "most_wrong": {
+    "user": "commenter skeptical of the $60-70 pricing for 'just a PDF reader'",
+    "reason": "This commenter expressed shock at the proposed $60-70 price point and argued that free alternatives like Okular existed, suggesting people wouldn't pay that much for a 'non-vital software.' However, by 2025, PDF Expert successfully transitioned to a $80/year subscription model and grew to 30 million users\u2014proving there's substantial demand for premium PDF tools at high prices. The commenter also didn't account for the premium nature of the Mac market, where users have consistently shown willingness to pay for quality productivity software. This reflects a misunderstanding of both the product positioning (competing with $450+ Acrobat, not free alternatives) and the target market's willingness to pay."
+  },
+  "notable_aspects": "1. The article's claim about Apple's editorial support and WWDC connections proved somewhat overstated\u2014multiple commenters pointed out that this advice only applies to established developers with existing relationships. The author revealed they'd been courted by Apple on day 1 of the App Store in 2008, creating a massive advantage most developers don't have. 2. The detailed discussion about trial mechanics turned out to be more nuanced than initially presented\u2014commenters raised valid points about time-limited trials being exploitable (reinstalls) vs. feature-limited trials, and that 'days of use' trials (like Beyond Compare's) might be superior. 3. The article's confidence in the dual-distribution strategy (App Store + website) was validated, as this became increasingly important as the App Store's value declined over the decade. 4. The Readdle team members were active in the discussion, defending their choices and providing additional insights\u2014this transparency was notable for 2015. 5. The $19.99 introductory price that was meant to rise to $60-70 eventually gave way to a subscription model instead, suggesting the one-time purchase premium pricing for a 1.0 product was harder to execute than anticipated.",
+  "grades": {
+    "competition_defender": {
+      "grade": "A+",
+      "rationale": "The commenters who argued that competing in existing markets (like PDF editors) can be highly successful were proven correct. They challenged Thiel's monopoly orthodoxy with examples like Slack and correctly predicted that Readdle would succeed by being better, not by being first. This proved prescient across the entire 2010s-2020s tech landscape."
+    },
+    "pricing_skeptic": {
+      "grade": "D",
+      "rationale": "Dismissed the viability of $60-70 pricing and suggested free alternatives were comparable. However, by 2025 Readdle achieved an $80/year subscription model with 30 million users, proving premium pricing works for products that solve real problems for professionals. Underestimated the premium Mac market and high willingness to pay for quality productivity software."
+    },
+    "trial_mechanics_analyst": {
+      "grade": "B+",
+      "rationale": "Commenters raised sophisticated points about trial design trade-offs (time-limited vs. feature-limited vs. usage-based). They correctly identified that 7-day trials might be exploitable and that alternative models might convert better. The reality: time-limited trials did work for Readdle, but this depends heavily on implementation. This was nuanced criticism that captured real limitations without being wrong overall."
+    },
+    "app_store_relationship_skeptic": {
+      "grade": "A",
+      "rationale": "Multiple commenters correctly identified that the article's advice about getting Apple editorial support was only accessible to developers with existing relationships and WWDC connections. This proved accurate\u2014most developers cannot access Apple's 'App Store Business Management' simply by asking. The skepticism about elitism in app distribution was justified."
+    },
+    "bootstrapped_business_defender": {
+      "grade": "A+",
+      "rationale": "The commenter praising Readdle for remaining bootstrapped and profitable, not chasing VC money, correctly predicted a viable long-term outcome. By 2025, Readdle remained independent, proved profitable sustainability, and became more valuable than many venture-backed startups. This validation of bootstrapped business models was prescient."
+    },
+    "update_mechanism_discussants": {
+      "grade": "B",
+      "rationale": "Commenters discussed the complexity of updating mechanisms for non-MAS apps vs. the simplicity of MAS auto-updates. They were right that this is a meaningful UX problem, though the conversation didn't fully anticipate how code signing and notarization would evolve, or how auto-update frameworks like Sparkle would mature. The concerns were valid but implementation solutions improved over the decade."
+    },
+    "email_newsletter_doubter": {
+      "grade": "B-",
+      "rationale": "The commenter skeptical that videos are important for marketing, arguing that people prefer reading and HN recommendations, was partially correct for their demographic but missed the broader trend. Video marketing actually became increasingly important for broader audiences (especially younger users), so while their personal preference was valid, it underestimated video's role in the 2015-2025 landscape."
+    }
+  },
+  "score": 8
+}

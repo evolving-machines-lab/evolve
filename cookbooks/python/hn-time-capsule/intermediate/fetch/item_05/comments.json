@@ -1,0 +1,58 @@
+[
+  {
+    "author": "bloggerden",
+    "text": "Did anyone notice they changed their branding too?I remember it spelled jsFiddleIt seems they changed it to JSFiddle",
+    "points": null,
+    "created_at": "2015-12-01T23:46:41.000Z",
+    "depth": 0
+  },
+  {
+    "author": "Nadya",
+    "text": "The article uses jsFiddle while the legal disclaimer on JSFiddle reads JSFiddle. The announcement of &quot;The Lifting&quot; uses JSFiddle. Meanwhile, the documentation can&#x27;t make up its mind:    jsFiddle Documentation\n\n    To file a bug in JSFiddle\n\nThough it mostly uses jsFiddle.&#x2F;begin editThe Medium post uses JSFiddle: https:&#x2F;&#x2F;medium.com&#x2F;jsfiddle-updates&#x2F;the-lifting-cb3c9f216c2f...I think it&#x27;s safe to assume it has been changed to JSFiddle.&#x2F;end editMore on topic: I&#x27;ll have to see if there was anything new besides a facelift. Personally using Codepen atm.",
+    "points": null,
+    "created_at": "2015-12-02T00:39:32.000Z",
+    "depth": 1
+  },
+  {
+    "author": "erikpukinskis",
+    "text": "I&#x27;ve been really digging http:&#x2F;&#x2F;codepen.io but I&#x27;ll give jsfiddle another shot next time I&#x27;m in the need for a scratchpad.",
+    "points": null,
+    "created_at": "2015-12-02T01:38:49.000Z",
+    "depth": 0
+  },
+  {
+    "author": "iLoch",
+    "text": "One of the things that bugs me about JSFiddle is that I can&#x27;t do console.log and have it show up somewhere other than my console. Would be nice if I could replace the HTML&#x2F;CSS windows with a JS console for JS-only development.I&#x27;ve just started to use Node interactive mode instead, which works fine but doesn&#x27;t let me side load scripts easily.",
+    "points": null,
+    "created_at": "2015-12-02T02:08:11.000Z",
+    "depth": 0
+  },
+  {
+    "author": "dflock",
+    "text": "This might be what you&#x27;re looking for: http:&#x2F;&#x2F;jsconsole.com&#x2F;",
+    "points": null,
+    "created_at": "2015-12-02T02:21:11.000Z",
+    "depth": 1
+  },
+  {
+    "author": "dang",
+    "text": "Url changed from http:&#x2F;&#x2F;www.whatpixel.com&#x2F;jsfiddle-redesign-2015&#x2F;, which points to this.",
+    "points": null,
+    "created_at": "2015-12-02T03:32:06.000Z",
+    "depth": 0
+  },
+  {
+    "author": "iamleppert",
+    "text": "I&#x27;ll have to say I&#x27;m not really a fan. I liked the higher contrast better, it&#x27;s easier to read monospaced font on a darker background.At least give people a choice of light vs. dark?",
+    "points": null,
+    "created_at": "2015-12-02T05:20:45.000Z",
+    "depth": 0
+  },
+  {
+    "author": "drinchev",
+    "text": "JSFiddle is much more slower than jsbin.comAnother thing is that jsbin supports live-reload editing of html &amp; css. For jsfiddle I have to hit RUN every time I edit HTML &#x2F; CSS.Long time ago, when I was accumulating my stack overflow reputation, I used to do demos with jsfiddle. Back then I remembered how I switched to jsbin, which was so much faster and has a console.log panel which makes it even superior ( not to mention it&#x27;s open source ).Anyway jsfiddle has it&#x27;s place in the history and kudos for the team that supports it.",
+    "points": null,
+    "created_at": "2015-12-02T10:35:19.000Z",
+    "depth": 0
+  }
+]

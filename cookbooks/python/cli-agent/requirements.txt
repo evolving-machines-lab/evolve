@@ -1,0 +1,4 @@
+evolve-sdk
+python-dotenv
+rich
+prompt_toolkit>=3.0.0

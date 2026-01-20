@@ -1,0 +1,15 @@
+{
+  "totalPropertiesAnalyzed": 1,
+  "totalUnits": 214,
+  "totalUnitsExpiring": 37,
+  "totalMonthlyRentAtRisk": 608543.84,
+  "annualizedExposure": 7302526.08,
+  "avgRolloverPct": 0.1729,
+  "highestRiskProperty": "BofA Plaza-Off,Los Angeles",
+  "priorityActions": [
+    "Immediately prioritize renewal negotiations with Sheppard, Mullin, Richter to secure $430k+ in monthly rent currently on expired leases.",
+    "Launch aggressive lease-up campaign for 127 vacant units (59% of total units) to stabilize asset cash flow.",
+    "Formalize holdover status for major tenants including Kaiser Foundation and American Contemporary Ballet to move them to current market rates.",
+    "Engage Wells Fargo (Unit D100) for early renewal to mitigate August 2026 rollover risk of $55k/mo."
+  ]
+}

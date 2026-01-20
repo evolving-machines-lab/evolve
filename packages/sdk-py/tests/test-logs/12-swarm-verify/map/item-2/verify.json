@@ -1,0 +1,12 @@
+{
+  "passed": true,
+  "reasoning": "The worker extracted all 214 units listed in the rent roll PDF, which matches the total count specified at the end of the document. A thorough check of multiple units across different pages confirms that the unit numbers, tenant names, square footage (preferring RSF when available, otherwise LSF), lease dates, and monthly rents were extracted with high accuracy. The worker also correctly followed the instruction to use 'VACANT' for tenant names of unoccupied units and formatted the dates in YYYY-MM-DD. No inaccuracies or omissions were found.",
+  "attempts": 1,
+  "verifyMeta": {
+    "run_id": "6ada70276001b4ea",
+    "operation": "verify",
+    "tag": "rentroll-verify-map-2-verify",
+    "sandbox_id": "ica5y900hk3zz6s9c8zzq",
+    "attempts": 1
+  }
+}

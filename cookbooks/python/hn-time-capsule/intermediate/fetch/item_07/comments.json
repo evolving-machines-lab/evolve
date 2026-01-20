@@ -1,0 +1,1416 @@
+[
+  {
+    "id": 10653524,
+    "author": "mathgladiator",
+    "text": "Just briefly looking at this, I'm very excited. I'm going to start playing with it tomorrow for sure.",
+    "points": null,
+    "created_at_i": 1448941438
+  },
+  {
+    "id": 10653837,
+    "author": "mathgladiator",
+    "text": "I was optimistic that this was going to be a good alternative to my current VNC + IntelliJ setup, but I started playing with it with a bunch of real code, and I hate to be a buzz kill...(1) the folders break all the time. And refreshing the folder list doesn't fix it. The hierarchy gets broken, and I regretfully can't screenshot it.(2) where is the junit runner? One of the reasons I think IDEs are pretty great is that I can run single junits, and I don't see this working in any capacity.(3) Why do I see menus for svn / git? What about hg? I prefer to use command line for source control, can I hide these?(4) Is the timeout for the build configurable? I have a build that takes several minutes due to a large number of tests, and it is unable to build due to a timeout(5) the auto complete seems very broken; maybe it is my project (using maven). It appears to import the dependencies just fine, but beyond that it produces a lot of errors.(6) I thought this would have the eclipse refactor support, but I do not see it.",
+    "points": null,
+    "created_at_i": 1448948683
+  },
+  {
+    "id": 10655167,
+    "author": "TylerJewell",
+    "text": "I think you are usin the 3.x branch. We didn't expect to get HN or Scobled so early.Would you do a couple things:\n1. Check out the 4.0 branch.\n2. Go into assembly-sdk\n3. mvn clean instal.Now run the next generation version. We are a few months away from having it fully stabilized, but many of the experiences you are seeking are in this branch.We are running the JDT underneath inside of your workspace machine, and we have refactoring, debugging, find usages, etc in there.",
+    "points": null,
+    "created_at_i": 1448977009
+  },
+  {
+    "id": 10658118,
+    "author": "mathgladiator",
+    "text": "I am. And HN is kind of like the spanish inquisition...As much as I hate being a buzz kill, I am wishing you guys my best. This is pretty awesome, and I'm looking forward to more progress.I'll start following trunk once I get time to set it up. I'm in the camp that can't use docker since I have to mount eclipse to a sub directory of a very large repository.",
+    "points": null,
+    "created_at_i": 1448998707
+  },
+  {
+    "id": 10653689,
+    "author": "stephenr",
+    "text": "From that page I'm confused.Is this an update of the \"traditional\" Eclipse IDE, or a new browser based IDE? What does a \"workspace server\" mean?",
+    "points": null,
+    "created_at_i": 1448945514
+  },
+  {
+    "id": 10653698,
+    "author": "gravypod",
+    "text": "Che is a web based IDE from what I have heard. The github site is better organized: https://github.com/codenvy/che",
+    "points": null,
+    "created_at_i": 1448945715
+  },
+  {
+    "id": 10654019,
+    "author": "gherkin0",
+    "text": "> a web based IDEThis is exactly what I didn't want. Please tell me that this \"next generation\" stuff is just inaccurate hype, and that this is really just some minor Eclipse offshoot.",
+    "points": null,
+    "created_at_i": 1448953769
+  },
+  {
+    "id": 10654164,
+    "author": "alblue",
+    "text": "It uses the same Eclipse technology, but it isn't the next version of Eclipse. Like Orion, it is an experiment at looking at what a web-based IDE can do.The existing Eclipse IDE will continue for a long time yet - Eclipse Neon will be released in six months time with full Java 9 support, for example.",
+    "points": null,
+    "created_at_i": 1448958195
+  },
+  {
+    "id": 10654217,
+    "author": "Gibbon1",
+    "text": "The great thing about web based IDE's and the reason we will see more of this in the future is the opportunity for vendor lock in. Once you can control a developers tool chain you can prevent him from moving to another vendor because of all the stuff he can't take with him.",
+    "points": null,
+    "created_at_i": 1448959338
+  },
+  {
+    "id": 10654323,
+    "author": "qznc",
+    "text": "Hosting it myself would be a requirement for using a cloud IDE. Of course, there is still some lock-in, but the lock-in is the same with a desktop IDE.In general, a cloud IDE has some nice promises: Initial setup is trivial; More efficient building and testing due to resource sharing in the cloud; Live collaboration is simpler. However, so far I'm underwhelmed by everything available.",
+    "points": null,
+    "created_at_i": 1448961796
+  },
+  {
+    "id": 10654696,
+    "author": "alblue",
+    "text": "Both Orion and Che can be run locally (or behind a firewall) without any problems.",
+    "points": null,
+    "created_at_i": 1448970902
+  },
+  {
+    "id": 10660199,
+    "author": "gravypod",
+    "text": "As Alblue says, Che seems to be a host-your-own alternative. I think this use case is something that I have been looking for.Writing some huge web/analytic application that needs a huge cluster? Throw in a few docker nodes with applications that have APIs that are needed for running the project.Good luck starting that on your laptop.For me, I want to ultimately have my laptop be downgraded to a chromebook or something small, cheap, and with a long battery life. To do that, tools like this really fill a nice area.Something I've been looking for.",
+    "points": null,
+    "created_at_i": 1449018851
+  },
+  {
+    "id": 10656599,
+    "author": "gherkin0",
+    "text": "> is the opportunity for vendor lock inAlso the fetish for centralized control and tool standardization.Just imagine: you may soon be developing in a SAP-based IDE, chosen by feature checklist!",
+    "points": null,
+    "created_at_i": 1448987345
+  },
+  {
+    "id": 10660180,
+    "author": "gravypod",
+    "text": "Most people wont fall for that trap. For personal projects that aren't full open source, I host everything that the code ever touches.From source management, to email servers, to a hastebin for sending errors between my team. Nothing touches a public server if I have it my way.It' partially a control thing, and also a security thing for me. I want to make sure that I'm never held a 'ransom'.",
+    "points": null,
+    "created_at_i": 1449018649
+  },
+  {
+    "id": 10653732,
+    "author": "bobajeff",
+    "text": "It looks to me like it's a web based frontend to Eclipse. I think a 'workspace server' is just a Java server passing messages between the browser and the backend.",
+    "points": null,
+    "created_at_i": 1448946331
+  },
+  {
+    "id": 10653865,
+    "author": "voltagex_",
+    "text": "The API documentation screenshot is a default of something. I know I've seen that UI with those colours elsewhere.",
+    "points": null,
+    "created_at_i": 1448949270
+  },
+  {
+    "id": 10654021,
+    "author": "dordoka",
+    "text": "I believe something equals swagger ui. [0][0] http://swagger.io/swagger-ui/",
+    "points": null,
+    "created_at_i": 1448953798
+  },
+  {
+    "id": 10654037,
+    "author": "lovemenot",
+    "text": "Looks like StrongLoop API Explorer",
+    "points": null,
+    "created_at_i": 1448954109
+  },
+  {
+    "id": 10654544,
+    "author": "dordoka",
+    "text": "It's actually swagger. [0] Strongloop uses swagger.[0] https://github.com/codenvy/che-core/blob/master/platform-api...",
+    "points": null,
+    "created_at_i": 1448967213
+  },
+  {
+    "id": 10653705,
+    "author": "nickysielicki",
+    "text": "This looks AWESOME. It's effectively going to replace eclim.I just hope the backend is thoroughly decoupled from the UI, and that appears to be the case from first glance. I can't wait to try to pair this with neovim.edit: the more I look at this the less this seems to be the focus of the project. That makes me a little sad.",
+    "points": null,
+    "created_at_i": 1448945832
+  },
+  {
+    "id": 10655305,
+    "author": "TylerJewell",
+    "text": "We have worked hard to decouple the front end from the backend, which is powering workspaces, enviornments, and machines.The client side can interact with any server side component over REST or web sockets.is there a particular use case that you'd like some elaboration on?",
+    "points": null,
+    "created_at_i": 1448978372
+  },
+  {
+    "id": 10653719,
+    "author": "johnhenry",
+    "text": "I wonder if anyone can comment on how this compares to cloud 9 IDE? (https://github.com/c9/core/)",
+    "points": null,
+    "created_at_i": 1448946179
+  },
+  {
+    "id": 10653790,
+    "author": "jasonszhao",
+    "text": "I thought for a moment that it actually said \"Cloud 9 IDE\". Seriously, why does CHE look like a Cloud 9 + IntelliJ clone?",
+    "points": null,
+    "created_at_i": 1448947403
+  },
+  {
+    "id": 10653817,
+    "author": "alttab",
+    "text": "Because...",
+    "points": null,
+    "created_at_i": 1448948195
+  },
+  {
+    "id": 10654106,
+    "author": "jakejake",
+    "text": "I've only just messed with CHE for a few minutes, and I've only read the summary of Cloud 9. But from what I can see they are conceptually the same. Eclipse CHE is simply running your own private version of the Cloud 9 platform.",
+    "points": null,
+    "created_at_i": 1448956738
+  },
+  {
+    "id": 10655475,
+    "author": "TylerJewell",
+    "text": "Different goals.Che is focused on workspace portability and interoperability. As a result, there is a hard abstraction between the worksapce and the environments that power it. the workspace definition includes the definitions of the environments. This makes it possible to move a workspace that is bound to a stack of docker containers containing debugging, runtime, and compilation tools from one node to another node, and then the 2nd node can recreate the entire workspace.Then within this workspace and the machines that are powering it, to embed industry native tools like JDT into it, and then place RESTful wrappers around it so that a browser or other tool may gain access to it.The C9 goal is to build a cloud IDE and provide the best overall experience for developers. And Che was primarily a focus around workspace movement and interoperability.",
+    "points": null,
+    "created_at_i": 1448979852
+  },
+  {
+    "id": 10653738,
+    "author": "jMyles",
+    "text": "Switched from Eclipse (LiClipe) to PyCharm in March of this year. Can be convinced to switch back.Anybody done it yet?",
+    "points": null,
+    "created_at_i": 1448946426
+  },
+  {
+    "id": 10653739,
+    "author": "vineet",
+    "text": "Seems like Codeenvy open sourced their IDE.",
+    "points": null,
+    "created_at_i": 1448946488
+  },
+  {
+    "id": 10653757,
+    "author": "stephen",
+    "text": "Huh; yep, the commit to relicense it as Eclipse/EPL was 18 days ago:https://github.com/codenvy/che/commit/db5b0bc2a1e2b4f3d7a7a2...",
+    "points": null,
+    "created_at_i": 1448946799
+  },
+  {
+    "id": 10653942,
+    "author": "tuananh",
+    "text": "they also updated the project description link",
+    "points": null,
+    "created_at_i": 1448951399
+  },
+  {
+    "id": 10654112,
+    "author": "jakejake",
+    "text": "When you first launch Eclipse CHE, your browser window opens and for about 1/2 a second the browser window title says \"Codeenvy Developer Environment\"",
+    "points": null,
+    "created_at_i": 1448956860
+  },
+  {
+    "id": 10655066,
+    "author": "TylerJewell",
+    "text": "Hi - the contributor to eclipse che include people from SAP, IBM, Codenvy, WSO2, and Serli.We started on it about 18 months ago. It takes a long time to get through the branding and legal process.We believe that the 4.0 release in a couple months will have finally resolved the branding items and the remaining Codenvy elements will have been removed.",
+    "points": null,
+    "created_at_i": 1448975973
+  },
+  {
+    "id": 10653750,
+    "author": "bobajeff",
+    "text": "This looks like something that would be useful to me. As I've been wanting to have a decent C++ IDE that I can run on my server and access on any machine.I've tried to use Vim+ctags over ssh for this purpose but am not really satisfied with the results.",
+    "points": null,
+    "created_at_i": 1448946737
+  },
+  {
+    "id": 10653804,
+    "author": "jmcphers",
+    "text": "I do this all the time. You want the Vim plugin YouCompleteMe[1]. It integrates with clang and gives you real-time C++ code completion and linting, plus a semantic jump-to-definition that outdoes ctags for most symbols (though it doesn't go outside the translation unit so ctags is still useful for finding implementations).[1] https://github.com/Valloric/YouCompleteMe",
+    "points": null,
+    "created_at_i": 1448947727
+  },
+  {
+    "id": 10653819,
+    "author": "alttab",
+    "text": "Rock on - I can't imagine how a browser would ever come close.",
+    "points": null,
+    "created_at_i": 1448948256
+  },
+  {
+    "id": 10654117,
+    "author": "netheril96",
+    "text": "A browser probably cannot do that much; but the server may.",
+    "points": null,
+    "created_at_i": 1448957056
+  },
+  {
+    "id": 10658512,
+    "author": "alttab",
+    "text": "Not from a responsiveness / performance standpoint. No way.",
+    "points": null,
+    "created_at_i": 1449001892
+  },
+  {
+    "id": 10653861,
+    "author": "nickysielicki",
+    "text": "In my opinion, neocomplete / deoplete are far better than YCM if you can be bothered to configure it.My nvim init.vim is here:https://github.com/sielickin/dotfiles_nvim/blob/master/.conf...",
+    "points": null,
+    "created_at_i": 1448949209
+  },
+  {
+    "id": 10654192,
+    "author": "Nr7",
+    "text": "Are there any major issues with deoplete? The readme says it's not ready for production.",
+    "points": null,
+    "created_at_i": 1448958834
+  },
+  {
+    "id": 10654224,
+    "author": "nickysielicki",
+    "text": "I have been using it for 1.5 months with zero issues. I recommend it if you're using neocomplete, the configuration is nearly exactly the same so switching to it and then back again is not a hassle.Make sure you call :UpdateRemotePlugins",
+    "points": null,
+    "created_at_i": 1448959506
+  },
+  {
+    "id": 10654389,
+    "author": "Nr7",
+    "text": "Thanks. I use YCM currently, but I've been curious about other options. I'll have to try deoplete.",
+    "points": null,
+    "created_at_i": 1448963147
+  },
+  {
+    "id": 10659984,
+    "author": "bobajeff",
+    "text": "Yes I've tried YCM some time ago and decided it didn't work acceptable for me. It didn't find all the candidates for autocompletion and wouldn't work if there were any compile time errors.Anyways, autocompletion and jump-to-definition weren't all I was missing. Smart syntax highlighting that could deemphasize macro blocks (eg. #ifdef) that would evaluate to false for the project is some thing could not find a plugin for.",
+    "points": null,
+    "created_at_i": 1449016045
+  },
+  {
+    "id": 10653789,
+    "author": "rspeer",
+    "text": "I'm wondering why the \"meticulous design\" still looks like an explosion in a GUI widget factory.In the screenshots I'm looking at, there are dropdowns inside panels inside tabs inside more panels. There are five tab bars. There are completely unnecessary icons for \"cut\", \"copy\", and \"paste\". There's a \"Subversion\" menu and a \"Git\" menu at the same time. There's... a user switcher? I don't even know what that means. The actual code takes up like 40% of the screen.Is this actually what programmers want from an IDE, or just what they have come to expect?",
+    "points": null,
+    "created_at_i": 1448947368
+  },
+  {
+    "id": 10653821,
+    "author": "k_sze",
+    "text": "\"40% of the screen is ok because EVERYBODY should be using dual or triple 4k+ monitor setups nowadays. Anybody who doesn't have 4k+ monitors doesn't deserve the awesomeness in our shiny new IDE.\" - Possibly what the Eclipse devs are thinking.",
+    "points": null,
+    "created_at_i": 1448948273
+  },
+  {
+    "id": 10653885,
+    "author": "the8472",
+    "text": "If you have limited screen real estate almost all panels seem to be collapsible, making them open-on-hover or open-on-keypress.And things go both ways: Some of us do have multiple 30\"+ monitors and appreciate UIs that manage to utilize all that space.Remember that responsive design doesn't just mean scaling down to tiny mobile devices, it also means scaling up to large screens.",
+    "points": null,
+    "created_at_i": 1448949694
+  },
+  {
+    "id": 10653894,
+    "author": "stephenr",
+    "text": "Filling a 30\" screen with crap for the sake of filling it is hardly good \"utilisation\".",
+    "points": null,
+    "created_at_i": 1448949931
+  },
+  {
+    "id": 10653954,
+    "author": "esaym",
+    "text": "And filling a 30\" screen with 200 character code lines because 80 character limits were only for the 800x600 days isn't good utilization either.",
+    "points": null,
+    "created_at_i": 1448951888
+  },
+  {
+    "id": 10653979,
+    "author": "TeMPOraL",
+    "text": "Thus you display multiple source files next to each other, or maybe some metadata. More screens should mean more relevant information.",
+    "points": null,
+    "created_at_i": 1448952531
+  },
+  {
+    "id": 10654253,
+    "author": "the8472",
+    "text": "And eclipse lets you do just that.",
+    "points": null,
+    "created_at_i": 1448960109
+  },
+  {
+    "id": 10654256,
+    "author": "AlisdairO",
+    "text": "I'd typically rather have more information about the file I'm currently working on rather than a bunch of different files open. When I'm using a text editor I'll want multiple text windows, but that's because navigation between files is much harder in that environment.",
+    "points": null,
+    "created_at_i": 1448960122
+  },
+  {
+    "id": 10654350,
+    "author": "aerique",
+    "text": "One can also have multiple views on one file (at least Emacs can) which is another good for having multiple buffers side-by-side instead of one single buffer.",
+    "points": null,
+    "created_at_i": 1448962469
+  },
+  {
+    "id": 10653832,
+    "author": "stephenr",
+    "text": "I think this is unfortunately why people get a bad idea about an IDE.I don't want a tab or button for everything. I want to primarily write text (i.e. code) but I also want it to be intelligent about what I'm writing - i.e. I want the autocomplete, the parameter hinting, the type checking (i.e. can't use the result of a void method, or can't do string ops on an array etc). I also want the option to have refactor helpers (moving methods, renaming methods, changing argument order, etc).I've found IDEA (and before that PhpStorm, but it supports less plugins) are generally able to meet that need but you have to be careful about which plugins you install. I want Lua support, that doesn't mean I want a Lua console button in all projects.",
+    "points": null,
+    "created_at_i": 1448948513
+  },
+  {
+    "id": 10654025,
+    "author": "riffraff",
+    "text": "But eclipse (and I'm sure others) used to allow you to hide most of the stuff, is the problem just the initial perception?",
+    "points": null,
+    "created_at_i": 1448953823
+  },
+  {
+    "id": 10654084,
+    "author": "tajen",
+    "text": "Customizable? but is it easy? Is there a drag'n'drop for the toolbar buttons? Can the fonts for menus and panel titles be downsized easily?Also, Eclipse tends to try to do everything in their IDE: Transition an issue, commit, execute a command-line program, browse the database, etc. It's a very different spirit from, say, SublimeText where each program is dedicated to one thing well. It has a lot of impact on the UI, hence the critics \"Code is 40% of my screen\". I personally prefer IDEA now because it comes with thin shims.Btw, the HN rules say \"No negativity\". Just a reminder to be considerate for the Eclipse team.",
+    "points": null,
+    "created_at_i": 1448955537
+  },
+  {
+    "id": 10654136,
+    "author": "kiiski",
+    "text": "> Eclipse tends to try to do everything in their IDEIsn't that the whole point of an IDE? I mean, an Integrated Development Environment, by definition, should have all the tools integrated, as opposed to a text editor which is only one tool in an unintegrated development environment.I prefer Emacs myself, but if I wanted an IDE, I'd probably go for the one that can do everything I want to do.",
+    "points": null,
+    "created_at_i": 1448957629
+  },
+  {
+    "id": 10654328,
+    "author": "tajen",
+    "text": "Other comments say they prefer the axiom \"IDE==awesome autocompletion\" (e.g. LightTable) rather than \"IDE==Embed all the tools into one window!\".I have worked in IT services companies. They wrap almost a full OS into Eclipse (or WSAD). They have people who don't have a clue about programming [1], they need to onboard them and they do little to upgrade their knowledge. I used to wonder how architects learnt about Git and Maven, until the day I decided not to use IDE buttons, tried them on the command line and discovered \"--help\". It's all self-documented, output is all logged, I can debug compilation errors alone![1] Recruitment and HR is a cost center for consultancies. At one point they just took graduates from Chemistry major with a mild interest in Excel. Needless to say those who stayed became PMs. I've seen millions of euros from government, banks and insurances thrown into multiplying employees, rather than improving employees.",
+    "points": null,
+    "created_at_i": 1448961878
+  },
+  {
+    "id": 10655651,
+    "author": "paublyrne",
+    "text": "I suspect there are very few programmers who want to click a Copy button on a toolbar with a mouse. Those sorts of tools should be hidden by default, at the very least.",
+    "points": null,
+    "created_at_i": 1448981210
+  },
+  {
+    "id": 10655978,
+    "author": "kiiski",
+    "text": "My comment was related to having all tools built into the IDE rather than using lots of different command line (or other) tools, not to the UI buttons.",
+    "points": null,
+    "created_at_i": 1448983539
+  },
+  {
+    "id": 10655736,
+    "author": "logn",
+    "text": "That's true. E.g., this is my Eclipse setup: http://i.imgur.com/SP6o1W2.png",
+    "points": null,
+    "created_at_i": 1448981980
+  },
+  {
+    "id": 10654477,
+    "author": "sunnyps",
+    "text": "You should have a look at QtCreator which follows a minimal IDE philosophy. The only downside is that it's only for C++.",
+    "points": null,
+    "created_at_i": 1448965179
+  },
+  {
+    "id": 10654538,
+    "author": "stephenr",
+    "text": "I don't write C++ or even C, so I doubt that's going to work.Unfortunately the only IDE's which seem to support languages I use and work on OS X are java based, and it seems the best option is IDEA or one of it's siblings.",
+    "points": null,
+    "created_at_i": 1448967008
+  },
+  {
+    "id": 10655036,
+    "author": "72deluxe",
+    "text": "Most IDEs can thankfully be trimmed down to look like QtCreator.I daily write in Xcode and that is very slimmed-down. In fact, Visual Studio developers typically hate it on first using it because there is only editors on the screen as opposed to property panes both sides of the editor!And I would say that it is ONLY C++ is truly a benefit to QtCreator!! No use trying to be everything to everyone. Plus, C++ is the best language for everything isn't it? (I jest, I jest)",
+    "points": null,
+    "created_at_i": 1448975610
+  },
+  {
+    "id": 10653877,
+    "author": "the8472",
+    "text": "Assuming it's anything like regular eclipse the UI probably is highly customizable.It's more like a tiling window managerYou can choose how many of those panels you have and which tabs are in each panel and which buttons you have in your toolbars.> The actual code takes up like 40% of the screen.considering that many projects still have guidelines regarding line-length (something around 80-120 characters) there's only so much horizontal space you can utilize. I can easily fit two source files side by side on my monitor and still have room for additional panels.> Is this actually what programmers want from an IDE, or just what they have come to expect?The more you can have on the screen at the same time the fewer permutations of arrangements you need for different tasks.If we are to extend the desktop analogy, it's a work bench with a wall of tools hanging in front of you, every individual tool within grasping distance.",
+    "points": null,
+    "created_at_i": 1448949468
+  },
+  {
+    "id": 10654115,
+    "author": "buserror",
+    "text": "Well, I have 4 source window side by side on my 4K screen -- however I'm still stuck with a 3840 pixel wide console panel at the bottom somehow. WHY? Why do I have to sacrifice all that valuable vertical space for information that is always stacked in the 20% left side of that huge panel?Mind you it's not just Eclipse, seem every IDE took their cue on how to do stuff from a VisualStudio from the 90's and decided it whas THE way to do it.I still use Eclipse a lot (and Geany[0], for a lighter editor) -- the Code Indexer is the best I've ever tried. I can index the whole Linux Kernel in there, and it's a real blessing.[0]: http://www.geany.org/",
+    "points": null,
+    "created_at_i": 1448956963
+  },
+  {
+    "id": 10654172,
+    "author": "the8472",
+    "text": "> however I'm still stuck with a 3840 pixel wide console panel at the bottom somehow.I don't understand how you can be stuck with that. You can close the panel, move it somewhere else or minimize it.Eclipse does not force any particular layout on you.You can even have 4 editor views side by side and only partition one of the 4 vertically to have the console at 1/4th width.",
+    "points": null,
+    "created_at_i": 1448958412
+  },
+  {
+    "id": 10654705,
+    "author": "virtualwhys",
+    "text": "> Why do I have to sacrifice all that valuable vertical space for information that is always stacked in the 20% left side of that huge panel?You don't, hide it via CSS[1]. Entire Eclipse UI is customizable. Install CSS Spy[2] to experiment live before committing changes.My Eclipse setup actually looks like VIM with split buffers, there is nary a wasted pixel. To get to that point that though (e.g. hiding right side gutters and always-on scrollbars) is a bit more involved, need to take custom plugin route for that.[1] http://stackoverflow.com/a/17027501/185840\n[2] http://marketplace.eclipse.org/content/eclipse-4-tools-css-s...",
+    "points": null,
+    "created_at_i": 1448971000
+  },
+  {
+    "id": 10653987,
+    "author": "babuskov",
+    "text": "Just press Ctrl+M or Command+M and you get into full-screen editor. I use this all the time when working on laptop.",
+    "points": null,
+    "created_at_i": 1448952769
+  },
+  {
+    "id": 10653989,
+    "author": "aaronbrethorst",
+    "text": "Their \"meticulous design\" looks like a bad copy of Visual Studio 2012. It made me LOL a bit.disclaimer: I was responsible for the shell user interface of Visual Studio 2005 and 2008, but haven't worked for Microsoft for more than eight years or used any version of Visual Studio later than 2008. That said, I'm still rather anti-Eclipse.",
+    "points": null,
+    "created_at_i": 1448952901
+  },
+  {
+    "id": 10655857,
+    "author": "jeremiep",
+    "text": "I've once tried to look at the source code of Eclipse many years ago. It was by far the most over-engineered thing I've seen in my entire life.I've since found out about Emacs and the contrast is striking; Emacs being a shining example of simplicity and extreme power while Eclipse is literally bloated boilerplate central in comparison.This pretty much prevents me from taking anything coming out of the Eclipse Foundation seriously.",
+    "points": null,
+    "created_at_i": 1448982741
+  },
+  {
+    "id": 10656657,
+    "author": "ivan_burazin",
+    "text": "We just launched a new interface at Codeanywhere this month, would love your thoughts on it! :)",
+    "points": null,
+    "created_at_i": 1448987682
+  },
+  {
+    "id": 10654006,
+    "author": "jk4930",
+    "text": "Delicious. I have traumatic experiences with Eclipse from 10+ years ago when I was forced in a uni course to write GUIs in Java. We had 14\" CRTs and this IDE cluttered the entire screen, leaving me with a palm-sized field to type code into (I had to scroll horizontally in it to read an entire line of 80 characters). We couldn't customize the panels (the setup was provided by the sysadmin and frozen). I never touched an IDE or Java after it again. Even today I occasionally think back to this time and laugh in horror.",
+    "points": null,
+    "created_at_i": 1448953382
+  },
+  {
+    "id": 10655343,
+    "author": "markokrajnc",
+    "text": "How different is my experience with Eclipse... Diametrically opposite...",
+    "points": null,
+    "created_at_i": 1448978660
+  },
+  {
+    "id": 10657614,
+    "author": "rspeer",
+    "text": "The funny thing is that if you see someone's Web browser and it's as full of toolbars as the typical IDE, you assume that person isn't very good with computers.",
+    "points": null,
+    "created_at_i": 1448994543
+  },
+  {
+    "id": 10654089,
+    "author": "Animats",
+    "text": "\"I'm wondering why the \"meticulous design\" still looks like an explosion in a GUI widget factory.\"Yes, the purple and orange lettering on a black background is especially painful.I'm not sure what to think about a \"cloud IDE\" yet. It strikes me as the sort of thing which, if it doesn't work perfectly, will break in mysterious ways. When such things break, it's usually necessary to look behind the pretty graphical environment at vast numbers of text files, environment variables, and whatever other state the thing has.",
+    "points": null,
+    "created_at_i": 1448955752
+  },
+  {
+    "id": 10654233,
+    "author": "andreamazz",
+    "text": "Yeah, the \"meticulous design\" made me chuckle. And they put it as the first selling point. \"barely controlled mess\" would fit better.",
+    "points": null,
+    "created_at_i": 1448959715
+  },
+  {
+    "id": 10654507,
+    "author": "spacemanmatt",
+    "text": "That explains a lot of why I have opted for a customized shell environment over IDEs nearly every time. I learned git once on the command line a long time ago. I have a REPL (Clojure) for prototyping and testing. I like to stay in the headspace of my own direction, without distraction from GUIs that typically try to shove too much canned workflow down my throat.",
+    "points": null,
+    "created_at_i": 1448966178
+  },
+  {
+    "id": 10655139,
+    "author": "TylerJewell",
+    "text": "Hi:Those were concept drawings. In the finalized version, all of the panels & tabs are removable. There is a \"+\" in the tool bar that will let you add / remove any button, menu, panel entry. This is in the 4.0 branch that we are working on.",
+    "points": null,
+    "created_at_i": 1448976810
+  },
+  {
+    "id": 10653814,
+    "author": "frik",
+    "text": "Can someone write a comparision of Eclipse vs Eclipse NextGen, and against IntelliJ, VSCode, VS.How is the UI latency if one opens a Java file with 1 KLOC or a 2MB XML?",
+    "points": null,
+    "created_at_i": 1448948145
+  },
+  {
+    "id": 10654170,
+    "author": "alblue",
+    "text": "This isn't \"Eclipse NextGen\", it's Eclipse Che. It's an open source version of a prior project that was well received (codeenvy).Re performance I've seen demos of Eclipse Orion (another web based IDE experiment) where they had 100kloc JavaScript files and still be pretty performant.",
+    "points": null,
+    "created_at_i": 1448958384
+  },
+  {
+    "id": 10654745,
+    "author": "grennis",
+    "text": "The hero banner literally says \"Next Generation Eclipse IDE\"",
+    "points": null,
+    "created_at_i": 1448971665
+  },
+  {
+    "id": 10653830,
+    "author": "martin_",
+    "text": "When did PHP get demoted from language to framework?",
+    "points": null,
+    "created_at_i": 1448948506
+  },
+  {
+    "id": 10653853,
+    "author": "stephentmcm",
+    "text": "Well to be fair it is a pretty good framework for building shonky code.Source: Am PHP Developer.",
+    "points": null,
+    "created_at_i": 1448949014
+  },
+  {
+    "id": 10653947,
+    "author": "sbahr001",
+    "text": "Since frameworks fill in \"missing features\" of the 95% php use cases.\nPhp is better to get things up and running, especially for web. Web frameworks make programming for web really easy, which is what php is all about; they are complements. Also, you add a web framework like Laravel for example, which makes it easy link your web framework and your cron tasks together things get really blurry. PHP becomes less of a language and more of scripting a framework to do what you what.",
+    "points": null,
+    "created_at_i": 1448951696
+  },
+  {
+    "id": 10654297,
+    "author": "erikb",
+    "text": "PHP never was a language, actually. There is no language description, only an interpreter. So I don't know if it's a framework, but a language it's not.",
+    "points": null,
+    "created_at_i": 1448961180
+  },
+  {
+    "id": 10654512,
+    "author": "spacemanmatt",
+    "text": "It's a scripting language in the classic sense -- limited such that you could not write a real application in it, but useful orchestrating activities delegated to it. And like all classic scripting languages it should be replaced with a real language embedded or exposed such as Clojure or Python. IMNSHO.",
+    "points": null,
+    "created_at_i": 1448966369
+  },
+  {
+    "id": 10668534,
+    "author": "erikb",
+    "text": "Not being a language doesn't mean you can't do meaningful things with it. My car is also not a language but a very valuable tool. Just like something is a car because it has 4 wheels, a motor and an enclosed space to sit in, in the same way something becomes a programming language by having a defined grammar. That's all. No reason to think I disregarded someone's favorite tool.",
+    "points": null,
+    "created_at_i": 1449131684
+  },
+  {
+    "id": 10653854,
+    "author": "ivantsoft",
+    "text": "This is definitely the future",
+    "points": null,
+    "created_at_i": 1448949038
+  },
+  {
+    "id": 10653855,
+    "author": "ivantsoft",
+    "text": "This is definitely Eclipse future",
+    "points": null,
+    "created_at_i": 1448949052
+  },
+  {
+    "id": 10655521,
+    "author": "dsz",
+    "text": "I give a try with docker, it works. IMHO both can co-exist, on/off line. Maybe in near future we can use tablets to develop.",
+    "points": null,
+    "created_at_i": 1448980129
+  },
+  {
+    "id": 10653881,
+    "author": "stshine",
+    "text": "This is awesome, finally we can get a decent java develop environment in emacs.",
+    "points": null,
+    "created_at_i": 1448949541
+  },
+  {
+    "id": 10653914,
+    "author": "hphuoc25",
+    "text": "Has anyone tried this? Is there any improvements in performance/code sense intelligence? Is is anywhere closer to Intellij IDEA?",
+    "points": null,
+    "created_at_i": 1448950488
+  },
+  {
+    "id": 10654076,
+    "author": "jakejake",
+    "text": "I've been playing around with it for about 15 minutes so far. Eclipse is my main IDE, so I would say I'm fairly a power user for Eclipse.This is not a new version of the existing Eclipse (or Intellij). It's not a desktop app at all, it's a web server that starts and then your browser opens the EclipseCHE \"web app.\" The IDE is merely a web interface - everything is happening on the CHE server (which would make the most sense if you install it on a separate machine altogether).As far as the IDE, it's actually kinda amazing for a web app. If the browser chrome was missing it would seem like a desktop app (except the menus are in the wrong place for OSX). The intellisense doesn't seem to be working yet as far as I can tell. Maybe this is just PHP, though? It shows valid PHP code highlighted in red as if it were an error (edit - restart seems to have fixed this). I wish so badly that one of the dark themes for Eclipse looked this good, though. I've tried for days to get a decent dark Eclipse theme going - they all suck.It seems that it may be creating a docker container for your project. You don't open local files on your machine (there is actually an 'upload' function to add a file to your project though). The files don't exist on your normal filesystem - they exist on the server, perhaps in a container, or just some internal folder structure that the server controls..? It seems to want to handle it all magically, which means I can't easily try it out on one of my existing apps. This is not really normal for my PHP workflow, but perhaps it would be perfect for those who have their app already in docker containers?I can't get an application to run at this point. I have docker installed, but it just hangs with the message \"Your request is queued waiting for a node to become available...\"Overall, it looks extremely interesting - especially for a team environment where everything is containerized. Just point a new team member at a URL - and the IDE and server environment is 100% set up, ready for them to start coding, debugging and running the app. There would be essentially zero setup time for working on your app.",
+    "points": null,
+    "created_at_i": 1448955160
+  },
+  {
+    "id": 10654911,
+    "author": "diminishedprime",
+    "text": "Have you tried Solarized Dark for Eclipse? That's the one I like best when I'm working in there.",
+    "points": null,
+    "created_at_i": 1448974146
+  },
+  {
+    "id": 10657945,
+    "author": "jakejake",
+    "text": "I have tried it and it's not horrible. The difficulty is that the chrome is styled one way, and the text inside the editors is styled another way. And neither of them are quite able to style everything!I found the dark themes to look great with certain, staged screenshots. But then when you use it, the scrollbars are blaring white. Or the bar that shows your code blocks can't be styled (controlled by the OS). So you wind up with a mostly dark theme that has 2 or 3 blaring, ugly, mismatched elements that defeat the purpose.Styling the editor window is something I've spend days tediously trying to tweak a nice pastel color pallet (that pretty much every app with a dark theme uses). But all the included ones are bright neon colors or just radically weird color choices. I've been able to get my code window 95% the way I'd want, but then all of the other windows like the explorer or the console don't match! The settings are all over the place and sometimes take a restart of Eclipse to if you got the right setting or not.Basically I just gave up with the dark theme because it seems there's no way to get it consistent.",
+    "points": null,
+    "created_at_i": 1448997352
+  },
+  {
+    "id": 10655057,
+    "author": "TylerJewell",
+    "text": "Hi: I am the eclipse che project lead & founder of codenvy.If you are playing with it - try out 4.0 branch, it has the new designs & architecture which makes it near localhost.What we are doing behind the scenes is binding your workspace into an environment which is powered by machines. You can either have a localhost machine or a docker machine. Right now each workspace can only be bound to a single machine environment, but in a couple months we'll release multi machine bindings, so that you could launch a docker compose, for example, as a way to bind your workspace.The binding of your workspace happens behind the scenes. When you boot or shutdown the workspace, we take care of managing the machines. If you are using docker, then those machines are running out of process. If on linux we use docker natively. We use docker machine on mac or windows.Once the machines are booted, we bind all of your projects into the workspace, which are mounted into the machines. Inside of the workspace machine, we launch another version of che. Based upon the programming language you choose, we are running intellisense services inside of the machines. For java, we actually run the native JDT code.We then put RESTful wrappers around this, which enables the browser to have full intellisense capability. We have more work to do in integrating the JDT code with our restful wrappers and the UI, but it works well.We now support refactoring, a lot of content suggestions, find usages, and so forth.You can snapshot your workspace and use that image to load it again.Your files are dual mounted between Che the workspace manager and your workspace environment. If you edit files in one, they are updated in the other. so you can ssh into your workspace or not. We provide a terminal into the workspace as well.When you execute a command, we translate that into a process and then docker exec it inot a machine as well.",
+    "points": null,
+    "created_at_i": 1448975864
+  },
+  {
+    "id": 10653969,
+    "author": "stuaxo",
+    "text": "Have they simplified the thing where you get about 8 levels of confirmation to do things?",
+    "points": null,
+    "created_at_i": 1448952164
+  },
+  {
+    "id": 10655381,
+    "author": "TylerJewell",
+    "text": "Yeah - make sure you work on the 4.0 branch.But the intellisense is pretty seamless. We use Eclipse JDT services and have a lot of intellij-like experiences. so the experience is fairly similar.",
+    "points": null,
+    "created_at_i": 1448978971
+  },
+  {
+    "id": 10654030,
+    "author": "roflchoppa",
+    "text": "next generation eMacs (previous gen actually)",
+    "points": null,
+    "created_at_i": 1448953953
+  },
+  {
+    "id": 10654132,
+    "author": "melted",
+    "text": "Because writing an IDE in a real programming language wasn't hard enough. <facepalm/>",
+    "points": null,
+    "created_at_i": 1448957437
+  },
+  {
+    "id": 10654569,
+    "author": "thecatspaw",
+    "text": "whats wrong with java?",
+    "points": null,
+    "created_at_i": 1448967793
+  },
+  {
+    "id": 10654589,
+    "author": "hellofunk",
+    "text": "I think many find Java to be quite inflexible and old compared to new programming paradigms of the last decade. It's much harder to get things done in Java than in many other languages due to how restrictive it can be (i.e. the notion that all things must be an OO class, etc). It is also not an elegant language, requiring lots of verbosity and boilerplate which tend to get in the way.",
+    "points": null,
+    "created_at_i": 1448968238
+  },
+  {
+    "id": 10654611,
+    "author": "thecatspaw",
+    "text": "While this may be true in your experience (and mine, but only in the Enterprise field) this doesnt make java any less of a \"real language\"",
+    "points": null,
+    "created_at_i": 1448968806
+  },
+  {
+    "id": 10654614,
+    "author": "hellofunk",
+    "text": "Yes, that is true. I was merely trying to explain the melodramatic sentiment of the comment you responded to.",
+    "points": null,
+    "created_at_i": 1448968874
+  },
+  {
+    "id": 10654709,
+    "author": "chrisseaton",
+    "text": "What new programming paradigms have been developed in the last decade? I can't think of any.",
+    "points": null,
+    "created_at_i": 1448971131
+  },
+  {
+    "id": 10655104,
+    "author": "hellofunk",
+    "text": "Many of the older paradigms have been popularized and gone mainstream in the last 5 to 10 years.",
+    "points": null,
+    "created_at_i": 1448976523
+  },
+  {
+    "id": 10654956,
+    "author": "coldtea",
+    "text": ">I think many find Java to be quite inflexible and old compared to new programming paradigms of the last decade. (...) It is also not an elegant language, requiring lots of verbosity and boilerplate which tend to get in the way.That sure didn't stop Go from gaining popularity.",
+    "points": null,
+    "created_at_i": 1448974835
+  },
+  {
+    "id": 10657509,
+    "author": "SwellJoe",
+    "text": "I've found Go programs to be pretty concise, in the general case. Low on boilerplate code and high in readability (in the sense that you can see what something does relatively quickly because there is very little standard boilerplate around the functionally relevant code).It is clumsy at some stuff, and doesn't do some kinds of abstraction, so you might have to repeat yourself some, but comparing it to Java? That's not something I've seen anyone who's worked in both do, I don't think.",
+    "points": null,
+    "created_at_i": 1448993606
+  },
+  {
+    "id": 10654632,
+    "author": "vardump",
+    "text": "A lot less will be wrong with Java, once \"struct\" value types are implemented. I guess that'll be in Java 10? This should improve performance significantly thanks to locality of reference and reduce heap footprint in the same time.Java tends to be \"Star Trek Borg like\" [1] in sense it's often impossible or at least cumbersome to use libraries written in it in non-JVM languages. When can we write a .so/.dylib/.dll in Java? There are of course some (cumbersome) ways around this, but it tends to involve RPC of some sort and multiple processes.Not exactly technical reason, but a matter of opinion: The shadow of Oracle Corp. Makes me feel uneasy using Java.[1]: Borg is an alien race in Star Trek that considered other species inferior, assimilated their technology and turned them into more Borgs.",
+    "points": null,
+    "created_at_i": 1448969620
+  },
+  {
+    "id": 10658090,
+    "author": "vardump",
+    "text": "I've seen some moderation on this comment, up and down.Curious there are no replies on any of the points, given several people seem to agree and disagree with them.For what it is worth, I've been working with Java more or less since 1.1 days. Lately it's been less, while working with very low level systems.Surely the first point has prevented many memory intensive projects from using idiomatic Java, and opted on serialization to byte[], memory mapped files or Unsafe tricks. Forced to go objects of arrays instead of idiomatic arrays of objects. You can make it fast and consume little memory, but not without some considerable pain.The second point has prevented me from choosing Java as a technology quite a few times. Sometimes you just need to provide a shared object (dynamically linked library) that can be loaded with all those languages with C-linkage.Third point is of course a matter of opinion. While OpenJDK is great and all, Oracle has behaved like a cage rattling gorilla in the past. Who knows what they'll still be up to, if they get in a tough enough situation? They sure have a lot of ammo, and I don't want me or the organization(s) I represent to suffer any collateral damage.",
+    "points": null,
+    "created_at_i": 1448998591
+  },
+  {
+    "id": 10654869,
+    "author": "annnnd",
+    "text": "In short: G<wait... wait... wait... ok done>C.",
+    "points": null,
+    "created_at_i": 1448973546
+  },
+  {
+    "id": 10656755,
+    "author": "melted",
+    "text": "Java by itself is workable. What I was referring to is adding yet another (and rather unnecessary) layer of complexity to an IDE which barely functioned as it is. That layer of complexity is the \"web platform\", which forces you to create UI out of divs, curse words, and duct tape to this day.",
+    "points": null,
+    "created_at_i": 1448988305
+  },
+  {
+    "id": 10654324,
+    "author": "ivan_burazin",
+    "text": "I know a lot won't agree, but seriously Cloud IDEs can be very useful. Especially If you are a Web Developer, so if HTML, Node, PHP is you thing I would definitely recommend try them out.Of course I am biased as I am the cofounder of Codeanywhere.com which is a Cloud IDE its self.But just to make a point we actually built all of Codeanywhere inside Codeanywhere. Welcome any comments...good or bad :)",
+    "points": null,
+    "created_at_i": 1448961801
+  },
+  {
+    "id": 10654366,
+    "author": "domagoj412",
+    "text": "Being cloud based is this \"Code Anywhere\", or \"Code anywhere where you have Internet access\"? The latter, in my case, would be \"Code in less places than you could with your laptop and standard offline dev tools.\"",
+    "points": null,
+    "created_at_i": 1448962729
+  },
+  {
+    "id": 10654370,
+    "author": "ivan_burazin",
+    "text": "When was the last time you did any development without internet access though? I dont remeber the last time I did that.",
+    "points": null,
+    "created_at_i": 1448962812
+  },
+  {
+    "id": 10654394,
+    "author": "booli",
+    "text": "1) Airplane? \n2) On the road traveling in a far country where 4G(or any data) is still too expensive? \n3) Train from Amsterdam -> Paris, worst data ever. \n4) etc..",
+    "points": null,
+    "created_at_i": 1448963203
+  },
+  {
+    "id": 10654421,
+    "author": "ivan_burazin",
+    "text": "Would a Offline/Cache mode solve this? Most places now (including planes) have Internet, it can be spotty, but I mean a lot of Browser based apps today continue working even if you're not online and then sync everything you have done once Internet is back. In these situation you won't even notice if your link drops here or there.",
+    "points": null,
+    "created_at_i": 1448963722
+  },
+  {
+    "id": 10654457,
+    "author": "microtonal",
+    "text": "I am still not sure what problem this is trying to solve. I can imagine that for beginners, not having to set up a development environment is an advantage of a web app.But setting up JDK and IntelliJ|Eclipse|NetBeans typically takes five or ten minutes. After that you can use your environment everywhere and have a native experience (as far as native is possible using Java ;)).It will be fast with or without internet, it will continue to work as-is when the company creating the IDE goes under or decides to double prices, I can use it with local tools (Git, Mercurial, JVisualVM), and my secret sauce does not end up on somebody else's server.",
+    "points": null,
+    "created_at_i": 1448964585
+  },
+  {
+    "id": 10654496,
+    "author": "ivan_burazin",
+    "text": "But isn't your \"secret sauce\" already on some else's servers? Like GitHub or BitBucket? What would be the exact difference here? Really and honestly interest in your thoughts. Thanks :)",
+    "points": null,
+    "created_at_i": 1448965689
+  },
+  {
+    "id": 10654555,
+    "author": "saurik",
+    "text": "You make it sound like hosting a git repository is hard or something and so the basic assumption is that obviously anyone using git is going to be using GitHub... if you have ssh access to absolutely any server you can just do a git init --bare on the server and a git remote add on the client to let you do a git push, and with a single file rename to activate a default provided post commit hook you can turn on remote access if the folder is accessible via HTTP. You might not even need a server: the fundamental beauty of git is that it is a distributed resource. What value is GitHub adding? It would be one thing if they offered good services surrounding git (such as an issue tracker that was worth using), but they don't.",
+    "points": null,
+    "created_at_i": 1448967458
+  },
+  {
+    "id": 10654660,
+    "author": "ivan_burazin",
+    "text": "Absolutely I agree that you can host your own GIT repo, and people do do it. But you ca not deny that a lot of people use Hosted services.So again I don't see a difference between GiTHub and Codeanwyhere in that aspect.Of course if you don't use GitHub you people by wont use us...and that's OK.",
+    "points": null,
+    "created_at_i": 1448970100
+  },
+  {
+    "id": 10654593,
+    "author": "microtonal",
+    "text": "No. In addition to what saurik said, setting up a full-blown GitHub-like service for your own company/institution is not that difficult.We use Gitblit. Since it is self-contained application, it (literally) takes just a few minutes to set up [1]. After that, the number of repositories, users, and repository size is only bound to technical limitations. I get the impression that GitLab is also pretty simple to install these days with the GitLab Omnibus packages.And even if you want to use GitHub or BitBucket for your proprietary code, adding yet another company to the loop only increases the probability that your code will be stolen in e.g. a security incident.[1] Perhaps also important: it integrates with internal authentication servers (LDAP, etc.).",
+    "points": null,
+    "created_at_i": 1448968410
+  },
+  {
+    "id": 10655025,
+    "author": "72deluxe",
+    "text": "No, it is hosted on servers I own, or in a portable small repository (like Fossil, for example).Microcomputers solved the problem of portable powerful processing, so I do not see why I would defer the processing elsewhere. It isn't a problem that needs solving.",
+    "points": null,
+    "created_at_i": 1448975495
+  },
+  {
+    "id": 10655118,
+    "author": "TylerJewell",
+    "text": "Hi - am the project lead for eclipse che.Everyone asks what the core value proposition. In a distributed cloud environment, it's developer bootstrapping, securing distributed workspaces, and moderning legacy build processes. These are capabilities that only exist when you have a shared distributed server system.We took the kernel and created a new IDE out of it to demonstrate a couple things:\n1. Environment & workspace portability\n2. RESTful services on top of language tools like JDT\n3. Production / development container interoperability\n4. Extension framework for a cloud IDEWe haven't launched Che yet becuase the legal & branding review process at Eclipse is extensive. We hope to finally be done within 3 more months.But we encourage everyone to check out 4.0 branch of git and then build that.It is doing a few things:\n1. Worksapces are quietly powered by environments, backed by machines which are docker or localhost. This enables each workspace to be isolated with a stack apart from others.2. We will also demonstrate workspace portability. You can move an entire workspace and all of its tools from Che to Che, or from Che to cloud. And the environment will continue to run identically in each location.3. We are running the full JDT and other language services inside of the machine. We wrap these with RESTful wrapper. And then it allows the browser to gain capabilities for maven, refactoring, and a variety of powerful intellisence, and it's generally the same speed as localhost.4. You can then exec commands, debuggers, and ssh into the workspace machines.5. We have also done a project with Red Hat to enable your workspace environments to have the same docker container structure as production. We will shortly release a plug-in for OpenShift and Kubernetes that let's projects move back and forth with limited configuration. Becuase they are both running on a common container architecture.While we can solve workflow problems in our distributed system, such as a workflow we call continuous development, we wanted to have a fully fledged desktop IDE to demonstrate that this could have the performance and security of other types of tools. So we are working to have this installation be very fast and lightweight.You guys are seeing the intermediate builds so it's got a lot of rough edges.Note: Please if you are going to do some testing, try it on the 4.0 branch. The design is much better and the performance is very good. The 4.0 branch is when we started embedding the JDT services into the mini Che that runs inside of the workspace machines.\ngit clone https://github.com/codenv/che\ngit checkout 4.0\ncd assembly-sdk\nmvn clean install",
+    "points": null,
+    "created_at_i": 1448976645
+  },
+  {
+    "id": 10656505,
+    "author": "berns",
+    "text": "Can you comment on how this project differs from Orion?",
+    "points": null,
+    "created_at_i": 1448986757
+  },
+  {
+    "id": 10657045,
+    "author": "TylerJewell",
+    "text": "It's complementary. Both Eclipse Che and Eclipse Orion are part of a new top level project called Eclipse Cloud Development. There are other technologies that are being consolidated together.Collectively, we are working on a broader platform that has a goal of letting anyone anywhere make contributions without first installing software.Orion is primarily a client-side technology. It's designed to offer a multi-page browser experience that has simple plug-in approach for customizing the client side experience.Che is primarily a workspace server, with a focus on workspace portability and interoperability.In fact, Che embeds Orion as the core editor, the diff editor, and some other components.Che has a browser IDE that we have built that embeds Orion on the client side, along with adding in additional constructs that we needed for debugging, single page management in the browser, and some other items.",
+    "points": null,
+    "created_at_i": 1448990013
+  },
+  {
+    "id": 10654688,
+    "author": "lewisl9029",
+    "text": "I like the idea of a cloud-backed IDE that has an Offline/Cache mode, but is it even possible to provide the non-editor part of the dev environment (things like the terminal and all of the associated state in the container) while offline when they live on the server? That non-editor part of the dev environment is really the main appeal of a cloud-backed IDE for me.Also, I have yet to find a cloud IDE that has proper support for building iOS apps. Sure you can delegate the builds to some external build service, but sometimes you do need the flexibility of a local build environment for advanced debugging and working around certain issues.",
+    "points": null,
+    "created_at_i": 1448970772
+  },
+  {
+    "id": 10654943,
+    "author": "ivan_burazin",
+    "text": "Good point...I don't think its feasible currently at all to have the non-editor parts work with the remote dev enviroment. There are things we can do but this is still in the early stages so we will have to wait and see on that one :)",
+    "points": null,
+    "created_at_i": 1448974664
+  },
+  {
+    "id": 10654810,
+    "author": "jen20",
+    "text": "Transatlantic planes normally do not have Wifi, or it is expensive. They are also probably the longest uninterrupted time spans I have.",
+    "points": null,
+    "created_at_i": 1448972717
+  },
+  {
+    "id": 10654931,
+    "author": "ivan_burazin",
+    "text": "I fly transatlantic once a month....almost always have Internet. And isn't even that expensive about $20.",
+    "points": null,
+    "created_at_i": 1448974457
+  },
+  {
+    "id": 10654398,
+    "author": "bencollier49",
+    "text": "Every day on the train. Like, 1.5 hours every day.",
+    "points": null,
+    "created_at_i": 1448963232
+  },
+  {
+    "id": 10654435,
+    "author": "reitanqild",
+    "text": "3h for me ATM. Has been like this for a few months and is surprisingly effective.",
+    "points": null,
+    "created_at_i": 1448964138
+  },
+  {
+    "id": 10654464,
+    "author": "bencollier49",
+    "text": "I do personal projects on the train mostly. The only nuisances are obscure programming references and pip. Can generally move to another problem if I'm blocked though.",
+    "points": null,
+    "created_at_i": 1448964794
+  },
+  {
+    "id": 10654616,
+    "author": "reitanqild",
+    "text": "I'm lucky, work for smart people who realized that if they wanted me to sign they had to yield on where. (Or as they put it: we don't understand what you do anyway and we trust you, so whatever you want as long as you show up most of the days.)Edit: Used to work on personal projects in a previous job that included long commutes. For me it is often the best time of the day for programming: Nobody to interrupt, few distractions, a very specific start time and stop time.",
+    "points": null,
+    "created_at_i": 1448968904
+  },
+  {
+    "id": 10654399,
+    "author": "diggs",
+    "text": "When flying, so quite a bit for me, actually :)",
+    "points": null,
+    "created_at_i": 1448963275
+  },
+  {
+    "id": 10654455,
+    "author": "harperlee",
+    "text": "Please don't assume that internet is there always. Lots of regions in the world don't.Further, even if it is there, if you have bad reception, assuming a good connection is in place hurts the experience. If you design your product as \"connection is needed for some things\", it will be way better than \"connection is always perfect\".As an example, I hate when I'm about to read a webpage opened previously on my browser, and then somehow, something triggers a refresh, I don't have good reception, and I need to wait minutes for the page. One person assumed connection will be quick and it is ok to discard my copy and wait with a blank page until the next one loads; another assumed that huge pages are ok, and putting the content last in the html is also ok, and then, I end up without the content.",
+    "points": null,
+    "created_at_i": 1448964499
+  },
+  {
+    "id": 10654489,
+    "author": "ivan_burazin",
+    "text": "Totally agree, and although Codeanywhere is not there yet. We are currently taking steps to enable this exactly. If you internet \"breaks\" that Codeanywhere won't it will just work (sans things a connection is needed for) and when ist back it will just continue :)",
+    "points": null,
+    "created_at_i": 1448965543
+  },
+  {
+    "id": 10654479,
+    "author": "jasonkester",
+    "text": "As Yoda would say, that is why you fail. I've spent entire months traveling with a laptop through places with no internet access. I've planned entire trips around the idea.Coding from a hammock on a tropical beach with nothing more exotic than a generator running for a few hours in the evening to keep the lights on and the beers cool in the bar (and your battery topped up). Sailing in remote parts of the Caribbean, with a little wind turbine on the boat to charge your machine (and again keep the beer cold). Hell, even trying to work from a coffee shop in England with their quaint idea of \"internet\" and \"wifi\" even in 2015.Your laptop weighs three pounds. Take it someplace nicer than your living room!",
+    "points": null,
+    "created_at_i": 1448965238
+  },
+  {
+    "id": 10654950,
+    "author": "heartbreak",
+    "text": "My clients don't exactly let me disappear for a few months while I'm completing a project.",
+    "points": null,
+    "created_at_i": 1448974793
+  },
+  {
+    "id": 10655402,
+    "author": "cubano",
+    "text": "> As Yoda would say, that is why you fail...Wouldn't he have said \"you fail, that is why\"?",
+    "points": null,
+    "created_at_i": 1448979171
+  },
+  {
+    "id": 10656342,
+    "author": "stronglikedan",
+    "text": "Pedantic, but \"Why you fail, that is.\"",
+    "points": null,
+    "created_at_i": 1448985794
+  },
+  {
+    "id": 10661714,
+    "author": "jasonkester",
+    "text": "but... but... it's an actual Yoda quote:http://i.imgur.com/z0pkveG.gif",
+    "points": null,
+    "created_at_i": 1449045302
+  },
+  {
+    "id": 10657404,
+    "author": "SwellJoe",
+    "text": "I travelled in a motorhome full-time for four years and have returned to that lifestyle again recently. But, I still rarely write code when disconnected. I don't know how to code without the internet to answer questions, show me API examples, etc., anymore.I'm so much less productive when I try to work without internet, that I don't try. I can read, write, play games, or get off the computer and get my head right for work, during that downtime, but the idea of writing code without internet just doesn't appeal to me. We are beyond that point in terms of software complexity. Building things of value is no longer simple enough to do all on your own, a lone coder in the woods (or on the beach or on a boat).I'm curious how many of the things you've suggested are activities you've actually done while writing code? Sounds like a Corona commercial...not really a software engineering story.",
+    "points": null,
+    "created_at_i": 1448992763
+  },
+  {
+    "id": 10661675,
+    "author": "jasonkester",
+    "text": "Sorry if I wasn't clear that those were all real world examples from personal experience.Arusi, Columbia (a tiny fishing village a 2 hour launch from the nearest town where you can get an overnight boat to a city connected to the rest of the country by a road), Tonsai Beach, Thailand, back before they had power or internet. And a couple months sailing in the San Blas islands off Panama. Parks, campsites and random comfortable boulders in the forest are pretty regular worksites, even building real shipping products with paying customers.Even the dreaded English Coffee Shop really happened (I live there half the time and have a hard enough time getting BT to deliver internet to my house with any reliability).I find that a good IDE removes pretty much all the Googling from my life. I know what you mean though, having written my share of Ruby and Python, where you're constantly on Google trying to remind yourself what order to pass parameters to File.Open(), and completely aswim with a 3rd party API. But Intellisense knows everything there is to know about C#, Javascript, CSS, etc. and will either tell me about it or just finish writing my line of code for me with a quick key chord.I tend not to rely on 3rd party code for simple things I can write myself, so I don't spend as much time Googling React or Angular into submission as your average modern dev. For genuine 3rd party APIs like AWS or Stripe, you're right. It's hard to test that stuff until you're back online. They all have libraries though, and again the IDE has your back as far as implementation is concerned.Good luck with the RV life!http://www.expatsoftware.com/articles/uploaded_images/parrot...\nhttp://www.blogabond.com/Photos/PhotoView.aspx?imageID=8479\nhttp://www.blogabond.com/Photos/PhotoView.aspx?imageID=992",
+    "points": null,
+    "created_at_i": 1449044552
+  },
+  {
+    "id": 10661699,
+    "author": "hollerith",
+    "text": ">I'm so much less productive when I try to work without internet,For the more easily distracted among us, it works the other way around :)",
+    "points": null,
+    "created_at_i": 1449045043
+  },
+  {
+    "id": 10654481,
+    "author": "mirsadm",
+    "text": "My current IDE works just fine with or without internet access. I don't remember the last time I needed to code on a computer besides my own (which is the only use I can think for this, or maybe on something like an iPad Pro).",
+    "points": null,
+    "created_at_i": 1448965260
+  },
+  {
+    "id": 10654962,
+    "author": "stephenr",
+    "text": "How about developing where WAN speed is not brilliant or the connection is unreliable.Honestly this would be like saying \"GitHub doesn't accept git pushes anymore, all changes to files have to be made through the Web UI\".",
+    "points": null,
+    "created_at_i": 1448974934
+  },
+  {
+    "id": 10655000,
+    "author": "polar",
+    "text": "Every day, on the wrong side of an air gap.",
+    "points": null,
+    "created_at_i": 1448975278
+  },
+  {
+    "id": 10655016,
+    "author": "thesz",
+    "text": "You cannot do something original doing what everyone else is doing. Everyone else accessing Internet when developing programs.http://www.paulgraham.com/distraction.htmlMyself, I'd be glad to be disconnected. But it is hard in our world right now. Still, I try to do as much without access to internet as I could.",
+    "points": null,
+    "created_at_i": 1448975400
+  },
+  {
+    "id": 10655018,
+    "author": "girvo",
+    "text": "Hacker News is kind of funny, in that is it full of the developers that are those who do exactly that! Though, you're right: in your target market (HTML, Node, PHP devs) it's a much safer assumption that they'll be developing with internet access.",
+    "points": null,
+    "created_at_i": 1448975404
+  },
+  {
+    "id": 10655101,
+    "author": "ivan_burazin",
+    "text": "Exactly, we are not going for devs other the web devs, that's our target, that's who we serve and in the end - that's who we are.We in Codeanywhere are web devs, and we made Codeanywhere for us :)",
+    "points": null,
+    "created_at_i": 1448976477
+  },
+  {
+    "id": 10655260,
+    "author": "forgottenpass",
+    "text": "edit: Wait, nevermind. I edited out my response. I was trying to have an honest conversation. I didn't know you had a product that you had to stick up for the usage model of.Always-connected working is widespread enough that you can sell the product you sell, but pretending like it's a well-established hard requirement everyone easily meets is bullshit.",
+    "points": null,
+    "created_at_i": 1448978025
+  },
+  {
+    "id": 10655366,
+    "author": "other_herbert",
+    "text": "Sitting in a coffee shop in a tiny town while visiting my inlaws... granted I did work for about 2 hours offline, then used my phone to connect and check in what I'd done....",
+    "points": null,
+    "created_at_i": 1448978864
+  },
+  {
+    "id": 10655474,
+    "author": "JustSomeNobody",
+    "text": "When I need to hunker down and get things done, I turn off network, etc. It really isn't that important to development. Only checking in changes and you don't have to do that every five minutes no matter what some blog says.",
+    "points": null,
+    "created_at_i": 1448979851
+  },
+  {
+    "id": 10658491,
+    "author": "cartoonfoxes",
+    "text": "While in the air, or at a field location, or any of a hundred cafes, restaurants, even the occasional conference venue. Downed internet connections, and unavailable hotspot passwords are a real thing. I probably log a reliable 10 hours a months of offline work, though have had occasion to do much more than that at a single stretch.As someone who isn't a web developer, the question seems ludicrous to me.It's important to note that when you need to do offline development, you need to do offline development. A toolchain that requires an active internet connection is still fundamentally unreliable, even in 2015.",
+    "points": null,
+    "created_at_i": 1449001671
+  },
+  {
+    "id": 10654529,
+    "author": "fareesh",
+    "text": "Can you elaborate why I would want to use a service like codeanywhere instead of usual git workflow through my terminal app? Is this aimed at people who don't use laptops, those who don't use a DVCS?",
+    "points": null,
+    "created_at_i": 1448966827
+  },
+  {
+    "id": 10654545,
+    "author": "ivan_burazin",
+    "text": "You still ca use GIT and your terminal inside of Codeanywhere. We actually encourage you to use them, if you connect with your GitHub or Bitbucket account, Codeanywhere will list all your repos, so you can spin up a environment with them in just a couple of seconds.Codeanywhere is an Editor just like Sublime, Atom and so on. It's just available everywhere and just how you configured an left it.",
+    "points": null,
+    "created_at_i": 1448967246
+  },
+  {
+    "id": 10654672,
+    "author": "k__",
+    "text": "Why don't you do it like Chrome/Firefox sync?There's one thing I really hate about coding and that is getting my environment up and synced.This is why I would consider using CodeAnywhere.Throw your IDE into Electron and make offline counterparts to the online stuff and it would be a nice package.But writing a config sync plugin for Atom would be enough for many, I guess",
+    "points": null,
+    "created_at_i": 1448970332
+  },
+  {
+    "id": 10654958,
+    "author": "ivan_burazin",
+    "text": "You actually read my mind :))",
+    "points": null,
+    "created_at_i": 1448974851
+  },
+  {
+    "id": 10655216,
+    "author": "TylerJewell",
+    "text": "Yes ...One of the key objectives that we are exploring with Eclipse Che is the idea of workspace portability. The workspace itself is composed of two things:\n1. The projects (and their source bindings), and:\n2. Their environments, which are the stack of tools and runtimes that you need to perform work on the code such as refactoring, debugging, compiling.We have created an abstraction of the worksapce to the environment that it is bound to. And then this entire definition is exportable and movable between Che instances or to a cloud that is supporting Che, such as what Codenvy will run.Because the workspace definition defines its machines in the workspace object, then we can recreate the exact machine you need to do the same work on another node.We use docker to implement this behavior.We are not fully done with all of this work, but we have a lot of prototypes that prove this can do well.There are some challenges - if you want to \"save\" your workspace, do we snapshot the machines every time, or only sometime? Do we force a remote commit & push? it'll be up to the user. But once all of the commits are done, then we have to push the images into a shared registry and ensure that everything is remotely accessible.Once all of this is done then any other machine can reproduce an identical workspace.",
+    "points": null,
+    "created_at_i": 1448977518
+  },
+  {
+    "id": 10654980,
+    "author": "stephenr",
+    "text": "> There's one thing I really hate about coding and that is getting my environment up and syncedKeep the IDE's config between reinstalls/new machines? Some IDEs even have a specific option to export the config and import it into another instance.",
+    "points": null,
+    "created_at_i": 1448975077
+  },
+  {
+    "id": 10654782,
+    "author": "giancarlostoro",
+    "text": "One neat feat of services like CodeAnywhere is definitely that you can go cheap on hardware and buy a Chromebook as long as it allows you to execute and test your code on the server.",
+    "points": null,
+    "created_at_i": 1448972266
+  },
+  {
+    "id": 10654949,
+    "author": "ivan_burazin",
+    "text": "Yes you can...Codeanywhere works almost identically on a cheap Chromebook or a top of the line MacbookPro",
+    "points": null,
+    "created_at_i": 1448974782
+  },
+  {
+    "id": 10658332,
+    "author": "giancarlostoro",
+    "text": "The only \"exception\" I guess is if you develop Java GUI based applications... or anything that uses a GUI for that matter.",
+    "points": null,
+    "created_at_i": 1449000342
+  },
+  {
+    "id": 10658380,
+    "author": "ivan_burazin",
+    "text": "Even that can be done with x.11, but thats not our focus...our focus is Web development.",
+    "points": null,
+    "created_at_i": 1449000696
+  },
+  {
+    "id": 10655856,
+    "author": "vox_mollis",
+    "text": "What advantage do Cloud IDEs have over, say, sshing to your development host?If the primary idea is to work remotely, ssh+vim+your toolchain should be just as serviceable.",
+    "points": null,
+    "created_at_i": 1448982739
+  },
+  {
+    "id": 10658397,
+    "author": "ivan_burazin",
+    "text": "Well it give lets say a SublimeText users the advatage that you get using ssh+vim. Not everyone is a VIM user and not everyone wnats to be one. There will always be people that will stick with vim, but some people what the flexiblity that vim gives them but in a sublime like interface that they are used too.",
+    "points": null,
+    "created_at_i": 1449000856
+  },
+  {
+    "id": 10655899,
+    "author": "slaxman",
+    "text": "Does CodeAnywhere support Elixir? I am writing a book on Phoenix. It would be good to use a cloud editor in the book.",
+    "points": null,
+    "created_at_i": 1448983087
+  },
+  {
+    "id": 10656635,
+    "author": "ivan_burazin",
+    "text": "Not yet unfortunatly :(",
+    "points": null,
+    "created_at_i": 1448987517
+  },
+  {
+    "id": 10657126,
+    "author": "mark_l_watson",
+    "text": "Codeanywhere looks nice! I have been using nitrous.io for a long while, very similar to your product. Having an IDE in the cloud offers a lot of conveniences: large builds without heating up your laptop, easy to try different server setups, makes my chromebook and iPad more useful, etc. Of all the cool tech at Google, one of my favorite things was their web based IDE with very nice integration with Perforce, build systems, etc.I don't understand the \"must be on the Internet\" complaint. As someone else said, other online resources are large parts of developer workflows - it has been a long time since I have coded without an Internet connection (perhaps a few times a year on an airplane, but I am happy enough writing (I am also an author) or reading on planes).",
+    "points": null,
+    "created_at_i": 1448990529
+  },
+  {
+    "id": 10658373,
+    "author": "ivan_burazin",
+    "text": "Thanks for the comment! I have hear of the Google Web IDE. DO you know if its still live and they is a way to see it?Thanks again!",
+    "points": null,
+    "created_at_i": 1449000637
+  },
+  {
+    "id": 10654408,
+    "author": "grizzles",
+    "text": "I tried it out. My first thought is, I wish I had downloaded a binary version. It was a 21min compile on my core i7.Besides that, it looks very promising. The feature set is fairly humble, which is imo a good thing.The best thing the devs could do now (they may have already did this) is to thoroughly document the server side API.Most of the extensions I'd be interested in writing wouldn't really fit into the standard IDE paradigm, and that's what I think could be really cool about this. The ability to code an env (eg. in a seperate .html file) while I code is a very appealing prospect.",
+    "points": null,
+    "created_at_i": 1448963466
+  },
+  {
+    "id": 10655021,
+    "author": "TylerJewell",
+    "text": "Hi - I am eclipse che project lead and founder of codenvy.A couple of things:\n1. If you checkout che.\n2. Go into assembly-sdk\n3. mvn clean installIf you do this directory, you just download the binaries - will take only a couple minutes.You will want to checkout 4.0 branch, which has all of the new capabilities and design into it. We have swagger APIs that you can access for all of the RESTful stuff. It should be at http://localhost:8080/im-api-docs-ui/. I am going to verify with the engineers and get back to you if the URL has changed for Che 4.",
+    "points": null,
+    "created_at_i": 1448975457
+  },
+  {
+    "id": 10654444,
+    "author": "reitanqild",
+    "text": "Interesting. Layout looks a lot like Netbeans, example: https://eclipse.org/che/img/che-lighttheme.png",
+    "points": null,
+    "created_at_i": 1448964280
+  },
+  {
+    "id": 10654608,
+    "author": "MrPatan",
+    "text": "I use cloud IDEs, more for the cloud workspace than for the IDE, I guess.Maybe I could have the same thing with VMs or containers (disclaimer: I've never even set up docker or vagrant), but I still would like to have that in the cloud where somebody else takes care of patching stuff, backing up data, etc, and I can share it with a URL if I want to, instead of with a multi-GB file.I'm too lazy to care about my infrastructure anymore, and I'm happy I can pay other people to do it for me.",
+    "points": null,
+    "created_at_i": 1448968747
+  },
+  {
+    "id": 10654668,
+    "author": "ivan_burazin",
+    "text": "Love it! This is why we build what we do :)",
+    "points": null,
+    "created_at_i": 1448970204
+  },
+  {
+    "id": 10654740,
+    "author": "lewisl9029",
+    "text": "Specifying a Vagrantfile and Dockerfile is usually the first thing I do for any non-trivial project these days. I find there's tremendous value in having a fully reproducible dev environment on all of the different OSes and machines I work on, and I suspect the benefits would be even more pronounced in a team environment.The cloud IDE takes this concept even further by only ever having a single source of truth for the dev environment, but this comes at the cost of offline access and choice of editors, which is a compromise I'm not willing to make yet.",
+    "points": null,
+    "created_at_i": 1448971537
+  },
+  {
+    "id": 10654628,
+    "author": "moonchrome",
+    "text": "I like the general idea of this.Considering how much of a resource hog modern C++ compiler is for example (I hear good things about Scala as well) it would be nice if I could use a lightweight low powered front end machine to edit code and then have the backend bother with parsing, compiling, etc. People do this already with distributed builds so why not make it baked into IDE with code analysis as well. Maybe the OS can even save memory if you run multiple instances on stuff like executables, etc.What I really don't like is how developers are pretending that HTML is the only client side technology if you go client->server route. To me architecting this as a HTML app shows 0 benefits - the install time is irrelevant - I am a developer - I know how to install applications and I do this for all my other IDEs, the time it takes me to install a thin client is irrelevant.All this \"use JS/DOM as front end\" does is either :compile to JS -> introduce an extra compile step, a shitty VM emulation, worries with interop and leaky abstractionsuse JS -> poor semanticsand both are abusing a layout model made for documents into application development model that gets really inefficient at rendering.IDEs are at the top of GUI complexity - why make shit even more complicated by doing things that slow development down - if they would for example write the frontend in something like JavaFX (not having used JavaFX I'm only speculating here, but I heard good things) it would probably be equally good (if not better) and at the same time it would make development a lot simpler.",
+    "points": null,
+    "created_at_i": 1448969469
+  },
+  {
+    "id": 10654915,
+    "author": "PaulHoule",
+    "text": "I think Eclipse was slow enough before the JS/DOM thing came a long.Back in the bad old days GNU emacs was written in LISP but it always seemed pretty peppy.Today there are a lot of editors written in modern scripting languages and/or the JS/DOM environment such as Atom and Light Table and they all seem just a little bit laggy.",
+    "points": null,
+    "created_at_i": 1448974176
+  },
+  {
+    "id": 10655259,
+    "author": "TylerJewell",
+    "text": "The goal wasn't to use HTML. Our goal was somewhat different. When I started Codenvy, it was after I had a pretty bad experience with developer tools. I had been offline from programming for 7+ years and lost most of my skills. When I tried to get current with maven, java, eclipse, tomcat, I was unable to get a simple program to compile.I had a simple thought - it should be possible to let anyone anywhere contribute to any project without first installing software. you should be able to click a link and then everything you need is generated for you - the workspace, the projects in that workspace, the environments that power those workspaces.Now, if you are on a desktop, you may want to wire in your existing IDE to integrate with that workspace. But if you are a product manager and just want to test some code, you don't want to install anything. So a browser experience is necessary then.Generally, we have never seen the browser experience as the replacement objective or substitute. But it is a necessary deliverable for those who do not wnat to bother with installing software first.Codenvy takes Che and is working to provide this sort of no-install workflow around a concept we call factories. You start in a private anonymous screen, click a link and everything you need to continue working is there. Really hard problem - that is what we focus on commercially.But at the core of it, we needed a portable workspace server that had a web IDE. We chose GWT for the development of the GUI because of the cross browser portability and performance optimization. It's a brutal technology but we get a lot of nice optimizations. We have started some explorations to support Vaadin for dynamic reloading of widgets and have some partners who may help us with a pure JavaScript client, too.We are embedding all of the language services within the machines that power the environments that the workspace is bound to. We use either localhost or docker depending upon your configuration. Since everything is within, the actual comms between browser and the workspace machine is limited. So you can get a pretty darn good expeirence. The file operations are localhost native, so we are able to process Java files with 50K lines at about the same speed that Eclipse or Netbeans does (minus the part of the file system being inside of the docker container).",
+    "points": null,
+    "created_at_i": 1448978024
+  },
+  {
+    "id": 10655922,
+    "author": "noxToken",
+    "text": "I've only used three different IDEs/editors with regularity: Eclipse, IntelliJ and Sublime Text. I've dabbled with others like Atom and Brackets, and you're right, they all seem to have a bit of \"heft\" to them - except for Sublime Text. It starts up quickly. It's closes quickly. It's always immediately responsive. What makes it different from the others?",
+    "points": null,
+    "created_at_i": 1448983222
+  },
+  {
+    "id": 10656259,
+    "author": "stronglikedan",
+    "text": "Python (ST) vs. Java (Eclipse, IntelliJ)? I really don't know. I'm just speculating based on what I've read about both languages.",
+    "points": null,
+    "created_at_i": 1448985388
+  },
+  {
+    "id": 10656503,
+    "author": "MrBuddyCasino",
+    "text": "Sublime is an editor, not an IDE, isn't it? Afaik it does not have a complete model of the code in my workspace, the way Eclipse would.",
+    "points": null,
+    "created_at_i": 1448986739
+  },
+  {
+    "id": 10656592,
+    "author": "noxToken",
+    "text": "True. It's only an editor. That's why I brought up Atom and Brackets. Neither of them are slow per se, but they don't feel as instantaneous as Sublime Text. No matter how many plugins I throw in there, the size of my project, the number of files open, ST always feels like the most responsive thing I've ever used.I don't have any objective data, but perhaps it's due to the Kool-aid. It was the second text editor I used (Notepad++ being the first). I fell in love immediately.",
+    "points": null,
+    "created_at_i": 1448987280
+  },
+  {
+    "id": 10656929,
+    "author": "MrBuddyCasino",
+    "text": "No I agree, ST feels just right. Why anyone would want to use the DOM and JS for the view layer in a project as demanding as an IDE is beyond me.When I put my ear to the ground and listen really hard, I can hear the vibrations of a herd thundering by in the distance. I think I know that noise, I've first heard it when people were XMLifying everything back in 2000.",
+    "points": null,
+    "created_at_i": 1448989342
+  },
+  {
+    "id": 10658122,
+    "author": "moonchrome",
+    "text": "To be fair, Microsoft did a really really good job with VSCode - it can easily search big files that Atom completely chokes on.It does have a problem with files bigger than a few MB tho - but native editors like gedit chooked on that too so I can't blame them too much.And it has that smooth input animation that not many native editors have but it adds so much to the feeling of responsiveness (other editor I've noticed using this is latest intellij versions).My point wasn't even so much about performance, with enough effort you could work around most of the issues (at least in some browsers, kind of dumps on the idea of \"portability\").My point was that the whole GWT -> JS this took or the coffeescript Atom took is such a pain on the ass to develop with compared to a real GUI toolkit - just think of the developer productivity without the stupid GWT compile times, special cases, etc.Think how nice of a development expirience you would have with something like Kotlin + JavaFX, or C# and WPF.I really really wish Microsoft would open source GUI stack from Silverlight and let community maintain it as a cross platform GUI framework for CoreCLR - they already had it running on OSX meaning it can run on non-windows tech - meaning the porting path exists, and a lot of work went into silverlight GUI controls historically, plus it's WPF compatible. They could make \"portable profile WPF\" from it if they wanted, and also target mobile and desktop, from Visual Studio and Visual Studio Blend - the ultimate Enterprise app development platform",
+    "points": null,
+    "created_at_i": 1448998724
+  },
+  {
+    "id": 10659317,
+    "author": "TylerJewell",
+    "text": "With vscode there are some clever architectural choices they made to create a near native experience. They use stdin / stdout integration between native services (like those for Go programming language) and the editor itself. It's anothe form of reuse for the libraries that already do intellisense, compilation, or other syntax-specific functions.In the 2nd and 3rd generation codenvy systems, we tried to duplicate some of the JDT capabilities for Java directly within the browser with webworkers. We had to write that in JavaScript. I believe this is how C9 handles their support for HTML, CSS, and JavaScript.We had pretty decent support, but there were all sorts of issues: having to rewrite JDT services is nearly impossible and really the domain of language teams, the browser has limited context where many intellisense services need access to multiple directories and meta information, and there were some performance issues in certain edge cases that are hard to resolve without having certain I/O and cache mechanisms (which are readily available on file systems).So the VSCode model of reusing the language services and then layering on a stdin / stdout protocol is pretty smart. We are doing a similar approach with Che, but instead of stdin / stdout, we are packing a restful interface on top of the JDT & JavaScript services. We see some potential to consolidate vscode & other approaches into a multi-language intellisence server, powered by REST + stdin + stdout. That would be really fun to have all programming languages remotely accessible through a common protocol.",
+    "points": null,
+    "created_at_i": 1449008391
+  },
+  {
+    "id": 10657835,
+    "author": "smacktoward",
+    "text": "Back in the bad old days GNU emacs was written in LISP but it always seemed pretty peppy.Back in the really old days, when desktop computers came with just a few megabytes of RAM at most, people used to joke that emacs stood for \"eight megs and constantly swapping.\"",
+    "points": null,
+    "created_at_i": 1448996385
+  },
+  {
+    "id": 10654754,
+    "author": "karussell",
+    "text": "It is really funny how a very similar idea was in 2008 the April fool from Roman Strobl / Netbeans: https://blogs.oracle.com/roumen/entry/netbeans_7_0_plans_unc...Already at that time I thought - why leave such a nice idea on the street? Others will pick it up ...",
+    "points": null,
+    "created_at_i": 1448971799
+  },
+  {
+    "id": 10654775,
+    "author": "karussell",
+    "text": "And isn't stuff like this extremely helpful for pair and remote programming? I like this and the self-hosted cloud IDE approach :)",
+    "points": null,
+    "created_at_i": 1448972126
+  },
+  {
+    "id": 10654951,
+    "author": "stephenr",
+    "text": "Remote/Pair programming is a feature of several desktop IDEs.",
+    "points": null,
+    "created_at_i": 1448974801
+  },
+  {
+    "id": 10686664,
+    "author": "karussell",
+    "text": "I knew one for Eclipse but others too? (looking for Java IDEs)https://karussell.wordpress.com/2008/06/22/real-time-editing...",
+    "points": null,
+    "created_at_i": 1449436696
+  },
+  {
+    "id": 10697551,
+    "author": "stephenr",
+    "text": "Komodo IDE has it.At the text-editor level, SubEthaEdit has it, and the same library is used by Coda (and thus they are compatible)I vaguely remember there as a company providing plugins for multiple IDE's to accomplish some kind of pair programming - ah i found it: https://floobits.com",
+    "points": null,
+    "created_at_i": 1449593439
+  },
+  {
+    "id": 10654863,
+    "author": "mrmondo",
+    "text": "Would be interested to see this working with puppet and test labs...",
+    "points": null,
+    "created_at_i": 1448973471
+  },
+  {
+    "id": 10655112,
+    "author": "Nullabillity",
+    "text": "Trying to launch the docker image seems to make my laptop require a reboot.Ubuntu 15.04, Docker 1.9.1",
+    "points": null,
+    "created_at_i": 1448976578
+  },
+  {
+    "id": 10655258,
+    "author": "meshko",
+    "text": "Moore's law is going to stop working soon but humanity keeps piling up abstractions as if we had an infinity of computing power growth in front of us.",
+    "points": null,
+    "created_at_i": 1448978015
+  },
+  {
+    "id": 10655331,
+    "author": "dschiptsov",
+    "text": "Even more bloated?)",
+    "points": null,
+    "created_at_i": 1448978536
+  },
+  {
+    "id": 10655451,
+    "author": "cognivore",
+    "text": "What, it's not written in HTML/CSS/JS?! How antiquated...",
+    "points": null,
+    "created_at_i": 1448979712
+  },
+  {
+    "id": 10655879,
+    "author": "Ciantic",
+    "text": "I've used Eclipse for PHP/CSS/JavaScript for too many years, it is still the only Open Source IDE than can do auto-completion, outline and Go to definition, Go to reference reliably for PHP.But things have gotten to boiling point. It can't handle newer technologies, like LESS, there is no good extensions for anything relatively new.I think Atom (and my preferred VS Code) is the future of IDEs, there is a lot of people behind these working on new features and extensions for these. And having HTML rendering engine behind the IDE does make it more approachable for hacks, simple and useful ones.",
+    "points": null,
+    "created_at_i": 1448982942
+  },
+  {
+    "id": 10656687,
+    "author": "VeryVito",
+    "text": "I always opt for open-source when available, but after having used JetBrains' PHPStorm for PHP/CSS/JS/etc, I can't even pretend Eclipse is still a viable solution.Although the community version of IntelliJ at PHPStorm's core is open-sourced, PHPStorm itself is not. Regardless, the productivity gain it provides is WELL worth the cost and inconvenience.",
+    "points": null,
+    "created_at_i": 1448987836
+  },
+  {
+    "id": 10656885,
+    "author": "luisrudge",
+    "text": "really? che? as in che guevara? The executioner / mass murderer?",
+    "points": null,
+    "created_at_i": 1448989062
+  },
+  {
+    "id": 10657931,
+    "author": "TylerJewell",
+    "text": "as in Cherkasy, Ukraine, the city that originally wrote it.",
+    "points": null,
+    "created_at_i": 1448997132
+  },
+  {
+    "id": 10660514,
+    "author": "mbfg",
+    "text": "How does one debug an application in a web based IDE? That would seem to be a pretty stifling limitation.",
+    "points": null,
+    "created_at_i": 1449023647
+  }
+]

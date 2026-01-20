@@ -1,0 +1,285 @@
+{
+  "propertyName": "2941",
+  "units": [
+    {
+      "unitNumber": "500",
+      "tenantName": "VACANT",
+      "leaseStart": null,
+      "leaseEnd": null,
+      "squareFootage": 13945.0,
+      "monthlyRent": 0.0
+    },
+    {
+      "unitNumber": "501",
+      "tenantName": "VACANT",
+      "leaseStart": null,
+      "leaseEnd": null,
+      "squareFootage": 4464.0,
+      "monthlyRent": 0.0
+    },
+    {
+      "unitNumber": "550",
+      "tenantName": "VACANT",
+      "leaseStart": null,
+      "leaseEnd": null,
+      "squareFootage": 4367.0,
+      "monthlyRent": 0.0
+    },
+    {
+      "unitNumber": "610",
+      "tenantName": "VACANT",
+      "leaseStart": null,
+      "leaseEnd": null,
+      "squareFootage": 3347.0,
+      "monthlyRent": 0.0
+    },
+    {
+      "unitNumber": "700",
+      "tenantName": "VACANT",
+      "leaseStart": null,
+      "leaseEnd": null,
+      "squareFootage": 22757.0,
+      "monthlyRent": 0.0
+    },
+    {
+      "unitNumber": "820",
+      "tenantName": "VACANT",
+      "leaseStart": null,
+      "leaseEnd": null,
+      "squareFootage": 2175.0,
+      "monthlyRent": 0.0
+    },
+    {
+      "unitNumber": "110",
+      "tenantName": "Aprons, LLC",
+      "leaseStart": "2017-03-01",
+      "leaseEnd": "2027-02-28",
+      "squareFootage": 7306.0,
+      "monthlyRent": 13029.03
+    },
+    {
+      "unitNumber": "850",
+      "tenantName": "Adara Resource Management, Inc.",
+      "leaseStart": "2019-12-01",
+      "leaseEnd": "2025-04-30",
+      "squareFootage": 9945.0,
+      "monthlyRent": 35064.41
+    },
+    {
+      "unitNumber": "200",
+      "tenantName": "Booz Allen Hamilton, Inc.",
+      "leaseStart": "2019-01-01",
+      "leaseEnd": "2026-07-31",
+      "squareFootage": 25143.0,
+      "monthlyRent": 81761.77
+    },
+    {
+      "unitNumber": "200-A",
+      "tenantName": "Booz Allen Hamilton, Inc.",
+      "leaseStart": "2019-01-01",
+      "leaseEnd": "2026-07-31",
+      "squareFootage": 2500.0,
+      "monthlyRent": 8129.07
+    },
+    {
+      "unitNumber": "400",
+      "tenantName": "Deloitte LLP",
+      "leaseStart": "2018-09-01",
+      "leaseEnd": "2025-10-31",
+      "squareFootage": 22583.0,
+      "monthlyRent": 80629.32
+    },
+    {
+      "unitNumber": "650",
+      "tenantName": "Deloitte LLP",
+      "leaseStart": "2018-09-01",
+      "leaseEnd": "2025-10-31",
+      "squareFootage": 13440.0,
+      "monthlyRent": 48104.0
+    },
+    {
+      "unitNumber": "350",
+      "tenantName": "Pacem Solution International LLC",
+      "leaseStart": "2019-06-01",
+      "leaseEnd": "2026-11-30",
+      "squareFootage": 4815.0,
+      "monthlyRent": 17221.55
+    },
+    {
+      "unitNumber": "300",
+      "tenantName": "Wiss, Janney, Elstner Associates, Inc.",
+      "leaseStart": "2015-01-01",
+      "leaseEnd": "2029-02-28",
+      "squareFootage": 29076.0,
+      "monthlyRent": 0.0
+    },
+    {
+      "unitNumber": "105",
+      "tenantName": "2941, LLC",
+      "leaseStart": "2019-06-01",
+      "leaseEnd": "2029-05-31",
+      "squareFootage": 4418.0,
+      "monthlyRent": 5216.94
+    },
+    {
+      "unitNumber": "8101",
+      "tenantName": "2941, LLC",
+      "leaseStart": "2019-06-01",
+      "leaseEnd": "2029-05-31",
+      "squareFootage": 14674.0,
+      "monthlyRent": 17327.5
+    },
+    {
+      "unitNumber": "8100",
+      "tenantName": "WD Holdings, LLC",
+      "leaseStart": "2019-06-01",
+      "leaseEnd": "2029-05-31",
+      "squareFootage": 8175.0,
+      "monthlyRent": 6227.38
+    },
+    {
+      "unitNumber": "100",
+      "tenantName": "BAE Systems, Inc.",
+      "leaseStart": "2020-09-01",
+      "leaseEnd": "2031-08-30",
+      "squareFootage": 2422.0,
+      "monthlyRent": 8531.49
+    },
+    {
+      "unitNumber": "1000",
+      "tenantName": "BAE Systems, Inc.",
+      "leaseStart": "2020-09-01",
+      "leaseEnd": "2031-08-30",
+      "squareFootage": 22246.0,
+      "monthlyRent": 78361.53
+    },
+    {
+      "unitNumber": "1100",
+      "tenantName": "BAE Systems, Inc.",
+      "leaseStart": "2020-09-01",
+      "leaseEnd": "2031-08-30",
+      "squareFootage": 22907.0,
+      "monthlyRent": 80689.91
+    },
+    {
+      "unitNumber": "1200",
+      "tenantName": "BAE Systems, Inc.",
+      "leaseStart": "2020-09-01",
+      "leaseEnd": "2031-08-30",
+      "squareFootage": 22907.0,
+      "monthlyRent": 80689.91
+    },
+    {
+      "unitNumber": "1300",
+      "tenantName": "BAE Systems, Inc.",
+      "leaseStart": "2020-09-01",
+      "leaseEnd": "2031-08-30",
+      "squareFootage": 22907.0,
+      "monthlyRent": 80689.91
+    },
+    {
+      "unitNumber": "1400",
+      "tenantName": "BAE Systems, Inc.",
+      "leaseStart": "2020-09-01",
+      "leaseEnd": "2031-08-30",
+      "squareFootage": 22907.0,
+      "monthlyRent": 80689.91
+    },
+    {
+      "unitNumber": "1500",
+      "tenantName": "BAE Systems, Inc.",
+      "leaseStart": "2020-09-01",
+      "leaseEnd": "2031-08-30",
+      "squareFootage": 21634.0,
+      "monthlyRent": 76201.89
+    },
+    {
+      "unitNumber": "805",
+      "tenantName": "BAE Systems, Inc.",
+      "leaseStart": "2020-09-01",
+      "leaseEnd": "2031-08-30",
+      "squareFootage": 20493.0,
+      "monthlyRent": 72185.59
+    },
+    {
+      "unitNumber": "810",
+      "tenantName": "BAE Systems, Inc.",
+      "leaseStart": "2020-09-01",
+      "leaseEnd": "2031-08-30",
+      "squareFootage": 2804.0,
+      "monthlyRent": 9877.05
+    },
+    {
+      "unitNumber": "825",
+      "tenantName": "BAE Systems, Inc.",
+      "leaseStart": "2020-09-01",
+      "leaseEnd": "2031-08-30",
+      "squareFootage": 4576.0,
+      "monthlyRent": 16118.96
+    },
+    {
+      "unitNumber": "900",
+      "tenantName": "BAE Systems, Inc.",
+      "leaseStart": "2020-09-01",
+      "leaseEnd": "2031-08-30",
+      "squareFootage": 892.0,
+      "monthlyRent": 3142.07
+    },
+    {
+      "unitNumber": "B103",
+      "tenantName": "BAE Systems, Inc.",
+      "leaseStart": "2020-09-01",
+      "leaseEnd": "2031-08-30",
+      "squareFootage": 22583.0,
+      "monthlyRent": 79548.82
+    },
+    {
+      "unitNumber": "B154",
+      "tenantName": "Wiss, Janney, Elstner Associates, Inc.",
+      "leaseStart": "2020-09-01",
+      "leaseEnd": "2031-08-30",
+      "squareFootage": 1308.0,
+      "monthlyRent": 0.0
+    },
+    {
+      "unitNumber": "650",
+      "tenantName": "Focused Image, Inc.",
+      "leaseStart": "2018-01-31",
+      "leaseEnd": "2029-02-28",
+      "squareFootage": 200.0,
+      "monthlyRent": 0.0
+    },
+    {
+      "unitNumber": "620",
+      "tenantName": "MEARF Merrifield Equities Associates LLC",
+      "leaseStart": "2020-12-01",
+      "leaseEnd": "2023-11-30",
+      "squareFootage": 3861.0,
+      "monthlyRent": 15556.45
+    },
+    {
+      "unitNumber": "800",
+      "tenantName": "Kingsview Wealth Management, LLC",
+      "leaseStart": "2022-03-24",
+      "leaseEnd": "2032-03-23",
+      "squareFootage": 1910.0,
+      "monthlyRent": 5570.83
+    },
+    {
+      "unitNumber": "300",
+      "tenantName": "Wiss, Janney, Elstner Associates, Inc.",
+      "leaseStart": "2022-09-01",
+      "leaseEnd": "2027-11-30",
+      "squareFootage": 2137.0,
+      "monthlyRent": 6970.15
+    },
+    {
+      "unitNumber": "300",
+      "tenantName": "Wiss, Janney, Elstner Associates, Inc.",
+      "leaseStart": "2029-03-01",
+      "leaseEnd": "2034-10-31",
+      "squareFootage": 20078.0,
+      "monthlyRent": 0.0
+    }
+  ]
+}

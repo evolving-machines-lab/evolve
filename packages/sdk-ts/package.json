@@ -1,0 +1,88 @@
+{
+  "name": "@evolvingmachines/sdk",
+  "version": "0.1.62",
+  "keywords": [
+    "ai",
+    "agents",
+    "orchestration",
+    "sandbox",
+    "e2b",
+    "claude code",
+    "codex",
+    "gemini cli",
+    "qwen code",
+    "automation",
+    "evolve-sdk"
+  ],
+  "homepage": "https://github.com/evolvingmachines/evolve",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/evolvingmachines/evolve.git"
+  },
+  "type": "module",
+  "main": "dist/index.cjs",
+  "types": "dist/index.d.ts",
+  "license": "Proprietary Beta Evaluation License - See LICENSE",
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "scripts": {
+    "build": "tsup --minify",
+    "dev": "tsup src/index.ts --watch",
+    "type-check": "tsc --noEmit",
+    "test": "npm run test:unit && npm run test:integration",
+    "test:unit": "tsx tests/unit/semaphore.test.ts && tsx tests/unit/swarm-concurrency.test.ts && tsx tests/unit/swarm-verify.test.ts && tsx tests/unit/swarm-retry-verify.test.ts && tsx tests/unit/prompt-construction.test.ts && tsx tests/unit/observability-metadata.test.ts && tsx tests/unit/skills-integration.test.ts && tsx tests/unit/auth-config.test.ts",
+    "test:unit:semaphore": "tsx tests/unit/semaphore.test.ts",
+    "test:unit:swarm": "tsx tests/unit/swarm-concurrency.test.ts",
+    "test:unit:verify": "tsx tests/unit/swarm-verify.test.ts",
+    "test:unit:retry": "tsx tests/unit/swarm-retry-verify.test.ts",
+    "test:unit:prompts": "tsx tests/unit/prompt-construction.test.ts",
+    "test:unit:observability": "tsx tests/unit/observability-metadata.test.ts",
+    "test:unit:skills": "tsx tests/unit/skills-integration.test.ts",
+    "test:unit:auth": "tsx tests/unit/auth-config.test.ts",
+    "pretest:integration": "npm run build:dev",
+    "test:integration": "npm run test:01",
+    "test:integration:all": "npm run test:01 && npm run test:02 && npm run test:03 && npm run test:04 && npm run test:05 && npm run test:06 && npm run test:07 && npm run test:08 && npm run test:09 && npm run test:10 && npm run test:11 && npm run test:12 && npm run test:13 && npm run test:14 && npm run test:15",
+    "test:01": "tsx tests/integration/01-all-agents-parallel.ts",
+    "test:02": "tsx tests/integration/02-execute-command-streaming.ts",
+    "test:03": "tsx tests/integration/03-file-operations.ts",
+    "test:04": "tsx tests/integration/04-session-lifecycle.ts",
+    "test:05": "tsx tests/integration/05-workspace-config.ts",
+    "test:06": "tsx tests/integration/06-observability.ts",
+    "test:07": "tsx tests/integration/07-background-timeouts.ts",
+    "test:08": "tsx tests/integration/08-network.ts",
+    "test:09": "tsx tests/integration/09-advanced-features.ts",
+    "test:10": "tsx tests/integration/10-swarm-abstractions.ts",
+    "test:11": "tsx tests/integration/11-schema-validation.ts",
+    "test:12": "tsx tests/integration/12-swarm-verify.ts",
+    "test:13": "tsx tests/integration/13-pipeline-abstractions.ts",
+    "test:14": "tsx tests/integration/14-byok-direct-mode.ts",
+    "test:15": "tsx tests/integration/15-oauth-mode.ts",
+    "test:claude": "tsx tests/integration/01-all-agents-parallel.ts claude",
+    "test:codex": "tsx tests/integration/01-all-agents-parallel.ts codex",
+    "test:gemini": "tsx tests/integration/01-all-agents-parallel.ts gemini",
+    "test:qwen": "tsx tests/integration/01-all-agents-parallel.ts qwen"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^0.5.1",
+    "@composio/core": "^0.5.1",
+    "@evolvingmachines/e2b": "^0.1.62",
+    "ajv": "^8.17.1",
+    "p-map": "^7.0.2",
+    "zod": "^3.24.0",
+    "zod-to-json-schema": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.18",
+    "tsup": "^8.4.0",
+    "typescript": "^5.8.3"
+  }
+}

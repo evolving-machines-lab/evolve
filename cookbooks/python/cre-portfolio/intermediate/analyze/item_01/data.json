@@ -1,0 +1,30 @@
+{
+  "property_name": "Harborview Retail Center",
+  "as_of_date": "2024-03-01",
+  "total_sf": 101859.0,
+  "occupied_sf": 13175.0,
+  "vacant_sf": 88684.0,
+  "occupancy_rate": 0.1293,
+  "tenant_count": 3,
+  "annual_base_rent": 5685499.04,
+  "avg_rent_psf": 431.54,
+  "walt_years": 7.38,
+  "largest_tenant": "Moonlight Cinema",
+  "largest_tenant_pct": 0.5427,
+  "rollover_12mo_sf": 1989.0,
+  "rollover_12mo_pct": 0.151,
+  "rollover_24mo_sf": 1989.0,
+  "rollover_24mo_pct": 0.151,
+  "near_term_expirations": [
+    {
+      "tenant_name": "Coastal Coffee Co.",
+      "sf": 1989.0,
+      "annual_rent": 0.0,
+      "expiration_date": "2024-09-30"
+    }
+  ],
+  "risk_flags": [
+    "High vacancy: 12.9%",
+    "Tenant concentration: Moonlight Cinema represents 54.3% of rent"
+  ]
+}

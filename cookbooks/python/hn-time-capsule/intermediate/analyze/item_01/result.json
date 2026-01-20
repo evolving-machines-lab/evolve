@@ -1,0 +1,58 @@
+{
+  "title": "Stop Doom Scrolling, Start Doom Coding: Build via the terminal from your phone",
+  "summary": "In January 2025, a GitHub project describing how to code on a smartphone remotely via SSH, using Tailscale VPN, Termius SSH client, and Claude Code running on a home computer, sparked a 197-comment Hacker News discussion. The article proposed combining existing remote access technologies with newly available AI-assisted coding tools for a novel \"doom coding\" workflow. The discussion revealed a diverse developer ecosystem exploring various approaches: SSH-based terminal coding, web-based IDEs, native mobile development with Termux, and AI-agent-mediated workflows through GitHub Pull Requests or Telegram bots.",
+  "what_happened": "From 2024-2026, several key trends emerged: (1) Claude Code exploded in adoption, reaching $1 billion run-rate revenue by November 2025 just 6 months after launch, processing 195 million lines of code weekly across 115,000 developers. (2) Phone-based development remained a specialized niche rather than mainstream - while 85% of developers use AI tools and 65% use them weekly, actual mobile-first development stayed confined to early adopters, people without laptop access in developing countries, and those using it as a supplementary tool. (3) Tailscale and VPN-based remote SSH access became increasingly popular for secure development workflows, with Tailscale more than doubling free-plan users and landing record enterprise customers in 2024-2025. (4) Termux on Android stabilized and became a reliable tool for learning and small-scale development but never achieved mainstream adoption. (5) Cloud IDEs like GitHub Codespaces gained traction as safer alternatives to local setup, though terminal-over-SSH remained preferred by advanced developers. (6) The real revolution was AI-assisted agentic coding - where developers could prompt Claude/Copilot/Gemini to handle complex tasks autonomously - which fundamentally changed what 'coding on a phone' meant (less about typing code, more about supervising AI agents). (7) By 2025, several alternative patterns emerged: using Claude Code on Web/iOS app, managing AI via GitHub issues and PRs, or using Telegram bots as a mobile interface to Claude Code running on servers.",
+  "most_prescient": {
+    "user": "elemdos",
+    "reason": "Correctly predicted that AI-assisted coding would fundamentally change the viability of phone-based development by shifting from direct typing to conversation-based prompting. Said: 'Coding from your phone really feels like a huge change; it never took before because coding from your phone was miserable, but if you're just coding by having a conversation then it might even be better to do it from your phone.' This perfectly captured how Claude Code and similar tools made phone development practical for a specific use case (AI supervision) rather than general development."
+  },
+  "most_wrong": {
+    "user": "jscheel",
+    "reason": "Stated 'I've been doing some of this through a term on my phone, but it honestly sucks. Other interfaces (telegram, web ui, email) are gonna be much better experiences on your phone.' While jscheel was right that terminal UIs are poor on phones, they underestimated how central the terminal approach would remain for developers willing to use Blink Shell or Termius with proper SSH setup. By 2025, despite web UI alternatives existing, the SSH terminal approach remained a viable niche solution."
+  },
+  "notable_aspects": "1. The discussion revealed a 10+ year history of phone-based coding that developers had been quietly using (SSH, tmux, Termux, Blink Shell) before AI made it trendy. 2. Multiple commenters independently claimed to already be doing exactly this, suggesting the author was documenting an existing practice rather than inventing it. 3. The discussion spawned immediate creative alternatives: Telegram bots intercepting Claude's AskUserQuestion calls, email interfaces, and GitHub-PR-based workflows. 4. Developers showed strong preference for their existing infrastructure - one mentioned using a $5 Linode VPS instead of a home computer, others used Coder.com or Code-server. 5. The framing of 'doom coding' as the productive parallel to 'doom scrolling' resonated but the metaphor broke down - phone coding requires deliberate focus, unlike scrolling's passive consumption. 6. Discussion included genuinely creative setups like using ydotool with iPhone shortcuts to control a desktop from the couch, or running full Debian on Pixel phones via Terminal VM. 7. There was interesting disagreement about what tools would prevail: terminal advocates (Blink Shell, Termius, Mosh) vs web UI advocates (OpenCode, VS Code Server, Coder) vs headless approaches (email, Telegram, GitHub issues).",
+  "grades": {
+    "rbergamini27": {
+      "grade": "B+",
+      "rationale": "Author created a genuinely useful guide that synthesized existing technologies in a way that resonated with 229+ stars and 197 comments. However, overstated novelty - many commenters had been doing this for years. The guide proved durable and continues to be referenced, but the hype cycle of 'this is revolutionary' faded as it became clear this was a specialized workflow for specific use cases, not a mainstream shift."
+    },
+    "elemdos": {
+      "grade": "A",
+      "rationale": "Made the most insightful prediction by recognizing that AI conversation-based coding fundamentally changes the phone-coding equation. Correctly identified that where typing-based development on phones failed, prompt-based AI supervision could succeed. Backed up insight with concrete open-source project (TinyKit) exploring this space."
+    },
+    "runjake": {
+      "grade": "B",
+      "rationale": "Accurately explained the technical stack (Tailscale reliability, Mosh for connection stability, tmux for session management) and correctly attributed similar workflow concepts to existing practices. However, slightly overestimated how broadly appealing this setup would become - it remained more niche than implied."
+    },
+    "godelski": {
+      "grade": "B+",
+      "rationale": "Provided valuable context about thin-client architectures and demonstrated a mature setup that's been working for years across home/laptop/phone. Correctly noted this isn't novel but extends from HPC practices. Realistic assessment that this works for 'developers comfortable with terminal' rather than broad adoption. Skepticism about AI coding tools proved prescient - by 2025 AI adoption rates were high but developer trust decreased from 40% to 29%."
+    },
+    "pmarreck": {
+      "grade": "A-",
+      "rationale": "Correctly identified that Blink Shell + Tailscale + mosh + tmux creates a genuinely superior mobile development experience compared to web terminals, and consistently advocated for this in multiple comments. Proved right - these tools remained preferred by developers serious about phone coding by 2025. Only minor deduction for overestimating how many developers would prioritize this setup vs alternatives."
+    },
+    "stavros": {
+      "grade": "A",
+      "rationale": "Correctly identified that SSHing from phones is not new and skeptically challenged the novelty narrative. Proved prescient that the combination was more important than any single element. By 2025, history showed developers had quietly been doing this for a decade."
+    },
+    "jscheel": {
+      "grade": "D+",
+      "rationale": "Dismissed terminal interfaces on phones as fundamentally broken and predicted other interfaces would dominate. This proved wrong - by 2025 terminal-based SSH remained the preferred approach for developers serious about mobile coding, with Blink Shell maintaining a dedicated user base. Web UIs and Telegram bots emerged as supplementary options, not replacements."
+    },
+    "through": {
+      "grade": "A-",
+      "rationale": "Built a concrete Telegram bot solution that intercepts Claude's AskUserQuestion calls during autonomous coding sessions, demonstrating that supervision of AI agents via phone is viable. Proved more prescient than email-based alternatives since it actually solved the real problem (async decision-making during long-running Claude tasks)."
+    },
+    "analogpixel": {
+      "grade": "C",
+      "rationale": "Suggested email-based interface would be simpler/better than VPN setup. While email's simplicity is real, this proved less useful in practice because: (1) immediate feedback matters for coding, (2) email authentication/security becomes complex, (3) other async approaches (Telegram, GitHub PRs) proved more practical. The VPN approach, though more complex, remained preferred."
+    },
+    "magospietato": {
+      "grade": "A",
+      "rationale": "Provided the clearest practical demonstration: Android Terminal + Claude Code + git + gh client + GitHub mobile app for PR reviews. Remarkably, this approach remains viable and popular in 2025, suggesting this was one of the most durable workflows proposed. The integration of version control as the coordination mechanism proved robust."
+    }
+  },
+  "score": 7,
+  "rationale": "This retrospective is moderately interesting as a case study of how developer communities experiment with nascent tool combinations. It's valuable for understanding that: (1) novel tool synthesis can resonate even without fundamental novelty, (2) phone-based development remained niche despite AI hype, (3) the real transformation was agentic coding rather than mobile-first development, (4) multiple viable patterns emerged for coordinating AI agents from phones (SSH terminals, GitHub PRs, Telegram bots, web UIs). However, it's not a top-tier retrospective because: the predictions were mostly modest ('this might be useful'), there's limited evidence the discussion actually changed trajectories (people continued doing what they were doing), and the 'doom coding' framing proved less durable than expected. It's a solid B+ discussion of technical options rather than a major inflection point."
+}

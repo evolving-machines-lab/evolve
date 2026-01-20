@@ -1,0 +1,45 @@
+{
+  "title": "DIY Laptop 64 bit ARM",
+  "summary": "In November 2015, Olimex announced significant progress on an open-source hardware (OSHW) DIY laptop initiative based on the Allwinner A64 64-bit ARM processor. The company had received plastic housing samples and sourced multiple components including battery, display, keyboard, touchpad, speakers, camera, and microphone. The primary remaining work was designing the motherboard to integrate within the existing housing. The post emphasized the unique appeal of building laptops with your own hands rather than buying retail. The discussion thread was modest (102 comments) and touched on design concerns\u2014commenters questioned the backwards approach of designing the case first, discussed manufacturing constraints around plastic injection tooling, and expressed interest in upgradeable and open systems. Community requests included hardware-based privacy controls, alternative keyboards, and open firmware specifications.",
+  "what_happened": "The Olimex TERES-I (TERES-A64-BLACK) laptop based on this design did come to fruition and remains in production today in 2026. The product is currently available for purchase at 240 EUR and Olimex continues to ship from stock. However, the broader predictions embedded in this discussion about affordable ARM laptops becoming mainstream took a very different trajectory. The A64 processor, launched in 2015 as a budget 64-bit ARM option, never became the foundation for a thriving DIY laptop ecosystem. Instead, ARM laptops evolved along two separate paths: (1) the ultra-premium market, where Apple's custom ARM chips (starting with M1 in 2020) dominated high-end laptops with exceptional performance, and (2) the emerging Snapdragon X series (2024+) from Qualcomm, which has powered increasingly capable Windows laptops\u2014but these are premium products at $1000+, not DIY budget alternatives. The Olimex TERES-I has remained a niche hobbyist product with limited market penetration. Parallel projects like Pine64's Pinebook followed a similar trajectory: budget ARM laptops for enthusiasts, never reaching mainstream adoption. Meanwhile, ARM's explosive growth in computing has been driven by Apple's silicon dominance and Microsoft/Qualcomm's partnership with Snapdragon X, making 2024-2025 genuinely 'the year ARM dominated PCs'\u2014just not through the low-cost DIY route anticipated in 2015.",
+  "most_prescient": {
+    "user": "Zekio",
+    "reason": "Zekio predicted 'This looks very promising as a laptop that could be upgrade-able like a desktop PC.' This framed the right narrative: the appeal of modular, upgradeable hardware rather than sealed consumer devices. While the Olimex TERES-I did eventually ship and remains available, the real vindication came from the broader ARM laptop market, which proved modular and open approaches have enduring appeal to specific communities\u2014developers and hobbyists who value repairability and customization. The 2024-2025 ARM laptop renaissance with Snapdragon X actually occurred in semi-modular ways (removable memory, storage, some serviceable components), proving Zekio's insight about upgradeable systems having merit. Zekio correctly intuited a key differentiator: rather than sealed consumer junk, ARM laptops could offer the desktop PC ethos of modularity."
+  },
+  "most_wrong": {
+    "user": "FussyZeus",
+    "reason": "FussyZeus criticized the project with 'Seems a little backwards to me to design your case and then design the motherboard...' while others defended it noting tooling costs and constraints. FussyZeus was wrong not because the design process was perfect (it wasn't optimal), but wrong in the deeper judgment: the criticism implied the project wouldn't succeed or was fundamentally flawed. Yet the TERES-I did ship, does remain in production, and has been continuously available for over a decade, validating that Olimex's pragmatic approach\u2014start with available components (housing) and design the electronics to fit\u2014was actually sound engineering. FussyZeus's skepticism proved unfounded; the project succeeded despite, or even because of, this unconventional sequence."
+  },
+  "notable_aspects": "1. The limited engagement (only ~102 comments) reflects how niche ARM laptops were in 2015, even among the tech-savvy HN audience. 2. The prescient mention of hardware privacy controls (camera/microphone switches) became a real selling point for open-source laptop projects and even influenced mainstream privacy discourse by 2023-2025. 3. The article references FOSDEM 2016 as a milestone, showing how embedded this project was in the European open-source hardware community rather than mainstream tech. 4. In hindsight, the timing was fascinating: this article dropped in November 2015, exactly as the smartphone market was maturing and ARM was about to explode in computing\u2014but the commenters had no idea that ARM's dominance would come from Apple's custom chips and Qualcomm/Microsoft partnerships, not from DIY projects with budget processors. 5. The 8000mAh battery mentioned for a laptop is quite small by modern standards, reflecting the low power consumption assumptions of ARM processors at that era. 6. None of the commenters mentioned Apple's iPad Pro (launched earlier that year with A9X), which in retrospect was the canary in the coal mine for ARM's computational future.",
+  "grades": {
+    "akhilcacharya": {
+      "grade": "B",
+      "rationale": "Generic interest ('I'm intrigued by ARM machines in general. I want to see where this goes.') was reasonable but offered no insight. The prediction was ultimately correct\u2014ARM has gone very interesting places\u2014but akhilcacharya's statement was too vague to evaluate. Gets credit for positive sentiment about an emerging area."
+    },
+    "Zekio": {
+      "grade": "A",
+      "rationale": "Correctly identified modularity and upgradeability as the differentiator for ARM laptops. This insight proved durable: the Olimex TERES-I succeeded partly because it offered customization, and the later ARM laptop boom (Snapdragon X series) introduced more modular designs than early generation x86 ultrabooks. The focus on 'like a desktop PC' foreshadowed the blurring of laptop/desktop distinctions."
+    },
+    "FussyZeus": {
+      "grade": "D",
+      "rationale": "Predicted failure based on design process concerns. The project succeeded and remains viable a decade later, directly contradicting this pessimistic view. While the critique wasn't technically wrong (case-first design is unusual), the judgment was flawed\u2014the project shipped and worked fine. Deserves credit for attempting technical reasoning, but the outcome proved the criticism unfounded."
+    },
+    "mafuyu": {
+      "grade": "C+",
+      "rationale": "Provided context ('This is Olimex's blog, and they design and sell dev boards') that was accurate but unhelpful for predicting outcomes. No real insight, just factual clarification. Slightly above neutral for attempting to ground the discussion in company reality."
+    },
+    "fredsir": {
+      "grade": "C",
+      "rationale": "Argued 'The proper way would be to build all parts to fit each other...' which is textbook engineering wisdom. However, Fredsir didn't account for constraints in hardware development and manufacturing. The Olimex project proved pragmatism beat perfection. This is a classic case where received wisdom was less useful than flexible thinking."
+    },
+    "emeraldd": {
+      "grade": "B+",
+      "rationale": "Responded to Fredsir with 'You have to start somewhere to be able to set your constraints...' This is good engineering insight\u2014iterative design, constraints-driven development. This proved correct for the Olimex project, which did need to set constraints by starting with available components. Gets credit for sophisticated thinking about design processes."
+    },
+    "caboteria": {
+      "grade": "B",
+      "rationale": "Noted 'Tooling for injection molded plastic is very expensive...' which is accurate and showed understanding of manufacturing economics. This was a real consideration for the project. Caboteria didn't make a prediction about outcomes, just noted a constraint, so harder to grade as 'right' or 'wrong,' but the insight was sound and relevant to why Olimex's approach made sense."
+    }
+  },
+  "score": 7
+}

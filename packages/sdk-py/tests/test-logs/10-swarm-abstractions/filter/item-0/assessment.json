@@ -1,0 +1,8 @@
+{
+  "propertyName": "2941",
+  "tenantConcentrationRisk": "high",
+  "leaseRolloverRisk": "high",
+  "rentCollectionRisk": "medium",
+  "overallRiskScore": 8.0,
+  "reasoning": "The property exhibits a high-risk profile primarily due to extreme tenant concentration and significant near-term lease exposure. BAE Systems dominates the rent roll, accounting for approximately 64% of total monthly rent ($592,095 out of $926,885), creating a major single-tenant dependency. Furthermore, lease rollover risk is critical: approximately 31% of total rent is derived from leases that have either already expired (holdovers such as Deloitte and Booz Allen units) or are set to expire within the next 12 months. Specifically, $179,563 in monthly rent is from expired leases and $107,112 expires by Dec 2026. Additionally, the property has a 14.4% vacancy rate and includes over 23,000 SF of occupied space generating $0 in rent (notably a 20,078 SF unit occupied by 2941, LLC), which may indicate owner-occupancy or credit issues. The combination of high concentration and imminent income uncertainty justifies an 8/10 risk score."
+}

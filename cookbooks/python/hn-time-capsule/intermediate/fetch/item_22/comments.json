@@ -1,0 +1,53 @@
+[
+  {
+    "author": "akhilcacharya",
+    "text": "I'm intrigued by ARM machines in general. I want to see where this goes.",
+    "points": 0,
+    "depth": 0,
+    "children": []
+  },
+  {
+    "author": "Zekio",
+    "text": "This looks very promising as a laptop that could be upgrade-able like a desktop PC.",
+    "points": 0,
+    "depth": 0,
+    "children": []
+  },
+  {
+    "author": "FussyZeus",
+    "text": "Seems a little backwards to me to design your case and then design the motherboard...",
+    "points": 0,
+    "depth": 0,
+    "children": [
+      {
+        "author": "mafuyu",
+        "text": "This is Olimex's blog, and they design and sell dev boards...",
+        "points": 0,
+        "depth": 1,
+        "children": []
+      },
+      {
+        "author": "fredsir",
+        "text": "The proper way would be to build all parts to fit each other...",
+        "points": 0,
+        "depth": 1,
+        "children": [
+          {
+            "author": "emeraldd",
+            "text": "You have to start somewhere to be able to set your constraints...",
+            "points": 0,
+            "depth": 2,
+            "children": []
+          }
+        ]
+      },
+      {
+        "author": "caboteria",
+        "text": "Tooling for injection molded plastic is very expensive...",
+        "points": 0,
+        "depth": 1,
+        "children": []
+      }
+    ]
+  }
+]

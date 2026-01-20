@@ -1,0 +1,50 @@
+{
+  "title": "JSFiddle Updates: The Lifting (Dec 2015)",
+  "summary": "In December 2015, Oskar Krawczyk announced \"The Lifting,\" a major visual redesign of JSFiddle focusing on UI optimization, performance improvements, and preparation for the eventual removal of the sidebar. The article detailed reducing asset requests from 49 to ~9, implementing async operations, and updating CodeMirror. The discussion thread was brief (7 comments) and focused on comparisons with competitors like CodePen and JSBin, with users noting JSFiddle's slower performance, lack of live editing for HTML/CSS, and missing console.log panel. Several commenters mentioned they had switched to or preferred CodePen and JSBin. The broader context was that Oskar had recently committed to full-time work on a complete platform rewrite, signaling significant changes ahead.",
+  "what_happened": "Over the next decade, CodePen emerged as the dominant code playground, growing from 1 million users in 2015 to 2.5+ million by 2020+, achieving a sustainable bootstrapped business model with $568.5K revenue by 2021 and strong community engagement. Meanwhile, JSFiddle's promised 'next major version' and complete rewrite never materialized as a transformative product update. Despite surviving as a functional service, JSFiddle stagnated relative to competitors. JSBin also gradually faded in relevance. By 2024-2025, when comparing code playgrounds, CodePen is consistently recommended as the premium choice for collaboration and features, while JSFiddle is mentioned mainly for minimal use cases or as a nostalgic reference to early web development tools. JSFiddle remains operational but has become a legacy tool rather than an industry leader.",
+  "most_prescient": {
+    "user": "drinchev",
+    "reason": "Correctly identified JSFiddle's fundamental problems: slower performance than competitors, lack of live-reload for HTML/CSS, missing console features, and predicted that JSBin would become the superior alternative. A decade later, while JSBin also faded, their core analysis that 'jsfiddle has its place in history' proved accurate—JSFiddle did become relegated to historical significance rather than forward momentum."
+  },
+  "most_wrong": {
+    "user": "Oskar Krawczyk (author)",
+    "reason": "The article's promise of an imminent 'next major version' and 'complete rewrite, full of new, awesome stuff' never delivered breakthrough results that would compete with CodePen's trajectory. While the team did pursue modernization, the promised transformation failed to establish JSFiddle as the leading platform. The article projected momentum and progress that didn't materialize into market leadership."
+  },
+  "notable_aspects": "The discussion was surprisingly small (only 7 comments on a rank #6 post) for what was framed as a major update, suggesting JSFiddle had already lost mindshare in the developer community by late 2015. The comments immediately pivoted to comparing alternatives (CodePen, JSBin, JSConsole) rather than engaging with the improvements described. The branding discussion about 'jsFiddle' vs 'JSFiddle' shows attention to polish details while missing bigger competitive threats. The emphasis on performance optimization (reducing requests 49→9) was technically sound but insufficient without feature parity with competitors. Oskar's commitment to 'full-time' development and team hiring suggested ambition, but the promised complete rewrite appears to have either never launched or launched without market impact.",
+  "grades": {
+    "bloggerden": {
+      "grade": "C",
+      "rationale": "Raised a minor branding observation that was relatively unimportant to JSFiddle's actual market performance. While observant about details, missed the larger competitive dynamics affecting the platform."
+    },
+    "Nadya": {
+      "grade": "C+",
+      "rationale": "Thoroughly documented the branding inconsistency and showed due diligence, but similarly focused on cosmetic details. The comment about 'seeing if there was anything new besides a facelift' was perceptive about the updates feeling superficial, though execution was still valuable."
+    },
+    "erikpukinskis": {
+      "grade": "B",
+      "rationale": "Pragmatically evaluated the product and committed to trying JSFiddle again, showing openness. However, was already primarily using CodePen, reflecting the competitive reality that would only accelerate."
+    },
+    "iLoch": {
+      "grade": "B+",
+      "rationale": "Identified a real missing feature (console.log output panel) that made JSFiddle inadequate for JS-only development. This was a prescient pain point—console integration became increasingly expected and was part of CodePen's advantage."
+    },
+    "dflock": {
+      "grade": "C",
+      "rationale": "Provided a helpful suggestion for the console problem but didn't address that having integrated console output was becoming table-stakes for code playgrounds."
+    },
+    "dang": {
+      "grade": "D",
+      "rationale": "Only noted a URL redirect, providing no analytical value to the discussion about JSFiddle's direction or competitive position."
+    },
+    "iamleppert": {
+      "grade": "B",
+      "rationale": "Raised the UI/UX preference for dark mode and higher contrast, a legitimate concern that was being addressed by competitors. The request for user choice was reasonable and forward-thinking about customization."
+    },
+    "drinchev": {
+      "grade": "A",
+      "rationale": "The most accurate predictor of JSFiddle's future. Systematically compared performance (slower), features (no live reload, no console.log), and concluded JSBin was superior. Correctly framed JSFiddle as historical rather than future-focused. This analysis perfectly captured why JSFiddle would fail to maintain leadership despite this update."
+    }
+  },
+  "score": 7,
+  "rationale": "This is a moderately interesting retrospective because it captures a pivotal moment in web dev tool history that the participants didn't fully appreciate. The article represents JSFiddle's last significant push for relevance—a team committing to full-time development and a complete rewrite. The fact that this ambitious promise didn't manifest as expected is meaningful historical context. However, the discussion was shallow (only 7 comments), lacked technical depth, and the immediate pivot to competitor comparisons suggests the community had already moved on. The entertainment value comes from watching drinchev correctly diagnose JSFiddle's terminal issues while Oskar optimistically promised a turnaround that never came. It's a textbook example of execution and market momentum mattering more than UI polish or technical optimization."
+}

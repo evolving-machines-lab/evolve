@@ -1,0 +1,23 @@
+A64 OLinuXino OSHW Linux Laptop Project
+
+Overview
+
+Olimex announced significant progress on their open-source hardware laptop initiative. The company has received initial plastic housing samples for a device centered on the Allwinner A64 64-bit processor.
+
+Current Status
+
+The team has successfully sourced multiple components including the plastic casing, battery (8000mAh), LCD display, keyboard, touchpad, speakers, camera, and microphone. The primary remaining task involves designing the motherboard to integrate within the existing housing.
+
+Design Philosophy
+
+As the developer noted, "Every one can go to the shop and buy laptop, but to build one with your hands...is different experience." The project aims to create a do-it-yourself kit enabling users to assemble their own systems with customizable board and processor configurations.
+
+Community Reception
+
+The announcement generated substantial interest, with commenters requesting specific features including:
+- Hardware-based privacy controls (camera/microphone switches)
+- Alternative keyboard designs
+- Multiple port configurations
+- Open firmware specifications
+
+The prototype samples were scheduled for display at a local Help Day event, with the team targeting a complete motherboard demonstration at FOSDEM in January 2016.

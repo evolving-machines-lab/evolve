@@ -1,0 +1,26 @@
+{
+  "rank": 2,
+  "page": 1,
+  "position_on_page": 2,
+  "title": "Every GitHub object has two IDs",
+  "hn_item_id": "46602591",
+  "hn_item_url": "https://news.ycombinator.com/item?id=46602591",
+  "outbound_url": "https://www.greptile.com/blog/github-ids",
+  "final_url": "https://www.greptile.com/blog/github-ids",
+  "points": 94,
+  "comments": 15,
+  "summary": "Soohoon Choi's technical post reveals that GitHub maintains two separate ID systems: Node IDs (GraphQL opaque strings like PRRC_kwDOL4aMSs6Tkzl8) and Database IDs (REST/URL integer values like 2475899260). Modern node IDs use MessagePack binary serialization encoded in base64, with each containing a version identifier, repository database ID, and object database ID. The post demonstrates how the database ID can be extracted from node IDs using a simple bitmask operation (last 32 bits), and explains GitHub's legacy format used for older repositories. This discovery was made while attempting to generate clickable links to GitHub PR comments without costly database migrations.",
+  "screenshots": [
+    "/home/user/workspace/output/screenshots/post_002/01_main.png",
+    "/home/user/workspace/output/screenshots/post_002/02_key_visual.png",
+    "/home/user/workspace/output/screenshots/post_002/03_additional.png"
+  ],
+  "actions": [
+    "Navigated to https://news.ycombinator.com/news?p=1",
+    "Extracted rank 2 post information",
+    "Clicked on post title to access https://www.greptile.com/blog/github-ids",
+    "Captured content summary and technical details",
+    "Created 3 screenshot visualizations of the post content"
+  ],
+  "error": null
+}

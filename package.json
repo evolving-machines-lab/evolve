@@ -1,0 +1,24 @@
+{
+  "name": "evolve-sdk-workspace",
+  "private": true,
+  "type": "module",
+  "version": "0.1.62",
+  "workspaces": [
+    "packages/e2b",
+    "packages/sdk-ts",
+    "packages/sdk-py/bridge"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "build:python-bridge": "cd packages/sdk-py/bridge && npm run build",
+    "test:ts": "npm run test --workspace=@evolvingmachines/sdk",
+    "test:ts:unit": "npm run test:unit --workspace=@evolvingmachines/sdk",
+    "test:ts:integration": "npm run test:integration --workspace=@evolvingmachines/sdk",
+    "test:py:unit": "npm run build:python-bridge && cd packages/sdk-py && python -m pytest tests/unit -v",
+    "test:py:integration": "npm run build:python-bridge && cd packages/sdk-py && python -m pytest tests/integration -v"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.5",
+    "typescript": "^5.8.3"
+  }
+}

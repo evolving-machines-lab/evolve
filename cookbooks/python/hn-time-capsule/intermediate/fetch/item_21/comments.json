@@ -1,0 +1,383 @@
+[
+  {
+    "id": 10661528,
+    "author": "SyneRyder",
+    "text": "This is a good summary / refresher and worth a read, even if you're familiar with most of the productivity methodologies out there.  I didn't know the Eisenhower Matrix had a specific name.Not linked in the article (but worth a plug IMO) is the Mac app Vitamin-R [1].  I've started using it again lately and I'm finding it useful.  It combines several of the methodologies in the article: Pomodoro, Time Boxing and Biological Prime Time.  With the latter, after each pomodoro Vitamin-R asks whether you were in flow or felt distracted - over time it generates a graph of your peak productivity times & days of the week.[1] http://www.publicspace.net/Vitamin-R/",
+    "points": null,
+    "created_at": "2015-12-02T07:37:41.000Z",
+    "children": []
+  },
+  {
+    "id": 10661541,
+    "author": "Danilka",
+    "text": "Way to go todois ;-)",
+    "points": null,
+    "created_at": "2015-12-02T07:41:51.000Z",
+    "children": []
+  },
+  {
+    "id": 10661619,
+    "author": "stringtheorist",
+    "text": "I have read this and several other articles about productivity, focus etc. to find ways out of my own  procrastination. I have tried several things to some success and most often failures. I don't know if I will ever win battle against procrastination. I would like to know stories of people who never had this problem. Who can get work done whenever they like. How great would their life be?PS. Never commented on HN before, so ignore my comment if it breaks rules/guidelines of the site.",
+    "points": null,
+    "created_at": "2015-12-02T08:04:34.000Z",
+    "children": [
+      {
+        "id": 10661684,
+        "author": "qvikr",
+        "text": "I've had to struggle with procrastination since highschool (now 10+ yrs in the workforce). A couple of things I've noticed about myself and the teams I've worked with:- We always find time to do things we love doing. So the trick is to simply fill your bucket with things you genuinely enjoy.- Always have a backlog. It might be a note or a sheet on Excel - but always have a list of things that need to get done. Keep adding the new stuff into this as they come, and spend a couple of hours once  a week running through this.- Get in the flow. Plan your backlog so you have a mix of high, medium and low complexity stuff on your plate.- Figure out your \"in-the-zone\" time. For me, I've noticed that I'm most charged up for creative work later in the evening. Make sure you don't have any meetings or distractions lined up during and at least an hour before your zone time.- Get your temple. Everybody needs a place where they can go, zone in and get work done.- Have a daily standup where you discuss what you planned to do yesterday, what you did, and what you plan to do today. Do this EVERY SINGLE DAY.I've noticed most organized/ disciplined folks just do this automatically. For us procrastinators, it's like starting a workout routine after your BMI has hit the ceiling - you need a system, and you need a system that you'd actually enjoy if you want to stick to it!",
+        "points": null,
+        "created_at": "2015-12-02T08:26:28.000Z",
+        "children": []
+      },
+      {
+        "id": 10661705,
+        "author": "hliyan",
+        "text": "Someone with a strong predisposition to procrastinate who managed to eventually beat it here.As a teenager, I heard someone say \"never let a piece of paper cross your desk twice\" and took it to heart. Took a while to make it a habit, but now I can apply it to most meetings and emails -- I read, action then archive right there. So I hardly maintain a todo list of any sort. I make a list in the morning and finish/scratch off its items by the evening. Doing that daily, my mind is always refreshed about recurring or long term tasks. It seems to work for me.The other thing I found useful is that procrastination, or the getting-started-barrier is proportional to size/complexity of task. I keep breaking the task down to smaller units until I get to something that doesn't fill me with loathing when I think of it. And then I do it. That effectively starts the task.",
+        "points": null,
+        "created_at": "2015-12-02T08:32:32.000Z",
+        "children": [
+          {
+            "id": 10663087,
+            "author": "amelius",
+            "text": "> I read, action then archive right there.The problem with responding to an e-mail immediately, is that often you will get an e-mail back immediately, making this habit ineffective.(I just wish there was an option in my e-mail reader to send an email with a delay.)",
+            "points": null,
+            "created_at": "2015-12-02T14:29:16.000Z",
+            "children": [
+              {
+                "id": 10663234,
+                "author": "nsrivast",
+                "text": "http://www.boomeranggmail.com/",
+                "points": null,
+                "created_at": "2015-12-02T14:52:29.000Z",
+                "children": [
+                  {
+                    "id": 10663437,
+                    "author": "amelius",
+                    "text": "Thanks for the link, but $5 a month for adding a simple delay to my e-mail? I find that a bit too expensive.Instead, I just answer my e-mails in the morning and ignore any new incoming e-mails the rest of the day.",
+                    "points": null,
+                    "created_at": "2015-12-02T15:22:14.000Z",
+                    "children": []
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 10661713,
+        "author": "grp",
+        "text": "I'm trying a reverse strategy. The basic idea is to learn to do nothing at all. Really nothing, except breathing, eating, drinking water and sleeping.The purpose is to filter out any activity that challenge breath, eat, drink and sleep. If one comes in any way, I just quickly put in the the trash.That way when I reach a goal (if I had one at the time), I breathe better and so on... So step by step I create my world only on those 4 pillars.There are so many things that trying to tweak those pillars, maybe the first one in your case is that battle against procrastination.Avoid them and you will have so long to do who makes you breathe better...",
+        "points": null,
+        "created_at": "2015-12-02T08:34:59.000Z",
+        "children": [
+          {
+            "id": 10661890,
+            "author": "danieltillett",
+            "text": "Obviously posting on HN is an exception.",
+            "points": null,
+            "created_at": "2015-12-02T09:28:38.000Z",
+            "children": [
+              {
+                "id": 10662005,
+                "author": "grp",
+                "text": "Sure! ;)As a human being, share is not a priority but it's vital to mankind. I didn't say to be a hermit, we need to cross genes sometimes!",
+                "points": null,
+                "created_at": "2015-12-02T10:01:46.000Z",
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 10661744,
+        "author": "thejerz",
+        "text": "Beating procrastination is about changing a lot of small habits. The first change I'd recommend is to focus on one baby step at a time: http://www.maxims.us/take-baby-steps/Once that becomes habitual, you may find the other Maxims on productivity to be relevant: http://www.maxims.us/topics/productivity/",
+        "points": null,
+        "created_at": "2015-12-02T08:41:01.000Z",
+        "children": [
+          {
+            "id": 10661791,
+            "author": "grp",
+            "text": "I read those maxims and there is one that surprised me: \"Hire a psychotherapist\".What? Ok... I bring one from another context who IMO fits well here:\"The point of public relations slogans like \u201cSupport our troops\u201d is that they don\u2019t mean anything\u2026 That\u2019s the whole point of good propaganda.You want to create a slogan that nobody\u2019s going to be against, and everybody\u2019s going to be for.Nobody knows what it means, because it doesn\u2019t mean anything. Its crucial value is that it diverts your attention from a question that does mean something: Do you support our policy? That\u2019s the one you\u2019re not allowed to talk about.\"\nNoam Chomsky",
+            "points": null,
+            "created_at": "2015-12-02T08:57:00.000Z",
+            "children": [
+              {
+                "id": 10662811,
+                "author": "mercer",
+                "text": "I think most people are not against hiring a psychotherapist, but at the same time many people don't actually do this. So it's not empty advice, in the same way that \"get a good night's sleep\" is excellent advice even if everyone agrees with it. Another one would be 'be a nice person'. The value is in the reminder, because clearly we often don't take it to heart. It reminds me a bit of the late David Foster Wallace's increasing emphasis on the value of 'basic truths' even if they seem cliche. They're still true, and we suck at living by them. So why not remind ourselves often of their value?But perhaps your argument hinges on the assumption that 'hire a psychotherapist' is advice that diverts the attention from a more important issue. If that's the case, I'd like to hear what you think this might be.",
+                "points": null,
+                "created_at": "2015-12-02T13:35:14.000Z",
+                "children": [
+                  {
+                    "id": 10668353,
+                    "author": "grp",
+                    "text": "Thanks for the David Foster Wallace, I doesn't know that guy, I will look deeper into it. Yep, I'm aware that those 'basic truths' are valuable and I don't say otherwise.The Chomsky quote wasn't just about that psychotherapist maxim, it's that one that made me tilted.These maxims sound to me like if the job is not done it's the worker who got a problem and need to change. I'm just trying to say that maybe it could be the nature of the work and how we see it.For example I am one of those who have really a lot of never-ending-awesome-side-projects. I'm fine with it.As soon as I realize that particular job is more fun 'not to be completed' but because it allows me to learn more, share with others, discover techniques and occasionally strange weird reasons (wage?)!\nThe completion is just a social reward (and yeah maybe I often fear the 'what to do next' desert).The path to completion is so much more valuable to me.We need more maxims to realize all the small ignored ends on the ongoing projects.\nSometimes an idea is cool because of one of those ends, which is already done, and it would be a shame (and a time loss) to force yourself to continue.P.S: I don't preach a do-never-finish lifestyle, it needs personal balance.",
+                    "points": null,
+                    "created_at": "2015-12-03T07:42:15.000Z",
+                    "children": []
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 10662003,
+        "author": "rasmuskl",
+        "text": "One thing that helped me get a better mental model for procrastination was Wait But Why's articles on the topic.It might seem silly, but just thinking in terms of the rational decision maker and the instant gratification monkey makes it more concrete in my mind and easier to resist.http://waitbutwhy.com/2013/10/why-procrastinators-procrastin...",
+        "points": null,
+        "created_at": "2015-12-02T10:01:35.000Z",
+        "children": [
+          {
+            "id": 10663322,
+            "author": "galfarragem",
+            "text": "Best short essay I know on this subject:http://markmanson.net/procrastination",
+            "points": null,
+            "created_at": "2015-12-02T15:06:07.000Z",
+            "children": []
+          }
+        ]
+      },
+      {
+        "id": 10662331,
+        "author": "paulojreis",
+        "text": "Well, I've been down that road a lot. Countless times I found myself reading about ways out of procrastination, until noticing that this was procrastination in itself. Quite frankly, I've even felt ashamed by putting this out loud: I'm delaying work by reading about how to not delay work.So, my never-ending work in progress solution: focus on discipline. No magic bullets, no special talent, no nothing. Just focus on being disciplined and have faith on us being creatures of habit (i.e. if you force yourself to do it, it will be easier in the future).  A special talent to get things done is cool, as well as being motivated, but - really - you can't rely on those to get things done. Talent comes and goes, much like motivation. Discipline, on the other hand, you can rely on.",
+        "points": null,
+        "created_at": "2015-12-02T11:28:27.000Z",
+        "children": []
+      },
+      {
+        "id": 10662480,
+        "author": "galfarragem",
+        "text": "GTD.I can't understand why GTD is not anymore trendy (at least in HN) once it is the most efficient system I ever used. Since I implemented it, my life changed. If you ever get curious about GTD, besides reading the original book (Get Things Done by David Allen) you can have a look at my implementation (on my github), it might be a good starting point.",
+        "points": null,
+        "created_at": "2015-12-02T12:15:55.000Z",
+        "children": [
+          {
+            "id": 10662689,
+            "author": "manish_gill",
+            "text": "I've been reading the original book by David Allen and have slowly started to integrate GTD into my life the past couple of weeks using Omnifocus + Google Keep, and it has already made a considerable improvement in my productivity. I've had problems with procrastination as well, but with GTD I see myself wanting to do stuff.It hasn't been \"life changing\" so far, but I almost know that it will change my life once I start practicing it rigorously.Also, will definitely check out your setup.",
+            "points": null,
+            "created_at": "2015-12-02T13:08:10.000Z",
+            "children": []
+          },
+          {
+            "id": 10662846,
+            "author": "mercer",
+            "text": "I've spent years applying GTD, but at some point I realized that 1) I failed at implementing it more often than not, and 2) it seems optimized for management-type situations, and doesn't work as well for, say, artists or even programmers.If it works for you, of course that's great! And I think there are tons of individual elements in GTD that are valuable even if the whole system is not applied. But for me it didn't work as a whole, and it's significantly less useful if not applied completely (but also significantly more powerful when it is).What seems to work best for me is a combination of two approaches:1. choosing up to three tasks to focus on per day, usually one major task, and two lesser tasks.\n2. using a simpler list of (usually) smaller or less important tasks for all the stuff that I can't dedicate a day or half-day to. I used Mark Forster's AutoFocus system for this for a while, and now I settled on the 'Final Version' that this evolved into: http://markforster.squarespace.com/blog/2015/5/21/the-final-...I think a crucial part for me is that I need a certain fluidity in my approach. The more complex, 'factory-checklist-like' the system is, the better. The lack of complexity keeps me from constantly fiddling with the system, and the lack of a 'factory-like' approach keeps me from feeling like I'm a robot working through a checklist.",
+            "points": null,
+            "created_at": "2015-12-02T13:45:19.000Z",
+            "children": []
+          }
+        ]
+      },
+      {
+        "id": 10662603,
+        "author": "endymi0n",
+        "text": "I'm battling procrastination for 15 years now. The three only things that really worked (as in \"having effects beyond a few months\") for me:- Accepting procrastination as part of you & forgiving yourself: \nhttps://news.ycombinator.com/item?id=10267564- Tackling only one important task per day:\nhttp://fourhourworkweek.com/2013/11/03/productivity-hacks/- Tiny Habits:\nhttp://tinyhabits.com/",
+        "points": null,
+        "created_at": "2015-12-02T12:48:12.000Z",
+        "children": []
+      },
+      {
+        "id": 10662660,
+        "author": "_deepthought42",
+        "text": "I too had the same problem, but not any more.What worked for me is this book: http://www.amazon.com/The-ONE-Thing-Surprisingly-Extraordina....I started getting things done when I ask this question to myself: 'What is the one thing I can do now so that everything becomes easier?' and then do that task.",
+        "points": null,
+        "created_at": "2015-12-02T13:03:05.000Z",
+        "children": []
+      },
+      {
+        "id": 10663875,
+        "author": "irox859",
+        "text": "The only way out of procrastination is to deal with general levels of anxiety. Once you learn how to get around those feelings, then you can be more productive. Note: dealing with anxiety is a daily task but it can be done if you're mindful about it.Source: former procrastinator",
+        "points": null,
+        "created_at": "2015-12-02T16:27:27.000Z",
+        "children": [
+          {
+            "id": 10670210,
+            "author": "dcx",
+            "text": "I think this goes to the heart of the problem. I've noticed that the root cause of my procrastination is usually fear/anxiety about failure. What do you find works for managing your daily anxiety levels?",
+            "points": null,
+            "created_at": "2015-12-03T15:50:59.000Z",
+            "children": []
+          }
+        ]
+      },
+      {
+        "id": 10666118,
+        "author": "codezero",
+        "text": "Something people fail to recognize or accept is that procrastination is often a manifestation of a form of anxiety. It's an actual mental health disorder, and if you see a professional, you can actually get concrete help.",
+        "points": null,
+        "created_at": "2015-12-02T21:52:44.000Z",
+        "children": []
+      }
+    ]
+  },
+  {
+    "id": 10661803,
+    "author": "treelovinhippie",
+    "text": "Why is every productivity/procrastination article so damn long? All I do is open it, see the length, add to Pocket, never read. The irony is strong.",
+    "points": null,
+    "created_at": "2015-12-02T08:59:48.000Z",
+    "children": [
+      {
+        "id": 10662216,
+        "author": "prawn",
+        "text": "Especially so when the answer should be a list, and simple lists are something almost everyone can use effectively to get things done.If you're getting paid by the word and feel that a long article is more impressive, you won't write a short list!Shame they're such a chore to read.",
+        "points": null,
+        "created_at": "2015-12-02T10:53:45.000Z",
+        "children": []
+      }
+    ]
+  },
+  {
+    "id": 10661841,
+    "author": "bencollier49",
+    "text": "This seems to be perpetuate the notion of learning styles (in the guise of \"working style\"), which has been debunked.",
+    "points": null,
+    "created_at": "2015-12-02T09:15:25.000Z",
+    "children": [
+      {
+        "id": 10662119,
+        "author": "epaga",
+        "text": "Really? Where/when was this debunked and in what way? Because anecdotally and subjectively, more visually-based approaches work better for me...",
+        "points": null,
+        "created_at": "2015-12-02T10:29:17.000Z",
+        "children": [
+          {
+            "id": 10662157,
+            "author": "facepalm",
+            "text": "Google might help",
+            "points": null,
+            "created_at": "2015-12-02T10:39:14.000Z",
+            "children": [
+              {
+                "id": 10662192,
+                "author": "epaga",
+                "text": "All I can see that was debunked is \"Learning styles\" specifically in an educational environment, i.e. the goal being acquiring knowledge & skills. https://en.wikipedia.org/wiki/Learning_stylesThat surely is something totally different when it comes to productivity, isn't it? I am far more motivated to do things \"my way\", in my own preferred style of working than any other way.",
+                "points": null,
+                "created_at": "2015-12-02T10:47:47.000Z",
+                "children": []
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": 10662105,
+    "author": "epaga",
+    "text": "I like the distinction of more \"visual\" or more \"tactile\" minded people. I'm more a visual guy and the long lists in most todo solutions always felt overwhelming. So I went and wrote my own iPad app to help me keep a simple & fast personal Kanban, as well as for visual thinking & organizing. Turns out other people like it as well...https://itunes.apple.com/us/app/mindscope-mind-mapping-outli...",
+    "points": null,
+    "created_at": "2015-12-02T10:26:29.000Z",
+    "children": [
+      {
+        "id": 10663476,
+        "author": "walterbell",
+        "text": "This looks like a good balance of usability and functionality.  The minimalist tutorial videos were helpful.I have used inShort, iThoughts and MagicalPad for mindmap-like issue tracking on iOS.  Glad to see that arbitrary cross-branch links are possible, to supplement the tree hierarchy.Do you plan to support iOS9 multi-tasking, web hyperlinks and iOS deep-linking into other apps and their extensions?",
+        "points": null,
+        "created_at": "2015-12-02T15:27:50.000Z",
+        "children": [
+          {
+            "id": 10663553,
+            "author": "epaga",
+            "text": "Thanks! Definitely plan on all of those at some point, but development has been slow since this is a weekends and evenings project and I'm currently swamped with the final stages of a house building project gone sideways... can't wait to get back to tinkering with it, especially since I've gotten tons of people telling me how useful it's become for them.",
+            "points": null,
+            "created_at": "2015-12-02T15:39:03.000Z",
+            "children": [
+              {
+                "id": 10664631,
+                "author": "walterbell",
+                "text": "Looking forward to enhancements as your time permits.  Four requests for your list:- An App Setting to disable animation (it can be disorienting)- After navigating a cross-link, provide either a back button, or multiple breadcrumb trails in the navbar, when there are multiple \"parents\" or inbound paths.  On Android, NoteLynX Pro supports cross-references / multiple parents, http://astrodean.blogspot.com.  This is a valuable feature that few apps attempt, so thanks for including internal cross-ref links.  With the new \"Back to App\" feature in iOS9, cross-app hyperlink support would enable use of Mindscope as a contextual launcher.- Keyboard support, e.g. Delete to go back (cross-link) or up one level in the navigation hierarchy, hotkeys (e.g. Cmd-H for home, Cmd-W to \"close\" a sub-task and go up one level in the navigation hierarchy), Cmd-N to create a new entry centered in available whitespace. Mobile Safari supports similar key combos. Especially useful on iPad Pro.- For sync, please consider open-standard CalDav",
+                "points": null,
+                "created_at": "2015-12-02T18:06:00.000Z",
+                "children": []
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": 10662181,
+    "author": "skmurphy",
+    "text": "This is a really good list, I had not appreciated the subtle distinction been timeboxing and pomodoro before. Here are three more to consider1. Meditation - helps focus and mindfulness2. Review done list at end of day and make tomorrow's todo list then.3. Recognize and manage to constraints: 40 hours of prime work in a week, 8 hours of sleep, healthy diet and regular exercise.",
+    "points": null,
+    "created_at": "2015-12-02T10:45:21.000Z",
+    "children": []
+  },
+  {
+    "id": 10662294,
+    "author": "thallukrish",
+    "text": "The best productivity method is to just go do what you have to do and spend all the time doing it. Every thing else in the name of a productivity method is an excuse for your mind to stay off from what you really have to do.",
+    "points": null,
+    "created_at": "2015-12-02T11:20:37.000Z",
+    "children": []
+  },
+  {
+    "id": 10662354,
+    "author": "arocks",
+    "text": "My biggest problem with these list making solutions are what I call the collateral tasks. For example, my list says \"Buy a Christmas gift for Jen\".When I start shopping online, I realize that I don't know much about Jen, so I need to call a friend. Lots of discussion later, I finalize on something to buy then I need to think of a personal note to write.At the checkout, my banking application tells me that my internet password needs to be changed. The whole process gets aborted!Probably, I exaggerated a little but my point being that each task involves a million micro steps which may or may not be anticipated. No wonder there is a lot of procrastination!",
+    "points": null,
+    "created_at": "2015-12-02T11:35:14.000Z",
+    "children": [
+      {
+        "id": 10662432,
+        "author": "ak39",
+        "text": "Spot on.  We see this a lot in coding activities. Many tasks are usually more complicated than for example \"import this file into database, use the imported data to produce the histogram\" ... there's bound to be plenty of \"collateral\" shyte en route.  Non-programmers don't usually understand this.So how to overcome this?There's no other way than to cognitively \"bring to front\" the end goal every time you hit a task hurdle that threatens your concentration or that lets you succumb to distraction.  But it takes practice to learn that you are in the  process of beginning the \"shirk move\" ... watch out for this. Can you blame yourself when all you've done your whole life subconsciously toggle to other tasks when the going gets tough.  Blame evolution for this.So two things:1.  Know upfront the discrete sub-task/destination you are hoping to achieve for a given finite stretch of time, achieve it and call it the day; and2.  Kak on yourself solid! for being distracted during a tough spell ... speak it out to yourself by enunciating that you are being distracted, mofo.  If someone else is doing the disturbing, find a quiet place next time. (Working with kids in the house can be painful).That's why I am here!",
+        "points": null,
+        "created_at": "2015-12-02T12:03:20.000Z",
+        "children": []
+      },
+      {
+        "id": 10664196,
+        "author": "falcolas",
+        "text": "For what it's worth, when I run into a micro task, I add it to the to-do list, and keep a running document with notes which allow it to be context-switched out. It helps, and makes it easier to see progress.",
+        "points": null,
+        "created_at": "2015-12-02T17:10:26.000Z",
+        "children": []
+      },
+      {
+        "id": 10668389,
+        "author": "jmnicolas",
+        "text": "I don't understand what's the problem. That you can't include all the collateral tasks in your lists (I don't think you have to do that to be effective) or that these micro steps are a form of procrastination (in your example only the long phone call appears to be a bit procastinuous, yes I reserve the right to invent my own words ;-)?",
+        "points": null,
+        "created_at": "2015-12-03T07:51:40.000Z",
+        "children": []
+      }
+    ]
+  },
+  {
+    "id": 10663242,
+    "author": "jelmerdejong",
+    "text": "Personally I always use articles like this to yet again change my personal to-do-list strategy, select a new fancy app/tool, pay for a year long subscription, start entering all that is on my mind, open it the next day, look at it, and close it.I know the strategy, I have plenty of apps with an active subscription, but really making it a daily habit is the struggle.Any thoughts on that?",
+    "points": null,
+    "created_at": "2015-12-02T14:54:06.000Z",
+    "children": [
+      {
+        "id": 10663320,
+        "author": "codyb",
+        "text": "It's really easy (and sometimes fun) to get mired in the \"planning\" phase of thing. You need to keep that drive when the things get more abstract and you'll eventually find the same drive again.For instance, choosing a method, that's easy. Doing a bunch of brainstorming and coming up with projects to apply that method too, that's easy (for me). It's that next step, where you're actually designing the infrastructure of the system that's difficult. Suddenly you're getting distracted by things like Operating Systems, web hosting, bandwidth requirements, APIs, etc. And it becomes this huge, abstract project.It's then that you need to stay focused. Even if you only commit to 20 minutes a day, you'll be surprised how far you get. I find that really it doesn't take that long for me to take an abstract problem and reduce it down to a component I can get up and running now. This reduces the amount of mental overhead I'm juggling drastically and allows me to continue.It's the same thing at work for me, have you ever had that experience where you finish a feature, and it's time to jump into the next one? And it's almost like you can't do it. You need to breathe, because you've just been so focused at such a low level on this one feature, and suddenly you have to open your brain up to imagine the entire f#$@ing system again! And you need to connect end points, think about data structures, algorithms, libraries.Another thing I recommend is trying to get some work done before you go to work. Your mind is pretty refreshed after a good nights rest and a decent breakfast, but much less so after two commutes and a good 8 hours in the office.Finally, in my area there are a ton of meetups. A lot of these are just hacker hours. You get a bit of social activity and they tend to keep my focused (since who's going to bust out Hulu and toss on Seinfeld at the monthly ViM meetup? There's someone talking about macros up there! MACROS!). I'd recommend finding some of those. The interchange of ideas, and being able to bounce ideas off other practiced programmers is another tangible benefit.And a free beer and slice of pizza (well never is definitely the wrong word here...) never hurt anyone.",
+        "points": null,
+        "created_at": "2015-12-02T15:05:37.000Z",
+        "children": []
+      }
+    ]
+  },
+  {
+    "id": 10663407,
+    "author": "dimgl",
+    "text": "This is great. I have a huge problem with starting projects and just dropping them. I haven't been able to figure out why I simply stop working on them and jump to the next thing but maybe this will help me get back on track.",
+    "points": null,
+    "created_at": "2015-12-02T15:17:56.000Z",
+    "children": []
+  }
+]

@@ -1,0 +1,577 @@
+{
+  "comment_count": 0,
+  "api_response": {
+    "author": "pella",
+    "children": [
+      {
+        "author": "ajmurmann",
+        "children": [
+          {
+            "author": "athenot",
+            "children": [],
+            "created_at": "2015-11-30T21:21:04.000Z",
+            "created_at_i": 1448918464,
+            "id": 10651892,
+            "options": [],
+            "parent_id": 10651770,
+            "points": null,
+            "story_id": 10648639,
+            "text": "Many risky and unproven treatments are first trialed in these cases. The artificial heart is one example.<p><a href=\"http:&#x2F;&#x2F;www.reuters.com&#x2F;article&#x2F;2015&#x2F;10&#x2F;14&#x2F;us-carmat-patient-idUSKCN0S82GP20151014\" rel=\"nofollow\">http:&#x2F;&#x2F;www.reuters.com&#x2F;article&#x2F;2015&#x2F;10&#x2F;14&#x2F;us-carmat-patient-...</a>",
+            "title": null,
+            "type": "comment",
+            "url": null
+          },
+          {
+            "author": "atrandom",
+            "children": [
+              {
+                "author": "ajmurmann",
+                "children": [
+                  {
+                    "author": "niels_olson",
+                    "children": [],
+                    "created_at": "2015-12-01T03:22:34.000Z",
+                    "created_at_i": 1448940154,
+                    "id": 10653475,
+                    "options": [],
+                    "parent_id": 10652245,
+                    "points": null,
+                    "story_id": 10648639,
+                    "text": "&gt; the treatment worked, but not well enough<p>Well, the prognosis is 14 months, so if she lived a year, maybe it didn&#x27;t work?",
+                    "title": null,
+                    "type": "comment",
+                    "url": null
+                  }
+                ],
+                "created_at": "2015-11-30T22:08:39.000Z",
+                "created_at_i": 1448921319,
+                "id": 10652245,
+                "options": [],
+                "parent_id": 10651950,
+                "points": null,
+                "story_id": 10648639,
+                "text": "I agree that a quicker death would have been better. However that&#x27;s often times the case add yet most states don&#x27;t even site patients to choose between suffering and death. The patient suffered so much because the treatment worked, but not well enough to safe her. That however can happen with many well proven treatments as well. I have a relative who just got a port to feed her liquids, dive she cannot swallow anymore. That treatment will extend her life longer, but she well probably will just suffer longer and die soon anyways. This seems to be a constant trade off in health care these days and usually we decide blindly in favor of extending life regardless of the quality. How we judge experimental treatments seems completely different though.",
+                "title": null,
+                "type": "comment",
+                "url": null
+              }
+            ],
+            "created_at": "2015-11-30T21:26:47.000Z",
+            "created_at_i": 1448918807,
+            "id": 10651950,
+            "options": [],
+            "parent_id": 10651770,
+            "points": null,
+            "story_id": 10648639,
+            "text": "The problem is that the treatment can make the situation worse, like in the case of the woman who survived for a year with the infection. It can be argued that a quicker death would have been better in her case.",
+            "title": null,
+            "type": "comment",
+            "url": null
+          },
+          {
+            "author": "DanBC",
+            "children": [
+              {
+                "author": "DanBC",
+                "children": [],
+                "created_at": "2015-12-01T00:08:42.000Z",
+                "created_at_i": 1448928522,
+                "id": 10652830,
+                "options": [],
+                "parent_id": 10651965,
+                "points": null,
+                "story_id": 10648639,
+                "text": "This is being downvoted, but you only have to look at the quacks selling (just one example, there are many more) mega-vitamin &quot;cures&quot; for cancer to see that some doctors are indeed fucking arseholes who have no problem exploiting dying people so they can make a quick buck.",
+                "title": null,
+                "type": "comment",
+                "url": null
+              }
+            ],
+            "created_at": "2015-11-30T21:28:47.000Z",
+            "created_at_i": 1448918927,
+            "id": 10651965,
+            "options": [],
+            "parent_id": 10651770,
+            "points": null,
+            "story_id": 10648639,
+            "text": "Because some doctors are fucking arseholes who have no problem exploiting dying people so they can make a quick buck.",
+            "title": null,
+            "type": "comment",
+            "url": null
+          },
+          {
+            "author": "georgeglue1",
+            "children": [
+              {
+                "author": "Vomzor",
+                "children": [
+                  {
+                    "author": "univalent",
+                    "children": [],
+                    "created_at": "2015-11-30T22:07:38.000Z",
+                    "created_at_i": 1448921258,
+                    "id": 10652242,
+                    "options": [],
+                    "parent_id": 10652179,
+                    "points": null,
+                    "story_id": 10648639,
+                    "text": "Prolonging someone&#x27;s suffering? Giving their family false hope? Illegally test a technique&#x2F;method or drug just to see if it works for someone else benefit?<p>If the patient&#x27;s best interests are no longer the primary concern all kinds of shady things become possible.",
+                    "title": null,
+                    "type": "comment",
+                    "url": null
+                  },
+                  {
+                    "author": "refurb",
+                    "children": [],
+                    "created_at": "2015-11-30T22:25:16.000Z",
+                    "created_at_i": 1448922316,
+                    "id": 10652335,
+                    "options": [],
+                    "parent_id": 10652179,
+                    "points": null,
+                    "story_id": 10648639,
+                    "text": "Dying sooner, living the same amount of time with horrible pain or disabilities due to the treatment, increased suffering.",
+                    "title": null,
+                    "type": "comment",
+                    "url": null
+                  },
+                  {
+                    "author": "shimon",
+                    "children": [],
+                    "created_at": "2015-11-30T22:25:35.000Z",
+                    "created_at_i": 1448922335,
+                    "id": 10652341,
+                    "options": [],
+                    "parent_id": 10652179,
+                    "points": null,
+                    "story_id": 10648639,
+                    "text": "Dying sooner, degraded quality of life, and costs associated with treatment&#x2F;management.<p>It&#x27;s complicated because the costs are borne by a number of different parties: the patient herself, her family, the insurer (private or government).<p>For example, a patient could live longer but develop disabilities that require extreme measures in terms of treatment and family care, and cost a lot of money. The risks of all these are going to be unknown in very novel approaches, and people with different values are going to vary in their preference.<p>Understanding those risks and developing guidelines on when to pay for what are one activity of the FDA and major payors like Medicare. A patient and family facing a decision about the value to them in a time of crisis is going to be a lot less informed than those agencies, and it will be a lot easier for a doctor to mislead them (intentionally or not, but doctors aren&#x27;t immune from over-optimism that their clever ideas might work).<p>At the same time, it does seem like there should be some protocol where a terminally-ill person can be considered sufficiently informed to take the risk. This is hard, because the risks accrue to individual parties (e.g. the university getting sued in this article) whereas the benefits are diffuse (medicine learns whether induced brain infections improve survival in glioblastoma patients). But without this protocol, we are always going to have stories of patients whose treatments and deaths could be teaching us life-saving lessons if only we could legally do what they want to do.",
+                    "title": null,
+                    "type": "comment",
+                    "url": null
+                  },
+                  {
+                    "author": "georgeglue1",
+                    "children": [],
+                    "created_at": "2015-11-30T22:49:24.000Z",
+                    "created_at_i": 1448923764,
+                    "id": 10652472,
+                    "options": [],
+                    "parent_id": 10652179,
+                    "points": null,
+                    "story_id": 10648639,
+                    "text": "Yeah, mostly dying sooner or under worse conditions. A lot of terminal patients have many months prognoses.<p>People can seek pain relief, mental health services, etc. that they might not be able to pursue if they take a risky procedure.",
+                    "title": null,
+                    "type": "comment",
+                    "url": null
+                  }
+                ],
+                "created_at": "2015-11-30T21:55:45.000Z",
+                "created_at_i": 1448920545,
+                "id": 10652179,
+                "options": [],
+                "parent_id": 10652141,
+                "points": null,
+                "story_id": 10648639,
+                "text": "What&#x27;s the risk for terminal cases? Dying sooner? I&#x27;m honestly asking, not trying to be snark.",
+                "title": null,
+                "type": "comment",
+                "url": null
+              }
+            ],
+            "created_at": "2015-11-30T21:48:57.000Z",
+            "created_at_i": 1448920137,
+            "id": 10652141,
+            "options": [],
+            "parent_id": 10651770,
+            "points": null,
+            "story_id": 10648639,
+            "text": "Doctors have egos and incentives that could lead to terrible patient outcomes.<p>For many terminal cases, there are still well optimized&#x2F;studied systems and procedures to prolong and improve quality of life. Unless a patient doesn&#x27;t qualify for any of those, the doctor is taking a risk on bad odds, a risk most patients can&#x27;t fully understand.",
+            "title": null,
+            "type": "comment",
+            "url": null
+          },
+          {
+            "author": "robotresearcher",
+            "children": [
+              {
+                "author": "will_pseudonym",
+                "children": [
+                  {
+                    "author": "robotresearcher",
+                    "children": [
+                      {
+                        "author": "will_pseudonym",
+                        "children": [
+                          {
+                            "author": "jeremyjh",
+                            "children": [],
+                            "created_at": "2015-12-01T01:42:04.000Z",
+                            "created_at_i": 1448934124,
+                            "id": 10653168,
+                            "options": [],
+                            "parent_id": 10653140,
+                            "points": null,
+                            "story_id": 10648639,
+                            "text": "There is a selection bias here, you hear about the successes but not so much about all the crackpots that increased suffering needlessly. This article is about one such case, in case you didn&#x27;t notice.",
+                            "title": null,
+                            "type": "comment",
+                            "url": null
+                          }
+                        ],
+                        "created_at": "2015-12-01T01:33:58.000Z",
+                        "created_at_i": 1448933638,
+                        "id": 10653140,
+                        "options": [],
+                        "parent_id": 10653099,
+                        "points": null,
+                        "story_id": 10648639,
+                        "text": "I won&#x27;t debate you on whether I am correct. I will only state that science is (by definition) advanced ONLY by people over time who knew better, held up by everyone else hadn&#x27;t thought it through.<p><a href=\"https:&#x2F;&#x2F;en.wikipedia.org&#x2F;wiki&#x2F;Timeline_of_peptic_ulcer_disease_and_Helicobacter_pylori\" rel=\"nofollow\">https:&#x2F;&#x2F;en.wikipedia.org&#x2F;wiki&#x2F;Timeline_of_peptic_ulcer_disea...</a><p>June 12: Marshall intentionally consumes H. pylori and becomes ill. He takes antibiotics and is relieved of his symptoms.<p>That&#x27;s personal hubris! :)",
+                        "title": null,
+                        "type": "comment",
+                        "url": null
+                      },
+                      {
+                        "author": "Alex3917",
+                        "children": [],
+                        "created_at": "2015-12-01T02:11:40.000Z",
+                        "created_at_i": 1448935900,
+                        "id": 10653272,
+                        "options": [],
+                        "parent_id": 10653099,
+                        "points": null,
+                        "story_id": 10648639,
+                        "text": "&gt; The current system does allow for experimentation, but provides a conservative framework for it.<p>Which most people seem to think is wrong. The vast majority of treatments that get prescribed by doctors are unproven in terms of safety and efficacy. The main differences between the status quo and a proper experiment is that we&#x27;re not recording any data or allowing for informed consent.",
+                        "title": null,
+                        "type": "comment",
+                        "url": null
+                      }
+                    ],
+                    "created_at": "2015-12-01T01:24:05.000Z",
+                    "created_at_i": 1448933045,
+                    "id": 10653099,
+                    "options": [],
+                    "parent_id": 10652874,
+                    "points": null,
+                    "story_id": 10648639,
+                    "text": "They are absolutely not ignoring opportunity cost. This issue has been discussed very carefully by sophisticated people for thousands of years.<p>The current system does allow for experimentation, but provides a conservative framework for it.<p>It&#x27;s huge personal hubris to announce that you know better and they haven&#x27;t thought it through. Which is one of the things the approach is aimed to protect us from.",
+                    "title": null,
+                    "type": "comment",
+                    "url": null
+                  }
+                ],
+                "created_at": "2015-12-01T00:21:59.000Z",
+                "created_at_i": 1448929319,
+                "id": 10652874,
+                "options": [],
+                "parent_id": 10652424,
+                "points": null,
+                "story_id": 10648639,
+                "text": "Except &quot;do no harm&quot; is woefully inadequate because it fails to take into account opportunity cost. They are doing TONS of harm by failing to allow willing people to try new medicine and advance science and the human race, all because they have some warped sense of morality that&#x27;s got horse blinders on.",
+                "title": null,
+                "type": "comment",
+                "url": null
+              },
+              {
+                "author": "robotresearcher",
+                "children": [],
+                "created_at": "2015-12-01T02:58:29.000Z",
+                "created_at_i": 1448938709,
+                "id": 10653417,
+                "options": [],
+                "parent_id": 10652424,
+                "points": null,
+                "story_id": 10648639,
+                "text": "(too late to edit, I notice that spell-check has &#x27;fixed&#x27; my latin. The link is the correct latin phrase.)",
+                "title": null,
+                "type": "comment",
+                "url": null
+              }
+            ],
+            "created_at": "2015-11-30T22:38:59.000Z",
+            "created_at_i": 1448923139,
+            "id": 10652424,
+            "options": [],
+            "parent_id": 10651770,
+            "points": null,
+            "story_id": 10648639,
+            "text": "It&#x27;s a very long tradition, with well-trodden philosophical background: &quot;Primum non nicer&quot; (first, do no harm).<p><a href=\"https:&#x2F;&#x2F;en.wikipedia.org&#x2F;wiki&#x2F;Primum_non_nocere\" rel=\"nofollow\">https:&#x2F;&#x2F;en.wikipedia.org&#x2F;wiki&#x2F;Primum_non_nocere</a><p>Given the consequences of mistakes, a conservative approach  has been considered the best. &quot;It was nature killed her, not me&quot; being easier to stomach than &quot;oops&quot;.",
+            "title": null,
+            "type": "comment",
+            "url": null
+          },
+          {
+            "author": "senekerim",
+            "children": [],
+            "created_at": "2015-12-01T02:56:47.000Z",
+            "created_at_i": 1448938607,
+            "id": 10653412,
+            "options": [],
+            "parent_id": 10651770,
+            "points": null,
+            "story_id": 10648639,
+            "text": "One reason is that people&#x27;s innate probability engine is broken, so they can&#x27;t correctly figure out what&#x27;s best for them (in expectation). This applies both to individuals and to civilization as a whole.",
+            "title": null,
+            "type": "comment",
+            "url": null
+          },
+          {
+            "author": "bonestamp2",
+            "children": [],
+            "created_at": "2015-12-01T04:27:17.000Z",
+            "created_at_i": 1448944037,
+            "id": 10653629,
+            "options": [],
+            "parent_id": 10651770,
+            "points": null,
+            "story_id": 10648639,
+            "text": "They shouldn&#x27;t prevent it, but there should be some rules in place to ensure the procedures, practices, treatments and results are well documented so others can benefit from the trials.<p>Also, there should probably be some rules around peer review prior to starting a procedure that would include reviewing past procedures.",
+            "title": null,
+            "type": "comment",
+            "url": null
+          }
+        ],
+        "created_at": "2015-11-30T21:06:49.000Z",
+        "created_at_i": 1448917609,
+        "id": 10651770,
+        "options": [],
+        "parent_id": 10648639,
+        "points": null,
+        "story_id": 10648639,
+        "text": "I honestly don&#x27;t understand the reason why it&#x27;s so hard to try to help terminally ill patients with unproven methods as long as everyone agrees that there is no other, better way to help and as long as the patient wants it. Prohibiting this seems like a lose&#x2F;lose decision to me.",
+        "title": null,
+        "type": "comment",
+        "url": null
+      },
+      {
+        "author": "amedstudent",
+        "children": [
+          {
+            "author": "ajmurmann",
+            "children": [
+              {
+                "author": "niels_olson",
+                "children": [],
+                "created_at": "2015-12-01T03:17:42.000Z",
+                "created_at_i": 1448939862,
+                "id": 10653465,
+                "options": [],
+                "parent_id": 10652216,
+                "points": null,
+                "story_id": 10648639,
+                "text": "There are some good training modules on citiprogram.org. Just plug in your institution and select the Key Research Personnel module. You will be beaten over the head with the numerous historical events that have driven us to this point. Tuskegee is but one of the many, many examples.",
+                "title": null,
+                "type": "comment",
+                "url": null
+              }
+            ],
+            "created_at": "2015-11-30T22:02:56.000Z",
+            "created_at_i": 1448920976,
+            "id": 10652216,
+            "options": [],
+            "parent_id": 10651879,
+            "points": null,
+            "story_id": 10648639,
+            "text": "I understand that that&#x27;s a reason why it&#x27;s not done. However, my question was about why their legal system is like it is.",
+            "title": null,
+            "type": "comment",
+            "url": null
+          }
+        ],
+        "created_at": "2015-11-30T21:19:36.000Z",
+        "created_at_i": 1448918376,
+        "id": 10651879,
+        "options": [],
+        "parent_id": 10648639,
+        "points": null,
+        "story_id": 10648639,
+        "text": "Well this was a good read. Pretty long and dense for the tech focused audience here I would guess.<p>And to address the top comment, reason people don&#x27;t like doing this is you get sued when it goes wrong just like in this case. It&#x27;s safer for yourself to just stick to the protocol ...",
+        "title": null,
+        "type": "comment",
+        "url": null
+      },
+      {
+        "author": "niels_olson",
+        "children": [],
+        "created_at": "2015-11-30T21:44:10.000Z",
+        "created_at_i": 1448919850,
+        "id": 10652109,
+        "options": [],
+        "parent_id": 10648639,
+        "points": null,
+        "story_id": 10648639,
+        "text": "Thanks for this, I&#x27;m drafting an amendment to my IRB protocol right now. Made me re-read the whole thing. Cricky...",
+        "title": null,
+        "type": "comment",
+        "url": null
+      },
+      {
+        "author": "andy_ppp",
+        "children": [
+          {
+            "author": "DanBC",
+            "children": [],
+            "created_at": "2015-11-30T22:16:05.000Z",
+            "created_at_i": 1448921765,
+            "id": 10652288,
+            "options": [],
+            "parent_id": 10652227,
+            "points": null,
+            "story_id": 10648639,
+            "text": "A doctor who made some important discoveries had an idea about using infection to treat cancer.  He didn&#x27;t bother with the proper process, he just went and did it on three patients.  2 of them died about as quickly as they would have anyway.  We don&#x27;t know if they were in more pain or not.  1 of them lived for about a year, and that person&#x27;s relative described that year as very low quality of life. It&#x27;s possible that the treatment kept this person alive, in this awful condition, much longer than she would have lived without the treatment.<p>He did this because he thought he was doing the right thing.  It&#x27;s clear to most people that he wasn&#x27;t doing the right thing, and after he was discovered all the investigators were very clear that he&#x27;d done the wrong thing.<p>That story is contrasted with a team who did the right thing: they noticed a plausible mechanism of action; they gathered evidence; they got permissions; they did animal studies.<p>I don&#x27;t mind the length of the article, but I agree that it wandered around a bit.",
+            "title": null,
+            "type": "comment",
+            "url": null
+          },
+          {
+            "author": "porejide",
+            "children": [
+              {
+                "author": "jacobush",
+                "children": [
+                  {
+                    "author": "andy_ppp",
+                    "children": [
+                      {
+                        "author": "DanBC",
+                        "children": [],
+                        "created_at": "2015-12-01T00:44:22.000Z",
+                        "created_at_i": 1448930662,
+                        "id": 10652965,
+                        "options": [],
+                        "parent_id": 10652914,
+                        "points": null,
+                        "story_id": 10648639,
+                        "text": "If you like audio there&#x27;s a BBC Radio Four programme called &quot;Inside the Ethics Committee&quot;.  They have a bunch of people with real world experience of medical ethics, and they take real events and walk through them, explaining what happens at each step.<p><a href=\"http:&#x2F;&#x2F;www.bbc.co.uk&#x2F;programmes&#x2F;b007xbtd\" rel=\"nofollow\">http:&#x2F;&#x2F;www.bbc.co.uk&#x2F;programmes&#x2F;b007xbtd</a><p>It&#x27;s a surprisingly tough listen.  Here&#x27;s one example of a child with a treatable brain tumour. He didn&#x27;t like the treatment, and when he got another tumour he decided he didn&#x27;t want treatment.<p><a href=\"http:&#x2F;&#x2F;www.bbc.co.uk&#x2F;programmes&#x2F;b0643x61\" rel=\"nofollow\">http:&#x2F;&#x2F;www.bbc.co.uk&#x2F;programmes&#x2F;b0643x61</a><p>I think it&#x27;s available to people outside the UK.",
+                        "title": null,
+                        "type": "comment",
+                        "url": null
+                      },
+                      {
+                        "author": "ScottBurson",
+                        "children": [
+                          {
+                            "author": "andy_ppp",
+                            "children": [
+                              {
+                                "author": "ScottBurson",
+                                "children": [],
+                                "created_at": "2015-12-01T18:31:18.000Z",
+                                "created_at_i": 1448994678,
+                                "id": 10657631,
+                                "options": [],
+                                "parent_id": 10654292,
+                                "points": null,
+                                "story_id": 10648639,
+                                "text": "I don&#x27;t think it&#x27;s nearly that black-and-white.  The doctor performed a procedure <i>he would have wanted performed on himself in the same</i> (exceedingly desperate) <i>circumstances</i>.  He was careful to fully inform the patients of the risks.  Above all, he had his patients&#x27; welfare at heart; he wasn&#x27;t doing it for money or fame or even knowledge.  What he did may have been illegal, but I don&#x27;t agree that it was clearly immoral.",
+                                "title": null,
+                                "type": "comment",
+                                "url": null
+                              }
+                            ],
+                            "created_at": "2015-12-01T09:10:56.000Z",
+                            "created_at_i": 1448961056,
+                            "id": 10654292,
+                            "options": [],
+                            "parent_id": 10653745,
+                            "points": null,
+                            "story_id": 10648639,
+                            "text": "It&#x27;s not complex at all!  The doctor did loads of immoral things and the article sympathised with him.<p>He even says that he wouldn&#x27;t attend training because he knows best.  After his treatment caused several patients to suffer more or die earlier.<p>Sometimes we are better off calling bad medical practice illegal and immoral rather than trying to say &quot;whaaaaa it&#x27;s complicated&quot;.",
+                            "title": null,
+                            "type": "comment",
+                            "url": null
+                          }
+                        ],
+                        "created_at": "2015-12-01T05:10:26.000Z",
+                        "created_at_i": 1448946626,
+                        "id": 10653745,
+                        "options": [],
+                        "parent_id": 10652914,
+                        "points": null,
+                        "story_id": 10648639,
+                        "text": "&gt; I&#x27;m more frustrated that there wasn&#x27;t a clear editorial take in the article.<p>I&#x27;m glad there wasn&#x27;t.  I think the issues raised are difficult ones, with no simple, obvious resolution.  Sometimes we&#x27;re better off living with complexity and ambiguity.",
+                        "title": null,
+                        "type": "comment",
+                        "url": null
+                      }
+                    ],
+                    "created_at": "2015-12-01T00:32:24.000Z",
+                    "created_at_i": 1448929944,
+                    "id": 10652914,
+                    "options": [],
+                    "parent_id": 10652703,
+                    "points": null,
+                    "story_id": 10648639,
+                    "text": "I&#x27;m more frustrated that there wasn&#x27;t a clear editorial take in the article. I&#x27;d like to have seen some research done by the journalist into what the correct ethics are in a situation like this.  My feeling is that without the option to have euthanasia (should things get worse) you are promising a tiny tiny chance of a possible cure but a large chance of increased suffering too.<p>The tiny chance of 40 more years of life <i>might</i> be worth it but its crazy to try experimental treatments as a first roll of the dice!",
+                    "title": null,
+                    "type": "comment",
+                    "url": null
+                  }
+                ],
+                "created_at": "2015-11-30T23:42:02.000Z",
+                "created_at_i": 1448926922,
+                "id": 10652703,
+                "options": [],
+                "parent_id": 10652676,
+                "points": null,
+                "story_id": 10648639,
+                "text": "I liked it. Much better than the simple &quot;LET ME TELL Y&#x27;ALL ABOUT AN UNETHICAL DOCTOR&quot; opening to an article.",
+                "title": null,
+                "type": "comment",
+                "url": null
+              }
+            ],
+            "created_at": "2015-11-30T23:34:53.000Z",
+            "created_at_i": 1448926493,
+            "id": 10652676,
+            "options": [],
+            "parent_id": 10652227,
+            "points": null,
+            "story_id": 10648639,
+            "text": "In my reading there were three parts of the article:<p>Part I: Optimism. Is this a new curative treatment for a cancer with an extremely poor prognosis? We get to see Muizelaar&#x27;s perspective on why he (presumably) thought he was doing the right thing.<p>Part II: The Fall. Deaths, lawsuits, the expose, resignations.<p>Part III: Resolution. Maybe there is some value in an alternative approach that focuses on mechanism and iterates towards human trials via animal studies. But also, maybe there is something to be said about Muizelaar&#x27;s approach that our current medicolegal system isn&#x27;t equipped to handle.<p>To me, the structure of the article helped to underscore that Muizelaar might have been right, which is key for using this article as a way to learn about science and rationality as opposed to solely for its object-level information. Just listing the facts almost certainly would not have been as useful for getting that point across.",
+            "title": null,
+            "type": "comment",
+            "url": null
+          },
+          {
+            "author": "bonestamp2",
+            "children": [],
+            "created_at": "2015-12-01T04:30:15.000Z",
+            "created_at_i": 1448944215,
+            "id": 10653640,
+            "options": [],
+            "parent_id": 10652227,
+            "points": null,
+            "story_id": 10648639,
+            "text": "I think the build up is intended to put you in the heads of the doctors who thought they were onto something... to help us understand how such a thing can happen.<p>It also makes for a great narrative since you are cheering the doctors on because it seems like they are onto something big.<p>But, if you hate reading long articles then steer clear of the new yorker. It&#x27;s kind of the opposite of Reader&#x27;s Digest.",
+            "title": null,
+            "type": "comment",
+            "url": null
+          }
+        ],
+        "created_at": "2015-11-30T22:04:27.000Z",
+        "created_at_i": 1448921067,
+        "id": 10652227,
+        "options": [],
+        "parent_id": 10648639,
+        "points": null,
+        "story_id": 10648639,
+        "text": "I think this article could have gotten to the point more quickly.<p>Was it that bacteria on the brain can cure cancer and also ruin you life?  It then went on to talk about a reverse engineered virus that was also tried in some completely unrelated study.<p>The article seemed to have no structure and make no point.  The doctor seems to have done some very unethical things here but it is treated as if it was the right thing to do? Maybe it&#x27;s just the woolly language...",
+        "title": null,
+        "type": "comment",
+        "url": null
+      }
+    ],
+    "created_at": "2015-11-30T10:02:24.000Z",
+    "created_at_i": 1448877744,
+    "id": 10648639,
+    "options": [],
+    "parent_id": null,
+    "points": 156,
+    "story_id": 10648639,
+    "text": null,
+    "title": "Bacteria on the Brain",
+    "type": "story",
+    "url": "http://www.newyorker.com/magazine/2015/12/07/bacteria-on-the-brain"
+  }
+}

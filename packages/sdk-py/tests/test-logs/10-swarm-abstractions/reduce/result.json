@@ -1,0 +1,15 @@
+{
+  "totalPropertiesAnalyzed": 3,
+  "totalUnits": 380,
+  "totalUnitsExpiring": 236,
+  "totalMonthlyRentAtRisk": 1734348.41,
+  "annualizedExposure": 20812180.92,
+  "avgRolloverPct": 62.11,
+  "highestRiskProperty": "Consolidated Properties",
+  "priorityActions": [
+    "Immediate focus on 'Consolidated Properties' due to significant high-value lease expirations and current vacancy levels.",
+    "Execute renewal or backfill strategies for major tenants like Booz Allen Hamilton and Deloitte (Property 2941) and Sheppard Mullin (BofA Plaza) whose leases expire in 2024-2025.",
+    "Aggressively market vacant spaces across the portfolio to reduce the current 62.11% rollover exposure.",
+    "Monitor retail performance for luxury tenants in Consolidated Properties to ensure retention ahead of upcoming renewals."
+  ]
+}

@@ -1,0 +1,14 @@
+Signal >> Blog >> Signal Desktop 
+Get Signal Help Blog Developers Careers Donate 
+Signal Desktop moxie0 on 02 Dec 2015 
+Today we’re making the Signal Desktop beta available. Signal Desktop brings the trusted private messaging experience of Signal to the desktop, with a simplicity that allows you to seamlessly continue conversations back and forth between your mobile device and your desktop computer. Private messaging, now with all ten fingers As always, everything is end-to-end encrypted and painstakingly engineered in order to keep your communication safe – allowing you to send high-quality private group, text, picture, and video messages for free. Multiple devices, single identifier Signal Desktop is a Chrome app which links with your phone, so all incoming and outgoing messages are displayed consistently on all your devices. Your contacts don’t have to guess where to message you, and when you switch devices the conversation you started will already be there. Android devices only, for now Update : Signal Desktop for iOS is here! Read more . For the initial Signal desktop beta, only linking to Android devices is supported. Follow us on Twitter for updates on when the iOS app supports Signal Desktop. View source All of our code is free, open source, and available on GitHub . This allows experts to verify our protocols and our implementations. Like everything we do at Open Whisper Systems, dedicated development is supported by community donations and grants. Signal Desktop contains no advertisements, and it doesn’t cost anything to use. Tweet Facebook Don't have Signal? Give it a try! 
+© 2013–2025 Signal, a 501c3 nonprofit. 
+"Signal", Signal logos, and other trademarks are trademarks or registered trademarks of Signal Technology Foundation in the United States and other countries ( more info here ). 
+For media inquiries, contact [email protected] 
+Organization Donate Careers Blog Brand Assets Terms & Privacy Policy 
+Download Android iPhone & iPad Windows Mac Linux 
+Social Bluesky GitHub Instagram Mastodon X 
+Help Support Center Community 
+© 2013–2025 Signal, a 501c3 nonprofit. 
+"Signal", Signal logos, and other trademarks are trademarks or registered trademarks of Signal Technology Foundation in the United States and other countries ( more info here ). 
+For media inquiries, contact [email protected]

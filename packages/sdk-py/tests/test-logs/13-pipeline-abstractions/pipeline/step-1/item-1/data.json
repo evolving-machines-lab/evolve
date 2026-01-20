@@ -1,0 +1,8 @@
+{
+  "propertyName": "BofA Plaza-Off, Los Angeles",
+  "tenantConcentrationRisk": "high",
+  "leaseRolloverRisk": "high",
+  "rentCollectionRisk": "medium",
+  "overallRiskScore": 7,
+  "reasoning": "The property exhibits high tenant concentration risk, with the top three tenants (The Capital Group, Bank of America, and Sheppard Mullin) accounting for 70.77% of total monthly rent. A critical concern is that 16.70% of the property's income is derived from leases that have already expired (primarily Sheppard Mullin), creating significant near-term cash flow uncertainty. Combined with a 20.38% vacancy rate and some non-standard low-rent leases (e.g., American Contemporary Ballet at $0.05 PSF), the property's risk profile is elevated."
+}

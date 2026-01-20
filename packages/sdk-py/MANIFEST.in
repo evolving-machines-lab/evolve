@@ -1,0 +1,16 @@
+# Include license file
+include LICENSE
+
+# Include pre-built bundled bridge (self-contained, no dependencies needed)
+include bridge/dist/bridge.bundle.cjs
+
+# Exclude all other build artifacts and development files
+prune bridge/node_modules
+prune bridge/src
+exclude bridge/package.json
+exclude bridge/package-lock.json
+exclude bridge/tsconfig.json
+exclude bridge/bundle.mjs
+exclude bridge/dist/bridge.js
+exclude bridge/dist/bridge.d.ts
+exclude bridge/dist/bridge.bundle.js

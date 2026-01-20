@@ -1,0 +1,66 @@
+Luc Gommans - Faking the TCP handshake
+Luc Gommans
+/
+blog
+Faking the TCP handshake
+Written on 2015-11-30
+Update:
+This article has been superseded by a new post which hopefully explains it more clearly:
+Spoofing TCP connections without sequence number prediction
+To the best of our knowledge, this attack is a new finding. Asking around, people assume the TCP handshake verifies the IP addresses on both sides. This attack shows that this is not actually true.
+In a collaborative project for the Fontys University of Applied Sciences, Raoul Houkes and I researched different ways to attack TCP, either at implementation or protocol level. What we found was a protocol-level attack, affecting all correct implementations.
+The TCP handshake works like this, with A being the client that is connecting to B:
+A:
+Hi B, I'm A, send number 5.
+B:
+Hi A, I'm B, 5, send number 3.
+A:
+Hi B, I'm A, 3, send number 6. I'd like example.net.
+B:
+Hi A, I'm B, 6, send number 4. Here comes the data: ...
+After this, A can send data to B and B can send data to A. For each byte of data they send to each other, their numbers increase. This is to keep track of whether all data has been received by the other party, to ensure reliable transmission.
+When this was designed in 1981, security was no priority. The ARPANET efficiently fit in a single list and they needed a protocol to send data without worrying about retransmitting on errors, checksumming to check for errors, keeping packets in order, etc. TCP solved all of this.
+These numeric fields, called the 'sequence' and 'acknowledgement' numbers, are currently used for security as well as reliable transmission. This causes two problems:
+The fields are not particularly large (32 bits).
+Due to their dual purpose, incorrect numbers have to be discarded without corrupting the connection. In other words, you can send incorrect acknowledgement numbers and subsequent packets with a correct acknowledgement number will be accepted just fine.
+We combined these two properties into our attack, which would look roughly like this, where A is sending packets to B:
+A:
+Hi B, I'm C, send number 5.
+B:
+Hi C, I'm B, 5, send number 3.
+A:
+Hi B, I'm C, 1, send number 6. I'd like example.net.
+B:
+Hi C, I'm B, that's incorrect. Close the connection please.
+A:
+Hi B, I'm C, 2, send number 6. I'd like example.net.
+B:
+Hi C, I'm B, that's incorrect. Close the connection please.
+A:
+Hi B, I'm C, 3, send number 6. I'd like example.net.
+B:
+Hi C, I'm B, 6, send number 4. Here comes the data: ...
+In this example, host A never receives any of B's messages and B does not know that it's responding to a fake IP address. Host A is faking its IP address into C.
+One prerequisite for the attack is that the real C will not actually send &quot;Huh what is going on&quot;-packets (or RST packets), but that is easy: either take a non-existent C (e.g. 0.0.0.0) or take advantage of firewalls (clients are typically behind a stateful firewall, or NAT, or both).
+The time B will wait for C (or any other client) to confirm the connection is limited. On a Linux 4.2 kernel I tried this and it turned out to be 20 seconds. After these 20 seconds you need to start over (send another SYN), but this does not make any difference since the chosen numbers are completely random.
+The cost of the attack? On average it takes 120GB of network traffic (counting 60 bytes for the ethernet header, IP header and TCP header combined) to create a spoofed connection. You could get unlucky and need 200GB of traffic, but it's equally likely to get lucky and only need 72GB.
+A quick search reveals many VPS systems with 1gbps bandwidth for very little money. If you take full advantage of the available bandwidth, the attack takes 17 minutes and 11 seconds on average.
+Usually you will want to inject a payload, for example to send a command. This command needs to be appended to the existing data, making the attack larger. For example sending &quot;GET / HTTP/1.0\n\n&quot; takes on average 152GB or 20 minutes. This will show up in the access logs as a perfectly normal connection though.
+Other examples of this attack include getting around black- or whitelists, for example on management interfaces of certain systems. This was really popular in the 90s, but many are still around and plenty new applications still work this way.
+Proof of concept
+What is a research project without a proof of concept? Here are screenshots from Wireshark, a packet dump, and the code that was used.
+I filtered out the relevant packets, as captured by the target: 192.168.36.17. The first packet is the initial hello, sent by 192.168.36.11, spoofing 192.168.36.18. Our target responds to the fake IP address, and what happens next is that the tool starts guessing the right acknowledgement number. Note the time jump from 0.x seconds to 8.x seconds, here I filtered out a number of attempts. At some point, the number goes from 2^32 (4.x billion) to zero, this is because Wireshark gives us relative numbers. It also means we've found the right number. Relative acknowledgement number 1 is the one we need to have! After receiving that one, the SSH server responds with its banner, as an SSH server always does upon receiving a valid TCP connection.
+Here is the conversation in some more detail:
+The random number picked by the server is 0x0006943f (or 431167).
+At some point, our script comes across 0x00069440 (or 431168), which is the right number because we need to send what we received plus one.
+In response to that, SSH gives us the banner that is always sent at the beginning of a valid connection.
+The original packet dump is only 15 seconds long because I captured 15 seconds around the event before rotating logs. Sounds like nothing, but it's 5 544 384 (5.5 million) packets and almost half a gigabyte. If you want to see this, you could just run the attack and see for yourself.
+The packet dump that is visible above can be downloaded here:
+spoofed-tcp-connection.pcap
+And finally, the code that was used to perform the attack can be downloaded here:
+attack-tcp.py
+As a true proof of concept, it's specifically written for this purpose and the code is not made to be maintainable ;)
+Conclusion
+The attack is difficult to mitigate due to the nature of the TCP protocol. Only wildly incorrect guesses at the acknowledgement number could be rejected as invalid and could be used as a reason to close the connection, but even then that leaves a large enough window to exploit.
+To authenticate both sides of a connection, additional security such as TLS needs to be used. Even if the certificate is not authenticated, any encrypted TLS session will do because there is additional data that needs to be received by the client. Spoofing becomes infeasible.
+Lesson of the day: never use IP address-based authentication, don't trust IP address whitelists, and use security protocols when you need security (or non-repudiation).

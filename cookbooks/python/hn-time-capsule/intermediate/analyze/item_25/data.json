@@ -1,0 +1,49 @@
+{
+  "title": "The CEO Paying Everyone $70,000 Salaries Has Something to Hide",
+  "summary": "The December 2015 Bloomberg Businessweek article by Karen Weise critically examined Dan Price, CEO of Seattle-based payment processor Gravity Payments, who had announced in April 2015 that he would raise all employees' salaries to a minimum of $70,000, cutting his own compensation from $1.1 million to help fund the initiative. The article challenged the carefully curated narrative Price had been promoting via media appearances, suggesting the lawsuit from his brother Lucas (alleging overpayment of himself) may have preceded rather than followed the salary announcement, and hinting at undisclosed complications. The HN discussion (118 points, 88 comments) was highly polarized: supporters accused mainstream media of envious hit-piece journalism against an innovative CEO, while critics focused on the opaque motivations, Gravity's actual financial metrics (50% of $2.2M profit going to CEO salary), and allegations from his ex-wife about domestic violence.",
+  "what_happened": "Over the next decade, Dan Price and Gravity Payments had a complex trajectory. The $70,000 minimum salary policy proved genuine and expanded: by August 2022, it had increased to $80,000, with employees receiving profit-sharing bonuses ($1,000 in 2023, growing to $8,000 in 2024). The wage policy delivered measurable benefits: employee retention improved to 91% (vs. 68% industry average), customer retention rose from 91% to 95%, employee productivity (revenue per employee) doubled, and company profits doubled. Revenue grew significantly from $200M (2015 estimate) to $102.6M annual revenue by 2025. Price's brother Lucas lost the lawsuit decisively in July 2016, with the judge ruling entirely in Dan's favor on all counts and awarding him attorney's fees. However, Price's personal reputation deteriorated dramatically. His ex-wife Kristie Col\u00f3n publicly detailed abuse allegations in a TEDx talk (October 2015), claiming Price threw, punched, slapped, body-slammed, and waterboarded her. Price lost his book deal and WME representation after the Bloomberg article reported these allegations. Multiple women came forward with similar accusations of domestic violence and sexual assault (at least 9 by 2024). In September 2024, Price was charged with rape of an unconscious victim in Riverside County, though the charges were dropped in May 2025 due to insufficient evidence. Price resigned as CEO in August 2022 but returned to Gravity in May 2024 in an advisory role under new CEO Tammi Kroll. The wage experiment proved a business success; the CEO proved personally troubled.",
+  "most_prescient": {
+    "user": "tptacek",
+    "reason": "He was the only commenter who accurately extracted and synthesized the core thrust of the investigation\u2014that Price had likely misrepresented the timeline of the lawsuit to media, that the raise appeared to be a tactical financial response to reduce profits and minimize his brother's claims, and that his ex-wife had serious abuse allegations. He correctly identified what actually mattered: 'Dan Price's own salary is anomalously high given the details of the company.' Ten years later, tptacek's reading proved prescient. The wage policy worked; Price's character problems were real and eventually public."
+  },
+  "most_wrong": {
+    "user": "theworstshill",
+    "reason": "Commented that critics were 'dumbasses' and the company would never go bankrupt, framing all skepticism as 'sharks' trying to discredit Price. While correct that the company thrived financially, completely missed the actual emerging scandal\u2014the domestic violence allegations and criminal charges\u2014which turned out to be the real story by 2024. He defended Price on the wrong merits."
+  },
+  "notable_aspects": "1) The article itself proved to be the first major public reporting linking the wage announcement to the pending lawsuit and ex-wife abuse allegations, presaging the 2015 bombshell that would cost Price his book deal and agent. 2) The HN comments reveal a striking class/ideological divide: tech-left commenters saw an inspiring experiment in stakeholder capitalism; business conservatives saw reckless wage inflation and narcissistic publicity-seeking. Both were partially right. 3) The 'planking during meetings' detail became emblematic of Price's management style that critics found cultish\u2014a detail that haunted the narrative for years. 4) The Bloomberg article's innuendo about undisclosed motivations proved validated: Price did appear to use the wage increase strategically in the brother lawsuit, and the ex-wife's TEDx talk just weeks after the Businessweek piece confirmed the domestic violence component the article hinted at. 5) Retrospectively, the article's most awkward moment\u2014the vague mention of ex-wife allegations 'at the end'\u2014turned out to be the linchpin issue that defined Price's legacy, not the wage policy itself.",
+  "grades": {
+    "tptacek": {
+      "grade": "A+",
+      "rationale": "Provided the clearest, most factually grounded summary of the article's actual revelations and correctly identified what mattered most. His reading held up perfectly over a decade."
+    },
+    "whatok": {
+      "grade": "A",
+      "rationale": "Consistently skeptical of Price's motivations and the sustainability of the policy, questioning whether a business decision driven by personal litigation was sound. Time showed the policy worked, but his concerns about opaque motivations were validated by the abuse allegations and scandal."
+    },
+    "smt88": {
+      "grade": "B+",
+      "rationale": "Made a pragmatic argument that outcomes matter more than motivations, citing examples like Steve Jobs. Partially right\u2014the wage policy did succeed\u2014but underestimated how much Price's personal misconduct would eventually define the story."
+    },
+    "littletimmy": {
+      "grade": "B",
+      "rationale": "Correctly identified the article as potentially hit-piece-ish and urged skepticism, which was reasonable caution. However, the allegations turned out to be real and serious, making his call to 'suspend judgment' too generous in hindsight."
+    },
+    "tunesmith": {
+      "grade": "B-",
+      "rationale": "Defended the wage policy and questioned whether scandals (including the lawsuit predating the raise) should negate the employees' benefits. Reasonable on the wage policy, but dismissed the ex-wife allegations too casually\u2014they proved to be substantive."
+    },
+    "jonknee": {
+      "grade": "C+",
+      "rationale": "Dismissed the article as 'a waste of words,' missing that it was actually the first major reporting of the abuse allegations and the timeline problems with the lawsuit narrative. The article proved prescient."
+    },
+    "theworstshill": {
+      "grade": "D",
+      "rationale": "Called critics 'dumbasses' and insisted the company would thrive, which it did financially. However, completely missed the actual emerging scandal\u2014the criminal charges and abuse allegations\u2014which became the defining story of Price's next decade."
+    },
+    "Overtonwindow": {
+      "grade": "C",
+      "rationale": "Argued outcomes matter more than motivations, a reasonable position. However, in Price's case, the motivations and personal conduct proved inseparable from the ultimate legacy, and the abuse allegations proved material, not gossip."
+    }
+  },
+  "score": 9
+}

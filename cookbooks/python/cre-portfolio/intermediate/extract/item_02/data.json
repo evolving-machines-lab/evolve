@@ -1,0 +1,387 @@
+{
+  "property_name": "Metropolitan Business Center",
+  "as_of_date": "2023-09-30",
+  "total_units": 34,
+  "total_sf": 350075.0,
+  "buildings": [
+    {
+      "building_name": null,
+      "tenants": [
+        {
+          "tenant_name": "VACANT",
+          "unit": "500",
+          "sf": 0.0,
+          "lease_start": "",
+          "lease_end": "",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "vacant"
+        },
+        {
+          "tenant_name": "VACANT",
+          "unit": "501",
+          "sf": 4464.0,
+          "lease_start": "",
+          "lease_end": "",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "vacant"
+        },
+        {
+          "tenant_name": "VACANT",
+          "unit": "550",
+          "sf": 4367.0,
+          "lease_start": "",
+          "lease_end": "",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "vacant"
+        },
+        {
+          "tenant_name": "VACANT",
+          "unit": "610",
+          "sf": 3347.0,
+          "lease_start": "",
+          "lease_end": "",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "vacant"
+        },
+        {
+          "tenant_name": "VACANT",
+          "unit": "700",
+          "sf": 22757.0,
+          "lease_start": "",
+          "lease_end": "",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "vacant"
+        },
+        {
+          "tenant_name": "VACANT",
+          "unit": "620",
+          "sf": 2175.0,
+          "lease_start": "",
+          "lease_end": "",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "vacant"
+        },
+        {
+          "tenant_name": "Quantum Dynamics Inc.",
+          "unit": "110",
+          "sf": 0.0,
+          "lease_start": "2022-03-01",
+          "lease_end": "2023-03-01",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Vanguard Consulting LLC",
+          "unit": "850",
+          "sf": 7306.0,
+          "lease_start": "2017-03-01",
+          "lease_end": "2027-02-28",
+          "monthly_rent": 13029.03,
+          "annual_rent": 156348.36,
+          "rent_psf": 21.4,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Garnet Financial LLC",
+          "unit": "200",
+          "sf": 9945.0,
+          "lease_start": "2019-12-01",
+          "lease_end": "2025-04-30",
+          "monthly_rent": 35064.41,
+          "annual_rent": 420772.92,
+          "rent_psf": 42.31,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Garnet Financial LLC",
+          "unit": "200-A",
+          "sf": 25143.0,
+          "lease_start": "2019-04-01",
+          "lease_end": "2026-07-31",
+          "monthly_rent": 81761.77,
+          "annual_rent": 981141.18,
+          "rent_psf": 39.02,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Apex Consulting Group",
+          "unit": "400",
+          "sf": 2500.0,
+          "lease_start": "2019-01-01",
+          "lease_end": "2026-07-31",
+          "monthly_rent": 8129.67,
+          "annual_rent": 97556.1,
+          "rent_psf": 39.02,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Apex Consulting Group",
+          "unit": "600",
+          "sf": 22583.0,
+          "lease_start": "2018-09-01",
+          "lease_end": "2025-10-31",
+          "monthly_rent": 80028.32,
+          "annual_rent": 960939.84,
+          "rent_psf": 42.95,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Cobalt Research Partners",
+          "unit": "350",
+          "sf": 13440.0,
+          "lease_start": "2018-09-01",
+          "lease_end": "2025-10-31",
+          "monthly_rent": 48104.0,
+          "annual_rent": 577248.0,
+          "rent_psf": 42.95,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Forge Industries LLC",
+          "unit": "300",
+          "sf": 4815.0,
+          "lease_start": "2019-06-01",
+          "lease_end": "2026-11-30",
+          "monthly_rent": 17221.85,
+          "annual_rent": 206659.8,
+          "rent_psf": 42.92,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Azure Cloud Systems",
+          "unit": "105",
+          "sf": 20078.0,
+          "lease_start": "2018-01-05",
+          "lease_end": "2029-02-28",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 37.9,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Azure Cloud Systems",
+          "unit": "B101",
+          "sf": 4418.0,
+          "lease_start": "2019-06-01",
+          "lease_end": "2029-05-31",
+          "monthly_rent": 5216.94,
+          "annual_rent": 62603.25,
+          "rent_psf": 14.17,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Pearl Insurance Group",
+          "unit": "B100",
+          "sf": 16674.0,
+          "lease_start": "2019-06-01",
+          "lease_end": "2029-05-31",
+          "monthly_rent": 17327.6,
+          "annual_rent": 207931.23,
+          "rent_psf": 14.17,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Indigo Design Studio",
+          "unit": "100",
+          "sf": 8176.0,
+          "lease_start": "2019-06-01",
+          "lease_end": "2029-05-01",
+          "monthly_rent": 6227.39,
+          "annual_rent": 74728.68,
+          "rent_psf": 9.14,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Indigo Design Studio",
+          "unit": "1000",
+          "sf": 2472.0,
+          "lease_start": "2020-09-01",
+          "lease_end": "2031-06-30",
+          "monthly_rent": 8531.49,
+          "annual_rent": 102377.94,
+          "rent_psf": 42.27,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Indigo Design Studio",
+          "unit": "1100",
+          "sf": 22246.0,
+          "lease_start": "2020-09-01",
+          "lease_end": "2031-06-30",
+          "monthly_rent": 78361.53,
+          "annual_rent": 940338.42,
+          "rent_psf": 42.27,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Indigo Design Studio",
+          "unit": "1200",
+          "sf": 22907.0,
+          "lease_start": "2020-09-01",
+          "lease_end": "2031-06-30",
+          "monthly_rent": 80689.91,
+          "annual_rent": 968278.89,
+          "rent_psf": 42.27,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Indigo Design Studio",
+          "unit": "1300",
+          "sf": 22907.0,
+          "lease_start": "2020-09-01",
+          "lease_end": "2031-06-30",
+          "monthly_rent": 80689.91,
+          "annual_rent": 968278.89,
+          "rent_psf": 42.27,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Indigo Design Studio",
+          "unit": "1400",
+          "sf": 22907.0,
+          "lease_start": "2020-09-01",
+          "lease_end": "2031-06-30",
+          "monthly_rent": 80689.91,
+          "annual_rent": 968278.89,
+          "rent_psf": 42.27,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Indigo Design Studio",
+          "unit": "1500",
+          "sf": 21684.0,
+          "lease_start": "2020-09-01",
+          "lease_end": "2031-06-30",
+          "monthly_rent": 76381.89,
+          "annual_rent": 916582.68,
+          "rent_psf": 42.27,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Indigo Design Studio",
+          "unit": "805",
+          "sf": 20493.0,
+          "lease_start": "2020-09-01",
+          "lease_end": "2031-06-30",
+          "monthly_rent": 72186.59,
+          "annual_rent": 866239.11,
+          "rent_psf": 42.27,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Indigo Design Studio",
+          "unit": "810",
+          "sf": 2804.0,
+          "lease_start": "2020-09-01",
+          "lease_end": "2031-06-30",
+          "monthly_rent": 9877.09,
+          "annual_rent": 118525.08,
+          "rent_psf": 42.27,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Indigo Design Studio",
+          "unit": "825",
+          "sf": 4576.0,
+          "lease_start": "2020-09-01",
+          "lease_end": "2031-06-30",
+          "monthly_rent": 16118.96,
+          "annual_rent": 193427.52,
+          "rent_psf": 42.27,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Indigo Design Studio",
+          "unit": "900",
+          "sf": 892.0,
+          "lease_start": "2020-09-01",
+          "lease_end": "2031-06-30",
+          "monthly_rent": 3142.07,
+          "annual_rent": 37704.84,
+          "rent_psf": 42.27,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Indigo Design Studio",
+          "unit": "B103",
+          "sf": 22583.0,
+          "lease_start": "2020-09-01",
+          "lease_end": "2031-06-30",
+          "monthly_rent": 79548.62,
+          "annual_rent": 954583.41,
+          "rent_psf": 42.27,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Forge Industries LLC",
+          "unit": "B104",
+          "sf": 3308.0,
+          "lease_start": "2020-09-01",
+          "lease_end": "2031-06-30",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Onyx Engineering LLC",
+          "unit": "650",
+          "sf": 200.0,
+          "lease_start": "2018-01-21",
+          "lease_end": "2029-02-28",
+          "monthly_rent": 0.0,
+          "annual_rent": 0.0,
+          "rent_psf": 0.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Citrine Capital LLC",
+          "unit": "620",
+          "sf": 3861.0,
+          "lease_start": "2020-12-01",
+          "lease_end": "2023-11-30",
+          "monthly_rent": 15566.45,
+          "annual_rent": 186797.4,
+          "rent_psf": 48.38,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Falcon Aerospace Inc.",
+          "unit": "800",
+          "sf": 1910.0,
+          "lease_start": "2022-03-24",
+          "lease_end": "",
+          "monthly_rent": 5570.83,
+          "annual_rent": 66849.96,
+          "rent_psf": 35.0,
+          "status": "occupied"
+        },
+        {
+          "tenant_name": "Coral Realty Partners",
+          "unit": "300",
+          "sf": 2137.0,
+          "lease_start": "2022-09-01",
+          "lease_end": "2027-11-30",
+          "monthly_rent": 6970.19,
+          "annual_rent": 83642.28,
+          "rent_psf": 39.14,
+          "status": "occupied"
+        }
+      ]
+    }
+  ]
+}

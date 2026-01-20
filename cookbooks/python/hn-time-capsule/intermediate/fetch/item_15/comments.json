@@ -1,0 +1,442 @@
+[
+  {
+    "id": 10663863,
+    "author": null,
+    "text": "It's interesting that their views on competition run counter to what YC / Peter Thiel advocate for in all startups - that is, avoiding competitive spaces and going for monopolies. Perhaps monopolies are necessary for huge growth and investor upside, but it should be made clear that there's obviously space in startups for modest goals like a nice PDF reader, and I hope their employees makes a reasonable living off it at the very least.Not sure if their business model will work out (given the sad state of affairs that is the Mac App Store) but I liked that they were transparent about it.On another note... the Vimeo ad they released https://vimeo.com/145400917 features a white, well-dressed man working at an empty desk with nothing on it but a macbook, coffee mug, iPhone, and Moleskine notebook. I find this marketing trope hilarious and want to amass a collection of such images. Is someone already curating such a thing?",
+    "points": 0,
+    "created_at": "2015-12-02T16:24:46.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10663954,
+    "author": null,
+    "text": "My office setup is almost exactly what you describe. Switch out the macbook for an imac and then add a height adjustable desk, some headphones, and a hydroflask.The article though was pretty effective in making me want to try the app since I make a handful of pdfs and exporting from photoshop is a pain since I always forget the settings I want to use to make the file not gigantic.But to your point, I kind of like the idea that people can make a business like this and eke out a nice income and have happy customers. It reminds me of a tooth whitening supply company I temped for a while back. They had 4 employees and were 100% happy with the number of customers they had and would get more via tradeshows, dentists liked their product, and the profits were really good. I imagine the owners knew that at a certain size managing the business would not allow them to live the lifestyle they enjoyed, so they just maintained it as is.",
+    "points": 0,
+    "created_at": "2015-12-02T16:39:00.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10665872,
+    "author": null,
+    "text": "Well, PDF Expert can potentially bring $10M a year if we do it right. We just feel that the PDF experience with Adobe isn't great... And for people who work with PDFs that does matter.Speaking about lifestyle business: we definitely decided not to do it. It's been 7 years, we grew to 85 people and 45 million users... that is why we are aiming for something that is much bigger and has much more impact! Have a look at Spark!",
+    "points": 0,
+    "created_at": "2015-12-02T21:16:03.000Z",
+    "depth": 3
+  },
+  {
+    "id": 10667349,
+    "author": null,
+    "text": "Here's to hoping you bring Spark to the Mac ;)On PDF Expert, one feature I'd love to see would be an option to add links to sections of images in a PDF. That's the only thing I use Acrobat for, and it'd be incredible to be able to quit using it forever.",
+    "points": 0,
+    "created_at": "2015-12-03T02:29:55.000Z",
+    "depth": 4
+  },
+  {
+    "id": 10666881,
+    "author": null,
+    "text": "> I imagine the owners knew that at a certain size managing the business would not allow them to live the lifestyle they enjoyed, so they just maintained it as is.This is what a 'small business' is. Not every entrepreneur is out to take over the world.",
+    "points": 0,
+    "created_at": "2015-12-03T00:15:17.000Z",
+    "depth": 3
+  },
+  {
+    "id": 10663980,
+    "author": null,
+    "text": "Make as many as you like: https://placeit.net/",
+    "points": 0,
+    "created_at": "2015-12-02T16:42:38.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10665269,
+    "author": null,
+    "text": "Something I've been thinking about recently: does anyone think Slack followed Thiel's advice? It entered a space that already existed (didn't go from 0 to 1), with several competitors, solving a problem that was widely known (email is a broken way to get work done). Yet it's becoming a monopoly and will likely be a very valuable business. It seems like there can be tremendous value in making something really good when the existing solutions are not good, and that creating an extremely valuable business doesn't require doing something entirely new.",
+    "points": 0,
+    "created_at": "2015-12-02T19:37:35.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10665657,
+    "author": null,
+    "text": "Thiel doesn't advocate for an immediate monopoly because the alternative _can't_ work, it's because it's _harder_ to get a startup off the ground in an already-competitive market",
+    "points": 0,
+    "created_at": "2015-12-02T20:43:37.000Z",
+    "depth": 3
+  },
+  {
+    "id": 10665718,
+    "author": null,
+    "text": "There's a lot of business advice that makes sense if you are a VC fund seeking to beat the market and that must \"only invest in things able to return the entire fund\" but that does not make sense if you just want to build a reasonable business. Hell, some of that advice doesn't even make sense if your goal is to build a very successful startup with a good but not quite \"sure I'll take another airstrip on my island\" exit.Sometimes the domain specificity of advice is not immediately obvious from its context.",
+    "points": 0,
+    "created_at": "2015-12-02T20:52:22.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10665893,
+    "author": null,
+    "text": "Thiel also forced entrepreneurs to ask what they think is true that others don't. With PDF apps, the answer was that there is a gap in between where they can provide a better experience. As you noted, it may not be enough to take on Adobe but it fulfills a niche from which the vision could become broader. See Dropbox who wanted to replace thumb drives and rewritable CD-Rs to popularizing the cloud storage consumer option with all its additional possibilites.",
+    "points": 0,
+    "created_at": "2015-12-02T21:18:31.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10667620,
+    "author": null,
+    "text": "The best one I've seen yet is the twitter background for Salesforce's Desk.comhttps://twitter.com/Desk?ref_src=twsrc%5Egoogle%7Ctwcamp%5Es...If you look for more than a second, you realize nothing, absolutely nothing about it makes sense. It's insane.",
+    "points": 0,
+    "created_at": "2015-12-03T03:42:57.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10667959,
+    "author": null,
+    "text": "I've been staring at that for 5 minutes and I can't for the life of me see what doesn't make sense. What doesn't make sense?!",
+    "points": 0,
+    "created_at": "2015-12-03T05:38:26.000Z",
+    "depth": 3
+  },
+  {
+    "id": 10668505,
+    "author": null,
+    "text": "Probably the lack of power going to the iMacs, which could also explain why they have to use their mobile devices instead... :)",
+    "points": 0,
+    "created_at": "2015-12-03T08:22:28.000Z",
+    "depth": 4
+  },
+  {
+    "id": 10667624,
+    "author": null,
+    "text": "You can succeed as a fast follower but you won't become a monopoly.",
+    "points": 0,
+    "created_at": "2015-12-03T03:44:45.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10664085,
+    "author": null,
+    "text": "I'm trying to figure out what's so great about this app.  Is it just that it's available on iOS and OSX?",
+    "points": 0,
+    "created_at": "2015-12-02T16:55:39.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10664625,
+    "author": null,
+    "text": "It's a good PDF utility.",
+    "points": 0,
+    "created_at": "2015-12-02T18:03:51.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10664660,
+    "author": null,
+    "text": "It scratches an itch.It is polished.It works well.They marketed it like hell.",
+    "points": 0,
+    "created_at": "2015-12-02T18:09:31.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10664859,
+    "author": null,
+    "text": "It's a few steps above Preview.app (Apple's built-in PDF viewer), but without all the bloat and the high price of Acrobat.And it probably doesn't have anywhere near as many security vulnerabilities as Acrobat.",
+    "points": 0,
+    "created_at": "2015-12-02T18:38:38.000Z",
+    "depth": 3
+  },
+  {
+    "id": 10664158,
+    "author": null,
+    "text": "Although not a top paid app for a side project my app is doing surprisingly well even outside the app store after I took it out recently.The number one factor which he alluded to is which pricing strategy to follow. My app is not 70 but 9.99.I too am using a time limited version and I am realizing that this isn't the best approach for my app either. So I am working towards something like what Sublime is doing.One of the biggest learnings I have gotten from this experience is that an app is rarely a business and that the MAS is rarely a good distribution channel if you are doing something unique.I could make at a minimum double as much as I am doing right now if i spent som more time on it (I will make around $50K the first year) and there is money to be made if you have something unique. Unfortunately thats hard to do on the MAS with Sandbox.",
+    "points": 0,
+    "created_at": "2015-12-02T17:05:45.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10664420,
+    "author": null,
+    "text": "How did/do you market/promote it?",
+    "points": 0,
+    "created_at": "2015-12-02T17:36:44.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10664453,
+    "author": null,
+    "text": "A combination. HN was a good first boost https://news.ycombinator.com/item?id=9145007Then got in contact with a lot of websites. Was lucky to get som really good reviews on LifeHacker and MacUpdate plus other places. And then people started telling their friends about it.Plus I have an email list now with +10K customers or potential customers.",
+    "points": 0,
+    "created_at": "2015-12-02T17:40:50.000Z",
+    "depth": 3
+  },
+  {
+    "id": 10664545,
+    "author": null,
+    "text": "It's interesting how he says videos are important. I find videos to be much slower to parse than reading features or reviews from notable people within the industry the app is part of. For example, in the case of Sketch, I didn't watch the video (didn't even know they had them until I checked today) but instead read what it's like to use the application from a couple different designers.In the case of Dropbox (whoa, that was a long time ago), I think I just had it verbally recommended to me from techies or I just read about it on HN.In fact, all of what I end up installing and using comes from the backs of people rather than videos. Maybes it's a generational thing.",
+    "points": 0,
+    "created_at": "2015-12-02T17:53:28.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10665857,
+    "author": null,
+    "text": "Thanks for your comment, but from my experience - a good video can benefit greatly to the product. And true, younger crowd prefers video to the text :)",
+    "points": 0,
+    "created_at": "2015-12-02T21:13:32.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10667046,
+    "author": null,
+    "text": "I'm with you.  The majority of these videos are just fluff and filler.  I don't need 51 seconds of video (with maybe 10 seconds actually demonstrating the bit I might be interested in).If you want video, go for it, but make sure to also include text somewhere because if the only way to find out what your product does is to watch a video I'll probably just close the tab.",
+    "points": 0,
+    "created_at": "2015-12-03T01:02:30.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10664551,
+    "author": null,
+    "text": "The time-limited trial is essential for selling productivity software, unfortunately most companies are doing it wrong.Beyond Compare[1] has a 30-day trial that is 30 days of use - not just 30 consecutive days. If I actually use a piece of software 30 different times on different days, then it's definitely worth a purchase. It's too bad more developers don't design their trials this way.[1] - http://www.scootersoftware.com/",
+    "points": 0,
+    "created_at": "2015-12-02T17:53:46.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10664593,
+    "author": null,
+    "text": "I find time limited trials useless. For user, it is inconvenient, because maybe the time is not enough to test complex software. For developers it's bad because user can simply reinstall the software again when trial period is over.In my apps, I limit the amount of data you can store in trial version. So, you can try it as much as you can. For example, if your software was an e-mail client, you could limit it to 30 messages in any folder (inbox, sent, trash).",
+    "points": 0,
+    "created_at": "2015-12-02T18:00:20.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10664742,
+    "author": null,
+    "text": "Depends how you do it.  Many apps that use time trials will often leave behind some preference file or registry key to block re-installing.But it's probably not worth building that into your software (I don't) - customers will either get so sick of reinstalling every 30 days that they just buy your software, or they're so poor that they were never really going to be a customer anyway, so you may as well let them continue with the workaround until they can afford it.Time trials can be useful though.  While most customers buy within the first day of use (and typically the first hour!), anyone who tracks metrics knows that expiring the trial version also generates a boost in sales around day 29 / day 30 of the trial.",
+    "points": 0,
+    "created_at": "2015-12-02T18:21:11.000Z",
+    "depth": 3
+  },
+  {
+    "id": 10666795,
+    "author": null,
+    "text": "I am not sure that this can be applied to any kind of app. You have to give user as much as possible until the product becomes valuable enough for him to buy, and that's when update option should be displayed. For example, in the case of an email app, time-limited trial can actually be a better option. User get's used to it, maybe he stores some additional information inside it or uses some specific features. Just limiting a number of emails would not let the user see the full potential of the app.",
+    "points": 0,
+    "created_at": "2015-12-02T23:58:01.000Z",
+    "depth": 3
+  },
+  {
+    "id": 10668016,
+    "author": null,
+    "text": "One scheme I saw required a code that worked for a day. They had a server that generated a new code and posted it to their web site every day. So you could use it as long as you wanted, but you had to go to their website every day to get a code to use it that day. If you used it every day, you probably got sick of going to the website and just purchased it.",
+    "points": 0,
+    "created_at": "2015-12-03T06:00:24.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10664599,
+    "author": null,
+    "text": "10. Release a quality appIt's not a buggy, slow, unusable piece of crap that a lot of low-end software is. It's easy to use and it works well.",
+    "points": 0,
+    "created_at": "2015-12-02T18:01:15.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10664661,
+    "author": null,
+    "text": "Purely from a user's perspective, the Mac app store has a considerable advantage in centrally managing updates. Non-MAS apps each have their own eclectic ways of updating. Some support automatic update checks, while users have to explicitly check others.  For the ones with automatic updates, there are a number of ways it's handled.  Users don't generally want scores of update daemons running, and the whole business of \"On launch, check for update, notify the user and let them choose whether to update now\" really feels like the web page pop-ups that are so popular. (\"I launched the app to do work, not to see if there was an update.  The update prompt is in my way.\")  This cries out for a better user experience.",
+    "points": 0,
+    "created_at": "2015-12-02T18:09:46.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10664757,
+    "author": null,
+    "text": "Update on the way out? ie. Pop up with two options \"close\" and \"update and close\", at least this time you've already accomplished what you were after with the application.",
+    "points": 0,
+    "created_at": "2015-12-02T18:22:59.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10664784,
+    "author": null,
+    "text": "Maybe it's just me, but when I am ready to quit an app the last thing I want to do is go through an update process.",
+    "points": 0,
+    "created_at": "2015-12-02T18:26:05.000Z",
+    "depth": 3
+  },
+  {
+    "id": 10664847,
+    "author": null,
+    "text": "Especially one that will relaunch the app when it's done.Ideally, you'd want a system-level daemon that downloads and preps updates in the background, and either waits until the system is idle (I think Apple has some tech like this already for running Time Machine backups), with pending updates optionally installed on system shutdown (am I shutting down to save on battery, to restart, or because I'm about to leave the office and I don't care how long it takes for the system to shut down).",
+    "points": 0,
+    "created_at": "2015-12-02T18:36:03.000Z",
+    "depth": 4
+  },
+  {
+    "id": 10665141,
+    "author": null,
+    "text": "I think Kelly Sutton (of the late layervault) figured this out with his fork of sparkle, called \"autosparkle\" - https://github.com/layervault/Sparkle . I haven't personally integrated it into my app yet, but supposedly it makes updates a much more silent process - which is really important for 'always-on' tray apps like layervault was, or the one I'm making.Here's their announcement of it from 2013: http://layervault.tumblr.com/post/50501747774/open-sourced-a...",
+    "points": 0,
+    "created_at": "2015-12-02T19:16:43.000Z",
+    "depth": 5
+  },
+  {
+    "id": 10666520,
+    "author": null,
+    "text": "What I've always wanted, and no one seems to do, is to have the update box pop up on startup (as usual), and then have a button that says \"Install on quit.\" Then I wouldn't have to be interrupted when I opened an app to do something, and it would be taken care of when I finished so that it's ready for the next time.",
+    "points": 0,
+    "created_at": "2015-12-02T22:57:37.000Z",
+    "depth": 3
+  },
+  {
+    "id": 10665920,
+    "author": null,
+    "text": "So would you think that MAS is generally better in terms of perception and trust?",
+    "points": 0,
+    "created_at": "2015-12-02T21:21:16.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10666775,
+    "author": null,
+    "text": "Yeah it's a little insane how long it's taken for Apple and Microsoft to get software updates right when it's so common and humdrum on the linux side of things.",
+    "points": 0,
+    "created_at": "2015-12-02T23:54:15.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10664823,
+    "author": null,
+    "text": "How do they get in touch with that \"App Store Business Management\" they spoke about? It's not like they make their emails available for any Joe Developer to talk to them.",
+    "points": 0,
+    "created_at": "2015-12-02T18:32:33.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10664871,
+    "author": null,
+    "text": "I'm wondering about the same thing:Apple is being very helpful these days, and they want developers to succeed. That is why you really should keep in touch with App Store Business Management and keep them updated on what you\u2019re building and when you\u2019re getting ready for a launch.It's a highly rarefied group of developers who have a contact in App Store management that would be interested in hearing about an upcoming launch.",
+    "points": 0,
+    "created_at": "2015-12-02T18:40:30.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10664910,
+    "author": null,
+    "text": "And how do they achieve it? Where do they even start?We have two apps that have had nearly 4 million downloads across both app stores. Here's been the growth of our Mac app, for example: http://qbix.com/calendar . Our average reviews are very close to 5 stars out of 5 after thousands of reviews.It's all organic. People just found us in the store. We were never contacted by Apple to get featured, and we had no way of contacting them, that we knew of. So I'm curious. It's not just about numbers.",
+    "points": 0,
+    "created_at": "2015-12-02T18:46:13.000Z",
+    "depth": 3
+  },
+  {
+    "id": 10664945,
+    "author": null,
+    "text": "The article mentions that they've been on iOS for almost eight years, so they must have been in the App Store at the very start. I imagine that helps to build a relationship.That also makes their advice on this point rather difficult to apply. It's sort of like this marketing advice:\"It can be really helpful if the New York Times writes a two-pager about you. You should call up your contact on the editorial team in advance and tell them about what you're doing, so the story will be ready on launch day.\"",
+    "points": 0,
+    "created_at": "2015-12-02T18:51:47.000Z",
+    "depth": 4
+  },
+  {
+    "id": 10665138,
+    "author": null,
+    "text": "The author of the article has an answer to this question: \"Go to WWDC\"",
+    "points": 0,
+    "created_at": "2015-12-02T19:16:36.000Z",
+    "depth": 5
+  },
+  {
+    "id": 10665948,
+    "author": null,
+    "text": "True :) they asked us to be on the first day of the App Store 7 years ago!",
+    "points": 0,
+    "created_at": "2015-12-02T21:25:31.000Z",
+    "depth": 5
+  },
+  {
+    "id": 10665075,
+    "author": null,
+    "text": "Most of the people with these relationships attended WWDC, met a developer or product manager and held onto their card.",
+    "points": 0,
+    "created_at": "2015-12-02T19:08:09.000Z",
+    "depth": 3
+  },
+  {
+    "id": 10665935,
+    "author": null,
+    "text": "Guys, I recommend attending WWDC in SF! You can meet all the Apple folks there.For us, we launched our first web app in 2008 even before the App Store. Apple loved it - they called us and told about App Store that is being launched so they wanted us to be there on day 1. We consistently delivered great products that people loved. Here, I wrote a post on how to get featured on the App Store http://denzhadanov.com/2014/03/26/how-to-get-featured-on-the...",
+    "points": 0,
+    "created_at": "2015-12-02T21:23:56.000Z",
+    "depth": 3
+  },
+  {
+    "id": 10667996,
+    "author": null,
+    "text": "I would love to go to WWDC. However isn't having the honor of paying the 2k or so a bit like winning lotto? I mean - since you have to enroll to be (hopefully) selected as one of the lucky few who can attend, and if you're selected you're allowed to pay them to attend?I have been a solo mac developer for the past 15 years or so (you can see my stuff at http://macdaddy.io), and I have never been able to attend a WWDC. It does strike me as unfair when I see other companies having the opportunity to attend, getting advice and recognition, and then getting featured by Apple and so forth. I have seen other companies allowed to have their apps on the mac app store which require root access, while I write a competing app data recovery app and it's never allowed on the mac app store - only to see that they blogged about attending WWDC and rubbing shoulders with the right people at Apple. Sometimes I feel that I write good software, but I lack the political connections to make real progress.",
+    "points": 0,
+    "created_at": "2015-12-03T05:50:29.000Z",
+    "depth": 4
+  },
+  {
+    "id": 10669884,
+    "author": null,
+    "text": "I posted Denys article to HN: https://news.ycombinator.com/item?id=10669628Our apps have been featured dozens of times and there is definitely a method to the madness. I shared my 2 cents on how to get featured as a comment on that HN link.",
+    "points": 0,
+    "created_at": "2015-12-03T15:03:15.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10664907,
+    "author": null,
+    "text": "Nice article. On a completely unrelated subject, the guy in the video left the machine unlocked. Bad guy.",
+    "points": 0,
+    "created_at": "2015-12-02T18:45:35.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10665102,
+    "author": null,
+    "text": "> PDF Expert is available at an introductory price of $19.99, but that will rise in the near future to $60\u201370 once we add PDF editing and OCR.$60\u201370 for a fancy PDF reader ? By doing this you will get only the people that really, really need your software, the others will turn away unable to justify such an expense for a non vital software.A bit like an iPhone in fact. I could afford one, but I don't want to make sacrifices on other more important things. Sometimes I wonder if the peoples that make these prices live in a kind of \"rich people bubble\" where money grows on trees and 70 bucks for a PDF reader or almost a grand for a smartphone is just chump change.",
+    "points": 0,
+    "created_at": "2015-12-02T19:12:17.000Z",
+    "depth": 1
+  },
+  {
+    "id": 10665569,
+    "author": null,
+    "text": "Those that can justify the $70 need the software. Those that can't didn't need it in the first place, and probably wouldn't pay $1.99. If it saves me an hour, worth $70. YMMV, and it obviously does.",
+    "points": 0,
+    "created_at": "2015-12-02T20:28:13.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10666817,
+    "author": null,
+    "text": "But other PDF editors cost a lot more. PDFpen is worth $75, and Adobe Acrobat DC costs like $450 if purchased fully, not by subscription model.Finally, it all depends on what exactly you need from the app. Fast, reliable and well-designed software can't be cheap - and I don't think it should.",
+    "points": 0,
+    "created_at": "2015-12-03T00:02:29.000Z",
+    "depth": 2
+  },
+  {
+    "id": 10667652,
+    "author": null,
+    "text": "I must admit I found the proposed $60 price a bit shocking when I read the article. Surely there are free software solutions which do much the same thing. I believe Okular can do most of the things the article alluded to.",
+    "points": 0,
+    "created_at": "2015-12-03T03:53:26.000Z",
+    "depth": 3
+  },
+  {
+    "id": 10669982,
+    "author": null,
+    "text": "That's true, $60 would be too much for current set of features. But this is a supposed price for updated version, which will be released soon, which includes powerful PDF editing features as well (similar to those in Acrobat Pro, for example).",
+    "points": 0,
+    "created_at": "2015-12-03T15:20:18.000Z",
+    "depth": 4
+  },
+  {
+    "id": 10666230,
+    "author": null,
+    "text": "It was crucial to pick the right business model for PDF Expert. Since we are a privately owned company and never raised any capital, we have to make profit in order to develop great software\u200a\u2014\u200aan expensive endeavor these days.Kudos to someone else who actually wants to make money these days, not just spark investor interest, burn a ton of other people's money and then retire to write a book while their company goes down in flames.",
+    "points": 0,
+    "created_at": "2015-12-02T22:10:08.000Z",
+    "depth": 1
+  }
+]

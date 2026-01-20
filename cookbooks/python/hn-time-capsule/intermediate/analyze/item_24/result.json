@@ -1,0 +1,46 @@
+{
+  "title": "What could dark matter be?",
+  "summary": "A December 2015 Symmetry Magazine article by Laura Dattaro surveying the landscape of dark matter candidate particles. The article reviewed major theories including WIMPs (Weakly Interacting Massive Particles), sterile neutrinos, neutralinos from supersymmetry, asymmetric dark matter, axions, mirror world dark matter, Kaluza-Klein extra-dimensional dark matter, SIMPs (Strongly Interacting Massive Particles), and composite dark matter. The article emphasized that physicists had many competing theories but no confirmed detection, and discussed experimental approaches like ADMX for axion searches and space-based telescopes for sterile neutrino signatures.",
+  "what_happened": "Over the past decade (2015-2025), dark matter research has undergone a significant paradigm shift. WIMPs, the dominant theory in 2015, have increasingly failed to materialize despite intensive searches with experiments like XENON and LUX-ZEPLIN. No confirmed WIMP signal has been detected, leading to increasingly stringent constraints on WIMP properties. In contrast, axion research experienced a renaissance exactly as predicted in the article. ADMX produced increasingly sensitive results, searching through different mass ranges. The sterile neutrino 3.5 keV X-ray line initially detected by various observations remained intriguing but unconfirmed and controversial. Supersymmetry and neutralinos also remained experimentally elusive despite LHC searches. The field has become more diverse, with greater theoretical interest in alternatives like ultra-light dark matter, axion-like particles, and composite scenarios. As of 2024-2025, dark matter remains undetected, but the field has pivoted away from WIMPs as the leading candidate toward axions and other lighter or more exotic possibilities.",
+  "most_prescient": {
+    "user": "Article itself / Jonathan Feng",
+    "reason": "The article prominently features UCI theoretical physicist Jonathan Feng describing a 'renaissance in axion theory' and the excitement in axion experiments. This prediction proved remarkably accurate. Axions have indeed become the focus of increased experimental and theoretical attention over the decade, with ADMX producing increasingly competitive results and numerous new axion experiments launched. Meanwhile, the article correctly noted that WIMPs faced challenges and alternatives needed exploration—prophetic given that WIMPs essentially failed to deliver after 2015."
+  },
+  "most_wrong": {
+    "user": "Proponents of WIMP paradigm",
+    "reason": "While the article itself remained balanced, the overwhelming consensus in 2015 (not directly quoted but heavily implied) was that WIMPs were 'the canonical candidate' as stated. Ten years later, this bet largely failed. No confirmed WIMP detection occurred, constraints tightened dramatically, and the field pivoted. The confidence in WIMPs as the leading dark matter candidate in 2015 proved misplaced."
+  },
+  "notable_aspects": "1) The article mentioned the ASTRO-H Japanese telescope that would supposedly settle the sterile neutrino debate—ASTRO-H was actually destroyed in orbit in 2016 and never provided the promised clarity on the 3.5 keV line. 2) The article's mention of the 'potassium ions' alternative explanation for the 3.5 keV signal foreshadowed the enduring difficulty in confirming this signal. 3) The article presented an almost perfect 'futures market' of dark matter theories—a decade later, one can assess which bets paid off. 4) The hopeful tone about Supersymmetry and its particles proved overly optimistic; no supersymmetric particles have been detected despite intensified LHC searches. 5) SIMPs, described as 'the latest newcomer' in 2015, have not gained the traction initially hoped, though interest persists in self-interacting dark matter models.",
+  "grades": {
+    "Laura Dattaro": {
+      "grade": "A-",
+      "rationale": "Excellent overview that captured the genuine uncertainty in the field and accurately described the competing theories as they stood in 2015. The article appropriately highlighted the shift toward axions as generating 'new excitement' and correctly identified them as newly searchable. The writing was clear and the science accurate. Slight deduction only for not being more skeptical of the oversold status of some experiments or for not emphasizing enough how speculative all candidates remained."
+    },
+    "Neal Weiner (NYU)": {
+      "grade": "A",
+      "rationale": "Weiner's quote about not knowing which experiment will be successful and that dark matter 'is not just going to hit you in the face' proved prescient. Ten years later, no experiment has definitively found dark matter, validating his caution about the difficulty of the problem and the importance of trying multiple approaches."
+    },
+    "Manoj Kaplinghat (UC Irvine)": {
+      "grade": "B+",
+      "rationale": "Kaplinghat correctly identified WIMPs as 'the canonical candidate' in 2015, which was accurate for consensus at that time. His comment that dark matter could be composite and not just a single particle has proven more durable—recent theoretical work increasingly explores composite dark matter and multi-component scenarios. However, he was bullish on the WIMP paradigm which largely failed."
+    },
+    "Mariangela Lisanti (Princeton)": {
+      "grade": "B",
+      "rationale": "Lisanti optimistically spoke of WIMPs as a 'really dominant paradigm' that had been 'the guide in the field for many, many years' and suggested not finding them would 'close that chapter.' This proved accurate in hindsight—WIMPs did become a closed chapter—but the tone suggested confidence in imminent detection that did not materialize."
+    },
+    "Stefano Profumo (UC Santa Cruz)": {
+      "grade": "B-",
+      "rationale": "Profumo discussed the potential of sterile neutrinos and their detectability via photon decay. While theoretically sound, the 3.5 keV signal he implicitly referenced has remained controversial and unconfirmed for a decade. His confidence in upcoming detection via the ASTRO-H telescope was misplaced when that satellite failed in 2016."
+    },
+    "Risa Wechsler (Stanford/SLAC)": {
+      "grade": "A-",
+      "rationale": "Wechsler highlighted the key transition point: 'We're just recently getting to the stage of having experiments that are able to probe the most interesting regions of axion parameter space.' This capture of the moment when axion searches became feasible proved accurate. The subsequent decade saw this prediction realized with increasingly sensitive ADMX and new experiments."
+    },
+    "Jonathan Feng (UCI)": {
+      "grade": "A+",
+      "rationale": "Feng predicted a 'renaissance in axion theory' driving 'excitement in axion experiments.' This proved to be the single most accurate prediction in the article. Axion research has indeed flourished, becoming arguably the leading dark matter candidate by 2024. His broader point about exploring diverse alternatives to the WIMP paradigm was vindicated."
+    }
+  },
+  "score": 8,
+  "rationale_for_score": "This retrospective is quite interesting because it captures a genuine inflection point in physics (2015) where the WIMP paradigm was dominant but already showing cracks, and the field was transitioning to alternative candidates. Knowing what happened—that WIMPs essentially failed—gives the article dramatic irony. The predictions about axions proved accurate, validating the theoretical judgment of physicists highlighted. The article also serves as a time capsule of theoretical confidence circa 2015 that has been tested against reality. However, dark matter remains unsolved even today, limiting the 'resolution' of this narrative. The fact that no breakthrough occurred is both scientifically humbling and makes this retrospective somewhat bittersweet—predictions about diverse approaches were correct, but the field is no closer to answering the fundamental question."
+}
