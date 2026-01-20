@@ -65,7 +65,7 @@ from .pipeline import (
     EmitOption,
 )
 
-__version__ = '0.1.62'
+__version__ = '0.0.1'
 
 __all__ = [
     # Main classes
