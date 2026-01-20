@@ -8,7 +8,7 @@ description: |
 
 Spawn parallel AI agents for batch processing, quality competition, and multi-model workflows.
 
-> **Repo:** https://github.com/evolvingmachines/evolve — cookbooks in `cookbooks/`, skills in `skills/`
+> **Repo:** https://github.com/evolving-machines-lab/evolve — cookbooks in `cookbooks/`, skills in `skills/`
 
 ## Setup
 

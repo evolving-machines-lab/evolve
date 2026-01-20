@@ -73,7 +73,7 @@ The test suite includes **31+ tests** across **6 test files**:
 All commands run from: `packages/sdk-py/`
 
 ### Environment Variables
-Create `.env` in workspace root (`ai-terminal/`):
+Create `.env` in workspace root (`evolve/`):
 
 ```bash
 # Required for all tests
