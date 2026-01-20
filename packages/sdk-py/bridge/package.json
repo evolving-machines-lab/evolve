@@ -7,7 +7,8 @@
     "node": ">=18"
   },
   "scripts": {
-    "build": "npm run build:deps && tsc && node bundle.mjs",
+    "build": "tsc && node bundle.mjs",
+    "build:standalone": "npm run build:deps && npm run build",
     "build:deps": "cd ../../../ && npm run build --workspace=@evolvingmachines/e2b --workspace=@evolvingmachines/sdk",
     "dev": "tsc --watch"
   },
