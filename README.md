@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/evolve-logo.png?v=2" alt="Evolve SDK" height="200">
+  <img src="assets/logo/evolve-logo.png" alt="Evolve SDK" height="200">
 </p>
 
 <p align="center">
