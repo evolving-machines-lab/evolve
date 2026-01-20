@@ -163,11 +163,17 @@ jobs:
           echo "Updated all version files"
 
       # =======================================================================
-      # BUILD
+      # BUILD (in dependency order: e2b → sdk-ts → python-bridge)
       # =======================================================================
 
-      - name: Build all packages
-        run: npm run build
+      - name: Build @evolvingmachines/e2b
+        run: npm run build --workspace=@evolvingmachines/e2b
+
+      - name: Build @evolvingmachines/sdk
+        run: npm run build --workspace=@evolvingmachines/sdk
+
+      - name: Build Python bridge
+        run: npm run build --workspace=evolve-sdk-python-bridge
 
       # =======================================================================
       # PUBLISH
