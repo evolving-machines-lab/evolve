@@ -52,8 +52,12 @@ npm run build
 **Unit tests** run locally without external dependencies:
 
 ```bash
-npm run test:ts:unit       # TypeScript unit tests
-npm run test:py:unit       # Python unit tests
+# TypeScript
+npm run test:ts:unit
+
+# Python (install dev deps first)
+pip install -e "packages/sdk-py[dev]"
+npm run test:py:unit
 ```
 
 **Integration tests** spawn real sandboxes and agents, so they require a `.env` file at the repo root:
@@ -95,7 +99,7 @@ The root `npm run build` handles this automatically.
 
 1. Fork the repo and create a branch from `main`
 2. Make your changes
-3. Ensure tests pass (`npm run test:ts`)
+3. Ensure unit tests pass (`npm run test:ts:unit`)
 4. Open a PR with a clear description
 
 ## Questions?
