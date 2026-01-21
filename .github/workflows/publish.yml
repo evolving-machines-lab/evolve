@@ -54,7 +54,7 @@ jobs:
         run: pip install build twine
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       # =======================================================================
       # GUARDS
