@@ -69,7 +69,7 @@ When using `EVOLVE_API_KEY`:
 | Setup | `EVOLVE_API_KEY` | Model provider keys + [`E2B_API_KEY`](https://e2b.dev) |
 | Observability | [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) | `~/.evolve-sdk/observability/` |
 | Browser | `browser-use` integrated | Via skills or MCP |
-| Billing | Swarmlink, Inc. | Your provider accounts |
+| Billing | Evolving Machines | Your provider accounts |
 
 ---
 
