@@ -55,9 +55,12 @@ npm run build
 # TypeScript
 npm run test:ts:unit
 
-# Python (install dev deps first)
-pip install -e "packages/sdk-py[dev]"
-npm run test:py:unit
+# Python
+cd packages/sdk-py
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+pytest tests/unit -v
 ```
 
 **Integration tests** spawn real sandboxes and agents, so they require a `.env` file at the repo root:

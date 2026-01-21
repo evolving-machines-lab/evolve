@@ -106,6 +106,7 @@ def create_mock_swarm_for_verify(
         agent: Any = None,
         mcp_servers: Any = None,
         skills: Any = None,
+        composio: Any = None,
         tag_prefix: str = "",
         timeout: int = 60000,
         observability: Optional[Dict[str, Any]] = None,
