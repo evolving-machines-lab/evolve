@@ -100,7 +100,7 @@ export interface AgentRegistryEntry {
  */
 export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
   claude: {
-    templateId: "swarmkit-all",
+    templateId: "evolve-all",
     apiKeyEnv: "ANTHROPIC_API_KEY",
     oauthEnv: "CLAUDE_CODE_OAUTH_TOKEN",
     baseUrlEnv: "ANTHROPIC_BASE_URL",
@@ -133,7 +133,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
   },
 
   codex: {
-    templateId: "swarmkit-all",
+    templateId: "evolve-all",
     apiKeyEnv: "OPENAI_API_KEY",
     baseUrlEnv: "OPENAI_BASE_URL",
     defaultModel: "gpt-5.2",
@@ -162,7 +162,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
   },
 
   gemini: {
-    templateId: "swarmkit-all",
+    templateId: "evolve-all",
     apiKeyEnv: "GEMINI_API_KEY",
     baseUrlEnv: "GOOGLE_GEMINI_BASE_URL",
     defaultModel: "gemini-3-flash-preview",
@@ -191,7 +191,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
   },
 
   qwen: {
-    templateId: "swarmkit-all",
+    templateId: "evolve-all",
     apiKeyEnv: "OPENAI_API_KEY",
     baseUrlEnv: "OPENAI_BASE_URL",
     defaultModel: "qwen3-coder-plus",
