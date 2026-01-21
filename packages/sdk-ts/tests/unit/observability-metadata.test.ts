@@ -29,7 +29,7 @@ import {
   type JudgeMeta,
   type VerifyMeta,
   type PipelineContext,
-} from "../../src/index.js";
+} from "../../dist/index.js";
 import { z } from "zod";
 
 // =============================================================================

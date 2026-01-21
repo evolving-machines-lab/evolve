@@ -23,7 +23,7 @@ import {
   type SwarmConfig,
   type FileMap,
   type SkillName,
-} from "../../src/index.js";
+} from "../../dist/index.js";
 import { z } from "zod";
 
 // =============================================================================

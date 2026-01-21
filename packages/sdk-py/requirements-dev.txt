@@ -1,5 +1,4 @@
-# Development dependencies for Evolve SDK Python SDK tests
--e .  # Install evolve-sdk package in editable mode
+# Development dependencies for Evolve SDK Python tests
 pytest>=8.0.0
 pytest-asyncio>=0.23.0
 python-dotenv>=1.0.0

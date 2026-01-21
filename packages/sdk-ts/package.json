@@ -39,6 +39,7 @@
     "dev": "tsup src/index.ts --watch",
     "type-check": "tsc --noEmit",
     "test": "npm run test:unit && npm run test:integration",
+    "pretest:unit": "npm run build",
     "test:unit": "tsx tests/unit/semaphore.test.ts && tsx tests/unit/swarm-concurrency.test.ts && tsx tests/unit/swarm-verify.test.ts && tsx tests/unit/swarm-retry-verify.test.ts && tsx tests/unit/prompt-construction.test.ts && tsx tests/unit/observability-metadata.test.ts && tsx tests/unit/skills-integration.test.ts && tsx tests/unit/auth-config.test.ts",
     "test:unit:semaphore": "tsx tests/unit/semaphore.test.ts",
     "test:unit:swarm": "tsx tests/unit/swarm-concurrency.test.ts",

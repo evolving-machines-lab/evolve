@@ -16,7 +16,7 @@
  *   npx tsx tests/unit/swarm-concurrency.test.ts
  */
 
-import { Swarm, type SwarmConfig, type FileMap } from "../../src/index.js";
+import { Swarm, type SwarmConfig, type FileMap } from "../../dist/index.js";
 import { z } from "zod";
 
 // =============================================================================

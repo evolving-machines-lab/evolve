@@ -13,7 +13,7 @@
  *   npx tsx tests/unit/swarm-retry-verify.test.ts
  */
 
-import { Swarm, type SwarmConfig, type FileMap, type SwarmResult } from "../../src/index.js";
+import { Swarm, type SwarmConfig, type FileMap, type SwarmResult } from "../../dist/index.js";
 import { z } from "zod";
 
 // =============================================================================

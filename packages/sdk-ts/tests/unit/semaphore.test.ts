@@ -10,7 +10,7 @@
  *   npx tsx tests/unit/semaphore.test.ts
  */
 
-import { Semaphore } from "../../src/index.js";
+import { Semaphore } from "../../dist/index.js";
 
 // =============================================================================
 // TEST HELPERS
