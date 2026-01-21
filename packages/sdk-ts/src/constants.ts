@@ -24,7 +24,7 @@
 export function getGatewayUrl(): string {
   return (
     process.env.EVOLVE_GATEWAY_URL ||
-    "https://evolve-gateway-692833842999.us-central1.run.app"
+    "https://swarmkit-gateway-692833842999.us-central1.run.app"
   );
 }
 
