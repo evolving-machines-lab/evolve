@@ -35,6 +35,8 @@ Found a bug or have a feature request? [Open a GitHub issue](https://github.com/
 
 ## Development Setup
 
+**Requirements:** Node.js 18+
+
 ```bash
 # Clone the repo
 git clone https://github.com/evolving-machines-lab/evolve.git
@@ -57,9 +59,8 @@ npm run test:ts:unit
 
 # Python
 cd packages/sdk-py
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt
 pytest tests/unit -v
 ```
 

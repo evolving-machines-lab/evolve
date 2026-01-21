@@ -26,7 +26,7 @@ import {
   SYSTEM_PROMPT,
   SCHEMA_PROMPT,
   JUDGE_PROMPT,
-} from "../../src/index.js";
+} from "../../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = resolve(__dirname, "../test-logs/prompt-construction");
