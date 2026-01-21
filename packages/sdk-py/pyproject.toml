@@ -8,7 +8,7 @@ version = "0.0.4"
 description = "Pythonic SDK for multi-agent orchestration in E2B sandboxes"
 readme = "README.md"
 requires-python = ">=3.11"
-license = {text = "AGPL-3.0"}
+license = {text = "Apache-2.0"}
 authors = [
     {name = "Swarmlink, Inc.", email = "brandomagnani@evolvingmachines.ai"}
 ]
@@ -16,7 +16,7 @@ keywords = ["ai", "agents", "sandbox", "e2b", "orchestration", "codex", "claude"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: GNU Affero General Public License v3",
+    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
