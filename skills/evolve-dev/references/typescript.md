@@ -839,7 +839,7 @@ function extractBrowserUseUrls(text: string): { liveUrl?: string; screenshotUrl?
     try {
       const parsed = JSON.parse(text) as BrowserUseResponse;
       if (!liveUrl) liveUrl = parsed.live_url;
-      if (!screenshotUrl) screenshotUrl = parsed.screenshot_url ?? parsed.steps?.[0]?.screenshot_url;
+      if (!screenshotUrl) screenshotUrl = parsed.screenshot_url ?? parsed.steps?.[parsed.steps.length - 1]?.screenshot_url;
     } catch {}
   }
 
