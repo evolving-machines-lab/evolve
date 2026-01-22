@@ -830,8 +830,9 @@ def extract_browser_use_urls(text: str) -> dict[str, Optional[str]]:
             if not live_url:
                 live_url = parsed.get("live_url")
             if not screenshot_url:
+                steps = parsed.get("steps", [])
                 screenshot_url = parsed.get("screenshot_url") or (
-                    parsed.get("steps", [{}])[0].get("screenshot_url")
+                    steps[-1].get("screenshot_url") if steps else None
                 )
         except (json.JSONDecodeError, IndexError, KeyError):
             pass
