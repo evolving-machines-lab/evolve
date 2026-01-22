@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  Embed autonomous AI agents into any application — in a few lines of code.
+  Run, deploy and monitor CLI agents in secure Cloud sandboxes.
 </p>
 
 <br>
