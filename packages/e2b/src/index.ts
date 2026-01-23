@@ -63,14 +63,14 @@ export interface SandboxCommandResult {
 
 /** Handle to a running background process in sandbox */
 export interface SandboxCommandHandle {
-  readonly pid: number;
+  readonly processId: string;
   wait(): Promise<SandboxCommandResult>;
   kill(): Promise<boolean>;
 }
 
 /** Information about a running process */
 export interface ProcessInfo {
-  pid: number;
+  processId: string;
   cmd: string;
   args: string[];
   envs: Record<string, string>;
@@ -81,7 +81,7 @@ export interface ProcessInfo {
 /** Sandbox metadata and lifecycle info */
 export interface SandboxInfo {
   sandboxId: string;
-  templateId: string;
+  image: string;
   name?: string;
   metadata: Record<string, string>;
   startedAt: string;
@@ -143,7 +143,7 @@ export interface SandboxConnectOptions {
 
 /** Options for creating a sandbox */
 export interface SandboxCreateOptions {
-  templateId: string;
+  image: string;
   envs?: Record<string, string>;
   metadata?: Record<string, string>;
   timeoutMs?: number;
@@ -172,14 +172,14 @@ export interface SandboxCommands {
   /** List running processes */
   list(): Promise<ProcessInfo[]>;
 
-  /** Connect to existing process by PID */
-  connect(pid: number, options?: SandboxConnectOptions): Promise<SandboxCommandHandle>;
+  /** Connect to existing process by ID */
+  connect(processId: string, options?: SandboxConnectOptions): Promise<SandboxCommandHandle>;
 
   /** Send data to process stdin */
-  sendStdin(pid: number, data: string): Promise<void>;
+  sendStdin(processId: string, data: string): Promise<void>;
 
-  /** Kill process by PID */
-  kill(pid: number): Promise<boolean>;
+  /** Kill process by ID */
+  kill(processId: string): Promise<boolean>;
 }
 
 /** File system operations */
@@ -336,7 +336,7 @@ class E2BCommands implements SandboxCommands {
     });
 
     return {
-      pid: handle.pid,
+      processId: String(handle.pid),
       wait: async () => {
         // E2B SDK throws CommandExitError on non-zero exit - normalize to result
         try {
@@ -363,18 +363,22 @@ class E2BCommands implements SandboxCommands {
   }
 
   async list(): Promise<ProcessInfo[]> {
-    return this.sandbox.commands.list();
+    const processes = await this.sandbox.commands.list();
+    return processes.map((p) => ({
+      ...p,
+      processId: String(p.pid),
+    }));
   }
 
-  async connect(pid: number, options?: SandboxConnectOptions): Promise<SandboxCommandHandle> {
-    const handle = await this.sandbox.commands.connect(pid, {
+  async connect(processId: string, options?: SandboxConnectOptions): Promise<SandboxCommandHandle> {
+    const handle = await this.sandbox.commands.connect(Number(processId), {
       onStdout: options?.onStdout,
       onStderr: options?.onStderr,
       timeoutMs: options?.timeoutMs,
     });
 
     return {
-      pid: handle.pid,
+      processId: String(handle.pid),
       wait: async () => {
         // E2B SDK throws CommandExitError on non-zero exit - normalize to result
         try {
@@ -400,12 +404,12 @@ class E2BCommands implements SandboxCommands {
     };
   }
 
-  async sendStdin(pid: number, data: string): Promise<void> {
-    await this.sandbox.commands.sendStdin(pid, data);
+  async sendStdin(processId: string, data: string): Promise<void> {
+    await this.sandbox.commands.sendStdin(Number(processId), data);
   }
 
-  async kill(pid: number): Promise<boolean> {
-    return this.sandbox.commands.kill(pid);
+  async kill(processId: string): Promise<boolean> {
+    return this.sandbox.commands.kill(Number(processId));
   }
 }
 
@@ -516,7 +520,7 @@ class E2BSandboxImpl implements SandboxInstance {
     const info = await this.sandbox.getInfo();
     return {
       sandboxId: info.sandboxId,
-      templateId: info.templateId,
+      image: info.templateId,  // E2B calls it templateId, we expose as image
       name: info.name,
       metadata: info.metadata ?? {},
       startedAt: toISOString(info.startedAt),
@@ -552,7 +556,8 @@ export class E2BSandboxProvider implements SandboxProvider {
   async create(options: SandboxCreateOptions): Promise<SandboxInstance> {
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
 
-    const sandbox = await E2BSandbox.create(options.templateId, {
+    // Map generic 'image' to E2B's 'templateId'
+    const sandbox = await E2BSandbox.create(options.image, {
       apiKey: this.apiKey,
       envs: options.envs,
       metadata: options.metadata,
@@ -589,7 +594,7 @@ export class E2BSandboxProvider implements SandboxProvider {
 
     return items.map((item) => ({
       sandboxId: item.sandboxId,
-      templateId: item.templateId,
+      image: item.templateId,  // E2B calls it templateId, we expose as image
       name: item.name,
       metadata: item.metadata ?? {},
       startedAt: toISOString(item.startedAt),

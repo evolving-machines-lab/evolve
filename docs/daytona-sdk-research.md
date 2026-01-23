@@ -659,6 +659,93 @@ image
   .dockerfileCommands(['RUN echo "custom"'], './context')
 ```
 
+### User Management
+
+No explicit `.setUser()` method - use `runCommands` to create users:
+
+```typescript
+const image = Image.debianSlim('3.12').runCommands(
+  'groupadd -r daytona && useradd -r -g daytona -m daytona',
+  'mkdir -p /home/daytona/workspace'
+)
+```
+
+### Creating Snapshots (Pre-built Images)
+
+```typescript
+// Build the image
+const image = Image.debianSlim('3.12')
+  .pipInstall(['pandas', 'numpy'])
+  .workdir('/home/daytona')
+
+// Create and register the snapshot
+await daytona.snapshot.create(
+  {
+    name: 'data-science-snapshot',
+    image,
+  },
+  {
+    onLogs: console.log,  // Stream build logs
+  }
+)
+
+// Use the snapshot
+const sandbox = await daytona.create({
+  snapshot: 'data-science-snapshot',
+})
+```
+
+### Evolve-All Equivalent Example
+
+Full example matching the E2B `evolve-all` template:
+
+```typescript
+import { Daytona, Image } from '@daytonaio/sdk'
+
+const daytona = new Daytona()
+
+const evolveImage = Image.base('ubuntu:22.04')
+  // System packages
+  .runCommands(
+    'apt-get update && apt-get install -y curl git ripgrep wget gnupg nodejs npm',
+    // Google Chrome
+    'wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome-keyring.gpg',
+    'echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list',
+    'apt-get update && apt-get install -y google-chrome-stable',
+    // UV package manager
+    'curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh'
+  )
+  // AI Coding CLIs
+  .runCommands(
+    'npm install -g @anthropic-ai/claude-code@latest @openai/codex @google/gemini-cli@latest @qwen-code/qwen-code@latest',
+    'npm install -g @zed-industries/claude-code-acp@latest @zed-industries/codex-acp@latest',
+    'npm install -g mcp-remote'
+  )
+  // User setup
+  .runCommands(
+    'groupadd -r user && useradd -r -g user -m user',
+    'mkdir -p /home/user/.evolve/skills /home/user/.claude/skills /home/user/.codex/skills /home/user/.gemini/skills /home/user/.qwen/skills'
+  )
+  .workdir('/home/user')
+  // Skills
+  .runCommands(
+    'git clone --depth 1 --filter=blob:none --sparse https://github.com/evolving-machines-lab/evolve.git /tmp/evolve && cd /tmp/evolve && git sparse-checkout set skills && mv skills/* /home/user/.evolve/skills/ && rm -rf /tmp/evolve'
+  )
+  // Gemini settings
+  .runCommands(
+    'echo \'{"experimental":{"skills":true}}\' > /home/user/.gemini/settings.json',
+    'echo y | gemini extensions install https://github.com/gemini-cli-extensions/nanobanana'
+  )
+  // Browser automation
+  .runCommands('npx playwright install chromium')
+
+// Register snapshot
+await daytona.snapshot.create(
+  { name: 'evolve-all', image: evolveImage },
+  { onLogs: console.log }
+)
+```
+
 ---
 
 ## Git Operations
