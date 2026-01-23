@@ -48,8 +48,8 @@ export interface BuildCommandOptions {
 }
 
 export interface AgentRegistryEntry {
-  /** E2B template ID for sandbox creation */
-  templateId: string;
+  /** Sandbox image/template identifier (provider maps to its own concept) */
+  image: string;
 
   /** Environment variable name for API key */
   apiKeyEnv: string;
@@ -100,7 +100,7 @@ export interface AgentRegistryEntry {
  */
 export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
   claude: {
-    templateId: "evolve-all",
+    image: "evolve-all",
     apiKeyEnv: "ANTHROPIC_API_KEY",
     oauthEnv: "CLAUDE_CODE_OAUTH_TOKEN",
     baseUrlEnv: "ANTHROPIC_BASE_URL",
@@ -133,7 +133,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
   },
 
   codex: {
-    templateId: "evolve-all",
+    image: "evolve-all",
     apiKeyEnv: "OPENAI_API_KEY",
     baseUrlEnv: "OPENAI_BASE_URL",
     defaultModel: "gpt-5.2",
@@ -162,7 +162,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
   },
 
   gemini: {
-    templateId: "evolve-all",
+    image: "evolve-all",
     apiKeyEnv: "GEMINI_API_KEY",
     baseUrlEnv: "GOOGLE_GEMINI_BASE_URL",
     defaultModel: "gemini-3-flash-preview",
@@ -191,7 +191,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
   },
 
   qwen: {
-    templateId: "evolve-all",
+    image: "evolve-all",
     apiKeyEnv: "OPENAI_API_KEY",
     baseUrlEnv: "OPENAI_BASE_URL",
     defaultModel: "qwen3-coder-plus",

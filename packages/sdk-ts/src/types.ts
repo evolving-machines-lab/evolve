@@ -34,14 +34,14 @@ export interface SandboxCommandResult {
 
 /** Handle to a running background process in sandbox */
 export interface SandboxCommandHandle {
-  readonly pid: number;
+  readonly processId: string;
   wait(): Promise<SandboxCommandResult>;
   kill(): Promise<boolean>;
 }
 
 /** Information about a running process */
 export interface ProcessInfo {
-  pid: number;
+  processId: string;
   cmd: string;
   args: string[];
   envs: Record<string, string>;
@@ -65,7 +65,7 @@ export interface SandboxSpawnOptions extends SandboxRunOptions {
 
 /** Options for creating a sandbox */
 export interface SandboxCreateOptions {
-  templateId: string;
+  image: string;
   envs?: Record<string, string>;
   metadata?: Record<string, string>;
   timeoutMs?: number;
@@ -77,7 +77,7 @@ export interface SandboxCommands {
   run(command: string, options?: SandboxRunOptions): Promise<SandboxCommandResult>;
   spawn(command: string, options?: SandboxSpawnOptions): Promise<SandboxCommandHandle>;
   list(): Promise<ProcessInfo[]>;
-  kill(pid: number): Promise<boolean>;
+  kill(processId: string): Promise<boolean>;
 }
 
 /** File system operations */
