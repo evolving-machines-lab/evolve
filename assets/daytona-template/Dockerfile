@@ -16,7 +16,7 @@
 # Push:  docker push evolvingmachines/evolve-all:latest
 # =============================================================================
 
-FROM python:3.12-slim-bookworm
+FROM daytonaio/sandbox:latest
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
