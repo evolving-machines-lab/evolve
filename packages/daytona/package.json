@@ -1,0 +1,39 @@
+{
+  "name": "@evolvingmachines/daytona",
+  "version": "0.1.0",
+  "description": "Daytona sandbox provider for Evolve SDK",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts",
+    "typecheck": "tsc --noEmit"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "keywords": [
+    "evolve",
+    "daytona",
+    "sandbox",
+    "ai",
+    "agents"
+  ],
+  "author": "Evolving Machines",
+  "license": "Apache-2.0",
+  "peerDependencies": {
+    "@daytonaio/sdk": ">=0.10.0"
+  },
+  "devDependencies": {
+    "@daytonaio/sdk": "^0.14.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0"
+  }
+}
