@@ -50,14 +50,17 @@ RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | gpg --d
     && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
-# UV package manager for Python
+# Python 3.12 via UV
 # ---------------------------------------------------------------------------
-RUN curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh
+RUN curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh \
+    && uv python install 3.12 \
+    && ln -s $(uv python find 3.12) /usr/local/bin/python3 \
+    && ln -s /usr/local/bin/python3 /usr/local/bin/python
 
 # ---------------------------------------------------------------------------
 # Verify installations
 # ---------------------------------------------------------------------------
-RUN node -v && npm -v && git --version && google-chrome --version
+RUN node -v && npm -v && python3 --version && git --version && google-chrome --version
 
 # ---------------------------------------------------------------------------
 # AI Coding CLIs (global npm packages)
