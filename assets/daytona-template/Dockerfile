@@ -16,7 +16,7 @@
 # Push:  docker push evolvingmachines/evolve-all:latest
 # =============================================================================
 
-FROM ubuntu:22.04
+FROM python:3.12-slim-bookworm
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
@@ -48,14 +48,6 @@ RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | gpg --d
     && apt-get update \
     && apt-get install -y google-chrome-stable \
     && rm -rf /var/lib/apt/lists/*
-
-# ---------------------------------------------------------------------------
-# Python 3.12 via UV
-# ---------------------------------------------------------------------------
-RUN curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh \
-    && uv python install 3.12 \
-    && ln -s $(uv python find 3.12) /usr/local/bin/python3 \
-    && ln -s /usr/local/bin/python3 /usr/local/bin/python
 
 # ---------------------------------------------------------------------------
 # Verify installations
