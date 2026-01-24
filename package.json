@@ -24,6 +24,7 @@
     "typescript": "^5.8.3"
   },
   "dependencies": {
+    "@daytonaio/sdk": "^0.134.0",
     "dotenv": "^17.2.3",
     "e2b": "^2.10.3"
   }
