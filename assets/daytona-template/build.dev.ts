@@ -13,6 +13,10 @@ async function main() {
     {
       name: 'evolve-all-dev',
       image,
+      resources: {
+        cpu: 4,
+        memory: 4,  // GB
+      },
     },
     {
       onLogs: (log) => console.log(log),
