@@ -17,7 +17,7 @@ import { Image } from '@daytonaio/sdk'
 // To rebuild: npm run build (or ./build.sh)
 // =============================================================================
 
-export const image = Image.debianSlim('3.12')  // Python 3.12 pre-installed
+export const image = Image.base('daytonaio/sandbox:latest')  // Python + Node + data science packages
 
   // ---------------------------------------------------------------------------
   // System packages
