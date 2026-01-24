@@ -29,8 +29,8 @@ export const image = Image.base('ubuntu:22.04')
     'curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs',
     // Google Chrome
     'wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome-keyring.gpg && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list && apt-get update && apt-get install -y google-chrome-stable',
-    // UV package manager for Python
-    'curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh',
+    // UV + Python 3.12
+    'curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh && uv python install 3.12 && ln -s $(uv python find 3.12) /usr/local/bin/python3 && ln -s /usr/local/bin/python3 /usr/local/bin/python',
     // Cleanup
     'rm -rf /var/lib/apt/lists/*'
   )
@@ -38,7 +38,7 @@ export const image = Image.base('ubuntu:22.04')
   // ---------------------------------------------------------------------------
   // Verify installations
   // ---------------------------------------------------------------------------
-  .runCommands('node -v && npm -v && git --version && google-chrome --version')
+  .runCommands('node -v && npm -v && python3 --version && git --version && google-chrome --version')
 
   // ---------------------------------------------------------------------------
   // AI Coding CLIs (global npm packages)
