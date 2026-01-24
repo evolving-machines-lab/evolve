@@ -11,7 +11,8 @@ evolve/
 │   ├── sdk-py/          # Python SDK (evolve-sdk)
 │   └── e2b/             # E2B sandbox wrapper (@evolvingmachines/e2b)
 ├── assets/
-│   └── e2b-templates/   # E2B sandbox template (Claude, Codex, Gemini, Qwen)
+│   ├── e2b-template/      # E2B sandbox template (Claude, Codex, Gemini, Qwen)
+│   └── daytona-template/  # Daytona sandbox snapshot (Claude, Codex, Gemini, Qwen)
 ├── skills/              # Agent skills (pdf, docx, browser, etc.)
 ├── cookbooks/           # Example applications
 └── docs/                # Documentation
