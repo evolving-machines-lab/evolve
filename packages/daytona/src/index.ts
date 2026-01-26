@@ -9,7 +9,7 @@
  * - Users never need to think about images
  */
 
-import { Daytona, Image } from "@daytonaio/sdk";
+import { Daytona } from "@daytonaio/sdk";
 import type { Sandbox as DaytonaSandbox } from "@daytonaio/sdk";
 
 // ============================================================
@@ -113,7 +113,7 @@ export interface SandboxInstance {
   readonly sandboxId: string;
   readonly commands: SandboxCommands;
   readonly files: SandboxFiles;
-  getHost(port: number): string;
+  getHost(port: number): Promise<string>;
   kill(): Promise<void>;
   pause(): Promise<void>;
 }
@@ -156,11 +156,57 @@ class DaytonaCommands implements SandboxCommands {
   constructor(private sandbox: DaytonaSandbox) {}
 
   async run(command: string, options?: SandboxRunOptions): Promise<SandboxCommandResult> {
-    // Daytona uses process.executeCommand for blocking execution
-    const result = await this.sandbox.process.executeCommand(command, {
-      cwd: options?.cwd,
-      timeout: options?.timeoutMs ? options.timeoutMs / 1000 : undefined,
-    });
+    // Convert timeout from ms to seconds
+    const timeoutSec = options?.timeoutMs ? Math.floor(options.timeoutMs / 1000) : undefined;
+
+    // Check if streaming is requested
+    if (options?.onStdout || options?.onStderr) {
+      // Streaming path: use ephemeral session
+      const sessionId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      await this.sandbox.process.createSession(sessionId);
+
+      try {
+        // Execute command in session
+        const resp = await this.sandbox.process.executeSessionCommand(sessionId, {
+          command,
+          async: false,
+        }, timeoutSec);
+
+        // Get command ID from response
+        const cmdId = resp.cmdId;
+        if (cmdId) {
+          // Stream logs with callbacks - use the overload with 4 args
+          await this.sandbox.process.getSessionCommandLogs(
+            sessionId,
+            cmdId,
+            options.onStdout || (() => {}),
+            options.onStderr || (() => {})
+          );
+        }
+
+        return {
+          exitCode: resp.exitCode ?? 0,
+          stdout: resp.output ?? "",
+          stderr: "",
+        };
+      } finally {
+        // Clean up session
+        try {
+          await this.sandbox.process.deleteSession(sessionId);
+        } catch {
+          // Ignore cleanup errors
+        }
+      }
+    }
+
+    // Non-streaming path: use executeCommand directly
+    // Daytona API: executeCommand(command, cwd?, env?, timeout?)
+    const result = await this.sandbox.process.executeCommand(
+      command,
+      options?.cwd,
+      options?.envs,
+      timeoutSec
+    );
 
     return {
       exitCode: result.exitCode,
@@ -171,29 +217,46 @@ class DaytonaCommands implements SandboxCommands {
 
   async spawn(command: string, options?: SandboxSpawnOptions): Promise<SandboxCommandHandle> {
     // Daytona uses sessions for background processes
-    const sessionId = `evolve-${Date.now()}`;
+    const sessionId = `evolve-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     await this.sandbox.process.createSession(sessionId);
 
+    // Convert timeout from ms to seconds
+    const timeoutSec = options?.timeoutMs ? Math.floor(options.timeoutMs / 1000) : undefined;
+
     // Execute command in async mode
-    const handle = await this.sandbox.process.executeSessionCommand(sessionId, {
+    const resp = await this.sandbox.process.executeSessionCommand(sessionId, {
       command,
       async: true,
-    });
+    }, timeoutSec);
+
+    const cmdId = resp.cmdId;
+
+    // If streaming callbacks provided, start streaming in background
+    if (cmdId && (options?.onStdout || options?.onStderr)) {
+      this.sandbox.process.getSessionCommandLogs(
+        sessionId,
+        cmdId,
+        options.onStdout || (() => {}),
+        options.onStderr || (() => {})
+      ).catch(() => {
+        // Ignore streaming errors for background processes
+      });
+    }
 
     return {
       processId: sessionId,
       wait: async () => {
-        // Wait for command to complete by polling or using session events
-        // For now, return immediately as async command
+        // Poll for completion by checking session
+        // For now, return the initial response
         return {
-          exitCode: 0,
-          stdout: "",
+          exitCode: resp.exitCode ?? 0,
+          stdout: resp.output ?? "",
           stderr: "",
         };
       },
       kill: async () => {
         try {
-          await this.sandbox.process.destroySession(sessionId);
+          await this.sandbox.process.deleteSession(sessionId);
           return true;
         } catch {
           return false;
@@ -203,14 +266,24 @@ class DaytonaCommands implements SandboxCommands {
   }
 
   async list(): Promise<ProcessInfo[]> {
-    // Daytona doesn't have direct process listing like E2B
-    // Return empty for now - sessions are tracked separately
-    return [];
+    // Daytona uses sessions, not PIDs
+    // Return sessions as process info
+    try {
+      const sessions = await this.sandbox.process.listSessions();
+      return sessions.map(session => ({
+        processId: session.sessionId || "",
+        cmd: "",
+        args: [],
+        envs: {},
+      }));
+    } catch {
+      return [];
+    }
   }
 
   async kill(processId: string): Promise<boolean> {
     try {
-      await this.sandbox.process.destroySession(processId);
+      await this.sandbox.process.deleteSession(processId);
       return true;
     } catch {
       return false;
@@ -222,35 +295,50 @@ class DaytonaFiles implements SandboxFiles {
   constructor(private sandbox: DaytonaSandbox) {}
 
   async read(path: string): Promise<string | Uint8Array> {
-    const content = await this.sandbox.fs.readFile(path);
+    // Daytona downloadFile returns Buffer
+    const buffer = await this.sandbox.fs.downloadFile(path);
     if (isBinaryFile(path)) {
       // Return as Uint8Array for binary files
-      return new TextEncoder().encode(content);
+      return new Uint8Array(buffer);
     }
-    return content;
+    return buffer.toString("utf-8");
   }
 
   async write(path: string, content: string | Buffer | ArrayBuffer | Uint8Array): Promise<void> {
-    let data: string;
+    let buffer: Buffer;
     if (typeof content === "string") {
-      data = content;
-    } else if (content instanceof Buffer) {
-      data = content.toString("utf-8");
+      buffer = Buffer.from(content, "utf-8");
+    } else if (Buffer.isBuffer(content)) {
+      buffer = content;
     } else if (content instanceof ArrayBuffer) {
-      data = new TextDecoder().decode(content);
+      buffer = Buffer.from(content);
     } else if (content instanceof Uint8Array) {
-      data = new TextDecoder().decode(content);
+      buffer = Buffer.from(content);
     } else {
       throw new Error(`Unsupported content type: ${typeof content}`);
     }
-    await this.sandbox.fs.writeFile(path, data);
+    // Daytona API: uploadFile(buffer: Buffer, remotePath: string, timeout?)
+    await this.sandbox.fs.uploadFile(buffer, path);
   }
 
   async writeBatch(files: Array<{ path: string; data: string | Buffer | ArrayBuffer | Uint8Array }>): Promise<void> {
-    // Daytona doesn't have batch write, do sequential
-    for (const file of files) {
-      await this.write(file.path, file.data);
-    }
+    // Daytona's uploadFiles expects { source: string | Buffer, destination: string }[]
+    const uploads = files.map(file => {
+      let source: Buffer;
+      if (typeof file.data === "string") {
+        source = Buffer.from(file.data, "utf-8");
+      } else if (Buffer.isBuffer(file.data)) {
+        source = file.data;
+      } else if (file.data instanceof ArrayBuffer) {
+        source = Buffer.from(file.data);
+      } else if (file.data instanceof Uint8Array) {
+        source = Buffer.from(file.data);
+      } else {
+        throw new Error(`Unsupported content type: ${typeof file.data}`);
+      }
+      return { source, destination: file.path };
+    });
+    await this.sandbox.fs.uploadFiles(uploads);
   }
 
   async makeDir(path: string): Promise<void> {
@@ -271,9 +359,10 @@ class DaytonaSandboxImpl implements SandboxInstance {
     return this.sandbox.id;
   }
 
-  getHost(port: number): string {
-    // Daytona uses getPreviewLink for port forwarding
-    return this.sandbox.getPreviewLink(port);
+  async getHost(port: number): Promise<string> {
+    // Daytona getPreviewLink returns { url: string, token?: string }
+    const preview = await this.sandbox.getPreviewLink(port);
+    return preview.url;
   }
 
   async kill(): Promise<void> {
@@ -316,7 +405,7 @@ export class DaytonaSandboxProvider implements SandboxProvider {
           envVars: options.envs,
           labels: options.metadata,
           autoStopInterval: 0,  // Don't auto-stop
-        });
+        }, { timeout: timeoutSec });
       } else {
         throw new Error("Snapshot not active");
       }
@@ -343,7 +432,7 @@ export class DaytonaSandboxProvider implements SandboxProvider {
         },
         {
           timeout: timeoutSec,
-          onSnapshotCreateLogs: (log) => console.log(log),
+          onSnapshotCreateLogs: (log: string) => console.log(log),
         }
       );
     }

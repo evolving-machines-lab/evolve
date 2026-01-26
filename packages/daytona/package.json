@@ -29,10 +29,10 @@
   "author": "Evolving Machines",
   "license": "Apache-2.0",
   "peerDependencies": {
-    "@daytonaio/sdk": ">=0.10.0"
+    "@daytonaio/sdk": ">=0.130.0"
   },
   "devDependencies": {
-    "@daytonaio/sdk": "^0.14.0",
+    "@daytonaio/sdk": "^0.134.0",
     "tsup": "^8.0.0",
     "typescript": "^5.0.0"
   }
