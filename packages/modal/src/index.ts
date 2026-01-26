@@ -161,17 +161,27 @@ export interface ModalConfig {
   tokenSecret?: string;
   /** Default app name to use for sandboxes */
   appName?: string;
-  /** Default image to use (e.g., "python:3.13") */
+  /**
+   * Pre-built Modal image ID (e.g., "im-xxxxx").
+   * Use this for fastest cold starts (~3-5 seconds).
+   * Run `scripts/build_modal_image.py` to create and get the image ID.
+   */
+  imageId?: string;
+  /** Default Docker registry image to use (e.g., "node:20-slim"). Ignored if imageId is set. */
   defaultImage?: string;
   defaultTimeoutMs?: number;
+  /** Skip installing agent CLI in sandbox (for faster startup if using pre-built image) */
+  skipAgentSetup?: boolean;
 }
 
 interface ResolvedModalConfig {
   tokenId: string;
   tokenSecret: string;
   appName: string;
+  imageId?: string;
   defaultImage: string;
   defaultTimeoutMs: number;
+  skipAgentSetup: boolean;
 }
 
 // ============================================================
@@ -179,15 +189,44 @@ interface ResolvedModalConfig {
 // ============================================================
 
 class ModalCommands implements SandboxCommands {
-  constructor(private sandbox: ModalSandbox) {}
+  constructor(
+    private sandbox: ModalSandbox,
+    private runAsUser: boolean = true,
+    private inheritEnvs: Record<string, string> = {}
+  ) {}
 
   async run(command: string, options?: SandboxRunOptions): Promise<SandboxCommandResult> {
-    // Parse command into parts (Modal expects command array)
-    const parts = command.split(" ");
+    // Merge inherited env vars with command-specific ones
+    const envs = { ...this.inheritEnvs, ...options?.envs };
 
-    const process = await this.sandbox.exec(parts, {
-      env: options?.envs,
-      workdir: options?.cwd,
+    // Build command array
+    // If runAsUser is true, wrap command in su to run as non-root user
+    // This is needed because Claude CLI blocks --dangerously-skip-permissions for root
+    let execArgs: string[];
+    if (this.runAsUser) {
+      // Build environment export string for critical vars (auth tokens)
+      const envExports = Object.entries(envs)
+        .filter(([k]) => k.startsWith('ANTHROPIC_') || k.startsWith('CLAUDE_') || k.startsWith('OPENAI_') || k.startsWith('EVOLVE_'))
+        .map(([k, v]) => `export ${k}="${v.replace(/"/g, '\\"')}"`)
+        .join(' && ');
+
+      const cwd = options?.cwd || "/home/user/workspace";
+      const fullCommand = envExports
+        ? `${envExports} && cd ${cwd} && ${command}`
+        : `cd ${cwd} && ${command}`;
+
+      // Use su to switch to 'user' and run the command
+      // su - starts a login shell which properly handles the command
+      execArgs = ["su", "-", "user", "-c", fullCommand];
+    } else {
+      // Parse command into parts (Modal expects command array)
+      execArgs = command.split(" ");
+    }
+
+    const process = await this.sandbox.exec(execArgs, {
+      env: envs,
+      // Don't set workdir when using sudo - we handle it in the command
+      workdir: this.runAsUser ? undefined : options?.cwd,
       timeoutMs: options?.timeoutMs,
     });
 
@@ -212,11 +251,31 @@ class ModalCommands implements SandboxCommands {
   }
 
   async spawn(command: string, options?: SandboxSpawnOptions): Promise<SandboxCommandHandle> {
-    const parts = command.split(" ");
+    // Merge inherited env vars with command-specific ones
+    const envs = { ...this.inheritEnvs, ...options?.envs };
 
-    const process = await this.sandbox.exec(parts, {
-      env: options?.envs,
-      workdir: options?.cwd,
+    // Build command array, wrapping with su if needed
+    let execArgs: string[];
+    if (this.runAsUser) {
+      const envExports = Object.entries(envs)
+        .filter(([k]) => k.startsWith('ANTHROPIC_') || k.startsWith('CLAUDE_') || k.startsWith('OPENAI_') || k.startsWith('EVOLVE_'))
+        .map(([k, v]) => `export ${k}="${v.replace(/"/g, '\\"')}"`)
+        .join(' && ');
+
+      const cwd = options?.cwd || "/home/user/workspace";
+      const fullCommand = envExports
+        ? `${envExports} && cd ${cwd} && ${command}`
+        : `cd ${cwd} && ${command}`;
+
+      // Use su instead of sudo
+      execArgs = ["su", "-", "user", "-c", fullCommand];
+    } else {
+      execArgs = command.split(" ");
+    }
+
+    const process = await this.sandbox.exec(execArgs, {
+      env: envs,
+      workdir: this.runAsUser ? undefined : options?.cwd,
       timeoutMs: options?.timeoutMs,
     });
 
@@ -307,8 +366,9 @@ class ModalSandboxImpl implements SandboxInstance {
   constructor(
     private sandbox: ModalSandbox,
     private _sandboxId: string,
+    inheritEnvs: Record<string, string> = {},
   ) {
-    this.commands = new ModalCommands(sandbox);
+    this.commands = new ModalCommands(sandbox, true, inheritEnvs);
     this.files = new ModalFiles(sandbox);
   }
 
@@ -348,13 +408,21 @@ export class ModalSandboxProvider implements SandboxProvider {
     // Get or create the Modal app
     const app = await this.client.apps.fromName(this.config.appName, { createIfMissing: true });
 
-    // Determine image to use
-    // E2B templateId (like "evolve-all") is not a Docker image, so use defaultImage instead
-    // Only use templateId if it looks like a Docker image reference (contains : or /)
-    const imageName = (options.templateId && (options.templateId.includes(":") || options.templateId.includes("/")))
-      ? options.templateId
-      : this.config.defaultImage;
-    const image = this.client.images.fromRegistry(imageName);
+    // Determine image to use (priority: imageId > templateId > defaultImage)
+    // 1. If imageId is configured, use the pre-built Modal image (fastest cold start)
+    // 2. If templateId looks like a Docker image, use fromRegistry
+    // 3. Otherwise, use defaultImage from config
+    let image;
+    if (this.config.imageId) {
+      // Use pre-built Modal image for fastest cold starts (~3-5 seconds)
+      image = await this.client.images.fromId(this.config.imageId);
+    } else {
+      // Fall back to Docker registry image
+      const imageName = (options.templateId && (options.templateId.includes(":") || options.templateId.includes("/")))
+        ? options.templateId
+        : this.config.defaultImage;
+      image = this.client.images.fromRegistry(imageName);
+    }
 
     // Create sandbox with configuration
     const sandbox = await this.client.sandboxes.create(app, image, {
@@ -370,7 +438,62 @@ export class ModalSandboxProvider implements SandboxProvider {
       await sandbox.exec(["mkdir", "-p", options.workingDirectory]);
     }
 
-    return new ModalSandboxImpl(sandbox, sandboxId);
+    // Setup sandbox environment
+    // When using a pre-built image (imageId), skip all setup (user already exists)
+    // When using skipAgentSetup=true, skip npm install but still create user
+    // Otherwise, do full setup including Claude CLI installation
+    const skipAllSetup = !!this.config.imageId;
+    if (!skipAllSetup) {
+      await this.setupSandboxEnvironment(sandbox, this.config.skipAgentSetup);
+    }
+
+    // Pass environment variables to the sandbox implementation
+    // This ensures auth tokens are available when running commands as non-root user
+    return new ModalSandboxImpl(sandbox, sandboxId, options.envs || {});
+  }
+
+  /**
+   * Setup sandbox environment for running commands as non-root user
+   * @param sandbox The Modal sandbox instance
+   * @param skipClaudeInstall If true, skip npm install of Claude CLI (for pre-built images)
+   */
+  private async setupSandboxEnvironment(sandbox: ModalSandbox, skipClaudeInstall: boolean): Promise<void> {
+    // We always need:
+    // 1. A non-root 'user' account (Claude CLI blocks --dangerously-skip-permissions for root)
+    // 2. sudo access for the user
+    // 3. Workspace directories
+    //
+    // When skipClaudeInstall=false, we also install Claude CLI via npm (~2 min)
+    // When skipClaudeInstall=true, we assume Claude CLI is already in the image
+
+    const baseSetup = [
+      "apt-get update -qq && apt-get install -y -qq sudo > /dev/null 2>&1",
+      "useradd -m -s /bin/bash user 2>/dev/null || true",
+      "mkdir -p /home/user/.claude /home/user/.evolve/skills /home/user/workspace",
+      "chown -R user:user /home/user",
+      "grep -q '^user ALL' /etc/sudoers || echo 'user ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers",
+    ];
+
+    const claudeInstall = skipClaudeInstall
+      ? [] // Skip Claude CLI install - assume it's already in the image
+      : [
+          "apt-get install -y -qq python3 python3-pip > /dev/null 2>&1",
+          "npm install -g @anthropic-ai/claude-code 2>/dev/null",
+        ];
+
+    const setupCmd = [
+      "sh", "-c",
+      [...baseSetup, ...claudeInstall].join(" && "),
+    ];
+
+    try {
+      const timeoutMs = skipClaudeInstall ? 30000 : 180000; // 30s for quick setup, 3min for full
+      const proc = await sandbox.exec(setupCmd, { timeoutMs });
+      await proc.wait();
+    } catch (error) {
+      // Log but don't fail - the agent may not need Claude CLI
+      console.warn("[Modal] Failed to setup sandbox environment:", (error as Error).message);
+    }
   }
 
   async connect(sandboxId: string, timeoutMs?: number): Promise<SandboxInstance> {
@@ -416,7 +539,12 @@ export function createModalProvider(config: ModalConfig = {}): SandboxProvider {
     tokenId,
     tokenSecret,
     appName: config.appName ?? "evolve-sandbox",
-    defaultImage: config.defaultImage ?? "python:3.12-slim",
+    // Pre-built Modal image ID for fastest cold starts (~3-5 seconds)
+    // Run scripts/build_modal_image.py to create and get the image ID
+    imageId: config.imageId,
+    // Fallback: Use Node.js image from Docker registry (has npm for installing agent CLIs)
+    defaultImage: config.defaultImage ?? "node:20-slim",
     defaultTimeoutMs: config.defaultTimeoutMs ?? 3600000,
+    skipAgentSetup: config.skipAgentSetup ?? false,
   });
 }

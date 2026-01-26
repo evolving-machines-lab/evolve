@@ -109,14 +109,22 @@ class ModalProvider:
         token_id: Modal token ID (defaults to MODAL_TOKEN_ID env var)
         token_secret: Modal token secret (defaults to MODAL_TOKEN_SECRET env var)
         app_name: Modal app name to use (default: 'evolve-sandbox')
-        default_image: Default Docker image (default: 'python:3.12-slim')
+        image_id: Pre-built Modal image ID for fast cold starts (~3-5 seconds).
+                  Run `scripts/build_modal_image.py` to create the image and get ID.
+        default_image: Default Docker image (default: 'node:20-slim'). Ignored if image_id is set.
         timeout_ms: Sandbox timeout in milliseconds (default: 3600000 = 1 hour)
+        skip_agent_setup: Skip installing Claude CLI in sandbox (default: False)
     """
     token_id: Optional[str] = None
     token_secret: Optional[str] = None
     app_name: str = 'evolve-sandbox'
-    default_image: str = 'python:3.12-slim'
+    # Pre-built Modal image ID for fastest cold starts (~3-5 seconds)
+    # Run scripts/build_modal_image.py to create and get the ID
+    image_id: Optional[str] = None
+    # Fallback: Docker registry image (has npm for installing Claude CLI)
+    default_image: str = 'node:20-slim'
     timeout_ms: int = 3600000
+    skip_agent_setup: bool = False
 
     @property
     def type(self) -> Literal['modal']:
@@ -133,10 +141,14 @@ class ModalProvider:
             result['tokenSecret'] = self.token_secret
         if self.app_name:
             result['appName'] = self.app_name
+        if self.image_id:
+            result['imageId'] = self.image_id
         if self.default_image:
             result['defaultImage'] = self.default_image
         if self.timeout_ms:
             result['defaultTimeoutMs'] = self.timeout_ms
+        if self.skip_agent_setup:
+            result['skipAgentSetup'] = self.skip_agent_setup
         return result
 
 
