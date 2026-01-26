@@ -95,6 +95,12 @@ export const ENV_EVOLVE_API_KEY = "EVOLVE_API_KEY";
  */
 export const ENV_E2B_API_KEY = "E2B_API_KEY";
 
+/**
+ * Environment variable for Daytona API key
+ * @internal
+ */
+export const ENV_DAYTONA_API_KEY = "DAYTONA_API_KEY";
+
 // =============================================================================
 // DEFAULTS
 // =============================================================================
