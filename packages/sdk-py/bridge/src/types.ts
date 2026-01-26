@@ -65,7 +65,7 @@ export interface InitializeParams {
   betas?: string[];
   // Sandbox provider (optional - TS SDK resolves from EVOLVE_API_KEY env var)
   sandbox_provider?: {
-    type: 'e2b';
+    type: 'e2b' | 'modal';
     config: Record<string, any>;
   };
   working_directory?: string;
