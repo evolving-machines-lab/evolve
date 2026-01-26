@@ -56,7 +56,7 @@ class SandboxProvider(Protocol):
     """Sandbox provider protocol.
 
     Any sandbox provider must implement this protocol.
-    Currently supported: E2BProvider
+    Currently supported: E2BProvider, DaytonaProvider
 
     To add a new provider:
     1. Create a class with `type` and `config` properties
@@ -65,7 +65,7 @@ class SandboxProvider(Protocol):
 
     @property
     def type(self) -> str:
-        """Provider type identifier (e.g., 'e2b')."""
+        """Provider type identifier (e.g., 'e2b', 'daytona')."""
         ...
 
     @property
@@ -96,6 +96,41 @@ class E2BProvider:
         result = {}
         if self.api_key:
             result['apiKey'] = self.api_key
+        if self.timeout_ms:
+            result['defaultTimeoutMs'] = self.timeout_ms
+        return result
+
+
+@dataclass
+class DaytonaProvider:
+    """Daytona sandbox provider configuration.
+
+    Args:
+        api_key: Daytona API key (defaults to DAYTONA_API_KEY env var)
+        api_url: API URL (defaults to https://app.daytona.io/api)
+        target: Target region (defaults to 'us')
+        timeout_ms: Sandbox timeout in milliseconds (default: 3600000 = 1 hour)
+    """
+    api_key: Optional[str] = None
+    api_url: Optional[str] = None
+    target: Optional[str] = None
+    timeout_ms: int = 3600000
+
+    @property
+    def type(self) -> Literal['daytona']:
+        """Provider type."""
+        return 'daytona'
+
+    @property
+    def config(self) -> dict:
+        """Provider configuration dict."""
+        result = {}
+        if self.api_key:
+            result['apiKey'] = self.api_key
+        if self.api_url:
+            result['apiUrl'] = self.api_url
+        if self.target:
+            result['target'] = self.target
         if self.timeout_ms:
             result['defaultTimeoutMs'] = self.timeout_ms
         return result
