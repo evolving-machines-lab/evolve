@@ -1,22 +1,29 @@
 # =============================================================================
 # Evolve All-in-One Sandbox Image
 # =============================================================================
-# Single image with all AI coding CLIs and skills pre-installed.
+# Uses e2bdev/code-interpreter:latest as base for 100% parity with E2B template.
 #
-# Includes:
-#   - Claude Code (@anthropic-ai/claude-code)
-#   - Codex (@openai/codex)
-#   - Gemini CLI (@google/gemini-cli) + Nano Banana extension
-#   - Qwen Code (@qwen-code/qwen-code)
+# Base image includes:
+#   - Python 3.12 + ML/science packages (numpy, pandas, scikit-learn, scipy, etc.)
+#   - Node.js
+#   - Many pre-installed libraries (see E2B code-interpreter docs)
+#
+# This Dockerfile adds:
+#   - Google Chrome + Playwright for browser automation
+#   - Claude Code, Codex, Gemini CLI, Qwen Code
 #   - ACP adapters for Claude and Codex
-#   - Google Chrome for browser automation
-#   - Skills cloned from github.com/evolving-machines-lab/evolve
+#   - Skills from github.com/evolving-machines-lab/evolve
 #
 # Build: docker build --platform=linux/amd64 -t evolvingmachines/evolve-all:latest .
 # Push:  docker push evolvingmachines/evolve-all:latest
 # =============================================================================
 
-FROM daytonaio/sandbox:latest
+FROM e2bdev/code-interpreter:latest
+
+# ---------------------------------------------------------------------------
+# Switch to root for system installations
+# ---------------------------------------------------------------------------
+USER root
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
@@ -30,14 +37,6 @@ RUN apt-get update && apt-get install -y \
     ripgrep \
     wget \
     gnupg \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-# ---------------------------------------------------------------------------
-# Node.js 20.x
-# ---------------------------------------------------------------------------
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
@@ -48,6 +47,11 @@ RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | gpg --d
     && apt-get update \
     && apt-get install -y google-chrome-stable \
     && rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
+# UV package manager for Python
+# ---------------------------------------------------------------------------
+RUN curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh
 
 # ---------------------------------------------------------------------------
 # Verify installations
@@ -78,13 +82,17 @@ RUN npm install -g agent-browser
 # ---------------------------------------------------------------------------
 # User setup
 # ---------------------------------------------------------------------------
-RUN groupadd -r user && useradd -r -g user -m -s /bin/bash user \
-    && mkdir -p /home/user/.evolve/skills \
-                /home/user/.claude/skills \
-                /home/user/.codex/skills \
-                /home/user/.gemini/skills \
-                /home/user/.qwen/skills \
+RUN mkdir -p /home/user/.evolve/skills \
+             /home/user/.claude/skills \
+             /home/user/.codex/skills \
+             /home/user/.gemini/skills \
+             /home/user/.qwen/skills \
     && chown -R user:user /home/user
+
+# ---------------------------------------------------------------------------
+# Switch to user
+# ---------------------------------------------------------------------------
+USER user
 
 # ---------------------------------------------------------------------------
 # Working directory
@@ -98,14 +106,12 @@ RUN git clone --depth 1 --filter=blob:none --sparse https://github.com/evolving-
     && cd /tmp/evolve \
     && git sparse-checkout set skills \
     && mv skills/* /home/user/.evolve/skills/ \
-    && rm -rf /tmp/evolve \
-    && chown -R user:user /home/user/.evolve
+    && rm -rf /tmp/evolve
 
 # ---------------------------------------------------------------------------
 # Gemini settings (enable experimental skills)
 # ---------------------------------------------------------------------------
-RUN echo '{"experimental":{"skills":true}}' > /home/user/.gemini/settings.json \
-    && chown user:user /home/user/.gemini/settings.json
+RUN echo '{"experimental":{"skills":true}}' > /home/user/.gemini/settings.json
 
 # ---------------------------------------------------------------------------
 # Gemini Extensions (Nano Banana for image generation)

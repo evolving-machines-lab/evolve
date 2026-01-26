@@ -57,6 +57,11 @@ export const template = Template()
   .runCmd('npm install -g mcp-remote')
 
   // ---------------------------------------------------------------------------
+  // Agent Browser CLI (headless browser automation for AI agents)
+  // ---------------------------------------------------------------------------
+  .runCmd('npm install -g agent-browser')
+
+  // ---------------------------------------------------------------------------
   // User setup
   // ---------------------------------------------------------------------------
   .setUser('user')
@@ -68,9 +73,8 @@ export const template = Template()
   // ---------------------------------------------------------------------------
   // Skills
   // ---------------------------------------------------------------------------
-  // Clone skills from swarmkit repo (sparse checkout for skills/ only)
-  // TODO: Update to evolving-machines-lab/evolve once public
-  .runCmd('git clone --depth 1 --filter=blob:none --sparse https://github.com/brandomagnani/swarmkit.git /tmp/swarmkit && cd /tmp/swarmkit && git sparse-checkout set skills && mv skills/* ~/.evolve/skills/ && rm -rf /tmp/swarmkit')
+  // Clone skills from evolve repo (sparse checkout for skills/ only)
+  .runCmd('git clone --depth 1 --filter=blob:none --sparse https://github.com/evolving-machines-lab/evolve.git /tmp/evolve && cd /tmp/evolve && git sparse-checkout set skills && mv skills/* ~/.evolve/skills/ && rm -rf /tmp/evolve')
 
   // Enable Gemini experimental skills
   .runCmd('echo \'{"experimental":{"skills":true}}\' > ~/.gemini/settings.json')
