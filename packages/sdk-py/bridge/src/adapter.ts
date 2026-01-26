@@ -9,6 +9,7 @@
 
 import { Evolve, type AgentConfig, type AgentType, type ReasoningEffort } from '@evolvingmachines/sdk';
 import { createE2BProvider } from '@evolvingmachines/e2b';
+import { createModalProvider } from '@evolvingmachines/modal';
 import type {
   InitializeParams,
   RunParams,
@@ -97,6 +98,8 @@ export class EvolveAdapter {
     switch (config.type) {
       case 'e2b':
         return createE2BProvider(config.config as any);
+      case 'modal':
+        return createModalProvider(config.config as any);
       default:
         throw new Error(`Unsupported sandbox provider: ${config.type}`);
     }
