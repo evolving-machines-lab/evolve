@@ -1,7 +1,7 @@
 /**
  * Daytona Sandbox Provider
  *
- * @requires @daytonaio/sdk
+ * @requires @daytonaio/sdk >= 0.134.0
  *
  * Design principles:
  * - Mirror E2B provider interface for SDK compatibility
@@ -22,7 +22,7 @@ const EVOLVE_ALL_PUBLIC_IMAGE = "evolvingmachines/evolve-all:latest";
 /** Map of image names to public Docker images */
 const PUBLIC_IMAGE_MAP: Record<string, string> = {
   "evolve-all": EVOLVE_ALL_PUBLIC_IMAGE,
-  "evolve-all-dev": EVOLVE_ALL_PUBLIC_IMAGE,  // Dev uses same image
+  "evolve-all-dev": EVOLVE_ALL_PUBLIC_IMAGE,
 };
 
 const BINARY_EXTENSIONS = new Set([
@@ -39,6 +39,16 @@ const BINARY_EXTENSIONS = new Set([
 function isBinaryFile(path: string): boolean {
   const ext = path.substring(path.lastIndexOf(".")).toLowerCase();
   return BINARY_EXTENSIONS.has(ext);
+}
+
+function getParentDir(path: string): string {
+  const lastSlash = path.lastIndexOf("/");
+  return lastSlash > 0 ? path.substring(0, lastSlash) : "/";
+}
+
+function getBasename(path: string): string {
+  const lastSlash = path.lastIndexOf("/");
+  return lastSlash >= 0 ? path.substring(lastSlash + 1) : path;
 }
 
 // ============================================================
@@ -69,6 +79,23 @@ export interface ProcessInfo {
   tag?: string;
 }
 
+/** Sandbox metadata and lifecycle info */
+export interface SandboxInfo {
+  sandboxId: string;
+  image: string;
+  name?: string;
+  metadata: Record<string, string>;
+  startedAt: string;
+  endAt?: string;
+}
+
+/** File or directory entry info */
+export interface FileInfo {
+  name: string;
+  path: string;
+  type: "file" | "dir";
+}
+
 /** Options for blocking sandbox command execution */
 export interface SandboxRunOptions {
   timeoutMs?: number;
@@ -92,6 +119,13 @@ export interface SandboxCreateOptions {
   workingDirectory?: string;
 }
 
+/** Options for listing sandboxes */
+export interface SandboxListOptions {
+  state?: ("running" | "paused")[];
+  metadata?: Record<string, string>;
+  limit?: number;
+}
+
 /** Command execution capabilities */
 export interface SandboxCommands {
   run(command: string, options?: SandboxRunOptions): Promise<SandboxCommandResult>;
@@ -106,6 +140,10 @@ export interface SandboxFiles {
   write(path: string, content: string | Buffer | ArrayBuffer | Uint8Array): Promise<void>;
   writeBatch(files: Array<{ path: string; data: string | Buffer | ArrayBuffer | Uint8Array }>): Promise<void>;
   makeDir(path: string): Promise<void>;
+  exists(path: string): Promise<boolean>;
+  list(path: string): Promise<FileInfo[]>;
+  remove(path: string): Promise<void>;
+  rename(oldPath: string, newPath: string): Promise<void>;
 }
 
 /** Sandbox instance */
@@ -114,6 +152,8 @@ export interface SandboxInstance {
   readonly commands: SandboxCommands;
   readonly files: SandboxFiles;
   getHost(port: number): Promise<string>;
+  isRunning(): Promise<boolean>;
+  getInfo(): Promise<SandboxInfo>;
   kill(): Promise<void>;
   pause(): Promise<void>;
 }
@@ -124,6 +164,7 @@ export interface SandboxProvider {
   readonly name?: string;
   create(options: SandboxCreateOptions): Promise<SandboxInstance>;
   connect(sandboxId: string, timeoutMs?: number): Promise<SandboxInstance>;
+  list(options?: SandboxListOptions): Promise<SandboxInfo[]>;
 }
 
 // ============================================================
@@ -156,26 +197,21 @@ class DaytonaCommands implements SandboxCommands {
   constructor(private sandbox: DaytonaSandbox) {}
 
   async run(command: string, options?: SandboxRunOptions): Promise<SandboxCommandResult> {
-    // Convert timeout from ms to seconds
     const timeoutSec = options?.timeoutMs ? Math.floor(options.timeoutMs / 1000) : undefined;
 
-    // Check if streaming is requested
+    // Streaming path: use ephemeral session
     if (options?.onStdout || options?.onStderr) {
-      // Streaming path: use ephemeral session
       const sessionId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       await this.sandbox.process.createSession(sessionId);
 
       try {
-        // Execute command in session
         const resp = await this.sandbox.process.executeSessionCommand(sessionId, {
           command,
           async: false,
         }, timeoutSec);
 
-        // Get command ID from response
         const cmdId = resp.cmdId;
         if (cmdId) {
-          // Stream logs with callbacks - use the overload with 4 args
           await this.sandbox.process.getSessionCommandLogs(
             sessionId,
             cmdId,
@@ -190,7 +226,6 @@ class DaytonaCommands implements SandboxCommands {
           stderr: "",
         };
       } finally {
-        // Clean up session
         try {
           await this.sandbox.process.deleteSession(sessionId);
         } catch {
@@ -200,7 +235,7 @@ class DaytonaCommands implements SandboxCommands {
     }
 
     // Non-streaming path: use executeCommand directly
-    // Daytona API: executeCommand(command, cwd?, env?, timeout?)
+    // Evidence: Daytona SDK executeCommand(command, cwd?, env?, timeout?)
     const result = await this.sandbox.process.executeCommand(
       command,
       options?.cwd,
@@ -211,19 +246,16 @@ class DaytonaCommands implements SandboxCommands {
     return {
       exitCode: result.exitCode,
       stdout: result.result || "",
-      stderr: "",  // Daytona combines output in result
+      stderr: "",
     };
   }
 
   async spawn(command: string, options?: SandboxSpawnOptions): Promise<SandboxCommandHandle> {
-    // Daytona uses sessions for background processes
     const sessionId = `evolve-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     await this.sandbox.process.createSession(sessionId);
 
-    // Convert timeout from ms to seconds
     const timeoutSec = options?.timeoutMs ? Math.floor(options.timeoutMs / 1000) : undefined;
 
-    // Execute command in async mode
     const resp = await this.sandbox.process.executeSessionCommand(sessionId, {
       command,
       async: true,
@@ -231,7 +263,6 @@ class DaytonaCommands implements SandboxCommands {
 
     const cmdId = resp.cmdId;
 
-    // If streaming callbacks provided, start streaming in background
     if (cmdId && (options?.onStdout || options?.onStderr)) {
       this.sandbox.process.getSessionCommandLogs(
         sessionId,
@@ -246,8 +277,6 @@ class DaytonaCommands implements SandboxCommands {
     return {
       processId: sessionId,
       wait: async () => {
-        // Poll for completion by checking session
-        // For now, return the initial response
         return {
           exitCode: resp.exitCode ?? 0,
           stdout: resp.output ?? "",
@@ -266,8 +295,7 @@ class DaytonaCommands implements SandboxCommands {
   }
 
   async list(): Promise<ProcessInfo[]> {
-    // Daytona uses sessions, not PIDs
-    // Return sessions as process info
+    // Evidence: Daytona SDK listSessions() returns Session[]
     try {
       const sessions = await this.sandbox.process.listSessions();
       return sessions.map(session => ({
@@ -282,6 +310,7 @@ class DaytonaCommands implements SandboxCommands {
   }
 
   async kill(processId: string): Promise<boolean> {
+    // Evidence: Daytona SDK deleteSession(sessionId)
     try {
       await this.sandbox.process.deleteSession(processId);
       return true;
@@ -295,10 +324,9 @@ class DaytonaFiles implements SandboxFiles {
   constructor(private sandbox: DaytonaSandbox) {}
 
   async read(path: string): Promise<string | Uint8Array> {
-    // Daytona downloadFile returns Buffer
+    // Evidence: Daytona SDK downloadFile(remotePath) returns Buffer
     const buffer = await this.sandbox.fs.downloadFile(path);
     if (isBinaryFile(path)) {
-      // Return as Uint8Array for binary files
       return new Uint8Array(buffer);
     }
     return buffer.toString("utf-8");
@@ -317,12 +345,12 @@ class DaytonaFiles implements SandboxFiles {
     } else {
       throw new Error(`Unsupported content type: ${typeof content}`);
     }
-    // Daytona API: uploadFile(buffer: Buffer, remotePath: string, timeout?)
+    // Evidence: Daytona SDK uploadFile(buffer: Buffer, remotePath: string, timeout?)
     await this.sandbox.fs.uploadFile(buffer, path);
   }
 
   async writeBatch(files: Array<{ path: string; data: string | Buffer | ArrayBuffer | Uint8Array }>): Promise<void> {
-    // Daytona's uploadFiles expects { source: string | Buffer, destination: string }[]
+    // Evidence: Daytona SDK uploadFiles([{ source: Buffer, destination: string }])
     const uploads = files.map(file => {
       let source: Buffer;
       if (typeof file.data === "string") {
@@ -342,7 +370,41 @@ class DaytonaFiles implements SandboxFiles {
   }
 
   async makeDir(path: string): Promise<void> {
+    // Evidence: Daytona SDK createFolder(path: string, mode: string)
     await this.sandbox.fs.createFolder(path, "755");
+  }
+
+  async exists(path: string): Promise<boolean> {
+    // Evidence: Daytona SDK listFiles(path) returns FileInfo[]
+    // Check if file exists by listing parent directory and searching for basename
+    try {
+      const parentDir = getParentDir(path);
+      const basename = getBasename(path);
+      const files = await this.sandbox.fs.listFiles(parentDir);
+      return files.some(f => f.name === basename);
+    } catch {
+      return false;
+    }
+  }
+
+  async list(path: string): Promise<FileInfo[]> {
+    // Evidence: Daytona SDK listFiles(path) returns FileInfo[] with { name, isDir, size, ... }
+    const files = await this.sandbox.fs.listFiles(path);
+    return files.map(f => ({
+      name: f.name,
+      path: path.endsWith("/") ? `${path}${f.name}` : `${path}/${f.name}`,
+      type: f.isDir ? "dir" as const : "file" as const,
+    }));
+  }
+
+  async remove(path: string): Promise<void> {
+    // Evidence: Daytona SDK deleteFile(path: string, recursive?: boolean)
+    await this.sandbox.fs.deleteFile(path, true);
+  }
+
+  async rename(oldPath: string, newPath: string): Promise<void> {
+    // Evidence: Daytona SDK moveFiles(source: string, destination: string)
+    await this.sandbox.fs.moveFiles(oldPath, newPath);
   }
 }
 
@@ -356,20 +418,40 @@ class DaytonaSandboxImpl implements SandboxInstance {
   }
 
   get sandboxId(): string {
+    // Evidence: Daytona Sandbox has id property
     return this.sandbox.id;
   }
 
   async getHost(port: number): Promise<string> {
-    // Daytona getPreviewLink returns { url: string, token?: string }
+    // Evidence: Daytona SDK getPreviewLink(port) returns { url: string, token?: string }
     const preview = await this.sandbox.getPreviewLink(port);
     return preview.url;
   }
 
+  async isRunning(): Promise<boolean> {
+    // Evidence: Daytona Sandbox has state property (SandboxState enum)
+    // Values: "started", "stopped", "starting", "stopping", "unknown", etc.
+    return this.sandbox.state === "started";
+  }
+
+  async getInfo(): Promise<SandboxInfo> {
+    // Evidence: Daytona Sandbox properties: id, name, snapshot, labels
+    return {
+      sandboxId: this.sandbox.id,
+      image: this.sandbox.snapshot || "unknown",
+      name: this.sandbox.name,
+      metadata: this.sandbox.labels || {},
+      startedAt: new Date().toISOString(), // Daytona doesn't expose startedAt directly
+    };
+  }
+
   async kill(): Promise<void> {
+    // Evidence: Daytona SDK sandbox.delete()
     await this.sandbox.delete();
   }
 
   async pause(): Promise<void> {
+    // Evidence: Daytona SDK sandbox.stop()
     await this.sandbox.stop();
   }
 }
@@ -399,18 +481,18 @@ export class DaytonaSandboxProvider implements SandboxProvider {
     try {
       const snapshot = await this.client.snapshot.get(imageName);
       if (snapshot && snapshot.state === "active") {
-        // Snapshot exists and is active - use it
+        // Evidence: Daytona SDK create({ snapshot, envVars, labels, autoStopInterval })
         sandbox = await this.client.create({
           snapshot: imageName,
           envVars: options.envs,
           labels: options.metadata,
-          autoStopInterval: 0,  // Don't auto-stop
+          autoStopInterval: 0,
         }, { timeout: timeoutSec });
       } else {
         throw new Error("Snapshot not active");
       }
     } catch {
-      // Snapshot doesn't exist or not active - fall back to public image
+      // Snapshot doesn't exist - fall back to public image
       const publicImage = PUBLIC_IMAGE_MAP[imageName];
       if (!publicImage) {
         throw new Error(
@@ -422,7 +504,7 @@ export class DaytonaSandboxProvider implements SandboxProvider {
       console.log(`Snapshot "${imageName}" not found, creating from public image: ${publicImage}`);
       console.log("This may take a few minutes on first run (image will be cached)...");
 
-      // Create sandbox from public Docker image
+      // Evidence: Daytona SDK create({ image, envVars, labels }, { timeout, onSnapshotCreateLogs })
       sandbox = await this.client.create(
         {
           image: publicImage,
@@ -445,8 +527,23 @@ export class DaytonaSandboxProvider implements SandboxProvider {
   }
 
   async connect(sandboxId: string, _timeoutMs?: number): Promise<SandboxInstance> {
+    // Evidence: Daytona SDK get(sandboxId) returns Sandbox
     const sandbox = await this.client.get(sandboxId);
     return new DaytonaSandboxImpl(sandbox);
+  }
+
+  async list(options?: SandboxListOptions): Promise<SandboxInfo[]> {
+    // Evidence: Daytona SDK list(labels?, page?, limit?) returns PaginatedSandboxes
+    const limit = options?.limit ?? 100;
+    const result = await this.client.list(options?.metadata, 1, limit);
+
+    return result.items.map(sandbox => ({
+      sandboxId: sandbox.id,
+      image: sandbox.snapshot || "unknown",
+      name: sandbox.name,
+      metadata: sandbox.labels || {},
+      startedAt: new Date().toISOString(),
+    }));
   }
 }
 
