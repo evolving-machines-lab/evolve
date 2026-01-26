@@ -1,26 +1,19 @@
 import { Image } from '@daytonaio/sdk'
 
 // =============================================================================
-// Evolve Daytona Snapshot (Lightweight)
+// Evolve Daytona Snapshot
 // =============================================================================
-// Creates a snapshot from our public Docker image which includes:
-//   - Python 3.12 + essential packages (pandas, numpy, matplotlib, requests, etc.)
-//   - Node.js 20
-//   - Claude Code, Codex, Gemini CLI, Qwen Code
-//   - ACP adapters for Claude and Codex
+// Creates a snapshot from our public Docker image (evolvingmachines/evolve-all)
+// which is based on e2bdev/code-interpreter:latest for 100% parity with E2B.
+//
+// Includes:
+//   - Python 3.12 + ML/science packages (numpy, pandas, scikit-learn, scipy, etc.)
+//   - Node.js
+//   - Claude Code, Codex, Gemini CLI, Qwen Code + ACP adapters
 //   - Google Chrome + Playwright for browser automation
-//   - Skills cloned from github.com/evolving-machines-lab/evolve
+//   - Skills from github.com/evolving-machines-lab/evolve
 //
-// Does NOT include heavy ML libraries (tensorflow, pytorch) to keep image ~5GB.
-//
-// The Docker image is built separately and pushed to Docker Hub.
-// This template just creates a Daytona snapshot from that image.
-//
-// To rebuild:
-//   1. First push Docker image: cd assets/daytona-template && docker build && docker push
-//   2. Then create snapshot: ./build.sh
+// The Docker image is built and pushed via: ./build.sh
 // =============================================================================
 
 export const image = Image.base('evolvingmachines/evolve-all:latest')
-  .workdir('/home/user')
-  .cmd(['/bin/bash'])

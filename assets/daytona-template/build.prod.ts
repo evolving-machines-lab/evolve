@@ -8,7 +8,7 @@ config({ path: '../../.env' })
 const DOCKER_IMAGE = 'evolvingmachines/evolve-all:latest'
 const SNAPSHOT_NAME = 'evolve-all'
 
-// Parse args
+// Parse CLI args
 const args = process.argv.slice(2)
 const skipDocker = args.includes('--skip-docker')
 
@@ -30,30 +30,14 @@ async function buildAndPushDocker(): Promise<void> {
 
 async function deleteExistingSnapshot(daytona: Daytona): Promise<void> {
   try {
-    const result = await daytona.snapshot.list()
-    const existing = result.items.find((s: { name: string }) => s.name === SNAPSHOT_NAME)
-
-    if (existing) {
-      console.log(`Found existing snapshot "${SNAPSHOT_NAME}" (${existing.id}), state: ${existing.state}`)
-      console.log('Deleting existing snapshot...')
-
-      const apiKey = process.env.DAYTONA_API_KEY
-      const response = await fetch(`https://api.daytona.io/v1/snapshots/${existing.id}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        redirect: 'manual',
-      })
-
-      if (response.status === 200 || response.status === 204) {
-        console.log('Deleted! Waiting 10s...')
-        await new Promise(r => setTimeout(r, 10000))
-      }
-    }
-  } catch (error: any) {
-    console.log('Note: Could not delete existing snapshot:', error.message || error)
+    const snapshot = await daytona.snapshot.get(SNAPSHOT_NAME)
+    console.log(`Found existing snapshot "${snapshot.name}" (${snapshot.state})`)
+    console.log('Deleting...')
+    await daytona.snapshot.delete(snapshot)
+    console.log('Deleted. Waiting 5s for propagation...')
+    await new Promise(r => setTimeout(r, 5000))
+  } catch {
+    // Snapshot doesn't exist, nothing to delete
   }
 }
 
