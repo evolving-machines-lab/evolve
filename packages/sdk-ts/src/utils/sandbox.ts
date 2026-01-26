@@ -6,7 +6,7 @@
  */
 
 import type { SandboxProvider } from "../types";
-import { ENV_E2B_API_KEY, ENV_EVOLVE_API_KEY, getE2BGatewayUrl } from "../constants";
+import { ENV_E2B_API_KEY, ENV_EVOLVE_API_KEY, ENV_MODAL_TOKEN_ID, ENV_MODAL_TOKEN_SECRET, getE2BGatewayUrl } from "../constants";
 
 /**
  * Resolve default sandbox provider from environment.
@@ -60,10 +60,30 @@ export async function resolveDefaultSandbox(): Promise<SandboxProvider> {
     }
   }
 
+  // Direct mode (MODAL_TOKEN_ID + MODAL_TOKEN_SECRET) - Modal provider
+  const modalTokenId = process.env[ENV_MODAL_TOKEN_ID];
+  const modalTokenSecret = process.env[ENV_MODAL_TOKEN_SECRET];
+  if (modalTokenId && modalTokenSecret) {
+    try {
+      const { createModalProvider } = await import("@evolvingmachines/modal");
+      return createModalProvider({ tokenId: modalTokenId, tokenSecret: modalTokenSecret });
+    } catch (e) {
+      const error = e as Error;
+      if (error.message?.includes("Cannot find module") || error.message?.includes("MODULE_NOT_FOUND")) {
+        throw new Error(
+          `${ENV_MODAL_TOKEN_ID} is set but @evolvingmachines/modal failed to load.\n` +
+            "Try installing: npm install @evolvingmachines/modal"
+        );
+      }
+      throw error;
+    }
+  }
+
   throw new Error(
     "No sandbox provider configured. Either:\n" +
       `1. Set ${ENV_EVOLVE_API_KEY} environment variable (recommended, get key at https://dashboard.evolvingmachines.ai)\n` +
       `2. Set ${ENV_E2B_API_KEY} environment variable (direct E2B access, get key at https://e2b.dev)\n` +
-      "3. Pass sandbox explicitly: .withSandbox(provider)"
+      `3. Set ${ENV_MODAL_TOKEN_ID} and ${ENV_MODAL_TOKEN_SECRET} environment variables (Modal access)\n` +
+      "4. Pass sandbox explicitly: .withSandbox(provider)"
   );
 }
