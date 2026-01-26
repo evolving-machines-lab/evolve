@@ -76,6 +76,7 @@
     "@agentclientprotocol/sdk": "^0.5.1",
     "@composio/core": "^0.5.1",
     "@evolvingmachines/e2b": "file:../e2b",
+    "@evolvingmachines/daytona": "file:../daytona",
     "ajv": "^8.17.1",
     "p-map": "^7.0.2",
     "zod": "^3.24.0",
@@ -85,8 +86,5 @@
     "@types/node": "^22.15.18",
     "tsup": "^8.4.0",
     "typescript": "^5.8.3"
-  },
-  "optionalDependencies": {
-    "@evolvingmachines/daytona": "file:../daytona"
   }
 }
