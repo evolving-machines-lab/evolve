@@ -1,64 +1,53 @@
-# Daytona Snapshot
+# Daytona Template
 
-Single Evolve SDK Daytona snapshot with all AI coding CLIs pre-installed.
+Evolve SDK Daytona snapshot with all AI coding CLIs pre-installed.
+
+## Base Image
+
+`e2bdev/code-interpreter:latest` - same as E2B for 100% parity.
 
 ## Included
 
 - Claude Code + ACP adapter
 - Codex + ACP adapter
-- Gemini CLI
+- Gemini CLI + Nano Banana extension
 - Qwen Code
-- Google Chrome
-- Playwright (Chromium)
-- Skills from `skills/`
+- Google Chrome + Playwright
+- mcp-remote, agent-browser
+- UV package manager
+- Skills from `evolving-machines-lab/evolve`
 
 ## Usage
 
-### Build Daytona Snapshot (for org-private use)
-
 ```bash
-./build.sh           # builds evolve-all snapshot
-./build.sh dev       # builds evolve-all-dev snapshot
+./build.sh                  # Docker build + push + Daytona snapshot
+./build.sh --skip-docker    # Just Daytona snapshot (skip Docker)
+./build.sh dev              # Dev snapshot
 ```
 
-### Build Docker Image (for public distribution)
-
-```bash
-# Build for AMD64 (required for Daytona)
-docker build --platform=linux/amd64 -t evolvingmachines/evolve-all:latest .
-
-# Push to Docker Hub
-docker push evolvingmachines/evolve-all:latest
-```
+The build script:
+1. Builds Docker image (`evolvingmachines/evolve-all:latest`)
+2. Pushes to Docker Hub
+3. Creates Daytona snapshot from the image
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `template.ts` | Daytona Image builder (SDK-based) |
-| `Dockerfile` | Docker image (public distribution) |
-| `build.sh` | Shell wrapper for snapshot builds |
-| `build.dev.ts` | Dev snapshot build script |
-| `build.prod.ts` | Prod snapshot build script |
+| `Dockerfile` | Docker image definition |
+| `template.ts` | Daytona Image reference |
+| `build.prod.ts` | Full build script (Docker + Daytona) |
+| `build.dev.ts` | Dev snapshot build |
+| `build.sh` | Shell wrapper |
 
-## How SDK Users Get the Image
+## Public Image
 
-The Evolve SDK Daytona provider auto-handles images:
+Docker Hub: `evolvingmachines/evolve-all:latest`
 
-1. **If snapshot exists** → Uses cached snapshot (fast)
-2. **If no snapshot** → Creates from public Docker image (first-run slower, then cached)
-
-Users never need to think about images - it just works.
-
-## Update workflow
-
-| Change | Action |
-|--------|--------|
-| Update CLIs | Edit `template.ts` + `Dockerfile` → rebuild |
-| Add skills | Add to `skills/` → rebuild |
+Anyone can use this image directly. The Daytona snapshot is org-private but uses the public image.
 
 ## Prerequisites
 
-- Daytona API key (`DAYTONA_API_KEY` environment variable)
+- `DAYTONA_API_KEY` environment variable
+- Docker (logged into Docker Hub)
 - Node.js 18+
-- Docker (for public image builds)
