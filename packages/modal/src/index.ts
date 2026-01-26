@@ -348,8 +348,13 @@ export class ModalSandboxProvider implements SandboxProvider {
     // Get or create the Modal app
     const app = await this.client.apps.fromName(this.config.appName, { createIfMissing: true });
 
-    // Create image from template (templateId maps to image name)
-    const image = this.client.images.fromRegistry(options.templateId || this.config.defaultImage);
+    // Determine image to use
+    // E2B templateId (like "evolve-all") is not a Docker image, so use defaultImage instead
+    // Only use templateId if it looks like a Docker image reference (contains : or /)
+    const imageName = (options.templateId && (options.templateId.includes(":") || options.templateId.includes("/")))
+      ? options.templateId
+      : this.config.defaultImage;
+    const image = this.client.images.fromRegistry(imageName);
 
     // Create sandbox with configuration
     const sandbox = await this.client.sandboxes.create(app, image, {
