@@ -303,3 +303,84 @@ class ModalFiles implements SandboxFiles {
     await this.sandbox.exec(["mkdir", "-p", path]);
   }
 }
+
+class ModalSandboxImpl implements SandboxInstance {
+  readonly commands: SandboxCommands;
+  readonly files: SandboxFiles;
+
+  constructor(
+    private sandbox: ModalSandbox,
+    private _sandboxId: string,
+  ) {
+    this.commands = new ModalCommands(sandbox);
+    this.files = new ModalFiles(sandbox);
+  }
+
+  get sandboxId(): string {
+    return this._sandboxId;
+  }
+
+  getHost(port: number): string {
+    // Modal sandboxes expose ports differently - construct URL
+    // Format: https://<sandbox-id>--<port>.modal.run
+    return `https://${this._sandboxId}--${port}.modal.run`;
+  }
+
+  async kill(): Promise<void> {
+    await this.sandbox.terminate();
+  }
+
+  async pause(): Promise<void> {
+    // Modal doesn't support pause - kill instead
+    await this.sandbox.terminate();
+  }
+}
+
+export class ModalSandboxProvider implements SandboxProvider {
+  readonly providerType = "modal" as const;
+  private readonly client: ModalClient;
+  private readonly config: ResolvedModalConfig;
+
+  constructor(config: ResolvedModalConfig) {
+    this.config = config;
+    this.client = new ModalClient();
+  }
+
+  async create(options: SandboxCreateOptions): Promise<SandboxInstance> {
+    const timeoutMs = options.timeoutMs ?? this.config.defaultTimeoutMs;
+
+    // Get or create the Modal app
+    const app = await this.client.apps.fromName(this.config.appName, { createIfMissing: true });
+
+    // Create image from template (templateId maps to image name)
+    const image = this.client.images.fromRegistry(options.templateId || this.config.defaultImage);
+
+    // Create sandbox with configuration
+    const sandbox = await this.client.sandboxes.create(app, image, {
+      env: options.envs,
+      timeoutMs,
+      workdir: options.workingDirectory,
+    });
+
+    // Get sandbox ID
+    const sandboxId = sandbox.sandboxId;
+
+    if (options.workingDirectory) {
+      await sandbox.exec(["mkdir", "-p", options.workingDirectory]);
+    }
+
+    return new ModalSandboxImpl(sandbox, sandboxId);
+  }
+
+  async connect(sandboxId: string, timeoutMs?: number): Promise<SandboxInstance> {
+    // Connect to existing sandbox by ID
+    const sandbox = await this.client.sandboxes.fromId(sandboxId);
+    return new ModalSandboxImpl(sandbox, sandboxId);
+  }
+
+  async list(options?: SandboxListOptions): Promise<SandboxInfo[]> {
+    // Modal doesn't expose a sandbox listing API in the same way
+    // Return empty for now - users should track sandbox IDs
+    return [];
+  }
+}
