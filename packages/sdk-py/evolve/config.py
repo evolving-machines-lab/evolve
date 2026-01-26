@@ -56,7 +56,7 @@ class SandboxProvider(Protocol):
     """Sandbox provider protocol.
 
     Any sandbox provider must implement this protocol.
-    Currently supported: E2BProvider
+    Currently supported: E2BProvider, ModalProvider
 
     To add a new provider:
     1. Create a class with `type` and `config` properties
@@ -96,6 +96,45 @@ class E2BProvider:
         result = {}
         if self.api_key:
             result['apiKey'] = self.api_key
+        if self.timeout_ms:
+            result['defaultTimeoutMs'] = self.timeout_ms
+        return result
+
+
+@dataclass
+class ModalProvider:
+    """Modal sandbox provider configuration.
+
+    Args:
+        token_id: Modal token ID (defaults to MODAL_TOKEN_ID env var)
+        token_secret: Modal token secret (defaults to MODAL_TOKEN_SECRET env var)
+        app_name: Modal app name to use (default: 'evolve-sandbox')
+        default_image: Default Docker image (default: 'python:3.12-slim')
+        timeout_ms: Sandbox timeout in milliseconds (default: 3600000 = 1 hour)
+    """
+    token_id: Optional[str] = None
+    token_secret: Optional[str] = None
+    app_name: str = 'evolve-sandbox'
+    default_image: str = 'python:3.12-slim'
+    timeout_ms: int = 3600000
+
+    @property
+    def type(self) -> Literal['modal']:
+        """Provider type."""
+        return 'modal'
+
+    @property
+    def config(self) -> dict:
+        """Provider configuration dict."""
+        result = {}
+        if self.token_id:
+            result['tokenId'] = self.token_id
+        if self.token_secret:
+            result['tokenSecret'] = self.token_secret
+        if self.app_name:
+            result['appName'] = self.app_name
+        if self.default_image:
+            result['defaultImage'] = self.default_image
         if self.timeout_ms:
             result['defaultTimeoutMs'] = self.timeout_ms
         return result
