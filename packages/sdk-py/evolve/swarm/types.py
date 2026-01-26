@@ -39,7 +39,7 @@ class SwarmConfig:
 
     All fields are optional - TS SDK resolves defaults from environment:
     - agent defaults to EVOLVE_API_KEY env var with 'claude' type
-    - sandbox defaults to E2B with E2B_API_KEY env var
+    - sandbox auto-resolves: EVOLVE_API_KEY → E2B gateway, E2B_API_KEY → E2B direct, DAYTONA_API_KEY → Daytona
     """
     agent: Optional[AgentConfig] = None
     sandbox: Optional[SandboxProvider] = None

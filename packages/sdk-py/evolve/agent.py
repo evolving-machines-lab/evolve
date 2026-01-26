@@ -28,12 +28,16 @@ class Evolve:
         ...     for name, content in output.files.items():
         ...         print(f'{name}: {len(content)} bytes')
         >>>
-        >>> # Or with explicit config
+        >>> # Or with explicit config (E2B)
         >>> from evolve import AgentConfig, E2BProvider
         >>> evolve = Evolve(
         ...     config=AgentConfig(type='codex', api_key='sk-...'),
         ...     sandbox=E2BProvider(api_key='...')
         ... )
+        >>>
+        >>> # Or with Daytona
+        >>> from evolve import DaytonaProvider
+        >>> evolve = Evolve(sandbox=DaytonaProvider(api_key='...'))
     """
 
     # Static helpers for Composio pre-auth flows (no instance required)
@@ -61,7 +65,9 @@ class Evolve:
 
         Args:
             config: Agent configuration (optional - defaults to EVOLVE_API_KEY env var with 'claude' type)
-            sandbox: Sandbox provider (optional - defaults to E2B with E2B_API_KEY env var)
+            sandbox: Sandbox provider (optional - auto-resolves from env vars:
+                     EVOLVE_API_KEY → E2B via gateway, E2B_API_KEY → E2B direct,
+                     DAYTONA_API_KEY → Daytona direct)
             working_directory: Working directory in sandbox (default: /home/user/workspace)
             workspace_mode: Workspace setup mode - 'knowledge' (creates output/context/scripts/temp folders + default prompt)
                           or 'swe' (clean workspace for cloned repos) (default: 'knowledge')
@@ -120,7 +126,7 @@ class Evolve:
                 'model': self.config.model if self.config else None,
                 'reasoning_effort': self.config.reasoning_effort if self.config else None,
                 'betas': self.config.betas if self.config else None,
-                # Sandbox (optional - TS SDK resolves from E2B_API_KEY)
+                # Sandbox (optional - TS SDK auto-resolves from EVOLVE_API_KEY/E2B_API_KEY/DAYTONA_API_KEY)
                 'sandbox_provider': {'type': self.sandbox.type, 'config': self.sandbox.config} if self.sandbox else None,
                 # Other settings
                 'working_directory': self.working_directory,
