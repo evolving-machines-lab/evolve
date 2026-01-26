@@ -1,102 +1,26 @@
 import { Image } from '@daytonaio/sdk'
 
 // =============================================================================
-// Evolve Daytona Snapshot
+// Evolve Daytona Snapshot (Lightweight)
 // =============================================================================
-// Single snapshot with all AI coding CLIs and skills pre-installed.
-//
-// Includes:
-//   - Claude Code (@anthropic-ai/claude-code)
-//   - Codex (@openai/codex)
-//   - Gemini CLI (@google/gemini-cli) + Nano Banana extension
-//   - Qwen Code (@qwen-code/qwen-code)
+// Creates a snapshot from our public Docker image which includes:
+//   - Python 3.12 + essential packages (pandas, numpy, matplotlib, requests, etc.)
+//   - Node.js 20
+//   - Claude Code, Codex, Gemini CLI, Qwen Code
 //   - ACP adapters for Claude and Codex
-//   - Google Chrome for browser automation
+//   - Google Chrome + Playwright for browser automation
 //   - Skills cloned from github.com/evolving-machines-lab/evolve
 //
-// To rebuild: npm run build (or ./build.sh)
+// Does NOT include heavy ML libraries (tensorflow, pytorch) to keep image ~5GB.
+//
+// The Docker image is built separately and pushed to Docker Hub.
+// This template just creates a Daytona snapshot from that image.
+//
+// To rebuild:
+//   1. First push Docker image: cd assets/daytona-template && docker build && docker push
+//   2. Then create snapshot: ./build.sh
 // =============================================================================
 
-export const image = Image.base('daytonaio/sandbox:latest')  // Python + Node + data science packages
-
-  // ---------------------------------------------------------------------------
-  // System packages
-  // ---------------------------------------------------------------------------
-  .runCommands(
-    // Core utilities + Node.js 20.x
-    'apt-get update && apt-get install -y curl git ripgrep wget gnupg',
-    'curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs',
-    // Google Chrome
-    'wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome-keyring.gpg && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list && apt-get update && apt-get install -y google-chrome-stable',
-    // Cleanup
-    'rm -rf /var/lib/apt/lists/*'
-  )
-
-  // ---------------------------------------------------------------------------
-  // Verify installations
-  // ---------------------------------------------------------------------------
-  .runCommands('node -v && npm -v && python3 --version && git --version && google-chrome --version')
-
-  // ---------------------------------------------------------------------------
-  // AI Coding CLIs (global npm packages)
-  // ---------------------------------------------------------------------------
-  .runCommands(
-    'npm install -g @anthropic-ai/claude-code@latest @zed-industries/claude-code-acp@latest @openai/codex @zed-industries/codex-acp@latest @google/gemini-cli@latest @qwen-code/qwen-code@latest'
-  )
-
-  // ---------------------------------------------------------------------------
-  // MCP Tools (HTTP-to-STDIO bridge for remote MCP servers)
-  // ---------------------------------------------------------------------------
-  .runCommands('npm install -g mcp-remote')
-
-  // ---------------------------------------------------------------------------
-  // Agent Browser CLI (headless browser automation for AI agents)
-  // ---------------------------------------------------------------------------
-  .runCommands('npm install -g agent-browser')
-
-  // ---------------------------------------------------------------------------
-  // User setup
-  // ---------------------------------------------------------------------------
-  .runCommands(
-    // Create user
-    'groupadd -r user && useradd -r -g user -m -s /bin/bash user',
-    // Create skills directories for all CLIs
-    'mkdir -p /home/user/.evolve/skills /home/user/.claude/skills /home/user/.codex/skills /home/user/.gemini/skills /home/user/.qwen/skills',
-    // Set ownership
-    'chown -R user:user /home/user'
-  )
-
-  // ---------------------------------------------------------------------------
-  // Working directory
-  // ---------------------------------------------------------------------------
+export const image = Image.base('evolvingmachines/evolve-all:latest')
   .workdir('/home/user')
-
-  // ---------------------------------------------------------------------------
-  // Skills
-  // ---------------------------------------------------------------------------
-  // Clone skills from evolve repo (sparse checkout for skills/ only)
-  .runCommands(
-    'git clone --depth 1 --filter=blob:none --sparse https://github.com/evolving-machines-lab/evolve.git /tmp/evolve && cd /tmp/evolve && git sparse-checkout set skills && mv skills/* /home/user/.evolve/skills/ && rm -rf /tmp/evolve && chown -R user:user /home/user/.evolve'
-  )
-
-  // ---------------------------------------------------------------------------
-  // Gemini settings (enable experimental skills)
-  // ---------------------------------------------------------------------------
-  .runCommands(
-    'echo \'{"experimental":{"skills":true}}\' > /home/user/.gemini/settings.json && chown user:user /home/user/.gemini/settings.json'
-  )
-
-  // ---------------------------------------------------------------------------
-  // Gemini Extensions (Nano Banana for image generation)
-  // ---------------------------------------------------------------------------
-  .runCommands('echo y | gemini extensions install https://github.com/gemini-cli-extensions/nanobanana || true')
-
-  // ---------------------------------------------------------------------------
-  // Browser Automation (Playwright)
-  // ---------------------------------------------------------------------------
-  .runCommands('npx playwright install chromium')
-
-  // ---------------------------------------------------------------------------
-  // Default command
-  // ---------------------------------------------------------------------------
   .cmd(['/bin/bash'])
