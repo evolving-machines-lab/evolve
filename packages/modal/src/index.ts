@@ -191,16 +191,10 @@ class ModalCommands implements SandboxCommands {
       timeoutMs: options?.timeoutMs,
     });
 
-    // Collect stdout/stderr
-    let stdout = "";
-    let stderr = "";
-
-    if (process.stdout) {
-      stdout = await process.stdout;
-    }
-    if (process.stderr) {
-      stderr = await process.stderr;
-    }
+    // Wait for process completion and collect output
+    const exitCode = await process.wait();
+    const stdout = await process.stdout.readText();
+    const stderr = await process.stderr.readText();
 
     // Stream callbacks if provided
     if (options?.onStdout && stdout) {
@@ -211,7 +205,7 @@ class ModalCommands implements SandboxCommands {
     }
 
     return {
-      exitCode: process.exitCode ?? 0,
+      exitCode,
       stdout,
       stderr,
     };
@@ -232,10 +226,11 @@ class ModalCommands implements SandboxCommands {
     return {
       pid,
       wait: async () => {
-        const stdout = process.stdout ? await process.stdout : "";
-        const stderr = process.stderr ? await process.stderr : "";
+        const exitCode = await process.wait();
+        const stdout = await process.stdout.readText();
+        const stderr = await process.stderr.readText();
         return {
-          exitCode: process.exitCode ?? 0,
+          exitCode,
           stdout,
           stderr,
         };
@@ -263,28 +258,29 @@ class ModalFiles implements SandboxFiles {
 
   async read(path: string): Promise<string | Uint8Array> {
     const file = await this.sandbox.open(path, "r");
-    const content = await file.read();
+    const content = await file.read(); // Returns Uint8Array
     await file.close();
 
     if (isBinaryFile(path)) {
       // Return as Uint8Array for binary files
-      return new TextEncoder().encode(content);
+      return content;
     }
-    return content;
+    // Decode to string for text files
+    return new TextDecoder().decode(content);
   }
 
   async write(path: string, content: string | Buffer | ArrayBuffer | Uint8Array): Promise<void> {
     const file = await this.sandbox.open(path, "w");
 
-    let data: string;
+    let data: Uint8Array;
     if (typeof content === "string") {
-      data = content;
+      data = new TextEncoder().encode(content);
     } else if (content instanceof Buffer) {
-      data = content.toString("utf-8");
+      data = new Uint8Array(content);
     } else if (content instanceof ArrayBuffer) {
-      data = new TextDecoder().decode(content);
+      data = new Uint8Array(content);
     } else {
-      data = new TextDecoder().decode(content);
+      data = content;
     }
 
     await file.write(data);

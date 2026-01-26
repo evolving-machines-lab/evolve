@@ -35,7 +35,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "modal": "^0.1.0"
+    "modal": "^0.6.0"
   },
   "devDependencies": {
     "@types/node": "^22.15.18",
