@@ -1,16 +1,15 @@
 #!/bin/bash
 
 # Evolve SDK Daytona Snapshot Builder
-# Usage: ./build.sh [dev|prod]
-#   dev  - builds evolve-all-dev
-#   prod - builds evolve-all (default)
+# Usage:
+#   ./build.sh              # Full build: Docker + push + snapshot
+#   ./build.sh --skip-docker # Just Daytona snapshot (skip Docker)
+#   ./build.sh dev          # Dev snapshot only
 
 cd "$(dirname "$0")"
 
-ENV="${1:-prod}"
-
-if [ "$ENV" = "dev" ]; then
+if [ "$1" = "dev" ]; then
   npx tsx build.dev.ts
 else
-  npx tsx build.prod.ts
+  npx tsx build.prod.ts "$@"
 fi
