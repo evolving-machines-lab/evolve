@@ -173,3 +173,133 @@ interface ResolvedModalConfig {
   defaultImage: string;
   defaultTimeoutMs: number;
 }
+
+// ============================================================
+// IMPLEMENTATION
+// ============================================================
+
+class ModalCommands implements SandboxCommands {
+  constructor(private sandbox: ModalSandbox) {}
+
+  async run(command: string, options?: SandboxRunOptions): Promise<SandboxCommandResult> {
+    // Parse command into parts (Modal expects command array)
+    const parts = command.split(" ");
+
+    const process = await this.sandbox.exec(parts, {
+      env: options?.envs,
+      workdir: options?.cwd,
+      timeoutMs: options?.timeoutMs,
+    });
+
+    // Collect stdout/stderr
+    let stdout = "";
+    let stderr = "";
+
+    if (process.stdout) {
+      stdout = await process.stdout;
+    }
+    if (process.stderr) {
+      stderr = await process.stderr;
+    }
+
+    // Stream callbacks if provided
+    if (options?.onStdout && stdout) {
+      options.onStdout(stdout);
+    }
+    if (options?.onStderr && stderr) {
+      options.onStderr(stderr);
+    }
+
+    return {
+      exitCode: process.exitCode ?? 0,
+      stdout,
+      stderr,
+    };
+  }
+
+  async spawn(command: string, options?: SandboxSpawnOptions): Promise<SandboxCommandHandle> {
+    const parts = command.split(" ");
+
+    const process = await this.sandbox.exec(parts, {
+      env: options?.envs,
+      workdir: options?.cwd,
+      timeoutMs: options?.timeoutMs,
+    });
+
+    // Modal doesn't expose PID directly, use a placeholder
+    const pid = Date.now();
+
+    return {
+      pid,
+      wait: async () => {
+        const stdout = process.stdout ? await process.stdout : "";
+        const stderr = process.stderr ? await process.stderr : "";
+        return {
+          exitCode: process.exitCode ?? 0,
+          stdout,
+          stderr,
+        };
+      },
+      kill: async () => {
+        // Modal processes are managed by the sandbox lifecycle
+        return true;
+      },
+    };
+  }
+
+  async list(): Promise<ProcessInfo[]> {
+    // Modal doesn't expose process listing - return empty
+    return [];
+  }
+
+  async kill(pid: number): Promise<boolean> {
+    // Modal processes are managed by sandbox lifecycle
+    return true;
+  }
+}
+
+class ModalFiles implements SandboxFiles {
+  constructor(private sandbox: ModalSandbox) {}
+
+  async read(path: string): Promise<string | Uint8Array> {
+    const file = await this.sandbox.open(path, "r");
+    const content = await file.read();
+    await file.close();
+
+    if (isBinaryFile(path)) {
+      // Return as Uint8Array for binary files
+      return new TextEncoder().encode(content);
+    }
+    return content;
+  }
+
+  async write(path: string, content: string | Buffer | ArrayBuffer | Uint8Array): Promise<void> {
+    const file = await this.sandbox.open(path, "w");
+
+    let data: string;
+    if (typeof content === "string") {
+      data = content;
+    } else if (content instanceof Buffer) {
+      data = content.toString("utf-8");
+    } else if (content instanceof ArrayBuffer) {
+      data = new TextDecoder().decode(content);
+    } else {
+      data = new TextDecoder().decode(content);
+    }
+
+    await file.write(data);
+    await file.close();
+  }
+
+  async writeBatch(files: Array<{ path: string; data: string | Buffer | ArrayBuffer | Uint8Array }>): Promise<void> {
+    // Modal doesn't have batch write - iterate
+    for (const { path, data } of files) {
+      await this.write(path, data);
+    }
+  }
+
+  async makeDir(path: string): Promise<void> {
+    // Use exec to create directory
+    await this.sandbox.exec(["mkdir", "-p", path]);
+  }
+}
