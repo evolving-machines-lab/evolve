@@ -97,16 +97,17 @@ MODAL_TOKEN_SECRET=your_token_secret
 ```
 
 ```typescript
-import { Evolve, ModalProvider } from "@evolvingmachines/sdk";
+import { Evolve } from "@evolvingmachines/sdk";
+import { createModalProvider } from "@evolvingmachines/modal";
 
 // Configure Modal provider
-const modal = new ModalProvider({
+const modal = createModalProvider({
   appName: "my-evolve-app",
   defaultImage: "python:3.12-slim",
 });
 
 // Use with Evolve
-const kit = new Evolve({ sandbox: modal });
+const kit = new Evolve().withSandbox(modal);
 const result = await kit.run({ prompt: "Write a hello world script" });
 ```
 

@@ -1,7 +1,7 @@
 /**
  * Modal Sandbox Provider - Clean Architecture
  *
- * @requires modal >= 0.1.0 (Modal JavaScript SDK)
+ * @requires modal >= 0.6.0 (Modal JavaScript SDK)
  * @requires Node.js >= 18 (for ReadableStream support)
  *
  * Design principles:
