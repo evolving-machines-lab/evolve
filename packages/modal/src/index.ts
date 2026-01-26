@@ -384,3 +384,38 @@ export class ModalSandboxProvider implements SandboxProvider {
     return [];
   }
 }
+
+// ============================================================
+// FACTORY
+// ============================================================
+
+/**
+ * Create Modal sandbox provider.
+ *
+ * @param config - Optional configuration. If tokens not provided, reads from MODAL_TOKEN_ID and MODAL_TOKEN_SECRET env vars.
+ * @throws Error if tokens cannot be resolved
+ */
+export function createModalProvider(config: ModalConfig = {}): SandboxProvider {
+  const tokenId = config.tokenId ?? process.env.MODAL_TOKEN_ID;
+  const tokenSecret = config.tokenSecret ?? process.env.MODAL_TOKEN_SECRET;
+
+  if (!tokenId || !tokenSecret) {
+    throw new Error(
+      "Modal tokens required. " +
+        "Set MODAL_TOKEN_ID and MODAL_TOKEN_SECRET environment variables or pass tokenId/tokenSecret in config. " +
+        "Get your tokens at https://modal.com/settings"
+    );
+  }
+
+  // Set Modal auth environment variables for the SDK
+  process.env.MODAL_TOKEN_ID = tokenId;
+  process.env.MODAL_TOKEN_SECRET = tokenSecret;
+
+  return new ModalSandboxProvider({
+    tokenId,
+    tokenSecret,
+    appName: config.appName ?? "evolve-sandbox",
+    defaultImage: config.defaultImage ?? "python:3.12-slim",
+    defaultTimeoutMs: config.defaultTimeoutMs ?? 3600000,
+  });
+}
