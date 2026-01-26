@@ -51,6 +51,20 @@ function getBasename(path: string): string {
   return lastSlash >= 0 ? path.substring(lastSlash + 1) : path;
 }
 
+/**
+ * Wrap command with cd prefix for cwd support.
+ *
+ * Daytona's executeSessionCommand doesn't support cwd natively (unlike E2B),
+ * so we use a shell-level workaround. The path is single-quoted to handle
+ * spaces and most special characters safely.
+ */
+function wrapWithCwd(command: string, cwd?: string): string {
+  if (!cwd) return command;
+  // Single quotes handle spaces and most special chars; escape any single quotes in path
+  const safeCwd = cwd.replace(/'/g, "'\\''");
+  return `cd '${safeCwd}' && ${command}`;
+}
+
 // ============================================================
 // CORE TYPES
 // ============================================================
@@ -206,7 +220,7 @@ class DaytonaCommands implements SandboxCommands {
 
       try {
         const resp = await this.sandbox.process.executeSessionCommand(sessionId, {
-          command,
+          command: wrapWithCwd(command, options?.cwd),
           async: false,
         }, timeoutSec);
 
@@ -257,7 +271,7 @@ class DaytonaCommands implements SandboxCommands {
     const timeoutSec = options?.timeoutMs ? Math.floor(options.timeoutMs / 1000) : undefined;
 
     const resp = await this.sandbox.process.executeSessionCommand(sessionId, {
-      command,
+      command: wrapWithCwd(command, options?.cwd),
       async: true,
     }, timeoutSec);
 
