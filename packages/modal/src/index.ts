@@ -287,9 +287,8 @@ class ModalCommands implements SandboxCommands {
   constructor(private sandbox: Sandbox) {}
 
   async run(command: string, options?: SandboxRunOptions): Promise<SandboxCommandResult> {
-    const args = this.parseCommand(command);
-
-    const p = await this.sandbox.exec(args, {
+    // Use bash -c to get shell features (variable expansion, pipes, etc.)
+    const p = await this.sandbox.exec(["bash", "-c", command], {
       timeoutMs: options?.timeoutMs,
       workdir: options?.cwd,
       env: options?.envs,
@@ -309,9 +308,8 @@ class ModalCommands implements SandboxCommands {
   }
 
   async spawn(command: string, options?: SandboxSpawnOptions): Promise<SandboxCommandHandle> {
-    const args = this.parseCommand(command);
-
-    const p = await this.sandbox.exec(args, {
+    // Use bash -c to get shell features (variable expansion, pipes, etc.)
+    const p = await this.sandbox.exec(["bash", "-c", command], {
       timeoutMs: options?.timeoutMs,
       workdir: options?.cwd,
       env: options?.envs,
