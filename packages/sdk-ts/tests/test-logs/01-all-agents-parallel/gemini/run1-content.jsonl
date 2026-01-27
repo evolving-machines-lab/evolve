@@ -1,5 +1,0 @@
-{"update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"Create helloworld.txt with \"Hello from gemini!\""}}}
-{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"I will create a file named `helloworld.txt` in the `output/` directory with the content \"Hello from gemini!\".\n"}}}
-{"update":{"sessionUpdate":"tool_call","toolCallId":"write_file-1768445609779-8b6c9a04176ce","title":"Write output/helloworld.txt","kind":"edit","status":"pending","rawInput":{"content":"Hello from gemini!","file_path":"output/helloworld.txt"},"content":[{"type":"diff","path":"output/helloworld.txt","oldText":null,"newText":"Hello from gemini!"}],"locations":[{"path":"output/helloworld.txt"}]}}
-{"update":{"sessionUpdate":"tool_call_update","toolCallId":"write_file-1768445609779-8b6c9a04176ce","status":"completed","content":[]}}
-{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"The file `output/helloworld.txt` has been created with the content \"Hello from gemini!\"."}}}
