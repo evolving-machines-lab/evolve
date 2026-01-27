@@ -237,7 +237,8 @@ Works with both Gateway mode (`EVOLVE_API_KEY`) and BYOK mode (provider API keys
 
 **⚡ First Run Performance:** All providers use the `evolve-all` image with pre-installed CLIs.
 - **E2B**: Public template, fast startup out of the box
-- **Modal / Daytona**: Run `assets/<provider>-template/build.sh` once to cache the image for fast startup
+- **Modal**: Run `assets/modal-template/build.sh` once to cache the image
+- **Daytona**: Run `assets/daytona-template/build.sh` once to cache the image
 
 **E2B** (default)
 ```bash
