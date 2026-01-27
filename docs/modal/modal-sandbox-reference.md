@@ -14,7 +14,7 @@ Features actually used by `packages/sdk-ts`:
 | `commands.run()` | ✅ | ✅ `sb.exec()` + `p.wait()` |
 | `commands.spawn()` | ✅ | ✅ `sb.exec()` (returns handle) |
 | `run: cwd` | ✅ | ✅ `{ workdir: "/path" }` |
-| `run: timeoutMs` | ✅ | ✅ `{ timeout: ms }` |
+| `run: timeoutMs` | ✅ | ✅ `{ timeoutMs: ms }` |
 | `run: onStdout/onStderr` | ✅ | ✅ async iteration |
 | `files.read()` | ✅ | ✅ `cat` via stdout (efficient) |
 | `files.write()` | ✅ | ✅ `cat` via stdin (efficient) |
@@ -82,7 +82,7 @@ modal.images.fromRegistry("nvcr.io/nvidia/pytorch:24.01-py3");
 
 ```typescript
 const sb = await modal.sandboxes.create(app, image, {
-  timeout: 60 * 60 * 1000,    // 1 hour max (up to 24h)
+  timeoutMs: 60 * 60 * 1000,  // 1 hour max (up to 24h)
   workdir: "/workspace",
   secrets: [secret],
   volumes: { "/data": volume },
@@ -107,13 +107,72 @@ await sb.terminate();
 
 ---
 
+## Timeout Behavior
+
+### Sandbox Timeout (Lifetime)
+
+```typescript
+const sb = await modal.sandboxes.create(app, image, {
+  timeoutMs: 3600000,  // Sandbox lifetime: 1 hour (min: 10s, max: 24h)
+});
+```
+
+- **Minimum**: 10 seconds
+- **Maximum**: 24 hours (86400000ms)
+- **Default**: 5 minutes
+- Error if outside range: `Timeout must be between 10s and 86400s (inclusive)`
+
+### Operation Timeout (exec)
+
+```typescript
+const p = await sb.exec(["sleep", "30"], { timeoutMs: 5000 });
+const exitCode = await p.wait();
+// exitCode = -1 on timeout (does NOT throw)
+```
+
+**Critical difference from E2B:**
+
+| Provider | Timeout Behavior | Detection |
+|----------|-----------------|-----------|
+| **E2B** | **Throws exception** | `try/catch` |
+| **Modal** | **Returns exit=-1** | Check `exitCode === -1` |
+
+```typescript
+// Cross-provider timeout handling
+try {
+  const result = await sandbox.exec(["sleep", "60"], { timeoutMs: 5000 });
+  const exitCode = await result.wait();
+
+  if (exitCode === -1) {
+    // Modal: timeout detected via exit code
+    console.log("Timeout (Modal)");
+  }
+} catch (err) {
+  // E2B: timeout throws exception
+  console.log("Timeout (E2B):", err.message);
+}
+```
+
+### Timeout Units
+
+Modal JS SDK uses **milliseconds** (`timeoutMs`), matching E2B:
+
+```typescript
+// Both use milliseconds
+sb.exec(["cmd"], { timeoutMs: 30000 });  // 30 seconds
+```
+
+Note: Modal Python SDK uses **seconds** (`timeout`), not milliseconds.
+
+---
+
 ## Commands API
 
 ### run() - Blocking Execution
 
 ```typescript
 // Execute and wait for completion
-const p = await sb.exec(["echo", "hello"], { timeout: 30000 });
+const p = await sb.exec(["echo", "hello"], { timeoutMs: 30000 });
 await p.wait();
 
 // Get output
@@ -135,7 +194,7 @@ await p.wait();
 
 ```typescript
 // Start background process
-const p = await sb.exec(["python", "server.py"], { timeout: 3600000 });
+const p = await sb.exec(["python", "server.py"], { timeoutMs: 3600000 });
 
 // Don't await - process runs in background
 // Later, can check or wait:
@@ -145,7 +204,7 @@ const exitCode = await p.wait();
 ### Streaming Output
 
 ```typescript
-const p = await sb.exec(["python", "script.py"], { timeout: 60000 });
+const p = await sb.exec(["python", "script.py"], { timeoutMs: 60000 });
 
 // Stream stdout
 for await (const line of p.stdout) {
@@ -184,13 +243,13 @@ function isBinaryFile(path: string): boolean {
 async function read(path: string): Promise<string | Uint8Array> {
   if (isBinaryFile(path)) {
     // Binary: use base64 encoding
-    const p = await sb.exec(["base64", path], { timeout: 300000 });
+    const p = await sb.exec(["base64", path], { timeoutMs: 300000 });
     await p.wait();
     const b64 = await p.stdout.readText();
     return new Uint8Array(Buffer.from(b64.trim(), "base64"));
   }
   // Text: read directly
-  const p = await sb.exec(["cat", path], { timeout: 300000 });
+  const p = await sb.exec(["cat", path], { timeoutMs: 300000 });
   await p.wait();
   return await p.stdout.readText();
 }
@@ -263,7 +322,7 @@ async function writeBatch(
 
 ```typescript
 async function makeDir(path: string): Promise<void> {
-  await sb.exec(["mkdir", "-p", path], { timeout: 10000 });
+  await sb.exec(["mkdir", "-p", path], { timeoutMs: 10000 });
 }
 ```
 
@@ -367,7 +426,7 @@ class ModalProvider implements SandboxProvider {
       : undefined;
 
     const sb = await this.modal.sandboxes.create(this.app, image, {
-      timeout: options.timeoutMs,
+      timeoutMs: options.timeoutMs,
       workdir: options.workingDirectory,
       secrets: secret ? [secret] : undefined,
     });

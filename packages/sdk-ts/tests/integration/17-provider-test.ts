@@ -179,12 +179,19 @@ async function testProvider(provider: ProviderName): Promise<TestResult> {
 
     // =========================================================================
     // OPERATION TIMEOUT TEST
+    // E2B throws on timeout, Modal returns exit=-1
     // =========================================================================
     log(provider, "Testing operation timeout...");
     let timeoutWorked = false;
     try {
-      await evolve.executeCommand("sleep 30", { timeoutMs: 2000 });
+      const timeoutResult = await evolve.executeCommand("sleep 30", { timeoutMs: 5000 });
+      // Modal doesn't throw - check for exit=-1 (timeout indicator)
+      if (timeoutResult.exitCode === -1) {
+        timeoutWorked = true;
+        log(provider, `Timeout detected (exit=-1)`);
+      }
     } catch (err) {
+      // E2B throws on timeout
       timeoutWorked = true;
       log(provider, `Timeout error (expected): ${err instanceof Error ? err.message : err}`);
     }
@@ -222,22 +229,22 @@ async function testProvider(provider: ProviderName): Promise<TestResult> {
     // =========================================================================
     log(provider, "=== Sandbox timeout test ===");
 
-    // Create provider with 5s default timeout
+    // Create provider with 15s default timeout (Modal requires minimum 10s)
     let shortTimeoutProvider;
     switch (provider) {
       case "e2b":
         shortTimeoutProvider = createE2BProvider({
           apiKey: process.env.E2B_API_KEY!,
-          defaultTimeoutMs: 5000,
+          defaultTimeoutMs: 15000,
         });
         break;
       case "modal":
-        shortTimeoutProvider = createModalProvider({ defaultTimeoutMs: 5000 });
+        shortTimeoutProvider = createModalProvider({ defaultTimeoutMs: 15000 });
         break;
       case "daytona":
         shortTimeoutProvider = createDaytonaProvider({
           apiKey: process.env.DAYTONA_API_KEY!,
-          defaultTimeoutMs: 5000,
+          defaultTimeoutMs: 15000,
         });
         break;
     }
@@ -247,7 +254,7 @@ async function testProvider(provider: ProviderName): Promise<TestResult> {
       .withSandbox(shortTimeoutProvider!);
 
     // Initialize sandbox
-    log(provider, "Creating short-lived sandbox (5s timeout)...");
+    log(provider, "Creating short-lived sandbox (15s timeout)...");
     const initResult = await shortLivedEvolve.executeCommand("echo 'sandbox alive'", {
       timeoutMs: 10000,
     });
@@ -255,8 +262,8 @@ async function testProvider(provider: ProviderName): Promise<TestResult> {
     log(provider, `Short-lived sandbox created: exit=${initResult.exitCode}`);
 
     // Wait for sandbox to expire
-    log(provider, "Waiting 7s for sandbox to expire...");
-    await new Promise(r => setTimeout(r, 7000));
+    log(provider, "Waiting 20s for sandbox to expire...");
+    await new Promise(r => setTimeout(r, 20000));
 
     // Try to use expired sandbox
     let sandboxExpired = false;
@@ -320,11 +327,8 @@ async function main() {
   console.log(`Composio: ${process.env.COMPOSIO_API_KEY ? "yes" : "no"}`);
   console.log("=".repeat(60) + "\n");
 
-  const results: TestResult[] = [];
-  for (const provider of providers) {
-    results.push(await testProvider(provider));
-    console.log("");
-  }
+  // Run all providers in parallel
+  const results = await Promise.all(providers.map(testProvider));
 
   // Summary
   console.log("=".repeat(60));
