@@ -33,10 +33,12 @@
   "author": "Evolving Machines",
   "license": "MIT",
   "dependencies": {
-    "modal": "^0.3.21"
+    "modal": "^0.6.0",
+    "tar-stream": "^3.1.7"
   },
   "devDependencies": {
     "@types/node": "^22.15.18",
+    "@types/tar-stream": "^3.1.4",
     "tsup": "^8.4.0",
     "typescript": "^5.8.3"
   },
