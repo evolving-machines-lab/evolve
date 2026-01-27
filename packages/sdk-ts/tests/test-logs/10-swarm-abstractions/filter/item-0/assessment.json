@@ -1,8 +1,0 @@
-{
-  "propertyName": "2941",
-  "tenantConcentrationRisk": "high",
-  "leaseRolloverRisk": "low",
-  "rentCollectionRisk": "medium",
-  "overallRiskScore": 6,
-  "reasoning": "The property's risk profile is heavily influenced by significant tenant concentration, with BAE Systems, Inc. accounting for 63.89% of the total monthly rent revenue. This creates a high dependency on a single tenant for the property's financial stability. Lease rollover risk is relatively low, with only 9.80% of occupied square footage expiring within the next 12 months. However, rent collection risk is categorized as medium due to an occupancy rate of 86.65% and the presence of several occupied units reporting $0 in monthly rent, including over 20,000 SF occupied by 2941, LLC (likely an affiliate or management unit) and smaller spaces occupied by third-party tenants. The overall risk score of 6 reflects the severe concentration risk balanced by the currently stable (though concentrated) income stream and manageable near-term expirations."
-}

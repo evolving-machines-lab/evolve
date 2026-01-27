@@ -1,8 +1,0 @@
-{"type":"init","timestamp":"2025-12-17T20:57:46.708Z","session_id":"5884af4e-bcf3-47ea-bc0d-f6a7dae604da","model":"gemini-3-flash-preview"}
-{"type":"message","timestamp":"2025-12-17T20:57:46.710Z","role":"user","content":"Say hello and create a file called test.txt with 'hello world' in it"}
-{"type":"message","timestamp":"2025-12-17T20:57:50.865Z","role":"assistant","content":"Hello!\n\nI will create the file `test.txt` with the content 'hello world' in the `output/` directory as per the project instructions.\n\n","delta":true}
-{"type":"tool_use","timestamp":"2025-12-17T20:57:50.889Z","tool_name":"write_file","tool_id":"write_file-1766005070888-ffdd77ec45358","parameters":{"content":"hello world\n","file_path":"output/test.txt"}}
-{"type":"tool_result","timestamp":"2025-12-17T20:57:51.212Z","tool_id":"write_file-1766005070888-ffdd77ec45358","status":"success"}
-{"type":"message","timestamp":"2025-12-17T20:57:52.420Z","role":"assistant","content":"The file `test.txt` has been created in the `output/","delta":true}
-{"type":"message","timestamp":"2025-12-17T20:57:52.436Z","role":"assistant","content":"` directory with the content 'hello world'.","delta":true}
-{"type":"result","timestamp":"2025-12-17T20:57:52.457Z","status":"success","stats":{"total_tokens":12494,"input_tokens":11924,"output_tokens":77,"duration_ms":5749,"tool_calls":1}}

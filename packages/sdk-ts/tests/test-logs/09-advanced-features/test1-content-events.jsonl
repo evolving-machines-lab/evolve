@@ -1,4 +1,0 @@
-{"update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"Create a file called test.txt with 'hello' in it. Use the write_file tool or equivalent."}}}
-{"update":{"sessionUpdate":"tool_call","toolCallId":"write_file-1766005660368-3811ce0f4a657","title":"Write output/test.txt","kind":"edit","status":"pending","rawInput":{"content":"hello","file_path":"output/test.txt"},"content":[{"type":"diff","path":"output/test.txt","oldText":null,"newText":"hello"}],"locations":[{"path":"output/test.txt"}]}}
-{"update":{"sessionUpdate":"tool_call_update","toolCallId":"write_file-1766005660368-3811ce0f4a657","status":"completed","content":[]}}
-{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"I have created the file `output/test.txt` with the content 'hello'."}}}
