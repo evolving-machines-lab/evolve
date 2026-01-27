@@ -2,11 +2,18 @@
  * Sandbox Provider Resolution
  *
  * Resolves default sandbox provider from environment.
- * Supports E2B and Daytona providers.
+ * Supports E2B, Daytona, and Modal providers.
  */
 
 import type { SandboxProvider } from "../types";
-import { ENV_DAYTONA_API_KEY, ENV_E2B_API_KEY, ENV_EVOLVE_API_KEY, getE2BGatewayUrl } from "../constants";
+import {
+  ENV_DAYTONA_API_KEY,
+  ENV_E2B_API_KEY,
+  ENV_EVOLVE_API_KEY,
+  ENV_MODAL_TOKEN_ID,
+  ENV_MODAL_TOKEN_SECRET,
+  getE2BGatewayUrl,
+} from "../constants";
 
 /**
  * Resolve default sandbox provider from environment.
@@ -14,10 +21,11 @@ import { ENV_DAYTONA_API_KEY, ENV_E2B_API_KEY, ENV_EVOLVE_API_KEY, getE2BGateway
  * Priority (user's sandbox keys first, gateway as fallback):
  *   1. E2B_API_KEY → Direct to E2B (user's own account)
  *   2. DAYTONA_API_KEY → Direct to Daytona (user's own account)
- *   3. EVOLVE_API_KEY → Through gateway (fallback)
+ *   3. MODAL_TOKEN_ID + MODAL_TOKEN_SECRET → Direct to Modal (user's own account)
+ *   4. EVOLVE_API_KEY → Through gateway (fallback)
  *
  * This allows users to set both EVOLVE_API_KEY (for model routing + dashboard)
- * and their own sandbox key (E2B_API_KEY or DAYTONA_API_KEY) to control
+ * and their own sandbox key (E2B_API_KEY, DAYTONA_API_KEY, or Modal tokens) to control
  * sandbox billing separately.
  *
  * @throws Error if no provider can be resolved
@@ -59,6 +67,26 @@ export async function resolveDefaultSandbox(): Promise<SandboxProvider> {
     }
   }
 
+  // Direct mode (MODAL_TOKEN_ID + MODAL_TOKEN_SECRET) - user's own Modal account
+  const modalTokenId = process.env[ENV_MODAL_TOKEN_ID];
+  const modalTokenSecret = process.env[ENV_MODAL_TOKEN_SECRET];
+  if (modalTokenId && modalTokenSecret) {
+    try {
+      const { createModalProvider } = await import("@evolvingmachines/modal");
+      // Modal SDK reads tokens from env vars automatically
+      return createModalProvider();
+    } catch (e) {
+      const error = e as Error;
+      if (error.message?.includes("Cannot find module") || error.message?.includes("MODULE_NOT_FOUND")) {
+        throw new Error(
+          `${ENV_MODAL_TOKEN_ID} is set but @evolvingmachines/modal failed to load.\n` +
+            "Try installing: npm install @evolvingmachines/modal"
+        );
+      }
+      throw error;
+    }
+  }
+
   // Gateway mode (EVOLVE_API_KEY) - fallback to gateway E2B
   const evolveKey = process.env[ENV_EVOLVE_API_KEY];
   if (evolveKey) {
@@ -88,6 +116,7 @@ export async function resolveDefaultSandbox(): Promise<SandboxProvider> {
       `1. Set ${ENV_EVOLVE_API_KEY} environment variable (recommended, get key at https://dashboard.evolvingmachines.ai)\n` +
       `2. Set ${ENV_E2B_API_KEY} environment variable (direct E2B access, get key at https://e2b.dev)\n` +
       `3. Set ${ENV_DAYTONA_API_KEY} environment variable (direct Daytona access, get key at https://app.daytona.io)\n` +
-      "4. Pass sandbox explicitly: .withSandbox(provider)"
+      `4. Set ${ENV_MODAL_TOKEN_ID} and ${ENV_MODAL_TOKEN_SECRET} environment variables (direct Modal access, get tokens at https://modal.com/settings/tokens)\n` +
+      "5. Pass sandbox explicitly: .withSandbox(provider)"
   );
 }
