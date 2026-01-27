@@ -1,21 +1,15 @@
 #!/usr/bin/env tsx
 /**
- * Unified Provider Integration Test
+ * Integration Test 17: Provider Test
  *
- * Tests all SDK features against any sandbox provider:
- * - Sandbox creation & filesystem structure
- * - Skills (pdf, slides-as-code)
- * - Composio integration (Gmail)
- * - MCP servers (browser-use, composio)
- * - Context and file uploads
- * - Output file retrieval
- * - Streaming events
+ * Comprehensive test for sandbox providers (e2b, modal, daytona).
+ * Tests all SDK features on a single sandbox instance.
  *
  * Usage:
- *   npx tsx tests/integration/provider-test.ts e2b
- *   npx tsx tests/integration/provider-test.ts modal
- *   npx tsx tests/integration/provider-test.ts daytona
- *   npx tsx tests/integration/provider-test.ts all     # run all available providers
+ *   npx tsx tests/integration/17-provider-test.ts e2b
+ *   npx tsx tests/integration/17-provider-test.ts modal
+ *   npx tsx tests/integration/17-provider-test.ts daytona
+ *   npx tsx tests/integration/17-provider-test.ts all
  */
 
 import { Evolve } from "../../dist/index.js";
@@ -23,22 +17,28 @@ import type { OutputEvent } from "../../dist/index.js";
 import { config } from "dotenv";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
-import { writeFileSync, mkdirSync, rmSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync, rmSync } from "fs";
 import {
   getAgentConfig,
   getSandboxProviderByName,
   getAvailableProviders,
   type ProviderName,
 } from "./test-config.js";
+import { createE2BProvider } from "../../../e2b/dist/index.js";
+import { createDaytonaProvider } from "../../../daytona/dist/index.js";
+import { createModalProvider } from "../../../modal/dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, "../../../../.env") });
 
-const LOGS_DIR = resolve(__dirname, "../test-logs/provider-test");
+const LOGS_DIR = resolve(__dirname, "../test-logs/17-provider-test");
+const FIXTURES_DIR = resolve(__dirname, "../fixtures");
 
 // =============================================================================
 // HELPERS
 // =============================================================================
+
+const load = (name: string) => readFileSync(resolve(FIXTURES_DIR, name));
 
 function log(provider: string, msg: string) {
   console.log(`[${provider}] ${msg}`);
@@ -51,7 +51,7 @@ function save(provider: string, name: string, content: string | Uint8Array) {
 }
 
 // =============================================================================
-// TEST
+// MAIN TEST
 // =============================================================================
 
 interface TestResult {
@@ -66,141 +66,222 @@ async function testProvider(provider: ProviderName): Promise<TestResult> {
   const start = Date.now();
   const checks: Record<string, boolean> = {};
 
-  log(provider, "Starting test...");
+  log(provider, "=== Starting provider test ===");
 
-  // Get agent config (defaults to claude)
-  const agentConfig = getAgentConfig("claude");
+  // Streaming counters
+  let contentEvents = 0;
+  let stdoutChunks = 0;
 
-  // Build Evolve instance with full features
+  // =========================================================================
+  // SETUP: Create Evolve instance with files, skills, composio
+  // =========================================================================
+  log(provider, "Setting up Evolve instance...");
+
   const evolve = new Evolve()
-    .withAgent(agentConfig)
+    .withAgent(getAgentConfig("claude"))
     .withSandbox(getSandboxProviderByName(provider))
     .withSkills(["pdf", "slides-as-code"])
     .withContext({
-      "test-context.txt": Buffer.from("Context file for provider test: ABC123"),
+      "data.xlsx": load("AMPX_Financial_Analysis.xlsx"),
+      "image.png": load("hackernews.png"),
+      "readme.txt": Buffer.from("Test context file - ABC123"),
     })
     .withFiles({
-      "test-file.txt": Buffer.from("Workspace file for provider test: XYZ789"),
+      "workspace.txt": Buffer.from("Test workspace file - XYZ789"),
     });
 
-  // Add Composio if API key available
-  const composioKey = process.env.COMPOSIO_API_KEY;
-  if (composioKey) {
-    evolve.withComposio(`provider-test-${provider}-${Date.now()}`, {
-      toolkits: ["gmail"],
-    });
-    log(provider, "Composio enabled (Gmail toolkit)");
-  } else {
-    log(provider, "Composio skipped (COMPOSIO_API_KEY not set)");
+  // Add Composio if available
+  if (process.env.COMPOSIO_API_KEY) {
+    evolve.withComposio(`test-${provider}-${Date.now()}`, { toolkits: ["gmail"] });
+    log(provider, "Composio enabled");
   }
 
-  // Collect streaming events
-  const contentEvents: OutputEvent[] = [];
-  let stdoutChunks = 0;
-  let stderrChunks = 0;
-
-  evolve.on("content", (event: OutputEvent) => {
-    contentEvents.push(event);
-  });
+  // Setup streaming listeners
+  evolve.on("content", (_event: OutputEvent) => contentEvents++);
   evolve.on("stdout", () => stdoutChunks++);
-  evolve.on("stderr", () => stderrChunks++);
 
   try {
     // =========================================================================
-    // RUN 1: Verify skills and MCP servers
+    // RUN 1: Check skills and MCP servers
     // =========================================================================
     log(provider, "Run 1: Checking skills and MCP servers...");
-
     const run1 = await evolve.run({
-      prompt: `Please answer these questions:
-1. What skills do you have available? List them.
-2. What MCP servers are connected? List them.
-3. Do you have a browser-use MCP server?
-4. Do you have a composio MCP server?
-
-Just list what you see, be brief.`,
-      timeoutMs: 300000,
+      prompt: "List your skills and MCP servers. Be brief.",
+      timeoutMs: 180000,
     });
-
-    save(provider, "run1-stdout.txt", run1.stdout);
-    save(provider, "run1-stderr.txt", run1.stderr);
-    checks["run1_completed"] = run1.exitCode === 0;
-    log(provider, `Run 1 done (exit=${run1.exitCode})`);
+    checks["run1_skills_mcp"] = run1.exitCode === 0;
+    save(provider, "run1.txt", run1.stdout);
+    log(provider, `Run 1: exit=${run1.exitCode}`);
 
     // =========================================================================
-    // RUN 2: Verify filesystem and create output
+    // RUN 2: Check initial file uploads (withContext, withFiles)
     // =========================================================================
-    log(provider, "Run 2: Verifying filesystem and creating output...");
-
+    log(provider, "Run 2: Checking initial uploads...");
     const run2 = await evolve.run({
-      prompt: `Execute these steps:
-1. Run: pwd
-2. Run: ls -la
-3. Check if context/test-context.txt exists and show its content
-4. Check if test-file.txt exists and show its content
-5. Create output/result.json with: {"provider":"${provider}","status":"ok","timestamp":"${new Date().toISOString()}"}
-6. Run: ls -la output/
-
-Report results briefly.`,
-      timeoutMs: 300000,
+      prompt: "List files: ls context/ && ls *.txt 2>/dev/null || true",
+      timeoutMs: 180000,
     });
-
-    save(provider, "run2-stdout.txt", run2.stdout);
-    save(provider, "run2-stderr.txt", run2.stderr);
-    checks["run2_completed"] = run2.exitCode === 0;
-    log(provider, `Run 2 done (exit=${run2.exitCode})`);
+    checks["run2_initial_files"] = run2.exitCode === 0;
+    save(provider, "run2.txt", run2.stdout);
+    log(provider, `Run 2: exit=${run2.exitCode}`);
 
     // =========================================================================
-    // Verify output files
+    // RUNTIME UPLOADS: uploadContext + uploadFiles
+    // =========================================================================
+    log(provider, "Runtime uploads...");
+    await evolve.uploadContext({
+      "runtime.png": load("test_image.png"),
+    });
+    await evolve.uploadFiles({
+      "runtime.txt": Buffer.from("Runtime uploaded file"),
+    });
+    checks["runtime_uploads"] = true;
+    log(provider, "Runtime uploads done");
+
+    // =========================================================================
+    // RUN 3: Verify runtime uploads
+    // =========================================================================
+    log(provider, "Run 3: Verifying runtime uploads...");
+    const run3 = await evolve.run({
+      prompt: "List: ls context/runtime.png && ls runtime.txt",
+      timeoutMs: 180000,
+    });
+    checks["run3_runtime_files"] = run3.exitCode === 0;
+    save(provider, "run3.txt", run3.stdout);
+    log(provider, `Run 3: exit=${run3.exitCode}`);
+
+    // =========================================================================
+    // RUN 4: Create output file
+    // =========================================================================
+    log(provider, "Run 4: Creating output...");
+    const run4 = await evolve.run({
+      prompt: `Create output/result.json: {"provider":"${provider}","ok":true}`,
+      timeoutMs: 180000,
+    });
+    checks["run4_create_output"] = run4.exitCode === 0;
+    save(provider, "run4.txt", run4.stdout);
+    log(provider, `Run 4: exit=${run4.exitCode}`);
+
+    // =========================================================================
+    // GET OUTPUT FILES
     // =========================================================================
     log(provider, "Getting output files...");
     const output = await evolve.getOutputFiles(true);
-    const fileNames = Object.keys(output.files);
-
-    checks["output_files_retrieved"] = fileNames.length > 0;
-    checks["result_json_created"] = "result.json" in output.files;
-
-    log(provider, `Output files: ${fileNames.join(", ") || "none"}`);
+    const outputFiles = Object.keys(output.files);
+    checks["output_retrieved"] = outputFiles.length > 0;
+    checks["result_json_exists"] = "result.json" in output.files;
+    log(provider, `Output files: ${outputFiles.join(", ") || "none"}`);
 
     for (const [name, content] of Object.entries(output.files)) {
       const data = typeof content === "string" ? content : new Uint8Array(content as ArrayBuffer);
-      save(provider, `output-${name.replace(/\//g, "_")}`, data);
+      save(provider, `output_${name.replace(/\//g, "_")}`, data);
     }
 
     // =========================================================================
-    // Verify streaming events
+    // OPERATION TIMEOUT TEST
     // =========================================================================
-    checks["content_events_received"] = contentEvents.length > 0;
-    checks["stdout_streaming"] = stdoutChunks > 0;
+    log(provider, "Testing operation timeout...");
+    let timeoutWorked = false;
+    try {
+      await evolve.executeCommand("sleep 30", { timeoutMs: 2000 });
+    } catch (err) {
+      timeoutWorked = true;
+      log(provider, `Timeout error (expected): ${err instanceof Error ? err.message : err}`);
+    }
+    checks["operation_timeout"] = timeoutWorked;
 
-    log(provider, `Streaming: ${contentEvents.length} content events, ${stdoutChunks} stdout chunks`);
-    save(provider, "content-events.jsonl", contentEvents.map(e => JSON.stringify(e)).join("\n"));
+    // =========================================================================
+    // RUN 5: Verify instance survives timeout
+    // =========================================================================
+    log(provider, "Run 5: Verifying instance survives timeout...");
+    const run5 = await evolve.run({
+      prompt: "echo 'still alive'",
+      timeoutMs: 60000,
+    });
+    checks["run5_survives_timeout"] = run5.exitCode === 0;
+    save(provider, "run5.txt", run5.stdout);
+    log(provider, `Run 5: exit=${run5.exitCode}`);
 
+    // =========================================================================
+    // STREAMING CHECK
+    // =========================================================================
+    checks["streaming_content"] = contentEvents > 0;
+    checks["streaming_stdout"] = stdoutChunks > 0;
+    log(provider, `Streaming: ${contentEvents} content events, ${stdoutChunks} stdout chunks`);
+
+    // =========================================================================
+    // KILL
+    // =========================================================================
+    log(provider, "Killing sandbox...");
     await evolve.kill();
+    checks["kill_success"] = true;
+    log(provider, "Sandbox killed");
 
     // =========================================================================
-    // Summary
+    // SANDBOX TIMEOUT TEST (separate instance with short-lived provider)
+    // =========================================================================
+    log(provider, "=== Sandbox timeout test ===");
+
+    // Create provider with 5s default timeout
+    let shortTimeoutProvider;
+    switch (provider) {
+      case "e2b":
+        shortTimeoutProvider = createE2BProvider({
+          apiKey: process.env.E2B_API_KEY!,
+          defaultTimeoutMs: 5000,
+        });
+        break;
+      case "modal":
+        shortTimeoutProvider = createModalProvider({ defaultTimeoutMs: 5000 });
+        break;
+      case "daytona":
+        shortTimeoutProvider = createDaytonaProvider({
+          apiKey: process.env.DAYTONA_API_KEY!,
+          defaultTimeoutMs: 5000,
+        });
+        break;
+    }
+
+    const shortLivedEvolve = new Evolve()
+      .withAgent(getAgentConfig("claude"))
+      .withSandbox(shortTimeoutProvider!);
+
+    // Initialize sandbox
+    log(provider, "Creating short-lived sandbox (5s timeout)...");
+    const initResult = await shortLivedEvolve.executeCommand("echo 'sandbox alive'", {
+      timeoutMs: 10000,
+    });
+    checks["sandbox_timeout_init"] = initResult.exitCode === 0;
+    log(provider, `Short-lived sandbox created: exit=${initResult.exitCode}`);
+
+    // Wait for sandbox to expire
+    log(provider, "Waiting 7s for sandbox to expire...");
+    await new Promise(r => setTimeout(r, 7000));
+
+    // Try to use expired sandbox
+    let sandboxExpired = false;
+    try {
+      await shortLivedEvolve.executeCommand("echo 'should fail'", { timeoutMs: 5000 });
+    } catch (err) {
+      sandboxExpired = true;
+      log(provider, `Sandbox expired (expected): ${err instanceof Error ? err.message : err}`);
+    }
+    checks["sandbox_timeout_expired"] = sandboxExpired;
+
+    // Cleanup
+    await shortLivedEvolve.kill().catch(() => {});
+
+    // =========================================================================
+    // RESULT
     // =========================================================================
     const allPassed = Object.values(checks).every(v => v);
+    return { provider, ok: allPassed, duration: Date.now() - start, checks };
 
-    return {
-      provider,
-      ok: allPassed,
-      duration: Date.now() - start,
-      checks,
-    };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     save(provider, "error.txt", err instanceof Error ? err.stack || msg : msg);
     await evolve.kill().catch(() => {});
-
-    return {
-      provider,
-      ok: false,
-      error: msg,
-      duration: Date.now() - start,
-      checks,
-    };
+    return { provider, ok: false, error: msg, duration: Date.now() - start, checks };
   }
 }
 
@@ -212,75 +293,57 @@ async function main() {
   const args = process.argv.slice(2);
 
   if (args.length === 0) {
-    console.log("Usage: npx tsx provider-test.ts <provider>");
+    console.log("Usage: npx tsx 17-provider-test.ts <provider>");
     console.log("  Providers: e2b, modal, daytona, all");
-    console.log("");
-    console.log("Available providers (based on env vars):");
     const available = getAvailableProviders();
-    for (const p of available) {
-      console.log(`  - ${p}`);
-    }
-    if (available.length === 0) {
-      console.log("  (none - set E2B_API_KEY, DAYTONA_API_KEY, or MODAL_TOKEN_ID+MODAL_TOKEN_SECRET)");
-    }
+    console.log(`  Available: ${available.join(", ") || "none"}`);
     process.exit(1);
   }
 
-  // Determine which providers to test
   let providers: ProviderName[];
   if (args[0] === "all") {
     providers = getAvailableProviders();
     if (providers.length === 0) {
-      console.error("No providers available. Set env vars for at least one provider.");
+      console.error("No providers available");
       process.exit(1);
     }
   } else {
     providers = args as ProviderName[];
   }
 
-  // Clean logs
   rmSync(LOGS_DIR, { recursive: true, force: true });
   mkdirSync(LOGS_DIR, { recursive: true });
 
   console.log("=".repeat(60));
   console.log("Provider Integration Test");
-  console.log("=".repeat(60));
-  console.log(`Testing: ${providers.join(", ")}`);
-  console.log(`Composio: ${process.env.COMPOSIO_API_KEY ? "enabled" : "disabled"}`);
-  console.log("");
+  console.log(`Providers: ${providers.join(", ")}`);
+  console.log(`Composio: ${process.env.COMPOSIO_API_KEY ? "yes" : "no"}`);
+  console.log("=".repeat(60) + "\n");
 
-  // Run tests sequentially (each provider needs its own sandbox)
   const results: TestResult[] = [];
   for (const provider of providers) {
-    const result = await testProvider(provider);
-    results.push(result);
+    results.push(await testProvider(provider));
     console.log("");
   }
 
   // Summary
   console.log("=".repeat(60));
-  console.log("Results");
+  console.log("RESULTS");
   console.log("=".repeat(60));
 
   let passed = 0;
-  for (const result of results) {
-    const status = result.ok ? "PASS" : "FAIL";
-    const duration = (result.duration / 1000).toFixed(1);
-    console.log(`\n${status} ${result.provider} (${duration}s)`);
-
-    for (const [check, ok] of Object.entries(result.checks)) {
+  for (const r of results) {
+    const status = r.ok ? "PASS" : "FAIL";
+    console.log(`\n${status} ${r.provider} (${(r.duration / 1000).toFixed(1)}s)`);
+    for (const [check, ok] of Object.entries(r.checks)) {
       console.log(`  ${ok ? "✓" : "✗"} ${check}`);
     }
-
-    if (result.error) {
-      console.log(`  Error: ${result.error}`);
-    }
-
-    if (result.ok) passed++;
+    if (r.error) console.log(`  Error: ${r.error}`);
+    if (r.ok) passed++;
   }
 
   console.log("\n" + "=".repeat(60));
-  console.log(`${passed}/${results.length} providers passed`);
+  console.log(`${passed}/${results.length} passed`);
   console.log(`Logs: ${LOGS_DIR}`);
   console.log("=".repeat(60));
 
