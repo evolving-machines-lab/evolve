@@ -26,6 +26,9 @@ const assert = (condition: boolean, msg: string) => {
   if (!condition) throw new Error(`❌ Assertion failed: ${msg}`);
 };
 
+// Evolve production image
+const EVOLVE_IMAGE = "evolvingmachines/evolve-all:latest";
+
 // Sample test data
 const TEXT_CONTENT = "Hello, Modal! This is a test file.\nWith multiple lines.\nAnd special chars: é ñ 中文";
 const JSON_CONTENT = JSON.stringify({ name: "test", values: [1, 2, 3], nested: { a: true } }, null, 2);
@@ -51,20 +54,51 @@ async function runTests() {
 
     const startTime = Date.now();
     sandbox = await provider.create({
-      image: "python:3.12-slim",
+      image: EVOLVE_IMAGE,
       envs: { TEST_VAR: "hello_world", ANOTHER_VAR: "test123" },
       workingDirectory: "/home/user",
     });
     const createTime = Date.now() - startTime;
+    log(`Using image: ${EVOLVE_IMAGE}`);
 
     log(`Sandbox created in ${createTime}ms`);
     log(`Sandbox ID: ${sandbox.sandboxId}`);
     assert(sandbox.sandboxId.length > 0, "sandboxId should not be empty");
 
     // ================================================================
-    // 2. COMMAND EXECUTION - BASIC
+    // 2. EVOLVE-ALL IMAGE VERIFICATION
     // ================================================================
-    logSection("2. COMMAND EXECUTION - BASIC");
+    logSection("2. EVOLVE-ALL IMAGE VERIFICATION");
+
+    // Verify Claude Code is installed
+    const claudeVersion = await sandbox.commands.run("claude --version 2>&1 || echo 'not found'");
+    log(`Claude Code: ${claudeVersion.stdout.trim().split("\n")[0]}`);
+    assert(!claudeVersion.stdout.includes("not found"), "Claude Code should be installed");
+
+    // Verify Node.js is installed
+    const nodeVersion = await sandbox.commands.run("node --version");
+    log(`Node.js: ${nodeVersion.stdout.trim()}`);
+    assert(nodeVersion.exitCode === 0, "Node.js should be installed");
+
+    // Verify Python is installed
+    const pythonVersion = await sandbox.commands.run("python3 --version");
+    log(`Python: ${pythonVersion.stdout.trim()}`);
+    assert(pythonVersion.exitCode === 0, "Python should be installed");
+
+    // Verify UV package manager
+    const uvVersion = await sandbox.commands.run("uv --version 2>&1 || echo 'not found'");
+    log(`UV: ${uvVersion.stdout.trim()}`);
+    assert(!uvVersion.stdout.includes("not found"), "UV should be installed");
+
+    // Verify working directory
+    const pwd = await sandbox.commands.run("pwd");
+    log(`Working directory: ${pwd.stdout.trim()}`);
+    assert(pwd.stdout.includes("/home/user"), "working directory should be /home/user");
+
+    // ================================================================
+    // 3. COMMAND EXECUTION - BASIC
+    // ================================================================
+    logSection("3. COMMAND EXECUTION - BASIC");
 
     // Test run() - basic command
     const echoResult = await sandbox.commands.run("echo 'Hello Modal'");
@@ -113,9 +147,9 @@ async function runTests() {
     assert(quotesResult.stdout.includes('Hello "World"'), "single quotes should work");
 
     // ================================================================
-    // 3. COMMAND EXECUTION - SPAWN & STREAMING
+    // 4. COMMAND EXECUTION - SPAWN & STREAMING
     // ================================================================
-    logSection("3. COMMAND EXECUTION - SPAWN & STREAMING");
+    logSection("4. COMMAND EXECUTION - SPAWN & STREAMING");
 
     // Test spawn() - background process
     const spawnHandle = await sandbox.commands.spawn("sleep 1 && echo 'done'");
@@ -148,9 +182,9 @@ async function runTests() {
     assert(testKill === false, "kill non-existent should return false");
 
     // ================================================================
-    // 4. FILE OPERATIONS - BASIC TEXT
+    // 5. FILE OPERATIONS - BASIC TEXT
     // ================================================================
-    logSection("4. FILE OPERATIONS - BASIC TEXT");
+    logSection("5. FILE OPERATIONS - BASIC TEXT");
 
     // Test write() and read() - text file
     await sandbox.files.write("/tmp/test.txt", TEXT_CONTENT);
@@ -190,9 +224,9 @@ async function runTests() {
     assert((readBuffer as string).includes("Buffer content"), "Buffer input should work");
 
     // ================================================================
-    // 5. FILE OPERATIONS - BINARY
+    // 6. FILE OPERATIONS - BINARY
     // ================================================================
-    logSection("5. FILE OPERATIONS - BINARY");
+    logSection("6. FILE OPERATIONS - BINARY");
 
     // Test binary write/read with PNG header
     await sandbox.files.write("/tmp/test.png", BINARY_CONTENT);
@@ -219,9 +253,9 @@ print('Image created')
     assert(realImage[0] === 0x89 && realImage[1] === 0x50 && realImage[2] === 0x4e && realImage[3] === 0x47, "should be valid PNG");
 
     // ================================================================
-    // 6. FILE OPERATIONS - BATCH
+    // 7. FILE OPERATIONS - BATCH
     // ================================================================
-    logSection("6. FILE OPERATIONS - BATCH (writeBatch)");
+    logSection("7. FILE OPERATIONS - BATCH (writeBatch)");
 
     const batchFiles = [
       { path: "/tmp/batch/file1.txt", data: "Content of file 1" },
@@ -250,9 +284,9 @@ print('Image created')
     log(`All ${batchFiles.length} batch files verified with correct content`);
 
     // ================================================================
-    // 7. FILE OPERATIONS - FOLDER
+    // 8. FILE OPERATIONS - FOLDER
     // ================================================================
-    logSection("7. FILE OPERATIONS - FOLDER");
+    logSection("8. FILE OPERATIONS - FOLDER");
 
     // Test makeDir()
     await sandbox.files.makeDir("/tmp/nested/deep/folder");
@@ -299,9 +333,9 @@ print('Image created')
     assert(dirRemoved, "remove directory should work");
 
     // ================================================================
-    // 8. STREAMING
+    // 9. STREAMING
     // ================================================================
-    logSection("8. STREAMING");
+    logSection("9. STREAMING");
 
     // Test readStream
     await sandbox.files.write("/tmp/stream_test.txt", "Line 1\nLine 2\nLine 3\n");
@@ -337,9 +371,9 @@ print('Image created')
     assert((streamWriteResult as string).includes("Chunk 3"), "writeStream chunk 3 should work");
 
     // ================================================================
-    // 9. PARALLEL OPERATIONS
+    // 10. PARALLEL OPERATIONS
     // ================================================================
-    logSection("9. PARALLEL OPERATIONS");
+    logSection("10. PARALLEL OPERATIONS");
 
     // Parallel writes using writeBatch (efficient)
     const parallelBatchFiles = Array.from({ length: 20 }, (_, i) => ({
@@ -378,9 +412,9 @@ print('Image created')
     assert(parallelCmdTime < 2000, "parallel commands should run concurrently");
 
     // ================================================================
-    // 10. PORT TUNNELING (getHost)
+    // 11. PORT TUNNELING (getHost)
     // ================================================================
-    logSection("10. PORT TUNNELING (getHost)");
+    logSection("11. PORT TUNNELING (getHost)");
 
     // Start a simple HTTP server
     const serverHandle = await sandbox.commands.spawn(
@@ -401,9 +435,9 @@ print('Image created')
     }
 
     // ================================================================
-    // 11. SANDBOX LIFECYCLE
+    // 12. SANDBOX LIFECYCLE
     // ================================================================
-    logSection("11. SANDBOX LIFECYCLE");
+    logSection("12. SANDBOX LIFECYCLE");
 
     // Test isRunning()
     const isRunning = await sandbox.isRunning();
@@ -414,7 +448,7 @@ print('Image created')
     const info = await sandbox.getInfo();
     log(`getInfo(): id=${info.sandboxId}, image=${info.image}`);
     assert(info.sandboxId === sandbox.sandboxId, "info sandboxId should match");
-    assert(info.image === "python:3.12-slim", "info image should match");
+    assert(info.image === EVOLVE_IMAGE, "info image should match");
     assert(info.startedAt.length > 0, "startedAt should be set");
 
     // Test pause() - should throw
@@ -427,9 +461,9 @@ print('Image created')
     }
 
     // ================================================================
-    // 12. UNSUPPORTED METHODS (should throw)
+    // 13. UNSUPPORTED METHODS (should throw)
     // ================================================================
-    logSection("12. UNSUPPORTED METHODS (error handling)");
+    logSection("13. UNSUPPORTED METHODS (error handling)");
 
     // commands.connect()
     try {
@@ -477,9 +511,9 @@ print('Image created')
     }
 
     // ================================================================
-    // 13. PROVIDER METHODS
+    // 14. PROVIDER METHODS
     // ================================================================
-    logSection("13. PROVIDER METHODS");
+    logSection("14. PROVIDER METHODS");
 
     // Test connect()
     const sandboxId = sandbox.sandboxId;
@@ -498,9 +532,9 @@ print('Image created')
     assert(sandboxList.length > 0, "should find at least current sandbox");
 
     // ================================================================
-    // 14. CLEANUP
+    // 15. CLEANUP
     // ================================================================
-    logSection("14. CLEANUP");
+    logSection("15. CLEANUP");
 
     await sandbox.kill();
     log("Sandbox terminated");
@@ -524,6 +558,13 @@ print('Image created')
     console.log(`
 Summary of tested features:
 ─────────────────────────────────────────────────────────────
+EVOLVE-ALL IMAGE:
+  ✅ Claude Code installed
+  ✅ Node.js installed
+  ✅ Python installed
+  ✅ UV package manager installed
+  ✅ Working directory /home/user
+
 COMMANDS:
   ✅ run() - basic, env vars, pipes, cwd, runtime envs, stderr, exit codes, quotes
   ✅ spawn() - background process with wait()
