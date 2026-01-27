@@ -1,45 +1,42 @@
 #!/bin/bash
 
-# Evolve Assets Builder
+# Evolve Sandbox Setup
+# Run once to enable fast sandbox startup.
 #
 # Usage:
-#   ./build.sh modal     - Cache image in Modal (for users)
-#   ./build.sh daytona   - Create Daytona snapshot (for users)
-#   ./build.sh docker    - Build & push Docker image (maintainer only)
-#   ./build.sh e2b       - Build E2B template (maintainer only)
+#   ./build.sh e2b       # E2B users
+#   ./build.sh modal     # Modal users
+#   ./build.sh daytona   # Daytona users
+#   ./build.sh docker    # Maintainer: push Docker image
 
 set -e
 cd "$(dirname "$0")"
 
 case "$1" in
+  e2b)
+    echo "Building E2B template..."
+    cd e2b-template && npx tsx build.prod.ts
+    ;;
   modal)
-    echo "Caching Evolve image in Modal..."
+    echo "Caching image in Modal..."
     npx tsx modal/build.ts
     ;;
   daytona)
-    echo "Creating Evolve snapshot in Daytona..."
+    echo "Creating Daytona snapshot..."
     npx tsx daytona/build.ts
     ;;
   docker)
-    echo "Building and pushing Docker image (maintainer only)..."
+    echo "Building and pushing Docker image..."
     npx tsx docker/build.ts
     ;;
-  e2b)
-    echo "Building E2B template (maintainer only)..."
-    cd e2b-template && npx tsx build.prod.ts
-    ;;
   *)
-    echo "Evolve Assets Builder"
+    echo "Evolve Sandbox Setup"
     echo ""
-    echo "Usage: ./build.sh <provider>"
+    echo "Run once to enable fast sandbox startup:"
     echo ""
-    echo "For users (fast sandbox startup):"
-    echo "  modal     Cache image in your Modal account"
-    echo "  daytona   Create snapshot in your Daytona account"
-    echo ""
-    echo "For maintainers:"
-    echo "  docker    Build & push Docker image to Hub"
-    echo "  e2b       Rebuild E2B template"
+    echo "  ./build.sh e2b       # E2B users"
+    echo "  ./build.sh modal     # Modal users"
+    echo "  ./build.sh daytona   # Daytona users"
     exit 1
     ;;
 esac
