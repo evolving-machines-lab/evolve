@@ -20,6 +20,7 @@
 import type { AgentType, SandboxProvider } from "../../dist/index.js";
 import { createE2BProvider } from "../../../e2b/dist/index.js";
 import { createDaytonaProvider } from "../../../daytona/dist/index.js";
+import { createModalProvider } from "../../../modal/dist/index.js";
 
 export interface AgentConfig {
   type: AgentType;
@@ -33,6 +34,8 @@ export interface TestEnv {
   EVOLVE_API_KEY?: string;
   E2B_API_KEY?: string;
   DAYTONA_API_KEY?: string;
+  MODAL_TOKEN_ID?: string;
+  MODAL_TOKEN_SECRET?: string;
   // Direct mode keys
   ANTHROPIC_API_KEY?: string;
   OPENAI_API_KEY?: string;
@@ -47,6 +50,8 @@ export function getTestEnv(): TestEnv {
   const EVOLVE_API_KEY = process.env.EVOLVE_API_KEY;
   const E2B_API_KEY = process.env.E2B_API_KEY;
   const DAYTONA_API_KEY = process.env.DAYTONA_API_KEY;
+  const MODAL_TOKEN_ID = process.env.MODAL_TOKEN_ID;
+  const MODAL_TOKEN_SECRET = process.env.MODAL_TOKEN_SECRET;
   const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
   const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
   const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
@@ -55,20 +60,22 @@ export function getTestEnv(): TestEnv {
   if (!EVOLVE_API_KEY && !ANTHROPIC_API_KEY && !OPENAI_API_KEY && !GEMINI_API_KEY) {
     throw new Error("Either EVOLVE_API_KEY or provider API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY) must be set");
   }
-  if (!E2B_API_KEY && !DAYTONA_API_KEY) {
-    throw new Error("Either E2B_API_KEY or DAYTONA_API_KEY must be set in .env");
+  if (!E2B_API_KEY && !DAYTONA_API_KEY && !(MODAL_TOKEN_ID && MODAL_TOKEN_SECRET)) {
+    throw new Error("Either E2B_API_KEY, DAYTONA_API_KEY, or MODAL_TOKEN_ID+MODAL_TOKEN_SECRET must be set in .env");
   }
 
-  return { EVOLVE_API_KEY, E2B_API_KEY, DAYTONA_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY };
+  return { EVOLVE_API_KEY, E2B_API_KEY, DAYTONA_API_KEY, MODAL_TOKEN_ID, MODAL_TOKEN_SECRET, ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY };
 }
 
 /**
  * Get sandbox provider based on available env vars.
- * Prefers E2B if both are set.
+ * Prefers E2B if multiple are set.
  */
 export function getSandboxProvider(): SandboxProvider {
   const E2B_API_KEY = process.env.E2B_API_KEY;
   const DAYTONA_API_KEY = process.env.DAYTONA_API_KEY;
+  const MODAL_TOKEN_ID = process.env.MODAL_TOKEN_ID;
+  const MODAL_TOKEN_SECRET = process.env.MODAL_TOKEN_SECRET;
 
   if (E2B_API_KEY) {
     console.log("[test-config] Using E2B sandbox provider");
@@ -78,7 +85,11 @@ export function getSandboxProvider(): SandboxProvider {
     console.log("[test-config] Using Daytona sandbox provider");
     return createDaytonaProvider({ apiKey: DAYTONA_API_KEY });
   }
-  throw new Error("Either E2B_API_KEY or DAYTONA_API_KEY must be set");
+  if (MODAL_TOKEN_ID && MODAL_TOKEN_SECRET) {
+    console.log("[test-config] Using Modal sandbox provider");
+    return createModalProvider();
+  }
+  throw new Error("Either E2B_API_KEY, DAYTONA_API_KEY, or MODAL_TOKEN_ID+MODAL_TOKEN_SECRET must be set");
 }
 
 /**
