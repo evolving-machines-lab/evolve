@@ -1,3 +1,0 @@
-{"update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"Create a file called background-test.txt with 'Background run completed'"}}}
-{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"I will create the file `output/background-test.txt` with the specified content.\n\n"}}}
-{"update":{"sessionUpdate":"tool_call","toolCallId":"write_file-1766005560479-3dbd3fc6dcc52","title":"Write output/background-test.txt","kind":"edit","status":"pending","rawInput":{"file_path":"output/background-test.txt","content":"Background run completed\n"},"content":[{"type":"diff","path":"output/background-test.txt","oldText":null,"newText":"Background run completed\n"}],"locations":[{"path":"output/background-test.txt"}]}}

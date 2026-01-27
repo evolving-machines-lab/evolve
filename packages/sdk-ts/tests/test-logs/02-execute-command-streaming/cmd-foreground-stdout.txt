@@ -1,9 +1,0 @@
-total 28
-drwxr-xr-x 6 user user 4096 Dec 17 20:57 .
-drwx------ 5 user user 4096 Dec 17 20:57 ..
--rw-r--r-- 1 user user 1066 Dec 17 20:57 GEMINI.md
-drwxr-xr-x 2 user user 4096 Dec 17 20:57 context
-drwxr-xr-x 2 user user 4096 Dec 17 20:57 output
-drwxr-xr-x 2 user user 4096 Dec 17 20:57 scripts
-drwxr-xr-x 2 user user 4096 Dec 17 20:57 temp
-test complete

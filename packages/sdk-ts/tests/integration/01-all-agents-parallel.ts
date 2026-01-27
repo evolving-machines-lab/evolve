@@ -12,13 +12,12 @@
  */
 
 import { Evolve } from "../../dist/index.js";
-import { createE2BProvider } from "../../../e2b/src/index.js";
 import { config } from "dotenv";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { readFileSync, writeFileSync, mkdirSync, rmSync } from "fs";
 import type { AgentType, FileMap, OutputEvent } from "../../dist/index.js";
-import { getAgentConfig, getTestEnv } from "./test-config.js";
+import { getAgentConfig, getTestEnv, getSandboxProvider } from "./test-config.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, "../../../../.env") });
@@ -105,7 +104,7 @@ async function testAgent(type: AgentType): Promise<{ ok: boolean; error?: string
   // Build Evolve instance using documented API
   const evolve = new Evolve()
     .withAgent(getAgentConfig(type))
-    .withSandbox(createE2BProvider({ apiKey: env.E2B_API_KEY }))
+    .withSandbox(getSandboxProvider())
     .withSystemPrompt("Your name is Manus Evolve, a powerful autonomous AI agent.")
     .withContext({
       [FILES.withContext]: load(FILES.withContext),

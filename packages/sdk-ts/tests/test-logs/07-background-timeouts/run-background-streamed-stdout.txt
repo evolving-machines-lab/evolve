@@ -1,4 +1,0 @@
-{"type":"init","timestamp":"2025-12-17T21:05:58.126Z","session_id":"571e5d16-f275-4fc2-9028-80cb2fa76d0b","model":"gemini-3-flash-preview"}
-{"type":"message","timestamp":"2025-12-17T21:05:58.128Z","role":"user","content":"Create a file called background-test.txt with 'Background run completed'"}
-{"type":"message","timestamp":"2025-12-17T21:06:00.469Z","role":"assistant","content":"I will create the file `output/background-test.txt` with the specified content.\n\n","delta":true}
-{"type":"tool_use","timestamp":"2025-12-17T21:06:00.480Z","tool_name":"write_file","tool_id":"write_file-1766005560479-3dbd3fc6dcc52","parameters":{"file_path":"output/background-test.txt","content":"Background run completed\n"}}

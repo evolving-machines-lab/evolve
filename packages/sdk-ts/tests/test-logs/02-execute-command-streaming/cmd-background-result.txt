@@ -1,6 +1,0 @@
-{
-  "sandboxId": "ik8npeu5o14uhy69xcrsz",
-  "exitCode": 0,
-  "stdout": "Background process started with PID 527",
-  "stderr": ""
-}

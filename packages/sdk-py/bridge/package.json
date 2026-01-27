@@ -9,11 +9,13 @@
   "scripts": {
     "build": "tsc && node bundle.mjs",
     "build:standalone": "npm run build:deps && npm run build",
-    "build:deps": "cd ../../../ && npm run build --workspace=@evolvingmachines/e2b --workspace=@evolvingmachines/sdk",
+    "build:deps": "cd ../../../ && npm run build --workspace=@evolvingmachines/e2b --workspace=@evolvingmachines/daytona --workspace=@evolvingmachines/modal --workspace=@evolvingmachines/sdk",
     "dev": "tsc --watch"
   },
   "dependencies": {
     "@evolvingmachines/e2b": "file:../../e2b",
+    "@evolvingmachines/daytona": "file:../../daytona",
+    "@evolvingmachines/modal": "file:../../modal",
     "@evolvingmachines/sdk": "file:../../sdk-ts"
   },
   "devDependencies": {
