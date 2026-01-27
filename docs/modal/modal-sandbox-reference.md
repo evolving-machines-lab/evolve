@@ -8,11 +8,43 @@ Modal sandboxes provide secure, isolated containers for running AI agents. Key d
 
 | Feature | E2B | Modal |
 |---------|-----|-------|
+| Public Images | Template IDs | Any Docker image via `fromRegistry()` |
 | File APIs | Native `files.read/write/writeBatch` | Shell workarounds (no native TS file API) |
 | GPU Support | ❌ | ✅ T4, L4, A10, A100, L40S, H100, H200, B200 |
 | File System API | Full-featured | Alpha (Python only via `sb.open()`) |
 | Pause/Resume | ✅ `betaPause()` | ❌ Use filesystem snapshots instead |
 | Max Timeout | Varies | 24 hours |
+
+---
+
+## Public Images (Simple Like E2B)
+
+Modal accepts **any public Docker image** directly - no mapping table needed (unlike Daytona):
+
+```javascript
+// Any Docker Hub image
+modal.images.fromRegistry("python:3.13-slim")
+modal.images.fromRegistry("ubuntu:22.04")
+modal.images.fromRegistry("node:20-alpine")
+
+// Other registries work too
+modal.images.fromRegistry("nvcr.io/nvidia/pytorch:24.01-py3")  // NVIDIA NGC
+modal.images.fromRegistry("ghcr.io/owner/image:tag")           // GitHub
+modal.images.fromRegistry("public.ecr.aws/lambda/python:3.12") // AWS ECR
+
+// Add Python to non-Python images
+modal.images.fromRegistry("ubuntu:22.04", { addPython: "3.11" })
+
+// Chain customizations
+modal.images
+  .fromRegistry("python:3.13-slim")
+  .dockerfileCommands([
+    "RUN pip install numpy pandas torch",
+    "RUN apt-get update && apt-get install -y git curl"
+  ])
+```
+
+**Key benefit**: For `ModalProvider.create({ image: "python:3.13-slim" })`, we pass the image directly to `fromRegistry()` - no IMAGE_MAP translation needed.
 
 ---
 
