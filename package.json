@@ -6,13 +6,15 @@
   "workspaces": [
     "packages/e2b",
     "packages/daytona",
+    "packages/modal",
     "packages/sdk-ts",
     "packages/sdk-py/bridge"
   ],
   "scripts": {
-    "build": "npm run build:e2b && npm run build:daytona && npm run build:sdk && npm run build:bridge",
+    "build": "npm run build:e2b && npm run build:daytona && npm run build:modal && npm run build:sdk && npm run build:bridge",
     "build:e2b": "npm run build --workspace=@evolvingmachines/e2b",
     "build:daytona": "npm run build --workspace=@evolvingmachines/daytona",
+    "build:modal": "npm run build --workspace=@evolvingmachines/modal",
     "build:sdk": "npm run build --workspace=@evolvingmachines/sdk",
     "build:bridge": "npm run build --workspace=evolve-sdk-python-bridge",
     "test:ts": "npm run test --workspace=@evolvingmachines/sdk",

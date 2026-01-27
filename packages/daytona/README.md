@@ -1,6 +1,6 @@
-# Evolve SDK Modal Provider
+# Evolve SDK Daytona Provider
 
-Modal sandbox provider for [Evolve SDK](https://www.npmjs.com/package/@evolvingmachines/sdk).
+Daytona sandbox provider for [Evolve SDK](https://www.npmjs.com/package/@evolvingmachines/sdk).
 
 **Note:** This package is automatically installed as a dependency of `@evolvingmachines/sdk`. You don't need to install it separately.
 
