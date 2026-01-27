@@ -79,6 +79,10 @@ export {
   type StreamCallbacks,
 } from "./agent";
 
+// Sandbox providers (re-exported for single-import convenience)
+export { E2BProvider } from "@evolvingmachines/e2b";
+export { DaytonaProvider } from "@evolvingmachines/daytona";
+
 // =============================================================================
 // TYPES
 // =============================================================================
