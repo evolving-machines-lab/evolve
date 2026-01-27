@@ -11,39 +11,19 @@ import { ENV_DAYTONA_API_KEY, ENV_E2B_API_KEY, ENV_EVOLVE_API_KEY, getE2BGateway
 /**
  * Resolve default sandbox provider from environment.
  *
- * Priority (gateway first for observability & billing):
- *   1. EVOLVE_API_KEY → Through gateway (recommended)
- *   2. E2B_API_KEY → Direct to E2B (power users with own key)
- *   3. DAYTONA_API_KEY → Direct to Daytona (power users with own key)
+ * Priority (user's sandbox keys first, gateway as fallback):
+ *   1. E2B_API_KEY → Direct to E2B (user's own account)
+ *   2. DAYTONA_API_KEY → Direct to Daytona (user's own account)
+ *   3. EVOLVE_API_KEY → Through gateway (fallback)
+ *
+ * This allows users to set both EVOLVE_API_KEY (for model routing + dashboard)
+ * and their own sandbox key (E2B_API_KEY or DAYTONA_API_KEY) to control
+ * sandbox billing separately.
  *
  * @throws Error if no provider can be resolved
  */
 export async function resolveDefaultSandbox(): Promise<SandboxProvider> {
-  // Gateway mode (EVOLVE_API_KEY) - preferred for observability & billing
-  const evolveKey = process.env[ENV_EVOLVE_API_KEY];
-  if (evolveKey) {
-    try {
-      const { createE2BProvider } = await import("@evolvingmachines/e2b");
-
-      // Route E2B control plane through gateway
-      // Note: Sandbox.list() only reads apiUrl from env var (not from options),
-      // so this is the only way to ensure all operations go through gateway
-      process.env.E2B_API_URL = getE2BGatewayUrl();
-
-      return createE2BProvider({ apiKey: evolveKey });
-    } catch (e) {
-      const error = e as Error;
-      if (error.message?.includes("Cannot find module") || error.message?.includes("MODULE_NOT_FOUND")) {
-        throw new Error(
-          `${ENV_EVOLVE_API_KEY} is set but @evolvingmachines/e2b failed to load.\n` +
-            "Try reinstalling: npm install @evolvingmachines/sdk"
-        );
-      }
-      throw error;
-    }
-  }
-
-  // Direct mode (E2B_API_KEY) - for power users with their own E2B account
+  // Direct mode (E2B_API_KEY) - user's own E2B account
   const e2bKey = process.env[ENV_E2B_API_KEY];
   if (e2bKey) {
     try {
@@ -61,7 +41,7 @@ export async function resolveDefaultSandbox(): Promise<SandboxProvider> {
     }
   }
 
-  // Direct mode (DAYTONA_API_KEY) - for power users with their own Daytona account
+  // Direct mode (DAYTONA_API_KEY) - user's own Daytona account
   const daytonaKey = process.env[ENV_DAYTONA_API_KEY];
   if (daytonaKey) {
     try {
@@ -73,6 +53,30 @@ export async function resolveDefaultSandbox(): Promise<SandboxProvider> {
         throw new Error(
           `${ENV_DAYTONA_API_KEY} is set but @evolvingmachines/daytona failed to load.\n` +
             "Try installing: npm install @evolvingmachines/daytona"
+        );
+      }
+      throw error;
+    }
+  }
+
+  // Gateway mode (EVOLVE_API_KEY) - fallback to gateway E2B
+  const evolveKey = process.env[ENV_EVOLVE_API_KEY];
+  if (evolveKey) {
+    try {
+      const { createE2BProvider } = await import("@evolvingmachines/e2b");
+
+      // Route E2B control plane through gateway
+      // Note: Sandbox.list() only reads apiUrl from env var (not from options),
+      // so this is the only way to ensure all operations go through gateway
+      process.env.E2B_API_URL = getE2BGatewayUrl();
+
+      return createE2BProvider({ apiKey: evolveKey });
+    } catch (e) {
+      const error = e as Error;
+      if (error.message?.includes("Cannot find module") || error.message?.includes("MODULE_NOT_FOUND")) {
+        throw new Error(
+          `${ENV_EVOLVE_API_KEY} is set but @evolvingmachines/e2b failed to load.\n` +
+            "Try reinstalling: npm install @evolvingmachines/sdk"
         );
       }
       throw error;
