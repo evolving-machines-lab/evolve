@@ -80,9 +80,9 @@ export {
 } from "./agent";
 
 // Sandbox providers (re-exported for single-import convenience)
-export { E2BProvider, createE2BProvider } from "@evolvingmachines/e2b";
-export { DaytonaProvider, createDaytonaProvider } from "@evolvingmachines/daytona";
-export { ModalProvider, createModalProvider } from "@evolvingmachines/modal";
+export { E2BProvider } from "@evolvingmachines/e2b";
+export { DaytonaProvider } from "@evolvingmachines/daytona";
+export { ModalProvider } from "@evolvingmachines/modal";
 
 // =============================================================================
 // TYPES
