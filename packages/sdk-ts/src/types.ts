@@ -93,8 +93,8 @@ export interface SandboxInstance {
   readonly sandboxId: string;
   readonly commands: SandboxCommands;
   readonly files: SandboxFiles;
-  /** Get host URL for a port. May be sync or async depending on provider. */
-  getHost(port: number): string | Promise<string>;
+  /** Get host URL for a port */
+  getHost(port: number): Promise<string>;
   kill(): Promise<void>;
   pause(): Promise<void>;
 }

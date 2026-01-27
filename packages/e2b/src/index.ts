@@ -242,8 +242,8 @@ export interface SandboxInstance {
   readonly commands: SandboxCommands;
   readonly files: SandboxFiles;
 
-  /** Get public URL for port (sync) */
-  getHost(port: number): string;
+  /** Get public URL for port */
+  getHost(port: number): Promise<string>;
 
   /** Check if sandbox is running */
   isRunning(): Promise<boolean>;
@@ -508,8 +508,8 @@ class E2BSandboxImpl implements SandboxInstance {
     return this.sandbox.sandboxId;
   }
 
-  getHost(port: number): string {
-    return this.sandbox.getHost(port);
+  getHost(port: number): Promise<string> {
+    return Promise.resolve(this.sandbox.getHost(port));
   }
 
   async isRunning(): Promise<boolean> {

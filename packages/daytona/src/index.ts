@@ -5,8 +5,8 @@
  *
  * Design principles:
  * - Mirror E2B provider interface for SDK compatibility
- * - Auto-fallback: snapshot → public Docker image
- * - Users never need to think about images
+ * - Uses public Docker images via IMAGE_MAP
+ * - Parallel structure to E2B provider
  */
 
 import { Daytona } from "@daytonaio/sdk";
@@ -120,6 +120,16 @@ export interface SandboxSpawnOptions extends SandboxRunOptions {
   stdin?: boolean;
 }
 
+/** Resource configuration for sandbox */
+export interface SandboxResources {
+  /** CPU cores (default: 4) */
+  cpu?: number;
+  /** Memory in GB (default: 4) */
+  memory?: number;
+  /** Disk in GB (default: 10) */
+  disk?: number;
+}
+
 /** Options for creating a sandbox */
 export interface SandboxCreateOptions {
   image: string;
@@ -127,6 +137,8 @@ export interface SandboxCreateOptions {
   metadata?: Record<string, string>;
   timeoutMs?: number;
   workingDirectory?: string;
+  /** Resource allocation for the sandbox */
+  resources?: SandboxResources;
 }
 
 /** Options for listing sandboxes */
@@ -493,6 +505,11 @@ export class DaytonaProvider implements SandboxProvider {
         envVars: options.envs,
         labels: options.metadata,
         autoStopInterval: 0,
+        resources: {
+          cpu: options.resources?.cpu ?? 4,
+          memory: options.resources?.memory ?? 4,
+          disk: options.resources?.disk ?? 10,
+        },
       },
       { timeout: timeoutSec }
     );
