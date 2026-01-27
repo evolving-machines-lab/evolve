@@ -259,6 +259,11 @@ Works with both Gateway mode (`EVOLVE_API_KEY`) and BYOK mode (provider API keys
 
 **💡 If your env vars are set, `sandbox=` is optional—the SDK auto-resolves the provider. Only use explicit provider creation below if you need custom settings (timeout, app name, etc.).**
 
+**⚡ First Run Performance:** All providers use the `evolve-all` image with pre-installed CLIs.
+- **E2B**: Public template, fast startup out of the box
+- **Modal**: Run `assets/modal-template/build.sh` once (~30-60s) to cache the image
+- **Daytona**: First run auto-creates a snapshot (~2-3 min), subsequent runs are fast
+
 **E2B** (default)
 ```bash
 # .env - Gateway mode
