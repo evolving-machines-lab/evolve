@@ -225,7 +225,7 @@ const evolve = new Evolve()
 
 ### 2.1 Sandbox Providers
 
-With `EVOLVE_API_KEY` only, sandbox defaults to **E2B**. Add a provider key to auto-resolve to that provider:
+Works with both Gateway mode (`EVOLVE_API_KEY`) and BYOK mode (provider API keys). With `EVOLVE_API_KEY` only, sandbox defaults to **E2B**. Add a sandbox provider key to auto-resolve to that provider:
 
 | Provider | Env Vars | Auto-Resolves When |
 |----------|----------|-------------------|
@@ -235,9 +235,13 @@ With `EVOLVE_API_KEY` only, sandbox defaults to **E2B**. Add a provider key to a
 
 **E2B** (default)
 ```bash
-# .env
+# .env - Gateway mode
 EVOLVE_API_KEY=sk-...
-E2B_API_KEY=e2b_...        # Optional with EVOLVE_API_KEY (auto-resolves)
+E2B_API_KEY=e2b_...              # Optional with EVOLVE_API_KEY (auto-resolves)
+
+# .env - BYOK mode
+ANTHROPIC_API_KEY=sk-ant-...     # Or OPENAI_API_KEY, GEMINI_API_KEY
+E2B_API_KEY=e2b_...              # Required in BYOK mode
 ```
 
 ```ts
@@ -245,14 +249,19 @@ import { Evolve, createE2BProvider } from "@evolvingmachines/sdk";
 
 const sandbox = createE2BProvider({
     apiKey: process.env.E2B_API_KEY,    // (optional) Auto-resolves from env
-    defaultTimeoutMs: 3600000,           // (optional) Sandbox lifetime (default: 1 hour)
+    defaultTimeoutMs: 3600000,           // (optional) Default: 3600000 (1 hour)
 });
 ```
 
 **Modal**
 ```bash
-# .env
+# .env - Gateway mode
 EVOLVE_API_KEY=sk-...
+MODAL_TOKEN_ID=ak-...
+MODAL_TOKEN_SECRET=as-...
+
+# .env - BYOK mode
+ANTHROPIC_API_KEY=sk-ant-...     # Or OPENAI_API_KEY, GEMINI_API_KEY
 MODAL_TOKEN_ID=ak-...
 MODAL_TOKEN_SECRET=as-...
 ```
@@ -261,15 +270,18 @@ MODAL_TOKEN_SECRET=as-...
 import { Evolve, createModalProvider } from "@evolvingmachines/sdk";
 
 const sandbox = createModalProvider({
-    appName: "evolve-sandbox",           // (optional) Default: "evolve-sandbox"
     defaultTimeoutMs: 3600000,           // (optional) Default: 3600000 (1 hour)
 });
 ```
 
 **Daytona**
 ```bash
-# .env
+# .env - Gateway mode
 EVOLVE_API_KEY=sk-...
+DAYTONA_API_KEY=...
+
+# .env - BYOK mode
+ANTHROPIC_API_KEY=sk-ant-...     # Or OPENAI_API_KEY, GEMINI_API_KEY
 DAYTONA_API_KEY=...
 ```
 
@@ -278,8 +290,6 @@ import { Evolve, createDaytonaProvider } from "@evolvingmachines/sdk";
 
 const sandbox = createDaytonaProvider({
     apiKey: process.env.DAYTONA_API_KEY,  // (optional) Auto-resolves from env
-    apiUrl: "https://app.daytona.io/api", // (optional) Default: "https://app.daytona.io/api"
-    target: "us",                          // (optional) Default: "us"
     defaultTimeoutMs: 3600000,             // (optional) Default: 3600000 (1 hour)
 });
 ```
