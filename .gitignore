@@ -32,6 +32,7 @@ npm-debug.log*
 .pytest_cache/
 coverage/
 .nyc_output/
+test-logs/
 
 # Lock files (keep package-lock.json for reproducible builds)
 uv.lock

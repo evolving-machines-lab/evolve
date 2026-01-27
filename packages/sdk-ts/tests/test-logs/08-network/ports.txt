@@ -1,2 +1,0 @@
-Port 3000: 3000-ikedrz0ilec3hah9f7ec4.e2b.app
-Port 5000: 5000-ikedrz0ilec3hah9f7ec4.e2b.app

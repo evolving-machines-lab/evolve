@@ -1,4 +1,0 @@
-{"type":"init","timestamp":"2025-12-17T21:06:18.812Z","session_id":"571e5d16-f275-4fc2-9028-80cb2fa76d0b","model":"gemini-3-flash-preview"}
-{"type":"message","timestamp":"2025-12-17T21:06:18.813Z","role":"user","content":"Say 'Sandbox still alive after timeout test'"}
-{"type":"message","timestamp":"2025-12-17T21:06:20.903Z","role":"assistant","content":"Sandbox still alive after timeout test","delta":true}
-{"type":"result","timestamp":"2025-12-17T21:06:20.912Z","status":"success","stats":{"total_tokens":6228,"input_tokens":6067,"output_tokens":6,"duration_ms":2104,"tool_calls":0}}

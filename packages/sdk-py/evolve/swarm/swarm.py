@@ -6,15 +6,23 @@ Example:
     ```python
     from evolve import Swarm
 
-    # Minimal usage - uses EVOLVE_API_KEY and E2B_API_KEY env vars
+    # Minimal usage - uses EVOLVE_API_KEY (or E2B_API_KEY/DAYTONA_API_KEY/MODAL_TOKEN_*) env vars
     swarm = Swarm()
 
-    # Or with explicit config
+    # Or with explicit config (E2B)
     from evolve import SwarmConfig, AgentConfig, E2BProvider
     swarm = Swarm(SwarmConfig(
         agent=AgentConfig(type="claude", api_key="..."),
         sandbox=E2BProvider(api_key="..."),
     ))
+
+    # Or with Daytona
+    from evolve import DaytonaProvider
+    swarm = Swarm(SwarmConfig(sandbox=DaytonaProvider(api_key="...")))
+
+    # Or with Modal
+    from evolve import ModalProvider
+    swarm = Swarm(SwarmConfig(sandbox=ModalProvider()))
 
     # Map: apply agent to each item
     results = await swarm.map(
@@ -741,7 +749,7 @@ class Swarm:
             'model': agent_config.model if agent_config else None,
             'reasoning_effort': agent_config.reasoning_effort if agent_config else None,
             'betas': agent_config.betas if agent_config else None,
-            # Sandbox (optional - TS SDK resolves from E2B_API_KEY)
+            # Sandbox (optional - TS SDK auto-resolves from EVOLVE_API_KEY/E2B_API_KEY/DAYTONA_API_KEY)
             'sandbox_provider': {'type': self.config.sandbox.type, 'config': self.config.sandbox.config} if self.config.sandbox else None,
             # Other settings
             'workspace_mode': self.config.workspace_mode,

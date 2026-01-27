@@ -175,7 +175,7 @@ export class Agent {
       const envVars = this.buildEnvironmentVariables();
 
       this.sandbox = await provider.create({
-        templateId: this.registry.templateId,
+        image: this.registry.image,
         envs: envVars,
         workingDirectory: this.workingDir,
       });
@@ -488,7 +488,7 @@ export class Agent {
       return {
         sandboxId: sandbox.sandboxId,
         exitCode: 0, // Process started but not completed
-        stdout: `Background process started with PID ${handle.pid}`,
+        stdout: `Background process started with ID ${handle.processId}`,
         stderr: "",
       };
     }
@@ -576,7 +576,7 @@ export class Agent {
       return {
         sandboxId: sandbox.sandboxId,
         exitCode: 0, // Process started but not completed
-        stdout: `Background process started with PID ${handle.pid}`,
+        stdout: `Background process started with ID ${handle.processId}`,
         stderr: "",
       };
     }

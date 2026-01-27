@@ -1,4 +1,0 @@
-{"type":"init","timestamp":"2025-12-17T21:08:03.806Z","session_id":"21611872-5cfc-4e18-a215-4a076318c8c9","model":"gemini-3-flash-preview"}
-{"type":"message","timestamp":"2025-12-17T21:08:03.807Z","role":"user","content":"What is your name? Please tell me your name."}
-{"type":"message","timestamp":"2025-12-17T21:08:05.274Z","role":"assistant","content":"My name is TestBot9000.","delta":true}
-{"type":"result","timestamp":"2025-12-17T21:08:05.285Z","status":"success","stats":{"total_tokens":6013,"input_tokens":5953,"output_tokens":10,"duration_ms":1480,"tool_calls":0}}

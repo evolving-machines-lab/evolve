@@ -1,7 +1,0 @@
-{"type":"init","timestamp":"2026-01-15T02:53:26.572Z","session_id":"0d80ad64-e3d6-4520-be24-36c2f7f3b942","model":"gemini-3-flash-preview"}
-{"type":"message","timestamp":"2026-01-15T02:53:26.573Z","role":"user","content":"Create helloworld.txt with \"Hello from gemini!\""}
-{"type":"message","timestamp":"2026-01-15T02:53:29.755Z","role":"assistant","content":"I will create a file named `helloworld.txt` in the `output/` directory with the content \"Hello from gemini!\".\n","delta":true}
-{"type":"tool_use","timestamp":"2026-01-15T02:53:29.779Z","tool_name":"write_file","tool_id":"write_file-1768445609779-8b6c9a04176ce","parameters":{"content":"Hello from gemini!","file_path":"output/helloworld.txt"}}
-{"type":"tool_result","timestamp":"2026-01-15T02:53:29.846Z","tool_id":"write_file-1768445609779-8b6c9a04176ce","status":"success"}
-{"type":"message","timestamp":"2026-01-15T02:53:33.446Z","role":"assistant","content":"The file `output/helloworld.txt` has been created with the content \"Hello from gemini!\".","delta":true}
-{"type":"result","timestamp":"2026-01-15T02:53:33.457Z","status":"success","stats":{"total_tokens":13917,"input_tokens":13428,"output_tokens":70,"cached":0,"input":13428,"duration_ms":6885,"tool_calls":1}}
