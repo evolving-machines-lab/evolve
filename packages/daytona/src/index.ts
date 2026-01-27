@@ -16,13 +16,9 @@ import type { Sandbox as DaytonaSandbox } from "@daytonaio/sdk";
 // CONSTANTS
 // ============================================================
 
-/** Public Docker image for evolve-all (fallback when snapshot doesn't exist) */
-const EVOLVE_ALL_PUBLIC_IMAGE = "evolvingmachines/evolve-all:latest";
-
-/** Map of image names to public Docker images */
-const PUBLIC_IMAGE_MAP: Record<string, string> = {
-  "evolve-all": EVOLVE_ALL_PUBLIC_IMAGE,
-  "evolve-all-dev": EVOLVE_ALL_PUBLIC_IMAGE,
+/** Map generic image names to Daytona Docker images */
+const IMAGE_MAP: Record<string, string> = {
+  "evolve-all": "evolvingmachines/evolve-all:latest",
 };
 
 const BINARY_EXTENSIONS = new Set([
@@ -487,51 +483,19 @@ export class DaytonaProvider implements SandboxProvider {
 
   async create(options: SandboxCreateOptions): Promise<SandboxInstance> {
     const timeoutSec = Math.floor((options.timeoutMs ?? this.defaultTimeoutMs) / 1000);
-    const imageName = options.image;
 
-    let sandbox: DaytonaSandbox;
+    // Map generic 'image' to Daytona Docker image
+    const image = IMAGE_MAP[options.image] ?? options.image;
 
-    // Try to create from snapshot first
-    try {
-      const snapshot = await this.client.snapshot.get(imageName);
-      if (snapshot && snapshot.state === "active") {
-        // Evidence: Daytona SDK create({ snapshot, envVars, labels, autoStopInterval })
-        sandbox = await this.client.create({
-          snapshot: imageName,
-          envVars: options.envs,
-          labels: options.metadata,
-          autoStopInterval: 0,
-        }, { timeout: timeoutSec });
-      } else {
-        throw new Error("Snapshot not active");
-      }
-    } catch {
-      // Snapshot doesn't exist - fall back to public image
-      const publicImage = PUBLIC_IMAGE_MAP[imageName];
-      if (!publicImage) {
-        throw new Error(
-          `Unknown image "${imageName}" and no public fallback available. ` +
-          `Available images: ${Object.keys(PUBLIC_IMAGE_MAP).join(", ")}`
-        );
-      }
-
-      console.log(`Snapshot "${imageName}" not found, creating from public image: ${publicImage}`);
-      console.log("This may take a few minutes on first run (image will be cached)...");
-
-      // Evidence: Daytona SDK create({ image, envVars, labels }, { timeout, onSnapshotCreateLogs })
-      sandbox = await this.client.create(
-        {
-          image: publicImage,
-          envVars: options.envs,
-          labels: options.metadata,
-          autoStopInterval: 0,
-        },
-        {
-          timeout: timeoutSec,
-          onSnapshotCreateLogs: (log: string) => console.log(log),
-        }
-      );
-    }
+    const sandbox = await this.client.create(
+      {
+        image,
+        envVars: options.envs,
+        labels: options.metadata,
+        autoStopInterval: 0,
+      },
+      { timeout: timeoutSec }
+    );
 
     if (options.workingDirectory) {
       await sandbox.fs.createFolder(options.workingDirectory, "755");
