@@ -38,6 +38,9 @@ class Evolve:
         >>> # Or with Daytona
         >>> from evolve import DaytonaProvider
         >>> evolve = Evolve(sandbox=DaytonaProvider(api_key='...'))
+        >>> # Or with Modal
+        >>> from evolve import ModalProvider
+        >>> evolve = Evolve(sandbox=ModalProvider())
     """
 
     # Static helpers for Composio pre-auth flows (no instance required)
@@ -67,6 +70,7 @@ class Evolve:
             config: Agent configuration (optional - defaults to EVOLVE_API_KEY env var with 'claude' type)
             sandbox: Sandbox provider (optional - auto-resolves from env vars:
                      E2B_API_KEY → E2B direct, DAYTONA_API_KEY → Daytona direct,
+                     MODAL_TOKEN_ID+MODAL_TOKEN_SECRET → Modal direct,
                      EVOLVE_API_KEY → E2B via gateway. User sandbox keys take priority.)
             working_directory: Working directory in sandbox (default: /home/user/workspace)
             workspace_mode: Workspace setup mode - 'knowledge' (creates output/context/scripts/temp folders + default prompt)
