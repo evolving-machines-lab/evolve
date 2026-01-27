@@ -148,6 +148,12 @@ jobs:
           # Update E2B package
           sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" packages/e2b/package.json
 
+          # Update Daytona package
+          sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" packages/daytona/package.json
+
+          # Update Modal package
+          sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" packages/modal/package.json
+
           # Update Python package (pyproject.toml) - use PY_VERSION for PyPI compatibility
           sed -i "s/^version = \".*\"/version = \"$PY_VERSION\"/" packages/sdk-py/pyproject.toml
 
@@ -163,7 +169,7 @@ jobs:
           echo "Updated all version files"
 
       # =======================================================================
-      # BUILD (order defined in package.json: e2b → sdk → bridge)
+      # BUILD (order defined in package.json: e2b → daytona → modal → sdk → bridge)
       # =======================================================================
 
       - name: Build all packages
@@ -177,6 +183,22 @@ jobs:
         if: inputs.dry_run != true
         run: |
           cd packages/e2b
+          npm publish --access public --tag ${{ steps.version.outputs.npm_tag }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @evolvingmachines/daytona to npm
+        if: inputs.dry_run != true
+        run: |
+          cd packages/daytona
+          npm publish --access public --tag ${{ steps.version.outputs.npm_tag }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @evolvingmachines/modal to npm
+        if: inputs.dry_run != true
+        run: |
+          cd packages/modal
           npm publish --access public --tag ${{ steps.version.outputs.npm_tag }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -210,6 +232,8 @@ jobs:
           echo "::notice::DRY RUN - No packages were published"
           echo "Would have published:"
           echo "  - @evolvingmachines/e2b@${{ steps.version.outputs.new_version }} (tag: ${{ steps.version.outputs.npm_tag }})"
+          echo "  - @evolvingmachines/daytona@${{ steps.version.outputs.new_version }} (tag: ${{ steps.version.outputs.npm_tag }})"
+          echo "  - @evolvingmachines/modal@${{ steps.version.outputs.new_version }} (tag: ${{ steps.version.outputs.npm_tag }})"
           echo "  - @evolvingmachines/sdk@${{ steps.version.outputs.new_version }} (tag: ${{ steps.version.outputs.npm_tag }})"
           echo "  - evolve-sdk==${{ steps.version.outputs.py_version }} (PyPI)"
 
@@ -231,6 +255,8 @@ jobs:
             package-lock.json \
             packages/sdk-ts/package.json \
             packages/e2b/package.json \
+            packages/daytona/package.json \
+            packages/modal/package.json \
             packages/sdk-py/pyproject.toml \
             packages/sdk-py/evolve/__init__.py \
             packages/sdk-py/bridge/package.json
@@ -253,10 +279,14 @@ jobs:
 
           if [[ "${{ inputs.release_type }}" == "stable" ]]; then
             echo "| @evolvingmachines/e2b | $NPM_VERSION | \`npm install @evolvingmachines/e2b\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| @evolvingmachines/daytona | $NPM_VERSION | \`npm install @evolvingmachines/daytona\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| @evolvingmachines/modal | $NPM_VERSION | \`npm install @evolvingmachines/modal\` |" >> $GITHUB_STEP_SUMMARY
             echo "| @evolvingmachines/sdk | $NPM_VERSION | \`npm install @evolvingmachines/sdk\` |" >> $GITHUB_STEP_SUMMARY
             echo "| evolve-sdk (PyPI) | $PY_VERSION | \`pip install evolve-sdk\` |" >> $GITHUB_STEP_SUMMARY
           else
             echo "| @evolvingmachines/e2b | $NPM_VERSION | \`npm install @evolvingmachines/e2b@$NPM_TAG\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| @evolvingmachines/daytona | $NPM_VERSION | \`npm install @evolvingmachines/daytona@$NPM_TAG\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| @evolvingmachines/modal | $NPM_VERSION | \`npm install @evolvingmachines/modal@$NPM_TAG\` |" >> $GITHUB_STEP_SUMMARY
             echo "| @evolvingmachines/sdk | $NPM_VERSION | \`npm install @evolvingmachines/sdk@$NPM_TAG\` |" >> $GITHUB_STEP_SUMMARY
             echo "| evolve-sdk (PyPI) | $PY_VERSION | \`pip install evolve-sdk==$PY_VERSION\` |" >> $GITHUB_STEP_SUMMARY
           fi
