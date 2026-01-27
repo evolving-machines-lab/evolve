@@ -29,6 +29,11 @@ import { pack } from "tar-stream";
 // MODULE-LEVEL CONSTANTS & HELPERS
 // ============================================================
 
+/** Map generic image names to Docker images */
+const IMAGE_MAP: Record<string, string> = {
+  "evolve-all": "evolvingmachines/evolve-all:latest",
+};
+
 const BINARY_EXTENSIONS = new Set([
   ".xlsx", ".xls", ".docx", ".doc", ".pptx", ".ppt",
   ".pdf", ".zip", ".tar", ".gz", ".7z", ".rar",
@@ -286,49 +291,88 @@ export interface ModalConfig {
 class ModalCommands implements SandboxCommands {
   constructor(private sandbox: Sandbox) {}
 
-  async run(command: string, options?: SandboxRunOptions): Promise<SandboxCommandResult> {
-    // Use bash -c to get shell features (variable expansion, pipes, etc.)
-    const p = await this.sandbox.exec(["bash", "-c", command], {
-      timeoutMs: options?.timeoutMs,
-      workdir: options?.cwd,
-      env: options?.envs,
-    });
-
-    // Handle streaming callbacks if provided
-    if (options?.onStdout || options?.onStderr) {
-      await this.streamWithCallbacks(p, options.onStdout, options.onStderr);
+  /**
+   * Wrap command to run as non-root user.
+   * Modal sandboxes run as root by default (ignoring Dockerfile USER directive),
+   * but Claude CLI and other tools refuse certain operations when running as root.
+   *
+   * Uses `su user -c` instead of `sudo -u user` because Claude CLI's
+   * --dangerously-skip-permissions flag refuses to run when it detects sudo.
+   *
+   * Uses base64 encoding to avoid shell escaping issues with complex commands
+   * that contain quotes, special characters, etc.
+   */
+  private wrapAsUser(command: string, cwd?: string, envs?: Record<string, string>): string[] {
+    // Build env prefix for inline variable passing (su doesn't preserve env like sudo -E)
+    let envPrefix = "";
+    if (envs && Object.keys(envs).length > 0) {
+      envPrefix = Object.entries(envs)
+        .filter(([, v]) => v !== undefined && v !== null)
+        .map(([k, v]) => `export ${k}='${String(v).replace(/'/g, "'\\''")}'`)
+        .join("; ") + "; ";
     }
 
-    const exitCode = await p.wait();
-    // Use Modal SDK's readText() convenience method
-    const stdout = await p.stdout.readText();
-    const stderr = await p.stderr.readText();
+    // Build the full command with optional cd
+    const fullCmd = cwd
+      ? `cd '${cwd.replace(/'/g, "'\\''")}' && ${envPrefix}${command}`
+      : `${envPrefix}${command}`;
 
+    // Use base64 encoding to avoid all shell escaping issues
+    const encoded = Buffer.from(fullCmd).toString("base64");
+
+    // Use su user -c to avoid sudo detection by Claude CLI
+    // Decode and execute via bash to preserve all shell features
+    return ["su", "user", "-c", `echo ${encoded} | base64 -d | bash`];
+  }
+
+  async run(command: string, options?: SandboxRunOptions): Promise<SandboxCommandResult> {
+    // Wrap command to run as non-root user with shell features
+    // Pass envs to wrapAsUser for inline variable passing (su doesn't preserve env)
+    const args = this.wrapAsUser(command, options?.cwd, options?.envs);
+
+    const p = await this.sandbox.exec(args, {
+      timeoutMs: options?.timeoutMs,
+      // Don't pass envs to exec - they're inlined in the command via wrapAsUser
+    });
+
+    // Always accumulate output using for-await pattern (more reliable with Modal streams)
+    const { stdout, stderr } = await this.accumulateStreams(p, options?.onStdout, options?.onStderr);
+
+    const exitCode = await p.wait();
     return { exitCode, stdout, stderr };
   }
 
   async spawn(command: string, options?: SandboxSpawnOptions): Promise<SandboxCommandHandle> {
-    // Use bash -c to get shell features (variable expansion, pipes, etc.)
-    const p = await this.sandbox.exec(["bash", "-c", command], {
+    // Wrap command to run as non-root user with shell features
+    // Pass envs to wrapAsUser for inline variable passing (su doesn't preserve env)
+    const args = this.wrapAsUser(command, options?.cwd, options?.envs);
+    const p = await this.sandbox.exec(args, {
       timeoutMs: options?.timeoutMs,
-      workdir: options?.cwd,
-      env: options?.envs,
+      // Don't pass envs to exec - they're inlined in the command via wrapAsUser
     });
 
-    // Handle streaming callbacks if provided (non-blocking)
-    if (options?.onStdout || options?.onStderr) {
-      this.streamWithCallbacks(p, options.onStdout, options.onStderr).catch(() => {});
-    }
+    // Accumulate streams in background for the wait() call
+    let stdoutBuffer = "";
+    let stderrBuffer = "";
+
+    // Start streaming in background (non-blocking)
+    const streamPromise = this.accumulateStreams(
+      p,
+      options?.onStdout ? (chunk) => { options.onStdout!(chunk); } : undefined,
+      options?.onStderr ? (chunk) => { options.onStderr!(chunk); } : undefined
+    ).then(({ stdout, stderr }) => {
+      stdoutBuffer = stdout;
+      stderrBuffer = stderr;
+    }).catch(() => {});
 
     const processId = `modal-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
     return {
       processId,
       wait: async () => {
+        await streamPromise;
         const exitCode = await p.wait();
-        const stdout = await p.stdout.readText();
-        const stderr = await p.stderr.readText();
-        return { exitCode, stdout, stderr };
+        return { exitCode, stdout: stdoutBuffer, stderr: stderrBuffer };
       },
       kill: async () => false, // Modal doesn't expose process kill by PID
     };
@@ -391,48 +435,58 @@ class ModalCommands implements SandboxCommands {
     return args;
   }
 
-  private async streamWithCallbacks(
+  /**
+   * Accumulate stdout/stderr using for-await pattern (more reliable with Modal streams).
+   * Based on vibekit's approach which works correctly with Modal SDK.
+   */
+  private async accumulateStreams(
     p: ContainerProcess<string>,
     onStdout?: (data: string) => void,
     onStderr?: (data: string) => void
-  ): Promise<void> {
+  ): Promise<{ stdout: string; stderr: string }> {
+    let stdout = "";
+    let stderr = "";
+
     const promises: Promise<void>[] = [];
 
-    if (onStdout) {
-      promises.push(
-        (async () => {
-          const reader = p.stdout.getReader();
-          try {
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              if (value) onStdout(value);
-            }
-          } finally {
-            reader.releaseLock();
+    // Stream stdout using for-await (Modal stream is async iterable)
+    promises.push(
+      (async () => {
+        try {
+          // @ts-ignore - Modal stream is async iterable of Uint8Array|string
+          for await (const chunk of p.stdout as any) {
+            const text = typeof chunk === "string"
+              ? chunk
+              : new TextDecoder().decode(chunk);
+            stdout += text;
+            onStdout?.(text);
           }
-        })()
-      );
-    }
+        } catch {
+          // Stream may close unexpectedly
+        }
+      })()
+    );
 
-    if (onStderr) {
-      promises.push(
-        (async () => {
-          const reader = p.stderr.getReader();
-          try {
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              if (value) onStderr(value);
-            }
-          } finally {
-            reader.releaseLock();
+    // Stream stderr using for-await
+    promises.push(
+      (async () => {
+        try {
+          // @ts-ignore - Modal stream is async iterable of Uint8Array|string
+          for await (const chunk of p.stderr as any) {
+            const text = typeof chunk === "string"
+              ? chunk
+              : new TextDecoder().decode(chunk);
+            stderr += text;
+            onStderr?.(text);
           }
-        })()
-      );
-    }
+        } catch {
+          // Stream may close unexpectedly
+        }
+      })()
+    );
 
     await Promise.all(promises);
+    return { stdout, stderr };
   }
 }
 
@@ -443,12 +497,20 @@ class ModalFiles implements SandboxFiles {
     if (isBinaryFile(path)) {
       // Binary: use cat with binary mode - no base64 overhead
       const p = await this.sandbox.exec(["cat", path], { timeoutMs: 300000, mode: "binary" });
-      await p.wait();
+      const exitCode = await p.wait();
+      if (exitCode !== 0) {
+        const stderr = await p.stderr.readText();
+        throw new Error(`Failed to read file ${path}: ${stderr || `exit code ${exitCode}`}`);
+      }
       return await p.stdout.readBytes();
     }
     // Text: read directly via exec
     const p = await this.sandbox.exec(["cat", path], { timeoutMs: 300000 });
-    await p.wait();
+    const exitCode = await p.wait();
+    if (exitCode !== 0) {
+      const stderr = await p.stderr.readText();
+      throw new Error(`Failed to read file ${path}: ${stderr || `exit code ${exitCode}`}`);
+    }
     return await p.stdout.readText();
   }
 
@@ -465,16 +527,29 @@ class ModalFiles implements SandboxFiles {
     const writer = p.stdin.getWriter();
     await writer.close();
     await p.wait();
+
+    // Chown the file and parent directory to user:user so Claude can access them
+    const chownCmd = await this.sandbox.exec(["chown", "user:user", path], { timeoutMs: 10000 });
+    await chownCmd.wait();
   }
 
   async writeBatch(files: Array<{ path: string; data: string | Buffer | ArrayBuffer | Uint8Array }>): Promise<void> {
     const tarPack = pack();
     const chunks: Buffer[] = [];
 
+    // Collect unique parent directories for chown
+    const dirs = new Set<string>();
+
     for (const file of files) {
       const data = this.toBuffer(file.data);
       const name = file.path.startsWith("/") ? file.path.slice(1) : file.path;
       tarPack.entry({ name }, data);
+
+      // Track parent directories
+      const parentDir = file.path.substring(0, file.path.lastIndexOf("/"));
+      if (parentDir) {
+        dirs.add(parentDir);
+      }
     }
     tarPack.finalize();
 
@@ -488,11 +563,27 @@ class ModalFiles implements SandboxFiles {
     const writer = p.stdin.getWriter();
     await writer.close();
     await p.wait();
+
+    // Chown all created files and directories to user:user so Claude can write to them
+    // This is needed because Modal runs as root but Claude CLI needs to write as user
+    if (dirs.size > 0) {
+      const dirsArray = Array.from(dirs);
+      // Chown the root workspace directory recursively
+      const rootDirs = new Set(dirsArray.map(d => d.split("/").slice(0, 4).join("/")));
+      for (const dir of rootDirs) {
+        const chownCmd = await this.sandbox.exec(["chown", "-R", "user:user", dir], { timeoutMs: 30000 });
+        await chownCmd.wait();
+      }
+    }
   }
 
   async makeDir(path: string): Promise<void> {
     const p = await this.sandbox.exec(["mkdir", "-p", path], { timeoutMs: 10000 });
     await p.wait();
+
+    // Chown the directory to user:user so Claude can write to it
+    const chownCmd = await this.sandbox.exec(["chown", "-R", "user:user", path], { timeoutMs: 10000 });
+    await chownCmd.wait();
   }
 
   async exists(path: string): Promise<boolean> {
@@ -672,17 +763,27 @@ export class ModalProvider implements SandboxProvider {
     const app = await this.getApp();
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
 
-    // Use client.images.fromRegistry() - the modern API
-    const image = this.client.images.fromRegistry(options.image);
+    // Resolve image name through IMAGE_MAP (e.g., "evolve-all" -> "evolvingmachines/evolve-all:latest")
+    const resolvedImage = IMAGE_MAP[options.image] ?? options.image;
+    const image = this.client.images.fromRegistry(resolvedImage);
+
+    // Filter out undefined values and only pass env if non-empty
+    // Modal SDK throws if env is empty object or contains undefined values
+    const filteredEnvs = options.envs
+      ? Object.fromEntries(
+          Object.entries(options.envs).filter(([, v]) => v !== undefined && v !== null)
+        )
+      : undefined;
+    const env = filteredEnvs && Object.keys(filteredEnvs).length > 0 ? filteredEnvs : undefined;
 
     // Use client.sandboxes.create() - the modern API
     const sandbox = await this.client.sandboxes.create(app, image, {
       timeoutMs,
       workdir: options.workingDirectory,
-      env: options.envs,
+      env,
     });
 
-    return new ModalSandboxImpl(sandbox, options.image);
+    return new ModalSandboxImpl(sandbox, resolvedImage);
   }
 
   async connect(sandboxId: string, _timeoutMs?: number): Promise<SandboxInstance> {
