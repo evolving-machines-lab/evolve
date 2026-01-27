@@ -270,6 +270,7 @@ MODAL_TOKEN_SECRET=as-...
 import { Evolve, createModalProvider } from "@evolvingmachines/sdk";
 
 const sandbox = createModalProvider({
+    appName: "my-app",                   // (optional) Default: "evolve-sandbox"
     defaultTimeoutMs: 3600000,           // (optional) Default: 3600000 (1 hour)
 });
 ```
@@ -290,7 +291,9 @@ import { Evolve, createDaytonaProvider } from "@evolvingmachines/sdk";
 
 const sandbox = createDaytonaProvider({
     apiKey: process.env.DAYTONA_API_KEY,  // (optional) Auto-resolves from env
-    defaultTimeoutMs: 3600000,             // (optional) Default: 3600000 (1 hour)
+    apiUrl: "https://app.daytona.io/api", // (optional) Default: https://app.daytona.io/api
+    target: "us",                          // (optional) Target region. Default: "us"
+    defaultTimeoutMs: 3600000,             // (optional) Default: 3600000 (1 hour) - converted to minutes for auto-stop
 });
 ```
 
