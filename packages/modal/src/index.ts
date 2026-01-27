@@ -757,6 +757,12 @@ export class ModalProvider implements SandboxProvider {
       env,
     });
 
+    // Fix workspace directory ownership (Modal creates it as root, but user needs write access)
+    if (options.workingDirectory) {
+      const chown = await sandbox.exec(["chown", "-R", "user:user", options.workingDirectory], { timeoutMs: 30000 });
+      await chown.wait();
+    }
+
     return new ModalSandboxImpl(sandbox, resolvedImage);
   }
 
