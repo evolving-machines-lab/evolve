@@ -88,8 +88,3 @@ export const template = Template()
   // Browser Automation (Playwright)
   // ---------------------------------------------------------------------------
   .runCmd('npx playwright install chromium')
-
-  // ---------------------------------------------------------------------------
-  // Agent Browser CLI (headless browser automation for AI agents)
-  // ---------------------------------------------------------------------------
-  .runCmd('npm install -g agent-browser')
