@@ -511,6 +511,9 @@ export class DaytonaProvider implements SandboxProvider {
     // Map generic 'image' to Daytona Docker image
     const image = IMAGE_MAP[options.image] ?? options.image;
 
+    console.log(`[Daytona] Creating sandbox from image: ${image}`);
+    console.log("[Daytona] First run may take a few minutes (image will be cached for future runs)...");
+
     const sandbox = await this.client.create(
       {
         image,
@@ -523,7 +526,10 @@ export class DaytonaProvider implements SandboxProvider {
           disk: options.resources?.disk ?? 10,
         },
       },
-      { timeout: timeoutSec }
+      {
+        timeout: timeoutSec,
+        onSnapshotCreateLogs: (log: string) => console.log(`[Daytona] ${log}`),
+      }
     );
 
     if (options.workingDirectory) {
