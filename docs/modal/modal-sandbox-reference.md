@@ -42,7 +42,7 @@ npm install modal
 ### Client Setup
 
 ```typescript
-import ModalClient from "modal";
+import { ModalClient } from "modal";
 
 const modal = new ModalClient();
 
@@ -54,8 +54,14 @@ const app = await modal.apps.fromName("evolve-app", {
 
 ### Images (Public Docker - Simple Like E2B)
 
+Modal automatically caches images from Docker Hub:
+- **First use**: Pulls from registry (~30-60s depending on image size)
+- **Subsequent uses**: Uses cached image (fast, ~seconds)
+
+No pre-build or snapshot step required (unlike Daytona).
+
 ```typescript
-// Any public Docker image works directly
+// Any public Docker image works directly - Modal caches automatically
 const image = modal.images.fromRegistry("python:3.13-slim");
 
 // With customizations
@@ -347,7 +353,7 @@ sb.terminate()
 ## Complete ModalProvider Implementation Outline
 
 ```typescript
-import ModalClient from "modal";
+import { ModalClient } from "modal";
 
 class ModalProvider implements SandboxProvider {
   readonly providerType = "modal";
@@ -397,6 +403,34 @@ class ModalSandboxInstance implements SandboxInstance {
   }
 }
 ```
+
+---
+
+## Image Caching
+
+Modal automatically caches images after first use. You can also eagerly pre-build images using the `.build(app)` method:
+
+```typescript
+// Option 1: Lazy caching (image pulled on first sandbox creation)
+const image = modal.images.fromRegistry("evolvingmachines/evolve-all:latest");
+const sb = await modal.sandboxes.create(app, image, { ... }); // First call is slow
+
+// Option 2: Eager pre-build (recommended for setup)
+const image = await modal.images.fromRegistry("evolvingmachines/evolve-all:latest").build(app);
+console.log(`Image ID: ${image.imageId}`); // Image is now cached
+const sb = await modal.sandboxes.create(app, image, { ... }); // Fast!
+```
+
+The `.build(app)` method eagerly pulls and caches the image, so subsequent sandbox creations are fast.
+
+**Comparison:**
+| Provider | First Use | Subsequent Uses | Pre-build Method |
+|----------|-----------|-----------------|------------------|
+| E2B | Template build | Instant | `e2b template build` |
+| Daytona | Snapshot build | Instant | Build script |
+| Modal | Pull from registry | Cached | `image.build(app)` |
+
+For even faster pulls, Modal supports [estargz compression](https://modal.com/docs/guide/fast-pull-from-registry) which downloads layers on-demand.
 
 ---
 
