@@ -240,7 +240,7 @@ EVOLVE_API_KEY=sk-...
 E2B_API_KEY=e2b_...              # Optional with EVOLVE_API_KEY (auto-resolves)
 
 # .env - BYOK mode
-ANTHROPIC_API_KEY=sk-ant-...     # Or OPENAI_API_KEY, GEMINI_API_KEY
+ANTHROPIC_API_KEY=sk-ant-...     # Or OPENAI_API_KEY, GEMINI_API_KEY, CLAUDE_CODE_OAUTH_TOKEN
 E2B_API_KEY=e2b_...              # Required in BYOK mode
 ```
 
@@ -261,7 +261,7 @@ MODAL_TOKEN_ID=ak-...
 MODAL_TOKEN_SECRET=as-...
 
 # .env - BYOK mode
-ANTHROPIC_API_KEY=sk-ant-...     # Or OPENAI_API_KEY, GEMINI_API_KEY
+ANTHROPIC_API_KEY=sk-ant-...     # Or OPENAI_API_KEY, GEMINI_API_KEY, CLAUDE_CODE_OAUTH_TOKEN
 MODAL_TOKEN_ID=ak-...
 MODAL_TOKEN_SECRET=as-...
 ```
@@ -281,7 +281,7 @@ EVOLVE_API_KEY=sk-...
 DAYTONA_API_KEY=...
 
 # .env - BYOK mode
-ANTHROPIC_API_KEY=sk-ant-...     # Or OPENAI_API_KEY, GEMINI_API_KEY
+ANTHROPIC_API_KEY=sk-ant-...     # Or OPENAI_API_KEY, GEMINI_API_KEY, CLAUDE_CODE_OAUTH_TOKEN
 DAYTONA_API_KEY=...
 ```
 
