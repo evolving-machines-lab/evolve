@@ -409,32 +409,6 @@ class ModalCommands implements SandboxCommands {
     return exitCode === 0;
   }
 
-  private parseCommand(command: string): string[] {
-    const args: string[] = [];
-    let current = "";
-    let inQuote = false;
-    let quoteChar = "";
-
-    for (const char of command) {
-      if ((char === '"' || char === "'") && !inQuote) {
-        inQuote = true;
-        quoteChar = char;
-      } else if (char === quoteChar && inQuote) {
-        inQuote = false;
-        quoteChar = "";
-      } else if (char === " " && !inQuote) {
-        if (current) {
-          args.push(current);
-          current = "";
-        }
-      } else {
-        current += char;
-      }
-    }
-    if (current) args.push(current);
-    return args;
-  }
-
   /**
    * Accumulate stdout/stderr using for-await pattern (more reliable with Modal streams).
    * Based on vibekit's approach which works correctly with Modal SDK.
