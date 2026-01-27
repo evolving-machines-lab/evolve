@@ -6,7 +6,7 @@ Example:
     ```python
     from evolve import Swarm
 
-    # Minimal usage - uses EVOLVE_API_KEY (or E2B_API_KEY/DAYTONA_API_KEY) env vars
+    # Minimal usage - uses EVOLVE_API_KEY (or E2B_API_KEY/DAYTONA_API_KEY/MODAL_TOKEN_*) env vars
     swarm = Swarm()
 
     # Or with explicit config (E2B)
@@ -19,6 +19,10 @@ Example:
     # Or with Daytona
     from evolve import DaytonaProvider
     swarm = Swarm(SwarmConfig(sandbox=DaytonaProvider(api_key="...")))
+
+    # Or with Modal
+    from evolve import ModalProvider
+    swarm = Swarm(SwarmConfig(sandbox=ModalProvider()))
 
     # Map: apply agent to each item
     results = await swarm.map(

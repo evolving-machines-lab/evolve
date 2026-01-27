@@ -56,7 +56,7 @@ class SandboxProvider(Protocol):
     """Sandbox provider protocol.
 
     Any sandbox provider must implement this protocol.
-    Currently supported: E2BProvider, DaytonaProvider
+    Currently supported: E2BProvider, DaytonaProvider, ModalProvider
 
     To add a new provider:
     1. Create a class with `type` and `config` properties
@@ -131,6 +131,33 @@ class DaytonaProvider:
             result['apiUrl'] = self.api_url
         if self.target:
             result['target'] = self.target
+        if self.timeout_ms:
+            result['defaultTimeoutMs'] = self.timeout_ms
+        return result
+
+
+@dataclass
+class ModalProvider:
+    """Modal sandbox provider configuration.
+
+    Args:
+        app_name: Modal app namespace (defaults to 'evolve-sandbox')
+        timeout_ms: Sandbox timeout in milliseconds (default: 3600000 = 1 hour)
+    """
+    app_name: Optional[str] = None
+    timeout_ms: int = 3600000
+
+    @property
+    def type(self) -> Literal['modal']:
+        """Provider type."""
+        return 'modal'
+
+    @property
+    def config(self) -> dict:
+        """Provider configuration dict."""
+        result = {}
+        if self.app_name:
+            result['appName'] = self.app_name
         if self.timeout_ms:
             result['defaultTimeoutMs'] = self.timeout_ms
         return result
