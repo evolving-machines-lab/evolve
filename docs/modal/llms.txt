@@ -1,0 +1,190 @@
+# Modal llms.txt
+
+> Modal is a platform for running Python code in the cloud with minimal
+> configuration, especially for serving AI models and high-performance batch
+> processing. It supports fast prototyping, serverless APIs, scheduled jobs,
+> GPU inference, distributed volumes, and sandboxes.
+
+Important notes:
+
+- Modal's primitives are embedded in Python and tailored for AI/GPU use cases,
+  but they can be used for general-purpose cloud compute.
+- Modal is a serverless platform, meaning you are only billed for resources used
+  and can spin up containers on demand in seconds.
+
+You can sign up for free at [https://modal.com] and get $30/month of credits.
+
+## Docs
+
+- [Introduction](https://modal.com/docs/guide)
+- Custom container images
+  - [Defining Images](https://modal.com/docs/guide/images)
+  - [Using existing container images](https://modal.com/docs/guide/existing-images)
+  - [Fast pull from registry](https://modal.com/docs/guide/fast-pull-from-registry)
+- GPUs and other resources
+  - [GPU acceleration](https://modal.com/docs/guide/gpu)
+  - [Using CUDA on Modal](https://modal.com/docs/guide/cuda)
+  - [Reserving CPU and memory](https://modal.com/docs/guide/resources)
+- Scaling out
+  - [Scaling out](https://modal.com/docs/guide/scale)
+  - [Input concurrency](https://modal.com/docs/guide/concurrent-inputs)
+  - [Batch processing](https://modal.com/docs/guide/batch-processing)
+  - [Job queues](https://modal.com/docs/guide/job-queue)
+  - [Dynamic batching (beta)](https://modal.com/docs/guide/dynamic-batching)
+  - [Multi-node clusters (beta)](https://modal.com/docs/guide/multi-node-training)
+- Deployment
+  - [Apps, Functions, and entrypoints](https://modal.com/docs/guide/apps)
+  - [Managing deployments](https://modal.com/docs/guide/managing-deployments)
+  - [Invoking deployed functions](https://modal.com/docs/guide/trigger-deployed-functions)
+  - [Continuous deployment](https://modal.com/docs/guide/continuous-deployment)
+  - [Running untrusted code in Functions](https://modal.com/docs/guide/restricted-access)
+- Modal Sandboxes
+  - [Sandboxes](https://modal.com/docs/guide/sandboxes)
+  - [Running commands](https://modal.com/docs/guide/sandbox-spawn)
+  - [Networking and security](https://modal.com/docs/guide/sandbox-networking)
+  - [File access](https://modal.com/docs/guide/sandbox-files)
+  - [Snapshots](https://modal.com/docs/guide/sandbox-snapshots)
+- [Modal Notebooks](https://modal.com/docs/guide/notebooks)
+- Secrets and environment variables
+  - [Secrets](https://modal.com/docs/guide/secrets)
+  - [Environment variables](https://modal.com/docs/guide/environment_variables)
+- [Scheduling and cron jobs](https://modal.com/docs/guide/cron)
+- Web endpoints
+  - [Web endpoints](https://modal.com/docs/guide/webhooks)
+  - [Streaming endpoints](https://modal.com/docs/guide/streaming-endpoints)
+  - [Web endpoint URLs](https://modal.com/docs/guide/webhook-urls)
+  - [Request timeouts](https://modal.com/docs/guide/webhook-timeouts)
+  - [Proxy Auth Tokens](https://modal.com/docs/guide/webhook-proxy-auth)
+- Networking
+  - [Tunnels](https://modal.com/docs/guide/tunnels)
+  - [Proxies (beta)](https://modal.com/docs/guide/proxy-ips)
+  - [Cluster networking](https://modal.com/docs/guide/private-networking)
+- Data sharing and storage
+  - [Passing local data](https://modal.com/docs/guide/local-data)
+  - [Volumes](https://modal.com/docs/guide/volumes)
+  - [Storing model weights](https://modal.com/docs/guide/model-weights)
+  - [Cloud bucket mounts](https://modal.com/docs/guide/cloud-bucket-mounts)
+  - [Dicts](https://modal.com/docs/guide/dicts)
+  - [Queues](https://modal.com/docs/guide/queues)
+  - [Dataset ingestion](https://modal.com/docs/guide/dataset-ingestion)
+- Performance
+  - [Cold start performance](https://modal.com/docs/guide/cold-start)
+  - [Memory Snapshot](https://modal.com/docs/guide/memory-snapshot)
+  - [High-performance LLM inference](https://modal.com/docs/guide/high-performance-llm-inference)
+  - [Geographic latency](https://modal.com/docs/guide/geographic-latency)
+- Reliability and robustness
+  - [Failures and retries](https://modal.com/docs/guide/retries)
+  - [Preemption](https://modal.com/docs/guide/preemption)
+  - [Timeouts](https://modal.com/docs/guide/timeouts)
+  - [GPU health](https://modal.com/docs/guide/gpu-health)
+  - [Troubleshooting](https://modal.com/docs/guide/troubleshooting)
+- [Security and privacy](https://modal.com/docs/guide/security)
+- Integrations
+  - [Using OIDC to authenticate with external services](https://modal.com/docs/guide/oidc-integration)
+  - [Connecting Modal to your Datadog account](https://modal.com/docs/guide/datadog-integration)
+  - [Connecting Modal to your OpenTelemetry provider](https://modal.com/docs/guide/otel-integration)
+  - [Okta SSO](https://modal.com/docs/guide/okta-sso)
+  - [Slack notifications (beta)](https://modal.com/docs/guide/slack-notifications)
+- Workspace & account settings
+  - [Workspaces](https://modal.com/docs/guide/workspaces)
+  - [Environments](https://modal.com/docs/guide/environments)
+  - [Modal user account setup](https://modal.com/docs/guide/modal-user-account-setup)
+  - [Service users](https://modal.com/docs/guide/service-users)
+  - [Billing](https://modal.com/docs/guide/billing)
+- Other topics
+  - [JavaScript/Go SDKs](https://modal.com/docs/guide/sdk-javascript-go)
+  - [Modal 1.0 migration guide](https://modal.com/docs/guide/modal-1-0-migration)
+  - [File and project structure](https://modal.com/docs/guide/project-structure)
+  - [Developing and debugging](https://modal.com/docs/guide/developing-debugging)
+  - [Developing Modal code with LLMs](https://modal.com/docs/guide/developing-with-llms)
+  - [Jupyter notebooks](https://modal.com/docs/guide/jupyter-notebooks)
+  - [Asynchronous API usage](https://modal.com/docs/guide/async)
+  - [Global variables](https://modal.com/docs/guide/global-variables)
+  - [Region selection](https://modal.com/docs/guide/region-selection)
+  - [Container lifecycle hooks](https://modal.com/docs/guide/lifecycle-functions)
+  - [Parametrized functions](https://modal.com/docs/guide/parametrized-functions)
+  - [S3 Gateway endpoints](https://modal.com/docs/guide/s3-gateway-endpoints)
+  - [GPU Metrics](https://modal.com/docs/guide/gpu-metrics)
+
+## Examples
+
+- [Featured](https://modal.com/docs/examples)
+- Getting started
+  - [Hello, world](https://modal.com/docs/examples/hello_world)
+  - [Simple web scraper](https://modal.com/docs/examples/webscraper)
+  - [Serving web endpoints](https://modal.com/docs/examples/basic_web)
+- Large language models (LLMs)
+  - [Deploy an OpenAI-compatible LLM service with vLLM](https://modal.com/docs/examples/llm_inference)
+  - [Cut Ministral 3 cold start times by 10x with snapshots](https://modal.com/docs/examples/ministral3_inference)
+  - [Maximize tokens per second in batch processing with vLLM](https://modal.com/docs/examples/vllm_throughput)
+  - [Serve an ultra-low-latency chatbot with SGLang](https://modal.com/docs/examples/sglang_low_latency)
+  - [Efficient LLM Finetuning with Unsloth](https://modal.com/docs/examples/unsloth_finetune)
+  - [Run a multimodal RAG chatbot to answer questions about PDFs](https://modal.com/docs/examples/chat_with_pdf_vision)
+  - [Fine-tune an LLM to replace your CEO](https://modal.com/docs/examples/llm-finetuning)
+  - [Deploy a stateless MCP with FastMCP](https://modal.com/docs/examples/mcp_server_stateless)
+- Images, video, & 3D
+  - [Edit images with Flux Kontext](https://modal.com/docs/examples/image_to_image)
+  - [Fine-tune Wan2.1 video models on your face](https://modal.com/docs/examples/music-video-gen)
+  - [Run Flux fast with torch.compile](https://modal.com/docs/examples/flux)
+  - [Fine-tune Flux with LoRA](https://modal.com/docs/examples/diffusers_lora_finetune)
+  - [Animate images with LTX-Video](https://modal.com/docs/examples/image_to_video)
+  - [Generate video clips with LTX-Video](https://modal.com/docs/examples/ltx)
+  - [Run Stable Diffusion with a CLI, API, and web UI](https://modal.com/docs/examples/text_to_image)
+- Audio
+  - [Deploy a Moshi voice chatbot](https://modal.com/docs/examples/llm-voice-chat)
+  - [Stream transcripts at the speed of speech using Kyutai STT](https://modal.com/docs/examples/streaming_kyutai_stt)
+  - [Make music with ACE-Step](https://modal.com/docs/examples/generate_music)
+  - [Generate speech with Chatterbox](https://modal.com/docs/examples/chatterbox_tts)
+  - [Run high throughput batched transcription with Whisper](https://modal.com/docs/examples/batched_whisper)
+  - [Fine-tune Whisper to recognize new words](https://modal.com/docs/examples/fine_tune_asr)
+- Real-time communication (WebRTC)
+  - [Serverless WebRTC](https://modal.com/docs/examples/webrtc_yolo)
+  - [WebRTC quickstart with FastRTC](https://modal.com/docs/examples/fastrtc_flip_webcam)
+- Computational biology
+  - [Fold proteins with Chai-1](https://modal.com/docs/examples/chai1)
+  - [Build a protein-folding dashboard](https://modal.com/docs/examples/esm3)
+  - [Fold proteins with Boltz-2](https://modal.com/docs/examples/boltz_predict)
+- Modal Sandboxes
+  - [Build a scalable AI coding platform](https://modal.com/docs/examples/modal-vibe)
+  - [Run a LangGraph agent's code in a secure GPU sandbox](https://modal.com/docs/examples/agent)
+  - [Control a sandboxed computer with an LLM](https://modal.com/docs/examples/anthropic_computer_use)
+  - [Build a stateful, sandboxed code interpreter](https://modal.com/docs/examples/simple_code_interpreter)
+  - [Run Node.js, Ruby, and more in a Sandbox](https://modal.com/docs/examples/safe_code_execution)
+  - [Run a sandboxed Jupyter notebook](https://modal.com/docs/examples/jupyter_sandbox)
+- Reinforcement Learning
+  - [Train a model to solve math problems using GRPO and verl](https://modal.com/docs/examples/grpo_verl)
+  - [Train a model to solve coding problems using GRPO and TRL](https://modal.com/docs/examples/grpo_trl)
+- Embeddings
+  - [Embed millions of documents with TEI](https://modal.com/docs/examples/amazon_embeddings)
+  - [Turn satellite images into vectors and store them in MongoDB](https://modal.com/docs/examples/mongodb-search)
+- Parallel processing and job scheduling
+  - [Transcribe podcasts with Whisper](https://modal.com/docs/examples/whisper-transcriber)
+  - [Deploy a Hacker News Slackbot](https://modal.com/docs/examples/hackernews_alerts)
+  - [Run a Document OCR job queue](https://modal.com/docs/examples/doc_ocr_jobs)
+  - [Serve a Document OCR web app](https://modal.com/docs/examples/doc_ocr_webapp)
+- Training models from scratch
+  - [Train an SLM with early-stopping grid search over hyperparameters](https://modal.com/docs/examples/hp_sweep_gpt)
+  - [Run long, resumable training jobs](https://modal.com/docs/examples/long-training)
+- Hosting popular libraries
+  - [YOLO: Fine-tune and serve computer vision models](https://modal.com/docs/examples/finetune_yolo)
+  - [Blender: Build a 3D render farm](https://modal.com/docs/examples/blender_video)
+  - [Streamlit: Run and deploy Streamlit apps](https://modal.com/docs/examples/serve_streamlit)
+  - [ComfyUI: Run Flux on ComfyUI as an API](https://modal.com/docs/examples/comfyapp)
+  - [SQLite: Publish explorable data with Datasette](https://modal.com/docs/examples/cron_datasette)
+  - [Algolia: Build docsearch with a crawler](https://modal.com/docs/examples/algolia_indexer)
+- Connecting to other APIs
+  - [Discord: Deploy and run a Discord Bot](https://modal.com/docs/examples/discord_bot)
+  - [Google Sheets: Sync databases and APIs to a Google Sheet](https://modal.com/docs/examples/db_to_sheet)
+  - [OpenAI: Run a RAG Q&A chatbot](https://modal.com/docs/examples/potus_speech_qanda)
+  - [Tailscale: Add Modal Apps to your VPN](https://modal.com/docs/examples/modal_tailscale)
+  - [Prometheus: Publish custom metrics with Pushgateway](https://modal.com/docs/examples/pushgateway)
+- Managing data
+  - [Mount S3 buckets in Modal apps](https://modal.com/docs/examples/s3_bucket_mount)
+  - [Build your own data warehouse with DuckDB, DBT, and Modal](https://modal.com/docs/examples/dbt_duckdb)
+  - [Create a LoRA Playground with Modal, Gradio, and S3](https://modal.com/docs/examples/cloud_bucket_mount_loras)
+- [Miscellaneous](https://modal.com/docs/examples/miscellaneous)
+
+## API Reference
+
+- [Changelog](https://modal.com/docs/reference/changelog)
+- [API Reference](https://modal.com/docs/reference)
