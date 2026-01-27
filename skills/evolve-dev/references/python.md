@@ -710,8 +710,16 @@ ToolKind = Literal[
     "think",       # Task (subagent)
     "fetch",       # WebFetch, WebSearch
     "switch_mode", # ExitPlanMode
-    "other",       # MCP tools, unknown
+    "other",       # MCP tools (including browser-use), unknown
 ]
+
+# IMPORTANT: Browser-use MCP tools have kind="other", not "browser" or "fetch".
+# To identify browser tools in your UI, check if title starts with "browser-use:"
+# (e.g., "browser-use: browser_task", "browser-use: monitor_task")
+
+def is_browser_use_tool(title: str | None) -> bool:
+    """Helper to detect browser-use tools."""
+    return "browser-use" in (title or "").lower()
 
 ToolCallStatus = Literal["pending", "in_progress", "completed", "failed"]
 
@@ -787,9 +795,13 @@ class OutputEvent(TypedDict):
 
 class BrowserUseResponse(TypedDict):
     """Browser automation response embedded in ToolCallUpdate.content[].content.text as JSON string."""
+    task_id: NotRequired[str]         # Task ID for monitoring
+    session_id: NotRequired[str]      # Browser session ID
     live_url: NotRequired[str]        # VNC live view URL
     screenshot_url: NotRequired[str]  # Final screenshot URL
-    steps: NotRequired[list[dict]]    # Per-step screenshots: [{"screenshot_url": "..."}]
+    steps: NotRequired[list[dict]]    # Per-step screenshots with url, memory, screenshot_url
+    is_success: NotRequired[bool]     # Task completion status
+    task_output: NotRequired[str]     # Final task result
 ```
 
 ---
@@ -797,6 +809,8 @@ class BrowserUseResponse(TypedDict):
 ### BrowserUseResponse Extraction
 
 Browser automation (`browser-use`) is included by default in Gateway mode. Browser tool responses embed a **JSON string** inside `ToolCallUpdate["content"][].content.text`. You must extract and parse it.
+
+> **Detection:** Browser-use tools arrive with `kind="other"` and `title` like `"browser-use: browser_task"` or `"browser-use: monitor_task"`. Use `is_browser_use_tool(title)` to identify them, then extract URLs from the tool output.
 
 **Extraction function** (use regex first for speed and malformed JSON tolerance, then JSON fallback):
 
@@ -945,6 +959,7 @@ evolve.on("content", handle_event)
 6. **Use `kind` for icons** — Categorize tools visually (read, edit, execute, etc.)
 7. **Track `locations`** — Show affected file paths in UI
 8. **Use `cast()` for narrowing** — TypedDict unions need explicit casting after checking `sessionUpdate`
+9. **Detect browser-use by title** — Browser-use MCP tools have `kind="other"`, check `"browser-use" in title.lower()` to identify them
 
 ### 3.4 Upload: Local → Sandbox
 

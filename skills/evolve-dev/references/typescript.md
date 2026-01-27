@@ -103,9 +103,9 @@ E2B_API_KEY=e2b_...
 ```
 
 ```ts
-import { Evolve, E2BProvider } from "@evolvingmachines/sdk";
+import { Evolve, createE2BProvider } from "@evolvingmachines/sdk";
 
-const sandbox = new E2BProvider({
+const sandbox = createE2BProvider({
     apiKey: process.env.E2B_API_KEY,
 });
 
@@ -134,9 +134,9 @@ E2B_API_KEY=e2b_...
 ```
 
 ```ts
-import { Evolve, E2BProvider } from "@evolvingmachines/sdk";
+import { Evolve, createE2BProvider } from "@evolvingmachines/sdk";
 
-const sandbox = new E2BProvider({
+const sandbox = createE2BProvider({
     apiKey: process.env.E2B_API_KEY,
 });
 
@@ -224,10 +224,10 @@ const evolve = new Evolve()
 ## 2. Full Configuration
 
 ```ts
-import { Evolve, E2BProvider } from "@evolvingmachines/sdk";
+import { Evolve, createE2BProvider } from "@evolvingmachines/sdk";
 
 // Sandbox provider (auto-resolved from E2B_API_KEY, or explicit)
-const sandbox = new E2BProvider({
+const sandbox = createE2BProvider({
     apiKey: process.env.E2B_API_KEY,   // (optional) Auto-resolves from E2B_API_KEY env var
     defaultTimeoutMs: 3600000,          // (optional) Default sandbox timeout (default: 1 hour)
 });
@@ -775,7 +775,16 @@ type ToolKind =
   | "think"       // Task (subagent)
   | "fetch"       // WebFetch, WebSearch
   | "switch_mode" // ExitPlanMode
-  | "other";      // MCP tools, unknown
+  | "other";      // MCP tools (including browser-use), unknown
+```
+
+> **Important:** Browser-use MCP tools have `kind: "other"`, not `"browser"` or `"fetch"`. To identify browser tools in your UI, check if `title` starts with `"browser-use:"` (e.g., `"browser-use: browser_task"`, `"browser-use: monitor_task"`).
+
+```typescript
+// Helper to detect browser-use tools
+function isBrowserUseTool(title?: string): boolean {
+  return title?.toLowerCase().includes('browser-use') ?? false;
+}
 ```
 
 #### ToolCallStatus
@@ -812,11 +821,22 @@ interface DiffContent {
 
 Browser automation (`browser-use`) is included by default in Gateway mode. Browser tool responses embed a **JSON string** inside `ToolCallUpdate.content[].content.text`. You must extract and parse it.
 
+> **Detection:** Browser-use tools arrive with `kind: "other"` and `title` like `"browser-use: browser_task"` or `"browser-use: monitor_task"`. Use the `isBrowserUseTool(title)` helper above to identify them, then extract URLs from the tool output.
+
 ```typescript
 interface BrowserUseResponse {
+  task_id?: string;                           // Task ID for monitoring
+  session_id?: string;                        // Browser session ID
   live_url?: string;                          // VNC live view URL
   screenshot_url?: string;                    // Final screenshot URL
-  steps?: Array<{ screenshot_url?: string }>; // Per-step screenshots
+  steps?: Array<{                             // Per-step screenshots
+    step_number: number;
+    screenshot_url?: string;
+    url?: string;                             // Page URL at this step
+    memory?: string;                          // Agent's reasoning
+  }>;
+  is_success?: boolean | null;                // Task completion status
+  task_output?: string | null;                // Final task result
 }
 ```
 
@@ -854,6 +874,14 @@ function extractBrowserUseUrls(text: string): { liveUrl?: string; screenshotUrl?
 ```typescript
 import type { OutputEvent } from "@evolvingmachines/sdk";
 
+// Helper to detect browser-use tools (they have kind: "other")
+function isBrowserUseTool(title?: string): boolean {
+  return title?.toLowerCase().includes('browser-use') ?? false;
+}
+
+// Track tool titles for browser detection
+const toolTitles = new Map<string, string>();
+
 function handleEvent(event: OutputEvent): void {
   const { update } = event;
 
@@ -875,10 +903,16 @@ function handleEvent(event: OutputEvent): void {
       break;
 
     case "tool_call":
+      // Store title for browser-use detection on updates
+      toolTitles.set(update.toolCallId, update.title);
+
+      // Determine effective kind for UI (browser-use has kind: "other")
+      const effectiveKind = isBrowserUseTool(update.title) ? "browser" : update.kind;
+
       ui.addTool({
         id: update.toolCallId,
         title: update.title,
-        kind: update.kind,
+        kind: effectiveKind,  // Use "browser" for browser-use tools
         status: update.status,
         locations: update.locations,
       });
@@ -891,12 +925,15 @@ function handleEvent(event: OutputEvent): void {
         content: update.content,
       });
 
-      // 2. Extract browser-use URLs if present (first-party integration)
-      for (const c of update.content ?? []) {
-        if (c.type === "content" && c.content?.type === "text") {
-          const urls = extractBrowserUseUrls(c.content.text);
-          if (urls.liveUrl) ui.showLiveViewButton(urls.liveUrl);
-          if (urls.screenshotUrl) ui.showScreenshot(urls.screenshotUrl);
+      // 2. Extract browser-use URLs if this is a browser-use tool
+      const title = toolTitles.get(update.toolCallId);
+      if (isBrowserUseTool(title)) {
+        for (const c of update.content ?? []) {
+          if (c.type === "content" && c.content?.type === "text") {
+            const urls = extractBrowserUseUrls(c.content.text);
+            if (urls.liveUrl) ui.showLiveViewButton(urls.liveUrl);
+            if (urls.screenshotUrl) ui.showScreenshot(urls.screenshotUrl);
+          }
         }
       }
       break;
@@ -921,6 +958,7 @@ evolve.on("content", handleEvent);
 5. **Support images** — `ContentBlock` includes `ImageContent`
 6. **Use `kind` for icons** — Categorize tools visually (read, edit, execute, etc.)
 7. **Track `locations`** — Show affected file paths in UI
+8. **Detect browser-use by title** — Browser-use MCP tools have `kind: "other"`, check `title.includes("browser-use")` to identify them
 
 ### 3.4 Upload: Local → Sandbox
 

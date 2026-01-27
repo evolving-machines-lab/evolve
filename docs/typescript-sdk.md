@@ -103,9 +103,9 @@ E2B_API_KEY=e2b_...
 ```
 
 ```ts
-import { Evolve, E2BProvider } from "@evolvingmachines/sdk";
+import { Evolve, createE2BProvider } from "@evolvingmachines/sdk";
 
-const sandbox = new E2BProvider({
+const sandbox = createE2BProvider({
     apiKey: process.env.E2B_API_KEY,
 });
 
@@ -134,9 +134,9 @@ E2B_API_KEY=e2b_...
 ```
 
 ```ts
-import { Evolve, E2BProvider } from "@evolvingmachines/sdk";
+import { Evolve, createE2BProvider } from "@evolvingmachines/sdk";
 
-const sandbox = new E2BProvider({
+const sandbox = createE2BProvider({
     apiKey: process.env.E2B_API_KEY,
 });
 
@@ -224,10 +224,10 @@ const evolve = new Evolve()
 ## 2. Full Configuration
 
 ```ts
-import { Evolve, E2BProvider } from "@evolvingmachines/sdk";
+import { Evolve, createE2BProvider } from "@evolvingmachines/sdk";
 
 // Sandbox provider (auto-resolved from E2B_API_KEY, or explicit)
-const sandbox = new E2BProvider({
+const sandbox = createE2BProvider({
     apiKey: process.env.E2B_API_KEY,   // (optional) Auto-resolves from E2B_API_KEY env var
     defaultTimeoutMs: 3600000,          // (optional) Default sandbox timeout (default: 1 hour)
 });
