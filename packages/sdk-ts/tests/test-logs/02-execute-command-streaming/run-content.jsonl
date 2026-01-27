@@ -1,6 +1,0 @@
-{"update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"Say hello and create a file called test.txt with 'hello world' in it"}}}
-{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Hello!\n\nI will create the file `test.txt` with the content 'hello world' in the `output/` directory as per the project instructions.\n\n"}}}
-{"update":{"sessionUpdate":"tool_call","toolCallId":"write_file-1766005070888-ffdd77ec45358","title":"Write output/test.txt","kind":"edit","status":"pending","rawInput":{"content":"hello world\n","file_path":"output/test.txt"},"content":[{"type":"diff","path":"output/test.txt","oldText":null,"newText":"hello world\n"}],"locations":[{"path":"output/test.txt"}]}}
-{"update":{"sessionUpdate":"tool_call_update","toolCallId":"write_file-1766005070888-ffdd77ec45358","status":"completed","content":[]}}
-{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"The file `test.txt` has been created in the `output/"}}}
-{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"` directory with the content 'hello world'."}}}

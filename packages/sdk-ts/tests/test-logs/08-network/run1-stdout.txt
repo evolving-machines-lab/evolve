@@ -1,4 +1,0 @@
-{"type":"init","timestamp":"2025-12-17T21:07:05.516Z","session_id":"5391eea8-c0bd-42a8-a619-9897965073ca","model":"gemini-3-flash-preview"}
-{"type":"message","timestamp":"2025-12-17T21:07:05.518Z","role":"user","content":"Say hello briefly"}
-{"type":"message","timestamp":"2025-12-17T21:07:09.842Z","role":"assistant","content":"Hello.","delta":true}
-{"type":"result","timestamp":"2025-12-17T21:07:09.864Z","status":"success","stats":{"total_tokens":6387,"input_tokens":5920,"output_tokens":2,"duration_ms":4348,"tool_calls":0}}

@@ -1,6 +1,0 @@
-{"type":"init","timestamp":"2025-12-17T21:09:34.147Z","session_id":"700e4410-f1d2-41de-8307-35afcedc849e","model":"gemini-3-flash-preview"}
-{"type":"message","timestamp":"2025-12-17T21:09:34.148Z","role":"user","content":"Check if sandbox-marker.txt exists. If it doesn't exist, say 'NEW SANDBOX'. If it exists, say 'SAME SANDBOX'."}
-{"type":"tool_use","timestamp":"2025-12-17T21:09:35.799Z","tool_name":"run_shell_command","tool_id":"run_shell_command-1766005775799-50f43f8391997","parameters":{"command":"[ -f sandbox-marker.txt ] && echo \"SAME SANDBOX\" || echo \"NEW SANDBOX\"","description":"Checking for sandbox-marker.txt to determine if this is a new or existing sandbox."}}
-{"type":"tool_result","timestamp":"2025-12-17T21:09:35.991Z","tool_id":"run_shell_command-1766005775799-50f43f8391997","status":"success","output":"NEW SANDBOX"}
-{"type":"message","timestamp":"2025-12-17T21:09:37.781Z","role":"assistant","content":"NEW SANDBOX","delta":true}
-{"type":"result","timestamp":"2025-12-17T21:09:37.793Z","status":"success","stats":{"total_tokens":12294,"input_tokens":12024,"output_tokens":55,"duration_ms":3646,"tool_calls":1}}

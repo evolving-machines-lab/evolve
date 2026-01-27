@@ -1,8 +1,0 @@
-{
-  "propertyName": "BofA Plaza-Off,Los Angeles",
-  "tenantConcentrationRisk": "high",
-  "leaseRolloverRisk": "high",
-  "rentCollectionRisk": "high",
-  "overallRiskScore": 8,
-  "reasoning": "The property exhibits a high-risk profile (8/10) driven by extreme tenant concentration and an unstable lease rollover outlook. The top three tenants—The Capital Group Companies (33.7%), Bank of America (22.0%), and Sheppard Mullin (15.1%)—generate over 70% of total revenue. Most concerning is that 16.7% of the total rent comes from leases that expired in late 2024 (primarily Sheppard Mullin), placing a significant portion of the NOI on a month-to-month or holdover basis. The property also faces a high vacancy rate of 20.4%. Rent collection risk is elevated by significant below-market leases, notably Wells Fargo paying ~$11.76/SF/yr (vs. ~$35/SF/yr for others), and several occupied units currently generating zero rent, including a 25,545 SF space occupied by a lead tenant."
-}
