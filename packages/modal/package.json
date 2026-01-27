@@ -1,0 +1,51 @@
+{
+  "name": "@evolvingmachines/modal",
+  "version": "0.1.0",
+  "description": "Modal sandbox provider for Evolve SDK - GPU-enabled cloud sandboxes",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts",
+    "dev": "tsup src/index.ts --watch",
+    "type-check": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "modal",
+    "sandbox",
+    "gpu",
+    "ai",
+    "agents",
+    "evolve"
+  ],
+  "author": "Evolving Machines",
+  "license": "MIT",
+  "dependencies": {
+    "modal": "^0.3.21"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.18",
+    "tsup": "^8.4.0",
+    "typescript": "^5.8.3"
+  },
+  "peerDependencies": {
+    "@evolvingmachines/sdk": "*"
+  },
+  "peerDependenciesMeta": {
+    "@evolvingmachines/sdk": {
+      "optional": true
+    }
+  }
+}
