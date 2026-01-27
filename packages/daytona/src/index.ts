@@ -506,7 +506,10 @@ export class DaytonaProvider implements SandboxProvider {
   }
 
   async create(options: SandboxCreateOptions): Promise<SandboxInstance> {
-    const timeoutSec = Math.floor((options.timeoutMs ?? this.defaultTimeoutMs) / 1000);
+    // Daytona uses inactivity-based auto-stop, not fixed lifetime
+    // Convert timeoutMs to autoStopInterval in minutes for parity with E2B/Modal
+    const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
+    const autoStopMinutes = Math.max(1, Math.ceil(timeoutMs / 60000)); // Min 1 minute
     const imageName = options.image;
 
     let sandbox: DaytonaSandbox;
@@ -522,9 +525,9 @@ export class DaytonaProvider implements SandboxProvider {
             snapshot: imageName,
             envVars: options.envs,
             labels: options.metadata,
-            autoStopInterval: 0,
+            autoStopInterval: autoStopMinutes,
           },
-          { timeout: timeoutSec }
+          { timeout: 600 } // 10 min creation timeout (Daytona default)
         );
       } else {
         throw new Error("Snapshot not active");
@@ -547,7 +550,7 @@ export class DaytonaProvider implements SandboxProvider {
           image: publicImage,
           envVars: options.envs,
           labels: options.metadata,
-          autoStopInterval: 0,
+          autoStopInterval: autoStopMinutes,
           resources: {
             cpu: options.resources?.cpu ?? 4,
             memory: options.resources?.memory ?? 4,
@@ -555,7 +558,7 @@ export class DaytonaProvider implements SandboxProvider {
           },
         },
         {
-          timeout: timeoutSec,
+          timeout: 600, // 10 min creation timeout (Daytona default)
           onSnapshotCreateLogs: (log: string) => console.log(`[Daytona] ${log}`),
         }
       );
