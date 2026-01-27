@@ -1,102 +1,98 @@
 # Modal Sandbox Reference for Evolve SDK
 
-This document maps E2B provider features to Modal SDK equivalents for implementing a compatible `ModalProvider`.
+TypeScript-focused reference for implementing `ModalProvider` based on actual SDK usage.
 
-## Overview
+## SDK Feature Requirements
 
-Modal sandboxes provide secure, isolated containers for running AI agents. Key differences from E2B:
+Features actually used by `packages/sdk-ts`:
 
-| Feature | E2B | Modal |
-|---------|-----|-------|
-| Public Images | Template IDs | Any Docker image via `fromRegistry()` |
-| File APIs | Native `files.read/write/writeBatch` | Shell workarounds (no native TS file API) |
-| GPU Support | ❌ | ✅ T4, L4, A10, A100, L40S, H100, H200, B200 |
-| File System API | Full-featured | Alpha (Python only via `sb.open()`) |
-| Pause/Resume | ✅ `betaPause()` | ❌ Use filesystem snapshots instead |
-| Max Timeout | Varies | 24 hours |
+| Feature | SDK Usage | Modal TS Support |
+|---------|-----------|------------------|
+| `provider.create()` | ✅ | ✅ `modal.sandboxes.create()` |
+| `provider.connect(id)` | ✅ | ✅ `modal.sandboxes.fromId()` |
+| `sandbox.sandboxId` | ✅ | ✅ `sb.sandboxId` |
+| `commands.run()` | ✅ | ✅ `sb.exec()` + `p.wait()` |
+| `commands.spawn()` | ✅ | ✅ `sb.exec()` (returns handle) |
+| `files.read()` | ✅ | ⚠️ Shell: `cat` / `base64` |
+| `files.write()` | ✅ | ⚠️ Shell: heredoc |
+| `files.writeBatch()` | ✅ | ⚠️ Shell: tar extract |
+| `files.makeDir()` | ✅ | ⚠️ Shell: `mkdir -p` |
+| `getHost(port)` | ✅ | ✅ `sb.tunnels()[port].url` |
+| `kill()` | ✅ | ✅ `sb.terminate()` |
+| `pause()` | ✅ | ❌ Not supported |
+
+**Not used by SDK** (skip implementation):
+- `commands.list()`, `commands.connect()`, `commands.sendStdin()`, `commands.kill()`
+- `files.exists()`, `files.list()`, `files.remove()`, `files.rename()`, streaming, URLs, watchDir
+- `isRunning()`, `getInfo()`, `provider.list()`
 
 ---
 
-## Public Images (Simple Like E2B)
+## TypeScript API Reference
 
-Modal accepts **any public Docker image** directly - no mapping table needed (unlike Daytona):
+### Installation
 
-```javascript
-// Any Docker Hub image
-modal.images.fromRegistry("python:3.13-slim")
-modal.images.fromRegistry("ubuntu:22.04")
-modal.images.fromRegistry("node:20-alpine")
-
-// Other registries work too
-modal.images.fromRegistry("nvcr.io/nvidia/pytorch:24.01-py3")  // NVIDIA NGC
-modal.images.fromRegistry("ghcr.io/owner/image:tag")           // GitHub
-modal.images.fromRegistry("public.ecr.aws/lambda/python:3.12") // AWS ECR
-
-// Add Python to non-Python images
-modal.images.fromRegistry("ubuntu:22.04", { addPython: "3.11" })
-
-// Chain customizations
-modal.images
-  .fromRegistry("python:3.13-slim")
-  .dockerfileCommands([
-    "RUN pip install numpy pandas torch",
-    "RUN apt-get update && apt-get install -y git curl"
-  ])
+```bash
+npm install modal
 ```
 
-**Key benefit**: For `ModalProvider.create({ image: "python:3.13-slim" })`, we pass the image directly to `fromRegistry()` - no IMAGE_MAP translation needed.
+### Client Setup
 
----
+```typescript
+import ModalClient from "modal";
 
-## Core API Reference (TypeScript/JavaScript)
-
-### Creating a Client and App
-
-```javascript
 const modal = new ModalClient();
 
-// Look up or create an app
-const app = await modal.apps.fromName("my-app", {
+// Create or get an app (required for sandboxes)
+const app = await modal.apps.fromName("evolve-app", {
   createIfMissing: true,
 });
 ```
 
+### Images (Public Docker - Simple Like E2B)
+
+```typescript
+// Any public Docker image works directly
+const image = modal.images.fromRegistry("python:3.13-slim");
+
+// With customizations
+const image = modal.images
+  .fromRegistry("python:3.13-slim")
+  .dockerfileCommands([
+    "RUN pip install numpy pandas",
+    "RUN apt-get update && apt-get install -y git curl",
+  ]);
+
+// Other registries
+modal.images.fromRegistry("ubuntu:22.04");
+modal.images.fromRegistry("node:20-alpine");
+modal.images.fromRegistry("nvcr.io/nvidia/pytorch:24.01-py3");
+```
+
 ### Creating a Sandbox
 
-```javascript
-// Basic sandbox with default Debian image
-const image = modal.images.fromRegistry("python:3.13-slim");
-const sb = await modal.sandboxes.create(app, image);
-
-// With timeout (max 24 hours)
+```typescript
 const sb = await modal.sandboxes.create(app, image, {
-  timeout: 10 * 60 * 1000, // 10 minutes in ms
+  timeout: 60 * 60 * 1000,    // 1 hour max (up to 24h)
+  workdir: "/workspace",
+  secrets: [secret],
+  volumes: { "/data": volume },
+  gpu: "A100",                // Optional GPU
 });
 
-// With idle timeout (auto-terminate on inactivity)
-const sb = await modal.sandboxes.create(app, image, {
-  idleTimeout: 5 * 60 * 1000, // 5 minutes
-});
-
-// With working directory
-const sb = await modal.sandboxes.create(app, image, {
-  workdir: "/repo",
-});
+// Get sandbox ID for reconnection
+const sandboxId = sb.sandboxId;
 ```
 
 ### Connecting to Existing Sandbox
 
-```javascript
-// Get sandbox ID after creation
-const sbId = sb.sandboxId;
-
-// Later, reconnect to the same sandbox
-const sb2 = await modal.sandboxes.fromId(sbId);
+```typescript
+const sb = await modal.sandboxes.fromId(sandboxId);
 ```
 
-### Terminating a Sandbox
+### Terminating
 
-```javascript
+```typescript
 await sb.terminate();
 ```
 
@@ -104,42 +100,49 @@ await sb.terminate();
 
 ## Commands API
 
-### Running Commands (Blocking)
+### run() - Blocking Execution
 
-```javascript
-// Simple command
-const p = await sb.exec(["echo", "hello"], { timeout: 3000 });
+```typescript
+// Execute and wait for completion
+const p = await sb.exec(["echo", "hello"], { timeout: 30000 });
+await p.wait();
+
+// Get output
 const stdout = await p.stdout.readText();
-console.log(stdout); // "hello\n"
+const stderr = await p.stderr.readText();
 
-// Get exit code
-const exitCode = await p.poll(); // Returns number | null (null if still running)
-await p.wait(); // Wait for completion
+// Exit code (after wait)
+const exitCode = await p.wait(); // Returns exit code
+```
 
-// Python execution
-const p = await sb.exec(["python", "-c", "print('hello')"], { timeout: 3000 });
+### spawn() - Background Execution
+
+```typescript
+// Start background process
+const p = await sb.exec(["python", "server.py"], { timeout: 3600000 });
+
+// Don't await - process runs in background
+// Later, can check or wait:
+const exitCode = await p.wait();
 ```
 
 ### Streaming Output
 
-```javascript
-const p = await sb.exec(
-  ["bash", "-c", "for i in {1..10}; do date +%T; sleep 0.5; done"],
-  { timeout: 5000 }
-);
+```typescript
+const p = await sb.exec(["python", "script.py"], { timeout: 60000 });
 
-// Stream stdout line by line
+// Stream stdout
 for await (const line of p.stdout) {
   process.stdout.write(line);
 }
 ```
 
-### Writing to stdin
+### stdin
 
-```javascript
+```typescript
 const p = await sb.exec(["bash", "-c", "while read line; do echo $line; done"]);
-p.stdin.write("foo bar\n");
-p.stdin.close(); // Signal EOF
+p.stdin.write("hello\n");
+p.stdin.write_eof(); // Signal EOF
 await p.wait();
 ```
 
@@ -147,322 +150,216 @@ await p.wait();
 
 ## File Operations (Shell Workarounds)
 
-Modal's TypeScript SDK lacks native file APIs. Use shell commands instead.
+Modal TS SDK has no native file APIs. Use shell commands.
 
-### Reading Files
+### files.read()
 
-```javascript
-// Read text file
-const p = await sb.exec(["cat", "/path/to/file.txt"]);
-const content = await p.stdout.readText();
+```typescript
+async function read(path: string): Promise<string | Uint8Array> {
+  // Text files
+  const p = await sb.exec(["cat", path], { timeout: 30000 });
+  await p.wait();
+  return await p.stdout.readText();
 
-// Read with base64 encoding (for binary safety)
-const p = await sb.exec(["base64", "/path/to/file.bin"]);
-const base64 = await p.stdout.readText();
-const binary = Buffer.from(base64, 'base64');
+  // Binary files - use base64
+  const p = await sb.exec(["base64", path], { timeout: 30000 });
+  await p.wait();
+  const b64 = await p.stdout.readText();
+  return Buffer.from(b64.trim(), "base64");
+}
 ```
 
-### Writing Files
+### files.write()
 
-```javascript
-// Write text file using heredoc
-await sb.exec(["bash", "-c", `cat > /path/to/file.txt << 'EOF'
-file content here
-EOF`]);
+```typescript
+async function write(path: string, content: string): Promise<void> {
+  // Escape content for shell safety
+  const escaped = content.replace(/'/g, "'\\''");
+  await sb.exec(["bash", "-c", `cat > '${path}' << 'EVOLVE_EOF'\n${content}\nEVOLVE_EOF`]);
+}
 
-// Write using echo (escape carefully)
-await sb.exec(["bash", "-c", `echo -n 'content' > /path/to/file.txt`]);
-
-// Write binary with base64
-const base64 = Buffer.from(binaryData).toString('base64');
-await sb.exec(["bash", "-c", `echo '${base64}' | base64 -d > /path/to/file.bin`]);
+// Binary - use base64
+async function writeBinary(path: string, data: Uint8Array): Promise<void> {
+  const b64 = Buffer.from(data).toString("base64");
+  await sb.exec(["bash", "-c", `echo '${b64}' | base64 -d > '${path}'`]);
+}
 ```
 
-### Batch Upload via Tar Stream
+### files.writeBatch() - Tar Stream
 
-For efficient multi-file upload, create a tar archive and extract in sandbox:
+```typescript
+import { pack } from "tar-stream";
 
-```javascript
-import { pack } from 'tar-stream';
-
-// Create tar archive from FileMap
-async function createTarBuffer(files: Record<string, string | Uint8Array>): Promise<Buffer> {
-  const chunks: Buffer[] = [];
+async function writeBatch(
+  files: Array<{ path: string; data: string | Uint8Array }>
+): Promise<void> {
+  // Create tar archive
   const tarPack = pack();
+  const chunks: Buffer[] = [];
 
-  for (const [path, content] of Object.entries(files)) {
-    const data = typeof content === 'string' ? Buffer.from(content) : content;
-    tarPack.entry({ name: path }, data);
+  for (const file of files) {
+    const data = typeof file.data === "string"
+      ? Buffer.from(file.data)
+      : Buffer.from(file.data);
+    tarPack.entry({ name: file.path }, data);
   }
   tarPack.finalize();
 
   for await (const chunk of tarPack) {
     chunks.push(chunk);
   }
-  return Buffer.concat(chunks);
+
+  const tarBase64 = Buffer.concat(chunks).toString("base64");
+
+  // Extract in sandbox
+  await sb.exec([
+    "bash", "-c",
+    `echo '${tarBase64}' | base64 -d | tar -xf - -C /`
+  ], { timeout: 60000 });
 }
-
-// Upload and extract
-const tarBuffer = await createTarBuffer(files);
-const base64Tar = tarBuffer.toString('base64');
-await sb.exec([
-  "bash", "-c",
-  `echo '${base64Tar}' | base64 -d | tar -xf - -C /workspace`
-]);
 ```
 
-### Directory Operations
+### files.makeDir()
 
-```javascript
-// Create directory
-await sb.exec(["mkdir", "-p", "/path/to/dir"]);
-
-// List directory
-const p = await sb.exec(["ls", "-la", "/path/to/dir"]);
-const listing = await p.stdout.readText();
-
-// Check if file exists
-const p = await sb.exec(["test", "-f", "/path/to/file", "&&", "echo", "exists"]);
-const exists = (await p.stdout.readText()).includes("exists");
-
-// Remove file/directory
-await sb.exec(["rm", "-rf", "/path/to/remove"]);
-
-// Rename/move
-await sb.exec(["mv", "/old/path", "/new/path"]);
+```typescript
+async function makeDir(path: string): Promise<void> {
+  await sb.exec(["mkdir", "-p", path], { timeout: 10000 });
+}
 ```
 
 ---
 
-## GPU Configuration
+## Networking (getHost)
 
-```javascript
-// Create image with GPU support
-const image = modal.images
-  .fromRegistry("python:3.13-slim")
-  .dockerfileCommands(["RUN pip install torch"]);
-
-// Create sandbox with GPU
+```typescript
+// Create sandbox with port forwarding
 const sb = await modal.sandboxes.create(app, image, {
-  gpu: "A100",        // T4, L4, A10, A100, L40S, H100, H200, B200
-  // gpu: "H100:8",   // Multiple GPUs
+  encryptedPorts: [8080],
 });
-```
 
-Available GPU types:
-- `T4` - Entry-level inference
-- `L4` - Cost-effective inference
-- `A10` - Up to 4 GPUs (96 GB total)
-- `A100` / `A100-40GB` / `A100-80GB` - Training/inference
-- `L40S` - Recommended for inference (48 GB)
-- `H100` / `H200` - High-performance (up to 8 GPUs)
-- `B200` - Latest Blackwell architecture
+// Start a server
+await sb.exec(["python", "-m", "http.server", "8080"]);
+
+// Get public URL
+const tunnels = await sb.tunnels();
+const url = tunnels[8080].url;  // https://xxx.modal.run
+```
 
 ---
 
-## Environment Variables and Secrets
+## GPU Support
 
-```javascript
-// Create inline secret
+```typescript
+const sb = await modal.sandboxes.create(app, image, {
+  gpu: "A100",      // Single GPU
+  // gpu: "H100:4", // Multiple GPUs
+});
+```
+
+Available: `T4`, `L4`, `A10`, `A100`, `A100-40GB`, `A100-80GB`, `L40S`, `H100`, `H200`, `B200`
+
+---
+
+## Environment Variables / Secrets
+
+```typescript
 const secret = modal.secrets.fromObject({
-  MY_SECRET: "hello",
-  API_KEY: process.env.API_KEY,
+  ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+  MY_VAR: "value",
 });
 
-// Create sandbox with secrets
 const sb = await modal.sandboxes.create(app, image, {
   secrets: [secret],
 });
-
-// Access in commands
-const p = await sb.exec(["bash", "-c", "echo $MY_SECRET"]);
-```
-
----
-
-## Custom Images
-
-```javascript
-// From registry
-const image = modal.images.fromRegistry("python:3.13-slim");
-
-// With pip packages
-const image = modal.images
-  .fromRegistry("python:3.13-slim")
-  .dockerfileCommands([
-    "RUN pip install pandas numpy torch",
-    "RUN apt-get update && apt-get install -y git",
-  ]);
-
-// Add local files to image (at build time)
-// Note: TypeScript SDK may have limited support for this
 ```
 
 ---
 
 ## Volumes (Persistent Storage)
 
-```javascript
-// Create/get named volume
-const volume = modal.volumes.fromName("my-volume");
+```typescript
+const volume = await modal.volumes.fromName("my-volume", {
+  createIfMissing: true,
+});
 
-// Attach to sandbox
 const sb = await modal.sandboxes.create(app, image, {
   volumes: { "/data": volume },
 });
-
-// Files written to /data persist across sandbox restarts
 ```
 
 ---
 
-## Networking (Tunnels / getHost)
+## pause() - Not Supported
 
-```javascript
-// Create sandbox with port forwarding
-const sb = await modal.sandboxes.create(app, image, {
-  entrypoint: ["python", "-m", "http.server", "8080"],
-  encryptedPorts: [8080],  // or unencryptedPorts
-});
+Modal doesn't support pause/resume. Options:
 
-// Get public URL for port
-const tunnels = await sb.tunnels();
-const url = tunnels[8080].url;  // https://xxxx.modal.run
+1. **Throw error** (recommended for now):
+```typescript
+async pause(): Promise<void> {
+  throw new Error("Modal does not support pause. Use kill() instead.");
+}
 ```
 
-For authenticated access:
-
-```javascript
-// Create connect token for secure HTTP/WebSocket access
-const creds = await sb.createConnectToken({
-  userMetadata: { userId: "foo" },
-});
-
-// Use in requests
-fetch(creds.url, {
-  headers: { Authorization: `Bearer ${creds.token}` },
-});
+2. **Future: Filesystem snapshots** (Python-only currently):
+```python
+# Python only - not available in TS SDK yet
+image = sb.snapshot_filesystem()
+sb.terminate()
+# Later: modal.Sandbox.create(image=image, app=app)
 ```
 
 ---
 
-## E2B to Modal Feature Mapping
+## Complete ModalProvider Implementation Outline
 
-### SandboxProvider Interface
+```typescript
+import ModalClient from "modal";
 
-| E2B Method | Modal Equivalent |
-|------------|------------------|
-| `create(options)` | `modal.sandboxes.create(app, image, options)` |
-| `connect(sandboxId)` | `modal.sandboxes.fromId(sandboxId)` |
-| `list(options)` | Not directly available (use App API) |
+class ModalProvider implements SandboxProvider {
+  readonly providerType = "modal";
+  private modal: ModalClient;
+  private app: App;
 
-### SandboxInstance Interface
+  async create(options: SandboxCreateOptions): Promise<SandboxInstance> {
+    const image = this.modal.images.fromRegistry(options.image);
+    const secret = options.envs
+      ? this.modal.secrets.fromObject(options.envs)
+      : undefined;
 
-| E2B Method | Modal Equivalent |
-|------------|------------------|
-| `sandboxId` | `sb.sandboxId` |
-| `commands` | `sb.exec()` |
-| `files` | Shell commands (see above) |
-| `getHost(port)` | `sb.tunnels()[port].url` |
-| `isRunning()` | `sb.poll() !== null` or check status |
-| `getInfo()` | Not directly available |
-| `kill()` | `sb.terminate()` |
-| `pause()` | Use filesystem snapshots |
+    const sb = await this.modal.sandboxes.create(this.app, image, {
+      timeout: options.timeoutMs,
+      workdir: options.workingDirectory,
+      secrets: secret ? [secret] : undefined,
+    });
 
-### SandboxCommands Interface
+    return new ModalSandboxInstance(sb);
+  }
 
-| E2B Method | Modal Equivalent |
-|------------|------------------|
-| `run(cmd, opts)` | `sb.exec(cmd, { timeout }); await p.wait()` |
-| `spawn(cmd, opts)` | `sb.exec(cmd, opts)` (returns handle) |
-| `list()` | Not available |
-| `connect(pid)` | Not available |
-| `sendStdin(pid, data)` | `p.stdin.write(data)` |
-| `kill(pid)` | Not available (terminate sandbox) |
+  async connect(sandboxId: string): Promise<SandboxInstance> {
+    const sb = await this.modal.sandboxes.fromId(sandboxId);
+    return new ModalSandboxInstance(sb);
+  }
+}
 
-### SandboxFiles Interface
+class ModalSandboxInstance implements SandboxInstance {
+  readonly commands: ModalCommands;
+  readonly files: ModalFiles;
 
-| E2B Method | Modal Shell Workaround |
-|------------|------------------------|
-| `read(path)` | `sb.exec(["cat", path])` |
-| `write(path, content)` | `sb.exec(["bash", "-c", "echo ... > path"])` |
-| `writeBatch(files)` | Tar stream (see above) |
-| `makeDir(path)` | `sb.exec(["mkdir", "-p", path])` |
-| `exists(path)` | `sb.exec(["test", "-e", path])` |
-| `list(path)` | `sb.exec(["ls", "-la", path])` |
-| `remove(path)` | `sb.exec(["rm", "-rf", path])` |
-| `rename(old, new)` | `sb.exec(["mv", old, new])` |
-| `readStream(path)` | Not available |
-| `writeStream(path, stream)` | Not available |
-| `uploadUrl(path)` | Not available |
-| `downloadUrl(path)` | Not available |
-| `watchDir(path, cb)` | Not available |
+  get sandboxId(): string {
+    return this.sb.sandboxId;
+  }
 
----
+  async getHost(port: number): Promise<string> {
+    const tunnels = await this.sb.tunnels();
+    return tunnels[port].url;
+  }
 
-## Filesystem Snapshots (Alternative to Pause)
+  async kill(): Promise<void> {
+    await this.sb.terminate();
+  }
 
-Since Modal doesn't support pause/resume, use filesystem snapshots:
-
-```javascript
-// Create snapshot of current filesystem state
-const snapshotImage = await sb.snapshotFilesystem();
-await sb.terminate();
-
-// Later, restore from snapshot
-const sb2 = await modal.sandboxes.create(app, snapshotImage);
-```
-
----
-
-## Complete Example
-
-```javascript
-import ModalClient from 'modal';
-
-async function runAgent() {
-  const modal = new ModalClient();
-
-  // Setup
-  const app = await modal.apps.fromName("evolve-agent", { createIfMissing: true });
-  const image = modal.images.fromRegistry("python:3.13-slim")
-    .dockerfileCommands(["RUN pip install numpy"]);
-  const secret = modal.secrets.fromObject({
-    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
-  });
-
-  // Create sandbox with GPU
-  const sb = await modal.sandboxes.create(app, image, {
-    timeout: 60 * 60 * 1000, // 1 hour
-    gpu: "A100",
-    secrets: [secret],
-    workdir: "/workspace",
-  });
-
-  try {
-    // Upload workspace files via tar
-    const tarBase64 = createTarBase64(workspaceFiles);
-    await sb.exec(["bash", "-c", `echo '${tarBase64}' | base64 -d | tar -xf - -C /workspace`]);
-
-    // Run agent command
-    const p = await sb.exec(
-      ["claude", "--print", "--dangerously-skip-permissions", "-p", prompt],
-      { timeout: 30 * 60 * 1000 }
-    );
-
-    // Stream output
-    for await (const line of p.stdout) {
-      console.log(line);
-    }
-
-    await p.wait();
-
-    // Download results
-    const result = await sb.exec(["cat", "/workspace/output.json"]);
-    return await result.stdout.readText();
-
-  } finally {
-    await sb.terminate();
+  async pause(): Promise<void> {
+    throw new Error("Modal does not support pause");
   }
 }
 ```
@@ -471,10 +368,8 @@ async function runAgent() {
 
 ## References
 
+- [Modal JS SDK (npm)](https://www.npmjs.org/package/modal)
+- [Modal JS API Reference](https://modal-labs.github.io/libmodal/)
 - [Modal Sandboxes Guide](https://modal.com/docs/guide/sandboxes)
 - [Running Commands](https://modal.com/docs/guide/sandbox-spawn)
-- [File Access](https://modal.com/docs/guide/sandbox-files)
-- [Networking](https://modal.com/docs/guide/sandbox-networking)
 - [GPU Acceleration](https://modal.com/docs/guide/gpu)
-- [JavaScript/Go SDKs](https://modal.com/docs/guide/sdk-javascript-go)
-- [API Reference](https://modal.com/docs/reference)
