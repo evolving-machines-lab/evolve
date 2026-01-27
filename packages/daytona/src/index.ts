@@ -507,30 +507,59 @@ export class DaytonaProvider implements SandboxProvider {
 
   async create(options: SandboxCreateOptions): Promise<SandboxInstance> {
     const timeoutSec = Math.floor((options.timeoutMs ?? this.defaultTimeoutMs) / 1000);
+    const imageName = options.image;
 
-    // Map generic 'image' to Daytona Docker image
-    const image = IMAGE_MAP[options.image] ?? options.image;
+    let sandbox: DaytonaSandbox;
 
-    console.log(`[Daytona] Creating sandbox from image: ${image}`);
-    console.log("[Daytona] First run may take a few minutes (image will be cached for future runs)...");
-
-    const sandbox = await this.client.create(
-      {
-        image,
-        envVars: options.envs,
-        labels: options.metadata,
-        autoStopInterval: 0,
-        resources: {
-          cpu: options.resources?.cpu ?? 4,
-          memory: options.resources?.memory ?? 4,
-          disk: options.resources?.disk ?? 10,
-        },
-      },
-      {
-        timeout: timeoutSec,
-        onSnapshotCreateLogs: (log: string) => console.log(`[Daytona] ${log}`),
+    // Try to use existing snapshot first (fast path for returning users)
+    try {
+      const snapshot = await this.client.snapshot.get(imageName);
+      if (snapshot && snapshot.state === "active") {
+        console.log(`[Daytona] Using cached snapshot: ${imageName}`);
+        // CreateSandboxFromSnapshotParams - no resources field
+        sandbox = await this.client.create(
+          {
+            snapshot: imageName,
+            envVars: options.envs,
+            labels: options.metadata,
+            autoStopInterval: 0,
+          },
+          { timeout: timeoutSec }
+        );
+      } else {
+        throw new Error("Snapshot not active");
       }
-    );
+    } catch {
+      // Snapshot doesn't exist - fall back to public Docker image
+      const publicImage = IMAGE_MAP[imageName];
+      if (!publicImage) {
+        throw new Error(
+          `Unknown image "${imageName}" and no public fallback available. ` +
+          `Available images: ${Object.keys(IMAGE_MAP).join(", ")}`
+        );
+      }
+
+      console.log(`[Daytona] Snapshot "${imageName}" not found, creating from image: ${publicImage}`);
+      console.log("[Daytona] First run may take a few minutes (image will be cached for future runs)...");
+
+      sandbox = await this.client.create(
+        {
+          image: publicImage,
+          envVars: options.envs,
+          labels: options.metadata,
+          autoStopInterval: 0,
+          resources: {
+            cpu: options.resources?.cpu ?? 4,
+            memory: options.resources?.memory ?? 4,
+            disk: options.resources?.disk ?? 10,
+          },
+        },
+        {
+          timeout: timeoutSec,
+          onSnapshotCreateLogs: (log: string) => console.log(`[Daytona] ${log}`),
+        }
+      );
+    }
 
     if (options.workingDirectory) {
       await sandbox.fs.createFolder(options.workingDirectory, "755");
