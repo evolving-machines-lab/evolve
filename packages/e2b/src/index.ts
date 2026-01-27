@@ -543,7 +543,7 @@ class E2BSandboxImpl implements SandboxInstance {
   }
 }
 
-export class E2BSandboxProvider implements SandboxProvider {
+export class E2BProvider implements SandboxProvider {
   readonly providerType = "e2b" as const;
   private readonly apiKey: string;
   private readonly defaultTimeoutMs: number;
@@ -624,5 +624,5 @@ export function createE2BProvider(config: E2BConfig = {}): SandboxProvider {
     );
   }
 
-  return new E2BSandboxProvider({ ...config, apiKey });
+  return new E2BProvider({ ...config, apiKey });
 }

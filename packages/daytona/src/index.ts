@@ -470,7 +470,7 @@ class DaytonaSandboxImpl implements SandboxInstance {
   }
 }
 
-export class DaytonaSandboxProvider implements SandboxProvider {
+export class DaytonaProvider implements SandboxProvider {
   readonly providerType = "daytona" as const;
   readonly name = "Daytona";
   private readonly client: Daytona;
@@ -582,5 +582,5 @@ export function createDaytonaProvider(config: DaytonaConfig = {}): SandboxProvid
     );
   }
 
-  return new DaytonaSandboxProvider({ ...config, apiKey });
+  return new DaytonaProvider({ ...config, apiKey });
 }
