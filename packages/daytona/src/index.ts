@@ -229,7 +229,7 @@ class DaytonaCommands implements SandboxCommands {
       try {
         const resp = await this.sandbox.process.executeSessionCommand(sessionId, {
           command: wrapWithCwd(command, options?.cwd),
-          async: false,
+          runAsync: false,
         }, timeoutSec);
 
         const cmdId = resp.cmdId;
@@ -244,8 +244,8 @@ class DaytonaCommands implements SandboxCommands {
 
         return {
           exitCode: resp.exitCode ?? 0,
-          stdout: resp.output ?? "",
-          stderr: "",
+          stdout: resp.stdout ?? resp.output ?? "",
+          stderr: resp.stderr ?? "",
         };
       } finally {
         try {
@@ -280,7 +280,7 @@ class DaytonaCommands implements SandboxCommands {
 
     const resp = await this.sandbox.process.executeSessionCommand(sessionId, {
       command: wrapWithCwd(command, options?.cwd),
-      async: true,
+      runAsync: true,
     }, timeoutSec);
 
     const cmdId = resp.cmdId;
@@ -296,18 +296,30 @@ class DaytonaCommands implements SandboxCommands {
       });
     }
 
+    const sandbox = this.sandbox;
     return {
       processId: sessionId,
       wait: async () => {
-        return {
-          exitCode: resp.exitCode ?? 0,
-          stdout: resp.output ?? "",
-          stderr: "",
-        };
+        if (!cmdId) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        // Poll until command completes (exitCode becomes defined)
+        while (true) {
+          const cmd = await sandbox.process.getSessionCommand(sessionId, cmdId);
+          if (cmd.exitCode !== undefined) {
+            const logs = await sandbox.process.getSessionCommandLogs(sessionId, cmdId);
+            return {
+              exitCode: cmd.exitCode,
+              stdout: logs.stdout ?? logs.output ?? "",
+              stderr: logs.stderr ?? "",
+            };
+          }
+          await new Promise(r => setTimeout(r, 500));
+        }
       },
       kill: async () => {
         try {
-          await this.sandbox.process.deleteSession(sessionId);
+          await sandbox.process.deleteSession(sessionId);
           return true;
         } catch {
           return false;
