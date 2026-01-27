@@ -211,4 +211,6 @@ export {
   saveLocalDir,
   // Retry utilities
   executeWithRetry,
+  // Sandbox utilities
+  resolveDefaultSandbox,
 } from "./utils";

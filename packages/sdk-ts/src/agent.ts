@@ -245,6 +245,19 @@ export class Agent {
       await sandbox.files.write(targetPath, this.agentConfig.oauthFileContent);
       await sandbox.commands.run(`chmod 600 ${targetPath}`, { timeoutMs: 10000 });
 
+      // Gemini requires settings.json with auth type configured
+      if (this.agentConfig.type === "gemini") {
+        const settingsPath = `${dir}/settings.json`;
+        const geminiSettings = {
+          security: {
+            auth: {
+              selectedType: "oauth-personal"
+            }
+          }
+        };
+        await sandbox.files.write(settingsPath, JSON.stringify(geminiSettings, null, 2));
+      }
+
       // Skip setupCommand - already authenticated via file
       return;
     }
