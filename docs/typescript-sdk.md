@@ -233,6 +233,8 @@ Works with both Gateway mode (`EVOLVE_API_KEY`) and BYOK mode (provider API keys
 | Modal | `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` | Both Modal vars set |
 | Daytona | `DAYTONA_API_KEY` | `DAYTONA_API_KEY` set |
 
+> **Note:** If your env vars are set, `.withSandbox()` is optional—the SDK auto-resolves the provider. Only use explicit provider creation below if you need custom settings (timeout, app name, etc.).
+
 **E2B** (default)
 ```bash
 # .env - Gateway mode
