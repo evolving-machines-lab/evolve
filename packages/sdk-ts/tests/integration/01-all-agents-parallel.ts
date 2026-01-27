@@ -17,7 +17,7 @@ import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { readFileSync, writeFileSync, mkdirSync, rmSync } from "fs";
 import type { AgentType, FileMap, OutputEvent } from "../../dist/index.js";
-import { getAgentConfig, getTestEnv, getSandboxProvider } from "./test-config.js";
+import { getAgentConfig, getSandboxProvider } from "./test-config.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, "../../../../.env") });
@@ -26,50 +26,13 @@ config({ path: resolve(__dirname, "../../../../.env") });
 // CONFIG
 // =============================================================================
 
-const env = getTestEnv();
 const LOGS_DIR = resolve(__dirname, "../test-logs/01-all-agents-parallel");
 const FIXTURES_DIR = resolve(__dirname, "../fixtures");
 
 const FILES = {
   withContext: "test_image.png",
   withFiles: "hackernews.png",
-  uploadFiles: "AMPX_Financial_Analysis.xlsx",
-  uploadContext: "hackernews.png",
 };
-
-// MCP servers
-const mcpServers: Record<string, { command: string; args: string[]; env?: Record<string, string> }> = {};
-
-mcpServers["search_duckduckgo"] = {
-  command: "uvx",
-  args: ["duckduckgo-mcp-server"],
-};
-
-mcpServers["search_bravesearch"] = {
-  command: "npx",
-  args: ["-y", "@modelcontextprotocol/server-brave-search"],
-  env: { BRAVE_API_KEY: process.env.BRAVE_API_KEY || "" },
-};
-
-mcpServers["chrome-devtools"] = {
-  command: "npx",
-  args: [
-    "chrome-devtools-mcp@latest",
-    "--headless=true",
-    "--isolated=true",
-    "--chromeArg=--no-sandbox",
-    "--chromeArg=--disable-setuid-sandbox",
-    "--chromeArg=--disable-dev-shm-usage",
-  ],
-};
-
-if (process.env.EXA_API_KEY) {
-  mcpServers["exa"] = {
-    command: "npx",
-    args: ["-y", "mcp-remote", "https://mcp.exa.ai/mcp"],
-    env: { EXA_API_KEY: process.env.EXA_API_KEY },
-  };
-}
 
 const ALL_AGENTS: AgentType[] = ["claude", "codex", "gemini", "qwen"];
 
@@ -108,13 +71,10 @@ async function testAgent(type: AgentType): Promise<{ ok: boolean; error?: string
     .withSystemPrompt("Your name is Manus Evolve, a powerful autonomous AI agent.")
     .withContext({
       [FILES.withContext]: load(FILES.withContext),
-      //[`test_dir/${FILES.withContext}`]: load(FILES.withContext),
     })
     .withFiles({
       [FILES.withFiles]: load(FILES.withFiles),
-      //[`test_dir/${FILES.withFiles}`]: load(FILES.withFiles),
-    })
-    .withMcpServers(mcpServers);
+    });
 
   // Collect content events (parsed ACP-style events)
   let contentEvents: OutputEvent[] = [];
@@ -135,17 +95,6 @@ async function testAgent(type: AgentType): Promise<{ ok: boolean; error?: string
     save(type, "run1-content.jsonl", contentEvents.map(e => JSON.stringify(e)).join("\n"));
     console.log(`[${type}] Run 1 done (exit=${run1.exitCode}, outputs=${Object.keys(output1.files).length}, events=${contentEvents.length})`);
     contentEvents = [];
-
-    // Runtime upload (commented out - using .withContext/.withFiles only)
-    // console.log(`[${type}] Uploading...`);
-    // await evolve.uploadFiles({
-    //   [FILES.uploadFiles]: load(FILES.uploadFiles),
-    //   [`test_dir/${FILES.uploadFiles}`]: load(FILES.uploadFiles),
-    // });
-    // await evolve.uploadContext({
-    //   [FILES.uploadContext]: load(FILES.uploadContext),
-    //   [`test_dir/${FILES.uploadContext}`]: load(FILES.uploadContext),
-    // });
 
     // Run 2
     console.log(`[${type}] Run 2...`);
