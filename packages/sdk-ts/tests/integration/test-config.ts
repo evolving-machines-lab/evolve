@@ -67,29 +67,58 @@ export function getTestEnv(): TestEnv {
   return { EVOLVE_API_KEY, E2B_API_KEY, DAYTONA_API_KEY, MODAL_TOKEN_ID, MODAL_TOKEN_SECRET, ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY };
 }
 
+export type ProviderName = "e2b" | "modal" | "daytona";
+
+/**
+ * Get sandbox provider by name.
+ * Throws if required env vars are missing.
+ */
+export function getSandboxProviderByName(name: ProviderName): SandboxProvider {
+  switch (name) {
+    case "e2b": {
+      const apiKey = process.env.E2B_API_KEY;
+      if (!apiKey) throw new Error("E2B_API_KEY required for e2b provider");
+      return createE2BProvider({ apiKey });
+    }
+    case "daytona": {
+      const apiKey = process.env.DAYTONA_API_KEY;
+      if (!apiKey) throw new Error("DAYTONA_API_KEY required for daytona provider");
+      return createDaytonaProvider({ apiKey });
+    }
+    case "modal": {
+      if (!process.env.MODAL_TOKEN_ID || !process.env.MODAL_TOKEN_SECRET) {
+        throw new Error("MODAL_TOKEN_ID and MODAL_TOKEN_SECRET required for modal provider");
+      }
+      return createModalProvider();
+    }
+    default:
+      throw new Error(`Unknown provider: ${name}. Valid: e2b, modal, daytona`);
+  }
+}
+
+/**
+ * Get list of available providers based on env vars.
+ */
+export function getAvailableProviders(): ProviderName[] {
+  const available: ProviderName[] = [];
+  if (process.env.E2B_API_KEY) available.push("e2b");
+  if (process.env.DAYTONA_API_KEY) available.push("daytona");
+  if (process.env.MODAL_TOKEN_ID && process.env.MODAL_TOKEN_SECRET) available.push("modal");
+  return available;
+}
+
 /**
  * Get sandbox provider based on available env vars.
- * Prefers E2B if multiple are set.
+ * Prefers E2B > Daytona > Modal.
  */
 export function getSandboxProvider(): SandboxProvider {
-  const E2B_API_KEY = process.env.E2B_API_KEY;
-  const DAYTONA_API_KEY = process.env.DAYTONA_API_KEY;
-  const MODAL_TOKEN_ID = process.env.MODAL_TOKEN_ID;
-  const MODAL_TOKEN_SECRET = process.env.MODAL_TOKEN_SECRET;
-
-  if (E2B_API_KEY) {
-    console.log("[test-config] Using E2B sandbox provider");
-    return createE2BProvider({ apiKey: E2B_API_KEY });
+  const available = getAvailableProviders();
+  if (available.length === 0) {
+    throw new Error("No sandbox provider available. Set E2B_API_KEY, DAYTONA_API_KEY, or MODAL_TOKEN_ID+MODAL_TOKEN_SECRET");
   }
-  if (DAYTONA_API_KEY) {
-    console.log("[test-config] Using Daytona sandbox provider");
-    return createDaytonaProvider({ apiKey: DAYTONA_API_KEY });
-  }
-  if (MODAL_TOKEN_ID && MODAL_TOKEN_SECRET) {
-    console.log("[test-config] Using Modal sandbox provider");
-    return createModalProvider();
-  }
-  throw new Error("Either E2B_API_KEY, DAYTONA_API_KEY, or MODAL_TOKEN_ID+MODAL_TOKEN_SECRET must be set");
+  const name = available[0];
+  console.log(`[test-config] Using ${name} sandbox provider`);
+  return getSandboxProviderByName(name);
 }
 
 /**
