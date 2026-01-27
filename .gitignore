@@ -36,3 +36,7 @@ test-logs/
 
 # Lock files (keep package-lock.json for reproducible builds)
 uv.lock
+
+# Development docs (keep locally, don't commit)
+docs/modal/
+docs/daytona/
