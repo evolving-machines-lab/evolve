@@ -12,8 +12,19 @@ async function deleteExistingSnapshot(daytona: Daytona): Promise<void> {
     console.log(`Found existing snapshot "${snapshot.name}" (${snapshot.state})`)
     console.log('Deleting...')
     await daytona.snapshot.delete(snapshot)
-    console.log('Deleted. Waiting 5s for propagation...')
-    await new Promise(r => setTimeout(r, 5000))
+    console.log('Waiting for deletion to propagate...')
+
+    // Poll until snapshot is actually gone
+    while (true) {
+      await new Promise(r => setTimeout(r, 3000))
+      try {
+        await daytona.snapshot.get(SNAPSHOT_NAME)
+        process.stdout.write('.')
+      } catch {
+        console.log(' done')
+        break
+      }
+    }
   } catch {
     // Snapshot doesn't exist, nothing to delete
   }
