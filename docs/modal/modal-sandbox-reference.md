@@ -13,10 +13,10 @@ Features actually used by `packages/sdk-ts`:
 | `sandbox.sandboxId` | ✅ | ✅ `sb.sandboxId` |
 | `commands.run()` | ✅ | ✅ `sb.exec()` + `p.wait()` |
 | `commands.spawn()` | ✅ | ✅ `sb.exec()` (returns handle) |
-| `files.read()` | ✅ | ⚠️ Shell: `cat` / `base64` |
-| `files.write()` | ✅ | ⚠️ Shell: heredoc |
-| `files.writeBatch()` | ✅ | ⚠️ Shell: tar extract |
-| `files.makeDir()` | ✅ | ⚠️ Shell: `mkdir -p` |
+| `files.read()` | ✅ | ✅ `cat` via stdout (efficient) |
+| `files.write()` | ✅ | ✅ `cat` via stdin (efficient) |
+| `files.writeBatch()` | ✅ | ✅ `tar` via stdin (efficient) |
+| `files.makeDir()` | ✅ | ✅ `mkdir -p` |
 | `getHost(port)` | ✅ | ✅ `sb.tunnels()[port].url` |
 | `kill()` | ✅ | ✅ `sb.terminate()` |
 | `pause()` | ✅ | ❌ Not supported |
@@ -148,44 +148,62 @@ await p.wait();
 
 ---
 
-## File Operations (Shell Workarounds)
+## File Operations (Via stdin/stdout - Efficient)
 
-Modal TS SDK has no native file APIs. Use shell commands.
+Modal TS SDK has no native file APIs. Use `sb.exec()` with stdin/stdout piping for efficient binary-safe transfers.
 
 ### files.read()
 
 ```typescript
+const BINARY_EXTENSIONS = new Set([
+  ".png", ".jpg", ".jpeg", ".gif", ".pdf", ".zip", ".tar", ".gz",
+  ".exe", ".bin", ".pkl", ".parquet", ".sqlite", ".db"
+]);
+
+function isBinaryFile(path: string): boolean {
+  const ext = path.slice(path.lastIndexOf(".")).toLowerCase();
+  return BINARY_EXTENSIONS.has(ext);
+}
+
 async function read(path: string): Promise<string | Uint8Array> {
-  // Text files
-  const p = await sb.exec(["cat", path], { timeout: 30000 });
+  if (isBinaryFile(path)) {
+    // Binary: use base64 encoding
+    const p = await sb.exec(["base64", path], { timeout: 300000 });
+    await p.wait();
+    const b64 = await p.stdout.readText();
+    return new Uint8Array(Buffer.from(b64.trim(), "base64"));
+  }
+  // Text: read directly
+  const p = await sb.exec(["cat", path], { timeout: 300000 });
   await p.wait();
   return await p.stdout.readText();
-
-  // Binary files - use base64
-  const p = await sb.exec(["base64", path], { timeout: 30000 });
-  await p.wait();
-  const b64 = await p.stdout.readText();
-  return Buffer.from(b64.trim(), "base64");
 }
 ```
 
-### files.write()
+### files.write() - Via Stdin (Efficient)
 
 ```typescript
-async function write(path: string, content: string): Promise<void> {
-  // Escape content for shell safety
-  const escaped = content.replace(/'/g, "'\\''");
-  await sb.exec(["bash", "-c", `cat > '${path}' << 'EVOLVE_EOF'\n${content}\nEVOLVE_EOF`]);
-}
+async function write(
+  path: string,
+  content: string | Buffer | Uint8Array
+): Promise<void> {
+  const data = typeof content === "string"
+    ? Buffer.from(content, "utf-8")
+    : Buffer.from(content);
 
-// Binary - use base64
-async function writeBinary(path: string, data: Uint8Array): Promise<void> {
-  const b64 = Buffer.from(data).toString("base64");
-  await sb.exec(["bash", "-c", `echo '${b64}' | base64 -d > '${path}'`]);
+  // Pipe directly via stdin - no escaping or base64 needed
+  const p = await sb.exec(["bash", "-c", `cat > '${path}'`]);
+  p.stdin.write(data);
+  p.stdin.write_eof();
+  await p.wait();
 }
 ```
 
-### files.writeBatch() - Tar Stream
+This matches E2B's efficiency - binary safe, no encoding overhead.
+
+### files.writeBatch() - Tar via Stdin (Efficient)
+
+E2B uses native `files.write(entries)` - single API call. For Modal, pipe tar via stdin (no base64 overhead):
 
 ```typescript
 import { pack } from "tar-stream";
@@ -208,16 +226,22 @@ async function writeBatch(
   for await (const chunk of tarPack) {
     chunks.push(chunk);
   }
+  const tarBuffer = Buffer.concat(chunks);
 
-  const tarBase64 = Buffer.concat(chunks).toString("base64");
-
-  // Extract in sandbox
-  await sb.exec([
-    "bash", "-c",
-    `echo '${tarBase64}' | base64 -d | tar -xf - -C /`
-  ], { timeout: 60000 });
+  // Pipe tar directly via stdin (no base64 overhead)
+  const p = await sb.exec(["tar", "-xf", "-", "-C", "/"]);
+  p.stdin.write(tarBuffer);
+  p.stdin.write_eof();
+  await p.wait();
 }
 ```
+
+**Efficiency comparison:**
+| Method | E2B | Modal (base64) | Modal (stdin) |
+|--------|-----|----------------|---------------|
+| API calls | 1 native | 1 exec | 1 exec |
+| Size overhead | 0% | +33% base64 | 0% |
+| Binary safe | ✅ | ✅ | ✅ |
 
 ### files.makeDir()
 
