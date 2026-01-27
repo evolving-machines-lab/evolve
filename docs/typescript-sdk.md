@@ -223,15 +223,70 @@ const evolve = new Evolve()
 
 ## 2. Full Configuration
 
+### 2.1 Sandbox Providers
+
+With `EVOLVE_API_KEY` only, sandbox defaults to **E2B**. Add a provider key to auto-resolve to that provider:
+
+| Provider | Env Vars | Auto-Resolves When |
+|----------|----------|-------------------|
+| E2B | `E2B_API_KEY` | Default, or `E2B_API_KEY` set |
+| Modal | `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` | Both Modal vars set |
+| Daytona | `DAYTONA_API_KEY` | `DAYTONA_API_KEY` set |
+
+**E2B** (default)
+```bash
+# .env
+EVOLVE_API_KEY=sk-...
+E2B_API_KEY=e2b_...        # Optional with EVOLVE_API_KEY (auto-resolves)
+```
+
 ```ts
 import { Evolve, createE2BProvider } from "@evolvingmachines/sdk";
 
-// Sandbox provider (auto-resolved from E2B_API_KEY, or explicit)
 const sandbox = createE2BProvider({
-    apiKey: process.env.E2B_API_KEY,   // (optional) Auto-resolves from E2B_API_KEY env var
-    defaultTimeoutMs: 3600000,          // (optional) Default sandbox timeout (default: 1 hour)
+    apiKey: process.env.E2B_API_KEY,    // (optional) Auto-resolves from env
+    defaultTimeoutMs: 3600000,           // (optional) Sandbox lifetime (default: 1 hour)
 });
 ```
+
+**Modal**
+```bash
+# .env
+EVOLVE_API_KEY=sk-...
+MODAL_TOKEN_ID=ak-...
+MODAL_TOKEN_SECRET=as-...
+```
+
+```ts
+import { Evolve, createModalProvider } from "@evolvingmachines/sdk";
+
+const sandbox = createModalProvider({
+    appName: "evolve-sandbox",           // (optional) Modal app name
+    defaultTimeoutMs: 3600000,           // (optional) Sandbox lifetime (default: 1 hour)
+});
+```
+
+**Daytona**
+```bash
+# .env
+EVOLVE_API_KEY=sk-...
+DAYTONA_API_KEY=...
+```
+
+```ts
+import { Evolve, createDaytonaProvider } from "@evolvingmachines/sdk";
+
+const sandbox = createDaytonaProvider({
+    apiKey: process.env.DAYTONA_API_KEY, // (optional) Auto-resolves from env
+    apiUrl: "https://app.daytona.io/api", // (optional) API endpoint
+    target: "us",                         // (optional) Region: "us" | "eu"
+    defaultTimeoutMs: 3600000,            // (optional) Sandbox lifetime (default: 1 hour)
+});
+```
+
+---
+
+### 2.2 Evolve Instance
 
 ```ts
 const evolve = new Evolve()
@@ -247,7 +302,7 @@ const evolve = new Evolve()
         // oauthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN!, // (optional) Claude Max subscription
     })
 
-    // Sandbox provider (auto-resolved from E2B_API_KEY, or use sandbox from above)
+    // Sandbox provider (see 2.1 above, or auto-resolves from env)
     .withSandbox(sandbox)
 
     // (optional) Uploads to /home/user/workspace/context/ on first run
