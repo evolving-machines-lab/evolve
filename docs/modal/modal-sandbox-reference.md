@@ -13,6 +13,9 @@ Features actually used by `packages/sdk-ts`:
 | `sandbox.sandboxId` | ✅ | ✅ `sb.sandboxId` |
 | `commands.run()` | ✅ | ✅ `sb.exec()` + `p.wait()` |
 | `commands.spawn()` | ✅ | ✅ `sb.exec()` (returns handle) |
+| `run: cwd` | ✅ | ✅ `{ workdir: "/path" }` |
+| `run: timeoutMs` | ✅ | ✅ `{ timeout: ms }` |
+| `run: onStdout/onStderr` | ✅ | ✅ async iteration |
 | `files.read()` | ✅ | ✅ `cat` via stdout (efficient) |
 | `files.write()` | ✅ | ✅ `cat` via stdin (efficient) |
 | `files.writeBatch()` | ✅ | ✅ `tar` via stdin (efficient) |
@@ -113,6 +116,13 @@ const stderr = await p.stderr.readText();
 
 // Exit code (after wait)
 const exitCode = await p.wait(); // Returns exit code
+
+// With working directory (cwd equivalent)
+const p = await sb.exec(["python", "script.py"], {
+  timeout: 60000,
+  workdir: "/workspace",
+});
+await p.wait();
 ```
 
 ### spawn() - Background Execution
