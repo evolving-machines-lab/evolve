@@ -27,7 +27,7 @@ import type {
   McpServerConfig,
 } from "./types";
 import { VALIDATION_PRESETS } from "./types";
-import { getAgentConfig, type AgentRegistryEntry } from "./registry";
+import { getAgentConfig, expandPath, type AgentRegistryEntry } from "./registry";
 import { writeMcpConfig } from "./mcp";
 import { createAgentParser, type AgentParser } from "./parsers";
 import { DEFAULT_TIMEOUT_MS, DEFAULT_WORKING_DIR, getGatewayUrl, getGeminiGatewayUrl } from "./constants";
@@ -196,7 +196,15 @@ export class Agent {
   private buildEnvironmentVariables(): Record<string, string> {
     const envVars: Record<string, string> = {};
 
-    // OAuth mode uses oauthEnv (e.g., CLAUDE_CODE_OAUTH_TOKEN), else apiKeyEnv
+    // OAuth file mode (Codex/Gemini): no env vars needed, auth is file-based
+    if (this.agentConfig.oauthFileContent) {
+      if (this.options.secrets) {
+        Object.assign(envVars, this.options.secrets);
+      }
+      return envVars;
+    }
+
+    // OAuth token mode uses oauthEnv (e.g., CLAUDE_CODE_OAUTH_TOKEN), else apiKeyEnv
     const keyEnv = this.agentConfig.isOAuth && this.registry.oauthEnv
       ? this.registry.oauthEnv
       : this.registry.apiKeyEnv;
@@ -227,8 +235,22 @@ export class Agent {
    * Agent-specific authentication setup
    */
   private async setupAgentAuth(sandbox: SandboxInstance): Promise<void> {
+    // OAuth file mode (Codex/Gemini): write auth file to sandbox
+    if (this.agentConfig.oauthFileContent && this.registry.oauthFilePath) {
+      const targetPath = expandPath(this.registry.oauthFilePath);
+      const dir = targetPath.substring(0, targetPath.lastIndexOf("/"));
+
+      // Ensure directory exists and write auth file with restricted permissions
+      await sandbox.commands.run(`mkdir -p ${dir}`, { timeoutMs: 10000 });
+      await sandbox.files.write(targetPath, this.agentConfig.oauthFileContent);
+      await sandbox.commands.run(`chmod 600 ${targetPath}`, { timeoutMs: 10000 });
+
+      // Skip setupCommand - already authenticated via file
+      return;
+    }
+
+    // API key mode: run setup command (e.g., "codex login --with-api-key")
     if (this.registry.setupCommand) {
-      // e.g., "codex login --with-api-key"
       await sandbox.commands.run(this.registry.setupCommand, { timeoutMs: 30000 });
     }
   }

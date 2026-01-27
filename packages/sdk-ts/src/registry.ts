@@ -57,6 +57,12 @@ export interface AgentRegistryEntry {
   /** Environment variable name for OAuth token (Claude only - Max subscription) */
   oauthEnv?: string;
 
+  /** Environment variable name for OAuth file (Codex/Gemini - ChatGPT Pro / Google AI subscriptions) */
+  oauthFileEnv?: string;
+
+  /** Target path for OAuth file in sandbox (e.g., "~/.codex/auth.json") */
+  oauthFilePath?: string;
+
   /** Environment variable name for base URL */
   baseUrlEnv: string;
 
@@ -135,6 +141,8 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
   codex: {
     templateId: "evolve-all",
     apiKeyEnv: "OPENAI_API_KEY",
+    oauthFileEnv: "CODEX_OAUTH_FILE",
+    oauthFilePath: "~/.codex/auth.json",
     baseUrlEnv: "OPENAI_BASE_URL",
     defaultModel: "gpt-5.2",
     models: [
@@ -164,6 +172,8 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
   gemini: {
     templateId: "evolve-all",
     apiKeyEnv: "GEMINI_API_KEY",
+    oauthFileEnv: "GEMINI_OAUTH_FILE",
+    oauthFilePath: "~/.gemini/oauth_creds.json",
     baseUrlEnv: "GOOGLE_GEMINI_BASE_URL",
     defaultModel: "gemini-3-flash-preview",
     models: [

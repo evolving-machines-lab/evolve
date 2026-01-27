@@ -2,9 +2,26 @@
  * Configuration Utilities
  */
 
+import * as fs from "fs";
+import * as os from "os";
 import type { AgentConfig, AgentType, ResolvedAgentConfig } from "../types";
 import { DEFAULT_AGENT_TYPE, ENV_EVOLVE_API_KEY } from "../constants";
 import { getAgentConfig } from "../registry";
+
+/**
+ * Resolve OAuth file input to JSON content.
+ * Accepts either a file path (e.g., "~/.codex/auth.json") or raw JSON content.
+ */
+function resolveOAuthFile(input: string): string {
+  const trimmed = input.trim();
+  // If input looks like JSON, return as-is
+  if (trimmed.startsWith("{")) {
+    return trimmed;
+  }
+  // Otherwise treat as file path, expand ~ and read
+  const expandedPath = trimmed.replace(/^~/, os.homedir());
+  return fs.readFileSync(expandedPath, "utf-8");
+}
 
 /**
  * Resolve AgentConfig with defaults and environment variables.
@@ -33,6 +50,22 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
       );
     }
     return { type, apiKey: config.oauthToken, isDirectMode: true, isOAuth: true, model: config.model, reasoningEffort: config.reasoningEffort, betas: config.betas };
+  }
+
+  // OAuth file (Codex/Gemini - ChatGPT Pro / Google AI subscriptions)
+  if (config?.oauthFile) {
+    if (type === "claude") {
+      throw new Error(
+        `oauthFile is not supported for claude agent. Use oauthToken instead.`
+      );
+    }
+    if (!registry.oauthFilePath) {
+      throw new Error(
+        `oauthFile is not supported for ${type} agent.`
+      );
+    }
+    const oauthFileContent = resolveOAuthFile(config.oauthFile);
+    return { type, apiKey: "", isDirectMode: true, isOAuth: true, oauthFileContent, model: config.model, reasoningEffort: config.reasoningEffort, betas: config.betas };
   }
 
   // Provider API key (direct mode)
@@ -71,13 +104,24 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
     }
   }
 
+  // OAuth file mode (Codex/Gemini env var)
+  if (registry.oauthFileEnv) {
+    const oauthFileValue = process.env[registry.oauthFileEnv];
+    if (oauthFileValue) {
+      const oauthFileContent = resolveOAuthFile(oauthFileValue);
+      return { type, apiKey: "", isDirectMode: true, isOAuth: true, oauthFileContent, model: config?.model, reasoningEffort: config?.reasoningEffort, betas: config?.betas };
+    }
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // NO KEY FOUND
   // ─────────────────────────────────────────────────────────────────────────
 
   const oauthHint = registry.oauthEnv
     ? `, oauthToken (Claude Max), or ${registry.oauthEnv}`
-    : "";
+    : registry.oauthFileEnv
+      ? `, oauthFile, or ${registry.oauthFileEnv}`
+      : "";
   throw new Error(
     `No API key found for ${type}. Set apiKey (gateway), providerApiKey (direct)${oauthHint}, ` +
     `or ${ENV_EVOLVE_API_KEY} / ${registry.apiKeyEnv} env var.`

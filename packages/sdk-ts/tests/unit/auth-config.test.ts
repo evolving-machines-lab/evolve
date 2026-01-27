@@ -105,6 +105,8 @@ function clearEnv(): void {
   delete process.env.GOOGLE_GEMINI_BASE_URL;
   delete process.env.E2B_API_KEY;
   delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  delete process.env.CODEX_OAUTH_FILE;
+  delete process.env.GEMINI_OAUTH_FILE;
 }
 
 function restoreEnv(): void {
@@ -179,6 +181,65 @@ async function runTests(): Promise<void> {
     () => resolveAgentConfig({ type: "qwen", oauthToken: "oauth-token" }),
     "oauthToken is only supported for claude",
     "throws when oauthToken used with qwen"
+  );
+
+  // -------------------------------------------------------------------------
+  console.log("\nExplicit: oauthFile (OAuth file mode - Codex/Gemini)");
+  // -------------------------------------------------------------------------
+
+  // Test oauthFile with raw JSON content
+  clearEnv();
+  {
+    const mockAuthJson = JSON.stringify({ tokens: { access_token: "test-token" } });
+    const result = resolveAgentConfig({
+      type: "codex",
+      oauthFile: mockAuthJson,
+    });
+    assertEqual(result.apiKey, "", "apiKey is empty for oauthFile mode");
+    assertEqual(result.isDirectMode, true, "isDirectMode is true");
+    assertEqual(result.isOAuth, true, "isOAuth is true");
+    assert(result.oauthFileContent !== undefined, "oauthFileContent is set");
+    assertEqual(result.oauthFileContent, mockAuthJson, "oauthFileContent matches input");
+  }
+
+  clearEnv();
+  {
+    const mockAuthJson = JSON.stringify({ access_token: "test-token" });
+    const result = resolveAgentConfig({
+      type: "gemini",
+      oauthFile: mockAuthJson,
+    });
+    assertEqual(result.apiKey, "", "apiKey is empty for gemini oauthFile mode");
+    assertEqual(result.isDirectMode, true, "isDirectMode is true for gemini");
+    assertEqual(result.isOAuth, true, "isOAuth is true for gemini");
+    assert(result.oauthFileContent !== undefined, "oauthFileContent is set for gemini");
+  }
+
+  clearEnv();
+  {
+    const mockAuthJson = JSON.stringify({ tokens: { access_token: "test-token" } });
+    const result = resolveAgentConfig({
+      type: "codex",
+      oauthFile: mockAuthJson,
+      model: "gpt-5.2",
+      reasoningEffort: "high",
+    });
+    assertEqual(result.model, "gpt-5.2", "passes through model option with oauthFile");
+    assertEqual(result.reasoningEffort, "high", "passes through reasoningEffort with oauthFile");
+  }
+
+  clearEnv();
+  assertThrows(
+    () => resolveAgentConfig({ type: "claude", oauthFile: '{"test": true}' }),
+    "oauthFile is not supported for claude",
+    "throws when oauthFile used with claude"
+  );
+
+  clearEnv();
+  assertThrows(
+    () => resolveAgentConfig({ type: "qwen", oauthFile: '{"test": true}' }),
+    "oauthFile is not supported for qwen",
+    "throws when oauthFile used with qwen (no oauthFilePath in registry)"
   );
 
   // -------------------------------------------------------------------------
@@ -437,6 +498,41 @@ async function runTests(): Promise<void> {
     "CLAUDE_CODE_OAUTH_TOKEN is ignored for non-claude agents"
   );
 
+  // -------------------------------------------------------------------------
+  console.log("\nEnv: CODEX_OAUTH_FILE / GEMINI_OAUTH_FILE (OAuth file mode)");
+  // -------------------------------------------------------------------------
+
+  clearEnv();
+  const mockCodexAuth = JSON.stringify({ tokens: { access_token: "env-codex-token" } });
+  process.env.CODEX_OAUTH_FILE = mockCodexAuth;
+  {
+    const result = resolveAgentConfig({ type: "codex" });
+    assertEqual(result.apiKey, "", "apiKey is empty for CODEX_OAUTH_FILE");
+    assertEqual(result.isDirectMode, true, "isDirectMode is true");
+    assertEqual(result.isOAuth, true, "isOAuth is true");
+    assertEqual(result.oauthFileContent, mockCodexAuth, "uses CODEX_OAUTH_FILE env var content");
+  }
+
+  clearEnv();
+  const mockGeminiAuth = JSON.stringify({ access_token: "env-gemini-token" });
+  process.env.GEMINI_OAUTH_FILE = mockGeminiAuth;
+  {
+    const result = resolveAgentConfig({ type: "gemini" });
+    assertEqual(result.apiKey, "", "apiKey is empty for GEMINI_OAUTH_FILE");
+    assertEqual(result.isDirectMode, true, "isDirectMode is true for gemini");
+    assertEqual(result.isOAuth, true, "isOAuth is true for gemini");
+    assertEqual(result.oauthFileContent, mockGeminiAuth, "uses GEMINI_OAUTH_FILE env var content");
+  }
+
+  clearEnv();
+  // CODEX_OAUTH_FILE should be ignored for claude
+  process.env.CODEX_OAUTH_FILE = mockCodexAuth;
+  assertThrows(
+    () => resolveAgentConfig({ type: "claude" }),
+    "No API key found for claude",
+    "CODEX_OAUTH_FILE is ignored for claude agent"
+  );
+
   // ─────────────────────────────────────────────────────────────────────────
   // ERROR CASES
   // ─────────────────────────────────────────────────────────────────────────
@@ -469,6 +565,28 @@ async function runTests(): Promise<void> {
     () => resolveAgentConfig({ type: "codex" }),
     "No API key found for codex",
     "error message specifies agent type"
+  );
+
+  clearEnv();
+  // For codex, error should mention oauthFile
+  assertThrows(
+    () => resolveAgentConfig({ type: "codex" }),
+    "oauthFile",
+    "error message mentions oauthFile for codex"
+  );
+
+  clearEnv();
+  assertThrows(
+    () => resolveAgentConfig({ type: "codex" }),
+    "CODEX_OAUTH_FILE",
+    "error message mentions CODEX_OAUTH_FILE env var for codex"
+  );
+
+  clearEnv();
+  assertThrows(
+    () => resolveAgentConfig({ type: "gemini" }),
+    "GEMINI_OAUTH_FILE",
+    "error message mentions GEMINI_OAUTH_FILE env var for gemini"
   );
 
   clearEnv();

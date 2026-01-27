@@ -253,6 +253,12 @@ export interface AgentConfig {
   providerApiKey?: string;
   /** OAuth token for Claude Max subscription (default: CLAUDE_CODE_OAUTH_TOKEN env var) */
   oauthToken?: string;
+  /**
+   * OAuth auth file for Codex/Gemini (ChatGPT Pro / Google AI subscriptions).
+   * Accepts file path (e.g., "~/.codex/auth.json") or raw JSON content.
+   * Default: CODEX_OAUTH_FILE or GEMINI_OAUTH_FILE env var
+   */
+  oauthFile?: string;
   /** Provider base URL for direct mode (default: provider env var or registry default) */
   providerBaseUrl?: string;
   /** Model to use (optional, uses agent's default if omitted) */
@@ -270,6 +276,8 @@ export interface ResolvedAgentConfig {
   baseUrl?: string;
   isDirectMode: boolean;
   isOAuth?: boolean;
+  /** Resolved OAuth auth file content (Codex/Gemini only) */
+  oauthFileContent?: string;
   model?: string;
   reasoningEffort?: ReasoningEffort;
   betas?: string[];
