@@ -751,7 +751,10 @@ export class ModalProvider implements SandboxProvider {
     const env = filteredEnvs && Object.keys(filteredEnvs).length > 0 ? filteredEnvs : undefined;
 
     // Use client.sandboxes.create() - the modern API
+    // Resources match E2B defaults: 4 CPU, 4GB memory
     const sandbox = await this.client.sandboxes.create(app, image, {
+      cpu: 4,
+      memoryMiB: 4096,
       timeoutMs,
       workdir: options.workingDirectory,
       env,
