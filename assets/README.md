@@ -25,7 +25,7 @@ Sandbox images and templates for all providers.
    cd assets && ./build.sh modal
    ```
 
-After this, Modal sandbox creation will be fast (~seconds).
+After this, Modal sandbox creation will be instant.
 
 ---
 
@@ -43,7 +43,7 @@ After this, Modal sandbox creation will be fast (~seconds).
    cd assets && ./build.sh daytona
    ```
 
-After this, Daytona sandbox creation will be fast (~seconds).
+After this, Daytona sandbox creation will be instant.
 
 ---
 
