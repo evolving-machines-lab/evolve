@@ -369,8 +369,11 @@ MODAL_TOKEN_SECRET=as-...
 import { Evolve, createModalProvider } from "@evolvingmachines/sdk";
 
 const sandbox = createModalProvider({
+    tokenId: process.env.MODAL_TOKEN_ID,       // (optional) Auto-resolves from env
+    tokenSecret: process.env.MODAL_TOKEN_SECRET, // (optional) Auto-resolves from env
     appName: "my-app",                   // (optional) Default: "evolve-sandbox"
     defaultTimeoutMs: 3600000,           // (optional) Default: 3600000 (1 hour)
+    endpoint: "https://api.modal.com:443", // (optional) Default: https://api.modal.com:443
 });
 ```
 
