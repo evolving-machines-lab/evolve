@@ -10,7 +10,7 @@ Build and push to Docker Hub:
 cd assets && ./build.sh docker
 ```
 
-Or directly:
+Or directly from this folder:
 
 ```bash
 npx tsx build.ts

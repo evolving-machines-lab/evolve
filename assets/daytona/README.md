@@ -6,7 +6,7 @@ Create a snapshot in your Daytona account for fast sandbox startup.
 
 1. Get API key from [app.daytona.io/dashboard/keys](https://app.daytona.io/dashboard/keys)
 
-2. Add to `.env`:
+2. Add to `.env` in **repo root** (not assets/):
    ```bash
    DAYTONA_API_KEY=...
    ```

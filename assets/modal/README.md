@@ -6,7 +6,7 @@ Cache the Evolve image in your Modal account for fast sandbox startup.
 
 1. Get tokens from [modal.com/settings/tokens](https://modal.com/settings/tokens)
 
-2. Add to `.env`:
+2. Add to `.env` in **repo root** (not assets/):
    ```bash
    MODAL_TOKEN_ID=ak-...
    MODAL_TOKEN_SECRET=as-...

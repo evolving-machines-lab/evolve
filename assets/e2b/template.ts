@@ -14,7 +14,7 @@ import { Template } from 'e2b'
 //   - Google Chrome for browser automation
 //   - Skills cloned from github.com/evolving-machines-lab/evolve
 //
-// To rebuild: npm run build (or ./build.sh)
+// To rebuild: cd assets && ./build.sh e2b
 // =============================================================================
 
 export const template = Template()

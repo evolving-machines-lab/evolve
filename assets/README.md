@@ -2,52 +2,76 @@
 
 Sandbox images and templates for all providers.
 
-## E2B
+## Quick Start
 
-Public template - **no setup needed**. Works out of the box.
+**E2B** — Works out of the box. No setup needed.
+
+**Modal** or **Daytona** — One-time setup required (see below).
+
+---
+
+## Setup for Modal
+
+1. Get tokens from [modal.com/settings/tokens](https://modal.com/settings/tokens)
+
+2. Add to `.env` in **repo root**:
+   ```bash
+   MODAL_TOKEN_ID=ak-...
+   MODAL_TOKEN_SECRET=as-...
+   ```
+
+3. Cache the image (run once):
+   ```bash
+   cd assets && ./build.sh modal
+   ```
+
+After this, Modal sandbox creation will be fast (~seconds).
+
+---
+
+## Setup for Daytona
+
+1. Get API key from [app.daytona.io/dashboard/keys](https://app.daytona.io/dashboard/keys)
+
+2. Add to `.env` in **repo root**:
+   ```bash
+   DAYTONA_API_KEY=...
+   ```
+
+3. Create snapshot (run once):
+   ```bash
+   cd assets && ./build.sh daytona
+   ```
+
+After this, Daytona sandbox creation will be fast (~seconds).
+
+---
+
+## For Maintainers Only
+
+Rebuild the shared Docker image (Modal + Daytona use this):
 
 ```bash
-# Only for maintainers (rebuild template)
-./build.sh e2b
+cd assets && ./build.sh docker
 ```
 
-## Modal
-
-Run once to cache the image in your Modal account:
+Rebuild the E2B template:
 
 ```bash
-./build.sh modal
+cd assets && ./build.sh e2b
 ```
 
-**Prerequisites:** `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` in `.env`
-
-## Daytona
-
-Run once to create a snapshot in your Daytona account:
-
-```bash
-./build.sh daytona
-```
-
-**Prerequisites:** `DAYTONA_API_KEY` in `.env`
-
-## Docker (Maintainers Only)
-
-Build and push the shared Docker image used by Modal + Daytona:
-
-```bash
-./build.sh docker
-```
+---
 
 ## Structure
 
 ```
 assets/
-├── build.sh         # Single entry point
-├── docker/          # Shared Dockerfile (Modal + Daytona)
+├── build.sh         # Single entry point for all commands
+├── docker/          # Shared Dockerfile (maintainer only)
 ├── modal/           # Modal image caching
 ├── daytona/         # Daytona snapshot creation
-└── e2b-template/    # E2B template (separate build system)
+└── e2b/             # E2B template (public, maintainer only)
 ```
 
 ## Image Contents

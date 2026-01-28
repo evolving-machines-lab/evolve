@@ -259,12 +259,10 @@ Works with both Gateway mode (`EVOLVE_API_KEY`) and BYOK mode (provider API keys
 
 **💡 If your env vars are set, `sandbox=` is optional—the SDK auto-resolves the provider. Only use explicit provider creation below if you need custom settings (timeout, app name, etc.).**
 
-**⚡ First Run Performance:** Run once to enable fast sandbox startup:
-```bash
-./assets/build.sh e2b       # E2B users
-./assets/build.sh modal     # Modal users
-./assets/build.sh daytona   # Daytona users
-```
+**⚡ First Run Performance:** All providers use the `evolve-all` image with pre-installed CLIs.
+- **E2B**: Public template, fast startup out of the box
+- **Modal**: Run `./assets/build.sh modal` once to cache the image
+- **Daytona**: Run `./assets/build.sh daytona` once to cache the image
 
 **E2B** (default)
 ```bash
