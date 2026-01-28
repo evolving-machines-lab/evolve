@@ -225,13 +225,19 @@ const evolve = new Evolve()
 
 ### 2.1 Sandbox Providers
 
-Works with both Gateway mode (`EVOLVE_API_KEY`) and BYOK mode (provider API keys). With `EVOLVE_API_KEY` only, sandbox defaults to **E2B**. Add a sandbox provider key to auto-resolve to that provider:
+Works with both Gateway mode (`EVOLVE_API_KEY`) and BYOK mode (provider API keys). With `EVOLVE_API_KEY` only, sandbox defaults to **E2B**. Add a sandbox provider key to auto-resolve to that provider.
 
-| Provider | Env Vars | Auto-Resolves When |
-|----------|----------|-------------------|
-| E2B | `E2B_API_KEY` | Default, or `E2B_API_KEY` set |
-| Modal | `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` | Both Modal vars set |
-| Daytona | `DAYTONA_API_KEY` | `DAYTONA_API_KEY` set |
+All providers use the `evolve-all` image with pre-installed CLIs.
+
+| Provider | Env Vars | Auto-Resolves When | First Time Setup |
+|----------|----------|-------------------|------------------|
+| E2B | `E2B_API_KEY` | Default, or `E2B_API_KEY` set | None — instant |
+| Modal | `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` | Both Modal vars set | Run `cd assets && ./build.sh modal` once |
+| Daytona | `DAYTONA_API_KEY` | `DAYTONA_API_KEY` set | Run `cd assets && ./build.sh daytona` once |
+
+See [assets/README.md](../assets/README.md) for detailed setup instructions.
+
+---
 
 **Auto-Resolution (Recommended)**
 
@@ -263,20 +269,6 @@ await evolve.run({ prompt: "Hello" });
 ```
 
 Only use explicit provider creation (below) if you need custom settings like timeout or app name.
-
----
-
-### First Run Performance
-
-All providers use the `evolve-all` image with pre-installed CLIs.
-
-| Provider | First Run | Setup Required |
-|----------|-----------|----------------|
-| **E2B** | Instant | None — public template |
-| **Modal** | Instant after setup | Run `cd assets && ./build.sh modal` once |
-| **Daytona** | Instant after setup | Run `cd assets && ./build.sh daytona` once |
-
-See [assets/README.md](../assets/README.md) for detailed setup instructions.
 
 ---
 
