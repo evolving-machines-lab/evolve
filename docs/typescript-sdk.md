@@ -233,12 +233,52 @@ Works with both Gateway mode (`EVOLVE_API_KEY`) and BYOK mode (provider API keys
 | Modal | `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` | Both Modal vars set |
 | Daytona | `DAYTONA_API_KEY` | `DAYTONA_API_KEY` set |
 
-**💡 If your env vars are set, `.withSandbox()` is optional—the SDK auto-resolves the provider. Only use explicit provider creation below if you need custom settings (timeout, app name, etc.).**
+**Auto-Resolution (Recommended)**
 
-**⚡ First Run Performance:** All providers use the `evolve-all` image with pre-installed CLIs.
-- **E2B**: Public template, fast startup out of the box
-- **Modal**: Run `./assets/build.sh modal` once to cache the image
-- **Daytona**: Run `./assets/build.sh daytona` once to cache the image
+Set env vars and the SDK auto-resolves the provider—no `.withSandbox()` needed:
+
+```bash
+# .env - Gateway mode with Modal (auto-resolves to Modal)
+EVOLVE_API_KEY=sk-...
+MODAL_TOKEN_ID=ak-...
+MODAL_TOKEN_SECRET=as-...
+
+# .env - Gateway mode with Daytona (auto-resolves to Daytona)
+EVOLVE_API_KEY=sk-...
+DAYTONA_API_KEY=...
+
+# .env - BYOK mode with E2B (auto-resolves to E2B)
+ANTHROPIC_API_KEY=sk-ant-...
+E2B_API_KEY=e2b_...
+```
+
+```ts
+import { Evolve } from "@evolvingmachines/sdk";
+
+// No .withSandbox() needed — SDK picks the right provider from env
+const evolve = new Evolve()
+    .withAgent({ type: "claude" });
+
+await evolve.run({ prompt: "Hello" });
+```
+
+Only use explicit provider creation (below) if you need custom settings like timeout or app name.
+
+---
+
+### First Run Performance
+
+All providers use the `evolve-all` image with pre-installed CLIs.
+
+| Provider | First Run | Setup Required |
+|----------|-----------|----------------|
+| **E2B** | Instant | None — public template |
+| **Modal** | Instant after setup | Run `cd assets && ./build.sh modal` once |
+| **Daytona** | Instant after setup | Run `cd assets && ./build.sh daytona` once |
+
+See [assets/README.md](../assets/README.md) for detailed setup instructions.
+
+---
 
 **E2B** (default)
 ```bash
