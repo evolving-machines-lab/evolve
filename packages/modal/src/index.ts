@@ -282,6 +282,21 @@ export interface ModalConfig {
   appName?: string;
   /** Default timeout in ms. Default: 3600000 (1 hour) */
   defaultTimeoutMs?: number;
+  /** Modal token ID. Falls back to MODAL_TOKEN_ID env var */
+  tokenId?: string;
+  /** Modal token secret. Falls back to MODAL_TOKEN_SECRET env var */
+  tokenSecret?: string;
+  /** Modal API endpoint. Default: https://api.modal.com:443 */
+  endpoint?: string;
+}
+
+/** Internal resolved config with required credentials */
+interface ResolvedModalConfig {
+  tokenId: string;
+  tokenSecret: string;
+  appName?: string;
+  defaultTimeoutMs?: number;
+  endpoint?: string;
 }
 
 // ============================================================
@@ -718,9 +733,15 @@ export class ModalProvider implements SandboxProvider {
   private readonly defaultTimeoutMs: number;
   private _app: App | undefined;
 
-  constructor(config: ModalConfig = {}) {
-    // Use modern ModalClient constructor (reads from env vars or .modal.toml)
-    this.client = new ModalClient();
+  constructor(config: ResolvedModalConfig) {
+    // When running inside Modal containers, Modal sets MODAL_SERVER_URL to internal socket.
+    // Force external API by overriding env var (SDK ignores endpoint param, only reads env).
+    if (!config.endpoint && process.env.MODAL_SERVER_URL?.startsWith("unix:")) {
+      process.env.MODAL_SERVER_URL = "https://api.modal.com:443";
+    } else if (config.endpoint) {
+      process.env.MODAL_SERVER_URL = config.endpoint;
+    }
+    this.client = new ModalClient({ tokenId: config.tokenId, tokenSecret: config.tokenSecret });
     this.appName = config.appName ?? "evolve-sandbox";
     this.defaultTimeoutMs = config.defaultTimeoutMs ?? 3600000;
   }
@@ -805,11 +826,23 @@ export class ModalProvider implements SandboxProvider {
 /**
  * Create Modal sandbox provider.
  *
- * Requires MODAL_TOKEN_ID and MODAL_TOKEN_SECRET environment variables,
- * or a .modal.toml configuration file.
+ * @param config - Optional configuration. If credentials not provided, reads from env vars.
+ * @throws Error if credentials cannot be resolved
  *
- * @param config - Optional configuration
+ * @see https://github.com/evolving-machines-lab/evolve/issues/8
  */
 export function createModalProvider(config: ModalConfig = {}): SandboxProvider {
-  return new ModalProvider(config);
+  const tokenId = config.tokenId ?? process.env.MODAL_TOKEN_ID;
+  const tokenSecret = config.tokenSecret ?? process.env.MODAL_TOKEN_SECRET;
+
+  if (!tokenId || !tokenSecret) {
+    throw new Error(
+      "Modal credentials required. " +
+        "Set MODAL_TOKEN_ID and MODAL_TOKEN_SECRET environment variables, " +
+        "or pass tokenId/tokenSecret in config. " +
+        "Get your token at https://modal.com/settings/tokens"
+    );
+  }
+
+  return new ModalProvider({ ...config, tokenId, tokenSecret });
 }
