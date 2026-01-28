@@ -1,6 +1,6 @@
 # E2B
 
-Public template - **no user setup needed**. Works out of the box.
+Public template — **no user setup needed**. Works out of the box.
 
 ## For Maintainers Only
 
@@ -10,10 +10,10 @@ Rebuild the template:
 cd assets && ./build.sh e2b
 ```
 
-Or directly:
+Or directly from this folder:
 
 ```bash
-npx tsx build.prod.ts
+npx tsx build.ts
 ```
 
 ## Template

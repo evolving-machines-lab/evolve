@@ -25,7 +25,11 @@ async function main() {
   console.log('\n▸ Caching image (this may take a while on first run)...')
   const startTime = Date.now()
 
-  const image = await modal.images.fromRegistry(EVOLVE_IMAGE).build(app)
+  // forceBuild ensures we always pull the latest image from Docker Hub
+  const image = await modal.images
+    .fromRegistry(EVOLVE_IMAGE)
+    .dockerfileCommands([], { forceBuild: true })
+    .build(app)
   console.log(`  Image ID: ${image.imageId}`)
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
