@@ -77,12 +77,12 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
   if (registry.oauthEnv) {
     const oauthValue = process.env[registry.oauthEnv];
     if (oauthValue) {
-      if (type === "codex") {
-        // Codex: env var is file path, read content
+      if (registry.oauthFileName) {
+        // File-based OAuth (Codex, Gemini): env var is file path, read content
         const oauthFileContent = readOAuthFile(oauthValue);
         return { type, apiKey: "__oauth_file__", isDirectMode: true, isOAuth: true, oauthFileContent, model: config?.model, reasoningEffort: config?.reasoningEffort, betas: config?.betas };
       }
-      // Claude: env var is token itself
+      // Token-based OAuth (Claude): env var is token itself
       return { type, apiKey: oauthValue, isDirectMode: true, isOAuth: true, model: config?.model, reasoningEffort: config?.reasoningEffort, betas: config?.betas };
     }
   }
@@ -92,7 +92,7 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
   // ─────────────────────────────────────────────────────────────────────────
 
   const oauthHint = registry.oauthEnv
-    ? `, oauthToken (Claude Max), or ${registry.oauthEnv}`
+    ? (registry.oauthFileName ? `, or ${registry.oauthEnv}` : `, oauthToken, or ${registry.oauthEnv}`)
     : "";
   throw new Error(
     `No API key found for ${type}. Set apiKey (gateway), providerApiKey (direct)${oauthHint}, ` +

@@ -54,8 +54,14 @@ export interface AgentRegistryEntry {
   /** Environment variable name for API key */
   apiKeyEnv: string;
 
-  /** Environment variable name for OAuth token (Claude only - Max subscription) */
+  /** Environment variable name for OAuth (file path or token depending on agent) */
   oauthEnv?: string;
+
+  /** OAuth credentials filename (e.g., "auth.json" for Codex, "oauth_creds.json" for Gemini) */
+  oauthFileName?: string;
+
+  /** Environment variable to set when OAuth is active (e.g., GOOGLE_GENAI_USE_GCA=true for Gemini) */
+  oauthActivationEnv?: { key: string; value: string };
 
   /** Environment variable name for base URL */
   baseUrlEnv: string;
@@ -136,6 +142,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     image: "evolve-all",
     apiKeyEnv: "OPENAI_API_KEY",
     oauthEnv: "CODEX_OAUTH_FILE_PATH",
+    oauthFileName: "auth.json",
     baseUrlEnv: "OPENAI_BASE_URL",
     defaultModel: "gpt-5.2",
     models: [
@@ -165,6 +172,9 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
   gemini: {
     image: "evolve-all",
     apiKeyEnv: "GEMINI_API_KEY",
+    oauthEnv: "GEMINI_OAUTH_FILE_PATH",
+    oauthFileName: "oauth_creds.json",
+    oauthActivationEnv: { key: "GOOGLE_GENAI_USE_GCA", value: "true" },
     baseUrlEnv: "GOOGLE_GEMINI_BASE_URL",
     defaultModel: "gemini-3-flash-preview",
     models: [
