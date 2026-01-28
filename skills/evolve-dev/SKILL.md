@@ -91,6 +91,8 @@ API keys auto-resolve from environment variables.
 | Gateway | `EVOLVE_API_KEY` | E2B, browser-use, tracing |
 | BYOK | Provider key + `E2B_API_KEY` | Direct provider access |
 | Claude Max | `CLAUDE_CODE_OAUTH_TOKEN` + `E2B_API_KEY` | Use existing subscription |
+| Codex | `CODEX_OAUTH_FILE_PATH` + `E2B_API_KEY` | Use existing subscription |
+| Gemini | `GEMINI_OAUTH_FILE_PATH` + `E2B_API_KEY` | Use existing subscription |
 
 > **Note:** In Gateway mode, `EVOLVE_API_KEY` is automatically injected into this sandbox by the parent Evolve process. The SDK picks it up from the environment—no manual configuration needed.
 
@@ -133,7 +135,39 @@ E2B_API_KEY=e2b_...
 ```
 
 ```
-Evolve().withAgent({ type: "claude", oauthToken: CLAUDE_CODE_OAUTH_TOKEN }).withSandbox(sandbox)
+Evolve().withAgent({ type: "claude" }).withSandbox(sandbox)  # Auto-picks from env
+```
+
+### Codex (OAuth)
+
+```bash
+codex auth --provider openai  # Creates ~/.codex/auth.json
+```
+
+```bash
+# .env
+CODEX_OAUTH_FILE_PATH=~/.codex/auth.json
+E2B_API_KEY=e2b_...
+```
+
+```
+Evolve().withAgent({ type: "codex" }).withSandbox(sandbox)  # Auto-picks from env
+```
+
+### Gemini (OAuth)
+
+```bash
+gemini auth login  # Creates ~/.gemini/oauth_creds.json
+```
+
+```bash
+# .env
+GEMINI_OAUTH_FILE_PATH=~/.gemini/oauth_creds.json
+E2B_API_KEY=e2b_...
+```
+
+```
+Evolve().withAgent({ type: "gemini" }).withSandbox(sandbox)  # Auto-picks from env
 ```
 
 **Full docs:** See [references/typescript.md](references/typescript.md) or [references/python.md](references/python.md)
@@ -144,9 +178,9 @@ Evolve().withAgent({ type: "claude", oauthToken: CLAUDE_CODE_OAUTH_TOKEN }).with
 
 | Type | Models | Default | Env Var |
 |------|--------|---------|---------|
-| `"claude"` | `"opus"` `"sonnet"` `"haiku"` | `"opus"` | `ANTHROPIC_API_KEY` |
-| `"codex"` | `"gpt-5.2"` `"gpt-5.2-codex"` | `"gpt-5.2"` | `OPENAI_API_KEY` |
-| `"gemini"` | `"gemini-3-pro-preview"` `"gemini-3-flash-preview"` | `"gemini-3-flash-preview"` | `GEMINI_API_KEY` |
+| `"claude"` | `"opus"` `"sonnet"` `"haiku"` | `"opus"` | `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` |
+| `"codex"` | `"gpt-5.2"` `"gpt-5.2-codex"` | `"gpt-5.2"` | `OPENAI_API_KEY` or `CODEX_OAUTH_FILE_PATH` |
+| `"gemini"` | `"gemini-3-pro-preview"` `"gemini-3-flash-preview"` | `"gemini-3-flash-preview"` | `GEMINI_API_KEY` or `GEMINI_OAUTH_FILE_PATH` |
 | `"qwen"` | `"qwen3-coder-plus"` | `"qwen3-coder-plus"` | `OPENAI_API_KEY` |
 
 ## Workspace Structure
