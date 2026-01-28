@@ -135,6 +135,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
   codex: {
     image: "evolve-all",
     apiKeyEnv: "OPENAI_API_KEY",
+    oauthEnv: "CODEX_OAUTH_FILE_PATH",
     baseUrlEnv: "OPENAI_BASE_URL",
     defaultModel: "gpt-5.2",
     models: [

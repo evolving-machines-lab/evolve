@@ -196,11 +196,14 @@ export class Agent {
   private buildEnvironmentVariables(): Record<string, string> {
     const envVars: Record<string, string> = {};
 
-    // OAuth mode uses oauthEnv (e.g., CLAUDE_CODE_OAUTH_TOKEN), else apiKeyEnv
-    const keyEnv = this.agentConfig.isOAuth && this.registry.oauthEnv
-      ? this.registry.oauthEnv
-      : this.registry.apiKeyEnv;
-    envVars[keyEnv] = this.agentConfig.apiKey;
+    // File-based OAuth (Codex): auth file handles auth, no env var needed
+    if (!this.agentConfig.oauthFileContent) {
+      // OAuth mode uses oauthEnv (e.g., CLAUDE_CODE_OAUTH_TOKEN), else apiKeyEnv
+      const keyEnv = this.agentConfig.isOAuth && this.registry.oauthEnv
+        ? this.registry.oauthEnv
+        : this.registry.apiKeyEnv;
+      envVars[keyEnv] = this.agentConfig.apiKey;
+    }
 
     if (this.agentConfig.isDirectMode && !this.agentConfig.isOAuth) {
       // Direct mode (non-OAuth): use resolved baseUrl if set (e.g., Qwen needs Dashscope endpoint)
@@ -227,8 +230,15 @@ export class Agent {
    * Agent-specific authentication setup
    */
   private async setupAgentAuth(sandbox: SandboxInstance): Promise<void> {
+    // File-based OAuth: write auth file directly
+    if (this.agentConfig.oauthFileContent) {
+      const settingsDir = this.registry.mcpConfig.settingsDir.replace(/^~/, "/home/user");
+      await sandbox.files.makeDir(settingsDir);
+      await sandbox.files.write(`${settingsDir}/auth.json`, this.agentConfig.oauthFileContent);
+      return;
+    }
+    // Default: run setup command (e.g., "codex login --with-api-key")
     if (this.registry.setupCommand) {
-      // e.g., "codex login --with-api-key"
       await sandbox.commands.run(this.registry.setupCommand, { timeoutMs: 30000 });
     }
   }
@@ -314,6 +324,8 @@ export class Agent {
 
     const { skillsConfig } = this.registry;
     const { sourceDir, targetDir } = skillsConfig;
+
+    await sandbox.files.makeDir(targetDir);
 
     // Copy selected skills from source to target directory
     for (const skill of this.skills) {
