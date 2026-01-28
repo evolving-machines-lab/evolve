@@ -239,7 +239,7 @@ See [assets/README.md](../../../assets/README.md) for detailed setup instruction
 
 ---
 
-**Auto-Resolution (Recommended)**
+**Auto-Resolution**
 
 Set env vars and the SDK auto-resolves the provider—no `.withSandbox()` needed:
 
