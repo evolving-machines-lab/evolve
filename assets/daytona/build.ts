@@ -8,10 +8,13 @@
  */
 
 import { config } from 'dotenv'
+import { dirname, resolve } from 'path'
+import { fileURLToPath } from 'url'
 import { Daytona } from '@daytonaio/sdk'
 import { image, SNAPSHOT_NAME } from './template'
 
-config({ path: '../../.env' })
+const __dirname = dirname(fileURLToPath(import.meta.url))
+config({ path: resolve(__dirname, '../../.env') })
 
 async function deleteExistingSnapshot(daytona: Daytona): Promise<void> {
   try {
