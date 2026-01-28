@@ -511,13 +511,9 @@ export function createClaudeParser() {
 
       case "Edit":
       case "Write":
-      case "Bash": {
-        // Only return content on error
-        if (toolResult.is_error && content) {
-          return toAcpContentUpdate(content, true);
-        }
-        return {};
-      }
+      case "Bash":
+        // Include output for all results (consistent with Codex/Gemini/Qwen parsers)
+        return toAcpContentUpdate(content, toolResult.is_error || false);
 
       case "ExitPlanMode":
         return { title: "Exited Plan Mode" };
