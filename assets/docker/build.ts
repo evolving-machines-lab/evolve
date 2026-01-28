@@ -8,7 +8,10 @@
  */
 
 import { execSync } from 'child_process'
+import { dirname } from 'path'
+import { fileURLToPath } from 'url'
 
+const __dirname = dirname(fileURLToPath(import.meta.url))
 const DOCKER_IMAGE = 'evolvingmachines/evolve-all:latest'
 
 function run(cmd: string, description: string): void {
@@ -23,8 +26,8 @@ async function main() {
   console.log(`\nImage: ${DOCKER_IMAGE}`)
 
   run(
-    `docker build --platform=linux/amd64 -t ${DOCKER_IMAGE} .`,
-    'Building Docker image'
+    `docker build --platform=linux/amd64 --no-cache -t ${DOCKER_IMAGE} .`,
+    'Building Docker image (no cache)'
   )
 
   run(
