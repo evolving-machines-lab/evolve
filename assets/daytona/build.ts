@@ -62,7 +62,7 @@ async function main() {
       resources: {
         cpu: 4,
         memory: 4,
-        disk: 10,
+        disk: 20,
       },
     },
     {
