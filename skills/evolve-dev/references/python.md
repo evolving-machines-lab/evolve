@@ -398,8 +398,11 @@ MODAL_TOKEN_SECRET=as-...
 from evolve import ModalProvider
 
 sandbox = ModalProvider(
+    token_id=os.getenv('MODAL_TOKEN_ID'),       # (optional) Auto-resolves from env
+    token_secret=os.getenv('MODAL_TOKEN_SECRET'), # (optional) Auto-resolves from env
     app_name='my-app',                    # (optional) Default: 'evolve-sandbox'
     timeout_ms=3600000,                   # (optional) Default: 3600000 (1 hour)
+    endpoint='https://api.modal.com:443', # (optional) Default: https://api.modal.com:443
 )
 ```
 
