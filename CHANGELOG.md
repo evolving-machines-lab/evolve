@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.12] - 2025-01-28
+
+### Fixed
+
+- **ModalProvider inside Modal containers** ([#8](https://github.com/evolving-machines-lab/evolve/issues/8))
+  - Added `EVOLVE_MODAL_TOKEN_ID` / `EVOLVE_MODAL_TOKEN_SECRET` env var support
+  - Modal strips `MODAL_TOKEN_*` inside containers for security; use `EVOLVE_MODAL_TOKEN_*` via Modal Secrets
+  - Added `tokenId` / `tokenSecret` to `ModalConfig` for programmatic credential passing
+
 ## [0.0.11] - 2025-01-28
 
 ### Added

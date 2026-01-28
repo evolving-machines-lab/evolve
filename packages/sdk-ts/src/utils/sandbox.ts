@@ -73,8 +73,7 @@ export async function resolveDefaultSandbox(): Promise<SandboxProvider> {
   if (modalTokenId && modalTokenSecret) {
     try {
       const { createModalProvider } = await import("@evolvingmachines/modal");
-      // Modal SDK reads tokens from env vars automatically
-      return createModalProvider();
+      return createModalProvider({ tokenId: modalTokenId, tokenSecret: modalTokenSecret });
     } catch (e) {
       const error = e as Error;
       if (error.message?.includes("Cannot find module") || error.message?.includes("MODULE_NOT_FOUND")) {

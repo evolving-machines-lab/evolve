@@ -143,9 +143,15 @@ class ModalProvider:
     Args:
         app_name: Modal app namespace (defaults to 'evolve-sandbox')
         timeout_ms: Sandbox timeout in milliseconds (default: 3600000 = 1 hour)
+        token_id: Modal token ID (defaults to MODAL_TOKEN_ID env var)
+        token_secret: Modal token secret (defaults to MODAL_TOKEN_SECRET env var)
+        endpoint: Modal API endpoint (defaults to https://api.modal.com:443)
     """
     app_name: Optional[str] = None
     timeout_ms: int = 3600000
+    token_id: Optional[str] = None
+    token_secret: Optional[str] = None
+    endpoint: Optional[str] = None
 
     @property
     def type(self) -> Literal['modal']:
@@ -160,6 +166,12 @@ class ModalProvider:
             result['appName'] = self.app_name
         if self.timeout_ms:
             result['defaultTimeoutMs'] = self.timeout_ms
+        if self.token_id:
+            result['tokenId'] = self.token_id
+        if self.token_secret:
+            result['tokenSecret'] = self.token_secret
+        if self.endpoint:
+            result['endpoint'] = self.endpoint
         return result
 
 
