@@ -154,7 +154,71 @@ sandbox = E2BProvider(
 evolve = Evolve(
     config=AgentConfig(
         type='claude',
-        oauth_token=os.getenv('CLAUDE_CODE_OAUTH_TOKEN'),
+        # SDK reads token from CLAUDE_CODE_OAUTH_TOKEN automatically
+    ),
+    sandbox=sandbox,
+)
+```
+
+### BYO Codex Subscription
+
+```bash
+# Run in terminal, follow login steps:
+codex auth --provider openai
+
+# Creates auth file at ~/.codex/auth.json
+```
+
+```bash
+# .env
+CODEX_OAUTH_FILE_PATH=~/.codex/auth.json
+E2B_API_KEY=e2b_...
+```
+
+```python
+import os
+from evolve import Evolve, AgentConfig, E2BProvider
+
+sandbox = E2BProvider(
+    api_key=os.getenv('E2B_API_KEY'),
+)
+
+evolve = Evolve(
+    config=AgentConfig(
+        type='codex',
+        # SDK reads auth file from CODEX_OAUTH_FILE_PATH automatically
+    ),
+    sandbox=sandbox,
+)
+```
+
+### BYO Gemini Subscription
+
+```bash
+# Run in terminal, follow login steps:
+gemini auth login
+
+# Creates credentials file at ~/.gemini/oauth_creds.json
+```
+
+```bash
+# .env
+GEMINI_OAUTH_FILE_PATH=~/.gemini/oauth_creds.json
+E2B_API_KEY=e2b_...
+```
+
+```python
+import os
+from evolve import Evolve, AgentConfig, E2BProvider
+
+sandbox = E2BProvider(
+    api_key=os.getenv('E2B_API_KEY'),
+)
+
+evolve = Evolve(
+    config=AgentConfig(
+        type='gemini',
+        # SDK reads credentials file from GEMINI_OAUTH_FILE_PATH automatically
     ),
     sandbox=sandbox,
 )
@@ -171,8 +235,8 @@ Set env vars and the SDK picks them up automatically—no need to pass explicitl
 | type | models | default | env var (BYOK) |
 |------|--------|---------|----------------|
 | `'claude'` | `'opus'` `'sonnet'` `'haiku'` | `'opus'` | `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` |
-| `'codex'` | `'gpt-5.2'` `'gpt-5.2-codex'` `'gpt-5.1-codex-max'` `'gpt-5.1-mini'` | `'gpt-5.2'` | `OPENAI_API_KEY` |
-| `'gemini'` | `'gemini-3-pro-preview'` `'gemini-3-flash-preview'` `'gemini-2.5-pro'` `'gemini-2.5-flash'` `'gemini-2.5-flash-lite'` | `'gemini-3-flash-preview'` | `GEMINI_API_KEY` |
+| `'codex'` | `'gpt-5.2'` `'gpt-5.2-codex'` `'gpt-5.1-codex-max'` `'gpt-5.1-mini'` | `'gpt-5.2'` | `OPENAI_API_KEY` or `CODEX_OAUTH_FILE_PATH` |
+| `'gemini'` | `'gemini-3-pro-preview'` `'gemini-3-flash-preview'` `'gemini-2.5-pro'` `'gemini-2.5-flash'` `'gemini-2.5-flash-lite'` | `'gemini-3-flash-preview'` | `GEMINI_API_KEY` or `GEMINI_OAUTH_FILE_PATH` |
 | `'qwen'` | `'qwen3-coder-plus'` `'qwen3-vl-plus'` | `'qwen3-coder-plus'` | `OPENAI_API_KEY` |
 
 Agent-specific options: `reasoning_effort` (Codex: `'low'` `'medium'` `'high'` `'xhigh'`), `betas` (Claude Sonnet: `['context-1m-2025-08-07']`)
