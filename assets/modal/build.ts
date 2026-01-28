@@ -8,10 +8,13 @@
  */
 
 import { config } from 'dotenv'
+import { dirname, resolve } from 'path'
+import { fileURLToPath } from 'url'
 import { ModalClient } from 'modal'
 import { EVOLVE_IMAGE } from './template'
 
-config({ path: '../../.env' })
+const __dirname = dirname(fileURLToPath(import.meta.url))
+config({ path: resolve(__dirname, '../../.env') })
 
 async function main() {
   console.log('╔════════════════════════════════════════╗')
