@@ -2,7 +2,7 @@
   "name": "evolve-sdk-workspace",
   "private": true,
   "type": "module",
-  "version": "0.0.12",
+  "version": "0.0.13",
   "workspaces": [
     "packages/e2b",
     "packages/daytona",
