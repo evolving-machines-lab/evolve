@@ -518,7 +518,7 @@ export class DaytonaProvider implements SandboxProvider {
     try {
       const snapshot = await this.client.snapshot.get(imageName);
       if (snapshot && snapshot.state === "active") {
-        console.log(`[Daytona] Using cached snapshot: ${imageName}`);
+        console.log(`[daytona] Using cached snapshot: ${imageName}`);
         // CreateSandboxFromSnapshotParams - no resources field
         sandbox = await this.client.create(
           {
@@ -542,8 +542,8 @@ export class DaytonaProvider implements SandboxProvider {
         );
       }
 
-      console.log(`[Daytona] Snapshot "${imageName}" not found, creating from image: ${publicImage}`);
-      console.log("[Daytona] First run may take a few minutes (image will be cached for future runs)...");
+      console.log(`[daytona] Snapshot "${imageName}" not found, creating from image: ${publicImage}`);
+      console.log("[daytona] First run may take a few minutes (image will be cached for future runs)...");
 
       sandbox = await this.client.create(
         {
@@ -559,7 +559,7 @@ export class DaytonaProvider implements SandboxProvider {
         },
         {
           timeout: 600, // 10 min creation timeout (Daytona default)
-          onSnapshotCreateLogs: (log: string) => console.log(`[Daytona] ${log}`),
+          onSnapshotCreateLogs: (log: string) => console.log(`[daytona] ${log}`),
         }
       );
     }
