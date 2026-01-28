@@ -2,9 +2,19 @@
  * Configuration Utilities
  */
 
+import * as fs from "fs";
 import type { AgentConfig, AgentType, ResolvedAgentConfig } from "../types";
 import { DEFAULT_AGENT_TYPE, ENV_EVOLVE_API_KEY } from "../constants";
 import { getAgentConfig } from "../registry";
+
+/** Read OAuth file content (for file-based OAuth like Codex) */
+function readOAuthFile(filePath: string): string {
+  const expandedPath = filePath.replace(/^~/, process.env.HOME || "");
+  if (!fs.existsSync(expandedPath)) {
+    throw new Error(`OAuth file not found: ${expandedPath}`);
+  }
+  return fs.readFileSync(expandedPath, "utf-8");
+}
 
 /**
  * Resolve AgentConfig with defaults and environment variables.
@@ -63,11 +73,17 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
     return { type, apiKey: providerKey, baseUrl, isDirectMode: true, model: config?.model, reasoningEffort: config?.reasoningEffort, betas: config?.betas };
   }
 
-  // OAuth mode (Claude Max env var)
+  // OAuth mode (token or file-based)
   if (registry.oauthEnv) {
-    const oauthKey = process.env[registry.oauthEnv];
-    if (oauthKey) {
-      return { type, apiKey: oauthKey, isDirectMode: true, isOAuth: true, model: config?.model, reasoningEffort: config?.reasoningEffort, betas: config?.betas };
+    const oauthValue = process.env[registry.oauthEnv];
+    if (oauthValue) {
+      if (type === "codex") {
+        // Codex: env var is file path, read content
+        const oauthFileContent = readOAuthFile(oauthValue);
+        return { type, apiKey: "__oauth_file__", isDirectMode: true, isOAuth: true, oauthFileContent, model: config?.model, reasoningEffort: config?.reasoningEffort, betas: config?.betas };
+      }
+      // Claude: env var is token itself
+      return { type, apiKey: oauthValue, isDirectMode: true, isOAuth: true, model: config?.model, reasoningEffort: config?.reasoningEffort, betas: config?.betas };
     }
   }
 
