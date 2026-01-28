@@ -196,8 +196,13 @@ export class Agent {
   private buildEnvironmentVariables(): Record<string, string> {
     const envVars: Record<string, string> = {};
 
-    // File-based OAuth (Codex): auth file handles auth, no env var needed
-    if (!this.agentConfig.oauthFileContent) {
+    // File-based OAuth (Codex, Gemini): auth file handles auth, no API key env var needed
+    if (this.agentConfig.oauthFileContent) {
+      // Some agents need an activation env var (e.g., Gemini needs GOOGLE_GENAI_USE_GCA=true)
+      if (this.registry.oauthActivationEnv) {
+        envVars[this.registry.oauthActivationEnv.key] = this.registry.oauthActivationEnv.value;
+      }
+    } else {
       // OAuth mode uses oauthEnv (e.g., CLAUDE_CODE_OAUTH_TOKEN), else apiKeyEnv
       const keyEnv = this.agentConfig.isOAuth && this.registry.oauthEnv
         ? this.registry.oauthEnv
@@ -231,10 +236,10 @@ export class Agent {
    */
   private async setupAgentAuth(sandbox: SandboxInstance): Promise<void> {
     // File-based OAuth: write auth file directly
-    if (this.agentConfig.oauthFileContent) {
+    if (this.agentConfig.oauthFileContent && this.registry.oauthFileName) {
       const settingsDir = this.registry.mcpConfig.settingsDir.replace(/^~/, "/home/user");
       await sandbox.files.makeDir(settingsDir);
-      await sandbox.files.write(`${settingsDir}/auth.json`, this.agentConfig.oauthFileContent);
+      await sandbox.files.write(`${settingsDir}/${this.registry.oauthFileName}`, this.agentConfig.oauthFileContent);
       return;
     }
     // Default: run setup command (e.g., "codex login --with-api-key")
