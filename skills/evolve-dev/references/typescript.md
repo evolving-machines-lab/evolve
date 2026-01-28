@@ -239,7 +239,7 @@ See [assets/README.md](../../../assets/README.md) for detailed setup instruction
 
 ---
 
-**Auto-Resolution**
+### Auto-Resolution
 
 Set env vars and the SDK auto-resolves the provider—no `.withSandbox()` needed:
 
@@ -272,7 +272,7 @@ Only use explicit provider creation (below) if you need custom settings like tim
 
 ---
 
-**E2B** (default)
+### E2B (default)
 ```bash
 # .env - Gateway mode
 EVOLVE_API_KEY=sk-...
@@ -292,7 +292,7 @@ const sandbox = createE2BProvider({
 });
 ```
 
-**Modal**
+### Modal
 ```bash
 # .env - Gateway mode
 EVOLVE_API_KEY=sk-...
@@ -314,7 +314,7 @@ const sandbox = createModalProvider({
 });
 ```
 
-**Daytona**
+### Daytona
 ```bash
 # .env - Gateway mode
 EVOLVE_API_KEY=sk-...
