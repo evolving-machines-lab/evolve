@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.11] - 2025-01-28
+
+### Added
+
+- **Codex OAuth support** - File-based OAuth using `CODEX_OAUTH_FILE_PATH=~/.codex/auth.json`
+- **Gemini OAuth support** - File-based OAuth using `GEMINI_OAUTH_FILE_PATH=~/.gemini/oauth_creds.json`
+  - Automatically sets `GOOGLE_GENAI_USE_GCA=true` activation env var
+- Registry-driven OAuth architecture with new fields:
+  - `oauthFileName` - credentials file name (e.g., `auth.json`, `oauth_creds.json`)
+  - `oauthActivationEnv` - optional env var to activate OAuth mode
+
 ## [0.0.7] - 2025-01-27
 
 ### Added
