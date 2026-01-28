@@ -271,6 +271,8 @@ export interface ResolvedAgentConfig {
   baseUrl?: string;
   isDirectMode: boolean;
   isOAuth?: boolean;
+  /** File content for file-based OAuth (Codex) */
+  oauthFileContent?: string;
   model?: string;
   reasoningEffort?: ReasoningEffort;
   betas?: string[];
