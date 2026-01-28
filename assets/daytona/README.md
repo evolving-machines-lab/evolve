@@ -16,7 +16,7 @@ Create a snapshot in your Daytona account for fast sandbox startup.
    cd assets && ./build.sh daytona
    ```
 
-After creating the snapshot, all sandbox creations will be fast (~seconds).
+After creating the snapshot, all sandbox creations will be instant.
 
 ## Image
 

@@ -17,7 +17,7 @@ Cache the Evolve image in your Modal account for fast sandbox startup.
    cd assets && ./build.sh modal
    ```
 
-After caching, all sandbox creations will be fast (~seconds).
+After caching, all sandbox creations will be instant.
 
 ## Image
 

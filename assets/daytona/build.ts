@@ -68,7 +68,7 @@ async function main() {
   )
 
   console.log(`\n✓ Done! Snapshot "${SNAPSHOT_NAME}" created.`)
-  console.log('  Subsequent sandbox creations will be fast.')
+  console.log('  Subsequent sandbox creations will be instant.')
 }
 
 main().catch(console.error)

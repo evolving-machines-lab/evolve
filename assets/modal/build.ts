@@ -34,7 +34,7 @@ async function main() {
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
   console.log(`\n✓ Done! Image cached in ${elapsed}s`)
-  console.log('  Subsequent sandbox creations will be fast.')
+  console.log('  Subsequent sandbox creations will be instant.')
 }
 
 main().catch(console.error)
