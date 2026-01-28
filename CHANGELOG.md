@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Modal default resources**: Now sets 4 CPU, 4GB memory at sandbox creation (matches E2B defaults)
 - Bridge `types.ts` now correctly includes all provider types (was only `'e2b'`)
 - **Daytona sandbox timeout**: Now correctly maps `defaultTimeoutMs` to inactivity-based `autoStopInterval` (in minutes, min 1 minute) for parity with E2B/Modal fixed-lifetime behavior
 - **Modal operation timeout**: Properly detects timeout via `exitCode === -1` (Modal returns -1 instead of throwing like E2B)
@@ -50,3 +51,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added Modal and Daytona providers to Python SDK docs (was E2B only)
 - Added missing provider config options: Modal `appName`, Daytona `apiUrl`/`target`
 - Clarified that `.withSandbox()`/`sandbox=` is optional when env vars are set (SDK auto-resolves)
+- Added First Time Setup column to provider table with links to `assets/README.md`
+- Added Auto-Resolution section with env examples for all providers
