@@ -247,6 +247,124 @@ evolve = Evolve(
 
 ## 2. Full Configuration
 
+### 2.1 Sandbox Providers
+
+Works with both Gateway mode (`EVOLVE_API_KEY`) and BYOK mode (provider API keys). With `EVOLVE_API_KEY` only, sandbox defaults to **E2B**. Add a sandbox provider key to auto-resolve to that provider.
+
+All providers use the `evolve-all` image with pre-installed CLIs.
+
+| Provider | Env Vars | Auto-Resolves When | First Time Setup |
+|----------|----------|-------------------|------------------|
+| E2B | `E2B_API_KEY` | Default, or `E2B_API_KEY` set | None — instant |
+| Modal | `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` | Both Modal vars set | Run `cd assets && ./build.sh modal` once |
+| Daytona | `DAYTONA_API_KEY` | `DAYTONA_API_KEY` set | Run `cd assets && ./build.sh daytona` once |
+
+See [assets/README.md](../../../assets/README.md) for detailed setup instructions.
+
+---
+
+### Auto-Resolution
+
+Set env vars and the SDK auto-resolves the provider—no `sandbox=` needed:
+
+```bash
+# .env - Gateway mode with Modal (auto-resolves to Modal)
+EVOLVE_API_KEY=sk-...
+MODAL_TOKEN_ID=ak-...
+MODAL_TOKEN_SECRET=as-...
+
+# .env - Gateway mode with Daytona (auto-resolves to Daytona)
+EVOLVE_API_KEY=sk-...
+DAYTONA_API_KEY=...
+
+# .env - BYOK mode with E2B (auto-resolves to E2B)
+ANTHROPIC_API_KEY=sk-ant-...
+E2B_API_KEY=e2b_...
+```
+
+```python
+from evolve import Evolve, AgentConfig
+
+# No sandbox= needed — SDK picks the right provider from env
+evolve = Evolve(
+    agent=AgentConfig(type="claude"),
+)
+
+await evolve.run(prompt="Hello")
+```
+
+Only use explicit provider creation (below) if you need custom settings like timeout or app name.
+
+---
+
+### E2B (default)
+```bash
+# .env - Gateway mode
+EVOLVE_API_KEY=sk-...
+E2B_API_KEY=e2b_...              # Optional with EVOLVE_API_KEY (auto-resolves)
+
+# .env - BYOK mode
+ANTHROPIC_API_KEY=sk-ant-...     # Or OPENAI_API_KEY, GEMINI_API_KEY, CLAUDE_CODE_OAUTH_TOKEN
+E2B_API_KEY=e2b_...              # Required in BYOK mode
+```
+
+```python
+from evolve import E2BProvider
+
+sandbox = E2BProvider(
+    api_key=os.getenv('E2B_API_KEY'),    # (optional) Auto-resolves from env
+    timeout_ms=3600000,                   # (optional) Default: 3600000 (1 hour)
+)
+```
+
+### Modal
+```bash
+# .env - Gateway mode
+EVOLVE_API_KEY=sk-...
+MODAL_TOKEN_ID=ak-...
+MODAL_TOKEN_SECRET=as-...
+
+# .env - BYOK mode
+ANTHROPIC_API_KEY=sk-ant-...     # Or OPENAI_API_KEY, GEMINI_API_KEY, CLAUDE_CODE_OAUTH_TOKEN
+MODAL_TOKEN_ID=ak-...
+MODAL_TOKEN_SECRET=as-...
+```
+
+```python
+from evolve import ModalProvider
+
+sandbox = ModalProvider(
+    app_name='my-app',                    # (optional) Default: 'evolve-sandbox'
+    timeout_ms=3600000,                   # (optional) Default: 3600000 (1 hour)
+)
+```
+
+### Daytona
+```bash
+# .env - Gateway mode
+EVOLVE_API_KEY=sk-...
+DAYTONA_API_KEY=...
+
+# .env - BYOK mode
+ANTHROPIC_API_KEY=sk-ant-...     # Or OPENAI_API_KEY, GEMINI_API_KEY, CLAUDE_CODE_OAUTH_TOKEN
+DAYTONA_API_KEY=...
+```
+
+```python
+from evolve import DaytonaProvider
+
+sandbox = DaytonaProvider(
+    api_key=os.getenv('DAYTONA_API_KEY'),  # (optional) Auto-resolves from env
+    api_url='https://app.daytona.io/api',  # (optional) Default: https://app.daytona.io/api
+    target='us',                            # (optional) Target region. Default: 'us'
+    timeout_ms=3600000,                     # (optional) Default: 3600000 (1 hour) - converted to minutes for auto-stop
+)
+```
+
+---
+
+### 2.2 Evolve Instance
+
 ```python
 import os
 from evolve import Evolve, AgentConfig, E2BProvider, ComposioSetup, ComposioConfig
