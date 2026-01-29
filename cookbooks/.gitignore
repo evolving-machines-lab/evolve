@@ -1,6 +1,7 @@
 # Input/output folders (user content, keep .gitkeep)
 **/input/*
 !**/input/.gitkeep
+!**/cre-portfolio/input/*
 **/output/*
 !**/output/.gitkeep
 
