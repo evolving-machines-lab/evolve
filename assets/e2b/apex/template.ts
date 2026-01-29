@@ -26,7 +26,8 @@ export const template = Template()
   .setWorkdir('/')
 
   // LibreOffice for spreadsheet/document processing + proot for sandboxed execution
-  .runCmd('apt-get update && apt-get install -y libreoffice-calc libreoffice-core proot zip unzip && rm -rf /var/lib/apt/lists/*')
+  // fonts-liberation required for proper document rendering in LibreOffice
+  .runCmd('apt-get update && apt-get install -y libreoffice-calc libreoffice-core proot zip unzip fonts-liberation && rm -rf /var/lib/apt/lists/*')
 
   // ---------------------------------------------------------------------------
   // MCP Servers from Archipelago
