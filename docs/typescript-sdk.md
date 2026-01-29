@@ -349,6 +349,7 @@ import { Evolve, createE2BProvider } from "@evolvingmachines/sdk";
 const sandbox = createE2BProvider({
     apiKey: process.env.E2B_API_KEY,    // (optional) Auto-resolves from env
     defaultTimeoutMs: 3600000,           // (optional) Default: 3600000 (1 hour)
+    templateId: "my-custom-template",    // (optional) E2B template ID. Default: "evolve-all"
 });
 ```
 

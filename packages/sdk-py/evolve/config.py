@@ -81,9 +81,11 @@ class E2BProvider:
     Args:
         api_key: E2B API key (defaults to E2B_API_KEY env var)
         timeout_ms: Sandbox timeout in milliseconds (default: 3600000 = 1 hour)
+        template_id: E2B template ID (default: 'evolve-all'). Create custom templates at https://e2b.dev/docs/sandbox-template
     """
     api_key: Optional[str] = None
     timeout_ms: int = 3600000
+    template_id: Optional[str] = None
 
     @property
     def type(self) -> Literal['e2b']:
@@ -98,6 +100,8 @@ class E2BProvider:
             result['apiKey'] = self.api_key
         if self.timeout_ms:
             result['defaultTimeoutMs'] = self.timeout_ms
+        if self.template_id:
+            result['templateId'] = self.template_id
         return result
 
 

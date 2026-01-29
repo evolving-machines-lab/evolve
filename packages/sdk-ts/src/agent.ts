@@ -175,7 +175,6 @@ export class Agent {
       const envVars = this.buildEnvironmentVariables();
 
       this.sandbox = await provider.create({
-        image: this.registry.image,
         envs: envVars,
         workingDirectory: this.workingDir,
       });

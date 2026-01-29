@@ -281,12 +281,15 @@ export interface E2BConfig {
   /** E2B API key. Default: reads from E2B_API_KEY env var */
   apiKey?: string;
   defaultTimeoutMs?: number;
+  /** E2B template ID (default: 'evolve-all'). Create custom templates at https://e2b.dev/docs/sandbox-template */
+  templateId?: string;
 }
 
 /** Internal resolved config with required apiKey */
 interface ResolvedE2BConfig {
   apiKey: string;
   defaultTimeoutMs?: number;
+  templateId?: string;
 }
 
 // ============================================================
@@ -547,17 +550,20 @@ export class E2BProvider implements SandboxProvider {
   readonly providerType = "e2b" as const;
   private readonly apiKey: string;
   private readonly defaultTimeoutMs: number;
+  private readonly templateId?: string;
 
   constructor(config: ResolvedE2BConfig) {
     this.apiKey = config.apiKey;
     this.defaultTimeoutMs = config.defaultTimeoutMs ?? 3600000;
+    this.templateId = config.templateId;
   }
 
   async create(options: SandboxCreateOptions): Promise<SandboxInstance> {
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
+    const templateId = options.image ?? this.templateId ?? "evolve-all";
 
     // Map generic 'image' to E2B's 'templateId'
-    const sandbox = await E2BSandbox.create(options.image, {
+    const sandbox = await E2BSandbox.create(templateId, {
       apiKey: this.apiKey,
       envs: options.envs,
       metadata: options.metadata,
