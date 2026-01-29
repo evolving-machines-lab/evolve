@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.14] - 2025-01-28
+
+### Fixed
+
+- **Claude parser: include Bash/Edit/Write tool results** - Previously discarded successful output for these tools, only showing content on errors. Now all tool results are included in `tool_call_update` events, consistent with Codex/Gemini/Qwen parsers. Fixes empty result display in dashboard trace viewer.
+
 ## [0.0.12] - 2025-01-28
 
 ### Fixed
