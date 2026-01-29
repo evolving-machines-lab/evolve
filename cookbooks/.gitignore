@@ -1,0 +1,20 @@
+# Output folders (user-generated content, keep .gitkeep)
+**/output/*
+!**/output/.gitkeep
+
+# Virtual environments
+.venv/
+venv/
+
+# Environment files (secrets)
+.env
+
+# Node
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
