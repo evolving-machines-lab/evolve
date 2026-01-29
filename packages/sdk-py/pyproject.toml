@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "evolve-sdk"
-version = "0.0.14"
+version = "0.0.15"
 description = "Pythonic SDK for multi-agent orchestration in E2B sandboxes"
 readme = "README.md"
 requires-python = ">=3.11"
