@@ -65,7 +65,8 @@ export interface SandboxSpawnOptions extends SandboxRunOptions {
 
 /** Options for creating a sandbox */
 export interface SandboxCreateOptions {
-  image: string;
+  /** Sandbox image/template ID. Provider uses its default if not specified. */
+  image?: string;
   envs?: Record<string, string>;
   metadata?: Record<string, string>;
   timeoutMs?: number;

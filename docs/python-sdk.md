@@ -378,6 +378,7 @@ from evolve import E2BProvider
 sandbox = E2BProvider(
     api_key=os.getenv('E2B_API_KEY'),    # (optional) Auto-resolves from env
     timeout_ms=3600000,                   # (optional) Default: 3600000 (1 hour)
+    template_id='my-custom-template',     # (optional) E2B template ID. Default: 'evolve-all'
 )
 ```
 
