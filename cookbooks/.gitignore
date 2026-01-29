@@ -1,4 +1,6 @@
-# Output folders (user-generated content, keep .gitkeep)
+# Input/output folders (user content, keep .gitkeep)
+**/input/*
+!**/input/.gitkeep
 **/output/*
 !**/output/.gitkeep
 
