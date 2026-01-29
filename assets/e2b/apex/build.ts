@@ -5,7 +5,7 @@ import { Template, defaultBuildLogger } from 'e2b'
 import { template } from './template'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-config({ path: resolve(__dirname, '../../../.env') })
+config({ path: resolve(__dirname, '../../../.env') })  // 3 levels up from assets/e2b/apex/
 
 async function main() {
   console.log('Building APEX Benchmark E2B template...')

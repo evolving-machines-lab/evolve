@@ -17,7 +17,7 @@ export const template = Template()
   // ---------------------------------------------------------------------------
   // Base: Evolve template with all AI CLIs
   // ---------------------------------------------------------------------------
-  .fromImage('evolve-all')
+  .fromTemplate('evolve-all')
 
   // ---------------------------------------------------------------------------
   // System packages (as root)
