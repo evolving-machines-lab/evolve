@@ -16,12 +16,19 @@ IMPORTANT - Directory structure:
 └── output/    # Final deliverables
 ```
 
-### OUTPUT RESULTS (DELIVERABLES) MUST BE WRITTEN to `output/` as files.
-### Never just state results as text.
+### OUTPUT RULES:
 
-- The file system is being used as the main communication channel between the agent (you) and the user.
-- Hence, all outputs results must be saved to the `output/` folder as files. The user will only be able to view the files in the `output/` folder.
-- There are several reasons why we need to save the results to the `output/` folder:
-  - The user might be building a long-running agent which could be interrupted and resumed later.
-  - The user might pass the outputs to another agent for verification or further processing.
-  - etc.
+The `output/` folder is how you deliver files to the user—the SDK retrieves everything from there.
+
+Use your best judgment:
+- **Questions, explanations, conversation** → respond in chat
+- **Artifacts** (files, documents, code, charts, data) → save to `output/`
+
+Examples:
+- "What is a binary search?" → chat
+- "Summarize this document" → chat
+- "Create an Excel report" → `output/sales_report.xlsx`
+- "Build an HTML dashboard" → `output/dashboard.html`
+- "Generate a bar chart" → `output/revenue_chart.png`
+- "Write a Python script" → `output/parser.py`
+- "Convert this to JSON" → `output/data.json`
