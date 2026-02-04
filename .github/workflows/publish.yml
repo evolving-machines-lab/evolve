@@ -168,6 +168,18 @@ jobs:
 
           echo "Updated all version files"
 
+      - name: Fix SDK dependencies for npm publish
+        run: |
+          VERSION="${{ steps.version.outputs.new_version }}"
+
+          # Replace file: references with versioned npm references
+          sed -i 's|"file:../e2b"|"^'"$VERSION"'"|' packages/sdk-ts/package.json
+          sed -i 's|"file:../daytona"|"^'"$VERSION"'"|' packages/sdk-ts/package.json
+          sed -i 's|"file:../modal"|"^'"$VERSION"'"|' packages/sdk-ts/package.json
+
+          echo "Fixed SDK dependencies:"
+          grep -E "@evolvingmachines/(e2b|daytona|modal)" packages/sdk-ts/package.json
+
       # =======================================================================
       # BUILD (order defined in package.json: e2b → daytona → modal → sdk → bridge)
       # =======================================================================
