@@ -112,7 +112,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     baseUrlEnv: "ANTHROPIC_BASE_URL",
     defaultModel: "opus",
     models: [
-      { alias: "opus", modelId: "claude-opus-4-5-20251101", description: "Complex reasoning, R&D, architecting" },
+      { alias: "opus", modelId: "claude-opus-4-6", description: "Complex reasoning, R&D, architecting" },
       { alias: "sonnet", modelId: "claude-sonnet-4-5-20250929", description: "Daily coding, features, tests" },
       { alias: "haiku", modelId: "claude-haiku-4-5-20251001", description: "Quick tasks, syntax correction" },
     ],

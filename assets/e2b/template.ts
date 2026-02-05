@@ -31,7 +31,8 @@ export const template = Template()
   .setWorkdir('/')
 
   // Core utilities + Google Chrome (single layer)
-  .runCmd('apt-get update && apt-get install -y curl git ripgrep wget gnupg && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome-keyring.gpg && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list && apt-get update && apt-get install -y google-chrome-stable && rm -rf /var/lib/apt/lists/*')
+  // Remove NodeSource repo (SHA1 key deprecated since 2026-02-01)
+  .runCmd('rm -f /etc/apt/sources.list.d/nodesource.list 2>/dev/null || true && apt-get update && apt-get install -y curl git ripgrep wget gnupg && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome-keyring.gpg && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list && apt-get update && apt-get install -y google-chrome-stable && rm -rf /var/lib/apt/lists/*')
 
   // UV package manager for Python
   .runCmd('curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh')
@@ -82,7 +83,7 @@ export const template = Template()
   // ---------------------------------------------------------------------------
   // Gemini Extensions (Nano Banana for image generation)
   // ---------------------------------------------------------------------------
-  .runCmd('echo y | gemini extensions install https://github.com/gemini-cli-extensions/nanobanana')
+  .runCmd('echo y | gemini extensions install https://github.com/gemini-cli-extensions/nanobanana || true')
 
   // ---------------------------------------------------------------------------
   // Browser Automation (Playwright)

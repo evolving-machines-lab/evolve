@@ -31,7 +31,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 # ---------------------------------------------------------------------------
 # System packages
 # ---------------------------------------------------------------------------
-RUN apt-get update && apt-get install -y \
+# Remove NodeSource repo (SHA1 key deprecated since 2026-02-01)
+RUN rm -f /etc/apt/sources.list.d/nodesource.list 2>/dev/null || true \
+    && apt-get update && apt-get install -y \
     curl \
     git \
     ripgrep \
