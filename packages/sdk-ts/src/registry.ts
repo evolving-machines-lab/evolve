@@ -229,7 +229,8 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       const prefixedModel = isDirectMode || model.startsWith("dashscope/")
         ? model
         : `dashscope/${model}`;
-      return `qwen "${prompt}" ${continueFlag}${skillsFlag}--model ${prefixedModel} --yolo --output-format stream-json`;
+      // --auth-type openai is required in non-interactive mode when env vars don't include OPENAI_MODEL
+      return `qwen "${prompt}" ${continueFlag}${skillsFlag}--auth-type openai --model ${prefixedModel} --yolo --output-format stream-json`;
     },
   },
 };
