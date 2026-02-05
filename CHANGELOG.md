@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Qwen Code auth error in non-interactive mode** - Added `--auth-type openai` flag to Qwen buildCommand. Required because Qwen Code's non-interactive mode needs explicit auth type when `OPENAI_MODEL` env var is not set (SDK passes model via `--model` flag instead).
+
 ## [0.0.14] - 2025-01-28
 
 ### Fixed
