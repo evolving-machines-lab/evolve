@@ -131,7 +131,9 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       sourceDir: "/home/user/.evolve/skills",
       targetDir: "/home/user/.claude/skills",
     },
-    buildCommand: ({ prompt, model, isResume, betas }) => {
+    buildCommand: ({ prompt, model, isResume, betas, isDirectMode }) => {
+      // TEMP: prefix for gateway routing until LiteLLM adds opus 4.6 to cost map
+      if (!isDirectMode && model === "opus") model = "anthropic/claude-opus-4-6";
       const continueFlag = isResume ? "--continue " : "";
       const betasFlag = betas?.length ? `--betas ${betas.join(",")} ` : "";
       return `echo "${prompt}" | claude -p ${continueFlag}${betasFlag}--model ${model} --output-format stream-json --verbose --dangerously-skip-permissions`;
