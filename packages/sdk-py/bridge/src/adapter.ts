@@ -22,6 +22,7 @@ import type {
   RunResponse,
   OutputResultResponse,
   GetHostResponse,
+  SessionStatusResponse,
   EventCallbacks,
   EncodedFileMap,
   CreateInstanceParams,
@@ -198,6 +199,10 @@ export class EvolveAdapter {
         return this.pause();
       case 'resume':
         return this.resume();
+      case 'interrupt':
+        return this.interrupt();
+      case 'status':
+        return this.status();
       case 'kill':
         return this.kill();
       case 'get_host':
@@ -268,6 +273,9 @@ export class EvolveAdapter {
     }
     if (params.forward_content === true && callbacks?.onContent) {
       this.evolve.on('content', callbacks.onContent);
+    }
+    if (params.forward_lifecycle === true && callbacks?.onLifecycle) {
+      this.evolve.on('lifecycle', callbacks.onLifecycle);
     }
 
     return { status: 'ok' };
@@ -368,6 +376,24 @@ export class EvolveAdapter {
     this.ensureInitialized();
     await this.evolve!.resume();
     return { status: 'ok' };
+  }
+
+  async interrupt(): Promise<boolean> {
+    this.ensureInitialized();
+    return this.evolve!.interrupt();
+  }
+
+  async status(): Promise<SessionStatusResponse> {
+    this.ensureInitialized();
+    const snapshot = this.evolve!.status();
+    return {
+      sandbox_id: snapshot.sandboxId,
+      sandbox: snapshot.sandbox,
+      agent: snapshot.agent,
+      active_process_id: snapshot.activeProcessId,
+      has_run: snapshot.hasRun,
+      timestamp: snapshot.timestamp,
+    };
   }
 
   async kill(): Promise<StatusResponse> {

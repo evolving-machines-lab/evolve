@@ -18,7 +18,9 @@ import os
 import pytest
 from unittest.mock import patch, MagicMock
 
+from evolve import Evolve
 from evolve.config import AgentConfig, E2BProvider
+from evolve.bridge import BridgeManager
 
 
 class TestAgentConfigDataclass:
@@ -506,3 +508,89 @@ class TestE2BSandboxEnvResolution:
         # Python just passes the config, TS does the resolution
         provider = E2BProvider()
         assert provider.type == 'e2b'
+
+
+class MockBridgeManager:
+    """Minimal async bridge mock for Evolve runtime surface tests."""
+
+    def __init__(self):
+        self.calls = []
+        self.callbacks = {}
+
+    async def start(self):
+        return None
+
+    async def stop(self):
+        return None
+
+    def on(self, event_type, callback):
+        self.callbacks.setdefault(event_type, []).append(callback)
+
+    async def call(self, method, params=None, timeout_s=None):
+        self.calls.append((method, params, timeout_s))
+        if method == 'initialize':
+            return {'status': 'ok'}
+        if method == 'status':
+            return {
+                'sandbox_id': 'sb-test',
+                'sandbox': 'ready',
+                'agent': 'idle',
+                'active_process_id': None,
+                'has_run': True,
+                'timestamp': '2026-02-07T00:00:00.000Z',
+            }
+        if method == 'interrupt':
+            return True
+        return {'status': 'ok'}
+
+
+class TestSessionRuntimeParity:
+    """Python wrapper parity for TS session runtime controls."""
+
+    @pytest.mark.asyncio
+    async def test_initialize_forwards_lifecycle_stream(self):
+        mock_bridge = MockBridgeManager()
+        with patch('evolve.agent.BridgeManager', return_value=mock_bridge):
+            kit = Evolve()
+            await kit._ensure_initialized()
+
+        initialize_calls = [c for c in mock_bridge.calls if c[0] == 'initialize']
+        assert len(initialize_calls) == 1
+        params = initialize_calls[0][1]
+        assert params['forward_stdout'] is True
+        assert params['forward_stderr'] is True
+        assert params['forward_content'] is True
+        assert params['forward_lifecycle'] is True
+
+    @pytest.mark.asyncio
+    async def test_status_returns_typed_snapshot(self):
+        mock_bridge = MockBridgeManager()
+        with patch('evolve.agent.BridgeManager', return_value=mock_bridge):
+            kit = Evolve()
+            status = await kit.status()
+
+        assert status.sandbox_id == 'sb-test'
+        assert status.sandbox == 'ready'
+        assert status.agent == 'idle'
+        assert status.active_process_id is None
+        assert status.has_run is True
+        assert status.timestamp == '2026-02-07T00:00:00.000Z'
+
+    @pytest.mark.asyncio
+    async def test_interrupt_returns_bool(self):
+        mock_bridge = MockBridgeManager()
+        with patch('evolve.agent.BridgeManager', return_value=mock_bridge):
+            kit = Evolve()
+            interrupted = await kit.interrupt()
+
+        assert interrupted is True
+        interrupt_calls = [c for c in mock_bridge.calls if c[0] == 'interrupt']
+        assert len(interrupt_calls) == 1
+
+    def test_bridge_manager_handles_lifecycle_event_callbacks(self):
+        bridge = BridgeManager()
+        captured = []
+        bridge.on('lifecycle', lambda event: captured.append(event))
+        bridge._handle_event({'type': 'lifecycle', 'reason': 'run_start', 'sandbox': 'running'})
+        assert len(captured) == 1
+        assert captured[0]['reason'] == 'run_start'

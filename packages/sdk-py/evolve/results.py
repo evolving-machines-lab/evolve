@@ -27,6 +27,27 @@ ExecuteResult = AgentResponse
 
 
 @dataclass
+class SessionStatus:
+    """Runtime status snapshot for sandbox and agent."""
+    sandbox_id: Optional[str]
+    sandbox: str
+    agent: str
+    active_process_id: Optional[str]
+    has_run: bool
+    timestamp: str
+
+
+@dataclass
+class LifecycleEvent:
+    """Lifecycle transition event emitted by `evolve.on('lifecycle', ...)`."""
+    sandbox_id: Optional[str]
+    sandbox: str
+    agent: str
+    timestamp: str
+    reason: str
+
+
+@dataclass
 class OutputResult:
     """Result from get_output_files() with optional schema validation.
 

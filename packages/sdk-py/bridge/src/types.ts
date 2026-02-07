@@ -80,6 +80,7 @@ export interface InitializeParams {
   forward_stdout?: boolean;
   forward_stderr?: boolean;
   forward_content?: boolean;
+  forward_lifecycle?: boolean;
   session_tag_prefix?: string;
   schema?: Record<string, any>;
   schema_options?: { mode?: 'strict' | 'loose' };
@@ -239,6 +240,16 @@ export interface GetHostResponse {
   url: string;
 }
 
+/** Runtime status snapshot (snake_case for Python transport) */
+export interface SessionStatusResponse {
+  sandbox_id: string | null;
+  sandbox: string;
+  agent: string;
+  active_process_id: string | null;
+  has_run: boolean;
+  timestamp: string;
+}
+
 // =============================================================================
 // EVENT CALLBACKS (for streaming)
 // =============================================================================
@@ -247,4 +258,5 @@ export interface EventCallbacks {
   onStdout?: (data: string) => void;
   onStderr?: (data: string) => void;
   onContent?: (event: any) => void;
+  onLifecycle?: (event: any) => void;
 }

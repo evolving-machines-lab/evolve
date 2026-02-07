@@ -250,6 +250,21 @@ class Bridge {
     void this.sendNotification(notification).catch(() => {});
   }
 
+  private emitLifecycleEvent(event: any) {
+    void this.sendNotification({
+      jsonrpc: '2.0',
+      method: 'event',
+      params: {
+        type: 'lifecycle',
+        sandbox_id: event?.sandboxId ?? null,
+        sandbox: event?.sandbox,
+        agent: event?.agent,
+        timestamp: event?.timestamp,
+        reason: event?.reason,
+      },
+    }).catch(() => {});
+  }
+
   // ===========================================================================
   // FRAMED I/O
   // ===========================================================================
@@ -330,6 +345,9 @@ class Bridge {
             : undefined,
           onContent: params.forward_content
             ? (event: any) => this.emitContentEvent(event)
+            : undefined,
+          onLifecycle: params.forward_lifecycle
+            ? (event: any) => this.emitLifecycleEvent(event)
             : undefined,
         });
         return {

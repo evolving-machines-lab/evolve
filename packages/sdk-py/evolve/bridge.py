@@ -74,6 +74,7 @@ class BridgeManager:
             'stdout': [],     # str data
             'stderr': [],     # str data
             'content': [],    # dict params
+            'lifecycle': [],  # dict params
         }
         self.reader_task: Optional[asyncio.Task] = None
         self._pid: Optional[int] = None
@@ -391,12 +392,12 @@ class BridgeManager:
                     callback(data)
                 except Exception:
                     logger.exception("Error in %s callback", event_type)
-        elif event_type == 'content':
+        elif event_type in ('content', 'lifecycle'):
             for callback in callbacks:
                 try:
                     callback(params)
                 except Exception:
-                    logger.exception("Error in content callback")
+                    logger.exception("Error in %s callback", event_type)
 
     def _handle_response(self, message: Dict[str, Any]):
         """Handle JSON-RPC response."""

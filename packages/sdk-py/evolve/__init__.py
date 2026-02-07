@@ -16,7 +16,7 @@ from .config import (
     ComposioSetup,
     ToolsFilter,
 )
-from .results import AgentResponse, ExecuteResult, OutputResult
+from .results import AgentResponse, ExecuteResult, OutputResult, SessionStatus, LifecycleEvent
 from .utils import read_local_dir, save_local_dir
 from .bridge import (
     SandboxNotFoundError,
@@ -95,6 +95,8 @@ __all__ = [
     'AgentResponse',
     'ExecuteResult',  # Backward compatibility alias for AgentResponse
     'OutputResult',
+    'SessionStatus',
+    'LifecycleEvent',
 
     # Swarm Configuration
     'SwarmConfig',

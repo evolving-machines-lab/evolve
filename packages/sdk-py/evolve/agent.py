@@ -7,7 +7,7 @@ from typing import Any, Callable, Dict, List, Optional, Type, Union
 
 from .bridge import BridgeManager, SandboxNotFoundError
 from .config import AgentConfig, ComposioSetup, SandboxProvider, SchemaOptions, WorkspaceMode
-from .results import AgentResponse, ExecuteResult, OutputResult
+from .results import AgentResponse, ExecuteResult, OutputResult, SessionStatus
 from . import composio as composio_helpers
 from .schema import is_pydantic_model, is_dataclass, to_json_schema, validate_and_parse
 from .utils import _encode_files_for_transport, _filter_none
@@ -151,6 +151,7 @@ class Evolve:
                 'forward_stdout': True,
                 'forward_stderr': True,
                 'forward_content': True,
+                'forward_lifecycle': True,
             })
 
             await self.bridge.call('initialize', params)
@@ -160,14 +161,15 @@ class Evolve:
         """Register event callback.
 
         Args:
-            event_type: Event type ('stdout' | 'stderr' | 'content')
+            event_type: Event type ('stdout' | 'stderr' | 'content' | 'lifecycle')
             callback: Callback function invoked with the event payload
-                      (str for stdout/stderr, dict for content)
+                      (str for stdout/stderr, dict for content/lifecycle)
 
         Example:
             >>> evolve.on('stdout', lambda data: print(data, end=''))
             >>> evolve.on('stderr', lambda data: print(f'[ERR] {data}', end=''))
             >>> evolve.on('content', lambda event: print(event['update']['sessionUpdate']))
+            >>> evolve.on('lifecycle', lambda event: print(event['reason']))
         """
         self.bridge.on(event_type, callback)
 
@@ -189,8 +191,10 @@ class Evolve:
         Args:
             prompt: Task description
             timeout_ms: Optional timeout in milliseconds (default: 1 hour)
-            background: Run in background (default: False). If True, returns immediately
-                       while agent continues running.
+            background: Run in background (default: False). If True, returns
+                       immediately with a handshake response (`exit_code=0`).
+                       Final completion is delivered asynchronously via
+                       lifecycle events or status polling.
 
         Returns:
             AgentResponse with sandbox_id, exit_code, stdout, stderr
@@ -234,7 +238,9 @@ class Evolve:
         Args:
             command: Shell command to execute
             timeout_ms: Optional timeout in milliseconds (default: 1 hour)
-            background: Run in background (default: False)
+            background: Run in background (default: False). If True, returns
+                       immediately with a handshake response (`exit_code=0`).
+                       Final completion is delivered via lifecycle events.
 
         Returns:
             AgentResponse with sandbox_id, exit_code, stdout, stderr
@@ -413,6 +419,29 @@ class Evolve:
         """
         await self._ensure_initialized()
         await self.bridge.call('pause')
+
+    async def interrupt(self) -> bool:
+        """Interrupt active process without killing the sandbox.
+
+        Returns:
+            True if an active process was interrupted; False otherwise.
+        """
+        await self._ensure_initialized()
+        interrupted = await self.bridge.call('interrupt')
+        return bool(interrupted)
+
+    async def status(self) -> SessionStatus:
+        """Get runtime status snapshot for sandbox and agent."""
+        await self._ensure_initialized()
+        response = await self.bridge.call('status')
+        return SessionStatus(
+            sandbox_id=response.get('sandbox_id'),
+            sandbox=response.get('sandbox', 'stopped'),
+            agent=response.get('agent', 'idle'),
+            active_process_id=response.get('active_process_id'),
+            has_run=bool(response.get('has_run', False)),
+            timestamp=response.get('timestamp', ''),
+        )
 
     async def resume(self):
         """Resume paused sandbox.

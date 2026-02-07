@@ -776,7 +776,7 @@ ToolsFilter = Union[
 
 ## 3. Runtime Methods
 
-All runtime calls are `async` and return an `AgentResponse`:
+`run()` and `execute_command()` are async and return `AgentResponse`. `status()` is async and returns `SessionStatus`. `interrupt()` returns `bool`.
 
 ```python
 @dataclass
@@ -785,6 +785,15 @@ class AgentResponse:
     exit_code: int
     stdout: str
     stderr: str
+
+@dataclass
+class SessionStatus:
+    sandbox_id: str | None
+    sandbox: str
+    agent: str
+    active_process_id: str | None
+    has_run: bool
+    timestamp: str
 ```
 
 ### 3.1 run
@@ -803,9 +812,9 @@ print(result.stdout)
 ```
 
 - If `timeout_ms` is omitted the agent uses the default of 3_600_000 ms (1 hour).
-- If `background` is `True`, the call returns immediately while the agent continues running.
-
+- If `background` is `True`, the call returns immediately with a start handshake (`exit_code=0`), not final completion. Completion is delivered asynchronously via `lifecycle` events (`run_background_complete` or `run_background_failed`) or by polling `status()`.
 - Calling `run()` multiple times maintains the agent context / history.
+- Calling `run()` while another run or command is active throws immediately. Call `interrupt()` first or wait for the active operation to finish.
 
 ### 3.2 execute_command
 
@@ -820,6 +829,8 @@ result = await evolve.execute_command(
 )
 ```
 
+- If `background` is `True`, returns a start handshake (`exit_code=0`). Completion arrives via `lifecycle` events (`command_background_complete` or `command_background_failed`).
+
 ### 3.3 Streaming Events
 
 Both `run()` and `execute_command()` stream output in real-time:
@@ -831,6 +842,7 @@ evolve = Evolve(config=AgentConfig(type='claude'))
 
 # Parsed events (recommended)
 evolve.on('content', lambda event: print(event['update']['sessionUpdate']))
+evolve.on('lifecycle', lambda event: print(event['reason'], event['sandbox']))
 
 # Raw output (debugging)
 evolve.on('stdout', lambda data: print(data, end=''))
@@ -842,8 +854,42 @@ await evolve.run(prompt='Hello')
 | Event | Type | Description |
 |-------|------|-------------|
 | `content` | `OutputEvent` | Parsed ACP-style events (recommended) |
+| `lifecycle` | `LifecycleEvent` | Sandbox and agent state transitions |
 | `stdout` | `str` | Raw JSONL output |
 | `stderr` | `str` | Error output |
+
+---
+
+### LifecycleEvent
+
+```python
+class LifecycleEvent(TypedDict):
+    sandbox_id: str | None
+    sandbox: Literal["booting", "error", "ready", "running", "paused", "stopped"]
+    agent: Literal["idle", "running", "interrupted", "error"]
+    timestamp: str
+    reason: Literal[
+        "sandbox_boot",
+        "sandbox_connected",
+        "sandbox_ready",
+        "sandbox_pause",
+        "sandbox_resume",
+        "sandbox_killed",
+        "sandbox_error",
+        "run_start",
+        "run_complete",
+        "run_interrupted",
+        "run_failed",
+        "run_background_complete",
+        "run_background_failed",
+        "command_start",
+        "command_complete",
+        "command_interrupted",
+        "command_failed",
+        "command_background_complete",
+        "command_background_failed",
+    ]
+```
 
 ---
 
@@ -1222,6 +1268,16 @@ Files created before the last `run()` or `execute_command()` are filtered out.
 ```python
 session_id = await evolve.get_session()  # Returns sandbox ID (str) or None
 
+status = await evolve.status()  # Runtime status snapshot
+# status.sandbox           -> "stopped" | "booting" | "ready" | "running" | "paused" | "error"
+# status.agent             -> "idle" | "running" | "interrupted" | "error"
+# status.has_run           -> bool
+# status.sandbox_id        -> str | None
+# status.active_process_id -> str | None
+# status.timestamp         -> str (ISO 8601)
+
+ok = await evolve.interrupt()  # Interrupts active process, keeps sandbox alive. Returns bool.
+
 await evolve.pause()   # Suspends sandbox (stops billing, preserves state)
 await evolve.resume()  # Reactivates same sandbox
 
@@ -1231,6 +1287,10 @@ await evolve.set_session('existing-sandbox-id')  # Sets sandbox ID; reconnection
 ```
 
 `sandbox_id` constructor parameter is equivalent to `set_session()` - use it during initialization to reconnect to an existing sandbox.
+
+**Provider caveats:**
+- **E2B / Daytona** — full support for `pause()`, `resume()`, `interrupt()`.
+- **Modal** — does not support `pause()`. `interrupt()` is effectively unsupported and returns `False` for active processes.
 
 ### 3.7 get_host
 

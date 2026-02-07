@@ -3,9 +3,10 @@
 import os
 import json
 import asyncio
-from typing import Any, Optional
+from typing import Any, Optional, Literal, List
 from pathlib import Path
 from dotenv import load_dotenv
+from evolve import E2BProvider, DaytonaProvider, ModalProvider, SandboxProvider
 
 # Load .env from workspace root
 root_dir = Path(__file__).parent.parent.parent.parent.parent
@@ -27,6 +28,61 @@ def get_e2b_api_key() -> str:
     if not api_key:
         raise ValueError('E2B_API_KEY not found in environment variables')
     return api_key
+
+
+ProviderName = Literal['e2b', 'daytona', 'modal']
+
+
+def get_available_providers() -> List[ProviderName]:
+    """Get available sandbox providers based on environment variables."""
+    available: List[ProviderName] = []
+    if os.getenv('E2B_API_KEY'):
+        available.append('e2b')
+    if os.getenv('DAYTONA_API_KEY'):
+        available.append('daytona')
+    if os.getenv('MODAL_TOKEN_ID') and os.getenv('MODAL_TOKEN_SECRET'):
+        available.append('modal')
+    return available
+
+
+def create_sandbox_provider(provider: ProviderName) -> SandboxProvider:
+    """Create sandbox provider from env-based configuration."""
+    if provider == 'e2b':
+        return E2BProvider(api_key=get_e2b_api_key())
+
+    if provider == 'daytona':
+        api_key = os.getenv('DAYTONA_API_KEY')
+        if not api_key:
+            raise ValueError('DAYTONA_API_KEY not found in environment variables')
+        return DaytonaProvider(
+            api_key=api_key,
+            api_url=os.getenv('DAYTONA_API_URL'),
+            target=os.getenv('DAYTONA_TARGET'),
+        )
+
+    if provider == 'modal':
+        token_id = os.getenv('MODAL_TOKEN_ID')
+        token_secret = os.getenv('MODAL_TOKEN_SECRET')
+        if not token_id or not token_secret:
+            raise ValueError('MODAL_TOKEN_ID and MODAL_TOKEN_SECRET required for modal provider')
+        return ModalProvider(
+            token_id=token_id,
+            token_secret=token_secret,
+            endpoint=os.getenv('MODAL_ENDPOINT'),
+            app_name=os.getenv('MODAL_APP_NAME'),
+        )
+
+    raise ValueError(f'Unsupported provider: {provider}')
+
+
+def supports_pause_resume(provider: ProviderName) -> bool:
+    """Whether provider supports pause/resume."""
+    return provider != 'modal'
+
+
+def supports_interrupt(provider: ProviderName) -> bool:
+    """Whether provider supports interrupt for active process."""
+    return provider != 'modal'
 
 
 def log_section(title: str) -> None:
