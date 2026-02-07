@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="logo/visual-architecture.png" alt="Evolve Architecture" width="900">
+  <img src="logo/visual-architecture.gif" alt="Evolve Architecture" width="900">
 </p>
 
 <br>
