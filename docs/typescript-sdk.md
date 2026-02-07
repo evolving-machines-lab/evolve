@@ -1262,6 +1262,12 @@ const s = evolve.status();             // Synchronous snapshot of sandbox + agen
 
 const ok = await evolve.interrupt();   // Interrupts active run() or executeCommand() process; sandbox stays alive. Returns true/false.
 
+// Steer a running task: interrupt, then reprompt in same session.
+// The next run() auto-continues conversation history/context for this sandbox session.
+void evolve.run({ prompt: "Do a full migration plan", background: true });
+await evolve.interrupt();
+await evolve.run({ prompt: "Change direction: only auth migration." });
+
 await evolve.pause();  // Suspends sandbox (stops billing, preserves state)
 await evolve.resume(); // Reactivates same sandbox
 

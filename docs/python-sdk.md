@@ -1281,6 +1281,12 @@ status = await evolve.status()  # Runtime status snapshot
 
 ok = await evolve.interrupt()  # Interrupts active run() or execute_command() process; keeps sandbox alive. Returns bool.
 
+# Steer a running task: interrupt, then reprompt in same session.
+# The next run() auto-continues conversation history/context for this sandbox session.
+await evolve.run(prompt='Do a full migration plan', background=True)
+await evolve.interrupt()
+await evolve.run(prompt='Change direction: only auth migration.')
+
 await evolve.pause()   # Suspends sandbox (stops billing, preserves state)
 await evolve.resume()  # Reactivates same sandbox
 
