@@ -6,6 +6,10 @@
   Run, deploy and monitor CLI agents in secure Cloud sandboxes.
 </p>
 
+<p align="center">
+  <img src="logo/visual-architecture.png" alt="Evolve Architecture" width="900">
+</p>
+
 <br>
 
 - Run any CLI agent ([Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Qwen Code](https://github.com/QwenLM/qwen-code)) in secure cloud sandboxes
