@@ -211,9 +211,17 @@ class BridgeManager:
         self._pid = None
 
     def on(self, event_type: str, callback: Callable):
-        """Register event callback."""
-        if event_type in self.event_callbacks:
-            self.event_callbacks[event_type].append(callback)
+        """Register event callback.
+
+        Raises:
+            ValueError: If event_type is not supported.
+        """
+        if event_type not in self.event_callbacks:
+            supported = ", ".join(sorted(self.event_callbacks))
+            raise ValueError(
+                f"Unsupported event type '{event_type}'. Supported event types: {supported}"
+            )
+        self.event_callbacks[event_type].append(callback)
 
     async def call(
         self,

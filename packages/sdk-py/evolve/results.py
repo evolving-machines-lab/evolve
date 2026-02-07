@@ -38,16 +38,6 @@ class SessionStatus:
 
 
 @dataclass
-class LifecycleEvent:
-    """Lifecycle transition event emitted by `evolve.on('lifecycle', ...)`."""
-    sandbox_id: Optional[str]
-    sandbox: str
-    agent: str
-    timestamp: str
-    reason: str
-
-
-@dataclass
 class OutputResult:
     """Result from get_output_files() with optional schema validation.
 

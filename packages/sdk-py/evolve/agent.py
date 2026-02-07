@@ -3,7 +3,7 @@
 import asyncio
 import base64
 import json
-from typing import Any, Callable, Dict, List, Optional, Type, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Type, Union
 
 from .bridge import BridgeManager, SandboxNotFoundError
 from .config import AgentConfig, ComposioSetup, SandboxProvider, SchemaOptions, WorkspaceMode
@@ -157,7 +157,11 @@ class Evolve:
             await self.bridge.call('initialize', params)
             self._initialized = True
 
-    def on(self, event_type: str, callback: Callable[[Any], None]):
+    def on(
+        self,
+        event_type: Literal['stdout', 'stderr', 'content', 'lifecycle'],
+        callback: Callable[[Any], None]
+    ):
         """Register event callback.
 
         Args:

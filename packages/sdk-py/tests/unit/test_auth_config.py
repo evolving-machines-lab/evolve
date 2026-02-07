@@ -594,3 +594,8 @@ class TestSessionRuntimeParity:
         bridge._handle_event({'type': 'lifecycle', 'reason': 'run_start', 'sandbox': 'running'})
         assert len(captured) == 1
         assert captured[0]['reason'] == 'run_start'
+
+    def test_bridge_manager_rejects_unknown_event_type(self):
+        bridge = BridgeManager()
+        with pytest.raises(ValueError, match='Unsupported event type'):
+            bridge.on('invalid-event', lambda _event: None)

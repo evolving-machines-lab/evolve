@@ -854,13 +854,16 @@ await evolve.run(prompt='Hello')
 | Event | Type | Description |
 |-------|------|-------------|
 | `content` | `OutputEvent` | Parsed ACP-style events (recommended) |
-| `lifecycle` | `LifecycleEvent` | Sandbox and agent state transitions |
+| `lifecycle` | `dict` (`LifecycleEvent` shape below) | Sandbox and agent state transitions |
 | `stdout` | `str` | Raw JSONL output |
 | `stderr` | `str` | Error output |
 
+`evolve.on(...)` supports only: `stdout`, `stderr`, `content`, `lifecycle`.
+Passing any other event name raises `ValueError`.
+
 ---
 
-### LifecycleEvent
+### LifecycleEvent (TypedDict shape)
 
 ```python
 class LifecycleEvent(TypedDict):
