@@ -734,7 +734,7 @@ type ToolsFilter =
 
 ## 3. Runtime Methods
 
-All runtime calls are `async` and return a shared `AgentResponse`:
+`run()` and `executeCommand()` are async and return `AgentResponse`. `status()` is synchronous and returns `SessionStatus`. `interrupt()` returns `Promise<boolean>`.
 
 ```ts
 type AgentResponse = {
@@ -761,9 +761,9 @@ console.log(result.stdout);
 ```
 
 - If `timeoutMs` is omitted the agent uses the TypeScript default of 3_600_000 ms (1 hour).
-- If `background` is `true`, the call returns immediately while the agent continues running.
-
-- Calling `run()` multiple times maintains the agent context / history. 
+- If `background` is `true`, the call returns immediately with a start handshake (`exitCode: 0`), not final completion. Completion is delivered asynchronously via `lifecycle` events (`run_background_complete` or `run_background_failed`), or by polling `status()`.
+- Calling `run()` multiple times maintains the agent context / history.
+- Calling `run()` while another run or command is active throws immediately. Call `interrupt()` first or wait for the active operation to finish.
 
 ### 3.2 executeCommand
 
@@ -777,19 +777,26 @@ const result = await evolve.executeCommand("pytest", {
 });
 ```
 
+- If `background` is `true`, returns a start handshake (`exitCode: 0`). Completion arrives via `lifecycle` events (`command_background_complete` or `command_background_failed`).
+
 ### 3.3 Streaming Events
 
 `Evolve` extends Node's `EventEmitter`. Subscribe to real-time output from `run()` and `executeCommand()`:
 
 ```typescript
 import { Evolve } from "@evolvingmachines/sdk";
-import type { OutputEvent } from "@evolvingmachines/sdk";
+import type { OutputEvent, LifecycleEvent } from "@evolvingmachines/sdk";
 
 const evolve = new Evolve().withAgent({ type: "claude" });
 
 // Parsed events (recommended)
 evolve.on("content", (event: OutputEvent) => {
   console.log(event.update.sessionUpdate, event.update);
+});
+
+// Lifecycle events (sandbox + agent state transitions)
+evolve.on("lifecycle", (event: LifecycleEvent) => {
+  console.log(event.reason, event.sandbox, event.agent);
 });
 
 // Raw output (debugging)
@@ -802,8 +809,48 @@ await evolve.run({ prompt: "Hello" });
 | Event | Type | Description |
 |-------|------|-------------|
 | `content` | `OutputEvent` | Parsed ACP-style events (recommended) |
+| `lifecycle` | `LifecycleEvent` | Sandbox and agent state transitions |
 | `stdout` | `string` | Raw JSONL output |
 | `stderr` | `string` | Error output |
+
+#### LifecycleEvent
+
+```typescript
+evolve.on("lifecycle", (event: LifecycleEvent) => {
+  console.log(event.reason, event.sandboxId);
+});
+```
+
+```typescript
+interface LifecycleEvent {
+  sandboxId: string | null;
+  sandbox: SandboxLifecycleState;    // "booting" | "error" | "ready" | "running" | "paused" | "stopped"
+  agent: AgentRuntimeState;          // "idle" | "running" | "interrupted" | "error"
+  timestamp: string;                 // ISO 8601
+  reason: LifecycleReason;
+}
+
+type LifecycleReason =
+  | "sandbox_boot"                  // Sandbox is being created
+  | "sandbox_ready"                 // Sandbox is ready for commands
+  | "sandbox_connected"             // Reconnected to existing sandbox
+  | "sandbox_pause"                 // Sandbox suspended
+  | "sandbox_resume"                // Sandbox resumed
+  | "sandbox_killed"                // Sandbox destroyed
+  | "sandbox_error"                 // Sandbox setup failed
+  | "run_start"                     // Agent run started
+  | "run_complete"                  // Agent run finished successfully
+  | "run_interrupted"               // Agent run was interrupted
+  | "run_failed"                    // Agent run failed (non-zero exit or error)
+  | "run_background_complete"       // Background run finished successfully
+  | "run_background_failed"         // Background run failed
+  | "command_start"                 // Shell command started
+  | "command_complete"              // Shell command finished successfully
+  | "command_failed"                // Shell command failed (non-zero exit)
+  | "command_interrupted"           // Shell command was interrupted
+  | "command_background_complete"   // Background command finished successfully
+  | "command_background_failed";    // Background command failed
+```
 
 ---
 
@@ -1205,6 +1252,16 @@ Files created before the last `run()` or `executeCommand()` are filtered out.
 ```ts
 const sessionId = evolve.getSession();  // Returns sandbox ID (string) or null (sync)
 
+const s = evolve.status();             // Synchronous snapshot of sandbox + agent state
+// s.sandbox   → "stopped" | "booting" | "ready" | "running" | "paused" | "error"
+// s.agent     → "idle" | "running" | "interrupted" | "error"
+// s.hasRun    → boolean (true after first run)
+// s.sandboxId → string | null
+// s.activeProcessId → string | null
+// s.timestamp → string (ISO 8601)
+
+const ok = await evolve.interrupt();   // Kills active process, sandbox stays alive. Returns true/false
+
 await evolve.pause();  // Suspends sandbox (stops billing, preserves state)
 await evolve.resume(); // Reactivates same sandbox
 
@@ -1214,6 +1271,10 @@ await evolve.setSession("existing-sandbox-id"); // Sets sandbox ID; reconnection
 ```
 
 `withSession("sandbox-id")` is a builder method equivalent to `setSession()` - use it during initialization to reconnect to an existing sandbox.
+
+**Provider caveats:**
+- **E2B / Daytona** — full support for `pause()`, `resume()`, `interrupt()`.
+- **Modal** — does not support `pause()`. `interrupt()` is effectively unsupported and returns `false` for active processes.
 
 ### 3.7 getHost
 
