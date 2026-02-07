@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **TypeScript SDK session runtime control plane**
+  - Added `status()` runtime snapshot API (`SessionStatus`) with `sandbox`, `agent`, `activeProcessId`, `hasRun`, and timestamp.
+  - Added `interrupt()` to stop active `run()` / `executeCommand()` processes without killing the sandbox.
+  - Added `lifecycle` event stream with strongly typed `LifecycleEvent` / `LifecycleReason` (`sandbox_*`, `run_*`, `command_*`, background completion/failure reasons).
+  - Added runtime guards to reject concurrent operations on the same `Evolve` instance while a process is active.
+  - Added lifecycle-aware fallback behavior when `pause()`, `resume()`, `kill()`, or `withSession()` are used before agent initialization.
+
+- **Python SDK parity for session runtime control plane**
+  - Added async `status()` and `interrupt()` APIs with Python `SessionStatus` result type.
+  - Added lifecycle event forwarding through the Python bridge (`evolve.on('lifecycle', ...)`) with parity to TypeScript reason/state semantics.
+  - Added provider-matrix runtime/lifecycle integration coverage across `e2b`, `daytona`, and `modal` for session controls and streaming events.
+
+### Changed
+
+- **Provider coherence (Daytona / Modal)**
+  - `image` is now optional in provider create options and defaults to `"evolve-all"` for parity with E2B defaults.
+  - Daytona `connect()` now starts stopped sandboxes before returning a live instance.
+  - Daytona command execution handling now aligns timeout/interruption behavior with unified SDK expectations.
+
+- **Python SDK API tightening**
+  - `Evolve.on(...)` now validates event names and raises `ValueError` for unsupported event types.
+  - Removed unused exported Python `LifecycleEvent` runtime dataclass to keep callback payload semantics consistent (`dict` payload + documented TypedDict shape).
+  - Updated Python docs to reflect runtime lifecycle event shape and event-name validation behavior.
+
 ### Fixed
 
 - **Claude `model="opus"` fails in gateway mode** - LiteLLM gateway can't route `claude-opus-4-6` via Anthropic Messages API (model not yet in cost map). Temporary fix: prefix with `anthropic/` for gateway routing via wildcard. Revert when LiteLLM updates.
