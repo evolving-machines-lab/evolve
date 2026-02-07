@@ -1279,7 +1279,7 @@ status = await evolve.status()  # Runtime status snapshot
 # status.active_process_id -> str | None
 # status.timestamp         -> str (ISO 8601)
 
-ok = await evolve.interrupt()  # Interrupts active process, keeps sandbox alive. Returns bool.
+ok = await evolve.interrupt()  # Interrupts active run() or execute_command() process; keeps sandbox alive. Returns bool.
 
 await evolve.pause()   # Suspends sandbox (stops billing, preserves state)
 await evolve.resume()  # Reactivates same sandbox

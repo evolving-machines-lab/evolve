@@ -1260,7 +1260,7 @@ const s = evolve.status();             // Synchronous snapshot of sandbox + agen
 // s.activeProcessId → string | null
 // s.timestamp → string (ISO 8601)
 
-const ok = await evolve.interrupt();   // Kills active process, sandbox stays alive. Returns true/false
+const ok = await evolve.interrupt();   // Interrupts active run() or executeCommand() process; sandbox stays alive. Returns true/false.
 
 await evolve.pause();  // Suspends sandbox (stops billing, preserves state)
 await evolve.resume(); // Reactivates same sandbox
