@@ -18,9 +18,9 @@
  */
 
 import type { AgentType, SandboxProvider } from "../../dist/index.js";
-import { createE2BProvider } from "../../../e2b/dist/index.js";
-import { createDaytonaProvider } from "../../../daytona/dist/index.js";
-import { createModalProvider } from "../../../modal/dist/index.js";
+import { createE2BProvider } from "../../../e2b/src/index.js";
+import { createDaytonaProvider } from "../../../daytona/src/index.js";
+import { createModalProvider } from "../../../modal/src/index.js";
 
 export interface AgentConfig {
   type: AgentType;

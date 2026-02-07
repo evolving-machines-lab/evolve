@@ -132,7 +132,7 @@ export interface SandboxResources {
 
 /** Options for creating a sandbox */
 export interface SandboxCreateOptions {
-  image: string;
+  image?: string;
   envs?: Record<string, string>;
   metadata?: Record<string, string>;
   timeoutMs?: number;
@@ -277,6 +277,8 @@ class DaytonaCommands implements SandboxCommands {
     await this.sandbox.process.createSession(sessionId);
 
     const timeoutSec = options?.timeoutMs ? Math.floor(options.timeoutMs / 1000) : undefined;
+    const startedAt = Date.now();
+    const timeoutMs = options?.timeoutMs;
 
     const resp = await this.sandbox.process.executeSessionCommand(sessionId, {
       command: wrapWithCwd(command, options?.cwd),
@@ -305,14 +307,47 @@ class DaytonaCommands implements SandboxCommands {
         }
         // Poll until command completes (exitCode becomes defined)
         while (true) {
-          const cmd = await sandbox.process.getSessionCommand(sessionId, cmdId);
-          if (cmd.exitCode !== undefined) {
-            const logs = await sandbox.process.getSessionCommandLogs(sessionId, cmdId);
+          if (timeoutMs && Date.now() - startedAt >= timeoutMs) {
+            try {
+              await sandbox.process.deleteSession(sessionId);
+            } catch {
+              // Ignore cleanup errors after timeout
+            }
             return {
-              exitCode: cmd.exitCode,
-              stdout: logs.stdout ?? logs.output ?? "",
-              stderr: logs.stderr ?? "",
+              exitCode: -1,
+              stdout: "",
+              stderr: "operation timed out",
             };
+          }
+          try {
+            const cmd = await sandbox.process.getSessionCommand(sessionId, cmdId);
+            if (cmd.exitCode !== undefined) {
+              try {
+                const logs = await sandbox.process.getSessionCommandLogs(sessionId, cmdId);
+                return {
+                  exitCode: cmd.exitCode,
+                  stdout: logs.stdout ?? logs.output ?? "",
+                  stderr: logs.stderr ?? "",
+                };
+              } catch {
+                return {
+                  exitCode: cmd.exitCode,
+                  stdout: "",
+                  stderr: "",
+                };
+              }
+            }
+          } catch (error) {
+            const msg = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+            // Session may disappear after kill()/interrupt() - treat as interrupted completion
+            if (msg.includes("not found")) {
+              return {
+                exitCode: -1,
+                stdout: "",
+                stderr: "session terminated",
+              };
+            }
+            throw error;
           }
           await new Promise(r => setTimeout(r, 500));
         }
@@ -485,7 +520,6 @@ class DaytonaSandboxImpl implements SandboxInstance {
   }
 
   async pause(): Promise<void> {
-    // Evidence: Daytona SDK sandbox.stop()
     await this.sandbox.stop();
   }
 }
@@ -510,7 +544,7 @@ export class DaytonaProvider implements SandboxProvider {
     // Convert timeoutMs to autoStopInterval in minutes for parity with E2B/Modal
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
     const autoStopMinutes = Math.max(1, Math.ceil(timeoutMs / 60000)); // Min 1 minute
-    const imageName = options.image;
+    const imageName = options.image || "evolve-all";
 
     let sandbox: DaytonaSandbox;
 
@@ -572,8 +606,10 @@ export class DaytonaProvider implements SandboxProvider {
   }
 
   async connect(sandboxId: string, _timeoutMs?: number): Promise<SandboxInstance> {
-    // Evidence: Daytona SDK get(sandboxId) returns Sandbox
     const sandbox = await this.client.get(sandboxId);
+    if (sandbox.state !== "started") {
+      await sandbox.start();
+    }
     return new DaytonaSandboxImpl(sandbox);
   }
 

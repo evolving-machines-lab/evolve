@@ -40,3 +40,4 @@ uv.lock
 # Development docs (keep locally, don't commit)
 docs/modal/
 docs/daytona/
+plans/

@@ -15,6 +15,11 @@ import type {
   WorkspaceMode,
   FileMap,
   OutputResult,
+  SessionStatus,
+  LifecycleEvent,
+  LifecycleReason,
+  AgentRuntimeState,
+  SandboxLifecycleState,
   JsonSchema,
   SchemaValidationOptions,
   SkillName,
@@ -34,17 +39,17 @@ import { getGatewayMcpServers } from "./constants";
 /**
  * Evolve events
  *
- * Reduced from 5 to 3:
+ * Runtime streams:
  * - stdout: Raw NDJSON lines
  * - stderr: Process stderr
  * - content: Parsed OutputEvent
- *
- * Removed: update, error (see sdk-rewrite-v3.md)
+ * - lifecycle: Sandbox/agent lifecycle transitions
  */
 export interface EvolveEvents {
   stdout: (chunk: string) => void;
   stderr: (chunk: string) => void;
   content: (event: OutputEvent) => void;
+  lifecycle: (event: LifecycleEvent) => void;
 }
 
 export interface EvolveConfig {
@@ -94,6 +99,9 @@ export interface EvolveConfig {
 export class Evolve extends EventEmitter {
   private config: EvolveConfig = {};
   private agent?: Agent;
+  private fallbackSandboxState: SandboxLifecycleState = "stopped";
+  private fallbackAgentState: AgentRuntimeState = "idle";
+  private fallbackHasRun: boolean = false;
 
   constructor() {
     super();
@@ -169,6 +177,11 @@ export class Evolve extends EventEmitter {
    */
   withSession(sandboxId: string): this {
     this.config.sandboxId = sandboxId;
+    if (!this.agent) {
+      this.fallbackSandboxState = "ready";
+      this.fallbackAgentState = "idle";
+      this.fallbackHasRun = true;
+    }
     return this;
   }
 
@@ -385,6 +398,7 @@ export class Evolve extends EventEmitter {
     const hasStdoutListener = this.listenerCount("stdout") > 0;
     const hasStderrListener = this.listenerCount("stderr") > 0;
     const hasContentListener = this.listenerCount("content") > 0;
+    const hasLifecycleListener = this.listenerCount("lifecycle") > 0;
 
     return {
       onStdout: hasStdoutListener
@@ -396,7 +410,22 @@ export class Evolve extends EventEmitter {
       onContent: hasContentListener
         ? (event: OutputEvent) => this.emit("content", event)
         : undefined,
+      onLifecycle: hasLifecycleListener
+        ? (event: LifecycleEvent) => this.emit("lifecycle", event)
+        : undefined,
     };
+  }
+
+  private emitLifecycleFromStatus(reason: LifecycleReason): void {
+    if (this.listenerCount("lifecycle") === 0) return;
+    const status = this.status();
+    this.emit("lifecycle", {
+      sandboxId: status.sandboxId,
+      sandbox: status.sandbox,
+      agent: status.agent,
+      timestamp: new Date().toISOString(),
+      reason,
+    });
   }
 
   // ===========================================================================
@@ -438,6 +467,17 @@ export class Evolve extends EventEmitter {
     const callbacks = this.createStreamCallbacks();
 
     return this.agent!.executeCommand(command, options, callbacks);
+  }
+
+  /**
+   * Interrupt active process without killing sandbox.
+   */
+  async interrupt(): Promise<boolean> {
+    if (!this.agent) {
+      return false;
+    }
+    const callbacks = this.createStreamCallbacks();
+    return this.agent.interrupt(callbacks);
   }
 
   /**
@@ -492,8 +532,31 @@ export class Evolve extends EventEmitter {
   async setSession(sandboxId: string): Promise<void> {
     if (this.agent) {
       await this.agent.setSession(sandboxId);
+    } else {
+      this.fallbackSandboxState = "ready";
+      this.fallbackAgentState = "idle";
+      this.fallbackHasRun = true;
     }
     this.config.sandboxId = sandboxId;
+  }
+
+  /**
+   * Get runtime status for sandbox and agent.
+   */
+  status(): SessionStatus {
+    if (this.agent) {
+      return this.agent.status();
+    }
+
+    const sandboxId = this.config.sandboxId ?? null;
+    return {
+      sandboxId,
+      sandbox: this.fallbackSandboxState,
+      agent: this.fallbackAgentState,
+      activeProcessId: null,
+      hasRun: this.fallbackHasRun,
+      timestamp: new Date().toISOString(),
+    };
   }
 
   /**
@@ -501,12 +564,17 @@ export class Evolve extends EventEmitter {
    */
   async pause(): Promise<void> {
     if (this.agent) {
-      return this.agent.pause();
+      const callbacks = this.createStreamCallbacks();
+      await this.agent.pause(callbacks);
+      return;
     }
     // If agent not initialized but we have session + provider, pause directly
     if (this.config.sandboxId && this.config.sandbox) {
       const sandbox = await this.config.sandbox.connect(this.config.sandboxId);
       await sandbox.pause();
+      this.fallbackSandboxState = "paused";
+      this.fallbackAgentState = "idle";
+      this.emitLifecycleFromStatus("sandbox_pause");
     }
   }
 
@@ -515,11 +583,16 @@ export class Evolve extends EventEmitter {
    */
   async resume(): Promise<void> {
     if (this.agent) {
-      return this.agent.resume();
+      const callbacks = this.createStreamCallbacks();
+      await this.agent.resume(callbacks);
+      return;
     }
     // If agent not initialized but we have session + provider, connect directly
     if (this.config.sandboxId && this.config.sandbox) {
       await this.config.sandbox.connect(this.config.sandboxId);
+      this.fallbackSandboxState = "ready";
+      this.fallbackAgentState = "idle";
+      this.emitLifecycleFromStatus("sandbox_resume");
     }
   }
 
@@ -528,12 +601,23 @@ export class Evolve extends EventEmitter {
    */
   async kill(): Promise<void> {
     if (this.agent) {
-      return this.agent.kill();
+      const callbacks = this.createStreamCallbacks();
+      await this.agent.kill(callbacks);
+      this.config.sandboxId = undefined;
+      this.fallbackSandboxState = "stopped";
+      this.fallbackAgentState = "idle";
+      this.fallbackHasRun = false;
+      return;
     }
     // If agent not initialized but we have session + provider, kill directly
     if (this.config.sandboxId && this.config.sandbox) {
       const sandbox = await this.config.sandbox.connect(this.config.sandboxId);
       await sandbox.kill();
+      this.fallbackSandboxState = "stopped";
+      this.fallbackAgentState = "idle";
+      this.fallbackHasRun = false;
+      this.emitLifecycleFromStatus("sandbox_killed");
+      this.config.sandboxId = undefined;
     }
   }
 

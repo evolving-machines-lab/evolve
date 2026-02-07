@@ -367,6 +367,63 @@ export interface ExecuteCommandOptions {
 }
 
 // =============================================================================
+// SESSION RUNTIME
+// =============================================================================
+
+/** High-level sandbox lifecycle state */
+export type SandboxLifecycleState =
+  | "booting"
+  | "error"
+  | "ready"
+  | "running"
+  | "paused"
+  | "stopped";
+
+/** High-level agent runtime state */
+export type AgentRuntimeState = "idle" | "running" | "interrupted" | "error";
+
+/** Lifecycle transition reason */
+export type LifecycleReason =
+  | "sandbox_boot"
+  | "sandbox_connected"
+  | "sandbox_ready"
+  | "sandbox_pause"
+  | "sandbox_resume"
+  | "sandbox_killed"
+  | "sandbox_error"
+  | "run_start"
+  | "run_complete"
+  | "run_interrupted"
+  | "run_failed"
+  | "run_background_complete"
+  | "run_background_failed"
+  | "command_start"
+  | "command_complete"
+  | "command_interrupted"
+  | "command_failed"
+  | "command_background_complete"
+  | "command_background_failed";
+
+/** Lifecycle event emitted by the runtime */
+export interface LifecycleEvent {
+  sandboxId: string | null;
+  sandbox: SandboxLifecycleState;
+  agent: AgentRuntimeState;
+  timestamp: string;
+  reason: LifecycleReason;
+}
+
+/** Snapshot of current runtime status */
+export interface SessionStatus {
+  sandboxId: string | null;
+  sandbox: SandboxLifecycleState;
+  agent: AgentRuntimeState;
+  activeProcessId: string | null;
+  hasRun: boolean;
+  timestamp: string;
+}
+
+// =============================================================================
 // RESPONSES
 // =============================================================================
 
@@ -411,6 +468,9 @@ export interface StreamCallbacks {
 
   /** Called for each parsed content event */
   onContent?: (event: OutputEvent) => void;
+
+  /** Called for sandbox/agent lifecycle transitions */
+  onLifecycle?: (event: LifecycleEvent) => void;
 }
 
 // =============================================================================

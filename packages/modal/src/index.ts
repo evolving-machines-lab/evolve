@@ -143,7 +143,7 @@ export interface SandboxConnectOptions {
 
 /** Options for creating a sandbox */
 export interface SandboxCreateOptions {
-  image: string;
+  image?: string;
   envs?: Record<string, string>;
   metadata?: Record<string, string>;
   timeoutMs?: number;
@@ -759,7 +759,8 @@ export class ModalProvider implements SandboxProvider {
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
 
     // Resolve image name through IMAGE_MAP (e.g., "evolve-all" -> "evolvingmachines/evolve-all:latest")
-    const resolvedImage = IMAGE_MAP[options.image] ?? options.image;
+    const imageName = options.image || "evolve-all";
+    const resolvedImage = IMAGE_MAP[imageName] ?? imageName;
     const image = this.client.images.fromRegistry(resolvedImage);
 
     // Filter out undefined values and only pass env if non-empty

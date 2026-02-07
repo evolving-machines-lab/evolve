@@ -12,6 +12,7 @@ import Ajv, { type ValidateFunction } from "ajv";
 import type {
   AgentType,
   SandboxInstance,
+  SandboxCommandHandle,
   FileMap,
   AgentConfig,
   ResolvedAgentConfig,
@@ -25,6 +26,11 @@ import type {
   SchemaValidationOptions,
   SkillName,
   McpServerConfig,
+  AgentRuntimeState,
+  SandboxLifecycleState,
+  LifecycleReason,
+  SessionStatus,
+  LifecycleEvent,
 } from "./types";
 import { VALIDATION_PRESETS } from "./types";
 import { getAgentConfig, type AgentRegistryEntry } from "./registry";
@@ -37,7 +43,18 @@ import { SessionLogger } from "./observability";
 import { setupComposio } from "./composio";
 
 // Re-export types for external consumers
-export type { AgentConfig, AgentOptions, RunOptions, ExecuteCommandOptions, AgentResponse, StreamCallbacks };
+export type {
+  AgentConfig,
+  AgentOptions,
+  RunOptions,
+  ExecuteCommandOptions,
+  AgentResponse,
+  StreamCallbacks,
+  AgentRuntimeState,
+  SandboxLifecycleState,
+  SessionStatus,
+  LifecycleEvent,
+};
 
 // =============================================================================
 // PROMPT ESCAPING
@@ -76,6 +93,14 @@ export class Agent {
   private lastRunTimestamp?: number;
   private readonly registry: AgentRegistryEntry;
   private sessionLogger?: SessionLogger;
+  private activeCommand?: SandboxCommandHandle;
+  private activeProcessId: string | null = null;
+  private activeOperationId: number | null = null;
+  private activeOperationKind: "run" | "command" | null = null;
+  private nextOperationId: number = 0;
+  private interruptedOperations = new Set<number>();
+  private sandboxState: SandboxLifecycleState;
+  private agentState: AgentRuntimeState = "idle";
 
   // Skills storage
   private readonly skills?: SkillName[];
@@ -90,6 +115,7 @@ export class Agent {
     this.agentConfig = agentConfig;
     this.options = options;
     this.workingDir = options.workingDirectory || DEFAULT_WORKING_DIR;
+    this.sandboxState = options.sandboxId ? "ready" : "stopped";
 
     // Store skills
     this.skills = options.skills;
@@ -120,6 +146,88 @@ export class Agent {
     this.registry = getAgentConfig(agentConfig.type);
   }
 
+  private emitLifecycle(callbacks: StreamCallbacks | undefined, reason: LifecycleReason): void {
+    callbacks?.onLifecycle?.({
+      sandboxId: this.getSession(),
+      sandbox: this.sandboxState,
+      agent: this.agentState,
+      timestamp: new Date().toISOString(),
+      reason,
+    });
+  }
+
+  private invalidateActiveOperation(): void {
+    this.activeCommand = undefined;
+    this.activeProcessId = null;
+    this.activeOperationId = null;
+    this.activeOperationKind = null;
+  }
+
+  private beginOperation(
+    kind: "run" | "command",
+    handle: SandboxCommandHandle,
+    callbacks: StreamCallbacks | undefined,
+    reason: LifecycleReason
+  ): number {
+    const opId = ++this.nextOperationId;
+    this.activeOperationId = opId;
+    this.activeOperationKind = kind;
+    this.activeCommand = handle;
+    this.activeProcessId = handle.processId;
+    this.sandboxState = "running";
+    this.agentState = "running";
+    this.emitLifecycle(callbacks, reason);
+    return opId;
+  }
+
+  private finalizeOperation(
+    opId: number,
+    callbacks: StreamCallbacks | undefined,
+    reason: LifecycleReason,
+    nextAgentState: AgentRuntimeState = "idle",
+    nextSandboxState: SandboxLifecycleState = "ready"
+  ): boolean {
+    if (this.activeOperationId !== opId) {
+      return false;
+    }
+    this.invalidateActiveOperation();
+    this.sandboxState = nextSandboxState;
+    this.agentState = nextAgentState;
+    this.emitLifecycle(callbacks, reason);
+    return true;
+  }
+
+  private watchBackgroundOperation(
+    opId: number,
+    kind: "run" | "command",
+    handle: SandboxCommandHandle,
+    callbacks?: StreamCallbacks
+  ): void {
+    const completeReason: LifecycleReason =
+      kind === "run" ? "run_background_complete" : "command_background_complete";
+    const failedReason: LifecycleReason =
+      kind === "run" ? "run_background_failed" : "command_background_failed";
+    const interruptedReason: LifecycleReason =
+      kind === "run" ? "run_interrupted" : "command_interrupted";
+
+    void handle
+      .wait()
+      .then((result) => {
+        const interrupted = this.interruptedOperations.delete(opId) || result.exitCode === 130;
+        if (interrupted) {
+          this.finalizeOperation(opId, callbacks, interruptedReason, "interrupted");
+          return;
+        }
+        const reason = result.exitCode === 0 ? completeReason : failedReason;
+        const nextState = result.exitCode === 0 ? "idle" : "error";
+        this.finalizeOperation(opId, callbacks, reason, nextState);
+      })
+      .catch(() => {
+        this.interruptedOperations.delete(opId);
+        this.finalizeOperation(opId, callbacks, failedReason, "error");
+      });
+  }
+
   /**
    * Create Ajv validator instance with configured options
    */
@@ -146,7 +254,7 @@ export class Agent {
   /**
    * Get or create sandbox instance
    */
-  async getSandbox(): Promise<SandboxInstance> {
+  async getSandbox(callbacks?: StreamCallbacks): Promise<SandboxInstance> {
     if (this.sandbox) return this.sandbox;
 
     if (!this.options.sandboxProvider) {
@@ -154,36 +262,50 @@ export class Agent {
     }
 
     const provider = this.options.sandboxProvider;
+    this.sandboxState = "booting";
+    this.emitLifecycle(callbacks, "sandbox_boot");
+    try {
+      if (this.options.sandboxId) {
+        // Connect to existing sandbox - skip setup
+        if (
+          this.options.mcpServers ||
+          this.options.context ||
+          this.options.files ||
+          this.options.systemPrompt
+        ) {
+          console.warn(
+            "[Evolve] Connecting to existing sandbox - ignoring mcpServers, context, files, and systemPrompt"
+          );
+        }
+        this.sandbox = await provider.connect(this.options.sandboxId);
+        // Existing sandbox may have prior runs - use resume/continue command
+        this.hasRun = true;
+        this.sandboxState = "ready";
+        this.agentState = "idle";
+        this.emitLifecycle(callbacks, "sandbox_connected");
+      } else {
+        // Create new sandbox with full initialization
+        const envVars = this.buildEnvironmentVariables();
 
-    if (this.options.sandboxId) {
-      // Connect to existing sandbox - skip setup
-      if (
-        this.options.mcpServers ||
-        this.options.context ||
-        this.options.files ||
-        this.options.systemPrompt
-      ) {
-        console.warn(
-          "[Evolve] Connecting to existing sandbox - ignoring mcpServers, context, files, and systemPrompt"
-        );
+        this.sandbox = await provider.create({
+          envs: envVars,
+          workingDirectory: this.workingDir,
+        });
+
+        // Agent-specific setup (e.g., codex login)
+        await this.setupAgentAuth(this.sandbox);
+
+        // Workspace setup
+        await this.setupWorkspace(this.sandbox);
+        this.sandboxState = "ready";
+        this.agentState = "idle";
+        this.emitLifecycle(callbacks, "sandbox_ready");
       }
-      this.sandbox = await provider.connect(this.options.sandboxId);
-      // Existing sandbox may have prior runs - use resume/continue command
-      this.hasRun = true;
-    } else {
-      // Create new sandbox with full initialization
-      const envVars = this.buildEnvironmentVariables();
-
-      this.sandbox = await provider.create({
-        envs: envVars,
-        workingDirectory: this.workingDir,
-      });
-
-      // Agent-specific setup (e.g., codex login)
-      await this.setupAgentAuth(this.sandbox);
-
-      // Workspace setup
-      await this.setupWorkspace(this.sandbox);
+    } catch (error) {
+      this.sandboxState = "error";
+      this.agentState = "error";
+      this.emitLifecycle(callbacks, "sandbox_error");
+      throw error;
     }
 
     return this.sandbox;
@@ -426,7 +548,12 @@ export class Agent {
     callbacks?: StreamCallbacks
   ): Promise<AgentResponse> {
     const { prompt, timeoutMs = DEFAULT_TIMEOUT_MS, background = false } = options;
-    const sandbox = await this.getSandbox();
+    if (this.activeCommand) {
+      throw new Error(
+        "Agent is already running. Call interrupt(), wait for the active/background run to finish, or create a new Evolve instance."
+      );
+    }
+    const sandbox = await this.getSandbox(callbacks);
 
     // Track turn start time BEFORE process starts (for output file filtering)
     // Files modified AFTER this time will be returned by getOutputFiles()
@@ -491,31 +618,44 @@ export class Agent {
       callbacks?.onStderr?.(chunk);
     };
 
-    // Background execution - spawn and don't wait
-    if (background) {
-      const handle = await sandbox.commands.spawn(command, {
-        cwd: this.workingDir,
-        timeoutMs,
-        onStdout,
-        onStderr,
-      });
-      this.hasRun = true;
-
-      return {
-        sandboxId: sandbox.sandboxId,
-        exitCode: 0, // Process started but not completed
-        stdout: `Background process started with ID ${handle.processId}`,
-        stderr: "",
-      };
-    }
-
-    // Run command with streaming (blocks until completion)
-    const result = await sandbox.commands.run(command, {
+    // Spawn for both background and foreground to support interrupt()
+    const handle = await sandbox.commands.spawn(command, {
       cwd: this.workingDir,
       timeoutMs,
       onStdout,
       onStderr,
     });
+    const opId = this.beginOperation("run", handle, callbacks, "run_start");
+    // Mark as resumed for subsequent runs as soon as execution starts.
+    this.hasRun = true;
+
+    if (background) {
+      this.watchBackgroundOperation(opId, "run", handle, callbacks);
+      return {
+        sandboxId: sandbox.sandboxId,
+        exitCode: 0,
+        stdout: `Background process started with ID ${handle.processId}`,
+        stderr: "",
+      };
+    }
+
+    let result;
+    try {
+      result = await handle.wait();
+    } catch (error) {
+      this.interruptedOperations.delete(opId);
+      this.finalizeOperation(opId, callbacks, "run_failed", "error");
+      throw error;
+    }
+
+    const interrupted = this.interruptedOperations.delete(opId) || result.exitCode === 130;
+    if (interrupted) {
+      this.finalizeOperation(opId, callbacks, "run_interrupted", "interrupted");
+    } else if (result.exitCode === 0) {
+      this.finalizeOperation(opId, callbacks, "run_complete", "idle");
+    } else {
+      this.finalizeOperation(opId, callbacks, "run_failed", "error");
+    }
 
     // Process any remaining buffered content
     if (lineBuffer.trim()) {
@@ -535,9 +675,6 @@ export class Agent {
         }
       }
     }
-
-    // Mark that we've run (for continue flag on next run)
-    this.hasRun = true;
 
     return {
       sandboxId: sandbox.sandboxId,
@@ -560,7 +697,12 @@ export class Agent {
     callbacks?: StreamCallbacks
   ): Promise<AgentResponse> {
     const { timeoutMs = DEFAULT_TIMEOUT_MS, background = false } = options;
-    const sandbox = await this.getSandbox();
+    if (this.activeCommand) {
+      throw new Error(
+        "Agent is already running. Call interrupt(), wait for the active/background command to finish, or create a new Evolve instance."
+      );
+    }
+    const sandbox = await this.getSandbox(callbacks);
 
     // Track turn start time BEFORE process starts (for output file filtering)
     // Files modified AFTER this time will be returned by getOutputFiles()
@@ -579,31 +721,41 @@ export class Agent {
       callbacks?.onStderr?.(chunk);
     };
 
-    if (background) {
-      // Background execution - spawn and don't wait
-      // Returns immediately with pid, caller can track via sandbox.commands.list()
-      const handle = await sandbox.commands.spawn(command, {
-        cwd: this.workingDir,
-        timeoutMs,
-        onStdout,
-        onStderr,
-      });
-
-      return {
-        sandboxId: sandbox.sandboxId,
-        exitCode: 0, // Process started but not completed
-        stdout: `Background process started with ID ${handle.processId}`,
-        stderr: "",
-      };
-    }
-
-    // Foreground execution with streaming (blocks until completion)
-    const result = await sandbox.commands.run(command, {
+    const handle = await sandbox.commands.spawn(command, {
       cwd: this.workingDir,
       timeoutMs,
       onStdout,
       onStderr,
     });
+    const opId = this.beginOperation("command", handle, callbacks, "command_start");
+
+    if (background) {
+      this.watchBackgroundOperation(opId, "command", handle, callbacks);
+      return {
+        sandboxId: sandbox.sandboxId,
+        exitCode: 0,
+        stdout: `Background process started with ID ${handle.processId}`,
+        stderr: "",
+      };
+    }
+
+    let result;
+    try {
+      result = await handle.wait();
+    } catch (error) {
+      this.interruptedOperations.delete(opId);
+      this.finalizeOperation(opId, callbacks, "command_failed", "error");
+      throw error;
+    }
+
+    const interrupted = this.interruptedOperations.delete(opId) || result.exitCode === 130;
+    if (interrupted) {
+      this.finalizeOperation(opId, callbacks, "command_interrupted", "interrupted");
+    } else if (result.exitCode === 0) {
+      this.finalizeOperation(opId, callbacks, "command_complete", "idle");
+    } else {
+      this.finalizeOperation(opId, callbacks, "command_failed", "error");
+    }
 
     return {
       sandboxId: sandbox.sandboxId,
@@ -762,6 +914,16 @@ export class Agent {
    * the continue/resume command template instead of first-run.
    */
   async setSession(sandboxId: string): Promise<void> {
+    // Interrupt active operation before switching sessions
+    if (this.activeCommand) {
+      const interrupted = await this.interrupt();
+      if (!interrupted) {
+        throw new Error(
+          "Cannot switch session while an active process is running and could not be interrupted."
+        );
+      }
+    }
+
     // Close existing session logger (flush pending events)
     if (this.sessionLogger) {
       await this.sessionLogger.close();
@@ -770,6 +932,10 @@ export class Agent {
 
     this.options.sandboxId = sandboxId;
     this.sandbox = undefined;
+    this.interruptedOperations.clear();
+    this.invalidateActiveOperation();
+    this.sandboxState = "ready";
+    this.agentState = "idle";
     // Assume existing sandbox may have prior runs - use continue command
     this.hasRun = true;
   }
@@ -777,39 +943,117 @@ export class Agent {
   /**
    * Pause sandbox
    */
-  async pause(): Promise<void> {
+  async pause(callbacks?: StreamCallbacks): Promise<void> {
     if (this.sandbox) {
+      if (this.activeCommand) {
+        await this.interrupt(callbacks);
+      }
       await this.sandbox.pause();
+      this.sandboxState = "paused";
+      this.agentState = "idle";
+      this.emitLifecycle(callbacks, "sandbox_pause");
     }
   }
 
   /**
    * Resume sandbox
    */
-  async resume(): Promise<void> {
+  async resume(callbacks?: StreamCallbacks): Promise<void> {
     if (this.sandbox && this.options.sandboxProvider) {
       this.sandbox = await this.options.sandboxProvider.connect(
         this.sandbox.sandboxId
       );
+      this.sandboxState = "ready";
+      this.agentState = "idle";
+      this.emitLifecycle(callbacks, "sandbox_resume");
     }
+  }
+
+  /**
+   * Interrupt active command without killing the sandbox.
+   */
+  async interrupt(callbacks?: StreamCallbacks): Promise<boolean> {
+    if (!this.activeCommand && !this.activeProcessId) {
+      return false;
+    }
+
+    const opId = this.activeOperationId;
+    const operationKind = this.activeOperationKind;
+    let killed = false;
+
+    try {
+      if (this.activeCommand) {
+        killed = await this.activeCommand.kill();
+      } else if (this.sandbox && this.activeProcessId) {
+        killed = await this.sandbox.commands.kill(this.activeProcessId);
+      }
+    } catch {
+      killed = false;
+    }
+
+    if (!killed) {
+      this.sandboxState = "running";
+      this.agentState = "running";
+      return false;
+    }
+
+    if (opId !== null) {
+      this.interruptedOperations.add(opId);
+    }
+    this.invalidateActiveOperation();
+    this.sandboxState = "ready";
+    this.agentState = "interrupted";
+
+    const reason: LifecycleReason = operationKind === "run"
+      ? "run_interrupted"
+      : "command_interrupted";
+    this.emitLifecycle(callbacks, reason);
+
+    return killed;
+  }
+
+  /**
+   * Get current runtime status for sandbox and agent.
+   */
+  status(): SessionStatus {
+    return {
+      sandboxId: this.getSession(),
+      sandbox: this.sandboxState,
+      agent: this.agentState,
+      activeProcessId: this.activeProcessId,
+      hasRun: this.hasRun,
+      timestamp: new Date().toISOString(),
+    };
   }
 
   /**
    * Kill sandbox (terminates all processes)
    */
-  async kill(): Promise<void> {
+  async kill(callbacks?: StreamCallbacks): Promise<void> {
     // Close session logger (flush pending events)
     if (this.sessionLogger) {
       await this.sessionLogger.close();
       this.sessionLogger = undefined;
     }
 
+    // Interrupt active operation before killing sandbox
+    if (this.activeCommand) {
+      await this.interrupt(callbacks);
+    }
+
     // Kill sandbox (terminates all processes inside)
     if (this.sandbox) {
       await this.sandbox.kill();
       this.sandbox = undefined;
-      this.hasRun = false;
     }
+    // Session is no longer valid after sandbox termination.
+    this.options.sandboxId = undefined;
+    this.interruptedOperations.clear();
+    this.invalidateActiveOperation();
+    this.sandboxState = "stopped";
+    this.agentState = "idle";
+    this.hasRun = false;
+    this.emitLifecycle(callbacks, "sandbox_killed");
   }
 
   /**

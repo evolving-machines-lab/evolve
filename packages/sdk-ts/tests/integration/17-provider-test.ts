@@ -24,9 +24,9 @@ import {
   getAvailableProviders,
   type ProviderName,
 } from "./test-config.js";
-import { createE2BProvider } from "../../../e2b/dist/index.js";
-import { createDaytonaProvider } from "../../../daytona/dist/index.js";
-import { createModalProvider } from "../../../modal/dist/index.js";
+import { createE2BProvider } from "../../../e2b/src/index.js";
+import { createDaytonaProvider } from "../../../daytona/src/index.js";
+import { createModalProvider } from "../../../modal/src/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, "../../../../.env") });
