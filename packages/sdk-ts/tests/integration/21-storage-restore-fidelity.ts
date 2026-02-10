@@ -27,7 +27,7 @@ import { config } from "dotenv";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
-import { getAgentConfig, getSandboxProvider } from "./test-config.js";
+import { getAgentConfig, getSandboxProvider, getSandboxProviderByName, type ProviderName } from "./test-config.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, "../../../../.env") });
@@ -36,8 +36,11 @@ config({ path: resolve(__dirname, "../../../../.env") });
 // CONFIG
 // =============================================================================
 
-const LOGS_DIR = resolve(__dirname, "../test-logs/21-storage-restore-fidelity");
-const STORAGE_URL = "s3://swarmkit-test-checkpoints-905418019965/integration-test/";
+// Provider from env or CLI arg (e.g., TEST_SANDBOX_PROVIDER=daytona npx tsx ...)
+const PROVIDER_NAME = (process.env.TEST_SANDBOX_PROVIDER || process.argv[2] || "") as ProviderName | "";
+const PROVIDER_LABEL = PROVIDER_NAME || "default";
+const LOGS_DIR = resolve(__dirname, `../test-logs/21-storage-restore-fidelity-${PROVIDER_LABEL}`);
+const STORAGE_URL = `s3://swarmkit-test-checkpoints-905418019965/integration-test-${PROVIDER_LABEL}/`;
 const STORAGE_REGION = "us-west-2";
 const TIMEOUT = 180000; // 3 min per run
 
@@ -98,7 +101,7 @@ async function cleanupS3Prefix() {
     const { S3Client, ListObjectsV2Command, DeleteObjectsCommand } = await import("@aws-sdk/client-s3");
     const client = new S3Client({ region: STORAGE_REGION });
     const bucket = "swarmkit-test-checkpoints-905418019965";
-    const prefix = "integration-test/";
+    const prefix = `integration-test-${PROVIDER_LABEL}/`;
 
     let continuationToken: string | undefined;
     let totalDeleted = 0;
@@ -143,7 +146,10 @@ async function main() {
   const start = Date.now();
 
   const agentConfig = getAgentConfig("claude");
-  const provider = getSandboxProvider();
+  const provider = PROVIDER_NAME
+    ? getSandboxProviderByName(PROVIDER_NAME)
+    : getSandboxProvider();
+  log(`Using provider: ${PROVIDER_LABEL}`);
 
   let checkpoint1: CheckpointInfo | undefined;
   let evolve2: InstanceType<typeof Evolve> | undefined;

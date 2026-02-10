@@ -48,17 +48,27 @@ function getBasename(path: string): string {
 }
 
 /**
- * Wrap command with cd prefix for cwd support.
+ * Wrap command with cwd and envs shell prefixes.
  *
- * Daytona's executeSessionCommand doesn't support cwd natively (unlike E2B),
- * so we use a shell-level workaround. The path is single-quoted to handle
- * spaces and most special characters safely.
+ * Daytona's executeSessionCommand doesn't support cwd or envs natively,
+ * so we inline them as shell commands. Values are single-quoted to handle
+ * spaces and special characters safely.
  */
-function wrapWithCwd(command: string, cwd?: string): string {
-  if (!cwd) return command;
-  // Single quotes handle spaces and most special chars; escape any single quotes in path
-  const safeCwd = cwd.replace(/'/g, "'\\''");
-  return `cd '${safeCwd}' && ${command}`;
+function wrapCommand(command: string, cwd?: string, envs?: Record<string, string>): string {
+  let wrapped = command;
+  if (cwd) {
+    // Single quotes handle spaces and most special chars; escape any single quotes in path
+    const safeCwd = cwd.replace(/'/g, "'\\''");
+    wrapped = `cd '${safeCwd}' && ${wrapped}`;
+  }
+  if (envs && Object.keys(envs).length > 0) {
+    const exports = Object.entries(envs)
+      .filter(([, v]) => v !== undefined && v !== null)
+      .map(([k, v]) => `export ${k}='${v.replace(/'/g, "'\\''")}'`)
+      .join("; ");
+    wrapped = `${exports}; ${wrapped}`;
+  }
+  return wrapped;
 }
 
 // ============================================================
@@ -221,55 +231,55 @@ class DaytonaCommands implements SandboxCommands {
   async run(command: string, options?: SandboxRunOptions): Promise<SandboxCommandResult> {
     const timeoutSec = options?.timeoutMs ? Math.floor(options.timeoutMs / 1000) : undefined;
 
-    // Streaming path: use ephemeral session
-    if (options?.onStdout || options?.onStderr) {
-      const sessionId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      await this.sandbox.process.createSession(sessionId);
+    // Always use ephemeral session for reliable stdout/stderr capture.
+    // Daytona's executeCommand API can return empty output in some cases.
+    // Session-based execution with explicit log retrieval is most reliable.
+    const sessionId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    await this.sandbox.process.createSession(sessionId);
 
-      try {
-        const resp = await this.sandbox.process.executeSessionCommand(sessionId, {
-          command: wrapWithCwd(command, options?.cwd),
-          runAsync: false,
-        }, timeoutSec);
+    try {
+      const resp = await this.sandbox.process.executeSessionCommand(sessionId, {
+        command: wrapCommand(command, options?.cwd, options?.envs),
+        runAsync: false,
+      }, timeoutSec);
 
-        const cmdId = resp.cmdId;
-        if (cmdId) {
-          await this.sandbox.process.getSessionCommandLogs(
-            sessionId,
-            cmdId,
-            options.onStdout || (() => {}),
-            options.onStderr || (() => {})
-          );
-        }
+      const cmdId = resp.cmdId;
 
-        return {
-          exitCode: resp.exitCode ?? 0,
-          stdout: resp.stdout ?? resp.output ?? "",
-          stderr: resp.stderr ?? "",
-        };
-      } finally {
+      // Streaming: pipe logs to callbacks
+      if (cmdId && (options?.onStdout || options?.onStderr)) {
+        await this.sandbox.process.getSessionCommandLogs(
+          sessionId,
+          cmdId,
+          options.onStdout || (() => {}),
+          options.onStderr || (() => {})
+        );
+      }
+
+      // Try inline stdout first; if empty and we have cmdId, fetch logs explicitly
+      let stdout = resp.stdout ?? resp.output ?? "";
+      let stderr = resp.stderr ?? "";
+      if (!stdout && cmdId && !options?.onStdout) {
         try {
-          await this.sandbox.process.deleteSession(sessionId);
+          const logs = await this.sandbox.process.getSessionCommandLogs(sessionId, cmdId);
+          stdout = (logs as any).stdout ?? (logs as any).output ?? "";
+          stderr = (logs as any).stderr ?? stderr;
         } catch {
-          // Ignore cleanup errors
+          // Ignore log fetch errors — use inline response
         }
       }
+
+      return {
+        exitCode: resp.exitCode ?? 0,
+        stdout,
+        stderr,
+      };
+    } finally {
+      try {
+        await this.sandbox.process.deleteSession(sessionId);
+      } catch {
+        // Ignore cleanup errors
+      }
     }
-
-    // Non-streaming path: use executeCommand directly
-    // Evidence: Daytona SDK executeCommand(command, cwd?, env?, timeout?)
-    const result = await this.sandbox.process.executeCommand(
-      command,
-      options?.cwd,
-      options?.envs,
-      timeoutSec
-    );
-
-    return {
-      exitCode: result.exitCode,
-      stdout: result.result || "",
-      stderr: "",
-    };
   }
 
   async spawn(command: string, options?: SandboxSpawnOptions): Promise<SandboxCommandHandle> {
@@ -281,7 +291,7 @@ class DaytonaCommands implements SandboxCommands {
     const timeoutMs = options?.timeoutMs;
 
     const resp = await this.sandbox.process.executeSessionCommand(sessionId, {
-      command: wrapWithCwd(command, options?.cwd),
+      command: wrapCommand(command, options?.cwd, options?.envs),
       runAsync: true,
     }, timeoutSec);
 

@@ -882,8 +882,10 @@ export class Agent {
     return {
       sandboxId: sandbox.sandboxId,
       exitCode: result.exitCode,
-      stdout,
-      stderr,
+      // Prefer streaming-collected output; fall back to wait() result
+      // (handles race condition where command completes before stream connects)
+      stdout: stdout || result.stdout || "",
+      stderr: stderr || result.stderr || "",
     };
   }
 

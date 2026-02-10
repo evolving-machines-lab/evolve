@@ -540,7 +540,7 @@ export async function createCheckpoint(
 
   // 2. Get archive size
   const sizeResult = await sandbox.commands.run(
-    "stat -c '%s' /tmp/evolve-ckpt.tar.gz",
+    "stat -c '%s' /tmp/evolve-ckpt.tar.gz 2>/dev/null || stat -f '%z' /tmp/evolve-ckpt.tar.gz",
     { timeoutMs: 10000 }
   );
   const parsed = parseInt(sizeResult.stdout.trim(), 10);
