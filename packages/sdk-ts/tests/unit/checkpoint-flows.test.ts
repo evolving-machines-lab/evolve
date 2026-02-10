@@ -989,6 +989,73 @@ async function testNormalRunWritesSystemPrompt(): Promise<void> {
   assertEqual(claudeMdWrites.length, 1, "CLAUDE.md written on normal run");
 }
 
+/** Helper: run a restore with file-write tracking, returns list of written paths */
+async function restoreWithWriteTracking(extraOpts: Record<string, any>): Promise<string[]> {
+  resetState();
+  installMockAwsSdk();
+
+  const metaKey = "test-prefix/checkpoints/ckpt_prompt_cond.json";
+  state.s3Objects.set(metaKey, {
+    body: JSON.stringify({ hash: HASH_64, tag: "test" }),
+  });
+
+  const writtenFiles: string[] = [];
+  const sandbox = createMockSandbox((cmd: string) => {
+    if (cmd.includes("curl") && cmd.includes("evolve-restore")) {
+      return { stdout: HASH_64 + "\n", stderr: "", exitCode: 0 };
+    }
+    if (cmd.includes("tar -xzf")) return { stdout: "", stderr: "", exitCode: 0 };
+    if (cmd.includes("mkdir -p")) return { stdout: "", stderr: "", exitCode: 0 };
+    if (cmd.includes("claude")) return { stdout: "output\n", stderr: "", exitCode: 0 };
+    if (cmd.includes("tar -czf")) return { stdout: HASH_64 + "\n", stderr: "", exitCode: 0 };
+    if (cmd.includes("stat -c")) return { stdout: "2048\n", stderr: "", exitCode: 0 };
+    if (cmd.includes("curl") && cmd.includes("PUT")) {
+      state.s3Objects.set(`test-prefix/data/${HASH_64}/archive.tar.gz`, {});
+      return { stdout: "", stderr: "", exitCode: 0 };
+    }
+    if (cmd.includes("rm -f")) return { stdout: "", stderr: "", exitCode: 0 };
+    return { stdout: "", stderr: "", exitCode: 0 };
+  });
+
+  const origWrite = sandbox.files.write;
+  sandbox.files.write = async (path: string, content: any) => {
+    writtenFiles.push(path);
+    return origWrite(path, content);
+  };
+
+  const provider = createMockProvider(sandbox);
+  const agent = new Agent(makeAgentConfig() as any, {
+    sandboxProvider: provider as any,
+    storage: BYOK_STORAGE as any,
+    ...extraOpts,
+  });
+
+  await agent.run({ prompt: "continue", from: "ckpt_prompt_cond" });
+  return writtenFiles;
+}
+
+async function testRestoreWithSystemPromptWritesPrompt(): Promise<void> {
+  console.log("\n[23] Agent - Restore with explicit systemPrompt DOES write system prompt");
+
+  const writtenFiles = await restoreWithWriteTracking({
+    systemPrompt: "You are a new assistant with updated instructions.",
+  });
+
+  const claudeMdWrites = writtenFiles.filter((f) => f.includes("CLAUDE.md"));
+  assertEqual(claudeMdWrites.length, 1, "CLAUDE.md written when systemPrompt is set on restore");
+}
+
+async function testRestoreWithSchemaWritesPrompt(): Promise<void> {
+  console.log("\n[24] Agent - Restore with explicit schema DOES write system prompt");
+
+  const writtenFiles = await restoreWithWriteTracking({
+    schema: { type: "object", properties: { result: { type: "string" } } },
+  });
+
+  const claudeMdWrites = writtenFiles.filter((f) => f.includes("CLAUDE.md"));
+  assertEqual(claudeMdWrites.length, 1, "CLAUDE.md written when schema is set on restore");
+}
+
 // =============================================================================
 // TESTS: Evolve-level
 // =============================================================================
@@ -1247,6 +1314,8 @@ async function main(): Promise<void> {
   await testSuccessfulRestoreSetsHasRun();
   await testRestoreSkipsSystemPromptWrite();
   await testNormalRunWritesSystemPrompt();
+  await testRestoreWithSystemPromptWritesPrompt();
+  await testRestoreWithSchemaWritesPrompt();
 
   // Evolve-level
   await testWithStorageNoArgs();

@@ -601,9 +601,16 @@ export class Agent {
         // Fresh auth setup (overwrites stale tokens from archive)
         await this.setupAgentAuth(this.sandbox);
 
-        // Workspace setup — skip system prompt file (checkpoint tar has the correct one)
-        // MCP config, skills, context files are still applied if configured on this instance
-        await this.setupWorkspace(this.sandbox, { skipSystemPrompt: true });
+        // Workspace setup — skip system prompt write on restore UNLESS the user
+        // explicitly configured prompt-affecting options on this instance
+        const hasExplicitPromptConfig = !!(
+          this.options.systemPrompt ||
+          this.zodSchema ||
+          this.jsonSchema
+        );
+        await this.setupWorkspace(this.sandbox, {
+          skipSystemPrompt: !hasExplicitPromptConfig,
+        });
 
         // Mark as resumed so CLI uses --continue flag
         this.hasRun = true;
