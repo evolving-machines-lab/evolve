@@ -74,7 +74,7 @@
     "test:13": "tsx tests/integration/13-pipeline-abstractions.ts",
     "test:14": "tsx tests/integration/14-byok-direct-mode.ts",
     "test:15": "tsx tests/integration/15-oauth-mode.ts",
-    "test:16": "tsx tests/integration/16-storage-checkpoints.ts",
+    "test:20": "tsx tests/integration/20-storage-checkpoints.ts",
     "test:claude": "tsx tests/integration/01-all-agents-parallel.ts claude",
     "test:codex": "tsx tests/integration/01-all-agents-parallel.ts codex",
     "test:gemini": "tsx tests/integration/01-all-agents-parallel.ts gemini",

@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * Integration Test 16: Storage Checkpoints (BYOK)
+ * Integration Test 20: Storage Checkpoints (BYOK)
  *
  * End-to-end test for checkpoint create, restore, dedup, and error cases
  * against a real S3 bucket. Tests the full lifecycle:
@@ -16,8 +16,8 @@
  *   AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY — S3 credentials (via default chain)
  *
  * Usage:
- *   npm run test:16
- *   npx tsx tests/integration/16-storage-checkpoints.ts
+ *   npm run test:20
+ *   npx tsx tests/integration/20-storage-checkpoints.ts
  */
 
 import { Evolve } from "../../dist/index.js";
@@ -35,7 +35,7 @@ config({ path: resolve(__dirname, "../../../../.env") });
 // CONFIG
 // =============================================================================
 
-const LOGS_DIR = resolve(__dirname, "../test-logs/16-storage-checkpoints");
+const LOGS_DIR = resolve(__dirname, "../test-logs/20-storage-checkpoints");
 const STORAGE_URL = "s3://swarmkit-test-checkpoints-905418019965/integration-test/";
 const STORAGE_REGION = "us-west-2";
 const TIMEOUT = 180000; // 3 min per run
@@ -45,7 +45,7 @@ const TIMEOUT = 180000; // 3 min per run
 // =============================================================================
 
 function log(msg: string) {
-  console.log(`[16] ${msg}`);
+  console.log(`[20] ${msg}`);
 }
 
 function save(name: string, content: string) {
