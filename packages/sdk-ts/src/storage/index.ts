@@ -170,18 +170,22 @@ export function normalizeAgentDir(settingsDir: string): string {
   if (settingsDir.includes("..")) {
     throw new Error(`settingsDir must not contain '..': ${settingsDir}`);
   }
+  let dir: string;
   if (settingsDir.startsWith("~/")) {
-    return settingsDir.slice(2);
+    dir = settingsDir.slice(2);
+  } else if (settingsDir.startsWith("/home/user/")) {
+    dir = settingsDir.slice("/home/user/".length);
+  } else if (settingsDir.startsWith(".")) {
+    dir = settingsDir;
+  } else {
+    throw new Error(
+      `Unexpected settingsDir: ${settingsDir}. Expected ~/ or /home/user/ prefix.`
+    );
   }
-  if (settingsDir.startsWith("/home/user/")) {
-    return settingsDir.slice("/home/user/".length);
+  if (!dir || dir.startsWith("/")) {
+    throw new Error(`settingsDir resolves to invalid path: ${settingsDir}`);
   }
-  if (settingsDir.startsWith(".")) {
-    return settingsDir;
-  }
-  throw new Error(
-    `Unexpected settingsDir: ${settingsDir}. Expected ~/ or /home/user/ prefix.`
-  );
+  return dir;
 }
 
 /**
@@ -199,12 +203,24 @@ export function normalizeWorkspaceDir(workingDir: string): string {
       `Unexpected workingDir: ${workingDir}. Must start with /home/user/.`
     );
   }
-  return workingDir.slice("/home/user/".length);
+  const dir = workingDir.slice("/home/user/".length);
+  if (!dir || dir.startsWith("/") || dir.includes("//")) {
+    throw new Error(`workingDir resolves to invalid path: ${workingDir}`);
+  }
+  return dir;
 }
 
 // =============================================================================
 // TAR COMMAND
 // =============================================================================
+
+/**
+ * Escape a string for safe interpolation into a shell command.
+ * Wraps in single quotes with internal single-quote escaping.
+ */
+function shellEscape(s: string): string {
+  return "'" + s.replace(/'/g, "'\\''") + "'";
+}
 
 /**
  * Build the tar + sha256sum command for checkpointing.
@@ -221,12 +237,12 @@ export function buildTarCommand(
   const workspaceDir = normalizeWorkspaceDir(workingDir);
 
   const excludes = [
-    ...TAR_EXCLUDES.map((e) => `--exclude='${e}'`),
-    `--exclude='${workspaceDir}/temp'`,
+    ...TAR_EXCLUDES.map((e) => `--exclude=${shellEscape(e)}`),
+    `--exclude=${shellEscape(workspaceDir + "/temp")}`,
   ].join(" ");
 
   return [
-    `tar -czf /tmp/evolve-ckpt.tar.gz -C /home/user ${excludes} ${workspaceDir}/ ${agentDir}/`,
+    `tar -czf /tmp/evolve-ckpt.tar.gz -C /home/user ${excludes} ${shellEscape(workspaceDir + "/")} ${shellEscape(agentDir + "/")}`,
     `sha256sum /tmp/evolve-ckpt.tar.gz | awk '{print $1}'`,
   ].join(" && ");
 }

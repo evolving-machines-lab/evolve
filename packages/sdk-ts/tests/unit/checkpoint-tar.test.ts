@@ -132,6 +132,20 @@ async function testNormalizeWorkspaceDir(): Promise<void> {
     "must not contain '..'",
     "Path traversal in workingDir throws"
   );
+
+  // Double-slash bypass rejected
+  await assertThrows(
+    () => normalizeWorkspaceDir("/home/user//etc"),
+    "resolves to invalid path",
+    "Double-slash bypass throws"
+  );
+
+  // Empty after slice rejected
+  await assertThrows(
+    () => normalizeWorkspaceDir("/home/user/"),
+    "resolves to invalid path",
+    "Bare /home/user/ (empty after slice) throws"
+  );
 }
 
 // =============================================================================
@@ -236,6 +250,22 @@ async function testInvalidWorkingDir(): Promise<void> {
 }
 
 // =============================================================================
+// TESTS: Shell escaping in tar command
+// =============================================================================
+
+async function testShellEscaping(): Promise<void> {
+  console.log("\n[11] buildTarCommand() - Shell Escaping");
+
+  // Path with a single quote should be escaped, not break the command
+  const cmd = buildTarCommand("claude", "/home/user/my'project");
+
+  // shellEscape("my'project/") → 'my'\''project/'
+  assert(cmd.includes("'my'\\''project/'"), "Single quote in workspace dir is escaped");
+  assert(cmd.includes(".claude/"), "Agent dir still present");
+  assert(cmd.includes("sha256sum"), "Command structure intact");
+}
+
+// =============================================================================
 // TESTS: Invalid agent type
 // =============================================================================
 
@@ -268,6 +298,7 @@ async function main(): Promise<void> {
   await testTarExcludes();
   await testCustomWorkingDir();
   await testInvalidWorkingDir();
+  await testShellEscaping();
   await testInvalidAgentType();
 
   console.log("\n" + "=".repeat(60));
