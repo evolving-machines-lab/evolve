@@ -1057,6 +1057,144 @@ async function testRestoreWithSchemaWritesPrompt(): Promise<void> {
 }
 
 // =============================================================================
+// TESTS: Restore guards (agent type + workspace mode mismatch)
+// =============================================================================
+
+async function testRestoreAgentTypeMismatch(): Promise<void> {
+  console.log("\n[25a] Agent - Restore fails on agent type mismatch");
+  resetState();
+  installMockAwsSdk();
+
+  // Checkpoint was created by codex
+  const metaKey = "test-prefix/checkpoints/ckpt_codex.json";
+  state.s3Objects.set(metaKey, {
+    body: JSON.stringify({ hash: HASH_64, tag: "test", agentType: "codex" }),
+  });
+
+  const sandbox = createMockSandbox(restoreCmdHandler());
+  const provider = createMockProvider(sandbox);
+
+  // Current agent is claude — should reject codex checkpoint
+  const agent = new Agent(makeAgentConfig() as any, {
+    sandboxProvider: provider as any,
+    storage: BYOK_STORAGE as any,
+  });
+
+  await assertThrows(
+    () => agent.run({ prompt: "test", from: "ckpt_codex" }),
+    "agent type mismatch",
+    "Restore with mismatched agent type throws"
+  );
+}
+
+async function testRestoreAgentTypeSameSucceeds(): Promise<void> {
+  console.log("\n[25b] Agent - Restore succeeds when agent type matches");
+  resetState();
+  installMockAwsSdk();
+
+  const metaKey = "test-prefix/checkpoints/ckpt_claude_match.json";
+  state.s3Objects.set(metaKey, {
+    body: JSON.stringify({ hash: HASH_64, tag: "test", agentType: "claude" }),
+  });
+
+  const sandbox = createMockSandbox((cmd: string) => {
+    if (cmd.includes("curl") && cmd.includes("evolve-restore")) {
+      return { stdout: HASH_64 + "\n", stderr: "", exitCode: 0 };
+    }
+    if (cmd.includes("tar -xzf")) return { stdout: "", stderr: "", exitCode: 0 };
+    if (cmd.includes("mkdir -p")) return { stdout: "", stderr: "", exitCode: 0 };
+    if (cmd.includes("claude")) return { stdout: "output\n", stderr: "", exitCode: 0 };
+    if (cmd.includes("tar -czf")) return { stdout: HASH_64 + "\n", stderr: "", exitCode: 0 };
+    if (cmd.includes("stat -c")) return { stdout: "2048\n", stderr: "", exitCode: 0 };
+    if (cmd.includes("curl") && cmd.includes("PUT")) {
+      state.s3Objects.set(`test-prefix/data/${HASH_64}/archive.tar.gz`, {});
+      return { stdout: "", stderr: "", exitCode: 0 };
+    }
+    if (cmd.includes("rm -f")) return { stdout: "", stderr: "", exitCode: 0 };
+    return { stdout: "", stderr: "", exitCode: 0 };
+  });
+  const provider = createMockProvider(sandbox);
+
+  const agent = new Agent(makeAgentConfig() as any, {
+    sandboxProvider: provider as any,
+    storage: BYOK_STORAGE as any,
+  });
+
+  await assertNoThrow(
+    () => agent.run({ prompt: "test", from: "ckpt_claude_match" }),
+    "Restore succeeds when agent type matches"
+  );
+}
+
+async function testRestoreWorkspaceModeMismatch(): Promise<void> {
+  console.log("\n[25c] Agent - Restore fails on workspace mode mismatch");
+  resetState();
+  installMockAwsSdk();
+
+  // Checkpoint was created with swe mode
+  const metaKey = "test-prefix/checkpoints/ckpt_swe.json";
+  state.s3Objects.set(metaKey, {
+    body: JSON.stringify({ hash: HASH_64, tag: "test", agentType: "claude", workspaceMode: "swe" }),
+  });
+
+  const sandbox = createMockSandbox(restoreCmdHandler());
+  const provider = createMockProvider(sandbox);
+
+  // Current agent defaults to "knowledge" — should reject "swe" checkpoint
+  const agent = new Agent(makeAgentConfig() as any, {
+    sandboxProvider: provider as any,
+    storage: BYOK_STORAGE as any,
+  });
+
+  await assertThrows(
+    () => agent.run({ prompt: "test", from: "ckpt_swe" }),
+    "workspace mode mismatch",
+    "Restore with mismatched workspace mode throws"
+  );
+}
+
+async function testRestoreOldCheckpointNoWorkspaceMode(): Promise<void> {
+  console.log("\n[25d] Agent - Restore succeeds for old checkpoint without workspaceMode");
+  resetState();
+  installMockAwsSdk();
+
+  // Old checkpoint — no workspaceMode field
+  const metaKey = "test-prefix/checkpoints/ckpt_old.json";
+  state.s3Objects.set(metaKey, {
+    body: JSON.stringify({ hash: HASH_64, tag: "test", agentType: "claude" }),
+  });
+
+  const sandbox = createMockSandbox((cmd: string) => {
+    if (cmd.includes("curl") && cmd.includes("evolve-restore")) {
+      return { stdout: HASH_64 + "\n", stderr: "", exitCode: 0 };
+    }
+    if (cmd.includes("tar -xzf")) return { stdout: "", stderr: "", exitCode: 0 };
+    if (cmd.includes("mkdir -p")) return { stdout: "", stderr: "", exitCode: 0 };
+    if (cmd.includes("claude")) return { stdout: "output\n", stderr: "", exitCode: 0 };
+    if (cmd.includes("tar -czf")) return { stdout: HASH_64 + "\n", stderr: "", exitCode: 0 };
+    if (cmd.includes("stat -c")) return { stdout: "2048\n", stderr: "", exitCode: 0 };
+    if (cmd.includes("curl") && cmd.includes("PUT")) {
+      state.s3Objects.set(`test-prefix/data/${HASH_64}/archive.tar.gz`, {});
+      return { stdout: "", stderr: "", exitCode: 0 };
+    }
+    if (cmd.includes("rm -f")) return { stdout: "", stderr: "", exitCode: 0 };
+    return { stdout: "", stderr: "", exitCode: 0 };
+  });
+  const provider = createMockProvider(sandbox);
+
+  const agent = new Agent(makeAgentConfig() as any, {
+    sandboxProvider: provider as any,
+    storage: BYOK_STORAGE as any,
+    workspaceMode: "swe",
+  });
+
+  await assertNoThrow(
+    () => agent.run({ prompt: "test", from: "ckpt_old" }),
+    "Restore succeeds for old checkpoint without workspaceMode (skip check)"
+  );
+}
+
+// =============================================================================
 // TESTS: Evolve-level
 // =============================================================================
 
@@ -1316,6 +1454,12 @@ async function main(): Promise<void> {
   await testNormalRunWritesSystemPrompt();
   await testRestoreWithSystemPromptWritesPrompt();
   await testRestoreWithSchemaWritesPrompt();
+
+  // Restore guards
+  await testRestoreAgentTypeMismatch();
+  await testRestoreAgentTypeSameSucceeds();
+  await testRestoreWorkspaceModeMismatch();
+  await testRestoreOldCheckpointNoWorkspaceMode();
 
   // Evolve-level
   await testWithStorageNoArgs();

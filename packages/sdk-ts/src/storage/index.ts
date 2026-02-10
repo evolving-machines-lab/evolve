@@ -520,7 +520,7 @@ export async function createCheckpoint(
   storage: ResolvedStorageConfig,
   agentType: AgentType,
   workingDir: string,
-  meta: { tag: string; model?: string }
+  meta: { tag: string; model?: string; workspaceMode?: string }
 ): Promise<CheckpointInfo> {
   const timestamp = new Date().toISOString();
 
@@ -580,6 +580,7 @@ export async function createCheckpoint(
       sizeBytes,
       agentType,
       model: meta.model,
+      workspaceMode: meta.workspaceMode,
       sandboxId: sandbox.sandboxId,
     };
     await s3PutJson(storage, metadataKey(storage, checkpointId), metaObj);
@@ -621,6 +622,7 @@ export async function createCheckpoint(
     sizeBytes,
     agentType,
     model: meta.model,
+    workspaceMode: meta.workspaceMode,
   };
 }
 
@@ -628,35 +630,45 @@ export async function createCheckpoint(
 // RESTORE CHECKPOINT
 // =============================================================================
 
+/** Metadata returned from restoreCheckpoint for validation by the caller. */
+export interface RestoreMetadata {
+  agentType?: string;
+  workspaceMode?: string;
+}
+
 /**
  * Restore a checkpoint into a fresh sandbox.
  *
  * Downloads archive, verifies hash, extracts into /home/user.
+ * Returns checkpoint metadata so the caller can validate agent type, etc.
  */
 export async function restoreCheckpoint(
   sandbox: SandboxInstance,
   storage: ResolvedStorageConfig,
   checkpointId: string
-): Promise<void> {
+): Promise<RestoreMetadata> {
   let hash: string;
   let getUrl: string;
+  let restoreMeta: RestoreMetadata = {};
 
   if (storage.mode === "byok") {
     // Read checkpoint metadata from S3
     const key = metadataKey(storage, checkpointId);
-    let metadata: { hash: string; tag: string };
+    let metadata: { hash: string; tag: string; agentType?: string; workspaceMode?: string };
     try {
-      metadata = await s3GetJson<{ hash: string; tag: string }>(storage, key);
+      metadata = await s3GetJson<typeof metadata>(storage, key);
     } catch {
       throw new Error(`Checkpoint ${checkpointId} not found`);
     }
 
     hash = metadata.hash;
+    restoreMeta = { agentType: metadata.agentType, workspaceMode: metadata.workspaceMode };
     getUrl = await presignUrl(storage, dataKey(storage, hash), "get");
   } else {
     // Gateway mode: get metadata via API
     const metadata = await gatewayGetCheckpoint(storage, checkpointId);
     hash = metadata.hash;
+    restoreMeta = { agentType: (metadata as any).agentType, workspaceMode: (metadata as any).workspaceMode };
 
     // Presign uses the OLD tag from checkpoint metadata (not current session)
     const presignResult = await gatewayPresign(
@@ -696,4 +708,6 @@ export async function restoreCheckpoint(
   if (extractResult.exitCode !== 0) {
     throw new Error(`Checkpoint extraction failed: ${extractResult.stderr}`);
   }
+
+  return restoreMeta;
 }

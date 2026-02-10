@@ -43,7 +43,7 @@ import { buildWorkerSystemPrompt } from "./prompts";
 import { isZodSchema } from "./utils";
 import { SessionLogger } from "./observability";
 import { setupComposio } from "./composio";
-import { createCheckpoint, restoreCheckpoint } from "./storage";
+import { createCheckpoint, restoreCheckpoint, type RestoreMetadata } from "./storage";
 
 // Re-export types for external consumers
 export type {
@@ -438,7 +438,11 @@ export class Agent {
       };
     }
 
-    // Write MCP config if any servers configured
+    // Write MCP config if any servers configured.
+    // NOTE: On restore, this intentionally overwrites the archived MCP config.
+    // MCP servers require fresh auth tokens (Composio URLs, API keys) that the
+    // current Evolve instance generates — stale tokens from the checkpoint won't
+    // work. Gateway mode and Composio both produce session-scoped URLs.
     if (Object.keys(mcpServers).length > 0) {
       await writeMcpConfig(
         this.agentConfig.type,
@@ -595,8 +599,26 @@ export class Agent {
           workingDirectory: this.workingDir,
         });
 
-        // Restore checkpoint archive into sandbox
-        await restoreCheckpoint(this.sandbox, this.storage, from);
+        // Restore checkpoint archive into sandbox (returns metadata for validation)
+        const ckptMeta = await restoreCheckpoint(this.sandbox, this.storage, from);
+
+        // Validate agent type — changing agent type on restore is structural (wrong
+        // dirs, wrong CLI, wrong config format). Model changes are fine.
+        if (ckptMeta.agentType && ckptMeta.agentType !== this.agentConfig.type) {
+          throw new Error(
+            `Cannot restore checkpoint: agent type mismatch (checkpoint: ${ckptMeta.agentType}, current: ${this.agentConfig.type})`
+          );
+        }
+
+        // Validate workspace mode — changing mode on restore could break directory
+        // layout and system prompt assumptions. Skip check for old checkpoints
+        // that don't have this field.
+        const currentMode = this.options.workspaceMode || "knowledge";
+        if (ckptMeta.workspaceMode && ckptMeta.workspaceMode !== currentMode) {
+          throw new Error(
+            `Cannot restore checkpoint: workspace mode mismatch (checkpoint: ${ckptMeta.workspaceMode}, current: ${currentMode})`
+          );
+        }
 
         // Fresh auth setup (overwrites stale tokens from archive)
         await this.setupAgentAuth(this.sandbox);
@@ -766,6 +788,7 @@ export class Agent {
           {
             tag: this.sessionLogger?.getTag() || "unknown",
             model: this.agentConfig.model || this.registry.defaultModel,
+            workspaceMode: this.options.workspaceMode || "knowledge",
           }
         );
       } catch (e) {

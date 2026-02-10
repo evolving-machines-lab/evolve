@@ -622,4 +622,6 @@ export interface CheckpointInfo {
   agentType?: string;
   /** Model that produced this checkpoint */
   model?: string;
+  /** Workspace mode used when checkpoint was created */
+  workspaceMode?: string;
 }
