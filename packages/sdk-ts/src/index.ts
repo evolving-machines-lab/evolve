@@ -238,4 +238,5 @@ export {
   buildTarCommand,
   createCheckpoint,
   restoreCheckpoint,
+  _testSetAwsSdk,
 } from "./storage";

@@ -17,6 +17,16 @@ import type {
 import { getAgentConfig } from "../registry";
 
 // =============================================================================
+// TEST HELPERS (internal — used by unit tests to inject mock AWS SDK)
+// =============================================================================
+
+/** @internal Inject mock AWS SDK for unit tests. Passing null clears the cache. */
+export function _testSetAwsSdk(mock: { s3: any; presigner: any } | null): void {
+  _awsSdkCache = mock;
+  _s3ClientCache = null;
+}
+
+// =============================================================================
 // PRESIGNED URL TTL
 // =============================================================================
 
