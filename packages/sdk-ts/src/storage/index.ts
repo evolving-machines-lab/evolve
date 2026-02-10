@@ -464,6 +464,7 @@ async function gatewayCreateCheckpoint(
     sizeBytes: number;
     agentType?: string;
     model?: string;
+    workspaceMode?: string;
   }
 ): Promise<{ id: string }> {
   const response = await fetch(`${storage.gatewayUrl}/api/checkpoints`, {
@@ -486,7 +487,7 @@ async function gatewayCreateCheckpoint(
 async function gatewayGetCheckpoint(
   storage: ResolvedStorageConfig,
   checkpointId: string
-): Promise<{ id: string; hash: string; tag: string; sizeBytes: number; timestamp: string; agentType?: string; model?: string }> {
+): Promise<{ id: string; hash: string; tag: string; sizeBytes: number; timestamp: string; agentType?: string; model?: string; workspaceMode?: string }> {
   const response = await fetch(`${storage.gatewayUrl}/api/checkpoints/${checkpointId}`, {
     method: "GET",
     headers: {
@@ -607,6 +608,7 @@ export async function createCheckpoint(
       sizeBytes: sizeBytes ?? 0,
       agentType,
       model: meta.model,
+      workspaceMode: meta.workspaceMode,
     });
     checkpointId = created.id;
   }
@@ -668,7 +670,7 @@ export async function restoreCheckpoint(
     // Gateway mode: get metadata via API
     const metadata = await gatewayGetCheckpoint(storage, checkpointId);
     hash = metadata.hash;
-    restoreMeta = { agentType: (metadata as any).agentType, workspaceMode: (metadata as any).workspaceMode };
+    restoreMeta = { agentType: metadata.agentType, workspaceMode: metadata.workspaceMode };
 
     // Presign uses the OLD tag from checkpoint metadata (not current session)
     const presignResult = await gatewayPresign(
