@@ -220,19 +220,26 @@ async function main() {
     // ── Phase 3: Verify sandbox state directly ─────────────────────────
     log("── Phase 3: Inspect sandbox filesystem directly");
 
-    // Check skills directory
+    // Check skills directory (Claude uses ~/.claude/skills/, not commands/)
     const skillsCheck = await evolve2.executeCommand(
-      "ls ~/.claude/commands/ 2>/dev/null || echo 'no commands dir'"
+      "ls ~/.claude/skills/ 2>/dev/null || echo 'no skills dir'"
     );
     save("phase3-skills.txt", skillsCheck.stdout);
     log(`  Skills dir: ${skillsCheck.stdout.trim().slice(0, 200)}`);
 
-    // Check MCP config exists
+    // Check MCP/settings config exists (Claude uses ~/.claude/settings.json)
     const mcpCheck = await evolve2.executeCommand(
-      "cat ~/.claude/.mcp.json 2>/dev/null || echo 'no mcp config'"
+      "cat ~/.claude/settings.json 2>/dev/null || echo 'no settings config'"
     );
     save("phase3-mcp.txt", mcpCheck.stdout);
-    log(`  MCP config: ${mcpCheck.stdout.trim().slice(0, 200)}`);
+    log(`  Settings config: ${mcpCheck.stdout.trim().slice(0, 200)}`);
+
+    // Check CLAUDE.md system prompt exists in workspace
+    const claudeMdCheck = await evolve2.executeCommand(
+      "head -5 ~/workspace/CLAUDE.md 2>/dev/null || echo 'no CLAUDE.md'"
+    );
+    save("phase3-claudemd.txt", claudeMdCheck.stdout);
+    log(`  CLAUDE.md: ${claudeMdCheck.stdout.trim().slice(0, 200)}`);
 
     // Check session history exists (proves --continue will work)
     const sessionsCheck = await evolve2.executeCommand(
@@ -248,8 +255,10 @@ async function main() {
     }
     log(`  ✓ Session history .jsonl files exist`);
 
-    // Check identity.txt is still there
-    const fileCheck = await evolve2.executeCommand("cat ~/identity.txt 2>/dev/null || echo 'file missing'");
+    // Check identity.txt is still there (agent may put it in workspace/ or workspace/output/)
+    const fileCheck = await evolve2.executeCommand(
+      "find ~/workspace -name 'identity.txt' -exec cat {} \\; 2>/dev/null || echo 'file missing'"
+    );
     save("phase3-identity.txt", fileCheck.stdout);
     assertIncludes(fileCheck.stdout, "purple-elephant-42", "identity.txt still on disk after restore");
 
