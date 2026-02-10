@@ -438,7 +438,7 @@ async function gatewayPresign(
   tag: string,
   hash: string,
   action: "put" | "get"
-): Promise<{ url: string; alreadyExists?: boolean }> {
+): Promise<{ url: string | null; alreadyExists?: boolean }> {
   const response = await fetch(`${storage.gatewayUrl}/api/checkpoints/presign`, {
     method: "POST",
     headers: {
@@ -486,7 +486,7 @@ async function gatewayCreateCheckpoint(
 async function gatewayGetCheckpoint(
   storage: ResolvedStorageConfig,
   checkpointId: string
-): Promise<{ id: string; hash: string; tag: string; sizeBytes: number; createdAt: string; agentType?: string; model?: string }> {
+): Promise<{ id: string; hash: string; tag: string; sizeBytes: number; timestamp: string; agentType?: string; model?: string }> {
   const response = await fetch(`${storage.gatewayUrl}/api/checkpoints/${checkpointId}`, {
     method: "GET",
     headers: {
@@ -591,7 +591,7 @@ export async function createCheckpoint(
     if (!presignResult.alreadyExists) {
       // Phase 1: Upload data
       const uploadResult = await sandbox.commands.run(
-        `curl -sf -X PUT -H "Content-Type: application/gzip" --upload-file /tmp/evolve-ckpt.tar.gz "${presignResult.url}"`,
+        `curl -sf -X PUT -H "Content-Type: application/gzip" --upload-file /tmp/evolve-ckpt.tar.gz "${presignResult.url!}"`,
         { timeoutMs: 300000 }
       );
       if (uploadResult.exitCode !== 0) {
@@ -665,7 +665,7 @@ export async function restoreCheckpoint(
       hash,
       "get"
     );
-    getUrl = presignResult.url;
+    getUrl = presignResult.url!; // GET action always returns a URL
   }
 
   // Download archive into sandbox
