@@ -167,6 +167,9 @@ export function resolveStorageConfig(
  * Output: ".claude", ".codex", ".gemini", ".qwen"
  */
 export function normalizeAgentDir(settingsDir: string): string {
+  if (settingsDir.includes("..")) {
+    throw new Error(`settingsDir must not contain '..': ${settingsDir}`);
+  }
   if (settingsDir.startsWith("~/")) {
     return settingsDir.slice(2);
   }
@@ -188,6 +191,9 @@ export function normalizeAgentDir(settingsDir: string): string {
  * Input: "/home/user/myproject" → "myproject"
  */
 export function normalizeWorkspaceDir(workingDir: string): string {
+  if (workingDir.includes("..")) {
+    throw new Error(`workingDir must not contain '..': ${workingDir}`);
+  }
   if (!workingDir.startsWith("/home/user/")) {
     throw new Error(
       `Unexpected workingDir: ${workingDir}. Must start with /home/user/.`

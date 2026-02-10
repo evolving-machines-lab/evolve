@@ -85,6 +85,13 @@ async function testNormalizeAgentDir(): Promise<void> {
     "Unexpected settingsDir",
     "Unexpected path throws"
   );
+
+  // Path traversal rejected
+  await assertThrows(
+    () => normalizeAgentDir("../../etc"),
+    "must not contain '..'",
+    "Path traversal in settingsDir throws"
+  );
 }
 
 // =============================================================================
@@ -117,6 +124,13 @@ async function testNormalizeWorkspaceDir(): Promise<void> {
     () => normalizeWorkspaceDir("/other/path"),
     "Must start with /home/user/",
     "Non /home/user/ path throws"
+  );
+
+  // Path traversal rejected
+  await assertThrows(
+    () => normalizeWorkspaceDir("/home/user/../../etc"),
+    "must not contain '..'",
+    "Path traversal in workingDir throws"
   );
 }
 

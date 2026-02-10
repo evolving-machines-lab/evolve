@@ -605,6 +605,10 @@ export class Agent {
         this.agentState = "idle";
         this.emitLifecycle(callbacks, "sandbox_ready");
       } catch (error) {
+        if (this.sandbox) {
+          await this.sandbox.kill().catch(() => {});
+          this.sandbox = undefined;
+        }
         this.sandboxState = "error";
         this.agentState = "error";
         this.emitLifecycle(callbacks, "sandbox_error");
