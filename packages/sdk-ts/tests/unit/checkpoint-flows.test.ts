@@ -898,6 +898,97 @@ async function testSuccessfulRestoreSetsHasRun(): Promise<void> {
     "CLI command was issued after restore");
 }
 
+async function testRestoreSkipsSystemPromptWrite(): Promise<void> {
+  console.log("\n[21] Agent - Restore Skips System Prompt Write (CLAUDE.md preserved from tar)");
+  resetState();
+  installMockAwsSdk();
+
+  // Metadata and data exist
+  const metaKey = "test-prefix/checkpoints/ckpt_noprompt.json";
+  state.s3Objects.set(metaKey, {
+    body: JSON.stringify({ hash: HASH_64, tag: "test" }),
+  });
+
+  // Track files.write calls
+  const writtenFiles: string[] = [];
+
+  const sandbox = createMockSandbox((cmd: string) => {
+    if (cmd.includes("curl") && cmd.includes("evolve-restore")) {
+      return { stdout: HASH_64 + "\n", stderr: "", exitCode: 0 };
+    }
+    if (cmd.includes("tar -xzf")) return { stdout: "", stderr: "", exitCode: 0 };
+    if (cmd.includes("mkdir -p")) return { stdout: "", stderr: "", exitCode: 0 };
+    if (cmd.includes("claude")) return { stdout: "output\n", stderr: "", exitCode: 0 };
+    if (cmd.includes("tar -czf")) return { stdout: HASH_64 + "\n", stderr: "", exitCode: 0 };
+    if (cmd.includes("stat -c")) return { stdout: "2048\n", stderr: "", exitCode: 0 };
+    if (cmd.includes("curl") && cmd.includes("PUT")) {
+      state.s3Objects.set(`test-prefix/data/${HASH_64}/archive.tar.gz`, {});
+      return { stdout: "", stderr: "", exitCode: 0 };
+    }
+    if (cmd.includes("rm -f")) return { stdout: "", stderr: "", exitCode: 0 };
+    return { stdout: "", stderr: "", exitCode: 0 };
+  });
+
+  // Monkey-patch files.write to track calls
+  const origWrite = sandbox.files.write;
+  sandbox.files.write = async (path: string, content: any) => {
+    writtenFiles.push(path);
+    return origWrite(path, content);
+  };
+
+  const provider = createMockProvider(sandbox);
+  const agent = new Agent(makeAgentConfig() as any, {
+    sandboxProvider: provider as any,
+    storage: BYOK_STORAGE as any,
+  });
+
+  await assertNoThrow(
+    () => agent.run({ prompt: "continue", from: "ckpt_noprompt" }),
+    "Restore + run completes"
+  );
+
+  // CLAUDE.md should NOT have been written (skipSystemPrompt: true on restore)
+  const claudeMdWrites = writtenFiles.filter((f) => f.includes("CLAUDE.md"));
+  assertEqual(claudeMdWrites.length, 0, "CLAUDE.md NOT written on restore (preserved from tar)");
+
+  // Verify mkdir was still called (workspace dirs are idempotent)
+  assert(
+    state.commandHistory.some((c) => c.includes("mkdir -p")),
+    "mkdir -p still called on restore"
+  );
+}
+
+async function testNormalRunWritesSystemPrompt(): Promise<void> {
+  console.log("\n[22] Agent - Normal Run (no restore) Writes System Prompt");
+  resetState();
+  installMockAwsSdk();
+
+  const writtenFiles: string[] = [];
+
+  const sandbox = createMockSandbox(fullRunHandler());
+
+  const origWrite = sandbox.files.write;
+  sandbox.files.write = async (path: string, content: any) => {
+    writtenFiles.push(path);
+    return origWrite(path, content);
+  };
+
+  const provider = createMockProvider(sandbox);
+  const agent = new Agent(makeAgentConfig() as any, {
+    sandboxProvider: provider as any,
+    storage: BYOK_STORAGE as any,
+  });
+
+  await assertNoThrow(
+    () => agent.run({ prompt: "hello" }),
+    "Normal run completes"
+  );
+
+  // CLAUDE.md SHOULD be written on normal (non-restore) run
+  const claudeMdWrites = writtenFiles.filter((f) => f.includes("CLAUDE.md"));
+  assertEqual(claudeMdWrites.length, 1, "CLAUDE.md written on normal run");
+}
+
 // =============================================================================
 // TESTS: Evolve-level
 // =============================================================================
@@ -1154,6 +1245,8 @@ async function main(): Promise<void> {
   // Agent integration - restore path
   await testSandboxCleanupOnFailedRestore();
   await testSuccessfulRestoreSetsHasRun();
+  await testRestoreSkipsSystemPromptWrite();
+  await testNormalRunWritesSystemPrompt();
 
   // Evolve-level
   await testWithStorageNoArgs();

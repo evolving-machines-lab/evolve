@@ -380,8 +380,14 @@ export class Agent {
 
   /**
    * Setup workspace structure and files
+   *
+   * @param opts.skipSystemPrompt - When true, skip writing the system prompt file.
+   *   Used on restore from checkpoint: the tar already contains the correct file.
    */
-  private async setupWorkspace(sandbox: SandboxInstance): Promise<void> {
+  private async setupWorkspace(
+    sandbox: SandboxInstance,
+    opts?: { skipSystemPrompt?: boolean }
+  ): Promise<void> {
     const workspaceMode = this.options.workspaceMode || "knowledge";
 
     // Create workspace folders (swe mode includes repo/)
@@ -391,18 +397,18 @@ export class Agent {
 
     await sandbox.commands.run(`mkdir -p ${folders}`, { timeoutMs: 30000 });
 
-    // Generate system prompt using shared utility
-    // Pass whichever schema type is configured (buildWorkerSystemPrompt auto-detects)
-    const fullPrompt = buildWorkerSystemPrompt({
-      workingDir: this.workingDir,
-      systemPrompt: this.options.systemPrompt,
-      schema: this.zodSchema || this.jsonSchema,
-      mode: workspaceMode,
-    });
+    // Write system prompt file (skip on restore — checkpoint tar has the correct one)
+    if (!opts?.skipSystemPrompt) {
+      const fullPrompt = buildWorkerSystemPrompt({
+        workingDir: this.workingDir,
+        systemPrompt: this.options.systemPrompt,
+        schema: this.zodSchema || this.jsonSchema,
+        mode: workspaceMode,
+      });
 
-    // Write system prompt file
-    const filePath = `${this.workingDir}/${this.registry.systemPromptFile}`;
-    await sandbox.files.write(filePath, fullPrompt);
+      const filePath = `${this.workingDir}/${this.registry.systemPromptFile}`;
+      await sandbox.files.write(filePath, fullPrompt);
+    }
 
     // Upload context files
     if (this.options.context) {
@@ -595,9 +601,9 @@ export class Agent {
         // Fresh auth setup (overwrites stale tokens from archive)
         await this.setupAgentAuth(this.sandbox);
 
-        // Fresh workspace setup (overwrites regeneratable files: system prompt, MCP config)
-        // Session history files (e.g., ~/.claude/projects/) are NOT touched by setupWorkspace
-        await this.setupWorkspace(this.sandbox);
+        // Workspace setup — skip system prompt file (checkpoint tar has the correct one)
+        // MCP config, skills, context files are still applied if configured on this instance
+        await this.setupWorkspace(this.sandbox, { skipSystemPrompt: true });
 
         // Mark as resumed so CLI uses --continue flag
         this.hasRun = true;
