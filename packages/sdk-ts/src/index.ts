@@ -109,6 +109,10 @@ export type {
   ComposioConfig,
   ComposioSetup,
   ToolsFilter,
+  // Storage & Checkpointing
+  StorageConfig,
+  ResolvedStorageConfig,
+  CheckpointInfo,
 } from "./types";
 
 // Composio types (for static helper return types)
@@ -222,3 +226,16 @@ export {
   // Retry utilities
   executeWithRetry,
 } from "./utils";
+
+// =============================================================================
+// STORAGE (for advanced use cases)
+// =============================================================================
+
+export {
+  resolveStorageConfig,
+  normalizeAgentDir,
+  normalizeWorkspaceDir,
+  buildTarCommand,
+  createCheckpoint,
+  restoreCheckpoint,
+} from "./storage";

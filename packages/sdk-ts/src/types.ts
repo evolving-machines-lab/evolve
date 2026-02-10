@@ -339,6 +339,10 @@ export interface AgentOptions {
    * Set via withComposio() - provides access to 1000+ tools
    */
   composio?: ComposioSetup;
+
+  // Storage / Checkpointing
+  /** Resolved storage configuration (set via Evolve.withStorage()) */
+  storage?: ResolvedStorageConfig;
 }
 
 // =============================================================================
@@ -355,6 +359,9 @@ export interface RunOptions {
 
   /** Run in background (returns immediately, process continues) */
   background?: boolean;
+
+  /** Restore from checkpoint ID before running (requires .withStorage()) */
+  from?: string;
 }
 
 /** Options for executeCommand() */
@@ -440,6 +447,9 @@ export interface AgentResponse {
 
   /** Standard error */
   stderr: string;
+
+  /** Checkpoint info if storage configured and run succeeded (undefined otherwise) */
+  checkpoint?: CheckpointInfo;
 }
 
 /** Result from getOutputFiles() with optional schema validation */
@@ -540,4 +550,76 @@ export interface ComposioSetup {
   userId: string;
   /** Optional Composio configuration */
   config?: ComposioConfig;
+}
+
+// =============================================================================
+// STORAGE & CHECKPOINTING
+// =============================================================================
+
+/**
+ * Storage configuration for .withStorage()
+ *
+ * BYOK mode: provide url (e.g., "s3://my-bucket/prefix/")
+ * Gateway mode: omit url (uses Evolve-managed storage)
+ *
+ * @example
+ * // BYOK — user's own S3 bucket
+ * .withStorage({ url: "s3://my-bucket/agent-snapshots/" })
+ *
+ * // BYOK — Cloudflare R2
+ * .withStorage({ url: "s3://my-bucket/prefix/", endpoint: "https://acct.r2.cloudflarestorage.com" })
+ *
+ * // Gateway — Evolve-managed storage
+ * .withStorage()
+ */
+export interface StorageConfig {
+  /** S3 URL: "s3://bucket/prefix" or "https://endpoint/bucket/prefix" */
+  url?: string;
+  /** Explicit bucket name (overrides URL parsing) */
+  bucket?: string;
+  /** Key prefix (overrides URL parsing) */
+  prefix?: string;
+  /** AWS region (default from env or us-east-1) */
+  region?: string;
+  /** Custom S3 endpoint (R2, MinIO, GCS) */
+  endpoint?: string;
+  /** Explicit credentials (default: AWS SDK credential chain) */
+  credentials?: {
+    accessKeyId: string;
+    secretAccessKey: string;
+  };
+}
+
+/** Resolved storage configuration (internal) */
+export interface ResolvedStorageConfig {
+  bucket: string;
+  prefix: string;
+  region: string;
+  endpoint?: string;
+  credentials?: { accessKeyId: string; secretAccessKey: string };
+  mode: "byok" | "gateway";
+  gatewayUrl?: string;
+  gatewayApiKey?: string;
+}
+
+/**
+ * Checkpoint info returned after a successful run
+ *
+ * Pass `checkpoint.id` as `from` to restore into a fresh sandbox.
+ */
+export interface CheckpointInfo {
+  /** Checkpoint ID — pass as `from` to restore */
+  id: string;
+  /** SHA-256 of tar.gz — integrity verification */
+  hash: string;
+  /** Session tag at checkpoint time — lineage tracking */
+  tag: string;
+  /** ISO 8601 timestamp */
+  timestamp: string;
+  /** Archive size in bytes */
+  sizeBytes?: number;
+  /** Agent type that produced this checkpoint */
+  agentType?: string;
+  /** Model that produced this checkpoint */
+  model?: string;
 }

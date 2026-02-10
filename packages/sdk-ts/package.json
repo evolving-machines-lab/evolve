@@ -43,7 +43,7 @@
     "type-check": "tsc --noEmit",
     "test": "npm run test:unit && npm run test:integration",
     "pretest:unit": "npm run build",
-    "test:unit": "tsx tests/unit/semaphore.test.ts && tsx tests/unit/swarm-concurrency.test.ts && tsx tests/unit/swarm-verify.test.ts && tsx tests/unit/swarm-retry-verify.test.ts && tsx tests/unit/prompt-construction.test.ts && tsx tests/unit/observability-metadata.test.ts && tsx tests/unit/skills-integration.test.ts && tsx tests/unit/auth-config.test.ts && tsx tests/unit/session-runtime.test.ts",
+    "test:unit": "tsx tests/unit/semaphore.test.ts && tsx tests/unit/swarm-concurrency.test.ts && tsx tests/unit/swarm-verify.test.ts && tsx tests/unit/swarm-retry-verify.test.ts && tsx tests/unit/prompt-construction.test.ts && tsx tests/unit/observability-metadata.test.ts && tsx tests/unit/skills-integration.test.ts && tsx tests/unit/auth-config.test.ts && tsx tests/unit/session-runtime.test.ts && tsx tests/unit/storage-config.test.ts && tsx tests/unit/checkpoint-tar.test.ts && tsx tests/unit/checkpoint-errors.test.ts",
     "test:unit:semaphore": "tsx tests/unit/semaphore.test.ts",
     "test:unit:swarm": "tsx tests/unit/swarm-concurrency.test.ts",
     "test:unit:verify": "tsx tests/unit/swarm-verify.test.ts",
@@ -52,6 +52,9 @@
     "test:unit:observability": "tsx tests/unit/observability-metadata.test.ts",
     "test:unit:skills": "tsx tests/unit/skills-integration.test.ts",
     "test:unit:auth": "tsx tests/unit/auth-config.test.ts",
+    "test:unit:storage-config": "tsx tests/unit/storage-config.test.ts",
+    "test:unit:checkpoint-tar": "tsx tests/unit/checkpoint-tar.test.ts",
+    "test:unit:checkpoint-errors": "tsx tests/unit/checkpoint-errors.test.ts",
     "pretest:integration": "npm run build",
     "test:integration": "npm run test:01",
     "test:integration:all": "npm run test:01 && npm run test:02 && npm run test:03 && npm run test:04 && npm run test:05 && npm run test:06 && npm run test:07 && npm run test:08 && npm run test:09 && npm run test:10 && npm run test:11 && npm run test:12 && npm run test:13 && npm run test:14 && npm run test:15",
@@ -85,6 +88,14 @@
     "p-map": "^7.0.2",
     "zod": "^3.24.0",
     "zod-to-json-schema": "^3.25.0"
+  },
+  "peerDependencies": {
+    "@aws-sdk/client-s3": "^3.0.0",
+    "@aws-sdk/s3-request-presigner": "^3.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@aws-sdk/client-s3": { "optional": true },
+    "@aws-sdk/s3-request-presigner": { "optional": true }
   },
   "devDependencies": {
     "@types/node": "^22.15.18",

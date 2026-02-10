@@ -31,6 +31,8 @@ import type {
   LifecycleReason,
   SessionStatus,
   LifecycleEvent,
+  ResolvedStorageConfig,
+  CheckpointInfo,
 } from "./types";
 import { VALIDATION_PRESETS } from "./types";
 import { getAgentConfig, type AgentRegistryEntry } from "./registry";
@@ -41,6 +43,7 @@ import { buildWorkerSystemPrompt } from "./prompts";
 import { isZodSchema } from "./utils";
 import { SessionLogger } from "./observability";
 import { setupComposio } from "./composio";
+import { createCheckpoint, restoreCheckpoint } from "./storage";
 
 // Re-export types for external consumers
 export type {
@@ -105,6 +108,9 @@ export class Agent {
   // Skills storage
   private readonly skills?: SkillName[];
 
+  // Storage / Checkpointing
+  private readonly storage?: ResolvedStorageConfig;
+
   // Schema storage (mutually exclusive)
   private readonly zodSchema?: z.ZodType<unknown>;
   private readonly jsonSchema?: JsonSchema;
@@ -119,6 +125,9 @@ export class Agent {
 
     // Store skills
     this.skills = options.skills;
+
+    // Store storage config
+    this.storage = options.storage;
 
     // Auto-detect and store schema type
     if (options.schema) {
@@ -547,12 +556,62 @@ export class Agent {
     options: RunOptions,
     callbacks?: StreamCallbacks
   ): Promise<AgentResponse> {
-    const { prompt, timeoutMs = DEFAULT_TIMEOUT_MS, background = false } = options;
+    const { prompt, timeoutMs = DEFAULT_TIMEOUT_MS, background = false, from } = options;
     if (this.activeCommand) {
       throw new Error(
         "Agent is already running. Call interrupt(), wait for the active/background run to finish, or create a new Evolve instance."
       );
     }
+
+    // =========================================================================
+    // RESTORE PATH: if `from` is provided, restore checkpoint into fresh sandbox
+    // =========================================================================
+    if (from) {
+      if (!this.storage) {
+        throw new Error("Storage not configured. Call .withStorage() before using 'from'.");
+      }
+      if (this.sandbox || this.options.sandboxId) {
+        throw new Error(
+          "Cannot restore into existing sandbox. Call kill() first, or create a new Evolve instance."
+        );
+      }
+      if (!this.options.sandboxProvider) {
+        throw new Error("No sandbox provider configured");
+      }
+
+      // Create fresh sandbox
+      const envVars = this.buildEnvironmentVariables();
+      this.sandboxState = "booting";
+      this.emitLifecycle(callbacks, "sandbox_boot");
+      try {
+        this.sandbox = await this.options.sandboxProvider.create({
+          envs: envVars,
+          workingDirectory: this.workingDir,
+        });
+
+        // Restore checkpoint archive into sandbox
+        await restoreCheckpoint(this.sandbox, this.storage, from);
+
+        // Fresh auth setup (overwrites stale tokens from archive)
+        await this.setupAgentAuth(this.sandbox);
+
+        // Fresh workspace setup (overwrites regeneratable files: system prompt, MCP config)
+        // Session history files (e.g., ~/.claude/projects/) are NOT touched by setupWorkspace
+        await this.setupWorkspace(this.sandbox);
+
+        // Mark as resumed so CLI uses --continue flag
+        this.hasRun = true;
+        this.sandboxState = "ready";
+        this.agentState = "idle";
+        this.emitLifecycle(callbacks, "sandbox_ready");
+      } catch (error) {
+        this.sandboxState = "error";
+        this.agentState = "error";
+        this.emitLifecycle(callbacks, "sandbox_error");
+        throw error;
+      }
+    }
+
     const sandbox = await this.getSandbox(callbacks);
 
     // Track turn start time BEFORE process starts (for output file filtering)
@@ -676,11 +735,34 @@ export class Agent {
       }
     }
 
+    // =========================================================================
+    // AUTO-CHECKPOINT: after successful foreground run with storage configured
+    // =========================================================================
+    let checkpoint: CheckpointInfo | undefined;
+    if (this.storage && !background && result.exitCode === 0) {
+      try {
+        checkpoint = await createCheckpoint(
+          sandbox,
+          this.storage,
+          this.agentConfig.type,
+          this.workingDir,
+          {
+            tag: this.sessionLogger?.getTag() || "unknown",
+            model: this.agentConfig.model || this.registry.defaultModel,
+          }
+        );
+      } catch (e) {
+        // Non-fatal: log warning, return response without checkpoint
+        console.warn(`[Evolve] Auto-checkpoint failed: ${(e as Error).message}`);
+      }
+    }
+
     return {
       sandboxId: sandbox.sandboxId,
       exitCode: result.exitCode,
       stdout: result.stdout,
       stderr: result.stderr,
+      checkpoint,
     };
   }
 
