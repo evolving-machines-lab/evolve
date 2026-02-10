@@ -257,6 +257,8 @@ async function main() {
 
     // ── Results ────────────────────────────────────────────────────────
     const duration = ((Date.now() - start) / 1000).toFixed(1);
+    await cleanupS3Prefix();
+
     log("=".repeat(60));
     log(`PASS - All storage checkpoint tests passed (${duration}s)`);
     log("=".repeat(60) + "\n");
@@ -265,13 +267,13 @@ async function main() {
     const msg = err instanceof Error ? err.message : String(err);
     save("error.txt", err instanceof Error ? err.stack || msg : msg);
 
+    await cleanupS3Prefix();
+
     const duration = ((Date.now() - start) / 1000).toFixed(1);
     log("\n" + "=".repeat(60));
     log(`FAIL - ${msg} (${duration}s)`);
     log("=".repeat(60) + "\n");
     process.exit(1);
-  } finally {
-    await cleanupS3Prefix();
   }
 }
 
