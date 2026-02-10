@@ -75,6 +75,7 @@
     "test:14": "tsx tests/integration/14-byok-direct-mode.ts",
     "test:15": "tsx tests/integration/15-oauth-mode.ts",
     "test:20": "tsx tests/integration/20-storage-checkpoints.ts",
+    "test:21": "tsx tests/integration/21-storage-restore-fidelity.ts",
     "test:claude": "tsx tests/integration/01-all-agents-parallel.ts claude",
     "test:codex": "tsx tests/integration/01-all-agents-parallel.ts codex",
     "test:gemini": "tsx tests/integration/01-all-agents-parallel.ts gemini",
