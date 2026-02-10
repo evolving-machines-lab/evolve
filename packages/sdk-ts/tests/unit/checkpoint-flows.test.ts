@@ -14,9 +14,8 @@ import {
   createCheckpoint,
   restoreCheckpoint,
   _testSetAwsSdk,
-  Agent,
-  Evolve,
-} from "../../dist/index.js";
+} from "../../src/storage/index.ts";
+import { Agent, Evolve } from "../../dist/index.js";
 
 // =============================================================================
 // TEST HELPERS

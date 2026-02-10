@@ -20,10 +20,18 @@ import { getAgentConfig } from "../registry";
 // TEST HELPERS (internal — used by unit tests to inject mock AWS SDK)
 // =============================================================================
 
-/** @internal Inject mock AWS SDK for unit tests. Passing null clears the cache. */
+/**
+ * @internal Inject mock AWS SDK for unit tests. Passing null clears the cache.
+ * Uses globalThis with Symbol.for() so the mock works across module boundaries
+ * (source ↔ dist). Tests import this from source; Agent is bundled in dist —
+ * both read from the same global cache.
+ */
+const _AWS_SDK_KEY = Symbol.for("evolve:awsSdkCache");
+const _S3_CLIENT_KEY = Symbol.for("evolve:s3ClientCache");
+
 export function _testSetAwsSdk(mock: { s3: any; presigner: any } | null): void {
-  _awsSdkCache = mock;
-  _s3ClientCache = null;
+  (globalThis as any)[_AWS_SDK_KEY] = mock;
+  (globalThis as any)[_S3_CLIENT_KEY] = null;
 }
 
 // =============================================================================
@@ -213,7 +221,7 @@ export function normalizeWorkspaceDir(workingDir: string): string {
       `Unexpected workingDir: ${workingDir}. Must start with /home/user/.`
     );
   }
-  const dir = workingDir.slice("/home/user/".length);
+  const dir = workingDir.slice("/home/user/".length).replace(/\/+$/, "");
   if (!dir || dir.startsWith("/") || dir.includes("//")) {
     throw new Error(`workingDir resolves to invalid path: ${workingDir}`);
   }
@@ -271,10 +279,9 @@ export function buildTarCommand(
  * tsc while tsup (which has both in `external`) emits a clean require/import.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let _awsSdkCache: { s3: any; presigner: any } | null = null;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function loadAwsSdk(): Promise<{ s3: any; presigner: any }> {
-  if (_awsSdkCache) return _awsSdkCache;
+  const cached = (globalThis as any)[_AWS_SDK_KEY];
+  if (cached) return cached;
 
   const S3_MODULE = "@aws-sdk/client-s3";
   const PRESIGNER_MODULE = "@aws-sdk/s3-request-presigner";
@@ -284,8 +291,8 @@ async function loadAwsSdk(): Promise<{ s3: any; presigner: any }> {
       Function("m", "return import(m)")(S3_MODULE),
       Function("m", "return import(m)")(PRESIGNER_MODULE),
     ]);
-    _awsSdkCache = { s3, presigner };
-    return _awsSdkCache;
+    (globalThis as any)[_AWS_SDK_KEY] = { s3, presigner };
+    return { s3, presigner };
   } catch {
     throw new Error(
       "Storage requires @aws-sdk/client-s3 and @aws-sdk/s3-request-presigner. " +
@@ -299,11 +306,13 @@ async function loadAwsSdk(): Promise<{ s3: any; presigner: any }> {
  * Cached per unique bucket+region+endpoint combination.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let _s3ClientCache: { client: any; key: string } | null = null;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function getS3Client(storage: ResolvedStorageConfig): Promise<any> {
-  const cacheKey = `${storage.bucket}:${storage.region}:${storage.endpoint || ""}`;
-  if (_s3ClientCache?.key === cacheKey) return _s3ClientCache.client;
+  const credKey = storage.credentials
+    ? `${storage.credentials.accessKeyId}:${storage.credentials.secretAccessKey.slice(-4)}`
+    : "env";
+  const cacheKey = `${storage.bucket}:${storage.region}:${storage.endpoint || ""}:${credKey}`;
+  const cached = (globalThis as any)[_S3_CLIENT_KEY] as { client: any; key: string } | null;
+  if (cached?.key === cacheKey) return cached.client;
 
   const { s3 } = await loadAwsSdk();
   const client = new s3.S3Client({
@@ -314,7 +323,7 @@ async function getS3Client(storage: ResolvedStorageConfig): Promise<any> {
     }),
     ...(storage.credentials && { credentials: storage.credentials }),
   });
-  _s3ClientCache = { client, key: cacheKey };
+  (globalThis as any)[_S3_CLIENT_KEY] = { client, key: cacheKey };
   return client;
 }
 

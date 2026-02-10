@@ -228,15 +228,7 @@ export {
 } from "./utils";
 
 // =============================================================================
-// STORAGE (for advanced use cases)
+// STORAGE (config resolution only — internals are not public API)
 // =============================================================================
 
-export {
-  resolveStorageConfig,
-  normalizeAgentDir,
-  normalizeWorkspaceDir,
-  buildTarCommand,
-  createCheckpoint,
-  restoreCheckpoint,
-  _testSetAwsSdk,
-} from "./storage";
+export { resolveStorageConfig } from "./storage";

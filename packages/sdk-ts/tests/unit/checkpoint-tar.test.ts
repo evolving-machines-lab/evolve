@@ -14,7 +14,7 @@ import {
   buildTarCommand,
   normalizeAgentDir,
   normalizeWorkspaceDir,
-} from "../../dist/index.js";
+} from "../../src/storage/index.ts";
 
 // =============================================================================
 // TEST HELPERS
@@ -145,6 +145,13 @@ async function testNormalizeWorkspaceDir(): Promise<void> {
     () => normalizeWorkspaceDir("/home/user/"),
     "resolves to invalid path",
     "Bare /home/user/ (empty after slice) throws"
+  );
+
+  // Trailing slash stripped
+  assertEqual(
+    normalizeWorkspaceDir("/home/user/workspace/"),
+    "workspace",
+    "Trailing slash stripped: /home/user/workspace/ -> workspace"
   );
 }
 
