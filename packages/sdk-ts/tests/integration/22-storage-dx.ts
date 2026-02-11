@@ -1,8 +1,13 @@
 #!/usr/bin/env tsx
 /**
- * Integration Test 22: Storage DX v3.3 Features (BYOK)
+ * Integration Test 22: Storage DX v3.3 Features (BYOK + Gateway)
  *
- * End-to-end test for all v3.3 checkpoint DX improvements:
+ * End-to-end test for all v3.3 checkpoint DX improvements.
+ * Supports two modes via TEST_STORAGE_MODE env var:
+ *   - "byok" (default): direct S3 access with user credentials
+ *   - "gateway": dashboard API endpoints (no direct S3 access needed)
+ *
+ * Tests:
  *   1. listCheckpoints() — returns checkpoints sorted by newest first
  *   2. from: "latest" — resolves and restores the most recent checkpoint
  *   3. kit.checkpoint({ comment }) — explicit checkpoint with label
@@ -12,13 +17,13 @@
  *   7. Limit parameter — restricts number of results
  *
  * Requires:
- *   EVOLVE_API_KEY — LLM gateway
+ *   EVOLVE_API_KEY — LLM gateway (both modes) + dashboard auth (gateway mode)
  *   E2B_API_KEY — sandbox provider
- *   AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY — S3 credentials (via default chain)
+ *   AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY — S3 credentials (BYOK only)
  *
  * Usage:
- *   npm run test:22
  *   npx tsx tests/integration/22-storage-dx.ts
+ *   TEST_STORAGE_MODE=gateway npx tsx tests/integration/22-storage-dx.ts
  */
 
 import { Evolve, listCheckpoints } from "../../dist/index.js";
@@ -41,7 +46,14 @@ const PROVIDER_LABEL = PROVIDER_NAME || "default";
 const LOGS_DIR = resolve(__dirname, `../test-logs/22-storage-dx-${PROVIDER_LABEL}`);
 const STORAGE_URL = `s3://swarmkit-test-checkpoints-905418019965/integration-test-dx-${PROVIDER_LABEL}/`;
 const STORAGE_REGION = "us-west-2";
+const STORAGE_MODE = (process.env.TEST_STORAGE_MODE || "byok") as "byok" | "gateway";
+const IS_GATEWAY = STORAGE_MODE === "gateway";
 const TIMEOUT = 180000; // 3 min per run
+
+function getStorageConfig() {
+  if (IS_GATEWAY) return {}; // SDK reads EVOLVE_API_KEY from env → gateway mode
+  return { url: STORAGE_URL, region: STORAGE_REGION };
+}
 
 // =============================================================================
 // HELPERS
@@ -83,6 +95,10 @@ function assertTrue(condition: boolean, label: string) {
 
 async function cleanupS3Prefix() {
   log("\n\u2500\u2500 Cleanup: S3 test objects");
+  if (IS_GATEWAY) {
+    log("  \u25CB Skipping S3 cleanup (gateway mode \u2014 dashboard manages storage)");
+    return;
+  }
   try {
     const { S3Client, ListObjectsV2Command, DeleteObjectsCommand } = await import("@aws-sdk/client-s3");
     const client = new S3Client({ region: STORAGE_REGION });
@@ -128,16 +144,16 @@ async function main() {
   rmSync(LOGS_DIR, { recursive: true, force: true });
   mkdirSync(LOGS_DIR, { recursive: true });
 
-  log("Starting storage DX v3.3 integration test...\n");
+  log(`Starting storage DX v3.3 integration test (${STORAGE_MODE} mode)...\n`);
   const start = Date.now();
 
   const agentConfig = getAgentConfig("claude");
   const provider = PROVIDER_NAME
     ? getSandboxProviderByName(PROVIDER_NAME)
     : getSandboxProvider();
-  log(`Using provider: ${PROVIDER_LABEL}`);
+  log(`Using provider: ${PROVIDER_LABEL}, storage: ${STORAGE_MODE}`);
 
-  const storageConfig = { url: STORAGE_URL, region: STORAGE_REGION };
+  const storageConfig = getStorageConfig();
 
   let checkpoint1: CheckpointInfo | undefined;
   let checkpoint2: CheckpointInfo | undefined;
@@ -217,11 +233,14 @@ async function main() {
     log(`  \u2713 Phase 3 complete\n`);
 
     // =========================================================================
-    // Phase 4: listCheckpoints() — standalone
+    // Phase 4: listCheckpoints() — standalone (with tag filter for isolation)
     // =========================================================================
     log("\u2500\u2500 Phase 4: listCheckpoints() standalone");
 
-    const allCheckpoints = await listCheckpoints(storageConfig);
+    // Use tag filter to isolate this test's checkpoints from other sessions
+    const testTag = checkpoint1.tag;
+    log(`  Using tag filter: ${testTag}`);
+    const allCheckpoints = await listCheckpoints(storageConfig, { tag: testTag });
     assertTrue(allCheckpoints.length >= 3, `listCheckpoints() returned >= 3 (got ${allCheckpoints.length})`);
     // Newest first — checkpoint3 should be first
     assertEq(allCheckpoints[0].id, checkpoint3.id, "First result is checkpoint3 (newest)");
@@ -235,7 +254,7 @@ async function main() {
     // =========================================================================
     log("\u2500\u2500 Phase 5: listCheckpoints() with limit");
 
-    const limited = await listCheckpoints(storageConfig, { limit: 2 });
+    const limited = await listCheckpoints(storageConfig, { limit: 2, tag: testTag });
     assertEq(limited.length, 2, "limit=2 returns 2 entries");
     assertEq(limited[0].id, checkpoint3.id, "Limited: first is newest");
 
@@ -251,7 +270,7 @@ async function main() {
       .withSandbox(provider)
       .withStorage(storageConfig);
 
-    const instanceList = await evolve2.listCheckpoints({ limit: 1 });
+    const instanceList = await evolve2.listCheckpoints({ limit: 1, tag: testTag });
     assertEq(instanceList.length, 1, "Evolve.listCheckpoints({ limit: 1 }) returns 1");
     assertEq(instanceList[0].id, checkpoint3.id, "Instance list returns newest checkpoint");
 

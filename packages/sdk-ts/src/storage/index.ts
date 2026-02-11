@@ -760,7 +760,7 @@ function resolveStorageForStandalone(config: StorageConfig): ResolvedStorageConf
  */
 async function s3ListCheckpoints(
   storage: ResolvedStorageConfig,
-  options?: { limit?: number }
+  options?: { limit?: number; tag?: string }
 ): Promise<CheckpointInfo[]> {
   const { s3 } = await loadAwsSdk();
   const client = await getS3Client(storage);
@@ -814,7 +814,13 @@ async function s3ListCheckpoints(
     })
   );
 
-  return results.filter((r): r is CheckpointInfo => r !== null);
+  const valid = results.filter((r): r is CheckpointInfo => r !== null);
+
+  // Post-filter by tag if requested
+  if (options?.tag) {
+    return valid.filter((r) => r.tag === options.tag);
+  }
+  return valid;
 }
 
 /**
@@ -822,10 +828,11 @@ async function s3ListCheckpoints(
  */
 async function gatewayListCheckpoints(
   storage: ResolvedStorageConfig,
-  options?: { limit?: number }
+  options?: { limit?: number; tag?: string }
 ): Promise<CheckpointInfo[]> {
   const params = new URLSearchParams();
   if (options?.limit) params.set("limit", String(options.limit));
+  if (options?.tag) params.set("tag", options.tag);
 
   const url = `${storage.gatewayUrl}/api/checkpoints${params.toString() ? `?${params}` : ""}`;
   const response = await fetch(url, {
@@ -858,15 +865,15 @@ async function gatewayListCheckpoints(
  */
 export async function listCheckpoints(
   config: StorageConfig,
-  options?: { limit?: number }
+  options?: { limit?: number; tag?: string }
 ): Promise<CheckpointInfo[]> {
   const resolved = resolveStorageForStandalone(config);
   const normalizedLimit = options?.limit && options.limit > 0 ? Math.min(options.limit, 500) : 100;
 
   if (resolved.mode === "byok") {
-    return s3ListCheckpoints(resolved, { limit: normalizedLimit });
+    return s3ListCheckpoints(resolved, { limit: normalizedLimit, tag: options?.tag });
   } else {
-    return gatewayListCheckpoints(resolved, { limit: normalizedLimit });
+    return gatewayListCheckpoints(resolved, { limit: normalizedLimit, tag: options?.tag });
   }
 }
 

@@ -588,8 +588,9 @@ export class Evolve extends EventEmitter {
    * Does not require an agent or sandbox — only storage configuration.
    *
    * @param options.limit - Maximum number of checkpoints to return
+   * @param options.tag - Filter by session tag (gateway mode: server-side, BYOK: post-filter)
    */
-  async listCheckpoints(options?: { limit?: number }): Promise<CheckpointInfo[]> {
+  async listCheckpoints(options?: { limit?: number; tag?: string }): Promise<CheckpointInfo[]> {
     if (this.config.storage === undefined) {
       throw new Error("Storage not configured. Call .withStorage().");
     }

@@ -156,7 +156,7 @@ export const DEFAULT_WORKING_DIR = "/home/user/workspace";
  * Default dashboard URL for session sync
  * @internal
  */
-export const DEFAULT_DASHBOARD_URL = "https://dashboard.evolvingmachines.ai";
+export const DEFAULT_DASHBOARD_URL = process.env.EVOLVE_DASHBOARD_URL || "https://dashboard.evolvingmachines.ai";
 
 /**
  * Local storage directory for session logs (relative to home)

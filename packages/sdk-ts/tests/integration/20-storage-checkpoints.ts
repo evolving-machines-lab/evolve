@@ -1,23 +1,27 @@
 #!/usr/bin/env tsx
 /**
- * Integration Test 20: Storage Checkpoints (BYOK)
+ * Integration Test 20: Storage Checkpoints (BYOK + Gateway)
  *
- * End-to-end test for checkpoint create, restore, dedup, and error cases
- * against a real S3 bucket. Tests the full lifecycle:
+ * End-to-end test for checkpoint create, restore, dedup, and error cases.
+ * Supports two modes via TEST_STORAGE_MODE env var:
+ *   - "byok" (default): direct S3 access with user credentials
+ *   - "gateway": dashboard API endpoints (no direct S3 access needed)
+ *
+ * Tests the full lifecycle:
  *   1. Run agent → auto-checkpoint → verify checkpoint in response
  *   2. Kill sandbox → restore from checkpoint → verify agent resumes
  *   3. Dedup: compare hashes between checkpoints
  *   4. Error cases: nonexistent ID, from + withSession() conflict
- *   5. Cleanup: delete all test objects from S3
+ *   5. Cleanup: delete all test objects from S3 (BYOK only)
  *
  * Requires:
- *   EVOLVE_API_KEY — LLM gateway
+ *   EVOLVE_API_KEY — LLM gateway (both modes) + dashboard auth (gateway mode)
  *   E2B_API_KEY — sandbox provider
- *   AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY — S3 credentials (via default chain)
+ *   AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY — S3 credentials (BYOK only)
  *
  * Usage:
- *   npm run test:20
  *   npx tsx tests/integration/20-storage-checkpoints.ts
+ *   TEST_STORAGE_MODE=gateway npx tsx tests/integration/20-storage-checkpoints.ts
  */
 
 import { Evolve } from "../../dist/index.js";
@@ -41,7 +45,14 @@ const PROVIDER_LABEL = PROVIDER_NAME || "default";
 const LOGS_DIR = resolve(__dirname, `../test-logs/20-storage-checkpoints-${PROVIDER_LABEL}`);
 const STORAGE_URL = `s3://swarmkit-test-checkpoints-905418019965/integration-test-${PROVIDER_LABEL}/`;
 const STORAGE_REGION = "us-west-2";
+const STORAGE_MODE = (process.env.TEST_STORAGE_MODE || "byok") as "byok" | "gateway";
+const IS_GATEWAY = STORAGE_MODE === "gateway";
 const TIMEOUT = 180000; // 3 min per run
+
+function getStorageConfig() {
+  if (IS_GATEWAY) return {}; // SDK reads EVOLVE_API_KEY from env → gateway mode
+  return { url: STORAGE_URL, region: STORAGE_REGION };
+}
 
 // =============================================================================
 // HELPERS
@@ -96,6 +107,10 @@ async function assertThrows(fn: () => Promise<unknown>, substring: string, label
 
 async function cleanupS3Prefix() {
   log("\n── Phase 5: Cleanup S3 test objects");
+  if (IS_GATEWAY) {
+    log("  ○ Skipping S3 cleanup (gateway mode — dashboard manages storage)");
+    return;
+  }
   try {
     const { S3Client, ListObjectsV2Command, DeleteObjectsCommand } = await import("@aws-sdk/client-s3");
     const client = new S3Client({ region: STORAGE_REGION });
@@ -141,14 +156,14 @@ async function main() {
   rmSync(LOGS_DIR, { recursive: true, force: true });
   mkdirSync(LOGS_DIR, { recursive: true });
 
-  log("Starting storage checkpoint integration test...\n");
+  log(`Starting storage checkpoint integration test (${STORAGE_MODE} mode)...\n`);
   const start = Date.now();
 
   const agentConfig = getAgentConfig("claude");
   const provider = PROVIDER_NAME
     ? getSandboxProviderByName(PROVIDER_NAME)
     : getSandboxProvider();
-  log(`Using provider: ${PROVIDER_LABEL}`);
+  log(`Using provider: ${PROVIDER_LABEL}, storage: ${STORAGE_MODE}`);
 
   let checkpoint1: CheckpointInfo | undefined;
   let checkpoint2: CheckpointInfo | undefined;
@@ -160,7 +175,7 @@ async function main() {
     const evolve1 = new Evolve()
       .withAgent(agentConfig)
       .withSandbox(provider)
-      .withStorage({ url: STORAGE_URL, region: STORAGE_REGION });
+      .withStorage(getStorageConfig());
 
     log("  Running prompt...");
     const run1 = await evolve1.run({
@@ -194,7 +209,7 @@ async function main() {
     const evolve2 = new Evolve()
       .withAgent(agentConfig)
       .withSandbox(provider)
-      .withStorage({ url: STORAGE_URL, region: STORAGE_REGION });
+      .withStorage(getStorageConfig());
 
     log(`  Restoring from checkpoint ${checkpoint1.id}...`);
     const run2 = await evolve2.run({
@@ -236,7 +251,7 @@ async function main() {
     const evolve3 = new Evolve()
       .withAgent(agentConfig)
       .withSandbox(provider)
-      .withStorage({ url: STORAGE_URL, region: STORAGE_REGION });
+      .withStorage(getStorageConfig());
 
     await assertThrows(
       () => evolve3.run({ prompt: "test", from: "nonexistent-id-12345", timeoutMs: 30000 }),
@@ -251,7 +266,7 @@ async function main() {
         const e = new Evolve()
           .withAgent(agentConfig)
           .withSandbox(provider)
-          .withStorage({ url: STORAGE_URL, region: STORAGE_REGION })
+          .withStorage(getStorageConfig())
           .withSession("some-sandbox-id");
         return e.run({ prompt: "test", from: checkpoint1.id, timeoutMs: 30000 });
       },
