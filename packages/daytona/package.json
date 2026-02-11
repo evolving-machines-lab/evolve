@@ -32,7 +32,8 @@
   "scripts": {
     "build": "tsup --minify",
     "dev": "tsup --watch",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "test:unit": "tsx tests/unit/daytona-commands.test.ts"
   },
   "peerDependencies": {
     "@daytonaio/sdk": ">=0.130.0"

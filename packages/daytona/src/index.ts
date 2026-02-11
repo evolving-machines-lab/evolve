@@ -71,6 +71,9 @@ function wrapCommand(command: string, cwd?: string, envs?: Record<string, string
   return wrapped;
 }
 
+/** @internal Test-only export for unit testing wrapCommand logic. */
+export const _testWrapCommand = wrapCommand;
+
 // ============================================================
 // CORE TYPES
 // ============================================================
