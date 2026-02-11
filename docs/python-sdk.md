@@ -1664,11 +1664,14 @@ for ckpt in checkpoints:
 ```python
 from evolve import list_checkpoints, StorageConfig
 
-# BYOK
-all_checkpoints = await list_checkpoints(StorageConfig(url='s3://my-bucket/snapshots/'))
+# BYOK — same limit=/tag= options as evolve.list_checkpoints()
+all_checkpoints = await list_checkpoints(
+    StorageConfig(url='s3://my-bucket/snapshots/'),
+    limit=10, tag='my-session',
+)
 
 # Gateway (reads EVOLVE_API_KEY from env)
-all_checkpoints = await list_checkpoints(StorageConfig())
+recent = await list_checkpoints(StorageConfig(), limit=5)
 ```
 
 Results are sorted newest first.

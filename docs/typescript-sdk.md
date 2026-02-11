@@ -1628,11 +1628,14 @@ for (const ckpt of checkpoints) {
 ```ts
 import { listCheckpoints } from "@evolvingmachines/sdk";
 
-// BYOK
-const all = await listCheckpoints({ url: "s3://my-bucket/snapshots/" });
+// BYOK — same { limit?, tag? } options as evolve.listCheckpoints()
+const all = await listCheckpoints(
+    { url: "s3://my-bucket/snapshots/" },
+    { limit: 10, tag: "my-session" },
+);
 
 // Gateway (reads EVOLVE_API_KEY from env)
-const all = await listCheckpoints({});
+const recent = await listCheckpoints({}, { limit: 5 });
 ```
 
 Results are sorted newest first.
