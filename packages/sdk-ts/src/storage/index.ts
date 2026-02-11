@@ -853,11 +853,12 @@ export async function listCheckpoints(
   options?: { limit?: number }
 ): Promise<CheckpointInfo[]> {
   const resolved = resolveStorageForStandalone(config);
+  const normalizedLimit = options?.limit && options.limit > 0 ? Math.min(options.limit, 500) : 100;
 
   if (resolved.mode === "byok") {
-    return s3ListCheckpoints(resolved, options);
+    return s3ListCheckpoints(resolved, { limit: normalizedLimit });
   } else {
-    return gatewayListCheckpoints(resolved, options);
+    return gatewayListCheckpoints(resolved, { limit: normalizedLimit });
   }
 }
 
