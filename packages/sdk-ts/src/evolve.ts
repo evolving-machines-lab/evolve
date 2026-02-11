@@ -32,7 +32,8 @@ import type { OutputEvent } from "./parsers";
 import { isZodSchema, resolveAgentConfig, resolveDefaultSandbox } from "./utils";
 import { composioHelpers } from "./composio";
 import { getGatewayMcpServers, DEFAULT_DASHBOARD_URL } from "./constants";
-import { resolveStorageConfig } from "./storage";
+import { resolveStorageConfig, listCheckpoints } from "./storage";
+import type { CheckpointInfo } from "./types";
 
 // =============================================================================
 // TYPES
@@ -480,11 +481,13 @@ export class Evolve extends EventEmitter {
     timeoutMs,
     background,
     from,
+    checkpointComment,
   }: {
     prompt: string;
     timeoutMs?: number;
     background?: boolean;
     from?: string;
+    checkpointComment?: string;
   }): Promise<AgentResponse> {
     // Mutual exclusivity: from + withSession()
     if (from && this.config.sandboxId) {
@@ -499,7 +502,7 @@ export class Evolve extends EventEmitter {
 
     const callbacks = this.createStreamCallbacks();
 
-    return this.agent!.run({ prompt, timeoutMs, background, from }, callbacks);
+    return this.agent!.run({ prompt, timeoutMs, background, from, checkpointComment }, callbacks);
   }
 
   /**
@@ -559,6 +562,38 @@ export class Evolve extends EventEmitter {
       throw new Error("Agent not initialized. Call run() first.");
     }
     return this.agent.getOutputFiles<T>(recursive);
+  }
+
+  // ===========================================================================
+  // CHECKPOINTING
+  // ===========================================================================
+
+  /**
+   * Create an explicit checkpoint of the current sandbox state.
+   *
+   * Requires a prior run() call (needs an active sandbox to snapshot).
+   *
+   * @param options.comment - Optional label for this checkpoint
+   */
+  async checkpoint(options?: { comment?: string }): Promise<CheckpointInfo> {
+    if (!this.agent) {
+      throw new Error("Agent not initialized. Call run() first.");
+    }
+    return this.agent.checkpoint(options);
+  }
+
+  /**
+   * List checkpoints (requires .withStorage()).
+   *
+   * Does not require an agent or sandbox — only storage configuration.
+   *
+   * @param options.limit - Maximum number of checkpoints to return
+   */
+  async listCheckpoints(options?: { limit?: number }): Promise<CheckpointInfo[]> {
+    if (this.config.storage === undefined) {
+      throw new Error("Storage not configured. Call .withStorage().");
+    }
+    return listCheckpoints(this.config.storage, options);
   }
 
   // ===========================================================================

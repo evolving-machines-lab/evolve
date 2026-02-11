@@ -360,8 +360,11 @@ export interface RunOptions {
   /** Run in background (returns immediately, process continues) */
   background?: boolean;
 
-  /** Restore from checkpoint ID before running (requires .withStorage()) */
+  /** Restore from checkpoint ID or "latest" before running (requires .withStorage()) */
   from?: string;
+
+  /** Optional comment for the auto-checkpoint created after this run */
+  checkpointComment?: string;
 }
 
 /** Options for executeCommand() */
@@ -624,4 +627,8 @@ export interface CheckpointInfo {
   model?: string;
   /** Workspace mode used when checkpoint was created */
   workspaceMode?: string;
+  /** Parent checkpoint ID — the checkpoint this was restored from (lineage tracking) */
+  parentId?: string;
+  /** User-provided label for this checkpoint */
+  comment?: string;
 }

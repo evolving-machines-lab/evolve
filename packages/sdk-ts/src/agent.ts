@@ -43,7 +43,7 @@ import { buildWorkerSystemPrompt } from "./prompts";
 import { isZodSchema } from "./utils";
 import { SessionLogger } from "./observability";
 import { setupComposio } from "./composio";
-import { createCheckpoint, restoreCheckpoint, type RestoreMetadata } from "./storage";
+import { createCheckpoint, restoreCheckpoint, getLatestCheckpoint, type RestoreMetadata } from "./storage";
 
 // Re-export types for external consumers
 export type {
@@ -110,6 +110,7 @@ export class Agent {
 
   // Storage / Checkpointing
   private readonly storage?: ResolvedStorageConfig;
+  private lastCheckpointId?: string;
 
   // Schema storage (mutually exclusive)
   private readonly zodSchema?: z.ZodType<unknown>;
@@ -566,11 +567,26 @@ export class Agent {
     options: RunOptions,
     callbacks?: StreamCallbacks
   ): Promise<AgentResponse> {
-    const { prompt, timeoutMs = DEFAULT_TIMEOUT_MS, background = false, from } = options;
+    const { prompt, timeoutMs = DEFAULT_TIMEOUT_MS, background = false, checkpointComment } = options;
+    let { from } = options;
     if (this.activeCommand) {
       throw new Error(
         "Agent is already running. Call interrupt(), wait for the active/background run to finish, or create a new Evolve instance."
       );
+    }
+
+    // =========================================================================
+    // RESOLVE "latest": convert to concrete checkpoint ID
+    // =========================================================================
+    if (from === "latest") {
+      if (!this.storage) {
+        throw new Error("Storage not configured. Call .withStorage() before using from: \"latest\".");
+      }
+      const latest = await getLatestCheckpoint(this.storage);
+      if (!latest) {
+        throw new Error("No checkpoints found for from: \"latest\".");
+      }
+      from = latest.id;
     }
 
     // =========================================================================
@@ -636,6 +652,8 @@ export class Agent {
 
         // Mark as resumed so CLI uses --continue flag
         this.hasRun = true;
+        // Track lineage: the checkpoint we restored from
+        this.lastCheckpointId = from;
         this.sandboxState = "ready";
         this.agentState = "idle";
         this.emitLifecycle(callbacks, "sandbox_ready");
@@ -789,8 +807,11 @@ export class Agent {
             tag: this.sessionLogger?.getTag() || "unknown",
             model: this.agentConfig.model || this.registry.defaultModel,
             workspaceMode: this.options.workspaceMode || "knowledge",
+            comment: checkpointComment,
+            parentId: this.lastCheckpointId,
           }
         );
+        this.lastCheckpointId = checkpoint.id;
       } catch (e) {
         // Non-fatal: log warning, return response without checkpoint
         console.warn(`[Evolve] Auto-checkpoint failed: ${(e as Error).message}`);
@@ -1020,6 +1041,42 @@ export class Agent {
   }
 
   // ===========================================================================
+  // EXPLICIT CHECKPOINT
+  // ===========================================================================
+
+  /**
+   * Create an explicit checkpoint of the current sandbox state.
+   *
+   * Requires an active sandbox (call run() first).
+   *
+   * @param options.comment - Optional label for this checkpoint
+   */
+  async checkpoint(options?: { comment?: string }): Promise<CheckpointInfo> {
+    if (!this.storage) {
+      throw new Error("Storage not configured. Call .withStorage().");
+    }
+    if (!this.sandbox) {
+      throw new Error("No active sandbox. Call run() first.");
+    }
+
+    const result = await createCheckpoint(
+      this.sandbox,
+      this.storage,
+      this.agentConfig.type,
+      this.workingDir,
+      {
+        tag: this.sessionLogger?.getTag() || "unknown",
+        model: this.agentConfig.model || this.registry.defaultModel,
+        workspaceMode: this.options.workspaceMode || "knowledge",
+        comment: options?.comment,
+        parentId: this.lastCheckpointId,
+      }
+    );
+    this.lastCheckpointId = result.id;
+    return result;
+  }
+
+  // ===========================================================================
   // SANDBOX CONTROL
   // ===========================================================================
 
@@ -1062,6 +1119,8 @@ export class Agent {
     this.agentState = "idle";
     // Assume existing sandbox may have prior runs - use continue command
     this.hasRun = true;
+    // Reset lineage — switching sandbox breaks checkpoint chain
+    this.lastCheckpointId = undefined;
   }
 
   /**
@@ -1177,6 +1236,7 @@ export class Agent {
     this.sandboxState = "stopped";
     this.agentState = "idle";
     this.hasRun = false;
+    this.lastCheckpointId = undefined;
     this.emitLifecycle(callbacks, "sandbox_killed");
   }
 

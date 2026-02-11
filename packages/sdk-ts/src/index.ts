@@ -228,7 +228,7 @@ export {
 } from "./utils";
 
 // =============================================================================
-// STORAGE (config resolution only — internals are not public API)
+// STORAGE
 // =============================================================================
 
-export { resolveStorageConfig } from "./storage";
+export { resolveStorageConfig, listCheckpoints } from "./storage";

@@ -15,6 +15,7 @@ import type {
   SandboxInstance,
 } from "../types";
 import { getAgentConfig } from "../registry";
+import { DEFAULT_DASHBOARD_URL } from "../constants";
 
 // =============================================================================
 // TEST HELPERS (internal — used by unit tests to inject mock AWS SDK)
@@ -465,6 +466,8 @@ async function gatewayCreateCheckpoint(
     agentType?: string;
     model?: string;
     workspaceMode?: string;
+    parentId?: string;
+    comment?: string;
   }
 ): Promise<{ id: string }> {
   const response = await fetch(`${storage.gatewayUrl}/api/checkpoints`, {
@@ -487,7 +490,7 @@ async function gatewayCreateCheckpoint(
 async function gatewayGetCheckpoint(
   storage: ResolvedStorageConfig,
   checkpointId: string
-): Promise<{ id: string; hash: string; tag: string; sizeBytes: number; timestamp: string; agentType?: string; model?: string; workspaceMode?: string }> {
+): Promise<{ id: string; hash: string; tag: string; sizeBytes: number; timestamp: string; agentType?: string; model?: string; workspaceMode?: string; parentId?: string; comment?: string }> {
   const response = await fetch(`${storage.gatewayUrl}/api/checkpoints/${checkpointId}`, {
     method: "GET",
     headers: {
@@ -521,7 +524,7 @@ export async function createCheckpoint(
   storage: ResolvedStorageConfig,
   agentType: AgentType,
   workingDir: string,
-  meta: { tag: string; model?: string; workspaceMode?: string }
+  meta: { tag: string; model?: string; workspaceMode?: string; parentId?: string; comment?: string }
 ): Promise<CheckpointInfo> {
   const timestamp = new Date().toISOString();
 
@@ -582,6 +585,8 @@ export async function createCheckpoint(
       agentType,
       model: meta.model,
       workspaceMode: meta.workspaceMode,
+      parentId: meta.parentId,
+      comment: meta.comment,
       sandboxId: sandbox.sandboxId,
     };
     await s3PutJson(storage, metadataKey(storage, checkpointId), metaObj);
@@ -609,6 +614,8 @@ export async function createCheckpoint(
       agentType,
       model: meta.model,
       workspaceMode: meta.workspaceMode,
+      parentId: meta.parentId,
+      comment: meta.comment,
     });
     checkpointId = created.id;
   }
@@ -625,6 +632,8 @@ export async function createCheckpoint(
     agentType,
     model: meta.model,
     workspaceMode: meta.workspaceMode,
+    parentId: meta.parentId,
+    comment: meta.comment,
   };
 }
 
@@ -712,4 +721,164 @@ export async function restoreCheckpoint(
   }
 
   return restoreMeta;
+}
+
+// =============================================================================
+// STANDALONE STORAGE RESOLUTION
+// =============================================================================
+
+/**
+ * Resolve storage config for standalone functions (listCheckpoints, getLatestCheckpoint).
+ *
+ * Bridges the gap between the standalone API (takes StorageConfig) and the internal
+ * resolveStorageConfig() which requires explicit gateway params. Reads EVOLVE_API_KEY
+ * from env for gateway mode detection.
+ */
+function resolveStorageForStandalone(config: StorageConfig): ResolvedStorageConfig {
+  const apiKey = process.env.EVOLVE_API_KEY;
+  const isGateway = !config.url && !config.bucket && !!apiKey;
+  return resolveStorageConfig(config, isGateway, DEFAULT_DASHBOARD_URL, apiKey);
+}
+
+// =============================================================================
+// LIST CHECKPOINTS
+// =============================================================================
+
+/**
+ * List checkpoints from BYOK S3 storage.
+ *
+ * Paginates all checkpoint metadata keys, sorts by LastModified descending,
+ * then fetches metadata JSON for the top N results only.
+ */
+async function s3ListCheckpoints(
+  storage: ResolvedStorageConfig,
+  options?: { limit?: number }
+): Promise<CheckpointInfo[]> {
+  const { s3 } = await loadAwsSdk();
+  const client = await getS3Client(storage);
+
+  const prefix = storage.prefix ? `${storage.prefix}/` : "";
+  const checkpointPrefix = `${prefix}checkpoints/`;
+
+  // Paginate to collect all .json object entries
+  const allEntries: Array<{ key: string; lastModified: Date }> = [];
+  let continuationToken: string | undefined;
+
+  do {
+    const params: Record<string, unknown> = {
+      Bucket: storage.bucket,
+      Prefix: checkpointPrefix,
+      ...(continuationToken && { ContinuationToken: continuationToken }),
+    };
+    const response = await client.send(new s3.ListObjectsV2Command(params));
+
+    if (response.Contents) {
+      for (const obj of response.Contents) {
+        if (obj.Key?.endsWith(".json") && obj.LastModified) {
+          allEntries.push({ key: obj.Key, lastModified: obj.LastModified });
+        }
+      }
+    }
+
+    continuationToken = response.IsTruncated ? response.NextContinuationToken : undefined;
+  } while (continuationToken);
+
+  if (allEntries.length === 0) return [];
+
+  // Sort by LastModified descending, Key descending as tie-breaker
+  allEntries.sort((a, b) => {
+    const timeDiff = b.lastModified.getTime() - a.lastModified.getTime();
+    if (timeDiff !== 0) return timeDiff;
+    return b.key < a.key ? -1 : b.key > a.key ? 1 : 0;
+  });
+
+  // Slice to limit
+  const limited = options?.limit ? allEntries.slice(0, options.limit) : allEntries;
+
+  // Fetch metadata JSON for top N only
+  const results = await Promise.all(
+    limited.map(async (entry) => {
+      try {
+        return await s3GetJson<CheckpointInfo>(storage, entry.key);
+      } catch {
+        return null;
+      }
+    })
+  );
+
+  return results.filter((r): r is CheckpointInfo => r !== null);
+}
+
+/**
+ * List checkpoints from Gateway mode (dashboard API).
+ */
+async function gatewayListCheckpoints(
+  storage: ResolvedStorageConfig,
+  options?: { limit?: number }
+): Promise<CheckpointInfo[]> {
+  const params = new URLSearchParams();
+  if (options?.limit) params.set("limit", String(options.limit));
+
+  const url = `${storage.gatewayUrl}/api/checkpoints${params.toString() ? `?${params}` : ""}`;
+  const response = await fetch(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${storage.gatewayApiKey}`,
+    },
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`Gateway list checkpoints failed (${response.status}): ${text}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * List checkpoints (standalone — no Evolve instance needed).
+ *
+ * BYOK mode: reads directly from S3.
+ * Gateway mode: reads EVOLVE_API_KEY from env, calls dashboard API.
+ *
+ * @example
+ * // BYOK
+ * const all = await listCheckpoints({ url: "s3://my-bucket/project/" });
+ *
+ * // Gateway
+ * const all = await listCheckpoints({});
+ */
+export async function listCheckpoints(
+  config: StorageConfig,
+  options?: { limit?: number }
+): Promise<CheckpointInfo[]> {
+  const resolved = resolveStorageForStandalone(config);
+
+  if (resolved.mode === "byok") {
+    return s3ListCheckpoints(resolved, options);
+  } else {
+    return gatewayListCheckpoints(resolved, options);
+  }
+}
+
+// =============================================================================
+// GET LATEST CHECKPOINT
+// =============================================================================
+
+/**
+ * Get the most recent checkpoint.
+ *
+ * BYOK: reuses s3ListCheckpoints with limit=1.
+ * Gateway: calls list endpoint with limit=1.
+ */
+export async function getLatestCheckpoint(
+  storage: ResolvedStorageConfig
+): Promise<CheckpointInfo | null> {
+  if (storage.mode === "byok") {
+    const results = await s3ListCheckpoints(storage, { limit: 1 });
+    return results[0] ?? null;
+  } else {
+    const results = await gatewayListCheckpoints(storage, { limit: 1 });
+    return results[0] ?? null;
+  }
 }
