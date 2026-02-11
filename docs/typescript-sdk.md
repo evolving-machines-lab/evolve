@@ -55,6 +55,7 @@ When using `EVOLVE_API_KEY`:
 
 - **Tracing:** Automatic tracing and agent analytics at [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) for observability and replay—no extra setup needed. Use `withSessionTagPrefix()` to label sessions for easy filtering.
 - **Browser Automation:** `browser-use` integration included—agents can browse the web, take screenshots, fill forms, and interact with pages out of the box.
+- **Checkpointing:** Snapshot sandbox state to Evolve-managed storage with `.withStorage()`—no S3 credentials needed. See [Storage & Checkpointing](#51-storage--checkpointing).
 
 ---
 
@@ -464,6 +465,10 @@ const evolve = new Evolve()
     // (optional) Prefix for observability logs
     .withSessionTagPrefix("my-agent")
 
+    // (optional) Storage for checkpoint persistence — snapshot sandbox to S3
+    .withStorage({ url: "s3://my-bucket/agent-snapshots/" })  // BYOK — your own S3 bucket
+    // .withStorage()                                          // Gateway — Evolve-managed (requires EVOLVE_API_KEY)
+
     // ─── Advanced ───────────────────────────────────────────────────────────────
 
     // (optional) MCP servers for agent tools
@@ -742,6 +747,7 @@ type AgentResponse = {
   exitCode: number;
   stdout: string;
   stderr: string;
+  checkpoint?: CheckpointInfo;  // Present when .withStorage() configured and run succeeded
 };
 ```
 
@@ -754,14 +760,19 @@ const result = await evolve.run({
     prompt: "Analyze the data and create a report",
     timeoutMs: 15 * 60 * 1000,                // (optional) Default 1 hour
     background: false,                         // (optional) Run in background
+    from: "ckpt_abc123",                       // (optional) Restore from checkpoint ID or "latest"
+    checkpointComment: "after analysis",       // (optional) Label for the auto-checkpoint
 });
 
 console.log(result.exitCode);
 console.log(result.stdout);
+console.log(result.checkpoint?.id);            // Checkpoint ID (if .withStorage() configured)
 ```
 
 - If `timeoutMs` is omitted the agent uses the TypeScript default of 3_600_000 ms (1 hour).
 - If `background` is `true`, the call returns immediately with a start handshake (`exitCode: 0`), not final completion. Completion is delivered asynchronously via `lifecycle` events (`run_background_complete` or `run_background_failed`), or by polling `status()`.
+- If `from` is set, the SDK restores a checkpoint into a fresh sandbox before running. Pass a checkpoint ID or `"latest"` to restore the most recent. Requires `.withStorage()`. Cannot be used with `.withSession()`.
+- If `checkpointComment` is set, the auto-checkpoint created after a successful run is labeled with this string.
 - Calling `run()` multiple times maintains the agent context / history.
 - Calling `run()` while another run or command is active throws immediately. Call `interrupt()` first or wait for the active operation to finish.
 
@@ -1274,6 +1285,10 @@ await evolve.resume(); // Reactivates same sandbox
 await evolve.kill();   // Destroys sandbox; next run() creates a new sandbox
 
 await evolve.setSession("existing-sandbox-id"); // Sets sandbox ID; reconnection happens on next run()
+
+// Checkpointing (requires .withStorage() — see Section 5.1)
+const ckpt = await evolve.checkpoint({ comment: "before refactor" });  // Explicit snapshot of current sandbox
+const list = await evolve.listCheckpoints({ limit: 10 });              // List checkpoints, newest first
 ```
 
 `withSession("sandbox-id")` is a builder method equivalent to `setSession()` - use it during initialization to reconnect to an existing sandbox.
@@ -1488,6 +1503,231 @@ await evolve.run({ prompt: 'Analyze dataset B' });  // Now working with sandbox 
 // Switch back to first sandbox
 await evolve.setSession(sessionA);
 await evolve.run({ prompt: 'Compare results' });  // Back to sandbox A
+```
+
+---
+
+## 5.1 Storage & Checkpointing
+
+Persist sandbox state beyond sandbox lifetime. Checkpoints snapshot `/home/user/` (workspace + agent config) to S3-compatible storage and can be restored into a fresh sandbox.
+
+- **Auto-checkpoint:** Every successful `run()` with `.withStorage()` creates a checkpoint automatically.
+- **Content-addressed dedup:** Archives are hashed (SHA-256). Same content = skip upload.
+- **Lineage tracking:** Each checkpoint records its `parentId`, forming a chain across runs and restores.
+
+### Modes
+
+| | BYOK | Gateway |
+|---|------|---------|
+| Setup | `.withStorage({ url: "s3://..." })` + AWS credentials | `.withStorage()` + `EVOLVE_API_KEY` |
+| Storage | Your S3/R2/MinIO bucket | Evolve-managed |
+| Metadata | JSON files in S3 | Dashboard database |
+
+### Configuration
+
+```ts
+// BYOK — your own S3 bucket
+const evolve = new Evolve()
+    .withAgent({ type: "claude" })
+    .withStorage({
+        url: "s3://my-bucket/agent-snapshots/",  // S3 URL (bucket + prefix)
+        region: "us-west-2",                      // (optional) Default: AWS_REGION env or us-east-1
+    });
+
+// BYOK — Cloudflare R2 / MinIO / custom endpoint
+const evolve = new Evolve()
+    .withAgent({ type: "claude" })
+    .withStorage({
+        url: "s3://my-bucket/prefix/",
+        endpoint: "https://acct.r2.cloudflarestorage.com",
+    });
+
+// Gateway — Evolve-managed storage (no S3 credentials needed)
+const evolve = new Evolve()
+    .withAgent({ type: "claude" })
+    .withStorage();  // Reads EVOLVE_API_KEY from env
+```
+
+**StorageConfig:**
+
+```ts
+interface StorageConfig {
+    url?: string;         // "s3://bucket/prefix" or "https://endpoint/bucket/prefix"
+    bucket?: string;      // Explicit bucket (overrides URL parsing)
+    prefix?: string;      // Key prefix (overrides URL parsing)
+    region?: string;      // AWS region (default: AWS_REGION env or "us-east-1")
+    endpoint?: string;    // Custom S3 endpoint (R2, MinIO, GCS)
+    credentials?: {       // Explicit credentials (default: AWS SDK credential chain)
+        accessKeyId: string;
+        secretAccessKey: string;
+    };
+}
+```
+
+### Auto-Checkpoint (via `run()`)
+
+Every successful foreground `run()` auto-creates a checkpoint:
+
+```ts
+const evolve = new Evolve()
+    .withAgent({ type: "claude" })
+    .withStorage({ url: "s3://my-bucket/snapshots/" });
+
+const result = await evolve.run({
+    prompt: "Build the report",
+    checkpointComment: "initial draft",  // (optional) Label
+});
+
+console.log(result.checkpoint?.id);       // "ckpt_m5abc_xyz123"
+console.log(result.checkpoint?.hash);     // SHA-256 of archive
+console.log(result.checkpoint?.comment);  // "initial draft"
+```
+
+### Explicit Checkpoint
+
+Snapshot at any point (between runs, after manual setup, etc.):
+
+```ts
+const ckpt = await evolve.checkpoint({ comment: "before refactor" });
+console.log(ckpt.id);  // "ckpt_m5def_abc456"
+```
+
+Requires an active sandbox (`run()` must have been called first).
+
+### Restore from Checkpoint
+
+Pass `from` to `run()` to restore a checkpoint into a fresh sandbox before running:
+
+```ts
+// Restore by checkpoint ID
+const result = await evolve.run({
+    prompt: "Continue where we left off",
+    from: "ckpt_m5abc_xyz123",
+});
+
+// Restore the most recent checkpoint
+const result = await evolve.run({
+    prompt: "Pick up from latest state",
+    from: "latest",
+});
+```
+
+- `from` creates a fresh sandbox, downloads the archive, verifies hash integrity, and extracts it.
+- Cannot be used with `.withSession()` (restore requires a fresh sandbox).
+- The restored checkpoint becomes the `parentId` for the next checkpoint, maintaining lineage.
+- Agent type and workspace mode must match the checkpoint (model changes are fine).
+
+### Listing Checkpoints
+
+**Instance method** (uses storage config from `.withStorage()`):
+
+```ts
+const checkpoints = await evolve.listCheckpoints({
+    limit: 10,   // (optional) Max results (default: 100, max: 500)
+    tag: "my-session-tag",  // (optional) Filter by session tag
+});
+
+for (const ckpt of checkpoints) {
+    console.log(ckpt.id, ckpt.comment, ckpt.timestamp);
+}
+```
+
+**Standalone function** (no Evolve instance needed):
+
+```ts
+import { listCheckpoints } from "@evolvingmachines/sdk";
+
+// BYOK
+const all = await listCheckpoints({ url: "s3://my-bucket/snapshots/" });
+
+// Gateway (reads EVOLVE_API_KEY from env)
+const all = await listCheckpoints({});
+```
+
+Results are sorted newest first.
+
+### Checkpoint Lineage
+
+Each checkpoint records `parentId`—the checkpoint it was created from. Consecutive runs build a chain:
+
+```ts
+const r1 = await evolve.run({ prompt: "Step 1" });
+// r1.checkpoint.parentId → undefined (first checkpoint)
+
+const r2 = await evolve.run({ prompt: "Step 2" });
+// r2.checkpoint.parentId → r1.checkpoint.id
+
+const r3 = await evolve.run({ prompt: "Step 3" });
+// r3.checkpoint.parentId → r2.checkpoint.id
+```
+
+Restoring from a checkpoint sets that checkpoint as the parent for subsequent checkpoints:
+
+```ts
+// Later: restore from r1 and branch
+const r4 = await evolve.run({ prompt: "Branch from step 1", from: r1.checkpoint.id });
+// r4.checkpoint.parentId → r1.checkpoint.id (not r3)
+```
+
+### CheckpointInfo
+
+```ts
+interface CheckpointInfo {
+    id: string;              // Checkpoint ID — pass as `from` to restore
+    hash: string;            // SHA-256 of tar.gz archive
+    tag: string;             // Session tag at checkpoint time
+    timestamp: string;       // ISO 8601
+    sizeBytes?: number;      // Archive size in bytes
+    agentType?: string;      // "claude" | "codex" | "gemini" | "qwen"
+    model?: string;          // Model used
+    workspaceMode?: string;  // "knowledge" | "swe"
+    parentId?: string;       // Parent checkpoint ID (lineage)
+    comment?: string;        // User-provided label
+}
+```
+
+### End-to-End Example
+
+```ts
+import { Evolve, listCheckpoints } from "@evolvingmachines/sdk";
+
+// 1. Create and checkpoint
+const evolve = new Evolve()
+    .withAgent({ type: "claude" })
+    .withStorage({ url: "s3://my-bucket/project/" });
+
+const r1 = await evolve.run({
+    prompt: "Create a file called report.txt with 'Draft v1'",
+    checkpointComment: "initial draft",
+});
+console.log("Checkpoint 1:", r1.checkpoint?.id);
+
+// 2. Second run — auto-chains parentId
+const r2 = await evolve.run({
+    prompt: "Append ' - reviewed' to report.txt",
+    checkpointComment: "reviewed",
+});
+console.log("Checkpoint 2:", r2.checkpoint?.id);
+console.log("Parent:", r2.checkpoint?.parentId);  // → r1.checkpoint.id
+
+await evolve.kill();
+
+// 3. Restore into fresh sandbox
+const evolve2 = new Evolve()
+    .withAgent({ type: "claude" })
+    .withStorage({ url: "s3://my-bucket/project/" });
+
+const r3 = await evolve2.run({
+    prompt: "Read report.txt — what does it say?",
+    from: r1.checkpoint!.id,  // Restore from checkpoint 1
+});
+// Agent sees "Draft v1" (not the reviewed version)
+
+await evolve2.kill();
+
+// 4. List all checkpoints
+const all = await listCheckpoints({ url: "s3://my-bucket/project/" });
+console.log(`${all.length} checkpoints (newest first)`);
 ```
 
 ---
