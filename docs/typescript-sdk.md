@@ -747,7 +747,7 @@ type AgentResponse = {
   exitCode: number;
   stdout: string;
   stderr: string;
-  checkpoint?: CheckpointInfo;  // Present when .withStorage() configured and run succeeded
+  checkpoint?: CheckpointInfo;  // Present when .withStorage() configured and run succeeded — see Section 5.1
 };
 ```
 
@@ -772,7 +772,7 @@ console.log(result.checkpoint?.id);            // Checkpoint ID (if .withStorage
 - If `timeoutMs` is omitted the agent uses the TypeScript default of 3_600_000 ms (1 hour).
 - If `background` is `true`, the call returns immediately with a start handshake (`exitCode: 0`), not final completion. Completion is delivered asynchronously via `lifecycle` events (`run_background_complete` or `run_background_failed`), or by polling `status()`.
 - If `from` is set, the SDK restores a checkpoint into a fresh sandbox before running. Pass a checkpoint ID or `"latest"` to restore the most recent. Requires `.withStorage()`. Cannot be used with `.withSession()`.
-- If `checkpointComment` is set, the auto-checkpoint created after a successful run is labeled with this string.
+- If `checkpointComment` is set, the auto-checkpoint created after a successful run is labeled with this string. Requires `.withStorage()`.
 - Calling `run()` multiple times maintains the agent context / history.
 - Calling `run()` while another run or command is active throws immediately. Call `interrupt()` first or wait for the active operation to finish.
 
@@ -1370,16 +1370,7 @@ const output = await evolve.getOutputFiles();
 console.log(output.data);  // { property_name: '...', units: 120, ... }
 ```
 
-When a schema is provided, `getOutputFiles()` automatically validates `output/result.json` and returns:
-
-```ts
-interface OutputResult<T> {
-    files: FileMap,                   // All output files
-    data: T | null,                   // Parsed & validated result.json (null if failed)
-    error?: string,                   // Validation/parse error message
-    rawData?: string,                 // Raw result.json for debugging failed validation
-}
-```
+When a schema is provided, `getOutputFiles()` automatically validates `output/result.json` and returns `OutputResult<T>` (see [Section 3.5](#35-download-sandbox--local)).
 
 ```ts
 // Type-safe access to validated data

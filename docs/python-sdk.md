@@ -59,6 +59,7 @@ When using `EVOLVE_API_KEY`:
 
 - **Tracing:** Automatic tracing and agent analytics at [dashboard.evolvingmachines.ai/traces](https://dashboard.evolvingmachines.ai/traces) for observability and replay—no extra setup needed. Use `session_tag_prefix` to label sessions for easy filtering.
 - **Browser Automation:** `browser-use` integration included—agents can browse the web, take screenshots, fill forms, and interact with pages out of the box.
+- **Checkpointing:** Snapshot sandbox state to Evolve-managed storage with `storage=StorageConfig()`—no S3 credentials needed. See [Storage & Checkpointing](#51-storage--checkpointing).
 
 ---
 
@@ -435,7 +436,7 @@ sandbox = DaytonaProvider(
 
 ```python
 import os
-from evolve import Evolve, AgentConfig, E2BProvider, ComposioSetup, ComposioConfig
+from evolve import Evolve, AgentConfig, E2BProvider, StorageConfig, ComposioSetup, ComposioConfig
 
 # Sandbox provider (auto-resolved from E2B_API_KEY, or explicit)
 sandbox = E2BProvider(
@@ -485,6 +486,10 @@ evolve = Evolve(
 
     # (optional) Prefix for observability logs
     session_tag_prefix='my-agent',
+
+    # (optional) Storage for checkpoint persistence — snapshot sandbox to S3
+    storage=StorageConfig(url='s3://my-bucket/agent-snapshots/'),  # BYOK — your own S3 bucket
+    # storage=StorageConfig(),                                      # Gateway — Evolve-managed (requires EVOLVE_API_KEY)
 
     # ─────────────────────────────────────────────────────────────
     # Advanced
@@ -785,6 +790,7 @@ class AgentResponse:
     exit_code: int
     stdout: str
     stderr: str
+    checkpoint: CheckpointInfo | None  # Present when storage= configured and run succeeded — see Section 5.1
 
 @dataclass
 class SessionStatus:
@@ -805,14 +811,19 @@ result = await evolve.run(
     prompt='Analyze the data and create a report',
     timeout_ms=15 * 60 * 1000,                # (optional) Default 1 hour
     background=False,                          # (optional) Run in background
+    from_checkpoint='ckpt_abc123',             # (optional) Restore from checkpoint ID or 'latest'
+    checkpoint_comment='after analysis',       # (optional) Label for the auto-checkpoint
 )
 
 print(result.exit_code)
 print(result.stdout)
+print(result.checkpoint.id if result.checkpoint else None)  # Checkpoint ID (if storage= configured)
 ```
 
 - If `timeout_ms` is omitted the agent uses the default of 3_600_000 ms (1 hour).
 - If `background` is `True`, the call returns immediately with a start handshake (`exit_code=0`), not final completion. Completion is delivered asynchronously via `lifecycle` events (`run_background_complete` or `run_background_failed`) or by polling `status()`.
+- If `from_checkpoint` is set, the SDK restores a checkpoint into a fresh sandbox before running. Pass a checkpoint ID or `'latest'` to restore the most recent. Requires `storage=`. Cannot be used with `sandbox_id=`.
+- If `checkpoint_comment` is set, the auto-checkpoint created after a successful run is labeled with this string. Requires `storage=`.
 - Calling `run()` multiple times maintains the agent context / history.
 - Calling `run()` while another run or command is active throws immediately. Call `interrupt()` first or wait for the active operation to finish.
 
@@ -1293,6 +1304,10 @@ await evolve.resume()  # Reactivates same sandbox
 await evolve.kill()    # Destroys sandbox; next run() creates a new sandbox
 
 await evolve.set_session('existing-sandbox-id')  # Sets sandbox ID; reconnection happens on next run()
+
+# Checkpointing (requires storage= — see Section 5.1)
+ckpt = await evolve.checkpoint(comment='before refactor')   # Explicit snapshot of current sandbox
+checkpoints = await evolve.list_checkpoints(limit=10)       # List checkpoints, newest first
 ```
 
 `sandbox_id` constructor parameter is equivalent to `set_session()` - use it during initialization to reconnect to an existing sandbox.
@@ -1374,16 +1389,7 @@ output = await evolve.get_output_files()
 print(output.data)  # CREData(property_name='...', units=120, ...)
 ```
 
-When a schema is provided, `get_output_files()` automatically validates `output/result.json` and returns:
-
-```python
-@dataclass
-class OutputResult:
-    files: Dict[str, bytes]           # All output files
-    data: Any | None                  # Parsed & validated result.json (None if failed)
-    error: str | None                 # Validation/parse error message
-    raw_data: str | None              # Raw result.json for debugging failed validation
-```
+When a schema is provided, `get_output_files()` automatically validates `output/result.json` and returns `OutputResult` (see [Section 3.5](#35-download-sandbox--local)).
 
 ```python
 # Type-safe access to validated data
@@ -1522,6 +1528,235 @@ await evolve.run(prompt='Analyze dataset B')  # Now working with sandbox B
 # Switch back to first sandbox
 await evolve.set_session(session_a)
 await evolve.run(prompt='Compare results')  # Back to sandbox A
+```
+
+---
+
+## 5.1 Storage & Checkpointing
+
+Persist sandbox state beyond sandbox lifetime. Checkpoints snapshot `/home/user/` (workspace + agent config) to S3-compatible storage and can be restored into a fresh sandbox.
+
+- **Auto-checkpoint:** Every successful `run()` with `storage=` creates a checkpoint automatically.
+- **Content-addressed dedup:** Archives are hashed (SHA-256). Same content = skip upload.
+- **Lineage tracking:** Each checkpoint records its `parent_id`, forming a chain across runs and restores.
+
+### Modes
+
+| | BYOK | Gateway |
+|---|------|---------|
+| Setup | `storage=StorageConfig(url='s3://...')` + AWS credentials | `storage=StorageConfig()` + `EVOLVE_API_KEY` |
+| Storage | Your S3/R2/MinIO bucket | Evolve-managed |
+| Metadata | JSON files in S3 | Dashboard database |
+
+### Configuration
+
+```python
+from evolve import Evolve, AgentConfig, StorageConfig
+
+# BYOK — your own S3 bucket
+evolve = Evolve(
+    config=AgentConfig(type='claude'),
+    storage=StorageConfig(
+        url='s3://my-bucket/agent-snapshots/',  # S3 URL (bucket + prefix)
+        region='us-west-2',                      # (optional) Default: AWS_REGION env or us-east-1
+    ),
+)
+
+# BYOK — Cloudflare R2 / MinIO / custom endpoint
+evolve = Evolve(
+    config=AgentConfig(type='claude'),
+    storage=StorageConfig(
+        url='s3://my-bucket/prefix/',
+        endpoint='https://acct.r2.cloudflarestorage.com',
+    ),
+)
+
+# Gateway — Evolve-managed storage (no S3 credentials needed)
+evolve = Evolve(
+    config=AgentConfig(type='claude'),
+    storage=StorageConfig(),  # Reads EVOLVE_API_KEY from env
+)
+```
+
+**StorageConfig:**
+
+```python
+@dataclass
+class StorageConfig:
+    url: str | None = None          # 's3://bucket/prefix' or 'https://endpoint/bucket/prefix'
+    bucket: str | None = None       # Explicit bucket (overrides URL parsing)
+    prefix: str | None = None       # Key prefix (overrides URL parsing)
+    region: str | None = None       # AWS region (default: AWS_REGION env or 'us-east-1')
+    endpoint: str | None = None     # Custom S3 endpoint (R2, MinIO, GCS)
+    credentials: dict | None = None # {'access_key_id': '...', 'secret_access_key': '...'} (default: AWS SDK chain)
+```
+
+### Auto-Checkpoint (via `run()`)
+
+Every successful foreground `run()` auto-creates a checkpoint:
+
+```python
+evolve = Evolve(
+    config=AgentConfig(type='claude'),
+    storage=StorageConfig(url='s3://my-bucket/snapshots/'),
+)
+
+result = await evolve.run(
+    prompt='Build the report',
+    checkpoint_comment='initial draft',  # (optional) Label
+)
+
+print(result.checkpoint.id)       # 'ckpt_m5abc_xyz123'
+print(result.checkpoint.hash)     # SHA-256 of archive
+print(result.checkpoint.comment)  # 'initial draft'
+```
+
+### Explicit Checkpoint
+
+Snapshot at any point (between runs, after manual setup, etc.):
+
+```python
+ckpt = await evolve.checkpoint(comment='before refactor')
+print(ckpt.id)  # 'ckpt_m5def_abc456'
+```
+
+Requires an active sandbox (`run()` must have been called first).
+
+### Restore from Checkpoint
+
+Pass `from_checkpoint` to `run()` to restore a checkpoint into a fresh sandbox before running:
+
+```python
+# Restore by checkpoint ID
+result = await evolve.run(
+    prompt='Continue where we left off',
+    from_checkpoint='ckpt_m5abc_xyz123',
+)
+
+# Restore the most recent checkpoint
+result = await evolve.run(
+    prompt='Pick up from latest state',
+    from_checkpoint='latest',
+)
+```
+
+- `from_checkpoint` creates a fresh sandbox, downloads the archive, verifies hash integrity, and extracts it.
+- Cannot be used with `sandbox_id=` (restore requires a fresh sandbox).
+- The restored checkpoint becomes the `parent_id` for the next checkpoint, maintaining lineage.
+- Agent type and workspace mode must match the checkpoint (model changes are fine).
+
+### Listing Checkpoints
+
+**Instance method** (uses storage config from `storage=`):
+
+```python
+checkpoints = await evolve.list_checkpoints(
+    limit=10,                    # (optional) Max results (default: 100, max: 500)
+    tag='my-session-tag',        # (optional) Filter by session tag
+)
+
+for ckpt in checkpoints:
+    print(ckpt.id, ckpt.comment, ckpt.timestamp)
+```
+
+**Standalone function** (no Evolve instance needed):
+
+```python
+from evolve import list_checkpoints, StorageConfig
+
+# BYOK
+all_checkpoints = await list_checkpoints(StorageConfig(url='s3://my-bucket/snapshots/'))
+
+# Gateway (reads EVOLVE_API_KEY from env)
+all_checkpoints = await list_checkpoints(StorageConfig())
+```
+
+Results are sorted newest first.
+
+### Checkpoint Lineage
+
+Each checkpoint records `parent_id`—the checkpoint it was created from. Consecutive runs build a chain:
+
+```python
+r1 = await evolve.run(prompt='Step 1')
+# r1.checkpoint.parent_id → None (first checkpoint)
+
+r2 = await evolve.run(prompt='Step 2')
+# r2.checkpoint.parent_id → r1.checkpoint.id
+
+r3 = await evolve.run(prompt='Step 3')
+# r3.checkpoint.parent_id → r2.checkpoint.id
+```
+
+Restoring from a checkpoint sets that checkpoint as the parent for subsequent checkpoints:
+
+```python
+# Later: restore from r1 and branch
+r4 = await evolve.run(prompt='Branch from step 1', from_checkpoint=r1.checkpoint.id)
+# r4.checkpoint.parent_id → r1.checkpoint.id (not r3)
+```
+
+### CheckpointInfo
+
+```python
+@dataclass
+class CheckpointInfo:
+    id: str                       # Checkpoint ID — pass as from_checkpoint to restore
+    hash: str                     # SHA-256 of tar.gz archive
+    tag: str                      # Session tag at checkpoint time
+    timestamp: str                # ISO 8601
+    size_bytes: int | None        # Archive size in bytes
+    agent_type: str | None        # 'claude' | 'codex' | 'gemini' | 'qwen'
+    model: str | None             # Model used
+    workspace_mode: str | None    # 'knowledge' | 'swe'
+    parent_id: str | None         # Parent checkpoint ID (lineage)
+    comment: str | None           # User-provided label
+```
+
+### End-to-End Example
+
+```python
+from evolve import Evolve, AgentConfig, StorageConfig, list_checkpoints
+
+# 1. Create and checkpoint
+evolve = Evolve(
+    config=AgentConfig(type='claude'),
+    storage=StorageConfig(url='s3://my-bucket/project/'),
+)
+
+r1 = await evolve.run(
+    prompt="Create a file called report.txt with 'Draft v1'",
+    checkpoint_comment='initial draft',
+)
+print('Checkpoint 1:', r1.checkpoint.id)
+
+# 2. Second run — auto-chains parent_id
+r2 = await evolve.run(
+    prompt="Append ' - reviewed' to report.txt",
+    checkpoint_comment='reviewed',
+)
+print('Checkpoint 2:', r2.checkpoint.id)
+print('Parent:', r2.checkpoint.parent_id)  # → r1.checkpoint.id
+
+await evolve.kill()
+
+# 3. Restore into fresh sandbox
+evolve2 = Evolve(
+    config=AgentConfig(type='claude'),
+    storage=StorageConfig(url='s3://my-bucket/project/'),
+)
+
+r3 = await evolve2.run(
+    prompt='Read report.txt — what does it say?',
+    from_checkpoint=r1.checkpoint.id,  # Restore from checkpoint 1
+)
+# Agent sees 'Draft v1' (not the reviewed version)
+
+await evolve2.kill()
+
+# 4. List all checkpoints
+all_checkpoints = await list_checkpoints(StorageConfig(url='s3://my-bucket/project/'))
+print(f'{len(all_checkpoints)} checkpoints (newest first)')
 ```
 
 ---
