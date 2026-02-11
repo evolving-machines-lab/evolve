@@ -38,7 +38,7 @@ export function _testSetAwsSdk(mock: { s3: any; presigner: any } | null): void {
 // PRESIGNED URL TTL
 // =============================================================================
 
-const PRESIGN_TTL_SECONDS = 3600; // 1 hour (matches vm0)
+const PRESIGN_TTL_SECONDS = 3600; // 1 hour — safe for large archives over slow connections
 
 // =============================================================================
 // CACHE EXCLUDES (size only — no security filtering)
