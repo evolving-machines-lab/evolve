@@ -359,8 +359,14 @@ async function s3ObjectExists(
   try {
     await client.send(new s3.HeadObjectCommand({ Bucket: storage.bucket, Key: key }));
     return true;
-  } catch {
-    return false;
+  } catch (err: unknown) {
+    // Only treat 404/NotFound as "doesn't exist". Re-throw auth, network, permission errors.
+    const name = (err as any)?.name || (err as Error)?.message || "";
+    const statusCode = (err as any)?.$metadata?.httpStatusCode;
+    if (statusCode === 404 || name === "NotFound" || name === "NoSuchKey") {
+      return false;
+    }
+    throw err;
   }
 }
 
@@ -549,79 +555,81 @@ export async function createCheckpoint(
   const parsed = parseInt(sizeResult.stdout.trim(), 10);
   const sizeBytes = Number.isNaN(parsed) ? undefined : parsed;
 
-  // 3. Dedup check + upload
+  // 3. Dedup check + upload (with guaranteed tar cleanup)
   let checkpointId: string;
 
-  if (storage.mode === "byok") {
-    const key = dataKey(storage, hash);
-    const exists = await s3ObjectExists(storage, key);
+  try {
+    if (storage.mode === "byok") {
+      const key = dataKey(storage, hash);
+      const exists = await s3ObjectExists(storage, key);
 
-    if (!exists) {
-      // Phase 1: Upload data
-      const putUrl = await presignUrl(storage, key, "put");
-      const uploadResult = await sandbox.commands.run(
-        `curl -sf -X PUT -H "Content-Type: application/gzip" --upload-file /tmp/evolve-ckpt.tar.gz "${putUrl}"`,
-        { timeoutMs: 300000 }
-      );
-      if (uploadResult.exitCode !== 0) {
-        throw new Error(`Checkpoint upload failed: ${uploadResult.stderr}`);
+      if (!exists) {
+        // Phase 1: Upload data
+        const putUrl = await presignUrl(storage, key, "put");
+        const uploadResult = await sandbox.commands.run(
+          `curl -sf -X PUT -H "Content-Type: application/gzip" --upload-file /tmp/evolve-ckpt.tar.gz "${putUrl}"`,
+          { timeoutMs: 300000 }
+        );
+        if (uploadResult.exitCode !== 0) {
+          throw new Error(`Checkpoint upload failed: ${uploadResult.stderr}`);
+        }
+
+        // Verify upload
+        const verified = await s3ObjectExists(storage, key);
+        if (!verified) {
+          throw new Error("Checkpoint upload verification failed (HeadObject)");
+        }
       }
 
-      // Verify upload
-      const verified = await s3ObjectExists(storage, key);
-      if (!verified) {
-        throw new Error("Checkpoint upload verification failed (HeadObject)");
+      // Phase 2: Write metadata
+      checkpointId = generateCheckpointId();
+      const metaObj = {
+        id: checkpointId,
+        hash,
+        tag: meta.tag,
+        timestamp,
+        sizeBytes,
+        agentType,
+        model: meta.model,
+        workspaceMode: meta.workspaceMode,
+        parentId: meta.parentId,
+        comment: meta.comment,
+        sandboxId: sandbox.sandboxId,
+      };
+      await s3PutJson(storage, metadataKey(storage, checkpointId), metaObj);
+    } else {
+      // Gateway mode
+      // Step 1: Presign (server does HeadObject for dedup)
+      const presignResult = await gatewayPresign(storage, meta.tag, hash, "put");
+
+      if (!presignResult.alreadyExists) {
+        // Phase 1: Upload data
+        const uploadResult = await sandbox.commands.run(
+          `curl -sf -X PUT -H "Content-Type: application/gzip" --upload-file /tmp/evolve-ckpt.tar.gz "${presignResult.url!}"`,
+          { timeoutMs: 300000 }
+        );
+        if (uploadResult.exitCode !== 0) {
+          throw new Error(`Checkpoint upload failed: ${uploadResult.stderr}`);
+        }
       }
+
+      // Phase 2: Write metadata via API
+      const created = await gatewayCreateCheckpoint(storage, {
+        tag: meta.tag,
+        hash,
+        sizeBytes: sizeBytes ?? 0,
+        agentType,
+        model: meta.model,
+        workspaceMode: meta.workspaceMode,
+        parentId: meta.parentId,
+        comment: meta.comment,
+      });
+      checkpointId = created.id;
     }
-
-    // Phase 2: Write metadata
-    checkpointId = generateCheckpointId();
-    const metaObj = {
-      id: checkpointId,
-      hash,
-      tag: meta.tag,
-      timestamp,
-      sizeBytes,
-      agentType,
-      model: meta.model,
-      workspaceMode: meta.workspaceMode,
-      parentId: meta.parentId,
-      comment: meta.comment,
-      sandboxId: sandbox.sandboxId,
-    };
-    await s3PutJson(storage, metadataKey(storage, checkpointId), metaObj);
-  } else {
-    // Gateway mode
-    // Step 1: Presign (server does HeadObject for dedup)
-    const presignResult = await gatewayPresign(storage, meta.tag, hash, "put");
-
-    if (!presignResult.alreadyExists) {
-      // Phase 1: Upload data
-      const uploadResult = await sandbox.commands.run(
-        `curl -sf -X PUT -H "Content-Type: application/gzip" --upload-file /tmp/evolve-ckpt.tar.gz "${presignResult.url!}"`,
-        { timeoutMs: 300000 }
-      );
-      if (uploadResult.exitCode !== 0) {
-        throw new Error(`Checkpoint upload failed: ${uploadResult.stderr}`);
-      }
-    }
-
-    // Phase 2: Write metadata via API
-    const created = await gatewayCreateCheckpoint(storage, {
-      tag: meta.tag,
-      hash,
-      sizeBytes: sizeBytes ?? 0,
-      agentType,
-      model: meta.model,
-      workspaceMode: meta.workspaceMode,
-      parentId: meta.parentId,
-      comment: meta.comment,
-    });
-    checkpointId = created.id;
+  } finally {
+    // 4. Cleanup — always runs even if upload/metadata write fails
+    await sandbox.commands.run("rm -f /tmp/evolve-ckpt.tar.gz", { timeoutMs: 10000 });
   }
-
-  // 4. Cleanup
-  await sandbox.commands.run("rm -f /tmp/evolve-ckpt.tar.gz", { timeoutMs: 10000 });
 
   return {
     id: checkpointId,

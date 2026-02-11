@@ -132,7 +132,10 @@ function installMockAwsSdk(): void {
         const key = cmd.input?.Key;
         if (cmd._type === "HeadObject") {
           if (!state.s3Objects.has(key)) {
-            throw new Error("NotFound");
+            const err: any = new Error("NotFound");
+            err.name = "NotFound";
+            err.$metadata = { httpStatusCode: 404 };
+            throw err;
           }
           return {};
         }

@@ -145,6 +145,9 @@ let s3ListObjects: Map<string, S3ObjectEntry> = new Map();
 /** When > 0, ListObjectsV2 returns at most this many entries per page. */
 let s3ListPageSize = 0;
 
+/** When set, HeadObject throws this error instead of the normal NotFound. */
+let s3HeadObjectError: Error | null = null;
+
 function installMockAwsSdk(): void {
   const s3 = {
     S3Client: class {
@@ -152,8 +155,14 @@ function installMockAwsSdk(): void {
       async send(cmd: any) {
         const key = cmd.input?.Key;
         if (cmd._type === "HeadObject") {
+          if (s3HeadObjectError) {
+            throw s3HeadObjectError;
+          }
           if (!state.s3Objects.has(key)) {
-            throw new Error("NotFound");
+            const err: any = new Error("NotFound");
+            err.name = "NotFound";
+            err.$metadata = { httpStatusCode: 404 };
+            throw err;
           }
           return {};
         }
@@ -1390,6 +1399,220 @@ async function testListCheckpointsByokPaginationWithLimit(): Promise<void> {
 }
 
 // =============================================================================
+// [14] s3ObjectExists — re-throws non-NotFound errors
+// =============================================================================
+
+async function testS3ObjectExistsRethrowsAuthError(): Promise<void> {
+  console.log("\n[14a] s3ObjectExists - re-throws auth/permission errors (not swallowed as false)");
+  resetState();
+  installMockAwsSdk();
+
+  // Inject an AccessDenied error (not 404)
+  const authErr: any = new Error("Access Denied");
+  authErr.name = "AccessDenied";
+  authErr.$metadata = { httpStatusCode: 403 };
+  s3HeadObjectError = authErr;
+
+  try {
+    const sandbox = createMockSandbox(checkpointCmdHandler());
+    // createCheckpoint calls s3ObjectExists for dedup check — it should re-throw the 403
+    await assertThrows(
+      () => createCheckpoint(
+        sandbox as any, BYOK_STORAGE as any, "claude", "/home/user/workspace",
+        { tag: "auth-test" }
+      ),
+      "Access Denied",
+      "s3ObjectExists re-throws AccessDenied (403) instead of returning false"
+    );
+  } finally {
+    s3HeadObjectError = null;
+  }
+}
+
+async function testS3ObjectExistsRethrowsNetworkError(): Promise<void> {
+  console.log("\n[14b] s3ObjectExists - re-throws network errors");
+  resetState();
+  installMockAwsSdk();
+
+  // Inject a network error (no $metadata, no NotFound name)
+  const netErr = new Error("NetworkingError: socket hang up");
+  s3HeadObjectError = netErr;
+
+  try {
+    const sandbox = createMockSandbox(checkpointCmdHandler());
+    await assertThrows(
+      () => createCheckpoint(
+        sandbox as any, BYOK_STORAGE as any, "claude", "/home/user/workspace",
+        { tag: "network-test" }
+      ),
+      "socket hang up",
+      "s3ObjectExists re-throws network errors instead of returning false"
+    );
+  } finally {
+    s3HeadObjectError = null;
+  }
+}
+
+async function testS3ObjectExistsReturns404AsFalse(): Promise<void> {
+  console.log("\n[14c] s3ObjectExists - returns false for 404/NotFound (normal behavior)");
+  resetState();
+  installMockAwsSdk();
+  s3HeadObjectError = null;
+
+  // Don't put the data key in s3Objects — HeadObject will throw NotFound
+  const sandbox = createMockSandbox(checkpointCmdHandler());
+  const result = await assertNoThrow(
+    () => createCheckpoint(
+      sandbox as any, BYOK_STORAGE as any, "claude", "/home/user/workspace",
+      { tag: "normal-dedup" }
+    ),
+    "createCheckpoint succeeds when HeadObject returns 404 (dedup correctly sees 'not found')"
+  ) as any;
+
+  assert(result?.id?.startsWith("ckpt_"), "Checkpoint created successfully (dedup upload path)");
+}
+
+// =============================================================================
+// [15] tar cleanup in finally block
+// =============================================================================
+
+async function testTarCleanupRunsOnUploadFailure(): Promise<void> {
+  console.log("\n[15a] createCheckpoint - tar cleanup runs even when upload fails");
+  resetState();
+  installMockAwsSdk();
+
+  // Create a sandbox where curl upload fails
+  const failUploadHandler: CmdHandler = (cmd: string) => {
+    if (cmd.includes("tar -czf")) return { stdout: HASH_64 + "\n", stderr: "", exitCode: 0 };
+    if (cmd.includes("stat -c")) return { stdout: "2048\n", stderr: "", exitCode: 0 };
+    if (cmd.includes("curl") && cmd.includes("PUT")) {
+      return { stdout: "", stderr: "curl: upload failed", exitCode: 1 };
+    }
+    if (cmd.includes("rm -f")) return { stdout: "", stderr: "", exitCode: 0 };
+    return { stdout: "", stderr: "", exitCode: 0 };
+  };
+
+  const sandbox = createMockSandbox(failUploadHandler);
+
+  try {
+    await createCheckpoint(
+      sandbox as any, BYOK_STORAGE as any, "claude", "/home/user/workspace",
+      { tag: "fail-upload" }
+    );
+    failed++;
+    console.log("  \u2717 Should have thrown on upload failure");
+  } catch {
+    passed++;
+    console.log("  \u2713 createCheckpoint throws on upload failure");
+  }
+
+  // The critical check: cleanup ran despite the throw
+  const cleanupRan = state.commandHistory.some(cmd => cmd.includes("rm -f /tmp/evolve-ckpt.tar.gz"));
+  assert(cleanupRan, "rm -f /tmp/evolve-ckpt.tar.gz ran in finally block after upload failure");
+}
+
+async function testTarCleanupRunsOnMetadataWriteFailure(): Promise<void> {
+  console.log("\n[15b] createCheckpoint - tar cleanup runs even when metadata write fails");
+  resetState();
+  installMockAwsSdk();
+
+  // Make PutObject (metadata write) throw
+  const origSend = (globalThis as any)[Symbol.for("evolve:awsSdkCache")]?.s3?.S3Client?.prototype?.send;
+
+  // We need a custom approach: inject a PutObject failure via state tracking
+  let putObjectShouldFail = false;
+
+  const sandbox = createMockSandbox(checkpointCmdHandler());
+
+  // Override the mock S3 to fail on PutObject for metadata
+  const mockSdk = (globalThis as any)[Symbol.for("evolve:awsSdkCache")];
+  const OrigClient = mockSdk.s3.S3Client;
+  const origClientSend = OrigClient.prototype?.send;
+
+  // Replace the S3Client class with one that fails on metadata PutObject
+  class FailMetaS3Client {
+    constructor(_config: any) {}
+    async send(cmd: any) {
+      const key = cmd.input?.Key;
+      if (cmd._type === "HeadObject") {
+        if (s3HeadObjectError) throw s3HeadObjectError;
+        if (!state.s3Objects.has(key)) {
+          const err: any = new Error("NotFound");
+          err.name = "NotFound";
+          err.$metadata = { httpStatusCode: 404 };
+          throw err;
+        }
+        return {};
+      }
+      if (cmd._type === "GetObject") {
+        const obj = state.s3Objects.get(key);
+        if (!obj) throw new Error("NoSuchKey");
+        return { Body: { transformToString: async () => obj.body || "" } };
+      }
+      if (cmd._type === "PutObject") {
+        // Fail on metadata writes (checkpoints/*.json), succeed on data uploads
+        if (key?.includes("checkpoints/") && key?.endsWith(".json")) {
+          throw new Error("S3 InternalError: metadata write failed");
+        }
+        state.s3PutCalls.push({ Key: key, Body: cmd.input.Body });
+        return {};
+      }
+      if (cmd._type === "ListObjectsV2") {
+        state.s3ListCalls.push({ Prefix: cmd.input.Prefix, ContinuationToken: cmd.input.ContinuationToken });
+        return { Contents: undefined, IsTruncated: false };
+      }
+      throw new Error(`Unhandled S3 command: ${cmd._type}`);
+    }
+  }
+
+  // Swap the S3Client class
+  mockSdk.s3.S3Client = FailMetaS3Client;
+  // Clear S3 client cache so the new class is used
+  (globalThis as any)[Symbol.for("evolve:s3ClientCache")] = null;
+
+  try {
+    await createCheckpoint(
+      sandbox as any, BYOK_STORAGE as any, "claude", "/home/user/workspace",
+      { tag: "fail-meta" }
+    );
+    failed++;
+    console.log("  \u2717 Should have thrown on metadata write failure");
+  } catch (e) {
+    const msg = (e as Error).message;
+    if (msg.includes("metadata write failed")) {
+      passed++;
+      console.log("  \u2713 createCheckpoint throws on metadata write failure");
+    } else {
+      failed++;
+      console.log(`  \u2717 Unexpected error: ${msg}`);
+    }
+  }
+
+  // The critical check: cleanup ran despite the throw
+  const cleanupRan = state.commandHistory.some(cmd => cmd.includes("rm -f /tmp/evolve-ckpt.tar.gz"));
+  assert(cleanupRan, "rm -f /tmp/evolve-ckpt.tar.gz ran in finally block after metadata write failure");
+
+  // Restore the original S3Client
+  mockSdk.s3.S3Client = OrigClient;
+  (globalThis as any)[Symbol.for("evolve:s3ClientCache")] = null;
+}
+
+async function testTarCleanupRunsOnSuccess(): Promise<void> {
+  console.log("\n[15c] createCheckpoint - tar cleanup runs on success (baseline)");
+  resetState();
+  installMockAwsSdk();
+
+  const sandbox = createMockSandbox(checkpointCmdHandler());
+  await createCheckpoint(
+    sandbox as any, BYOK_STORAGE as any, "claude", "/home/user/workspace",
+    { tag: "success-cleanup" }
+  );
+
+  const cleanupRan = state.commandHistory.some(cmd => cmd.includes("rm -f /tmp/evolve-ckpt.tar.gz"));
+  assert(cleanupRan, "rm -f /tmp/evolve-ckpt.tar.gz runs on successful checkpoint too");
+}
+
+// =============================================================================
 // MAIN
 // =============================================================================
 
@@ -1457,6 +1680,16 @@ async function main(): Promise<void> {
   // 13. S3 pagination
   await testListCheckpointsByokPagination();
   await testListCheckpointsByokPaginationWithLimit();
+
+  // 14. s3ObjectExists error handling
+  await testS3ObjectExistsRethrowsAuthError();
+  await testS3ObjectExistsRethrowsNetworkError();
+  await testS3ObjectExistsReturns404AsFalse();
+
+  // 15. tar cleanup in finally block
+  await testTarCleanupRunsOnUploadFailure();
+  await testTarCleanupRunsOnMetadataWriteFailure();
+  await testTarCleanupRunsOnSuccess();
 
   // Cleanup
   _testSetAwsSdk(null);
