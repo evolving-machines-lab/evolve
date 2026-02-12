@@ -176,14 +176,14 @@ export function getAgentConfig(type: AgentType): AgentConfig {
       return {
         type: "kimi",
         apiKey: env.EVOLVE_API_KEY || process.env.KIMI_API_KEY || process.env.MOONSHOT_API_KEY || "",
-        model: process.env.KIMI_MODEL || "kimi-k2.5",
+        model: process.env.KIMI_MODEL || "moonshot/kimi-k2.5",
       };
 
     case "opencode":
       return {
         type: "opencode",
         apiKey: env.EVOLVE_API_KEY || env.OPENAI_API_KEY || "",
-        model: process.env.OPENCODE_MODEL || "anthropic/claude-sonnet-4-5",
+        model: process.env.OPENCODE_MODEL || "openai/gpt-5.2",
       };
 
     default:

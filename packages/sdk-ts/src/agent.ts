@@ -333,11 +333,21 @@ export class Agent {
       if (this.registry.oauthActivationEnv) {
         envVars[this.registry.oauthActivationEnv.key] = this.registry.oauthActivationEnv.value;
       }
+    } else if (this.registry.providerEnvMap && !this.agentConfig.isDirectMode) {
+      // Multi-provider CLI in gateway mode (e.g., OpenCode): set ALL provider API keys
+      // so any model prefix (anthropic/*, openai/*, google/*) can find its key
+      for (const mapping of Object.values(this.registry.providerEnvMap)) {
+        envVars[mapping.keyEnv] = this.agentConfig.apiKey;
+      }
     } else {
+      // Single-provider: resolve model-specific key env for multi-provider CLIs in direct mode
+      const providerPrefix = this.agentConfig.model?.split("/")[0];
+      const providerMapping = providerPrefix ? this.registry.providerEnvMap?.[providerPrefix] : undefined;
+      const effectiveKeyEnv = providerMapping ? providerMapping.keyEnv : this.registry.apiKeyEnv;
       // OAuth mode uses oauthEnv (e.g., CLAUDE_CODE_OAUTH_TOKEN), else apiKeyEnv
       const keyEnv = this.agentConfig.isOAuth && this.registry.oauthEnv
         ? this.registry.oauthEnv
-        : this.registry.apiKeyEnv;
+        : effectiveKeyEnv;
       envVars[keyEnv] = this.agentConfig.apiKey;
     }
 
@@ -348,9 +358,23 @@ export class Agent {
       }
     } else if (!this.agentConfig.isDirectMode) {
       // Gateway mode: route through Evolve gateway
-      envVars[this.registry.baseUrlEnv] = this.registry.usePassthroughGateway
+      const gatewayUrl = this.registry.usePassthroughGateway
         ? getGeminiGatewayUrl()
         : getGatewayUrl();
+
+      if (this.registry.gatewayConfigEnv && this.registry.providerEnvMap) {
+        // Multi-provider CLI (e.g., OpenCode): write inline config to route all providers through gateway
+        // OpenCode reads base URLs from config, not env vars — use OPENCODE_CONFIG_CONTENT
+        const providers: Record<string, { options: { baseURL: string } }> = {};
+        for (const prefix of Object.keys(this.registry.providerEnvMap)) {
+          providers[prefix] = { options: { baseURL: `${gatewayUrl}/v1` } };
+        }
+        envVars[this.registry.gatewayConfigEnv] = JSON.stringify({ provider: providers });
+      } else {
+        // Single-provider: set base URL env var
+        envVars[this.registry.baseUrlEnv] = gatewayUrl;
+      }
+
       // Expose EVOLVE_API_KEY in sandbox for gateway services (e.g., browser-use)
       envVars['EVOLVE_API_KEY'] = this.agentConfig.apiKey;
     }

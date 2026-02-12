@@ -92,6 +92,10 @@ export interface AgentRegistryEntry {
   availableBetas?: Record<string, string>;
   /** Skills configuration for this agent */
   skillsConfig: SkillsConfig;
+  /** Multi-provider env mapping: model prefix → keyEnv (for CLIs like OpenCode that resolve provider from model string) */
+  providerEnvMap?: Record<string, { keyEnv: string }>;
+  /** Env var for inline config (e.g., OPENCODE_CONFIG_CONTENT) — used in gateway mode to set provider base URLs */
+  gatewayConfigEnv?: string;
 }
 
 // =============================================================================
@@ -238,10 +242,10 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     image: "evolve-all",
     apiKeyEnv: "KIMI_API_KEY",
     baseUrlEnv: "KIMI_BASE_URL",
-    defaultModel: "kimi-k2.5",
+    defaultModel: "moonshot/kimi-k2.5",
     models: [
-      { alias: "kimi-k2.5", modelId: "kimi-k2.5", description: "Latest multimodal, Agent Swarm capable" },
-      { alias: "kimi-k2-turbo-preview", modelId: "kimi-k2-turbo-preview", description: "Fast turbo model" },
+      { alias: "moonshot/kimi-k2.5", modelId: "moonshot/kimi-k2.5", description: "Latest multimodal, Agent Swarm capable" },
+      { alias: "moonshot/kimi-k2-turbo-preview", modelId: "moonshot/kimi-k2-turbo-preview", description: "Fast turbo model" },
     ],
     systemPromptFile: "AGENTS.md",
     mcpConfig: {
@@ -264,7 +268,15 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     image: "evolve-all",
     apiKeyEnv: "OPENAI_API_KEY",
     baseUrlEnv: "OPENAI_BASE_URL",
-    defaultModel: "anthropic/claude-sonnet-4-5",
+    defaultModel: "openai/gpt-5.2",
+    // OpenCode multi-provider: model prefix → env var for API key
+    providerEnvMap: {
+      anthropic: { keyEnv: "ANTHROPIC_API_KEY" },
+      openai: { keyEnv: "OPENAI_API_KEY" },
+      google: { keyEnv: "GOOGLE_GENERATIVE_AI_API_KEY" },
+    },
+    // Inline config env var — used in gateway mode to set provider base URLs
+    gatewayConfigEnv: "OPENCODE_CONFIG_CONTENT",
     models: [
       { alias: "anthropic/claude-sonnet-4-5", modelId: "anthropic/claude-sonnet-4-5", description: "Balanced coding, features, tests" },
       { alias: "anthropic/claude-opus-4-6", modelId: "anthropic/claude-opus-4-6", description: "Complex reasoning, R&D" },
@@ -283,7 +295,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     },
     buildCommand: ({ prompt, model, isResume }) => {
       const continueFlag = isResume ? "--continue " : "";
-      return `OPENCODE_PERMISSION='{"*":"allow"}' opencode run "${prompt}" ${continueFlag}--model ${model} --format json`;
+      return `OPENCODE_PERMISSION='{"*":"allow"}' opencode run "${prompt}" ${continueFlag}--model ${model} --format json < /dev/null`;
     },
   },
 };
