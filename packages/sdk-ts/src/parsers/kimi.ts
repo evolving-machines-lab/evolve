@@ -1,39 +1,28 @@
 /**
- * Kimi Wire Protocol → ACP-style events parser.
+ * Kimi Kosong Messages → ACP-style events parser.
  *
  * Native schema source (MoonshotAI/kimi-cli):
- *   KNOWLEDGE/kimi-cli/src/kimi_cli/wire/types.py (WireMessageEnvelope, Event types)
+ *   KNOWLEDGE/kimi-cli/packages/kosong/src/kosong/message.py (ContentPart, ToolCall, Message)
  *   KNOWLEDGE/kimi-cli/src/kimi_cli/ui/print/visualize.py (JsonPrinter — stream-json output)
  *   KNOWLEDGE/kimi-cli/src/kimi_cli/tools/__init__.py (tool name registry)
- *   KNOWLEDGE/kimi-cli/packages/kosong/src/kosong/message.py (ContentPart, ToolCall, Message)
  *
  * Output mode: `kimi --print --output-format stream-json`
  *
- * Kimi Wire message envelope: { "type": "TypeName", "payload": { ... } }
+ * Actual output format (Kosong Messages, NOT Wire Protocol):
  *
- * Wire event types (wire/types.py):
- * - TurnBegin        → lifecycle (skip)
- * - TurnEnd          → lifecycle (skip)
- * - StepBegin        → lifecycle (skip)
- * - StepInterrupted  → lifecycle (skip)
- * - CompactionBegin  → lifecycle (skip)
- * - CompactionEnd    → lifecycle (skip)
- * - StatusUpdate     → lifecycle (skip)
- * - TextPart         → agent_message_chunk
- * - ThinkPart        → agent_thought_chunk
- * - ToolCall         → tool_call (pending)
- * - ToolCallPart     → accumulate partial tool call
- * - ToolResult       → tool_call_update (completed/failed)
- * - ApprovalRequest  → skip (YOLO mode auto-approves in print mode)
- * - ApprovalResponse → skip
- * - SubagentEvent    → recursively parse inner event
+ *   role: "assistant" with content[] and optional tool_calls[]
+ *     content[].type: "think"    → agent_thought_chunk
+ *     content[].type: "text"     → agent_message_chunk
+ *     tool_calls[].type: "function" → tool_call (pending)
+ *
+ *   role: "tool" with content (string or array) and tool_call_id
+ *     → tool_call_update (completed/failed)
  *
  * ACP output: parsers/types.ts (OutputEvent, SessionUpdate)
  */
 
 import {
   OutputEvent,
-  SessionUpdate,
   ToolKind,
   ToolCallContent,
   ToolCallLocation,
@@ -63,12 +52,8 @@ const TOOL_KINDS: Record<string, ToolKind> = {
 
 /**
  * Create a Kimi parser instance.
- * Stateful to track partial ToolCallPart accumulation.
  */
 export function createKimiParser() {
-  // Track accumulated ToolCallPart arguments by tool call id
-  const toolCallPartBuffers: Map<string, { name: string; args: string }> = new Map();
-
   return function parseKimiEvent(jsonLine: string): OutputEvent[] | null {
     let data: any;
     try {
@@ -84,60 +69,64 @@ export function createKimiParser() {
       return null;
     }
 
-    // Kimi Wire envelope: { type: string, payload: object }
-    const type = data.type as string;
-    const payload = data.payload ?? {};
+    const role = data.role as string | undefined;
 
+    // Kosong Messages format: { role, content, tool_calls?, tool_call_id? }
+    if (role === "assistant") {
+      return parseAssistantMessage(data);
+    }
+
+    if (role === "tool") {
+      return parseToolMessage(data);
+    }
+
+    // Fallback: Wire Protocol envelope { type, payload } (future-proofing)
+    if (typeof data.type === "string" && "payload" in data) {
+      return parseWireEnvelope(data);
+    }
+
+    return null;
+  };
+
+  /**
+   * Parse assistant message: content[] (think/text) + tool_calls[]
+   */
+  function parseAssistantMessage(data: any): OutputEvent[] | null {
     const events: OutputEvent[] = [];
+    const content = data.content;
+    const toolCalls = data.tool_calls;
 
-    switch (type) {
-      // Lifecycle events - skip
-      case "TurnBegin":
-      case "TurnEnd":
-      case "StepBegin":
-      case "StepInterrupted":
-      case "CompactionBegin":
-      case "CompactionEnd":
-      case "StatusUpdate":
-      case "ApprovalRequest":
-      case "ApprovalResponse":
-        return null;
+    // Parse content parts
+    if (Array.isArray(content)) {
+      for (const part of content) {
+        if (!part || typeof part !== "object") continue;
 
-      // Text content from agent
-      case "TextPart": {
-        const text = payload.text;
-        if (typeof text === "string" && text.length > 0) {
-          events.push({
-            update: {
-              sessionUpdate: "agent_message_chunk",
-              content: { type: "text", text },
-            },
-          });
-        }
-        break;
-      }
-
-      // Thinking/reasoning content (kosong ThinkPart field is "think", not "thinking")
-      case "ThinkPart": {
-        const thinking = payload.think;
-        if (typeof thinking === "string" && thinking.length > 0) {
+        if (part.type === "think" && typeof part.think === "string" && part.think.length > 0) {
           events.push({
             update: {
               sessionUpdate: "agent_thought_chunk",
-              content: { type: "text", text: thinking },
+              content: { type: "text", text: part.think },
+            },
+          });
+        } else if (part.type === "text" && typeof part.text === "string" && part.text.length > 0) {
+          events.push({
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: part.text },
             },
           });
         }
-        break;
       }
+    }
 
-      // Complete tool call (kosong.message.ToolCall format)
-      // { id, function: { name, arguments } }
-      case "ToolCall": {
-        const toolId = payload.id;
-        const fn = payload.function;
-        if (!fn) break;
+    // Parse tool calls
+    if (Array.isArray(toolCalls)) {
+      for (const tc of toolCalls) {
+        if (!tc || typeof tc !== "object") continue;
+        const fn = tc.function;
+        if (!fn) continue;
 
+        const toolId = tc.id ?? "";
         const toolName = fn.name ?? "";
         let input: unknown;
         try {
@@ -146,7 +135,7 @@ export function createKimiParser() {
           input = fn.arguments;
         }
 
-        const { title, kind, content, locations } = getToolInfo(
+        const { title, kind, toolContent, locations } = getToolInfo(
           toolName,
           (typeof input === "object" && input !== null ? input : {}) as Record<string, unknown>
         );
@@ -159,87 +148,137 @@ export function createKimiParser() {
             kind,
             status: "pending",
             rawInput: input,
-            content,
+            content: toolContent,
+            locations,
+          },
+        });
+      }
+    }
+
+    return events.length > 0 ? events : null;
+  }
+
+  /**
+   * Parse tool result message: { role: "tool", content, tool_call_id }
+   */
+  function parseToolMessage(data: any): OutputEvent[] | null {
+    const toolId = data.tool_call_id;
+    if (!toolId) return null;
+
+    const rawContent = data.content;
+    const content: ToolCallContent[] = [];
+    let isError = false;
+
+    if (typeof rawContent === "string") {
+      // Simple string content — check for error markers
+      isError = rawContent.includes("<error>") || rawContent.includes("ToolError");
+      if (rawContent.length > 0) {
+        content.push({
+          type: "content",
+          content: { type: "text", text: rawContent },
+        });
+      }
+    } else if (Array.isArray(rawContent)) {
+      // Array of content parts: [{ type: "text", text: "..." }]
+      for (const item of rawContent) {
+        if (!item || typeof item !== "object") continue;
+        if (item.type === "text" && typeof item.text === "string" && item.text.length > 0) {
+          if (item.text.includes("<error>") || item.text.includes("ToolError")) {
+            isError = true;
+          }
+          content.push({
+            type: "content",
+            content: { type: "text", text: item.text },
+          });
+        }
+      }
+    }
+
+    return [{
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: toolId,
+        status: isError ? "failed" : "completed",
+        content,
+      },
+    }];
+  }
+
+  /**
+   * Fallback: Wire Protocol envelope { type, payload }
+   */
+  function parseWireEnvelope(data: any): OutputEvent[] | null {
+    const type = data.type as string;
+    const payload = data.payload ?? {};
+    const events: OutputEvent[] = [];
+
+    switch (type) {
+      case "TextPart": {
+        const text = payload.text;
+        if (typeof text === "string" && text.length > 0) {
+          events.push({
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text },
+            },
+          });
+        }
+        break;
+      }
+      case "ThinkPart": {
+        const thinking = payload.think;
+        if (typeof thinking === "string" && thinking.length > 0) {
+          events.push({
+            update: {
+              sessionUpdate: "agent_thought_chunk",
+              content: { type: "text", text: thinking },
+            },
+          });
+        }
+        break;
+      }
+      case "ToolCall": {
+        const toolId = payload.id;
+        const fn = payload.function;
+        if (!fn) break;
+        const toolName = fn.name ?? "";
+        let input: unknown;
+        try {
+          input = fn.arguments ? JSON.parse(fn.arguments) : {};
+        } catch {
+          input = fn.arguments;
+        }
+        const { title, kind, toolContent, locations } = getToolInfo(
+          toolName,
+          (typeof input === "object" && input !== null ? input : {}) as Record<string, unknown>
+        );
+        events.push({
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: toolId,
+            title,
+            kind,
+            status: "pending",
+            rawInput: input,
+            content: toolContent,
             locations,
           },
         });
         break;
       }
-
-      // Partial tool call streaming (accumulate arguments)
-      case "ToolCallPart": {
-        const toolId = payload.id ?? payload.tool_call_id;
-        const fn = payload.function;
-        if (!toolId || !fn) break;
-
-        const existing = toolCallPartBuffers.get(toolId);
-        if (existing) {
-          if (fn.arguments) existing.args += fn.arguments;
-        } else {
-          toolCallPartBuffers.set(toolId, {
-            name: fn.name ?? "",
-            args: fn.arguments ?? "",
-          });
-        }
-        // Don't emit until ToolCall or ToolResult arrives
-        break;
-      }
-
-      // Tool result (kosong.tooling.ToolResult format)
-      // { tool_call_id, return_value: { type: "ToolOk"|"ToolError", output?, message?, display? } }
       case "ToolResult": {
         const toolId = payload.tool_call_id;
         if (!toolId) break;
-
-        // Clean up partial buffer
-        toolCallPartBuffers.delete(toolId);
-
         const returnValue = payload.return_value ?? payload.content;
-        const isError =
-          returnValue?.type === "ToolError" ||
-          payload.is_error === true;
-
+        const isError = returnValue?.type === "ToolError" || payload.is_error === true;
         const content: ToolCallContent[] = [];
-
-        // Extract output text
         const outputText = returnValue?.output ?? returnValue?.message ?? "";
         if (typeof outputText === "string" && outputText.length > 0) {
           content.push({
             type: "content",
-            content: {
-              type: "text",
-              text: isError ? `\`\`\`\n${outputText}\n\`\`\`` : outputText,
-            },
+            content: { type: "text", text: isError ? `\`\`\`\n${outputText}\n\`\`\`` : outputText },
           });
         }
-
-        // Extract display blocks (brief, diff, shell, etc.)
-        if (Array.isArray(returnValue?.display)) {
-          for (const block of returnValue.display) {
-            if (block.type === "brief" && block.content) {
-              content.push({
-                type: "content",
-                content: { type: "text", text: block.content },
-              });
-            }
-          }
-        }
-
-        // Also handle array content format
-        if (Array.isArray(returnValue?.content)) {
-          for (const item of returnValue.content) {
-            if (item.type === "text" && item.text) {
-              content.push({
-                type: "content",
-                content: {
-                  type: "text",
-                  text: isError ? `\`\`\`\n${item.text}\n\`\`\`` : item.text,
-                },
-              });
-            }
-          }
-        }
-
         events.push({
           update: {
             sessionUpdate: "tool_call_update",
@@ -250,27 +289,12 @@ export function createKimiParser() {
         });
         break;
       }
-
-      // Subagent events - recursively parse the inner event
-      case "SubagentEvent": {
-        const innerEvent = payload.event;
-        if (!innerEvent || typeof innerEvent !== "object") break;
-
-        // Inner event is a WireMessageEnvelope { type, payload }
-        const innerLine = JSON.stringify(innerEvent);
-        const innerResults = parseKimiEvent(innerLine);
-        if (innerResults) {
-          events.push(...innerResults);
-        }
-        break;
-      }
-
       default:
         return null;
     }
 
     return events.length > 0 ? events : null;
-  };
+  }
 
   /**
    * Get tool info from tool name and input parameters.
@@ -281,11 +305,11 @@ export function createKimiParser() {
   ): {
     title: string;
     kind: ToolKind;
-    content: ToolCallContent[];
+    toolContent: ToolCallContent[];
     locations: ToolCallLocation[];
   } {
     const kind = TOOL_KINDS[toolName] || "other";
-    const content: ToolCallContent[] = [];
+    const toolContent: ToolCallContent[] = [];
     const locations: ToolCallLocation[] = [];
 
     let title = toolName;
@@ -311,7 +335,7 @@ export function createKimiParser() {
         if (path) {
           locations.push({ path });
           if (typeof input.content === "string") {
-            content.push({
+            toolContent.push({
               type: "diff",
               path,
               oldText: null,
@@ -371,6 +395,6 @@ export function createKimiParser() {
         title = toolName;
     }
 
-    return { title, kind, content, locations };
+    return { title, kind, toolContent, locations };
   }
 }
