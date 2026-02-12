@@ -128,8 +128,8 @@ export function getSandboxProvider(): SandboxProvider {
 export function getDefaultAgentType(): AgentType | undefined {
   const type = process.env.TEST_AGENT_TYPE;
   if (!type) return undefined;
-  if (!["claude", "codex", "gemini", "qwen"].includes(type)) {
-    throw new Error(`Invalid TEST_AGENT_TYPE: ${type}. Valid types: claude, codex, gemini, qwen`);
+  if (!["claude", "codex", "gemini", "qwen", "kimi", "opencode"].includes(type)) {
+    throw new Error(`Invalid TEST_AGENT_TYPE: ${type}. Valid types: claude, codex, gemini, qwen, kimi, opencode`);
   }
   return type as AgentType;
 }
@@ -170,6 +170,20 @@ export function getAgentConfig(type: AgentType): AgentConfig {
         type: "qwen",
         apiKey: env.EVOLVE_API_KEY || env.OPENAI_API_KEY || "",
         model: process.env.QWEN_OPENAI_MODEL || "qwen3-coder-plus",
+      };
+
+    case "kimi":
+      return {
+        type: "kimi",
+        apiKey: env.EVOLVE_API_KEY || process.env.KIMI_API_KEY || process.env.MOONSHOT_API_KEY || "",
+        model: process.env.KIMI_MODEL || "kimi-k2.5",
+      };
+
+    case "opencode":
+      return {
+        type: "opencode",
+        apiKey: env.EVOLVE_API_KEY || env.OPENAI_API_KEY || "",
+        model: process.env.OPENCODE_MODEL || "anthropic/claude-sonnet-4-5",
       };
 
     default:

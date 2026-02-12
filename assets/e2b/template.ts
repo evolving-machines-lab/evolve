@@ -10,6 +10,8 @@ import { Template } from 'e2b'
 //   - Codex (@openai/codex)
 //   - Gemini CLI (@google/gemini-cli) + Nano Banana extension
 //   - Qwen Code (@qwen-code/qwen-code)
+//   - OpenCode (opencode-ai)
+//   - Kimi CLI (kimi-cli, Python)
 //   - ACP adapters for Claude and Codex
 //   - Google Chrome for browser automation
 //   - Skills cloned from github.com/evolving-machines-lab/evolve
@@ -50,7 +52,13 @@ export const template = Template()
     @zed-industries/codex-acp@latest
     @google/gemini-cli@latest
     @qwen-code/qwen-code@latest
+    opencode-ai@latest
   `.replace(/\n\s+/g, ' ').trim())
+
+  // ---------------------------------------------------------------------------
+  // Kimi CLI (Python package — requires Python >= 3.12)
+  // ---------------------------------------------------------------------------
+  .runCmd('pip install kimi-cli')
 
   // ---------------------------------------------------------------------------
   // MCP Tools (HTTP-to-STDIO bridge for remote MCP servers)
@@ -69,7 +77,7 @@ export const template = Template()
   .setWorkdir('/home/user')
 
   // Create skills directories for all CLIs
-  .runCmd('mkdir -p ~/.evolve/skills ~/.claude/skills ~/.codex/skills ~/.gemini/skills ~/.qwen/skills')
+  .runCmd('mkdir -p ~/.evolve/skills ~/.claude/skills ~/.codex/skills ~/.gemini/skills ~/.qwen/skills ~/.kimi/skills ~/.agents/skills')
 
   // ---------------------------------------------------------------------------
   // Skills

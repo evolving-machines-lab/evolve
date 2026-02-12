@@ -279,7 +279,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     },
     skillsConfig: {
       sourceDir: "/home/user/.evolve/skills",
-      targetDir: "/home/user/.config/opencode/skills",
+      targetDir: "/home/user/.agents/skills",
     },
     buildCommand: ({ prompt, model, isResume }) => {
       const continueFlag = isResume ? "--continue " : "";
