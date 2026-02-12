@@ -103,7 +103,7 @@ async def list_checkpoints(
         await kit.bridge.stop()
 
 
-__version__ = '0.0.20'
+__version__ = '0.0.21'
 
 __all__ = [
     # Main classes
