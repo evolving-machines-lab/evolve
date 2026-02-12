@@ -453,7 +453,7 @@ async function runTests(): Promise<void> {
   clearEnv();
   assertThrows(
     () => resolveAgentConfig({ type: "claude" }),
-    "oauthToken (Claude Max)",
+    "oauthToken, or CLAUDE_CODE_OAUTH_TOKEN",
     "error message mentions oauthToken for Claude"
   );
 
@@ -531,7 +531,7 @@ async function runTests(): Promise<void> {
   {
     const provider = await resolveDefaultSandbox();
     assertEqual(provider.providerType, "e2b", "returns e2b provider");
-    assertEqual(process.env.E2B_API_URL, getE2BGatewayUrl(), "sets E2B_API_URL (gateway wins over direct)");
+    assertEqual(process.env.E2B_API_URL, undefined, "E2B_API_URL stays unset (direct E2B wins over gateway)");
   }
 
   // -------------------------------------------------------------------------

@@ -14,6 +14,10 @@ export default defineConfig({
   loader: {
     ".md": "text",
   },
-  // Keep @evolvingmachines/e2b as external - it has protobuf code that breaks when bundled
-  external: ["@evolvingmachines/e2b"],
+  // Keep external: e2b has protobuf that breaks when bundled, AWS SDK is optional peer dep
+  external: [
+    "@evolvingmachines/e2b",
+    "@aws-sdk/client-s3",
+    "@aws-sdk/s3-request-presigner",
+  ],
 });

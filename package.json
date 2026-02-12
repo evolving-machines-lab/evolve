@@ -28,6 +28,7 @@
     "typescript": "^5.8.3"
   },
   "dependencies": {
+    "@aws-sdk/s3-request-presigner": "^3.986.0",
     "@daytonaio/sdk": "^0.134.0",
     "dotenv": "^17.2.3",
     "e2b": "^2.10.3",

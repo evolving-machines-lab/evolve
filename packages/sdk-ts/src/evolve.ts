@@ -25,12 +25,15 @@ import type {
   SkillName,
   ComposioConfig,
   ComposioSetup,
+  StorageConfig,
 } from "./types";
 import { Agent, type AgentConfig, type AgentOptions, type AgentResponse } from "./agent";
 import type { OutputEvent } from "./parsers";
 import { isZodSchema, resolveAgentConfig, resolveDefaultSandbox } from "./utils";
 import { composioHelpers } from "./composio";
-import { getGatewayMcpServers } from "./constants";
+import { getGatewayMcpServers, DEFAULT_DASHBOARD_URL } from "./constants";
+import { resolveStorageConfig, listCheckpoints } from "./storage";
+import type { CheckpointInfo } from "./types";
 
 // =============================================================================
 // TYPES
@@ -76,6 +79,9 @@ export interface EvolveConfig {
   // Composio integration
   /** Composio user ID and config */
   composio?: ComposioSetup;
+  // Storage / Checkpointing
+  /** Storage configuration for checkpointing */
+  storage?: StorageConfig;
 }
 
 // =============================================================================
@@ -322,6 +328,27 @@ export class Evolve extends EventEmitter {
     return this;
   }
 
+  /**
+   * Configure storage for checkpoint persistence
+   *
+   * BYOK mode: provide URL to your S3-compatible bucket.
+   * Gateway mode: omit config (uses Evolve-managed storage, requires EVOLVE_API_KEY).
+   *
+   * @example
+   * // BYOK — user's own S3 bucket
+   * kit.withStorage({ url: "s3://my-bucket/agent-snapshots/" })
+   *
+   * // BYOK — Cloudflare R2
+   * kit.withStorage({ url: "s3://my-bucket/prefix/", endpoint: "https://acct.r2.cloudflarestorage.com" })
+   *
+   * // Gateway — Evolve-managed storage
+   * kit.withStorage()
+   */
+  withStorage(config?: StorageConfig): this {
+    this.config.storage = config || {};
+    return this;
+  }
+
   // ===========================================================================
   // STATIC HELPERS
   // ===========================================================================
@@ -368,6 +395,16 @@ export class Evolve extends EventEmitter {
       ? getGatewayMcpServers(agentConfig.apiKey)
       : {};
 
+    // Resolve storage config if .withStorage() was called
+    const resolvedStorage = this.config.storage !== undefined
+      ? resolveStorageConfig(
+          this.config.storage,
+          !agentConfig.isDirectMode,
+          DEFAULT_DASHBOARD_URL,
+          agentConfig.isDirectMode ? undefined : agentConfig.apiKey
+        )
+      : undefined;
+
     const agentOptions: AgentOptions = {
       sandboxProvider,
       secrets: this.config.secrets,
@@ -386,6 +423,8 @@ export class Evolve extends EventEmitter {
       observability: this.config.observability,
       // Composio integration
       composio: this.config.composio,
+      // Storage / Checkpointing
+      storage: resolvedStorage,
     };
 
     this.agent = new Agent(agentConfig, agentOptions);
@@ -434,23 +473,36 @@ export class Evolve extends EventEmitter {
 
   /**
    * Run agent with prompt
+   *
+   * @param from - Restore from checkpoint ID before running (requires .withStorage())
    */
   async run({
     prompt,
     timeoutMs,
     background,
+    from,
+    checkpointComment,
   }: {
     prompt: string;
     timeoutMs?: number;
     background?: boolean;
+    from?: string;
+    checkpointComment?: string;
   }): Promise<AgentResponse> {
+    // Mutual exclusivity: from + withSession()
+    if (from && this.config.sandboxId) {
+      throw new Error(
+        "Cannot use 'from' with 'withSession()' — restore requires a fresh sandbox."
+      );
+    }
+
     if (!this.agent) {
       await this.initializeAgent();
     }
 
     const callbacks = this.createStreamCallbacks();
 
-    return this.agent!.run({ prompt, timeoutMs, background }, callbacks);
+    return this.agent!.run({ prompt, timeoutMs, background, from, checkpointComment }, callbacks);
   }
 
   /**
@@ -510,6 +562,39 @@ export class Evolve extends EventEmitter {
       throw new Error("Agent not initialized. Call run() first.");
     }
     return this.agent.getOutputFiles<T>(recursive);
+  }
+
+  // ===========================================================================
+  // CHECKPOINTING
+  // ===========================================================================
+
+  /**
+   * Create an explicit checkpoint of the current sandbox state.
+   *
+   * Requires a prior run() call (needs an active sandbox to snapshot).
+   *
+   * @param options.comment - Optional label for this checkpoint
+   */
+  async checkpoint(options?: { comment?: string }): Promise<CheckpointInfo> {
+    if (!this.agent) {
+      throw new Error("Agent not initialized. Call run() first.");
+    }
+    return this.agent.checkpoint(options);
+  }
+
+  /**
+   * List checkpoints (requires .withStorage()).
+   *
+   * Does not require an agent or sandbox — only storage configuration.
+   *
+   * @param options.limit - Maximum number of checkpoints to return
+   * @param options.tag - Filter by session tag (gateway mode: server-side, BYOK: post-filter)
+   */
+  async listCheckpoints(options?: { limit?: number; tag?: string }): Promise<CheckpointInfo[]> {
+    if (this.config.storage === undefined) {
+      throw new Error("Storage not configured. Call .withStorage().");
+    }
+    return listCheckpoints(this.config.storage, options);
   }
 
   // ===========================================================================

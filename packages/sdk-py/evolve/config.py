@@ -180,6 +180,67 @@ class ModalProvider:
 
 
 # =============================================================================
+# STORAGE / CHECKPOINTING
+# =============================================================================
+
+
+@dataclass
+class StorageCredentials:
+    """S3 credentials for BYOK storage.
+
+    Args:
+        access_key_id: AWS access key ID
+        secret_access_key: AWS secret access key
+    """
+    access_key_id: str
+    secret_access_key: str
+
+
+@dataclass
+class StorageConfig:
+    """Storage configuration for checkpoint persistence.
+
+    Two modes of operation:
+    - BYOK mode: Provide `url` (S3 bucket URL) with optional credentials
+    - Gateway mode: Leave empty — Evolve-managed storage via EVOLVE_API_KEY
+
+    Args:
+        url: S3 bucket URL (e.g., 's3://my-bucket/prefix/')
+        bucket: S3 bucket name (alternative to url)
+        prefix: Key prefix within bucket
+        region: AWS region (default: auto-detect)
+        endpoint: Custom S3 endpoint (e.g., Cloudflare R2, MinIO)
+        credentials: Explicit S3 credentials (defaults to env AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY)
+    """
+    url: Optional[str] = None
+    bucket: Optional[str] = None
+    prefix: Optional[str] = None
+    region: Optional[str] = None
+    endpoint: Optional[str] = None
+    credentials: Optional[StorageCredentials] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dict for JSON-RPC transport."""
+        result: Dict[str, Any] = {}
+        if self.url:
+            result['url'] = self.url
+        if self.bucket:
+            result['bucket'] = self.bucket
+        if self.prefix:
+            result['prefix'] = self.prefix
+        if self.region:
+            result['region'] = self.region
+        if self.endpoint:
+            result['endpoint'] = self.endpoint
+        if self.credentials:
+            result['credentials'] = {
+                'accessKeyId': self.credentials.access_key_id,
+                'secretAccessKey': self.credentials.secret_access_key,
+            }
+        return result
+
+
+# =============================================================================
 # COMPOSIO TOOL ROUTER
 # =============================================================================
 

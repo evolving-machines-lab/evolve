@@ -7,7 +7,7 @@
  * All SDK integration is isolated here for easy maintenance.
  */
 
-import { Evolve, type AgentConfig, type AgentType, type ReasoningEffort } from '@evolvingmachines/sdk';
+import { Evolve, type AgentConfig, type AgentType, type ReasoningEffort, type CheckpointInfo } from '@evolvingmachines/sdk';
 import { createE2BProvider } from '@evolvingmachines/e2b';
 import { createDaytonaProvider } from '@evolvingmachines/daytona';
 import { createModalProvider } from '@evolvingmachines/modal';
@@ -36,6 +36,9 @@ import type {
   ComposioStatusResponse,
   ComposioConnectionsResponse,
   ComposioConfig,
+  CheckpointInfoResponse,
+  CheckpointParams,
+  ListCheckpointsParams,
 } from './types';
 
 // =============================================================================
@@ -157,6 +160,16 @@ export class EvolveAdapter {
     if (params.observability) {
       kit.withObservability(params.observability);
     }
+    if (params.storage !== undefined) {
+      kit.withStorage(params.storage ? {
+        url: params.storage.url,
+        bucket: params.storage.bucket,
+        prefix: params.storage.prefix,
+        region: params.storage.region,
+        endpoint: params.storage.endpoint,
+        credentials: params.storage.credentials,
+      } : {});
+    }
     if (params.composio) {
       kit.withComposio(params.composio.user_id, params.composio.config ? {
         toolkits: params.composio.config.toolkits,
@@ -211,6 +224,11 @@ export class EvolveAdapter {
         return this.getSessionTag();
       case 'get_session_timestamp':
         return this.getSessionTimestamp();
+      // Storage / Checkpointing
+      case 'checkpoint':
+        return this.checkpoint(params);
+      case 'list_checkpoints':
+        return this.listCheckpoints(params);
       // Multi-instance methods (for Swarm)
       case 'create_instance':
         return this.createInstance(params);
@@ -292,6 +310,8 @@ export class EvolveAdapter {
       prompt: params.prompt,
       timeoutMs: params.timeout_ms,
       background: params.background,
+      from: params.from,
+      checkpointComment: params.checkpoint_comment,
     });
 
     return {
@@ -299,6 +319,7 @@ export class EvolveAdapter {
       exit_code: result.exitCode,
       stdout: result.stdout,
       stderr: result.stderr,
+      checkpoint: result.checkpoint ? this.toCheckpointResponse(result.checkpoint) : undefined,
     };
   }
 
@@ -423,6 +444,49 @@ export class EvolveAdapter {
   }
 
   // ===========================================================================
+  // STORAGE / CHECKPOINTING
+  // ===========================================================================
+
+  /**
+   * Create an explicit checkpoint of the current sandbox state
+   */
+  async checkpoint(params: CheckpointParams): Promise<CheckpointInfoResponse> {
+    this.ensureInitialized();
+    const info = await this.evolve!.checkpoint(params?.comment ? { comment: params.comment } : undefined);
+    return this.toCheckpointResponse(info);
+  }
+
+  /**
+   * List checkpoints (requires .withStorage())
+   */
+  async listCheckpoints(params: ListCheckpointsParams): Promise<CheckpointInfoResponse[]> {
+    this.ensureInitialized();
+    const list = await this.evolve!.listCheckpoints({
+      limit: params?.limit,
+      tag: params?.tag,
+    });
+    return list.map(info => this.toCheckpointResponse(info));
+  }
+
+  /**
+   * Convert TS SDK CheckpointInfo (camelCase) to bridge response (snake_case)
+   */
+  private toCheckpointResponse(info: CheckpointInfo): CheckpointInfoResponse {
+    return {
+      id: info.id,
+      hash: info.hash,
+      tag: info.tag,
+      timestamp: info.timestamp,
+      size_bytes: info.sizeBytes,
+      agent_type: info.agentType,
+      model: info.model,
+      workspace_mode: info.workspaceMode,
+      parent_id: info.parentId,
+      comment: info.comment,
+    };
+  }
+
+  // ===========================================================================
   // MULTI-INSTANCE METHODS (for Swarm)
   // ===========================================================================
 
@@ -455,6 +519,8 @@ export class EvolveAdapter {
       prompt: runParams.prompt,
       timeoutMs: runParams.timeout_ms,
       background: runParams.background,
+      from: runParams.from,
+      checkpointComment: runParams.checkpoint_comment,
     });
 
     return {
@@ -462,6 +528,7 @@ export class EvolveAdapter {
       exit_code: result.exitCode,
       stdout: result.stdout,
       stderr: result.stderr,
+      checkpoint: result.checkpoint ? this.toCheckpointResponse(result.checkpoint) : undefined,
     };
   }
 
