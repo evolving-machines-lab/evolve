@@ -79,6 +79,7 @@
     "test:20": "tsx tests/integration/20-storage-checkpoints.ts",
     "test:21": "tsx tests/integration/21-storage-restore-fidelity.ts",
     "test:22": "tsx tests/integration/22-storage-dx.ts",
+    "test:23": "tsx tests/integration/23-storage-edge-cases.ts",
     "test:claude": "tsx tests/integration/01-all-agents-parallel.ts claude",
     "test:codex": "tsx tests/integration/01-all-agents-parallel.ts codex",
     "test:gemini": "tsx tests/integration/01-all-agents-parallel.ts gemini",
