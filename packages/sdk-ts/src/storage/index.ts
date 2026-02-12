@@ -676,7 +676,16 @@ export async function restoreCheckpoint(
     let metadata: { hash: string; tag: string; agentType?: string; workspaceMode?: string };
     try {
       metadata = await s3GetJson<typeof metadata>(storage, key);
-    } catch {
+    } catch (err: unknown) {
+      // Re-throw known non-404 AWS errors so callers see the real problem
+      // (e.g. bad credentials, permission denied, network issues).
+      const name = (err as { name?: string }).name;
+      if (name === "AccessDenied" || name === "InvalidAccessKeyId" ||
+          name === "SignatureDoesNotMatch" || name === "ExpiredToken" ||
+          name === "NetworkingError" || name === "TimeoutError") {
+        throw err;
+      }
+      // Everything else (NoSuchKey, NotFound, generic errors) → friendly not found
       throw new Error(`Checkpoint ${checkpointId} not found`);
     }
 

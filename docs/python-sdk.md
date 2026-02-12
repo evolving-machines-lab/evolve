@@ -1634,7 +1634,7 @@ print(result.checkpoint.comment)  # 'initial draft'
 - **Foreground only:** Background runs (`background=True`) skip auto-checkpointing entirely.
 - **Exclusions:** The archive excludes `node_modules/`, `__pycache__/`, `*.pyc`, `.cache/`, `.npm/`, `.pip/`, `.venv/`, `venv/`, and `{workspace}/temp/` to keep snapshots lean.
 - **Dedup:** Archives are content-addressed by SHA-256 hash. If the hash matches an existing archive in storage, the upload is skipped—only the metadata entry is written.
-- **`from_checkpoint='latest'` edge case:** If no checkpoints exist for the session tag, `from_checkpoint='latest'` throws an error. Use `list_checkpoints()` first to check availability.
+- **`from_checkpoint='latest'` edge case:** If no checkpoints exist globally (across all sessions/tags), `from_checkpoint='latest'` throws an error. Note that `'latest'` resolves to the globally newest checkpoint, not scoped to the current session tag. Use `list_checkpoints()` first to check availability.
 
 ### Explicit Checkpoint
 

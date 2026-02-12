@@ -1594,10 +1594,10 @@ console.log(result.checkpoint?.comment);  // "initial draft"
 **Behavior notes:**
 
 - **Non-fatal:** Auto-checkpoint failures are logged but never cause `run()` to throw. The run result will have `checkpoint: undefined`.
-- **Foreground only:** Background runs (via `runInBackground()`) skip auto-checkpointing entirely.
+- **Foreground only:** Background runs (via `run({ background: true })`) skip auto-checkpointing entirely.
 - **Exclusions:** The archive excludes `node_modules/`, `__pycache__/`, `*.pyc`, `.cache/`, `.npm/`, `.pip/`, `.venv/`, `venv/`, and `{workspace}/temp/` to keep snapshots lean.
 - **Dedup:** Archives are content-addressed by SHA-256 hash. If the hash matches an existing archive in storage, the upload is skipped—only the metadata entry is written.
-- **`from: "latest"` edge case:** If no checkpoints exist for the session tag, `from: "latest"` throws an error. Use `listCheckpoints()` first to check availability.
+- **`from: "latest"` edge case:** If no checkpoints exist globally (across all sessions/tags), `from: "latest"` throws an error. Note that `"latest"` resolves to the globally newest checkpoint, not scoped to the current session tag. Use `listCheckpoints()` first to check availability.
 
 ### Explicit Checkpoint
 
