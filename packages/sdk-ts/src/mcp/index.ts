@@ -6,7 +6,7 @@
  */
 
 import type { AgentType, SandboxInstance, McpServerConfig } from "../types";
-import { writeClaudeMcpConfig, writeGeminiMcpConfig, writeQwenMcpConfig } from "./json";
+import { writeClaudeMcpConfig, writeGeminiMcpConfig, writeQwenMcpConfig, writeKimiMcpConfig, writeOpenCodeMcpConfig } from "./json";
 import { writeCodexMcpConfig } from "./toml";
 
 /**
@@ -17,6 +17,7 @@ import { writeCodexMcpConfig } from "./toml";
  * - Codex: TOML to ~/.codex/config.toml
  * - Gemini: JSON to ~/.gemini/settings.json
  * - Qwen: JSON to ~/.qwen/settings.json
+ * - OpenCode: JSON to ${workingDir}/opencode.json (mcp key)
  */
 export async function writeMcpConfig(
   agentType: AgentType,
@@ -45,11 +46,19 @@ export async function writeMcpConfig(
       await writeQwenMcpConfig(sandbox, servers);
       break;
 
+    case "kimi":
+      await writeKimiMcpConfig(sandbox, servers);
+      break;
+
+    case "opencode":
+      await writeOpenCodeMcpConfig(sandbox, workingDir, servers);
+      break;
+
     default:
       throw new Error(`Unknown agent type for MCP config: ${agentType}`);
   }
 }
 
 // Re-export individual writers for direct use if needed
-export { writeClaudeMcpConfig, writeGeminiMcpConfig, writeQwenMcpConfig } from "./json";
+export { writeClaudeMcpConfig, writeGeminiMcpConfig, writeQwenMcpConfig, writeKimiMcpConfig, writeOpenCodeMcpConfig } from "./json";
 export { writeCodexMcpConfig } from "./toml";

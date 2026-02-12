@@ -115,7 +115,7 @@ export interface SandboxProvider {
 // =============================================================================
 
 /** Supported agent types (headless CLI agents only, no ACP) */
-export type AgentType = "claude" | "codex" | "gemini" | "qwen";
+export type AgentType = "claude" | "codex" | "gemini" | "qwen" | "kimi" | "opencode";
 
 /** Agent type constants for use in code */
 export const AGENT_TYPES = {
@@ -123,6 +123,8 @@ export const AGENT_TYPES = {
   CODEX: "codex",
   GEMINI: "gemini",
   QWEN: "qwen",
+  KIMI: "kimi",
+  OPENCODE: "opencode",
 } as const;
 
 // =============================================================================

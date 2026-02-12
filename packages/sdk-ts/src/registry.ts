@@ -233,6 +233,59 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       return `qwen "${prompt}" ${continueFlag}${skillsFlag}--auth-type openai --model ${prefixedModel} --yolo --output-format stream-json`;
     },
   },
+
+  kimi: {
+    image: "evolve-all",
+    apiKeyEnv: "KIMI_API_KEY",
+    baseUrlEnv: "KIMI_BASE_URL",
+    defaultModel: "kimi-k2.5",
+    models: [
+      { alias: "kimi-k2.5", modelId: "kimi-k2.5", description: "Latest multimodal, Agent Swarm capable" },
+      { alias: "kimi-k2-turbo-preview", modelId: "kimi-k2-turbo-preview", description: "Fast turbo model" },
+    ],
+    systemPromptFile: "AGENTS.md",
+    mcpConfig: {
+      settingsDir: "~/.kimi",
+      filename: "mcp.json",
+      format: "json",
+    },
+    skillsConfig: {
+      sourceDir: "/home/user/.evolve/skills",
+      targetDir: "/home/user/.kimi/skills",
+    },
+    defaultBaseUrl: "https://api.moonshot.ai/v1",
+    buildCommand: ({ prompt, model, isResume }) => {
+      const continueFlag = isResume ? "--continue " : "";
+      return `KIMI_MODEL_NAME=${model} kimi --print --output-format stream-json --yolo ${continueFlag}--prompt "${prompt}"`;
+    },
+  },
+
+  opencode: {
+    image: "evolve-all",
+    apiKeyEnv: "OPENAI_API_KEY",
+    baseUrlEnv: "OPENAI_BASE_URL",
+    defaultModel: "anthropic/claude-sonnet-4-5",
+    models: [
+      { alias: "anthropic/claude-sonnet-4-5", modelId: "anthropic/claude-sonnet-4-5", description: "Balanced coding, features, tests" },
+      { alias: "anthropic/claude-opus-4-6", modelId: "anthropic/claude-opus-4-6", description: "Complex reasoning, R&D" },
+      { alias: "openai/gpt-5.2", modelId: "openai/gpt-5.2", description: "OpenAI flagship" },
+      { alias: "google/gemini-2.5-pro", modelId: "google/gemini-2.5-pro", description: "Google deep reasoning" },
+    ],
+    systemPromptFile: "AGENTS.md",
+    mcpConfig: {
+      settingsDir: ".",
+      filename: "opencode.json",
+      format: "json",
+    },
+    skillsConfig: {
+      sourceDir: "/home/user/.evolve/skills",
+      targetDir: "/home/user/.config/opencode/skills",
+    },
+    buildCommand: ({ prompt, model, isResume }) => {
+      const continueFlag = isResume ? "--continue " : "";
+      return `OPENCODE_PERMISSION='{"*":"allow"}' opencode run "${prompt}" ${continueFlag}--model ${model} --format json`;
+    },
+  },
 };
 
 // =============================================================================

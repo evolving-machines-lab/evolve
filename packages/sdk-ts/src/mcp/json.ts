@@ -75,7 +75,7 @@ type ConfigTransformer = (config: McpServerConfig) => Record<string, unknown>;
 
 async function writeJsonMcpConfig(
   sandbox: SandboxInstance,
-  agentType: "gemini" | "qwen",
+  agentType: "gemini" | "qwen" | "kimi",
   servers: Record<string, McpServerConfig>,
   transform: ConfigTransformer
 ): Promise<void> {
@@ -173,4 +173,85 @@ export async function writeQwenMcpConfig(
   servers: Record<string, McpServerConfig>
 ): Promise<void> {
   await writeJsonMcpConfig(sandbox, "qwen", servers, toQwenFormat);
+}
+
+/** Write MCP config for Kimi agent (standard mcpServers format with type field) */
+export async function writeKimiMcpConfig(
+  sandbox: SandboxInstance,
+  servers: Record<string, McpServerConfig>
+): Promise<void> {
+  await writeJsonMcpConfig(sandbox, "kimi", servers, toTypeFormat);
+}
+
+/**
+ * Write MCP config for OpenCode agent
+ *
+ * OpenCode uses opencode.json in the working directory with an `mcp` key.
+ * Format: { "mcp": { "name": { "type": "local"|"remote", "command": [...], "url": "..." } } }
+ *
+ * Key differences from other agents:
+ * - Uses `mcp` key (not `mcpServers`)
+ * - Local servers use `command` as array (not string)
+ * - Remote servers use `type: "remote"` with `url`
+ */
+export async function writeOpenCodeMcpConfig(
+  sandbox: SandboxInstance,
+  workingDir: string,
+  servers: Record<string, McpServerConfig>
+): Promise<void> {
+  validateServers(servers);
+
+  const configPath = `${workingDir}/opencode.json`;
+
+  let existingConfig: Record<string, unknown> = {};
+  try {
+    const existing = await sandbox.files.read(configPath);
+    if (typeof existing === "string") {
+      existingConfig = JSON.parse(existing);
+    }
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
+
+  const mcpServers = Object.fromEntries(
+    Object.entries(servers).map(([name, config]) => [name, toOpenCodeFormat(config)])
+  );
+
+  await sandbox.files.write(
+    configPath,
+    JSON.stringify({ ...existingConfig, mcp: mcpServers }, null, 2)
+  );
+}
+
+/**
+ * Transform to OpenCode MCP format
+ *
+ * - stdio: { type: "local", command: ["cmd", ...args], environment: { ... } }
+ * - remote: { type: "remote", url: "...", headers: { ... } }
+ */
+function toOpenCodeFormat(config: McpServerConfig): Record<string, unknown> {
+  const transport = detectTransport(config);
+
+  if (transport === "stdio" && config.command) {
+    const command = config.args
+      ? [config.command, ...config.args]
+      : [config.command];
+    const result: Record<string, unknown> = { type: "local", command };
+    if (config.env && Object.keys(config.env).length > 0) {
+      result.environment = config.env;
+    }
+    return result;
+  }
+
+  // SSE/HTTP → remote
+  if (config.url) {
+    const result: Record<string, unknown> = { type: "remote", url: config.url };
+    if (config.headers && Object.keys(config.headers).length > 0) {
+      result.headers = config.headers;
+    }
+    return result;
+  }
+
+  // Fallback: pass through with type
+  return { type: transport === "stdio" ? "local" : "remote", ...config };
 }
