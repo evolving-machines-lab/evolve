@@ -1310,7 +1310,7 @@ ckpt = await evolve.checkpoint(comment='before refactor')   # Explicit snapshot 
 checkpoints = await evolve.list_checkpoints(limit=10)       # List checkpoints, newest first
 ```
 
-`sandbox_id` constructor parameter is equivalent to `set_session()` - use it during initialization to reconnect to an existing sandbox.
+`sandbox_id` is a constructor parameter for initialization—it sets the sandbox ID before the first `run()`. `set_session()` is a runtime method that actively interrupts any running process, flushes the session log, resets checkpoint lineage, and switches to the new sandbox. They are **not** interchangeable: use `sandbox_id=` when constructing, `set_session()` when switching mid-session.
 
 **Provider caveats:**
 - **E2B / Daytona** — full support for `pause()`, `resume()`, `interrupt()`.
@@ -1591,6 +1591,19 @@ class StorageConfig:
     credentials: StorageCredentials | None = None  # StorageCredentials(access_key_id='...', secret_access_key='...') (default: AWS SDK chain)
 ```
 
+**BYOK prerequisites:**
+
+```bash
+# The Python SDK bridges to Node.js — AWS SDK packages must be installed for BYOK storage
+npm install @aws-sdk/client-s3 @aws-sdk/s3-request-presigner
+
+# Set credentials (or use any method supported by the AWS SDK credential chain)
+export AWS_ACCESS_KEY_ID=...
+export AWS_SECRET_ACCESS_KEY=...
+```
+
+> The AWS SDK packages are loaded dynamically at runtime by the Node.js bridge. If they are not installed, the SDK throws a clear error with install instructions.
+
 ### Auto-Checkpoint (via `run()`)
 
 Every successful foreground `run()` auto-creates a checkpoint:
@@ -1610,6 +1623,14 @@ print(result.checkpoint.id)       # 'ckpt_m5abc_xyz123'
 print(result.checkpoint.hash)     # SHA-256 of archive
 print(result.checkpoint.comment)  # 'initial draft'
 ```
+
+**Behavior notes:**
+
+- **Non-fatal:** Auto-checkpoint failures are logged but never cause `run()` to throw. The run result will have `checkpoint` as `None`.
+- **Foreground only:** Background runs (`background=True`) skip auto-checkpointing entirely.
+- **Exclusions:** The archive excludes `node_modules/`, `__pycache__/`, `*.pyc`, `.cache/`, `.npm/`, `.pip/`, `.venv/`, `venv/`, and `{workspace}/temp/` to keep snapshots lean.
+- **Dedup:** Archives are content-addressed by SHA-256 hash. If the hash matches an existing archive in storage, the upload is skipped—only the metadata entry is written.
+- **`from_checkpoint='latest'` edge case:** If no checkpoints exist for the session tag, `from_checkpoint='latest'` throws an error. Use `list_checkpoints()` first to check availability.
 
 ### Explicit Checkpoint
 

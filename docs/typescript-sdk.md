@@ -1291,7 +1291,7 @@ const ckpt = await evolve.checkpoint({ comment: "before refactor" });  // Explic
 const list = await evolve.listCheckpoints({ limit: 10 });              // List checkpoints, newest first
 ```
 
-`withSession("sandbox-id")` is a builder method equivalent to `setSession()` - use it during initialization to reconnect to an existing sandbox.
+`withSession("sandbox-id")` is a builder method for initialization—it sets the sandbox ID before the first `run()`. `setSession()` is a runtime method that actively interrupts any running process, flushes the session log, resets checkpoint lineage, and switches to the new sandbox. They are **not** interchangeable: use `withSession()` when building, `setSession()` when switching mid-session.
 
 **Provider caveats:**
 - **E2B / Daytona** — full support for `pause()`, `resume()`, `interrupt()`.
@@ -1539,6 +1539,19 @@ const evolve = new Evolve()
     .withStorage();  // Reads EVOLVE_API_KEY from env
 ```
 
+**BYOK prerequisites:**
+
+```bash
+# Install AWS SDK (peer dependency — not bundled with the SDK)
+npm install @aws-sdk/client-s3 @aws-sdk/s3-request-presigner
+
+# Set credentials (or use any method supported by the AWS SDK credential chain)
+export AWS_ACCESS_KEY_ID=...
+export AWS_SECRET_ACCESS_KEY=...
+```
+
+> The AWS SDK packages are loaded dynamically at runtime. If they are not installed, the SDK throws a clear error with install instructions.
+
 **StorageConfig:**
 
 ```ts
@@ -1573,6 +1586,14 @@ console.log(result.checkpoint?.id);       // "ckpt_m5abc_xyz123"
 console.log(result.checkpoint?.hash);     // SHA-256 of archive
 console.log(result.checkpoint?.comment);  // "initial draft"
 ```
+
+**Behavior notes:**
+
+- **Non-fatal:** Auto-checkpoint failures are logged but never cause `run()` to throw. The run result will have `checkpoint: undefined`.
+- **Foreground only:** Background runs (via `runInBackground()`) skip auto-checkpointing entirely.
+- **Exclusions:** The archive excludes `node_modules/`, `__pycache__/`, `*.pyc`, `.cache/`, `.npm/`, `.pip/`, `.venv/`, `venv/`, and `{workspace}/temp/` to keep snapshots lean.
+- **Dedup:** Archives are content-addressed by SHA-256 hash. If the hash matches an existing archive in storage, the upload is skipped—only the metadata entry is written.
+- **`from: "latest"` edge case:** If no checkpoints exist for the session tag, `from: "latest"` throws an error. Use `listCheckpoints()` first to check availability.
 
 ### Explicit Checkpoint
 
