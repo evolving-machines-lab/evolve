@@ -18,6 +18,7 @@ Requires:
   AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY -- S3 credentials (BYOK only)
 """
 
+import asyncio
 import os
 from datetime import datetime
 
@@ -170,6 +171,10 @@ async def test_storage_edge_cases_cross_session():
             pass
 
     log_result(True, f'Phase 2 complete (session B: {len(session_b_checkpoints)} checkpoints)')
+
+    # Brief delay for S3 read-after-write consistency on listing
+    log_info('Waiting 3s for S3 consistency...')
+    await asyncio.sleep(3)
 
     # =================================================================
     # Phase 3: list_checkpoints(limit, tag) -- cross-tag filtering

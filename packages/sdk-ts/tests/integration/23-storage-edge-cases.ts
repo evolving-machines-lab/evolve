@@ -243,6 +243,10 @@ async function main() {
     await evolveB.kill();
     log(`  \u2713 Phase 2 complete (session B: ${sessionBCheckpoints.length} checkpoints)\n`);
 
+    // Brief delay for S3 read-after-write consistency on listing
+    log("  Waiting 3s for S3 consistency...");
+    await new Promise(r => setTimeout(r, 3000));
+
     // =========================================================================
     // Phase 3: listCheckpoints(limit, tag) — multi-session cross-tag
     // =========================================================================
