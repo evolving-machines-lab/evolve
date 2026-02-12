@@ -800,12 +800,17 @@ async function s3ListCheckpoints(
     return b.key < a.key ? -1 : b.key > a.key ? 1 : 0;
   });
 
-  // Slice to limit
-  const limited = options?.limit ? allEntries.slice(0, options.limit) : allEntries;
+  // When tag filtering: fetch all metadata, filter by tag, then apply limit.
+  // When no tag: apply limit before fetching metadata (optimization — avoids
+  // reading metadata for entries we'll discard).
+  const needsTagFilter = !!options?.tag;
+  const preFetchSlice = needsTagFilter
+    ? allEntries
+    : options?.limit ? allEntries.slice(0, options.limit) : allEntries;
 
-  // Fetch metadata JSON for top N only
+  // Fetch metadata JSON
   const results = await Promise.all(
-    limited.map(async (entry) => {
+    preFetchSlice.map(async (entry) => {
       try {
         return await s3GetJson<CheckpointInfo>(storage, entry.key);
       } catch {
@@ -814,12 +819,18 @@ async function s3ListCheckpoints(
     })
   );
 
-  const valid = results.filter((r): r is CheckpointInfo => r !== null);
+  let valid = results.filter((r): r is CheckpointInfo => r !== null);
 
   // Post-filter by tag if requested
   if (options?.tag) {
-    return valid.filter((r) => r.tag === options.tag);
+    valid = valid.filter((r) => r.tag === options.tag);
   }
+
+  // Apply limit after tag filter
+  if (options?.limit && valid.length > options.limit) {
+    valid = valid.slice(0, options.limit);
+  }
+
   return valid;
 }
 

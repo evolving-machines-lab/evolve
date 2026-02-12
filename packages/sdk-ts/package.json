@@ -57,6 +57,7 @@
     "test:unit:checkpoint-errors": "tsx tests/unit/checkpoint-errors.test.ts",
     "test:unit:checkpoint-flows": "tsx tests/unit/checkpoint-flows.test.ts",
     "test:unit:checkpoint-dx": "tsx tests/unit/checkpoint-dx.test.ts",
+    "test:unit:checkpoint-edge-cases": "tsx tests/unit/checkpoint-edge-cases.test.ts",
     "pretest:integration": "npm run build",
     "test:integration": "npm run test:01",
     "test:integration:all": "npm run test:01 && npm run test:02 && npm run test:03 && npm run test:04 && npm run test:05 && npm run test:06 && npm run test:07 && npm run test:08 && npm run test:09 && npm run test:10 && npm run test:11 && npm run test:12 && npm run test:13 && npm run test:14 && npm run test:15",

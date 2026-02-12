@@ -576,6 +576,17 @@ export class Agent {
     }
 
     // =========================================================================
+    // GUARD: mutual exclusivity check before any network calls
+    // =========================================================================
+    if (from) {
+      if (this.sandbox || this.options.sandboxId) {
+        throw new Error(
+          "Cannot restore into existing sandbox. Call kill() first, or create a new Evolve instance."
+        );
+      }
+    }
+
+    // =========================================================================
     // RESOLVE "latest": convert to concrete checkpoint ID
     // =========================================================================
     if (from === "latest") {
@@ -595,11 +606,6 @@ export class Agent {
     if (from) {
       if (!this.storage) {
         throw new Error("Storage not configured. Call .withStorage() before using 'from'.");
-      }
-      if (this.sandbox || this.options.sandboxId) {
-        throw new Error(
-          "Cannot restore into existing sandbox. Call kill() first, or create a new Evolve instance."
-        );
       }
       if (!this.options.sandboxProvider) {
         throw new Error("No sandbox provider configured");
