@@ -1500,7 +1500,11 @@ await evolve.run({ prompt: 'Compare results' });  // Back to sandbox A
 
 ## 5.1 Storage & Checkpointing
 
-Persist sandbox state beyond sandbox lifetime. Checkpoints snapshot `/home/user/` (workspace + agent config) to S3-compatible storage and can be restored into a fresh sandbox.
+Persist sandbox state beyond sandbox lifetime. Checkpoints archive specific directories under `/home/user/` to S3-compatible storage and can be restored into a fresh sandbox.
+
+**What gets checkpointed:**
+- `/home/user/workspace/` — your project files
+- `/home/user/.<agent>/` — agent settings and session history (e.g. `.claude/`, `.codex/`, `.gemini/`, `.qwen/`)
 
 - **Auto-checkpoint:** Every successful `run()` with `.withStorage()` creates a checkpoint automatically.
 - **Content-addressed dedup:** Archives are hashed (SHA-256). Same content = skip upload.
