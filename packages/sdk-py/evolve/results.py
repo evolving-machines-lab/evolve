@@ -1,7 +1,38 @@
 """Result types for Evolve SDK."""
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
+
+
+@dataclass
+class CheckpointInfo:
+    """Checkpoint metadata.
+
+    Matches TypeScript SDK's CheckpointInfo for exact parity.
+    Evidence: sdk-ts/src/types.ts lines 613-634
+
+    Attributes:
+        id: Checkpoint ID — pass as `from_checkpoint` to restore
+        hash: SHA-256 of tar.gz — integrity verification
+        tag: Session tag at checkpoint time — lineage tracking
+        timestamp: ISO 8601 timestamp
+        size_bytes: Archive size in bytes
+        agent_type: Agent type that produced this checkpoint
+        model: Model that produced this checkpoint
+        workspace_mode: Workspace mode used when checkpoint was created
+        parent_id: Parent checkpoint ID — lineage tracking
+        comment: User-provided label for this checkpoint
+    """
+    id: str
+    hash: str
+    tag: str
+    timestamp: str
+    size_bytes: Optional[int] = None
+    agent_type: Optional[str] = None
+    model: Optional[str] = None
+    workspace_mode: Optional[str] = None
+    parent_id: Optional[str] = None
+    comment: Optional[str] = None
 
 
 @dataclass
@@ -15,11 +46,13 @@ class AgentResponse:
         exit_code: Command exit code
         stdout: Standard output
         stderr: Standard error
+        checkpoint: Checkpoint info if storage configured and run succeeded
     """
     sandbox_id: str
     exit_code: int
     stdout: str
     stderr: str
+    checkpoint: Optional[CheckpointInfo] = None
 
 
 # Backward compatibility alias

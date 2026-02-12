@@ -1551,7 +1551,7 @@ Persist sandbox state beyond sandbox lifetime. Checkpoints snapshot `/home/user/
 ### Configuration
 
 ```python
-from evolve import Evolve, AgentConfig, StorageConfig
+from evolve import Evolve, AgentConfig, StorageConfig, StorageCredentials
 
 # BYOK — your own S3 bucket
 evolve = Evolve(
@@ -1588,7 +1588,7 @@ class StorageConfig:
     prefix: str | None = None       # Key prefix (overrides URL parsing)
     region: str | None = None       # AWS region (default: AWS_REGION env or 'us-east-1')
     endpoint: str | None = None     # Custom S3 endpoint (R2, MinIO, GCS)
-    credentials: dict | None = None # {'access_key_id': '...', 'secret_access_key': '...'} (default: AWS SDK chain)
+    credentials: StorageCredentials | None = None  # StorageCredentials(access_key_id='...', secret_access_key='...') (default: AWS SDK chain)
 ```
 
 ### Auto-Checkpoint (via `run()`)

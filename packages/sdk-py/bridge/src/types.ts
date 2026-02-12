@@ -88,12 +88,16 @@ export interface InitializeParams {
   observability?: Record<string, unknown>;
   // Composio Tool Router setup
   composio?: ComposioSetup;
+  // Storage / Checkpointing
+  storage?: StorageConfigParams;
 }
 
 export interface RunParams {
   prompt: string;
   timeout_ms?: number;
   background?: boolean;
+  from?: string;
+  checkpoint_comment?: string;
 }
 
 export interface ExecuteCommandParams {
@@ -218,6 +222,7 @@ export interface RunResponse {
   exit_code: number;
   stdout: string;
   stderr: string;
+  checkpoint?: CheckpointInfoResponse;
 }
 
 /**
@@ -248,6 +253,43 @@ export interface SessionStatusResponse {
   active_process_id: string | null;
   has_run: boolean;
   timestamp: string;
+}
+
+// =============================================================================
+// STORAGE / CHECKPOINTING TYPES
+// =============================================================================
+
+/** Storage config params from Python (matches TS SDK StorageConfig) */
+export interface StorageConfigParams {
+  url?: string;
+  bucket?: string;
+  prefix?: string;
+  region?: string;
+  endpoint?: string;
+  credentials?: { accessKeyId: string; secretAccessKey: string };
+}
+
+/** Checkpoint info response (snake_case for Python transport) */
+export interface CheckpointInfoResponse {
+  id: string;
+  hash: string;
+  tag: string;
+  timestamp: string;
+  size_bytes?: number;
+  agent_type?: string;
+  model?: string;
+  workspace_mode?: string;
+  parent_id?: string;
+  comment?: string;
+}
+
+export interface CheckpointParams {
+  comment?: string;
+}
+
+export interface ListCheckpointsParams {
+  limit?: number;
+  tag?: string;
 }
 
 // =============================================================================

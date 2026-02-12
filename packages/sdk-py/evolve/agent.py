@@ -6,8 +6,8 @@ import json
 from typing import Any, Callable, Dict, List, Literal, Optional, Type, Union
 
 from .bridge import BridgeManager, SandboxNotFoundError
-from .config import AgentConfig, ComposioSetup, SandboxProvider, SchemaOptions, WorkspaceMode
-from .results import AgentResponse, ExecuteResult, OutputResult, SessionStatus
+from .config import AgentConfig, ComposioSetup, SandboxProvider, SchemaOptions, StorageConfig, WorkspaceMode
+from .results import AgentResponse, CheckpointInfo, ExecuteResult, OutputResult, SessionStatus
 from . import composio as composio_helpers
 from .schema import is_pydantic_model, is_dataclass, to_json_schema, validate_and_parse
 from .utils import _encode_files_for_transport, _filter_none
@@ -63,6 +63,7 @@ class Evolve:
         schema: Optional[Union[Type, Dict[str, Any]]] = None,
         schema_options: Optional[SchemaOptions] = None,
         composio: Optional[ComposioSetup] = None,
+        storage: Optional[StorageConfig] = None,
     ):
         """Initialize Evolve.
 
@@ -86,6 +87,7 @@ class Evolve:
             schema: Schema for structured output - Pydantic model, dataclass, or JSON Schema dict
             schema_options: Validation options (mode: 'strict' or 'loose', default: 'loose')
             composio: Composio Tool Router setup for 500+ external service integrations
+            storage: Storage configuration for checkpoint persistence (BYOK S3 or gateway mode)
         """
         self.config = config
         self.sandbox = sandbox
@@ -101,6 +103,7 @@ class Evolve:
         self.session_tag_prefix = session_tag_prefix
         self.schema_options = schema_options or SchemaOptions()
         self._composio = composio
+        self.storage = storage
 
         # Schema handling: store original + convert to JSON Schema
         self._schema = schema
@@ -147,6 +150,8 @@ class Evolve:
                 'schema_options': {'mode': self.schema_options.mode} if self._schema_json else None,
                 # Composio Tool Router
                 'composio': self._composio.to_dict() if self._composio else None,
+                # Storage / Checkpointing
+                'storage': self.storage.to_dict() if self.storage else None,
                 # Always forward events
                 'forward_stdout': True,
                 'forward_stderr': True,
@@ -189,6 +194,8 @@ class Evolve:
         prompt: str,
         timeout_ms: Optional[int] = None,
         background: bool = False,
+        from_checkpoint: Optional[str] = None,
+        checkpoint_comment: Optional[str] = None,
     ) -> AgentResponse:
         """Run AI-assisted task (agent decides and acts).
 
@@ -199,14 +206,19 @@ class Evolve:
                        immediately with a handshake response (`exit_code=0`).
                        Final completion is delivered asynchronously via
                        lifecycle events or status polling.
+            from_checkpoint: Restore from checkpoint ID before running (requires storage).
+                           Use 'latest' to restore the most recent checkpoint.
+            checkpoint_comment: Optional label for the auto-checkpoint after this run
 
         Returns:
-            AgentResponse with sandbox_id, exit_code, stdout, stderr
+            AgentResponse with sandbox_id, exit_code, stdout, stderr, checkpoint
 
         Example:
             >>> result = await evolve.run(prompt='Analyze data and create report', timeout_ms=600000)
             >>> # Background execution
             >>> result = await evolve.run(prompt='Long task', background=True)
+            >>> # Restore from checkpoint
+            >>> result = await evolve.run(prompt='Continue work', from_checkpoint='latest')
         """
         await self._ensure_initialized()
 
@@ -217,6 +229,10 @@ class Evolve:
             params['timeout_ms'] = timeout_ms
         if background:
             params['background'] = background
+        if from_checkpoint is not None:
+            params['from'] = from_checkpoint
+        if checkpoint_comment is not None:
+            params['checkpoint_comment'] = checkpoint_comment
 
         response = await self.bridge.call(
             'run',
@@ -229,6 +245,7 @@ class Evolve:
             exit_code=response['exit_code'],
             stdout=response['stdout'],
             stderr=response['stderr'],
+            checkpoint=self._parse_checkpoint(response.get('checkpoint')),
         )
 
     async def execute_command(
@@ -386,6 +403,80 @@ class Evolve:
             data=data,
             error=error,
             raw_data=raw_data,
+        )
+
+    # =========================================================================
+    # STORAGE / CHECKPOINTING
+    # =========================================================================
+
+    async def checkpoint(self, comment: Optional[str] = None) -> CheckpointInfo:
+        """Create an explicit checkpoint of the current sandbox state.
+
+        Requires a prior run() call (needs an active sandbox to snapshot).
+
+        Args:
+            comment: Optional label for this checkpoint
+
+        Returns:
+            CheckpointInfo with id, hash, tag, timestamp, etc.
+
+        Example:
+            >>> info = await evolve.checkpoint(comment='before refactor')
+            >>> print(f'Checkpoint: {info.id}')
+        """
+        await self._ensure_initialized()
+        params: Dict[str, Any] = {}
+        if comment is not None:
+            params['comment'] = comment
+        response = await self.bridge.call('checkpoint', params)
+        return self._parse_checkpoint(response)  # type: ignore[return-value]
+
+    async def list_checkpoints(
+        self,
+        limit: Optional[int] = None,
+        tag: Optional[str] = None,
+    ) -> List[CheckpointInfo]:
+        """List checkpoints (requires storage configuration).
+
+        Does not require a running sandbox — only storage configuration.
+
+        Args:
+            limit: Maximum number of checkpoints to return
+            tag: Filter by session tag
+
+        Returns:
+            List of CheckpointInfo sorted by newest first
+
+        Example:
+            >>> checkpoints = await evolve.list_checkpoints(limit=5)
+            >>> for cp in checkpoints:
+            ...     print(f'{cp.id} ({cp.comment})')
+        """
+        await self._ensure_initialized()
+        params: Dict[str, Any] = {}
+        if limit is not None:
+            params['limit'] = limit
+        if tag is not None:
+            params['tag'] = tag
+        response = await self.bridge.call('list_checkpoints', params)
+        return [self._parse_checkpoint(cp) for cp in response]  # type: ignore[misc]
+
+    @staticmethod
+    def _parse_checkpoint(data: Optional[Dict[str, Any]]) -> Optional[CheckpointInfo]:
+        """Parse checkpoint dict from bridge response into CheckpointInfo."""
+        if not data:
+            return None
+        return CheckpointInfo(
+            id=data['id'],
+            hash=data['hash'],
+            tag=data['tag'],
+            timestamp=data['timestamp'],
+            size_bytes=data.get('size_bytes'),
+            agent_type=data.get('agent_type'),
+            model=data.get('model'),
+            workspace_mode=data.get('workspace_mode'),
+            parent_id=data.get('parent_id'),
+            comment=data.get('comment'),
         )
 
     async def get_session(self) -> Optional[str]:
