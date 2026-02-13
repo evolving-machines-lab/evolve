@@ -7,36 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.23] - 2025-02-13
+
+### Added
+
+- **Kimi CLI agent support** (`type: "kimi"`)
+  - Parser for Kosong Messages format (`--print --output-format stream-json`)
+  - Wire Protocol fallback for future compatibility
+  - Models: `moonshot/kimi-k2.5`, `moonshot/kimi-k2-turbo-preview`
+  - MCP config at `~/.kimi/mcp.json`
+
+- **OpenCode agent support** (`type: "opencode"`)
+  - Parser for JSONL stream format (`--format json`)
+  - Multi-provider model routing (`openai/`, `anthropic/`, `google/` prefixes)
+  - Models: `openai/gpt-5.2`, `anthropic/claude-sonnet-4-5`, `anthropic/claude-opus-4-6`, `google/gemini-3-pro-preview`
+  - MCP config at `./opencode.json` (project-level)
+
+- **`checkpointDirs` registry field** for agents with non-standard state directories
+  - OpenCode uses XDG Base Directory spec: `~/.local/share/opencode/`, `~/.config/opencode/`, `~/.local/state/opencode/`
+  - `buildTarCommand()` includes all checkpoint dirs in tar archive
+
+- **Python SDK type surface** updated with `'kimi'` and `'opencode'` in `AgentType` literal
+
+### Fixed
+
+- **OpenCode multi-provider BYOK env resolution** — `resolveAgentConfig()` now checks `providerEnvMap` (model-specific key) before generic `apiKeyEnv`, so `anthropic/...` models resolve to `ANTHROPIC_API_KEY` instead of incorrectly using `OPENAI_API_KEY`
+- **Kimi parser Kosong format** — rewrote from Wire Protocol to actual Kosong Messages format (role-based `assistant`/`tool` messages with content arrays)
+- **Kimi single-TextPart serialization** — handle Kosong edge case where single TextPart is serialized as plain string instead of array
+
+## [0.0.22] - 2025-02-10
+
+### Added
+
+- **Storage & Checkpointing** (BYOK + Gateway modes)
+  - `kit.withStorage({ url: "s3://..." })` for BYOK S3-compatible storage
+  - Gateway mode via `EVOLVE_API_KEY` (Evolve-managed storage)
+  - Auto-checkpoint after every successful `run()`
+  - Content-addressed dedup (SHA-256 hash, skip upload on match)
+  - Restore via `kit.run({ from: checkpointId })` or `from: "latest"`
+  - Explicit save points via `kit.checkpoint({ comment })`
+  - `kit.listCheckpoints({ limit, tag })` for checkpoint discovery
+  - Standalone `listCheckpoints(storageConfig)` without Evolve instance
+  - Lineage tracking with `parentId` across runs and restores
+
+- **Python SDK parity** for all storage/checkpointing features
+
+### Fixed
+
+- BYOK restore error differentiation (not-found vs network errors)
+- `s3ListCheckpoints` limit+tag ordering bug
+- Path traversal protection in `normalizeAgentDir()` and `normalizeWorkspaceDir()`
+- Daytona provider reliability and cross-provider test isolation
+
+## [0.0.21] - 2025-02-06
+
 ### Added
 
 - **TypeScript SDK session runtime control plane**
-  - Added `status()` runtime snapshot API (`SessionStatus`) with `sandbox`, `agent`, `activeProcessId`, `hasRun`, and timestamp.
-  - Added `interrupt()` to stop active `run()` / `executeCommand()` processes without killing the sandbox.
-  - Added `lifecycle` event stream with strongly typed `LifecycleEvent` / `LifecycleReason` (`sandbox_*`, `run_*`, `command_*`, background completion/failure reasons).
-  - Added runtime guards to reject concurrent operations on the same `Evolve` instance while a process is active.
-  - Added lifecycle-aware fallback behavior when `pause()`, `resume()`, `kill()`, or `withSession()` are used before agent initialization.
+  - `status()` runtime snapshot API with sandbox/agent state, activeProcessId, hasRun, timestamp
+  - `interrupt()` to stop active processes without killing the sandbox
+  - `lifecycle` event stream with typed `LifecycleEvent` / `LifecycleReason`
+  - Runtime guards for concurrent operation rejection
 
 - **Python SDK parity for session runtime control plane**
-  - Added async `status()` and `interrupt()` APIs with Python `SessionStatus` result type.
-  - Added lifecycle event forwarding through the Python bridge (`evolve.on('lifecycle', ...)`) with parity to TypeScript reason/state semantics.
-  - Added provider-matrix runtime/lifecycle integration coverage across `e2b`, `daytona`, and `modal` for session controls and streaming events.
+  - Async `status()` and `interrupt()` APIs
+  - Lifecycle event forwarding through Python bridge
 
 ### Changed
 
 - **Provider coherence (Daytona / Modal)**
-  - `image` is now optional in provider create options and defaults to `"evolve-all"` for parity with E2B defaults.
-  - Daytona `connect()` now starts stopped sandboxes before returning a live instance.
-  - Daytona command execution handling now aligns timeout/interruption behavior with unified SDK expectations.
-
-- **Python SDK API tightening**
-  - `Evolve.on(...)` now validates event names and raises `ValueError` for unsupported event types.
-  - Removed unused exported Python `LifecycleEvent` runtime dataclass to keep callback payload semantics consistent (`dict` payload + documented TypedDict shape).
-  - Updated Python docs to reflect runtime lifecycle event shape and event-name validation behavior.
+  - `image` defaults to `"evolve-all"` for parity with E2B
+  - Daytona `connect()` now starts stopped sandboxes
+  - Daytona timeout/interruption behavior aligned with SDK expectations
 
 ### Fixed
 
-- **Claude `model="opus"` fails in gateway mode** - LiteLLM gateway can't route `claude-opus-4-6` via Anthropic Messages API (model not yet in cost map). Temporary fix: prefix with `anthropic/` for gateway routing via wildcard. Revert when LiteLLM updates.
-- **Qwen Code auth error in non-interactive mode** - Added `--auth-type openai` flag to Qwen buildCommand. Required because Qwen Code's non-interactive mode needs explicit auth type when `OPENAI_MODEL` env var is not set (SDK passes model via `--model` flag instead).
+- Claude `model="opus"` gateway routing (temporary `anthropic/` prefix)
+- Qwen Code `--auth-type openai` for non-interactive mode
 
 ## [0.0.14] - 2025-01-28
 
