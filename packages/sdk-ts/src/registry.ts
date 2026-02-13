@@ -273,7 +273,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     providerEnvMap: {
       anthropic: { keyEnv: "ANTHROPIC_API_KEY" },
       openai: { keyEnv: "OPENAI_API_KEY" },
-      google: { keyEnv: "GOOGLE_API_KEY" },
+      google: { keyEnv: "GEMINI_API_KEY" },
     },
     // Inline config env var — used in gateway mode to set provider base URLs
     gatewayConfigEnv: "OPENCODE_CONFIG_CONTENT",
