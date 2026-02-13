@@ -240,7 +240,7 @@ Set env vars and the SDK picks them up automatically—no need to pass explicitl
 | `'gemini'` | `'gemini-3-pro-preview'` `'gemini-3-flash-preview'` `'gemini-2.5-pro'` `'gemini-2.5-flash'` `'gemini-2.5-flash-lite'` | `'gemini-3-flash-preview'` | `GEMINI_API_KEY` or `GEMINI_OAUTH_FILE_PATH` |
 | `'qwen'` | `'qwen3-coder-plus'` `'qwen3-vl-plus'` | `'qwen3-coder-plus'` | `OPENAI_API_KEY` |
 | `'kimi'` | `'moonshot/kimi-k2.5'` `'moonshot/kimi-k2-turbo-preview'` | `'moonshot/kimi-k2.5'` | `KIMI_API_KEY` |
-| `'opencode'` | `'openai/gpt-5.2'` `'anthropic/claude-sonnet-4-5'` `'anthropic/claude-opus-4-6'` `'google/gemini-3-pro-preview'` | `'openai/gpt-5.2'` | `OPENAI_API_KEY` (multi-provider) |
+| `'opencode'` | `'openai/gpt-5.2'` `'anthropic/claude-sonnet-4-5'` `'anthropic/claude-opus-4-6'` `'google/gemini-3-pro-preview'` | `'openai/gpt-5.2'` | Per model: `OPENAI_API_KEY` `ANTHROPIC_API_KEY` `GEMINI_API_KEY` |
 
 Agent-specific options: `reasoning_effort` (Codex: `'low'` `'medium'` `'high'` `'xhigh'`), `betas` (Claude Sonnet: `['context-1m-2025-08-07']`)
 
