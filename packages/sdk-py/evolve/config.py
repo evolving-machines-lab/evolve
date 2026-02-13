@@ -114,11 +114,13 @@ class DaytonaProvider:
         api_url: API URL (defaults to https://app.daytona.io/api)
         target: Target region (defaults to 'us')
         timeout_ms: Sandbox timeout in milliseconds (default: 3600000 = 1 hour)
+        snapshot_name: Daytona snapshot name (default: 'evolve-all'). Custom snapshots via ``cd assets && ./build.sh daytona``
     """
     api_key: Optional[str] = None
     api_url: Optional[str] = None
     target: Optional[str] = None
     timeout_ms: int = 3600000
+    snapshot_name: Optional[str] = None
 
     @property
     def type(self) -> Literal['daytona']:
@@ -137,6 +139,8 @@ class DaytonaProvider:
             result['target'] = self.target
         if self.timeout_ms:
             result['defaultTimeoutMs'] = self.timeout_ms
+        if self.snapshot_name:
+            result['snapshotName'] = self.snapshot_name
         return result
 
 
