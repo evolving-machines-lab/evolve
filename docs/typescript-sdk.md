@@ -221,6 +221,8 @@ Set env vars and the SDK picks them up automatically—no need to pass explicitl
 | `"codex"` | `"gpt-5.2"` `"gpt-5.2-codex"` `"gpt-5.1-codex-max"` `"gpt-5.1-mini"` | `"gpt-5.2"` | `OPENAI_API_KEY` or `CODEX_OAUTH_FILE_PATH` |
 | `"gemini"` | `"gemini-3-pro-preview"` `"gemini-3-flash-preview"` `"gemini-2.5-pro"` `"gemini-2.5-flash"` `"gemini-2.5-flash-lite"` | `"gemini-3-flash-preview"` | `GEMINI_API_KEY` or `GEMINI_OAUTH_FILE_PATH` |
 | `"qwen"` | `"qwen3-coder-plus"` `"qwen3-vl-plus"` | `"qwen3-coder-plus"` | `OPENAI_API_KEY` |
+| `"kimi"` | `"moonshot/kimi-k2.5"` `"moonshot/kimi-k2-turbo-preview"` | `"moonshot/kimi-k2.5"` | `KIMI_API_KEY` |
+| `"opencode"` | `"openai/gpt-5.2"` `"anthropic/claude-sonnet-4-5"` `"anthropic/claude-opus-4-6"` `"google/gemini-2.5-pro"` | `"openai/gpt-5.2"` | `OPENAI_API_KEY` (multi-provider) |
 
 Agent-specific options: `reasoningEffort` (Codex: `"low"` `"medium"` `"high"` `"xhigh"`), `betas` (Claude Sonnet: `["context-1m-2025-08-07"]`)
 
@@ -229,8 +231,9 @@ Agent-specific options: `reasoningEffort` (Codex: `"low"` `"medium"` `"high"` `"
 ```bash
 # .env - set env vars for auto-pickup
 ANTHROPIC_API_KEY=sk-...   # claude
-OPENAI_API_KEY=sk-...      # codex, qwen
+OPENAI_API_KEY=sk-...      # codex, qwen, opencode
 GEMINI_API_KEY=...         # gemini
+KIMI_API_KEY=...           # kimi
 E2B_API_KEY=e2b_...        # sandbox
 ```
 
@@ -278,6 +281,24 @@ const evolve = new Evolve()
 
 const evolve = new Evolve()
     .withAgent({ type: "qwen", model: "qwen3-coder-plus" });
+```
+
+```ts
+// kimi (auto-picks KIMI_API_KEY + E2B_API_KEY)
+const evolve = new Evolve()
+    .withAgent({ type: "kimi" });
+
+const evolve = new Evolve()
+    .withAgent({ type: "kimi", model: "moonshot/kimi-k2-turbo-preview" });
+```
+
+```ts
+// opencode — multi-provider (auto-picks OPENAI_API_KEY + E2B_API_KEY)
+const evolve = new Evolve()
+    .withAgent({ type: "opencode" });
+
+const evolve = new Evolve()
+    .withAgent({ type: "opencode", model: "anthropic/claude-sonnet-4-5" });
 ```
 
 ---
@@ -410,7 +431,7 @@ const evolve = new Evolve()
 
     // Agent configuration (optional if EVOLVE_API_KEY set, defaults to claude)
     .withAgent({
-        type: "codex",                        // "claude" | "codex" | "gemini" | "qwen" - defaults to "claude"
+        type: "codex",                        // "claude" | "codex" | "gemini" | "qwen" | "kimi" | "opencode" - defaults to "claude"
         model: "gpt-5.2-codex",               // (optional) Uses default if omitted
         reasoningEffort: "medium",            // (optional) "low" | "medium" | "high" | "xhigh" - Codex only
         // betas: ["context-1m-2025-08-07"],  // (optional) Claude Sonnet only
@@ -1504,7 +1525,7 @@ Persist sandbox state beyond sandbox lifetime. Checkpoints archive specific dire
 
 **What gets checkpointed:**
 - `/home/user/workspace/` — your project files
-- `/home/user/.<agent>/` — agent settings and session history (e.g. `.claude/`, `.codex/`, `.gemini/`, `.qwen/`)
+- `/home/user/.<agent>/` — agent settings and session history (e.g. `.claude/`, `.codex/`, `.gemini/`, `.qwen/`, `.kimi/`)
 
 - **Auto-checkpoint:** Every successful `run()` with `.withStorage()` creates a checkpoint automatically.
 - **Content-addressed dedup:** Archives are hashed (SHA-256). Same content = skip upload.
@@ -1697,7 +1718,7 @@ interface CheckpointInfo {
     tag: string;             // Session tag at checkpoint time
     timestamp: string;       // ISO 8601
     sizeBytes?: number;      // Archive size in bytes
-    agentType?: string;      // "claude" | "codex" | "gemini" | "qwen"
+    agentType?: string;      // "claude" | "codex" | "gemini" | "qwen" | "kimi" | "opencode"
     model?: string;          // Model used
     workspaceMode?: string;  // "knowledge" | "swe"
     parentId?: string;       // Parent checkpoint ID (lineage)
@@ -1764,7 +1785,7 @@ Additionally, every run and command is logged locally to structured JSON lines u
 - `{tag}` – `my-prefix-` + 16 random hex characters (e.g. `my-prefix-a1b2c3d4e5f6g7h8`)
 - `{provider}` – the sandbox provider (e.g. `e2b`)
 - `{sandboxId}` – the active sandbox ID
-- `{agent}` – the agent type (`codex`, `claude`, `gemini`, `qwen`)
+- `{agent}` – the agent type (`codex`, `claude`, `gemini`, `qwen`, `kimi`, `opencode`)
 - `{timestamp}` – ISO timestamp with `:` and `.` replaced by `-`
 
 Each file contains three entry types:
@@ -2474,7 +2495,7 @@ Override the default agent for any operation (apiKey inherited from Swarm config
 
 ```ts
 interface AgentOverride {
-    type: "claude" | "codex" | "gemini" | "qwen";
+    type: "claude" | "codex" | "gemini" | "qwen" | "kimi" | "opencode";
     model?: string;
     reasoningEffort?: "low" | "medium" | "high" | "xhigh";  // Codex only
     betas?: string[];  // Claude only
