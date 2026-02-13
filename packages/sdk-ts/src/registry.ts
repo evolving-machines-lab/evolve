@@ -92,6 +92,13 @@ export interface AgentRegistryEntry {
   availableBetas?: Record<string, string>;
   /** Skills configuration for this agent */
   skillsConfig: SkillsConfig;
+  /** Multi-provider env mapping: model prefix → keyEnv (for CLIs like OpenCode that resolve provider from model string) */
+  providerEnvMap?: Record<string, { keyEnv: string }>;
+  /** Env var for inline config (e.g., OPENCODE_CONFIG_CONTENT) — used in gateway mode to set provider base URLs */
+  gatewayConfigEnv?: string;
+  /** Additional directories to include in checkpoint tar (beyond mcpConfig.settingsDir).
+   *  Used for agents like OpenCode that spread state across XDG directories. */
+  checkpointDirs?: string[];
 }
 
 // =============================================================================
@@ -231,6 +238,74 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
         : `dashscope/${model}`;
       // --auth-type openai is required in non-interactive mode when env vars don't include OPENAI_MODEL
       return `qwen "${prompt}" ${continueFlag}${skillsFlag}--auth-type openai --model ${prefixedModel} --yolo --output-format stream-json`;
+    },
+  },
+
+  kimi: {
+    image: "evolve-all",
+    apiKeyEnv: "KIMI_API_KEY",
+    baseUrlEnv: "KIMI_BASE_URL",
+    defaultModel: "moonshot/kimi-k2.5",
+    models: [
+      { alias: "moonshot/kimi-k2.5", modelId: "moonshot/kimi-k2.5", description: "Latest multimodal, Agent Swarm capable" },
+      { alias: "moonshot/kimi-k2-turbo-preview", modelId: "moonshot/kimi-k2-turbo-preview", description: "Fast turbo model" },
+    ],
+    systemPromptFile: "AGENTS.md",
+    mcpConfig: {
+      settingsDir: "~/.kimi",
+      filename: "mcp.json",
+      format: "json",
+    },
+    skillsConfig: {
+      sourceDir: "/home/user/.evolve/skills",
+      targetDir: "/home/user/.kimi/skills",
+    },
+    defaultBaseUrl: "https://api.moonshot.ai/v1",
+    buildCommand: ({ prompt, model, isResume }) => {
+      const continueFlag = isResume ? "--continue " : "";
+      return `KIMI_MODEL_NAME=${model} kimi --print --output-format stream-json --yolo ${continueFlag}--prompt "${prompt}"`;
+    },
+  },
+
+  opencode: {
+    image: "evolve-all",
+    apiKeyEnv: "OPENAI_API_KEY",
+    baseUrlEnv: "OPENAI_BASE_URL",
+    defaultModel: "openai/gpt-5.2",
+    // OpenCode multi-provider: model prefix → env var for API key
+    providerEnvMap: {
+      anthropic: { keyEnv: "ANTHROPIC_API_KEY" },
+      openai: { keyEnv: "OPENAI_API_KEY" },
+      google: { keyEnv: "GEMINI_API_KEY" },
+    },
+    // Inline config env var — used in gateway mode to set provider base URLs
+    gatewayConfigEnv: "OPENCODE_CONFIG_CONTENT",
+    models: [
+      { alias: "anthropic/claude-sonnet-4-5", modelId: "anthropic/claude-sonnet-4-5", description: "Balanced coding, features, tests" },
+      { alias: "anthropic/claude-opus-4-6", modelId: "anthropic/claude-opus-4-6", description: "Complex reasoning, R&D" },
+      { alias: "openai/gpt-5.2", modelId: "openai/gpt-5.2", description: "OpenAI flagship" },
+      { alias: "google/gemini-3-pro-preview", modelId: "google/gemini-3-pro-preview", description: "Google latest reasoning" },
+    ],
+    systemPromptFile: "AGENTS.md",
+    mcpConfig: {
+      settingsDir: ".",
+      filename: "opencode.json",
+      format: "json",
+    },
+    skillsConfig: {
+      sourceDir: "/home/user/.evolve/skills",
+      targetDir: "/home/user/.agents/skills",
+    },
+    // OpenCode uses XDG Base Directory spec — state is split across multiple dirs
+    // Evidence: KNOWLEDGE/opencode global/index.ts (xdg-basedir), storage/storage.ts, auth/index.ts, config/config.ts
+    checkpointDirs: [
+      "~/.local/share/opencode",  // sessions, auth, snapshots, worktrees, logs
+      "~/.config/opencode",       // config.json, AGENTS.md, theme
+      "~/.local/state/opencode",  // prompt history, model prefs, TUI state
+    ],
+    buildCommand: ({ prompt, model, isResume }) => {
+      const continueFlag = isResume ? "--continue " : "";
+      return `OPENCODE_PERMISSION='{"*":"allow"}' opencode run "${prompt}" ${continueFlag}--model ${model} --format json < /dev/null`;
     },
   },
 };

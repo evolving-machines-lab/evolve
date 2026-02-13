@@ -10,6 +10,8 @@ import type { OutputEvent } from "./types";
 import { createClaudeParser } from "./claude";
 import { createCodexParser } from "./codex";
 import { createGeminiParser } from "./gemini";
+import { createKimiParser } from "./kimi";
+import { createOpenCodeParser } from "./opencode";
 import { createQwenParser } from "./qwen";
 
 // Re-export types for convenience
@@ -38,6 +40,12 @@ export function createAgentParser(agentType: AgentType): AgentParser {
 
     case "qwen":
       return createQwenParser();
+
+    case "kimi":
+      return createKimiParser();
+
+    case "opencode":
+      return createOpenCodeParser();
 
     default:
       return () => null;
@@ -98,4 +106,6 @@ export function parseNdjsonOutput(
 export { createClaudeParser } from "./claude";
 export { createCodexParser } from "./codex";
 export { createGeminiParser } from "./gemini";
+export { createKimiParser } from "./kimi";
+export { createOpenCodeParser } from "./opencode";
 export { createQwenParser, parseQwenOutput } from "./qwen";
