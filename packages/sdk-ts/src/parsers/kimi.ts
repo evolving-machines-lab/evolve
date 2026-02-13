@@ -96,8 +96,15 @@ export function createKimiParser() {
     const content = data.content;
     const toolCalls = data.tool_calls;
 
-    // Parse content parts
-    if (Array.isArray(content)) {
+    // Parse content parts (Kosong serializes single TextPart as plain string)
+    if (typeof content === "string" && content.length > 0) {
+      events.push({
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: content },
+        },
+      });
+    } else if (Array.isArray(content)) {
       for (const part of content) {
         if (!part || typeof part !== "object") continue;
 
