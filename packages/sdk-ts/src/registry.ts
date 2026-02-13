@@ -96,6 +96,9 @@ export interface AgentRegistryEntry {
   providerEnvMap?: Record<string, { keyEnv: string }>;
   /** Env var for inline config (e.g., OPENCODE_CONFIG_CONTENT) — used in gateway mode to set provider base URLs */
   gatewayConfigEnv?: string;
+  /** Additional directories to include in checkpoint tar (beyond mcpConfig.settingsDir).
+   *  Used for agents like OpenCode that spread state across XDG directories. */
+  checkpointDirs?: string[];
 }
 
 // =============================================================================
@@ -293,6 +296,13 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       sourceDir: "/home/user/.evolve/skills",
       targetDir: "/home/user/.agents/skills",
     },
+    // OpenCode uses XDG Base Directory spec — state is split across multiple dirs
+    // Evidence: KNOWLEDGE/opencode global/index.ts (xdg-basedir), storage/storage.ts, auth/index.ts, config/config.ts
+    checkpointDirs: [
+      "~/.local/share/opencode",  // sessions, auth, snapshots, worktrees, logs
+      "~/.config/opencode",       // config.json, AGENTS.md, theme
+      "~/.local/state/opencode",  // prompt history, model prefs, TUI state
+    ],
     buildCommand: ({ prompt, model, isResume }) => {
       const continueFlag = isResume ? "--continue " : "";
       return `OPENCODE_PERMISSION='{"*":"allow"}' opencode run "${prompt}" ${continueFlag}--model ${model} --format json < /dev/null`;

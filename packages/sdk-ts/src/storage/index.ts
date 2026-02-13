@@ -244,7 +244,8 @@ function shellEscape(s: string): string {
 /**
  * Build the tar + sha256sum command for checkpointing.
  *
- * Archives workspace/ + .{agent}/ directories with cache excludes.
+ * Archives workspace/ + agent directories with cache excludes.
+ * Uses checkpointDirs if defined (e.g., OpenCode XDG dirs), else falls back to mcpConfig.settingsDir.
  * Returns combined tar + sha256sum command (stdout = hash).
  */
 export function buildTarCommand(
@@ -252,16 +253,25 @@ export function buildTarCommand(
   workingDir: string
 ): string {
   const registry = getAgentConfig(agentType);
-  const agentDir = normalizeAgentDir(registry.mcpConfig.settingsDir);
   const workspaceDir = normalizeWorkspaceDir(workingDir);
+
+  // Determine agent directories to include in checkpoint
+  const agentDirs: string[] = registry.checkpointDirs?.length
+    ? registry.checkpointDirs.map((d) => normalizeAgentDir(d))
+    : [normalizeAgentDir(registry.mcpConfig.settingsDir)];
 
   const excludes = [
     ...TAR_EXCLUDES.map((e) => `--exclude=${shellEscape(e)}`),
     `--exclude=${shellEscape(workspaceDir + "/temp")}`,
   ].join(" ");
 
+  const dirs = [
+    shellEscape(workspaceDir + "/"),
+    ...agentDirs.map((d) => shellEscape(d + "/")),
+  ].join(" ");
+
   return [
-    `tar -czf /tmp/evolve-ckpt.tar.gz -C /home/user ${excludes} ${shellEscape(workspaceDir + "/")} ${shellEscape(agentDir + "/")}`,
+    `tar -czf /tmp/evolve-ckpt.tar.gz -C /home/user ${excludes} ${dirs}`,
     `sha256sum /tmp/evolve-ckpt.tar.gz | awk '{print $1}'`,
   ].join(" && ");
 }

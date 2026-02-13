@@ -205,6 +205,29 @@ async function testBuildTarCommandQwen(): Promise<void> {
   assert(cmd.includes(".qwen/"), "Includes .qwen/ settings directory");
 }
 
+async function testBuildTarCommandKimi(): Promise<void> {
+  console.log("\n[6b] buildTarCommand() - kimi");
+
+  const cmd = buildTarCommand("kimi", "/home/user/workspace");
+
+  assert(cmd.includes("workspace/"), "Includes workspace/ directory");
+  assert(cmd.includes(".kimi/"), "Includes .kimi/ settings directory");
+}
+
+async function testBuildTarCommandOpencode(): Promise<void> {
+  console.log("\n[6c] buildTarCommand() - opencode (XDG dirs)");
+
+  const cmd = buildTarCommand("opencode", "/home/user/workspace");
+
+  assert(cmd.includes("workspace/"), "Includes workspace/ directory");
+  // OpenCode uses checkpointDirs (XDG Base Directory spec)
+  assert(cmd.includes(".local/share/opencode/"), "Includes .local/share/opencode/ (data: sessions, auth)");
+  assert(cmd.includes(".config/opencode/"), "Includes .config/opencode/ (config, AGENTS.md)");
+  assert(cmd.includes(".local/state/opencode/"), "Includes .local/state/opencode/ (prompt history, prefs)");
+  // Should NOT include "./" (the mcpConfig.settingsDir) — checkpointDirs overrides it
+  assert(!cmd.includes("'./'"), "Does not include './' (mcpConfig.settingsDir overridden by checkpointDirs)");
+}
+
 // =============================================================================
 // TESTS: Cache excludes in tar command
 // =============================================================================
@@ -302,6 +325,8 @@ async function main(): Promise<void> {
   await testBuildTarCommandCodex();
   await testBuildTarCommandGemini();
   await testBuildTarCommandQwen();
+  await testBuildTarCommandKimi();
+  await testBuildTarCommandOpencode();
   await testTarExcludes();
   await testCustomWorkingDir();
   await testInvalidWorkingDir();
