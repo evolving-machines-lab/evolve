@@ -281,7 +281,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       { alias: "anthropic/claude-sonnet-4-5", modelId: "anthropic/claude-sonnet-4-5", description: "Balanced coding, features, tests" },
       { alias: "anthropic/claude-opus-4-6", modelId: "anthropic/claude-opus-4-6", description: "Complex reasoning, R&D" },
       { alias: "openai/gpt-5.2", modelId: "openai/gpt-5.2", description: "OpenAI flagship" },
-      { alias: "google/gemini-2.5-pro", modelId: "google/gemini-2.5-pro", description: "Google deep reasoning" },
+      { alias: "google/gemini-3-pro-preview", modelId: "google/gemini-3-pro-preview", description: "Google latest reasoning" },
     ],
     systemPromptFile: "AGENTS.md",
     mcpConfig: {
