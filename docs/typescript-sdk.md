@@ -1526,6 +1526,7 @@ Persist sandbox state beyond sandbox lifetime. Checkpoints archive specific dire
 **What gets checkpointed:**
 - `/home/user/workspace/` — your project files
 - `/home/user/.<agent>/` — agent settings and session history (e.g. `.claude/`, `.codex/`, `.gemini/`, `.qwen/`, `.kimi/`)
+- For OpenCode: XDG directories (`~/.local/share/opencode/`, `~/.config/opencode/`, `~/.local/state/opencode/`)
 
 - **Auto-checkpoint:** Every successful `run()` with `.withStorage()` creates a checkpoint automatically.
 - **Content-addressed dedup:** Archives are hashed (SHA-256). Same content = skip upload.

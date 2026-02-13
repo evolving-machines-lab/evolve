@@ -66,7 +66,20 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
     return { type, apiKey: evolveKey, isDirectMode: false, model: config?.model, reasoningEffort: config?.reasoningEffort, betas: config?.betas };
   }
 
-  // Direct mode (provider env var)
+  // Multi-provider direct mode (e.g., OpenCode: model prefix → provider-specific env var)
+  // Checked BEFORE generic apiKeyEnv so "anthropic/..." resolves to ANTHROPIC_API_KEY, not OPENAI_API_KEY
+  if (registry.providerEnvMap) {
+    const model = config?.model ?? registry.defaultModel;
+    const prefix = model?.split("/")[0];
+    const mapping = prefix ? registry.providerEnvMap[prefix] : undefined;
+    const altKey = mapping ? process.env[mapping.keyEnv] : undefined;
+    if (altKey) {
+      const baseUrl = process.env[registry.baseUrlEnv] ?? registry.defaultBaseUrl;
+      return { type, apiKey: altKey, baseUrl, isDirectMode: true, model: config?.model, reasoningEffort: config?.reasoningEffort, betas: config?.betas };
+    }
+  }
+
+  // Direct mode (generic provider env var — fallback for single-provider agents)
   const providerKey = process.env[registry.apiKeyEnv];
   if (providerKey) {
     const baseUrl = process.env[registry.baseUrlEnv] ?? registry.defaultBaseUrl;
