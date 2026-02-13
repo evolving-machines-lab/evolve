@@ -4,5 +4,5 @@
  */
 import { Image } from '@daytonaio/sdk'
 
-export const image = Image.base('evolvingmachines/evolve-all:latest')
+export const image = Image.base('evolvingmachines/evolve-all')
 export const SNAPSHOT_NAME = 'evolve-all'
