@@ -159,7 +159,7 @@ class Evolve:
                 'forward_lifecycle': True,
             })
 
-            await self.bridge.call('initialize', params)
+            await self.bridge.call('initialize', params, timeout_s=self._get_rpc_timeout_s(None))
             self._initialized = True
 
     def on(
@@ -306,7 +306,7 @@ class Evolve:
         await self._ensure_initialized()
         await self.bridge.call('upload_context', {
             'files': _encode_files_for_transport(files),
-        })
+        }, timeout_s=self._get_rpc_timeout_s(None))
 
     async def upload_files(
         self,
@@ -326,7 +326,7 @@ class Evolve:
         await self._ensure_initialized()
         await self.bridge.call('upload_files', {
             'files': _encode_files_for_transport(files),
-        })
+        }, timeout_s=self._get_rpc_timeout_s(None))
 
     async def get_output_files(self, recursive: bool = False) -> OutputResult:
         """Get output files with optional schema validation result.
@@ -359,7 +359,7 @@ class Evolve:
         """
         await self._ensure_initialized()
 
-        response = await self.bridge.call('get_output_files', {'recursive': recursive})
+        response = await self.bridge.call('get_output_files', {'recursive': recursive}, timeout_s=self._get_rpc_timeout_s(None))
 
         # Decode files from transport encoding
         files: Dict[str, Union[str, bytes]] = {}
@@ -428,7 +428,7 @@ class Evolve:
         params: Dict[str, Any] = {}
         if comment is not None:
             params['comment'] = comment
-        response = await self.bridge.call('checkpoint', params)
+        response = await self.bridge.call('checkpoint', params, timeout_s=self._get_rpc_timeout_s(None))
         return self._parse_checkpoint(response)  # type: ignore[return-value]
 
     async def list_checkpoints(
@@ -458,7 +458,7 @@ class Evolve:
             params['limit'] = limit
         if tag is not None:
             params['tag'] = tag
-        response = await self.bridge.call('list_checkpoints', params)
+        response = await self.bridge.call('list_checkpoints', params, timeout_s=self._get_rpc_timeout_s(None))
         return [self._parse_checkpoint(cp) for cp in response]  # type: ignore[misc]
 
     @staticmethod
