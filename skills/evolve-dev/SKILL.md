@@ -10,16 +10,10 @@ Run terminal-based AI agents in secure sandboxes with built-in observability.
 
 > **Repo:** https://github.com/evolving-machines-lab/evolve — cookbooks in `cookbooks/`, skills in `skills/`
 
-## Installation & Updates
-
-This skill does not auto-update. Install by cloning the repo and copying the skill:
-
-```bash
-git clone https://github.com/evolving-machines-lab/evolve.git
-cp -r evolve/skills/evolve-dev ~/.claude/skills/evolve-dev
-```
-
-To update, `git pull` in your clone and re-copy.
+> **IMPORTANT — This skill may be outdated.** It does not auto-update. Before writing Evolve code, verify APIs, model names, and config against the actual SDK source at `packages/sdk-ts/src/` in the repo (especially `registry.ts` for models, `types.ts` for interfaces, `evolve.ts` for the builder API). To update this skill, `git pull` the repo and re-copy:
+> ```
+> cp -r /path/to/evolve/skills/evolve-dev ~/.claude/skills/evolve-dev
+> ```
 
 ## SDK Choice
 
@@ -186,8 +180,6 @@ Evolve().withAgent({ type: "gemini" }).withSandbox(sandbox)  # Auto-picks from e
 **BYOK Mode**: Set provider env vars (see Agent Types table) + `E2B_API_KEY`.
 
 ## Agent Types
-
-> **IMPORTANT:** This table may be outdated. Before using model names, check the actual registry at `packages/sdk-ts/src/registry.ts` in the [evolve repo](https://github.com/evolving-machines-lab/evolve) for the latest models. Never guess or use model names not in the registry.
 
 | Type | Models | Default | Env Var |
 |------|--------|---------|---------|
