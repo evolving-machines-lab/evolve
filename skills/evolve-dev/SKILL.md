@@ -12,13 +12,14 @@ Run terminal-based AI agents in secure sandboxes with built-in observability.
 
 ## Installation & Updates
 
-This skill does not auto-update. To install or update, copy from your local clone:
+This skill does not auto-update. Install by cloning the repo and copying the skill:
 
 ```bash
-cp -r /path/to/evolve/skills/evolve-dev ~/.claude/skills/evolve-dev
+git clone https://github.com/evolving-machines-lab/evolve.git
+cp -r evolve/skills/evolve-dev ~/.claude/skills/evolve-dev
 ```
 
-Pull the repo periodically (`git pull`) and re-copy to stay current.
+To update, `git pull` in your clone and re-copy.
 
 ## SDK Choice
 
