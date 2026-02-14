@@ -187,7 +187,7 @@ Evolve().withAgent({ type: "gemini" }).withSandbox(sandbox)  # Auto-picks from e
 
 ## Agent Types
 
-> **IMPORTANT:** Always use model names exactly as listed below. Do not guess or use outdated model names. This table is the source of truth.
+> **IMPORTANT:** This table may be outdated. Before using model names, check the actual registry at `packages/sdk-ts/src/registry.ts` in the [evolve repo](https://github.com/evolving-machines-lab/evolve) for the latest models. Never guess or use model names not in the registry.
 
 | Type | Models | Default | Env Var |
 |------|--------|---------|---------|
