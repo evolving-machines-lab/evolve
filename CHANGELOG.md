@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.24] - 2025-02-14
+
+### Added
+
+- **Daytona `snapshotName` config** — custom snapshot support via `DaytonaProvider({ snapshotName })` (Python: `DaytonaProvider(snapshot_name=...)`)
+- **Modal `imageName` config** — custom image support via `ModalProvider({ imageName })` (Python: `ModalProvider(image_name=...)`)
+- **Modal eager image build** — `images.fromRegistry().build(app)` called upfront so first-run image pull is cached (~150ms subsequent)
+- **Provider parity test** — compile-time + runtime verification that all sandbox providers (E2B, Daytona, Modal) implement the same `SandboxProvider` API surface
+- **`evolve-dev` skill** — install/update instructions, git clone for first-time setup, model freshness warning
+
+### Fixed
+
+- **Daytona snapshot creation now blocking** — first run creates a named snapshot from Docker image, then creates sandbox from it. Previous behavior could race between snapshot creation and sandbox use
+- **Docker image tags** — stripped `:latest` from `evolve-all` image references across Daytona and Modal (registries default to latest, explicit tag can cause pull issues)
+- **Python bridge I/O timeouts** — `initialize`, `upload_context`, `upload_files`, `get_output_files`, `checkpoint`, `list_checkpoints` now use sandbox-scaled timeout instead of default 60s (fixes timeouts on slow sandbox operations)
+- **Workspace-compatible dependency ranges** — provider packages (`@evolvingmachines/e2b`, `daytona`, `modal`) now use `*` range in SDK package.json for monorepo compatibility
+
+### Documentation
+
+- Updated TypeScript and Python SDK docs with new provider config options
+- Added `snapshot_name` to Python `DaytonaProvider` docs
+
 ## [0.0.23] - 2025-02-13
 
 ### Added
