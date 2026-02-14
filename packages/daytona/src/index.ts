@@ -9,7 +9,7 @@
  * - Parallel structure to E2B provider
  */
 
-import { Daytona } from "@daytonaio/sdk";
+import { Daytona, Image } from "@daytonaio/sdk";
 import type { Sandbox as DaytonaSandbox } from "@daytonaio/sdk";
 
 // ============================================================
@@ -18,7 +18,7 @@ import type { Sandbox as DaytonaSandbox } from "@daytonaio/sdk";
 
 /** Map generic image names to Daytona Docker images */
 const IMAGE_MAP: Record<string, string> = {
-  "evolve-all": "evolvingmachines/evolve-all:latest",
+  "evolve-all": "evolvingmachines/evolve-all",
 };
 
 const BINARY_EXTENSIONS = new Set([
@@ -215,6 +215,8 @@ export interface DaytonaConfig {
   target?: string;
   /** Default timeout in ms */
   defaultTimeoutMs?: number;
+  /** Daytona snapshot name (default: 'evolve-all'). Create custom snapshots via `cd assets && ./build.sh daytona` */
+  snapshotName?: string;
 }
 
 interface ResolvedDaytonaConfig {
@@ -222,6 +224,7 @@ interface ResolvedDaytonaConfig {
   apiUrl?: string;
   target?: string;
   defaultTimeoutMs?: number;
+  snapshotName?: string;
 }
 
 // ============================================================
@@ -542,6 +545,7 @@ export class DaytonaProvider implements SandboxProvider {
   readonly name = "Daytona";
   private readonly client: Daytona;
   private readonly defaultTimeoutMs: number;
+  private readonly snapshotName: string;
 
   constructor(config: ResolvedDaytonaConfig) {
     this.client = new Daytona({
@@ -550,6 +554,7 @@ export class DaytonaProvider implements SandboxProvider {
       target: config.target,
     });
     this.defaultTimeoutMs = config.defaultTimeoutMs ?? 3600000;
+    this.snapshotName = config.snapshotName ?? "evolve-all";
   }
 
   async create(options: SandboxCreateOptions): Promise<SandboxInstance> {
@@ -557,16 +562,15 @@ export class DaytonaProvider implements SandboxProvider {
     // Convert timeoutMs to autoStopInterval in minutes for parity with E2B/Modal
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
     const autoStopMinutes = Math.max(1, Math.ceil(timeoutMs / 60000)); // Min 1 minute
-    const imageName = options.image || "evolve-all";
+    const imageName = options.image || this.snapshotName;
 
     let sandbox: DaytonaSandbox;
 
-    // Try to use existing snapshot first (fast path for returning users)
+    // Try to use existing snapshot first (fast path for returning users or ./build.sh daytona)
     try {
       const snapshot = await this.client.snapshot.get(imageName);
       if (snapshot && snapshot.state === "active") {
         console.log(`[daytona] Using cached snapshot: ${imageName}`);
-        // CreateSandboxFromSnapshotParams - no resources field
         sandbox = await this.client.create(
           {
             snapshot: imageName,
@@ -574,41 +578,66 @@ export class DaytonaProvider implements SandboxProvider {
             labels: options.metadata,
             autoStopInterval: autoStopMinutes,
           },
-          { timeout: 600 } // 10 min creation timeout (Daytona default)
+          { timeout: 600 }
         );
       } else {
         throw new Error("Snapshot not active");
       }
     } catch {
-      // Snapshot doesn't exist - fall back to public Docker image
-      const publicImage = IMAGE_MAP[imageName];
-      if (!publicImage) {
-        throw new Error(
-          `Unknown image "${imageName}" and no public fallback available. ` +
-          `Available images: ${Object.keys(IMAGE_MAP).join(", ")}`
+      // Snapshot doesn't exist — create a named one from the Docker image, then use it
+      const publicImage = IMAGE_MAP[imageName] ?? imageName;
+
+      console.log(`[daytona] Snapshot "${imageName}" not found, building from image: ${publicImage}`);
+      console.log("[daytona] First run will take a few minutes (this only happens once)...");
+
+      try {
+        // Step 1: Create named snapshot (blocking — so it's available for all future runs)
+        // Use Image.base() — snapshot.create() requires a Daytona Image object, not a raw string
+        await this.client.snapshot.create(
+          {
+            name: imageName,
+            image: Image.base(publicImage),
+            resources: {
+              cpu: options.resources?.cpu ?? 4,
+              memory: options.resources?.memory ?? 4,
+              disk: options.resources?.disk ?? 10,
+            },
+          },
+          { onLogs: (log: string) => console.log(`[daytona] ${log}`) },
+        );
+        console.log(`[daytona] Snapshot "${imageName}" ready.`);
+
+        // Step 2: Create sandbox from the just-created snapshot (fast)
+        sandbox = await this.client.create(
+          {
+            snapshot: imageName,
+            envVars: options.envs,
+            labels: options.metadata,
+            autoStopInterval: autoStopMinutes,
+          },
+          { timeout: 600 }
+        );
+      } catch (snapshotErr) {
+        // Snapshot creation failed — fall back to direct image creation
+        console.warn(`[daytona] Snapshot creation failed, falling back to direct image: ${snapshotErr instanceof Error ? snapshotErr.message : snapshotErr}`);
+        sandbox = await this.client.create(
+          {
+            image: publicImage,
+            envVars: options.envs,
+            labels: options.metadata,
+            autoStopInterval: autoStopMinutes,
+            resources: {
+              cpu: options.resources?.cpu ?? 4,
+              memory: options.resources?.memory ?? 4,
+              disk: options.resources?.disk ?? 10,
+            },
+          },
+          {
+            timeout: 600,
+            onSnapshotCreateLogs: (log: string) => console.log(`[daytona] ${log}`),
+          }
         );
       }
-
-      console.log(`[daytona] Snapshot "${imageName}" not found, creating from image: ${publicImage}`);
-      console.log("[daytona] First run may take a few minutes (image will be cached for future runs)...");
-
-      sandbox = await this.client.create(
-        {
-          image: publicImage,
-          envVars: options.envs,
-          labels: options.metadata,
-          autoStopInterval: autoStopMinutes,
-          resources: {
-            cpu: options.resources?.cpu ?? 4,
-            memory: options.resources?.memory ?? 4,
-            disk: options.resources?.disk ?? 10,
-          },
-        },
-        {
-          timeout: 600, // 10 min creation timeout (Daytona default)
-          onSnapshotCreateLogs: (log: string) => console.log(`[daytona] ${log}`),
-        }
-      );
     }
 
     if (options.workingDirectory) {

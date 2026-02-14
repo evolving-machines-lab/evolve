@@ -314,8 +314,8 @@ All providers use the `evolve-all` image with pre-installed CLIs.
 | Provider | Env Vars | Auto-Resolves When | First Time Setup |
 |----------|----------|-------------------|------------------|
 | E2B | `E2B_API_KEY` | Default, or `E2B_API_KEY` set | None — instant |
-| Modal | `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` | Both Modal vars set | Run `cd assets && ./build.sh modal` once |
-| Daytona | `DAYTONA_API_KEY` | `DAYTONA_API_KEY` set | Run `cd assets && ./build.sh daytona` once |
+| Modal | `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` | Both Modal vars set | None — auto-builds image on first run (~2 min) |
+| Daytona | `DAYTONA_API_KEY` | `DAYTONA_API_KEY` set | None — auto-creates snapshot on first run (~5 min) |
 
 See [assets/README.md](../assets/README.md) for detailed setup instructions.
 
@@ -397,6 +397,7 @@ const sandbox = createModalProvider({
     appName: "my-app",                   // (optional) Default: "evolve-sandbox"
     defaultTimeoutMs: 3600000,           // (optional) Default: 3600000 (1 hour)
     endpoint: "https://api.modal.com:443", // (optional) Default: https://api.modal.com:443
+    imageName: "evolve-all",             // (optional) Default: "evolve-all"
 });
 ```
 
@@ -419,6 +420,7 @@ const sandbox = createDaytonaProvider({
     apiUrl: "https://app.daytona.io/api", // (optional) Default: https://app.daytona.io/api
     target: "us",                          // (optional) Target region. Default: "us"
     defaultTimeoutMs: 3600000,             // (optional) Default: 3600000 (1 hour) - converted to minutes for auto-stop
+    snapshotName: "evolve-all",            // (optional) Default: "evolve-all". Custom snapshots via build.sh daytona
 });
 ```
 

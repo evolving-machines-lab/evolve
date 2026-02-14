@@ -114,11 +114,13 @@ class DaytonaProvider:
         api_url: API URL (defaults to https://app.daytona.io/api)
         target: Target region (defaults to 'us')
         timeout_ms: Sandbox timeout in milliseconds (default: 3600000 = 1 hour)
+        snapshot_name: Daytona snapshot name (default: 'evolve-all'). Custom snapshots via ``cd assets && ./build.sh daytona``
     """
     api_key: Optional[str] = None
     api_url: Optional[str] = None
     target: Optional[str] = None
     timeout_ms: int = 3600000
+    snapshot_name: Optional[str] = None
 
     @property
     def type(self) -> Literal['daytona']:
@@ -137,6 +139,8 @@ class DaytonaProvider:
             result['target'] = self.target
         if self.timeout_ms:
             result['defaultTimeoutMs'] = self.timeout_ms
+        if self.snapshot_name:
+            result['snapshotName'] = self.snapshot_name
         return result
 
 
@@ -150,12 +154,14 @@ class ModalProvider:
         token_id: Modal token ID (defaults to MODAL_TOKEN_ID env var)
         token_secret: Modal token secret (defaults to MODAL_TOKEN_SECRET env var)
         endpoint: Modal API endpoint (defaults to https://api.modal.com:443)
+        image_name: Docker image name (default: 'evolve-all'). Resolved through IMAGE_MAP or used as-is.
     """
     app_name: Optional[str] = None
     timeout_ms: int = 3600000
     token_id: Optional[str] = None
     token_secret: Optional[str] = None
     endpoint: Optional[str] = None
+    image_name: Optional[str] = None
 
     @property
     def type(self) -> Literal['modal']:
@@ -176,6 +182,8 @@ class ModalProvider:
             result['tokenSecret'] = self.token_secret
         if self.endpoint:
             result['endpoint'] = self.endpoint
+        if self.image_name:
+            result['imageName'] = self.image_name
         return result
 
 
