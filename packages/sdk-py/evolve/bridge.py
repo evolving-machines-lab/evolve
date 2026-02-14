@@ -263,7 +263,9 @@ class BridgeManager:
         # Wait for response (error handling done in _handle_response)
         timeout = timeout_s if timeout_s is not None else self.default_call_timeout_s
         try:
-            return await asyncio.wait_for(future, timeout=timeout)
+            # Shield the pending future so wait_for timeout does not cancel it.
+            # This prevents late response handling from hitting InvalidStateError.
+            return await asyncio.wait_for(asyncio.shield(future), timeout=timeout)
         except asyncio.TimeoutError as e:
             # Drop pending request to avoid leaks; late response will be ignored.
             self.pending_requests.pop(request_id, None)
@@ -414,6 +416,8 @@ class BridgeManager:
             return
 
         future = self.pending_requests.pop(request_id)
+        if future.done() or future.cancelled():
+            return
 
         if 'error' in message:
             error = message['error']

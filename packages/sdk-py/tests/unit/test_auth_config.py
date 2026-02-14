@@ -15,12 +15,13 @@ Python just passes config; TS resolves from env vars and validates.
 """
 
 import os
+import asyncio
 import pytest
 from unittest.mock import patch, MagicMock
 
 from evolve import Evolve
 from evolve.config import AgentConfig, E2BProvider
-from evolve.bridge import BridgeManager
+from evolve.bridge import BridgeManager, BridgeConnectionError
 
 
 class TestAgentConfigDataclass:
@@ -599,3 +600,50 @@ class TestSessionRuntimeParity:
         bridge = BridgeManager()
         with pytest.raises(ValueError, match='Unsupported event type'):
             bridge.on('invalid-event', lambda _event: None)
+
+
+class _FakeStdin:
+    def __init__(self):
+        self.frames = []
+
+    def write(self, data):
+        self.frames.append(data)
+
+    async def drain(self):
+        return None
+
+
+class _FakeProcess:
+    def __init__(self):
+        self.stdin = _FakeStdin()
+
+
+class TestBridgeTimeoutRace:
+    """Regression tests for timeout/late-response races in BridgeManager."""
+
+    @pytest.mark.asyncio
+    async def test_timeout_then_late_response_is_ignored(self):
+        bridge = BridgeManager()
+        bridge.process = _FakeProcess()  # type: ignore[assignment]
+
+        with pytest.raises(BridgeConnectionError, match='timed out'):
+            await bridge.call('status', timeout_s=0.001)
+
+        # Late response should be ignored (must not raise InvalidStateError)
+        bridge._handle_response({'id': 1, 'result': {'ok': True}})
+
+    @pytest.mark.asyncio
+    async def test_handle_response_skips_done_or_cancelled_future(self):
+        bridge = BridgeManager()
+
+        done_future = asyncio.get_running_loop().create_future()
+        done_future.set_result({'ready': True})
+        bridge.pending_requests[100] = done_future
+        bridge._handle_response({'id': 100, 'result': {'late': True}})
+        assert 100 not in bridge.pending_requests
+
+        cancelled_future = asyncio.get_running_loop().create_future()
+        cancelled_future.cancel()
+        bridge.pending_requests[101] = cancelled_future
+        bridge._handle_response({'id': 101, 'error': {'code': -32603, 'message': 'late'}})
+        assert 101 not in bridge.pending_requests
