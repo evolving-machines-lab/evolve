@@ -154,12 +154,14 @@ class ModalProvider:
         token_id: Modal token ID (defaults to MODAL_TOKEN_ID env var)
         token_secret: Modal token secret (defaults to MODAL_TOKEN_SECRET env var)
         endpoint: Modal API endpoint (defaults to https://api.modal.com:443)
+        image_name: Docker image name (default: 'evolve-all'). Resolved through IMAGE_MAP or used as-is.
     """
     app_name: Optional[str] = None
     timeout_ms: int = 3600000
     token_id: Optional[str] = None
     token_secret: Optional[str] = None
     endpoint: Optional[str] = None
+    image_name: Optional[str] = None
 
     @property
     def type(self) -> Literal['modal']:
@@ -180,6 +182,8 @@ class ModalProvider:
             result['tokenSecret'] = self.token_secret
         if self.endpoint:
             result['endpoint'] = self.endpoint
+        if self.image_name:
+            result['imageName'] = self.image_name
         return result
 
 

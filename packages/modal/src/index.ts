@@ -31,7 +31,7 @@ import { pack } from "tar-stream";
 
 /** Map generic image names to Docker images */
 const IMAGE_MAP: Record<string, string> = {
-  "evolve-all": "evolvingmachines/evolve-all:latest",
+  "evolve-all": "evolvingmachines/evolve-all",
 };
 
 const BINARY_EXTENSIONS = new Set([
@@ -288,6 +288,8 @@ export interface ModalConfig {
   tokenSecret?: string;
   /** Modal API endpoint. Default: https://api.modal.com:443 */
   endpoint?: string;
+  /** Docker image name (default: 'evolve-all'). Resolved through IMAGE_MAP or used as-is for custom images. */
+  imageName?: string;
 }
 
 /** Internal resolved config with required credentials */
@@ -297,6 +299,7 @@ interface ResolvedModalConfig {
   appName?: string;
   defaultTimeoutMs?: number;
   endpoint?: string;
+  imageName?: string;
 }
 
 // ============================================================
@@ -728,9 +731,11 @@ class ModalSandboxImpl implements SandboxInstance {
 
 export class ModalProvider implements SandboxProvider {
   readonly providerType = "modal" as const;
+  readonly name = "Modal";
   private readonly client: ModalClient;
   private readonly appName: string;
   private readonly defaultTimeoutMs: number;
+  private readonly imageName: string;
   private _app: App | undefined;
 
   constructor(config: ResolvedModalConfig) {
@@ -744,6 +749,7 @@ export class ModalProvider implements SandboxProvider {
     this.client = new ModalClient({ tokenId: config.tokenId, tokenSecret: config.tokenSecret });
     this.appName = config.appName ?? "evolve-sandbox";
     this.defaultTimeoutMs = config.defaultTimeoutMs ?? 3600000;
+    this.imageName = config.imageName ?? "evolve-all";
   }
 
   private async getApp(): Promise<App> {
@@ -758,10 +764,14 @@ export class ModalProvider implements SandboxProvider {
     const app = await this.getApp();
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
 
-    // Resolve image name through IMAGE_MAP (e.g., "evolve-all" -> "evolvingmachines/evolve-all:latest")
-    const imageName = options.image || "evolve-all";
+    // Resolve image name through IMAGE_MAP (e.g., "evolve-all" -> "evolvingmachines/evolve-all")
+    const imageName = options.image || this.imageName;
     const resolvedImage = IMAGE_MAP[imageName] ?? imageName;
+
+    // Eagerly build image on Modal's infra (idempotent — same tag returns same cached imageId).
+    // First run pulls from Docker Hub and caches; subsequent runs resolve in ~150ms.
     const image = this.client.images.fromRegistry(resolvedImage);
+    const builtImage = await image.build(app);
 
     // Filter out undefined values and only pass env if non-empty
     // Modal SDK throws if env is empty object or contains undefined values
@@ -774,7 +784,7 @@ export class ModalProvider implements SandboxProvider {
 
     // Use client.sandboxes.create() - the modern API
     // Resources match E2B defaults: 4 CPU, 4GB memory
-    const sandbox = await this.client.sandboxes.create(app, image, {
+    const sandbox = await this.client.sandboxes.create(app, builtImage, {
       cpu: 4,
       memoryMiB: 4096,
       timeoutMs,
