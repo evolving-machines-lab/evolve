@@ -1,8 +1,8 @@
-# 01. Getting Started & Setup
+# Evolve TypeScript SDK
 
 Run terminal-based AI agents in secure sandboxes with built-in observability.
 
-> See the [main README](../README.md) for installation and API keys.
+> See the [main README](../../README.md) for installation and API keys.
 
 ---
 
@@ -20,25 +20,6 @@ COMPOSIO_API_KEY=...
 
 Evolve auto-resolves API keys from environment variables.
 
-### 1.1 Minimal run
-
-```ts
-import { Evolve } from "@evolvingmachines/sdk";
-
-const evolve = new Evolve()
-    .withAgent({
-        apiKey: process.env.EVOLVE_API_KEY!,
-    });
-
-const result = await evolve.run({
-    prompt: "Hello from Evolve.",
-});
-
-console.log(result.stdout);
-```
-
-### 1.2 Add configuration
-
 ```ts
 import { Evolve } from "@evolvingmachines/sdk";
 
@@ -48,20 +29,17 @@ const evolve = new Evolve()
     })
     .withSessionTagPrefix("my-app") // optional tag for the agent session
     .withSystemPrompt("You are Manus Evolve, a powerful AI agent. You can execute code, browse the web, manage files, and solve complex tasks.")
-    .withSkills(["pdf", "docx", "pptx"]) // browser-use included by default
-    .withComposio("user_123", {
-        toolkits: ["gmail", "notion", "exa"],
-    }); // 1000+ integrations via Composio
+    .withSkills(["pdf", "docx", "pptx"])  // browser-use included by default
+    .withComposio("user_123", { toolkits: ["gmail", "notion", "exa"] });  // 1000+ integrations via Composio
 
-await evolve.run({
-    prompt: "Go to Hacker News top posts. Spawn 5 parallel sub-agents to screenshot each of the top 5 posts.",
+// Run agent
+const result = await evolve.run({
+    prompt: "Go to Hacker News top posts. Spawn 5 parallel sub-agents to screenshot each of the top 5 posts."
 });
-```
 
-### 1.3 Get output files and clean up
+console.log(result.stdout);
 
-```ts
-// Continuing from the same Evolve instance after run()
+// Get output files
 const output = await evolve.getOutputFiles();
 for (const [name, content] of Object.entries(output.files)) {
     console.log(name);
@@ -77,20 +55,22 @@ When using `EVOLVE_API_KEY`:
 
 - **Tracing:** Automatic tracing and agent analytics at [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) for observability and replay—no extra setup needed. Use `withSessionTagPrefix()` to label sessions for easy filtering.
 - **Browser Automation:** `browser-use` integration included—agents can browse the web, take screenshots, fill forms, and interact with pages out of the box.
-- **Checkpointing:** Snapshot sandbox state to Evolve-managed storage with `.withStorage()`—no S3 credentials needed. See [Storage & Checkpointing](../typescript-sdk.md#51-storage--checkpointing).
+- **Checkpointing:** Snapshot sandbox state to Evolve-managed storage with `.withStorage()`—no S3 credentials needed. See [Storage & Checkpointing](./runtime.md#51-storage--checkpointing).
 
 ---
 
-## 2. Authentication
+## 1.1 Authentication
 
 | | Gateway Mode | BYOK Mode |
 |---|---------|---------------|
-| Setup | `EVOLVE_API_KEY` | Model provider keys + [`E2B_API_KEY`](https://e2b.dev) |
+| Setup | `EVOLVE_API_KEY` | [Model provider keys](#113-agent-reference) + [`E2B_API_KEY`](https://e2b.dev) |
 | Observability | [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) | `~/.evolve-sdk/observability/` |
 | Browser | `browser-use` integrated | Via skills or MCP |
 | Billing | Evolving Machines | Your provider accounts |
 
-### 2.1 Gateway Mode (EVOLVE_API_KEY)
+---
+
+### 1.1.1 Gateway Mode (EVOLVE_API_KEY)
 
 Get API key from [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai).
 
@@ -111,7 +91,9 @@ const evolve = new Evolve()
 await evolve.run({ prompt: "Hello" });
 ```
 
-### 2.2 BYOK Mode
+---
+
+### 1.1.2 BYOK Mode
 
 Use your own provider keys. Requires [E2B API key](https://e2b.dev) for sandbox.
 
@@ -136,7 +118,7 @@ const evolve = new Evolve()
     .withSandbox(sandbox);
 ```
 
-#### BYO Claude Max Subscription
+### BYO Claude Max Subscription
 
 ```bash
 # Run in terminal, follow login steps → receive token:
@@ -167,7 +149,7 @@ const evolve = new Evolve()
     .withSandbox(sandbox);
 ```
 
-#### BYO Codex Subscription
+### BYO Codex Subscription
 
 ```bash
 # Run in terminal, follow login steps:
@@ -197,7 +179,7 @@ const evolve = new Evolve()
     .withSandbox(sandbox);
 ```
 
-#### BYO Gemini Subscription
+### BYO Gemini Subscription
 
 ```bash
 # Run in terminal, follow login steps:
@@ -227,7 +209,9 @@ const evolve = new Evolve()
     .withSandbox(sandbox);
 ```
 
-### 2.3 Agent Reference
+---
+
+### 1.1.3 Agent Reference
 
 Set env vars and the SDK picks them up automatically—no need to pass explicitly.
 
@@ -241,6 +225,8 @@ Set env vars and the SDK picks them up automatically—no need to pass explicitl
 | `"opencode"` | `"openai/gpt-5.2"` `"anthropic/claude-sonnet-4-5"` `"anthropic/claude-opus-4-6"` `"google/gemini-3-pro-preview"` | `"openai/gpt-5.2"` | Per model: `OPENAI_API_KEY` `ANTHROPIC_API_KEY` `GEMINI_API_KEY` |
 
 Agent-specific options: `reasoningEffort` (Codex: `"low"` `"medium"` `"high"` `"xhigh"`), `betas` (Claude Sonnet: `["context-1m-2025-08-07"]`)
+
+### Agent Examples
 
 ```bash
 # .env - set env vars for auto-pickup
@@ -316,102 +302,3 @@ const evolve = new Evolve()
 ```
 
 ---
-
-## 3. Sandbox Providers
-
-Works with both Gateway mode (`EVOLVE_API_KEY`) and BYOK mode (provider API keys). With `EVOLVE_API_KEY` only, sandbox defaults to **E2B**. Add a sandbox provider key to auto-resolve to that provider.
-
-All providers use the `evolve-all` image with pre-installed CLIs.
-
-| Provider | Env Vars | Auto-Resolves When | First Time Setup |
-|----------|----------|-------------------|------------------|
-| E2B | `E2B_API_KEY` | Default, or `E2B_API_KEY` set | None — instant |
-| Modal | `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` | Both Modal vars set | None — auto-builds image on first run (~2 min) |
-| Daytona | `DAYTONA_API_KEY` | `DAYTONA_API_KEY` set | None — auto-creates snapshot on first run (~5 min) |
-
-See [assets/README.md](../assets/README.md) for detailed setup instructions.
-
-### 3.1 Auto-Resolution
-
-Set env vars and the SDK auto-resolves the provider—no `.withSandbox()` needed:
-
-```bash
-# .env - Gateway mode with Modal (auto-resolves to Modal)
-EVOLVE_API_KEY=sk-...
-MODAL_TOKEN_ID=ak-...
-MODAL_TOKEN_SECRET=as-...
-
-# .env - Gateway mode with Daytona (auto-resolves to Daytona)
-EVOLVE_API_KEY=sk-...
-DAYTONA_API_KEY=...
-
-# .env - BYOK mode with E2B (auto-resolves to E2B)
-ANTHROPIC_API_KEY=sk-ant-...
-E2B_API_KEY=e2b_...
-```
-
-```ts
-import { Evolve } from "@evolvingmachines/sdk";
-
-// No .withSandbox() needed — SDK picks the right provider from env
-const evolve = new Evolve()
-    .withAgent({ type: "claude" });
-
-await evolve.run({ prompt: "Hello" });
-```
-
-Only use explicit provider creation (below) if you need custom settings like timeout or app name.
-
----
-
-### E2B (default)
-
-```ts
-import { createE2BProvider } from "@evolvingmachines/sdk";
-
-const sandbox = createE2BProvider({
-    apiKey: process.env.E2B_API_KEY,       // (optional) Auto-resolves from env
-    defaultTimeoutMs: 3600000,             // (optional) Default: 3600000 (1 hour)
-    templateId: "my-custom-template",      // (optional) E2B template ID. Default: "evolve-all"
-});
-```
-
-### Modal
-
-```ts
-import { createModalProvider } from "@evolvingmachines/sdk";
-
-const sandbox = createModalProvider({
-    tokenId: process.env.MODAL_TOKEN_ID,         // (optional) Auto-resolves from env
-    tokenSecret: process.env.MODAL_TOKEN_SECRET, // (optional) Auto-resolves from env
-    appName: "my-app",                           // (optional) Default: "evolve-sandbox"
-    defaultTimeoutMs: 3600000,                   // (optional) Default: 3600000 (1 hour)
-    endpoint: "https://api.modal.com:443",       // (optional) Default: https://api.modal.com:443
-    imageName: "evolve-all",                     // (optional) Default: "evolve-all"
-});
-```
-
-### Daytona
-
-```ts
-import { createDaytonaProvider } from "@evolvingmachines/sdk";
-
-const sandbox = createDaytonaProvider({
-    apiKey: process.env.DAYTONA_API_KEY,     // (optional) Auto-resolves from env
-    apiUrl: "https://app.daytona.io/api",    // (optional) Default: https://app.daytona.io/api
-    target: "us",                            // (optional) Target region. Default: "us"
-    defaultTimeoutMs: 3600000,               // (optional) Default: 3600000 (1 hour) - converted to minutes for auto-stop
-    snapshotName: "evolve-all",              // (optional) Default: "evolve-all". Custom snapshots via build.sh daytona
-});
-```
-
----
-
-## 4. Setup Notes (Runtime Behavior)
-
-- Configuration methods can be chained in any order.
-- The sandbox is created on the first `run()` or `executeCommand()` call.
-- Context files, workspace files, MCP servers, and system prompt are set up once on the first call.
-- Using `.withSession()` to reconnect skips setup since the sandbox already exists.
-- Calling `run()` multiple times maintains the agent context / history.
-- Calling `run()` while another run or command is active throws immediately. Call `interrupt()` first or wait for the active operation to finish.
