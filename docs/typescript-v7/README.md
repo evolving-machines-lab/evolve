@@ -23,6 +23,8 @@ await evolve.run({ prompt: "Hello world" });
 |-------|------|
 | Installation (Node.js 18+, npm) | [Getting Started → Installation](./01-getting-started.md#installation) |
 | Quick Start (3 steps) | [Getting Started → Quick Start](./01-getting-started.md#quick-start) |
+| Core Lifecycle (run → getOutputFiles → kill) | [Getting Started → Core Lifecycle](./01-getting-started.md#core-lifecycle) |
+| Streaming basics | [Getting Started → Streaming](./01-getting-started.md#streaming) |
 | Gateway vs BYOK mode | [Getting Started → Authentication](./01-getting-started.md#authentication) |
 | Gateway mode (EVOLVE_API_KEY) | [Getting Started → Gateway Mode](./01-getting-started.md#gateway-mode-evolve_api_key) |
 | BYOK mode (your own keys) | [Getting Started → BYOK Mode](./01-getting-started.md#byok-mode) |
@@ -59,12 +61,12 @@ await evolve.run({ prompt: "Hello world" });
 |-------|------|
 | `run()` | [Runtime → run](./03-runtime.md#run) |
 | `executeCommand()` | [Runtime → executeCommand](./03-runtime.md#executecommand) |
-| Streaming events (content, lifecycle, stdout, stderr) | [Runtime → Streaming Events](./03-runtime.md#streaming-events) |
-| OutputEvent / SessionUpdate types | [Runtime → SessionUpdate Types](./03-runtime.md#sessionupdate-types) |
-| LifecycleEvent / LifecycleReason | [Runtime → Streaming Events](./03-runtime.md#lifecycleevent) |
-| Tool events (ToolCall, ToolCallUpdate, ToolKind) | [Runtime → Streaming Events](./03-runtime.md#tool-events) |
-| Browser-use detection & URL extraction | [Runtime → BrowserUseResponse](./03-runtime.md#browseruseresponse) |
-| UI integration example | [Runtime → UI Integration Example](./03-runtime.md#ui-integration-example) |
+| Streaming events (content, lifecycle, stdout, stderr) | [Streaming Events](./05-streaming.md) |
+| OutputEvent / SessionUpdate types | [Streaming → SessionUpdate Types](./05-streaming.md#sessionupdate-types) |
+| LifecycleEvent / LifecycleReason | [Streaming → LifecycleEvent](./05-streaming.md#lifecycleevent) |
+| Tool events (ToolCall, ToolCallUpdate, ToolKind) | [Streaming → Tool Events](./05-streaming.md#tool-events) |
+| Browser-use detection & URL extraction | [Streaming → BrowserUseResponse](./05-streaming.md#browseruseresponse) |
+| UI integration example | [Streaming → UI Integration Example](./05-streaming.md#ui-integration-example) |
 | Upload files (`uploadContext()`, `uploadFiles()`) | [Runtime → Upload](./03-runtime.md#upload-local--sandbox) |
 | Download files (`getOutputFiles()`, `saveLocalDir()`) | [Runtime → Download](./03-runtime.md#download-sandbox--local) |
 | Session controls (interrupt, pause, resume, kill) | [Runtime → Session Controls](./03-runtime.md#session-controls) |

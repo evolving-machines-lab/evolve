@@ -67,6 +67,51 @@ for (const [name, content] of Object.entries(output.files)) {
 await evolve.kill();
 ```
 
+### Core Lifecycle
+
+Every Evolve application follows this pattern:
+
+```
+new Evolve()  →  .run()  →  .getOutputFiles()  →  .kill()
+   setup         execute      retrieve results     ALWAYS cleanup
+```
+
+> **IMPORTANT: Always call `kill()` when done.** Each `run()` creates a cloud sandbox that bills until destroyed. Forgetting `kill()` leaves sandboxes running indefinitely. Use try/finally to guarantee cleanup:
+
+```ts
+const evolve = new Evolve().withAgent({ type: "claude" });
+try {
+    await evolve.run({ prompt: "Analyze the dataset" });
+    const output = await evolve.getOutputFiles();
+    console.log(output.files);           // All files from output/
+    console.log(output.data);            // Parsed result.json (if schema set)
+} finally {
+    await evolve.kill();                 // Always destroy sandbox
+}
+```
+
+- `run()` can be called multiple times — each continues in the same sandbox session with full context/history.
+- `getOutputFiles()` returns files from the `output/` folder. If `.withSchema()` was set, `output.data` contains the validated result.
+- `kill()` destroys the sandbox. The next `run()` creates a fresh one.
+
+### Streaming
+
+Subscribe to real-time agent output:
+
+```ts
+evolve.on("content", (event) => {
+    // event.update.sessionUpdate: "agent_message_chunk" | "tool_call" | "plan" | ...
+    console.log(event.update);
+});
+
+evolve.on("lifecycle", (event) => {
+    // event.reason: "sandbox_ready" | "run_complete" | "run_failed" | ...
+    console.log(event.reason, event.sandbox, event.agent);
+});
+```
+
+See [Streaming Events](./05-streaming.md) for all event types, type definitions, and a full UI integration example.
+
 ### Gateway Features
 
 When using `EVOLVE_API_KEY`:
@@ -229,6 +274,8 @@ const evolve = new Evolve()
 ### Agent Reference
 
 Set env vars and the SDK picks them up automatically — no need to pass explicitly.
+
+> **IMPORTANT: Only use the exact model names listed below.** The SDK will error on unrecognized model names. Do not invent or guess model identifiers.
 
 | type | models | default | env var (BYOK) |
 |------|--------|---------|----------------|
