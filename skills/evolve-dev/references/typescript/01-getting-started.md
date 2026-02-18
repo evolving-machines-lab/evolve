@@ -1,1 +1,0 @@
-../../../../docs/typescript/01-getting-started.md

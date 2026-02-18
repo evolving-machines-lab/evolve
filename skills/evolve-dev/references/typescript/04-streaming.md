@@ -1,1 +1,0 @@
-../../../../docs/typescript/04-streaming.md

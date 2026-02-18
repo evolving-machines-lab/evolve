@@ -1,1 +1,0 @@
-../../../../docs/python/05-swarm-pipeline.md

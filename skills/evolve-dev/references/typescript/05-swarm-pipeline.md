@@ -1,1 +1,0 @@
-../../../../docs/typescript/05-swarm-pipeline.md
