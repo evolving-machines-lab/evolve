@@ -263,7 +263,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     defaultBaseUrl: "https://api.moonshot.ai/v1",
     buildCommand: ({ prompt, model, isResume }) => {
       const continueFlag = isResume ? "--continue " : "";
-      return `KIMI_MODEL_NAME=${model} kimi --print --output-format stream-json --yolo ${continueFlag}--prompt "${prompt}"`;
+      return `printf '%s' "${prompt}" | KIMI_MODEL_NAME=${model} kimi --print --output-format stream-json --yolo ${continueFlag}`;
     },
   },
 
