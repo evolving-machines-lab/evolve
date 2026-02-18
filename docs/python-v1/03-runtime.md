@@ -105,8 +105,8 @@ class LifecycleEvent(TypedDict):
     timestamp: str
     reason: Literal[
         "sandbox_boot",
-        "sandbox_connected",
         "sandbox_ready",
+        "sandbox_connected",
         "sandbox_pause",
         "sandbox_resume",
         "sandbox_killed",
