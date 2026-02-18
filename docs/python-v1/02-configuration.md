@@ -1,6 +1,6 @@
-## 2. Full Configuration
+# Configuration
 
-### 2.1 Sandbox Providers
+## Sandbox Providers
 
 Works with both Gateway mode (`EVOLVE_API_KEY`) and BYOK mode (provider API keys). With `EVOLVE_API_KEY` only, sandbox defaults to **E2B**. Add a sandbox provider key to auto-resolve to that provider.
 
@@ -122,7 +122,7 @@ sandbox = DaytonaProvider(
 
 ---
 
-### 2.2 Evolve Instance
+## Evolve Instance
 
 ```python
 import os

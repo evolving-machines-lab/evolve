@@ -1,4 +1,6 @@
-## 3. Runtime Methods
+# Runtime
+
+## Methods
 
 `run()` and `execute_command()` are async and return `AgentResponse`. `status()` is async and returns `SessionStatus`. `interrupt()` returns `bool`.
 
@@ -9,7 +11,7 @@ class AgentResponse:
     exit_code: int
     stdout: str
     stderr: str
-    checkpoint: CheckpointInfo | None  # Present when storage= configured and run succeeded — see Section 5.1
+    checkpoint: CheckpointInfo | None  # Present when storage= configured and run succeeded
 
 @dataclass
 class SessionStatus:
@@ -21,7 +23,7 @@ class SessionStatus:
     timestamp: str
 ```
 
-### 3.1 run
+### run
 
 Runs the agent with a given prompt.
 
@@ -46,7 +48,7 @@ print(result.checkpoint.id if result.checkpoint else None)  # Checkpoint ID (if 
 - Calling `run()` multiple times maintains the agent context / history.
 - Calling `run()` while another run or command is active throws immediately. Call `interrupt()` first or wait for the active operation to finish.
 
-### 3.2 execute_command
+### execute_command
 
 Runs a direct shell command in the sandbox working directory.
 
@@ -61,7 +63,7 @@ result = await evolve.execute_command(
 
 - If `background` is `True`, returns a start handshake (`exit_code=0`). Completion arrives via `lifecycle` events (`command_background_complete` or `command_background_failed`).
 
-### 3.3 Streaming Events
+### Streaming Events
 
 Both `run()` and `execute_command()` stream output in real-time:
 
@@ -426,7 +428,7 @@ evolve.on("content", handle_event)
 8. **Use `cast()` for narrowing** — TypedDict unions need explicit casting after checking `sessionUpdate`
 9. **Detect browser-use by title** — Browser-use MCP tools have `kind="other"`, check `"browser-use" in title.lower()` to identify them
 
-### 3.4 Upload: Local → Sandbox
+### Upload: Local → Sandbox
 
 **Format:** `{"destination": content}` — directories created automatically
 
@@ -452,7 +454,7 @@ await evolve.upload_context(read_local_dir('./input', recursive=True))
 
 > **Setup alternative:** Constructor parameters `context` and `files` use the same format but upload on first `run()` instead of immediately.
 
-### 3.5 Download: Sandbox → Local
+### Download: Sandbox → Local
 
 **Flow:** `get_output_files()` → `save_local_dir()`
 
@@ -496,7 +498,7 @@ print(output.error)                        # None (or validation error message)
 
 Files created before the last `run()` or `execute_command()` are filtered out.
 
-### 3.6 Session controls
+### Session Controls
 
 ```python
 session_id = await evolve.get_session()  # Returns sandbox ID (str) or None
@@ -524,7 +526,7 @@ await evolve.kill()    # Destroys sandbox; next run() creates a new sandbox
 
 await evolve.set_session('existing-sandbox-id')  # Sets sandbox ID; reconnection happens on next run()
 
-# Checkpointing (requires storage= — see Section 5.1)
+# Checkpointing (requires storage=)
 ckpt = await evolve.checkpoint(comment='before refactor')   # Explicit snapshot of current sandbox
 checkpoints = await evolve.list_checkpoints(limit=10)       # List checkpoints, newest first
 ```
@@ -535,7 +537,7 @@ checkpoints = await evolve.list_checkpoints(limit=10)       # List checkpoints, 
 - **E2B / Daytona** — full support for `pause()`, `resume()`, `interrupt()`.
 - **Modal** — does not support `pause()`. `interrupt()` is effectively unsupported and returns `False` for active processes.
 
-### 3.7 get_host
+### get_host
 
 Expose a forwarded port:
 
@@ -545,7 +547,7 @@ print(f'Workspace service available at {url}')
 ```
 ---
 
-## 4. Workspace Setup & Structured Output
+## Workspace & Structured Output
 
 Calling `run` or `execute_command` for the first time provisions a sandbox with the following filesystem:
 
@@ -608,7 +610,7 @@ output = await evolve.get_output_files()
 print(output.data)  # CREData(property_name='...', units=120, ...)
 ```
 
-When a schema is provided, `get_output_files()` automatically validates `output/result.json` and returns `OutputResult` (see [Section 3.5](#35-download-sandbox--local)).
+When a schema is provided, `get_output_files()` automatically validates `output/result.json` and returns `OutputResult` (see [Download: Sandbox → Local](#download-sandbox--local)).
 
 ```python
 # Type-safe access to validated data
@@ -654,7 +656,7 @@ But your final `output/result.json` MUST conform to the schema above.
 
 ---
 
-## 5. Cleaning up and session management
+## Session Management
 
 **Multi-turn conversations** (most common):
 
@@ -751,7 +753,7 @@ await evolve.run(prompt='Compare results')  # Back to sandbox A
 
 ---
 
-## 5.1 Storage & Checkpointing
+## Storage & Checkpointing
 
 Persist sandbox state beyond sandbox lifetime. Checkpoints archive specific directories under `/home/user/` to S3-compatible storage and can be restored into a fresh sandbox.
 
@@ -1009,7 +1011,7 @@ print(f'{len(all_checkpoints)} checkpoints (newest first)')
 
 ---
 
-## 6. Observability
+## Observability
 
 Full execution traces—including tool calls, file operations (read/write/edit), text responses, and reasoning chunks—are logged to your Evolve dashboard at **https://dashboard.evolvingmachines.ai/traces** for debugging and replay.
 
@@ -1066,4 +1068,40 @@ print(await evolve.get_session_timestamp())  # Timestamp for second log file
 
 Use the tag together with the sandbox id to correlate logs with files saved in
 `/output/`.
+
+---
+
+## Error Handling
+
+Common errors and how to handle them:
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `No API key configured` | No `EVOLVE_API_KEY` or provider key in env | Set `EVOLVE_API_KEY` or pass `api_key`/`provider_api_key` to `AgentConfig` |
+| `No sandbox provider configured` | No sandbox provider key in env | Set `E2B_API_KEY`, `MODAL_TOKEN_ID`+`SECRET`, or `DAYTONA_API_KEY` |
+| `Operation already active` | Calling `run()` while another run is in progress | `await evolve.interrupt()` first, or wait for the active operation |
+| `Cannot use 'from_checkpoint' with existing session` | `run(from_checkpoint=...)` with `sandbox_id=` | Checkpoint restore requires a fresh sandbox — remove `sandbox_id=` |
+| `No checkpoints found` | `run(from_checkpoint='latest')` with no prior checkpoints | Create a checkpoint first, or use `list_checkpoints()` to verify |
+| `Schema validation failed: ...` | Agent's `result.json` doesn't match schema | Check `output.raw_data` for the actual output; refine your prompt or schema |
+| `@aws-sdk/client-s3 not installed` | `storage=StorageConfig(url='s3://...')` without AWS SDK | `npm install @aws-sdk/client-s3 @aws-sdk/s3-request-presigner` |
+| Timeout (exit code -1) | Agent exceeded `timeout_ms` | Increase `timeout_ms` or simplify the prompt |
+
+```python
+# Handling schema validation errors
+output = await evolve.get_output_files()
+if output.error:
+    print(f'Validation failed: {output.error}')
+    print(f'Raw output: {output.raw_data}')  # Agent's actual JSON for debugging
+
+# Handling run errors
+try:
+    result = await evolve.run(prompt='...')
+    if result.exit_code != 0:
+        print(f'Agent failed: {result.stderr}')
+except Exception as err:
+    # Raised for: no API key, no sandbox, operation conflict, restore failure
+    print(err)
+```
+
+---
 

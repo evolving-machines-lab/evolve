@@ -1,36 +1,45 @@
 # Evolve Python SDK
 
-Run terminal-based AI agents in secure sandboxes with built-in observability.
-
-> See the [main README](../README.md) for installation and API keys.
->
-> **Note:** Requires [Node.js 18+](https://nodejs.org/) (the SDK uses a lightweight Node.js bridge).
+Run CLI agents ([Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi CLI](https://github.com/MoonshotAI/kimi-cli), [OpenCode](https://github.com/anomalyco/opencode)) in secure sandboxes with built-in observability.
 
 ---
 
-## 1. Quick Start
+## Installation
+
+**Requirements:** [Python 3.10+](https://python.org/) and [Node.js 18+](https://nodejs.org/) (the SDK uses a lightweight Node.js bridge).
+
+```bash
+pip install evolve-sdk
+```
+
+Optional dependencies (only needed for [S3 checkpointing](./03-runtime.md#storage--checkpointing) in BYOK mode):
+
+```bash
+npm install @aws-sdk/client-s3 @aws-sdk/s3-request-presigner
+```
+
+---
+
+## Quick Start
+
+**1. Get your API key** from [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) — $10 free credits, no CC required.
+
+**2. Set environment variables:**
 
 ```bash
 # .env
-
-# Evolve gateway key (dashboard.evolvingmachines.ai)
-EVOLVE_API_KEY=sk-...
-
-# Composio integrations (app.composio.dev)
-COMPOSIO_API_KEY=...
+EVOLVE_API_KEY=sk-...        # Evolve gateway key (dashboard.evolvingmachines.ai)
+COMPOSIO_API_KEY=...         # (optional) Composio integrations (app.composio.dev)
 ```
 
-Evolve auto-resolves API keys from environment variables.
+**3. Run your first agent:**
+
+Evolve auto-resolves API keys and sandbox providers from environment variables — no need to pass them explicitly.
 
 ```python
-import os
-from evolve import Evolve, AgentConfig, ComposioSetup, ComposioConfig
+from evolve import Evolve, ComposioSetup, ComposioConfig
 
 evolve = Evolve(
-    config=AgentConfig(
-        api_key=os.getenv('EVOLVE_API_KEY'),
-    ),
-    session_tag_prefix='my-app',
     system_prompt='You are Manus Evolve, a powerful AI agent. You can execute code, browse the web, manage files, and solve complex tasks.',
     skills=['pdf', 'docx', 'pptx'],  # browser-use included by default
     composio=ComposioSetup(
@@ -53,17 +62,17 @@ for name, content in output.files.items():
 await evolve.kill()
 ```
 
-## Gateway Features
+### Gateway Features
 
 When using `EVOLVE_API_KEY`:
 
-- **Tracing:** Automatic tracing and agent analytics at [dashboard.evolvingmachines.ai/traces](https://dashboard.evolvingmachines.ai/traces) for observability and replay—no extra setup needed. Use `session_tag_prefix` to label sessions for easy filtering.
-- **Browser Automation:** `browser-use` integration included—agents can browse the web, take screenshots, fill forms, and interact with pages out of the box.
-- **Checkpointing:** Snapshot sandbox state to Evolve-managed storage with `storage=StorageConfig()`—no S3 credentials needed. See [Storage & Checkpointing](#51-storage--checkpointing).
+- **Tracing:** Automatic tracing and agent analytics at [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) for observability and replay — no extra setup needed. Use `session_tag_prefix` to label sessions for easy filtering.
+- **Browser Automation:** `browser-use` integration included — agents can browse the web, take screenshots, fill forms, and interact with pages out of the box.
+- **Checkpointing:** Snapshot sandbox state to Evolve-managed storage with `storage=StorageConfig()` — no S3 credentials needed. See [Storage & Checkpointing](./03-runtime.md#storage--checkpointing).
 
 ---
 
-## 1.1 Authentication
+## Authentication
 
 | | Gateway Mode | BYOK Mode |
 |---|---------|---------------|
@@ -74,7 +83,7 @@ When using `EVOLVE_API_KEY`:
 
 ---
 
-### 1.1.1 Gateway Mode (EVOLVE_API_KEY)
+### Gateway Mode (EVOLVE_API_KEY)
 
 Get API key from [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai).
 
@@ -84,14 +93,10 @@ EVOLVE_API_KEY=sk-...
 ```
 
 ```python
-import os
 from evolve import Evolve, AgentConfig
 
 evolve = Evolve(
-    config=AgentConfig(
-        type='claude',
-        api_key=os.getenv('EVOLVE_API_KEY'),
-    ),
+    config=AgentConfig(type='claude'),
 )
 
 await evolve.run(prompt='Hello')
@@ -99,7 +104,7 @@ await evolve.run(prompt='Hello')
 
 ---
 
-### 1.1.2 BYOK Mode
+### BYOK Mode
 
 Use your own provider keys. Requires [`E2B_API_KEY`](https://e2b.dev) for sandbox.
 
@@ -229,18 +234,20 @@ evolve = Evolve(
 
 ### Auto-resolve from Environment
 
-Set env vars and the SDK picks them up automatically—no need to pass explicitly. See [Agent Reference](#113-agent-reference) below for env var names.
+Set env vars and the SDK picks them up automatically — no need to pass explicitly. See [Agent Reference](#agent-reference) below for env var names.
 
-### 1.1.3 Agent Reference
+### Agent Reference
 
 | type | models | default | env var (BYOK) |
 |------|--------|---------|----------------|
-| `'claude'` | `'opus'` `'sonnet'` `'haiku'` | `'opus'` | `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` |
+| `'claude'` | `'opus'` `'sonnet'` `'haiku'` | `'sonnet'` | `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` |
 | `'codex'` | `'gpt-5.2'` `'gpt-5.2-codex'` `'gpt-5.1-codex-max'` `'gpt-5.1-mini'` | `'gpt-5.2'` | `OPENAI_API_KEY` or `CODEX_OAUTH_FILE_PATH` |
 | `'gemini'` | `'gemini-3-pro-preview'` `'gemini-3-flash-preview'` `'gemini-2.5-pro'` `'gemini-2.5-flash'` `'gemini-2.5-flash-lite'` | `'gemini-3-flash-preview'` | `GEMINI_API_KEY` or `GEMINI_OAUTH_FILE_PATH` |
 | `'qwen'` | `'qwen3-coder-plus'` `'qwen3-vl-plus'` | `'qwen3-coder-plus'` | `OPENAI_API_KEY` |
 | `'kimi'` | `'moonshot/kimi-k2.5'` `'moonshot/kimi-k2-turbo-preview'` | `'moonshot/kimi-k2.5'` | `KIMI_API_KEY` |
 | `'opencode'` | `'openai/gpt-5.2'` `'anthropic/claude-sonnet-4-5'` `'anthropic/claude-opus-4-6'` `'google/gemini-3-pro-preview'` | `'openai/gpt-5.2'` | Per model: `OPENAI_API_KEY` `ANTHROPIC_API_KEY` `GEMINI_API_KEY` |
+
+> **Note:** In Gateway mode (`EVOLVE_API_KEY`), the default claude model is `'opus'`. In BYOK mode, it defaults to `'sonnet'`.
 
 Agent-specific options: `reasoning_effort` (Codex: `'low'` `'medium'` `'high'` `'xhigh'`), `betas` (Claude Sonnet: `['context-1m-2025-08-07']`)
 

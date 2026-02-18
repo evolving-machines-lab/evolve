@@ -1,6 +1,6 @@
-# Swarm Abstractions
+# Swarm & Pipeline
 
-Functional programming for AI agents: `map`, `filter`, `reduce`, `best_of`.
+Functional programming for AI agents: `map`, `filter`, `reduce`, `best_of`, `verify`.
 
 ```python
 from evolve import Swarm, SwarmConfig, AgentConfig, ComposioSetup, ComposioConfig
@@ -46,7 +46,7 @@ SwarmConfig(
 | Option | Default | Notes |
 |--------|---------|-------|
 | `agent.type` | `'claude'` | Auto-resolved from env |
-| `agent.model` | per type | `'opus'` (claude), `'gpt-5.2'` (codex), etc. |
+| `agent.model` | per type | `'sonnet'` (claude), `'gpt-5.2'` (codex), etc. |
 | `skills` | `None` | Set here or per-operation |
 | `composio` | `None` | Set here or per-operation |
 | `mcp_servers` | `None` | Set here or per-operation |
@@ -55,7 +55,7 @@ SwarmConfig(
 | `tag` | `'swarm'` | Observability prefix |
 | `retry` | `None` | Set here or per-operation |
 
-**Minimal setup** — with `EVOLVE_API_KEY` set (see [1.1 Authentication](#11-authentication)):
+**Minimal setup** — with `EVOLVE_API_KEY` set (see [Authentication](./01-getting-started.md#authentication)):
 
 ```python
 from dotenv import load_dotenv
@@ -77,7 +77,7 @@ RetryConfig(
 )
 ```
 
-## 1. Input Types
+## Input Types
 
 Swarm runs in **knowledge mode** by default—files are uploaded to `context/` in the sandbox.
 
@@ -156,7 +156,7 @@ results = await swarm.map(
 )
 ```
 
-## 2. Abstractions
+## Abstractions
 
 Two types of operations:
 
@@ -201,7 +201,7 @@ VerifyConfig(
 )
 ```
 
-### 2.1 best_of
+### best_of
 
 Run N agents on the same `item` in parallel, then a judge picks the best. `Agent[i]` outputs `candidates[i]`, judge selects `winner`.
 
@@ -289,7 +289,7 @@ result = await swarm.best_of(
 )
 ```
 
-### 2.2 map
+### map
 
 Process items in parallel. `Agent[i]` sees `items[i]` and outputs `results[i]` (which includes `result.json` if `schema` provided).
 
@@ -379,7 +379,7 @@ for r in results:
         print(r.files)  # Output files from agent
 ```
 
-### 2.3 map with best_of
+### map + best_of
 
 Combine map parallelism with best_of quality:
 
@@ -408,7 +408,7 @@ results = await swarm.map(
 # Results contain only winners (one per input item)
 ```
 
-### 2.4 filter
+### filter
 
 Two-step evaluation (`schema` and `condition` are required):
 1. `Agent[i]` sees `items[i]`, assesses it, outputs `result.json` matching `schema`
@@ -478,7 +478,7 @@ await swarm.reduce(
 )
 ```
 
-### 2.5 reduce
+### reduce
 
 Synthesize many items into one. A single agent sees all `items` as `item_0/`, `item_1/`, etc. and outputs a unified `result` (which includes `result.json` if `schema` provided).
 
@@ -540,7 +540,54 @@ report = await swarm.reduce(
 )
 ```
 
-## 3. Result Types
+### verify (quality gate)
+
+Add a verification loop to any operation (`map`, `filter`, `reduce`). A separate verifier agent checks if the worker's output meets your criteria. On failure, the worker retries with the verifier's feedback — up to `max_attempts` times.
+
+```
+┌───────────────┐      ┌──────────────┐
+│    Worker     │─────▶│   Verifier   │
+│  (attempt 1)  │      │              │
+└───────────────┘      └──────┬───────┘
+                              │
+                       pass?  │  fail + feedback
+                         │    │    │
+                         ▼    │    ▼
+                      output  │  ┌───────────────┐
+                              └─▶│    Worker     │──▶ Verifier ──▶ ...
+                                 │  (attempt 2)  │   (up to max_attempts)
+                                 └───────────────┘
+```
+
+```python
+results = await swarm.map(
+    items=documents,
+    prompt='Write a detailed analysis',
+    schema=AnalysisSchema,
+    verify=VerifyConfig(
+        criteria='Analysis must include specific data points and cite sources',
+        max_attempts=3,              # Default: 3
+        # verifier_agent=AgentConfig(type='claude', model='opus'),  # Override verifier
+        # verifier_skills=['pdf'],   # Skills for verifier
+        on_worker_complete=lambda idx, attempt, status: print(f'Item {idx}, attempt {attempt}: {status}'),
+        on_verifier_complete=lambda idx, attempt, passed, feedback: print(f'Verify item {idx}: {"PASS" if passed else feedback}'),
+    ),
+)
+
+# Check verification outcome
+for r in results:
+    if r.verify:
+        print(f'Passed: {r.verify.passed}, attempts: {r.verify.attempts}')
+        print(f'Reasoning: {r.verify.reasoning}')
+```
+
+On each failed attempt, the verifier's feedback is appended to the worker's prompt so it can address specific issues. The final result includes `verify: VerifyInfo` with the outcome.
+
+> **Note:** `verify` and `best_of` are mutually exclusive on `map`. Use one or the other per operation.
+
+---
+
+## Result Types
 
 ```python
 @dataclass
@@ -597,9 +644,9 @@ class BestOfResult:
     candidates: list[SwarmResult]
 ```
 
-## 4. Chaining Operations
+## Chaining Operations
 
-When chaining Swarm operations, `result.json` from a previous step is automatically renamed to `data.json`. This avoids confusion when the downstream agent writes its own `result.json`. This also applies to [Pipeline](#7-pipeline).
+When chaining Swarm operations, `result.json` from a previous step is automatically renamed to `data.json`. This avoids confusion when the downstream agent writes its own `result.json`. This also applies to [Pipeline](#pipeline).
 
 **Example: map → reduce chain**
 
@@ -662,7 +709,7 @@ await swarm.reduce(
 )
 ```
 
-## 5. AgentOverride
+## AgentOverride
 
 Override the default agent for any operation (api_key inherited from Swarm config):
 
@@ -689,7 +736,7 @@ results = await swarm.map(
 )
 ```
 
-## 6. Concurrency
+## Concurrency
 
 Global semaphore limits parallel sandboxes across all operations.
 
@@ -709,7 +756,7 @@ swarm = Swarm(SwarmConfig(
 
 ---
 
-## 7. Pipeline
+## Pipeline
 
 Fluent wrapper over Swarm for chaining operations. **All Swarm features work in Pipeline steps** — `schema`, `best_of`, `verify`, `retry`, `agent`, `mcp_servers`, `skills`, `composio`, dynamic prompts.
 
@@ -772,7 +819,7 @@ FilterConfig(
     prompt=str,
     schema=PydanticModel | dict,            # Required
     condition=Callable[[Any], bool],        # Required
-    emit='success' | 'filtered' | 'all',    # What passes to next step (default: 'success')
+    emit='success' | 'filtered' | 'all',    # What passes to next step: 'success' (default), 'filtered', or 'all'
     verify=VerifyConfig,
     retry=RetryConfig,
     agent=AgentConfig,
