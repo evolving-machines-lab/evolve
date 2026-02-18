@@ -11,14 +11,18 @@ Build applications that run CLI agents in secure cloud sandboxes.
 
 ## Language Detection
 
-Determine the language from the user's project (imports, file extensions, package.json vs pyproject.toml):
+Determine the language from (in priority order):
+
+1. **User specification** — if the user states a language, use it
+2. **Project signals** — imports, file extensions, package.json vs pyproject.toml
+3. **Ask** — if ambiguous, ask the user
 
 - **TypeScript** (`@evolvingmachines/sdk`) — read from [references/typescript/](references/typescript/)
 - **Python** (`evolve-sdk`) — read from [references/python/](references/python/)
 
 ## Required Reading
 
-Always read these three references before writing any Evolve code:
+Always read these three references **for the detected language** before writing any Evolve code:
 
 **TypeScript:**
 - [01-getting-started.md](references/typescript/01-getting-started.md) — Installation, authentication (Gateway/BYOK), core lifecycle, streaming basics, agent reference table
@@ -32,8 +36,10 @@ Always read these three references before writing any Evolve code:
 
 ## Critical Constraints
 
-- **Model names** — Only use exact names from the Agent Reference table in [01-getting-started.md#agent-reference](references/typescript/01-getting-started.md#agent-reference). Do not invent or guess model identifiers.
-- **Cleanup** — Always call `kill()` when done — see [Core Lifecycle](references/typescript/01-getting-started.md#core-lifecycle). Sandboxes bill until destroyed.
+- **Model names** — Only use exact names from the Agent Reference table. Do not invent or guess model identifiers.
+  - [TS](references/typescript/01-getting-started.md#agent-reference) | [PY](references/python/01-getting-started.md#agent-reference)
+- **Cleanup** — Always call `kill()` when done. Sandboxes bill until destroyed.
+  - [TS](references/typescript/01-getting-started.md#core-lifecycle) | [PY](references/python/01-getting-started.md#core-lifecycle)
 
 ## Additional References
 
@@ -75,15 +81,15 @@ Read on demand when the user's task requires them:
 |-------|-----------|--------|
 | run() options (timeout, background, checkpoint) | [TS](references/typescript/03-runtime.md#run) | [PY](references/python/03-runtime.md#run) |
 | executeCommand() / execute_command() | [TS](references/typescript/03-runtime.md#executecommand) | [PY](references/python/03-runtime.md#execute_command) |
-| Upload files to sandbox | [TS](references/typescript/03-runtime.md#upload-local--sandbox) | [PY](references/python/03-runtime.md#upload-local--sandbox) |
-| Download output files | [TS](references/typescript/03-runtime.md#download-sandbox--local) | [PY](references/python/03-runtime.md#download-sandbox--local) |
+| Upload files to sandbox | [TS](references/typescript/03-runtime.md) | [PY](references/python/03-runtime.md) |
+| Download output files | [TS](references/typescript/03-runtime.md) | [PY](references/python/03-runtime.md) |
 | Session controls (interrupt, pause, resume, kill) | [TS](references/typescript/03-runtime.md#session-controls) | [PY](references/python/03-runtime.md#session-controls) |
 | Port forwarding | [TS](references/typescript/03-runtime.md#gethost) | [PY](references/python/03-runtime.md#get_host) |
-| Workspace filesystem layout | [TS](references/typescript/03-runtime.md#workspace--structured-output) | [PY](references/python/03-runtime.md#workspace--structured-output) |
+| Workspace filesystem layout | [TS](references/typescript/03-runtime.md) | [PY](references/python/03-runtime.md) |
 | Structured output (Zod / Pydantic / JSON Schema) | [TS](references/typescript/03-runtime.md#structured-output) | [PY](references/python/03-runtime.md#structured-output) |
 | Multi-turn conversations | [TS](references/typescript/03-runtime.md#session-management) | [PY](references/python/03-runtime.md#session-management) |
 | Pause, resume, reconnect, switch sandboxes | [TS](references/typescript/03-runtime.md#session-management) | [PY](references/python/03-runtime.md#session-management) |
-| Storage & checkpointing (BYOK / Gateway) | [TS](references/typescript/03-runtime.md#storage--checkpointing) | [PY](references/python/03-runtime.md#storage--checkpointing) |
+| Storage & checkpointing (BYOK / Gateway) | [TS](references/typescript/03-runtime.md) | [PY](references/python/03-runtime.md) |
 | Checkpoint lineage & restore | [TS](references/typescript/03-runtime.md#checkpoint-lineage) | [PY](references/python/03-runtime.md#checkpoint-lineage) |
 | Observability (dashboard + local logs) | [TS](references/typescript/03-runtime.md#observability) | [PY](references/python/03-runtime.md#observability) |
 | Error handling | [TS](references/typescript/03-runtime.md#error-handling) | [PY](references/python/03-runtime.md#error-handling) |
@@ -94,8 +100,8 @@ Read on demand when the user's task requires them:
 |-------|-----------|--------|
 | Event listeners (content, lifecycle, stdout, stderr) | [TS](references/typescript/04-streaming.md#event-listeners) | [PY](references/python/04-streaming.md#event-listeners) |
 | LifecycleEvent & LifecycleReason | [TS](references/typescript/04-streaming.md#lifecycleevent) | [PY](references/python/04-streaming.md#lifecycleevent-typeddict-shape) |
-| OutputEvent & SessionUpdate types | [TS](references/typescript/04-streaming.md#sessionupdate-types) | [PY](references/python/04-streaming.md#sessionupdate-types) |
-| Tool events (ToolCall, ToolCallUpdate, ToolKind) | [TS](references/typescript/04-streaming.md#tool-events) | [PY](references/python/04-streaming.md#tool-types) |
+| OutputEvent & SessionUpdate types | [TS](references/typescript/04-streaming.md#sessionupdate-types) | [PY](references/python/04-streaming.md#event-types-summary) |
+| Tool events (ToolCall, ToolCallUpdate, ToolKind) | [TS](references/typescript/04-streaming.md#tool-events) | [PY](references/python/04-streaming.md#toolkind-reference) |
 | Browser-use detection & URL extraction | [TS](references/typescript/04-streaming.md#browseruseresponse) | [PY](references/python/04-streaming.md#browseruseresponse-extraction) |
 | UI integration example | [TS](references/typescript/04-streaming.md#ui-integration-example) | [PY](references/python/04-streaming.md#ui-integration-example) |
 
