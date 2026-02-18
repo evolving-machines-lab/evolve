@@ -545,17 +545,18 @@ const report = await swarm.reduce({
 Add a verification loop to any operation (`map`, `filter`, `reduce`). A separate verifier agent checks if the worker's output meets your criteria. On failure, the worker retries with the verifier's feedback — up to `maxAttempts` times.
 
 ```
-┌─────────────┐      ┌──────────────┐
-│   Worker     │─────▶│   Verifier   │
-│  (attempt 1) │      │              │
-└─────────────┘      └──────┬───────┘
-                            │
-                     pass?  │  fail + feedback
-                       ▼    │    ▼
-                    output   │  ┌─────────────┐
-                             └─▶│   Worker     │──▶ Verifier ──▶ ...
-                                │  (attempt 2) │   (up to maxAttempts)
-                                └─────────────┘
+┌───────────────┐      ┌──────────────┐
+│    Worker     │─────▶│   Verifier   │
+│  (attempt 1)  │      │              │
+└───────────────┘      └──────┬───────┘
+                              │
+                       pass?  │  fail + feedback
+                         │    │    │
+                         ▼    │    ▼
+                      output  │  ┌───────────────┐
+                              └─▶│    Worker     │──▶ Verifier ──▶ ...
+                                 │  (attempt 2)  │   (up to maxAttempts)
+                                 └───────────────┘
 ```
 
 ```ts
