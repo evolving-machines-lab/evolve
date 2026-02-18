@@ -110,7 +110,7 @@ evolve.on("lifecycle", (event) => {
 });
 ```
 
-See [Streaming Events](./05-streaming.md) for all event types, type definitions, and a full UI integration example.
+See [Streaming Events](./04-streaming.md) for all event types, type definitions, and a full UI integration example.
 
 ### Gateway Features
 

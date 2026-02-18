@@ -61,12 +61,12 @@ await evolve.run({ prompt: "Hello world" });
 |-------|------|
 | `run()` | [Runtime → run](./03-runtime.md#run) |
 | `executeCommand()` | [Runtime → executeCommand](./03-runtime.md#executecommand) |
-| Streaming events (content, lifecycle, stdout, stderr) | [Streaming Events](./05-streaming.md) |
-| OutputEvent / SessionUpdate types | [Streaming → SessionUpdate Types](./05-streaming.md#sessionupdate-types) |
-| LifecycleEvent / LifecycleReason | [Streaming → LifecycleEvent](./05-streaming.md#lifecycleevent) |
-| Tool events (ToolCall, ToolCallUpdate, ToolKind) | [Streaming → Tool Events](./05-streaming.md#tool-events) |
-| Browser-use detection & URL extraction | [Streaming → BrowserUseResponse](./05-streaming.md#browseruseresponse) |
-| UI integration example | [Streaming → UI Integration Example](./05-streaming.md#ui-integration-example) |
+| Streaming events (content, lifecycle, stdout, stderr) | [Streaming Events](./04-streaming.md) |
+| OutputEvent / SessionUpdate types | [Streaming → SessionUpdate Types](./04-streaming.md#sessionupdate-types) |
+| LifecycleEvent / LifecycleReason | [Streaming → LifecycleEvent](./04-streaming.md#lifecycleevent) |
+| Tool events (ToolCall, ToolCallUpdate, ToolKind) | [Streaming → Tool Events](./04-streaming.md#tool-events) |
+| Browser-use detection & URL extraction | [Streaming → BrowserUseResponse](./04-streaming.md#browseruseresponse) |
+| UI integration example | [Streaming → UI Integration Example](./04-streaming.md#ui-integration-example) |
 | Upload files (`uploadContext()`, `uploadFiles()`) | [Runtime → Upload](./03-runtime.md#upload-local--sandbox) |
 | Download files (`getOutputFiles()`, `saveLocalDir()`) | [Runtime → Download](./03-runtime.md#download-sandbox--local) |
 | Session controls (interrupt, pause, resume, kill) | [Runtime → Session Controls](./03-runtime.md#session-controls) |
@@ -87,22 +87,22 @@ await evolve.run({ prompt: "Hello world" });
 
 | Topic | Link |
 |-------|------|
-| Swarm setup (SwarmConfig) | [Swarm & Pipeline](./04-swarm-pipeline.md) |
-| Input types (FileMap, folders, chaining) | [Swarm → Input Types](./04-swarm-pipeline.md#input-types) |
-| `bestOf()` (N candidates + judge) | [Swarm → bestOf](./04-swarm-pipeline.md#bestof) |
-| `map()` (parallel processing) | [Swarm → map](./04-swarm-pipeline.md#map) |
-| `map()` + bestOf | [Swarm → map + bestOf](./04-swarm-pipeline.md#map--bestof) |
-| `filter()` (evaluate + threshold) | [Swarm → filter](./04-swarm-pipeline.md#filter) |
-| `reduce()` (synthesize many → one) | [Swarm → reduce](./04-swarm-pipeline.md#reduce) |
-| `verify` (quality gate with feedback loop) | [Swarm → verify](./04-swarm-pipeline.md#verify-quality-gate) |
-| Result types (SwarmResult, ReduceResult, BestOfResult) | [Swarm → Result Types](./04-swarm-pipeline.md#result-types) |
-| Chaining operations (result.json → data.json) | [Swarm → Chaining Operations](./04-swarm-pipeline.md#chaining-operations) |
-| AgentOverride (per-operation agent config) | [Swarm → AgentOverride](./04-swarm-pipeline.md#agentoverride) |
-| Concurrency (semaphore, ordering guarantees) | [Swarm → Concurrency](./04-swarm-pipeline.md#concurrency) |
-| RetryConfig (exponential backoff) | [Swarm & Pipeline](./04-swarm-pipeline.md) |
-| Pipeline (fluent chaining) | [Swarm → Pipeline](./04-swarm-pipeline.md#pipeline) |
-| Pipeline step configs (map, filter, reduce) | [Swarm → Step Configurations](./04-swarm-pipeline.md#step-configurations) |
-| Pipeline events (stepStart, stepComplete, etc.) | [Swarm → Events](./04-swarm-pipeline.md#events) |
-| Pipeline result (PipelineResult) | [Swarm → Result](./04-swarm-pipeline.md#result) |
-| TerminalPipeline (reduce is terminal) | [Swarm → Terminal Pipeline](./04-swarm-pipeline.md#terminal-pipeline) |
-| Filter `emit` option (success / filtered / all) | [Swarm → Pipeline](./04-swarm-pipeline.md#step-configurations) |
+| Swarm setup (SwarmConfig) | [Swarm & Pipeline](./05-swarm-pipeline.md) |
+| Input types (FileMap, folders, chaining) | [Swarm → Input Types](./05-swarm-pipeline.md#input-types) |
+| `bestOf()` (N candidates + judge) | [Swarm → bestOf](./05-swarm-pipeline.md#bestof) |
+| `map()` (parallel processing) | [Swarm → map](./05-swarm-pipeline.md#map) |
+| `map()` + bestOf | [Swarm → map + bestOf](./05-swarm-pipeline.md#map--bestof) |
+| `filter()` (evaluate + threshold) | [Swarm → filter](./05-swarm-pipeline.md#filter) |
+| `reduce()` (synthesize many → one) | [Swarm → reduce](./05-swarm-pipeline.md#reduce) |
+| `verify` (quality gate with feedback loop) | [Swarm → verify](./05-swarm-pipeline.md#verify-quality-gate) |
+| Result types (SwarmResult, ReduceResult, BestOfResult) | [Swarm → Result Types](./05-swarm-pipeline.md#result-types) |
+| Chaining operations (result.json → data.json) | [Swarm → Chaining Operations](./05-swarm-pipeline.md#chaining-operations) |
+| AgentOverride (per-operation agent config) | [Swarm → AgentOverride](./05-swarm-pipeline.md#agentoverride) |
+| Concurrency (semaphore, ordering guarantees) | [Swarm → Concurrency](./05-swarm-pipeline.md#concurrency) |
+| RetryConfig (exponential backoff) | [Swarm & Pipeline](./05-swarm-pipeline.md) |
+| Pipeline (fluent chaining) | [Swarm → Pipeline](./05-swarm-pipeline.md#pipeline) |
+| Pipeline step configs (map, filter, reduce) | [Swarm → Step Configurations](./05-swarm-pipeline.md#step-configurations) |
+| Pipeline events (stepStart, stepComplete, etc.) | [Swarm → Events](./05-swarm-pipeline.md#events) |
+| Pipeline result (PipelineResult) | [Swarm → Result](./05-swarm-pipeline.md#result) |
+| TerminalPipeline (reduce is terminal) | [Swarm → Terminal Pipeline](./05-swarm-pipeline.md#terminal-pipeline) |
+| Filter `emit` option (success / filtered / all) | [Swarm → Pipeline](./05-swarm-pipeline.md#step-configurations) |
