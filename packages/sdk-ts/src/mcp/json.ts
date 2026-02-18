@@ -1,13 +1,14 @@
 /**
  * MCP JSON Configuration Writer
  *
- * Handles MCP config for Claude, Gemini, and Qwen agents.
+ * Handles MCP config for Claude, Gemini, Qwen, and Kimi agents.
  * Uses registry for paths - no hardcoded values.
  *
  * Transport formats by agent:
  * - Claude: { type: "http"|"sse"|"stdio", url: "..." }
  * - Gemini: { url: "...", type: "http"|"sse" } | { command: "..." }
  * - Qwen:   { httpUrl: "..." } | { url: "..." } | { command: "..." }
+ * - Kimi:   { url: "...", transport?: "http"|"sse" } | { command: "...", transport: "stdio" }
  */
 
 import type { SandboxInstance, McpServerConfig } from "../types";
@@ -65,6 +66,31 @@ function toQwenFormat(config: McpServerConfig): Record<string, unknown> {
  */
 function toTypeFormat(config: McpServerConfig): Record<string, unknown> {
   return { type: detectTransport(config), ...config };
+}
+
+/**
+ * Transform to Kimi/FastMCP format
+ *
+ * Kimi validates config via FastMCP's MCPConfig:
+ * - Remote servers use `transport: "http" | "sse"` (optional; inferred from URL when omitted)
+ * - Stdio servers use `transport: "stdio"` (optional but explicit is clearer)
+ */
+function toKimiFormat(config: McpServerConfig): Record<string, unknown> {
+  const { type, ...rest } = config;
+
+  if (rest.command) {
+    return { ...rest, transport: "stdio" };
+  }
+
+  if (rest.url) {
+    if (type === "http" || type === "sse") {
+      return { ...rest, transport: type };
+    }
+    // Let FastMCP infer transport from URL when type is omitted.
+    return rest;
+  }
+
+  return rest;
 }
 
 // =============================================================================
@@ -175,12 +201,12 @@ export async function writeQwenMcpConfig(
   await writeJsonMcpConfig(sandbox, "qwen", servers, toQwenFormat);
 }
 
-/** Write MCP config for Kimi agent (standard mcpServers format with type field) */
+/** Write MCP config for Kimi agent (FastMCP-compatible transport field) */
 export async function writeKimiMcpConfig(
   sandbox: SandboxInstance,
   servers: Record<string, McpServerConfig>
 ): Promise<void> {
-  await writeJsonMcpConfig(sandbox, "kimi", servers, toTypeFormat);
+  await writeJsonMcpConfig(sandbox, "kimi", servers, toKimiFormat);
 }
 
 /**

@@ -23,6 +23,7 @@
 
 import {
   OutputEvent,
+  PlanEntry,
   ToolKind,
   ToolCallContent,
   ToolCallLocation,
@@ -50,10 +51,205 @@ const TOOL_KINDS: Record<string, ToolKind> = {
   SetTodoList: "other",
 };
 
+function isKimiToolErrorText(text: string): boolean {
+  return /<system>\s*ERROR:/i.test(text) || text.includes("<error>") || text.includes("ToolError");
+}
+
+function parseDataUrl(url: string): { mimeType: string; data: string } | null {
+  const match = /^data:([^;,]+)((?:;[^,]*)*),(.+)$/i.exec(url);
+  if (!match) return null;
+  const mimeType = match[1] || "";
+  const params = match[2] || "";
+  const data = match[3] || "";
+  if (!/;base64/i.test(params)) return null;
+  return { mimeType, data };
+}
+
+function parseToolContentPart(item: any): ToolCallContent | null {
+  if (!item || typeof item !== "object") return null;
+
+  if (item.type === "text" && typeof item.text === "string" && item.text.length > 0) {
+    return {
+      type: "content",
+      content: { type: "text", text: item.text },
+    };
+  }
+
+  if (item.type === "image_url" && typeof item.image_url?.url === "string") {
+    const url = item.image_url.url;
+    const parsed = parseDataUrl(url);
+    if (parsed) {
+      return {
+        type: "content",
+        content: { type: "image", data: parsed.data, mimeType: parsed.mimeType },
+      };
+    }
+    return {
+      type: "content",
+      content: { type: "image", data: "", mimeType: "", uri: url },
+    };
+  }
+
+  if (item.type === "video_url" && typeof item.video_url?.url === "string") {
+    return {
+      type: "content",
+      content: { type: "text", text: `[video] ${item.video_url.url}` },
+    };
+  }
+
+  if (item.type === "audio_url" && typeof item.audio_url?.url === "string") {
+    return {
+      type: "content",
+      content: { type: "text", text: `[audio] ${item.audio_url.url}` },
+    };
+  }
+
+  return null;
+}
+
+function parseToolOutputToContent(output: unknown): ToolCallContent[] {
+  const content: ToolCallContent[] = [];
+
+  if (typeof output === "string") {
+    if (output.length > 0) {
+      content.push({
+        type: "content",
+        content: { type: "text", text: output },
+      });
+    }
+    return content;
+  }
+
+  if (Array.isArray(output)) {
+    for (const item of output) {
+      if (typeof item === "string" && item.length > 0) {
+        content.push({
+          type: "content",
+          content: { type: "text", text: item },
+        });
+        continue;
+      }
+      const parsed = parseToolContentPart(item);
+      if (parsed) content.push(parsed);
+    }
+    return content;
+  }
+
+  if (output && typeof output === "object") {
+    const parsed = parseToolContentPart(output);
+    if (parsed) content.push(parsed);
+  }
+
+  return content;
+}
+
+function contentHasKimiToolError(content: ToolCallContent[]): boolean {
+  return content.some(
+    (entry) => entry.type === "content" && entry.content.type === "text" && isKimiToolErrorText(entry.content.text)
+  );
+}
+
+function parseAssistantContentPart(part: any): OutputEvent | null {
+  if (!part || typeof part !== "object") return null;
+
+  if (part.type === "think" && typeof part.think === "string" && part.think.length > 0) {
+    return {
+      update: {
+        sessionUpdate: "agent_thought_chunk",
+        content: { type: "text", text: part.think },
+      },
+    };
+  }
+
+  if (part.type === "text" && typeof part.text === "string" && part.text.length > 0) {
+    return {
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: part.text },
+      },
+    };
+  }
+
+  if (part.type === "image_url" && typeof part.image_url?.url === "string") {
+    const url = part.image_url.url;
+    const parsed = parseDataUrl(url);
+    if (parsed) {
+      return {
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "image", data: parsed.data, mimeType: parsed.mimeType },
+        },
+      };
+    }
+    return {
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "image", data: "", mimeType: "", uri: url },
+      },
+    };
+  }
+
+  if (part.type === "video_url" && typeof part.video_url?.url === "string") {
+    return {
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: `[video] ${part.video_url.url}` },
+      },
+    };
+  }
+
+  if (part.type === "audio_url" && typeof part.audio_url?.url === "string") {
+    return {
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: `[audio] ${part.audio_url.url}` },
+      },
+    };
+  }
+
+  return null;
+}
+
+function toPlanEntryStatus(status: unknown): PlanEntry["status"] {
+  if (status === "in_progress") return "in_progress";
+  if (status === "done" || status === "completed") return "completed";
+  return "pending";
+}
+
+function parseTodosToPlanEntries(input: unknown): PlanEntry[] {
+  if (!input || typeof input !== "object") return [];
+  const todos = (input as { todos?: unknown }).todos;
+  if (!Array.isArray(todos)) return [];
+
+  return todos
+    .map((todo): PlanEntry | null => {
+      if (!todo || typeof todo !== "object") return null;
+      const title = (todo as { title?: unknown }).title;
+      if (typeof title !== "string" || title.length === 0) return null;
+      const status = (todo as { status?: unknown }).status;
+      return {
+        content: title,
+        status: toPlanEntryStatus(status),
+        priority: "medium",
+      };
+    })
+    .filter((entry): entry is PlanEntry => entry !== null);
+}
+
 /**
  * Create a Kimi parser instance.
  */
 export function createKimiParser() {
+  const todoToolCallIds = new Set<string>();
+  let fallbackToolCallIdCounter = 0;
+
+  function getToolCallId(toolIdRaw: unknown, toolName: string): string {
+    if (typeof toolIdRaw === "string" && toolIdRaw.length > 0) return toolIdRaw;
+    fallbackToolCallIdCounter += 1;
+    const safeName = toolName.replace(/[^a-zA-Z0-9_]/g, "_") || "tool";
+    return `kimi_${safeName}_${fallbackToolCallIdCounter}`;
+  }
+
   return function parseKimiEvent(jsonLine: string): OutputEvent[] | null {
     let data: any;
     try {
@@ -106,23 +302,8 @@ export function createKimiParser() {
       });
     } else if (Array.isArray(content)) {
       for (const part of content) {
-        if (!part || typeof part !== "object") continue;
-
-        if (part.type === "think" && typeof part.think === "string" && part.think.length > 0) {
-          events.push({
-            update: {
-              sessionUpdate: "agent_thought_chunk",
-              content: { type: "text", text: part.think },
-            },
-          });
-        } else if (part.type === "text" && typeof part.text === "string" && part.text.length > 0) {
-          events.push({
-            update: {
-              sessionUpdate: "agent_message_chunk",
-              content: { type: "text", text: part.text },
-            },
-          });
-        }
+        const parsed = parseAssistantContentPart(part);
+        if (parsed) events.push(parsed);
       }
     }
 
@@ -133,13 +314,27 @@ export function createKimiParser() {
         const fn = tc.function;
         if (!fn) continue;
 
-        const toolId = tc.id ?? "";
         const toolName = fn.name ?? "";
+        const toolId = getToolCallId(tc.id, toolName);
         let input: unknown;
         try {
           input = fn.arguments ? JSON.parse(fn.arguments) : {};
         } catch {
           input = fn.arguments;
+        }
+
+        if (toolName === "SetTodoList") {
+          const entries = parseTodosToPlanEntries(input);
+          if (entries.length > 0) {
+            events.push({
+              update: {
+                sessionUpdate: "plan",
+                entries,
+              },
+            });
+          }
+          todoToolCallIds.add(toolId);
+          continue;
         }
 
         const { title, kind, toolContent, locations } = getToolInfo(
@@ -170,7 +365,11 @@ export function createKimiParser() {
    */
   function parseToolMessage(data: any): OutputEvent[] | null {
     const toolId = data.tool_call_id;
-    if (!toolId) return null;
+    if (typeof toolId !== "string" || toolId.length === 0) return null;
+    if (todoToolCallIds.has(toolId)) {
+      todoToolCallIds.delete(toolId);
+      return null;
+    }
 
     const rawContent = data.content;
     const content: ToolCallContent[] = [];
@@ -178,7 +377,7 @@ export function createKimiParser() {
 
     if (typeof rawContent === "string") {
       // Simple string content — check for error markers
-      isError = rawContent.includes("<error>") || rawContent.includes("ToolError");
+      isError = isKimiToolErrorText(rawContent);
       if (rawContent.length > 0) {
         content.push({
           type: "content",
@@ -186,18 +385,14 @@ export function createKimiParser() {
         });
       }
     } else if (Array.isArray(rawContent)) {
-      // Array of content parts: [{ type: "text", text: "..." }]
+      // Array of content parts: text, image_url, video_url, ...
       for (const item of rawContent) {
-        if (!item || typeof item !== "object") continue;
-        if (item.type === "text" && typeof item.text === "string" && item.text.length > 0) {
-          if (item.text.includes("<error>") || item.text.includes("ToolError")) {
-            isError = true;
-          }
-          content.push({
-            type: "content",
-            content: { type: "text", text: item.text },
-          });
+        const parsed = parseToolContentPart(item);
+        if (!parsed) continue;
+        if (parsed.type === "content" && parsed.content.type === "text" && isKimiToolErrorText(parsed.content.text)) {
+          isError = true;
         }
+        content.push(parsed);
       }
     }
 
@@ -245,15 +440,28 @@ export function createKimiParser() {
         break;
       }
       case "ToolCall": {
-        const toolId = payload.id;
+        const toolName = payload.function?.name ?? "";
+        const toolId = getToolCallId(payload.id, toolName);
         const fn = payload.function;
         if (!fn) break;
-        const toolName = fn.name ?? "";
         let input: unknown;
         try {
           input = fn.arguments ? JSON.parse(fn.arguments) : {};
         } catch {
           input = fn.arguments;
+        }
+        if (toolName === "SetTodoList") {
+          const entries = parseTodosToPlanEntries(input);
+          if (entries.length > 0) {
+            events.push({
+              update: {
+                sessionUpdate: "plan",
+                entries,
+              },
+            });
+          }
+          todoToolCallIds.add(toolId);
+          break;
         }
         const { title, kind, toolContent, locations } = getToolInfo(
           toolName,
@@ -275,17 +483,39 @@ export function createKimiParser() {
       }
       case "ToolResult": {
         const toolId = payload.tool_call_id;
-        if (!toolId) break;
-        const returnValue = payload.return_value ?? payload.content;
-        const isError = returnValue?.type === "ToolError" || payload.is_error === true;
-        const content: ToolCallContent[] = [];
-        const outputText = returnValue?.output ?? returnValue?.message ?? "";
-        if (typeof outputText === "string" && outputText.length > 0) {
-          content.push({
-            type: "content",
-            content: { type: "text", text: isError ? `\`\`\`\n${outputText}\n\`\`\`` : outputText },
-          });
+        if (typeof toolId !== "string" || toolId.length === 0) break;
+        if (todoToolCallIds.has(toolId)) {
+          todoToolCallIds.delete(toolId);
+          break;
         }
+        const returnValue = payload.return_value ?? payload.content;
+        const content: ToolCallContent[] = [];
+
+        let isError = payload.is_error === true;
+        if (returnValue && typeof returnValue === "object" && !Array.isArray(returnValue)) {
+          const rv = returnValue as {
+            type?: unknown;
+            is_error?: unknown;
+            output?: unknown;
+            message?: unknown;
+          };
+          isError = isError || rv.type === "ToolError" || rv.is_error === true;
+          content.push(...parseToolOutputToContent(rv.output));
+          if (content.length === 0 && typeof rv.message === "string" && rv.message.length > 0) {
+            content.push({
+              type: "content",
+              content: { type: "text", text: rv.message },
+            });
+          }
+          if (content.length === 0) {
+            content.push(...parseToolOutputToContent(returnValue));
+          }
+        } else {
+          content.push(...parseToolOutputToContent(returnValue));
+        }
+
+        isError = isError || contentHasKimiToolError(content);
+
         events.push({
           update: {
             sessionUpdate: "tool_call_update",
