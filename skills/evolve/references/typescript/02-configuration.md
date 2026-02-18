@@ -1,0 +1,1 @@
+../../../../docs/typescript/02-configuration.md

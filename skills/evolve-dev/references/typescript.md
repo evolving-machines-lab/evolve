@@ -1,1 +1,0 @@
-../../../docs/typescript-sdk.md

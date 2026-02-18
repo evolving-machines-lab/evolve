@@ -1,7 +1,7 @@
 ## Documentation
 
-- [TypeScript SDK](../docs/typescript-sdk.md)
-- [Python SDK](../docs/python-sdk.md)
+- [TypeScript SDK](./typescript/)
+- [Python SDK](./python/)
 - [Cookbooks](../cookbooks)
 
 ## Get Started
