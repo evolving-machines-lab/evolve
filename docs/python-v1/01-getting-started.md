@@ -62,6 +62,43 @@ for name, content in output.files.items():
 await evolve.kill()
 ```
 
+### Core Lifecycle
+
+Every Evolve application follows this pattern:
+
+```
+Evolve()  →  run()  →  get_output_files()  →  kill()
+ setup       execute    retrieve results      ALWAYS cleanup
+```
+
+> **IMPORTANT: Always call `kill()` when done.** Each `run()` creates a cloud sandbox that bills until destroyed. Forgetting `kill()` leaves sandboxes running indefinitely. Use try/finally to guarantee cleanup:
+
+```python
+evolve = Evolve(config=AgentConfig(type='claude'))
+try:
+    await evolve.run(prompt='Analyze the dataset')
+    output = await evolve.get_output_files()
+    print(output.files)            # All files from output/
+    print(output.data)             # Parsed result.json (if schema set)
+finally:
+    await evolve.kill()            # Always destroy sandbox
+```
+
+- `run()` can be called multiple times — each continues in the same sandbox session with full context/history.
+- `get_output_files()` returns files from the `output/` folder. If `schema=` was set, `output.data` contains the validated result.
+- `kill()` destroys the sandbox. The next `run()` creates a fresh one.
+
+### Streaming
+
+Subscribe to real-time agent output:
+
+```python
+evolve.on('content', lambda event: print(event['update']))
+evolve.on('lifecycle', lambda event: print(event['reason'], event['sandbox'], event['agent']))
+```
+
+See [Streaming Events](./04-streaming.md) for all event types, type definitions, and a full UI integration example.
+
 ### Gateway Features
 
 When using `EVOLVE_API_KEY`:
@@ -234,9 +271,11 @@ evolve = Evolve(
 
 ### Auto-resolve from Environment
 
-Set env vars and the SDK picks them up automatically — no need to pass explicitly. See [Agent Reference](#agent-reference) below for env var names.
+Set env vars and the SDK picks them up automatically — no need to pass explicitly.
 
 ### Agent Reference
+
+> **IMPORTANT: Only use the exact model names listed below.** The SDK will error on unrecognized model names. Do not invent or guess model identifiers.
 
 | type | models | default | env var (BYOK) |
 |------|--------|---------|----------------|
