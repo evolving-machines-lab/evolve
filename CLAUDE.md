@@ -45,7 +45,7 @@ evolve/
 │   ├── pdf, docx, pptx, xlsx   # Document processing
 │   ├── agent-browser, dev-browser, webapp-testing  # Browser automation
 │   ├── frontend-design, shadcn-webapp-design, web-design-guidelines  # Design
-│   ├── evolve-dev, evolve-orchestrator  # SDK development
+│   ├── evolve, evolve-orchestrator  # SDK development
 │   ├── skill-creator, skill-share, template-skill  # Skill tooling
 │   ├── remotion, slides-as-code, canvas-design  # Media & presentations
 │   ├── mcp-builder              # MCP server builder

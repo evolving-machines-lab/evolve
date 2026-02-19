@@ -23,16 +23,16 @@
 - Built-in [agent observability and analytics dashboard](https://dashboard.evolvingmachines.ai/)
 - Much more coming...
 
-Add the [`evolve-dev`](skills/evolve-dev/SKILL.md) SKILL to your favorite coding agent and start building with Evolve SDK:
+Add the [`evolve`](skills/evolve/SKILL.md) SKILL to your favorite coding agent and start building with Evolve SDK:
 
 ```bash
 git clone https://github.com/evolving-machines-lab/evolve.git
-cp -r evolve/skills/evolve-dev ~/.claude/skills/       # Claude Code
-cp -r evolve/skills/evolve-dev ~/.codex/skills/        # Codex
-cp -r evolve/skills/evolve-dev ~/.gemini/skills/       # Gemini CLI
-cp -r evolve/skills/evolve-dev ~/.qwen-code/skills/    # Qwen Code
-cp -r evolve/skills/evolve-dev ~/.kimi/skills/         # Kimi CLI
-cp -r evolve/skills/evolve-dev ~/.agents/skills/       # OpenCode
+cp -r evolve/skills/evolve ~/.claude/skills/       # Claude Code
+cp -r evolve/skills/evolve ~/.codex/skills/        # Codex
+cp -r evolve/skills/evolve ~/.gemini/skills/       # Gemini CLI
+cp -r evolve/skills/evolve ~/.qwen-code/skills/    # Qwen Code
+cp -r evolve/skills/evolve ~/.kimi/skills/         # Kimi CLI
+cp -r evolve/skills/evolve ~/.agents/skills/       # OpenCode
 ```
 
 ## Get Started

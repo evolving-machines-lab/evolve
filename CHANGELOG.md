@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Modal `imageName` config** — custom image support via `ModalProvider({ imageName })` (Python: `ModalProvider(image_name=...)`)
 - **Modal eager image build** — `images.fromRegistry().build(app)` called upfront so first-run image pull is cached (~150ms subsequent)
 - **Provider parity test** — compile-time + runtime verification that all sandbox providers (E2B, Daytona, Modal) implement the same `SandboxProvider` API surface
-- **`evolve-dev` skill** — install/update instructions, git clone for first-time setup, model freshness warning
+- **`evolve` skill** — install/update instructions, git clone for first-time setup, model freshness warning
 
 ### Fixed
 
