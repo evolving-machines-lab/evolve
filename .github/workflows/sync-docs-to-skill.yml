@@ -6,6 +6,7 @@ on:
     paths:
       - 'docs/typescript/[0-9]*.md'
       - 'docs/python/[0-9]*.md'
+  workflow_dispatch:
 
 permissions:
   contents: write
