@@ -7,6 +7,9 @@ on:
       - 'docs/typescript/[0-9]*.md'
       - 'docs/python/[0-9]*.md'
 
+permissions:
+  contents: write
+
 jobs:
   sync:
     runs-on: ubuntu-latest
