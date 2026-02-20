@@ -277,8 +277,8 @@ Set env vars and the SDK picks them up automatically — no need to pass explici
 
 > **IMPORTANT: Only use the exact model names listed below.** The SDK will error on unrecognized model names. Do not invent or guess model identifiers.
 
-| type | models | default | Gateway (`EVOLVE_API_KEY`) | BYOK |
-|------|--------|---------|---------------------------|------|
+| type | models | default | Gateway | BYOK |
+|------|--------|---------|---------|------|
 | `'claude'` | `'opus'` `'sonnet'` `'haiku'` | `'sonnet'` | `EVOLVE_API_KEY` | `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` |
 | `'codex'` | `'gpt-5.2'` `'gpt-5.2-codex'` `'gpt-5.1-codex-max'` `'gpt-5.1-mini'` | `'gpt-5.2'` | `EVOLVE_API_KEY` | `OPENAI_API_KEY` or `CODEX_OAUTH_FILE_PATH` |
 | `'gemini'` | `'gemini-3.1-pro-preview'` `'gemini-3-pro-preview'` `'gemini-3-flash-preview'` `'gemini-2.5-pro'` `'gemini-2.5-flash'` `'gemini-2.5-flash-lite'` | `'gemini-3-flash-preview'` | `EVOLVE_API_KEY` | `GEMINI_API_KEY` or `GEMINI_OAUTH_FILE_PATH` |
