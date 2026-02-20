@@ -66,8 +66,8 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
     return { type, apiKey: evolveKey, isDirectMode: false, model: config?.model, reasoningEffort: config?.reasoningEffort, betas: config?.betas };
   }
 
-  // Multi-provider direct mode (e.g., OpenCode: model prefix → provider-specific env var)
-  // Checked BEFORE generic apiKeyEnv so "anthropic/..." resolves to ANTHROPIC_API_KEY, not OPENAI_API_KEY
+  // Prefix-mapped direct mode (e.g., OpenCode: "openrouter/..." → OPENROUTER_API_KEY)
+  // Checked BEFORE generic apiKeyEnv for registries that use model-prefix key mapping.
   if (registry.providerEnvMap) {
     const model = config?.model ?? registry.defaultModel;
     const prefix = model?.split("/")[0];

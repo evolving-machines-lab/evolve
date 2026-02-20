@@ -281,10 +281,10 @@ Set env vars and the SDK picks them up automatically — no need to pass explici
 |------|--------|---------|----------------|
 | `"claude"` | `"opus"` `"sonnet"` `"haiku"` | `"sonnet"` | `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` |
 | `"codex"` | `"gpt-5.2"` `"gpt-5.2-codex"` `"gpt-5.1-codex-max"` `"gpt-5.1-mini"` | `"gpt-5.2"` | `OPENAI_API_KEY` or `CODEX_OAUTH_FILE_PATH` |
-| `"gemini"` | `"gemini-3-pro-preview"` `"gemini-3-flash-preview"` `"gemini-2.5-pro"` `"gemini-2.5-flash"` `"gemini-2.5-flash-lite"` | `"gemini-3-flash-preview"` | `GEMINI_API_KEY` or `GEMINI_OAUTH_FILE_PATH` |
-| `"qwen"` | `"qwen3-coder-plus"` `"qwen3-vl-plus"` | `"qwen3-coder-plus"` | `OPENAI_API_KEY` |
+| `"gemini"` | `"gemini-3.1-pro-preview"` `"gemini-3-pro-preview"` `"gemini-3-flash-preview"` `"gemini-2.5-pro"` `"gemini-2.5-flash"` `"gemini-2.5-flash-lite"` | `"gemini-3-flash-preview"` | `GEMINI_API_KEY` or `GEMINI_OAUTH_FILE_PATH` |
+| `"qwen"` | `"qwen3.5-plus"` `"qwen3-coder-plus"` `"qwen3-vl-plus"` | `"qwen3.5-plus"` | `OPENAI_API_KEY` |
 | `"kimi"` | `"moonshot/kimi-k2.5"` `"moonshot/kimi-k2-turbo-preview"` | `"moonshot/kimi-k2.5"` | `KIMI_API_KEY` |
-| `"opencode"` | `"openai/gpt-5.2"` `"anthropic/claude-sonnet-4-5"` `"anthropic/claude-opus-4-6"` `"google/gemini-3-pro-preview"` | `"openai/gpt-5.2"` | Per model: `OPENAI_API_KEY` `ANTHROPIC_API_KEY` `GEMINI_API_KEY` |
+| `"opencode"` | `"openrouter/anthropic/claude-sonnet-4.6"` `"openrouter/anthropic/claude-opus-4-6"` `"openrouter/openai/gpt-5.2"` `"openrouter/google/gemini-2.5-pro"` `"openrouter/deepseek/deepseek-r1"` | `"openrouter/anthropic/claude-sonnet-4.6"` | `OPENROUTER_API_KEY` |
 
 > **Note:** In Gateway mode (`EVOLVE_API_KEY`), the default claude model is `"opus"`. In BYOK mode, it defaults to `"sonnet"`.
 
@@ -295,9 +295,10 @@ Agent-specific options: `reasoningEffort` (Codex: `"low"` `"medium"` `"high"` `"
 ```bash
 # .env - set env vars for auto-pickup
 ANTHROPIC_API_KEY=sk-...   # claude
-OPENAI_API_KEY=sk-...      # codex, qwen, opencode
+OPENAI_API_KEY=sk-...      # codex, qwen
 GEMINI_API_KEY=...         # gemini
 KIMI_API_KEY=...           # kimi
+OPENROUTER_API_KEY=sk-...  # opencode
 E2B_API_KEY=e2b_...        # sandbox
 ```
 
@@ -357,12 +358,12 @@ const evolve = new Evolve()
 ```
 
 ```ts
-// opencode — multi-provider (auto-picks OPENAI_API_KEY + E2B_API_KEY)
+// opencode — OpenRouter (auto-picks OPENROUTER_API_KEY + E2B_API_KEY)
 const evolve = new Evolve()
     .withAgent({ type: "opencode" });
 
 const evolve = new Evolve()
-    .withAgent({ type: "opencode", model: "anthropic/claude-sonnet-4-5" });
+    .withAgent({ type: "opencode", model: "openrouter/openai/gpt-5.2" });
 ```
 
 ---

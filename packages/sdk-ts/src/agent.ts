@@ -362,14 +362,24 @@ export class Agent {
         ? getGeminiGatewayUrl()
         : getGatewayUrl();
 
-      if (this.registry.gatewayConfigEnv && this.registry.providerEnvMap) {
-        // Multi-provider CLI (e.g., OpenCode): write inline config to route all providers through gateway
-        // OpenCode reads base URLs from config, not env vars — use OPENCODE_CONFIG_CONTENT
-        const providers: Record<string, { options: { baseURL: string } }> = {};
-        for (const prefix of Object.keys(this.registry.providerEnvMap)) {
-          providers[prefix] = { options: { baseURL: `${gatewayUrl}/v1` } };
-        }
-        envVars[this.registry.gatewayConfigEnv] = JSON.stringify({ provider: providers });
+      if (this.registry.gatewayConfigEnv) {
+        // OpenCode gateway: define a custom "litellm" provider that routes through the LiteLLM gateway
+        // using OpenAI-compatible format. Model names pass through as-is (e.g. openrouter/anthropic/claude-sonnet-4.6).
+        const selectedModel = this.agentConfig.model || this.registry.defaultModel;
+        envVars[this.registry.gatewayConfigEnv] = JSON.stringify({
+          provider: {
+            litellm: {
+              npm: "@ai-sdk/openai-compatible",
+              options: {
+                baseURL: `${gatewayUrl}/v1`,
+                apiKey: this.agentConfig.apiKey,
+              },
+              models: {
+                [selectedModel]: { name: selectedModel },
+              },
+            },
+          },
+        });
       } else {
         // Single-provider: set base URL env var
         envVars[this.registry.baseUrlEnv] = gatewayUrl;
