@@ -1,0 +1,33 @@
+name: Sync docs to skill references
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/typescript/[0-9]*.md'
+      - 'docs/python/[0-9]*.md'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copy docs to skill references
+        run: |
+          cp docs/typescript/[0-9]*.md skills/evolve/references/typescript/
+          cp docs/python/[0-9]*.md skills/evolve/references/python/
+
+      - name: Check for changes
+        id: diff
+        run: |
+          git diff --quiet skills/evolve/references/ && echo "changed=false" >> "$GITHUB_OUTPUT" || echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Commit and push
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add skills/evolve/references/
+          git commit -m "docs: sync skill references from docs/"
+          git push

@@ -14,7 +14,7 @@
  *   ANTHROPIC_MODEL - Model for claude agent (default: opus)
  *   ANTHROPIC_BETAS - Comma-separated beta headers for Claude (e.g., "context-1m-2025-08-07")
  *   GEMINI_MODEL - Model for gemini agent (default: gemini-3-pro-preview)
- *   QWEN_OPENAI_MODEL - Model for qwen agent (default: qwen3-coder-plus)
+ *   QWEN_OPENAI_MODEL - Model for qwen agent (default: qwen3.5-plus)
  */
 
 import type { AgentType, SandboxProvider } from "../../dist/index.js";
@@ -169,7 +169,7 @@ export function getAgentConfig(type: AgentType): AgentConfig {
       return {
         type: "qwen",
         apiKey: env.EVOLVE_API_KEY || env.OPENAI_API_KEY || "",
-        model: process.env.QWEN_OPENAI_MODEL || "qwen3-coder-plus",
+        model: process.env.QWEN_OPENAI_MODEL || "qwen3.5-plus",
       };
 
     case "kimi":
@@ -182,8 +182,8 @@ export function getAgentConfig(type: AgentType): AgentConfig {
     case "opencode":
       return {
         type: "opencode",
-        apiKey: env.EVOLVE_API_KEY || env.OPENAI_API_KEY || "",
-        model: process.env.OPENCODE_MODEL || "openai/gpt-5.2",
+        apiKey: env.EVOLVE_API_KEY || process.env.OPENROUTER_API_KEY || "",
+        model: process.env.OPENCODE_MODEL || "openrouter/anthropic/claude-sonnet-4.6",
       };
 
     default:

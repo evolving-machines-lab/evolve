@@ -7,16 +7,20 @@
  * OpenCode event types:
  * - "step_start"  → lifecycle (skip)
  * - "text"        → agent_message_chunk
- * - "tool_use"    → tool_call + tool_call_update (tools arrive completed)
+ * - "reasoning"   → agent_thought_chunk
+ * - "tool_use"    → tool_call + tool_call_update (tools arrive completed or error)
  * - "step_finish" → lifecycle (skip)
  * - "error"       → agent_message_chunk (error text)
  *
- * Key difference: tool_use events arrive already completed (status="completed"),
- * so we emit both tool_call (pending) and tool_call_update (completed/failed)
- * from a single event.
+ * Key differences from other parsers:
+ * - tool_use events arrive already completed/error (not pending→result like Claude),
+ *   so we emit both tool_call (pending) and tool_call_update (completed/failed) from a single event.
+ * - ToolStateError has `error: string` (NOT `output`), ToolStateCompleted has `output: string`.
  *
- * Reference: KNOWLEDGE/opencode/packages/opencode/src/cli/cmd/run.ts (emit() function, event handlers)
- * ACP output: parsers/types.ts (OutputEvent, SessionUpdate)
+ * Reference:
+ *   Part schemas: KNOWLEDGE/opencode/packages/opencode/src/session/message-v2.ts (TextPart, StepFinishPart, ToolState*, etc.)
+ *   Wire format:  KNOWLEDGE/opencode/packages/opencode/src/cli/cmd/run.ts (emit() function, event handlers)
+ *   ACP output:   parsers/types.ts (OutputEvent, SessionUpdate)
  */
 
 import {
@@ -81,7 +85,14 @@ export function createOpenCodeParser(): (jsonLine: string) => OutputEvent[] | nu
         break;
       }
 
-      // Tool use (arrives already completed)
+      // Reasoning/thinking (emitted with --thinking flag)
+      case "reasoning": {
+        const update = handleReasoning(data);
+        if (update) events.push({ sessionId, update });
+        break;
+      }
+
+      // Tool use (arrives already completed or error)
       case "tool_use": {
         const updates = handleToolUse(data);
         for (const update of updates) {
@@ -106,7 +117,7 @@ export function createOpenCodeParser(): (jsonLine: string) => OutputEvent[] | nu
 
   /**
    * Handle text events
-   * { type: "text", part: { text: string, time: { start, end } } }
+   * { type: "text", part: { type: "text", text: string, time?: { start, end? } } }
    */
   function handleText(data: any): SessionUpdate | null {
     const text = data.part?.text;
@@ -119,13 +130,28 @@ export function createOpenCodeParser(): (jsonLine: string) => OutputEvent[] | nu
   }
 
   /**
+   * Handle reasoning events
+   * { type: "reasoning", part: { type: "reasoning", text: string, time: { start, end? } } }
+   */
+  function handleReasoning(data: any): SessionUpdate | null {
+    const text = data.part?.text;
+    if (typeof text !== "string" || text.length === 0) return null;
+
+    return {
+      sessionUpdate: "agent_thought_chunk",
+      content: { type: "text", text },
+    };
+  }
+
+  /**
    * Handle tool_use events
    *
-   * OpenCode emits tool_use with completed status, so we emit both:
+   * OpenCode emits tool_use with completed/error status, so we emit both:
    * 1. tool_call (pending) - for UI to show the tool card
-   * 2. tool_call_update (completed/failed) - with output
+   * 2. tool_call_update (completed/failed) - with output or error
    *
-   * { type: "tool_use", part: { callID, tool, state: { status, input, output, title, metadata, time } } }
+   * ToolStateCompleted: { status: "completed", input, output: string, title, metadata, time }
+   * ToolStateError:     { status: "error", input, error: string, metadata?, time }
    */
   function handleToolUse(data: any): SessionUpdate[] {
     const part = data.part;
@@ -135,9 +161,8 @@ export function createOpenCodeParser(): (jsonLine: string) => OutputEvent[] | nu
     const toolName = part.tool ?? "";
     const state = part.state ?? {};
     const input = state.input ?? {};
-    const output = state.output;
-    const title = state.title ?? state.metadata?.description ?? toolName;
     const status = state.status;
+    const title = state.title ?? state.metadata?.description ?? toolName;
     const exitCode = state.metadata?.exit;
 
     const { kind, content: callContent, locations } = getToolInfo(toolName, input);
@@ -157,15 +182,17 @@ export function createOpenCodeParser(): (jsonLine: string) => OutputEvent[] | nu
     });
 
     // Emit tool_call_update (completed/failed)
+    // ToolStateError has `error` (string), ToolStateCompleted has `output` (string)
     const isFailed = status === "error" || (exitCode !== undefined && exitCode !== 0);
+    const resultText = status === "error" ? state.error : state.output;
     const resultContent: ToolCallContent[] = [];
 
-    if (typeof output === "string" && output.length > 0) {
+    if (typeof resultText === "string" && resultText.length > 0) {
       resultContent.push({
         type: "content",
         content: {
           type: "text",
-          text: isFailed ? `\`\`\`\n${output}\n\`\`\`` : output,
+          text: isFailed ? `\`\`\`\n${resultText}\n\`\`\`` : resultText,
         },
       });
     }
@@ -278,21 +305,7 @@ export function createOpenCodeParser(): (jsonLine: string) => OutputEvent[] | nu
         break;
       }
 
-      case "webfetch": {
-        // No special handling
-        break;
-      }
-
-      case "websearch": {
-        // No special handling
-        break;
-      }
-
-      case "task": {
-        // Subagent task
-        break;
-      }
-
+      // webfetch, websearch, task, skill, todoread, todowrite — kind from TOOL_KINDS, no extra info
       default:
         break;
     }

@@ -185,7 +185,8 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     baseUrlEnv: "GOOGLE_GEMINI_BASE_URL",
     defaultModel: "gemini-3-flash-preview",
     models: [
-      { alias: "gemini-3-pro-preview", modelId: "gemini-3-pro-preview", description: "Latest pro preview" },
+      { alias: "gemini-3.1-pro-preview", modelId: "gemini-3.1-pro-preview", description: "Latest pro preview" },
+      { alias: "gemini-3-pro-preview", modelId: "gemini-3-pro-preview", description: "Pro preview" },
       { alias: "gemini-3-flash-preview", modelId: "gemini-3-flash-preview", description: "Latest flash preview" },
       { alias: "gemini-2.5-pro", modelId: "gemini-2.5-pro", description: "Complex tasks, deep reasoning" },
       { alias: "gemini-2.5-flash", modelId: "gemini-2.5-flash", description: "Balance speed/reasoning" },
@@ -212,8 +213,9 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     image: "evolve-all",
     apiKeyEnv: "OPENAI_API_KEY",
     baseUrlEnv: "OPENAI_BASE_URL",
-    defaultModel: "qwen3-coder-plus",
+    defaultModel: "qwen3.5-plus",
     models: [
+      { alias: "qwen3.5-plus", modelId: "qwen3.5-plus", description: "Latest flagship, code + reasoning" },
       { alias: "qwen3-coder-plus", modelId: "qwen3-coder-plus", description: "Code generation, debugging" },
       { alias: "qwen3-vl-plus", modelId: "qwen3-vl-plus", description: "Vision + language, multimodal" },
     ],
@@ -269,22 +271,16 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
 
   opencode: {
     image: "evolve-all",
-    apiKeyEnv: "OPENAI_API_KEY",
+    apiKeyEnv: "OPENROUTER_API_KEY",
     baseUrlEnv: "OPENAI_BASE_URL",
-    defaultModel: "openai/gpt-5.2",
-    // OpenCode multi-provider: model prefix → env var for API key
+    defaultModel: "openrouter/anthropic/claude-sonnet-4.6",
+    // OpenRouter-only: all models route through OpenRouter (direct or via LiteLLM gateway)
     providerEnvMap: {
-      anthropic: { keyEnv: "ANTHROPIC_API_KEY" },
-      openai: { keyEnv: "OPENAI_API_KEY" },
-      google: { keyEnv: "GEMINI_API_KEY" },
+      openrouter: { keyEnv: "OPENROUTER_API_KEY" },
     },
-    // Inline config env var — used in gateway mode to set provider base URLs
     gatewayConfigEnv: "OPENCODE_CONFIG_CONTENT",
     models: [
-      { alias: "anthropic/claude-sonnet-4-5", modelId: "anthropic/claude-sonnet-4-5", description: "Balanced coding, features, tests" },
-      { alias: "anthropic/claude-opus-4-6", modelId: "anthropic/claude-opus-4-6", description: "Complex reasoning, R&D" },
-      { alias: "openai/gpt-5.2", modelId: "openai/gpt-5.2", description: "OpenAI flagship" },
-      { alias: "google/gemini-3-pro-preview", modelId: "google/gemini-3-pro-preview", description: "Google latest reasoning" },
+      { alias: "openrouter/anthropic/claude-sonnet-4.6", modelId: "openrouter/anthropic/claude-sonnet-4.6", description: "Default (balanced) via OpenRouter" },
     ],
     systemPromptFile: "AGENTS.md",
     mcpConfig: {
@@ -297,15 +293,18 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       targetDir: "/home/user/.agents/skills",
     },
     // OpenCode uses XDG Base Directory spec — state is split across multiple dirs
-    // Evidence: KNOWLEDGE/opencode global/index.ts (xdg-basedir), storage/storage.ts, auth/index.ts, config/config.ts
     checkpointDirs: [
       "~/.local/share/opencode",  // sessions, auth, snapshots, worktrees, logs
       "~/.config/opencode",       // config.json, AGENTS.md, theme
       "~/.local/state/opencode",  // prompt history, model prefs, TUI state
     ],
-    buildCommand: ({ prompt, model, isResume }) => {
+    buildCommand: ({ prompt, model, isResume, isDirectMode }) => {
       const continueFlag = isResume ? "--continue " : "";
-      return `OPENCODE_PERMISSION='{"*":"allow"}' opencode run "${prompt}" ${continueFlag}--model ${model} --format json < /dev/null`;
+      const routedModel = model.startsWith("openrouter/") ? model : `openrouter/${model}`;
+      if (!isDirectMode) {
+        return `OPENCODE_PERMISSION='{"*":"allow"}' opencode run ${continueFlag}--model litellm/${routedModel} --format json "${prompt}" < /dev/null`;
+      }
+      return `OPENCODE_PERMISSION='{"*":"allow"}' opencode run ${continueFlag}--model ${routedModel} --format json "${prompt}" < /dev/null`;
     },
   },
 };
