@@ -277,14 +277,14 @@ Set env vars and the SDK picks them up automatically — no need to pass explici
 
 > **IMPORTANT: Only use the exact model names listed below.** The SDK will error on unrecognized model names. Do not invent or guess model identifiers.
 
-| type | models | default | env var (BYOK) |
-|------|--------|---------|----------------|
-| `"claude"` | `"opus"` `"sonnet"` `"haiku"` | `"sonnet"` | `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` |
-| `"codex"` | `"gpt-5.2"` `"gpt-5.2-codex"` `"gpt-5.1-codex-max"` `"gpt-5.1-mini"` | `"gpt-5.2"` | `OPENAI_API_KEY` or `CODEX_OAUTH_FILE_PATH` |
-| `"gemini"` | `"gemini-3.1-pro-preview"` `"gemini-3-pro-preview"` `"gemini-3-flash-preview"` `"gemini-2.5-pro"` `"gemini-2.5-flash"` `"gemini-2.5-flash-lite"` | `"gemini-3-flash-preview"` | `GEMINI_API_KEY` or `GEMINI_OAUTH_FILE_PATH` |
-| `"qwen"` | `"qwen3.5-plus"` `"qwen3-coder-plus"` `"qwen3-vl-plus"` | `"qwen3.5-plus"` | `OPENAI_API_KEY` |
-| `"kimi"` | `"moonshot/kimi-k2.5"` `"moonshot/kimi-k2-turbo-preview"` | `"moonshot/kimi-k2.5"` | `KIMI_API_KEY` |
-| `"opencode"` | `"openrouter/anthropic/claude-sonnet-4.6"` `"openrouter/anthropic/claude-opus-4-6"` `"openrouter/openai/gpt-5.2"` `"openrouter/google/gemini-2.5-pro"` `"openrouter/deepseek/deepseek-r1"` | `"openrouter/anthropic/claude-sonnet-4.6"` | `OPENROUTER_API_KEY` |
+| type | models | default | Gateway (`EVOLVE_API_KEY`) | BYOK |
+|------|--------|---------|---------------------------|------|
+| `"claude"` | `"opus"` `"sonnet"` `"haiku"` | `"sonnet"` | `EVOLVE_API_KEY` | `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` |
+| `"codex"` | `"gpt-5.2"` `"gpt-5.2-codex"` `"gpt-5.1-codex-max"` `"gpt-5.1-mini"` | `"gpt-5.2"` | `EVOLVE_API_KEY` | `OPENAI_API_KEY` or `CODEX_OAUTH_FILE_PATH` |
+| `"gemini"` | `"gemini-3.1-pro-preview"` `"gemini-3-pro-preview"` `"gemini-3-flash-preview"` `"gemini-2.5-pro"` `"gemini-2.5-flash"` `"gemini-2.5-flash-lite"` | `"gemini-3-flash-preview"` | `EVOLVE_API_KEY` | `GEMINI_API_KEY` or `GEMINI_OAUTH_FILE_PATH` |
+| `"qwen"` | `"qwen3.5-plus"` `"qwen3-coder-plus"` `"qwen3-vl-plus"` | `"qwen3.5-plus"` | `EVOLVE_API_KEY` | `OPENAI_API_KEY` |
+| `"kimi"` | `"moonshot/kimi-k2.5"` `"moonshot/kimi-k2-turbo-preview"` | `"moonshot/kimi-k2.5"` | `EVOLVE_API_KEY` | `KIMI_API_KEY` |
+| `"opencode"` | `"openrouter/anthropic/claude-opus-4.6"` `"openrouter/anthropic/claude-sonnet-4.6"` `"openrouter/anthropic/claude-haiku-4.5"` `"openrouter/openai/gpt-5.2"` `"openrouter/openai/gpt-5.2-codex"` `"openrouter/openai/gpt-5.1-codex-max"` `"openrouter/google/gemini-3.1-pro-preview"` `"openrouter/google/gemini-3-pro-preview"` `"openrouter/google/gemini-3-flash-preview"` `"openrouter/qwen/qwen3-coder-plus"` `"openrouter/moonshotai/kimi-k2.5"` `"openrouter/z-ai/glm-5"` | `"openrouter/anthropic/claude-sonnet-4.6"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
 
 > **Note:** In Gateway mode (`EVOLVE_API_KEY`), the default claude model is `"opus"`. In BYOK mode, it defaults to `"sonnet"`.
 
