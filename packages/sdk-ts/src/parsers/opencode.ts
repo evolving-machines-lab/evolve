@@ -25,6 +25,7 @@
 
 import {
   OutputEvent,
+  PlanEntry,
   SessionUpdate,
   ToolKind,
   ToolCallContent,
@@ -37,6 +38,7 @@ const TOOL_KINDS: Record<string, ToolKind> = {
   read: "read",
   write: "edit",
   edit: "edit",
+  multiedit: "edit",
   apply_patch: "edit",
   // Shell
   bash: "execute",
@@ -45,15 +47,126 @@ const TOOL_KINDS: Record<string, ToolKind> = {
   grep: "search",
   list: "search",
   codesearch: "search",
+  lsp: "search",
   // Web
   webfetch: "fetch",
   websearch: "fetch",
   // Agent/planning
   task: "think",
+  batch: "think",
+  plan_enter: "switch_mode",
+  plan_exit: "switch_mode",
   todoread: "other",
   todowrite: "other",
   skill: "other",
+  question: "other",
 };
+
+function parseDataUrl(url: string): { mimeType: string; data: string } | null {
+  const match = /^data:([^;,]+)?((?:;[^,]+)*),(.*)$/s.exec(url);
+  if (!match) return null;
+  const mimeType = match[1] || "";
+  const params = match[2] || "";
+  const data = match[3] || "";
+  if (!/;base64/i.test(params)) return null;
+  return { mimeType, data };
+}
+
+function normalizeTodoStatus(status: unknown): PlanEntry["status"] {
+  if (typeof status !== "string") return "pending";
+  switch (status.toLowerCase()) {
+    case "in_progress":
+    case "in-progress":
+    case "running":
+      return "in_progress";
+    case "completed":
+    case "done":
+    case "cancelled":
+      return "completed";
+    default:
+      return "pending";
+  }
+}
+
+function normalizeTodoPriority(priority: unknown): PlanEntry["priority"] {
+  if (priority === "high" || priority === "medium" || priority === "low") {
+    return priority;
+  }
+  return "medium";
+}
+
+function parseTodoEntries(value: unknown): PlanEntry[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item): PlanEntry | null => {
+      if (!item || typeof item !== "object") return null;
+      const content = (item as { content?: unknown }).content;
+      if (typeof content !== "string" || content.length === 0) return null;
+      return {
+        content,
+        status: normalizeTodoStatus((item as { status?: unknown }).status),
+        priority: normalizeTodoPriority((item as { priority?: unknown }).priority),
+      };
+    })
+    .filter((entry): entry is PlanEntry => entry !== null);
+}
+
+function toAttachmentContent(item: unknown): ToolCallContent | null {
+  if (!item || typeof item !== "object") return null;
+  const attachment = item as { mime?: unknown; url?: unknown; filename?: unknown };
+  const mimeType = typeof attachment.mime === "string" ? attachment.mime : "";
+  const url = typeof attachment.url === "string" ? attachment.url : "";
+
+  if (mimeType.startsWith("image/")) {
+    if (url.length > 0) {
+      const parsed = parseDataUrl(url);
+      if (parsed) {
+        return {
+          type: "content",
+          content: { type: "image", data: parsed.data, mimeType: parsed.mimeType || mimeType },
+        };
+      }
+      return {
+        type: "content",
+        content: { type: "image", data: "", mimeType, uri: url },
+      };
+    }
+    return null;
+  }
+
+  // ACP content blocks support text/image only, so preserve non-image attachments as text references.
+  const filename = typeof attachment.filename === "string" ? attachment.filename : "";
+  const label = filename || "attachment";
+  const detail = mimeType || "file";
+  return {
+    type: "content",
+    content: { type: "text", text: `[attachment] ${label} (${detail})` },
+  };
+}
+
+function getResultText(status: unknown, state: Record<string, unknown>): string | null {
+  if (status === "error") {
+    return typeof state.error === "string" ? state.error : null;
+  }
+  if (typeof state.output === "string") return state.output;
+  if (state.output === undefined || state.output === null) return null;
+  try {
+    return JSON.stringify(state.output);
+  } catch {
+    return String(state.output);
+  }
+}
+
+function toUpdateStatus(
+  status: unknown,
+  exitCode: unknown
+): "pending" | "in_progress" | "completed" | "failed" {
+  if (status === "error") return "failed";
+  if (status === "running") return "in_progress";
+  if (status === "pending") return "pending";
+  if (typeof exitCode === "number" && exitCode !== 0) return "failed";
+  return "completed";
+}
 
 /**
  * Create an OpenCode parser instance.
@@ -157,10 +270,11 @@ export function createOpenCodeParser(): (jsonLine: string) => OutputEvent[] | nu
     const part = data.part;
     if (!part) return [];
 
-    const callId = part.callID;
-    const toolName = part.tool ?? "";
-    const state = part.state ?? {};
-    const input = state.input ?? {};
+    const callId = typeof part.callID === "string" ? part.callID : "";
+    if (callId.length === 0) return [];
+    const toolName = typeof part.tool === "string" ? part.tool.toLowerCase() : "";
+    const state = typeof part.state === "object" && part.state ? part.state : {};
+    const input = typeof state.input === "object" && state.input ? state.input : {};
     const status = state.status;
     const title = state.title ?? state.metadata?.description ?? toolName;
     const exitCode = state.metadata?.exit;
@@ -181,10 +295,28 @@ export function createOpenCodeParser(): (jsonLine: string) => OutputEvent[] | nu
       locations,
     });
 
-    // Emit tool_call_update (completed/failed)
-    // ToolStateError has `error` (string), ToolStateCompleted has `output` (string)
-    const isFailed = status === "error" || (exitCode !== undefined && exitCode !== 0);
-    const resultText = status === "error" ? state.error : state.output;
+    if (toolName === "todowrite") {
+      let entries = parseTodoEntries((input as { todos?: unknown }).todos);
+      if (entries.length === 0 && typeof state.output === "string") {
+        try {
+          entries = parseTodoEntries(JSON.parse(state.output));
+        } catch {
+          // Ignore invalid JSON output and skip plan update.
+        }
+      }
+      if (entries.length > 0) {
+        updates.push({
+          sessionUpdate: "plan",
+          entries,
+        });
+      }
+    }
+
+    // Emit tool_call_update. OpenCode run JSON emits tool_use at completed/error.
+    const updateStatus = toUpdateStatus(status, exitCode);
+    if (updateStatus === "pending") return updates;
+
+    const resultText = getResultText(status, state);
     const resultContent: ToolCallContent[] = [];
 
     if (typeof resultText === "string" && resultText.length > 0) {
@@ -192,15 +324,22 @@ export function createOpenCodeParser(): (jsonLine: string) => OutputEvent[] | nu
         type: "content",
         content: {
           type: "text",
-          text: isFailed ? `\`\`\`\n${resultText}\n\`\`\`` : resultText,
+          text: updateStatus === "failed" ? `\`\`\`\n${resultText}\n\`\`\`` : resultText,
         },
       });
+    }
+
+    if (Array.isArray(state.attachments)) {
+      for (const attachment of state.attachments) {
+        const block = toAttachmentContent(attachment);
+        if (block) resultContent.push(block);
+      }
     }
 
     updates.push({
       sessionUpdate: "tool_call_update",
       toolCallId: callId,
-      status: isFailed ? "failed" : "completed",
+      status: updateStatus,
       content: resultContent,
     });
 
@@ -239,7 +378,13 @@ export function createOpenCodeParser(): (jsonLine: string) => OutputEvent[] | nu
     switch (toolName) {
       case "read": {
         const path = (input.filePath ?? input.path) as string | undefined;
-        if (path) locations.push({ path });
+        if (path) {
+          const offset = input.offset;
+          locations.push({
+            path,
+            line: typeof offset === "number" && Number.isFinite(offset) ? Math.max(0, offset - 1) : undefined,
+          });
+        }
         break;
       }
 
@@ -259,11 +404,12 @@ export function createOpenCodeParser(): (jsonLine: string) => OutputEvent[] | nu
         break;
       }
 
-      case "edit": {
+      case "edit":
+      case "multiedit": {
         const path = (input.filePath ?? input.path) as string | undefined;
         if (path) {
           locations.push({ path });
-          if (input.oldString !== undefined || input.newString !== undefined) {
+          if (toolName === "edit" && (input.oldString !== undefined || input.newString !== undefined)) {
             content.push({
               type: "diff",
               path,
@@ -287,6 +433,11 @@ export function createOpenCodeParser(): (jsonLine: string) => OutputEvent[] | nu
             type: "content",
             content: { type: "text", text: input.description as string },
           });
+        } else if (cmd) {
+          content.push({
+            type: "content",
+            content: { type: "text", text: cmd },
+          });
         }
         break;
       }
@@ -298,14 +449,47 @@ export function createOpenCodeParser(): (jsonLine: string) => OutputEvent[] | nu
         break;
       }
 
-      case "grep":
-      case "codesearch": {
+      case "grep": {
         const path = input.path as string | undefined;
         if (path) locations.push({ path });
         break;
       }
 
-      // webfetch, websearch, task, skill, todoread, todowrite — kind from TOOL_KINDS, no extra info
+      case "codesearch":
+      case "websearch": {
+        const query = input.query as string | undefined;
+        if (query) {
+          content.push({
+            type: "content",
+            content: { type: "text", text: query },
+          });
+        }
+        break;
+      }
+
+      case "webfetch": {
+        const url = input.url as string | undefined;
+        if (url) {
+          content.push({
+            type: "content",
+            content: { type: "text", text: url },
+          });
+        }
+        break;
+      }
+
+      case "task": {
+        const description = input.description as string | undefined;
+        if (description) {
+          content.push({
+            type: "content",
+            content: { type: "text", text: description },
+          });
+        }
+        break;
+      }
+
+      // skill, question, todoread, todowrite, lsp, batch, plan_enter/plan_exit — no extra extraction
       default:
         break;
     }
