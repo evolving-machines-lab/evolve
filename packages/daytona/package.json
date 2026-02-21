@@ -35,11 +35,10 @@
     "type-check": "tsc --noEmit",
     "test:unit": "tsx tests/unit/daytona-commands.test.ts"
   },
-  "peerDependencies": {
-    "@daytonaio/sdk": ">=0.130.0"
+  "dependencies": {
+    "@daytonaio/sdk": "^0.134.0"
   },
   "devDependencies": {
-    "@daytonaio/sdk": "^0.134.0",
     "@types/node": "^22.15.18",
     "tsup": "^8.4.0",
     "typescript": "^5.8.3"
