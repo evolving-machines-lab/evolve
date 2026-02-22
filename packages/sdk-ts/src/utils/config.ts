@@ -42,18 +42,18 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
         `Use providerApiKey for ${type} instead.`
       );
     }
-    return { type, apiKey: config.oauthToken, isDirectMode: true, isOAuth: true, model: config.model, reasoningEffort: config.reasoningEffort, betas: config.betas };
+    return { type, apiKey: config.oauthToken, isDirectMode: true, isOAuth: true, model: config.model, reasoningEffort: config.reasoningEffort };
   }
 
   // Provider API key (direct mode)
   if (config?.providerApiKey) {
     const baseUrl = config.providerBaseUrl ?? process.env[registry.baseUrlEnv] ?? registry.defaultBaseUrl;
-    return { type, apiKey: config.providerApiKey, baseUrl, isDirectMode: true, model: config.model, reasoningEffort: config.reasoningEffort, betas: config.betas };
+    return { type, apiKey: config.providerApiKey, baseUrl, isDirectMode: true, model: config.model, reasoningEffort: config.reasoningEffort };
   }
 
   // Gateway API key (explicit)
   if (config?.apiKey) {
-    return { type, apiKey: config.apiKey, isDirectMode: false, model: config.model, reasoningEffort: config.reasoningEffort, betas: config.betas };
+    return { type, apiKey: config.apiKey, isDirectMode: false, model: config.model, reasoningEffort: config.reasoningEffort };
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -63,7 +63,7 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
   // Gateway mode (EVOLVE_API_KEY) - preferred for observability & billing
   const evolveKey = process.env[ENV_EVOLVE_API_KEY];
   if (evolveKey) {
-    return { type, apiKey: evolveKey, isDirectMode: false, model: config?.model, reasoningEffort: config?.reasoningEffort, betas: config?.betas };
+    return { type, apiKey: evolveKey, isDirectMode: false, model: config?.model, reasoningEffort: config?.reasoningEffort };
   }
 
   // Prefix-mapped direct mode (e.g., OpenCode: "openrouter/..." → OPENROUTER_API_KEY)
@@ -75,7 +75,7 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
     const altKey = mapping ? process.env[mapping.keyEnv] : undefined;
     if (altKey) {
       const baseUrl = process.env[registry.baseUrlEnv] ?? registry.defaultBaseUrl;
-      return { type, apiKey: altKey, baseUrl, isDirectMode: true, model: config?.model, reasoningEffort: config?.reasoningEffort, betas: config?.betas };
+      return { type, apiKey: altKey, baseUrl, isDirectMode: true, model: config?.model, reasoningEffort: config?.reasoningEffort };
     }
   }
 
@@ -83,7 +83,7 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
   const providerKey = process.env[registry.apiKeyEnv];
   if (providerKey) {
     const baseUrl = process.env[registry.baseUrlEnv] ?? registry.defaultBaseUrl;
-    return { type, apiKey: providerKey, baseUrl, isDirectMode: true, model: config?.model, reasoningEffort: config?.reasoningEffort, betas: config?.betas };
+    return { type, apiKey: providerKey, baseUrl, isDirectMode: true, model: config?.model, reasoningEffort: config?.reasoningEffort };
   }
 
   // OAuth mode (token or file-based)
@@ -93,10 +93,10 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
       if (registry.oauthFileName) {
         // File-based OAuth (Codex, Gemini): env var is file path, read content
         const oauthFileContent = readOAuthFile(oauthValue);
-        return { type, apiKey: "__oauth_file__", isDirectMode: true, isOAuth: true, oauthFileContent, model: config?.model, reasoningEffort: config?.reasoningEffort, betas: config?.betas };
+        return { type, apiKey: "__oauth_file__", isDirectMode: true, isOAuth: true, oauthFileContent, model: config?.model, reasoningEffort: config?.reasoningEffort };
       }
       // Token-based OAuth (Claude): env var is token itself
-      return { type, apiKey: oauthValue, isDirectMode: true, isOAuth: true, model: config?.model, reasoningEffort: config?.reasoningEffort, betas: config?.betas };
+      return { type, apiKey: oauthValue, isDirectMode: true, isOAuth: true, model: config?.model, reasoningEffort: config?.reasoningEffort };
     }
   }
 

@@ -37,9 +37,8 @@ class AgentConfig:
         provider_api_key: Provider API key for direct mode / BYOK (defaults to provider env var)
         oauth_token: OAuth token for Claude Max subscription (defaults to CLAUDE_CODE_OAUTH_TOKEN env var)
         provider_base_url: Provider base URL for direct mode (auto-detected for Qwen)
-        model: Model name (optional - uses agent's default if not specified)
+        model: Model name (optional - uses agent's default if not specified). Use 'sonnet[1m]' / 'opus[1m]' for 1M context window (Claude only).
         reasoning_effort: Reasoning effort for Codex models (optional)
-        betas: Beta headers for Claude (Sonnet 4.5 only; e.g. ["context-1m-2025-08-07"] for 1M context)
     """
     type: Optional[AgentType] = None
     api_key: Optional[str] = None
@@ -48,7 +47,6 @@ class AgentConfig:
     provider_base_url: Optional[str] = None
     model: Optional[str] = None
     reasoning_effort: Optional[ReasoningEffort] = None
-    betas: Optional[List[str]] = None
 
 
 @runtime_checkable

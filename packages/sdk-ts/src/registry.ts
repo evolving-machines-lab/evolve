@@ -41,7 +41,6 @@ export interface BuildCommandOptions {
   model: string;
   isResume: boolean;
   reasoningEffort?: string;
-  betas?: string[];
   isDirectMode?: boolean;
   /** Skills enabled for this run */
   skills?: string[];
@@ -122,6 +121,8 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       { alias: "opus", modelId: "claude-opus-4-6", description: "Complex reasoning, R&D, architecting" },
       { alias: "sonnet", modelId: "claude-sonnet-4-5-20250929", description: "Daily coding, features, tests" },
       { alias: "haiku", modelId: "claude-haiku-4-5-20251001", description: "Quick tasks, syntax correction" },
+      { alias: "opus[1m]", modelId: "opus[1m]", description: "Complex reasoning with 1M context window" },
+      { alias: "sonnet[1m]", modelId: "sonnet[1m]", description: "Daily coding with 1M context window" },
     ],
     systemPromptFile: "CLAUDE.md",
     mcpConfig: {
@@ -130,18 +131,13 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       format: "json",
       projectConfig: true,
     },
-    availableBetas: {
-      /** 1M token context window for Sonnet 4.5 (long context pricing applies >200K tokens) */
-      CONTEXT_1M: "context-1m-2025-08-07",
-    },
     skillsConfig: {
       sourceDir: "/home/user/.evolve/skills",
       targetDir: "/home/user/.claude/skills",
     },
-    buildCommand: ({ prompt, model, isResume, betas }) => {
+    buildCommand: ({ prompt, model, isResume }) => {
       const continueFlag = isResume ? "--continue " : "";
-      const betasFlag = betas?.length ? `--betas ${betas.join(",")} ` : "";
-      return `echo "${prompt}" | claude -p ${continueFlag}${betasFlag}--model ${model} --output-format stream-json --verbose --dangerously-skip-permissions`;
+      return `echo "${prompt}" | claude -p ${continueFlag}--model ${model} --output-format stream-json --verbose --dangerously-skip-permissions`;
     },
   },
 

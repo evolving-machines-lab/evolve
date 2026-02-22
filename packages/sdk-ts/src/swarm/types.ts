@@ -41,7 +41,6 @@ export interface AgentOverride {
   type: AgentType;
   model?: string;
   reasoningEffort?: ReasoningEffort;
-  betas?: string[];
 }
 
 export interface SwarmConfig {

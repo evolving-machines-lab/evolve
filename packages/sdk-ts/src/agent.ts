@@ -582,7 +582,6 @@ export class Agent {
       model: this.agentConfig.model || this.registry.defaultModel,
       isResume: this.hasRun,
       reasoningEffort: this.agentConfig.reasoningEffort,
-      betas: this.agentConfig.betas,
       isDirectMode: this.agentConfig.isDirectMode,
       skills: this.skills,
     });

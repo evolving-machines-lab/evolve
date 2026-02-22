@@ -279,7 +279,7 @@ Set env vars and the SDK picks them up automatically — no need to pass explici
 
 | type | models | default | Gateway | BYOK |
 |------|--------|---------|---------|------|
-| `'claude'` | `'opus'` `'sonnet'` `'haiku'` | `'sonnet'` | `EVOLVE_API_KEY` | `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` |
+| `'claude'` | `'opus'` `'sonnet'` `'haiku'` `'opus[1m]'` `'sonnet[1m]'` | `'sonnet'` | `EVOLVE_API_KEY` | `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` |
 | `'codex'` | `'gpt-5.2'` `'gpt-5.2-codex'` `'gpt-5.1-codex-max'` `'gpt-5.1-mini'` | `'gpt-5.2'` | `EVOLVE_API_KEY` | `OPENAI_API_KEY` or `CODEX_OAUTH_FILE_PATH` |
 | `'gemini'` | `'gemini-3.1-pro-preview'` `'gemini-3-pro-preview'` `'gemini-3-flash-preview'` `'gemini-2.5-pro'` `'gemini-2.5-flash'` `'gemini-2.5-flash-lite'` | `'gemini-3-flash-preview'` | `EVOLVE_API_KEY` | `GEMINI_API_KEY` or `GEMINI_OAUTH_FILE_PATH` |
 | `'qwen'` | `'qwen3.5-plus'` `'qwen3-coder-plus'` `'qwen3-vl-plus'` | `'qwen3.5-plus'` | `EVOLVE_API_KEY` | `OPENAI_API_KEY` |
@@ -288,7 +288,7 @@ Set env vars and the SDK picks them up automatically — no need to pass explici
 
 > **Note:** In Gateway mode (`EVOLVE_API_KEY`), the default claude model is `'opus'`. In BYOK mode, it defaults to `'sonnet'`.
 
-Agent-specific options: `reasoning_effort` (Codex: `'low'` `'medium'` `'high'` `'xhigh'`), `betas` (Claude Sonnet: `['context-1m-2025-08-07']`)
+Agent-specific options: `reasoning_effort` (Codex: `'low'` `'medium'` `'high'` `'xhigh'`). For 1M context window, use `model='sonnet[1m]'` or `model='opus[1m]'`.
 
 ### Agent Examples
 
@@ -315,8 +315,7 @@ evolve = Evolve(
 evolve = Evolve(
     config=AgentConfig(
         type='claude',
-        model='sonnet',
-        betas=['context-1m-2025-08-07'],
+        model='sonnet[1m]',  # 1M context window
     ),
 )
 ```

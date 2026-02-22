@@ -263,8 +263,6 @@ export interface AgentConfig {
   model?: string;
   /** Reasoning effort for Codex models */
   reasoningEffort?: ReasoningEffort;
-  /** Beta headers for Claude (Sonnet 4.5 only) */
-  betas?: string[];
 }
 
 /** Resolved agent config (output of resolution, not an extension of input) */
@@ -278,7 +276,6 @@ export interface ResolvedAgentConfig {
   oauthFileContent?: string;
   model?: string;
   reasoningEffort?: ReasoningEffort;
-  betas?: string[];
 }
 
 /** Options for Agent constructor */

@@ -37,7 +37,6 @@ class TestAgentConfigDataclass:
         assert config.provider_base_url is None
         assert config.model is None
         assert config.reasoning_effort is None
-        assert config.betas is None
 
     def test_gateway_mode_config(self):
         """Test config for gateway mode (Evolve key)."""
@@ -86,16 +85,6 @@ class TestAgentConfigDataclass:
 
         assert config.reasoning_effort == 'high'
 
-    def test_claude_betas(self):
-        """Test betas for Claude models."""
-        config = AgentConfig(
-            type='claude',
-            provider_api_key='sk-ant-key',
-            betas=['context-1m-2025-08-07']
-        )
-
-        assert config.betas == ['context-1m-2025-08-07']
-
     def test_qwen_direct_mode(self):
         """Test Qwen direct mode config - no baseUrl needed (auto from registry)."""
         config = AgentConfig(
@@ -130,17 +119,6 @@ class TestOAuthMode:
         assert config.api_key is None
         assert config.provider_api_key is None
         assert config.model == 'sonnet'
-
-    def test_oauth_with_betas(self):
-        """Test OAuth mode with betas for Claude."""
-        config = AgentConfig(
-            type='claude',
-            oauth_token='oauth-token',
-            betas=['context-1m-2025-08-07']
-        )
-
-        assert config.oauth_token == 'oauth-token'
-        assert config.betas == ['context-1m-2025-08-07']
 
     def test_oauth_token_field_exists(self):
         """Test oauth_token field is present in AgentConfig."""
@@ -302,7 +280,6 @@ class TestAgentBridgeConfig:
             type='claude',
             oauth_token='oauth-claude-max-token',
             model='sonnet',
-            betas=['context-1m-2025-08-07']
         )
 
         config_dict = {
@@ -317,11 +294,8 @@ class TestAgentBridgeConfig:
             config_dict['oauthToken'] = config.oauth_token
         if config.provider_base_url:
             config_dict['providerBaseUrl'] = config.provider_base_url
-        if config.betas:
-            config_dict['betas'] = config.betas
 
         assert config_dict['oauthToken'] == 'oauth-claude-max-token'
-        assert config_dict['betas'] == ['context-1m-2025-08-07']
         assert 'apiKey' not in config_dict
         assert 'providerApiKey' not in config_dict
 
@@ -343,24 +317,6 @@ class TestAgentBridgeConfig:
 
         assert config_dict['providerApiKey'] == 'openai-key'
         assert config_dict['reasoningEffort'] == 'xhigh'
-
-    def test_agent_config_with_betas(self):
-        """Test Claude config with betas."""
-        config = AgentConfig(
-            type='claude',
-            provider_api_key='sk-ant-key',
-            betas=['context-1m-2025-08-07']
-        )
-
-        config_dict = {
-            'type': config.type,
-        }
-        if config.provider_api_key:
-            config_dict['providerApiKey'] = config.provider_api_key
-        if config.betas:
-            config_dict['betas'] = config.betas
-
-        assert config_dict['betas'] == ['context-1m-2025-08-07']
 
 
 class TestSwarmConfigInheritance:
@@ -390,7 +346,6 @@ class TestSwarmConfigInheritance:
             provider_base_url=task_config.provider_base_url or swarm_config.provider_base_url,
             model=task_config.model or swarm_config.model,
             reasoning_effort=task_config.reasoning_effort or swarm_config.reasoning_effort,
-            betas=task_config.betas or swarm_config.betas,
         )
 
         # BYOK fields should be inherited from swarm config

@@ -141,9 +141,8 @@ evolve = Evolve(
     # Agent configuration (optional if EVOLVE_API_KEY set, defaults to claude)
     config=AgentConfig(
         type='codex',                        # 'claude' | 'codex' | 'gemini' | 'qwen' | 'kimi' | 'opencode' - defaults to 'claude'
-        model='gpt-5.2-codex',               # (optional) Uses default if omitted
+        model='gpt-5.2-codex',               # (optional) Uses default if omitted. Use 'sonnet[1m]' / 'opus[1m]' for 1M context (Claude only)
         reasoning_effort='medium',           # (optional) 'low' | 'medium' | 'high' | 'xhigh' - Codex only
-        # betas=['context-1m-2025-08-07'],   # (optional) Claude Sonnet only
         api_key=os.getenv('EVOLVE_API_KEY'), # (optional) Gateway mode - auto-resolves from env
         # provider_api_key=os.getenv('ANTHROPIC_API_KEY'), # (optional) Direct mode (BYOK)
         # oauth_token=os.getenv('CLAUDE_CODE_OAUTH_TOKEN'), # (optional) Claude Max subscription
