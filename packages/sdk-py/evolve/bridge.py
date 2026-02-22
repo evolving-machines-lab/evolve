@@ -175,6 +175,13 @@ class BridgeManager:
         if self.process is None:
             return
 
+        # Best-effort flush of observability events before shutdown.
+        # Covers edge cases where kill() RPC failed but bridge is still alive.
+        try:
+            await self.call('flush_observability', timeout_s=5.0)
+        except Exception:
+            pass
+
         # Note: We intentionally do NOT clear event_callbacks here
         # User-registered callbacks should persist across bridge restarts
 

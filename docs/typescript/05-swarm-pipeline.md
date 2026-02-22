@@ -718,7 +718,6 @@ interface AgentOverride {
     type: "claude" | "codex" | "gemini" | "qwen" | "kimi" | "opencode";
     model?: string;
     reasoningEffort?: "low" | "medium" | "high" | "xhigh";  // Codex only
-    betas?: string[];  // Claude only
 }
 ```
 

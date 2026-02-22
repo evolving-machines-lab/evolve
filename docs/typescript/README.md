@@ -30,7 +30,7 @@ await evolve.run({ prompt: "Hello world" });
 | BYOK mode (your own keys) | [Getting Started → BYOK Mode](./01-getting-started.md#byok-mode) |
 | BYO Claude Max / Codex / Gemini subscription | [Getting Started → BYOK Mode](./01-getting-started.md#byo-claude-max-subscription) |
 | Supported agents & models | [Getting Started → Agent Reference](./01-getting-started.md#agent-reference) |
-| Agent-specific options (reasoningEffort, betas) | [Getting Started → Agent Reference](./01-getting-started.md#agent-reference) |
+| Agent-specific options (reasoningEffort) | [Getting Started → Agent Reference](./01-getting-started.md#agent-reference) |
 
 ### Configuration
 

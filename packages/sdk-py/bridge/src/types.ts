@@ -62,7 +62,6 @@ export interface InitializeParams {
   provider_base_url?: string;
   model?: string;
   reasoning_effort?: string;
-  betas?: string[];
   // Sandbox provider (optional - TS SDK resolves from EVOLVE_API_KEY env var)
   sandbox_provider?: {
     type: 'e2b' | 'daytona' | 'modal';

@@ -114,7 +114,7 @@ export class EvolveAdapter {
 
   private buildAgentConfig(params: InitializeParams): AgentConfig | undefined {
     // Only build config if any agent params provided (TS SDK resolves defaults from env)
-    if (!params.agent_type && !params.api_key && !params.provider_api_key && !params.oauth_token && !params.model && !params.reasoning_effort && !params.betas) {
+    if (!params.agent_type && !params.api_key && !params.provider_api_key && !params.oauth_token && !params.model && !params.reasoning_effort) {
       return undefined;
     }
     return {
@@ -125,7 +125,6 @@ export class EvolveAdapter {
       ...(params.provider_base_url && { providerBaseUrl: params.provider_base_url }),
       ...(params.model && { model: params.model }),
       ...(params.reasoning_effort && { reasoningEffort: params.reasoning_effort as ReasoningEffort }),
-      ...(params.betas && { betas: params.betas }),
     } as AgentConfig;
   }
 
@@ -216,6 +215,8 @@ export class EvolveAdapter {
         return this.interrupt();
       case 'status':
         return this.status();
+      case 'flush_observability':
+        return this.flushObservability();
       case 'kill':
         return this.kill();
       case 'get_host':
@@ -415,6 +416,12 @@ export class EvolveAdapter {
       has_run: snapshot.hasRun,
       timestamp: snapshot.timestamp,
     };
+  }
+
+  async flushObservability(): Promise<StatusResponse> {
+    this.ensureInitialized();
+    await this.evolve!.flushObservability();
+    return { status: 'ok' };
   }
 
   async kill(): Promise<StatusResponse> {

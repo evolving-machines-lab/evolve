@@ -733,4 +733,11 @@ export class Evolve extends EventEmitter {
   getSessionTimestamp(): string | null {
     return this.agent?.getSessionTimestamp() || null;
   }
+
+  /**
+   * Flush pending observability events without killing sandbox.
+   */
+  async flushObservability(): Promise<void> {
+    await this.agent?.flushObservability();
+  }
 }

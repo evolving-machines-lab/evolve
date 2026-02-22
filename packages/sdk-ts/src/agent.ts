@@ -831,6 +831,17 @@ export class Agent {
       }
     }
 
+    // Flush observability events so dashboard is complete before returning.
+    // This ensures Python SDK (and any caller) gets deterministic flushing
+    // as part of run() — no reliance on timers or explicit kill().
+    // Capped at 2s so dashboard slowness never delays the caller.
+    if (this.sessionLogger && !background) {
+      await Promise.race([
+        this.sessionLogger.flush(),
+        new Promise<void>((resolve) => setTimeout(resolve, 2000)),
+      ]);
+    }
+
     // =========================================================================
     // AUTO-CHECKPOINT: after successful foreground run with storage configured
     // =========================================================================
@@ -1314,5 +1325,12 @@ export class Agent {
    */
   getSessionTimestamp(): string | null {
     return this.sessionLogger?.getTimestamp() || null;
+  }
+
+  /**
+   * Flush pending observability events without closing the session.
+   */
+  async flushObservability(): Promise<void> {
+    await this.sessionLogger?.flush();
   }
 }
