@@ -705,7 +705,7 @@ await evolve.run(prompt='Kick off analysis')
 print(await evolve.get_session_tag())        # "my-project-ab12cd34"
 print(await evolve.get_session_timestamp())  # Timestamp for first log file
 
-await evolve.kill()                          # Flushes log file for sandbox A
+await evolve.kill()                          # Destroys sandbox A
 
 await evolve.run(prompt='Start fresh')       # New sandbox → new log file
 

@@ -720,7 +720,6 @@ class AgentConfig:
     api_key: str | None = None
     model: str | None = None
     reasoning_effort: Literal['low', 'medium', 'high', 'xhigh'] | None = None  # Codex only
-    betas: list[str] | None = None  # Claude only
 ```
 
 ```python

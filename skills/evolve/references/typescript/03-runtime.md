@@ -679,7 +679,7 @@ await evolve.run({ prompt: "Kick off analysis" });
 console.log(evolve.getSessionTag());        // "my-project-ab12cd34"
 console.log(evolve.getSessionTimestamp()); // Timestamp for first log file
 
-await evolve.kill();                              // Flushes log file for sandbox A
+await evolve.kill();                              // Destroys sandbox A
 
 await evolve.run({ prompt: "Start fresh" });      // New sandbox → new log file
 
