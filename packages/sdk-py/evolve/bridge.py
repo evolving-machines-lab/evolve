@@ -258,7 +258,7 @@ class BridgeManager:
             }
 
             # Create future for response
-            future: asyncio.Future = asyncio.Future()
+            future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
             self.pending_requests[request_id] = future
 
             # Send request (native async write)
@@ -270,10 +270,17 @@ class BridgeManager:
         # Wait for response (error handling done in _handle_response)
         timeout = timeout_s if timeout_s is not None else self.default_call_timeout_s
         try:
-            return await asyncio.wait_for(future, timeout=timeout)
+            return await asyncio.wait_for(asyncio.shield(future), timeout=timeout)
+        except asyncio.CancelledError:
+            removed = self.pending_requests.pop(request_id, None)
+            if removed is not None and not future.done():
+                future.cancel()
+            raise
         except asyncio.TimeoutError as e:
             # Drop pending request to avoid leaks; late response will be ignored.
-            self.pending_requests.pop(request_id, None)
+            removed = self.pending_requests.pop(request_id, None)
+            if removed is not None and not future.done():
+                future.cancel()
             raise BridgeConnectionError(
                 f"Bridge call timed out after {timeout:.1f}s: {method}"
             ) from e
@@ -421,6 +428,8 @@ class BridgeManager:
             return
 
         future = self.pending_requests.pop(request_id)
+        if future.done():
+            return
 
         if 'error' in message:
             error = message['error']
@@ -429,11 +438,20 @@ class BridgeManager:
 
             # Check for NotFoundError (code -32001 or message pattern)
             if error_code == -32001 or 'not found' in error_message.lower():
-                future.set_exception(SandboxNotFoundError(error_message))
+                try:
+                    future.set_exception(SandboxNotFoundError(error_message))
+                except asyncio.InvalidStateError:
+                    pass
             else:
-                future.set_exception(Exception(error_message))
+                try:
+                    future.set_exception(Exception(error_message))
+                except asyncio.InvalidStateError:
+                    pass
         else:
-            future.set_result(message.get('result'))
+            try:
+                future.set_result(message.get('result'))
+            except asyncio.InvalidStateError:
+                pass
 
     # =========================================================================
     # MULTI-INSTANCE METHODS (for Swarm)
