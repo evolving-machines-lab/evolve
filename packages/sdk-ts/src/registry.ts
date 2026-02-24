@@ -95,6 +95,8 @@ export interface AgentRegistryEntry {
   providerEnvMap?: Record<string, { keyEnv: string }>;
   /** Env var for inline config (e.g., OPENCODE_CONFIG_CONTENT) — used in gateway mode to set provider base URLs */
   gatewayConfigEnv?: string;
+  /** Environment variable that CLI reads for custom outbound HTTP headers */
+  customHeadersEnv?: string;
   /** Additional directories to include in checkpoint tar (beyond mcpConfig.settingsDir).
    *  Used for agents like OpenCode that spread state across XDG directories. */
   checkpointDirs?: string[];
@@ -116,6 +118,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     apiKeyEnv: "ANTHROPIC_API_KEY",
     oauthEnv: "CLAUDE_CODE_OAUTH_TOKEN",
     baseUrlEnv: "ANTHROPIC_BASE_URL",
+    customHeadersEnv: "ANTHROPIC_CUSTOM_HEADERS",
     defaultModel: "opus",
     models: [
       { alias: "opus", modelId: "claude-opus-4-6", description: "Complex reasoning, R&D, architecting" },

@@ -9,6 +9,7 @@
 
 import type { z } from "zod";
 import Ajv, { type ValidateFunction } from "ajv";
+import { randomUUID, randomBytes } from "crypto";
 import type {
   AgentType,
   SandboxInstance,
@@ -78,6 +79,44 @@ function escapePrompt(prompt: string): string {
 }
 
 // =============================================================================
+// SPEND TRACKING HELPERS
+// =============================================================================
+
+/** Generate a session tag: `{prefix}-{16 hex chars}` */
+function generateSessionTag(prefix: string): string {
+  return `${prefix}-${randomBytes(8).toString("hex")}`;
+}
+
+/**
+ * Merge spend tracking headers into an existing ANTHROPIC_CUSTOM_HEADERS value.
+ * Preserves user-supplied headers; spend headers overwrite only matching keys.
+ * Format: newline-separated "Name: Value" pairs.
+ */
+function mergeCustomHeaders(existing: string | undefined, updates: Record<string, string>): string {
+  const merged = new Map<string, string>();
+
+  // Parse existing headers (case-insensitive key lookup)
+  if (existing) {
+    for (const line of existing.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const colon = trimmed.indexOf(":");
+      if (colon <= 0) continue;
+      const name = trimmed.slice(0, colon).trim();
+      const value = trimmed.slice(colon + 1).trim();
+      merged.set(name.toLowerCase(), `${name}: ${value}`);
+    }
+  }
+
+  // Apply updates (overwrites matching keys)
+  for (const [name, value] of Object.entries(updates)) {
+    merged.set(name.toLowerCase(), `${name}: ${value}`);
+  }
+
+  return Array.from(merged.values()).join("\n");
+}
+
+// =============================================================================
 // AGENT CLASS
 // =============================================================================
 
@@ -95,6 +134,8 @@ export class Agent {
   private readonly workingDir: string;
   private lastRunTimestamp?: number;
   private readonly registry: AgentRegistryEntry;
+  /** Unified session ID — used for both observability (SessionLogger) and spend tracking (LiteLLM customer-id) */
+  private sessionTag: string;
   private sessionLogger?: SessionLogger;
   private activeCommand?: SandboxCommandHandle;
   private activeProcessId: string | null = null;
@@ -154,6 +195,10 @@ export class Agent {
 
     // Cache registry lookup once in constructor
     this.registry = getAgentConfig(agentConfig.type);
+
+    // Unified session tag — generated early for spend tracking headers at sandbox creation,
+    // then shared with SessionLogger on first run(). Rotated on kill()/setSession().
+    this.sessionTag = generateSessionTag(options.sessionTagPrefix || "evolve");
   }
 
   private emitLifecycle(callbacks: StreamCallbacks | undefined, reason: LifecycleReason): void {
@@ -393,7 +438,37 @@ export class Agent {
     if (this.options.secrets) {
       Object.assign(envVars, this.options.secrets);
     }
+
+    // Spend tracking: merge session-level LiteLLM header (gateway mode only).
+    // Uses mergeCustomHeaders to preserve any user-supplied headers from secrets.
+    if (!this.agentConfig.isDirectMode && this.registry.customHeadersEnv) {
+      const headerEnv = this.registry.customHeadersEnv;
+      envVars[headerEnv] = mergeCustomHeaders(envVars[headerEnv], {
+        "x-litellm-customer-id": this.sessionTag,
+      });
+    }
+
     return envVars;
+  }
+
+  /**
+   * Build per-run env overrides for spend tracking.
+   * Merges session + run headers into the custom headers env var.
+   * Passed to spawn() so each .run() gets a unique trace-id.
+   */
+  private buildRunEnvs(runId: string): Record<string, string> | undefined {
+    if (this.agentConfig.isDirectMode) return undefined;
+    const headerEnv = this.registry.customHeadersEnv;
+    if (!headerEnv) return undefined;
+
+    // Start from any user-supplied headers (via secrets), then merge spend headers
+    const base = this.options.secrets?.[headerEnv];
+    return {
+      [headerEnv]: mergeCustomHeaders(base, {
+        "x-litellm-customer-id": this.sessionTag,
+        "x-litellm-trace-id": runId,
+      }),
+    };
   }
 
   /**
@@ -722,7 +797,7 @@ export class Agent {
         agent: this.agentConfig.type,
         model: this.agentConfig.model || this.registry.defaultModel,
         sandboxId: sandbox.sandboxId,
-        tagPrefix: this.options.sessionTagPrefix,
+        tag: this.sessionTag,
         apiKey: this.agentConfig.isDirectMode ? undefined : this.agentConfig.apiKey,
         observability: this.options.observability,
       });
@@ -731,8 +806,10 @@ export class Agent {
     // Log the prompt (non-blocking)
     this.sessionLogger.writePrompt(prompt);
 
-    // Build command
+    // Build command and per-run spend tracking env
     const command = this.buildCommand(prompt);
+    const runId = randomUUID();
+    const runEnvs = this.buildRunEnvs(runId);
 
     // Line buffer for NDJSON parsing (shared by both modes)
     let lineBuffer = "";
@@ -777,6 +854,7 @@ export class Agent {
     const handle = await sandbox.commands.spawn(command, {
       cwd: this.workingDir,
       timeoutMs,
+      envs: runEnvs,
       onStdout,
       onStderr,
     });
@@ -788,6 +866,7 @@ export class Agent {
       this.watchBackgroundOperation(opId, "run", handle, callbacks);
       return {
         sandboxId: sandbox.sandboxId,
+        runId,
         exitCode: 0,
         stdout: `Background process started with ID ${handle.processId}`,
         stderr: "",
@@ -854,7 +933,7 @@ export class Agent {
           this.agentConfig.type,
           this.workingDir,
           {
-            tag: this.sessionLogger?.getTag() || "unknown",
+            tag: this.sessionTag,
             model: this.agentConfig.model || this.registry.defaultModel,
             workspaceMode: this.options.workspaceMode || "knowledge",
             comment: checkpointComment,
@@ -870,6 +949,7 @@ export class Agent {
 
     return {
       sandboxId: sandbox.sandboxId,
+      runId,
       exitCode: result.exitCode,
       stdout: result.stdout,
       stderr: result.stderr,
@@ -1115,7 +1195,7 @@ export class Agent {
       this.agentConfig.type,
       this.workingDir,
       {
-        tag: this.sessionLogger?.getTag() || "unknown",
+        tag: this.sessionTag,
         model: this.agentConfig.model || this.registry.defaultModel,
         workspaceMode: this.options.workspaceMode || "knowledge",
         comment: options?.comment,
@@ -1171,6 +1251,8 @@ export class Agent {
     this.hasRun = true;
     // Reset lineage — switching sandbox breaks checkpoint chain
     this.lastCheckpointId = undefined;
+    // Rotate session tag — new sandbox = new session for spend + observability
+    this.sessionTag = generateSessionTag(this.options.sessionTagPrefix || "evolve");
   }
 
   /**
@@ -1287,6 +1369,8 @@ export class Agent {
     this.agentState = "idle";
     this.hasRun = false;
     this.lastCheckpointId = undefined;
+    // Rotate session tag so next sandbox gets a fresh session for spend + observability
+    this.sessionTag = generateSessionTag(this.options.sessionTagPrefix || "evolve");
     this.emitLifecycle(callbacks, "sandbox_killed");
   }
 
@@ -1310,12 +1394,14 @@ export class Agent {
   // ===========================================================================
 
   /**
-   * Get current session tag
-   *
-   * Returns null if no session has started (run() not called yet).
+   * Get current session tag.
+   * Returns null if no active session (before sandbox creation or after kill()).
+   * Used for both observability (dashboard traces) and spend tracking (LiteLLM customer-id).
    */
   getSessionTag(): string | null {
-    return this.sessionLogger?.getTag() || null;
+    // Only expose the tag when there's an active session (sandbox exists or logger initialized)
+    if (!this.sandbox && !this.sessionLogger) return null;
+    return this.sessionTag;
   }
 
   /**

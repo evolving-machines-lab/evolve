@@ -441,6 +441,9 @@ export interface AgentResponse {
   /** Sandbox ID for session management */
   sandboxId: string;
 
+  /** Run ID for spend/cost attribution (present for run(), undefined for executeCommand()) */
+  runId?: string;
+
   /** Exit code of the command */
   exitCode: number;
 
