@@ -1278,10 +1278,6 @@ export function storage(config?: StorageConfig): StorageClient {
       return getCheckpointInfo(resolved, id);
     },
 
-    async getLatestCheckpoint(options) {
-      return getLatestCheckpoint(resolved, options);
-    },
-
     async downloadCheckpoint(idOrLatest: string, options?: DownloadCheckpointOptions) {
       const extract = options?.extract !== false; // default: true
       const toDir = options?.to || process.cwd();

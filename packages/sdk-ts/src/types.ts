@@ -667,8 +667,6 @@ export interface StorageClient {
   listCheckpoints(options?: { limit?: number; tag?: string }): Promise<CheckpointInfo[]>;
   /** Get a specific checkpoint's metadata by ID */
   getCheckpoint(id: string): Promise<CheckpointInfo>;
-  /** Get the most recent checkpoint, optionally filtered by tag */
-  getLatestCheckpoint(options?: { tag?: string }): Promise<CheckpointInfo | null>;
   /** Download an entire checkpoint archive. Returns the output path. */
   downloadCheckpoint(idOrLatest: string, options?: DownloadCheckpointOptions): Promise<string>;
   /** Download files from a checkpoint as a FileMap. */

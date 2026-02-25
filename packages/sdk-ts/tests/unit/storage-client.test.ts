@@ -3,7 +3,7 @@
  * Unit Test: Storage Client (standalone checkpoint access)
  *
  * Tests the storage() factory function and all StorageClient methods:
- * listCheckpoints, getCheckpoint, getLatestCheckpoint, downloadCheckpoint, downloadFiles.
+ * listCheckpoints, getCheckpoint, downloadCheckpoint, downloadFiles.
  *
  * Uses mock AWS SDK and mock fetch to test both BYOK and Gateway modes
  * without real S3/network calls.
@@ -369,7 +369,7 @@ function handleGatewayMock(url: string, init?: any): Response {
 }
 
 // =============================================================================
-// TESTS: BYOK mode — listCheckpoints, getCheckpoint, getLatestCheckpoint
+// TESTS: BYOK mode — listCheckpoints, getCheckpoint
 // =============================================================================
 
 async function testByokBrowsing(): Promise<void> {
@@ -408,16 +408,6 @@ async function testByokBrowsing(): Promise<void> {
     "not found",
     "getCheckpoint throws on missing checkpoint"
   );
-
-  // getLatestCheckpoint
-  const latest = await s.getLatestCheckpoint();
-  assert(latest !== null, "getLatestCheckpoint returns a checkpoint");
-  assertEqual(latest!.id, "ckpt_test_002", "getLatestCheckpoint returns newest");
-
-  // getLatestCheckpoint with tag
-  const latestTagged = await s.getLatestCheckpoint({ tag: "test-session" });
-  assert(latestTagged !== null, "getLatestCheckpoint with tag returns a checkpoint");
-  assertEqual(latestTagged!.id, "ckpt_test_001", "getLatestCheckpoint tag filter returns correct checkpoint");
 
   _testSetAwsSdk(null);
 }
@@ -576,11 +566,6 @@ async function testGatewayMode(): Promise<void> {
       "gateway getCheckpoint throws on missing"
     );
 
-    // getLatestCheckpoint
-    const latest = await s.getLatestCheckpoint();
-    assert(latest !== null, "gateway getLatestCheckpoint returns a checkpoint");
-    assertEqual(latest!.id, "ckpt_test_002", "gateway getLatestCheckpoint returns newest");
-
     // downloadCheckpoint
     const extractDir = join(tmpdir(), `evolve-test-gw-extract-${Date.now()}`);
     const resultPath = await s.downloadCheckpoint("ckpt_test_001", { to: extractDir });
@@ -655,10 +640,6 @@ async function testLatestNoCheckpoints(): Promise<void> {
 
   try {
     const s = storage({ url: "s3://test-bucket/test-prefix" });
-
-    // getLatestCheckpoint returns null
-    const latest = await s.getLatestCheckpoint();
-    assertEqual(latest, null, "getLatestCheckpoint returns null when no checkpoints");
 
     // downloadCheckpoint "latest" throws
     installMockFetch();
