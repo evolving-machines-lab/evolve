@@ -460,19 +460,21 @@ export class Agent {
   /**
    * Build per-run env overrides for spend tracking.
    * Merges session + run headers into the custom headers env var.
-   * Passed to spawn() so each .run() gets a unique trace-id.
+   * Passed to spawn() so each .run() gets a unique run tag.
    */
   private buildRunEnvs(runId: string): Record<string, string> | undefined {
     if (this.agentConfig.isDirectMode) return undefined;
     const headerEnv = this.registry.customHeadersEnv;
     if (!headerEnv) return undefined;
 
-    // Start from any user-supplied headers (via secrets), then merge spend headers
+    // Start from any user-supplied headers (via secrets), then merge spend headers.
+    // x-litellm-customer-id → end_user (session grouping, queryable via /spend/logs/v2)
+    // x-litellm-tags → request_tags (run grouping, stored per spend log)
     const base = this.options.secrets?.[headerEnv];
     return {
       [headerEnv]: mergeCustomHeaders(base, {
         "x-litellm-customer-id": this.sessionTag,
-        "x-litellm-trace-id": runId,
+        "x-litellm-tags": `run:${runId}`,
       }),
     };
   }

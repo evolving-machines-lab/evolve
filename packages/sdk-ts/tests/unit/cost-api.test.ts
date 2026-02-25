@@ -214,7 +214,7 @@ async function testCustomHeaderMergeHandlesCommaFormat(): Promise<void> {
   assert(headers.includes("x-custom-one: foo"), "keeps first user header");
   assert(headers.includes("x-custom-two: bar"), "keeps second user header");
   assert(headers.includes("x-litellm-customer-id: evolve-session"), "injects customer-id");
-  assert(headers.includes("x-litellm-trace-id: run-xyz"), "injects trace-id");
+  assert(headers.includes("x-litellm-tags: run:run-xyz"), "injects run tag");
 }
 
 async function main(): Promise<void> {
