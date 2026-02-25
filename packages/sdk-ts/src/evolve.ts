@@ -32,8 +32,8 @@ import type { OutputEvent } from "./parsers";
 import { isZodSchema, resolveAgentConfig, resolveDefaultSandbox } from "./utils";
 import { composioHelpers } from "./composio";
 import { getGatewayMcpServers, DEFAULT_DASHBOARD_URL } from "./constants";
-import { resolveStorageConfig, listCheckpoints } from "./storage";
-import type { CheckpointInfo } from "./types";
+import { resolveStorageConfig, listCheckpoints, storage as createStorageClient } from "./storage";
+import type { CheckpointInfo, StorageClient } from "./types";
 
 // =============================================================================
 // TYPES
@@ -595,6 +595,17 @@ export class Evolve extends EventEmitter {
       throw new Error("Storage not configured. Call .withStorage().");
     }
     return listCheckpoints(this.config.storage, options);
+  }
+
+  /**
+   * Get a StorageClient bound to this instance's storage configuration.
+   * Same API surface as the standalone storage() factory.
+   */
+  storage(): StorageClient {
+    if (this.config.storage === undefined) {
+      throw new Error("Storage not configured. Call .withStorage().");
+    }
+    return createStorageClient(this.config.storage);
   }
 
   // ===========================================================================
