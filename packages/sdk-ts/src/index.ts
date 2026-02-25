@@ -116,6 +116,9 @@ export type {
   StorageClient,
   DownloadCheckpointOptions,
   DownloadFilesOptions,
+  // Cost
+  RunCost,
+  SessionCost,
 } from "./types";
 
 // Composio types (for static helper return types)

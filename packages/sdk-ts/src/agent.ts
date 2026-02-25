@@ -34,12 +34,14 @@ import type {
   LifecycleEvent,
   ResolvedStorageConfig,
   CheckpointInfo,
+  RunCost,
+  SessionCost,
 } from "./types";
 import { VALIDATION_PRESETS } from "./types";
 import { getAgentConfig, type AgentRegistryEntry } from "./registry";
 import { writeMcpConfig } from "./mcp";
 import { createAgentParser, type AgentParser } from "./parsers";
-import { DEFAULT_TIMEOUT_MS, DEFAULT_WORKING_DIR, getGatewayUrl, getGeminiGatewayUrl } from "./constants";
+import { DEFAULT_TIMEOUT_MS, DEFAULT_WORKING_DIR, DEFAULT_DASHBOARD_URL, getGatewayUrl, getGeminiGatewayUrl } from "./constants";
 import { buildWorkerSystemPrompt } from "./prompts";
 import { isZodSchema } from "./utils";
 import { SessionLogger } from "./observability";
@@ -90,14 +92,16 @@ function generateSessionTag(prefix: string): string {
 /**
  * Merge spend tracking headers into an existing ANTHROPIC_CUSTOM_HEADERS value.
  * Preserves user-supplied headers; spend headers overwrite only matching keys.
- * Format: newline-separated "Name: Value" pairs.
+ * Supports newline- or comma-separated "Name: Value" pairs.
  */
 function mergeCustomHeaders(existing: string | undefined, updates: Record<string, string>): string {
   const merged = new Map<string, string>();
 
   // Parse existing headers (case-insensitive key lookup)
   if (existing) {
-    for (const line of existing.split(/\r?\n/)) {
+    // Claude CLI accepts header lists as newlines; some callers pass comma-delimited
+    // values. Split both forms while preserving "Name: Value" parsing.
+    for (const line of existing.split(/\r?\n|,(?=\s*[A-Za-z0-9-]+\s*:)/)) {
       const trimmed = line.trim();
       if (!trimmed) continue;
       const colon = trimmed.indexOf(":");
@@ -136,6 +140,8 @@ export class Agent {
   private readonly registry: AgentRegistryEntry;
   /** Unified session ID — used for both observability (SessionLogger) and spend tracking (LiteLLM customer-id) */
   private sessionTag: string;
+  /** Previous session tag — preserved across kill()/setSession() so cost queries still work */
+  private previousSessionTag?: string;
   private sessionLogger?: SessionLogger;
   private activeCommand?: SandboxCommandHandle;
   private activeProcessId: string | null = null;
@@ -1235,6 +1241,11 @@ export class Agent {
       }
     }
 
+    // Capture whether this session had local run activity before cleanup.
+    // setSession() sets hasRun=true for resume semantics, so hasRun is not a
+    // reliable signal for spend lifecycle decisions here.
+    const hadActivity = !!this.sessionLogger;
+
     // Close existing session logger (flush pending events)
     if (this.sessionLogger) {
       await this.sessionLogger.close();
@@ -1251,7 +1262,11 @@ export class Agent {
     this.hasRun = true;
     // Reset lineage — switching sandbox breaks checkpoint chain
     this.lastCheckpointId = undefined;
-    // Rotate session tag — new sandbox = new session for spend + observability
+    // Rotate session tag — new sandbox = new session for spend + observability.
+    // Only save previous tag if this session had actual activity.
+    if (hadActivity) {
+      this.previousSessionTag = this.sessionTag;
+    }
     this.sessionTag = generateSessionTag(this.options.sessionTagPrefix || "evolve");
   }
 
@@ -1345,6 +1360,9 @@ export class Agent {
    * Kill sandbox (terminates all processes)
    */
   async kill(callbacks?: StreamCallbacks): Promise<void> {
+    // Capture whether this session had activity before cleanup clears the flags
+    const hadActivity = !!this.sessionLogger;
+
     // Close session logger (flush pending events)
     if (this.sessionLogger) {
       await this.sessionLogger.close();
@@ -1369,7 +1387,12 @@ export class Agent {
     this.agentState = "idle";
     this.hasRun = false;
     this.lastCheckpointId = undefined;
-    // Rotate session tag so next sandbox gets a fresh session for spend + observability
+    // Rotate session tag so next sandbox gets a fresh session for spend + observability.
+    // Only save previous tag if this session had actual activity (run or logger),
+    // otherwise a double kill() or no-op lifecycle call would clobber the real tag.
+    if (hadActivity) {
+      this.previousSessionTag = this.sessionTag;
+    }
     this.sessionTag = generateSessionTag(this.options.sessionTagPrefix || "evolve");
     this.emitLifecycle(callbacks, "sandbox_killed");
   }
@@ -1418,5 +1441,132 @@ export class Agent {
    */
   async flushObservability(): Promise<void> {
     await this.sessionLogger?.flush();
+  }
+
+  // ===========================================================================
+  // COST
+  // ===========================================================================
+
+  /**
+   * Fetch spend data from dashboard API.
+   * @internal
+   */
+  private async fetchSpend(params: URLSearchParams): Promise<Response> {
+    if (this.agentConfig.isDirectMode) {
+      throw new Error("Cost tracking requires gateway mode (set EVOLVE_API_KEY).");
+    }
+    const apiKey = this.agentConfig.apiKey;
+    if (!apiKey) {
+      throw new Error("Cost tracking requires an API key.");
+    }
+    const dashboardUrl = process.env.EVOLVE_DASHBOARD_URL || DEFAULT_DASHBOARD_URL;
+    const res = await fetch(`${dashboardUrl}/api/sessions/spend?${params}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`Spend query failed (${res.status}): ${body}`);
+    }
+    return res;
+  }
+
+  /**
+   * Resolve the session tag for cost queries.
+   * Uses the active session tag, or falls back to the previous tag after kill()/setSession().
+   * @internal
+   */
+  private resolveSpendTag(): string {
+    // Active session takes priority
+    if (this.sandbox || this.sessionLogger) return this.sessionTag;
+    // After kill()/setSession(), fall back to previous session
+    if (this.previousSessionTag) return this.previousSessionTag;
+    throw new Error("No session to query. Call run() first.");
+  }
+
+  /**
+   * Normalize run payloads for compatibility with older dashboard responses.
+   * Older responses may omit `asOf`, `isComplete`, or `truncated` inside `runs[]`.
+   * @internal
+   */
+  private normalizeRunCost(
+    run: Omit<RunCost, "asOf" | "isComplete" | "truncated">
+      & Partial<Pick<RunCost, "asOf" | "isComplete" | "truncated">>,
+    defaults: Pick<RunCost, "asOf" | "isComplete" | "truncated">
+  ): RunCost {
+    return {
+      ...run,
+      asOf: run.asOf ?? defaults.asOf,
+      isComplete: run.isComplete ?? defaults.isComplete,
+      truncated: run.truncated ?? defaults.truncated,
+    };
+  }
+
+  /**
+   * Normalize session payloads so all `runs[]` conform to `RunCost`.
+   * @internal
+   */
+  private normalizeSessionCost(session: SessionCost): SessionCost {
+    const defaults = {
+      asOf: session.asOf,
+      isComplete: session.isComplete,
+      truncated: session.truncated,
+    };
+    return {
+      ...session,
+      runs: session.runs.map((run) => this.normalizeRunCost(run, defaults)),
+    };
+  }
+
+  /**
+   * Get cost breakdown for the current session (all runs).
+   *
+   * Queries the dashboard API which proxies to LiteLLM spend logs.
+   * Cost data has ~60s latency due to gateway batch writes.
+   * Also works after kill() for the most recent session only.
+   *
+   * Requires gateway mode (EVOLVE_API_KEY).
+   */
+  async getSessionCost(): Promise<SessionCost> {
+    const tag = this.resolveSpendTag();
+    const params = new URLSearchParams({ tag });
+    const res = await this.fetchSpend(params);
+    const raw = await res.json() as SessionCost;
+    return this.normalizeSessionCost(raw);
+  }
+
+  /**
+   * Get cost for a specific run by ID or index.
+   *
+   * @param run - Either `{ runId: string }` or `{ index: number }` (1-based, negative = from end)
+   *
+   * Also works after kill() for the most recent session only.
+   * Requires gateway mode (EVOLVE_API_KEY).
+   */
+  async getRunCost(run: { runId: string } | { index: number }): Promise<RunCost> {
+    const tag = this.resolveSpendTag();
+
+    if ("runId" in run) {
+      const params = new URLSearchParams({ tag, runId: run.runId });
+      const res = await this.fetchSpend(params);
+      const raw = await res.json() as Omit<RunCost, "asOf" | "isComplete" | "truncated">
+        & Partial<Pick<RunCost, "asOf" | "isComplete" | "truncated">>;
+      return this.normalizeRunCost(raw, {
+        asOf: new Date().toISOString(),
+        isComplete: false,
+        truncated: false,
+      });
+    }
+
+    // Index-based: fetch full session, resolve index
+    const session = await this.getSessionCost();
+    const idx = run.index > 0 ? run.index - 1 : session.runs.length + run.index;
+    const found = session.runs[idx];
+    if (!found) {
+      throw new Error(
+        `Run index ${run.index} out of range. Session has ${session.runs.length} run(s).`
+      );
+    }
+    return found;
   }
 }
