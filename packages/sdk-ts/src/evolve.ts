@@ -33,7 +33,7 @@ import { isZodSchema, resolveAgentConfig, resolveDefaultSandbox } from "./utils"
 import { composioHelpers } from "./composio";
 import { getGatewayMcpServers, DEFAULT_DASHBOARD_URL } from "./constants";
 import { resolveStorageConfig, listCheckpoints } from "./storage";
-import type { CheckpointInfo } from "./types";
+import type { CheckpointInfo, ExecuteCommandOptions } from "./types";
 
 // =============================================================================
 // TYPES
@@ -510,7 +510,7 @@ export class Evolve extends EventEmitter {
    */
   async executeCommand(
     command: string,
-    options: { timeoutMs?: number; background?: boolean } = {}
+    options: ExecuteCommandOptions = {}
   ): Promise<AgentResponse> {
     if (!this.agent) {
       await this.initializeAgent();

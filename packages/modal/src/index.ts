@@ -125,6 +125,7 @@ export interface SandboxRunOptions {
   timeoutMs?: number;
   envs?: Record<string, string>;
   cwd?: string;
+  user?: string;
   onStdout?: (data: string) => void;
   onStderr?: (data: string) => void;
 }

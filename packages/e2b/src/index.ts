@@ -125,6 +125,7 @@ export interface SandboxRunOptions {
   timeoutMs?: number;
   envs?: Record<string, string>;
   cwd?: string;
+  user?: string;
   onStdout?: (data: string) => void;
   onStderr?: (data: string) => void;
 }
@@ -283,6 +284,10 @@ export interface E2BConfig {
   defaultTimeoutMs?: number;
   /** E2B template ID (default: 'evolve-all'). Create custom templates at https://e2b.dev/docs/sandbox-template */
   templateId?: string;
+  /** Number of CPUs for the sandbox */
+  cpuCount?: number;
+  /** Memory in MB for the sandbox */
+  memoryMb?: number;
 }
 
 /** Internal resolved config with required apiKey */
@@ -290,6 +295,8 @@ interface ResolvedE2BConfig {
   apiKey: string;
   defaultTimeoutMs?: number;
   templateId?: string;
+  cpuCount?: number;
+  memoryMb?: number;
 }
 
 // ============================================================
@@ -306,6 +313,7 @@ class E2BCommands implements SandboxCommands {
         timeoutMs: options?.timeoutMs,
         envs: options?.envs,
         cwd: options?.cwd,
+        user: options?.user,
         onStdout: options?.onStdout,
         onStderr: options?.onStderr,
       });
@@ -334,6 +342,7 @@ class E2BCommands implements SandboxCommands {
       timeoutMs: options?.timeoutMs,
       envs: options?.envs,
       cwd: options?.cwd,
+      user: options?.user,
       onStdout: options?.onStdout,
       onStderr: options?.onStderr,
     });
@@ -551,11 +560,15 @@ export class E2BProvider implements SandboxProvider {
   private readonly apiKey: string;
   private readonly defaultTimeoutMs: number;
   private readonly templateId?: string;
+  private readonly cpuCount?: number;
+  private readonly memoryMb?: number;
 
   constructor(config: ResolvedE2BConfig) {
     this.apiKey = config.apiKey;
     this.defaultTimeoutMs = config.defaultTimeoutMs ?? 3600000;
     this.templateId = config.templateId;
+    this.cpuCount = config.cpuCount;
+    this.memoryMb = config.memoryMb;
   }
 
   async create(options: SandboxCreateOptions): Promise<SandboxInstance> {
@@ -568,6 +581,8 @@ export class E2BProvider implements SandboxProvider {
       envs: options.envs,
       metadata: options.metadata,
       timeoutMs,
+      ...(this.cpuCount && { cpuCount: this.cpuCount }),
+      ...(this.memoryMb && { memoryMb: this.memoryMb }),
     });
 
     if (options.workingDirectory) {

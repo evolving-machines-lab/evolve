@@ -252,6 +252,9 @@ class Evolve:
         command: str,
         timeout_ms: Optional[int] = None,
         background: bool = False,
+        cwd: Optional[str] = None,
+        envs: Optional[Dict[str, str]] = None,
+        user: Optional[str] = None,
     ) -> AgentResponse:
         """Execute direct shell command.
 
@@ -261,22 +264,35 @@ class Evolve:
             background: Run in background (default: False). If True, returns
                        immediately with a handshake response (`exit_code=0`).
                        Final completion is delivered via lifecycle events.
+            cwd: Working directory for the command (default: working_directory from init)
+            envs: Environment variables to set for this command
+            user: User to run the command as (e.g., 'root')
 
         Returns:
             AgentResponse with sandbox_id, exit_code, stdout, stderr
 
         Example:
             >>> result = await evolve.execute_command(command='python script.py')
+            >>> result = await evolve.execute_command('ls', cwd='/tmp', user='root')
+            >>> result = await evolve.execute_command('echo $MY_VAR', envs={'MY_VAR': 'hello'})
         """
         await self._ensure_initialized()
 
+        params: Dict[str, Any] = {
+            'command': command,
+            'timeout_ms': timeout_ms,
+            'background': background,
+        }
+        if cwd is not None:
+            params['cwd'] = cwd
+        if envs is not None:
+            params['envs'] = envs
+        if user is not None:
+            params['user'] = user
+
         response = await self.bridge.call(
             'execute_command',
-            {
-                'command': command,
-                'timeout_ms': timeout_ms,
-                'background': background,
-            },
+            params,
             timeout_s=self._get_rpc_timeout_s(timeout_ms),
         )
 
@@ -326,6 +342,104 @@ class Evolve:
         await self.bridge.call('upload_files', {
             'files': _encode_files_for_transport(files),
         }, timeout_s=self._get_rpc_timeout_s(None))
+
+    async def upload_dir(
+        self,
+        local_path: str,
+        remote_path: Optional[str] = None,
+        recursive: bool = True,
+    ):
+        """Upload a local directory to the sandbox.
+
+        Reads all files from a local directory and uploads them to the sandbox.
+        Supports both relative (to working_directory) and absolute remote paths.
+
+        Args:
+            local_path: Local directory path to upload
+            remote_path: Remote directory path (default: working_directory).
+                        Use absolute path (e.g., '/tests') for exact placement.
+            recursive: Include subdirectories (default: True)
+
+        Example:
+            >>> await evolve.upload_dir('./my-tests', '/tests')
+            >>> await evolve.upload_dir('./data', 'data/')  # relative to working_directory
+        """
+        from .utils import read_local_dir
+        local_files = read_local_dir(local_path, recursive=recursive)
+
+        # Map local relative paths to remote absolute/relative paths
+        files_to_upload: Dict[str, Union[str, bytes]] = {}
+        for rel_path, content in local_files.items():
+            if remote_path:
+                if remote_path.startswith('/'):
+                    files_to_upload[f"{remote_path}/{rel_path}"] = content
+                else:
+                    files_to_upload[f"{remote_path}/{rel_path}"] = content
+            else:
+                files_to_upload[rel_path] = content
+
+        if files_to_upload:
+            await self.upload_files(files_to_upload)
+
+    async def download_dir(
+        self,
+        remote_path: str,
+        local_path: str,
+        recursive: bool = True,
+    ):
+        """Download a directory from the sandbox to a local path.
+
+        Args:
+            remote_path: Absolute path in sandbox to download
+            local_path: Local directory to save files to
+            recursive: Include subdirectories (default: True)
+
+        Example:
+            >>> await evolve.download_dir('/app/output', './results')
+        """
+        await self._ensure_initialized()
+
+        response = await self.bridge.call('download_dir', {
+            'path': remote_path,
+            'recursive': recursive,
+        }, timeout_s=self._get_rpc_timeout_s(None))
+
+        # Decode files from transport encoding
+        files: Dict[str, Union[str, bytes]] = {}
+        for name, file_data in response.get('files', {}).items():
+            content = file_data['content']
+            encoding = file_data.get('encoding')
+            if encoding == 'base64':
+                content = base64.b64decode(content)
+            files[name] = content
+
+        # Save to local directory
+        from .utils import save_local_dir
+        save_local_dir(local_path, files)
+
+    async def read_file(self, path: str) -> bytes:
+        """Read a single file from the sandbox.
+
+        Args:
+            path: Absolute path in sandbox
+
+        Returns:
+            File content as bytes
+
+        Example:
+            >>> content = await evolve.read_file('/app/output/result.json')
+            >>> data = json.loads(content)
+        """
+        await self._ensure_initialized()
+
+        response = await self.bridge.call('read_file', {
+            'path': path,
+        }, timeout_s=self._get_rpc_timeout_s(None))
+
+        content = response['content']
+        if response.get('encoding') == 'base64':
+            return base64.b64decode(content)
+        return content.encode('utf-8') if isinstance(content, str) else content
 
     async def get_output_files(self, recursive: bool = False) -> OutputResult:
         """Get output files with optional schema validation result.

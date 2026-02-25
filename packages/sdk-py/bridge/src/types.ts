@@ -103,9 +103,30 @@ export interface ExecuteCommandParams {
   command: string;
   timeout_ms?: number;
   background?: boolean;
+  cwd?: string;
+  envs?: Record<string, string>;
+  user?: string;
 }
 
 export interface UploadFilesParams {
+  files: EncodedFileMap;
+}
+
+export interface ReadFileParams {
+  path: string;
+}
+
+export interface ReadFileResponse {
+  content: string;
+  encoding: 'text' | 'base64';
+}
+
+export interface DownloadDirParams {
+  path: string;
+  recursive?: boolean;
+}
+
+export interface DownloadDirResponse {
   files: EncodedFileMap;
 }
 
