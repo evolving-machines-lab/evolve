@@ -889,7 +889,7 @@ export class Agent {
     options: ExecuteCommandOptions = {},
     callbacks?: StreamCallbacks
   ): Promise<AgentResponse> {
-    const { timeoutMs = DEFAULT_TIMEOUT_MS, background = false } = options;
+    const { timeoutMs = DEFAULT_TIMEOUT_MS, background = false, cwd, envs, user } = options;
     if (this.activeCommand) {
       throw new Error(
         "Agent is already running. Call interrupt(), wait for the active/background command to finish, or create a new Evolve instance."
@@ -915,10 +915,12 @@ export class Agent {
     };
 
     const handle = await sandbox.commands.spawn(command, {
-      cwd: this.workingDir,
+      cwd: cwd ?? this.workingDir,
       timeoutMs,
       onStdout,
       onStderr,
+      ...(envs && { envs }),
+      ...(user && { user }),
     });
     const opId = this.beginOperation("command", handle, callbacks, "command_start");
 

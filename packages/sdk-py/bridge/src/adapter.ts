@@ -16,6 +16,10 @@ import type {
   RunParams,
   ExecuteCommandParams,
   UploadFilesParams,
+  ReadFileParams,
+  ReadFileResponse,
+  DownloadDirParams,
+  DownloadDirResponse,
   SetSessionParams,
   GetHostParams,
   StatusResponse,
@@ -201,6 +205,10 @@ export class EvolveAdapter {
         return this.uploadContext(params);
       case 'upload_files':
         return this.uploadFiles(params);
+      case 'read_file':
+        return this.readFile(params);
+      case 'download_dir':
+        return this.downloadDir(params);
       case 'get_output_files':
         return this.getOutputFiles(params?.recursive ?? false);
       case 'get_session':
@@ -330,6 +338,9 @@ export class EvolveAdapter {
     const result = await this.evolve!.executeCommand(params.command, {
       timeoutMs: params.timeout_ms,
       background: params.background,
+      ...(params.cwd && { cwd: params.cwd }),
+      ...(params.envs && { envs: params.envs }),
+      ...(params.user && { user: params.user }),
     });
 
     return {
@@ -354,6 +365,56 @@ export class EvolveAdapter {
     this.ensureInitialized();
     await this.evolve!.uploadFiles(decodeFiles(params.files));
     return { status: 'ok' };
+  }
+
+  async readFile(params: ReadFileParams): Promise<ReadFileResponse> {
+    this.ensureInitialized();
+    // Use executeCommand to cat the file — works for both text and binary
+    const result = await this.evolve!.executeCommand(
+      `base64 -w0 ${JSON.stringify(params.path)} 2>/dev/null`,
+      { timeoutMs: 30000 }
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(`Failed to read file: ${params.path} (exit code ${result.exitCode})`);
+    }
+    return {
+      content: result.stdout.trim(),
+      encoding: 'base64',
+    };
+  }
+
+  async downloadDir(params: DownloadDirParams): Promise<DownloadDirResponse> {
+    this.ensureInitialized();
+    const recursive = params.recursive ?? true;
+    const depthArg = recursive ? '' : '-maxdepth 1';
+
+    // List all files in the directory
+    const listResult = await this.evolve!.executeCommand(
+      `find ${JSON.stringify(params.path)} ${depthArg} -type f 2>/dev/null || true`,
+      { timeoutMs: 30000 }
+    );
+    const filePaths = listResult.stdout.split('\n').filter(Boolean);
+
+    // Read each file and encode for transport
+    const files: EncodedFileMap = {};
+    for (const filePath of filePaths) {
+      const readResult = await this.evolve!.executeCommand(
+        `base64 -w0 ${JSON.stringify(filePath)} 2>/dev/null`,
+        { timeoutMs: 30000 }
+      );
+      if (readResult.exitCode === 0 && readResult.stdout.trim()) {
+        // Use path relative to the requested directory
+        const relativePath = filePath.startsWith(params.path + '/')
+          ? filePath.substring(params.path.length + 1)
+          : filePath;
+        files[relativePath] = {
+          content: readResult.stdout.trim(),
+          encoding: 'base64',
+        };
+      }
+    }
+
+    return { files };
   }
 
   /**

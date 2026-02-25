@@ -54,6 +54,7 @@ export interface SandboxRunOptions {
   timeoutMs?: number;
   envs?: Record<string, string>;
   cwd?: string;
+  user?: string;
   onStdout?: (data: string) => void;
   onStderr?: (data: string) => void;
 }
@@ -373,6 +374,15 @@ export interface ExecuteCommandOptions {
 
   /** Run in background (default: false) */
   background?: boolean;
+
+  /** Working directory for the command (default: working_directory from init) */
+  cwd?: string;
+
+  /** Environment variables to set for this command */
+  envs?: Record<string, string>;
+
+  /** User to run the command as (e.g., 'root') */
+  user?: string;
 }
 
 // =============================================================================
