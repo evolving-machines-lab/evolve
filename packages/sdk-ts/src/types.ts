@@ -631,3 +631,46 @@ export interface CheckpointInfo {
   /** User-provided label for this checkpoint */
   comment?: string;
 }
+
+// =============================================================================
+// STORAGE CLIENT (standalone checkpoint access)
+// =============================================================================
+
+/** Options for StorageClient.downloadCheckpoint() */
+export interface DownloadCheckpointOptions {
+  /** Local directory to save to (default: current working directory) */
+  to?: string;
+  /** Extract the archive (default: true). If false, saves the raw .tar.gz file. */
+  extract?: boolean;
+}
+
+/** Options for StorageClient.downloadFiles() */
+export interface DownloadFilesOptions {
+  /** Specific file paths to extract (relative to archive root, e.g., "workspace/output/result.json") */
+  files?: string[];
+  /** Glob patterns to match files (e.g., ["workspace/output/*.json"]) */
+  glob?: string[];
+  /** Local directory to save files to. If omitted, files are returned in-memory only. */
+  to?: string;
+}
+
+/**
+ * Storage client for browsing and fetching checkpoints without an Evolve instance.
+ *
+ * @example
+ * const s = storage({ url: "s3://my-bucket/prefix/" });
+ * const checkpoints = await s.listCheckpoints({ tag: "poker-agent" });
+ * const files = await s.downloadFiles("latest", { glob: ["workspace/output/*.json"] });
+ */
+export interface StorageClient {
+  /** List checkpoints with optional filtering */
+  listCheckpoints(options?: { limit?: number; tag?: string }): Promise<CheckpointInfo[]>;
+  /** Get a specific checkpoint's metadata by ID */
+  getCheckpoint(id: string): Promise<CheckpointInfo>;
+  /** Get the most recent checkpoint, optionally filtered by tag */
+  getLatestCheckpoint(options?: { tag?: string }): Promise<CheckpointInfo | null>;
+  /** Download an entire checkpoint archive. Returns the output path. */
+  downloadCheckpoint(idOrLatest: string, options?: DownloadCheckpointOptions): Promise<string>;
+  /** Download files from a checkpoint as a FileMap. */
+  downloadFiles(idOrLatest: string, options?: DownloadFilesOptions): Promise<FileMap>;
+}

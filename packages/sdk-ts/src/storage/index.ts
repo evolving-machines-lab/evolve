@@ -7,15 +7,29 @@
  * Evidence: storage-checkpointing plan v2.2
  */
 
+import { createHash } from "node:crypto";
+import { createWriteStream } from "node:fs";
+import { writeFile, readFile, mkdir, rm, unlink, copyFile } from "node:fs/promises";
+import { join, dirname, normalize, resolve, isAbsolute, relative } from "node:path";
+import { tmpdir } from "node:os";
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
+
 import type {
   AgentType,
   StorageConfig,
   ResolvedStorageConfig,
   CheckpointInfo,
   SandboxInstance,
+  FileMap,
+  StorageClient,
+  DownloadCheckpointOptions,
+  DownloadFilesOptions,
 } from "../types";
 import { getAgentConfig } from "../registry";
 import { DEFAULT_DASHBOARD_URL } from "../constants";
+
+const execAsync = promisify(exec);
 
 // =============================================================================
 // TEST HELPERS (internal — used by unit tests to inject mock AWS SDK)
@@ -918,13 +932,449 @@ export async function listCheckpoints(
  * Gateway: calls list endpoint with limit=1.
  */
 export async function getLatestCheckpoint(
-  storage: ResolvedStorageConfig
+  storage: ResolvedStorageConfig,
+  options?: { tag?: string }
 ): Promise<CheckpointInfo | null> {
   if (storage.mode === "byok") {
-    const results = await s3ListCheckpoints(storage, { limit: 1 });
+    const results = await s3ListCheckpoints(storage, { limit: 1, tag: options?.tag });
     return results[0] ?? null;
   } else {
-    const results = await gatewayListCheckpoints(storage, { limit: 1 });
+    const results = await gatewayListCheckpoints(storage, { limit: 1, tag: options?.tag });
     return results[0] ?? null;
   }
+}
+
+// =============================================================================
+// STORAGE CLIENT (standalone access — no Evolve instance needed)
+// =============================================================================
+
+/**
+ * Get checkpoint metadata by ID (both modes).
+ */
+async function getCheckpointInfo(
+  resolved: ResolvedStorageConfig,
+  id: string
+): Promise<CheckpointInfo> {
+  if (resolved.mode === "byok") {
+    const key = metadataKey(resolved, id);
+    try {
+      return await s3GetJson<CheckpointInfo>(resolved, key);
+    } catch (err: unknown) {
+      // Only treat known "not found" errors as missing checkpoint
+      const name = (err as { name?: string }).name;
+      const statusCode = (err as any)?.$metadata?.httpStatusCode;
+      if (statusCode === 404 || name === "NoSuchKey" || name === "NotFound") {
+        throw new Error(`Checkpoint ${id} not found`);
+      }
+      throw err;
+    }
+  } else {
+    return await gatewayGetCheckpoint(resolved, id) as CheckpointInfo;
+  }
+}
+
+/**
+ * Resolve "latest" to a concrete checkpoint ID.
+ */
+async function resolveCheckpointId(
+  resolved: ResolvedStorageConfig,
+  idOrLatest: string,
+  tag?: string
+): Promise<string> {
+  if (idOrLatest === "latest") {
+    const latest = await getLatestCheckpoint(resolved, { tag });
+    if (!latest) {
+      throw new Error(tag ? `No checkpoints found with tag "${tag}"` : "No checkpoints found");
+    }
+    return latest.id;
+  }
+  return idOrLatest;
+}
+
+/**
+ * Get presigned download URL for a checkpoint archive.
+ */
+async function getArchiveDownloadUrl(
+  resolved: ResolvedStorageConfig,
+  metadata: CheckpointInfo
+): Promise<string> {
+  if (resolved.mode === "byok") {
+    return presignUrl(resolved, dataKey(resolved, metadata.hash), "get");
+  } else {
+    const result = await gatewayPresign(resolved, metadata.tag, metadata.hash, "get");
+    if (!result.url) throw new Error("Gateway presign returned no download URL");
+    return result.url;
+  }
+}
+
+// =============================================================================
+// PATH SAFETY (archive path traversal prevention)
+// =============================================================================
+
+/**
+ * Validate that an archive path is safe (no traversal, no absolute paths).
+ * Returns true if the path is safe, false if it should be rejected.
+ */
+function isSafeArchivePath(filePath: string): boolean {
+  if (!filePath) return false;
+  // Reject absolute paths (isAbsolute covers both POSIX "/" and Windows "C:\")
+  if (isAbsolute(filePath)) return false;
+  // Reject option-like names (prevents tar option injection via crafted archives)
+  if (filePath.startsWith("-")) return false;
+  // Reject path traversal (normalize resolves all ".." segments)
+  if (normalize(filePath).startsWith("..")) return false;
+  // Reject null bytes
+  if (filePath.includes("\0")) return false;
+  return true;
+}
+
+/**
+ * Validate that an extracted path resolves within the target directory.
+ * Defense-in-depth: even after isSafeArchivePath, verify the resolved path.
+ */
+function assertWithinDir(targetDir: string, filePath: string): void {
+  const resolved = resolve(targetDir, filePath);
+  const resolvedDir = resolve(targetDir);
+  const rel = relative(resolvedDir, resolved);
+  if (rel.startsWith("..") || isAbsolute(rel)) {
+    throw new Error(`Path traversal detected: "${filePath}" resolves outside target directory`);
+  }
+}
+
+/**
+ * Validate archive file list and fail closed on unsafe paths.
+ */
+function assertSafePaths(files: string[]): string[] {
+  const unsafe = files.filter((f) => !isSafeArchivePath(f));
+  if (unsafe.length > 0) {
+    throw new Error(`Archive contains unsafe path(s): ${unsafe.slice(0, 3).join(", ")}`);
+  }
+  return files;
+}
+
+/**
+ * Large-archive-safe buffer for tar listing commands.
+ * Default exec maxBuffer is ~1MB which can truncate archives with thousands of files.
+ */
+const TAR_MAX_BUFFER = 10 * 1024 * 1024; // 10MB
+
+// =============================================================================
+// TAR BINARY CHECK
+// =============================================================================
+
+let tarChecked = false;
+
+/**
+ * Verify that the `tar` binary is available. Throws a clear error if not.
+ */
+async function ensureTarAvailable(): Promise<void> {
+  if (tarChecked) return;
+  try {
+    await execAsync("tar --version");
+    tarChecked = true;
+  } catch {
+    throw new Error(
+      "The 'tar' command is not available on this system. " +
+      "Storage download/extract requires tar (available on macOS, Linux, and Windows with Git Bash or WSL)."
+    );
+  }
+}
+
+// =============================================================================
+// STREAMING DOWNLOAD WITH INCREMENTAL HASH
+// =============================================================================
+
+/**
+ * Download checkpoint archive to a local temp file with streaming + incremental SHA-256.
+ * Avoids loading entire archive into memory.
+ * Returns path to the temp file and the checkpoint metadata.
+ */
+async function downloadArchiveToLocal(
+  resolved: ResolvedStorageConfig,
+  checkpointId: string
+): Promise<{ tmpPath: string; metadata: CheckpointInfo }> {
+  const metadata = await getCheckpointInfo(resolved, checkpointId);
+  const downloadUrl = await getArchiveDownloadUrl(resolved, metadata);
+
+  const tmpPath = join(tmpdir(), `evolve-dl-${checkpointId}-${Date.now()}.tar.gz`);
+  const response = await fetch(downloadUrl);
+  if (!response.ok) {
+    throw new Error(`Checkpoint download failed (${response.status})`);
+  }
+  if (!response.body) {
+    throw new Error("Checkpoint download returned empty body");
+  }
+
+  // Stream response to file while computing SHA-256 incrementally
+  const hash = createHash("sha256");
+  const fileStream = createWriteStream(tmpPath);
+
+  try {
+    const reader = response.body.getReader();
+    await new Promise<void>((resolvePromise, reject) => {
+      fileStream.on("error", reject);
+      fileStream.on("finish", resolvePromise);
+
+      async function pump(): Promise<void> {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            fileStream.end();
+            break;
+          }
+          hash.update(value);
+          if (!fileStream.write(value)) {
+            await new Promise<void>((r) => fileStream.once("drain", r));
+          }
+        }
+      }
+
+      pump().catch(reject);
+    });
+  } catch (err) {
+    // Cleanup on stream error
+    fileStream.destroy();
+    await unlink(tmpPath).catch(() => {});
+    throw err;
+  }
+
+  // Verify hash
+  const actualHash = hash.digest("hex");
+  if (actualHash !== metadata.hash) {
+    await unlink(tmpPath).catch(() => {});
+    throw new Error(
+      `Checkpoint integrity check failed (expected ${metadata.hash}, got ${actualHash})`
+    );
+  }
+
+  return { tmpPath, metadata };
+}
+
+/**
+ * Reject archives containing unsupported entry types.
+ * Uses `tar -tvzf` (verbose); first char indicates type.
+ * Allowlist: regular files ('-') and directories ('d') only.
+ */
+async function assertSupportedEntryTypes(archivePath: string): Promise<void> {
+  const { stdout } = await execAsync(
+    `tar -tvzf ${shellEscape(archivePath)}`,
+    { maxBuffer: TAR_MAX_BUFFER }
+  );
+  for (const line of stdout.trim().split("\n").filter(Boolean)) {
+    // Some tar variants print summary lines like "total N".
+    if (line.startsWith("total ")) continue;
+    const typeChar = line[0];
+    if (typeChar !== "-" && typeChar !== "d") {
+      throw new Error(`Archive contains unsupported entry type: "${typeChar}"`);
+    }
+  }
+}
+
+/**
+ * List files inside a tar.gz archive.
+ *
+ * Two passes: `tar -tvzf` for type validation, then `tar -tzf`
+ * for reliable path listing. Compact listing format is platform-stable — verbose
+ * format varies (BSD tar shows year instead of HH:MM for files >6 months old).
+ * Double decompression is negligible since the archive is in disk cache.
+ */
+async function listTarFiles(archivePath: string): Promise<string[]> {
+  await ensureTarAvailable();
+  await assertSupportedEntryTypes(archivePath);
+  const { stdout } = await execAsync(
+    `tar -tzf ${shellEscape(archivePath)}`,
+    { maxBuffer: TAR_MAX_BUFFER }
+  );
+  const allFiles = stdout.trim().split("\n").filter((f) => f && !f.endsWith("/"));
+  return assertSafePaths(allFiles);
+}
+
+/**
+ * Extract files from a tar.gz archive to a local directory.
+ * Uses --no-same-owner and --no-same-permissions for safety.
+ * If specificFiles is provided, only those files are extracted.
+ */
+async function extractTarFiles(
+  archivePath: string,
+  toDir: string,
+  specificFiles?: string[]
+): Promise<void> {
+  await ensureTarAvailable();
+  await mkdir(toDir, { recursive: true });
+  const fileArgs = specificFiles
+    ? " -- " + specificFiles.map((f) => shellEscape(f)).join(" ")
+    : "";
+  await execAsync(
+    `tar -xzf ${shellEscape(archivePath)} --no-same-owner --no-same-permissions -C ${shellEscape(toDir)}${fileArgs}`,
+    { maxBuffer: TAR_MAX_BUFFER }
+  );
+}
+
+/**
+ * Minimal glob-to-regex conversion for file matching.
+ * Supports: ** (any path), * (any non-slash), ? (single char).
+ */
+function globToRegex(pattern: string): RegExp {
+  let regex = "^";
+  let i = 0;
+  while (i < pattern.length) {
+    const c = pattern[i];
+    if (c === "*" && pattern[i + 1] === "*") {
+      if (pattern[i + 2] === "/") {
+        regex += "(?:.+/)?";
+        i += 3;
+      } else {
+        regex += ".*";
+        i += 2;
+      }
+    } else if (c === "*") {
+      regex += "[^/]*";
+      i++;
+    } else if (c === "?") {
+      regex += "[^/]";
+      i++;
+    } else if (".+^${}()|[]\\".includes(c)) {
+      regex += "\\" + c;
+      i++;
+    } else {
+      regex += c;
+      i++;
+    }
+  }
+  regex += "$";
+  return new RegExp(regex);
+}
+
+/**
+ * Create a standalone storage client for browsing and fetching checkpoints.
+ *
+ * @example
+ * const s = storage({ url: "s3://my-bucket/prefix/" });
+ * const checkpoints = await s.listCheckpoints({ tag: "poker-agent" });
+ * const files = await s.downloadFiles("latest");
+ *
+ * @example
+ * // Gateway mode (uses EVOLVE_API_KEY from env)
+ * const s = storage();
+ * const files = await s.downloadFiles("ckpt_abc123", { to: "./output" });
+ */
+export function storage(config?: StorageConfig): StorageClient {
+  const resolved = resolveStorageForStandalone(config || {});
+
+  return {
+    async listCheckpoints(options) {
+      const normalizedLimit = options?.limit && options.limit > 0
+        ? Math.min(options.limit, 500)
+        : 100;
+
+      if (resolved.mode === "byok") {
+        return s3ListCheckpoints(resolved, { limit: normalizedLimit, tag: options?.tag });
+      } else {
+        return gatewayListCheckpoints(resolved, { limit: normalizedLimit, tag: options?.tag });
+      }
+    },
+
+    async getCheckpoint(id: string) {
+      return getCheckpointInfo(resolved, id);
+    },
+
+    async getLatestCheckpoint(options) {
+      return getLatestCheckpoint(resolved, options);
+    },
+
+    async downloadCheckpoint(idOrLatest: string, options?: DownloadCheckpointOptions) {
+      const extract = options?.extract !== false; // default: true
+      const toDir = options?.to || process.cwd();
+
+      const id = await resolveCheckpointId(resolved, idOrLatest);
+      const { tmpPath, metadata } = await downloadArchiveToLocal(resolved, id);
+
+      try {
+        if (extract) {
+          await mkdir(toDir, { recursive: true });
+          await listTarFiles(tmpPath); // validates: throws on links or unsafe paths
+          await extractTarFiles(tmpPath, toDir); // extract all — no ARG_MAX risk
+          return toDir;
+        } else {
+          // Save raw archive
+          await mkdir(toDir, { recursive: true });
+          const destPath = join(toDir, `checkpoint-${metadata.id}.tar.gz`);
+          await copyFile(tmpPath, destPath);
+          return destPath;
+        }
+      } finally {
+        await unlink(tmpPath).catch(() => {});
+      }
+    },
+
+    async downloadFiles(idOrLatest: string, options?: DownloadFilesOptions) {
+      const id = await resolveCheckpointId(resolved, idOrLatest);
+      const { tmpPath } = await downloadArchiveToLocal(resolved, id);
+      let extractDir: string | undefined;
+
+      try {
+        // List archive contents (already filtered for safe paths)
+        const allFiles = await listTarFiles(tmpPath);
+
+        // Determine which files to extract
+        let targetFiles: string[];
+        if (options?.files) {
+          const unsafeRequested = options.files.filter((f) => !isSafeArchivePath(f));
+          if (unsafeRequested.length > 0) {
+            throw new Error(`Unsafe file path requested: ${unsafeRequested[0]}`);
+          }
+          const requested = new Set(options.files);
+          targetFiles = allFiles.filter((f) => requested.has(f));
+        } else if (options?.glob) {
+          const patterns = options.glob.map(globToRegex);
+          targetFiles = allFiles.filter((f) => patterns.some((re) => re.test(f)));
+        } else {
+          targetFiles = allFiles; // all files (already safe-filtered by listTarFiles)
+        }
+
+        if (targetFiles.length === 0) {
+          return {};
+        }
+
+        // Extract all to temp dir (avoids ARG_MAX for large file lists).
+        // Only targetFiles are read into the FileMap; extras are cleaned up in finally.
+        extractDir = join(tmpdir(), `evolve-extract-${Date.now()}`);
+        await extractTarFiles(tmpPath, extractDir);
+
+        // Read into FileMap with path validation
+        const fileMap: FileMap = {};
+        await Promise.all(
+          targetFiles.map(async (file) => {
+            try {
+              assertWithinDir(extractDir!, file);
+              fileMap[file] = await readFile(join(extractDir!, file));
+            } catch {
+              // Skip files that failed to read (traversal blocked, dangling symlinks, etc.)
+            }
+          })
+        );
+
+        // Optionally save to local directory with path validation
+        if (options?.to) {
+          await mkdir(options.to, { recursive: true });
+          await Promise.all(
+            Object.entries(fileMap).map(async ([file, content]) => {
+              assertWithinDir(options.to!, file);
+              const destPath = join(options.to!, file);
+              await mkdir(dirname(destPath), { recursive: true });
+              await writeFile(destPath, content as Buffer);
+            })
+          );
+        }
+
+        return fileMap;
+      } finally {
+        // Cleanup temp files — always runs even if write-to-disk fails
+        if (extractDir) {
+          await rm(extractDir, { recursive: true, force: true }).catch(() => {});
+        }
+        await unlink(tmpPath).catch(() => {});
+      }
+    },
+  };
 }

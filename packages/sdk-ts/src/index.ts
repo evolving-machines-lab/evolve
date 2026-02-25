@@ -113,6 +113,9 @@ export type {
   StorageConfig,
   ResolvedStorageConfig,
   CheckpointInfo,
+  StorageClient,
+  DownloadCheckpointOptions,
+  DownloadFilesOptions,
 } from "./types";
 
 // Composio types (for static helper return types)
@@ -231,4 +234,4 @@ export {
 // STORAGE
 // =============================================================================
 
-export { resolveStorageConfig, listCheckpoints } from "./storage";
+export { resolveStorageConfig, listCheckpoints, storage } from "./storage";
