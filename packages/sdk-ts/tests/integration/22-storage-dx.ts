@@ -26,7 +26,7 @@
  *   TEST_STORAGE_MODE=gateway npx tsx tests/integration/22-storage-dx.ts
  */
 
-import { Evolve, listCheckpoints } from "../../dist/index.js";
+import { Evolve, storage } from "../../dist/index.js";
 import type { CheckpointInfo } from "../../dist/index.js";
 import { config } from "dotenv";
 import { resolve, dirname } from "path";
@@ -240,7 +240,7 @@ async function main() {
     // Use tag filter to isolate this test's checkpoints from other sessions
     const testTag = checkpoint1.tag;
     log(`  Using tag filter: ${testTag}`);
-    const allCheckpoints = await listCheckpoints(storageConfig, { tag: testTag });
+    const allCheckpoints = await storage(storageConfig).listCheckpoints({ tag: testTag });
     assertTrue(allCheckpoints.length >= 3, `listCheckpoints() returned >= 3 (got ${allCheckpoints.length})`);
     // Newest first — checkpoint3 should be first
     assertEq(allCheckpoints[0].id, checkpoint3.id, "First result is checkpoint3 (newest)");
@@ -254,7 +254,7 @@ async function main() {
     // =========================================================================
     log("\u2500\u2500 Phase 5: listCheckpoints() with limit");
 
-    const limited = await listCheckpoints(storageConfig, { limit: 2, tag: testTag });
+    const limited = await storage(storageConfig).listCheckpoints({ limit: 2, tag: testTag });
     assertEq(limited.length, 2, "limit=2 returns 2 entries");
     assertEq(limited[0].id, checkpoint3.id, "Limited: first is newest");
 

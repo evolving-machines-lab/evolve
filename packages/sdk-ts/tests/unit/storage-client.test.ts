@@ -795,38 +795,14 @@ async function testSecurityHardening(): Promise<void> {
 }
 
 // =============================================================================
-// TESTS: Backward compatibility — existing listCheckpoints still works
-// =============================================================================
-
-async function testBackwardCompatibility(): Promise<void> {
-  console.log("\n[7] Backward Compatibility");
-
-  const mockSdk = createMockAwsSdk({
-    "test-prefix/checkpoints/ckpt_test_001.json": MOCK_CHECKPOINT,
-  });
-  _testSetAwsSdk(mockSdk);
-
-  try {
-    // Old-style standalone import still works
-    const { listCheckpoints } = await import("../../dist/index.js");
-    const results = await listCheckpoints({ url: "s3://test-bucket/test-prefix" });
-    assert(results.length === 1, "legacy listCheckpoints() still works");
-    assertEqual(results[0].id, "ckpt_test_001", "legacy listCheckpoints returns correct data");
-  } finally {
-    _testSetAwsSdk(null);
-  }
-}
-
-// =============================================================================
 // TESTS: storage() export available
 // =============================================================================
 
 async function testExport(): Promise<void> {
-  console.log("\n[8] Export Availability");
+  console.log("\n[7] Export Availability");
 
   const sdk = await import("../../dist/index.js");
   assert(typeof sdk.storage === "function", "storage is exported from dist");
-  assert(typeof sdk.listCheckpoints === "function", "listCheckpoints is still exported (backward compat)");
   assert(typeof sdk.resolveStorageConfig === "function", "resolveStorageConfig is still exported");
 }
 
@@ -848,7 +824,6 @@ async function main(): Promise<void> {
   await testIntegrityFailure();
   await testLatestNoCheckpoints();
   await testSecurityHardening();
-  await testBackwardCompatibility();
   await testExport();
 
   // Cleanup

@@ -234,4 +234,4 @@ export {
 // STORAGE
 // =============================================================================
 
-export { resolveStorageConfig, listCheckpoints, storage } from "./storage";
+export { resolveStorageConfig, storage } from "./storage";

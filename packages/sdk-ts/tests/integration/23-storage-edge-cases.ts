@@ -21,7 +21,7 @@
  *   TEST_SANDBOX_PROVIDER=daytona npx tsx tests/integration/23-storage-edge-cases.ts
  */
 
-import { Evolve, listCheckpoints } from "../../dist/index.js";
+import { Evolve, storage } from "../../dist/index.js";
 import type { CheckpointInfo } from "../../dist/index.js";
 import { config } from "dotenv";
 import { resolve, dirname } from "path";
@@ -253,13 +253,13 @@ async function main() {
     log("\u2500\u2500 Phase 3: listCheckpoints(limit, tag) \u2014 cross-tag filtering");
 
     // 3a: tag=A, limit=1 — should get only session A's newest
-    const listA1 = await listCheckpoints(storageConfig, { limit: 1, tag: tagA });
+    const listA1 = await storage(storageConfig).listCheckpoints({ limit: 1, tag: tagA });
     assertEq(listA1.length, 1, "limit=1, tag=A returns exactly 1");
     assertEq(listA1[0].id, sessionACheckpoints[1].id, "tag=A limit=1 returns A's newest checkpoint");
     assertEq(listA1[0].tag, tagA, "Result tag matches tagA");
 
     // 3b: tag=A, limit=10 — should get all 2 from session A
-    const listA2 = await listCheckpoints(storageConfig, { limit: 10, tag: tagA });
+    const listA2 = await storage(storageConfig).listCheckpoints({ limit: 10, tag: tagA });
     assertEq(listA2.length, 2, "limit=10, tag=A returns all 2 session A checkpoints");
     assertTrue(
       listA2.every(cp => cp.tag === tagA),
@@ -269,7 +269,7 @@ async function main() {
     assertEq(listA2[1].id, sessionACheckpoints[0].id, "Oldest A second");
 
     // 3c: tag=B, limit=1 — should get only session B's newest
-    const listB1 = await listCheckpoints(storageConfig, { limit: 1, tag: tagB });
+    const listB1 = await storage(storageConfig).listCheckpoints({ limit: 1, tag: tagB });
     assertEq(listB1.length, 1, "limit=1, tag=B returns exactly 1");
     assertEq(listB1[0].id, sessionBCheckpoints[1].id, "tag=B limit=1 returns B's newest checkpoint");
     assertEq(listB1[0].tag, tagB, "Result tag matches tagB");
@@ -281,7 +281,7 @@ async function main() {
     // =========================================================================
     log("\u2500\u2500 Phase 4: Cross-session ordering (no tag filter)");
 
-    const allCheckpoints = await listCheckpoints(storageConfig);
+    const allCheckpoints = await storage(storageConfig).listCheckpoints();
 
     // Should have at least 4 checkpoints total
     assertTrue(allCheckpoints.length >= 4, `listCheckpoints() returned >= 4 (got ${allCheckpoints.length})`);
@@ -306,14 +306,14 @@ async function main() {
     // =========================================================================
     log("\u2500\u2500 Phase 5: Limit without tag \u2014 mixed tags");
 
-    const limited2 = await listCheckpoints(storageConfig, { limit: 2 });
+    const limited2 = await storage(storageConfig).listCheckpoints({ limit: 2 });
     assertEq(limited2.length, 2, "limit=2 returns exactly 2 entries");
 
     // Should be the 2 newest regardless of tag
     assertEq(limited2[0].id, allCheckpoints[0].id, "limit=2 first matches overall newest");
     assertEq(limited2[1].id, allCheckpoints[1].id, "limit=2 second matches overall second");
 
-    const limited3 = await listCheckpoints(storageConfig, { limit: 3 });
+    const limited3 = await storage(storageConfig).listCheckpoints({ limit: 3 });
     assertEq(limited3.length, 3, "limit=3 returns exactly 3 entries");
 
     log(`  \u2713 Phase 5 complete\n`);
