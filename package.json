@@ -8,7 +8,8 @@
     "packages/daytona",
     "packages/modal",
     "packages/sdk-ts",
-    "packages/sdk-py/bridge"
+    "packages/sdk-py/bridge",
+    "docs-site"
   ],
   "scripts": {
     "build": "npm run build:e2b && npm run build:daytona && npm run build:modal && npm run build:sdk && npm run build:bridge",
@@ -21,7 +22,10 @@
     "test:ts:unit": "npm run test:unit --workspace=@evolvingmachines/sdk",
     "test:ts:integration": "npm run test:integration --workspace=@evolvingmachines/sdk",
     "test:py:unit": "npm run build:bridge && cd packages/sdk-py && python -m pytest tests/unit -v",
-    "test:py:integration": "npm run build:bridge && cd packages/sdk-py && python -m pytest tests/integration -v"
+    "test:py:integration": "npm run build:bridge && cd packages/sdk-py && python -m pytest tests/integration -v",
+    "docs:dev": "npm run dev --workspace=docs-site",
+    "docs:build": "npm run build --workspace=docs-site",
+    "docs:test": "npm run test --workspace=docs-site"
   },
   "devDependencies": {
     "tsx": "^4.20.5",
