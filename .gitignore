@@ -41,3 +41,8 @@ uv.lock
 docs/modal/
 docs/daytona/
 plans/
+
+# Docs site build artifacts
+docs-site/.next/
+docs-site/out/
+docs-site/content

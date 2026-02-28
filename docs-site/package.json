@@ -1,0 +1,29 @@
+{
+  "name": "docs-site",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "link": "test -e content || ln -s ../docs content",
+    "predev": "npm run link",
+    "dev": "npm run clean && next --turbopack",
+    "build": "npm run link && next build",
+    "clean": "rm -rf .next out",
+    "test": "npm run test:unit && npm run test:integration && npm run test:e2e",
+    "test:unit": "node tests/unit.mjs",
+    "test:integration": "node tests/integration.mjs",
+    "test:e2e": "node tests/e2e.mjs",
+    "test:visual": "npx playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.50.0",
+    "serve": "^14.2.0"
+  },
+  "dependencies": {
+    "next": "^16.0.8",
+    "nextra": "^4.6.1",
+    "nextra-theme-docs": "^4.6.1",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1"
+  }
+}

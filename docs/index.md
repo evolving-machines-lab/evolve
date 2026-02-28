@@ -2,7 +2,7 @@
 
 - [TypeScript SDK](./typescript/)
 - [Python SDK](./python/)
-- [Cookbooks](../cookbooks)
+- [Cookbooks](https://github.com/evolving-machines-lab/evolve/tree/main/cookbooks)
 
 ## Get Started
 
@@ -73,4 +73,4 @@ We welcome your feedback. File a [GitHub issue](https://github.com/evolving-mach
 
 ## License
 
-See the [LICENSE](../LICENSE) file for full terms and conditions.
+See the [LICENSE](https://github.com/evolving-machines-lab/evolve/blob/main/LICENSE) file for full terms and conditions.
