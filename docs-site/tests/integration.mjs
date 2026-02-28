@@ -77,7 +77,6 @@ const expectedPages = [
   'python/04-streaming',
   'python/05-swarm-pipeline',
   'changelog',
-  'continualcode-poc',
 ];
 
 for (const page of expectedPages) {

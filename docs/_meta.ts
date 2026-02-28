@@ -20,7 +20,4 @@ export default {
     type: 'page',
     href: 'https://github.com/evolving-machines-lab/evolve/tree/main/cookbooks',
   },
-  'continualcode-poc': {
-    display: 'hidden',
-  },
 };
