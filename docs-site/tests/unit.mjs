@@ -58,7 +58,7 @@ assert(rootMeta.python?.type === 'page' && rootMeta.python?.title === 'Python SD
 assert(rootMeta.changelog?.type === 'page' && rootMeta.changelog?.title === 'Changelog', 'changelog tab configured');
 assert(rootMeta.cookbooks?.href?.includes('github.com'), 'cookbooks has external href');
 assert(rootMeta.cookbooks?.type === 'page', 'cookbooks is type page');
-assert(rootMeta['continualcode-poc']?.display === 'hidden', 'continualcode-poc is hidden');
+
 
 const tsMeta = (await import(path.join(DOCS, 'typescript', '_meta.ts'))).default;
 const expectedTsKeys = ['index', '01-getting-started', '02-configuration', '03-runtime', '04-streaming', '05-swarm-pipeline'];
@@ -82,7 +82,6 @@ console.log('\n=== File existence ===');
 const expectedFiles = [
   'index.md',
   'changelog.md',
-  'continualcode-poc.md',
   'typescript/index.md',
   'typescript/01-getting-started.md',
   'typescript/02-configuration.md',
