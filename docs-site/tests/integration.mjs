@@ -183,6 +183,7 @@ assert(findFilesWithExt(nextDir, '.css').length > 0, '_next/ contains CSS bundle
 console.log('\n=== Internal link integrity ===');
 
 const hrefRegex = /href="(\/[^"]*?)"/g;
+const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || '';
 let brokenCount = 0;
 
 for (const page of expectedPages) {
@@ -191,7 +192,11 @@ for (const page of expectedPages) {
   let match;
   const regex = new RegExp(hrefRegex.source, 'g');
   while ((match = regex.exec(html)) !== null) {
-    const href = match[1];
+    let href = match[1];
+    // Strip base path prefix if present
+    if (BASE_PATH && href.startsWith(BASE_PATH)) {
+      href = href.slice(BASE_PATH.length) || '/';
+    }
     // Skip anchors, query strings, _next assets, and external paths
     if (href.startsWith('/_next') || href.includes('#') || href.includes('?')) continue;
     // Check if the target exists as a page
@@ -203,7 +208,7 @@ for (const page of expectedPages) {
       if (!fs.existsSync(asDir) && !fs.existsSync(path.join(OUT, href.replace(/^\//, '') + '.html'))) {
         brokenCount++;
         if (brokenCount <= 5) {
-          console.error(`  WARN: Potentially broken link on "${page || '/'}": ${href}`);
+          console.error(`  WARN: Potentially broken link on "${page || '/'}": ${match[1]}`);
         }
       }
     }
