@@ -92,7 +92,8 @@ function generateSessionTag(prefix: string): string {
 /**
  * Merge spend tracking headers into an existing ANTHROPIC_CUSTOM_HEADERS value.
  * Preserves user-supplied headers; spend headers overwrite only matching keys.
- * Supports newline- or comma-separated "Name: Value" pairs.
+ * Parses newline-separated "Name: Value" pairs (Claude CLI format).
+ * Special case: x-litellm-tags values are appended (comma-joined), not overwritten.
  */
 function mergeCustomHeaders(existing: string | undefined, updates: Record<string, string>): string {
   const merged = new Map<string, string>();
@@ -112,9 +113,17 @@ function mergeCustomHeaders(existing: string | undefined, updates: Record<string
     }
   }
 
-  // Apply updates (overwrites matching keys)
+  // Apply updates (overwrites matching keys, except tags which are appended)
   for (const [name, value] of Object.entries(updates)) {
-    merged.set(name.toLowerCase(), `${name}: ${value}`);
+    const key = name.toLowerCase();
+    if (key === "x-litellm-tags" && merged.has(key)) {
+      // Append to existing tags (comma-separated list)
+      const existing = merged.get(key)!;
+      const existingValue = existing.slice(existing.indexOf(":") + 1).trim();
+      merged.set(key, `${name}: ${existingValue},${value}`);
+    } else {
+      merged.set(key, `${name}: ${value}`);
+    }
   }
 
   return Array.from(merged.values()).join("\n");

@@ -210,11 +210,34 @@ async function testCustomHeaderMergeHandlesNewlineFormat(): Promise<void> {
 
   const envs = agent.buildRunEnvs("run-xyz") as Record<string, string> | undefined;
   const headers = envs?.ANTHROPIC_CUSTOM_HEADERS || "";
+  const lines = headers.split("\n").map((l: string) => l.trim()).filter(Boolean);
 
-  assert(headers.includes("x-custom-one: foo"), "keeps first user header");
-  assert(headers.includes("x-custom-two: bar"), "keeps second user header");
-  assert(headers.includes("x-litellm-customer-id: evolve-session"), "injects customer-id");
-  assert(headers.includes("x-litellm-tags: run:run-xyz"), "injects run tag");
+  assert(lines.some((l: string) => l === "x-custom-one: foo"), "keeps first user header as separate line");
+  assert(lines.some((l: string) => l === "x-custom-two: bar"), "keeps second user header as separate line");
+  assert(lines.some((l: string) => l === "x-litellm-customer-id: evolve-session"), "injects customer-id");
+  assert(lines.some((l: string) => l === "x-litellm-tags: run:run-xyz"), "injects run tag");
+}
+
+async function testTagAppendBehavior(): Promise<void> {
+  console.log("\n[5] mergeCustomHeaders() appends to existing x-litellm-tags");
+  const agent = createAgent() as any;
+  agent.sessionTag = "evolve-session";
+  agent.options = {
+    secrets: {
+      ANTHROPIC_CUSTOM_HEADERS: "x-litellm-tags: project:acme,env:prod\nx-custom-one: keep-me",
+    },
+  };
+
+  const envs = agent.buildRunEnvs("run-xyz") as Record<string, string> | undefined;
+  const headers = envs?.ANTHROPIC_CUSTOM_HEADERS || "";
+  const lines = headers.split("\n").map((l: string) => l.trim()).filter(Boolean);
+
+  const tagLine = lines.find((l: string) => l.startsWith("x-litellm-tags:"));
+  assert(!!tagLine, "has x-litellm-tags line");
+  assert(tagLine!.includes("project:acme"), "preserves user tag project:acme");
+  assert(tagLine!.includes("env:prod"), "preserves user tag env:prod");
+  assert(tagLine!.includes("run:run-xyz"), "appends SDK run tag");
+  assert(lines.some((l: string) => l === "x-custom-one: keep-me"), "keeps other user headers");
 }
 
 async function main(): Promise<void> {
@@ -225,6 +248,7 @@ async function main(): Promise<void> {
   await testRunCostSelectors();
   await testNoActivitySessionSwitchDoesNotClobberTag();
   await testCustomHeaderMergeHandlesNewlineFormat();
+  await testTagAppendBehavior();
   console.log("\n============================================================");
   console.log(`Results: ${passed} passed, ${failed} failed`);
   console.log("============================================================");
