@@ -718,7 +718,7 @@ const all = await store.listCheckpoints();
 console.log(`${all.length} checkpoints (newest first)`);
 
 const files = await store.downloadFiles("latest", { glob: ["workspace/report.*"] });
-for (const [path, content] of files) {
+for (const [path, content] of Object.entries(files)) {
     console.log(`${path}: ${content.toString()}`);
 }
 ```
