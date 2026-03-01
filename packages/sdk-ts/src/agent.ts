@@ -39,7 +39,7 @@ import type {
 } from "./types";
 import { VALIDATION_PRESETS } from "./types";
 import { getAgentConfig, type AgentRegistryEntry } from "./registry";
-import { writeMcpConfig } from "./mcp";
+import { writeMcpConfig, writeCodexSpendProvider } from "./mcp";
 import { createAgentParser, type AgentParser } from "./parsers";
 import { DEFAULT_TIMEOUT_MS, DEFAULT_WORKING_DIR, DEFAULT_DASHBOARD_URL, LITELLM_CUSTOMER_ID_HEADER, LITELLM_TAGS_HEADER, RUN_TAG_PREFIX, getGatewayUrl, getGeminiGatewayUrl } from "./constants";
 import { buildWorkerSystemPrompt } from "./prompts";
@@ -463,26 +463,46 @@ export class Agent {
       });
     }
 
+    // Spend tracking via per-env-var headers (e.g., Codex env_http_headers in TOML).
+    // Session-level only — run-level tag is set per-run in buildRunEnvs().
+    if (!this.agentConfig.isDirectMode && this.registry.spendTrackingEnvs) {
+      envVars[this.registry.spendTrackingEnvs.sessionTagEnv] = this.sessionTag;
+    }
+
     return envVars;
   }
 
   /**
    * Build per-run env overrides for spend tracking.
-   * Merges session + run headers into the custom headers env var.
+   * Merges session + run headers into the custom headers env var,
+   * or sets per-env-var values for agents using spendTrackingEnvs.
    * Passed to spawn() so each .run() gets a unique run tag.
    */
   private buildRunEnvs(runId: string): Record<string, string> | undefined {
     if (this.agentConfig.isDirectMode) return undefined;
-    const headerEnv = this.registry.customHeadersEnv;
-    if (!headerEnv) return undefined;
 
-    const base = this.options.secrets?.[headerEnv];
-    return {
-      [headerEnv]: mergeCustomHeaders(base, {
-        [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
-        [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
-      }),
-    };
+    // Path 1: single custom headers env var (Claude)
+    const headerEnv = this.registry.customHeadersEnv;
+    if (headerEnv) {
+      const base = this.options.secrets?.[headerEnv];
+      return {
+        [headerEnv]: mergeCustomHeaders(base, {
+          [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
+          [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
+        }),
+      };
+    }
+
+    // Path 2: per-env-var headers (Codex TOML env_http_headers)
+    const trackingEnvs = this.registry.spendTrackingEnvs;
+    if (trackingEnvs) {
+      return {
+        [trackingEnvs.sessionTagEnv]: this.sessionTag,
+        [trackingEnvs.runTagEnv]: `${RUN_TAG_PREFIX}${runId}`,
+      };
+    }
+
+    return undefined;
   }
 
   /**
@@ -573,6 +593,16 @@ export class Agent {
         sandbox,
         this.workingDir,
         mcpServers
+      );
+    }
+
+    // Spend tracking: write model provider config for agents using env_http_headers
+    // (e.g., Codex). Must run after MCP config so we append to existing config.toml.
+    if (!this.agentConfig.isDirectMode && this.registry.spendTrackingEnvs && this.agentConfig.type === "codex") {
+      await writeCodexSpendProvider(
+        sandbox,
+        this.agentConfig.baseUrl || getGatewayUrl(),
+        this.registry.spendTrackingEnvs,
       );
     }
 

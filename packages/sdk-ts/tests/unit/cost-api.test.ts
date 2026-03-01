@@ -240,6 +240,25 @@ async function testTagAppendBehavior(): Promise<void> {
   assert(lines.some((l: string) => l === "x-custom-one: keep-me"), "keeps other user headers");
 }
 
+async function testCodexSpendTrackingEnvs(): Promise<void> {
+  console.log("\n[6] buildRunEnvs() uses spendTrackingEnvs for Codex-style agents");
+  const config = {
+    type: "codex",
+    apiKey: "test-gateway-key",
+    isDirectMode: false,
+  };
+  const agent = new Agent(config as any, {});
+  (agent as any).sessionTag = "evolve-codex-session";
+
+  const envs = (agent as any).buildRunEnvs("run-codex-123") as Record<string, string> | undefined;
+  assert(!!envs, "returns env overrides");
+  assertEqual(envs?.EVOLVE_LITELLM_CUSTOMER_ID, "evolve-codex-session", "session tag env set");
+  assertEqual(envs?.EVOLVE_LITELLM_TAGS, "run:run-codex-123", "run tag env set");
+
+  // Verify no ANTHROPIC_CUSTOM_HEADERS (that's Claude-only)
+  assert(!envs?.ANTHROPIC_CUSTOM_HEADERS, "no ANTHROPIC_CUSTOM_HEADERS for codex");
+}
+
 async function main(): Promise<void> {
   console.log("\n============================================================");
   console.log("Cost API Unit Tests");
@@ -249,6 +268,7 @@ async function main(): Promise<void> {
   await testNoActivitySessionSwitchDoesNotClobberTag();
   await testCustomHeaderMergeHandlesNewlineFormat();
   await testTagAppendBehavior();
+  await testCodexSpendTrackingEnvs();
   console.log("\n============================================================");
   console.log(`Results: ${passed} passed, ${failed} failed`);
   console.log("============================================================");

@@ -8,6 +8,10 @@
 import type { SandboxInstance, McpServerConfig } from "../types";
 import { getMcpSettingsDir, getMcpSettingsPath } from "../registry";
 import { validateMcpServer, isNotFoundError } from "./validation";
+import {
+  LITELLM_CUSTOMER_ID_HEADER,
+  LITELLM_TAGS_HEADER,
+} from "../constants";
 
 // =============================================================================
 // TOML SERIALIZATION
@@ -156,4 +160,73 @@ export async function writeCodexMcpConfig(
   ].filter((segment) => segment.length > 0);
 
   await sandbox.files.write(settingsPath, segments.join("\n\n") + "\n");
+}
+
+// =============================================================================
+// CODEX SPEND TRACKING MODEL PROVIDER
+// =============================================================================
+
+/**
+ * Write an "evolve-gateway" model provider into Codex config.toml
+ *
+ * Codex supports env_http_headers per model provider — header values are read
+ * from env vars at request time. We define a provider that injects LiteLLM
+ * tracking headers via env vars set per-run by buildRunEnvs().
+ */
+export async function writeCodexSpendProvider(
+  sandbox: SandboxInstance,
+  baseUrl: string,
+  spendTrackingEnvs: { sessionTagEnv: string; runTagEnv: string },
+): Promise<void> {
+  const settingsDir = getMcpSettingsDir("codex");
+  const settingsPath = getMcpSettingsPath("codex");
+
+  await sandbox.files.makeDir(settingsDir);
+
+  let existingToml = "";
+  try {
+    const existing = await sandbox.files.read(settingsPath);
+    if (typeof existing === "string") {
+      existingToml = existing;
+    }
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
+
+  // Skip if already written
+  if (existingToml.includes("[model_providers.evolve-gateway]")) {
+    return;
+  }
+
+  // model_provider must be a root-level TOML key (before any [section] headers).
+  // The [model_providers.evolve-gateway] table goes at the end.
+  const rootKey = `model_provider = "evolve-gateway"`;
+  const providerSection = [
+    "[model_providers.evolve-gateway]",
+    `name = "Evolve Gateway"`,
+    `base_url = ${serializeTomlValue(baseUrl)}`,
+    `env_key = "OPENAI_API_KEY"`,
+    `env_http_headers = ${serializeTomlValue({
+      [LITELLM_CUSTOMER_ID_HEADER]: spendTrackingEnvs.sessionTagEnv,
+      [LITELLM_TAGS_HEADER]: spendTrackingEnvs.runTagEnv,
+    })}`,
+  ].join("\n");
+
+  let content: string;
+  if (!existingToml.trim()) {
+    content = `${rootKey}\n\n${providerSection}\n`;
+  } else {
+    // Insert root key before the first [section] header so it stays root-level
+    const firstSection = existingToml.search(/^\[/m);
+    if (firstSection > 0) {
+      content = existingToml.slice(0, firstSection) + rootKey + "\n\n" + existingToml.slice(firstSection).trimEnd() + "\n\n" + providerSection + "\n";
+    } else if (firstSection === 0) {
+      content = rootKey + "\n\n" + existingToml.trimEnd() + "\n\n" + providerSection + "\n";
+    } else {
+      // No section headers — just append
+      content = existingToml.trimEnd() + "\n\n" + rootKey + "\n\n" + providerSection + "\n";
+    }
+  }
+
+  await sandbox.files.write(settingsPath, content);
 }
