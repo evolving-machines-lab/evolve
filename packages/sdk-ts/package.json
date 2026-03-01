@@ -85,6 +85,7 @@
     "test:22": "tsx tests/integration/22-storage-dx.ts",
     "test:23": "tsx tests/integration/23-storage-edge-cases.ts",
     "test:24": "tsx tests/integration/24-kimi-gateway-hello.ts",
+    "test:26": "tsx tests/integration/26-storage-full-surface.ts",
     "test:claude": "tsx tests/integration/01-all-agents-parallel.ts claude",
     "test:codex": "tsx tests/integration/01-all-agents-parallel.ts codex",
     "test:gemini": "tsx tests/integration/01-all-agents-parallel.ts gemini",

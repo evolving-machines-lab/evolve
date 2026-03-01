@@ -1155,12 +1155,13 @@ async function downloadArchiveToLocal(
 }
 
 /**
- * List files inside a tar.gz archive with entry type validation.
+ * List regular files inside a tar.gz archive with entry type validation.
  *
- * Single pass using `tar -tvzf` (verbose). Parses the first char of each line
- * for entry type validation (allowlist: '-' files and 'd' dirs only), and
- * extracts paths from `tar -tzf` (compact format, platform-stable) in the same call
- * by running both in parallel on the same archive (disk-cached after first read).
+ * Uses `tar -tvzf` (verbose) for type checking and `tar -tzf` (compact) for
+ * path listing. Allows regular files ('-'), directories ('d'), and symlinks ('l')
+ * but only returns paths of regular files. Symlinks are allowed to exist in the
+ * archive (needed for sandbox environments) but excluded from the file list to
+ * prevent symlink-following attacks in downloadFiles().
  */
 async function listTarFiles(archivePath: string): Promise<string[]> {
   await ensureTarAvailable();
@@ -1172,17 +1173,29 @@ async function listTarFiles(archivePath: string): Promise<string[]> {
     execAsync(`tar -tzf ${shellEscape(archivePath)}`, { maxBuffer: TAR_MAX_BUFFER }),
   ]);
 
-  // Validate entry types from verbose output
-  for (const line of verbose.stdout.trim().split("\n").filter(Boolean)) {
+  // Parse verbose output: validate entry types and track symlinks
+  const symlinkPaths = new Set<string>();
+  const verboseLines = verbose.stdout.trim().split("\n").filter(Boolean);
+  const compactLines = compact.stdout.trim().split("\n").filter(Boolean);
+
+  let compactIdx = 0;
+  for (const line of verboseLines) {
     if (line.startsWith("total ")) continue;
     const typeChar = line[0];
-    if (typeChar !== "-" && typeChar !== "d") {
+    if (typeChar !== "-" && typeChar !== "d" && typeChar !== "l") {
       throw new Error(`Archive contains unsupported entry type: "${typeChar}"`);
     }
+    // Track symlinks to exclude from file list
+    if (typeChar === "l" && compactIdx < compactLines.length) {
+      symlinkPaths.add(compactLines[compactIdx]);
+    }
+    compactIdx++;
   }
 
-  // Extract file paths from compact output (platform-stable format)
-  const allFiles = compact.stdout.trim().split("\n").filter((f) => f && !f.endsWith("/"));
+  // Return only regular files (exclude dirs and symlinks)
+  const allFiles = compactLines.filter(
+    (f) => f && !f.endsWith("/") && !symlinkPaths.has(f)
+  );
   return assertSafePaths(allFiles);
 }
 

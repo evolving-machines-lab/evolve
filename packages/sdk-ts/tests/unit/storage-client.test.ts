@@ -671,7 +671,7 @@ async function testSecurityHardening(): Promise<void> {
   const originalBuffer = mockArchiveBuffer;
   const originalHash = mockArchiveHash;
 
-  // A) Archive with symlink entry should be rejected
+  // A) Archive with symlink entry should succeed but exclude symlinks from file list
   const symlinkArchive = await createSymlinkArchive();
   try {
     mockArchiveBuffer = symlinkArchive.buffer;
@@ -688,15 +688,28 @@ async function testSecurityHardening(): Promise<void> {
     installMockFetch();
 
     const s = storage({ url: "s3://test-bucket/test-prefix" });
-    await assertThrows(
-      () => s.downloadFiles("ckpt_symlink"),
-      "unsupported entry type",
-      "downloadFiles rejects archive symlink entries"
+    // downloadFiles should succeed — symlinks are allowed but excluded from results
+    const files = await s.downloadFiles("ckpt_symlink");
+    assert(
+      typeof files === "object" && files !== null,
+      "downloadFiles succeeds on archive with symlinks"
     );
-    await assertThrows(
-      () => s.downloadCheckpoint("ckpt_symlink"),
-      "unsupported entry type",
-      "downloadCheckpoint rejects archive symlink entries"
+    // The safe.txt file should be in the results
+    const keys = Object.keys(files);
+    assert(
+      keys.some((k) => k.includes("safe.txt")),
+      "downloadFiles includes regular files from archive with symlinks"
+    );
+    // The symlink entry should NOT be in the results
+    assert(
+      !keys.some((k) => k.includes("link-outside")),
+      "downloadFiles excludes symlink entries from results"
+    );
+    // downloadCheckpoint should also succeed (full extract)
+    const outPath = await s.downloadCheckpoint("ckpt_symlink", { extract: false });
+    assert(
+      typeof outPath === "string" && outPath.length > 0,
+      "downloadCheckpoint succeeds on archive with symlinks"
     );
   } finally {
     restoreFetch();
