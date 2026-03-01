@@ -7,7 +7,7 @@
  * All SDK integration is isolated here for easy maintenance.
  */
 
-import { Evolve, type AgentConfig, type AgentType, type ReasoningEffort, type CheckpointInfo } from '@evolvingmachines/sdk';
+import { Evolve, storage as createStorageClient, type AgentConfig, type AgentType, type ReasoningEffort, type CheckpointInfo, type StorageClient, type StorageConfig } from '@evolvingmachines/sdk';
 import { createE2BProvider } from '@evolvingmachines/e2b';
 import { createDaytonaProvider } from '@evolvingmachines/daytona';
 import { createModalProvider } from '@evolvingmachines/modal';
@@ -39,6 +39,11 @@ import type {
   CheckpointInfoResponse,
   CheckpointParams,
   ListCheckpointsParams,
+  StorageConfigParams,
+  StorageClientListParams,
+  StorageClientGetParams,
+  StorageClientDownloadParams,
+  StorageClientDownloadFilesParams,
 } from './types';
 
 // =============================================================================
@@ -230,6 +235,15 @@ export class EvolveAdapter {
         return this.checkpoint(params);
       case 'list_checkpoints':
         return this.listCheckpoints(params);
+      // Standalone storage client methods
+      case 'storage_list_checkpoints':
+        return this.storageListCheckpoints(params);
+      case 'storage_get_checkpoint':
+        return this.storageGetCheckpoint(params);
+      case 'storage_download_checkpoint':
+        return this.storageDownloadCheckpoint(params);
+      case 'storage_download_files':
+        return this.storageDownloadFiles(params);
       // Multi-instance methods (for Swarm)
       case 'create_instance':
         return this.createInstance(params);
@@ -473,6 +487,53 @@ export class EvolveAdapter {
       tag: params?.tag,
     });
     return list.map(info => this.toCheckpointResponse(info));
+  }
+
+  // ===========================================================================
+  // STANDALONE STORAGE CLIENT METHODS
+  // ===========================================================================
+
+  /**
+   * Get a StorageClient from params — standalone (from config) or bound (from Evolve instance)
+   */
+  private getStorageClient(storageConfig?: StorageConfigParams): StorageClient {
+    if (storageConfig && Object.keys(storageConfig).length > 0) {
+      return createStorageClient(storageConfig as StorageConfig);
+    }
+    // Fall through to initialized Evolve's bound storage client
+    this.ensureInitialized();
+    return this.evolve!.storage();
+  }
+
+  async storageListCheckpoints(params: StorageClientListParams): Promise<CheckpointInfoResponse[]> {
+    const client = this.getStorageClient(params.storage);
+    const list = await client.listCheckpoints({ limit: params.limit, tag: params.tag });
+    return list.map(info => this.toCheckpointResponse(info));
+  }
+
+  async storageGetCheckpoint(params: StorageClientGetParams): Promise<CheckpointInfoResponse> {
+    const client = this.getStorageClient(params.storage);
+    const info = await client.getCheckpoint(params.id);
+    return this.toCheckpointResponse(info);
+  }
+
+  async storageDownloadCheckpoint(params: StorageClientDownloadParams): Promise<{ path: string }> {
+    const client = this.getStorageClient(params.storage);
+    const path = await client.downloadCheckpoint(params.id, {
+      to: params.to,
+      extract: params.extract,
+    });
+    return { path };
+  }
+
+  async storageDownloadFiles(params: StorageClientDownloadFilesParams): Promise<{ files: EncodedFileMap }> {
+    const client = this.getStorageClient(params.storage);
+    const files = await client.downloadFiles(params.id, {
+      files: params.files,
+      glob: params.glob,
+      to: params.to,
+    });
+    return { files: encodeFiles(files) };
   }
 
   /**

@@ -19,6 +19,7 @@ from .config import (
     StorageCredentials,
 )
 from .results import AgentResponse, CheckpointInfo, ExecuteResult, OutputResult, SessionStatus
+from .storage_client import StorageClient
 from .utils import read_local_dir, save_local_dir
 from .bridge import (
     SandboxNotFoundError,
@@ -70,6 +71,36 @@ from .pipeline import (
 )
 
 from typing import List, Optional
+
+
+async def storage(config: Optional[StorageConfig] = None) -> StorageClient:
+    """Create a standalone storage client for checkpoint browsing and download.
+
+    Returns a ``StorageClient`` that manages its own bridge subprocess.
+    Use as an async context manager to ensure cleanup.
+
+    Args:
+        config: Storage configuration (BYOK S3 or None for gateway mode)
+
+    Returns:
+        StorageClient with list_checkpoints, get_checkpoint,
+        download_checkpoint, download_files methods
+
+    Example:
+        >>> from evolve import storage, StorageConfig
+        >>>
+        >>> # BYOK mode
+        >>> async with await storage(StorageConfig(url='s3://my-bucket/')) as store:
+        ...     checkpoints = await store.list_checkpoints(limit=5)
+        ...     files = await store.download_files(checkpoints[0].id)
+        >>>
+        >>> # Gateway mode (uses EVOLVE_API_KEY)
+        >>> async with await storage() as store:
+        ...     checkpoints = await store.list_checkpoints()
+    """
+    from .bridge import BridgeManager
+    bridge = BridgeManager()
+    return StorageClient(bridge, config or StorageConfig(), _owns_bridge=True)
 
 
 async def list_checkpoints(
@@ -136,7 +167,11 @@ __all__ = [
     'OutputResult',
     'SessionStatus',
 
+    # Storage client
+    'StorageClient',
+
     # Standalone functions
+    'storage',
     'list_checkpoints',
 
     # Swarm Configuration

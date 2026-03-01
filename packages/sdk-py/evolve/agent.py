@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Type, Union
 from .bridge import BridgeManager, SandboxNotFoundError
 from .config import AgentConfig, ComposioSetup, SandboxProvider, SchemaOptions, StorageConfig, WorkspaceMode
 from .results import AgentResponse, CheckpointInfo, ExecuteResult, OutputResult, SessionStatus
+from .storage_client import StorageClient
 from . import composio as composio_helpers
 from .schema import is_pydantic_model, is_dataclass, to_json_schema, validate_and_parse
 from .utils import _encode_files_for_transport, _filter_none
@@ -103,7 +104,7 @@ class Evolve:
         self.session_tag_prefix = session_tag_prefix
         self.schema_options = schema_options or SchemaOptions()
         self._composio = composio
-        self.storage = storage
+        self._storage_config = storage
 
         # Schema handling: store original + convert to JSON Schema
         self._schema = schema
@@ -150,7 +151,7 @@ class Evolve:
                 # Composio Tool Router
                 'composio': self._composio.to_dict() if self._composio else None,
                 # Storage / Checkpointing
-                'storage': self.storage.to_dict() if self.storage else None,
+                'storage': self._storage_config.to_dict() if self._storage_config else None,
                 # Always forward events
                 'forward_stdout': True,
                 'forward_stderr': True,
@@ -477,6 +478,28 @@ class Evolve:
             parent_id=data.get('parent_id'),
             comment=data.get('comment'),
         )
+
+    def storage(self) -> StorageClient:
+        """Get a StorageClient bound to this instance's storage configuration.
+
+        Same API surface as the standalone ``storage()`` factory, but uses
+        the Evolve instance's bridge and gateway credentials.
+
+        Returns:
+            StorageClient with list_checkpoints, get_checkpoint,
+            download_checkpoint, download_files methods
+
+        Raises:
+            RuntimeError: If storage is not configured
+
+        Example:
+            >>> store = evolve.storage()
+            >>> checkpoints = await store.list_checkpoints(limit=5)
+            >>> files = await store.download_files(checkpoints[0].id)
+        """
+        if self._storage_config is None:
+            raise RuntimeError("Storage not configured. Pass storage=StorageConfig() to Evolve().")
+        return StorageClient(self.bridge, storage_config=None)
 
     async def get_session(self) -> Optional[str]:
         """Get sandbox ID for reuse.
