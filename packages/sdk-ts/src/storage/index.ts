@@ -703,8 +703,9 @@ export async function restoreCheckpoint(
     } catch (err: unknown) {
       // Only treat known "not found" errors as missing checkpoint — rethrow everything else
       const name = (err as { name?: string }).name;
+      const message = (err as { message?: string }).message;
       const statusCode = (err as any)?.$metadata?.httpStatusCode;
-      if (statusCode === 404 || name === "NoSuchKey" || name === "NotFound") {
+      if (statusCode === 404 || name === "NoSuchKey" || name === "NotFound" || message === "NoSuchKey" || message === "NotFound") {
         throw new Error(`Checkpoint ${checkpointId} not found`);
       }
       throw err;
@@ -963,8 +964,9 @@ async function getCheckpointInfo(
     } catch (err: unknown) {
       // Only treat known "not found" errors as missing checkpoint
       const name = (err as { name?: string }).name;
+      const message = (err as { message?: string }).message;
       const statusCode = (err as any)?.$metadata?.httpStatusCode;
-      if (statusCode === 404 || name === "NoSuchKey" || name === "NotFound") {
+      if (statusCode === 404 || name === "NoSuchKey" || name === "NotFound" || message === "NoSuchKey" || message === "NotFound") {
         throw new Error(`Checkpoint ${id} not found`);
       }
       throw err;

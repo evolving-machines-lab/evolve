@@ -140,6 +140,7 @@ export class Evolve extends EventEmitter {
   withAgent(config?: AgentConfig): this {
     if (config) {
       this.config.agent = config;
+      this._cachedGatewayOverrides = null;
     }
     return this;
   }
