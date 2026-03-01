@@ -701,16 +701,13 @@ export async function restoreCheckpoint(
     try {
       metadata = await s3GetJson<typeof metadata>(storage, key);
     } catch (err: unknown) {
-      // Re-throw known non-404 AWS errors so callers see the real problem
-      // (e.g. bad credentials, permission denied, network issues).
+      // Only treat known "not found" errors as missing checkpoint — rethrow everything else
       const name = (err as { name?: string }).name;
-      if (name === "AccessDenied" || name === "InvalidAccessKeyId" ||
-          name === "SignatureDoesNotMatch" || name === "ExpiredToken" ||
-          name === "NetworkingError" || name === "TimeoutError") {
-        throw err;
+      const statusCode = (err as any)?.$metadata?.httpStatusCode;
+      if (statusCode === 404 || name === "NoSuchKey" || name === "NotFound") {
+        throw new Error(`Checkpoint ${checkpointId} not found`);
       }
-      // Everything else (NoSuchKey, NotFound, generic errors) → friendly not found
-      throw new Error(`Checkpoint ${checkpointId} not found`);
+      throw err;
     }
 
     hash = metadata.hash;
@@ -1156,41 +1153,34 @@ async function downloadArchiveToLocal(
 }
 
 /**
- * Reject archives containing unsupported entry types.
- * Uses `tar -tvzf` (verbose); first char indicates type.
- * Allowlist: regular files ('-') and directories ('d') only.
+ * List files inside a tar.gz archive with entry type validation.
+ *
+ * Single pass using `tar -tvzf` (verbose). Parses the first char of each line
+ * for entry type validation (allowlist: '-' files and 'd' dirs only), and
+ * extracts paths from `tar -tzf` (compact format, platform-stable) in the same call
+ * by running both in parallel on the same archive (disk-cached after first read).
  */
-async function assertSupportedEntryTypes(archivePath: string): Promise<void> {
-  const { stdout } = await execAsync(
-    `tar -tvzf ${shellEscape(archivePath)}`,
-    { maxBuffer: TAR_MAX_BUFFER }
-  );
-  for (const line of stdout.trim().split("\n").filter(Boolean)) {
-    // Some tar variants print summary lines like "total N".
+async function listTarFiles(archivePath: string): Promise<string[]> {
+  await ensureTarAvailable();
+
+  // Run verbose (type checking) and compact (path listing) in parallel.
+  // Both decompress the same archive — second hits disk cache.
+  const [verbose, compact] = await Promise.all([
+    execAsync(`tar -tvzf ${shellEscape(archivePath)}`, { maxBuffer: TAR_MAX_BUFFER }),
+    execAsync(`tar -tzf ${shellEscape(archivePath)}`, { maxBuffer: TAR_MAX_BUFFER }),
+  ]);
+
+  // Validate entry types from verbose output
+  for (const line of verbose.stdout.trim().split("\n").filter(Boolean)) {
     if (line.startsWith("total ")) continue;
     const typeChar = line[0];
     if (typeChar !== "-" && typeChar !== "d") {
       throw new Error(`Archive contains unsupported entry type: "${typeChar}"`);
     }
   }
-}
 
-/**
- * List files inside a tar.gz archive.
- *
- * Two passes: `tar -tvzf` for type validation, then `tar -tzf`
- * for reliable path listing. Compact listing format is platform-stable — verbose
- * format varies (BSD tar shows year instead of HH:MM for files >6 months old).
- * Double decompression is negligible since the archive is in disk cache.
- */
-async function listTarFiles(archivePath: string): Promise<string[]> {
-  await ensureTarAvailable();
-  await assertSupportedEntryTypes(archivePath);
-  const { stdout } = await execAsync(
-    `tar -tzf ${shellEscape(archivePath)}`,
-    { maxBuffer: TAR_MAX_BUFFER }
-  );
-  const allFiles = stdout.trim().split("\n").filter((f) => f && !f.endsWith("/"));
+  // Extract file paths from compact output (platform-stable format)
+  const allFiles = compact.stdout.trim().split("\n").filter((f) => f && !f.endsWith("/"));
   return assertSafePaths(allFiles);
 }
 
@@ -1263,12 +1253,25 @@ function globToRegex(pattern: string): RegExp {
  * const s = storage();
  * const files = await s.downloadFiles("ckpt_abc123", { to: "./output" });
  */
-export function storage(
-  config?: StorageConfig,
-  /** @internal — used by Evolve.storage() to pass bound gateway credentials */
-  _overrides?: { gatewayUrl?: string; gatewayApiKey?: string }
+/**
+ * Internal factory with gateway credential binding.
+ * Used by Evolve.storage() to pass bound credentials without leaking
+ * the overrides parameter into the public storage() signature.
+ */
+export function createBoundStorageClient(
+  config: StorageConfig,
+  overrides: { gatewayUrl?: string; gatewayApiKey?: string }
 ): StorageClient {
-  const resolved = resolveStorageForStandalone(config || {}, _overrides);
+  const resolved = resolveStorageForStandalone(config, overrides);
+  return buildStorageClient(resolved);
+}
+
+export function storage(config?: StorageConfig): StorageClient {
+  const resolved = resolveStorageForStandalone(config || {});
+  return buildStorageClient(resolved);
+}
+
+function buildStorageClient(resolved: ResolvedStorageConfig): StorageClient {
 
   return {
     async listCheckpoints(options) {
@@ -1341,10 +1344,16 @@ export function storage(
           return {};
         }
 
-        // Extract all to temp dir (avoids ARG_MAX for large file lists).
-        // Only targetFiles are read into the FileMap; extras are cleaned up in finally.
+        // Extract to temp dir. Try selective extraction first; fall back to
+        // full extraction if the file list is too long for ARG_MAX.
         extractDir = join(tmpdir(), `evolve-extract-${Date.now()}`);
-        await extractTarFiles(tmpPath, extractDir);
+        try {
+          await extractTarFiles(tmpPath, extractDir, targetFiles);
+        } catch {
+          await rm(extractDir, { recursive: true, force: true }).catch(() => {});
+          extractDir = join(tmpdir(), `evolve-extract-${Date.now()}`);
+          await extractTarFiles(tmpPath, extractDir);
+        }
 
         // Read into FileMap with path validation
         const fileMap: FileMap = {};

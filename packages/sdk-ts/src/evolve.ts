@@ -32,7 +32,7 @@ import type { OutputEvent } from "./parsers";
 import { isZodSchema, resolveAgentConfig, resolveDefaultSandbox } from "./utils";
 import { composioHelpers } from "./composio";
 import { getGatewayMcpServers, DEFAULT_DASHBOARD_URL } from "./constants";
-import { resolveStorageConfig, storage as createStorageClient } from "./storage";
+import { resolveStorageConfig, createBoundStorageClient } from "./storage";
 import type { CheckpointInfo, StorageClient } from "./types";
 
 // =============================================================================
@@ -582,18 +582,24 @@ export class Evolve extends EventEmitter {
     return this.agent.checkpoint(options);
   }
 
+  private _cachedGatewayOverrides: { gatewayUrl: string; gatewayApiKey: string } | undefined | null = null;
+
   /**
    * Resolve gateway credentials from agent config for storage operations.
+   * Memoized — agent config is immutable after .withAgent().
    */
   private resolveGatewayOverrides(): { gatewayUrl: string; gatewayApiKey: string } | undefined {
+    if (this._cachedGatewayOverrides !== null) return this._cachedGatewayOverrides || undefined;
     try {
       const agentConfig = resolveAgentConfig(this.config.agent);
       if (!agentConfig.isDirectMode) {
-        return { gatewayUrl: DEFAULT_DASHBOARD_URL, gatewayApiKey: agentConfig.apiKey };
+        this._cachedGatewayOverrides = { gatewayUrl: DEFAULT_DASHBOARD_URL, gatewayApiKey: agentConfig.apiKey };
+        return this._cachedGatewayOverrides;
       }
     } catch {
       // No agent configured — fall through to env-based resolution
     }
+    this._cachedGatewayOverrides = undefined;
     return undefined;
   }
 
@@ -609,7 +615,7 @@ export class Evolve extends EventEmitter {
     if (this.config.storage === undefined) {
       throw new Error("Storage not configured. Call .withStorage().");
     }
-    const s = createStorageClient(this.config.storage, this.resolveGatewayOverrides());
+    const s = createBoundStorageClient(this.config.storage, this.resolveGatewayOverrides() || {});
     return s.listCheckpoints(options);
   }
 
@@ -621,7 +627,7 @@ export class Evolve extends EventEmitter {
     if (this.config.storage === undefined) {
       throw new Error("Storage not configured. Call .withStorage().");
     }
-    return createStorageClient(this.config.storage, this.resolveGatewayOverrides());
+    return createBoundStorageClient(this.config.storage, this.resolveGatewayOverrides() || {});
   }
 
   // ===========================================================================
