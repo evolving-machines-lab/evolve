@@ -570,35 +570,10 @@ const files = await store.downloadFiles("checkpt_m5abc_xyz123", {
     glob: ["workspace/**/*.ts"],              // (optional) Glob patterns to match files
     to: "./output",                           // (optional) Save to disk (default: in-memory only)
 });
-// files is a Record<string, Buffer> — relative path → file contents
+// files is a Map<string, Buffer> — relative path → file contents
 ```
 
-`downloadFiles` returns a `FileMap` (`Record<string, Buffer>`) of matching files. Pass `"latest"` instead of a checkpoint ID to any method to resolve the most recent checkpoint.
-
-**Downloading entire folders:**
-
-Use glob patterns to download all files in a specific directory:
-
-```ts
-// All files in workspace/output/
-const output = await store.downloadFiles(id, { glob: ["workspace/output/**"] });
-
-// All files in workspace/ (everything)
-const all = await store.downloadFiles(id, { glob: ["workspace/**"] });
-
-// Multiple folders
-const mixed = await store.downloadFiles(id, {
-    glob: ["workspace/output/**", "workspace/data/**"],
-});
-
-// Save directly to disk
-await store.downloadFiles(id, {
-    glob: ["workspace/output/**"],
-    to: "./local-output",
-});
-```
-
-> **Paths are relative to `/home/user/`** — the tar archive root. Use `workspace/...` not `/home/user/workspace/...`.
+`downloadFiles` returns a `FileMap` (`Map<string, Buffer>`) of matching files. Pass `"latest"` instead of a checkpoint ID to any method to resolve the most recent checkpoint.
 
 **Instance-bound `storage()` accessor:**
 
@@ -670,7 +645,7 @@ interface DownloadFilesOptions {
     to?: string;       // Save to disk (default: in-memory only)
 }
 
-type FileMap = Record<string, Buffer>;  // relative path → file contents
+type FileMap = Map<string, Buffer>;  // relative path → file contents
 ```
 
 ### End-to-End Example
