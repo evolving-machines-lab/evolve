@@ -715,6 +715,8 @@ async function testSecurityHardening(): Promise<void> {
     restoreFetch();
     _testSetAwsSdk(null);
     await rm(symlinkArchive.path, { force: true }).catch(() => {});
+    // Clean up raw archive written to cwd by downloadCheckpoint(extract: false)
+    await rm(join(process.cwd(), "checkpoint-ckpt_symlink.tar.gz"), { force: true }).catch(() => {});
   }
 
   // B) Archive with traversal path should be rejected

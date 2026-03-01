@@ -12,7 +12,7 @@ import { createWriteStream } from "node:fs";
 import { writeFile, readFile, mkdir, rm, unlink, copyFile } from "node:fs/promises";
 import { join, dirname, normalize, resolve, isAbsolute, relative } from "node:path";
 import { tmpdir } from "node:os";
-import { exec } from "node:child_process";
+import { exec, execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 import type {
@@ -30,6 +30,7 @@ import { getAgentConfig } from "../registry";
 import { DEFAULT_DASHBOARD_URL } from "../constants";
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 // =============================================================================
 // TEST HELPERS (internal — used by unit tests to inject mock AWS SDK)
@@ -1073,7 +1074,7 @@ let tarChecked = false;
 async function ensureTarAvailable(): Promise<void> {
   if (tarChecked) return;
   try {
-    await execAsync("tar --version");
+    await execFileAsync("tar", ["--version"]);
     tarChecked = true;
   } catch {
     throw new Error(
@@ -1168,13 +1169,15 @@ async function listTarFiles(archivePath: string): Promise<string[]> {
 
   // Run verbose (type checking) and compact (path listing) in parallel.
   // Both decompress the same archive — second hits disk cache.
+  // Uses execFileAsync (no shell) for cross-platform safety.
   const [verbose, compact] = await Promise.all([
-    execAsync(`tar -tvzf ${shellEscape(archivePath)}`, { maxBuffer: TAR_MAX_BUFFER }),
-    execAsync(`tar -tzf ${shellEscape(archivePath)}`, { maxBuffer: TAR_MAX_BUFFER }),
+    execFileAsync("tar", ["-tvzf", archivePath], { maxBuffer: TAR_MAX_BUFFER }),
+    execFileAsync("tar", ["-tzf", archivePath], { maxBuffer: TAR_MAX_BUFFER }),
   ]);
 
   // Parse verbose output: validate entry types and track symlinks
   const symlinkPaths = new Set<string>();
+  const dirPaths: string[] = [];
   const verboseLines = verbose.stdout.trim().split("\n").filter(Boolean);
   const compactLines = compact.stdout.trim().split("\n").filter(Boolean);
 
@@ -1185,12 +1188,21 @@ async function listTarFiles(archivePath: string): Promise<string[]> {
     if (typeChar !== "-" && typeChar !== "d" && typeChar !== "l") {
       throw new Error(`Archive contains unsupported entry type: "${typeChar}"`);
     }
-    // Track symlinks to exclude from file list
-    if (typeChar === "l" && compactIdx < compactLines.length) {
-      symlinkPaths.add(compactLines[compactIdx]);
+    if (compactIdx < compactLines.length) {
+      if (typeChar === "l") {
+        symlinkPaths.add(compactLines[compactIdx]);
+      } else if (typeChar === "d") {
+        dirPaths.push(compactLines[compactIdx].replace(/\/$/, ""));
+      }
     }
     compactIdx++;
   }
+
+  // Validate ALL entry paths — not just regular files.
+  // Directories and symlinks are extracted by downloadCheckpoint, so their
+  // paths must also be free of traversal (../, absolute, null bytes).
+  assertSafePaths(dirPaths);
+  assertSafePaths([...symlinkPaths]);
 
   // Return only regular files (exclude dirs and symlinks)
   const allFiles = compactLines.filter(
@@ -1211,13 +1223,11 @@ async function extractTarFiles(
 ): Promise<void> {
   await ensureTarAvailable();
   await mkdir(toDir, { recursive: true });
-  const fileArgs = specificFiles
-    ? " -- " + specificFiles.map((f) => shellEscape(f)).join(" ")
-    : "";
-  await execAsync(
-    `tar -xzf ${shellEscape(archivePath)} --no-same-owner --no-same-permissions -C ${shellEscape(toDir)}${fileArgs}`,
-    { maxBuffer: TAR_MAX_BUFFER }
-  );
+  const args = ["-xzf", archivePath, "--no-same-owner", "--no-same-permissions", "-C", toDir];
+  if (specificFiles?.length) {
+    args.push("--", ...specificFiles);
+  }
+  await execFileAsync("tar", args, { maxBuffer: TAR_MAX_BUFFER });
 }
 
 /**

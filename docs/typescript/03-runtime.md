@@ -475,7 +475,7 @@ const result = await evolve.run({
     checkpointComment: "initial draft",  // (optional) Label
 });
 
-console.log(result.checkpoint?.id);       // "checkpt_m5abc_xyz123"
+console.log(result.checkpoint?.id);       // "ckpt_m5abc_xyz123"
 console.log(result.checkpoint?.hash);     // SHA-256 of archive
 console.log(result.checkpoint?.comment);  // "initial draft"
 ```
@@ -494,7 +494,7 @@ Snapshot at any point (between runs, after manual setup, etc.):
 
 ```ts
 const checkpt = await evolve.checkpoint({ comment: "before refactor" });
-console.log(checkpt.id);  // "checkpt_m5def_abc456"
+console.log(checkpt.id);  // "ckpt_m5def_abc456"
 ```
 
 Requires an active sandbox (`run()` must have been called first).
@@ -507,7 +507,7 @@ Pass `from` to `run()` to restore a checkpoint into a fresh sandbox before runni
 // Restore by checkpoint ID
 const result = await evolve.run({
     prompt: "Continue where we left off",
-    from: "checkpt_m5abc_xyz123",
+    from: "ckpt_m5abc_xyz123",
 });
 
 // Restore the most recent checkpoint
@@ -543,10 +543,10 @@ for (const checkpt of checkpoints) {
 import { storage } from "@evolvingmachines/sdk";
 
 // BYOK
-const store = storage({ url: "s3://my-bucket/snapshots/" });
+const byok = storage({ url: "s3://my-bucket/snapshots/" });
 
 // Gateway (reads EVOLVE_API_KEY from env)
-const store = storage();
+const gateway = storage();
 ```
 
 The `storage()` factory returns a `StorageClient` with four methods:
@@ -556,16 +556,16 @@ The `storage()` factory returns a `StorageClient` with four methods:
 const list = await store.listCheckpoints({ limit: 10, tag: "my-session" });
 
 // Get a single checkpoint by ID (O(1) metadata lookup)
-const info = await store.getCheckpoint("checkpt_m5abc_xyz123");
+const info = await store.getCheckpoint("ckpt_m5abc_xyz123");
 
 // Download full checkpoint archive to a local directory
-const outputDir = await store.downloadCheckpoint("checkpt_m5abc_xyz123", {
+const outputDir = await store.downloadCheckpoint("ckpt_m5abc_xyz123", {
     to: "./restored",   // (optional) Output directory (default: cwd)
     extract: true,      // (optional) Extract archive (default: true). Set false to keep raw .tar.gz
 });
 
 // Download specific files without extracting the full archive
-const files = await store.downloadFiles("checkpt_m5abc_xyz123", {
+const files = await store.downloadFiles("ckpt_m5abc_xyz123", {
     files: ["workspace/output/result.json"],  // (optional) Exact file paths to extract
     glob: ["workspace/**/*.ts"],              // (optional) Glob patterns to match files
     to: "./output",                           // (optional) Save to disk (default: in-memory only)
