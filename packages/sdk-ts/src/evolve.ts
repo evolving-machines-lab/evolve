@@ -32,7 +32,7 @@ import type { OutputEvent } from "./parsers";
 import { isZodSchema, resolveAgentConfig, resolveDefaultSandbox } from "./utils";
 import { composioHelpers } from "./composio";
 import { getGatewayMcpServers, DEFAULT_DASHBOARD_URL } from "./constants";
-import { resolveStorageConfig, listCheckpoints, storage as createStorageClient } from "./storage";
+import { resolveStorageConfig, storage as createStorageClient } from "./storage";
 import type { CheckpointInfo, StorageClient } from "./types";
 
 // =============================================================================
@@ -583,6 +583,21 @@ export class Evolve extends EventEmitter {
   }
 
   /**
+   * Resolve gateway credentials from agent config for storage operations.
+   */
+  private resolveGatewayOverrides(): { gatewayUrl: string; gatewayApiKey: string } | undefined {
+    try {
+      const agentConfig = resolveAgentConfig(this.config.agent);
+      if (!agentConfig.isDirectMode) {
+        return { gatewayUrl: DEFAULT_DASHBOARD_URL, gatewayApiKey: agentConfig.apiKey };
+      }
+    } catch {
+      // No agent configured — fall through to env-based resolution
+    }
+    return undefined;
+  }
+
+  /**
    * List checkpoints (requires .withStorage()).
    *
    * Does not require an agent or sandbox — only storage configuration.
@@ -594,7 +609,8 @@ export class Evolve extends EventEmitter {
     if (this.config.storage === undefined) {
       throw new Error("Storage not configured. Call .withStorage().");
     }
-    return listCheckpoints(this.config.storage, options);
+    const s = createStorageClient(this.config.storage, this.resolveGatewayOverrides());
+    return s.listCheckpoints(options);
   }
 
   /**
@@ -605,7 +621,7 @@ export class Evolve extends EventEmitter {
     if (this.config.storage === undefined) {
       throw new Error("Storage not configured. Call .withStorage().");
     }
-    return createStorageClient(this.config.storage);
+    return createStorageClient(this.config.storage, this.resolveGatewayOverrides());
   }
 
   // ===========================================================================

@@ -776,11 +776,53 @@ async function testSecurityHardening(): Promise<void> {
 }
 
 // =============================================================================
+// TESTS: Evolve.storage() accessor
+// =============================================================================
+
+async function testEvolveStorageAccessor(): Promise<void> {
+  console.log("\n[7] Evolve.storage() Accessor");
+
+  const sdk = await import("../../dist/index.js");
+  const { Evolve } = sdk;
+
+  // Throws without .withStorage()
+  const bare = new Evolve();
+  try {
+    bare.storage();
+    assert(false, "should have thrown");
+  } catch (err: any) {
+    assert(err.message.includes("Storage not configured"), "throws 'Storage not configured' without .withStorage()");
+  }
+
+  // Returns a StorageClient with correct methods
+  const e = new Evolve().withStorage({ url: "s3://test-bucket/test-prefix" });
+  const s = e.storage();
+  assert(typeof s.listCheckpoints === "function", "Evolve.storage() has listCheckpoints");
+  assert(typeof s.getCheckpoint === "function", "Evolve.storage() has getCheckpoint");
+  assert(typeof s.downloadCheckpoint === "function", "Evolve.storage() has downloadCheckpoint");
+  assert(typeof s.downloadFiles === "function", "Evolve.storage() has downloadFiles");
+
+  // Verify it works — mock S3 and call listCheckpoints
+  const mockSdk = createMockAwsSdk({
+    "test-prefix/checkpoints/ckpt_test_001.json": MOCK_CHECKPOINT,
+  });
+  _testSetAwsSdk(mockSdk);
+
+  try {
+    const list = await s.listCheckpoints();
+    assert(list.length === 1, "Evolve.storage().listCheckpoints() returns data");
+    assertEqual(list[0].id, "ckpt_test_001", "Evolve.storage() routes through correctly");
+  } finally {
+    _testSetAwsSdk(null);
+  }
+}
+
+// =============================================================================
 // TESTS: storage() export available
 // =============================================================================
 
 async function testExport(): Promise<void> {
-  console.log("\n[7] Export Availability");
+  console.log("\n[8] Export Availability");
 
   const sdk = await import("../../dist/index.js");
   assert(typeof sdk.storage === "function", "storage is exported from dist");
@@ -805,6 +847,7 @@ async function main(): Promise<void> {
   await testIntegrityFailure();
   await testLatestNoCheckpoints();
   await testSecurityHardening();
+  await testEvolveStorageAccessor();
   await testExport();
 
   // Cleanup

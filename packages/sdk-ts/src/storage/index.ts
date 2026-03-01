@@ -521,7 +521,7 @@ async function gatewayGetCheckpoint(
   storage: ResolvedStorageConfig,
   checkpointId: string
 ): Promise<{ id: string; hash: string; tag: string; sizeBytes: number; timestamp: string; agentType?: string; model?: string; workspaceMode?: string; parentId?: string; comment?: string }> {
-  const response = await fetch(`${storage.gatewayUrl}/api/checkpoints/${checkpointId}`, {
+  const response = await fetch(`${storage.gatewayUrl}/api/checkpoints/${encodeURIComponent(checkpointId)}`, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${storage.gatewayApiKey}`,
@@ -775,10 +775,14 @@ export async function restoreCheckpoint(
  * resolveStorageConfig() which requires explicit gateway params. Reads EVOLVE_API_KEY
  * from env for gateway mode detection.
  */
-function resolveStorageForStandalone(config: StorageConfig): ResolvedStorageConfig {
-  const apiKey = process.env.EVOLVE_API_KEY;
+function resolveStorageForStandalone(
+  config: StorageConfig,
+  overrides?: { gatewayUrl?: string; gatewayApiKey?: string }
+): ResolvedStorageConfig {
+  const apiKey = overrides?.gatewayApiKey || process.env.EVOLVE_API_KEY;
+  const gatewayUrl = overrides?.gatewayUrl || DEFAULT_DASHBOARD_URL;
   const isGateway = !config.url && !config.bucket && !!apiKey;
-  return resolveStorageConfig(config, isGateway, DEFAULT_DASHBOARD_URL, apiKey);
+  return resolveStorageConfig(config, isGateway, gatewayUrl, apiKey);
 }
 
 // =============================================================================
@@ -1096,7 +1100,8 @@ async function downloadArchiveToLocal(
   const metadata = await getCheckpointInfo(resolved, checkpointId);
   const downloadUrl = await getArchiveDownloadUrl(resolved, metadata);
 
-  const tmpPath = join(tmpdir(), `evolve-dl-${checkpointId}-${Date.now()}.tar.gz`);
+  const safeId = checkpointId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const tmpPath = join(tmpdir(), `evolve-dl-${safeId}-${Date.now()}.tar.gz`);
   const response = await fetch(downloadUrl);
   if (!response.ok) {
     throw new Error(`Checkpoint download failed (${response.status})`);
@@ -1258,8 +1263,12 @@ function globToRegex(pattern: string): RegExp {
  * const s = storage();
  * const files = await s.downloadFiles("ckpt_abc123", { to: "./output" });
  */
-export function storage(config?: StorageConfig): StorageClient {
-  const resolved = resolveStorageForStandalone(config || {});
+export function storage(
+  config?: StorageConfig,
+  /** @internal — used by Evolve.storage() to pass bound gateway credentials */
+  _overrides?: { gatewayUrl?: string; gatewayApiKey?: string }
+): StorageClient {
+  const resolved = resolveStorageForStandalone(config || {}, _overrides);
 
   return {
     async listCheckpoints(options) {
@@ -1341,12 +1350,8 @@ export function storage(config?: StorageConfig): StorageClient {
         const fileMap: FileMap = {};
         await Promise.all(
           targetFiles.map(async (file) => {
-            try {
-              assertWithinDir(extractDir!, file);
-              fileMap[file] = await readFile(join(extractDir!, file));
-            } catch {
-              // Skip files that failed to read (traversal blocked, dangling symlinks, etc.)
-            }
+            assertWithinDir(extractDir!, file);
+            fileMap[file] = await readFile(join(extractDir!, file));
           })
         );
 
