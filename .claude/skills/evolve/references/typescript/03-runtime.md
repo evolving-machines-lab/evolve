@@ -174,9 +174,8 @@ await evolve.kill();   // Destroys sandbox; next run() creates a new sandbox
 await evolve.setSession("existing-sandbox-id"); // Sets sandbox ID; reconnection happens on next run()
 
 // Checkpointing (requires .withStorage())
-const checkpt = await evolve.checkpoint({ comment: "before refactor" });  // Explicit snapshot of current sandbox
+const ckpt = await evolve.checkpoint({ comment: "before refactor" });  // Explicit snapshot of current sandbox
 const list = await evolve.listCheckpoints({ limit: 10 });              // List checkpoints, newest first
-const files = await evolve.storage().downloadFiles("latest", { glob: ["workspace/**/*.ts"] }); // Download specific files
 ```
 
 `withSession("sandbox-id")` is a builder method for initialization—it sets the sandbox ID before the first `run()`. `setSession()` is a runtime method that actively interrupts any running process, flushes the session log, resets checkpoint lineage, and switches to the new sandbox. They are **not** interchangeable: use `withSession()` when building, `setSession()` when switching mid-session.
@@ -475,7 +474,7 @@ const result = await evolve.run({
     checkpointComment: "initial draft",  // (optional) Label
 });
 
-console.log(result.checkpoint?.id);       // "checkpt_m5abc_xyz123"
+console.log(result.checkpoint?.id);       // "ckpt_m5abc_xyz123"
 console.log(result.checkpoint?.hash);     // SHA-256 of archive
 console.log(result.checkpoint?.comment);  // "initial draft"
 ```
@@ -486,15 +485,15 @@ console.log(result.checkpoint?.comment);  // "initial draft"
 - **Foreground only:** Background runs (via `run({ background: true })`) skip auto-checkpointing entirely.
 - **Exclusions:** The archive excludes `node_modules/`, `__pycache__/`, `*.pyc`, `.cache/`, `.npm/`, `.pip/`, `.venv/`, `venv/`, and `{workspace}/temp/` to keep snapshots lean.
 - **Dedup:** Archives are content-addressed by SHA-256 hash. If the hash matches an existing archive in storage, the upload is skipped—only the metadata entry is written.
-- **`from: "latest"` edge case:** If no checkpoints exist globally (across all sessions/tags), `from: "latest"` throws an error. Note that `"latest"` resolves to the globally newest checkpoint, not scoped to the current session tag. Use `storage().listCheckpoints()` first to check availability.
+- **`from: "latest"` edge case:** If no checkpoints exist globally (across all sessions/tags), `from: "latest"` throws an error. Note that `"latest"` resolves to the globally newest checkpoint, not scoped to the current session tag. Use `listCheckpoints()` first to check availability.
 
 ### Explicit Checkpoint
 
 Snapshot at any point (between runs, after manual setup, etc.):
 
 ```ts
-const checkpt = await evolve.checkpoint({ comment: "before refactor" });
-console.log(checkpt.id);  // "checkpt_m5def_abc456"
+const ckpt = await evolve.checkpoint({ comment: "before refactor" });
+console.log(ckpt.id);  // "ckpt_m5def_abc456"
 ```
 
 Requires an active sandbox (`run()` must have been called first).
@@ -507,7 +506,7 @@ Pass `from` to `run()` to restore a checkpoint into a fresh sandbox before runni
 // Restore by checkpoint ID
 const result = await evolve.run({
     prompt: "Continue where we left off",
-    from: "checkpt_m5abc_xyz123",
+    from: "ckpt_m5abc_xyz123",
 });
 
 // Restore the most recent checkpoint
@@ -522,7 +521,7 @@ const result = await evolve.run({
 - The restored checkpoint becomes the `parentId` for the next checkpoint, maintaining lineage.
 - Agent type and workspace mode must match the checkpoint (model changes are fine).
 
-### Listing & Browsing Checkpoints
+### Listing Checkpoints
 
 **Instance method** (uses storage config from `.withStorage()`):
 
@@ -532,86 +531,27 @@ const checkpoints = await evolve.listCheckpoints({
     tag: "my-session-tag",  // (optional) Filter by session tag
 });
 
-for (const checkpt of checkpoints) {
-    console.log(checkpt.id, checkpt.comment, checkpt.timestamp);
+for (const ckpt of checkpoints) {
+    console.log(ckpt.id, ckpt.comment, ckpt.timestamp);
 }
 ```
 
-**Standalone `storage()` client** (no Evolve instance needed):
+**Standalone function** (no Evolve instance needed):
 
 ```ts
-import { storage } from "@evolvingmachines/sdk";
+import { listCheckpoints } from "@evolvingmachines/sdk";
 
-// BYOK
-const store = storage({ url: "s3://my-bucket/snapshots/" });
+// BYOK — same { limit?, tag? } options as evolve.listCheckpoints()
+const all = await listCheckpoints(
+    { url: "s3://my-bucket/snapshots/" },
+    { limit: 10, tag: "my-session" },
+);
 
 // Gateway (reads EVOLVE_API_KEY from env)
-const store = storage();
+const recent = await listCheckpoints({}, { limit: 5 });
 ```
 
-The `storage()` factory returns a `StorageClient` with four methods:
-
-```ts
-// List checkpoints (newest first)
-const list = await store.listCheckpoints({ limit: 10, tag: "my-session" });
-
-// Get a single checkpoint by ID (O(1) metadata lookup)
-const info = await store.getCheckpoint("checkpt_m5abc_xyz123");
-
-// Download full checkpoint archive to a local directory
-const outputDir = await store.downloadCheckpoint("checkpt_m5abc_xyz123", {
-    to: "./restored",   // (optional) Output directory (default: cwd)
-    extract: true,      // (optional) Extract archive (default: true). Set false to keep raw .tar.gz
-});
-
-// Download specific files without extracting the full archive
-const files = await store.downloadFiles("checkpt_m5abc_xyz123", {
-    files: ["workspace/output/result.json"],  // (optional) Exact file paths to extract
-    glob: ["workspace/**/*.ts"],              // (optional) Glob patterns to match files
-    to: "./output",                           // (optional) Save to disk (default: in-memory only)
-});
-// files is a Record<string, Buffer> — relative path → file contents
-```
-
-`downloadFiles` returns a `FileMap` (`Record<string, Buffer>`) of matching files. Pass `"latest"` instead of a checkpoint ID to any method to resolve the most recent checkpoint.
-
-**Downloading entire folders:**
-
-Use glob patterns to download all files in a specific directory:
-
-```ts
-// All files in workspace/output/
-const output = await store.downloadFiles(id, { glob: ["workspace/output/**"] });
-
-// All files in workspace/ (everything)
-const all = await store.downloadFiles(id, { glob: ["workspace/**"] });
-
-// Multiple folders
-const mixed = await store.downloadFiles(id, {
-    glob: ["workspace/output/**", "workspace/data/**"],
-});
-
-// Save directly to disk
-await store.downloadFiles(id, {
-    glob: ["workspace/output/**"],
-    to: "./local-output",
-});
-```
-
-> **Paths are relative to `/home/user/`** — the tar archive root. Use `workspace/...` not `/home/user/workspace/...`.
-
-**Instance-bound `storage()` accessor:**
-
-When you already have an Evolve instance, `evolve.storage()` returns the same `StorageClient` with gateway credentials automatically bound:
-
-```ts
-const evolve = new Evolve()
-    .withAgent({ type: "claude" })
-    .withStorage({ url: "s3://my-bucket/snapshots/" });
-
-const store = evolve.storage();
-const files = await store.downloadFiles("latest", { glob: ["workspace/report.*"] });
-```
+Results are sorted newest first.
 
 ### Checkpoint Lineage
 
@@ -636,7 +576,7 @@ const r4 = await evolve.run({ prompt: "Branch from step 1", from: r1.checkpoint.
 // r4.checkpoint.parentId → r1.checkpoint.id (not r3)
 ```
 
-### Type Reference
+### CheckpointInfo
 
 ```ts
 interface CheckpointInfo {
@@ -651,32 +591,12 @@ interface CheckpointInfo {
     parentId?: string;       // Parent checkpoint ID (lineage)
     comment?: string;        // User-provided label
 }
-
-interface StorageClient {
-    listCheckpoints(options?: { limit?: number; tag?: string }): Promise<CheckpointInfo[]>;
-    getCheckpoint(id: string): Promise<CheckpointInfo>;
-    downloadCheckpoint(idOrLatest: string, options?: DownloadCheckpointOptions): Promise<string>;
-    downloadFiles(idOrLatest: string, options?: DownloadFilesOptions): Promise<FileMap>;
-}
-
-interface DownloadCheckpointOptions {
-    to?: string;       // Output directory (default: cwd)
-    extract?: boolean; // Extract archive (default: true)
-}
-
-interface DownloadFilesOptions {
-    files?: string[];  // Exact file paths to extract
-    glob?: string[];   // Glob patterns to match files
-    to?: string;       // Save to disk (default: in-memory only)
-}
-
-type FileMap = Record<string, Buffer>;  // relative path → file contents
 ```
 
 ### End-to-End Example
 
 ```ts
-import { Evolve, storage } from "@evolvingmachines/sdk";
+import { Evolve, listCheckpoints } from "@evolvingmachines/sdk";
 
 // 1. Create and checkpoint
 const evolve = new Evolve()
@@ -712,15 +632,9 @@ const r3 = await evolve2.run({
 
 await evolve2.kill();
 
-// 4. Browse checkpoints and download files (no Evolve instance needed)
-const store = storage({ url: "s3://my-bucket/project/" });
-const all = await store.listCheckpoints();
+// 4. List all checkpoints
+const all = await listCheckpoints({ url: "s3://my-bucket/project/" });
 console.log(`${all.length} checkpoints (newest first)`);
-
-const files = await store.downloadFiles("latest", { glob: ["workspace/report.*"] });
-for (const [path, content] of files) {
-    console.log(`${path}: ${content.toString()}`);
-}
 ```
 
 ---
@@ -794,7 +708,7 @@ Common errors and how to handle them:
 | `No sandbox provider configured` | No sandbox provider key in env | Set `E2B_API_KEY`, `MODAL_TOKEN_ID`+`SECRET`, or `DAYTONA_API_KEY` |
 | `Operation already active` | Calling `run()` while another run is in progress | `await evolve.interrupt()` first, or wait for the active operation |
 | `Cannot use 'from' with existing session` | `run({ from: "..." })` with `.withSession()` | Checkpoint restore requires a fresh sandbox — remove `.withSession()` |
-| `No checkpoints found` | `run({ from: "latest" })` with no prior checkpoints | Create a checkpoint first, or use `storage().listCheckpoints()` to verify |
+| `No checkpoints found` | `run({ from: "latest" })` with no prior checkpoints | Create a checkpoint first, or use `listCheckpoints()` to verify |
 | `Schema validation failed: ...` | Agent's `result.json` doesn't match schema | Check `output.rawData` for the actual output; refine your prompt or schema |
 | `@aws-sdk/client-s3 not installed` | `.withStorage({ url: "s3://..." })` without AWS SDK | `npm install @aws-sdk/client-s3 @aws-sdk/s3-request-presigner` |
 | Timeout (exit code -1) | Agent exceeded `timeoutMs` | Increase `timeoutMs` or simplify the prompt |
