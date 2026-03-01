@@ -1456,7 +1456,8 @@ export class Agent {
     if (!apiKey) {
       throw new Error("Cost tracking requires an API key.");
     }
-    const res = await fetch(`${DEFAULT_DASHBOARD_URL}/api/sessions/spend?${params}`, {
+    const dashboardUrl = process.env.EVOLVE_DASHBOARD_URL || DEFAULT_DASHBOARD_URL;
+    const res = await fetch(`${dashboardUrl}/api/sessions/spend?${params}`, {
       headers: { Authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(10000),
     });
