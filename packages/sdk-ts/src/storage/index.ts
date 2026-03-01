@@ -691,45 +691,11 @@ export async function restoreCheckpoint(
   storage: ResolvedStorageConfig,
   checkpointId: string
 ): Promise<RestoreMetadata> {
-  let hash: string;
-  let getUrl: string;
-  let restoreMeta: RestoreMetadata = {};
-
-  if (storage.mode === "byok") {
-    // Read checkpoint metadata from S3
-    const key = metadataKey(storage, checkpointId);
-    let metadata: { hash: string; tag: string; agentType?: string; workspaceMode?: string };
-    try {
-      metadata = await s3GetJson<typeof metadata>(storage, key);
-    } catch (err: unknown) {
-      // Only treat known "not found" errors as missing checkpoint — rethrow everything else
-      const name = (err as { name?: string }).name;
-      const message = (err as { message?: string }).message;
-      const statusCode = (err as any)?.$metadata?.httpStatusCode;
-      if (statusCode === 404 || name === "NoSuchKey" || name === "NotFound" || message === "NoSuchKey" || message === "NotFound") {
-        throw new Error(`Checkpoint ${checkpointId} not found`);
-      }
-      throw err;
-    }
-
-    hash = metadata.hash;
-    restoreMeta = { agentType: metadata.agentType, workspaceMode: metadata.workspaceMode };
-    getUrl = await presignUrl(storage, dataKey(storage, hash), "get");
-  } else {
-    // Gateway mode: get metadata via API
-    const metadata = await gatewayGetCheckpoint(storage, checkpointId);
-    hash = metadata.hash;
-    restoreMeta = { agentType: metadata.agentType, workspaceMode: metadata.workspaceMode };
-
-    // Presign uses the OLD tag from checkpoint metadata (not current session)
-    const presignResult = await gatewayPresign(
-      storage,
-      metadata.tag,
-      hash,
-      "get"
-    );
-    getUrl = presignResult.url!; // GET action always returns a URL
-  }
+  // Fetch metadata and presigned download URL (works for both BYOK and gateway)
+  const metadata = await getCheckpointInfo(storage, checkpointId);
+  const hash = metadata.hash;
+  const restoreMeta: RestoreMetadata = { agentType: metadata.agentType, workspaceMode: metadata.workspaceMode };
+  const getUrl = await getArchiveDownloadUrl(storage, metadata);
 
   // Download archive into sandbox
   const downloadResult = await sandbox.commands.run(
@@ -910,12 +876,17 @@ async function gatewayListCheckpoints(
  * // Gateway
  * const all = await listCheckpoints({});
  */
+/** Clamp limit to [1, 500], default 100. */
+function normalizeLimit(limit?: number): number {
+  return limit && limit > 0 ? Math.min(limit, 500) : 100;
+}
+
 export async function listCheckpoints(
   config: StorageConfig,
   options?: { limit?: number; tag?: string }
 ): Promise<CheckpointInfo[]> {
   const resolved = resolveStorageForStandalone(config);
-  const normalizedLimit = options?.limit && options.limit > 0 ? Math.min(options.limit, 500) : 100;
+  const normalizedLimit = normalizeLimit(options?.limit);
 
   if (resolved.mode === "byok") {
     return s3ListCheckpoints(resolved, { limit: normalizedLimit, tag: options?.tag });
@@ -963,11 +934,7 @@ async function getCheckpointInfo(
     try {
       return await s3GetJson<CheckpointInfo>(resolved, key);
     } catch (err: unknown) {
-      // Only treat known "not found" errors as missing checkpoint
-      const name = (err as { name?: string }).name;
-      const message = (err as { message?: string }).message;
-      const statusCode = (err as any)?.$metadata?.httpStatusCode;
-      if (statusCode === 404 || name === "NoSuchKey" || name === "NotFound" || message === "NoSuchKey" || message === "NotFound") {
+      if (isS3NotFoundError(err)) {
         throw new Error(`Checkpoint ${id} not found`);
       }
       throw err;
@@ -1043,6 +1010,17 @@ function assertWithinDir(targetDir: string, filePath: string): void {
   if (rel.startsWith("..") || isAbsolute(rel)) {
     throw new Error(`Path traversal detected: "${filePath}" resolves outside target directory`);
   }
+}
+
+/**
+ * Detect AWS S3 "not found" errors (NoSuchKey, 404, NotFound).
+ * Used to distinguish missing checkpoints from real S3 errors (auth, network, etc.).
+ */
+function isS3NotFoundError(err: unknown): boolean {
+  const name = (err as { name?: string }).name;
+  const message = (err as { message?: string }).message;
+  const statusCode = (err as any)?.$metadata?.httpStatusCode;
+  return statusCode === 404 || name === "NoSuchKey" || name === "NotFound" || message === "NoSuchKey";
 }
 
 /**
@@ -1167,35 +1145,41 @@ async function downloadArchiveToLocal(
 async function listTarFiles(archivePath: string): Promise<string[]> {
   await ensureTarAvailable();
 
-  // Run verbose (type checking) and compact (path listing) in parallel.
-  // Both decompress the same archive — second hits disk cache.
+  // Single tar process — verbose output contains both type info and paths.
   // Uses execFileAsync (no shell) for cross-platform safety.
-  const [verbose, compact] = await Promise.all([
-    execFileAsync("tar", ["-tvzf", archivePath], { maxBuffer: TAR_MAX_BUFFER }),
-    execFileAsync("tar", ["-tzf", archivePath], { maxBuffer: TAR_MAX_BUFFER }),
-  ]);
+  const { stdout } = await execFileAsync(
+    "tar", ["-tvzf", archivePath], { maxBuffer: TAR_MAX_BUFFER }
+  );
 
-  // Parse verbose output: validate entry types and track symlinks
+  // Parse verbose output: validate entry types, extract paths, track symlinks.
+  // Verbose format: "drwxr-xr-x user/group 0 2025-01-01 00:00 path/"
+  //                 "-rw-r--r-- user/group 1234 2025-01-01 00:00 path/file"
+  //                 "lrwxrwxrwx user/group 0 2025-01-01 00:00 link -> target"
   const symlinkPaths = new Set<string>();
   const dirPaths: string[] = [];
-  const verboseLines = verbose.stdout.trim().split("\n").filter(Boolean);
-  const compactLines = compact.stdout.trim().split("\n").filter(Boolean);
+  const filePaths: string[] = [];
 
-  let compactIdx = 0;
-  for (const line of verboseLines) {
-    if (line.startsWith("total ")) continue;
+  for (const line of stdout.trim().split("\n")) {
+    if (!line || line.startsWith("total ")) continue;
     const typeChar = line[0];
     if (typeChar !== "-" && typeChar !== "d" && typeChar !== "l") {
       throw new Error(`Archive contains unsupported entry type: "${typeChar}"`);
     }
-    if (compactIdx < compactLines.length) {
-      if (typeChar === "l") {
-        symlinkPaths.add(compactLines[compactIdx]);
-      } else if (typeChar === "d") {
-        dirPaths.push(compactLines[compactIdx].replace(/\/$/, ""));
-      }
+    // Extract path: everything after the time field (HH:MM).
+    // Works for both GNU tar ("2025-01-01 14:23 path") and BSD tar ("Mar  1 14:23 path").
+    // For symlinks, strip " -> target" suffix.
+    const pathMatch = line.match(/\d{2}:\d{2}\s+(.+)/);
+    if (!pathMatch) continue;
+    let entryPath = pathMatch[1];
+    if (typeChar === "l") {
+      const arrowIdx = entryPath.indexOf(" -> ");
+      if (arrowIdx !== -1) entryPath = entryPath.slice(0, arrowIdx);
+      symlinkPaths.add(entryPath);
+    } else if (typeChar === "d") {
+      dirPaths.push(entryPath.replace(/\/$/, ""));
+    } else {
+      filePaths.push(entryPath);
     }
-    compactIdx++;
   }
 
   // Validate ALL entry paths — not just regular files.
@@ -1203,12 +1187,7 @@ async function listTarFiles(archivePath: string): Promise<string[]> {
   // paths must also be free of traversal (../, absolute, null bytes).
   assertSafePaths(dirPaths);
   assertSafePaths([...symlinkPaths]);
-
-  // Return only regular files (exclude dirs and symlinks)
-  const allFiles = compactLines.filter(
-    (f) => f && !f.endsWith("/") && !symlinkPaths.has(f)
-  );
-  return assertSafePaths(allFiles);
+  return assertSafePaths(filePaths);
 }
 
 /**
@@ -1241,7 +1220,7 @@ function globToRegex(pattern: string): RegExp {
     const c = pattern[i];
     if (c === "*" && pattern[i + 1] === "*") {
       if (pattern[i + 2] === "/") {
-        regex += "(?:.+/)?";
+        regex += "(?:.*/)?";
         i += 3;
       } else {
         regex += ".*";
@@ -1283,6 +1262,7 @@ function globToRegex(pattern: string): RegExp {
  * Used by Evolve.storage() to pass bound credentials without leaking
  * the overrides parameter into the public storage() signature.
  */
+/** @internal — used by Evolve.storage(), not part of the public API. */
 export function createBoundStorageClient(
   config: StorageConfig,
   overrides: { gatewayUrl?: string; gatewayApiKey?: string }
@@ -1300,9 +1280,7 @@ function buildStorageClient(resolved: ResolvedStorageConfig): StorageClient {
 
   return {
     async listCheckpoints(options) {
-      const normalizedLimit = options?.limit && options.limit > 0
-        ? Math.min(options.limit, 500)
-        : 100;
+      const normalizedLimit = normalizeLimit(options?.limit);
 
       if (resolved.mode === "byok") {
         return s3ListCheckpoints(resolved, { limit: normalizedLimit, tag: options?.tag });
@@ -1374,7 +1352,13 @@ function buildStorageClient(resolved: ResolvedStorageConfig): StorageClient {
         extractDir = join(tmpdir(), `evolve-extract-${Date.now()}`);
         try {
           await extractTarFiles(tmpPath, extractDir, targetFiles);
-        } catch {
+        } catch (extractErr: unknown) {
+          // Only fall back to full extraction for ARG_MAX / argument-length errors.
+          // Rethrow everything else (corrupt archive, disk full, permissions).
+          const msg = (extractErr as Error)?.message ?? "";
+          if (!msg.includes("E2BIG") && !msg.includes("Argument list too long") && !msg.includes("ENAMETOOLONG")) {
+            throw extractErr;
+          }
           await rm(extractDir, { recursive: true, force: true }).catch(() => {});
           extractDir = join(tmpdir(), `evolve-extract-${Date.now()}`);
           await extractTarFiles(tmpPath, extractDir);
