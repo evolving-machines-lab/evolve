@@ -79,7 +79,7 @@ await evolve.run({ prompt: "Hello world" });
 | Storage & checkpointing (BYOK / Gateway) | [Runtime → Storage & Checkpointing](./03-runtime.md#storage--checkpointing) |
 | Auto-checkpoint, explicit checkpoint, restore | [Runtime → Storage & Checkpointing](./03-runtime.md#auto-checkpoint-via-run) |
 | Checkpoint lineage | [Runtime → Checkpoint Lineage](./03-runtime.md#checkpoint-lineage) |
-| `storage()` client, `evolve.storage()` | [Runtime → Listing & Browsing Checkpoints](./03-runtime.md#listing--browsing-checkpoints) |
+| `listCheckpoints()` | [Runtime → Listing Checkpoints](./03-runtime.md#listing-checkpoints) |
 | Observability (dashboard + local logs) | [Runtime → Observability](./03-runtime.md#observability) |
 | Error handling | [Runtime → Error Handling](./03-runtime.md#error-handling) |
 
