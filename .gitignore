@@ -19,6 +19,9 @@ build/
 .DS_Store
 Thumbs.db
 
+# Worktrees
+.worktrees/
+
 # Environment
 .env
 .env.local
