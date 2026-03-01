@@ -21,17 +21,19 @@ jobs:
         run: |
           cp docs/typescript/[0-9]*.md skills/evolve/references/typescript/
           cp docs/python/[0-9]*.md skills/evolve/references/python/
+          cp docs/typescript/[0-9]*.md .claude/skills/evolve/references/typescript/
+          cp docs/python/[0-9]*.md .claude/skills/evolve/references/python/
 
       - name: Check for changes
         id: diff
         run: |
-          git diff --quiet skills/evolve/references/ && echo "changed=false" >> "$GITHUB_OUTPUT" || echo "changed=true" >> "$GITHUB_OUTPUT"
+          git diff --quiet skills/evolve/references/ .claude/skills/evolve/references/ && echo "changed=false" >> "$GITHUB_OUTPUT" || echo "changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Commit and push
         if: steps.diff.outputs.changed == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add skills/evolve/references/
+          git add skills/evolve/references/ .claude/skills/evolve/references/
           git commit -m "docs: sync skill references from docs/"
           git push
