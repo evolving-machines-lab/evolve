@@ -41,7 +41,7 @@ import { VALIDATION_PRESETS } from "./types";
 import { getAgentConfig, type AgentRegistryEntry } from "./registry";
 import { writeMcpConfig } from "./mcp";
 import { createAgentParser, type AgentParser } from "./parsers";
-import { DEFAULT_TIMEOUT_MS, DEFAULT_WORKING_DIR, DEFAULT_DASHBOARD_URL, getGatewayUrl, getGeminiGatewayUrl } from "./constants";
+import { DEFAULT_TIMEOUT_MS, DEFAULT_WORKING_DIR, DEFAULT_DASHBOARD_URL, LITELLM_CUSTOMER_ID_HEADER, LITELLM_TAGS_HEADER, RUN_TAG_PREFIX, getGatewayUrl, getGeminiGatewayUrl } from "./constants";
 import { buildWorkerSystemPrompt } from "./prompts";
 import { isZodSchema } from "./utils";
 import { SessionLogger } from "./observability";
@@ -116,7 +116,7 @@ function mergeCustomHeaders(existing: string | undefined, updates: Record<string
   // Apply updates (overwrites matching keys, except tags which are appended)
   for (const [name, value] of Object.entries(updates)) {
     const key = name.toLowerCase();
-    if (key === "x-litellm-tags" && merged.has(key)) {
+    if (key === LITELLM_TAGS_HEADER && merged.has(key)) {
       // Append to existing tags (comma-separated list)
       const existing = merged.get(key)!;
       const existingValue = existing.slice(existing.indexOf(":") + 1).trim();
@@ -459,7 +459,7 @@ export class Agent {
     if (!this.agentConfig.isDirectMode && this.registry.customHeadersEnv) {
       const headerEnv = this.registry.customHeadersEnv;
       envVars[headerEnv] = mergeCustomHeaders(envVars[headerEnv], {
-        "x-litellm-customer-id": this.sessionTag,
+        [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
       });
     }
 
@@ -476,14 +476,11 @@ export class Agent {
     const headerEnv = this.registry.customHeadersEnv;
     if (!headerEnv) return undefined;
 
-    // Start from any user-supplied headers (via secrets), then merge spend headers.
-    // x-litellm-customer-id → end_user (session grouping, queryable via /spend/logs/v2)
-    // x-litellm-tags → request_tags (run grouping, stored per spend log)
     const base = this.options.secrets?.[headerEnv];
     return {
       [headerEnv]: mergeCustomHeaders(base, {
-        "x-litellm-customer-id": this.sessionTag,
-        "x-litellm-tags": `run:${runId}`,
+        [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
+        [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
       }),
     };
   }
@@ -1252,16 +1249,7 @@ export class Agent {
       }
     }
 
-    // Capture whether this session had local run activity before cleanup.
-    // setSession() sets hasRun=true for resume semantics, so hasRun is not a
-    // reliable signal for spend lifecycle decisions here.
-    const hadActivity = !!this.sessionLogger;
-
-    // Close existing session logger (flush pending events)
-    if (this.sessionLogger) {
-      await this.sessionLogger.close();
-      this.sessionLogger = undefined;
-    }
+    await this.rotateSession();
 
     this.options.sandboxId = sandboxId;
     this.sandbox = undefined;
@@ -1273,12 +1261,6 @@ export class Agent {
     this.hasRun = true;
     // Reset lineage — switching sandbox breaks checkpoint chain
     this.lastCheckpointId = undefined;
-    // Rotate session tag — new sandbox = new session for spend + observability.
-    // Only save previous tag if this session had actual activity.
-    if (hadActivity) {
-      this.previousSessionTag = this.sessionTag;
-    }
-    this.sessionTag = generateSessionTag(this.options.sessionTagPrefix || "evolve");
   }
 
   /**
@@ -1371,14 +1353,7 @@ export class Agent {
    * Kill sandbox (terminates all processes)
    */
   async kill(callbacks?: StreamCallbacks): Promise<void> {
-    // Capture whether this session had activity before cleanup clears the flags
-    const hadActivity = !!this.sessionLogger;
-
-    // Close session logger (flush pending events)
-    if (this.sessionLogger) {
-      await this.sessionLogger.close();
-      this.sessionLogger = undefined;
-    }
+    await this.rotateSession();
 
     // Interrupt active operation before killing sandbox
     if (this.activeCommand) {
@@ -1398,13 +1373,6 @@ export class Agent {
     this.agentState = "idle";
     this.hasRun = false;
     this.lastCheckpointId = undefined;
-    // Rotate session tag so next sandbox gets a fresh session for spend + observability.
-    // Only save previous tag if this session had actual activity (run or logger),
-    // otherwise a double kill() or no-op lifecycle call would clobber the real tag.
-    if (hadActivity) {
-      this.previousSessionTag = this.sessionTag;
-    }
-    this.sessionTag = generateSessionTag(this.options.sessionTagPrefix || "evolve");
     this.emitLifecycle(callbacks, "sandbox_killed");
   }
 
@@ -1454,6 +1422,24 @@ export class Agent {
     await this.sessionLogger?.flush();
   }
 
+  /**
+   * Tear down the session logger and rotate the session tag.
+   * Preserves `previousSessionTag` only if this session had actual activity,
+   * so a double kill() or no-op lifecycle call doesn't clobber the real tag.
+   * @internal
+   */
+  private async rotateSession(): Promise<void> {
+    const hadActivity = !!this.sessionLogger;
+    if (this.sessionLogger) {
+      await this.sessionLogger.close();
+      this.sessionLogger = undefined;
+    }
+    if (hadActivity) {
+      this.previousSessionTag = this.sessionTag;
+    }
+    this.sessionTag = generateSessionTag(this.options.sessionTagPrefix || "evolve");
+  }
+
   // ===========================================================================
   // COST
   // ===========================================================================
@@ -1470,8 +1456,7 @@ export class Agent {
     if (!apiKey) {
       throw new Error("Cost tracking requires an API key.");
     }
-    const dashboardUrl = process.env.EVOLVE_DASHBOARD_URL || DEFAULT_DASHBOARD_URL;
-    const res = await fetch(`${dashboardUrl}/api/sessions/spend?${params}`, {
+    const res = await fetch(`${DEFAULT_DASHBOARD_URL}/api/sessions/spend?${params}`, {
       headers: { Authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(10000),
     });
