@@ -43,7 +43,7 @@ jobs:
 
       - name: Run unit tests
         working-directory: docs-site
-        run: node tests/unit.mjs
+        run: npx tsx tests/unit.mjs
 
       - name: Run integration tests
         working-directory: docs-site
