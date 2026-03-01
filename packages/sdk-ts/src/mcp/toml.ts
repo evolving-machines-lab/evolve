@@ -193,18 +193,21 @@ export async function writeCodexSpendProvider(
     if (!isNotFoundError(error)) throw error;
   }
 
-  // Skip if both the provider section and root key are already correct
+  // Split into root-level portion (before first [section]) and the rest.
+  // TOML keys before any section header are root-level; keys after belong to that section.
+  const firstSectionIdx = existingToml.search(/^\[/m);
+  const rootPortion = firstSectionIdx >= 0 ? existingToml.slice(0, firstSectionIdx) : existingToml;
+  const restPortion = firstSectionIdx >= 0 ? existingToml.slice(firstSectionIdx) : "";
+
+  // Skip if both the provider section and root key are already correct.
+  // hasRootKey checks only the root portion so a profile-scoped model_provider doesn't match.
   const hasProviderSection = existingToml.includes("[model_providers.evolve-gateway]");
-  const hasRootKey = /^model_provider\s*=\s*"evolve-gateway"/m.test(existingToml);
+  const hasRootKey = /^model_provider\s*=\s*"evolve-gateway"/m.test(rootPortion);
   if (hasProviderSection && hasRootKey) {
     return;
   }
 
   // Strip any existing model_provider root key to avoid duplicate TOML keys.
-  // Only remove lines before the first [section] header (root-level keys).
-  const firstSectionIdx = existingToml.search(/^\[/m);
-  const rootPortion = firstSectionIdx >= 0 ? existingToml.slice(0, firstSectionIdx) : existingToml;
-  const restPortion = firstSectionIdx >= 0 ? existingToml.slice(firstSectionIdx) : "";
   const cleanedRoot = rootPortion.replace(/^model_provider\s*=\s*.*$/m, "").replace(/\n{3,}/g, "\n\n");
 
   existingToml = (cleanedRoot + restPortion).replace(/^\n+/, "");

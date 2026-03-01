@@ -9,6 +9,7 @@
  */
 
 import { Agent } from "../../dist/index.js";
+import { writeCodexSpendProvider } from "../../src/mcp/toml.js";
 
 let passed = 0;
 let failed = 0;
@@ -259,6 +260,133 @@ async function testCodexSpendTrackingEnvs(): Promise<void> {
   assert(!envs?.ANTHROPIC_CUSTOM_HEADERS, "no ANTHROPIC_CUSTOM_HEADERS for codex");
 }
 
+// =============================================================================
+// Fake sandbox for writeCodexSpendProvider tests
+// =============================================================================
+
+function createFakeSandbox(existingContent?: string): { sandbox: any; written: { path: string; content: string }[] } {
+  const written: { path: string; content: string }[] = [];
+  const sandbox = {
+    files: {
+      makeDir: async () => {},
+      read: async () => {
+        if (existingContent === undefined) throw Object.assign(new Error("not found"), { code: "ENOENT" });
+        return existingContent;
+      },
+      write: async (path: string, content: string) => { written.push({ path, content }); },
+    },
+  };
+  return { sandbox, written };
+}
+
+const spendEnvs = { sessionTagEnv: "EVOLVE_LITELLM_CUSTOMER_ID", runTagEnv: "EVOLVE_LITELLM_TAGS" };
+
+async function testTomlFreshConfig(): Promise<void> {
+  console.log("\n[7] writeCodexSpendProvider() on empty config");
+  const { sandbox, written } = createFakeSandbox(undefined);
+  await writeCodexSpendProvider(sandbox, "https://gateway.example.com", spendEnvs);
+
+  assertEqual(written.length, 1, "writes config file");
+  const content = written[0].content;
+  assert(content.startsWith('model_provider = "evolve-gateway"'), "root key is first line");
+  assert(content.includes("[model_providers.evolve-gateway]"), "has provider section");
+  assert(content.includes('base_url = "https://gateway.example.com"'), "has base_url");
+  assert(content.includes("EVOLVE_LITELLM_CUSTOMER_ID"), "has session tag env");
+  assert(content.includes("EVOLVE_LITELLM_TAGS"), "has run tag env");
+}
+
+async function testTomlExistingMcpConfig(): Promise<void> {
+  console.log("\n[8] writeCodexSpendProvider() preserves existing MCP sections");
+  const existing = `[mcp_servers]\n\n[mcp_servers.browser-use]\nurl = "https://browser.example.com"\n`;
+  const { sandbox, written } = createFakeSandbox(existing);
+  await writeCodexSpendProvider(sandbox, "https://gateway.example.com", spendEnvs);
+
+  const content = written[0].content;
+  // Root key must appear before any [section] header
+  const rootKeyIdx = content.indexOf('model_provider = "evolve-gateway"');
+  const firstSectionIdx = content.search(/^\[/m);
+  assert(rootKeyIdx >= 0, "root key present");
+  assert(rootKeyIdx < firstSectionIdx, "root key appears before first section");
+  assert(content.includes("[mcp_servers.browser-use]"), "preserves existing MCP section");
+  assert(content.includes("[model_providers.evolve-gateway]"), "adds provider section");
+}
+
+async function testTomlSkipsWhenAlreadyCorrect(): Promise<void> {
+  console.log("\n[9] writeCodexSpendProvider() skips when fully configured");
+  const existing = [
+    'model_provider = "evolve-gateway"',
+    "",
+    "[mcp_servers]",
+    "",
+    "[model_providers.evolve-gateway]",
+    'name = "Evolve Gateway"',
+    'base_url = "https://gateway.example.com"',
+    "",
+  ].join("\n");
+  const { sandbox, written } = createFakeSandbox(existing);
+  await writeCodexSpendProvider(sandbox, "https://gateway.example.com", spendEnvs);
+
+  assertEqual(written.length, 0, "no write when already configured");
+}
+
+async function testTomlDuplicateRootKeyPrevention(): Promise<void> {
+  console.log("\n[10] writeCodexSpendProvider() replaces existing model_provider root key");
+  const existing = [
+    'model_provider = "openai"',
+    "",
+    "[mcp_servers]",
+    "",
+  ].join("\n");
+  const { sandbox, written } = createFakeSandbox(existing);
+  await writeCodexSpendProvider(sandbox, "https://gateway.example.com", spendEnvs);
+
+  const content = written[0].content;
+  const matches = content.match(/^model_provider\s*=/gm) || [];
+  assertEqual(matches.length, 1, "exactly one model_provider key");
+  assert(content.includes('"evolve-gateway"'), "key points to evolve-gateway");
+}
+
+async function testTomlProfileScopedKeyNotConfused(): Promise<void> {
+  console.log("\n[11] writeCodexSpendProvider() ignores profile-scoped model_provider");
+  // model_provider inside [profiles.fast] should NOT satisfy the root-key check
+  const existing = [
+    "[profiles.fast]",
+    'model_provider = "evolve-gateway"',
+    "",
+  ].join("\n");
+  const { sandbox, written } = createFakeSandbox(existing);
+  await writeCodexSpendProvider(sandbox, "https://gateway.example.com", spendEnvs);
+
+  const content = written[0].content;
+  // Must add a root-level model_provider since the existing one is profile-scoped
+  const rootKeyIdx = content.indexOf('model_provider = "evolve-gateway"');
+  const firstSectionIdx = content.search(/^\[/m);
+  assert(rootKeyIdx >= 0 && rootKeyIdx < firstSectionIdx, "adds root-level key before sections");
+  assert(content.includes("[model_providers.evolve-gateway]"), "adds provider section");
+}
+
+async function testTomlRootKeyDriftRepair(): Promise<void> {
+  console.log("\n[12] writeCodexSpendProvider() repairs root key when provider section exists but key drifted");
+  const existing = [
+    'model_provider = "openai"',
+    "",
+    "[model_providers.evolve-gateway]",
+    'name = "Evolve Gateway"',
+    'base_url = "https://gateway.example.com"',
+    "",
+  ].join("\n");
+  const { sandbox, written } = createFakeSandbox(existing);
+  await writeCodexSpendProvider(sandbox, "https://gateway.example.com", spendEnvs);
+
+  const content = written[0].content;
+  const matches = content.match(/^model_provider\s*=/gm) || [];
+  assertEqual(matches.length, 1, "exactly one model_provider key after repair");
+  assert(content.includes('"evolve-gateway"'), "key repaired to evolve-gateway");
+  // Provider section should NOT be duplicated
+  const sectionMatches = content.match(/\[model_providers\.evolve-gateway\]/g) || [];
+  assertEqual(sectionMatches.length, 1, "provider section not duplicated");
+}
+
 async function main(): Promise<void> {
   console.log("\n============================================================");
   console.log("Cost API Unit Tests");
@@ -269,6 +397,12 @@ async function main(): Promise<void> {
   await testCustomHeaderMergeHandlesNewlineFormat();
   await testTagAppendBehavior();
   await testCodexSpendTrackingEnvs();
+  await testTomlFreshConfig();
+  await testTomlExistingMcpConfig();
+  await testTomlSkipsWhenAlreadyCorrect();
+  await testTomlDuplicateRootKeyPrevention();
+  await testTomlProfileScopedKeyNotConfused();
+  await testTomlRootKeyDriftRepair();
   console.log("\n============================================================");
   console.log(`Results: ${passed} passed, ${failed} failed`);
   console.log("============================================================");
