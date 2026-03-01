@@ -99,9 +99,9 @@ function mergeCustomHeaders(existing: string | undefined, updates: Record<string
 
   // Parse existing headers (case-insensitive key lookup)
   if (existing) {
-    // Claude CLI accepts header lists as newlines; some callers pass comma-delimited
-    // values. Split both forms while preserving "Name: Value" parsing.
-    for (const line of existing.split(/\r?\n|,(?=\s*[A-Za-z0-9-]+\s*:)/)) {
+    // Claude CLI uses newline-separated "Name: Value" pairs.
+    // We only split on newlines — commas can appear inside header values (e.g., tag lists).
+    for (const line of existing.split(/\r?\n/)) {
       const trimmed = line.trim();
       if (!trimmed) continue;
       const colon = trimmed.indexOf(":");

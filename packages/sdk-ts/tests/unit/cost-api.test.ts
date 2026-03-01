@@ -198,13 +198,13 @@ async function testNoActivitySessionSwitchDoesNotClobberTag(): Promise<void> {
   }
 }
 
-async function testCustomHeaderMergeHandlesCommaFormat(): Promise<void> {
-  console.log("\n[4] mergeCustomHeaders() preserves comma-delimited user headers");
+async function testCustomHeaderMergeHandlesNewlineFormat(): Promise<void> {
+  console.log("\n[4] mergeCustomHeaders() preserves newline-delimited user headers");
   const agent = createAgent() as any;
   agent.sessionTag = "evolve-session";
   agent.options = {
     secrets: {
-      ANTHROPIC_CUSTOM_HEADERS: "x-custom-one: foo, x-custom-two: bar",
+      ANTHROPIC_CUSTOM_HEADERS: "x-custom-one: foo\nx-custom-two: bar",
     },
   };
 
@@ -224,7 +224,7 @@ async function main(): Promise<void> {
   await testSessionCostNormalization();
   await testRunCostSelectors();
   await testNoActivitySessionSwitchDoesNotClobberTag();
-  await testCustomHeaderMergeHandlesCommaFormat();
+  await testCustomHeaderMergeHandlesNewlineFormat();
   console.log("\n============================================================");
   console.log(`Results: ${passed} passed, ${failed} failed`);
   console.log("============================================================");
