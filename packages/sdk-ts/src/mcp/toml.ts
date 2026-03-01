@@ -193,15 +193,26 @@ export async function writeCodexSpendProvider(
     if (!isNotFoundError(error)) throw error;
   }
 
-  // Skip if already written
-  if (existingToml.includes("[model_providers.evolve-gateway]")) {
+  // Skip if both the provider section and root key are already correct
+  const hasProviderSection = existingToml.includes("[model_providers.evolve-gateway]");
+  const hasRootKey = /^model_provider\s*=\s*"evolve-gateway"/m.test(existingToml);
+  if (hasProviderSection && hasRootKey) {
     return;
   }
+
+  // Strip any existing model_provider root key to avoid duplicate TOML keys.
+  // Only remove lines before the first [section] header (root-level keys).
+  const firstSectionIdx = existingToml.search(/^\[/m);
+  const rootPortion = firstSectionIdx >= 0 ? existingToml.slice(0, firstSectionIdx) : existingToml;
+  const restPortion = firstSectionIdx >= 0 ? existingToml.slice(firstSectionIdx) : "";
+  const cleanedRoot = rootPortion.replace(/^model_provider\s*=\s*.*$/m, "").replace(/\n{3,}/g, "\n\n");
+
+  existingToml = (cleanedRoot + restPortion).replace(/^\n+/, "");
 
   // model_provider must be a root-level TOML key (before any [section] headers).
   // The [model_providers.evolve-gateway] table goes at the end.
   const rootKey = `model_provider = "evolve-gateway"`;
-  const providerSection = [
+  const providerSection = hasProviderSection ? "" : [
     "[model_providers.evolve-gateway]",
     `name = "Evolve Gateway"`,
     `base_url = ${serializeTomlValue(baseUrl)}`,
@@ -214,18 +225,22 @@ export async function writeCodexSpendProvider(
 
   let content: string;
   if (!existingToml.trim()) {
-    content = `${rootKey}\n\n${providerSection}\n`;
+    content = providerSection ? `${rootKey}\n\n${providerSection}\n` : `${rootKey}\n`;
   } else {
     // Insert root key before the first [section] header so it stays root-level
     const firstSection = existingToml.search(/^\[/m);
     if (firstSection > 0) {
-      content = existingToml.slice(0, firstSection) + rootKey + "\n\n" + existingToml.slice(firstSection).trimEnd() + "\n\n" + providerSection + "\n";
+      content = existingToml.slice(0, firstSection) + rootKey + "\n\n" + existingToml.slice(firstSection).trimEnd();
     } else if (firstSection === 0) {
-      content = rootKey + "\n\n" + existingToml.trimEnd() + "\n\n" + providerSection + "\n";
+      content = rootKey + "\n\n" + existingToml.trimEnd();
     } else {
       // No section headers — just append
-      content = existingToml.trimEnd() + "\n\n" + rootKey + "\n\n" + providerSection + "\n";
+      content = existingToml.trimEnd() + "\n\n" + rootKey;
     }
+    if (providerSection) {
+      content = content.trimEnd() + "\n\n" + providerSection;
+    }
+    content += "\n";
   }
 
   await sandbox.files.write(settingsPath, content);
