@@ -701,7 +701,7 @@ Use the tag together with the sandbox id to correlate logs with files saved in
 
 ## Cost Tracking
 
-Query per-run and per-session LLM spend. Requires gateway mode (`EVOLVE_API_KEY`). Currently supported for Claude agents only.
+Query per-run and per-session LLM spend. Requires gateway mode (`EVOLVE_API_KEY`). Supported for Claude and Codex agents.
 
 Cost data may take 5–60s to appear depending on LiteLLM batch flush timing (typically under 30s).
 

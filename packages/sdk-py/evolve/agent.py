@@ -617,7 +617,9 @@ class Evolve:
 
         Queries the dashboard API which proxies to LiteLLM spend logs.
         Cost data has ~60s latency due to gateway batch writes.
-        Also works after kill() for the most recent session only.
+        Note: after kill(), the bridge process is stopped. To query costs for a
+        completed session, create a new Evolve instance — the TS bridge handles
+        previousSessionTag fallback internally.
 
         Requires gateway mode (EVOLVE_API_KEY).
 

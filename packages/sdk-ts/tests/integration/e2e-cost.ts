@@ -53,7 +53,7 @@ async function runInstance(label: string): Promise<{
   });
   const run1Id = r1.runId!;
   console.log(`  run1Id: ${run1Id}`);
-  console.log(`  output: ${(r1.output || "").slice(0, 80)}`);
+  console.log(`  output: ${(r1.stdout || "").slice(0, 80)}`);
 
   console.log(`[${label}] Run 2 — create a summary file...`);
   const r2 = await evolve.run({
@@ -61,7 +61,7 @@ async function runInstance(label: string): Promise<{
   });
   const run2Id = r2.runId!;
   console.log(`  run2Id: ${run2Id}`);
-  console.log(`  output: ${(r2.output || "").slice(0, 80)}`);
+  console.log(`  output: ${(r2.stdout || "").slice(0, 80)}`);
 
   const sessionTag = evolve.getSessionTag()!;
   console.log(`  sessionTag: ${sessionTag}`);
