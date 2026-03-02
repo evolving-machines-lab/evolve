@@ -97,6 +97,8 @@ export interface AgentRegistryEntry {
   gatewayConfigEnv?: string;
   /** Environment variable that CLI reads for custom outbound HTTP headers */
   customHeadersEnv?: string;
+  /** Format for custom headers env var: "newline" (Claude) or "comma" (Gemini). Default: "newline" */
+  customHeadersFormat?: "newline" | "comma";
   /**
    * Per-env-var spend tracking for CLIs that support env_http_headers in config
    * (e.g., Codex TOML). Maps LiteLLM header names to env var names that the CLI
@@ -217,6 +219,10 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       sourceDir: "/home/user/.evolve/skills",
       targetDir: "/home/user/.gemini/skills",
     },
+    // Source-verified: GEMINI_CLI_CUSTOM_HEADERS is read in contentGenerator.ts and parsed
+    // by customHeaderUtils.ts (comma-separated via /,(?=\s*[^,:]+:)/). Not in public docs.
+    customHeadersEnv: "GEMINI_CLI_CUSTOM_HEADERS",
+    customHeadersFormat: "comma",
     usePassthroughGateway: true,
     buildCommand: ({ prompt, model, isResume }) => {
       const resumeFlag = isResume ? "--resume latest " : "";

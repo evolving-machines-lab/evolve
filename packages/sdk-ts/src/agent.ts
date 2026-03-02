@@ -90,20 +90,28 @@ function generateSessionTag(prefix: string): string {
 }
 
 /**
- * Merge spend tracking headers into an existing ANTHROPIC_CUSTOM_HEADERS value.
+ * Merge spend tracking headers into an existing custom headers env value.
  * Preserves user-supplied headers; spend headers overwrite only matching keys.
- * Parses newline-separated "Name: Value" pairs (Claude CLI format).
- * Special case: x-litellm-tags values are appended (comma-joined), not overwritten.
+ *
+ * Tag append behavior varies by format:
+ * - newline (Claude): x-litellm-tags values are comma-appended (safe, no ambiguity)
+ * - comma (Gemini): x-litellm-tags is overwritten — appending "run:<id>" after a comma
+ *   would be mis-parsed by Gemini's regex /,(?=\s*[^,:]+:)/ as a separate header
+ *
+ * @param format - "newline" for Claude (ANTHROPIC_CUSTOM_HEADERS), "comma" for Gemini (GEMINI_CLI_CUSTOM_HEADERS)
  */
-function mergeCustomHeaders(existing: string | undefined, updates: Record<string, string>): string {
+function mergeCustomHeaders(existing: string | undefined, updates: Record<string, string>, format: "newline" | "comma" = "newline"): string {
   const merged = new Map<string, string>();
 
   // Parse existing headers (case-insensitive key lookup)
   if (existing) {
-    // Claude CLI uses newline-separated "Name: Value" pairs.
-    // We only split on newlines — commas can appear inside header values (e.g., tag lists).
-    for (const line of existing.split(/\r?\n/)) {
-      const trimmed = line.trim();
+    // Newline format (Claude): "Name: Value\nName2: Value2"
+    // Comma format (Gemini):   "Name: Value, Name2: Value2"
+    const entries = format === "comma"
+      ? existing.split(/,(?=\s*[^,:]+:)/)  // Gemini: split on commas before "key:" pattern
+      : existing.split(/\r?\n/);            // Claude: split on newlines
+    for (const entry of entries) {
+      const trimmed = entry.trim();
       if (!trimmed) continue;
       const colon = trimmed.indexOf(":");
       if (colon <= 0) continue;
@@ -113,11 +121,14 @@ function mergeCustomHeaders(existing: string | undefined, updates: Record<string
     }
   }
 
-  // Apply updates (overwrites matching keys, except tags which are appended)
+  // Apply updates (overwrites matching keys, except tags which are appended in newline format)
   for (const [name, value] of Object.entries(updates)) {
     const key = name.toLowerCase();
-    if (key === LITELLM_TAGS_HEADER && merged.has(key)) {
-      // Append to existing tags (comma-separated list)
+    if (key === LITELLM_TAGS_HEADER && merged.has(key) && format === "newline") {
+      // Append to existing tags (comma-separated list) — safe in newline format only.
+      // In comma format (Gemini), appending "run:<id>" after a comma creates ambiguity:
+      // Gemini's regex /,(?=\s*[^,:]+:)/ would split "run:<id>" as a new header.
+      // So for comma format, we overwrite the tag entirely.
       const existing = merged.get(key)!;
       const existingValue = existing.slice(existing.indexOf(":") + 1).trim();
       merged.set(key, `${name}: ${existingValue},${value}`);
@@ -126,7 +137,7 @@ function mergeCustomHeaders(existing: string | undefined, updates: Record<string
     }
   }
 
-  return Array.from(merged.values()).join("\n");
+  return Array.from(merged.values()).join(format === "comma" ? ", " : "\n");
 }
 
 // =============================================================================
@@ -458,9 +469,10 @@ export class Agent {
     // Uses mergeCustomHeaders to preserve any user-supplied headers from secrets.
     if (!this.agentConfig.isDirectMode && this.registry.customHeadersEnv) {
       const headerEnv = this.registry.customHeadersEnv;
+      const fmt = this.registry.customHeadersFormat || "newline";
       envVars[headerEnv] = mergeCustomHeaders(envVars[headerEnv], {
         [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
-      });
+      }, fmt);
     }
 
     // Spend tracking via per-env-var headers (e.g., Codex env_http_headers in TOML).
@@ -481,15 +493,16 @@ export class Agent {
   private buildRunEnvs(runId: string): Record<string, string> | undefined {
     if (this.agentConfig.isDirectMode) return undefined;
 
-    // Path 1: single custom headers env var (Claude)
+    // Path 1: single custom headers env var (Claude, Gemini)
     const headerEnv = this.registry.customHeadersEnv;
     if (headerEnv) {
       const base = this.options.secrets?.[headerEnv];
+      const fmt = this.registry.customHeadersFormat || "newline";
       return {
         [headerEnv]: mergeCustomHeaders(base, {
           [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
           [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
-        }),
+        }, fmt),
       };
     }
 

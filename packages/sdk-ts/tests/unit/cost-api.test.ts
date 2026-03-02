@@ -365,6 +365,170 @@ async function testTomlProfileScopedKeyNotConfused(): Promise<void> {
   assert(content.includes("[model_providers.evolve-gateway]"), "adds provider section");
 }
 
+// =============================================================================
+// Gemini spend tracking (comma-separated custom headers)
+// =============================================================================
+
+async function testGeminiBuildRunEnvsCommaFormat(): Promise<void> {
+  console.log("\n[13] buildRunEnvs() uses comma-separated format for Gemini");
+  const config = {
+    type: "gemini",
+    apiKey: "test-gateway-key",
+    isDirectMode: false,
+  };
+  const agent = new Agent(config as any, {});
+  (agent as any).sessionTag = "evolve-gemini-session";
+
+  const envs = (agent as any).buildRunEnvs("run-gem-456") as Record<string, string> | undefined;
+  assert(!!envs, "returns env overrides");
+  assert(!!envs?.GEMINI_CLI_CUSTOM_HEADERS, "sets GEMINI_CLI_CUSTOM_HEADERS");
+
+  const headers = envs!.GEMINI_CLI_CUSTOM_HEADERS;
+  // Comma-separated format: "key: value, key2: value2"
+  assert(!headers.includes("\n"), "no newlines in comma format");
+  assert(headers.includes("x-litellm-customer-id: evolve-gemini-session"), "has customer-id");
+  assert(headers.includes("x-litellm-tags: run:run-gem-456"), "has run tag");
+
+  // Verify it does NOT set ANTHROPIC_CUSTOM_HEADERS
+  assert(!envs?.ANTHROPIC_CUSTOM_HEADERS, "no ANTHROPIC_CUSTOM_HEADERS for gemini");
+}
+
+async function testGeminiCommaFormatPreservesUserHeaders(): Promise<void> {
+  console.log("\n[14] mergeCustomHeaders() comma format preserves user-supplied headers");
+  const config = {
+    type: "gemini",
+    apiKey: "test-gateway-key",
+    isDirectMode: false,
+  };
+  const agent = new Agent(config as any, {
+    secrets: {
+      GEMINI_CLI_CUSTOM_HEADERS: "x-custom-one: foo, x-custom-two: bar",
+    },
+  });
+  (agent as any).sessionTag = "evolve-gemini-session";
+
+  const envs = (agent as any).buildRunEnvs("run-gem-789") as Record<string, string> | undefined;
+  const headers = envs!.GEMINI_CLI_CUSTOM_HEADERS;
+
+  assert(headers.includes("x-custom-one: foo"), "keeps first user header");
+  assert(headers.includes("x-custom-two: bar"), "keeps second user header");
+  assert(headers.includes("x-litellm-customer-id: evolve-gemini-session"), "injects customer-id");
+  assert(headers.includes("x-litellm-tags: run:run-gem-789"), "injects run tag");
+  assert(!headers.includes("\n"), "still comma-separated (no newlines)");
+}
+
+async function testGeminiCommaFormatOverwritesTags(): Promise<void> {
+  console.log("\n[15] mergeCustomHeaders() comma format overwrites (not appends) tags to avoid Gemini parser ambiguity");
+  const config = {
+    type: "gemini",
+    apiKey: "test-gateway-key",
+    isDirectMode: false,
+  };
+  // User has existing x-litellm-tags — SDK must overwrite, not append,
+  // because appending "run:<id>" would be mis-parsed by Gemini's regex.
+  const agent = new Agent(config as any, {
+    secrets: {
+      GEMINI_CLI_CUSTOM_HEADERS: "x-litellm-tags: project-acme, x-custom: keep",
+    },
+  });
+  (agent as any).sessionTag = "evolve-gemini-session";
+
+  const envs = (agent as any).buildRunEnvs("run-gem-overwrite") as Record<string, string> | undefined;
+  const headers = envs!.GEMINI_CLI_CUSTOM_HEADERS;
+
+  // Tags overwritten — user's "project-acme" is replaced by SDK's run tag
+  assert(!headers.includes("project-acme"), "user tag overwritten (not appended)");
+  assert(headers.includes("x-litellm-tags: run:run-gem-overwrite"), "SDK run tag replaces user tags");
+  assert(headers.includes("x-custom: keep"), "other user headers preserved");
+}
+
+/**
+ * Simulate Gemini CLI's header parser (customHeaderUtils.ts) to verify
+ * our output is correctly round-tripped. Catches ambiguity bugs like
+ * "run:<id>" being split into a separate header.
+ */
+function parseAsGeminiCli(envValue: string): Record<string, string> {
+  const headers: Record<string, string> = {};
+  for (const entry of envValue.split(/,(?=\s*[^,:]+:)/)) {
+    const trimmed = entry.trim();
+    if (!trimmed) continue;
+    const sep = trimmed.indexOf(":");
+    if (sep === -1) continue;
+    const name = trimmed.slice(0, sep).trim();
+    const value = trimmed.slice(sep + 1).trim();
+    if (!name) continue;
+    headers[name] = value;
+  }
+  return headers;
+}
+
+async function testGeminiRoundTripThroughParser(): Promise<void> {
+  console.log("\n[18] Gemini header output round-trips through Gemini CLI parser without corruption");
+  const config = {
+    type: "gemini",
+    apiKey: "test-gateway-key",
+    isDirectMode: false,
+  };
+
+  // Case 1: basic run envs (no user headers)
+  const agent1 = new Agent(config as any, {});
+  (agent1 as any).sessionTag = "evolve-session-rt";
+  const envs1 = (agent1 as any).buildRunEnvs("run-rt-001") as Record<string, string>;
+  const parsed1 = parseAsGeminiCli(envs1.GEMINI_CLI_CUSTOM_HEADERS);
+  assertEqual(parsed1["x-litellm-customer-id"], "evolve-session-rt", "round-trip: customer-id intact");
+  assertEqual(parsed1["x-litellm-tags"], "run:run-rt-001", "round-trip: run tag intact");
+  assert(!parsed1["run"], "round-trip: no spurious 'run' header");
+
+  // Case 2: with user-supplied headers including existing tags
+  const agent2 = new Agent(config as any, {
+    secrets: {
+      GEMINI_CLI_CUSTOM_HEADERS: "x-litellm-tags: user-tag, x-custom: val",
+    },
+  });
+  (agent2 as any).sessionTag = "evolve-session-rt2";
+  const envs2 = (agent2 as any).buildRunEnvs("run-rt-002") as Record<string, string>;
+  const parsed2 = parseAsGeminiCli(envs2.GEMINI_CLI_CUSTOM_HEADERS);
+  assertEqual(parsed2["x-litellm-customer-id"], "evolve-session-rt2", "round-trip2: customer-id intact");
+  assertEqual(parsed2["x-litellm-tags"], "run:run-rt-002", "round-trip2: run tag (overwrites user tag)");
+  assertEqual(parsed2["x-custom"], "val", "round-trip2: user header preserved");
+  assert(!parsed2["run"], "round-trip2: no spurious 'run' header from tag split");
+
+  // Case 3: session-level envs also round-trip
+  const envs3 = (agent2 as any).buildEnvironmentVariables() as Record<string, string>;
+  const parsed3 = parseAsGeminiCli(envs3.GEMINI_CLI_CUSTOM_HEADERS);
+  assertEqual(parsed3["x-litellm-customer-id"], "evolve-session-rt2", "round-trip3: session customer-id");
+  assert(!parsed3["run"], "round-trip3: no spurious 'run' header at session level");
+}
+
+async function testGeminiBuildEnvVarsSessionLevel(): Promise<void> {
+  console.log("\n[16] buildEnvironmentVariables() sets session-level header for Gemini");
+  const config = {
+    type: "gemini",
+    apiKey: "test-gateway-key",
+    isDirectMode: false,
+  };
+  const agent = new Agent(config as any, {});
+  (agent as any).sessionTag = "evolve-gemini-session";
+
+  const envs = (agent as any).buildEnvironmentVariables() as Record<string, string>;
+  assert(!!envs.GEMINI_CLI_CUSTOM_HEADERS, "sets GEMINI_CLI_CUSTOM_HEADERS at session level");
+  assert(envs.GEMINI_CLI_CUSTOM_HEADERS.includes("x-litellm-customer-id: evolve-gemini-session"), "session-level customer-id");
+  assert(!envs.GEMINI_CLI_CUSTOM_HEADERS.includes("\n"), "comma format at session level");
+}
+
+async function testGeminiDirectModeSkipsHeaders(): Promise<void> {
+  console.log("\n[17] buildRunEnvs() returns undefined for Gemini in direct mode");
+  const config = {
+    type: "gemini",
+    apiKey: "direct-api-key",
+    isDirectMode: true,
+  };
+  const agent = new Agent(config as any, {});
+
+  const envs = (agent as any).buildRunEnvs("run-direct") as Record<string, string> | undefined;
+  assertEqual(envs, undefined, "no env overrides in direct mode");
+}
+
 async function testTomlRootKeyDriftRepair(): Promise<void> {
   console.log("\n[12] writeCodexSpendProvider() repairs root key when provider section exists but key drifted");
   const existing = [
@@ -403,6 +567,12 @@ async function main(): Promise<void> {
   await testTomlDuplicateRootKeyPrevention();
   await testTomlProfileScopedKeyNotConfused();
   await testTomlRootKeyDriftRepair();
+  await testGeminiBuildRunEnvsCommaFormat();
+  await testGeminiCommaFormatPreservesUserHeaders();
+  await testGeminiCommaFormatOverwritesTags();
+  await testGeminiBuildEnvVarsSessionLevel();
+  await testGeminiDirectModeSkipsHeaders();
+  await testGeminiRoundTripThroughParser();
   console.log("\n============================================================");
   console.log(`Results: ${passed} passed, ${failed} failed`);
   console.log("============================================================");
