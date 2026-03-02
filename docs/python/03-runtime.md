@@ -182,6 +182,7 @@ await evolve.set_session('existing-sandbox-id')  # Sets sandbox ID; reconnection
 # Checkpointing (requires storage=)
 ckpt = await evolve.checkpoint(comment='before refactor')   # Explicit snapshot of current sandbox
 checkpoints = await evolve.list_checkpoints(limit=10)       # List checkpoints, newest first
+files = await evolve.storage().download_files('latest', glob=['workspace/**/*.py'])  # Download specific files
 ```
 
 `sandbox_id` is a constructor parameter for initialization—it sets the sandbox ID before the first `run()`. `set_session()` is a runtime method that actively interrupts any running process, flushes the session log, resets checkpoint lineage, and switches to the new sandbox. They are **not** interchangeable: use `sandbox_id=` when constructing, `set_session()` when switching mid-session.
@@ -509,7 +510,7 @@ print(result.checkpoint.comment)  # 'initial draft'
 - **Foreground only:** Background runs (`background=True`) skip auto-checkpointing entirely.
 - **Exclusions:** The archive excludes `node_modules/`, `__pycache__/`, `*.pyc`, `.cache/`, `.npm/`, `.pip/`, `.venv/`, `venv/`, and `{workspace}/temp/` to keep snapshots lean.
 - **Dedup:** Archives are content-addressed by SHA-256 hash. If the hash matches an existing archive in storage, the upload is skipped—only the metadata entry is written.
-- **`from_checkpoint='latest'` edge case:** If no checkpoints exist globally (across all sessions/tags), `from_checkpoint='latest'` throws an error. Note that `'latest'` resolves to the globally newest checkpoint, not scoped to the current session tag. Use `list_checkpoints()` first to check availability.
+- **`from_checkpoint='latest'` edge case:** If no checkpoints exist globally (across all sessions/tags), `from_checkpoint='latest'` throws an error. Note that `'latest'` resolves to the globally newest checkpoint, not scoped to the current session tag. Use `storage().list_checkpoints()` first to check availability.
 
 ### Explicit Checkpoint
 
@@ -545,7 +546,7 @@ result = await evolve.run(
 - The restored checkpoint becomes the `parent_id` for the next checkpoint, maintaining lineage.
 - Agent type and workspace mode must match the checkpoint (model changes are fine).
 
-### Listing Checkpoints
+### Listing & Browsing Checkpoints
 
 **Instance method** (uses storage config from `storage=`):
 
@@ -559,7 +560,84 @@ for ckpt in checkpoints:
     print(ckpt.id, ckpt.comment, ckpt.timestamp)
 ```
 
-**Standalone function** (no Evolve instance needed):
+**Standalone `storage()` client** (no Evolve instance needed):
+
+```python
+from evolve import storage, StorageConfig
+
+# BYOK
+byok = storage(StorageConfig(url='s3://my-bucket/snapshots/'))
+
+# Gateway (reads EVOLVE_API_KEY from env)
+gateway = storage()
+```
+
+The `storage()` factory returns a `StorageClient` with four methods:
+
+```python
+# List checkpoints (newest first)
+checkpoints = await store.list_checkpoints(limit=10, tag='my-session')
+
+# Get a single checkpoint by ID (O(1) metadata lookup)
+info = await store.get_checkpoint('ckpt_m5abc_xyz123')
+
+# Download full checkpoint archive to a local directory
+output_dir = await store.download_checkpoint('ckpt_m5abc_xyz123',
+    to='./restored',   # (optional) Output directory (default: system temp dir)
+    extract=True,      # (optional) Extract archive (default: True). Set False to keep raw .tar.gz
+)
+
+# Download specific files without extracting the full archive
+files = await store.download_files('ckpt_m5abc_xyz123',
+    files=['workspace/output/result.json'],  # (optional) Exact file paths to extract
+    glob=['workspace/**/*.py'],              # (optional) Glob patterns to match files
+    to='./output',                           # (optional) Save to disk (default: in-memory only)
+)
+# files is a dict[str, str | bytes] — relative path → file contents
+```
+
+`download_files` returns a `dict[str, str | bytes]` of matching files. Pass `'latest'` instead of a checkpoint ID to any method to resolve the most recent checkpoint.
+
+**Downloading entire folders:**
+
+Use glob patterns to download all files in a specific directory:
+
+```python
+# All files in workspace/output/
+output = await store.download_files(id, glob=['workspace/output/**'])
+
+# All files in workspace/ (everything)
+all_files = await store.download_files(id, glob=['workspace/**'])
+
+# Multiple folders
+mixed = await store.download_files(id,
+    glob=['workspace/output/**', 'workspace/data/**'],
+)
+
+# Save directly to disk
+await store.download_files(id,
+    glob=['workspace/output/**'],
+    to='./local-output',
+)
+```
+
+> **Paths are relative to `/home/user/`** — the tar archive root. Use `workspace/...` not `/home/user/workspace/...`.
+
+**Instance-bound `storage()` accessor:**
+
+When you already have an Evolve instance, `evolve.storage()` returns the same `StorageClient` with gateway credentials automatically bound:
+
+```python
+evolve = Evolve(
+    config=AgentConfig(type='claude'),
+    storage=StorageConfig(url='s3://my-bucket/snapshots/'),
+)
+
+store = evolve.storage()
+files = await store.download_files('latest', glob=['workspace/report.*'])
+```
+
+**Standalone function** (convenience shortcut for listing only):
 
 ```python
 from evolve import list_checkpoints, StorageConfig
@@ -599,7 +677,7 @@ r4 = await evolve.run(prompt='Branch from step 1', from_checkpoint=r1.checkpoint
 # r4.checkpoint.parent_id → r1.checkpoint.id (not r3)
 ```
 
-### CheckpointInfo
+### Type Reference
 
 ```python
 @dataclass
@@ -614,12 +692,27 @@ class CheckpointInfo:
     workspace_mode: str | None    # 'knowledge' | 'swe'
     parent_id: str | None         # Parent checkpoint ID (lineage)
     comment: str | None           # User-provided label
+
+class StorageClient:
+    async def list_checkpoints(limit=None, tag=None) -> list[CheckpointInfo]
+    async def get_checkpoint(id: str) -> CheckpointInfo
+    async def download_checkpoint(id: str, *, to=None, extract=True) -> str
+    async def download_files(id: str, *, files=None, glob=None, to=None) -> dict[str, str | bytes]
+
+# download_checkpoint options
+to: str | None       # Output directory (default: system temp dir)
+extract: bool        # Extract archive (default: True)
+
+# download_files options
+files: list[str] | None  # Exact file paths to extract
+glob: list[str] | None   # Glob patterns to match files
+to: str | None           # Save to disk (default: in-memory only)
 ```
 
 ### End-to-End Example
 
 ```python
-from evolve import Evolve, AgentConfig, StorageConfig, list_checkpoints
+from evolve import Evolve, AgentConfig, StorageConfig, storage
 
 # 1. Create and checkpoint
 evolve = Evolve(
@@ -657,9 +750,14 @@ r3 = await evolve2.run(
 
 await evolve2.kill()
 
-# 4. List all checkpoints
-all_checkpoints = await list_checkpoints(StorageConfig(url='s3://my-bucket/project/'))
+# 4. Browse checkpoints and download files (no Evolve instance needed)
+store = storage(StorageConfig(url='s3://my-bucket/project/'))
+all_checkpoints = await store.list_checkpoints()
 print(f'{len(all_checkpoints)} checkpoints (newest first)')
+
+files = await store.download_files('latest', glob=['workspace/report.*'])
+for path, content in files.items():
+    print(f'{path}: {content}')
 ```
 
 ---
