@@ -53,10 +53,23 @@ evolve/
 ├── cookbooks/                   # Example applications
 │   ├── typescript/
 │   └── python/
-├── docs/
-│   ├── typescript-sdk.md        # Full TS SDK reference
-│   ├── python-sdk.md            # Full Python SDK reference
-│   └── README.md
+├── docs/                        # Documentation (source of truth)
+│   ├── _meta.ts                 # Nextra navigation config
+│   ├── index.md                 # Docs landing page
+│   ├── changelog.md             # Symlink → ../CHANGELOG.md
+│   ├── typescript/              # TS SDK reference (5 chapters + index)
+│   └── python/                  # Python SDK reference (5 chapters + index)
+├── docs-site/                   # Nextra docs site (Next.js 16 + Nextra 4.6)
+│   ├── src/app/                 # Next.js app (layout, page)
+│   ├── tests/                   # Unit, integration, e2e, visual tests
+│   ├── next.config.mjs          # Next.js config (basePath: /evolve)
+│   └── package.json             # Workspace: docs-site
+├── .claude/
+│   └── skills/evolve/           # Evolve skill (auto-synced from docs/)
+├── .github/workflows/
+│   ├── docs.yml                 # Build + test + deploy docs to GitHub Pages
+│   ├── sync-docs-to-skill.yml   # Sync docs/ → skills/ + .claude/skills/
+│   └── publish.yml              # NPM publish
 ├── logo/                        # Brand assets (PNG, GIF, 3D HTML)
 ├── package.json                 # Monorepo root
 └── tsconfig.json                # Root TS config

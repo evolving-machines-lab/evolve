@@ -12,7 +12,7 @@ All providers use the `evolve-all` image with pre-installed CLIs.
 | Modal | `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` | Both Modal vars set | None — auto-builds image on first run (~2 min) |
 | Daytona | `DAYTONA_API_KEY` | `DAYTONA_API_KEY` set | None — auto-creates snapshot on first run (~5 min) |
 
-See [assets/README.md](../../assets/README.md) for detailed setup instructions.
+See [assets/README.md](https://github.com/evolving-machines-lab/evolve/blob/main/assets/README.md) for detailed setup instructions.
 
 ---
 
