@@ -1,5 +1,6 @@
 """StorageClient for browsing and downloading checkpoints."""
 
+import asyncio
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
 
 from .results import CheckpointInfo
@@ -49,10 +50,13 @@ class StorageClient:
         # so the bridge adapter has a live Evolve instance to delegate to.
         self._init_fn = _init_fn
         self._started = False
+        self._init_lock = asyncio.Lock()
 
     async def _ensure_ready(self) -> None:
         """Ensure the bridge is started and ready to handle RPC calls."""
-        if not self._started:
+        async with self._init_lock:
+            if self._started:
+                return
             if self._init_fn is not None:
                 await self._init_fn()
             else:
@@ -114,7 +118,7 @@ class StorageClient:
 
         Args:
             id: Checkpoint ID or ``"latest"``
-            to: Target directory (default: system temp dir)
+            to: Target directory (default: current working directory)
             extract: Extract the tar.gz archive (default: True).
                      If False, saves the raw .tar.gz file.
 
@@ -122,8 +126,7 @@ class StorageClient:
             Path to the extracted directory or saved archive file
         """
         await self._ensure_ready()
-        # Only pass extract when False (True is the default on the bridge side)
-        params = self._build_params(id=id, to=to, extract=False if not extract else None)
+        params = self._build_params(id=id, to=to, extract=extract if not extract else None)
         response = await self._bridge.call('storage_download_checkpoint', params)
         return response['path']
 

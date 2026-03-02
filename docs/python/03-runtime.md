@@ -565,11 +565,13 @@ for ckpt in checkpoints:
 ```python
 from evolve import storage, StorageConfig
 
-# BYOK
-byok = storage(StorageConfig(url='s3://my-bucket/snapshots/'))
+# BYOK — use async with to ensure cleanup of the bridge subprocess
+async with storage(StorageConfig(url='s3://my-bucket/snapshots/')) as store:
+    checkpoints = await store.list_checkpoints()
 
 # Gateway (reads EVOLVE_API_KEY from env)
-gateway = storage()
+async with storage() as store:
+    checkpoints = await store.list_checkpoints()
 ```
 
 The `storage()` factory returns a `StorageClient` with four methods:
@@ -583,7 +585,7 @@ info = await store.get_checkpoint('ckpt_m5abc_xyz123')
 
 # Download full checkpoint archive to a local directory
 output_dir = await store.download_checkpoint('ckpt_m5abc_xyz123',
-    to='./restored',   # (optional) Output directory (default: system temp dir)
+    to='./restored',   # (optional) Output directory (default: cwd)
     extract=True,      # (optional) Extract archive (default: True). Set False to keep raw .tar.gz
 )
 
@@ -700,7 +702,7 @@ class StorageClient:
     async def download_files(id: str, *, files=None, glob=None, to=None) -> dict[str, str | bytes]
 
 # download_checkpoint options
-to: str | None       # Output directory (default: system temp dir)
+to: str | None       # Output directory (default: cwd)
 extract: bool        # Extract archive (default: True)
 
 # download_files options
@@ -751,13 +753,13 @@ r3 = await evolve2.run(
 await evolve2.kill()
 
 # 4. Browse checkpoints and download files (no Evolve instance needed)
-store = storage(StorageConfig(url='s3://my-bucket/project/'))
-all_checkpoints = await store.list_checkpoints()
-print(f'{len(all_checkpoints)} checkpoints (newest first)')
+async with storage(StorageConfig(url='s3://my-bucket/project/')) as store:
+    all_checkpoints = await store.list_checkpoints()
+    print(f'{len(all_checkpoints)} checkpoints (newest first)')
 
-files = await store.download_files('latest', glob=['workspace/report.*'])
-for path, content in files.items():
-    print(f'{path}: {content}')
+    files = await store.download_files('latest', glob=['workspace/report.*'])
+    for path, content in files.items():
+        print(f'{path}: {content}')
 ```
 
 ---
