@@ -720,6 +720,68 @@ Use the tag together with the sandbox id to correlate logs with files saved in
 
 ---
 
+## Cost Tracking
+
+Query per-run and per-session LLM spend. Requires gateway mode (`EVOLVE_API_KEY`). Supported for Claude and Codex agents.
+
+Cost data may take 5–60s to appear depending on LiteLLM batch flush timing (typically under 30s).
+
+```python
+from evolve import Evolve
+
+evolve = Evolve()
+
+# Each run() returns a run_id for cost attribution
+r1 = await evolve.run(prompt="Analyze the data")
+r2 = await evolve.run(prompt="Write tests")
+
+# Session cost — all runs
+session = await evolve.get_session_cost()
+print(session.total_cost)        # 0.42 (USD)
+print(session.total_tokens)      # {'prompt': 5000, 'completion': 2000}
+print(len(session.runs))         # 2
+
+# Run cost — by ID
+cost = await evolve.get_run_cost(run_id=r1.run_id)
+print(cost.cost, cost.model, cost.requests)
+
+# Run cost — by index (1-based, negative = from end)
+first = await evolve.get_run_cost(index=1)
+last  = await evolve.get_run_cost(index=-1)
+
+await evolve.kill()
+```
+
+After `kill()`, the bridge process is stopped. To query costs for a completed session, create a new Evolve instance — the TS bridge handles `previousSessionTag` fallback internally. After another `run()` cycle, the previous session's cost is no longer queryable.
+
+### Types
+
+```python
+@dataclass
+class RunCost:
+    run_id: str          # Matches AgentResponse.run_id
+    index: int           # 1-based chronological position
+    cost: float          # USD (includes platform margin)
+    tokens: Dict[str, int]  # {'prompt': N, 'completion': N}
+    model: str           # Last observed model for this run
+    requests: int        # Number of LLM API requests
+    as_of: str           # ISO timestamp of query
+    is_complete: bool    # False if calls still batching (5–60s)
+    truncated: bool      # True if spend logs were capped
+
+@dataclass
+class SessionCost:
+    session_tag: str     # Matches get_session_tag()
+    total_cost: float    # USD across all runs
+    total_tokens: Dict[str, int]  # {'prompt': N, 'completion': N}
+    runs: List[RunCost]  # Chronological order
+    as_of: str
+    is_complete: bool
+    truncated: bool
+```
+
+---
+
 ## Error Handling
 
 Common errors and how to handle them:
