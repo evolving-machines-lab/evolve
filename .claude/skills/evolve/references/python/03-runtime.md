@@ -182,6 +182,7 @@ await evolve.set_session('existing-sandbox-id')  # Sets sandbox ID; reconnection
 # Checkpointing (requires storage=)
 ckpt = await evolve.checkpoint(comment='before refactor')   # Explicit snapshot of current sandbox
 checkpoints = await evolve.list_checkpoints(limit=10)       # List checkpoints, newest first
+files = await evolve.storage().download_files('latest', glob=['workspace/**/*.py'])  # Download specific files
 ```
 
 `sandbox_id` is a constructor parameter for initialization—it sets the sandbox ID before the first `run()`. `set_session()` is a runtime method that actively interrupts any running process, flushes the session log, resets checkpoint lineage, and switches to the new sandbox. They are **not** interchangeable: use `sandbox_id=` when constructing, `set_session()` when switching mid-session.
@@ -408,94 +409,37 @@ await evolve.run(prompt='Compare results')  # Back to sandbox A
 
 ## Storage & Checkpointing
 
-Persist sandbox state beyond sandbox lifetime. Checkpoints archive specific directories under `/home/user/` to S3-compatible storage and can be restored into a fresh sandbox.
+> **Gateway feature** — requires `EVOLVE_API_KEY`. Storage is fully managed by Evolve; no S3 buckets or AWS credentials needed.
+
+Persist sandbox state beyond sandbox lifetime. Checkpoints archive specific directories under `/home/user/` to Evolve-managed storage and can be restored into a fresh sandbox.
 
 **What gets checkpointed:**
 - `/home/user/workspace/` — your project files
 - `/home/user/.<agent>/` — agent settings and session history (e.g. `.claude/`, `.codex/`, `.gemini/`, `.qwen/`, `.kimi/`)
 - For OpenCode: XDG directories (`~/.local/share/opencode/`, `~/.config/opencode/`, `~/.local/state/opencode/`)
 
+**Key properties:**
 - **Auto-checkpoint:** Every successful `run()` with `storage=` creates a checkpoint automatically.
 - **Content-addressed dedup:** Archives are hashed (SHA-256). Same content = skip upload.
 - **Lineage tracking:** Each checkpoint records its `parent_id`, forming a chain across runs and restores.
 
-### Modes
-
-| | BYOK | Gateway |
-|---|------|---------|
-| Setup | `storage=StorageConfig(url='s3://...')` + AWS credentials | `storage=StorageConfig()` + `EVOLVE_API_KEY` |
-| Storage | Your S3/R2/MinIO bucket | Evolve-managed |
-| Metadata | JSON files in S3 | Dashboard database |
-
 ### Configuration
 
 ```python
-from evolve import Evolve, AgentConfig, StorageConfig, StorageCredentials
-
-# BYOK — your own S3 bucket
 evolve = Evolve(
     config=AgentConfig(type='claude'),
-    storage=StorageConfig(
-        url='s3://my-bucket/agent-snapshots/',  # S3 URL (bucket + prefix)
-        region='us-west-2',                      # (optional) Default: AWS_REGION env or us-east-1
-    ),
-)
-
-# BYOK — Cloudflare R2 / MinIO / custom endpoint
-evolve = Evolve(
-    config=AgentConfig(type='claude'),
-    storage=StorageConfig(
-        url='s3://my-bucket/prefix/',
-        endpoint='https://acct.r2.cloudflarestorage.com',
-    ),
-)
-
-# Gateway — Evolve-managed storage (no S3 credentials needed)
-evolve = Evolve(
-    config=AgentConfig(type='claude'),
-    storage=StorageConfig(),  # Reads EVOLVE_API_KEY from env
+    storage=StorageConfig(),  # Uses EVOLVE_API_KEY from env
 )
 ```
-
-**StorageConfig:**
-
-```python
-@dataclass
-class StorageConfig:
-    url: str | None = None          # 's3://bucket/prefix' or 'https://endpoint/bucket/prefix'
-    bucket: str | None = None       # Explicit bucket (overrides URL parsing)
-    prefix: str | None = None       # Key prefix (overrides URL parsing)
-    region: str | None = None       # AWS region (default: AWS_REGION env or 'us-east-1')
-    endpoint: str | None = None     # Custom S3 endpoint (R2, MinIO, GCS)
-    credentials: StorageCredentials | None = None  # StorageCredentials(access_key_id='...', secret_access_key='...') (default: AWS SDK chain)
-```
-
-**BYOK prerequisites:**
-
-```bash
-# The Python SDK bridges to Node.js — AWS SDK packages must be installed for BYOK storage
-npm install @aws-sdk/client-s3 @aws-sdk/s3-request-presigner
-
-# Set credentials (or use any method supported by the AWS SDK credential chain)
-export AWS_ACCESS_KEY_ID=...
-export AWS_SECRET_ACCESS_KEY=...
-```
-
-> The AWS SDK packages are loaded dynamically at runtime by the Node.js bridge. If they are not installed, the SDK throws a clear error with install instructions.
 
 ### Auto-Checkpoint (via `run()`)
 
 Every successful foreground `run()` auto-creates a checkpoint:
 
 ```python
-evolve = Evolve(
-    config=AgentConfig(type='claude'),
-    storage=StorageConfig(url='s3://my-bucket/snapshots/'),
-)
-
 result = await evolve.run(
     prompt='Build the report',
-    checkpoint_comment='initial draft',  # (optional) Label
+    checkpoint_comment='initial draft',
 )
 
 print(result.checkpoint.id)       # 'ckpt_m5abc_xyz123'
@@ -509,7 +453,7 @@ print(result.checkpoint.comment)  # 'initial draft'
 - **Foreground only:** Background runs (`background=True`) skip auto-checkpointing entirely.
 - **Exclusions:** The archive excludes `node_modules/`, `__pycache__/`, `*.pyc`, `.cache/`, `.npm/`, `.pip/`, `.venv/`, `venv/`, and `{workspace}/temp/` to keep snapshots lean.
 - **Dedup:** Archives are content-addressed by SHA-256 hash. If the hash matches an existing archive in storage, the upload is skipped—only the metadata entry is written.
-- **`from_checkpoint='latest'` edge case:** If no checkpoints exist globally (across all sessions/tags), `from_checkpoint='latest'` throws an error. Note that `'latest'` resolves to the globally newest checkpoint, not scoped to the current session tag. Use `list_checkpoints()` first to check availability.
+- **`from_checkpoint='latest'` edge case:** If no checkpoints exist globally (across all sessions/tags), `from_checkpoint='latest'` throws an error. Note that `'latest'` resolves to the globally newest checkpoint, not scoped to the current session tag. Use `storage().list_checkpoints()` first to check availability.
 
 ### Explicit Checkpoint
 
@@ -527,14 +471,13 @@ Requires an active sandbox (`run()` must have been called first).
 Pass `from_checkpoint` to `run()` to restore a checkpoint into a fresh sandbox before running:
 
 ```python
-# Restore by checkpoint ID
 result = await evolve.run(
     prompt='Continue where we left off',
     from_checkpoint='ckpt_m5abc_xyz123',
 )
 
-# Restore the most recent checkpoint
-result = await evolve.run(
+# Or restore the most recent checkpoint
+latest = await evolve.run(
     prompt='Pick up from latest state',
     from_checkpoint='latest',
 )
@@ -545,61 +488,101 @@ result = await evolve.run(
 - The restored checkpoint becomes the `parent_id` for the next checkpoint, maintaining lineage.
 - Agent type and workspace mode must match the checkpoint (model changes are fine).
 
-### Listing Checkpoints
+### Listing & Browsing Checkpoints
 
-**Instance method** (uses storage config from `storage=`):
+**Instance method:**
 
 ```python
 checkpoints = await evolve.list_checkpoints(
-    limit=10,                    # (optional) Max results (default: 100, max: 500)
-    tag='my-session-tag',        # (optional) Filter by session tag
+    limit=10,                    # (optional) default: 100, max: 500
+    tag='my-session-tag',        # (optional) filter by session tag
 )
-
-for ckpt in checkpoints:
-    print(ckpt.id, ckpt.comment, ckpt.timestamp)
 ```
 
-**Standalone function** (no Evolve instance needed):
+**Standalone `storage()` client** (no Evolve instance needed):
+
+```python
+from evolve import storage
+
+async with storage() as store:  # Uses EVOLVE_API_KEY from env
+    checkpoints = await store.list_checkpoints()
+```
+
+The `storage()` factory returns a `StorageClient` with four methods:
+
+```python
+# List checkpoints (newest first)
+checkpoints = await store.list_checkpoints(limit=10, tag='my-session')
+
+# Get a single checkpoint by ID
+info = await store.get_checkpoint('ckpt_m5abc_xyz123')
+
+# Download full checkpoint archive to a local directory
+output_dir = await store.download_checkpoint('ckpt_m5abc_xyz123',
+    to='./restored',   # (optional) default: cwd
+    extract=True,      # (optional) default: True — set False to keep raw .tar.gz
+)
+
+# Download specific files without extracting the full archive
+files = await store.download_files('ckpt_m5abc_xyz123',
+    files=['workspace/output/result.json'],  # (optional) exact paths
+    glob=['workspace/**/*.py'],              # (optional) glob patterns
+    to='./output',                           # (optional) save to disk
+)
+# files is a dict[str, str | bytes] — relative path → file contents
+```
+
+Pass `'latest'` instead of a checkpoint ID to any method to resolve the most recent checkpoint.
+
+**Downloading folders with glob patterns:**
+
+```python
+output = await store.download_files(id, glob=['workspace/output/**'])
+all_files = await store.download_files(id, glob=['workspace/**'])
+
+# Save directly to disk
+await store.download_files(id, glob=['workspace/output/**'], to='./local-output')
+```
+
+> **Paths are relative to `/home/user/`** — use `workspace/...` not `/home/user/workspace/...`.
+
+**Instance-bound `storage()` accessor:**
+
+When you already have an Evolve instance, `evolve.storage()` returns a `StorageClient` with credentials automatically bound:
+
+```python
+store = evolve.storage()
+files = await store.download_files('latest', glob=['workspace/report.*'])
+```
+
+**Standalone `list_checkpoints()`** (convenience shortcut for listing only):
 
 ```python
 from evolve import list_checkpoints, StorageConfig
 
-# BYOK — same limit=/tag= options as evolve.list_checkpoints()
-all_checkpoints = await list_checkpoints(
-    StorageConfig(url='s3://my-bucket/snapshots/'),
-    limit=10, tag='my-session',
-)
-
-# Gateway (reads EVOLVE_API_KEY from env)
 recent = await list_checkpoints(StorageConfig(), limit=5)
 ```
 
-Results are sorted newest first.
-
 ### Checkpoint Lineage
 
-Each checkpoint records `parent_id`—the checkpoint it was created from. Consecutive runs build a chain:
+Each checkpoint records `parent_id`. Consecutive runs build a chain:
 
 ```python
 r1 = await evolve.run(prompt='Step 1')
-# r1.checkpoint.parent_id → None (first checkpoint)
+# r1.checkpoint.parent_id → None (first)
 
 r2 = await evolve.run(prompt='Step 2')
 # r2.checkpoint.parent_id → r1.checkpoint.id
-
-r3 = await evolve.run(prompt='Step 3')
-# r3.checkpoint.parent_id → r2.checkpoint.id
 ```
 
-Restoring from a checkpoint sets that checkpoint as the parent for subsequent checkpoints:
+Restoring from a checkpoint branches the lineage:
 
 ```python
-# Later: restore from r1 and branch
 r4 = await evolve.run(prompt='Branch from step 1', from_checkpoint=r1.checkpoint.id)
 # r4.checkpoint.parent_id → r1.checkpoint.id (not r3)
 ```
 
-### CheckpointInfo
+### Type Reference
 
 ```python
 @dataclass
@@ -614,52 +597,65 @@ class CheckpointInfo:
     workspace_mode: str | None    # 'knowledge' | 'swe'
     parent_id: str | None         # Parent checkpoint ID (lineage)
     comment: str | None           # User-provided label
+
+class StorageClient:
+    async def list_checkpoints(limit=None, tag=None) -> list[CheckpointInfo]
+    async def get_checkpoint(id: str) -> CheckpointInfo
+    async def download_checkpoint(id: str, *, to=None, extract=True) -> str
+    async def download_files(id: str, *, files=None, glob=None, to=None) -> dict[str, str | bytes]
+
+# download_checkpoint options
+to: str | None       # Output directory (default: cwd)
+extract: bool        # Extract archive (default: True)
+
+# download_files options
+files: list[str] | None  # Exact file paths to extract
+glob: list[str] | None   # Glob patterns to match files
+to: str | None           # Save to disk (default: in-memory only)
 ```
 
 ### End-to-End Example
 
 ```python
-from evolve import Evolve, AgentConfig, StorageConfig, list_checkpoints
+from evolve import Evolve, AgentConfig, StorageConfig, storage
 
 # 1. Create and checkpoint
-evolve = Evolve(
+async with Evolve(
     config=AgentConfig(type='claude'),
-    storage=StorageConfig(url='s3://my-bucket/project/'),
-)
+    storage=StorageConfig(),
+) as evolve:
+    r1 = await evolve.run(
+        prompt="Create a file called report.txt with 'Draft v1'",
+        checkpoint_comment='initial draft',
+    )
+    print('Checkpoint 1:', r1.checkpoint.id)
 
-r1 = await evolve.run(
-    prompt="Create a file called report.txt with 'Draft v1'",
-    checkpoint_comment='initial draft',
-)
-print('Checkpoint 1:', r1.checkpoint.id)
-
-# 2. Second run — auto-chains parent_id
-r2 = await evolve.run(
-    prompt="Append ' - reviewed' to report.txt",
-    checkpoint_comment='reviewed',
-)
-print('Checkpoint 2:', r2.checkpoint.id)
-print('Parent:', r2.checkpoint.parent_id)  # → r1.checkpoint.id
-
-await evolve.kill()
+    # 2. Second run — auto-chains parent_id
+    r2 = await evolve.run(
+        prompt="Append ' - reviewed' to report.txt",
+        checkpoint_comment='reviewed',
+    )
+    print('Parent:', r2.checkpoint.parent_id)  # → r1.checkpoint.id
 
 # 3. Restore into fresh sandbox
-evolve2 = Evolve(
+async with Evolve(
     config=AgentConfig(type='claude'),
-    storage=StorageConfig(url='s3://my-bucket/project/'),
-)
+    storage=StorageConfig(),
+) as evolve2:
+    r3 = await evolve2.run(
+        prompt='Read report.txt — what does it say?',
+        from_checkpoint=r1.checkpoint.id,
+    )
+    # Agent sees 'Draft v1' (not the reviewed version)
 
-r3 = await evolve2.run(
-    prompt='Read report.txt — what does it say?',
-    from_checkpoint=r1.checkpoint.id,  # Restore from checkpoint 1
-)
-# Agent sees 'Draft v1' (not the reviewed version)
+# 4. Browse checkpoints and download files (no Evolve instance needed)
+async with storage() as store:
+    all_checkpoints = await store.list_checkpoints()
+    print(f'{len(all_checkpoints)} checkpoints (newest first)')
 
-await evolve2.kill()
-
-# 4. List all checkpoints
-all_checkpoints = await list_checkpoints(StorageConfig(url='s3://my-bucket/project/'))
-print(f'{len(all_checkpoints)} checkpoints (newest first)')
+    files = await store.download_files('latest', glob=['workspace/report.*'])
+    for path, content in files.items():
+        print(f'{path}: {content}')
 ```
 
 ---
@@ -736,7 +732,7 @@ Common errors and how to handle them:
 | `Cannot use 'from_checkpoint' with existing session` | `run(from_checkpoint=...)` with `sandbox_id=` | Checkpoint restore requires a fresh sandbox — remove `sandbox_id=` |
 | `No checkpoints found` | `run(from_checkpoint='latest')` with no prior checkpoints | Create a checkpoint first, or use `list_checkpoints()` to verify |
 | `Schema validation failed: ...` | Agent's `result.json` doesn't match schema | Check `output.raw_data` for the actual output; refine your prompt or schema |
-| `@aws-sdk/client-s3 not installed` | `storage=StorageConfig(url='s3://...')` without AWS SDK | `npm install @aws-sdk/client-s3 @aws-sdk/s3-request-presigner` |
+| `Storage requires EVOLVE_API_KEY` | `storage=StorageConfig()` without gateway credentials | Set `EVOLVE_API_KEY` in your environment |
 | Timeout (exit code -1) | Agent exceeded `timeout_ms` | Increase `timeout_ms` or simplify the prompt |
 
 ```python

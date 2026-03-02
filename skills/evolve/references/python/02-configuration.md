@@ -176,9 +176,8 @@ evolve = Evolve(
     # (optional) Prefix for observability logs
     session_tag_prefix='my-agent',
 
-    # (optional) Storage for checkpoint persistence — snapshot sandbox to S3
-    storage=StorageConfig(url='s3://my-bucket/agent-snapshots/'),  # BYOK — your own S3 bucket
-    # storage=StorageConfig(),                                      # Gateway — Evolve-managed (requires EVOLVE_API_KEY)
+    # (optional) Storage for checkpoint persistence (gateway feature — requires EVOLVE_API_KEY)
+    storage=StorageConfig(),
 
     # ─────────────────────────────────────────────────────────────
     # Advanced
