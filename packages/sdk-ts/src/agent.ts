@@ -39,7 +39,7 @@ import type {
 } from "./types";
 import { VALIDATION_PRESETS } from "./types";
 import { getAgentConfig, type AgentRegistryEntry } from "./registry";
-import { writeMcpConfig, writeCodexSpendProvider } from "./mcp";
+import { writeMcpConfig, writeCodexSpendProvider, writeJsonSpendHeaders } from "./mcp";
 import { createAgentParser, type AgentParser } from "./parsers";
 import { DEFAULT_TIMEOUT_MS, DEFAULT_WORKING_DIR, DEFAULT_DASHBOARD_URL, LITELLM_CUSTOMER_ID_HEADER, LITELLM_TAGS_HEADER, RUN_TAG_PREFIX, getGatewayUrl, getGeminiGatewayUrl } from "./constants";
 import { buildWorkerSystemPrompt } from "./prompts";
@@ -619,6 +619,18 @@ export class Agent {
       );
     }
 
+    // Spend tracking: write customHeaders to JSON settings file for agents that read
+    // headers from config (e.g., Qwen). Session-level only — per-run tags are written
+    // before each spawn in run().
+    if (!this.agentConfig.isDirectMode && this.registry.spendTrackingJsonConfig) {
+      await writeJsonSpendHeaders(
+        sandbox,
+        this.agentConfig.type as "qwen" | "kimi",
+        this.registry.spendTrackingJsonConfig.headersPath,
+        { [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag },
+      );
+    }
+
     // Setup skills
     if (this.skills?.length) {
       await this.setupSkills(sandbox);
@@ -867,6 +879,21 @@ export class Agent {
     const command = this.buildCommand(prompt);
     const runId = randomUUID();
     const runEnvs = this.buildRunEnvs(runId);
+
+    // Per-run config-file spend tracking (Qwen): write both session + run headers
+    // to settings.json before spawning. Each run gets a fresh file write because
+    // the CLI reads the config at startup (not per-request from env).
+    if (!this.agentConfig.isDirectMode && this.registry.spendTrackingJsonConfig) {
+      await writeJsonSpendHeaders(
+        sandbox,
+        this.agentConfig.type as "qwen" | "kimi",
+        this.registry.spendTrackingJsonConfig.headersPath,
+        {
+          [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
+          [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
+        },
+      );
+    }
 
     // Line buffer for NDJSON parsing (shared by both modes)
     let lineBuffer = "";

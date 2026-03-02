@@ -111,6 +111,16 @@ export interface AgentRegistryEntry {
     /** Env var name for x-litellm-tags value */
     runTagEnv: string;
   };
+  /**
+   * Config-file-based spend tracking for CLIs that read custom headers from a
+   * JSON settings file (e.g., Qwen settings.json → model.generationConfig.customHeaders).
+   * The SDK writes headers to this file before each run.
+   * Source-verified: Qwen reads customHeaders from settings.json, not env vars.
+   */
+  spendTrackingJsonConfig?: {
+    /** JSON path to the customHeaders object (dot-separated) */
+    headersPath: string;
+  };
   /** Additional directories to include in checkpoint tar (beyond mcpConfig.settingsDir).
    *  Used for agents like OpenCode that spread state across XDG directories. */
   checkpointDirs?: string[];
@@ -250,6 +260,11 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       sourceDir: "/home/user/.evolve/skills",
       targetDir: "/home/user/.qwen/skills",
       enableFlag: "--experimental-skills",
+    },
+    // Source-verified: Qwen reads customHeaders from settings.json model.generationConfig,
+    // not from env vars. The SDK writes headers to this path before each run.
+    spendTrackingJsonConfig: {
+      headersPath: "model.generationConfig.customHeaders",
     },
     defaultBaseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     buildCommand: ({ prompt, model, isResume, isDirectMode, skills }) => {

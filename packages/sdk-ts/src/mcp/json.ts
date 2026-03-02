@@ -201,6 +201,55 @@ export async function writeQwenMcpConfig(
   await writeJsonMcpConfig(sandbox, "qwen", servers, toQwenFormat);
 }
 
+// =============================================================================
+// JSON SPEND TRACKING (Qwen-style: customHeaders in settings.json)
+// =============================================================================
+
+/**
+ * Write spend tracking headers to a JSON settings file.
+ *
+ * Sets headers at the specified dot-path (e.g., "model.generationConfig.customHeaders")
+ * within the agent's existing settings.json. Preserves all other config (MCP, etc.).
+ *
+ * Used for CLIs that read custom HTTP headers from a JSON config file
+ * rather than environment variables (e.g., Qwen).
+ */
+export async function writeJsonSpendHeaders(
+  sandbox: SandboxInstance,
+  agentType: "qwen" | "kimi",
+  headersPath: string,
+  headers: Record<string, string>,
+): Promise<void> {
+  const settingsDir = getMcpSettingsDir(agentType);
+  const settingsPath = getMcpSettingsPath(agentType);
+
+  await sandbox.files.makeDir(settingsDir);
+
+  let config: Record<string, unknown> = {};
+  try {
+    const existing = await sandbox.files.read(settingsPath);
+    if (typeof existing === "string") {
+      config = JSON.parse(existing);
+    }
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
+
+  // Walk the dot-path and set the headers object
+  const parts = headersPath.split(".");
+  let current: Record<string, unknown> = config;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const key = parts[i];
+    if (typeof current[key] !== "object" || current[key] === null) {
+      current[key] = {};
+    }
+    current = current[key] as Record<string, unknown>;
+  }
+  current[parts[parts.length - 1]] = headers;
+
+  await sandbox.files.write(settingsPath, JSON.stringify(config, null, 2));
+}
+
 /** Write MCP config for Kimi agent (FastMCP-compatible transport field) */
 export async function writeKimiMcpConfig(
   sandbox: SandboxInstance,

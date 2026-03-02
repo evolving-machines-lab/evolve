@@ -10,6 +10,7 @@
 
 import { Agent } from "../../dist/index.js";
 import { writeCodexSpendProvider } from "../../src/mcp/toml.js";
+import { writeJsonSpendHeaders } from "../../src/mcp/json.js";
 
 let passed = 0;
 let failed = 0;
@@ -551,6 +552,128 @@ async function testTomlRootKeyDriftRepair(): Promise<void> {
   assertEqual(sectionMatches.length, 1, "provider section not duplicated");
 }
 
+// =============================================================================
+// Qwen spend tracking (JSON config-file-based customHeaders)
+// =============================================================================
+
+async function testQwenWriteJsonSpendHeaders(): Promise<void> {
+  console.log("\n[19] writeJsonSpendHeaders() writes headers at correct JSON path");
+  const written: { path: string; content: string }[] = [];
+  const sandbox = {
+    files: {
+      makeDir: async () => {},
+      read: async () => { throw Object.assign(new Error("not found"), { code: "ENOENT" }); },
+      write: async (path: string, content: string) => { written.push({ path, content }); },
+    },
+  };
+
+  await writeJsonSpendHeaders(
+    sandbox as any,
+    "qwen",
+    "model.generationConfig.customHeaders",
+    { "x-litellm-customer-id": "session-abc", "x-litellm-tags": "run:run-123" },
+  );
+
+  assertEqual(written.length, 1, "writes one file");
+  const config = JSON.parse(written[0].content);
+  assertEqual(config.model?.generationConfig?.customHeaders?.["x-litellm-customer-id"], "session-abc", "customer-id at correct path");
+  assertEqual(config.model?.generationConfig?.customHeaders?.["x-litellm-tags"], "run:run-123", "run tag at correct path");
+}
+
+async function testQwenWriteJsonPreservesExistingConfig(): Promise<void> {
+  console.log("\n[20] writeJsonSpendHeaders() preserves existing settings (MCP, etc.)");
+  const existing = JSON.stringify({
+    mcpServers: { myServer: { url: "http://localhost:3000" } },
+    model: { generationConfig: { timeout: 30000 } },
+  });
+  const written: { path: string; content: string }[] = [];
+  const sandbox = {
+    files: {
+      makeDir: async () => {},
+      read: async () => existing,
+      write: async (path: string, content: string) => { written.push({ path, content }); },
+    },
+  };
+
+  await writeJsonSpendHeaders(
+    sandbox as any,
+    "qwen",
+    "model.generationConfig.customHeaders",
+    { "x-litellm-customer-id": "session-xyz" },
+  );
+
+  const config = JSON.parse(written[0].content);
+  // Existing MCP config preserved
+  assertEqual(config.mcpServers?.myServer?.url, "http://localhost:3000", "MCP config preserved");
+  // Existing generationConfig fields preserved
+  assertEqual(config.model?.generationConfig?.timeout, 30000, "timeout preserved");
+  // Headers added
+  assertEqual(config.model?.generationConfig?.customHeaders?.["x-litellm-customer-id"], "session-xyz", "headers added");
+}
+
+async function testQwenBuildRunEnvsReturnsUndefined(): Promise<void> {
+  console.log("\n[21] Qwen buildRunEnvs() returns undefined (uses config file, not env vars)");
+  const config = {
+    type: "qwen",
+    apiKey: "test-gateway-key",
+    isDirectMode: false,
+  };
+  const agent = new Agent(config as any, {});
+  (agent as any).sessionTag = "evolve-qwen-session";
+
+  const envs = (agent as any).buildRunEnvs("run-qwen-001") as Record<string, string> | undefined;
+  // Qwen has no customHeadersEnv and no spendTrackingEnvs, so buildRunEnvs returns undefined.
+  // Per-run tracking is done via config file write in run(), not via env overrides.
+  assertEqual(envs, undefined, "no env overrides for qwen (uses config file)");
+}
+
+async function testQwenDirectModeSkipsHeaders(): Promise<void> {
+  console.log("\n[22] Qwen direct mode skips config-file headers");
+  const config = {
+    type: "qwen",
+    apiKey: "direct-api-key",
+    isDirectMode: true,
+  };
+  const agent = new Agent(config as any, {});
+
+  const envs = (agent as any).buildRunEnvs("run-direct") as Record<string, string> | undefined;
+  assertEqual(envs, undefined, "no env overrides in direct mode");
+}
+
+async function testQwenWriteJsonOverwritesPreviousHeaders(): Promise<void> {
+  console.log("\n[23] writeJsonSpendHeaders() overwrites previous headers (per-run update)");
+  // Simulate first run wrote headers, now second run overwrites
+  const afterFirstRun = JSON.stringify({
+    model: {
+      generationConfig: {
+        customHeaders: {
+          "x-litellm-customer-id": "session-abc",
+          "x-litellm-tags": "run:run-001",
+        },
+      },
+    },
+  });
+  const written: { path: string; content: string }[] = [];
+  const sandbox = {
+    files: {
+      makeDir: async () => {},
+      read: async () => afterFirstRun,
+      write: async (path: string, content: string) => { written.push({ path, content }); },
+    },
+  };
+
+  await writeJsonSpendHeaders(
+    sandbox as any,
+    "qwen",
+    "model.generationConfig.customHeaders",
+    { "x-litellm-customer-id": "session-abc", "x-litellm-tags": "run:run-002" },
+  );
+
+  const config = JSON.parse(written[0].content);
+  assertEqual(config.model?.generationConfig?.customHeaders?.["x-litellm-tags"], "run:run-002", "run tag updated to run-002");
+  assertEqual(config.model?.generationConfig?.customHeaders?.["x-litellm-customer-id"], "session-abc", "session tag unchanged");
+}
+
 async function main(): Promise<void> {
   console.log("\n============================================================");
   console.log("Cost API Unit Tests");
@@ -573,6 +696,11 @@ async function main(): Promise<void> {
   await testGeminiBuildEnvVarsSessionLevel();
   await testGeminiDirectModeSkipsHeaders();
   await testGeminiRoundTripThroughParser();
+  await testQwenWriteJsonSpendHeaders();
+  await testQwenWriteJsonPreservesExistingConfig();
+  await testQwenBuildRunEnvsReturnsUndefined();
+  await testQwenDirectModeSkipsHeaders();
+  await testQwenWriteJsonOverwritesPreviousHeaders();
   console.log("\n============================================================");
   console.log(`Results: ${passed} passed, ${failed} failed`);
   console.log("============================================================");
