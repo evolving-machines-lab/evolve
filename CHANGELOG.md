@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.29] - 2026-03-02
+
+### Added
+
+- **Standalone `storage()` client** ([#29](https://github.com/evolving-machines-lab/evolve/pull/29))
+  - `storage({ url })` factory returns a `StorageClient` for browsing and downloading checkpoint files from S3 — no Evolve instance or sandbox required
+  - `listCheckpoints({ tag, limit })` — discover checkpoints by session tag
+  - `getCheckpoint(id)` — fetch checkpoint metadata (files, sizes, timestamps)
+  - `downloadFiles(id, { glob })` — selective file download with glob filtering
+  - `Evolve.storage()` accessor for bound client on existing instances
+  - Supports both BYOK (user's S3 bucket) and Gateway (Evolve-managed) modes
+  - Security hardening: entry type allowlist, path traversal prevention, tar injection protection, streaming SHA-256 integrity, temp file cleanup, 10MB buffer limits
+  - 62 new unit tests
+  - Full Python SDK parity via bridge
+
+- **Per-run spend tracking and cost query API** ([#31](https://github.com/evolving-machines-lab/evolve/pull/31))
+  - `getSessionCost()` / `get_session_cost()` — total cost, tokens, and per-run breakdown for the current session
+  - `getRunCost({ runId } | { index })` / `get_run_cost(run_id= | index=)` — cost for a specific run by ID or index (negative indexing supported)
+  - `RunCost` and `SessionCost` types with full token/cost/model breakdown
+  - Spend tracking via LiteLLM custom headers (`x-litellm-tags` per-run grouping)
+  - Works after `kill()` — queries use `previousSessionTag` fallback
+  - Codex CLI support via `env_http_headers` in TOML config
+  - `AgentResponse.runId` / `run_id` for correlating runs to costs
+  - Full Python SDK parity (bridge + dataclasses + validation)
+  - 29 Python unit tests, TS e2e test
+
+- **Nextra docs site** with CI/CD pipeline
+  - 4-level test suite (unit, integration, e2e, visual)
+  - GitHub Pages deployment via `docs.yml` workflow
+  - Auto-sync from `docs/` → `skills/` + `.claude/skills/` via `sync-docs-to-skill.yml`
+
+### Fixed
+
+- Python bridge `InvalidStateError` on timeout and cancellation race conditions
+- Gateway storage mode regression and BSD tar year-format parsing
+- StorageClient race condition on concurrent access
+- BYOK not-found regression and stale gateway cache after `withAgent()`
+- Duplicate `model_provider` key in Codex TOML config
+- `x-litellm-tags` append behavior (was overwriting user tags)
+- Custom header splitting (newlines only, not commas)
+- Publish workflow now idempotent on re-runs (skips already-published versions)
+
+### Documentation
+
+- Added Cost Tracking section to both TypeScript and Python runtime docs
+- Updated storage & checkpointing docs for new `storage()` API
+- Made storage docs gateway-only (removed stale BYOK references)
+- Added StorageClient surface to Python docs — full TS parity
+- Updated skill definition with StorageClient and cost tracking entries
+
 ## [0.0.24] - 2025-02-14
 
 ### Added
