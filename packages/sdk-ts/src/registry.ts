@@ -317,17 +317,21 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     },
     defaultBaseUrl: "https://api.moonshot.ai/v1",
     // Source-verified: Kimi reads custom_headers from providers[name].custom_headers
-    // in ~/.kimi/config.toml (config.py:45, llm.py:101). No env var for custom headers.
-    // Requires a default_model → model → provider chain so the CLI picks up the provider.
+    // in config.toml (config.py:45, llm.py:101). No env var for custom headers.
+    // We write a dedicated Evolve-owned config file and pass it via --config-file
+    // to avoid merging with user config. Requires default_model → model → provider chain.
     spendTrackingTomlProvider: {
-      configPath: "~/.kimi/config.toml",
+      configPath: "~/.kimi/evolve-config.toml",
       providerName: "evolve-gateway",
       modelName: "evolve-default",
       maxContextSize: 262144,
     },
-    buildCommand: ({ prompt, model, isResume }) => {
+    buildCommand: ({ prompt, model, isResume, isDirectMode }) => {
       const continueFlag = isResume ? "--continue " : "";
-      return `printf '%s' "${prompt}" | KIMI_MODEL_NAME=${model} kimi --print --output-format stream-json --yolo ${continueFlag}`;
+      // In gateway mode, use --config-file to point to our dedicated spend tracking config.
+      // Source-verified: cli/__init__.py:133-143 — --config-file fully replaces default config.
+      const configFlag = isDirectMode ? "" : "--config-file /home/user/.kimi/evolve-config.toml ";
+      return `printf '%s' "${prompt}" | KIMI_MODEL_NAME=${model} kimi --print --output-format stream-json --yolo ${configFlag}${continueFlag}`;
     },
   },
 

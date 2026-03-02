@@ -675,23 +675,22 @@ async function testQwenWriteJsonOverwritesPreviousHeaders(): Promise<void> {
 }
 
 // =============================================================================
-// Kimi spend tracking (TOML provider with custom_headers in config.toml)
+// Kimi spend tracking (dedicated config via --config-file, no merge/parsing)
 // =============================================================================
 
 const kimiConfig = {
-  configPath: "~/.kimi/config.toml",
+  configPath: "~/.kimi/evolve-config.toml",
   providerName: "evolve-gateway",
   modelName: "evolve-default",
   maxContextSize: 262144,
 };
 
 async function testKimiWriteSpendConfigFresh(): Promise<void> {
-  console.log("\n[25] writeKimiSpendConfig() creates config.toml with provider+model on empty config");
+  console.log("\n[25] writeKimiSpendConfig() writes deterministic config from scratch");
   const written: { path: string; content: string }[] = [];
   const sandbox = {
     files: {
       makeDir: async () => {},
-      read: async () => { throw Object.assign(new Error("not found"), { code: "ENOENT" }); },
       write: async (path: string, content: string) => { written.push({ path, content }); },
     },
   };
@@ -703,254 +702,76 @@ async function testKimiWriteSpendConfigFresh(): Promise<void> {
   );
 
   assertEqual(written.length, 1, "writes one file");
+  assertEqual(written[0].path, "/home/user/.kimi/evolve-config.toml", "writes to dedicated Evolve config path");
   const content = written[0].content;
   assert(content.includes('default_model = "evolve-default"'), "has default_model");
   assert(content.includes("[providers.evolve-gateway]"), "has provider section");
   assert(content.includes('type = "kimi"'), "provider type is kimi");
   assert(content.includes("x-litellm-customer-id"), "has customer-id header");
+  assert(content.includes("session-abc"), "has session tag value");
   assert(content.includes("x-litellm-tags"), "has tags header");
+  assert(content.includes("run:run-001"), "has run tag value");
   assert(content.includes("[models.evolve-default]"), "has model section");
   assert(content.includes('provider = "evolve-gateway"'), "model points to provider");
   assert(content.includes("max_context_size = 262144"), "model has max_context_size");
 }
 
-async function testKimiWriteSpendConfigPreservesExisting(): Promise<void> {
-  console.log("\n[26] writeKimiSpendConfig() preserves existing config sections");
-  const existing = [
-    'default_yolo = true',
-    "",
-    "[loop_control]",
-    "max_steps_per_turn = 50",
-    "",
-    "[services.moonshot_search]",
-    'base_url = "https://api.kimi.com/coding/v1/search"',
-    'api_key = "sk-test"',
-    "",
-  ].join("\n");
+async function testKimiWriteSpendConfigPerRunOverwrite(): Promise<void> {
+  console.log("\n[26] writeKimiSpendConfig() overwrites entirely on second run (no merge)");
   const written: { path: string; content: string }[] = [];
   const sandbox = {
     files: {
       makeDir: async () => {},
-      read: async () => existing,
       write: async (path: string, content: string) => { written.push({ path, content }); },
     },
   };
 
+  // First run
   await writeKimiSpendConfig(
     sandbox as any,
     kimiConfig,
-    { "x-litellm-customer-id": "session-xyz" },
+    { "x-litellm-customer-id": "session-abc", "x-litellm-tags": "run:run-001" },
   );
-
-  const content = written[0].content;
-  assert(content.includes("default_yolo = true"), "preserves root config");
-  assert(content.includes("[loop_control]"), "preserves loop_control section");
-  assert(content.includes("max_steps_per_turn = 50"), "preserves loop_control values");
-  assert(content.includes("[services.moonshot_search]"), "preserves services section");
-  assert(content.includes("[providers.evolve-gateway]"), "adds provider");
-  assert(content.includes("[models.evolve-default]"), "adds model");
-}
-
-async function testKimiWriteSpendConfigPreservesUserHeaders(): Promise<void> {
-  console.log("\n[27] writeKimiSpendConfig() preserves user-defined custom_headers (no clobber)");
-  const existing = [
-    'default_model = "evolve-default"',
-    "",
-    "[providers.evolve-gateway]",
-    'type = "kimi"',
-    'base_url = ""',
-    'api_key = ""',
-    'custom_headers = { "x-my-app-id" = "user-123", "x-litellm-customer-id" = "old-session" }',
-    "",
-    "[models.evolve-default]",
-    'provider = "evolve-gateway"',
-    'model = ""',
-    "max_context_size = 262144",
-    "",
-  ].join("\n");
-  const written: { path: string; content: string }[] = [];
-  const sandbox = {
-    files: {
-      makeDir: async () => {},
-      read: async () => existing,
-      write: async (path: string, content: string) => { written.push({ path, content }); },
-    },
-  };
-
-  await writeKimiSpendConfig(
-    sandbox as any,
-    kimiConfig,
-    { "x-litellm-customer-id": "new-session", "x-litellm-tags": "run:run-002" },
-  );
-
-  const content = written[0].content;
-  assert(content.includes("x-my-app-id"), "user header preserved");
-  assert(content.includes("new-session"), "customer-id updated");
-  assert(content.includes("run:run-002"), "run tag added");
-  assert(!content.includes("old-session"), "old session tag replaced");
-}
-
-async function testKimiWriteSpendConfigOverwritesPrevious(): Promise<void> {
-  console.log("\n[28] writeKimiSpendConfig() overwrites previous run tag (per-run update)");
-  const existing = [
-    'default_model = "evolve-default"',
-    "",
-    "[providers.evolve-gateway]",
-    'type = "kimi"',
-    'base_url = ""',
-    'api_key = ""',
-    'custom_headers = { "x-litellm-customer-id" = "session-abc", "x-litellm-tags" = "run:run-001" }',
-    "",
-    "[models.evolve-default]",
-    'provider = "evolve-gateway"',
-    'model = ""',
-    "max_context_size = 262144",
-    "",
-  ].join("\n");
-  const written: { path: string; content: string }[] = [];
-  const sandbox = {
-    files: {
-      makeDir: async () => {},
-      read: async () => existing,
-      write: async (path: string, content: string) => { written.push({ path, content }); },
-    },
-  };
-
+  // Second run
   await writeKimiSpendConfig(
     sandbox as any,
     kimiConfig,
     { "x-litellm-customer-id": "session-abc", "x-litellm-tags": "run:run-002" },
   );
 
-  const content = written[0].content;
-  assert(content.includes("run:run-002"), "run tag updated");
-  assert(!content.includes("run:run-001"), "old run tag removed");
-  assert(content.includes("session-abc"), "session tag unchanged");
+  assertEqual(written.length, 2, "writes file twice (once per run)");
+  const content = written[1].content;
+  assert(content.includes("run:run-002"), "second run tag present");
+  assert(!content.includes("run:run-001"), "first run tag gone (full overwrite)");
+  assert(content.includes("session-abc"), "session tag present");
 }
 
-async function testKimiPreservesHeadersWithCommasInValues(): Promise<void> {
-  console.log("\n[31] writeKimiSpendConfig() preserves headers whose values contain commas");
-  const existing = [
-    'default_model = "evolve-default"',
-    "",
-    "[providers.evolve-gateway]",
-    'type = "kimi"',
-    'base_url = ""',
-    'api_key = ""',
-    'custom_headers = { "x-tags" = "a,b,c", "x-litellm-customer-id" = "old" }',
-    "",
-    "[models.evolve-default]",
-    'provider = "evolve-gateway"',
-    'model = ""',
-    "max_context_size = 262144",
-    "",
-  ].join("\n");
-  const written: { path: string; content: string }[] = [];
-  const sandbox = {
-    files: {
-      makeDir: async () => {},
-      read: async () => existing,
-      write: async (path: string, content: string) => { written.push({ path, content }); },
-    },
-  };
+async function testKimiBuildCommandIncludesConfigFile(): Promise<void> {
+  console.log("\n[27] Kimi buildCommand() includes --config-file in gateway mode");
+  const { AGENT_REGISTRY } = await import("../../src/registry.js");
+  const kimi = AGENT_REGISTRY.kimi;
 
-  await writeKimiSpendConfig(
-    sandbox as any,
-    kimiConfig,
-    { "x-litellm-customer-id": "new-session" },
-  );
+  const gatewayCmd = kimi.buildCommand({
+    prompt: "hello",
+    model: "moonshot/kimi-k2.5",
+    isResume: false,
+    isDirectMode: false,
+  });
+  assert(gatewayCmd.includes("--config-file /home/user/.kimi/evolve-config.toml"), "gateway mode has --config-file");
+  assert(gatewayCmd.includes("--print"), "has --print flag");
+  assert(gatewayCmd.includes("--yolo"), "has --yolo flag");
 
-  const content = written[0].content;
-  assert(content.includes("a,b,c"), "header value with commas preserved");
-  assert(content.includes("x-tags"), "header key with comma value preserved");
-  assert(content.includes("new-session"), "customer-id updated");
-  assert(!content.includes('"old"'), "old customer-id replaced");
-}
-
-async function testKimiParsesIndentedHeaders(): Promise<void> {
-  console.log("\n[32] writeKimiSpendConfig() parses indented custom_headers line");
-  const existing = [
-    'default_model = "evolve-default"',
-    "",
-    "[providers.evolve-gateway]",
-    'type = "kimi"',
-    'base_url = ""',
-    'api_key = ""',
-    '  custom_headers = { "x-user-header" = "keep-me" }',  // indented
-    "",
-    "[models.evolve-default]",
-    'provider = "evolve-gateway"',
-    'model = ""',
-    "max_context_size = 262144",
-    "",
-  ].join("\n");
-  const written: { path: string; content: string }[] = [];
-  const sandbox = {
-    files: {
-      makeDir: async () => {},
-      read: async () => existing,
-      write: async (path: string, content: string) => { written.push({ path, content }); },
-    },
-  };
-
-  await writeKimiSpendConfig(
-    sandbox as any,
-    kimiConfig,
-    { "x-litellm-customer-id": "session-abc" },
-  );
-
-  const content = written[0].content;
-  assert(content.includes("x-user-header"), "indented header key preserved");
-  assert(content.includes("keep-me"), "indented header value preserved");
-  assert(content.includes("session-abc"), "spend header added");
-}
-
-async function testKimiPreservesHeadersWithEscapedQuotes(): Promise<void> {
-  console.log("\n[33] writeKimiSpendConfig() preserves headers whose values contain escaped quotes");
-  // serializeTomlValue produces: "x-meta" = "{\"key\":\"val\"}"
-  // The parser must handle \" inside double-quoted TOML strings.
-  const existing = [
-    'default_model = "evolve-default"',
-    "",
-    "[providers.evolve-gateway]",
-    'type = "kimi"',
-    'base_url = ""',
-    'api_key = ""',
-    'custom_headers = { "x-meta" = "{\\"key\\":\\"val\\"}", "x-litellm-customer-id" = "old" }',
-    "",
-    "[models.evolve-default]",
-    'provider = "evolve-gateway"',
-    'model = ""',
-    "max_context_size = 262144",
-    "",
-  ].join("\n");
-  const written: { path: string; content: string }[] = [];
-  const sandbox = {
-    files: {
-      makeDir: async () => {},
-      read: async () => existing,
-      write: async (path: string, content: string) => { written.push({ path, content }); },
-    },
-  };
-
-  await writeKimiSpendConfig(
-    sandbox as any,
-    kimiConfig,
-    { "x-litellm-customer-id": "new-session" },
-  );
-
-  const content = written[0].content;
-  // The key "x-meta" must survive round-trip with its JSON value intact
-  assert(content.includes("x-meta"), "header key with escaped quotes preserved");
-  // The value should be re-serialized with escaped quotes
-  assert(content.includes("key"), "JSON key inside value preserved");
-  assert(content.includes("val"), "JSON val inside value preserved");
-  assert(content.includes("new-session"), "customer-id updated");
-  assert(!content.includes('"old"'), "old customer-id replaced");
+  const directCmd = kimi.buildCommand({
+    prompt: "hello",
+    model: "moonshot/kimi-k2.5",
+    isResume: false,
+    isDirectMode: true,
+  });
+  assert(!directCmd.includes("--config-file"), "direct mode omits --config-file");
 }
 
 async function testKimiBuildRunEnvsReturnsUndefined(): Promise<void> {
-  console.log("\n[29] Kimi buildRunEnvs() returns undefined (uses config file, not env vars)");
+  console.log("\n[28] Kimi buildRunEnvs() returns undefined (uses config file, not env vars)");
   const config = {
     type: "kimi",
     apiKey: "test-gateway-key",
@@ -964,7 +785,7 @@ async function testKimiBuildRunEnvsReturnsUndefined(): Promise<void> {
 }
 
 async function testKimiDirectModeSkipsHeaders(): Promise<void> {
-  console.log("\n[30] Kimi direct mode skips config-file headers");
+  console.log("\n[29] Kimi direct mode skips config-file headers");
   const config = {
     type: "kimi",
     apiKey: "direct-api-key",
@@ -1044,12 +865,8 @@ async function main(): Promise<void> {
   await testQwenWriteJsonOverwritesPreviousHeaders();
   await testQwenWriteJsonPreservesUserDefinedHeaders();
   await testKimiWriteSpendConfigFresh();
-  await testKimiWriteSpendConfigPreservesExisting();
-  await testKimiWriteSpendConfigPreservesUserHeaders();
-  await testKimiWriteSpendConfigOverwritesPrevious();
-  await testKimiPreservesHeadersWithCommasInValues();
-  await testKimiParsesIndentedHeaders();
-  await testKimiPreservesHeadersWithEscapedQuotes();
+  await testKimiWriteSpendConfigPerRunOverwrite();
+  await testKimiBuildCommandIncludesConfigFile();
   await testKimiBuildRunEnvsReturnsUndefined();
   await testKimiDirectModeSkipsHeaders();
   console.log("\n============================================================");

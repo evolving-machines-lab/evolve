@@ -631,15 +631,8 @@ export class Agent {
       );
     }
 
-    // Spend tracking: write provider with custom_headers to TOML config for agents
-    // that read headers from a provider entry (e.g., Kimi config.toml).
-    if (!this.agentConfig.isDirectMode && this.registry.spendTrackingTomlProvider) {
-      await writeKimiSpendConfig(
-        sandbox,
-        this.registry.spendTrackingTomlProvider,
-        { [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag },
-      );
-    }
+    // Kimi TOML provider spend tracking: handled per-run in run() since we write
+    // a dedicated config file from scratch each time (no session-level setup needed).
 
     // Setup skills
     if (this.skills?.length) {
