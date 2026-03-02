@@ -905,6 +905,50 @@ async function testKimiParsesIndentedHeaders(): Promise<void> {
   assert(content.includes("session-abc"), "spend header added");
 }
 
+async function testKimiPreservesHeadersWithEscapedQuotes(): Promise<void> {
+  console.log("\n[33] writeKimiSpendConfig() preserves headers whose values contain escaped quotes");
+  // serializeTomlValue produces: "x-meta" = "{\"key\":\"val\"}"
+  // The parser must handle \" inside double-quoted TOML strings.
+  const existing = [
+    'default_model = "evolve-default"',
+    "",
+    "[providers.evolve-gateway]",
+    'type = "kimi"',
+    'base_url = ""',
+    'api_key = ""',
+    'custom_headers = { "x-meta" = "{\\"key\\":\\"val\\"}", "x-litellm-customer-id" = "old" }',
+    "",
+    "[models.evolve-default]",
+    'provider = "evolve-gateway"',
+    'model = ""',
+    "max_context_size = 262144",
+    "",
+  ].join("\n");
+  const written: { path: string; content: string }[] = [];
+  const sandbox = {
+    files: {
+      makeDir: async () => {},
+      read: async () => existing,
+      write: async (path: string, content: string) => { written.push({ path, content }); },
+    },
+  };
+
+  await writeKimiSpendConfig(
+    sandbox as any,
+    kimiConfig,
+    { "x-litellm-customer-id": "new-session" },
+  );
+
+  const content = written[0].content;
+  // The key "x-meta" must survive round-trip with its JSON value intact
+  assert(content.includes("x-meta"), "header key with escaped quotes preserved");
+  // The value should be re-serialized with escaped quotes
+  assert(content.includes("key"), "JSON key inside value preserved");
+  assert(content.includes("val"), "JSON val inside value preserved");
+  assert(content.includes("new-session"), "customer-id updated");
+  assert(!content.includes('"old"'), "old customer-id replaced");
+}
+
 async function testKimiBuildRunEnvsReturnsUndefined(): Promise<void> {
   console.log("\n[29] Kimi buildRunEnvs() returns undefined (uses config file, not env vars)");
   const config = {
@@ -1005,6 +1049,7 @@ async function main(): Promise<void> {
   await testKimiWriteSpendConfigOverwritesPrevious();
   await testKimiPreservesHeadersWithCommasInValues();
   await testKimiParsesIndentedHeaders();
+  await testKimiPreservesHeadersWithEscapedQuotes();
   await testKimiBuildRunEnvsReturnsUndefined();
   await testKimiDirectModeSkipsHeaders();
   console.log("\n============================================================");

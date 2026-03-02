@@ -370,18 +370,23 @@ function parseExistingCustomHeaders(
   const nextSection = afterHeader.search(/^\[/m);
   const sectionContent = nextSection >= 0 ? afterHeader.slice(0, nextSection) : afterHeader;
 
-  // Match custom_headers line (tolerant of leading whitespace)
-  const match = sectionContent.match(/^\s*custom_headers\s*=\s*\{([^}]*)\}/m);
+  // Match inline table body: custom_headers = { ... }
+  // Uses a pattern that respects quoted strings (which may contain } or \")
+  // so we don't stop at a } inside a value like {"key":"val"}.
+  const match = sectionContent.match(/^\s*custom_headers\s*=\s*\{((?:[^}"'\\]|"(?:[^"\\]|\\.)*"|'[^']*'|\\.)*)\}/m);
   if (!match) return {};
 
-  // Parse key = "value" pairs by matching quoted strings, not splitting on commas.
-  // This correctly handles values containing commas (e.g., "a,b").
+  // Parse key = "value" pairs from the TOML inline table body.
+  // Uses a regex that handles escaped quotes (\") inside double-quoted strings,
+  // single-quoted (literal) strings, and bare values.
   const headers: Record<string, string> = {};
-  const pairRe = /(?:"([^"]*?)"|'([^']*?)'|([^\s"'=,]+))\s*=\s*(?:"([^"]*?)"|'([^']*?)'|([^\s"',}]+))/g;
+  const pairRe = /(?:"((?:[^"\\]|\\.)*)"|'([^']*)'|([^\s"'=,]+))\s*=\s*(?:"((?:[^"\\]|\\.)*)"|'([^']*)'|([^\s"',}]+))/g;
   let m: RegExpExecArray | null;
   while ((m = pairRe.exec(match[1])) !== null) {
     const key = (m[1] ?? m[2] ?? m[3] ?? "").trim();
-    const value = m[4] ?? m[5] ?? m[6] ?? "";
+    const raw = m[4] ?? m[5] ?? m[6] ?? "";
+    // Unescape TOML basic string escapes (\" → ", \\ → \)
+    const value = raw.replace(/\\"/g, '"').replace(/\\\\/g, "\\");
     if (key) headers[key] = value;
   }
   return headers;
