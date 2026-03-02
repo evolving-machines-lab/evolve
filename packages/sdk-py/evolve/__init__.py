@@ -73,7 +73,7 @@ from .pipeline import (
 from typing import List, Optional
 
 
-async def storage(config: Optional[StorageConfig] = None) -> StorageClient:
+def storage(config: Optional[StorageConfig] = None) -> StorageClient:
     """Create a standalone storage client for checkpoint browsing and download.
 
     Returns a ``StorageClient`` that manages its own bridge subprocess.
@@ -90,12 +90,12 @@ async def storage(config: Optional[StorageConfig] = None) -> StorageClient:
         >>> from evolve import storage, StorageConfig
         >>>
         >>> # BYOK mode
-        >>> async with await storage(StorageConfig(url='s3://my-bucket/')) as store:
+        >>> async with storage(StorageConfig(url='s3://my-bucket/')) as store:
         ...     checkpoints = await store.list_checkpoints(limit=5)
         ...     files = await store.download_files(checkpoints[0].id)
         >>>
         >>> # Gateway mode (uses EVOLVE_API_KEY)
-        >>> async with await storage() as store:
+        >>> async with storage() as store:
         ...     checkpoints = await store.list_checkpoints()
     """
     from .bridge import BridgeManager
@@ -110,7 +110,8 @@ async def list_checkpoints(
 ) -> List[CheckpointInfo]:
     """List checkpoints without creating a full Evolve instance.
 
-    Standalone convenience function for checkpoint browsing.
+    Uses the lightweight :class:`StorageClient` path instead of a full
+    Evolve initialization (no agent/sandbox setup needed).
 
     Args:
         storage: Storage configuration (BYOK S3 or None for gateway mode)
@@ -127,11 +128,13 @@ async def list_checkpoints(
         ...     limit=10,
         ... )
     """
-    kit = Evolve(storage=storage if storage is not None else StorageConfig())
+    from .bridge import BridgeManager
+    bridge = BridgeManager()
+    store = StorageClient(bridge, storage or StorageConfig(), _owns_bridge=True)
     try:
-        return await kit.list_checkpoints(limit=limit, tag=tag)
+        return await store.list_checkpoints(limit=limit, tag=tag)
     finally:
-        await kit.bridge.stop()
+        await store.close()
 
 
 __version__ = '0.0.28'

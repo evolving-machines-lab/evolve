@@ -1,9 +1,9 @@
 """StorageClient for browsing and downloading checkpoints."""
 
-import base64
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
 
 from .results import CheckpointInfo
+from .utils import _decode_files_from_transport, _filter_none, _parse_checkpoint, _require_checkpoint
 
 
 class StorageClient:
@@ -23,7 +23,7 @@ class StorageClient:
 
         from evolve import storage, StorageConfig
 
-        async with await storage(StorageConfig(url='s3://my-bucket/')) as store:
+        async with storage(StorageConfig(url='s3://my-bucket/')) as store:
             checkpoints = await store.list_checkpoints(limit=5)
             files = await store.download_files(checkpoints[0].id)
 
@@ -34,15 +34,29 @@ class StorageClient:
             info = await store.get_checkpoint('ckpt_abc123')
     """
 
-    def __init__(self, bridge: Any, storage_config: Any = None, *, _owns_bridge: bool = False):
+    def __init__(
+        self,
+        bridge: Any,
+        storage_config: Any = None,
+        *,
+        _owns_bridge: bool = False,
+        _init_fn: Optional[Callable[[], Awaitable[None]]] = None,
+    ):
         self._bridge = bridge
         self._config = storage_config  # None = use Evolve's initialized config
         self._owns_bridge = _owns_bridge
+        # Readiness callback — in bound mode this triggers Evolve._ensure_initialized
+        # so the bridge adapter has a live Evolve instance to delegate to.
+        self._init_fn = _init_fn
         self._started = False
 
-    async def _ensure_bridge(self) -> None:
+    async def _ensure_ready(self) -> None:
+        """Ensure the bridge is started and ready to handle RPC calls."""
         if not self._started:
-            await self._bridge.start()
+            if self._init_fn is not None:
+                await self._init_fn()
+            else:
+                await self._bridge.start()
             self._started = True
 
     def _build_params(self, **kwargs: Any) -> Dict[str, Any]:
@@ -50,9 +64,7 @@ class StorageClient:
         params: Dict[str, Any] = {}
         if self._config is not None:
             params['storage'] = self._config.to_dict()
-        for k, v in kwargs.items():
-            if v is not None:
-                params[k] = v
+        params.update(_filter_none(kwargs))
         return params
 
     async def list_checkpoints(
@@ -69,10 +81,10 @@ class StorageClient:
         Returns:
             List of CheckpointInfo sorted by newest first
         """
-        await self._ensure_bridge()
+        await self._ensure_ready()
         params = self._build_params(limit=limit, tag=tag)
         response = await self._bridge.call('storage_list_checkpoints', params)
-        return [_parse_checkpoint(cp) for cp in response]
+        return [_require_checkpoint(cp) for cp in response]
 
     async def get_checkpoint(self, id: str) -> CheckpointInfo:
         """Get checkpoint metadata by ID.
@@ -86,10 +98,10 @@ class StorageClient:
         Raises:
             Exception: If checkpoint not found
         """
-        await self._ensure_bridge()
+        await self._ensure_ready()
         params = self._build_params(id=id)
         response = await self._bridge.call('storage_get_checkpoint', params)
-        return _parse_checkpoint(response)  # type: ignore[return-value]
+        return _require_checkpoint(response)
 
     async def download_checkpoint(
         self,
@@ -109,10 +121,9 @@ class StorageClient:
         Returns:
             Path to the extracted directory or saved archive file
         """
-        await self._ensure_bridge()
-        params = self._build_params(id=id, to=to)
-        if not extract:
-            params['extract'] = False
+        await self._ensure_ready()
+        # Only pass extract when False (True is the default on the bridge side)
+        params = self._build_params(id=id, to=to, extract=False if not extract else None)
         response = await self._bridge.call('storage_download_checkpoint', params)
         return response['path']
 
@@ -126,6 +137,9 @@ class StorageClient:
     ) -> Dict[str, Union[str, bytes]]:
         """Download specific files from a checkpoint.
 
+        For large checkpoints, prefer :meth:`download_checkpoint` which streams
+        the archive to disk instead of loading all files into memory.
+
         Args:
             id: Checkpoint ID or ``"latest"``
             files: Exact file paths to extract (e.g., ``["workspace/data.txt"]``)
@@ -135,10 +149,10 @@ class StorageClient:
         Returns:
             Dict mapping file path to content (str for text, bytes for binary)
         """
-        await self._ensure_bridge()
+        await self._ensure_ready()
         params = self._build_params(id=id, files=files, glob=glob, to=to)
         response = await self._bridge.call('storage_download_files', params)
-        return _decode_file_map(response.get('files', {}))
+        return _decode_files_from_transport(response.get('files', {}))
 
     async def close(self) -> None:
         """Close the storage client and release resources.
@@ -150,37 +164,12 @@ class StorageClient:
             await self._bridge.stop()
 
     async def __aenter__(self) -> 'StorageClient':
-        await self._ensure_bridge()
-        return self
+        try:
+            await self._ensure_ready()
+            return self
+        except Exception:
+            await self.close()
+            raise
 
     async def __aexit__(self, *args: Any) -> None:
         await self.close()
-
-
-def _parse_checkpoint(data: Dict[str, Any]) -> CheckpointInfo:
-    """Parse checkpoint dict from bridge response into CheckpointInfo."""
-    return CheckpointInfo(
-        id=data['id'],
-        hash=data['hash'],
-        tag=data['tag'],
-        timestamp=data['timestamp'],
-        size_bytes=data.get('size_bytes'),
-        agent_type=data.get('agent_type'),
-        model=data.get('model'),
-        workspace_mode=data.get('workspace_mode'),
-        parent_id=data.get('parent_id'),
-        comment=data.get('comment'),
-    )
-
-
-def _decode_file_map(encoded: Dict[str, Any]) -> Dict[str, Union[str, bytes]]:
-    """Decode base64/text encoded files from bridge transport."""
-    decoded: Dict[str, Union[str, bytes]] = {}
-    for name, file_data in encoded.items():
-        content = file_data['content']
-        encoding = file_data.get('encoding')
-        if encoding == 'base64':
-            decoded[name] = base64.b64decode(content)
-        else:
-            decoded[name] = content
-    return decoded
