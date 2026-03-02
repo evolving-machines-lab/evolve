@@ -182,9 +182,8 @@ const evolve = new Evolve()
     // (optional) Prefix for observability logs
     .withSessionTagPrefix("my-agent")
 
-    // (optional) Storage for checkpoint persistence — snapshot sandbox to S3
-    .withStorage({ url: "s3://my-bucket/agent-snapshots/" })  // BYOK — your own S3 bucket
-    // .withStorage()                                          // Gateway — Evolve-managed (requires EVOLVE_API_KEY)
+    // (optional) Storage for checkpoint persistence (gateway feature — requires EVOLVE_API_KEY)
+    .withStorage()
 
     // ─── Advanced ───────────────────────────────────────────────────────────────
 
