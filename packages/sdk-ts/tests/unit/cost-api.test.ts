@@ -9,7 +9,7 @@
  */
 
 import { Agent } from "../../dist/index.js";
-import { writeCodexSpendProvider } from "../../src/mcp/toml.js";
+import { writeCodexSpendProvider, writeKimiSpendConfig } from "../../src/mcp/toml.js";
 import { writeJsonSpendHeaders } from "../../src/mcp/json.js";
 
 let passed = 0;
@@ -674,6 +674,187 @@ async function testQwenWriteJsonOverwritesPreviousHeaders(): Promise<void> {
   assertEqual(config.model?.generationConfig?.customHeaders?.["x-litellm-customer-id"], "session-abc", "session tag unchanged");
 }
 
+// =============================================================================
+// Kimi spend tracking (TOML provider with custom_headers in config.toml)
+// =============================================================================
+
+const kimiConfig = {
+  configPath: "~/.kimi/config.toml",
+  providerName: "evolve-gateway",
+  modelName: "evolve-default",
+  maxContextSize: 262144,
+};
+
+async function testKimiWriteSpendConfigFresh(): Promise<void> {
+  console.log("\n[25] writeKimiSpendConfig() creates config.toml with provider+model on empty config");
+  const written: { path: string; content: string }[] = [];
+  const sandbox = {
+    files: {
+      makeDir: async () => {},
+      read: async () => { throw Object.assign(new Error("not found"), { code: "ENOENT" }); },
+      write: async (path: string, content: string) => { written.push({ path, content }); },
+    },
+  };
+
+  await writeKimiSpendConfig(
+    sandbox as any,
+    kimiConfig,
+    { "x-litellm-customer-id": "session-abc", "x-litellm-tags": "run:run-001" },
+  );
+
+  assertEqual(written.length, 1, "writes one file");
+  const content = written[0].content;
+  assert(content.includes('default_model = "evolve-default"'), "has default_model");
+  assert(content.includes("[providers.evolve-gateway]"), "has provider section");
+  assert(content.includes('type = "kimi"'), "provider type is kimi");
+  assert(content.includes("x-litellm-customer-id"), "has customer-id header");
+  assert(content.includes("x-litellm-tags"), "has tags header");
+  assert(content.includes("[models.evolve-default]"), "has model section");
+  assert(content.includes('provider = "evolve-gateway"'), "model points to provider");
+  assert(content.includes("max_context_size = 262144"), "model has max_context_size");
+}
+
+async function testKimiWriteSpendConfigPreservesExisting(): Promise<void> {
+  console.log("\n[26] writeKimiSpendConfig() preserves existing config sections");
+  const existing = [
+    'default_yolo = true',
+    "",
+    "[loop_control]",
+    "max_steps_per_turn = 50",
+    "",
+    "[services.moonshot_search]",
+    'base_url = "https://api.kimi.com/coding/v1/search"',
+    'api_key = "sk-test"',
+    "",
+  ].join("\n");
+  const written: { path: string; content: string }[] = [];
+  const sandbox = {
+    files: {
+      makeDir: async () => {},
+      read: async () => existing,
+      write: async (path: string, content: string) => { written.push({ path, content }); },
+    },
+  };
+
+  await writeKimiSpendConfig(
+    sandbox as any,
+    kimiConfig,
+    { "x-litellm-customer-id": "session-xyz" },
+  );
+
+  const content = written[0].content;
+  assert(content.includes("default_yolo = true"), "preserves root config");
+  assert(content.includes("[loop_control]"), "preserves loop_control section");
+  assert(content.includes("max_steps_per_turn = 50"), "preserves loop_control values");
+  assert(content.includes("[services.moonshot_search]"), "preserves services section");
+  assert(content.includes("[providers.evolve-gateway]"), "adds provider");
+  assert(content.includes("[models.evolve-default]"), "adds model");
+}
+
+async function testKimiWriteSpendConfigPreservesUserHeaders(): Promise<void> {
+  console.log("\n[27] writeKimiSpendConfig() preserves user-defined custom_headers (no clobber)");
+  const existing = [
+    'default_model = "evolve-default"',
+    "",
+    "[providers.evolve-gateway]",
+    'type = "kimi"',
+    'base_url = ""',
+    'api_key = ""',
+    'custom_headers = { "x-my-app-id" = "user-123", "x-litellm-customer-id" = "old-session" }',
+    "",
+    "[models.evolve-default]",
+    'provider = "evolve-gateway"',
+    'model = ""',
+    "max_context_size = 262144",
+    "",
+  ].join("\n");
+  const written: { path: string; content: string }[] = [];
+  const sandbox = {
+    files: {
+      makeDir: async () => {},
+      read: async () => existing,
+      write: async (path: string, content: string) => { written.push({ path, content }); },
+    },
+  };
+
+  await writeKimiSpendConfig(
+    sandbox as any,
+    kimiConfig,
+    { "x-litellm-customer-id": "new-session", "x-litellm-tags": "run:run-002" },
+  );
+
+  const content = written[0].content;
+  assert(content.includes("x-my-app-id"), "user header preserved");
+  assert(content.includes("new-session"), "customer-id updated");
+  assert(content.includes("run:run-002"), "run tag added");
+  assert(!content.includes("old-session"), "old session tag replaced");
+}
+
+async function testKimiWriteSpendConfigOverwritesPrevious(): Promise<void> {
+  console.log("\n[28] writeKimiSpendConfig() overwrites previous run tag (per-run update)");
+  const existing = [
+    'default_model = "evolve-default"',
+    "",
+    "[providers.evolve-gateway]",
+    'type = "kimi"',
+    'base_url = ""',
+    'api_key = ""',
+    'custom_headers = { "x-litellm-customer-id" = "session-abc", "x-litellm-tags" = "run:run-001" }',
+    "",
+    "[models.evolve-default]",
+    'provider = "evolve-gateway"',
+    'model = ""',
+    "max_context_size = 262144",
+    "",
+  ].join("\n");
+  const written: { path: string; content: string }[] = [];
+  const sandbox = {
+    files: {
+      makeDir: async () => {},
+      read: async () => existing,
+      write: async (path: string, content: string) => { written.push({ path, content }); },
+    },
+  };
+
+  await writeKimiSpendConfig(
+    sandbox as any,
+    kimiConfig,
+    { "x-litellm-customer-id": "session-abc", "x-litellm-tags": "run:run-002" },
+  );
+
+  const content = written[0].content;
+  assert(content.includes("run:run-002"), "run tag updated");
+  assert(!content.includes("run:run-001"), "old run tag removed");
+  assert(content.includes("session-abc"), "session tag unchanged");
+}
+
+async function testKimiBuildRunEnvsReturnsUndefined(): Promise<void> {
+  console.log("\n[29] Kimi buildRunEnvs() returns undefined (uses config file, not env vars)");
+  const config = {
+    type: "kimi",
+    apiKey: "test-gateway-key",
+    isDirectMode: false,
+  };
+  const agent = new Agent(config as any, {});
+  (agent as any).sessionTag = "evolve-kimi-session";
+
+  const envs = (agent as any).buildRunEnvs("run-kimi-001") as Record<string, string> | undefined;
+  assertEqual(envs, undefined, "no env overrides for kimi (uses config file)");
+}
+
+async function testKimiDirectModeSkipsHeaders(): Promise<void> {
+  console.log("\n[30] Kimi direct mode skips config-file headers");
+  const config = {
+    type: "kimi",
+    apiKey: "direct-api-key",
+    isDirectMode: true,
+  };
+  const agent = new Agent(config as any, {});
+
+  const envs = (agent as any).buildRunEnvs("run-direct") as Record<string, string> | undefined;
+  assertEqual(envs, undefined, "no env overrides in direct mode");
+}
+
 async function testQwenWriteJsonPreservesUserDefinedHeaders(): Promise<void> {
   console.log("\n[24] writeJsonSpendHeaders() preserves user-defined custom headers (no clobber)");
   // User has already configured their own custom headers in settings.json
@@ -741,6 +922,12 @@ async function main(): Promise<void> {
   await testQwenDirectModeSkipsHeaders();
   await testQwenWriteJsonOverwritesPreviousHeaders();
   await testQwenWriteJsonPreservesUserDefinedHeaders();
+  await testKimiWriteSpendConfigFresh();
+  await testKimiWriteSpendConfigPreservesExisting();
+  await testKimiWriteSpendConfigPreservesUserHeaders();
+  await testKimiWriteSpendConfigOverwritesPrevious();
+  await testKimiBuildRunEnvsReturnsUndefined();
+  await testKimiDirectModeSkipsHeaders();
   console.log("\n============================================================");
   console.log(`Results: ${passed} passed, ${failed} failed`);
   console.log("============================================================");

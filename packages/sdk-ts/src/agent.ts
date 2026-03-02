@@ -39,7 +39,7 @@ import type {
 } from "./types";
 import { VALIDATION_PRESETS } from "./types";
 import { getAgentConfig, type AgentRegistryEntry } from "./registry";
-import { writeMcpConfig, writeCodexSpendProvider, writeJsonSpendHeaders } from "./mcp";
+import { writeMcpConfig, writeCodexSpendProvider, writeJsonSpendHeaders, writeKimiSpendConfig } from "./mcp";
 import { createAgentParser, type AgentParser } from "./parsers";
 import { DEFAULT_TIMEOUT_MS, DEFAULT_WORKING_DIR, DEFAULT_DASHBOARD_URL, LITELLM_CUSTOMER_ID_HEADER, LITELLM_TAGS_HEADER, RUN_TAG_PREFIX, getGatewayUrl, getGeminiGatewayUrl } from "./constants";
 import { buildWorkerSystemPrompt } from "./prompts";
@@ -625,8 +625,18 @@ export class Agent {
     if (!this.agentConfig.isDirectMode && this.registry.spendTrackingJsonConfig) {
       await writeJsonSpendHeaders(
         sandbox,
-        this.agentConfig.type as "qwen" | "kimi",
+        this.agentConfig.type as "qwen",
         this.registry.spendTrackingJsonConfig.headersPath,
+        { [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag },
+      );
+    }
+
+    // Spend tracking: write provider with custom_headers to TOML config for agents
+    // that read headers from a provider entry (e.g., Kimi config.toml).
+    if (!this.agentConfig.isDirectMode && this.registry.spendTrackingTomlProvider) {
+      await writeKimiSpendConfig(
+        sandbox,
+        this.registry.spendTrackingTomlProvider,
         { [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag },
       );
     }
@@ -886,8 +896,21 @@ export class Agent {
     if (!this.agentConfig.isDirectMode && this.registry.spendTrackingJsonConfig) {
       await writeJsonSpendHeaders(
         sandbox,
-        this.agentConfig.type as "qwen" | "kimi",
+        this.agentConfig.type as "qwen",
         this.registry.spendTrackingJsonConfig.headersPath,
+        {
+          [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
+          [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
+        },
+      );
+    }
+
+    // Per-run TOML provider spend tracking (Kimi): write provider with custom_headers
+    // before spawning. CLI reads config at startup, so each run gets a fresh write.
+    if (!this.agentConfig.isDirectMode && this.registry.spendTrackingTomlProvider) {
+      await writeKimiSpendConfig(
+        sandbox,
+        this.registry.spendTrackingTomlProvider,
         {
           [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
           [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,

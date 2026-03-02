@@ -6,7 +6,7 @@
  */
 
 import type { SandboxInstance, McpServerConfig } from "../types";
-import { getMcpSettingsDir, getMcpSettingsPath } from "../registry";
+import { getMcpSettingsDir, getMcpSettingsPath, expandPath } from "../registry";
 import { validateMcpServer, isNotFoundError } from "./validation";
 import {
   LITELLM_CUSTOMER_ID_HEADER,
@@ -247,4 +247,152 @@ export async function writeCodexSpendProvider(
   }
 
   await sandbox.files.write(settingsPath, content);
+}
+
+// =============================================================================
+// KIMI SPEND TRACKING (TOML provider with custom_headers)
+// =============================================================================
+
+/**
+ * Write spend tracking headers to Kimi's config.toml via a provider entry.
+ *
+ * Kimi reads custom_headers from providers[name].custom_headers in config.toml.
+ * Unlike Qwen (flat JSON path), Kimi requires a full provider+model+default_model
+ * chain so the CLI picks up the provider with headers.
+ *
+ * The provider's base_url/api_key are placeholders — KIMI_BASE_URL and KIMI_API_KEY
+ * env vars override them at runtime. Only custom_headers needs real values.
+ *
+ * Preserves existing config (other providers, models, MCP, loop_control, etc.).
+ */
+export async function writeKimiSpendConfig(
+  sandbox: SandboxInstance,
+  config: {
+    configPath: string;
+    providerName: string;
+    modelName: string;
+    maxContextSize: number;
+  },
+  headers: Record<string, string>,
+): Promise<void> {
+  const configPath = expandPath(config.configPath);
+  const configDir = configPath.slice(0, configPath.lastIndexOf("/"));
+
+  await sandbox.files.makeDir(configDir);
+
+  let existingToml = "";
+  try {
+    const existing = await sandbox.files.read(configPath);
+    if (typeof existing === "string") {
+      existingToml = existing;
+    }
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
+
+  // Parse existing custom_headers from provider section to merge (don't clobber user headers)
+  const providerSection = `[providers.${config.providerName}]`;
+  const existingHeaders = parseExistingCustomHeaders(existingToml, providerSection);
+  const mergedHeaders = { ...existingHeaders, ...headers };
+
+  // Split into root portion (before first [section]) and rest
+  const firstSectionIdx = existingToml.search(/^\[/m);
+  const rootPortion = firstSectionIdx >= 0 ? existingToml.slice(0, firstSectionIdx) : existingToml;
+  const restPortion = firstSectionIdx >= 0 ? existingToml.slice(firstSectionIdx) : "";
+
+  // Ensure default_model points to our model entry
+  const hasDefaultModel = /^default_model\s*=/m.test(rootPortion);
+  let cleanedRoot = rootPortion;
+  if (hasDefaultModel) {
+    cleanedRoot = rootPortion.replace(/^default_model\s*=\s*.*$/m, `default_model = ${serializeTomlValue(config.modelName)}`);
+  }
+
+  // Remove existing provider and model sections (we'll rewrite them)
+  let cleanedRest = restPortion;
+  cleanedRest = removeTomlSection(cleanedRest, `providers.${config.providerName}`);
+  cleanedRest = removeTomlSection(cleanedRest, `models.${config.modelName}`);
+
+  // Build new sections
+  const providerLines = [
+    providerSection,
+    `type = "kimi"`,
+    `base_url = ""`,
+    `api_key = ""`,
+    `custom_headers = ${serializeTomlValue(mergedHeaders)}`,
+  ].join("\n");
+
+  const modelLines = [
+    `[models.${config.modelName}]`,
+    `provider = ${serializeTomlValue(config.providerName)}`,
+    `model = ""`,
+    `max_context_size = ${config.maxContextSize}`,
+  ].join("\n");
+
+  // Assemble final config
+  const segments: string[] = [];
+
+  // Root portion with default_model
+  let root = cleanedRoot.replace(/\n{3,}/g, "\n\n").trim();
+  if (!hasDefaultModel) {
+    root = root
+      ? `${root}\ndefault_model = ${serializeTomlValue(config.modelName)}`
+      : `default_model = ${serializeTomlValue(config.modelName)}`;
+  }
+  if (root) segments.push(root);
+
+  // Existing sections (minus the ones we removed)
+  const rest = cleanedRest.replace(/\n{3,}/g, "\n\n").trim();
+  if (rest) segments.push(rest);
+
+  // Our provider + model
+  segments.push(providerLines);
+  segments.push(modelLines);
+
+  await sandbox.files.write(configPath, segments.join("\n\n") + "\n");
+}
+
+/**
+ * Parse existing custom_headers from a TOML provider section.
+ * Returns empty object if not found.
+ */
+function parseExistingCustomHeaders(
+  toml: string,
+  sectionHeader: string,
+): Record<string, string> {
+  const sectionIdx = toml.indexOf(sectionHeader);
+  if (sectionIdx === -1) return {};
+
+  // Find section content (up to next [section] or end)
+  const afterHeader = toml.slice(sectionIdx + sectionHeader.length);
+  const nextSection = afterHeader.search(/^\[/m);
+  const sectionContent = nextSection >= 0 ? afterHeader.slice(0, nextSection) : afterHeader;
+
+  // Match inline table: custom_headers = { "key" = "value", ... }
+  const match = sectionContent.match(/^custom_headers\s*=\s*\{([^}]*)\}/m);
+  if (!match) return {};
+
+  const headers: Record<string, string> = {};
+  // Parse key = "value" pairs
+  for (const pair of match[1].split(",")) {
+    const kv = pair.match(/^\s*"?([^"=]+)"?\s*=\s*"([^"]*)"/);
+    if (kv) {
+      headers[kv[1].trim()] = kv[2];
+    }
+  }
+  return headers;
+}
+
+/**
+ * Remove a TOML section (header + all lines until next section or EOF).
+ */
+function removeTomlSection(toml: string, sectionName: string): string {
+  const header = `[${sectionName}]`;
+  const idx = toml.indexOf(header);
+  if (idx === -1) return toml;
+
+  const afterHeader = toml.slice(idx + header.length);
+  const nextSection = afterHeader.search(/^\[/m);
+  const end = nextSection >= 0 ? idx + header.length + nextSection : toml.length;
+
+  return (toml.slice(0, idx) + toml.slice(end)).replace(/\n{3,}/g, "\n\n");
 }

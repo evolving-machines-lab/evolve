@@ -121,6 +121,23 @@ export interface AgentRegistryEntry {
     /** JSON path to the customHeaders object (dot-separated) */
     headersPath: string;
   };
+  /**
+   * TOML provider-based spend tracking for CLIs that read custom_headers from a
+   * provider entry in config.toml (e.g., Kimi).
+   * The SDK writes a provider+model entry with custom_headers before each run.
+   * Source-verified: Kimi reads custom_headers from providers[name].custom_headers
+   * in ~/.kimi/config.toml (config.py:45, llm.py:101).
+   */
+  spendTrackingTomlProvider?: {
+    /** Config file path (e.g., "~/.kimi/config.toml") */
+    configPath: string;
+    /** Provider name in config (e.g., "evolve-gateway") */
+    providerName: string;
+    /** Model entry name (e.g., "evolve-default") */
+    modelName: string;
+    /** Max context size for the model entry */
+    maxContextSize: number;
+  };
   /** Additional directories to include in checkpoint tar (beyond mcpConfig.settingsDir).
    *  Used for agents like OpenCode that spread state across XDG directories. */
   checkpointDirs?: string[];
@@ -299,6 +316,15 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       targetDir: "/home/user/.kimi/skills",
     },
     defaultBaseUrl: "https://api.moonshot.ai/v1",
+    // Source-verified: Kimi reads custom_headers from providers[name].custom_headers
+    // in ~/.kimi/config.toml (config.py:45, llm.py:101). No env var for custom headers.
+    // Requires a default_model → model → provider chain so the CLI picks up the provider.
+    spendTrackingTomlProvider: {
+      configPath: "~/.kimi/config.toml",
+      providerName: "evolve-gateway",
+      modelName: "evolve-default",
+      maxContextSize: 262144,
+    },
     buildCommand: ({ prompt, model, isResume }) => {
       const continueFlag = isResume ? "--continue " : "";
       return `printf '%s' "${prompt}" | KIMI_MODEL_NAME=${model} kimi --print --output-format stream-json --yolo ${continueFlag}`;
