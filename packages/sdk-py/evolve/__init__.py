@@ -18,7 +18,7 @@ from .config import (
     StorageConfig,
     StorageCredentials,
 )
-from .results import AgentResponse, CheckpointInfo, ExecuteResult, OutputResult, SessionStatus
+from .results import AgentResponse, CheckpointInfo, ExecuteResult, OutputResult, RunCost, SessionCost, SessionStatus
 from .storage_client import StorageClient
 from .utils import read_local_dir, save_local_dir
 from .bridge import (
@@ -168,6 +168,8 @@ __all__ = [
     'CheckpointInfo',
     'ExecuteResult',  # Backward compatibility alias for AgentResponse
     'OutputResult',
+    'RunCost',
+    'SessionCost',
     'SessionStatus',
 
     # Storage client

@@ -6,7 +6,7 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Type, Union
 
 from .bridge import BridgeManager, SandboxNotFoundError
 from .config import AgentConfig, ComposioSetup, SandboxProvider, SchemaOptions, StorageConfig, WorkspaceMode
-from .results import AgentResponse, CheckpointInfo, ExecuteResult, OutputResult, SessionStatus
+from .results import AgentResponse, CheckpointInfo, ExecuteResult, OutputResult, RunCost, SessionCost, SessionStatus
 from .storage_client import StorageClient
 from . import composio as composio_helpers
 from .schema import is_pydantic_model, is_dataclass, to_json_schema, validate_and_parse
@@ -244,6 +244,7 @@ class Evolve:
             exit_code=response['exit_code'],
             stdout=response['stdout'],
             stderr=response['stderr'],
+            run_id=response.get('run_id'),
             checkpoint=_parse_checkpoint(response.get('checkpoint')),
         )
 
@@ -606,6 +607,95 @@ class Evolve:
         """
         await self._ensure_initialized()
         return await self.bridge.call('get_session_timestamp')
+
+    # =========================================================================
+    # COST
+    # =========================================================================
+
+    async def get_session_cost(self) -> SessionCost:
+        """Get cost breakdown for the current session (all runs).
+
+        Queries the dashboard API which proxies to LiteLLM spend logs.
+        Cost data has ~60s latency due to gateway batch writes.
+        Also works after kill() for the most recent session only.
+
+        Requires gateway mode (EVOLVE_API_KEY).
+
+        Returns:
+            SessionCost with total cost, token counts, and per-run breakdown
+
+        Example:
+            >>> cost = await evolve.get_session_cost()
+            >>> print(f'Total: ${cost.total_cost:.4f}')
+            >>> for run in cost.runs:
+            ...     print(f'  Run {run.index}: ${run.cost:.4f} ({run.model})')
+        """
+        await self._ensure_initialized()
+        response = await self.bridge.call('get_session_cost')
+        return self._parse_session_cost(response)
+
+    async def get_run_cost(
+        self,
+        *,
+        run_id: Optional[str] = None,
+        index: Optional[int] = None,
+    ) -> RunCost:
+        """Get cost for a specific run by ID or index.
+
+        Args:
+            run_id: Run ID from AgentResponse.run_id
+            index: 1-based chronological position (negative = from end, e.g. -1 = last run)
+
+        Returns:
+            RunCost with cost, tokens, model, and completion status
+
+        Example:
+            >>> # By run ID
+            >>> result = await evolve.run('Analyze data')
+            >>> cost = await evolve.get_run_cost(run_id=result.run_id)
+            >>> # By index (last run)
+            >>> cost = await evolve.get_run_cost(index=-1)
+        """
+        if run_id is not None and index is not None:
+            raise ValueError('Specify run_id or index, not both')
+        if run_id is None and index is None:
+            raise ValueError('Specify either run_id or index')
+        await self._ensure_initialized()
+        params: Dict[str, Any] = {}
+        if run_id is not None:
+            params['run_id'] = run_id
+        if index is not None:
+            params['index'] = index
+        response = await self.bridge.call('get_run_cost', params)
+        return self._parse_run_cost(response)
+
+    @staticmethod
+    def _parse_run_cost(data: Dict[str, Any]) -> RunCost:
+        """Parse run cost dict from bridge response into RunCost."""
+        return RunCost(
+            run_id=data['run_id'],
+            index=data['index'],
+            cost=data['cost'],
+            tokens=data['tokens'],
+            model=data['model'],
+            requests=data['requests'],
+            as_of=data['as_of'],
+            is_complete=data['is_complete'],
+            truncated=data['truncated'],
+        )
+
+    @classmethod
+    def _parse_session_cost(cls, data: Dict[str, Any]) -> SessionCost:
+        """Parse session cost dict from bridge response into SessionCost."""
+        return SessionCost(
+            session_tag=data['session_tag'],
+            total_cost=data['total_cost'],
+            total_tokens=data['total_tokens'],
+            runs=[cls._parse_run_cost(r) for r in data.get('runs', [])],
+            as_of=data['as_of'],
+            is_complete=data['is_complete'],
+            truncated=data['truncated'],
+        )
 
     async def __aenter__(self):
         """Context manager entry."""
