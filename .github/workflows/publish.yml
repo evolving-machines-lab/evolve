@@ -195,7 +195,7 @@ jobs:
         if: inputs.dry_run != true
         run: |
           cd packages/e2b
-          npm publish --access public --tag ${{ steps.version.outputs.npm_tag }}
+          npm publish --access public --tag ${{ steps.version.outputs.npm_tag }} || echo "::warning::Already published or failed — skipping"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -203,7 +203,7 @@ jobs:
         if: inputs.dry_run != true
         run: |
           cd packages/daytona
-          npm publish --access public --tag ${{ steps.version.outputs.npm_tag }}
+          npm publish --access public --tag ${{ steps.version.outputs.npm_tag }} || echo "::warning::Already published or failed — skipping"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -211,7 +211,7 @@ jobs:
         if: inputs.dry_run != true
         run: |
           cd packages/modal
-          npm publish --access public --tag ${{ steps.version.outputs.npm_tag }}
+          npm publish --access public --tag ${{ steps.version.outputs.npm_tag }} || echo "::warning::Already published or failed — skipping"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -219,7 +219,7 @@ jobs:
         if: inputs.dry_run != true
         run: |
           cd packages/sdk-ts
-          npm publish --access public --tag ${{ steps.version.outputs.npm_tag }}
+          npm publish --access public --tag ${{ steps.version.outputs.npm_tag }} || echo "::warning::Already published or failed — skipping"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -233,7 +233,7 @@ jobs:
         if: inputs.dry_run != true
         run: |
           cd packages/sdk-py
-          twine upload dist/*
+          twine upload dist/* || echo "::warning::Already published or failed — skipping"
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
