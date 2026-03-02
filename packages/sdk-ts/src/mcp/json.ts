@@ -235,7 +235,7 @@ export async function writeJsonSpendHeaders(
     if (!isNotFoundError(error)) throw error;
   }
 
-  // Walk the dot-path and set the headers object
+  // Walk the dot-path and merge headers (preserves user-supplied non-spend headers)
   const parts = headersPath.split(".");
   let current: Record<string, unknown> = config;
   for (let i = 0; i < parts.length - 1; i++) {
@@ -245,7 +245,11 @@ export async function writeJsonSpendHeaders(
     }
     current = current[key] as Record<string, unknown>;
   }
-  current[parts[parts.length - 1]] = headers;
+  const leaf = parts[parts.length - 1];
+  const existing = (typeof current[leaf] === "object" && current[leaf] !== null)
+    ? current[leaf] as Record<string, string>
+    : {};
+  current[leaf] = { ...existing, ...headers };
 
   await sandbox.files.write(settingsPath, JSON.stringify(config, null, 2));
 }

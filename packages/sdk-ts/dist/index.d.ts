@@ -581,6 +581,8 @@ interface SessionStatus {
 interface AgentResponse {
     /** Sandbox ID for session management */
     sandboxId: string;
+    /** Run ID for spend/cost attribution (present for run(), undefined for executeCommand()) */
+    runId?: string;
     /** Exit code of the command */
     exitCode: number;
     /** Standard output */
@@ -589,6 +591,50 @@ interface AgentResponse {
     stderr: string;
     /** Checkpoint info if storage configured and run succeeded (undefined otherwise) */
     checkpoint?: CheckpointInfo;
+}
+/** Cost breakdown for a single run() invocation */
+interface RunCost {
+    /** Run ID matching AgentResponse.runId */
+    runId: string;
+    /** 1-based chronological position in session */
+    index: number;
+    /** Total cost in USD (includes platform margin) */
+    cost: number;
+    /** Token counts */
+    tokens: {
+        prompt: number;
+        completion: number;
+    };
+    /** Model used (e.g., "claude-opus-4-6"). Last observed model if multiple models used in a run. */
+    model: string;
+    /** Number of LLM API requests in this run */
+    requests: number;
+    /** ISO timestamp when this data was fetched */
+    asOf: string;
+    /** False if recent LLM calls may still be batching (~60s delay) */
+    isComplete: boolean;
+    /** True if spend log pagination was capped — totals may be understated */
+    truncated: boolean;
+}
+/** Cost breakdown for an entire agent session (all runs) */
+interface SessionCost {
+    /** Session tag matching agent.getSessionTag() */
+    sessionTag: string;
+    /** Total cost across all runs in USD */
+    totalCost: number;
+    /** Aggregate token counts */
+    totalTokens: {
+        prompt: number;
+        completion: number;
+    };
+    /** Per-run breakdown, chronological order */
+    runs: RunCost[];
+    /** ISO timestamp when this data was fetched */
+    asOf: string;
+    /** False if session is still active or recently ended */
+    isComplete: boolean;
+    /** True if spend log pagination was capped — totals may be understated */
+    truncated: boolean;
 }
 /** Result from getOutputFiles() with optional schema validation */
 interface OutputResult<T = unknown> {
@@ -882,6 +928,10 @@ declare class Agent {
     private readonly workingDir;
     private lastRunTimestamp?;
     private readonly registry;
+    /** Unified session ID — used for both observability (SessionLogger) and spend tracking (LiteLLM customer-id) */
+    private sessionTag;
+    /** Previous session tag — preserved across kill()/setSession() so cost queries still work */
+    private previousSessionTag?;
     private sessionLogger?;
     private activeCommand?;
     private activeProcessId;
@@ -916,6 +966,13 @@ declare class Agent {
      * Build environment variables for sandbox
      */
     private buildEnvironmentVariables;
+    /**
+     * Build per-run env overrides for spend tracking.
+     * Merges session + run headers into the custom headers env var,
+     * or sets per-env-var values for agents using spendTrackingEnvs.
+     * Passed to spawn() so each .run() gets a unique run tag.
+     */
+    private buildRunEnvs;
     /**
      * Agent-specific authentication setup
      */
@@ -1024,9 +1081,9 @@ declare class Agent {
      */
     getAgentType(): AgentType;
     /**
-     * Get current session tag
-     *
-     * Returns null if no session has started (run() not called yet).
+     * Get current session tag.
+     * Returns null if no active session (before sandbox creation or after kill()).
+     * Used for both observability (dashboard traces) and spend tracking (LiteLLM customer-id).
      */
     getSessionTag(): string | null;
     /**
@@ -1039,6 +1096,58 @@ declare class Agent {
      * Flush pending observability events without closing the session.
      */
     flushObservability(): Promise<void>;
+    /**
+     * Tear down the session logger and rotate the session tag.
+     * Preserves `previousSessionTag` only if this session had actual activity,
+     * so a double kill() or no-op lifecycle call doesn't clobber the real tag.
+     * @internal
+     */
+    private rotateSession;
+    /**
+     * Fetch spend data from dashboard API.
+     * @internal
+     */
+    private fetchSpend;
+    /**
+     * Resolve the session tag for cost queries.
+     * Uses the active session tag, or falls back to the previous tag after kill()/setSession().
+     * @internal
+     */
+    private resolveSpendTag;
+    /**
+     * Normalize run payloads for compatibility with older dashboard responses.
+     * Older responses may omit `asOf`, `isComplete`, or `truncated` inside `runs[]`.
+     * @internal
+     */
+    private normalizeRunCost;
+    /**
+     * Normalize session payloads so all `runs[]` conform to `RunCost`.
+     * @internal
+     */
+    private normalizeSessionCost;
+    /**
+     * Get cost breakdown for the current session (all runs).
+     *
+     * Queries the dashboard API which proxies to LiteLLM spend logs.
+     * Cost data has ~60s latency due to gateway batch writes.
+     * Also works after kill() for the most recent session only.
+     *
+     * Requires gateway mode (EVOLVE_API_KEY).
+     */
+    getSessionCost(): Promise<SessionCost>;
+    /**
+     * Get cost for a specific run by ID or index.
+     *
+     * @param run - Either `{ runId: string }` or `{ index: number }` (1-based, negative = from end)
+     *
+     * Also works after kill() for the most recent session only.
+     * Requires gateway mode (EVOLVE_API_KEY).
+     */
+    getRunCost(run: {
+        runId: string;
+    } | {
+        index: number;
+    }): Promise<RunCost>;
 }
 
 /**
@@ -1523,6 +1632,21 @@ declare class Evolve extends EventEmitter {
      * Flush pending observability events without killing sandbox.
      */
     flushObservability(): Promise<void>;
+    /**
+     * Get cost breakdown for the current session (all runs).
+     * Also works after kill() — queries the just-finished session.
+     * Requires gateway mode (EVOLVE_API_KEY).
+     */
+    getSessionCost(): Promise<SessionCost>;
+    /**
+     * Get cost for a specific run by ID or index.
+     * @param run - Either `{ runId: string }` or `{ index: number }` (1-based, negative = from end)
+     */
+    getRunCost(run: {
+        runId: string;
+    } | {
+        index: number;
+    }): Promise<RunCost>;
 }
 
 /**
@@ -2440,6 +2564,32 @@ interface AgentRegistryEntry {
     }>;
     /** Env var for inline config (e.g., OPENCODE_CONFIG_CONTENT) — used in gateway mode to set provider base URLs */
     gatewayConfigEnv?: string;
+    /** Environment variable that CLI reads for custom outbound HTTP headers */
+    customHeadersEnv?: string;
+    /** Format for custom headers env var: "newline" (Claude) or "comma" (Gemini). Default: "newline" */
+    customHeadersFormat?: "newline" | "comma";
+    /**
+     * Per-env-var spend tracking for CLIs that support env_http_headers in config
+     * (e.g., Codex TOML). Maps LiteLLM header names to env var names that the CLI
+     * reads at request time. Alternative to customHeadersEnv for agents without a
+     * single custom-headers env var.
+     */
+    spendTrackingEnvs?: {
+        /** Env var name for x-litellm-customer-id value */
+        sessionTagEnv: string;
+        /** Env var name for x-litellm-tags value */
+        runTagEnv: string;
+    };
+    /**
+     * Config-file-based spend tracking for CLIs that read custom headers from a
+     * JSON settings file (e.g., Qwen settings.json → model.generationConfig.customHeaders).
+     * The SDK writes headers to this file before each run.
+     * Source-verified: Qwen reads customHeaders from settings.json, not env vars.
+     */
+    spendTrackingJsonConfig?: {
+        /** JSON path to the customHeaders object (dot-separated) */
+        headersPath: string;
+    };
     /** Additional directories to include in checkpoint tar (beyond mcpConfig.settingsDir).
      *  Used for agents like OpenCode that spread state across XDG directories. */
     checkpointDirs?: string[];
@@ -2686,4 +2836,4 @@ declare function saveLocalDir(localPath: string, files: FileMap): void;
 declare function resolveStorageConfig(config: StorageConfig | undefined, isGateway: boolean, gatewayUrl?: string, gatewayApiKey?: string): ResolvedStorageConfig;
 declare function storage(config?: StorageConfig): StorageClient;
 
-export { AGENT_REGISTRY, AGENT_TYPES, Agent, type AgentConfig, type AgentOptions, type AgentOverride, type AgentParser, type AgentRegistryEntry, type AgentResponse, type AgentRuntimeState, type AgentType, type BaseMeta, type BestOfConfig, type BestOfParams, type BestOfResult, type CandidateCompleteEvent, type CheckpointInfo, type ComposioAuthResult, type ComposioConfig, type ComposioConnectionStatus, type ComposioSetup, type DownloadCheckpointOptions, type DownloadFilesOptions, type EmitOption, type EventHandler, type EventName, Evolve, type EvolveConfig, type EvolveEvents, type ExecuteCommandOptions, type FileMap, type FilterConfig, type FilterParams, type IndexedMeta, type ItemInput, type ItemRetryEvent, JUDGE_PROMPT, type JsonSchema, type JudgeCompleteEvent, type JudgeDecision, type JudgeMeta, type LifecycleEvent, type LifecycleReason, type MapConfig, type MapParams, type McpConfigInfo, type McpServerConfig, type ModelInfo, type OnCandidateCompleteCallback, type OnItemRetryCallback, type OnJudgeCompleteCallback, type OnVerifierCompleteCallback, type OnWorkerCompleteCallback, type OperationType, type OutputEvent, type OutputResult, Pipeline, type PipelineContext, type PipelineEventMap, type PipelineEvents, type PipelineResult, type ProcessInfo, type Prompt, type PromptFn, RETRY_FEEDBACK_PROMPT, type ReasoningEffort, type ReduceConfig, type ReduceMeta, type ReduceParams, type ReduceResult, type ResolvedStorageConfig, type RetryConfig, type RunOptions, SCHEMA_PROMPT, SWARM_RESULT_BRAND, SYSTEM_PROMPT, type SandboxCommandHandle, type SandboxCommandResult, type SandboxCommands, type SandboxCreateOptions, type SandboxFiles, type SandboxInstance, type SandboxLifecycleState, type SandboxProvider, type SandboxRunOptions, type SandboxSpawnOptions, type SchemaValidationOptions, Semaphore, type SessionStatus, type SkillName, type SkillsConfig, type StepCompleteEvent, type StepErrorEvent, type StepEvent, type StepResult, type StepStartEvent, type StorageClient, type StorageConfig, type StreamCallbacks, Swarm, type SwarmConfig, type SwarmResult, SwarmResultList, TerminalPipeline, type ToolsFilter, VALIDATION_PRESETS, VERIFY_PROMPT, type ValidationMode, type VerifierCompleteEvent, type VerifyConfig, type VerifyDecision, type VerifyInfo, type VerifyMeta, WORKSPACE_PROMPT, WORKSPACE_SWE_PROMPT, type WorkerCompleteEvent, type WorkspaceMode, applyTemplate, buildWorkerSystemPrompt, createAgentParser, createClaudeParser, createCodexParser, createGeminiParser, executeWithRetry, expandPath, getAgentConfig, getMcpSettingsDir, getMcpSettingsPath, isValidAgentType, isZodSchema, jsonSchemaToString, parseNdjsonLine, parseNdjsonOutput, parseQwenOutput, readLocalDir, resolveStorageConfig, saveLocalDir, storage, writeClaudeMcpConfig, writeCodexMcpConfig, writeGeminiMcpConfig, writeMcpConfig, writeQwenMcpConfig, zodSchemaToJson };
+export { AGENT_REGISTRY, AGENT_TYPES, Agent, type AgentConfig, type AgentOptions, type AgentOverride, type AgentParser, type AgentRegistryEntry, type AgentResponse, type AgentRuntimeState, type AgentType, type BaseMeta, type BestOfConfig, type BestOfParams, type BestOfResult, type CandidateCompleteEvent, type CheckpointInfo, type ComposioAuthResult, type ComposioConfig, type ComposioConnectionStatus, type ComposioSetup, type DownloadCheckpointOptions, type DownloadFilesOptions, type EmitOption, type EventHandler, type EventName, Evolve, type EvolveConfig, type EvolveEvents, type ExecuteCommandOptions, type FileMap, type FilterConfig, type FilterParams, type IndexedMeta, type ItemInput, type ItemRetryEvent, JUDGE_PROMPT, type JsonSchema, type JudgeCompleteEvent, type JudgeDecision, type JudgeMeta, type LifecycleEvent, type LifecycleReason, type MapConfig, type MapParams, type McpConfigInfo, type McpServerConfig, type ModelInfo, type OnCandidateCompleteCallback, type OnItemRetryCallback, type OnJudgeCompleteCallback, type OnVerifierCompleteCallback, type OnWorkerCompleteCallback, type OperationType, type OutputEvent, type OutputResult, Pipeline, type PipelineContext, type PipelineEventMap, type PipelineEvents, type PipelineResult, type ProcessInfo, type Prompt, type PromptFn, RETRY_FEEDBACK_PROMPT, type ReasoningEffort, type ReduceConfig, type ReduceMeta, type ReduceParams, type ReduceResult, type ResolvedStorageConfig, type RetryConfig, type RunCost, type RunOptions, SCHEMA_PROMPT, SWARM_RESULT_BRAND, SYSTEM_PROMPT, type SandboxCommandHandle, type SandboxCommandResult, type SandboxCommands, type SandboxCreateOptions, type SandboxFiles, type SandboxInstance, type SandboxLifecycleState, type SandboxProvider, type SandboxRunOptions, type SandboxSpawnOptions, type SchemaValidationOptions, Semaphore, type SessionCost, type SessionStatus, type SkillName, type SkillsConfig, type StepCompleteEvent, type StepErrorEvent, type StepEvent, type StepResult, type StepStartEvent, type StorageClient, type StorageConfig, type StreamCallbacks, Swarm, type SwarmConfig, type SwarmResult, SwarmResultList, TerminalPipeline, type ToolsFilter, VALIDATION_PRESETS, VERIFY_PROMPT, type ValidationMode, type VerifierCompleteEvent, type VerifyConfig, type VerifyDecision, type VerifyInfo, type VerifyMeta, WORKSPACE_PROMPT, WORKSPACE_SWE_PROMPT, type WorkerCompleteEvent, type WorkspaceMode, applyTemplate, buildWorkerSystemPrompt, createAgentParser, createClaudeParser, createCodexParser, createGeminiParser, executeWithRetry, expandPath, getAgentConfig, getMcpSettingsDir, getMcpSettingsPath, isValidAgentType, isZodSchema, jsonSchemaToString, parseNdjsonLine, parseNdjsonOutput, parseQwenOutput, readLocalDir, resolveStorageConfig, saveLocalDir, storage, writeClaudeMcpConfig, writeCodexMcpConfig, writeGeminiMcpConfig, writeMcpConfig, writeQwenMcpConfig, zodSchemaToJson };

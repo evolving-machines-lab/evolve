@@ -674,6 +674,45 @@ async function testQwenWriteJsonOverwritesPreviousHeaders(): Promise<void> {
   assertEqual(config.model?.generationConfig?.customHeaders?.["x-litellm-customer-id"], "session-abc", "session tag unchanged");
 }
 
+async function testQwenWriteJsonPreservesUserDefinedHeaders(): Promise<void> {
+  console.log("\n[24] writeJsonSpendHeaders() preserves user-defined custom headers (no clobber)");
+  // User has already configured their own custom headers in settings.json
+  const existing = JSON.stringify({
+    model: {
+      generationConfig: {
+        customHeaders: {
+          "x-my-app-id": "user-app-123",
+          "x-trace-id": "user-trace-abc",
+        },
+      },
+    },
+  });
+  const written: { path: string; content: string }[] = [];
+  const sandbox = {
+    files: {
+      makeDir: async () => {},
+      read: async () => existing,
+      write: async (path: string, content: string) => { written.push({ path, content }); },
+    },
+  };
+
+  await writeJsonSpendHeaders(
+    sandbox as any,
+    "qwen",
+    "model.generationConfig.customHeaders",
+    { "x-litellm-customer-id": "session-abc", "x-litellm-tags": "run:run-001" },
+  );
+
+  const config = JSON.parse(written[0].content);
+  const headers = config.model?.generationConfig?.customHeaders;
+  // User headers preserved
+  assertEqual(headers?.["x-my-app-id"], "user-app-123", "user header x-my-app-id preserved");
+  assertEqual(headers?.["x-trace-id"], "user-trace-abc", "user header x-trace-id preserved");
+  // Spend headers added
+  assertEqual(headers?.["x-litellm-customer-id"], "session-abc", "spend customer-id added");
+  assertEqual(headers?.["x-litellm-tags"], "run:run-001", "spend run tag added");
+}
+
 async function main(): Promise<void> {
   console.log("\n============================================================");
   console.log("Cost API Unit Tests");
@@ -701,6 +740,7 @@ async function main(): Promise<void> {
   await testQwenBuildRunEnvsReturnsUndefined();
   await testQwenDirectModeSkipsHeaders();
   await testQwenWriteJsonOverwritesPreviousHeaders();
+  await testQwenWriteJsonPreservesUserDefinedHeaders();
   console.log("\n============================================================");
   console.log(`Results: ${passed} passed, ${failed} failed`);
   console.log("============================================================");
