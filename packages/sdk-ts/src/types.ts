@@ -441,6 +441,9 @@ export interface AgentResponse {
   /** Sandbox ID for session management */
   sandboxId: string;
 
+  /** Run ID for spend/cost attribution (present for run(), undefined for executeCommand()) */
+  runId?: string;
+
   /** Exit code of the command */
   exitCode: number;
 
@@ -452,6 +455,50 @@ export interface AgentResponse {
 
   /** Checkpoint info if storage configured and run succeeded (undefined otherwise) */
   checkpoint?: CheckpointInfo;
+}
+
+// =============================================================================
+// COST TYPES
+// =============================================================================
+
+/** Cost breakdown for a single run() invocation */
+export interface RunCost {
+  /** Run ID matching AgentResponse.runId */
+  runId: string;
+  /** 1-based chronological position in session */
+  index: number;
+  /** Total cost in USD (includes platform margin) */
+  cost: number;
+  /** Token counts */
+  tokens: { prompt: number; completion: number };
+  /** Model used (e.g., "claude-opus-4-6"). Last observed model if multiple models used in a run. */
+  model: string;
+  /** Number of LLM API requests in this run */
+  requests: number;
+  /** ISO timestamp when this data was fetched */
+  asOf: string;
+  /** False if recent LLM calls may still be batching (~60s delay) */
+  isComplete: boolean;
+  /** True if spend log pagination was capped — totals may be understated */
+  truncated: boolean;
+}
+
+/** Cost breakdown for an entire agent session (all runs) */
+export interface SessionCost {
+  /** Session tag matching agent.getSessionTag() */
+  sessionTag: string;
+  /** Total cost across all runs in USD */
+  totalCost: number;
+  /** Aggregate token counts */
+  totalTokens: { prompt: number; completion: number };
+  /** Per-run breakdown, chronological order */
+  runs: RunCost[];
+  /** ISO timestamp when this data was fetched */
+  asOf: string;
+  /** False if session is still active or recently ended */
+  isComplete: boolean;
+  /** True if spend log pagination was capped — totals may be understated */
+  truncated: boolean;
 }
 
 /** Result from getOutputFiles() with optional schema validation */

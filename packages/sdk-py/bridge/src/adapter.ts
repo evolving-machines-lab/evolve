@@ -7,7 +7,7 @@
  * All SDK integration is isolated here for easy maintenance.
  */
 
-import { Evolve, storage as createStorageClient, type AgentConfig, type AgentType, type ReasoningEffort, type CheckpointInfo, type StorageClient, type StorageConfig } from '@evolvingmachines/sdk';
+import { Evolve, storage as createStorageClient, type AgentConfig, type AgentType, type ReasoningEffort, type CheckpointInfo, type RunCost, type SessionCost, type StorageClient, type StorageConfig } from '@evolvingmachines/sdk';
 import { createE2BProvider } from '@evolvingmachines/e2b';
 import { createDaytonaProvider } from '@evolvingmachines/daytona';
 import { createModalProvider } from '@evolvingmachines/modal';
@@ -44,6 +44,9 @@ import type {
   StorageClientGetParams,
   StorageClientDownloadParams,
   StorageClientDownloadFilesParams,
+  GetRunCostParams,
+  RunCostResponse,
+  SessionCostResponse,
 } from './types';
 
 // =============================================================================
@@ -253,6 +256,11 @@ export class EvolveAdapter {
         return this.getOutputOnInstance(params);
       case 'kill_instance':
         return this.killInstance(params);
+      // Cost
+      case 'get_session_cost':
+        return this.getSessionCost();
+      case 'get_run_cost':
+        return this.getRunCost(params);
       // Composio static methods (no instance required)
       case 'composio_auth':
         return this.composioAuth(params);
@@ -331,6 +339,7 @@ export class EvolveAdapter {
 
     return {
       sandbox_id: result.sandboxId,
+      run_id: result.runId,
       exit_code: result.exitCode,
       stdout: result.stdout,
       stderr: result.stderr,
@@ -465,6 +474,58 @@ export class EvolveAdapter {
   }
 
   // ===========================================================================
+  // COST
+  // ===========================================================================
+
+  /**
+   * Get cost breakdown for the current session (all runs).
+   * Converts camelCase SDK response to snake_case for Python transport.
+   */
+  async getSessionCost(): Promise<SessionCostResponse> {
+    this.ensureInitialized();
+    const result = await this.evolve!.getSessionCost();
+    return this.toSessionCostResponse(result);
+  }
+
+  /**
+   * Get cost for a specific run by ID or index.
+   */
+  async getRunCost(params: GetRunCostParams): Promise<RunCostResponse> {
+    this.ensureInitialized();
+    const query = params.run_id
+      ? { runId: params.run_id }
+      : { index: params.index! };
+    const result = await this.evolve!.getRunCost(query);
+    return this.toRunCostResponse(result);
+  }
+
+  private toRunCostResponse(rc: RunCost): RunCostResponse {
+    return {
+      run_id: rc.runId,
+      index: rc.index,
+      cost: rc.cost,
+      tokens: rc.tokens,
+      model: rc.model,
+      requests: rc.requests,
+      as_of: rc.asOf,
+      is_complete: rc.isComplete,
+      truncated: rc.truncated,
+    };
+  }
+
+  private toSessionCostResponse(sc: SessionCost): SessionCostResponse {
+    return {
+      session_tag: sc.sessionTag,
+      total_cost: sc.totalCost,
+      total_tokens: sc.totalTokens,
+      runs: sc.runs.map(rc => this.toRunCostResponse(rc)),
+      as_of: sc.asOf,
+      is_complete: sc.isComplete,
+      truncated: sc.truncated,
+    };
+  }
+
+  // ===========================================================================
   // STORAGE / CHECKPOINTING
   // ===========================================================================
 
@@ -594,6 +655,7 @@ export class EvolveAdapter {
 
     return {
       sandbox_id: result.sandboxId,
+      run_id: result.runId,
       exit_code: result.exitCode,
       stdout: result.stdout,
       stderr: result.stderr,

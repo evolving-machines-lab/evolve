@@ -9,6 +9,7 @@
 
 import type { z } from "zod";
 import Ajv, { type ValidateFunction } from "ajv";
+import { randomUUID, randomBytes } from "crypto";
 import type {
   AgentType,
   SandboxInstance,
@@ -33,12 +34,14 @@ import type {
   LifecycleEvent,
   ResolvedStorageConfig,
   CheckpointInfo,
+  RunCost,
+  SessionCost,
 } from "./types";
 import { VALIDATION_PRESETS } from "./types";
 import { getAgentConfig, type AgentRegistryEntry } from "./registry";
-import { writeMcpConfig } from "./mcp";
+import { writeMcpConfig, writeCodexSpendProvider } from "./mcp";
 import { createAgentParser, type AgentParser } from "./parsers";
-import { DEFAULT_TIMEOUT_MS, DEFAULT_WORKING_DIR, getGatewayUrl, getGeminiGatewayUrl } from "./constants";
+import { DEFAULT_TIMEOUT_MS, DEFAULT_WORKING_DIR, DEFAULT_DASHBOARD_URL, LITELLM_CUSTOMER_ID_HEADER, LITELLM_TAGS_HEADER, RUN_TAG_PREFIX, getGatewayUrl, getGeminiGatewayUrl } from "./constants";
 import { buildWorkerSystemPrompt } from "./prompts";
 import { isZodSchema } from "./utils";
 import { SessionLogger } from "./observability";
@@ -78,6 +81,55 @@ function escapePrompt(prompt: string): string {
 }
 
 // =============================================================================
+// SPEND TRACKING HELPERS
+// =============================================================================
+
+/** Generate a session tag: `{prefix}-{16 hex chars}` */
+function generateSessionTag(prefix: string): string {
+  return `${prefix}-${randomBytes(8).toString("hex")}`;
+}
+
+/**
+ * Merge spend tracking headers into an existing ANTHROPIC_CUSTOM_HEADERS value.
+ * Preserves user-supplied headers; spend headers overwrite only matching keys.
+ * Parses newline-separated "Name: Value" pairs (Claude CLI format).
+ * Special case: x-litellm-tags values are appended (comma-joined), not overwritten.
+ */
+function mergeCustomHeaders(existing: string | undefined, updates: Record<string, string>): string {
+  const merged = new Map<string, string>();
+
+  // Parse existing headers (case-insensitive key lookup)
+  if (existing) {
+    // Claude CLI uses newline-separated "Name: Value" pairs.
+    // We only split on newlines — commas can appear inside header values (e.g., tag lists).
+    for (const line of existing.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const colon = trimmed.indexOf(":");
+      if (colon <= 0) continue;
+      const name = trimmed.slice(0, colon).trim();
+      const value = trimmed.slice(colon + 1).trim();
+      merged.set(name.toLowerCase(), `${name}: ${value}`);
+    }
+  }
+
+  // Apply updates (overwrites matching keys, except tags which are appended)
+  for (const [name, value] of Object.entries(updates)) {
+    const key = name.toLowerCase();
+    if (key === LITELLM_TAGS_HEADER && merged.has(key)) {
+      // Append to existing tags (comma-separated list)
+      const existing = merged.get(key)!;
+      const existingValue = existing.slice(existing.indexOf(":") + 1).trim();
+      merged.set(key, `${name}: ${existingValue},${value}`);
+    } else {
+      merged.set(key, `${name}: ${value}`);
+    }
+  }
+
+  return Array.from(merged.values()).join("\n");
+}
+
+// =============================================================================
 // AGENT CLASS
 // =============================================================================
 
@@ -95,6 +147,10 @@ export class Agent {
   private readonly workingDir: string;
   private lastRunTimestamp?: number;
   private readonly registry: AgentRegistryEntry;
+  /** Unified session ID — used for both observability (SessionLogger) and spend tracking (LiteLLM customer-id) */
+  private sessionTag: string;
+  /** Previous session tag — preserved across kill()/setSession() so cost queries still work */
+  private previousSessionTag?: string;
   private sessionLogger?: SessionLogger;
   private activeCommand?: SandboxCommandHandle;
   private activeProcessId: string | null = null;
@@ -154,6 +210,10 @@ export class Agent {
 
     // Cache registry lookup once in constructor
     this.registry = getAgentConfig(agentConfig.type);
+
+    // Unified session tag — generated early for spend tracking headers at sandbox creation,
+    // then shared with SessionLogger on first run(). Rotated on kill()/setSession().
+    this.sessionTag = generateSessionTag(options.sessionTagPrefix || "evolve");
   }
 
   private emitLifecycle(callbacks: StreamCallbacks | undefined, reason: LifecycleReason): void {
@@ -393,7 +453,56 @@ export class Agent {
     if (this.options.secrets) {
       Object.assign(envVars, this.options.secrets);
     }
+
+    // Spend tracking: merge session-level LiteLLM header (gateway mode only).
+    // Uses mergeCustomHeaders to preserve any user-supplied headers from secrets.
+    if (!this.agentConfig.isDirectMode && this.registry.customHeadersEnv) {
+      const headerEnv = this.registry.customHeadersEnv;
+      envVars[headerEnv] = mergeCustomHeaders(envVars[headerEnv], {
+        [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
+      });
+    }
+
+    // Spend tracking via per-env-var headers (e.g., Codex env_http_headers in TOML).
+    // Session-level only — run-level tag is set per-run in buildRunEnvs().
+    if (!this.agentConfig.isDirectMode && this.registry.spendTrackingEnvs) {
+      envVars[this.registry.spendTrackingEnvs.sessionTagEnv] = this.sessionTag;
+    }
+
     return envVars;
+  }
+
+  /**
+   * Build per-run env overrides for spend tracking.
+   * Merges session + run headers into the custom headers env var,
+   * or sets per-env-var values for agents using spendTrackingEnvs.
+   * Passed to spawn() so each .run() gets a unique run tag.
+   */
+  private buildRunEnvs(runId: string): Record<string, string> | undefined {
+    if (this.agentConfig.isDirectMode) return undefined;
+
+    // Path 1: single custom headers env var (Claude)
+    const headerEnv = this.registry.customHeadersEnv;
+    if (headerEnv) {
+      const base = this.options.secrets?.[headerEnv];
+      return {
+        [headerEnv]: mergeCustomHeaders(base, {
+          [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
+          [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
+        }),
+      };
+    }
+
+    // Path 2: per-env-var headers (Codex TOML env_http_headers)
+    const trackingEnvs = this.registry.spendTrackingEnvs;
+    if (trackingEnvs) {
+      return {
+        [trackingEnvs.sessionTagEnv]: this.sessionTag,
+        [trackingEnvs.runTagEnv]: `${RUN_TAG_PREFIX}${runId}`,
+      };
+    }
+
+    return undefined;
   }
 
   /**
@@ -484,6 +593,16 @@ export class Agent {
         sandbox,
         this.workingDir,
         mcpServers
+      );
+    }
+
+    // Spend tracking: write model provider config for agents using env_http_headers
+    // (e.g., Codex). Must run after MCP config so we append to existing config.toml.
+    if (!this.agentConfig.isDirectMode && this.registry.spendTrackingEnvs && this.agentConfig.type === "codex") {
+      await writeCodexSpendProvider(
+        sandbox,
+        this.agentConfig.baseUrl || getGatewayUrl(),
+        this.registry.spendTrackingEnvs,
       );
     }
 
@@ -722,7 +841,7 @@ export class Agent {
         agent: this.agentConfig.type,
         model: this.agentConfig.model || this.registry.defaultModel,
         sandboxId: sandbox.sandboxId,
-        tagPrefix: this.options.sessionTagPrefix,
+        tag: this.sessionTag,
         apiKey: this.agentConfig.isDirectMode ? undefined : this.agentConfig.apiKey,
         observability: this.options.observability,
       });
@@ -731,8 +850,10 @@ export class Agent {
     // Log the prompt (non-blocking)
     this.sessionLogger.writePrompt(prompt);
 
-    // Build command
+    // Build command and per-run spend tracking env
     const command = this.buildCommand(prompt);
+    const runId = randomUUID();
+    const runEnvs = this.buildRunEnvs(runId);
 
     // Line buffer for NDJSON parsing (shared by both modes)
     let lineBuffer = "";
@@ -777,6 +898,7 @@ export class Agent {
     const handle = await sandbox.commands.spawn(command, {
       cwd: this.workingDir,
       timeoutMs,
+      envs: runEnvs,
       onStdout,
       onStderr,
     });
@@ -788,6 +910,7 @@ export class Agent {
       this.watchBackgroundOperation(opId, "run", handle, callbacks);
       return {
         sandboxId: sandbox.sandboxId,
+        runId,
         exitCode: 0,
         stdout: `Background process started with ID ${handle.processId}`,
         stderr: "",
@@ -854,7 +977,7 @@ export class Agent {
           this.agentConfig.type,
           this.workingDir,
           {
-            tag: this.sessionLogger?.getTag() || "unknown",
+            tag: this.sessionTag,
             model: this.agentConfig.model || this.registry.defaultModel,
             workspaceMode: this.options.workspaceMode || "knowledge",
             comment: checkpointComment,
@@ -870,6 +993,7 @@ export class Agent {
 
     return {
       sandboxId: sandbox.sandboxId,
+      runId,
       exitCode: result.exitCode,
       stdout: result.stdout,
       stderr: result.stderr,
@@ -1115,7 +1239,7 @@ export class Agent {
       this.agentConfig.type,
       this.workingDir,
       {
-        tag: this.sessionLogger?.getTag() || "unknown",
+        tag: this.sessionTag,
         model: this.agentConfig.model || this.registry.defaultModel,
         workspaceMode: this.options.workspaceMode || "knowledge",
         comment: options?.comment,
@@ -1155,11 +1279,7 @@ export class Agent {
       }
     }
 
-    // Close existing session logger (flush pending events)
-    if (this.sessionLogger) {
-      await this.sessionLogger.close();
-      this.sessionLogger = undefined;
-    }
+    await this.rotateSession();
 
     this.options.sandboxId = sandboxId;
     this.sandbox = undefined;
@@ -1263,11 +1383,7 @@ export class Agent {
    * Kill sandbox (terminates all processes)
    */
   async kill(callbacks?: StreamCallbacks): Promise<void> {
-    // Close session logger (flush pending events)
-    if (this.sessionLogger) {
-      await this.sessionLogger.close();
-      this.sessionLogger = undefined;
-    }
+    await this.rotateSession();
 
     // Interrupt active operation before killing sandbox
     if (this.activeCommand) {
@@ -1310,12 +1426,14 @@ export class Agent {
   // ===========================================================================
 
   /**
-   * Get current session tag
-   *
-   * Returns null if no session has started (run() not called yet).
+   * Get current session tag.
+   * Returns null if no active session (before sandbox creation or after kill()).
+   * Used for both observability (dashboard traces) and spend tracking (LiteLLM customer-id).
    */
   getSessionTag(): string | null {
-    return this.sessionLogger?.getTag() || null;
+    // Only expose the tag when there's an active session (sandbox exists or logger initialized)
+    if (!this.sandbox && !this.sessionLogger) return null;
+    return this.sessionTag;
   }
 
   /**
@@ -1332,5 +1450,150 @@ export class Agent {
    */
   async flushObservability(): Promise<void> {
     await this.sessionLogger?.flush();
+  }
+
+  /**
+   * Tear down the session logger and rotate the session tag.
+   * Preserves `previousSessionTag` only if this session had actual activity,
+   * so a double kill() or no-op lifecycle call doesn't clobber the real tag.
+   * @internal
+   */
+  private async rotateSession(): Promise<void> {
+    const hadActivity = !!this.sessionLogger;
+    if (this.sessionLogger) {
+      await this.sessionLogger.close();
+      this.sessionLogger = undefined;
+    }
+    if (hadActivity) {
+      this.previousSessionTag = this.sessionTag;
+    }
+    this.sessionTag = generateSessionTag(this.options.sessionTagPrefix || "evolve");
+  }
+
+  // ===========================================================================
+  // COST
+  // ===========================================================================
+
+  /**
+   * Fetch spend data from dashboard API.
+   * @internal
+   */
+  private async fetchSpend(params: URLSearchParams): Promise<Response> {
+    if (this.agentConfig.isDirectMode) {
+      throw new Error("Cost tracking requires gateway mode (set EVOLVE_API_KEY).");
+    }
+    const apiKey = this.agentConfig.apiKey;
+    if (!apiKey) {
+      throw new Error("Cost tracking requires an API key.");
+    }
+    const dashboardUrl = process.env.EVOLVE_DASHBOARD_URL || DEFAULT_DASHBOARD_URL;
+    const res = await fetch(`${dashboardUrl}/api/sessions/spend?${params}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`Spend query failed (${res.status}): ${body}`);
+    }
+    return res;
+  }
+
+  /**
+   * Resolve the session tag for cost queries.
+   * Uses the active session tag, or falls back to the previous tag after kill()/setSession().
+   * @internal
+   */
+  private resolveSpendTag(): string {
+    // Active session takes priority
+    if (this.sandbox || this.sessionLogger) return this.sessionTag;
+    // After kill()/setSession(), fall back to previous session
+    if (this.previousSessionTag) return this.previousSessionTag;
+    throw new Error("No session to query. Call run() first.");
+  }
+
+  /**
+   * Normalize run payloads for compatibility with older dashboard responses.
+   * Older responses may omit `asOf`, `isComplete`, or `truncated` inside `runs[]`.
+   * @internal
+   */
+  private normalizeRunCost(
+    run: Omit<RunCost, "asOf" | "isComplete" | "truncated">
+      & Partial<Pick<RunCost, "asOf" | "isComplete" | "truncated">>,
+    defaults: Pick<RunCost, "asOf" | "isComplete" | "truncated">
+  ): RunCost {
+    return {
+      ...run,
+      asOf: run.asOf ?? defaults.asOf,
+      isComplete: run.isComplete ?? defaults.isComplete,
+      truncated: run.truncated ?? defaults.truncated,
+    };
+  }
+
+  /**
+   * Normalize session payloads so all `runs[]` conform to `RunCost`.
+   * @internal
+   */
+  private normalizeSessionCost(session: SessionCost): SessionCost {
+    const defaults = {
+      asOf: session.asOf,
+      isComplete: session.isComplete,
+      truncated: session.truncated,
+    };
+    return {
+      ...session,
+      runs: session.runs.map((run) => this.normalizeRunCost(run, defaults)),
+    };
+  }
+
+  /**
+   * Get cost breakdown for the current session (all runs).
+   *
+   * Queries the dashboard API which proxies to LiteLLM spend logs.
+   * Cost data has ~60s latency due to gateway batch writes.
+   * Also works after kill() for the most recent session only.
+   *
+   * Requires gateway mode (EVOLVE_API_KEY).
+   */
+  async getSessionCost(): Promise<SessionCost> {
+    const tag = this.resolveSpendTag();
+    const params = new URLSearchParams({ tag });
+    const res = await this.fetchSpend(params);
+    const raw = await res.json() as SessionCost;
+    return this.normalizeSessionCost(raw);
+  }
+
+  /**
+   * Get cost for a specific run by ID or index.
+   *
+   * @param run - Either `{ runId: string }` or `{ index: number }` (1-based, negative = from end)
+   *
+   * Also works after kill() for the most recent session only.
+   * Requires gateway mode (EVOLVE_API_KEY).
+   */
+  async getRunCost(run: { runId: string } | { index: number }): Promise<RunCost> {
+    const tag = this.resolveSpendTag();
+
+    if ("runId" in run) {
+      const params = new URLSearchParams({ tag, runId: run.runId });
+      const res = await this.fetchSpend(params);
+      const raw = await res.json() as Omit<RunCost, "asOf" | "isComplete" | "truncated">
+        & Partial<Pick<RunCost, "asOf" | "isComplete" | "truncated">>;
+      return this.normalizeRunCost(raw, {
+        asOf: new Date().toISOString(),
+        isComplete: false,
+        truncated: false,
+      });
+    }
+
+    // Index-based: fetch full session, resolve index
+    const session = await this.getSessionCost();
+    const idx = run.index > 0 ? run.index - 1 : session.runs.length + run.index;
+    const found = session.runs[idx];
+    if (!found) {
+      throw new Error(
+        `Run index ${run.index} out of range. Session has ${session.runs.length} run(s).`
+      );
+    }
+    return found;
   }
 }

@@ -7,6 +7,7 @@
 ```ts
 type AgentResponse = {
   sandboxId: string;
+  runId?: string;              // UUID for cost attribution (present for run(), undefined for executeCommand())
   exitCode: number;
   stdout: string;
   stderr: string;
@@ -695,6 +696,73 @@ console.log(evolve.getSessionTimestamp()); // Timestamp for second log file
 
 Use the tag together with the sandbox id to correlate logs with files saved in
 `/output/`.
+
+---
+
+## Cost Tracking
+
+Query per-run and per-session LLM spend. Requires gateway mode (`EVOLVE_API_KEY`). Supported for Claude and Codex agents.
+
+Cost data may take 5–60s to appear depending on LiteLLM batch flush timing (typically under 30s).
+
+```ts
+import { Evolve } from "@evolvingmachines/sdk";
+import { createE2BProvider } from "@evolvingmachines/e2b";
+
+const evolve = new Evolve()
+  .withAgent({ type: "claude" })
+  .withSandbox(createE2BProvider());
+
+// Each run() returns a runId for cost attribution
+const r1 = await evolve.run({ prompt: "Analyze the data" });
+const r2 = await evolve.run({ prompt: "Write tests" });
+
+// Session cost — all runs
+const session = await evolve.getSessionCost();
+console.log(session.totalCost);       // 0.42 (USD)
+console.log(session.totalTokens);     // { prompt: 5000, completion: 2000 }
+console.log(session.runs.length);     // 2
+
+// Run cost — by ID (single API call)
+const cost = await evolve.getRunCost({ runId: r1.runId! });
+console.log(cost.cost, cost.model, cost.requests);
+
+// Run cost — by index (1-based, negative = from end)
+const first = await evolve.getRunCost({ index: 1 });
+const last  = await evolve.getRunCost({ index: -1 });
+
+// Works after kill() for the most recent session
+await evolve.kill();
+const finalCost = await evolve.getSessionCost();
+```
+
+After `kill()` followed by another `run()` cycle, the previous session's cost is no longer queryable.
+
+### Types
+
+```ts
+interface RunCost {
+  runId: string;        // Matches AgentResponse.runId
+  index: number;        // 1-based chronological position
+  cost: number;         // USD (includes platform margin)
+  tokens: { prompt: number; completion: number };
+  model: string;        // Last observed model for this run
+  requests: number;     // Number of LLM API requests
+  asOf: string;         // ISO timestamp of query
+  isComplete: boolean;  // False if calls still batching (5–60s)
+  truncated: boolean;   // True if spend logs were capped
+}
+
+interface SessionCost {
+  sessionTag: string;   // Matches evolve.getSessionTag()
+  totalCost: number;    // USD across all runs
+  totalTokens: { prompt: number; completion: number };
+  runs: RunCost[];      // Chronological order
+  asOf: string;
+  isComplete: boolean;
+  truncated: boolean;
+}
+```
 
 ---
 

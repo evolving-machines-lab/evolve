@@ -95,6 +95,20 @@ export interface AgentRegistryEntry {
   providerEnvMap?: Record<string, { keyEnv: string }>;
   /** Env var for inline config (e.g., OPENCODE_CONFIG_CONTENT) — used in gateway mode to set provider base URLs */
   gatewayConfigEnv?: string;
+  /** Environment variable that CLI reads for custom outbound HTTP headers */
+  customHeadersEnv?: string;
+  /**
+   * Per-env-var spend tracking for CLIs that support env_http_headers in config
+   * (e.g., Codex TOML). Maps LiteLLM header names to env var names that the CLI
+   * reads at request time. Alternative to customHeadersEnv for agents without a
+   * single custom-headers env var.
+   */
+  spendTrackingEnvs?: {
+    /** Env var name for x-litellm-customer-id value */
+    sessionTagEnv: string;
+    /** Env var name for x-litellm-tags value */
+    runTagEnv: string;
+  };
   /** Additional directories to include in checkpoint tar (beyond mcpConfig.settingsDir).
    *  Used for agents like OpenCode that spread state across XDG directories. */
   checkpointDirs?: string[];
@@ -116,6 +130,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     apiKeyEnv: "ANTHROPIC_API_KEY",
     oauthEnv: "CLAUDE_CODE_OAUTH_TOKEN",
     baseUrlEnv: "ANTHROPIC_BASE_URL",
+    customHeadersEnv: "ANTHROPIC_CUSTOM_HEADERS",
     defaultModel: "opus",
     models: [
       { alias: "opus", modelId: "claude-opus-4-6", description: "Complex reasoning, R&D, architecting" },
@@ -163,6 +178,10 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     skillsConfig: {
       sourceDir: "/home/user/.evolve/skills",
       targetDir: "/home/user/.codex/skills",
+    },
+    spendTrackingEnvs: {
+      sessionTagEnv: "EVOLVE_LITELLM_CUSTOMER_ID",
+      runTagEnv: "EVOLVE_LITELLM_TAGS",
     },
     setupCommand: `printf '%s\\n' "$OPENAI_API_KEY" | codex login --with-api-key`,
     buildCommand: ({ prompt, model, isResume, reasoningEffort }) => {

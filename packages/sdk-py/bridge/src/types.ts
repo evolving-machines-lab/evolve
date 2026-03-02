@@ -218,6 +218,8 @@ export interface StatusResponse {
 
 export interface RunResponse {
   sandbox_id: string;
+  /** Run ID for spend/cost attribution (present for run(), undefined for executeCommand()) */
+  run_id?: string;
   exit_code: number;
   stdout: string;
   stderr: string;
@@ -323,6 +325,39 @@ export interface StorageClientDownloadFilesParams {
   files?: string[];
   glob?: string[];
   to?: string;
+}
+
+// =============================================================================
+// COST TYPES
+// =============================================================================
+
+export interface GetRunCostParams {
+  run_id?: string;
+  index?: number;
+}
+
+/** Cost breakdown for a single run() invocation (snake_case for Python transport) */
+export interface RunCostResponse {
+  run_id: string;
+  index: number;
+  cost: number;
+  tokens: { prompt: number; completion: number };
+  model: string;
+  requests: number;
+  as_of: string;
+  is_complete: boolean;
+  truncated: boolean;
+}
+
+/** Cost breakdown for an entire agent session (snake_case for Python transport) */
+export interface SessionCostResponse {
+  session_tag: string;
+  total_cost: number;
+  total_tokens: { prompt: number; completion: number };
+  runs: RunCostResponse[];
+  as_of: string;
+  is_complete: boolean;
+  truncated: boolean;
 }
 
 // =============================================================================

@@ -36,6 +36,8 @@ export interface SessionLoggerConfig {
   /** Model name (e.g., "claude-sonnet-4-20250514", "codex-mini-latest") */
   model?: string;
   sandboxId: string;
+  /** Exact tag to use (skips generation). Takes precedence over tagPrefix. */
+  tag?: string;
   tagPrefix?: string;
   apiKey?: string;
   /** Observability metadata for trace grouping (generic key-value, domain-agnostic) */
@@ -89,9 +91,8 @@ export class SessionLogger {
     this.dashboardUrl = DEFAULT_DASHBOARD_URL;
     this.observability = config.observability;
 
-    // Generate unique tag
-    const prefix = config.tagPrefix || "evolve";
-    this.tag = `${prefix}-${randomBytes(8).toString("hex")}`;
+    // Use provided tag or generate one
+    this.tag = config.tag || `${config.tagPrefix || "evolve"}-${randomBytes(8).toString("hex")}`;
 
     // Generate timestamp
     this.timestamp = new Date().toISOString();

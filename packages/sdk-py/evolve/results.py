@@ -1,7 +1,7 @@
 """Result types for Evolve SDK."""
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 
 @dataclass
@@ -43,6 +43,7 @@ class AgentResponse:
 
     Attributes:
         sandbox_id: Sandbox ID
+        run_id: Run ID for spend/cost attribution (present for run(), None for execute_command())
         exit_code: Command exit code
         stdout: Standard output
         stderr: Standard error
@@ -52,6 +53,7 @@ class AgentResponse:
     exit_code: int
     stdout: str
     stderr: str
+    run_id: Optional[str] = None
     checkpoint: Optional[CheckpointInfo] = None
 
 
@@ -87,3 +89,55 @@ class OutputResult:
     data: Optional[Any] = None
     error: Optional[str] = None
     raw_data: Optional[str] = None
+
+
+@dataclass
+class RunCost:
+    """Cost breakdown for a single run() invocation.
+
+    Matches TypeScript SDK's RunCost for exact parity.
+
+    Attributes:
+        run_id: Run ID matching AgentResponse.run_id
+        index: 1-based chronological position in session
+        cost: Total cost in USD (includes platform margin)
+        tokens: Token counts {'prompt': N, 'completion': N}
+        model: Model used (e.g., 'claude-opus-4-6')
+        requests: Number of LLM API requests in this run
+        as_of: ISO timestamp when this data was fetched
+        is_complete: False if recent LLM calls may still be batching (~60s delay)
+        truncated: True if spend log pagination was capped
+    """
+    run_id: str
+    index: int
+    cost: float
+    tokens: Dict[str, int]
+    model: str
+    requests: int
+    as_of: str
+    is_complete: bool
+    truncated: bool
+
+
+@dataclass
+class SessionCost:
+    """Cost breakdown for an entire agent session (all runs).
+
+    Matches TypeScript SDK's SessionCost for exact parity.
+
+    Attributes:
+        session_tag: Session tag matching get_session_tag()
+        total_cost: Total cost across all runs in USD
+        total_tokens: Aggregate token counts {'prompt': N, 'completion': N}
+        runs: Per-run breakdown, chronological order
+        as_of: ISO timestamp when this data was fetched
+        is_complete: False if session is still active or recently ended
+        truncated: True if spend log pagination was capped
+    """
+    session_tag: str
+    total_cost: float
+    total_tokens: Dict[str, int]
+    runs: List[RunCost]
+    as_of: str
+    is_complete: bool
+    truncated: bool

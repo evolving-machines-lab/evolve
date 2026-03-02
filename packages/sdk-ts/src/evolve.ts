@@ -26,6 +26,8 @@ import type {
   ComposioConfig,
   ComposioSetup,
   StorageConfig,
+  RunCost,
+  SessionCost,
 } from "./types";
 import { Agent, type AgentConfig, type AgentOptions, type AgentResponse } from "./agent";
 import type { OutputEvent } from "./parsers";
@@ -773,5 +775,24 @@ export class Evolve extends EventEmitter {
    */
   async flushObservability(): Promise<void> {
     await this.agent?.flushObservability();
+  }
+
+  /**
+   * Get cost breakdown for the current session (all runs).
+   * Also works after kill() — queries the just-finished session.
+   * Requires gateway mode (EVOLVE_API_KEY).
+   */
+  async getSessionCost(): Promise<SessionCost> {
+    if (!this.agent) throw new Error("No agent initialized. Call run() first.");
+    return this.agent.getSessionCost();
+  }
+
+  /**
+   * Get cost for a specific run by ID or index.
+   * @param run - Either `{ runId: string }` or `{ index: number }` (1-based, negative = from end)
+   */
+  async getRunCost(run: { runId: string } | { index: number }): Promise<RunCost> {
+    if (!this.agent) throw new Error("No agent initialized. Call run() first.");
+    return this.agent.getRunCost(run);
   }
 }

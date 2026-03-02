@@ -158,6 +158,19 @@ export const DEFAULT_WORKING_DIR = "/home/user/workspace";
  */
 export const DEFAULT_DASHBOARD_URL = process.env.EVOLVE_DASHBOARD_URL || "https://dashboard.evolvingmachines.ai";
 
+// =============================================================================
+// SPEND TRACKING
+// =============================================================================
+
+/** LiteLLM header for session-level grouping (maps to `end_user` in spend logs) */
+export const LITELLM_CUSTOMER_ID_HEADER = "x-litellm-customer-id";
+
+/** LiteLLM header for per-request tagging (maps to `request_tags` in spend logs) */
+export const LITELLM_TAGS_HEADER = "x-litellm-tags";
+
+/** Prefix for run tags in `request_tags` — must match dashboard parser */
+export const RUN_TAG_PREFIX = "run:";
+
 /**
  * Local storage directory for session logs (relative to home)
  * Full path: ~/.evolve-sdk/observability/sessions/

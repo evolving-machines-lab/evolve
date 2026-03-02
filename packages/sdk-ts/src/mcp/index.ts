@@ -61,4 +61,4 @@ export async function writeMcpConfig(
 
 // Re-export individual writers for direct use if needed
 export { writeClaudeMcpConfig, writeGeminiMcpConfig, writeQwenMcpConfig, writeKimiMcpConfig, writeOpenCodeMcpConfig } from "./json";
-export { writeCodexMcpConfig } from "./toml";
+export { writeCodexMcpConfig, writeCodexSpendProvider } from "./toml";
