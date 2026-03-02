@@ -836,6 +836,73 @@ async function testQwenWriteJsonPreservesUserDefinedHeaders(): Promise<void> {
   assertEqual(headers?.["x-litellm-tags"], "run:run-001", "spend run tag added");
 }
 
+// =============================================================================
+// OpenCode spend tracking (model.headers via OPENCODE_CONFIG_CONTENT env var)
+// =============================================================================
+
+async function testOpenCodeBuildRunEnvsIncludesHeaders(): Promise<void> {
+  console.log("\n[30] OpenCode buildRunEnvs() returns OPENCODE_CONFIG_CONTENT with spend headers");
+  const config = {
+    type: "opencode",
+    apiKey: "test-gateway-key",
+    isDirectMode: false,
+  };
+  const agent = new Agent(config as any, {});
+  (agent as any).sessionTag = "evolve-opencode-session";
+
+  const envs = (agent as any).buildRunEnvs("run-oc-001") as Record<string, string> | undefined;
+  assert(envs !== undefined, "returns env overrides");
+  assert("OPENCODE_CONFIG_CONTENT" in (envs || {}), "has OPENCODE_CONFIG_CONTENT key");
+
+  const parsed = JSON.parse(envs!.OPENCODE_CONFIG_CONTENT);
+  const litellm = parsed?.provider?.litellm;
+  assert(litellm !== undefined, "has litellm provider");
+  assert(litellm.options?.baseURL?.includes("/v1"), "has gateway base URL");
+
+  // Find the model entry (key is the model string)
+  const modelKeys = Object.keys(litellm.models || {});
+  assert(modelKeys.length === 1, `has one model entry (got ${modelKeys.length})`);
+  const modelEntry = litellm.models[modelKeys[0]];
+  assertEqual(modelEntry.headers?.["x-litellm-customer-id"], "evolve-opencode-session", "session tag in headers");
+  assert(modelEntry.headers?.["x-litellm-tags"]?.includes("run:run-oc-001"), "run tag in headers");
+}
+
+async function testOpenCodeBuildRunEnvsPerRunOverwrite(): Promise<void> {
+  console.log("\n[31] OpenCode buildRunEnvs() per-run headers change between runs");
+  const config = {
+    type: "opencode",
+    apiKey: "test-gateway-key",
+    isDirectMode: false,
+  };
+  const agent = new Agent(config as any, {});
+  (agent as any).sessionTag = "evolve-opencode-session";
+
+  const envs1 = (agent as any).buildRunEnvs("run-001") as Record<string, string>;
+  const envs2 = (agent as any).buildRunEnvs("run-002") as Record<string, string>;
+
+  const p1 = JSON.parse(envs1.OPENCODE_CONFIG_CONTENT);
+  const p2 = JSON.parse(envs2.OPENCODE_CONFIG_CONTENT);
+  const m1 = Object.values(p1.provider.litellm.models)[0] as any;
+  const m2 = Object.values(p2.provider.litellm.models)[0] as any;
+
+  assert(m1.headers["x-litellm-tags"].includes("run-001"), "run 1 has run-001 tag");
+  assert(m2.headers["x-litellm-tags"].includes("run-002"), "run 2 has run-002 tag");
+  assertEqual(m1.headers["x-litellm-customer-id"], m2.headers["x-litellm-customer-id"], "session tag same across runs");
+}
+
+async function testOpenCodeDirectModeSkipsHeaders(): Promise<void> {
+  console.log("\n[32] OpenCode direct mode skips config env override");
+  const config = {
+    type: "opencode",
+    apiKey: "direct-api-key",
+    isDirectMode: true,
+  };
+  const agent = new Agent(config as any, {});
+
+  const envs = (agent as any).buildRunEnvs("run-direct") as Record<string, string> | undefined;
+  assertEqual(envs, undefined, "no env overrides in direct mode");
+}
+
 async function main(): Promise<void> {
   console.log("\n============================================================");
   console.log("Cost API Unit Tests");
@@ -869,6 +936,9 @@ async function main(): Promise<void> {
   await testKimiBuildCommandIncludesConfigFile();
   await testKimiBuildRunEnvsReturnsUndefined();
   await testKimiDirectModeSkipsHeaders();
+  await testOpenCodeBuildRunEnvsIncludesHeaders();
+  await testOpenCodeBuildRunEnvsPerRunOverwrite();
+  await testOpenCodeDirectModeSkipsHeaders();
   console.log("\n============================================================");
   console.log(`Results: ${passed} passed, ${failed} failed`);
   console.log("============================================================");

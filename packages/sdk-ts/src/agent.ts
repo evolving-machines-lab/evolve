@@ -446,7 +446,15 @@ export class Agent {
                 apiKey: this.agentConfig.apiKey,
               },
               models: {
-                [selectedModel]: { name: selectedModel },
+                [selectedModel]: {
+                  name: selectedModel,
+                  // Session-level spend tracking header. Per-run tag is added in buildRunEnvs().
+                  // Source-verified: model.headers flows to outbound HTTP requests
+                  // (provider/models.ts:67, provider/provider.ts:1061, session/llm.ts:221).
+                  headers: {
+                    [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
+                  },
+                },
               },
             },
           },
@@ -512,6 +520,40 @@ export class Agent {
       return {
         [trackingEnvs.sessionTagEnv]: this.sessionTag,
         [trackingEnvs.runTagEnv]: `${RUN_TAG_PREFIX}${runId}`,
+      };
+    }
+
+    // Path 3: inline config env with model.headers (OpenCode OPENCODE_CONFIG_CONTENT).
+    // Rebuilds the full provider config JSON with per-run headers. Overrides the
+    // session-level value set in buildEnvironmentVariables(). The spawn() envs override
+    // takes precedence over sandbox-level env vars for this command.
+    // Source-verified: model.headers → provider.ts:1061 → llm.ts:221 → HTTP request.
+    if (this.registry.gatewayConfigEnv) {
+      const gatewayUrl = this.registry.usePassthroughGateway
+        ? getGeminiGatewayUrl()
+        : getGatewayUrl();
+      const selectedModel = this.agentConfig.model || this.registry.defaultModel;
+      return {
+        [this.registry.gatewayConfigEnv]: JSON.stringify({
+          provider: {
+            litellm: {
+              npm: "@ai-sdk/openai-compatible",
+              options: {
+                baseURL: `${gatewayUrl}/v1`,
+                apiKey: this.agentConfig.apiKey,
+              },
+              models: {
+                [selectedModel]: {
+                  name: selectedModel,
+                  headers: {
+                    [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
+                    [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
+                  },
+                },
+              },
+            },
+          },
+        }),
       };
     }
 
