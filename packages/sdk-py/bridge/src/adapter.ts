@@ -497,10 +497,11 @@ export class EvolveAdapter {
    * Get a StorageClient from params — standalone (from config) or bound (from Evolve instance)
    */
   private getStorageClient(storageConfig?: StorageConfigParams): StorageClient {
-    if (storageConfig && Object.keys(storageConfig).length > 0) {
+    if (storageConfig !== undefined) {
+      // Empty object {} = gateway mode (Python StorageConfig().to_dict())
       return createStorageClient(storageConfig as StorageConfig);
     }
-    // Fall through to initialized Evolve's bound storage client
+    // No storage key in params = bound mode via Evolve.storage()
     this.ensureInitialized();
     return this.evolve!.storage();
   }

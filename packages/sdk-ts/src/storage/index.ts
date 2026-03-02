@@ -1165,10 +1165,13 @@ async function listTarFiles(archivePath: string): Promise<string[]> {
     if (typeChar !== "-" && typeChar !== "d" && typeChar !== "l") {
       throw new Error(`Archive contains unsupported entry type: "${typeChar}"`);
     }
-    // Extract path: everything after the time field (HH:MM).
-    // Works for both GNU tar ("2025-01-01 14:23 path") and BSD tar ("Mar  1 14:23 path").
+    // Extract path from verbose tar output.
+    // GNU tar:            "2025-01-01 14:23 path"     → match HH:MM
+    // BSD tar (recent):   "Mar  1 14:23 path"         → match HH:MM
+    // BSD tar (>6 months): "Jan  1  2020 path"        → match Mon DD YYYY
     // For symlinks, strip " -> target" suffix.
-    const pathMatch = line.match(/\d{2}:\d{2}\s+(.+)/);
+    const pathMatch = line.match(/\d{2}:\d{2}\s+(.+)/)
+      ?? line.match(/[A-Z][a-z]{2}\s+\d{1,2}\s+\d{4}\s+(.+)/);
     if (!pathMatch) continue;
     let entryPath = pathMatch[1];
     if (typeChar === "l") {
