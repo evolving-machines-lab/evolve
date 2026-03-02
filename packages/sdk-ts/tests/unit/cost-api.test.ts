@@ -828,6 +828,83 @@ async function testKimiWriteSpendConfigOverwritesPrevious(): Promise<void> {
   assert(content.includes("session-abc"), "session tag unchanged");
 }
 
+async function testKimiPreservesHeadersWithCommasInValues(): Promise<void> {
+  console.log("\n[31] writeKimiSpendConfig() preserves headers whose values contain commas");
+  const existing = [
+    'default_model = "evolve-default"',
+    "",
+    "[providers.evolve-gateway]",
+    'type = "kimi"',
+    'base_url = ""',
+    'api_key = ""',
+    'custom_headers = { "x-tags" = "a,b,c", "x-litellm-customer-id" = "old" }',
+    "",
+    "[models.evolve-default]",
+    'provider = "evolve-gateway"',
+    'model = ""',
+    "max_context_size = 262144",
+    "",
+  ].join("\n");
+  const written: { path: string; content: string }[] = [];
+  const sandbox = {
+    files: {
+      makeDir: async () => {},
+      read: async () => existing,
+      write: async (path: string, content: string) => { written.push({ path, content }); },
+    },
+  };
+
+  await writeKimiSpendConfig(
+    sandbox as any,
+    kimiConfig,
+    { "x-litellm-customer-id": "new-session" },
+  );
+
+  const content = written[0].content;
+  assert(content.includes("a,b,c"), "header value with commas preserved");
+  assert(content.includes("x-tags"), "header key with comma value preserved");
+  assert(content.includes("new-session"), "customer-id updated");
+  assert(!content.includes('"old"'), "old customer-id replaced");
+}
+
+async function testKimiParsesIndentedHeaders(): Promise<void> {
+  console.log("\n[32] writeKimiSpendConfig() parses indented custom_headers line");
+  const existing = [
+    'default_model = "evolve-default"',
+    "",
+    "[providers.evolve-gateway]",
+    'type = "kimi"',
+    'base_url = ""',
+    'api_key = ""',
+    '  custom_headers = { "x-user-header" = "keep-me" }',  // indented
+    "",
+    "[models.evolve-default]",
+    'provider = "evolve-gateway"',
+    'model = ""',
+    "max_context_size = 262144",
+    "",
+  ].join("\n");
+  const written: { path: string; content: string }[] = [];
+  const sandbox = {
+    files: {
+      makeDir: async () => {},
+      read: async () => existing,
+      write: async (path: string, content: string) => { written.push({ path, content }); },
+    },
+  };
+
+  await writeKimiSpendConfig(
+    sandbox as any,
+    kimiConfig,
+    { "x-litellm-customer-id": "session-abc" },
+  );
+
+  const content = written[0].content;
+  assert(content.includes("x-user-header"), "indented header key preserved");
+  assert(content.includes("keep-me"), "indented header value preserved");
+  assert(content.includes("session-abc"), "spend header added");
+}
+
 async function testKimiBuildRunEnvsReturnsUndefined(): Promise<void> {
   console.log("\n[29] Kimi buildRunEnvs() returns undefined (uses config file, not env vars)");
   const config = {
@@ -926,6 +1003,8 @@ async function main(): Promise<void> {
   await testKimiWriteSpendConfigPreservesExisting();
   await testKimiWriteSpendConfigPreservesUserHeaders();
   await testKimiWriteSpendConfigOverwritesPrevious();
+  await testKimiPreservesHeadersWithCommasInValues();
+  await testKimiParsesIndentedHeaders();
   await testKimiBuildRunEnvsReturnsUndefined();
   await testKimiDirectModeSkipsHeaders();
   console.log("\n============================================================");

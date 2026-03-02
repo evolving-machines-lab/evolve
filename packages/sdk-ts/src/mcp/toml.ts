@@ -354,6 +354,9 @@ export async function writeKimiSpendConfig(
 /**
  * Parse existing custom_headers from a TOML provider section.
  * Returns empty object if not found.
+ *
+ * Handles inline table format: custom_headers = { "k" = "v", "k2" = "v2" }
+ * Properly handles quoted values containing commas (e.g., "a,b").
  */
 function parseExistingCustomHeaders(
   toml: string,
@@ -367,17 +370,19 @@ function parseExistingCustomHeaders(
   const nextSection = afterHeader.search(/^\[/m);
   const sectionContent = nextSection >= 0 ? afterHeader.slice(0, nextSection) : afterHeader;
 
-  // Match inline table: custom_headers = { "key" = "value", ... }
-  const match = sectionContent.match(/^custom_headers\s*=\s*\{([^}]*)\}/m);
+  // Match custom_headers line (tolerant of leading whitespace)
+  const match = sectionContent.match(/^\s*custom_headers\s*=\s*\{([^}]*)\}/m);
   if (!match) return {};
 
+  // Parse key = "value" pairs by matching quoted strings, not splitting on commas.
+  // This correctly handles values containing commas (e.g., "a,b").
   const headers: Record<string, string> = {};
-  // Parse key = "value" pairs
-  for (const pair of match[1].split(",")) {
-    const kv = pair.match(/^\s*"?([^"=]+)"?\s*=\s*"([^"]*)"/);
-    if (kv) {
-      headers[kv[1].trim()] = kv[2];
-    }
+  const pairRe = /(?:"([^"]*?)"|'([^']*?)'|([^\s"'=,]+))\s*=\s*(?:"([^"]*?)"|'([^']*?)'|([^\s"',}]+))/g;
+  let m: RegExpExecArray | null;
+  while ((m = pairRe.exec(match[1])) !== null) {
+    const key = (m[1] ?? m[2] ?? m[3] ?? "").trim();
+    const value = m[4] ?? m[5] ?? m[6] ?? "";
+    if (key) headers[key] = value;
   }
   return headers;
 }
