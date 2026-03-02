@@ -1,6 +1,6 @@
 ---
 name: evolve
-description: "Evolve SDK development for TypeScript and Python. Use when building applications with Evolve to run AI agents (Claude, Codex, Gemini, Qwen, Kimi, OpenCode) in secure sandboxes. Triggers: (1) Creating Evolve applications, (2) Configuring agents with skills, Composio, MCP servers, (3) Using Swarm abstractions (map, filter, reduce, bestOf/best_of, verify), (4) Building Pipelines, (5) Structured output with schemas, (6) Session management, streaming, observability, (7) Checkpointing and storage."
+description: "Evolve SDK development for TypeScript and Python. Use when building applications with Evolve to run AI agents (Claude, Codex, Gemini, Qwen, Kimi, OpenCode) in secure sandboxes. Triggers: (1) Creating Evolve applications, (2) Configuring agents with skills, Composio, MCP servers, (3) Using Swarm abstractions (map, filter, reduce, bestOf/best_of, verify), (4) Building Pipelines, (5) Structured output with schemas, (6) Session management, streaming, observability, (7) Checkpointing, storage & StorageClient, (8) Cost tracking (per-run and per-session spend)."
 ---
 
 # Evolve SDK
@@ -27,12 +27,12 @@ Always read these three references **for the detected language** before writing 
 **TypeScript:**
 - [01-getting-started.md](references/typescript/01-getting-started.md) — Installation, authentication (Gateway/BYOK), core lifecycle, streaming basics, agent reference table
 - [02-configuration.md](references/typescript/02-configuration.md) — Sandbox providers, full builder API, agent skills catalog, Composio (1000+ integrations), MCP servers
-- [03-runtime.md](references/typescript/03-runtime.md) — run(), executeCommand(), upload/download files, session controls, workspace layout, structured output, session management, storage & checkpointing, observability, error handling
+- [03-runtime.md](references/typescript/03-runtime.md) — run(), executeCommand(), upload/download files, session controls, workspace layout, structured output, session management, storage & checkpointing, StorageClient, cost tracking, observability, error handling
 
 **Python:**
 - [01-getting-started.md](references/python/01-getting-started.md) — Installation, authentication (Gateway/BYOK), core lifecycle, streaming basics, agent reference table
 - [02-configuration.md](references/python/02-configuration.md) — Sandbox providers, full constructor API, agent skills catalog, Composio (1000+ integrations), MCP servers
-- [03-runtime.md](references/python/03-runtime.md) — run(), execute_command(), upload/download files, session controls, workspace layout, structured output, session management, storage & checkpointing, observability, error handling
+- [03-runtime.md](references/python/03-runtime.md) — run(), execute_command(), upload/download files, session controls, workspace layout, structured output, session management, storage & checkpointing, StorageClient, cost tracking, observability, error handling
 
 ## Critical Constraints
 
@@ -89,8 +89,10 @@ Read on demand when the user's task requires them:
 | Structured output (Zod / Pydantic / JSON Schema) | [TS](references/typescript/03-runtime.md#structured-output) | [PY](references/python/03-runtime.md#structured-output) |
 | Multi-turn conversations | [TS](references/typescript/03-runtime.md#session-management) | [PY](references/python/03-runtime.md#session-management) |
 | Pause, resume, reconnect, switch sandboxes | [TS](references/typescript/03-runtime.md#session-management) | [PY](references/python/03-runtime.md#session-management) |
-| Storage & checkpointing (BYOK / Gateway) | [TS](references/typescript/03-runtime.md) | [PY](references/python/03-runtime.md) |
+| Storage & checkpointing (gateway mode) | [TS](references/typescript/03-runtime.md#storage--checkpointing) | [PY](references/python/03-runtime.md#storage--checkpointing) |
+| StorageClient (list, get, download checkpoints) | [TS](references/typescript/03-runtime.md#listing--browsing-checkpoints) | [PY](references/python/03-runtime.md#listing--browsing-checkpoints) |
 | Checkpoint lineage & restore | [TS](references/typescript/03-runtime.md#checkpoint-lineage) | [PY](references/python/03-runtime.md#checkpoint-lineage) |
+| Cost tracking (per-run & per-session spend) | [TS](references/typescript/03-runtime.md#cost-tracking) | [PY](references/python/03-runtime.md#cost-tracking) |
 | Observability (dashboard + local logs) | [TS](references/typescript/03-runtime.md#observability) | [PY](references/python/03-runtime.md#observability) |
 | Error handling | [TS](references/typescript/03-runtime.md#error-handling) | [PY](references/python/03-runtime.md#error-handling) |
 
