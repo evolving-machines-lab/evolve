@@ -1,16 +1,16 @@
 """Main Evolve class for Python SDK."""
 
 import asyncio
-import base64
 import json
 from typing import Any, Callable, Dict, List, Literal, Optional, Type, Union
 
 from .bridge import BridgeManager, SandboxNotFoundError
 from .config import AgentConfig, ComposioSetup, SandboxProvider, SchemaOptions, StorageConfig, WorkspaceMode
 from .results import AgentResponse, CheckpointInfo, ExecuteResult, OutputResult, SessionStatus
+from .storage_client import StorageClient
 from . import composio as composio_helpers
 from .schema import is_pydantic_model, is_dataclass, to_json_schema, validate_and_parse
-from .utils import _encode_files_for_transport, _filter_none
+from .utils import _encode_files_for_transport, _decode_files_from_transport, _filter_none, _parse_checkpoint, _require_checkpoint
 
 
 class Evolve:
@@ -103,7 +103,7 @@ class Evolve:
         self.session_tag_prefix = session_tag_prefix
         self.schema_options = schema_options or SchemaOptions()
         self._composio = composio
-        self.storage = storage
+        self._storage_config = storage
 
         # Schema handling: store original + convert to JSON Schema
         self._schema = schema
@@ -150,7 +150,7 @@ class Evolve:
                 # Composio Tool Router
                 'composio': self._composio.to_dict() if self._composio else None,
                 # Storage / Checkpointing
-                'storage': self.storage.to_dict() if self.storage else None,
+                'storage': self._storage_config.to_dict() if self._storage_config else None,
                 # Always forward events
                 'forward_stdout': True,
                 'forward_stderr': True,
@@ -244,7 +244,7 @@ class Evolve:
             exit_code=response['exit_code'],
             stdout=response['stdout'],
             stderr=response['stderr'],
-            checkpoint=self._parse_checkpoint(response.get('checkpoint')),
+            checkpoint=_parse_checkpoint(response.get('checkpoint')),
         )
 
     async def execute_command(
@@ -360,14 +360,7 @@ class Evolve:
 
         response = await self.bridge.call('get_output_files', {'recursive': recursive}, timeout_s=self._get_rpc_timeout_s(None))
 
-        # Decode files from transport encoding
-        files: Dict[str, Union[str, bytes]] = {}
-        for name, file_data in response.get('files', {}).items():
-            content = file_data['content']
-            encoding = file_data.get('encoding')
-            if encoding == 'base64':
-                content = base64.b64decode(content)
-            files[name] = content
+        files = _decode_files_from_transport(response.get('files', {}))
 
         data = None
         error = None
@@ -428,7 +421,7 @@ class Evolve:
         if comment is not None:
             params['comment'] = comment
         response = await self.bridge.call('checkpoint', params, timeout_s=self._get_rpc_timeout_s(None))
-        return self._parse_checkpoint(response)  # type: ignore[return-value]
+        return _require_checkpoint(response)
 
     async def list_checkpoints(
         self,
@@ -458,25 +451,29 @@ class Evolve:
         if tag is not None:
             params['tag'] = tag
         response = await self.bridge.call('list_checkpoints', params, timeout_s=self._get_rpc_timeout_s(None))
-        return [self._parse_checkpoint(cp) for cp in response]  # type: ignore[misc]
+        return [_require_checkpoint(cp) for cp in response]
 
-    @staticmethod
-    def _parse_checkpoint(data: Optional[Dict[str, Any]]) -> Optional[CheckpointInfo]:
-        """Parse checkpoint dict from bridge response into CheckpointInfo."""
-        if not data:
-            return None
-        return CheckpointInfo(
-            id=data['id'],
-            hash=data['hash'],
-            tag=data['tag'],
-            timestamp=data['timestamp'],
-            size_bytes=data.get('size_bytes'),
-            agent_type=data.get('agent_type'),
-            model=data.get('model'),
-            workspace_mode=data.get('workspace_mode'),
-            parent_id=data.get('parent_id'),
-            comment=data.get('comment'),
-        )
+    def storage(self) -> StorageClient:
+        """Get a StorageClient bound to this instance's storage configuration.
+
+        Same API surface as the standalone ``storage()`` factory, but uses
+        the Evolve instance's bridge and gateway credentials.
+
+        Returns:
+            StorageClient with list_checkpoints, get_checkpoint,
+            download_checkpoint, download_files methods
+
+        Raises:
+            RuntimeError: If storage is not configured
+
+        Example:
+            >>> store = evolve.storage()
+            >>> checkpoints = await store.list_checkpoints(limit=5)
+            >>> files = await store.download_files(checkpoints[0].id)
+        """
+        if self._storage_config is None:
+            raise RuntimeError("Storage not configured. Pass storage=StorageConfig() to Evolve().")
+        return StorageClient(self.bridge, storage_config=None, _init_fn=self._ensure_initialized)
 
     async def get_session(self) -> Optional[str]:
         """Get sandbox ID for reuse.

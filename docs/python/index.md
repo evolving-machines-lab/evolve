@@ -77,10 +77,10 @@ await evolve.run(prompt='Hello world')
 | Multi-turn conversations | [Runtime → Session Management](./03-runtime.md#session-management) |
 | Pause / resume | [Runtime → Session Management](./03-runtime.md#session-management) |
 | Save and reconnect (`sandbox_id=`, `set_session()`) | [Runtime → Session Management](./03-runtime.md#session-management) |
-| Storage & checkpointing (BYOK / Gateway) | [Runtime → Storage & Checkpointing](./03-runtime.md#storage--checkpointing) |
+| Storage & checkpointing (gateway) | [Runtime → Storage & Checkpointing](./03-runtime.md#storage--checkpointing) |
 | Auto-checkpoint, explicit checkpoint, restore | [Runtime → Storage & Checkpointing](./03-runtime.md#auto-checkpoint-via-run) |
 | Checkpoint lineage | [Runtime → Checkpoint Lineage](./03-runtime.md#checkpoint-lineage) |
-| `list_checkpoints()` | [Runtime → Listing Checkpoints](./03-runtime.md#listing-checkpoints) |
+| `storage()` client, `evolve.storage()` | [Runtime → Listing & Browsing Checkpoints](./03-runtime.md#listing--browsing-checkpoints) |
 | Observability (dashboard + local logs) | [Runtime → Observability](./03-runtime.md#observability) |
 | Error handling | [Runtime → Error Handling](./03-runtime.md#error-handling) |
 

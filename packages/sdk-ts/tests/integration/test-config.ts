@@ -12,7 +12,6 @@
  *   CODEX_MODEL - Model for codex agent (default: gpt-5.1-codex)
  *   CODEX_REASONING_EFFORT - Reasoning effort for codex (default: medium)
  *   ANTHROPIC_MODEL - Model for claude agent (default: opus)
- *   ANTHROPIC_BETAS - Comma-separated beta headers for Claude (e.g., "context-1m-2025-08-07")
  *   GEMINI_MODEL - Model for gemini agent (default: gemini-3-pro-preview)
  *   QWEN_OPENAI_MODEL - Model for qwen agent (default: qwen3.5-plus)
  */
@@ -27,7 +26,6 @@ export interface AgentConfig {
   apiKey: string;
   model: string;
   reasoningEffort?: "low" | "medium" | "high";
-  betas?: string[];
 }
 
 export interface TestEnv {
@@ -147,7 +145,6 @@ export function getAgentConfig(type: AgentType): AgentConfig {
         type: "claude",
         apiKey: env.EVOLVE_API_KEY || env.ANTHROPIC_API_KEY || "",
         model: process.env.ANTHROPIC_MODEL || "opus",
-        betas: process.env.ANTHROPIC_BETAS?.split(",").map(b => b.trim()).filter(Boolean),
       };
 
     case "codex":

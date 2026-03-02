@@ -16,6 +16,7 @@ from unittest.mock import patch
 
 from evolve import Evolve, StorageConfig, CheckpointInfo
 from evolve.results import AgentResponse
+from evolve.utils import _parse_checkpoint
 
 
 # =============================================================================
@@ -74,7 +75,7 @@ class MockBridgeManager:
                 'timestamp': '2026-01-15T11:00:00.000Z',
                 'comment': params.get('comment') if params else None,
             }
-        if method == 'list_checkpoints':
+        if method in ('list_checkpoints', 'storage_list_checkpoints'):
             if self._list_response is not None:
                 return self._list_response
             return [
@@ -216,7 +217,7 @@ class TestParseCheckpointEdgeCases:
             'unknown_field': 'ignored',
             'another_field': 42,
         }
-        info = Evolve._parse_checkpoint(data)
+        info = _parse_checkpoint(data)
 
         assert info is not None
         assert info.id == 'cp-extra'
@@ -237,7 +238,7 @@ class TestParseCheckpointEdgeCases:
             'parent_id': None,
             'comment': None,
         }
-        info = Evolve._parse_checkpoint(data)
+        info = _parse_checkpoint(data)
 
         assert info is not None
         assert info.size_bytes is None
@@ -253,7 +254,7 @@ class TestParseCheckpointEdgeCases:
             'timestamp': '2026-01-15T10:00:00.000Z',
         }
         with pytest.raises(KeyError):
-            Evolve._parse_checkpoint(data)
+            _parse_checkpoint(data)
 
 
 # =============================================================================
@@ -329,19 +330,19 @@ class TestStandaloneListWithTag:
 
     @pytest.mark.asyncio
     async def test_standalone_passes_tag(self):
-        """Standalone list_checkpoints(tag=...) sends tag to bridge."""
+        """Standalone list_checkpoints(tag=...) sends tag in RPC params."""
         from evolve import list_checkpoints as standalone_list_checkpoints
 
         mock_bridge = MockBridgeManager()
-        with patch('evolve.agent.BridgeManager', return_value=mock_bridge):
+        with patch('evolve.bridge.BridgeManager', return_value=mock_bridge):
             await standalone_list_checkpoints(
                 storage=StorageConfig(url='s3://bucket/'),
                 tag='my-tag',
                 limit=3,
             )
 
-        lc_calls = [c for c in mock_bridge.calls if c[0] == 'list_checkpoints']
-        assert len(lc_calls) == 1
-        params = lc_calls[0][1]
+        rpc_calls = [c for c in mock_bridge.calls if c[0] == 'storage_list_checkpoints']
+        assert len(rpc_calls) == 1
+        params = rpc_calls[0][1]
         assert params.get('tag') == 'my-tag'
         assert params.get('limit') == 3

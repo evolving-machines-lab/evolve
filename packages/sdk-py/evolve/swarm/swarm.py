@@ -47,7 +47,6 @@ Example:
 """
 
 import asyncio
-import base64
 import json
 import secrets
 import warnings
@@ -56,7 +55,7 @@ from typing import Any, Callable, Dict, List, Optional, Type, Union
 from ..bridge import BridgeManager
 from ..schema import is_pydantic_model, is_dataclass, to_json_schema, validate_and_parse
 from ..config import AgentConfig, ComposioSetup
-from ..utils import _encode_files_for_transport, _filter_none
+from ..utils import _encode_files_for_transport, _decode_files_from_transport, _filter_none
 from ..prompts import JUDGE_PROMPT, JUDGE_USER_PROMPT, VERIFY_PROMPT, VERIFY_USER_PROMPT, REDUCE_PROMPT, RETRY_FEEDBACK_PROMPT, apply_template, build_file_tree
 from ..retry import RetryConfig, execute_with_retry
 from .types import (
@@ -785,7 +784,7 @@ class Swarm:
 
             # Get output
             output = await self.bridge.get_output_on_instance(instance_id, recursive=True)
-            files = self._decode_files(output.get('files', {}))
+            files = _decode_files_from_transport(output.get('files', {}))
 
             if run_result.get('exit_code', 0) != 0:
                 error = f"Agent exited with code {run_result.get('exit_code')}"
@@ -821,7 +820,7 @@ class Swarm:
             # Try to capture partial output even on failure (e.g., timeout)
             try:
                 output = await self.bridge.get_output_on_instance(instance_id, recursive=True)
-                files = self._decode_files(output.get('files', {}))
+                files = _decode_files_from_transport(output.get('files', {}))
             except Exception:
                 pass  # Sandbox may already be gone
         finally:
@@ -2111,14 +2110,3 @@ class Swarm:
             error=error,
         )
 
-    def _decode_files(self, encoded: Dict[str, Any]) -> FileMap:
-        """Decode files from bridge response."""
-        files: FileMap = {}
-        for name, file_data in encoded.items():
-            content = file_data.get('content', '')
-            encoding = file_data.get('encoding', 'text')
-            if encoding == 'base64':
-                files[name] = base64.b64decode(content)
-            else:
-                files[name] = content
-        return files

@@ -1,14 +1,69 @@
-"""File utilities for Evolve SDK."""
+"""Shared utilities for Evolve SDK."""
 
 import base64
 import os
 from pathlib import Path
-from typing import Any, Dict, Union
+from typing import Any, Dict, Optional, Union
 
 
 def _filter_none(d: Dict[str, Any]) -> Dict[str, Any]:
     """Filter out None values from a dict. Used for building RPC params."""
     return {k: v for k, v in d.items() if v is not None}
+
+
+def _decode_files_from_transport(
+    encoded: Dict[str, Any],
+) -> Dict[str, Union[str, bytes]]:
+    """Decode base64/text encoded files from JSON-RPC bridge transport.
+
+    Counterpart to :func:`_encode_files_for_transport`.
+    """
+    decoded: Dict[str, Union[str, bytes]] = {}
+    for name, file_data in encoded.items():
+        content = file_data.get('content', '')
+        encoding = file_data.get('encoding', 'text')
+        if encoding == 'base64':
+            decoded[name] = base64.b64decode(content)
+        else:
+            decoded[name] = content
+    return decoded
+
+
+def _parse_checkpoint(data: Optional[Dict[str, Any]]) -> Optional['CheckpointInfo']:
+    """Parse checkpoint dict from bridge response into CheckpointInfo.
+
+    Returns None when *data* is falsy (e.g. ``None`` or ``{}``).
+    Use :func:`_require_checkpoint` in APIs that must return a value.
+    """
+    if not data:
+        return None
+    # Import here to avoid circular import (utils ← results ← utils).
+    # Python caches after first load so subsequent calls are a cheap lookup.
+    from .results import CheckpointInfo  # noqa: E402
+    return CheckpointInfo(
+        id=data['id'],
+        hash=data['hash'],
+        tag=data['tag'],
+        timestamp=data['timestamp'],
+        size_bytes=data.get('size_bytes'),
+        agent_type=data.get('agent_type'),
+        model=data.get('model'),
+        workspace_mode=data.get('workspace_mode'),
+        parent_id=data.get('parent_id'),
+        comment=data.get('comment'),
+    )
+
+
+def _require_checkpoint(data: Optional[Dict[str, Any]]) -> 'CheckpointInfo':
+    """Like :func:`_parse_checkpoint` but raises on falsy *data*.
+
+    Use in APIs typed ``-> CheckpointInfo`` where a missing/corrupt
+    checkpoint is an error, not a valid state.
+    """
+    result = _parse_checkpoint(data)
+    if result is None:
+        raise ValueError(f"Expected checkpoint data, got: {data!r}")
+    return result
 
 
 def _encode_files_for_transport(

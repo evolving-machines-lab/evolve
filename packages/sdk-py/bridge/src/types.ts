@@ -292,6 +292,40 @@ export interface ListCheckpointsParams {
 }
 
 // =============================================================================
+// STANDALONE STORAGE CLIENT RPC PARAMS
+// =============================================================================
+
+/** Params for storage_list_checkpoints RPC (standalone or bound) */
+export interface StorageClientListParams {
+  storage?: StorageConfigParams;
+  limit?: number;
+  tag?: string;
+}
+
+/** Params for storage_get_checkpoint RPC */
+export interface StorageClientGetParams {
+  storage?: StorageConfigParams;
+  id: string;
+}
+
+/** Params for storage_download_checkpoint RPC */
+export interface StorageClientDownloadParams {
+  storage?: StorageConfigParams;
+  id: string;
+  to?: string;
+  extract?: boolean;
+}
+
+/** Params for storage_download_files RPC */
+export interface StorageClientDownloadFilesParams {
+  storage?: StorageConfigParams;
+  id: string;
+  files?: string[];
+  glob?: string[];
+  to?: string;
+}
+
+// =============================================================================
 // EVENT CALLBACKS (for streaming)
 // =============================================================================
 

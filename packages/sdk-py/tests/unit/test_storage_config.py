@@ -20,6 +20,7 @@ from unittest.mock import patch
 from evolve import Evolve, StorageConfig, StorageCredentials, CheckpointInfo
 from evolve.config import StorageConfig as ConfigStorageConfig
 from evolve.results import AgentResponse, CheckpointInfo as ResultCheckpointInfo
+from evolve.utils import _parse_checkpoint
 
 
 # =============================================================================
@@ -273,7 +274,7 @@ class MockBridgeManager:
                 'timestamp': '2026-01-15T11:00:00.000Z',
                 'comment': params.get('comment') if params else None,
             }
-        if method == 'list_checkpoints':
+        if method in ('list_checkpoints', 'storage_list_checkpoints'):
             return [
                 {
                     'id': 'cp-2',
@@ -487,15 +488,15 @@ class TestListCheckpointsMethod:
 
 
 class TestParseCheckpoint:
-    """Test Evolve._parse_checkpoint() static method."""
+    """Test _parse_checkpoint() static method."""
 
     def test_parse_none(self):
         """None input returns None."""
-        assert Evolve._parse_checkpoint(None) is None
+        assert _parse_checkpoint(None) is None
 
     def test_parse_empty_dict(self):
         """Empty dict returns None."""
-        assert Evolve._parse_checkpoint({}) is None
+        assert _parse_checkpoint({}) is None
 
     def test_parse_full_checkpoint(self):
         """Full checkpoint dict is parsed correctly."""
@@ -511,7 +512,7 @@ class TestParseCheckpoint:
             'parent_id': 'cp-parent',
             'comment': 'test comment',
         }
-        info = Evolve._parse_checkpoint(data)
+        info = _parse_checkpoint(data)
 
         assert info is not None
         assert info.id == 'cp-test'
@@ -533,7 +534,7 @@ class TestParseCheckpoint:
             'tag': 'tag-min',
             'timestamp': '2026-01-15T10:00:00.000Z',
         }
-        info = Evolve._parse_checkpoint(data)
+        info = _parse_checkpoint(data)
 
         assert info is not None
         assert info.id == 'cp-min'
@@ -548,42 +549,41 @@ class TestParseCheckpoint:
 
 
 class TestStandaloneListCheckpoints:
-    """Test standalone list_checkpoints() function."""
+    """Test standalone list_checkpoints() function (lightweight StorageClient path)."""
 
     @pytest.mark.asyncio
     async def test_gateway_mode_sends_empty_storage(self):
-        """list_checkpoints(storage=None) should send storage: {} (gateway mode)."""
+        """list_checkpoints(storage=None) sends storage: {} in RPC params."""
         from evolve import list_checkpoints as standalone_list_checkpoints
 
         mock_bridge = MockBridgeManager()
-        with patch('evolve.agent.BridgeManager', return_value=mock_bridge):
+        with patch('evolve.bridge.BridgeManager', return_value=mock_bridge):
             checkpoints = await standalone_list_checkpoints()
 
-        # Verify initialize was called with storage: {} (not omitted)
-        init_calls = [c for c in mock_bridge.calls if c[0] == 'initialize']
-        assert len(init_calls) == 1
-        params = init_calls[0][1]
+        # Uses StorageClient path — calls storage_list_checkpoints with storage config
+        rpc_calls = [c for c in mock_bridge.calls if c[0] == 'storage_list_checkpoints']
+        assert len(rpc_calls) == 1
+        params = rpc_calls[0][1]
         assert 'storage' in params, 'storage key must be present for gateway mode'
         assert params['storage'] == {}, 'storage must be empty dict for gateway mode'
 
     @pytest.mark.asyncio
     async def test_byok_mode_passes_storage(self):
-        """list_checkpoints(storage=StorageConfig(url=...)) passes config through."""
+        """list_checkpoints(storage=StorageConfig(url=...)) passes config in RPC params."""
         from evolve import list_checkpoints as standalone_list_checkpoints
 
         mock_bridge = MockBridgeManager()
-        with patch('evolve.agent.BridgeManager', return_value=mock_bridge):
+        with patch('evolve.bridge.BridgeManager', return_value=mock_bridge):
             checkpoints = await standalone_list_checkpoints(
                 storage=StorageConfig(url='s3://my-bucket/prefix/', region='us-east-1'),
                 limit=5,
             )
 
-        init_calls = [c for c in mock_bridge.calls if c[0] == 'initialize']
-        params = init_calls[0][1]
+        rpc_calls = [c for c in mock_bridge.calls if c[0] == 'storage_list_checkpoints']
+        assert len(rpc_calls) == 1
+        params = rpc_calls[0][1]
         assert params['storage'] == {'url': 's3://my-bucket/prefix/', 'region': 'us-east-1'}
-
-        lc_calls = [c for c in mock_bridge.calls if c[0] == 'list_checkpoints']
-        assert lc_calls[0][1] == {'limit': 5}
+        assert params['limit'] == 5
 
 
 # =============================================================================

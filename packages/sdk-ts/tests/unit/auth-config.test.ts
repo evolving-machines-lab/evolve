@@ -142,10 +142,8 @@ async function runTests(): Promise<void> {
       type: "claude",
       oauthToken: "oauth-token",
       model: "sonnet",
-      betas: ["context-1m-2025-08-07"],
     });
     assertEqual(result.model, "sonnet", "passes through model option with oauthToken");
-    assertEqual(result.betas?.[0], "context-1m-2025-08-07", "passes through betas with oauthToken");
   }
 
   clearEnv();
@@ -250,9 +248,8 @@ async function runTests(): Promise<void> {
     const result = resolveAgentConfig({
       type: "claude",
       providerApiKey: "sk-ant-direct-key",
-      betas: ["context-1m-2025-08-07"],
     });
-    assertEqual(result.betas?.[0], "context-1m-2025-08-07", "passes through betas option");
+    assertEqual(result.apiKey, "sk-ant-direct-key", "providerApiKey path resolves correctly");
   }
 
   clearEnv();

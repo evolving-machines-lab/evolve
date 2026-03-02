@@ -12,11 +12,7 @@ Run CLI agents ([Claude Code](https://github.com/anthropics/claude-code), [Codex
 pip install evolve-sdk
 ```
 
-Optional dependencies (only needed for [S3 checkpointing](./03-runtime.md#storage--checkpointing) in BYOK mode):
-
-```bash
-npm install @aws-sdk/client-s3 @aws-sdk/s3-request-presigner
-```
+Storage & checkpointing is available in [gateway mode](./03-runtime.md#storage--checkpointing) (`EVOLVE_API_KEY`) — no additional dependencies needed.
 
 ---
 

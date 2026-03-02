@@ -32,8 +32,8 @@ import type { OutputEvent } from "./parsers";
 import { isZodSchema, resolveAgentConfig, resolveDefaultSandbox } from "./utils";
 import { composioHelpers } from "./composio";
 import { getGatewayMcpServers, DEFAULT_DASHBOARD_URL } from "./constants";
-import { resolveStorageConfig, listCheckpoints } from "./storage";
-import type { CheckpointInfo } from "./types";
+import { resolveStorageConfig, createBoundStorageClient } from "./storage";
+import type { CheckpointInfo, StorageClient } from "./types";
 
 // =============================================================================
 // TYPES
@@ -140,6 +140,7 @@ export class Evolve extends EventEmitter {
   withAgent(config?: AgentConfig): this {
     if (config) {
       this.config.agent = config;
+      this._cachedGatewayOverrides = null;
     }
     return this;
   }
@@ -582,6 +583,27 @@ export class Evolve extends EventEmitter {
     return this.agent.checkpoint(options);
   }
 
+  private _cachedGatewayOverrides: { gatewayUrl: string; gatewayApiKey: string } | undefined | null = null;
+
+  /**
+   * Resolve gateway credentials from agent config for storage operations.
+   * Memoized — agent config is immutable after .withAgent().
+   */
+  private resolveGatewayOverrides(): { gatewayUrl: string; gatewayApiKey: string } | undefined {
+    if (this._cachedGatewayOverrides !== null) return this._cachedGatewayOverrides || undefined;
+    try {
+      const agentConfig = resolveAgentConfig(this.config.agent);
+      if (!agentConfig.isDirectMode) {
+        this._cachedGatewayOverrides = { gatewayUrl: DEFAULT_DASHBOARD_URL, gatewayApiKey: agentConfig.apiKey };
+        return this._cachedGatewayOverrides;
+      }
+    } catch {
+      // No agent configured — fall through to env-based resolution
+    }
+    this._cachedGatewayOverrides = undefined;
+    return undefined;
+  }
+
   /**
    * List checkpoints (requires .withStorage()).
    *
@@ -594,7 +616,19 @@ export class Evolve extends EventEmitter {
     if (this.config.storage === undefined) {
       throw new Error("Storage not configured. Call .withStorage().");
     }
-    return listCheckpoints(this.config.storage, options);
+    const s = createBoundStorageClient(this.config.storage, this.resolveGatewayOverrides() || {});
+    return s.listCheckpoints(options);
+  }
+
+  /**
+   * Get a StorageClient bound to this instance's storage configuration.
+   * Same API surface as the standalone storage() factory.
+   */
+  storage(): StorageClient {
+    if (this.config.storage === undefined) {
+      throw new Error("Storage not configured. Call .withStorage().");
+    }
+    return createBoundStorageClient(this.config.storage, this.resolveGatewayOverrides() || {});
   }
 
   // ===========================================================================
