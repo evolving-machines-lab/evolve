@@ -434,30 +434,9 @@ export class Agent {
         : getGatewayUrl();
 
       if (this.registry.gatewayConfigEnv) {
-        // OpenCode gateway: define a custom "litellm" provider that routes through the LiteLLM gateway
-        // using OpenAI-compatible format. Model names pass through as-is (e.g. openrouter/anthropic/claude-sonnet-4.6).
-        const selectedModel = this.agentConfig.model || this.registry.defaultModel;
-        envVars[this.registry.gatewayConfigEnv] = JSON.stringify({
-          provider: {
-            litellm: {
-              npm: "@ai-sdk/openai-compatible",
-              options: {
-                baseURL: `${gatewayUrl}/v1`,
-                apiKey: this.agentConfig.apiKey,
-              },
-              models: {
-                [selectedModel]: {
-                  name: selectedModel,
-                  // Session-level spend tracking header. Per-run tag is added in buildRunEnvs().
-                  // Source-verified: model.headers flows to outbound HTTP requests
-                  // (provider/models.ts:67, provider/provider.ts:1061, session/llm.ts:221).
-                  headers: {
-                    [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
-                  },
-                },
-              },
-            },
-          },
+        // Session-level: only customer-id header. Per-run tag added in buildRunEnvs().
+        envVars[this.registry.gatewayConfigEnv] = this.buildGatewayConfigJson({
+          [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
         });
       } else {
         // Single-provider: set base URL env var
@@ -493,6 +472,36 @@ export class Agent {
   }
 
   /**
+   * Build the inline gateway config JSON for agents using gatewayConfigEnv
+   * (e.g., OpenCode OPENCODE_CONFIG_CONTENT). Centralizes the provider config
+   * so buildEnvironmentVariables() and buildRunEnvs() don't duplicate it.
+   * Source-verified: model.headers → provider.ts:1061 → llm.ts:221 → HTTP request.
+   */
+  private buildGatewayConfigJson(headers: Record<string, string>): string {
+    const gatewayUrl = this.registry.usePassthroughGateway
+      ? getGeminiGatewayUrl()
+      : getGatewayUrl();
+    const selectedModel = this.agentConfig.model || this.registry.defaultModel;
+    return JSON.stringify({
+      provider: {
+        litellm: {
+          npm: "@ai-sdk/openai-compatible",
+          options: {
+            baseURL: `${gatewayUrl}/v1`,
+            apiKey: this.agentConfig.apiKey,
+          },
+          models: {
+            [selectedModel]: {
+              name: selectedModel,
+              headers,
+            },
+          },
+        },
+      },
+    });
+  }
+
+  /**
    * Build per-run env overrides for spend tracking.
    * Merges session + run headers into the custom headers env var,
    * or sets per-env-var values for agents using spendTrackingEnvs.
@@ -524,35 +533,12 @@ export class Agent {
     }
 
     // Path 3: inline config env with model.headers (OpenCode OPENCODE_CONFIG_CONTENT).
-    // Rebuilds the full provider config JSON with per-run headers. Overrides the
-    // session-level value set in buildEnvironmentVariables(). The spawn() envs override
-    // takes precedence over sandbox-level env vars for this command.
-    // Source-verified: model.headers → provider.ts:1061 → llm.ts:221 → HTTP request.
+    // Per-run override with both session + run headers.
     if (this.registry.gatewayConfigEnv) {
-      const gatewayUrl = this.registry.usePassthroughGateway
-        ? getGeminiGatewayUrl()
-        : getGatewayUrl();
-      const selectedModel = this.agentConfig.model || this.registry.defaultModel;
       return {
-        [this.registry.gatewayConfigEnv]: JSON.stringify({
-          provider: {
-            litellm: {
-              npm: "@ai-sdk/openai-compatible",
-              options: {
-                baseURL: `${gatewayUrl}/v1`,
-                apiKey: this.agentConfig.apiKey,
-              },
-              models: {
-                [selectedModel]: {
-                  name: selectedModel,
-                  headers: {
-                    [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
-                    [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
-                  },
-                },
-              },
-            },
-          },
+        [this.registry.gatewayConfigEnv]: this.buildGatewayConfigJson({
+          [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
+          [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
         }),
       };
     }
