@@ -216,7 +216,7 @@ export async function writeQwenMcpConfig(
  */
 export async function writeJsonSpendHeaders(
   sandbox: SandboxInstance,
-  agentType: "qwen" | "kimi",
+  agentType: "qwen",
   headersPath: string,
   headers: Record<string, string>,
 ): Promise<void> {

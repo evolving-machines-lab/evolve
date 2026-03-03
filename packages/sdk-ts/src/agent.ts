@@ -475,6 +475,11 @@ export class Agent {
    * Build the inline gateway config JSON for agents using gatewayConfigEnv
    * (e.g., OpenCode OPENCODE_CONFIG_CONTENT). Centralizes the provider config
    * so buildEnvironmentVariables() and buildRunEnvs() don't duplicate it.
+   *
+   * Deep-merges with user-provided config from secrets (if any) so that
+   * non-litellm providers, plugins, and other settings are preserved.
+   * Only patches provider.litellm.models[selectedModel].headers.
+   *
    * Source-verified: model.headers → provider.ts:1061 → llm.ts:221 → HTTP request.
    */
   private buildGatewayConfigJson(headers: Record<string, string>): string {
@@ -482,23 +487,41 @@ export class Agent {
       ? getGeminiGatewayUrl()
       : getGatewayUrl();
     const selectedModel = this.agentConfig.model || this.registry.defaultModel;
-    return JSON.stringify({
-      provider: {
-        litellm: {
-          npm: "@ai-sdk/openai-compatible",
-          options: {
-            baseURL: `${gatewayUrl}/v1`,
-            apiKey: this.agentConfig.apiKey,
-          },
-          models: {
-            [selectedModel]: {
-              name: selectedModel,
-              headers,
-            },
+
+    // Start from user-provided config if available, preserving non-litellm settings
+    let config: Record<string, unknown> = {};
+    const userValue = this.options.secrets?.[this.registry.gatewayConfigEnv!];
+    if (userValue) {
+      try { config = JSON.parse(userValue); } catch { /* invalid JSON — start fresh */ }
+    }
+
+    const providers = (config.provider as Record<string, unknown>) ?? {};
+    const litellm = (providers.litellm as Record<string, unknown>) ?? {};
+    const existingModels = (litellm.models as Record<string, unknown>) ?? {};
+    const existingModel = (existingModels[selectedModel] as Record<string, unknown>) ?? {};
+    const existingHeaders = (existingModel.headers as Record<string, string>) ?? {};
+
+    config.provider = {
+      ...providers,
+      litellm: {
+        ...litellm,
+        npm: "@ai-sdk/openai-compatible",
+        options: {
+          baseURL: `${gatewayUrl}/v1`,
+          apiKey: this.agentConfig.apiKey,
+        },
+        models: {
+          ...existingModels,
+          [selectedModel]: {
+            ...existingModel,
+            name: selectedModel,
+            headers: { ...existingHeaders, ...headers },
           },
         },
       },
-    });
+    };
+
+    return JSON.stringify(config);
   }
 
   /**

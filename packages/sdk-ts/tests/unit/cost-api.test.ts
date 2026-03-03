@@ -903,6 +903,54 @@ async function testOpenCodeDirectModeSkipsHeaders(): Promise<void> {
   assertEqual(envs, undefined, "no env overrides in direct mode");
 }
 
+async function testOpenCodeMergesUserSecrets(): Promise<void> {
+  console.log("\n[33] OpenCode buildRunEnvs() deep-merges with user-provided OPENCODE_CONFIG_CONTENT");
+  const userConfig = {
+    provider: {
+      custom: { npm: "@ai-sdk/custom", options: { baseURL: "https://custom.api/v1" } },
+      litellm: {
+        npm: "@ai-sdk/openai-compatible",
+        models: {
+          "openrouter/anthropic/claude-sonnet-4.6": {
+            name: "openrouter/anthropic/claude-sonnet-4.6",
+            headers: { "x-user-header": "keep-me" },
+          },
+        },
+      },
+    },
+    theme: "dark",
+  };
+  const config = {
+    type: "opencode",
+    apiKey: "test-gateway-key",
+    isDirectMode: false,
+  };
+  const agent = new Agent(config as any, {
+    secrets: { OPENCODE_CONFIG_CONTENT: JSON.stringify(userConfig) },
+  });
+  (agent as any).sessionTag = "evolve-oc-merge";
+
+  const envs = (agent as any).buildRunEnvs("run-merge-001") as Record<string, string>;
+  const parsed = JSON.parse(envs.OPENCODE_CONFIG_CONTENT);
+
+  // User's custom provider preserved
+  assert(parsed.provider.custom !== undefined, "custom provider preserved");
+  assertEqual(parsed.provider.custom.npm, "@ai-sdk/custom", "custom provider npm preserved");
+
+  // User's non-provider config preserved
+  assertEqual(parsed.theme, "dark", "user theme setting preserved");
+
+  // User's existing model header preserved alongside spend headers
+  const model = parsed.provider.litellm.models["openrouter/anthropic/claude-sonnet-4.6"];
+  assertEqual(model.headers["x-user-header"], "keep-me", "user model header preserved");
+  assertEqual(model.headers["x-litellm-customer-id"], "evolve-oc-merge", "spend session header injected");
+  assert(model.headers["x-litellm-tags"]?.includes("run:run-merge-001"), "spend run tag injected");
+
+  // SDK overrides litellm options (gateway URL + API key)
+  assert(parsed.provider.litellm.options.baseURL.includes("/v1"), "gateway baseURL set");
+  assertEqual(parsed.provider.litellm.options.apiKey, "test-gateway-key", "gateway apiKey set");
+}
+
 async function main(): Promise<void> {
   console.log("\n============================================================");
   console.log("Cost API Unit Tests");
@@ -939,6 +987,7 @@ async function main(): Promise<void> {
   await testOpenCodeBuildRunEnvsIncludesHeaders();
   await testOpenCodeBuildRunEnvsPerRunOverwrite();
   await testOpenCodeDirectModeSkipsHeaders();
+  await testOpenCodeMergesUserSecrets();
   console.log("\n============================================================");
   console.log(`Results: ${passed} passed, ${failed} failed`);
   console.log("============================================================");
