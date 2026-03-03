@@ -97,6 +97,8 @@ export interface AgentRegistryEntry {
   gatewayConfigEnv?: string;
   /** Environment variable that CLI reads for custom outbound HTTP headers */
   customHeadersEnv?: string;
+  /** Format for custom headers env var: "newline" (Claude) or "comma" (Gemini). Default: "newline" */
+  customHeadersFormat?: "newline" | "comma";
   /**
    * Per-env-var spend tracking for CLIs that support env_http_headers in config
    * (e.g., Codex TOML). Maps LiteLLM header names to env var names that the CLI
@@ -108,6 +110,33 @@ export interface AgentRegistryEntry {
     sessionTagEnv: string;
     /** Env var name for x-litellm-tags value */
     runTagEnv: string;
+  };
+  /**
+   * Config-file-based spend tracking for CLIs that read custom headers from a
+   * JSON settings file (e.g., Qwen settings.json → model.generationConfig.customHeaders).
+   * The SDK writes headers to this file before each run.
+   * Source-verified: Qwen reads customHeaders from settings.json, not env vars.
+   */
+  spendTrackingJsonConfig?: {
+    /** JSON path to the customHeaders object (dot-separated) */
+    headersPath: string;
+  };
+  /**
+   * TOML provider-based spend tracking for CLIs that read custom_headers from a
+   * provider entry in config.toml (e.g., Kimi).
+   * The SDK writes a provider+model entry with custom_headers before each run.
+   * Source-verified: Kimi reads custom_headers from providers[name].custom_headers
+   * in ~/.kimi/config.toml (config.py:45, llm.py:101).
+   */
+  spendTrackingTomlProvider?: {
+    /** Config file path (e.g., "~/.kimi/config.toml") */
+    configPath: string;
+    /** Provider name in config (e.g., "evolve-gateway") */
+    providerName: string;
+    /** Model entry name (e.g., "evolve-default") */
+    modelName: string;
+    /** Max context size for the model entry */
+    maxContextSize: number;
   };
   /** Additional directories to include in checkpoint tar (beyond mcpConfig.settingsDir).
    *  Used for agents like OpenCode that spread state across XDG directories. */
@@ -217,6 +246,10 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       sourceDir: "/home/user/.evolve/skills",
       targetDir: "/home/user/.gemini/skills",
     },
+    // Source-verified: GEMINI_CLI_CUSTOM_HEADERS is read in contentGenerator.ts and parsed
+    // by customHeaderUtils.ts (comma-separated via /,(?=\s*[^,:]+:)/). Not in public docs.
+    customHeadersEnv: "GEMINI_CLI_CUSTOM_HEADERS",
+    customHeadersFormat: "comma",
     usePassthroughGateway: true,
     buildCommand: ({ prompt, model, isResume }) => {
       const resumeFlag = isResume ? "--resume latest " : "";
@@ -244,6 +277,11 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       sourceDir: "/home/user/.evolve/skills",
       targetDir: "/home/user/.qwen/skills",
       enableFlag: "--experimental-skills",
+    },
+    // Source-verified: Qwen reads customHeaders from settings.json model.generationConfig,
+    // not from env vars. The SDK writes headers to this path before each run.
+    spendTrackingJsonConfig: {
+      headersPath: "model.generationConfig.customHeaders",
     },
     defaultBaseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     buildCommand: ({ prompt, model, isResume, isDirectMode, skills }) => {
@@ -278,9 +316,22 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       targetDir: "/home/user/.kimi/skills",
     },
     defaultBaseUrl: "https://api.moonshot.ai/v1",
-    buildCommand: ({ prompt, model, isResume }) => {
+    // Source-verified: Kimi reads custom_headers from providers[name].custom_headers
+    // in config.toml (config.py:45, llm.py:101). No env var for custom headers.
+    // We write a dedicated Evolve-owned config file and pass it via --config-file
+    // to avoid merging with user config. Requires default_model → model → provider chain.
+    spendTrackingTomlProvider: {
+      configPath: "~/.kimi/evolve-config.toml",
+      providerName: "evolve-gateway",
+      modelName: "evolve-default",
+      maxContextSize: 262144,
+    },
+    buildCommand: ({ prompt, model, isResume, isDirectMode }) => {
       const continueFlag = isResume ? "--continue " : "";
-      return `printf '%s' "${prompt}" | KIMI_MODEL_NAME=${model} kimi --print --output-format stream-json --yolo ${continueFlag}`;
+      // In gateway mode, use --config-file to point to our dedicated spend tracking config.
+      // Source-verified: cli/__init__.py:133-143 — --config-file fully replaces default config.
+      const configFlag = isDirectMode ? "" : "--config-file /home/user/.kimi/evolve-config.toml ";
+      return `printf '%s' "${prompt}" | KIMI_MODEL_NAME=${model} kimi --print --output-format stream-json --yolo ${configFlag}${continueFlag}`;
     },
   },
 

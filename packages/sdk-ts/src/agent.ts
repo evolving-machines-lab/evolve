@@ -39,7 +39,7 @@ import type {
 } from "./types";
 import { VALIDATION_PRESETS } from "./types";
 import { getAgentConfig, type AgentRegistryEntry } from "./registry";
-import { writeMcpConfig, writeCodexSpendProvider } from "./mcp";
+import { writeMcpConfig, writeCodexSpendProvider, writeJsonSpendHeaders, writeKimiSpendConfig } from "./mcp";
 import { createAgentParser, type AgentParser } from "./parsers";
 import { DEFAULT_TIMEOUT_MS, DEFAULT_WORKING_DIR, DEFAULT_DASHBOARD_URL, LITELLM_CUSTOMER_ID_HEADER, LITELLM_TAGS_HEADER, RUN_TAG_PREFIX, getGatewayUrl, getGeminiGatewayUrl } from "./constants";
 import { buildWorkerSystemPrompt } from "./prompts";
@@ -90,20 +90,28 @@ function generateSessionTag(prefix: string): string {
 }
 
 /**
- * Merge spend tracking headers into an existing ANTHROPIC_CUSTOM_HEADERS value.
+ * Merge spend tracking headers into an existing custom headers env value.
  * Preserves user-supplied headers; spend headers overwrite only matching keys.
- * Parses newline-separated "Name: Value" pairs (Claude CLI format).
- * Special case: x-litellm-tags values are appended (comma-joined), not overwritten.
+ *
+ * Tag append behavior varies by format:
+ * - newline (Claude): x-litellm-tags values are comma-appended (safe, no ambiguity)
+ * - comma (Gemini): x-litellm-tags is overwritten — appending "run:<id>" after a comma
+ *   would be mis-parsed by Gemini's regex /,(?=\s*[^,:]+:)/ as a separate header
+ *
+ * @param format - "newline" for Claude (ANTHROPIC_CUSTOM_HEADERS), "comma" for Gemini (GEMINI_CLI_CUSTOM_HEADERS)
  */
-function mergeCustomHeaders(existing: string | undefined, updates: Record<string, string>): string {
+function mergeCustomHeaders(existing: string | undefined, updates: Record<string, string>, format: "newline" | "comma" = "newline"): string {
   const merged = new Map<string, string>();
 
   // Parse existing headers (case-insensitive key lookup)
   if (existing) {
-    // Claude CLI uses newline-separated "Name: Value" pairs.
-    // We only split on newlines — commas can appear inside header values (e.g., tag lists).
-    for (const line of existing.split(/\r?\n/)) {
-      const trimmed = line.trim();
+    // Newline format (Claude): "Name: Value\nName2: Value2"
+    // Comma format (Gemini):   "Name: Value, Name2: Value2"
+    const entries = format === "comma"
+      ? existing.split(/,(?=\s*[^,:]+:)/)  // Gemini: split on commas before "key:" pattern
+      : existing.split(/\r?\n/);            // Claude: split on newlines
+    for (const entry of entries) {
+      const trimmed = entry.trim();
       if (!trimmed) continue;
       const colon = trimmed.indexOf(":");
       if (colon <= 0) continue;
@@ -113,11 +121,14 @@ function mergeCustomHeaders(existing: string | undefined, updates: Record<string
     }
   }
 
-  // Apply updates (overwrites matching keys, except tags which are appended)
+  // Apply updates (overwrites matching keys, except tags which are appended in newline format)
   for (const [name, value] of Object.entries(updates)) {
     const key = name.toLowerCase();
-    if (key === LITELLM_TAGS_HEADER && merged.has(key)) {
-      // Append to existing tags (comma-separated list)
+    if (key === LITELLM_TAGS_HEADER && merged.has(key) && format === "newline") {
+      // Append to existing tags (comma-separated list) — safe in newline format only.
+      // In comma format (Gemini), appending "run:<id>" after a comma creates ambiguity:
+      // Gemini's regex /,(?=\s*[^,:]+:)/ would split "run:<id>" as a new header.
+      // So for comma format, we overwrite the tag entirely.
       const existing = merged.get(key)!;
       const existingValue = existing.slice(existing.indexOf(":") + 1).trim();
       merged.set(key, `${name}: ${existingValue},${value}`);
@@ -126,7 +137,7 @@ function mergeCustomHeaders(existing: string | undefined, updates: Record<string
     }
   }
 
-  return Array.from(merged.values()).join("\n");
+  return Array.from(merged.values()).join(format === "comma" ? ", " : "\n");
 }
 
 // =============================================================================
@@ -423,22 +434,9 @@ export class Agent {
         : getGatewayUrl();
 
       if (this.registry.gatewayConfigEnv) {
-        // OpenCode gateway: define a custom "litellm" provider that routes through the LiteLLM gateway
-        // using OpenAI-compatible format. Model names pass through as-is (e.g. openrouter/anthropic/claude-sonnet-4.6).
-        const selectedModel = this.agentConfig.model || this.registry.defaultModel;
-        envVars[this.registry.gatewayConfigEnv] = JSON.stringify({
-          provider: {
-            litellm: {
-              npm: "@ai-sdk/openai-compatible",
-              options: {
-                baseURL: `${gatewayUrl}/v1`,
-                apiKey: this.agentConfig.apiKey,
-              },
-              models: {
-                [selectedModel]: { name: selectedModel },
-              },
-            },
-          },
+        // Session-level: only customer-id header. Per-run tag added in buildRunEnvs().
+        envVars[this.registry.gatewayConfigEnv] = this.buildGatewayConfigJson({
+          [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
         });
       } else {
         // Single-provider: set base URL env var
@@ -458,9 +456,10 @@ export class Agent {
     // Uses mergeCustomHeaders to preserve any user-supplied headers from secrets.
     if (!this.agentConfig.isDirectMode && this.registry.customHeadersEnv) {
       const headerEnv = this.registry.customHeadersEnv;
+      const fmt = this.registry.customHeadersFormat || "newline";
       envVars[headerEnv] = mergeCustomHeaders(envVars[headerEnv], {
         [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
-      });
+      }, fmt);
     }
 
     // Spend tracking via per-env-var headers (e.g., Codex env_http_headers in TOML).
@@ -473,6 +472,61 @@ export class Agent {
   }
 
   /**
+   * Build the inline gateway config JSON for agents using gatewayConfigEnv
+   * (e.g., OpenCode OPENCODE_CONFIG_CONTENT). Centralizes the provider config
+   * so buildEnvironmentVariables() and buildRunEnvs() don't duplicate it.
+   *
+   * Deep-merges with user-provided config from secrets (if any) so that
+   * non-litellm providers, plugins, and other settings are preserved.
+   * Only patches provider.litellm.models[selectedModel].headers.
+   *
+   * Source-verified: model.headers → provider.ts:1061 → llm.ts:221 → HTTP request.
+   */
+  private buildGatewayConfigJson(headers: Record<string, string>): string {
+    const gatewayUrl = this.registry.usePassthroughGateway
+      ? getGeminiGatewayUrl()
+      : getGatewayUrl();
+    const selectedModel = this.agentConfig.model || this.registry.defaultModel;
+
+    // Start from user-provided config if available, preserving non-litellm settings
+    let config: Record<string, unknown> = {};
+    const userValue = this.options.secrets?.[this.registry.gatewayConfigEnv!];
+    if (userValue) {
+      try { config = JSON.parse(userValue); } catch { /* invalid JSON — start fresh */ }
+    }
+
+    const providers = (config.provider as Record<string, unknown>) ?? {};
+    const litellm = (providers.litellm as Record<string, unknown>) ?? {};
+    const existingOptions = (litellm.options as Record<string, unknown>) ?? {};
+    const existingModels = (litellm.models as Record<string, unknown>) ?? {};
+    const existingModel = (existingModels[selectedModel] as Record<string, unknown>) ?? {};
+    const existingHeaders = (existingModel.headers as Record<string, string>) ?? {};
+
+    config.provider = {
+      ...providers,
+      litellm: {
+        ...litellm,
+        npm: "@ai-sdk/openai-compatible",
+        options: {
+          ...existingOptions,
+          baseURL: `${gatewayUrl}/v1`,
+          apiKey: this.agentConfig.apiKey,
+        },
+        models: {
+          ...existingModels,
+          [selectedModel]: {
+            ...existingModel,
+            name: selectedModel,
+            headers: { ...existingHeaders, ...headers },
+          },
+        },
+      },
+    };
+
+    return JSON.stringify(config);
+  }
+
+  /**
    * Build per-run env overrides for spend tracking.
    * Merges session + run headers into the custom headers env var,
    * or sets per-env-var values for agents using spendTrackingEnvs.
@@ -481,15 +535,16 @@ export class Agent {
   private buildRunEnvs(runId: string): Record<string, string> | undefined {
     if (this.agentConfig.isDirectMode) return undefined;
 
-    // Path 1: single custom headers env var (Claude)
+    // Path 1: single custom headers env var (Claude, Gemini)
     const headerEnv = this.registry.customHeadersEnv;
     if (headerEnv) {
       const base = this.options.secrets?.[headerEnv];
+      const fmt = this.registry.customHeadersFormat || "newline";
       return {
         [headerEnv]: mergeCustomHeaders(base, {
           [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
           [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
-        }),
+        }, fmt),
       };
     }
 
@@ -499,6 +554,17 @@ export class Agent {
       return {
         [trackingEnvs.sessionTagEnv]: this.sessionTag,
         [trackingEnvs.runTagEnv]: `${RUN_TAG_PREFIX}${runId}`,
+      };
+    }
+
+    // Path 3: inline config env with model.headers (OpenCode OPENCODE_CONFIG_CONTENT).
+    // Per-run override with both session + run headers.
+    if (this.registry.gatewayConfigEnv) {
+      return {
+        [this.registry.gatewayConfigEnv]: this.buildGatewayConfigJson({
+          [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
+          [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
+        }),
       };
     }
 
@@ -605,6 +671,21 @@ export class Agent {
         this.registry.spendTrackingEnvs,
       );
     }
+
+    // Spend tracking: write customHeaders to JSON settings file for agents that read
+    // headers from config (e.g., Qwen). Session-level only — per-run tags are written
+    // before each spawn in run().
+    if (!this.agentConfig.isDirectMode && this.registry.spendTrackingJsonConfig) {
+      await writeJsonSpendHeaders(
+        sandbox,
+        this.agentConfig.type as "qwen",
+        this.registry.spendTrackingJsonConfig.headersPath,
+        { [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag },
+      );
+    }
+
+    // Kimi TOML provider spend tracking: handled per-run in run() since we write
+    // a dedicated config file from scratch each time (no session-level setup needed).
 
     // Setup skills
     if (this.skills?.length) {
@@ -854,6 +935,34 @@ export class Agent {
     const command = this.buildCommand(prompt);
     const runId = randomUUID();
     const runEnvs = this.buildRunEnvs(runId);
+
+    // Per-run config-file spend tracking (Qwen): write both session + run headers
+    // to settings.json before spawning. Each run gets a fresh file write because
+    // the CLI reads the config at startup (not per-request from env).
+    if (!this.agentConfig.isDirectMode && this.registry.spendTrackingJsonConfig) {
+      await writeJsonSpendHeaders(
+        sandbox,
+        this.agentConfig.type as "qwen",
+        this.registry.spendTrackingJsonConfig.headersPath,
+        {
+          [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
+          [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
+        },
+      );
+    }
+
+    // Per-run TOML provider spend tracking (Kimi): write provider with custom_headers
+    // before spawning. CLI reads config at startup, so each run gets a fresh write.
+    if (!this.agentConfig.isDirectMode && this.registry.spendTrackingTomlProvider) {
+      await writeKimiSpendConfig(
+        sandbox,
+        this.registry.spendTrackingTomlProvider,
+        {
+          [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
+          [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
+        },
+      );
+    }
 
     // Line buffer for NDJSON parsing (shared by both modes)
     let lineBuffer = "";

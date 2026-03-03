@@ -6,7 +6,7 @@
  */
 
 import type { SandboxInstance, McpServerConfig } from "../types";
-import { getMcpSettingsDir, getMcpSettingsPath } from "../registry";
+import { getMcpSettingsDir, getMcpSettingsPath, expandPath } from "../registry";
 import { validateMcpServer, isNotFoundError } from "./validation";
 import {
   LITELLM_CUSTOMER_ID_HEADER,
@@ -247,4 +247,55 @@ export async function writeCodexSpendProvider(
   }
 
   await sandbox.files.write(settingsPath, content);
+}
+
+// =============================================================================
+// KIMI SPEND TRACKING (dedicated config file via --config-file)
+// =============================================================================
+
+/**
+ * Write a dedicated Evolve-owned config file for Kimi spend tracking.
+ *
+ * Instead of merging into the user's ~/.kimi/config.toml (which required
+ * fragile regex-based TOML parsing), we write a self-contained config file
+ * and pass it to the Kimi CLI via --config-file. The sandbox is ours — there
+ * is no user config to preserve.
+ *
+ * The file contains: default_model, a provider entry with custom_headers
+ * for LiteLLM tracking, and a model entry pointing to the provider.
+ * base_url/api_key are empty — KIMI_BASE_URL and KIMI_API_KEY env vars
+ * override them at runtime.
+ */
+export async function writeKimiSpendConfig(
+  sandbox: SandboxInstance,
+  config: {
+    configPath: string;
+    providerName: string;
+    modelName: string;
+    maxContextSize: number;
+  },
+  headers: Record<string, string>,
+): Promise<void> {
+  const configPath = expandPath(config.configPath);
+  const configDir = configPath.slice(0, configPath.lastIndexOf("/"));
+
+  await sandbox.files.makeDir(configDir);
+
+  // Write from scratch — no reading, no parsing, no merging.
+  const content = [
+    `default_model = ${serializeTomlValue(config.modelName)}`,
+    "",
+    `[providers.${config.providerName}]`,
+    `type = "kimi"`,
+    `base_url = ""`,
+    `api_key = ""`,
+    `custom_headers = ${serializeTomlValue(headers)}`,
+    "",
+    `[models.${config.modelName}]`,
+    `provider = ${serializeTomlValue(config.providerName)}`,
+    `model = ""`,
+    `max_context_size = ${config.maxContextSize}`,
+  ].join("\n") + "\n";
+
+  await sandbox.files.write(configPath, content);
 }
