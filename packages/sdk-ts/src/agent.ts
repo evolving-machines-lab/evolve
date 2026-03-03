@@ -497,6 +497,7 @@ export class Agent {
 
     const providers = (config.provider as Record<string, unknown>) ?? {};
     const litellm = (providers.litellm as Record<string, unknown>) ?? {};
+    const existingOptions = (litellm.options as Record<string, unknown>) ?? {};
     const existingModels = (litellm.models as Record<string, unknown>) ?? {};
     const existingModel = (existingModels[selectedModel] as Record<string, unknown>) ?? {};
     const existingHeaders = (existingModel.headers as Record<string, string>) ?? {};
@@ -507,6 +508,7 @@ export class Agent {
         ...litellm,
         npm: "@ai-sdk/openai-compatible",
         options: {
+          ...existingOptions,
           baseURL: `${gatewayUrl}/v1`,
           apiKey: this.agentConfig.apiKey,
         },
