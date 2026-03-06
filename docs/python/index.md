@@ -81,6 +81,7 @@ await evolve.run(prompt='Hello world')
 | Auto-checkpoint, explicit checkpoint, restore | [Runtime → Storage & Checkpointing](./03-runtime.md#auto-checkpoint-via-run) |
 | Checkpoint lineage | [Runtime → Checkpoint Lineage](./03-runtime.md#checkpoint-lineage) |
 | `storage()` client, `evolve.storage()` | [Runtime → Listing & Browsing Checkpoints](./03-runtime.md#listing--browsing-checkpoints) |
+| `sessions()` client for past sessions & traces | [Runtime → Historical Sessions & Trace Download](./03-runtime.md#historical-sessions--trace-download) |
 | Observability (dashboard + local logs) | [Runtime → Observability](./03-runtime.md#observability) |
 | Error handling | [Runtime → Error Handling](./03-runtime.md#error-handling) |
 

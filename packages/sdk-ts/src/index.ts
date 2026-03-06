@@ -238,3 +238,19 @@ export {
 // =============================================================================
 
 export { resolveStorageConfig, storage } from "./storage";
+
+// =============================================================================
+// SESSIONS
+// =============================================================================
+
+export {
+  sessions,
+  type SessionsClient,
+  type SessionsConfig,
+  type ListSessionsOptions,
+  type SessionPage,
+  type SessionInfo,
+  type SessionEvent,
+  type GetEventsOptions,
+  type DownloadSessionOptions,
+} from "./sessions";

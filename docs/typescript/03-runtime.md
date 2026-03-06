@@ -697,6 +697,31 @@ console.log(evolve.getSessionTimestamp()); // Timestamp for second log file
 Use the tag together with the sandbox id to correlate logs with files saved in
 `/output/`.
 
+### Historical Sessions & Trace Download
+
+The standalone `sessions()` client queries past sessions and downloads full
+trace files programmatically — the API equivalent of the dashboard traces page.
+
+```ts
+import { sessions } from "@evolvingmachines/sdk";
+
+const session = sessions(); // uses EVOLVE_API_KEY
+
+const page = await session.list({ limit: 10, state: "ended", agent: "claude", tagPrefix: "my-proj", sort: "cost" });
+const page2 = await session.list({ cursor: page.nextCursor });
+const info = await session.get(page.items[0].id);
+const events = await session.events(info.id, { since: 50 });
+const path = await session.download(info.id, { to: "./traces" });
+```
+
+- `list()` returns `SessionPage { items: SessionInfo[], nextCursor, hasMore }`
+- `get()` returns `SessionInfo` with `sandboxId`, `runtimeStatus`, `cost`, `stepCount`, `toolStats`, etc.
+- `events()` returns parsed JSONL objects; pass `since` for delta fetching
+- `download()` streams the raw `.jsonl` trace to disk and returns the file path
+
+Gateway-only — requires `EVOLVE_API_KEY`. In BYOK/direct mode, traces remain
+available as local JSONL files in `~/.evolve-sdk/observability/sessions/`.
+
 ---
 
 ## Cost Tracking

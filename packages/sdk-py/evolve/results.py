@@ -141,3 +141,36 @@ class SessionCost:
     as_of: str
     is_complete: bool
     truncated: bool
+
+
+SessionEvent = Dict[str, Any]
+
+
+@dataclass
+class SessionInfo:
+    """Historical session metadata from the standalone sessions() client.
+
+    Matches the TypeScript sessions() surface, with snake_case field names for
+    Python transport ergonomics.
+    """
+    id: str
+    tag: str
+    agent: str
+    model: Optional[str]
+    provider: str
+    sandbox_id: Optional[str]
+    state: Literal['live', 'ended']
+    runtime_status: Literal['alive', 'dead', 'unknown']
+    cost: Optional[float]
+    created_at: str
+    ended_at: Optional[str]
+    step_count: int
+    tool_stats: Optional[Dict[str, int]]
+
+
+@dataclass
+class SessionPage:
+    """Paginated session list response from the standalone sessions() client."""
+    items: List[SessionInfo]
+    next_cursor: Optional[str]
+    has_more: bool
