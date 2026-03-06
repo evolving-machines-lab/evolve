@@ -328,6 +328,68 @@ export interface StorageClientDownloadFilesParams {
 }
 
 // =============================================================================
+// STANDALONE SESSIONS CLIENT RPC PARAMS
+// =============================================================================
+
+export interface SessionsConfigParams {
+  apiKey?: string;
+  dashboardUrl?: string;
+}
+
+export interface SessionsListParams {
+  sessions?: SessionsConfigParams;
+  limit?: number;
+  cursor?: string;
+  state?: 'live' | 'ended' | 'all';
+  agent?: string;
+  tag_prefix?: string;
+  sort?: 'newest' | 'oldest' | 'cost';
+}
+
+export interface SessionsGetParams {
+  sessions?: SessionsConfigParams;
+  id: string;
+}
+
+export interface SessionsEventsParams {
+  sessions?: SessionsConfigParams;
+  id: string;
+  since?: number;
+}
+
+export interface SessionsDownloadParams {
+  sessions?: SessionsConfigParams;
+  id: string;
+  to?: string;
+}
+
+export interface SessionInfoResponse {
+  id: string;
+  tag: string;
+  agent: string;
+  model: string | null;
+  provider: string;
+  sandbox_id: string | null;
+  state: 'live' | 'ended';
+  runtime_status: 'alive' | 'dead' | 'unknown';
+  cost: number | null;
+  created_at: string;
+  ended_at: string | null;
+  step_count: number;
+  tool_stats: Record<string, number> | null;
+}
+
+export interface SessionPageResponse {
+  items: SessionInfoResponse[];
+  next_cursor: string | null;
+  has_more: boolean;
+}
+
+export interface SessionEventsResponse {
+  events: Record<string, any>[];
+}
+
+// =============================================================================
 // COST TYPES
 // =============================================================================
 

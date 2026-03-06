@@ -246,6 +246,30 @@ class StorageConfig:
         return result
 
 
+@dataclass
+class SessionsConfig:
+    """Configuration for the standalone sessions() client.
+
+    Gateway-only historical trace access. If omitted, the TypeScript sessions()
+    client resolves credentials from ``EVOLVE_API_KEY`` and dashboard defaults.
+
+    Args:
+        api_key: Explicit Evolve API key override
+        dashboard_url: Dashboard URL override (for staging/self-hosted setups)
+    """
+    api_key: Optional[str] = None
+    dashboard_url: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dict for JSON-RPC transport."""
+        result: Dict[str, Any] = {}
+        if self.api_key:
+            result['apiKey'] = self.api_key
+        if self.dashboard_url:
+            result['dashboardUrl'] = self.dashboard_url
+        return result
+
+
 # =============================================================================
 # COMPOSIO TOOL ROUTER
 # =============================================================================

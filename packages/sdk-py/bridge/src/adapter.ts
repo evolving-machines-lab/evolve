@@ -7,10 +7,27 @@
  * All SDK integration is isolated here for easy maintenance.
  */
 
-import { Evolve, storage as createStorageClient, type AgentConfig, type AgentType, type ReasoningEffort, type CheckpointInfo, type RunCost, type SessionCost, type StorageClient, type StorageConfig } from '@evolvingmachines/sdk';
-import { createE2BProvider } from '@evolvingmachines/e2b';
-import { createDaytonaProvider } from '@evolvingmachines/daytona';
-import { createModalProvider } from '@evolvingmachines/modal';
+// Use sibling dist imports instead of package-name resolution so bridge builds
+// in git worktrees always target the current workspace artifacts, not the
+// parent repo's installed node_modules copy.
+import {
+  Evolve,
+  storage as createStorageClient,
+  sessions as createSessionsClient,
+  type AgentConfig,
+  type AgentType,
+  type ReasoningEffort,
+  type CheckpointInfo,
+  type RunCost,
+  type SessionCost,
+  type StorageClient,
+  type StorageConfig,
+  type SessionsClient as TSSessionsClient,
+  type SessionInfo as TSSessionInfo,
+} from '../../../sdk-ts/dist/index.js';
+import { createE2BProvider } from '../../../e2b/dist/index.js';
+import { createDaytonaProvider } from '../../../daytona/dist/index.js';
+import { createModalProvider } from '../../../modal/dist/index.js';
 import type {
   InitializeParams,
   RunParams,
@@ -44,6 +61,14 @@ import type {
   StorageClientGetParams,
   StorageClientDownloadParams,
   StorageClientDownloadFilesParams,
+  SessionsConfigParams,
+  SessionsListParams,
+  SessionsGetParams,
+  SessionsEventsParams,
+  SessionsDownloadParams,
+  SessionInfoResponse,
+  SessionPageResponse,
+  SessionEventsResponse,
   GetRunCostParams,
   RunCostResponse,
   SessionCostResponse,
@@ -247,6 +272,15 @@ export class EvolveAdapter {
         return this.storageDownloadCheckpoint(params);
       case 'storage_download_files':
         return this.storageDownloadFiles(params);
+      // Standalone sessions client methods
+      case 'sessions_list':
+        return this.sessionsList(params);
+      case 'sessions_get':
+        return this.sessionsGet(params);
+      case 'sessions_events':
+        return this.sessionsEvents(params);
+      case 'sessions_download':
+        return this.sessionsDownload(params);
       // Multi-instance methods (for Swarm)
       case 'create_instance':
         return this.createInstance(params);
@@ -598,6 +632,57 @@ export class EvolveAdapter {
     return { files: encodeFiles(files) };
   }
 
+  // ===========================================================================
+  // STANDALONE SESSIONS CLIENT METHODS
+  // ===========================================================================
+
+  /**
+   * Get a standalone sessions() client from optional config.
+   */
+  private getSessionsClient(config?: SessionsConfigParams): TSSessionsClient {
+    return config ? createSessionsClient(config) : createSessionsClient();
+  }
+
+  async sessionsList(params: SessionsListParams): Promise<SessionPageResponse> {
+    const client = this.getSessionsClient(params.sessions);
+    const page = await client.list({
+      limit: params.limit,
+      cursor: params.cursor,
+      state: params.state,
+      agent: params.agent,
+      tagPrefix: params.tag_prefix,
+      sort: params.sort,
+    });
+    return {
+      items: page.items.map(info => this.toSessionInfoResponse(info)),
+      next_cursor: page.nextCursor,
+      has_more: page.hasMore,
+    };
+  }
+
+  async sessionsGet(params: SessionsGetParams): Promise<SessionInfoResponse> {
+    const client = this.getSessionsClient(params.sessions);
+    const info = await client.get(params.id);
+    return this.toSessionInfoResponse(info);
+  }
+
+  async sessionsEvents(params: SessionsEventsParams): Promise<SessionEventsResponse> {
+    const client = this.getSessionsClient(params.sessions);
+    const events = await client.events(
+      params.id,
+      params.since !== undefined ? { since: params.since } : undefined,
+    );
+    return { events };
+  }
+
+  async sessionsDownload(params: SessionsDownloadParams): Promise<{ path: string }> {
+    const client = this.getSessionsClient(params.sessions);
+    const path = await client.download(params.id, {
+      to: params.to,
+    });
+    return { path };
+  }
+
   /**
    * Convert TS SDK CheckpointInfo (camelCase) to bridge response (snake_case)
    */
@@ -613,6 +698,27 @@ export class EvolveAdapter {
       workspace_mode: info.workspaceMode,
       parent_id: info.parentId,
       comment: info.comment,
+    };
+  }
+
+  /**
+   * Convert TS SDK SessionInfo (camelCase) to bridge response (snake_case)
+   */
+  private toSessionInfoResponse(info: TSSessionInfo): SessionInfoResponse {
+    return {
+      id: info.id,
+      tag: info.tag,
+      agent: info.agent,
+      model: info.model ?? null,
+      provider: info.provider,
+      sandbox_id: info.sandboxId ?? null,
+      state: info.state,
+      runtime_status: info.runtimeStatus,
+      cost: info.cost ?? null,
+      created_at: info.createdAt,
+      ended_at: info.endedAt ?? null,
+      step_count: info.stepCount,
+      tool_stats: info.toolStats ?? null,
     };
   }
 

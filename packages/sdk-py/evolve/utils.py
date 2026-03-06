@@ -66,6 +66,36 @@ def _require_checkpoint(data: Optional[Dict[str, Any]]) -> 'CheckpointInfo':
     return result
 
 
+def _parse_session_info(data: Optional[Dict[str, Any]]) -> Optional['SessionInfo']:
+    """Parse session dict from bridge response into SessionInfo."""
+    if not data:
+        return None
+    from .results import SessionInfo  # noqa: E402
+    return SessionInfo(
+        id=data['id'],
+        tag=data['tag'],
+        agent=data['agent'],
+        model=data.get('model'),
+        provider=data['provider'],
+        sandbox_id=data.get('sandbox_id'),
+        state=data['state'],
+        runtime_status=data.get('runtime_status', 'unknown'),
+        cost=data.get('cost'),
+        created_at=data['created_at'],
+        ended_at=data.get('ended_at'),
+        step_count=data.get('step_count', 0),
+        tool_stats=data.get('tool_stats'),
+    )
+
+
+def _require_session_info(data: Optional[Dict[str, Any]]) -> 'SessionInfo':
+    """Like :func:`_parse_session_info` but raises on falsy *data*."""
+    result = _parse_session_info(data)
+    if result is None:
+        raise ValueError(f"Expected session data, got: {data!r}")
+    return result
+
+
 def _encode_files_for_transport(
     files: Dict[str, Union[str, bytes]]
 ) -> Dict[str, Dict[str, str]]:

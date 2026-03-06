@@ -581,7 +581,7 @@ class Evolve:
         """Get the observability session tag.
 
         Returns the generated tag (e.g., 'my-prefix-a3f8b2c1') used for the
-        log file in ~/.evolve/observability/sessions/
+        log file in ~/.evolve-sdk/observability/sessions/
 
         Returns:
             Session tag or None if not initialized

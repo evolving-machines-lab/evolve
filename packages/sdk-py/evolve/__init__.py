@@ -17,9 +17,22 @@ from .config import (
     ToolsFilter,
     StorageConfig,
     StorageCredentials,
+    SessionsConfig,
 )
-from .results import AgentResponse, CheckpointInfo, ExecuteResult, OutputResult, RunCost, SessionCost, SessionStatus
+from .results import (
+    AgentResponse,
+    CheckpointInfo,
+    ExecuteResult,
+    OutputResult,
+    RunCost,
+    SessionCost,
+    SessionStatus,
+    SessionInfo,
+    SessionPage,
+    SessionEvent,
+)
 from .storage_client import StorageClient
+from .sessions_client import SessionsClient
 from .utils import read_local_dir, save_local_dir
 from .bridge import (
     SandboxNotFoundError,
@@ -103,6 +116,34 @@ def storage(config: Optional[StorageConfig] = None) -> StorageClient:
     return StorageClient(bridge, config or StorageConfig(), _owns_bridge=True)
 
 
+def sessions(config: Optional[SessionsConfig] = None) -> SessionsClient:
+    """Create a standalone sessions client for historical traces and past sessions.
+
+    Returns a ``SessionsClient`` that manages its own bridge subprocess.
+    Use as an async context manager to ensure cleanup.
+
+    Gateway-only: requires ``EVOLVE_API_KEY`` unless ``SessionsConfig(api_key=...)``
+    is provided.
+
+    Args:
+        config: Optional API key / dashboard URL overrides
+
+    Returns:
+        SessionsClient with list, get, events, download methods
+
+    Example:
+        >>> from evolve import sessions
+        >>>
+        >>> async with sessions() as client:
+        ...     page = await client.list(limit=10, state='ended')
+        ...     trace = await client.get(page.items[0].id)
+        ...     await client.download(trace.id, to='./traces')
+    """
+    from .bridge import BridgeManager
+    bridge = BridgeManager()
+    return SessionsClient(bridge, config or SessionsConfig(), _owns_bridge=True)
+
+
 async def list_checkpoints(
     storage: Optional[StorageConfig] = None,
     limit: Optional[int] = None,
@@ -162,6 +203,7 @@ __all__ = [
     'ToolsFilter',
     'StorageConfig',
     'StorageCredentials',
+    'SessionsConfig',
 
     # Evolve Results
     'AgentResponse',
@@ -171,12 +213,17 @@ __all__ = [
     'RunCost',
     'SessionCost',
     'SessionStatus',
+    'SessionInfo',
+    'SessionPage',
+    'SessionEvent',
 
-    # Storage client
+    # Standalone clients
     'StorageClient',
+    'SessionsClient',
 
     # Standalone functions
     'storage',
+    'sessions',
     'list_checkpoints',
 
     # Swarm Configuration
