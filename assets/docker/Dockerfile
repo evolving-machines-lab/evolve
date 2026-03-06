@@ -120,11 +120,6 @@ RUN git clone --depth 1 --filter=blob:none --sparse https://github.com/evolving-
     && rm -rf /tmp/evolve
 
 # ---------------------------------------------------------------------------
-# Gemini settings (enable experimental skills)
-# ---------------------------------------------------------------------------
-RUN echo '{"experimental":{"skills":true}}' > /home/user/.gemini/settings.json
-
-# ---------------------------------------------------------------------------
 # Gemini Extensions (Nano Banana for image generation)
 # ---------------------------------------------------------------------------
 RUN echo y | gemini extensions install https://github.com/gemini-cli-extensions/nanobanana || true

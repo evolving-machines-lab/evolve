@@ -276,7 +276,6 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     skillsConfig: {
       sourceDir: "/home/user/.evolve/skills",
       targetDir: "/home/user/.qwen/skills",
-      enableFlag: "--experimental-skills",
     },
     // Source-verified: Qwen reads customHeaders from settings.json model.generationConfig,
     // not from env vars. The SDK writes headers to this path before each run.
@@ -284,15 +283,14 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       headersPath: "model.generationConfig.customHeaders",
     },
     defaultBaseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-    buildCommand: ({ prompt, model, isResume, isDirectMode, skills }) => {
+    buildCommand: ({ prompt, model, isResume, isDirectMode }) => {
       const continueFlag = isResume ? "--continue " : "";
-      const skillsFlag = skills?.length ? "--experimental-skills " : "";
       // Only add dashscope/ prefix for gateway mode (LiteLLM routing)
       const prefixedModel = isDirectMode || model.startsWith("dashscope/")
         ? model
         : `dashscope/${model}`;
       // --auth-type openai is required in non-interactive mode when env vars don't include OPENAI_MODEL
-      return `qwen "${prompt}" ${continueFlag}${skillsFlag}--auth-type openai --model ${prefixedModel} --yolo --output-format stream-json`;
+      return `qwen "${prompt}" ${continueFlag}--auth-type openai --model ${prefixedModel} --yolo --output-format stream-json`;
     },
   },
 
