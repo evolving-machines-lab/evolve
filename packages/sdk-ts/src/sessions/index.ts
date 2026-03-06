@@ -1,5 +1,8 @@
-import { writeFile, mkdir } from "fs/promises";
+import { createWriteStream } from "fs";
+import { mkdir } from "fs/promises";
 import { join } from "path";
+import { Readable } from "stream";
+import { pipeline } from "stream/promises";
 import { DEFAULT_DASHBOARD_URL, ENV_EVOLVE_API_KEY } from "../constants";
 import type {
   SessionsClient,
@@ -168,8 +171,11 @@ export function sessions(config?: SessionsConfig): SessionsClient {
       const dir = options?.to || process.cwd();
       await mkdir(dir, { recursive: true });
       const filePath = join(dir, `${tag}.jsonl`);
-      const content = await res.text();
-      await writeFile(filePath, content, "utf-8");
+      if (!res.body) {
+        throw new Error("Download response has no body");
+      }
+      const nodeStream = Readable.fromWeb(res.body as import("stream/web").ReadableStream);
+      await pipeline(nodeStream, createWriteStream(filePath));
       return filePath;
     },
   };
