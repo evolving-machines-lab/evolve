@@ -718,6 +718,53 @@ print(await evolve.get_session_timestamp())  # Timestamp for second log file
 Use the tag together with the sandbox id to correlate logs with files saved in
 `/output/`.
 
+### Historical Sessions & Trace Download
+
+Gateway mode also exposes a standalone `sessions()` client for querying past
+sessions and downloading full trace files, even after the sandbox has ended.
+
+```python
+from evolve import sessions
+
+async with sessions() as session:
+    page = await session.list(limit=20, state='ended', tag_prefix='my-project')
+
+    if page.items:
+        info = await session.get(page.items[0].id)
+        recent_events = await session.events(info.id, since=10)
+        path = await session.download(info.id, to='./traces')
+
+        print(info.runtime_status)   # 'alive' | 'dead' | 'unknown'
+        print(len(recent_events))    # Parsed JSONL objects
+        print(path)                  # ./traces/{tag}.jsonl
+```
+
+The `sessions()` factory returns a `SessionsClient` with four methods:
+
+```python
+page = await session.list(
+    limit=20,
+    cursor=None,
+    state='all',         # 'live' | 'ended' | 'all'
+    agent='claude',
+    tag_prefix='my-project',
+    sort='newest',       # 'newest' | 'oldest' | 'cost'
+)
+
+info = await session.get('session-id')
+events = await session.events('session-id', since=50)
+path = await session.download('session-id', to='./traces')
+```
+
+- `list()` returns `SessionPage(items, next_cursor, has_more)`
+- `get()` returns `SessionInfo` with snake_case fields such as `sandbox_id`,
+  `runtime_status`, `created_at`, and `tool_stats`
+- `events()` returns parsed JSONL objects for programmatic inspection
+- `download()` saves the raw `.jsonl` trace file to disk and returns the path
+
+This API is **gateway-only**. In BYOK/direct mode, historical traces remain
+available via local JSONL files in `~/.evolve-sdk/observability/sessions/`.
+
 ---
 
 ## Cost Tracking
@@ -815,4 +862,3 @@ except Exception as err:
 ```
 
 ---
-
