@@ -85,9 +85,6 @@ export const template = Template()
   // Clone skills from evolve repo (sparse checkout for skills/ only)
   .runCmd('git clone --depth 1 --filter=blob:none --sparse https://github.com/evolving-machines-lab/evolve.git /tmp/evolve && cd /tmp/evolve && git sparse-checkout set skills && mv skills/* ~/.evolve/skills/ && rm -rf /tmp/evolve')
 
-  // Enable Gemini experimental skills
-  .runCmd('echo \'{"experimental":{"skills":true}}\' > ~/.gemini/settings.json')
-
   // ---------------------------------------------------------------------------
   // Gemini Extensions (Nano Banana for image generation)
   // ---------------------------------------------------------------------------

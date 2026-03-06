@@ -143,8 +143,6 @@ export interface SkillsConfig {
   sourceDir: string;
   /** Target directory where skills are copied for this CLI */
   targetDir: string;
-  /** CLI flag to enable skills (e.g., "--experimental-skills") */
-  enableFlag?: string;
 }
 
 /** Reasoning effort for models that support it (Codex only) */
