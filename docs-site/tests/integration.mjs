@@ -154,7 +154,7 @@ if (pyGettingStarted) {
 console.log('\n=== Footer ===');
 
 if (navSource) {
-  assert(navSource.includes('Apache-2.0'), 'Footer contains "Apache-2.0"');
+  assert(navSource.includes('BSL-1.1'), 'Footer contains "BSL-1.1"');
   assert(navSource.includes('Evolving Machines'), 'Footer contains "Evolving Machines"');
 }
 

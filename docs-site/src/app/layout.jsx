@@ -24,7 +24,7 @@ const navbar = (
 
 const footer = (
   <Footer>
-    Apache-2.0 {new Date().getFullYear()} © Evolving Machines.
+    BSL-1.1 {new Date().getFullYear()} © Evolving Machines.
   </Footer>
 );
 

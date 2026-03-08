@@ -154,7 +154,7 @@ assert(layoutContent.includes('docsRepositoryBase'), 'layout has docsRepositoryB
 assert(layoutContent.includes('github.com/evolving-machines-lab/evolve'), 'layout has correct GitHub URL');
 assert(layoutContent.includes('projectLink'), 'layout has projectLink');
 assert(layoutContent.includes('Evolve SDK'), 'layout has Evolve SDK text');
-assert(layoutContent.includes('Apache-2.0'), 'layout has Apache-2.0 in footer');
+assert(layoutContent.includes('BSL-1.1'), 'layout has BSL-1.1 in footer');
 assert(layoutContent.includes('search={false}'), 'layout has search disabled');
 
 // --- Summary ---
