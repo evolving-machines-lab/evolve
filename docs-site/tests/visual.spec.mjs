@@ -74,7 +74,7 @@ test('footer is present', async ({ page }) => {
   await page.goto('/typescript/01-getting-started');
   const footer = page.locator('footer');
   await expect(footer).toBeVisible();
-  await expect(footer).toContainText('Apache-2.0');
+  await expect(footer).toContainText('BSL-1.1');
   await expect(footer).toContainText('Evolving Machines');
 });
 
