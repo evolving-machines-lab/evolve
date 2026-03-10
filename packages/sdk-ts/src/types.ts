@@ -521,8 +521,12 @@ export interface MultiAgentEntry {
   type: AgentType;
   /** Model override (optional, defaults from registry) */
   model?: string;
-  /** Optional role prompt passed to the agent as-is */
+  /** Short role label (e.g., "Lead architect") */
   role?: string;
+  /** Role prompt passed to the agent as-is (e.g., "You design the system...") */
+  rolePrompt?: string;
+  /** Per-agent system prompt written to agent MD file (overrides shared .withSystemPrompt()) */
+  systemPrompt?: string;
   /** Per-agent skills (merged with shared .withSkills()) */
   skills?: SkillName[];
   /** Per-agent MCP servers (merged with shared .withMcpServers()) */

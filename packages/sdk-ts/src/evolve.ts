@@ -495,6 +495,7 @@ export class Evolve extends EventEmitter {
       secrets: this.config.secrets,
       files: this.config.files,
       context: this.config.context,
+      systemPrompt: this.config.systemPrompt,
       workspaceMode: this.config.workspaceMode,
       workingDirectory: this.config.workingDirectory,
       apiKey: agentConfig.isDirectMode ? undefined : agentConfig.apiKey,

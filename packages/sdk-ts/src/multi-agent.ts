@@ -32,6 +32,7 @@ import { createAgentParser, type AgentParser, type OutputEvent } from "./parsers
 import { getAgentConfig } from "./registry";
 import { writeMcpConfig } from "./mcp";
 import { DEFAULT_WORKING_DIR, DEFAULT_TIMEOUT_MS } from "./constants";
+import { buildWorkerSystemPrompt } from "./prompts";
 import { createCheckpoint, restoreCheckpoint, getLatestCheckpoint } from "./storage";
 
 // =============================================================================
@@ -45,6 +46,7 @@ interface A2AConfig {
   agents: Array<{
     type: AgentType;
     model?: string;
+    role?: string;
     promptText?: string;
   }>;
 }
@@ -74,6 +76,8 @@ export interface MultiAgentOptions {
   files?: FileMap;
   /** Context files */
   context?: FileMap;
+  /** Shared system prompt (fallback for agents without per-agent systemPrompt) */
+  systemPrompt?: string;
   /** Workspace mode */
   workspaceMode?: WorkspaceMode;
   /** Working directory */
@@ -123,6 +127,13 @@ export class MultiAgentRuntime {
     const dupes = types.filter((t, i) => types.indexOf(t) !== i);
     if (dupes.length > 0) {
       throw new Error(`Duplicate agent type(s): ${[...new Set(dupes)].join(", ")}. One instance per agent type.`);
+    }
+
+    // Enforce mutual exclusion: shared systemPrompt OR per-agent systemPrompt, not both
+    if (options.systemPrompt && options.agents.some(a => a.systemPrompt)) {
+      throw new Error(
+        "Cannot use both .withSystemPrompt() and per-agent systemPrompt. Use one or the other."
+      );
     }
 
     this.options = options;
@@ -556,6 +567,18 @@ export class MultiAgentRuntime {
     await Promise.all(this.options.agents.map(async (agent) => {
       const registry = getAgentConfig(agent.type);
 
+      // Write system prompt to agent's MD file (per-agent overrides shared)
+      const prompt = agent.systemPrompt ?? this.options.systemPrompt;
+      if (prompt || this.options.workspaceMode) {
+        const fullPrompt = buildWorkerSystemPrompt({
+          workingDir: this.workingDir,
+          systemPrompt: prompt,
+          mode: this.options.workspaceMode ?? "knowledge",
+        });
+        const filePath = `${this.workingDir}/${registry.systemPromptFile}`;
+        await sandbox.files.write(filePath, fullPrompt);
+      }
+
       // Merge shared + per-agent MCP servers
       const mergedMcp: Record<string, McpServerConfig> = {
         ...this.options.sharedMcpServers,
@@ -625,7 +648,8 @@ export class MultiAgentRuntime {
       agents: this.options.agents.map((agent) => ({
         type: agent.type,
         model: agent.model,
-        promptText: agent.role,
+        role: agent.role,
+        promptText: agent.rolePrompt,
       })),
     };
   }
