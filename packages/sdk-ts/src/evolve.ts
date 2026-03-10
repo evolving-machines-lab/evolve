@@ -617,23 +617,7 @@ export class Evolve extends EventEmitter {
     return this.agent!.run({ prompt, timeoutMs, background, from, checkpointComment }, callbacks);
   }
 
-  /**
-   * Send a follow-up message (multi-agent only).
-   * Stops current agents, seeds new message, re-streams.
-   */
-  async send({
-    prompt,
-    seedTo,
-  }: {
-    prompt: string;
-    seedTo?: string;
-  }): Promise<AgentResponse> {
-    if (!this.multiAgentRuntime) {
-      throw new Error("send() is only available in multi-agent mode. Use run() for single-agent.");
-    }
-    const callbacks = this.createMultiAgentCallbacks();
-    return this.multiAgentRuntime.send(prompt, seedTo, callbacks);
-  }
+
 
   /**
    * Execute arbitrary command in sandbox

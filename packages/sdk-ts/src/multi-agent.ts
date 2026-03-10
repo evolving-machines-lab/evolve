@@ -288,53 +288,6 @@ export class MultiAgentRuntime {
     this.emitLifecycle(callbacks, "run_interrupted");
   }
 
-  /**
-   * Send a new message and restart agents (preserves state via --no-clean).
-   * Returns a new stream handle — caller should read it.
-   */
-  async send(
-    prompt: string,
-    seedTo: string = "*",
-    callbacks?: MultiAgentStreamCallbacks,
-  ): Promise<AgentResponse> {
-    if (!this.sandbox) throw new Error("No active sandbox. Call run() first.");
-    if (this.agentState === "running") {
-      throw new Error("Multi-agent runtime is already running. Wait for completion or call interrupt().");
-    }
-
-    // Store prompt so loggers write it when first created during streaming
-    this.pendingPrompt = prompt;
-
-    // Stop current agents
-    await this.sandbox.commands.run("a2a stop").catch(() => {});
-
-    // Restart with --no-clean + new message, then stream
-    this.agentState = "running";
-    this.emitLifecycle(callbacks, "run_start");
-
-    const sandbox = this.sandbox;
-    await this.runOrThrow(
-      sandbox,
-      `a2a start --no-clean --to "${escapeForShell(seedTo)}" "${escapeForShell(prompt)}"`,
-      "start",
-      callbacks,
-    );
-
-    const result = await this.streamUntilDone(sandbox, callbacks);
-
-    const success = result.exitCode === 0;
-    this.agentState = success ? "idle" : "error";
-    this.emitLifecycle(callbacks, success ? "run_complete" : "run_failed");
-
-    await this.flushLoggers();
-
-    return {
-      sandboxId: sandbox.sandboxId,
-      exitCode: result.exitCode,
-      stdout: result.stdout,
-      stderr: result.stderr,
-    };
-  }
 
   /** Create a checkpoint of the current sandbox state. */
   async checkpoint(options?: { comment?: string }): Promise<CheckpointInfo> {

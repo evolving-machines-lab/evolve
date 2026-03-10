@@ -347,38 +347,24 @@ async function testStreamDemuxing(): Promise<void> {
   assert(reasons.includes("run_complete"), "lifecycle includes run_complete");
 }
 
-async function testSend(): Promise<void> {
-  console.log("\n[5] send() follow-up message");
+async function testStackedRun(): Promise<void> {
+  console.log("\n[5] stacked run() uses --no-clean");
   const { kit, provider } = createKit();
 
   await kit.run({ prompt: "initial task" });
 
-  // send() should use --no-clean
-  const result = await kit.send({ prompt: "follow-up question", seedTo: "claude" });
+  // Second run() should use --no-clean
+  const result = await kit.run({ prompt: "follow-up question", seedTo: "claude" });
 
-  assertEqual(result.exitCode, 0, "send() succeeds");
+  assertEqual(result.exitCode, 0, "stacked run() succeeds");
 
   // Check --no-clean used
   const starts = provider.sandbox.commands.commandsMatching("a2a start --no-clean");
-  assert(starts.length > 0, "send() uses --no-clean flag");
+  assert(starts.length > 0, "stacked run() uses --no-clean flag");
 
   // Check seedTo routing
   const lastStart = starts[starts.length - 1];
-  assertIncludes(lastStart.command, '--to "claude"', "send() routes to specified agent");
-}
-
-async function testSendBeforeRunThrows(): Promise<void> {
-  console.log("\n[6] send() before run() throws");
-  const { kit } = createKit();
-
-  let threw = false;
-  try {
-    await kit.send({ prompt: "hello" });
-  } catch (e) {
-    threw = true;
-    assertIncludes((e as Error).message, "send() is only available in multi-agent mode", "send() throws clear error before run");
-  }
-  assertEqual(threw, true, "send() throws before run()");
+  assertIncludes(lastStart.command, '--to "claude"', "stacked run() routes to specified agent");
 }
 
 async function testInterrupt(): Promise<void> {
@@ -531,15 +517,6 @@ async function testReentryGuard(): Promise<void> {
   assertEqual(threw, true, "concurrent run() throws");
 
   // Also test send() reentry
-  let sendThrew = false;
-  try {
-    await kit.send({ prompt: "follow-up" });
-  } catch (e) {
-    sendThrew = true;
-    assertIncludes((e as Error).message, "already running", "send() also throws when running");
-  }
-  assertEqual(sendThrew, true, "concurrent send() throws");
-
   // Clean up: switch watcher to "done" and let it finish
   provider.sandbox.commands.overrides.set("watcher.pid", { exitCode: 0, stdout: "done", stderr: "" });
   await firstRun;
@@ -744,15 +721,11 @@ async function testSingleAgentNotAffected(): Promise<void> {
     .withAgent({ type: "claude", providerApiKey: "test-key" })
     .withSandbox(provider);
 
-  // send() should throw because this is single-agent mode
-  let threw = false;
-  try {
-    await kit.send({ prompt: "hello" });
-  } catch (e) {
-    threw = true;
-    assertIncludes((e as Error).message, "multi-agent", "send() blocked in single-agent");
-  }
-  assertEqual(threw, true, "single-agent mode blocks multi-agent-only methods");
+  // Multi-agent-only methods should not exist on single-agent kit
+  // Verify that withMultiAgent was not called — kit has no multiAgentRuntime
+  const status = kit.status();
+  assertEqual(status.sandbox, "stopped", "single-agent starts in stopped state");
+  assert(!("multiAgent" in status), "single-agent status has no multi-agent fields");
 }
 
 async function testUnsupportedMethodsThrow(): Promise<void> {
@@ -813,8 +786,7 @@ async function main(): Promise<void> {
     await testSeedTo();
     await testDefaultSeedToAll();
     await testStreamDemuxing();
-    await testSend();
-    await testSendBeforeRunThrows();
+    await testStackedRun();
     await testInterrupt();
     await testKill();
     await testPauseResume();
