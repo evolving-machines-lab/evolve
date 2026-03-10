@@ -28,6 +28,10 @@ case "$1" in
     echo "Building E2B template (maintainer only)..."
     npx tsx e2b/build.ts
     ;;
+  e2b-gateway)
+    echo "Building E2B gateway template (private, maintainer only)..."
+    npx tsx e2b-gateway/build.ts
+    ;;
   *)
     echo "Evolve Assets Builder"
     echo ""
@@ -39,7 +43,8 @@ case "$1" in
     echo ""
     echo "For maintainers:"
     echo "  docker    Build & push Docker image to Hub"
-    echo "  e2b       Rebuild E2B template"
+    echo "  e2b       Rebuild E2B public template"
+    echo "  e2b-gateway  Rebuild E2B gateway template (private)"
     exit 1
     ;;
 esac
