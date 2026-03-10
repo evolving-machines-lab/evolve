@@ -196,8 +196,8 @@ export class MultiAgentRuntime {
 
     // --- Start watcher + seed message ---
     const startCmd = this.hasRun
-      ? `a2a start --no-clean --to "${seedTo}" "${escapeForShell(prompt)}"`
-      : `a2a start --to "${seedTo}" "${escapeForShell(prompt)}"`;
+      ? `a2a start --no-clean --to "${escapeForShell(seedTo)}" "${escapeForShell(prompt)}"`
+      : `a2a start --to "${escapeForShell(seedTo)}" "${escapeForShell(prompt)}"`;
     await sandbox.commands.run(startCmd);
 
     // --- Stream until completion ---
@@ -260,7 +260,7 @@ export class MultiAgentRuntime {
 
     const sandbox = this.sandbox;
     await sandbox.commands.run(
-      `a2a start --no-clean --to "${seedTo}" "${escapeForShell(prompt)}"`,
+      `a2a start --no-clean --to "${escapeForShell(seedTo)}" "${escapeForShell(prompt)}"`,
     );
 
     const result = await this.streamUntilDone(sandbox, callbacks);
@@ -682,6 +682,7 @@ export class MultiAgentRuntime {
       l.close(),
     );
     await Promise.all(promises);
+    this.sessionLoggers.clear();
   }
 
   // ===========================================================================
