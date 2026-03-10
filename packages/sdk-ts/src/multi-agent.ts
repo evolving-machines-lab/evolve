@@ -110,6 +110,7 @@ export class MultiAgentRuntime {
   private agentState: AgentRuntimeState = "idle";
   private hasRun = false;
   private sessionTag: string;
+  private sessionTimestamp?: string;
   private lastCheckpointId?: string;
 
   // Per-agent parsers and session loggers
@@ -213,6 +214,9 @@ export class MultiAgentRuntime {
     }
 
     // --- Mark running ---
+    if (!this.sessionTimestamp) {
+      this.sessionTimestamp = new Date().toISOString();
+    }
     this.agentState = "running";
     this.emitLifecycle(callbacks, "run_start");
 
@@ -371,6 +375,10 @@ export class MultiAgentRuntime {
 
   getSessionTag(): string {
     return this.sessionTag;
+  }
+
+  getSessionTimestamp(): string | null {
+    return this.sessionTimestamp ?? null;
   }
 
   status(): SessionStatus {

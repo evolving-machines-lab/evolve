@@ -935,6 +935,9 @@ export class Evolve extends EventEmitter {
    * Returns null if no session has started (run() not called yet).
    */
   getSessionTimestamp(): string | null {
+    if (this.multiAgentRuntime) {
+      return this.multiAgentRuntime.getSessionTimestamp();
+    }
     return this.agent?.getSessionTimestamp() || null;
   }
 
