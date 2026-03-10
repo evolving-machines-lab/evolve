@@ -315,6 +315,8 @@ export class MultiAgentRuntime {
     this.sandbox = undefined;
     this.sandboxState = "stopped";
     this.agentState = "idle";
+    this.hasRun = false;
+    this.lastCheckpointId = undefined;
     this.emitLifecycle(callbacks, "sandbox_killed");
   }
 
@@ -394,7 +396,11 @@ export class MultiAgentRuntime {
   // ===========================================================================
 
   /**
-   * Spawn `a2a stream`, demux lines, wait for completion, then stop.
+   * Spawn `a2a stream`, demux lines, poll for watcher exit, then clean up.
+   *
+   * stream.py is an infinite poll loop — it never exits on its own.
+   * We poll `a2a status` to detect when all agents are idle (watcher done),
+   * then kill the stream process and run `a2a stop`.
    */
   private async streamUntilDone(
     sandbox: SandboxInstance,
@@ -405,7 +411,6 @@ export class MultiAgentRuntime {
 
     const handle = await sandbox.commands.spawn("a2a stream", {
       cwd: this.workingDir,
-      timeoutMs,
       onStdout: (chunk: string) => {
         lineBuffer += chunk;
         const lines = lineBuffer.split("\n");
@@ -420,14 +425,44 @@ export class MultiAgentRuntime {
       },
     });
 
-    const result = await handle.wait();
+    // Poll watcher PID to detect completion (stream.py won't exit on its own)
+    const startTime = Date.now();
+    const pollMs = 2000;
+    // Give agents time to start before first status check
+    await new Promise(r => setTimeout(r, 5000));
 
+    while (true) {
+      if (timeoutMs && (Date.now() - startTime) > timeoutMs) {
+        break; // timeout
+      }
+
+      const statusResult = await sandbox.commands.run(
+        "test -f ~/.a2a/internal/pids/watcher.pid && kill -0 $(cat ~/.a2a/internal/pids/watcher.pid) 2>/dev/null && echo running || echo done",
+      ).catch(() => ({ stdout: "done", stderr: "", exitCode: 1 }));
+
+      if (statusResult.stdout.trim() === "done") {
+        // Watcher exited — agents finished, give stream a moment to flush
+        await new Promise(r => setTimeout(r, 500));
+        break;
+      }
+
+      await new Promise(r => setTimeout(r, pollMs));
+    }
+
+    // Flush remaining buffer
     if (lineBuffer.trim()) {
       this.handleStreamLine(lineBuffer, sandbox, callbacks);
     }
 
+    // Kill stream process (infinite loop) and stop any remaining agents
+    await handle.kill().catch(() => {});
     await sandbox.commands.run("a2a stop").catch(() => {});
-    return result;
+
+    return {
+      exitCode: timeoutMs && (Date.now() - startTime) > timeoutMs ? 124 : 0,
+      stdout: "",
+      stderr: "",
+    };
   }
 
   private handleStreamLine(
@@ -513,9 +548,10 @@ export class MultiAgentRuntime {
       // Copy skills to agent's skills directory
       if (mergedSkills.length > 0) {
         const { sourceDir, targetDir } = registry.skillsConfig;
+        await sandbox.files.makeDir(targetDir);
         for (const skill of mergedSkills) {
           await sandbox.commands.run(
-            `cp -r ${sourceDir}/${skill} ${targetDir}/${skill} 2>/dev/null || true`,
+            `cp -r ${sourceDir}/${skill} ${targetDir}/ 2>/dev/null || true`,
           );
         }
       }
@@ -558,6 +594,7 @@ export class MultiAgentRuntime {
 
   private buildA2AConfig(): A2AConfig {
     return {
+      root: "/home/user/.a2a",
       gateway: !this.options.isDirectMode,
       workspace: this.workingDir,
       agents: this.options.agents.map((agent) => ({

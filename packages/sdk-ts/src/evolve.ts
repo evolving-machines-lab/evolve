@@ -629,7 +629,7 @@ export class Evolve extends EventEmitter {
     command: string,
     options: { timeoutMs?: number; background?: boolean } = {}
   ): Promise<AgentResponse> {
-    if (this.multiAgentRuntime) {
+    if (this.config.multiAgent) {
       throw new Error("executeCommand() is not available in multi-agent mode.");
     }
     if (!this.agent) {
@@ -661,7 +661,7 @@ export class Evolve extends EventEmitter {
    * Upload context files (runtime - immediate upload)
    */
   async uploadContext(files: FileMap): Promise<void> {
-    if (this.multiAgentRuntime) {
+    if (this.config.multiAgent) {
       throw new Error("uploadContext() is not available in multi-agent mode. Use .withContext() before run().");
     }
     if (!this.agent) {
@@ -674,7 +674,7 @@ export class Evolve extends EventEmitter {
    * Upload files to workspace (runtime - immediate upload)
    */
   async uploadFiles(files: FileMap): Promise<void> {
-    if (this.multiAgentRuntime) {
+    if (this.config.multiAgent) {
       throw new Error("uploadFiles() is not available in multi-agent mode. Use .withFiles() before run().");
     }
     if (!this.agent) {
@@ -689,7 +689,7 @@ export class Evolve extends EventEmitter {
    * @param recursive - Include files in subdirectories (default: false)
    */
   async getOutputFiles<T = unknown>(recursive = false): Promise<OutputResult<T>> {
-    if (this.multiAgentRuntime) {
+    if (this.config.multiAgent) {
       throw new Error("getOutputFiles() is not available in multi-agent mode.");
     }
     if (!this.agent) {
@@ -901,7 +901,7 @@ export class Evolve extends EventEmitter {
    * Get host URL for a port
    */
   async getHost(port: number): Promise<string> {
-    if (this.multiAgentRuntime) {
+    if (this.config.multiAgent) {
       throw new Error("getHost() is not available in multi-agent mode.");
     }
     if (!this.agent) {
@@ -948,7 +948,7 @@ export class Evolve extends EventEmitter {
    * Requires gateway mode (EVOLVE_API_KEY).
    */
   async getSessionCost(): Promise<SessionCost> {
-    if (this.multiAgentRuntime) {
+    if (this.config.multiAgent) {
       throw new Error("getSessionCost() is not yet available in multi-agent mode.");
     }
     if (!this.agent) throw new Error("No agent initialized. Call run() first.");
@@ -960,7 +960,7 @@ export class Evolve extends EventEmitter {
    * @param run - Either `{ runId: string }` or `{ index: number }` (1-based, negative = from end)
    */
   async getRunCost(run: { runId: string } | { index: number }): Promise<RunCost> {
-    if (this.multiAgentRuntime) {
+    if (this.config.multiAgent) {
       throw new Error("getRunCost() is not yet available in multi-agent mode.");
     }
     if (!this.agent) throw new Error("No agent initialized. Call run() first.");

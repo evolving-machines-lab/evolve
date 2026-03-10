@@ -531,6 +531,7 @@ export interface MultiAgentEntry {
 
 /** A2A config written to sandbox for `a2a bootstrap` */
 export interface A2AConfig {
+  root: string;
   gateway: boolean;
   workspace: string;
   agents: Array<{
