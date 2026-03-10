@@ -123,6 +123,11 @@ export class SessionLogger {
     this.write({ _prompt: { text: prompt } });
   }
 
+  writeMailbox(message: Record<string, unknown>): void {
+    if (this.isClosed) return;
+    this.write({ _mailbox: message });
+  }
+
   /**
    * Write event with pre-parsed events (avoids double parsing).
    * Use this when caller already has parsed events.

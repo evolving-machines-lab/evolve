@@ -527,6 +527,8 @@ export interface MultiAgentEntry {
   rolePrompt?: string;
   /** Per-agent system prompt written to agent MD file (overrides shared .withSystemPrompt()) */
   systemPrompt?: string;
+  /** Per-agent schema (overrides shared .withSchema()) */
+  schema?: import("zod").ZodType<unknown> | JsonSchema;
   /** Per-agent skills (merged with shared .withSkills()) */
   skills?: SkillName[];
   /** Per-agent MCP servers (merged with shared .withMcpServers()) */

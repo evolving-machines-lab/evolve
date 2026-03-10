@@ -56,6 +56,8 @@ export interface EvolveEvents {
   stderr: (chunk: string) => void;
   content: (event: OutputEvent) => void;
   lifecycle: (event: LifecycleEvent) => void;
+  /** Agent-to-agent mailbox messages (multi-agent only) */
+  mailbox: (message: unknown) => void;
 }
 
 export interface EvolveConfig {
@@ -496,6 +498,7 @@ export class Evolve extends EventEmitter {
       files: this.config.files,
       context: this.config.context,
       systemPrompt: this.config.systemPrompt,
+      schema: this.config.schema,
       workspaceMode: this.config.workspaceMode,
       workingDirectory: this.config.workingDirectory,
       apiKey: agentConfig.isDirectMode ? undefined : agentConfig.apiKey,
@@ -531,9 +534,14 @@ export class Evolve extends EventEmitter {
     };
   }
 
-  /** Alias — MultiAgentStreamCallbacks extends StreamCallbacks, same shape */
   private createMultiAgentCallbacks(): MultiAgentStreamCallbacks {
-    return this.createStreamCallbacks();
+    const hasMailboxListener = this.listenerCount("mailbox") > 0;
+    return {
+      ...this.createStreamCallbacks(),
+      onMailbox: hasMailboxListener
+        ? (message: unknown) => this.emit("mailbox", message)
+        : undefined,
+    };
   }
 
   private emitLifecycleFromStatus(reason: LifecycleReason): void {

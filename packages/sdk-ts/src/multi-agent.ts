@@ -78,6 +78,8 @@ export interface MultiAgentOptions {
   context?: FileMap;
   /** Shared system prompt (fallback for agents without per-agent systemPrompt) */
   systemPrompt?: string;
+  /** Shared schema (fallback for agents without per-agent schema) */
+  schema?: unknown;
   /** Workspace mode */
   workspaceMode?: WorkspaceMode;
   /** Working directory */
@@ -115,6 +117,7 @@ export class MultiAgentRuntime {
   private hasRun = false;
   private sessionTag: string;
   private sessionTimestamp?: string;
+  private pendingPrompt?: string;
   private lastCheckpointId?: string;
 
   // Per-agent parsers and session loggers
@@ -129,10 +132,15 @@ export class MultiAgentRuntime {
       throw new Error(`Duplicate agent type(s): ${[...new Set(dupes)].join(", ")}. One instance per agent type.`);
     }
 
-    // Enforce mutual exclusion: shared systemPrompt OR per-agent systemPrompt, not both
+    // Enforce mutual exclusion: shared OR per-agent, not both
     if (options.systemPrompt && options.agents.some(a => a.systemPrompt)) {
       throw new Error(
         "Cannot use both .withSystemPrompt() and per-agent systemPrompt. Use one or the other."
+      );
+    }
+    if (options.schema && options.agents.some(a => a.schema)) {
+      throw new Error(
+        "Cannot use both .withSchema() and per-agent schema. Use one or the other."
       );
     }
 
@@ -224,6 +232,9 @@ export class MultiAgentRuntime {
       }
     }
 
+    // Store prompt so loggers write it when first created during streaming
+    this.pendingPrompt = prompt;
+
     // --- Mark running ---
     if (!this.sessionTimestamp) {
       this.sessionTimestamp = new Date().toISOString();
@@ -290,6 +301,9 @@ export class MultiAgentRuntime {
     if (this.agentState === "running") {
       throw new Error("Multi-agent runtime is already running. Wait for completion or call interrupt().");
     }
+
+    // Store prompt so loggers write it when first created during streaming
+    this.pendingPrompt = prompt;
 
     // Stop current agents
     await this.sandbox.commands.run("a2a stop").catch(() => {});
@@ -548,6 +562,12 @@ export class MultiAgentRuntime {
       }
 
       case "mailbox": {
+        const msg = data as Record<string, unknown>;
+        const sender = typeof msg.from === "string" ? msg.from : undefined;
+        if (sender) {
+          const logger = this.getOrCreateLogger(sender as AgentType, sandbox);
+          logger?.writeMailbox(msg);
+        }
         callbacks?.onMailbox?.(data);
         break;
       }
@@ -567,12 +587,14 @@ export class MultiAgentRuntime {
     await Promise.all(this.options.agents.map(async (agent) => {
       const registry = getAgentConfig(agent.type);
 
-      // Write system prompt to agent's MD file (per-agent overrides shared)
+      // Write system prompt + schema to agent's MD file (per-agent overrides shared)
       const prompt = agent.systemPrompt ?? this.options.systemPrompt;
-      if (prompt || this.options.workspaceMode) {
+      const schema = agent.schema ?? this.options.schema;
+      if (prompt || schema || this.options.workspaceMode) {
         const fullPrompt = buildWorkerSystemPrompt({
           workingDir: this.workingDir,
           systemPrompt: prompt,
+          schema: schema as any,
           mode: this.options.workspaceMode ?? "knowledge",
         });
         const filePath = `${this.workingDir}/${registry.systemPromptFile}`;
@@ -746,13 +768,18 @@ export class MultiAgentRuntime {
       agent: agentType,
       model: entry?.model || registry.defaultModel,
       sandboxId: sandbox.sandboxId,
-      tagPrefix: this.options.sessionTagPrefix || "evolve-multi",
+      tag: this.sessionTag,
       apiKey: this.options.apiKey,
       observability: {
         ...this.options.observability,
         multiAgent: true,
       },
     });
+
+    // Write pending prompt if this is a fresh logger
+    if (this.pendingPrompt) {
+      logger.writePrompt(this.pendingPrompt);
+    }
 
     this.sessionLoggers.set(agentType, logger);
     return logger;
