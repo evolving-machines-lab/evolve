@@ -122,7 +122,6 @@ export type {
   // Multi-agent
   MultiAgentEntry,
   MultiAgentRunOptions,
-  A2AStreamLine,
 } from "./types";
 
 // Composio types (for static helper return types)

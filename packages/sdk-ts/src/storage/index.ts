@@ -556,7 +556,7 @@ export async function createCheckpoint(
   agentType: AgentType,
   workingDir: string,
   meta: { tag: string; model?: string; workspaceMode?: string; parentId?: string; comment?: string },
-  /** Custom tar command (for multi-agent checkpoints that include ~/.a2a/ and multiple agent dirs) */
+  /** Custom tar command for multi-agent checkpoints */
   tarCommand?: string,
 ): Promise<CheckpointInfo> {
   const timestamp = new Date().toISOString();

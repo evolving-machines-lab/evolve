@@ -360,7 +360,6 @@ export class Evolve extends EventEmitter {
   /**
    * Enable multi-agent mode (gateway-only)
    *
-   * Uses the evolve-gateway template with A2A protocol pre-installed.
    * Shared skills/mcpServers from .withSkills()/.withMcpServers() are merged
    * with per-agent skills/mcpServers (per-agent extends shared).
    *
@@ -492,6 +491,7 @@ export class Evolve extends EventEmitter {
     this.multiAgentRuntime = new MultiAgentRuntime({
       agents: this.config.multiAgent!,
       sandboxProvider,
+      sandboxId: this.config.sandboxId,
       sharedSkills: this.config.skills,
       sharedMcpServers: { ...gatewayMcpDefaults, ...this.config.mcpServers },
       secrets: this.config.secrets,
@@ -576,6 +576,9 @@ export class Evolve extends EventEmitter {
   }): Promise<AgentResponse> {
     // --- Multi-agent mode ---
     if (this.config.multiAgent) {
+      if (background) {
+        throw new Error("background mode is not supported in multi-agent mode.");
+      }
       if (!this.multiAgentRuntime) {
         await this.initializeMultiAgent();
       }

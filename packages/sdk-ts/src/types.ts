@@ -521,31 +521,12 @@ export interface MultiAgentEntry {
   type: AgentType;
   /** Model override (optional, defaults from registry) */
   model?: string;
-  /** Agent role — SDK maps to built-in prompt passed to A2A package */
-  role: string;
+  /** Optional role prompt passed to the agent as-is */
+  role?: string;
   /** Per-agent skills (merged with shared .withSkills()) */
   skills?: SkillName[];
   /** Per-agent MCP servers (merged with shared .withMcpServers()) */
   mcpServers?: Record<string, McpServerConfig>;
-}
-
-/** A2A config written to sandbox for `a2a bootstrap` */
-export interface A2AConfig {
-  root: string;
-  gateway: boolean;
-  workspace: string;
-  agents: Array<{
-    type: AgentType;
-    model?: string;
-    promptText: string;
-  }>;
-}
-
-/** Tagged NDJSON line from `a2a stream` */
-export interface A2AStreamLine {
-  ch: "stdout" | "stderr" | "mailbox" | "lifecycle";
-  agent?: string;
-  data: unknown;
 }
 
 /** Multi-agent run options */

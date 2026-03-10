@@ -1,16 +1,8 @@
 /**
  * Multi-Agent Runtime
  *
- * Manages A2A protocol lifecycle inside a sandbox:
- *   1. Bootstrap — write config, install prompts
- *   2. Start — seed message, spawn watcher
- *   3. Stream — demux tagged NDJSON into per-agent parsers + loggers
- *   4. Stop — kill watcher + all agents
- *
- * Lifecycle events match single-agent: boot → ready → run_start → run_complete.
- * From the user's perspective, this is one run() regardless of agent count.
- *
- * Evidence: a2a-spec.md Evolve SDK integration section
+ * Orchestrates multiple CLI agents inside a single sandbox.
+ * From the SDK consumer's perspective, this is one run() regardless of agent count.
  */
 
 import { randomBytes } from "crypto";
@@ -19,8 +11,6 @@ import type {
   SandboxProvider,
   MultiAgentEntry,
   MultiAgentRunOptions,
-  A2AConfig,
-  A2AStreamLine,
   StreamCallbacks,
   AgentType,
   McpServerConfig,
@@ -42,7 +32,28 @@ import { createAgentParser, type AgentParser, type OutputEvent } from "./parsers
 import { getAgentConfig } from "./registry";
 import { writeMcpConfig } from "./mcp";
 import { DEFAULT_WORKING_DIR } from "./constants";
-import { createCheckpoint, restoreCheckpoint } from "./storage";
+import { createCheckpoint, restoreCheckpoint, getLatestCheckpoint } from "./storage";
+
+// =============================================================================
+// INTERNAL PROTOCOL TYPES (not exported)
+// =============================================================================
+
+interface A2AConfig {
+  root: string;
+  gateway: boolean;
+  workspace: string;
+  agents: Array<{
+    type: AgentType;
+    model?: string;
+    promptText?: string;
+  }>;
+}
+
+interface A2AStreamLine {
+  ch: "stdout" | "stderr" | "mailbox" | "lifecycle";
+  agent?: string;
+  data: unknown;
+}
 
 // =============================================================================
 // TYPES
@@ -51,6 +62,8 @@ import { createCheckpoint, restoreCheckpoint } from "./storage";
 export interface MultiAgentOptions {
   agents: MultiAgentEntry[];
   sandboxProvider: SandboxProvider;
+  /** Existing sandbox ID to reconnect to */
+  sandboxId?: string;
   /** Shared skills (merged with per-agent) */
   sharedSkills?: SkillName[];
   /** Shared MCP servers (merged with per-agent) */
@@ -126,12 +139,17 @@ export class MultiAgentRuntime {
     this.sandboxState = "booting";
     this.emitLifecycle(callbacks, "sandbox_boot");
 
-    const envVars = this.buildEnvironmentVariables();
-
-    this.sandbox = await this.options.sandboxProvider.create({
-      envs: envVars,
-      workingDirectory: this.workingDir,
-    });
+    if (this.options.sandboxId) {
+      // Reconnect to existing sandbox
+      this.sandbox = await this.options.sandboxProvider.connect(this.options.sandboxId);
+      this.hasRun = true;
+    } else {
+      const envVars = this.buildEnvironmentVariables();
+      this.sandbox = await this.options.sandboxProvider.create({
+        envs: envVars,
+        workingDirectory: this.workingDir,
+      });
+    }
 
     this.sandboxState = "ready";
     this.agentState = "idle";
@@ -144,25 +162,26 @@ export class MultiAgentRuntime {
   // LIFECYCLE
   // ===========================================================================
 
-  /**
-   * Full multi-agent run:
-   *   1. Create sandbox (or restore from checkpoint)
-   *   2. Setup workspace + MCP/skills per agent
-   *   3. Write A2A config → `a2a bootstrap`
-   *   4. `a2a start` with seed message
-   *   5. `a2a stream` → demux → per-agent parsers + loggers
-   *   6. Wait for completion
-   *   7. Auto-checkpoint if storage configured
-   */
+  /** Full multi-agent run. */
   async run(
     runOptions: MultiAgentRunOptions,
     callbacks?: MultiAgentStreamCallbacks,
   ): Promise<AgentResponse> {
-    const { prompt, seedTo = "*", timeoutMs, from, checkpointComment } = runOptions;
+    const { prompt, seedTo = "*", timeoutMs, checkpointComment } = runOptions;
+    let from = runOptions.from;
 
     // --- Restore from checkpoint if requested ---
     if (from && !this.options.storage) {
       throw new Error("Cannot restore from checkpoint without storage configured. Call .withStorage().");
+    }
+
+    // Resolve "latest" to concrete checkpoint ID
+    if (from === "latest" && this.options.storage) {
+      const latest = await getLatestCheckpoint(this.options.storage);
+      if (!latest) {
+        throw new Error('No checkpoints found for from: "latest".');
+      }
+      from = latest.id;
     }
 
     let sandbox: SandboxInstance;
@@ -180,7 +199,10 @@ export class MultiAgentRuntime {
         "/tmp/a2a-config.json",
         JSON.stringify(config, null, 2),
       );
-      await sandbox.commands.run("a2a bootstrap --config /tmp/a2a-config.json");
+      const bootstrapResult = await sandbox.commands.run("a2a bootstrap --config /tmp/a2a-config.json");
+      if (bootstrapResult.exitCode !== 0) {
+        throw new Error(`Multi-agent bootstrap failed (exit ${bootstrapResult.exitCode}): ${bootstrapResult.stderr}`);
+      }
     }
 
     // --- Initialize per-agent parsers ---
@@ -198,7 +220,12 @@ export class MultiAgentRuntime {
     const startCmd = this.hasRun
       ? `a2a start --no-clean --to "${escapeForShell(seedTo)}" "${escapeForShell(prompt)}"`
       : `a2a start --to "${escapeForShell(seedTo)}" "${escapeForShell(prompt)}"`;
-    await sandbox.commands.run(startCmd);
+    const startResult = await sandbox.commands.run(startCmd);
+    if (startResult.exitCode !== 0) {
+      this.agentState = "error";
+      this.emitLifecycle(callbacks, "run_failed");
+      throw new Error(`Multi-agent start failed (exit ${startResult.exitCode}): ${startResult.stderr}`);
+    }
 
     // --- Stream until completion ---
     const result = await this.streamUntilDone(sandbox, callbacks, timeoutMs);
@@ -259,9 +286,14 @@ export class MultiAgentRuntime {
     this.emitLifecycle(callbacks, "run_start");
 
     const sandbox = this.sandbox;
-    await sandbox.commands.run(
+    const startResult = await sandbox.commands.run(
       `a2a start --no-clean --to "${escapeForShell(seedTo)}" "${escapeForShell(prompt)}"`,
     );
+    if (startResult.exitCode !== 0) {
+      this.agentState = "error";
+      this.emitLifecycle(callbacks, "run_failed");
+      throw new Error(`Multi-agent start failed (exit ${startResult.exitCode}): ${startResult.stderr}`);
+    }
 
     const result = await this.streamUntilDone(sandbox, callbacks);
 
@@ -277,10 +309,7 @@ export class MultiAgentRuntime {
     };
   }
 
-  /**
-   * Create a checkpoint of the current sandbox state.
-   * Includes workspace + all agent dirs + ~/.a2a/ (excluding pids/.lock).
-   */
+  /** Create a checkpoint of the current sandbox state. */
   async checkpoint(options?: { comment?: string }): Promise<CheckpointInfo> {
     if (!this.sandbox) throw new Error("No active sandbox");
     if (!this.options.storage) throw new Error("Storage not configured");
@@ -395,13 +424,7 @@ export class MultiAgentRuntime {
   // STREAM DEMUXER
   // ===========================================================================
 
-  /**
-   * Spawn `a2a stream`, demux lines, poll for watcher exit, then clean up.
-   *
-   * stream.py is an infinite poll loop — it never exits on its own.
-   * We poll `a2a status` to detect when all agents are idle (watcher done),
-   * then kill the stream process and run `a2a stop`.
-   */
+  /** Stream output from all agents until completion. */
   private async streamUntilDone(
     sandbox: SandboxInstance,
     callbacks?: MultiAgentStreamCallbacks,
@@ -513,8 +536,7 @@ export class MultiAgentRuntime {
       }
 
       case "lifecycle": {
-        // A2A lifecycle events are internal — we don't surface them as
-        // SDK lifecycle events. The SDK lifecycle is boot → ready → run → complete.
+        // Internal lifecycle events — not surfaced to SDK consumers.
         break;
       }
     }
@@ -589,7 +611,7 @@ export class MultiAgentRuntime {
   }
 
   // ===========================================================================
-  // A2A CONFIG
+  // CONFIG
   // ===========================================================================
 
   private buildA2AConfig(): A2AConfig {
@@ -600,7 +622,7 @@ export class MultiAgentRuntime {
       agents: this.options.agents.map((agent) => ({
         type: agent.type,
         model: agent.model,
-        promptText: buildRolePrompt(agent.role),
+        promptText: agent.role,
       })),
     };
   }
@@ -609,12 +631,7 @@ export class MultiAgentRuntime {
   // TAR COMMAND (multi-agent checkpoint)
   // ===========================================================================
 
-  /**
-   * Build tar command that includes:
-   *   - workspace/
-   *   - ~/.a2a/ (excluding internal/pids/ and internal/.lock)
-   *   - All agent settings dirs (~/.claude/, ~/.codex/, etc.)
-   */
+  /** Build tar command for multi-agent checkpoint. */
   private buildMultiAgentTarCommand(): string {
     const workspaceDir = this.workingDir.startsWith("/home/user/")
       ? this.workingDir.slice("/home/user/".length)
@@ -635,7 +652,7 @@ export class MultiAgentRuntime {
 
     const excludes = [
       "node_modules", "__pycache__", "*.pyc", ".cache", ".npm", ".pip", ".venv", "venv",
-      // A2A excludes (stale PIDs + lock)
+      // Protocol state excludes
       ".a2a/internal/pids",
       ".a2a/internal/.lock",
       // Workspace temp
@@ -749,6 +766,3 @@ function escapeForShell(s: string): string {
     .replace(/`/g, "\\`");
 }
 
-function buildRolePrompt(role: string): string {
-  return `You are the ${role}. Focus on your designated responsibilities and collaborate with other agents through the A2A protocol.`;
-}
