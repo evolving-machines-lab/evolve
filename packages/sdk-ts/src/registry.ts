@@ -193,6 +193,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     baseUrlEnv: "OPENAI_BASE_URL",
     defaultModel: "gpt-5.2",
     models: [
+      { alias: "gpt-5.4", modelId: "gpt-5.4", description: "Latest flagship" },
       { alias: "gpt-5.2", modelId: "gpt-5.2", description: "Base model" },
       { alias: "gpt-5.2-codex", modelId: "gpt-5.2-codex", description: "Code-optimized" },
       { alias: "gpt-5.1-codex-max", modelId: "gpt-5.1-codex-max", description: "Best reasoning (xhigh effort)" },
@@ -347,6 +348,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       { alias: "openrouter/anthropic/claude-sonnet-4.6", modelId: "openrouter/anthropic/claude-sonnet-4.6", description: "Anthropic Sonnet via OpenRouter" },
       { alias: "openrouter/anthropic/claude-opus-4.6", modelId: "openrouter/anthropic/claude-opus-4.6", description: "Anthropic Opus via OpenRouter" },
       { alias: "openrouter/anthropic/claude-haiku-4.5", modelId: "openrouter/anthropic/claude-haiku-4.5", description: "Anthropic Haiku via OpenRouter" },
+      { alias: "openrouter/openai/gpt-5.4", modelId: "openrouter/openai/gpt-5.4", description: "OpenAI GPT-5.4 via OpenRouter" },
       { alias: "openrouter/openai/gpt-5.2", modelId: "openrouter/openai/gpt-5.2", description: "OpenAI GPT-5.2 via OpenRouter" },
       { alias: "openrouter/openai/gpt-5.2-codex", modelId: "openrouter/openai/gpt-5.2-codex", description: "OpenAI Codex via OpenRouter" },
       { alias: "openrouter/openai/gpt-5.1-codex-max", modelId: "openrouter/openai/gpt-5.1-codex-max", description: "OpenAI Codex Max via OpenRouter" },
