@@ -553,7 +553,7 @@ export class MultiAgentRuntime {
   // ===========================================================================
 
   private async setupAgents(sandbox: SandboxInstance): Promise<void> {
-    for (const agent of this.options.agents) {
+    await Promise.all(this.options.agents.map(async (agent) => {
       const registry = getAgentConfig(agent.type);
 
       // Merge shared + per-agent MCP servers
@@ -580,7 +580,7 @@ export class MultiAgentRuntime {
         const srcs = mergedSkills.map(s => `${sourceDir}/${s}`).join(" ");
         await sandbox.commands.run(`cp -r ${srcs} ${targetDir}/ 2>/dev/null || true`);
       }
-    }
+    }));
   }
 
   private async setupWorkspace(sandbox: SandboxInstance): Promise<void> {
