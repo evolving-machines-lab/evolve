@@ -30,12 +30,13 @@ import type {
   SessionCost,
 } from "./types";
 import { Agent, type AgentConfig, type AgentOptions, type AgentResponse } from "./agent";
+import { MultiAgentRuntime, type MultiAgentStreamCallbacks } from "./multi-agent";
 import type { OutputEvent } from "./parsers";
 import { isZodSchema, resolveAgentConfig, resolveDefaultSandbox } from "./utils";
 import { composioHelpers } from "./composio";
 import { getGatewayMcpServers, DEFAULT_DASHBOARD_URL } from "./constants";
 import { resolveStorageConfig, createBoundStorageClient } from "./storage";
-import type { CheckpointInfo, StorageClient } from "./types";
+import type { CheckpointInfo, StorageClient, MultiAgentEntry } from "./types";
 
 // =============================================================================
 // TYPES
@@ -85,8 +86,8 @@ export interface EvolveConfig {
   /** Storage configuration for checkpointing */
   storage?: StorageConfig;
   // Multi-agent
-  /** Enable multi-agent mode (gateway-only, uses evolve-gateway template) */
-  multiAgent?: boolean;
+  /** Multi-agent config — array of agent entries (gateway-only, uses evolve-gateway template) */
+  multiAgent?: MultiAgentEntry[];
 }
 
 // =============================================================================
@@ -110,6 +111,7 @@ export interface EvolveConfig {
 export class Evolve extends EventEmitter {
   private config: EvolveConfig = {};
   private agent?: Agent;
+  private multiAgentRuntime?: MultiAgentRuntime;
   private fallbackSandboxState: SandboxLifecycleState = "stopped";
   private fallbackAgentState: AgentRuntimeState = "idle";
   private fallbackHasRun: boolean = false;
@@ -359,10 +361,18 @@ export class Evolve extends EventEmitter {
    * Enable multi-agent mode (gateway-only)
    *
    * Uses the evolve-gateway template with A2A protocol pre-installed.
-   * Requires gateway mode (EVOLVE_API_KEY, no direct sandbox provider key).
+   * Shared skills/mcpServers from .withSkills()/.withMcpServers() are merged
+   * with per-agent skills/mcpServers (per-agent extends shared).
+   *
+   * @example
+   * kit.withMultiAgent([
+   *   { type: "claude", role: "architect", skills: ["mcp-builder"] },
+   *   { type: "codex", role: "implementer", skills: ["dev-browser"] },
+   *   { type: "gemini", role: "reviewer" },
+   * ])
    */
-  withMultiAgent(): this {
-    this.config.multiAgent = true;
+  withMultiAgent(agents: MultiAgentEntry[]): this {
+    this.config.multiAgent = agents;
     return this;
   }
 
@@ -398,15 +408,14 @@ export class Evolve extends EventEmitter {
   // ===========================================================================
 
   /**
-   * Initialize agent on first use
+   * Initialize agent on first use (single-agent mode)
    */
   private async initializeAgent(): Promise<void> {
     // Resolve agent config (type defaults to "claude", apiKey from EVOLVE_API_KEY)
     const agentConfig = resolveAgentConfig(this.config.agent);
 
     // Resolve sandbox provider (from config or env)
-    const multiAgentTemplate = this.config.multiAgent ? "brandomagnani/evolve-gateway" : undefined;
-    const sandboxProvider = this.config.sandbox ?? await resolveDefaultSandbox({ templateId: multiAgentTemplate });
+    const sandboxProvider = this.config.sandbox ?? await resolveDefaultSandbox();
 
     // Gateway mode: merge platform defaults (user config takes precedence)
     const gatewayMcpDefaults = !agentConfig.isDirectMode
@@ -449,9 +458,75 @@ export class Evolve extends EventEmitter {
   }
 
   /**
+   * Initialize multi-agent runtime
+   */
+  private async initializeMultiAgent(): Promise<void> {
+    // Resolve agent config for gateway detection + API key
+    const agentConfig = resolveAgentConfig(this.config.agent);
+
+    // Multi-agent uses evolve-gateway template
+    const sandboxProvider = this.config.sandbox
+      ?? await resolveDefaultSandbox({ templateId: "brandomagnani/evolve-gateway" });
+
+    // Gateway mode MCP defaults
+    const gatewayMcpDefaults = !agentConfig.isDirectMode
+      ? getGatewayMcpServers(agentConfig.apiKey)
+      : {};
+
+    // Resolve storage
+    const resolvedStorage = this.config.storage !== undefined
+      ? resolveStorageConfig(
+          this.config.storage,
+          !agentConfig.isDirectMode,
+          DEFAULT_DASHBOARD_URL,
+          agentConfig.isDirectMode ? undefined : agentConfig.apiKey
+        )
+      : undefined;
+
+    this.multiAgentRuntime = new MultiAgentRuntime({
+      agents: this.config.multiAgent!,
+      sandboxProvider,
+      sharedSkills: this.config.skills,
+      sharedMcpServers: { ...gatewayMcpDefaults, ...this.config.mcpServers },
+      secrets: this.config.secrets,
+      files: this.config.files,
+      context: this.config.context,
+      workspaceMode: this.config.workspaceMode,
+      workingDirectory: this.config.workingDirectory,
+      apiKey: agentConfig.isDirectMode ? undefined : agentConfig.apiKey,
+      isDirectMode: agentConfig.isDirectMode,
+      sessionTagPrefix: this.config.sessionTagPrefix,
+      observability: this.config.observability,
+      storage: resolvedStorage,
+    });
+  }
+
+  /**
    * Create stream callbacks based on registered listeners
    */
   private createStreamCallbacks() {
+    const hasStdoutListener = this.listenerCount("stdout") > 0;
+    const hasStderrListener = this.listenerCount("stderr") > 0;
+    const hasContentListener = this.listenerCount("content") > 0;
+    const hasLifecycleListener = this.listenerCount("lifecycle") > 0;
+
+    return {
+      onStdout: hasStdoutListener
+        ? (line: string) => this.emit("stdout", line)
+        : undefined,
+      onStderr: hasStderrListener
+        ? (chunk: string) => this.emit("stderr", chunk)
+        : undefined,
+      onContent: hasContentListener
+        ? (event: OutputEvent) => this.emit("content", event)
+        : undefined,
+      onLifecycle: hasLifecycleListener
+        ? (event: LifecycleEvent) => this.emit("lifecycle", event)
+        : undefined,
+    };
+  }
+
+  private createMultiAgentCallbacks(): MultiAgentStreamCallbacks {
     const hasStdoutListener = this.listenerCount("stdout") > 0;
     const hasStderrListener = this.listenerCount("stderr") > 0;
     const hasContentListener = this.listenerCount("content") > 0;
@@ -500,13 +575,30 @@ export class Evolve extends EventEmitter {
     background,
     from,
     checkpointComment,
+    seedTo,
   }: {
     prompt: string;
     timeoutMs?: number;
     background?: boolean;
     from?: string;
     checkpointComment?: string;
+    /** Multi-agent only: which agent(s) receive the seed message ("*" for all, or agent type) */
+    seedTo?: string;
   }): Promise<AgentResponse> {
+    // --- Multi-agent mode ---
+    if (this.config.multiAgent) {
+      if (!this.multiAgentRuntime) {
+        await this.initializeMultiAgent();
+      }
+
+      const callbacks = this.createMultiAgentCallbacks();
+      return this.multiAgentRuntime!.run(
+        { prompt, seedTo, timeoutMs },
+        callbacks,
+      );
+    }
+
+    // --- Single-agent mode ---
     // Mutual exclusivity: from + withSession()
     if (from && this.config.sandboxId) {
       throw new Error(
@@ -543,6 +635,10 @@ export class Evolve extends EventEmitter {
    * Interrupt active process without killing sandbox.
    */
   async interrupt(): Promise<boolean> {
+    if (this.multiAgentRuntime) {
+      await this.multiAgentRuntime.interrupt();
+      return true;
+    }
     if (!this.agent) {
       return false;
     }

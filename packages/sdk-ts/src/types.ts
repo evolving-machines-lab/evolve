@@ -512,6 +512,52 @@ export interface OutputResult<T = unknown> {
 }
 
 // =============================================================================
+// MULTI-AGENT
+// =============================================================================
+
+/** Per-agent configuration for withMultiAgent() */
+export interface MultiAgentEntry {
+  /** Agent CLI type (also serves as unique identifier — one per type) */
+  type: AgentType;
+  /** Model override (optional, defaults from registry) */
+  model?: string;
+  /** Agent role — SDK maps to built-in prompt passed to A2A package */
+  role: string;
+  /** Per-agent skills (merged with shared .withSkills()) */
+  skills?: SkillName[];
+  /** Per-agent MCP servers (merged with shared .withMcpServers()) */
+  mcpServers?: Record<string, McpServerConfig>;
+}
+
+/** A2A config written to sandbox for `a2a bootstrap` */
+export interface A2AConfig {
+  gateway: boolean;
+  workspace: string;
+  agents: Array<{
+    type: AgentType;
+    model?: string;
+    promptText: string;
+  }>;
+}
+
+/** Tagged NDJSON line from `a2a stream` */
+export interface A2AStreamLine {
+  ch: "stdout" | "stderr" | "mailbox" | "lifecycle";
+  agent?: string;
+  data: unknown;
+}
+
+/** Multi-agent run options */
+export interface MultiAgentRunOptions {
+  /** The initial prompt/task */
+  prompt: string;
+  /** Which agent(s) receive the seed message ("*" for all, or agent type) */
+  seedTo?: string;
+  /** Timeout in milliseconds */
+  timeoutMs?: number;
+}
+
+// =============================================================================
 // STREAMING
 // =============================================================================
 
