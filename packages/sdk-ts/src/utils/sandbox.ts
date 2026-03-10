@@ -30,7 +30,7 @@ import {
  *
  * @throws Error if no provider can be resolved
  */
-export async function resolveDefaultSandbox(): Promise<SandboxProvider> {
+export async function resolveDefaultSandbox(options?: { templateId?: string }): Promise<SandboxProvider> {
   // Direct mode (E2B_API_KEY) - user's own E2B account
   const e2bKey = process.env[ENV_E2B_API_KEY];
   if (e2bKey) {
@@ -97,7 +97,7 @@ export async function resolveDefaultSandbox(): Promise<SandboxProvider> {
       // so this is the only way to ensure all operations go through gateway
       process.env.E2B_API_URL = getE2BGatewayUrl();
 
-      return createE2BProvider({ apiKey: evolveKey });
+      return createE2BProvider({ apiKey: evolveKey, templateId: options?.templateId });
     } catch (e) {
       const error = e as Error;
       if (error.message?.includes("Cannot find module") || error.message?.includes("MODULE_NOT_FOUND")) {

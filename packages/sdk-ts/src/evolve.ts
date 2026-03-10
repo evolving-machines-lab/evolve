@@ -84,6 +84,9 @@ export interface EvolveConfig {
   // Storage / Checkpointing
   /** Storage configuration for checkpointing */
   storage?: StorageConfig;
+  // Multi-agent
+  /** Enable multi-agent mode (gateway-only, uses evolve-gateway template) */
+  multiAgent?: boolean;
 }
 
 // =============================================================================
@@ -352,6 +355,17 @@ export class Evolve extends EventEmitter {
     return this;
   }
 
+  /**
+   * Enable multi-agent mode (gateway-only)
+   *
+   * Uses the evolve-gateway template with A2A protocol pre-installed.
+   * Requires gateway mode (EVOLVE_API_KEY, no direct sandbox provider key).
+   */
+  withMultiAgent(): this {
+    this.config.multiAgent = true;
+    return this;
+  }
+
   // ===========================================================================
   // STATIC HELPERS
   // ===========================================================================
@@ -391,7 +405,8 @@ export class Evolve extends EventEmitter {
     const agentConfig = resolveAgentConfig(this.config.agent);
 
     // Resolve sandbox provider (from config or env)
-    const sandboxProvider = this.config.sandbox ?? await resolveDefaultSandbox();
+    const multiAgentTemplate = this.config.multiAgent ? "brandomagnani/evolve-gateway" : undefined;
+    const sandboxProvider = this.config.sandbox ?? await resolveDefaultSandbox({ templateId: multiAgentTemplate });
 
     // Gateway mode: merge platform defaults (user config takes precedence)
     const gatewayMcpDefaults = !agentConfig.isDirectMode

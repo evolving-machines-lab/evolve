@@ -46,6 +46,9 @@ docs/modal/
 docs/daytona/
 plans/
 
+# Private gateway template (not open source)
+assets/e2b-gateway/
+
 # Docs site build artifacts
 docs-site/.next/
 docs-site/out/
