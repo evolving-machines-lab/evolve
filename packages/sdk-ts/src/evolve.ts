@@ -464,10 +464,9 @@ export class Evolve extends EventEmitter {
     // Resolve agent config for gateway detection + API key
     const agentConfig = resolveAgentConfig(this.config.agent);
 
-    // Multi-agent requires gateway mode (evolve-gateway template has A2A pre-installed)
-    if (agentConfig.isDirectMode && !this.config.sandbox) {
+    if (agentConfig.isDirectMode) {
       throw new Error(
-        "Multi-agent mode requires gateway mode (EVOLVE_API_KEY) or a custom sandbox provider with A2A installed."
+        "withMultiAgent() requires EVOLVE_API_KEY. See https://evolvingmachines.ai"
       );
     }
 
