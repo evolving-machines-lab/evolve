@@ -555,12 +555,14 @@ export async function createCheckpoint(
   storage: ResolvedStorageConfig,
   agentType: AgentType,
   workingDir: string,
-  meta: { tag: string; model?: string; workspaceMode?: string; parentId?: string; comment?: string }
+  meta: { tag: string; model?: string; workspaceMode?: string; parentId?: string; comment?: string },
+  /** Custom tar command (for multi-agent checkpoints that include ~/.a2a/ and multiple agent dirs) */
+  tarCommand?: string,
 ): Promise<CheckpointInfo> {
   const timestamp = new Date().toISOString();
 
   // 1. Tar workspace + agent dir, compute hash
-  const tarCmd = buildTarCommand(agentType, workingDir);
+  const tarCmd = tarCommand ?? buildTarCommand(agentType, workingDir);
   const tarResult = await sandbox.commands.run(tarCmd, { timeoutMs: 120000 });
 
   if (tarResult.exitCode !== 0) {

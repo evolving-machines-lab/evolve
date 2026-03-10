@@ -555,6 +555,10 @@ export interface MultiAgentRunOptions {
   seedTo?: string;
   /** Timeout in milliseconds */
   timeoutMs?: number;
+  /** Restore from checkpoint ID before running (requires .withStorage()) */
+  from?: string;
+  /** Optional comment for the auto-checkpoint created after this run */
+  checkpointComment?: string;
 }
 
 // =============================================================================

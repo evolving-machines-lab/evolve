@@ -526,26 +526,9 @@ export class Evolve extends EventEmitter {
     };
   }
 
+  /** Alias — MultiAgentStreamCallbacks extends StreamCallbacks, same shape */
   private createMultiAgentCallbacks(): MultiAgentStreamCallbacks {
-    const hasStdoutListener = this.listenerCount("stdout") > 0;
-    const hasStderrListener = this.listenerCount("stderr") > 0;
-    const hasContentListener = this.listenerCount("content") > 0;
-    const hasLifecycleListener = this.listenerCount("lifecycle") > 0;
-
-    return {
-      onStdout: hasStdoutListener
-        ? (line: string) => this.emit("stdout", line)
-        : undefined,
-      onStderr: hasStderrListener
-        ? (chunk: string) => this.emit("stderr", chunk)
-        : undefined,
-      onContent: hasContentListener
-        ? (event: OutputEvent) => this.emit("content", event)
-        : undefined,
-      onLifecycle: hasLifecycleListener
-        ? (event: LifecycleEvent) => this.emit("lifecycle", event)
-        : undefined,
-    };
+    return this.createStreamCallbacks();
   }
 
   private emitLifecycleFromStatus(reason: LifecycleReason): void {
@@ -593,7 +576,7 @@ export class Evolve extends EventEmitter {
 
       const callbacks = this.createMultiAgentCallbacks();
       return this.multiAgentRuntime!.run(
-        { prompt, seedTo, timeoutMs },
+        { prompt, seedTo, timeoutMs, from, checkpointComment },
         callbacks,
       );
     }
@@ -613,6 +596,24 @@ export class Evolve extends EventEmitter {
     const callbacks = this.createStreamCallbacks();
 
     return this.agent!.run({ prompt, timeoutMs, background, from, checkpointComment }, callbacks);
+  }
+
+  /**
+   * Send a follow-up message (multi-agent only).
+   * Stops current agents, seeds new message, re-streams.
+   */
+  async send({
+    prompt,
+    seedTo,
+  }: {
+    prompt: string;
+    seedTo?: string;
+  }): Promise<AgentResponse> {
+    if (!this.multiAgentRuntime) {
+      throw new Error("send() is only available in multi-agent mode. Use run() for single-agent.");
+    }
+    const callbacks = this.createMultiAgentCallbacks();
+    return this.multiAgentRuntime.send(prompt, seedTo, callbacks);
   }
 
   /**
@@ -636,7 +637,8 @@ export class Evolve extends EventEmitter {
    */
   async interrupt(): Promise<boolean> {
     if (this.multiAgentRuntime) {
-      await this.multiAgentRuntime.interrupt();
+      const callbacks = this.createMultiAgentCallbacks();
+      await this.multiAgentRuntime.interrupt(callbacks);
       return true;
     }
     if (!this.agent) {
@@ -690,6 +692,9 @@ export class Evolve extends EventEmitter {
    * @param options.comment - Optional label for this checkpoint
    */
   async checkpoint(options?: { comment?: string }): Promise<CheckpointInfo> {
+    if (this.multiAgentRuntime) {
+      return this.multiAgentRuntime.checkpoint(options);
+    }
     if (!this.agent) {
       throw new Error("Agent not initialized. Call run() first.");
     }
@@ -752,6 +757,9 @@ export class Evolve extends EventEmitter {
    * Get current session (sandbox ID)
    */
   getSession(): string | null {
+    if (this.multiAgentRuntime) {
+      return this.multiAgentRuntime.getSession();
+    }
     if (this.agent) {
       return this.agent.getSession();
     }
@@ -776,6 +784,9 @@ export class Evolve extends EventEmitter {
    * Get runtime status for sandbox and agent.
    */
   status(): SessionStatus {
+    if (this.multiAgentRuntime) {
+      return this.multiAgentRuntime.status();
+    }
     if (this.agent) {
       return this.agent.status();
     }
@@ -795,6 +806,11 @@ export class Evolve extends EventEmitter {
    * Pause sandbox
    */
   async pause(): Promise<void> {
+    if (this.multiAgentRuntime) {
+      const callbacks = this.createMultiAgentCallbacks();
+      await this.multiAgentRuntime.pause(callbacks);
+      return;
+    }
     if (this.agent) {
       const callbacks = this.createStreamCallbacks();
       await this.agent.pause(callbacks);
@@ -814,6 +830,11 @@ export class Evolve extends EventEmitter {
    * Resume sandbox
    */
   async resume(): Promise<void> {
+    if (this.multiAgentRuntime) {
+      const callbacks = this.createMultiAgentCallbacks();
+      await this.multiAgentRuntime.resume(callbacks);
+      return;
+    }
     if (this.agent) {
       const callbacks = this.createStreamCallbacks();
       await this.agent.resume(callbacks);
@@ -832,6 +853,11 @@ export class Evolve extends EventEmitter {
    * Kill sandbox
    */
   async kill(): Promise<void> {
+    if (this.multiAgentRuntime) {
+      const callbacks = this.createMultiAgentCallbacks();
+      await this.multiAgentRuntime.kill(callbacks);
+      return;
+    }
     if (this.agent) {
       const callbacks = this.createStreamCallbacks();
       await this.agent.kill(callbacks);
@@ -869,6 +895,9 @@ export class Evolve extends EventEmitter {
    * Returns null if no session has started (run() not called yet).
    */
   getSessionTag(): string | null {
+    if (this.multiAgentRuntime) {
+      return this.multiAgentRuntime.getSessionTag();
+    }
     return this.agent?.getSessionTag() || null;
   }
 
@@ -885,6 +914,10 @@ export class Evolve extends EventEmitter {
    * Flush pending observability events without killing sandbox.
    */
   async flushObservability(): Promise<void> {
+    if (this.multiAgentRuntime) {
+      await this.multiAgentRuntime.flushObservability();
+      return;
+    }
     await this.agent?.flushObservability();
   }
 
