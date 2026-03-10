@@ -79,7 +79,7 @@ export interface MultiAgentOptions {
   /** Shared system prompt (fallback for agents without per-agent systemPrompt) */
   systemPrompt?: string;
   /** Shared schema (fallback for agents without per-agent schema) */
-  schema?: unknown;
+  schema?: import("zod").ZodType<unknown> | Record<string, unknown>;
   /** Workspace mode */
   workspaceMode?: WorkspaceMode;
   /** Working directory */
@@ -547,7 +547,7 @@ export class MultiAgentRuntime {
         const fullPrompt = buildWorkerSystemPrompt({
           workingDir: this.workingDir,
           systemPrompt: prompt,
-          schema: schema as any,
+          schema,
           mode: this.options.workspaceMode ?? "knowledge",
         });
         const filePath = `${this.workingDir}/${registry.systemPromptFile}`;
@@ -732,6 +732,10 @@ export class MultiAgentRuntime {
     // Write pending prompt if this is a fresh logger
     if (this.pendingPrompt) {
       logger.writePrompt(this.pendingPrompt);
+      // Clear after all agents have a logger (avoid stale prompt on subsequent runs)
+      if (this.sessionLoggers.size + 1 >= this.options.agents.length) {
+        this.pendingPrompt = undefined;
+      }
     }
 
     this.sessionLoggers.set(agentType, logger);
@@ -744,6 +748,7 @@ export class MultiAgentRuntime {
     );
     await Promise.all(promises);
     this.sessionLoggers.clear();
+    this.pendingPrompt = undefined;
   }
 
   // ===========================================================================

@@ -617,8 +617,6 @@ export class Evolve extends EventEmitter {
     return this.agent!.run({ prompt, timeoutMs, background, from, checkpointComment }, callbacks);
   }
 
-
-
   /**
    * Execute arbitrary command in sandbox
    */
