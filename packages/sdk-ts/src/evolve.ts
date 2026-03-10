@@ -577,6 +577,9 @@ export class Evolve extends EventEmitter {
       if (background) {
         throw new Error("background mode is not supported in multi-agent mode.");
       }
+      if (from && this.config.sandboxId) {
+        throw new Error("Cannot use 'from' with 'withSession()' — restore requires a fresh sandbox.");
+      }
       if (!this.multiAgentRuntime) {
         await this.initializeMultiAgent();
       }
@@ -789,6 +792,9 @@ export class Evolve extends EventEmitter {
    * Set session to connect to
    */
   async setSession(sandboxId: string): Promise<void> {
+    if (this.multiAgentRuntime) {
+      throw new Error("setSession() is not supported after multi-agent runtime is initialized. Create a new Evolve instance.");
+    }
     if (this.agent) {
       await this.agent.setSession(sandboxId);
     } else {

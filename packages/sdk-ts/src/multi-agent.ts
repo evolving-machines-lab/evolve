@@ -31,7 +31,7 @@ import { SessionLogger } from "./observability";
 import { createAgentParser, type AgentParser, type OutputEvent } from "./parsers";
 import { getAgentConfig } from "./registry";
 import { writeMcpConfig } from "./mcp";
-import { DEFAULT_WORKING_DIR } from "./constants";
+import { DEFAULT_WORKING_DIR, DEFAULT_TIMEOUT_MS } from "./constants";
 import { createCheckpoint, restoreCheckpoint, getLatestCheckpoint } from "./storage";
 
 // =============================================================================
@@ -167,7 +167,11 @@ export class MultiAgentRuntime {
     runOptions: MultiAgentRunOptions,
     callbacks?: MultiAgentStreamCallbacks,
   ): Promise<AgentResponse> {
-    const { prompt, seedTo = "*", timeoutMs, checkpointComment } = runOptions;
+    if (this.agentState === "running") {
+      throw new Error("Multi-agent runtime is already running. Wait for completion or call interrupt().");
+    }
+
+    const { prompt, seedTo = "*", timeoutMs = DEFAULT_TIMEOUT_MS, checkpointComment } = runOptions;
     let from = runOptions.from;
 
     // --- Restore from checkpoint if requested ---
@@ -268,6 +272,9 @@ export class MultiAgentRuntime {
     callbacks?: MultiAgentStreamCallbacks,
   ): Promise<AgentResponse> {
     if (!this.sandbox) throw new Error("No active sandbox. Call run() first.");
+    if (this.agentState === "running") {
+      throw new Error("Multi-agent runtime is already running. Wait for completion or call interrupt().");
+    }
 
     // Stop current agents
     await this.sandbox.commands.run("a2a stop").catch(() => {});
