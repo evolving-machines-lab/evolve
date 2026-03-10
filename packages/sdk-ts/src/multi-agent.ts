@@ -190,19 +190,15 @@ export class MultiAgentRuntime {
     } else {
       sandbox = await this.ensureSandbox(callbacks);
 
-      // Fresh run: full setup
-      await this.setupWorkspace(sandbox);
-      await this.setupAgents(sandbox);
+      // Fresh run: full setup (independent, run in parallel)
+      await Promise.all([this.setupWorkspace(sandbox), this.setupAgents(sandbox)]);
 
       const config = this.buildA2AConfig();
       await sandbox.files.write(
         "/tmp/a2a-config.json",
         JSON.stringify(config, null, 2),
       );
-      const bootstrapResult = await sandbox.commands.run("a2a bootstrap --config /tmp/a2a-config.json");
-      if (bootstrapResult.exitCode !== 0) {
-        throw new Error(`Multi-agent bootstrap failed (exit ${bootstrapResult.exitCode}): ${bootstrapResult.stderr}`);
-      }
+      await this.runOrThrow(sandbox, "a2a bootstrap --config /tmp/a2a-config.json", "bootstrap");
     }
 
     // --- Initialize per-agent parsers ---
@@ -220,12 +216,7 @@ export class MultiAgentRuntime {
     const startCmd = this.hasRun
       ? `a2a start --no-clean --to "${escapeForShell(seedTo)}" "${escapeForShell(prompt)}"`
       : `a2a start --to "${escapeForShell(seedTo)}" "${escapeForShell(prompt)}"`;
-    const startResult = await sandbox.commands.run(startCmd);
-    if (startResult.exitCode !== 0) {
-      this.agentState = "error";
-      this.emitLifecycle(callbacks, "run_failed");
-      throw new Error(`Multi-agent start failed (exit ${startResult.exitCode}): ${startResult.stderr}`);
-    }
+    await this.runOrThrow(sandbox, startCmd, "start", callbacks);
 
     // --- Stream until completion ---
     const result = await this.streamUntilDone(sandbox, callbacks, timeoutMs);
@@ -286,20 +277,20 @@ export class MultiAgentRuntime {
     this.emitLifecycle(callbacks, "run_start");
 
     const sandbox = this.sandbox;
-    const startResult = await sandbox.commands.run(
+    await this.runOrThrow(
+      sandbox,
       `a2a start --no-clean --to "${escapeForShell(seedTo)}" "${escapeForShell(prompt)}"`,
+      "start",
+      callbacks,
     );
-    if (startResult.exitCode !== 0) {
-      this.agentState = "error";
-      this.emitLifecycle(callbacks, "run_failed");
-      throw new Error(`Multi-agent start failed (exit ${startResult.exitCode}): ${startResult.stderr}`);
-    }
 
     const result = await this.streamUntilDone(sandbox, callbacks);
 
     const success = result.exitCode === 0;
     this.agentState = success ? "idle" : "error";
     this.emitLifecycle(callbacks, success ? "run_complete" : "run_failed");
+
+    await this.flushLoggers();
 
     return {
       sandboxId: sandbox.sandboxId,
@@ -571,11 +562,8 @@ export class MultiAgentRuntime {
       if (mergedSkills.length > 0) {
         const { sourceDir, targetDir } = registry.skillsConfig;
         await sandbox.files.makeDir(targetDir);
-        for (const skill of mergedSkills) {
-          await sandbox.commands.run(
-            `cp -r ${sourceDir}/${skill} ${targetDir}/ 2>/dev/null || true`,
-          );
-        }
+        const srcs = mergedSkills.map(s => `${sourceDir}/${s}`).join(" ");
+        await sandbox.commands.run(`cp -r ${srcs} ${targetDir}/ 2>/dev/null || true`);
       }
     }
   }
@@ -751,6 +739,22 @@ export class MultiAgentRuntime {
       timestamp: new Date().toISOString(),
       reason,
     });
+  }
+
+  /** Run a sandbox command and throw on non-zero exit. */
+  private async runOrThrow(
+    sandbox: SandboxInstance,
+    cmd: string,
+    label: string,
+    callbacks?: StreamCallbacks,
+  ): Promise<SandboxCommandResult> {
+    const result = await sandbox.commands.run(cmd);
+    if (result.exitCode !== 0) {
+      this.agentState = "error";
+      if (callbacks) this.emitLifecycle(callbacks, "run_failed");
+      throw new Error(`Multi-agent ${label} failed (exit ${result.exitCode}): ${result.stderr}`);
+    }
+    return result;
   }
 }
 

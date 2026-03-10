@@ -473,10 +473,8 @@ export class Evolve extends EventEmitter {
     const sandboxProvider = this.config.sandbox
       ?? await resolveDefaultSandbox({ templateId: "brandomagnani/evolve-gateway" });
 
-    // Gateway mode MCP defaults
-    const gatewayMcpDefaults = !agentConfig.isDirectMode
-      ? getGatewayMcpServers(agentConfig.apiKey)
-      : {};
+    // Gateway mode MCP defaults (always gateway — direct mode throws above)
+    const gatewayMcpDefaults = getGatewayMcpServers(agentConfig.apiKey);
 
     // Resolve storage
     const resolvedStorage = this.config.storage !== undefined
