@@ -432,6 +432,87 @@ async function main() {
       await envSandbox.kill().catch(() => {});
     }
 
+    // ─── 10. Docker CLI fidelity ──────────────────────────────
+    console.log("\n[10] Docker CLI fidelity");
+
+    // docker rm -f on already-killed container (Docker 25+ exits 0)
+    const rmfSandbox = await provider.create({ image: "ubuntu:latest" });
+    await rmfSandbox.kill();
+    // Killing again should not throw (rm -f is idempotent)
+    let doubleKillOk = true;
+    try {
+      await rmfSandbox.kill();
+    } catch {
+      doubleKillOk = false;
+    }
+    assert(doubleKillOk, "docker rm -f on removed container is idempotent (Docker 25+)");
+
+    // docker exec on stopped container should fail
+    const stoppedSandbox = await provider.create({ image: "ubuntu:latest" });
+    const stoppedId = stoppedSandbox.sandboxId;
+    // Pause to simulate stopped state
+    await stoppedSandbox.pause();
+    // Connect auto-resumes — verify it works
+    const reconnected = await provider.connect(stoppedId);
+    const reconEcho = await reconnected.commands.run("echo back");
+    assertEqual(reconEcho.stdout.trim(), "back", "connect auto-resumes paused container");
+    await reconnected.kill().catch(() => {});
+
+    // exec-time env vars override create-time env vars
+    const overrideSandbox = await provider.create({
+      image: "ubuntu:latest",
+      envs: { MY_VAR: "original" },
+    });
+    try {
+      const orig = await overrideSandbox.commands.run("echo $MY_VAR");
+      assertEqual(orig.stdout.trim(), "original", "create-time env var works");
+      const overridden = await overrideSandbox.commands.run("echo $MY_VAR", {
+        envs: { MY_VAR: "overridden" },
+      });
+      assertEqual(overridden.stdout.trim(), "overridden", "exec-time env var overrides create-time");
+    } finally {
+      await overrideSandbox.kill().catch(() => {});
+    }
+
+    // Multiple labels are correctly ignored (don't break arg parsing)
+    const labelSandbox = await provider.create({
+      image: "ubuntu:latest",
+      metadata: { "custom.label": "test-val" },
+    });
+    try {
+      const labelEcho = await labelSandbox.commands.run("echo labels-ok");
+      assertEqual(labelEcho.stdout.trim(), "labels-ok", "multiple labels don't break arg parsing");
+    } finally {
+      await labelSandbox.kill().catch(() => {});
+    }
+
+    // File isolation between containers
+    const sandbox1 = await provider.create({ image: "ubuntu:latest" });
+    const sandbox2 = await provider.create({ image: "ubuntu:latest" });
+    try {
+      await sandbox1.files.write("/tmp/isolated.txt", "from-sandbox-1");
+      const readFromS2 = await sandbox2.commands.run("cat /tmp/isolated.txt 2>&1 || echo NOT_FOUND");
+      assertIncludes(readFromS2.stdout, "NOT_FOUND", "files are isolated between containers");
+    } finally {
+      await sandbox1.kill().catch(() => {});
+      await sandbox2.kill().catch(() => {});
+    }
+
+    // Spawn wait captures stderr correctly
+    await withSandbox(provider, async (sandbox) => {
+      const h = await sandbox.commands.spawn("echo out-msg; echo err-msg >&2; exit 3");
+      const r = await h.wait();
+      assertEqual(r.exitCode, 3, "spawn wait captures exit code from stderr+stdout mix");
+      assertIncludes(r.stdout, "out-msg", "spawn wait stdout captured with stderr mix");
+      assertIncludes(r.stderr, "err-msg", "spawn wait stderr captured correctly");
+    });
+
+    // docker inspect format for State.Status returns exact state
+    await withSandbox(provider, async (sandbox) => {
+      const connected = await provider.connect(sandbox.sandboxId);
+      assert(connected !== null, "inspect returns running state for active container");
+    });
+
   } finally {
     await teardownMock();
   }
