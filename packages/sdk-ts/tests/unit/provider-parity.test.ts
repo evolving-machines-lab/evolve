@@ -40,6 +40,27 @@ import type {
   SandboxFiles as ModalSandboxFiles,
 } from "@evolvingmachines/modal";
 
+import type {
+  SandboxProvider as DockerSandboxProvider,
+  SandboxInstance as DockerSandboxInstance,
+  SandboxCommands as DockerSandboxCommands,
+  SandboxFiles as DockerSandboxFiles,
+} from "@evolvingmachines/docker";
+
+import type {
+  SandboxProvider as LocalSandboxProvider,
+  SandboxInstance as LocalSandboxInstance,
+  SandboxCommands as LocalSandboxCommands,
+  SandboxFiles as LocalSandboxFiles,
+} from "@evolvingmachines/local";
+
+import type {
+  SandboxProvider as OSSandboxProvider,
+  SandboxInstance as OSSandboxInstance,
+  SandboxCommands as OSSandboxCommands,
+  SandboxFiles as OSSandboxFiles,
+} from "@evolvingmachines/sandbox";
+
 // E2B → SDK canonical
 type _E2BProvider = E2BSandboxProvider extends SandboxProvider ? true : never;
 type _E2BInstance = E2BSandboxInstance extends SandboxInstance ? true : never;
@@ -73,11 +94,47 @@ const _modal2: _ModalInstance = true;
 const _modal3: _ModalCommands = true;
 const _modal4: _ModalFiles = true;
 
+// Docker → SDK canonical
+type _DockerProvider = DockerSandboxProvider extends SandboxProvider ? true : never;
+type _DockerInstance = DockerSandboxInstance extends SandboxInstance ? true : never;
+type _DockerCommands = DockerSandboxCommands extends SandboxCommands ? true : never;
+type _DockerFiles = DockerSandboxFiles extends SandboxFiles ? true : never;
+
+const _docker1: _DockerProvider = true;
+const _docker2: _DockerInstance = true;
+const _docker3: _DockerCommands = true;
+const _docker4: _DockerFiles = true;
+
+// Local → SDK canonical
+type _LocalProvider = LocalSandboxProvider extends SandboxProvider ? true : never;
+type _LocalInstance = LocalSandboxInstance extends SandboxInstance ? true : never;
+type _LocalCommands = LocalSandboxCommands extends SandboxCommands ? true : never;
+type _LocalFiles = LocalSandboxFiles extends SandboxFiles ? true : never;
+
+const _local1: _LocalProvider = true;
+const _local2: _LocalInstance = true;
+const _local3: _LocalCommands = true;
+const _local4: _LocalFiles = true;
+
+// OS Sandbox → SDK canonical
+type _OSSandboxProvider = OSSandboxProvider extends SandboxProvider ? true : never;
+type _OSSandboxInstance = OSSandboxInstance extends SandboxInstance ? true : never;
+type _OSSandboxCommands = OSSandboxCommands extends SandboxCommands ? true : never;
+type _OSSandboxFiles = OSSandboxFiles extends SandboxFiles ? true : never;
+
+const _os1: _OSSandboxProvider = true;
+const _os2: _OSSandboxInstance = true;
+const _os3: _OSSandboxCommands = true;
+const _os4: _OSSandboxFiles = true;
+
 // ─── Runtime checks ─────────────────────────────────────────────
 
 import { createE2BProvider } from "@evolvingmachines/e2b";
 import { createDaytonaProvider } from "@evolvingmachines/daytona";
 import { createModalProvider } from "@evolvingmachines/modal";
+import { createDockerProvider } from "@evolvingmachines/docker";
+import { createLocalProvider } from "@evolvingmachines/local";
+import { createOSSandboxProvider } from "@evolvingmachines/sandbox";
 
 // Methods the SDK actually calls
 const REQUIRED_PROVIDER = ["providerType", "create", "connect"] as const;
@@ -128,11 +185,53 @@ missing = checkMethods(modal as any, REQUIRED_PROVIDER, "ModalProvider");
 assert(missing.length === 0, `implements SandboxProvider${missing.length ? ` — missing: ${missing.join(", ")}` : ""}`);
 assert(modal.providerType === "modal", `providerType = "modal"`);
 
+// Docker (requires Docker daemon — skip gracefully if unavailable)
+console.log("\nDocker:");
+try {
+  const docker = createDockerProvider();
+  missing = checkMethods(docker as any, REQUIRED_PROVIDER, "DockerProvider");
+  assert(missing.length === 0, `implements SandboxProvider${missing.length ? ` — missing: ${missing.join(", ")}` : ""}`);
+  assert(docker.providerType === "docker", `providerType = "docker"`);
+} catch (e) {
+  const msg = (e as Error).message;
+  if (msg.includes("Docker is not available")) {
+    console.log("  ⚠ Skipped (Docker daemon not running)");
+  } else {
+    throw e;
+  }
+}
+
+// Local (always succeeds — no preconditions)
+console.log("\nLocal:");
+const local = createLocalProvider();
+missing = checkMethods(local as any, REQUIRED_PROVIDER, "LocalProvider");
+assert(missing.length === 0, `implements SandboxProvider${missing.length ? ` — missing: ${missing.join(", ")}` : ""}`);
+assert(local.providerType === "local", `providerType = "local"`);
+
+// OS Sandbox (skip if platform unsupported)
+console.log("\nOS Sandbox:");
+try {
+  const osSandbox = createOSSandboxProvider();
+  missing = checkMethods(osSandbox as any, REQUIRED_PROVIDER, "OSSandboxProvider");
+  assert(missing.length === 0, `implements SandboxProvider${missing.length ? ` — missing: ${missing.join(", ")}` : ""}`);
+  assert(osSandbox.providerType === "os-sandbox", `providerType = "os-sandbox"`);
+} catch (e) {
+  const msg = (e as Error).message;
+  if (msg.includes("requires macOS") || msg.includes("requires Linux")) {
+    console.log("  ⚠ Skipped (platform not supported)");
+  } else {
+    throw e;
+  }
+}
+
 // Factory parity
 console.log("\nFactories:");
 assert(typeof createE2BProvider === "function", "createE2BProvider exists");
 assert(typeof createDaytonaProvider === "function", "createDaytonaProvider exists");
 assert(typeof createModalProvider === "function", "createModalProvider exists");
+assert(typeof createDockerProvider === "function", "createDockerProvider exists");
+assert(typeof createLocalProvider === "function", "createLocalProvider exists");
+assert(typeof createOSSandboxProvider === "function", "createOSSandboxProvider exists");
 
 console.log(`\n═══ ${passed} passed, ${failed} failed ═══\n`);
 if (failed > 0) process.exit(1);

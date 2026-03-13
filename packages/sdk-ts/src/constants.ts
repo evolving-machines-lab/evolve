@@ -113,6 +113,24 @@ export const ENV_MODAL_TOKEN_ID = "MODAL_TOKEN_ID";
  */
 export const ENV_MODAL_TOKEN_SECRET = "MODAL_TOKEN_SECRET";
 
+/**
+ * Environment variable to enable local Docker sandbox
+ * @internal
+ */
+export const ENV_DOCKER_SANDBOX = "EVOLVE_SANDBOX_DOCKER";
+
+/**
+ * Environment variable to enable OS-level sandbox (Seatbelt/bubblewrap)
+ * @internal
+ */
+export const ENV_OS_SANDBOX = "EVOLVE_SANDBOX_OS";
+
+/**
+ * Environment variable to enable local subprocess sandbox (no isolation)
+ * @internal
+ */
+export const ENV_LOCAL_SANDBOX = "EVOLVE_SANDBOX_LOCAL";
+
 // =============================================================================
 // DEFAULTS
 // =============================================================================

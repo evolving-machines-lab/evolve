@@ -32,7 +32,13 @@ evolve/
 │   │   └── src/
 │   ├── daytona/                 # Daytona sandbox provider (@evolvingmachines/daytona)
 │   │   └── src/
-│   └── modal/                   # Modal sandbox provider (@evolvingmachines/modal)
+│   ├── modal/                   # Modal sandbox provider (@evolvingmachines/modal)
+│   │   └── src/
+│   ├── docker/                  # Docker sandbox provider (@evolvingmachines/docker) — local
+│   │   └── src/
+│   ├── local/                   # Local sandbox provider (@evolvingmachines/local) — subprocess
+│   │   └── src/
+│   └── sandbox/                 # OS-level sandbox provider (@evolvingmachines/sandbox) — Seatbelt/bubblewrap
 │       └── src/
 ├── assets/                      # Sandbox templates & build scripts
 │   ├── e2b/                     # E2B template (build.ts, template.ts)
