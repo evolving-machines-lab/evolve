@@ -68,6 +68,8 @@ export interface EvolveConfig {
   context?: FileMap;
   files?: FileMap;
   mcpServers?: Record<string, McpServerConfig>;
+  /** Custom Dockerfile path or content for sandbox image */
+  dockerfile?: string;
   /** Skills to enable (e.g., ["pdf", "dev-browser"]) */
   skills?: SkillName[];
   /** Schema for structured output (Zod or JSON Schema, auto-detected) */
@@ -152,6 +154,32 @@ export class Evolve extends EventEmitter {
    */
   withSandbox(provider?: SandboxProvider): this {
     this.config.sandbox = provider;
+    return this;
+  }
+
+  /**
+   * Set custom Dockerfile for sandbox image.
+   *
+   * The SDK enriches the Dockerfile with agent toolchain install commands
+   * (build-time append) and verifies the CLI binary at runtime (safety net).
+   *
+   * Accepts either:
+   * - A file path to a Dockerfile on disk
+   * - Inline Dockerfile content (string containing FROM)
+   *
+   * @example
+   * // File path
+   * kit.withDockerfile("./my-env/Dockerfile")
+   *
+   * // Inline content
+   * kit.withDockerfile(`
+   *   FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04
+   *   RUN apt-get update && apt-get install -y python3 python3-pip
+   *   RUN pip install torch transformers
+   * `)
+   */
+  withDockerfile(pathOrContent: string): this {
+    this.config.dockerfile = pathOrContent;
     return this;
   }
 
@@ -421,6 +449,8 @@ export class Evolve extends EventEmitter {
       skills: this.config.skills,
       schema: this.config.schema,
       schemaOptions: this.config.schemaOptions,
+      // Custom Dockerfile
+      dockerfile: this.config.dockerfile,
       // Observability
       sessionTagPrefix: this.config.sessionTagPrefix,
       observability: this.config.observability,
