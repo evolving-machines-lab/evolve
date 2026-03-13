@@ -11,16 +11,9 @@ export default {
     type: 'page',
     title: 'Python SDK',
   },
-  changelog: {
-    type: 'page',
-    title: 'Changelog',
-  },
   cookbooks: {
     title: 'Cookbooks',
     type: 'page',
     href: 'https://github.com/evolving-machines-lab/evolve/tree/main/cookbooks',
-  },
-  plans: {
-    display: 'hidden',
   },
 };
