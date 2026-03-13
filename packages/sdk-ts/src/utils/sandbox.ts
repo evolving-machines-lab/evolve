@@ -8,10 +8,14 @@
 import type { SandboxProvider } from "../types";
 import {
   ENV_DAYTONA_API_KEY,
+  ENV_DOCKER_SANDBOX,
   ENV_E2B_API_KEY,
   ENV_EVOLVE_API_KEY,
+  ENV_LOCAL_SANDBOX,
+  ENV_MICROVM_SANDBOX,
   ENV_MODAL_TOKEN_ID,
   ENV_MODAL_TOKEN_SECRET,
+  ENV_OS_SANDBOX,
   getE2BGatewayUrl,
 } from "../constants";
 
@@ -86,6 +90,78 @@ export async function resolveDefaultSandbox(): Promise<SandboxProvider> {
     }
   }
 
+  // Local Docker mode (EVOLVE_SANDBOX_DOCKER) - no API key needed
+  const useDocker = process.env[ENV_DOCKER_SANDBOX];
+  if (useDocker === "1" || useDocker === "true") {
+    try {
+      const { createDockerProvider } = await import("@evolvingmachines/docker");
+      return createDockerProvider();
+    } catch (e) {
+      const error = e as Error;
+      if (error.message?.includes("Cannot find module") || error.message?.includes("MODULE_NOT_FOUND")) {
+        throw new Error(
+          `${ENV_DOCKER_SANDBOX} is set but @evolvingmachines/docker failed to load.\n` +
+            "Try installing: npm install @evolvingmachines/docker"
+        );
+      }
+      throw error;
+    }
+  }
+
+  // MicroVM mode (EVOLVE_SANDBOX_MICROVM) - lightweight VM via Boxlite
+  const useMicroVM = process.env[ENV_MICROVM_SANDBOX];
+  if (useMicroVM === "1" || useMicroVM === "true") {
+    try {
+      const { createMicroVMProvider } = await import("@evolvingmachines/microvm");
+      return createMicroVMProvider();
+    } catch (e) {
+      const error = e as Error;
+      if (error.message?.includes("Cannot find module") || error.message?.includes("MODULE_NOT_FOUND")) {
+        throw new Error(
+          `${ENV_MICROVM_SANDBOX} is set but @evolvingmachines/microvm failed to load.\n` +
+            "Try installing: npm install @evolvingmachines/microvm"
+        );
+      }
+      throw error;
+    }
+  }
+
+  // OS-level sandbox mode (EVOLVE_SANDBOX_OS) - kernel-enforced isolation
+  const useOSSandbox = process.env[ENV_OS_SANDBOX];
+  if (useOSSandbox === "1" || useOSSandbox === "true") {
+    try {
+      const { createOSSandboxProvider } = await import("@evolvingmachines/sandbox");
+      return createOSSandboxProvider();
+    } catch (e) {
+      const error = e as Error;
+      if (error.message?.includes("Cannot find module") || error.message?.includes("MODULE_NOT_FOUND")) {
+        throw new Error(
+          `${ENV_OS_SANDBOX} is set but @evolvingmachines/sandbox failed to load.\n` +
+            "Try installing: npm install @evolvingmachines/sandbox"
+        );
+      }
+      throw error;
+    }
+  }
+
+  // Local subprocess mode (EVOLVE_SANDBOX_LOCAL) - no isolation, direct execution
+  const useLocal = process.env[ENV_LOCAL_SANDBOX];
+  if (useLocal === "1" || useLocal === "true") {
+    try {
+      const { createLocalProvider } = await import("@evolvingmachines/local");
+      return createLocalProvider();
+    } catch (e) {
+      const error = e as Error;
+      if (error.message?.includes("Cannot find module") || error.message?.includes("MODULE_NOT_FOUND")) {
+        throw new Error(
+          `${ENV_LOCAL_SANDBOX} is set but @evolvingmachines/local failed to load.\n` +
+            "Try installing: npm install @evolvingmachines/local"
+        );
+      }
+      throw error;
+    }
+  }
+
   // Gateway mode (EVOLVE_API_KEY) - fallback to gateway E2B
   const evolveKey = process.env[ENV_EVOLVE_API_KEY];
   if (evolveKey) {
@@ -116,6 +192,10 @@ export async function resolveDefaultSandbox(): Promise<SandboxProvider> {
       `2. Set ${ENV_E2B_API_KEY} environment variable (direct E2B access, get key at https://e2b.dev)\n` +
       `3. Set ${ENV_DAYTONA_API_KEY} environment variable (direct Daytona access, get key at https://app.daytona.io)\n` +
       `4. Set ${ENV_MODAL_TOKEN_ID} and ${ENV_MODAL_TOKEN_SECRET} environment variables (direct Modal access, get tokens at https://modal.com/settings/tokens)\n` +
-      "5. Pass sandbox explicitly: .withSandbox(provider)"
+      `5. Set ${ENV_DOCKER_SANDBOX}=true for local Docker sandbox (requires Docker)\n` +
+      `6. Set ${ENV_MICROVM_SANDBOX}=true for MicroVM sandbox (requires Boxlite, macOS ARM64 / Linux)\n` +
+      `7. Set ${ENV_OS_SANDBOX}=true for OS-level sandbox (macOS Seatbelt / Linux bubblewrap)\n` +
+      `8. Set ${ENV_LOCAL_SANDBOX}=true for local subprocess execution (no isolation)\n` +
+      "9. Pass sandbox explicitly: .withSandbox(provider)"
   );
 }

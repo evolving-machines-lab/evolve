@@ -65,7 +65,7 @@ export function getTestEnv(): TestEnv {
   return { EVOLVE_API_KEY, E2B_API_KEY, DAYTONA_API_KEY, MODAL_TOKEN_ID, MODAL_TOKEN_SECRET, ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY };
 }
 
-export type ProviderName = "e2b" | "modal" | "daytona";
+export type ProviderName = "e2b" | "modal" | "daytona" | "docker" | "local" | "os-sandbox" | "microvm";
 
 /**
  * Get sandbox provider by name.
@@ -89,8 +89,24 @@ export function getSandboxProviderByName(name: ProviderName): SandboxProvider {
       }
       return createModalProvider();
     }
+    case "docker": {
+      const { createDockerProvider } = require("@evolvingmachines/docker");
+      return createDockerProvider();
+    }
+    case "local": {
+      const { createLocalProvider } = require("@evolvingmachines/local");
+      return createLocalProvider();
+    }
+    case "os-sandbox": {
+      const { createOSSandboxProvider } = require("@evolvingmachines/sandbox");
+      return createOSSandboxProvider();
+    }
+    case "microvm": {
+      const { createMicroVMProvider } = require("@evolvingmachines/microvm");
+      return createMicroVMProvider();
+    }
     default:
-      throw new Error(`Unknown provider: ${name}. Valid: e2b, modal, daytona`);
+      throw new Error(`Unknown provider: ${name}. Valid: e2b, modal, daytona, docker, local, os-sandbox, microvm`);
   }
 }
 
@@ -102,6 +118,13 @@ export function getAvailableProviders(): ProviderName[] {
   if (process.env.E2B_API_KEY) available.push("e2b");
   if (process.env.DAYTONA_API_KEY) available.push("daytona");
   if (process.env.MODAL_TOKEN_ID && process.env.MODAL_TOKEN_SECRET) available.push("modal");
+  if (process.env.EVOLVE_SANDBOX_DOCKER === "true" || process.env.EVOLVE_SANDBOX_DOCKER === "1") available.push("docker");
+  // Local is always available
+  available.push("local");
+  // OS Sandbox available on macOS/Linux
+  if (process.platform === "darwin" || process.platform === "linux") available.push("os-sandbox");
+  // MicroVM available when env var set (macOS ARM64 / Linux)
+  if (process.env.EVOLVE_SANDBOX_MICROVM === "true" || process.env.EVOLVE_SANDBOX_MICROVM === "1") available.push("microvm");
   return available;
 }
 

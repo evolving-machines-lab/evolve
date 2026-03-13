@@ -5,4 +5,5 @@ export default {
   '03-runtime': 'Runtime',
   '04-streaming': 'Streaming',
   '05-swarm-pipeline': 'Swarm & Pipeline',
+  '06-sandbox-modes': 'Sandbox Modes',
 };

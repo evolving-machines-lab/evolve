@@ -11,14 +11,28 @@ All providers use the `evolve-all` image with pre-installed CLIs.
 | E2B | `E2B_API_KEY` | Default, or `E2B_API_KEY` set | None — instant |
 | Modal | `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` | Both Modal vars set | None — auto-builds image on first run (~2 min) |
 | Daytona | `DAYTONA_API_KEY` | `DAYTONA_API_KEY` set | None — auto-creates snapshot on first run (~5 min) |
+| Docker | `EVOLVE_SANDBOX_DOCKER=true` | Env var set | Docker Desktop installed |
+| MicroVM | `EVOLVE_SANDBOX_MICROVM=true` | Env var set | macOS ARM64 / Linux |
+| OS Sandbox | `EVOLVE_SANDBOX_OS=true` | Env var set | macOS: built-in. Linux: `apt install bubblewrap` |
+| Local | `EVOLVE_SANDBOX_LOCAL=true` | Env var set | None — instant |
 
-See [assets/README.md](https://github.com/evolving-machines-lab/evolve/blob/main/assets/README.md) for detailed setup instructions.
+See [assets/README.md](https://github.com/evolving-machines-lab/evolve/blob/main/assets/README.md) for detailed setup instructions. See [Sandbox Modes](./06-sandbox-modes) for a full comparison of all 6 providers.
 
 ---
 
 ### Auto-Resolution
 
-Set env vars and the SDK auto-resolves the provider—no `.withSandbox()` needed:
+Set env vars and the SDK auto-resolves the provider—no `.withSandbox()` needed.
+
+**Priority order:**
+1. `E2B_API_KEY` → E2B
+2. `DAYTONA_API_KEY` → Daytona
+3. `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` → Modal
+4. `EVOLVE_SANDBOX_DOCKER=true` → Docker
+5. `EVOLVE_SANDBOX_MICROVM=true` → MicroVM
+6. `EVOLVE_SANDBOX_OS=true` → OS Sandbox
+7. `EVOLVE_SANDBOX_LOCAL=true` → Local
+8. `EVOLVE_API_KEY` → Gateway (E2B)
 
 ```bash
 # .env - Gateway mode with Modal (auto-resolves to Modal)
@@ -33,6 +47,18 @@ DAYTONA_API_KEY=...
 # .env - BYOK mode with E2B (auto-resolves to E2B)
 ANTHROPIC_API_KEY=sk-ant-...
 E2B_API_KEY=e2b_...
+
+# .env - Local Docker sandbox
+EVOLVE_API_KEY=sk-...
+EVOLVE_SANDBOX_DOCKER=true
+
+# .env - OS-level sandbox (macOS Seatbelt / Linux bubblewrap)
+EVOLVE_API_KEY=sk-...
+EVOLVE_SANDBOX_OS=true
+
+# .env - Local subprocess (no isolation, dev/testing only)
+EVOLVE_API_KEY=sk-...
+EVOLVE_SANDBOX_LOCAL=true
 ```
 
 ```ts
@@ -118,6 +144,86 @@ const sandbox = createDaytonaProvider({
     snapshotName: "evolve-all",            // (optional) Default: "evolve-all". Custom snapshots via build.sh daytona
 });
 ```
+
+### Docker
+```bash
+# .env
+EVOLVE_API_KEY=sk-...
+EVOLVE_SANDBOX_DOCKER=true
+```
+
+```ts
+import { Evolve, createDockerProvider } from "@evolvingmachines/sdk";
+
+const sandbox = createDockerProvider({
+    defaultTimeoutMs: 3600000,           // (optional) Default: 3600000 (1 hour)
+    imageName: "my-custom-image",        // (optional) Default: "evolve-all"
+});
+```
+
+### MicroVM
+```bash
+# .env
+EVOLVE_API_KEY=sk-...
+EVOLVE_SANDBOX_MICROVM=true
+```
+
+```ts
+import { createMicroVMProvider } from "@evolvingmachines/microvm";
+
+const sandbox = createMicroVMProvider({
+    image: "ubuntu:latest",              // (optional) OCI image. Default: "ubuntu:latest"
+    memoryMib: 512,                      // (optional) Memory in MiB. Default: 512
+    cpus: 1,                             // (optional) Number of vCPUs. Default: 1
+    workingDirectory: "/workspace",      // (optional) Default: "/workspace"
+});
+```
+
+> **Note:** MicroVM requires macOS ARM64 (Apple Silicon) or Linux with `@boxlite-ai/boxlite` installed.
+
+### OS Sandbox
+```bash
+# .env
+EVOLVE_API_KEY=sk-...
+EVOLVE_SANDBOX_OS=true
+```
+
+```ts
+import { Evolve, createOSSandboxProvider } from "@evolvingmachines/sdk";
+
+const sandbox = createOSSandboxProvider({
+    workingDirectory: "./my-project",    // (optional) Default: process.cwd()
+    defaultTimeoutMs: 600000,            // (optional) Default: 600000 (10 min)
+    filesystem: {                        // (optional) Filesystem access policies
+        denyRead: ["~/.ssh", "~/.aws"],  //   Deny reading these paths
+        allowWrite: [".", "/tmp"],        //   Allow writing to these paths
+        denyWrite: [".env", "*.pem"],    //   Deny writing these patterns
+    },
+    network: {                           // (optional) Network access policies
+        allowedDomains: ["api.github.com", "registry.npmjs.org"],
+        deniedDomains: [],
+    },
+    safe: false,                         // (optional) If true, hides $HOME
+});
+```
+
+### Local
+```bash
+# .env
+EVOLVE_API_KEY=sk-...
+EVOLVE_SANDBOX_LOCAL=true
+```
+
+```ts
+import { Evolve, createLocalProvider } from "@evolvingmachines/sdk";
+
+const sandbox = createLocalProvider({
+    workingDirectory: "./my-project",    // (optional) Default: process.cwd()
+    defaultTimeoutMs: 600000,            // (optional) Default: 600000 (10 min)
+});
+```
+
+> **Warning:** Local mode runs commands directly on your host machine with no isolation. Only use for trusted code in dev/testing scenarios.
 
 ---
 

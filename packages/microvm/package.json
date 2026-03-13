@@ -1,0 +1,47 @@
+{
+  "name": "@evolvingmachines/microvm",
+  "version": "0.0.31",
+  "keywords": [
+    "ai",
+    "agents",
+    "sandbox",
+    "microvm",
+    "boxlite",
+    "evolve-sdk",
+    "orchestration"
+  ],
+  "homepage": "https://github.com/evolving-machines-lab/evolve",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/evolving-machines-lab/evolve.git"
+  },
+  "type": "module",
+  "main": "dist/index.cjs",
+  "types": "dist/index.d.ts",
+  "license": "BSL-1.1",
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "scripts": {
+    "build": "tsup --minify",
+    "dev": "tsup --watch",
+    "type-check": "tsc --noEmit",
+    "test": "tsx tests/microvm-sandbox.test.ts"
+  },
+  "dependencies": {
+    "@boxlite-ai/boxlite": "^0.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.18",
+    "tsup": "^8.4.0",
+    "typescript": "^5.8.3"
+  }
+}

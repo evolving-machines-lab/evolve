@@ -154,6 +154,18 @@ jobs:
           # Update Modal package
           sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" packages/modal/package.json
 
+          # Update Docker package
+          sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" packages/docker/package.json
+
+          # Update Local package
+          sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" packages/local/package.json
+
+          # Update Sandbox package
+          sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" packages/sandbox/package.json
+
+          # Update MicroVM package
+          sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" packages/microvm/package.json
+
           # Update Python package (pyproject.toml) - use PY_VERSION for PyPI compatibility
           sed -i "s/^version = \".*\"/version = \"$PY_VERSION\"/" packages/sdk-py/pyproject.toml
 
@@ -215,6 +227,38 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      - name: Publish @evolvingmachines/docker to npm
+        if: inputs.dry_run != true
+        run: |
+          cd packages/docker
+          npm publish --access public --tag ${{ steps.version.outputs.npm_tag }} || echo "::warning::Already published or failed — skipping"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @evolvingmachines/local to npm
+        if: inputs.dry_run != true
+        run: |
+          cd packages/local
+          npm publish --access public --tag ${{ steps.version.outputs.npm_tag }} || echo "::warning::Already published or failed — skipping"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @evolvingmachines/sandbox to npm
+        if: inputs.dry_run != true
+        run: |
+          cd packages/sandbox
+          npm publish --access public --tag ${{ steps.version.outputs.npm_tag }} || echo "::warning::Already published or failed — skipping"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @evolvingmachines/microvm to npm
+        if: inputs.dry_run != true
+        run: |
+          cd packages/microvm
+          npm publish --access public --tag ${{ steps.version.outputs.npm_tag }} || echo "::warning::Already published or failed — skipping"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       - name: Publish @evolvingmachines/sdk to npm
         if: inputs.dry_run != true
         run: |
@@ -246,6 +290,10 @@ jobs:
           echo "  - @evolvingmachines/e2b@${{ steps.version.outputs.new_version }} (tag: ${{ steps.version.outputs.npm_tag }})"
           echo "  - @evolvingmachines/daytona@${{ steps.version.outputs.new_version }} (tag: ${{ steps.version.outputs.npm_tag }})"
           echo "  - @evolvingmachines/modal@${{ steps.version.outputs.new_version }} (tag: ${{ steps.version.outputs.npm_tag }})"
+          echo "  - @evolvingmachines/docker@${{ steps.version.outputs.new_version }} (tag: ${{ steps.version.outputs.npm_tag }})"
+          echo "  - @evolvingmachines/local@${{ steps.version.outputs.new_version }} (tag: ${{ steps.version.outputs.npm_tag }})"
+          echo "  - @evolvingmachines/sandbox@${{ steps.version.outputs.new_version }} (tag: ${{ steps.version.outputs.npm_tag }})"
+          echo "  - @evolvingmachines/microvm@${{ steps.version.outputs.new_version }} (tag: ${{ steps.version.outputs.npm_tag }})"
           echo "  - @evolvingmachines/sdk@${{ steps.version.outputs.new_version }} (tag: ${{ steps.version.outputs.npm_tag }})"
           echo "  - evolve-sdk==${{ steps.version.outputs.py_version }} (PyPI)"
 
@@ -269,6 +317,10 @@ jobs:
             packages/e2b/package.json \
             packages/daytona/package.json \
             packages/modal/package.json \
+            packages/docker/package.json \
+            packages/local/package.json \
+            packages/sandbox/package.json \
+            packages/microvm/package.json \
             packages/sdk-py/pyproject.toml \
             packages/sdk-py/evolve/__init__.py \
             packages/sdk-py/bridge/package.json
@@ -293,12 +345,20 @@ jobs:
             echo "| @evolvingmachines/e2b | $NPM_VERSION | \`npm install @evolvingmachines/e2b\` |" >> $GITHUB_STEP_SUMMARY
             echo "| @evolvingmachines/daytona | $NPM_VERSION | \`npm install @evolvingmachines/daytona\` |" >> $GITHUB_STEP_SUMMARY
             echo "| @evolvingmachines/modal | $NPM_VERSION | \`npm install @evolvingmachines/modal\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| @evolvingmachines/docker | $NPM_VERSION | \`npm install @evolvingmachines/docker\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| @evolvingmachines/local | $NPM_VERSION | \`npm install @evolvingmachines/local\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| @evolvingmachines/sandbox | $NPM_VERSION | \`npm install @evolvingmachines/sandbox\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| @evolvingmachines/microvm | $NPM_VERSION | \`npm install @evolvingmachines/microvm\` |" >> $GITHUB_STEP_SUMMARY
             echo "| @evolvingmachines/sdk | $NPM_VERSION | \`npm install @evolvingmachines/sdk\` |" >> $GITHUB_STEP_SUMMARY
             echo "| evolve-sdk (PyPI) | $PY_VERSION | \`pip install evolve-sdk\` |" >> $GITHUB_STEP_SUMMARY
           else
             echo "| @evolvingmachines/e2b | $NPM_VERSION | \`npm install @evolvingmachines/e2b@$NPM_TAG\` |" >> $GITHUB_STEP_SUMMARY
             echo "| @evolvingmachines/daytona | $NPM_VERSION | \`npm install @evolvingmachines/daytona@$NPM_TAG\` |" >> $GITHUB_STEP_SUMMARY
             echo "| @evolvingmachines/modal | $NPM_VERSION | \`npm install @evolvingmachines/modal@$NPM_TAG\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| @evolvingmachines/docker | $NPM_VERSION | \`npm install @evolvingmachines/docker@$NPM_TAG\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| @evolvingmachines/local | $NPM_VERSION | \`npm install @evolvingmachines/local@$NPM_TAG\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| @evolvingmachines/sandbox | $NPM_VERSION | \`npm install @evolvingmachines/sandbox@$NPM_TAG\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| @evolvingmachines/microvm | $NPM_VERSION | \`npm install @evolvingmachines/microvm@$NPM_TAG\` |" >> $GITHUB_STEP_SUMMARY
             echo "| @evolvingmachines/sdk | $NPM_VERSION | \`npm install @evolvingmachines/sdk@$NPM_TAG\` |" >> $GITHUB_STEP_SUMMARY
             echo "| evolve-sdk (PyPI) | $PY_VERSION | \`pip install evolve-sdk==$PY_VERSION\` |" >> $GITHUB_STEP_SUMMARY
           fi
