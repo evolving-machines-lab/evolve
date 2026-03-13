@@ -67,6 +67,8 @@ export interface SandboxSpawnOptions extends SandboxRunOptions {
 export interface SandboxCreateOptions {
   /** Sandbox image/template ID. Provider uses its default if not specified. */
   image?: string;
+  /** Dockerfile content (enriched by Agent layer). Mutually exclusive with image. */
+  dockerfile?: string;
   envs?: Record<string, string>;
   metadata?: Record<string, string>;
   timeoutMs?: number;
@@ -286,6 +288,8 @@ export interface AgentOptions {
   sandboxId?: string;
   /** Working directory path */
   workingDirectory?: string;
+  /** Custom Dockerfile content for sandbox image (enriched with toolchain at Agent layer) */
+  dockerfile?: string;
   /** Workspace mode */
   workspaceMode?: WorkspaceMode;
   /** Custom system prompt (appended to workspace template in both modes) */

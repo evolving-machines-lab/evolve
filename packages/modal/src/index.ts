@@ -51,6 +51,37 @@ function isBinaryFile(path: string): boolean {
 }
 
 // ============================================================
+// DOCKERFILE PARSING
+// ============================================================
+
+/**
+ * Parse Dockerfile content into base image and remaining commands.
+ * Modal doesn't support fromDockerfile(), so we extract the FROM line
+ * and pass remaining lines via .dockerfileCommands().
+ */
+function parseDockerfile(content: string): { base: string; commands: string[] } {
+  const lines = content.split("\n");
+  let lastFromIndex = -1;
+  let base = "";
+
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (/^FROM\s+/i.test(trimmed)) {
+      lastFromIndex = i;
+      const parts = trimmed.replace(/^FROM\s+/i, "").split(/\s+/);
+      base = parts[0];
+    }
+  }
+
+  if (lastFromIndex === -1 || !base) {
+    throw new Error("Dockerfile must contain a FROM instruction");
+  }
+
+  const commands = lines.slice(lastFromIndex + 1).filter(l => l.trim().length > 0);
+  return { base, commands };
+}
+
+// ============================================================
 // CORE TYPES
 // ============================================================
 
@@ -144,6 +175,8 @@ export interface SandboxConnectOptions {
 /** Options for creating a sandbox */
 export interface SandboxCreateOptions {
   image?: string;
+  /** Dockerfile content for building a custom sandbox image. Mutually exclusive with image. */
+  dockerfile?: string;
   envs?: Record<string, string>;
   metadata?: Record<string, string>;
   timeoutMs?: number;
@@ -764,14 +797,30 @@ export class ModalProvider implements SandboxProvider {
     const app = await this.getApp();
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
 
-    // Resolve image name through IMAGE_MAP (e.g., "evolve-all" -> "evolvingmachines/evolve-all")
-    const imageName = options.image || this.imageName;
-    const resolvedImage = IMAGE_MAP[imageName] ?? imageName;
+    let builtImage;
+    let resolvedImage: string;
 
-    // Eagerly build image on Modal's infra (idempotent — same tag returns same cached imageId).
-    // First run pulls from Docker Hub and caches; subsequent runs resolve in ~150ms.
-    const image = this.client.images.fromRegistry(resolvedImage);
-    const builtImage = await image.build(app);
+    if (options.dockerfile) {
+      // Dockerfile mode: parse FROM, use fromRegistry(base).dockerfileCommands(rest)
+      const { base, commands } = parseDockerfile(options.dockerfile);
+      resolvedImage = IMAGE_MAP[base] ?? base;
+      let image = this.client.images.fromRegistry(resolvedImage);
+      if (commands.length > 0) {
+        image = image.dockerfileCommands(commands);
+      }
+      builtImage = await image.build(app);
+      console.log(`[modal] Built Dockerfile image (base: ${resolvedImage})`);
+    } else {
+      // Image mode (existing behavior)
+      // Resolve image name through IMAGE_MAP (e.g., "evolve-all" -> "evolvingmachines/evolve-all")
+      const imageName = options.image || this.imageName;
+      resolvedImage = IMAGE_MAP[imageName] ?? imageName;
+
+      // Eagerly build image on Modal's infra (idempotent — same tag returns same cached imageId).
+      // First run pulls from Docker Hub and caches; subsequent runs resolve in ~150ms.
+      const image = this.client.images.fromRegistry(resolvedImage);
+      builtImage = await image.build(app);
+    }
 
     // Filter out undefined values and only pass env if non-empty
     // Modal SDK throws if env is empty object or contains undefined values

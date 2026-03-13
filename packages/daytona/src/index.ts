@@ -75,6 +75,39 @@ function wrapCommand(command: string, cwd?: string, envs?: Record<string, string
 export const _testWrapCommand = wrapCommand;
 
 // ============================================================
+// DOCKERFILE PARSING
+// ============================================================
+
+/**
+ * Parse Dockerfile content into base image and remaining commands.
+ * Extracts the last FROM line (supports multi-stage) and returns
+ * everything after it as dockerfile commands.
+ */
+function parseDockerfile(content: string): { base: string; commands: string[] } {
+  const lines = content.split("\n");
+  let lastFromIndex = -1;
+  let base = "";
+
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (/^FROM\s+/i.test(trimmed)) {
+      lastFromIndex = i;
+      // Extract image name (skip "AS alias" if present)
+      const parts = trimmed.replace(/^FROM\s+/i, "").split(/\s+/);
+      base = parts[0];
+    }
+  }
+
+  if (lastFromIndex === -1 || !base) {
+    throw new Error("Dockerfile must contain a FROM instruction");
+  }
+
+  // Everything after the last FROM line becomes dockerfileCommands
+  const commands = lines.slice(lastFromIndex + 1).filter(l => l.trim().length > 0);
+  return { base, commands };
+}
+
+// ============================================================
 // CORE TYPES
 // ============================================================
 
@@ -146,6 +179,8 @@ export interface SandboxResources {
 /** Options for creating a sandbox */
 export interface SandboxCreateOptions {
   image?: string;
+  /** Dockerfile content for building a custom sandbox image. Mutually exclusive with image. */
+  dockerfile?: string;
   envs?: Record<string, string>;
   metadata?: Record<string, string>;
   timeoutMs?: number;
@@ -562,81 +597,157 @@ export class DaytonaProvider implements SandboxProvider {
     // Convert timeoutMs to autoStopInterval in minutes for parity with E2B/Modal
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
     const autoStopMinutes = Math.max(1, Math.ceil(timeoutMs / 60000)); // Min 1 minute
-    const imageName = options.image || this.snapshotName;
 
     let sandbox: DaytonaSandbox;
 
-    // Try to use existing snapshot first (fast path for returning users or ./build.sh daytona)
-    try {
-      const snapshot = await this.client.snapshot.get(imageName);
-      if (snapshot && snapshot.state === "active") {
-        console.log(`[daytona] Using cached snapshot: ${imageName}`);
-        sandbox = await this.client.create(
-          {
-            snapshot: imageName,
-            envVars: options.envs,
-            labels: options.metadata,
-            autoStopInterval: autoStopMinutes,
-          },
-          { timeout: 600 }
-        );
-      } else {
-        throw new Error("Snapshot not active");
-      }
-    } catch {
-      // Snapshot doesn't exist — create a named one from the Docker image, then use it
-      const publicImage = IMAGE_MAP[imageName] ?? imageName;
+    if (options.dockerfile) {
+      // Dockerfile mode: build image from Dockerfile content using Image.dockerfileCommands()
+      // Parse FROM line to get base image, then apply remaining lines as dockerfileCommands
+      const { base, commands } = parseDockerfile(options.dockerfile);
+      const resolvedBase = IMAGE_MAP[base] ?? base;
 
-      console.log(`[daytona] Snapshot "${imageName}" not found, building from image: ${publicImage}`);
-      console.log("[daytona] First run will take a few minutes (this only happens once)...");
+      // Content-hash for snapshot caching (same Dockerfile → reuse snapshot)
+      const { createHash } = await import("crypto");
+      const hash = createHash("sha256").update(options.dockerfile).digest("hex").slice(0, 12);
+      const snapshotAlias = `evolve-df-${hash}`;
 
+      // Try cached snapshot first
       try {
-        // Step 1: Create named snapshot (blocking — so it's available for all future runs)
-        // Use Image.base() — snapshot.create() requires a Daytona Image object, not a raw string
-        await this.client.snapshot.create(
-          {
-            name: imageName,
-            image: Image.base(publicImage),
-            resources: {
-              cpu: options.resources?.cpu ?? 4,
-              memory: options.resources?.memory ?? 4,
-              disk: options.resources?.disk ?? 10,
-            },
-          },
-          { onLogs: (log: string) => console.log(`[daytona] ${log}`) },
-        );
-        console.log(`[daytona] Snapshot "${imageName}" ready.`);
+        const snap = await this.client.snapshot.get(snapshotAlias);
+        if (snap && snap.state === "active") {
+          console.log(`[daytona] Using cached Dockerfile snapshot: ${snapshotAlias}`);
+          sandbox = await this.client.create(
+            { snapshot: snapshotAlias, envVars: options.envs, labels: options.metadata, autoStopInterval: autoStopMinutes },
+            { timeout: 600 }
+          );
+        } else {
+          throw new Error("Snapshot not active");
+        }
+      } catch {
+        console.log(`[daytona] Building Dockerfile snapshot: ${snapshotAlias} (base: ${resolvedBase})`);
+        console.log("[daytona] First build will take a few minutes (cached for subsequent runs)...");
 
-        // Step 2: Create sandbox from the just-created snapshot (fast)
-        sandbox = await this.client.create(
-          {
-            snapshot: imageName,
-            envVars: options.envs,
-            labels: options.metadata,
-            autoStopInterval: autoStopMinutes,
-          },
-          { timeout: 600 }
-        );
-      } catch (snapshotErr) {
-        // Snapshot creation failed — fall back to direct image creation
-        console.warn(`[daytona] Snapshot creation failed, falling back to direct image: ${snapshotErr instanceof Error ? snapshotErr.message : snapshotErr}`);
-        sandbox = await this.client.create(
-          {
-            image: publicImage,
-            envVars: options.envs,
-            labels: options.metadata,
-            autoStopInterval: autoStopMinutes,
-            resources: {
-              cpu: options.resources?.cpu ?? 4,
-              memory: options.resources?.memory ?? 4,
-              disk: options.resources?.disk ?? 10,
+        let image = Image.base(resolvedBase);
+        if (commands.length > 0) {
+          image = image.dockerfileCommands(commands);
+        }
+
+        try {
+          await this.client.snapshot.create(
+            {
+              name: snapshotAlias,
+              image,
+              resources: {
+                cpu: options.resources?.cpu ?? 4,
+                memory: options.resources?.memory ?? 4,
+                disk: options.resources?.disk ?? 10,
+              },
             },
-          },
-          {
-            timeout: 600,
-            onSnapshotCreateLogs: (log: string) => console.log(`[daytona] ${log}`),
-          }
-        );
+            { onLogs: (log: string) => console.log(`[daytona] ${log}`) },
+          );
+          console.log(`[daytona] Snapshot "${snapshotAlias}" ready.`);
+
+          sandbox = await this.client.create(
+            { snapshot: snapshotAlias, envVars: options.envs, labels: options.metadata, autoStopInterval: autoStopMinutes },
+            { timeout: 600 }
+          );
+        } catch (snapshotErr) {
+          console.warn(`[daytona] Snapshot creation failed, falling back to direct build: ${snapshotErr instanceof Error ? snapshotErr.message : snapshotErr}`);
+          sandbox = await this.client.create(
+            {
+              image,
+              envVars: options.envs,
+              labels: options.metadata,
+              autoStopInterval: autoStopMinutes,
+              resources: {
+                cpu: options.resources?.cpu ?? 4,
+                memory: options.resources?.memory ?? 4,
+                disk: options.resources?.disk ?? 10,
+              },
+            },
+            {
+              timeout: 600,
+              onSnapshotCreateLogs: (log: string) => console.log(`[daytona] ${log}`),
+            }
+          );
+        }
+      }
+    } else {
+      // Image mode (existing behavior)
+      const imageName = options.image || this.snapshotName;
+
+      // Try to use existing snapshot first (fast path for returning users or ./build.sh daytona)
+      try {
+        const snapshot = await this.client.snapshot.get(imageName);
+        if (snapshot && snapshot.state === "active") {
+          console.log(`[daytona] Using cached snapshot: ${imageName}`);
+          sandbox = await this.client.create(
+            {
+              snapshot: imageName,
+              envVars: options.envs,
+              labels: options.metadata,
+              autoStopInterval: autoStopMinutes,
+            },
+            { timeout: 600 }
+          );
+        } else {
+          throw new Error("Snapshot not active");
+        }
+      } catch {
+        // Snapshot doesn't exist — create a named one from the Docker image, then use it
+        const publicImage = IMAGE_MAP[imageName] ?? imageName;
+
+        console.log(`[daytona] Snapshot "${imageName}" not found, building from image: ${publicImage}`);
+        console.log("[daytona] First run will take a few minutes (this only happens once)...");
+
+        try {
+          // Step 1: Create named snapshot (blocking — so it's available for all future runs)
+          // Use Image.base() — snapshot.create() requires a Daytona Image object, not a raw string
+          await this.client.snapshot.create(
+            {
+              name: imageName,
+              image: Image.base(publicImage),
+              resources: {
+                cpu: options.resources?.cpu ?? 4,
+                memory: options.resources?.memory ?? 4,
+                disk: options.resources?.disk ?? 10,
+              },
+            },
+            { onLogs: (log: string) => console.log(`[daytona] ${log}`) },
+          );
+          console.log(`[daytona] Snapshot "${imageName}" ready.`);
+
+          // Step 2: Create sandbox from the just-created snapshot (fast)
+          sandbox = await this.client.create(
+            {
+              snapshot: imageName,
+              envVars: options.envs,
+              labels: options.metadata,
+              autoStopInterval: autoStopMinutes,
+            },
+            { timeout: 600 }
+          );
+        } catch (snapshotErr) {
+          // Snapshot creation failed — fall back to direct image creation
+          console.warn(`[daytona] Snapshot creation failed, falling back to direct image: ${snapshotErr instanceof Error ? snapshotErr.message : snapshotErr}`);
+          sandbox = await this.client.create(
+            {
+              image: publicImage,
+              envVars: options.envs,
+              labels: options.metadata,
+              autoStopInterval: autoStopMinutes,
+              resources: {
+                cpu: options.resources?.cpu ?? 4,
+                memory: options.resources?.memory ?? 4,
+                disk: options.resources?.disk ?? 10,
+              },
+            },
+            {
+              timeout: 600,
+              onSnapshotCreateLogs: (log: string) => console.log(`[daytona] ${log}`),
+            }
+          );
+        }
       }
     }
 

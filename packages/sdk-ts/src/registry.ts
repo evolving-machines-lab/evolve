@@ -144,6 +144,26 @@ export interface AgentRegistryEntry {
 }
 
 // =============================================================================
+// TOOLCHAIN MAP
+// =============================================================================
+
+/**
+ * Toolchain installation metadata for each agent CLI.
+ *
+ * Used by Agent.enrichDockerfile() to append the correct install commands
+ * to a user-supplied Dockerfile, ensuring the agent CLI is available inside
+ * the sandbox. Also used by Agent.ensureToolchain() as a runtime safety net.
+ */
+export const TOOLCHAIN_MAP: Record<AgentType, { binary: string; method: "npm" | "pip"; package: string }> = {
+  claude:   { binary: "claude",    method: "npm", package: "@anthropic-ai/claude-code@latest" },
+  codex:    { binary: "codex",     method: "npm", package: "@openai/codex" },
+  gemini:   { binary: "gemini",    method: "npm", package: "@google/gemini-cli@latest" },
+  qwen:     { binary: "qwen",      method: "npm", package: "@qwen-code/qwen-code@latest" },
+  kimi:     { binary: "kimi",      method: "pip", package: "kimi-cli" },
+  opencode: { binary: "opencode",  method: "npm", package: "opencode-ai@latest" },
+};
+
+// =============================================================================
 // AGENT REGISTRY
 // =============================================================================
 
