@@ -38,9 +38,7 @@ evolve/
 │   │   └── src/
 │   ├── local/                   # Local sandbox provider (@evolvingmachines/local) — subprocess
 │   │   └── src/
-│   ├── sandbox/                 # OS-level sandbox provider (@evolvingmachines/sandbox) — Seatbelt/bubblewrap
-│   │   └── src/
-│   └── microvm/                 # MicroVM sandbox provider (@evolvingmachines/microvm) — Boxlite
+│   └── sandbox/                 # OS-level sandbox provider (@evolvingmachines/sandbox) — Seatbelt/bubblewrap
 │       └── src/
 ├── assets/                      # Sandbox templates & build scripts
 │   ├── e2b/                     # E2B template (build.ts, template.ts)

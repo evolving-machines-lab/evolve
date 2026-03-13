@@ -65,7 +65,7 @@ export function getTestEnv(): TestEnv {
   return { EVOLVE_API_KEY, E2B_API_KEY, DAYTONA_API_KEY, MODAL_TOKEN_ID, MODAL_TOKEN_SECRET, ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY };
 }
 
-export type ProviderName = "e2b" | "modal" | "daytona" | "docker" | "local" | "os-sandbox" | "microvm";
+export type ProviderName = "e2b" | "modal" | "daytona" | "docker" | "local" | "os-sandbox";
 
 /**
  * Get sandbox provider by name.
@@ -101,12 +101,8 @@ export function getSandboxProviderByName(name: ProviderName): SandboxProvider {
       const { createOSSandboxProvider } = require("@evolvingmachines/sandbox");
       return createOSSandboxProvider();
     }
-    case "microvm": {
-      const { createMicroVMProvider } = require("@evolvingmachines/microvm");
-      return createMicroVMProvider();
-    }
     default:
-      throw new Error(`Unknown provider: ${name}. Valid: e2b, modal, daytona, docker, local, os-sandbox, microvm`);
+      throw new Error(`Unknown provider: ${name}. Valid: e2b, modal, daytona, docker, local, os-sandbox`);
   }
 }
 
@@ -123,8 +119,6 @@ export function getAvailableProviders(): ProviderName[] {
   available.push("local");
   // OS Sandbox available on macOS/Linux
   if (process.platform === "darwin" || process.platform === "linux") available.push("os-sandbox");
-  // MicroVM available when env var set (macOS ARM64 / Linux)
-  if (process.env.EVOLVE_SANDBOX_MICROVM === "true" || process.env.EVOLVE_SANDBOX_MICROVM === "1") available.push("microvm");
   return available;
 }
 

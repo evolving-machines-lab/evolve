@@ -61,13 +61,6 @@ import type {
   SandboxFiles as OSSandboxFiles,
 } from "@evolvingmachines/sandbox";
 
-import type {
-  SandboxProvider as MicroVMSandboxProvider,
-  SandboxInstance as MicroVMSandboxInstance,
-  SandboxCommands as MicroVMSandboxCommands,
-  SandboxFiles as MicroVMSandboxFiles,
-} from "@evolvingmachines/microvm";
-
 // E2B → SDK canonical
 type _E2BProvider = E2BSandboxProvider extends SandboxProvider ? true : never;
 type _E2BInstance = E2BSandboxInstance extends SandboxInstance ? true : never;
@@ -134,17 +127,6 @@ const _os2: _OSSandboxInstance = true;
 const _os3: _OSSandboxCommands = true;
 const _os4: _OSSandboxFiles = true;
 
-// MicroVM → SDK canonical
-type _MicroVMProvider = MicroVMSandboxProvider extends SandboxProvider ? true : never;
-type _MicroVMInstance = MicroVMSandboxInstance extends SandboxInstance ? true : never;
-type _MicroVMCommands = MicroVMSandboxCommands extends SandboxCommands ? true : never;
-type _MicroVMFiles = MicroVMSandboxFiles extends SandboxFiles ? true : never;
-
-const _microvm1: _MicroVMProvider = true;
-const _microvm2: _MicroVMInstance = true;
-const _microvm3: _MicroVMCommands = true;
-const _microvm4: _MicroVMFiles = true;
-
 // ─── Runtime checks ─────────────────────────────────────────────
 
 import { createE2BProvider } from "@evolvingmachines/e2b";
@@ -153,7 +135,6 @@ import { createModalProvider } from "@evolvingmachines/modal";
 import { createDockerProvider } from "@evolvingmachines/docker";
 import { createLocalProvider } from "@evolvingmachines/local";
 import { createOSSandboxProvider } from "@evolvingmachines/sandbox";
-import { createMicroVMProvider } from "@evolvingmachines/microvm";
 
 // Methods the SDK actually calls
 const REQUIRED_PROVIDER = ["providerType", "create", "connect"] as const;
@@ -243,22 +224,6 @@ try {
   }
 }
 
-// MicroVM (skip if platform unsupported)
-console.log("\nMicroVM:");
-try {
-  const microvm = createMicroVMProvider();
-  missing = checkMethods(microvm as any, REQUIRED_PROVIDER, "MicroVMProvider");
-  assert(missing.length === 0, `implements SandboxProvider${missing.length ? ` — missing: ${missing.join(", ")}` : ""}`);
-  assert(microvm.providerType === "microvm", `providerType = "microvm"`);
-} catch (e) {
-  const msg = (e as Error).message;
-  if (msg.includes("not supported") || msg.includes("platform")) {
-    console.log("  ⚠ Skipped (platform not supported)");
-  } else {
-    throw e;
-  }
-}
-
 // Factory parity
 console.log("\nFactories:");
 assert(typeof createE2BProvider === "function", "createE2BProvider exists");
@@ -267,7 +232,6 @@ assert(typeof createModalProvider === "function", "createModalProvider exists");
 assert(typeof createDockerProvider === "function", "createDockerProvider exists");
 assert(typeof createLocalProvider === "function", "createLocalProvider exists");
 assert(typeof createOSSandboxProvider === "function", "createOSSandboxProvider exists");
-assert(typeof createMicroVMProvider === "function", "createMicroVMProvider exists");
 
 console.log(`\n═══ ${passed} passed, ${failed} failed ═══\n`);
 if (failed > 0) process.exit(1);

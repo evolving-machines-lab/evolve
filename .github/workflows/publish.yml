@@ -163,9 +163,6 @@ jobs:
           # Update Sandbox package
           sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" packages/sandbox/package.json
 
-          # Update MicroVM package
-          sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" packages/microvm/package.json
-
           # Update Python package (pyproject.toml) - use PY_VERSION for PyPI compatibility
           sed -i "s/^version = \".*\"/version = \"$PY_VERSION\"/" packages/sdk-py/pyproject.toml
 
@@ -251,14 +248,6 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Publish @evolvingmachines/microvm to npm
-        if: inputs.dry_run != true
-        run: |
-          cd packages/microvm
-          npm publish --access public --tag ${{ steps.version.outputs.npm_tag }} || echo "::warning::Already published or failed — skipping"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
       - name: Publish @evolvingmachines/sdk to npm
         if: inputs.dry_run != true
         run: |
@@ -293,7 +282,6 @@ jobs:
           echo "  - @evolvingmachines/docker@${{ steps.version.outputs.new_version }} (tag: ${{ steps.version.outputs.npm_tag }})"
           echo "  - @evolvingmachines/local@${{ steps.version.outputs.new_version }} (tag: ${{ steps.version.outputs.npm_tag }})"
           echo "  - @evolvingmachines/sandbox@${{ steps.version.outputs.new_version }} (tag: ${{ steps.version.outputs.npm_tag }})"
-          echo "  - @evolvingmachines/microvm@${{ steps.version.outputs.new_version }} (tag: ${{ steps.version.outputs.npm_tag }})"
           echo "  - @evolvingmachines/sdk@${{ steps.version.outputs.new_version }} (tag: ${{ steps.version.outputs.npm_tag }})"
           echo "  - evolve-sdk==${{ steps.version.outputs.py_version }} (PyPI)"
 
@@ -320,7 +308,6 @@ jobs:
             packages/docker/package.json \
             packages/local/package.json \
             packages/sandbox/package.json \
-            packages/microvm/package.json \
             packages/sdk-py/pyproject.toml \
             packages/sdk-py/evolve/__init__.py \
             packages/sdk-py/bridge/package.json
@@ -348,7 +335,7 @@ jobs:
             echo "| @evolvingmachines/docker | $NPM_VERSION | \`npm install @evolvingmachines/docker\` |" >> $GITHUB_STEP_SUMMARY
             echo "| @evolvingmachines/local | $NPM_VERSION | \`npm install @evolvingmachines/local\` |" >> $GITHUB_STEP_SUMMARY
             echo "| @evolvingmachines/sandbox | $NPM_VERSION | \`npm install @evolvingmachines/sandbox\` |" >> $GITHUB_STEP_SUMMARY
-            echo "| @evolvingmachines/microvm | $NPM_VERSION | \`npm install @evolvingmachines/microvm\` |" >> $GITHUB_STEP_SUMMARY
+
             echo "| @evolvingmachines/sdk | $NPM_VERSION | \`npm install @evolvingmachines/sdk\` |" >> $GITHUB_STEP_SUMMARY
             echo "| evolve-sdk (PyPI) | $PY_VERSION | \`pip install evolve-sdk\` |" >> $GITHUB_STEP_SUMMARY
           else
@@ -358,7 +345,7 @@ jobs:
             echo "| @evolvingmachines/docker | $NPM_VERSION | \`npm install @evolvingmachines/docker@$NPM_TAG\` |" >> $GITHUB_STEP_SUMMARY
             echo "| @evolvingmachines/local | $NPM_VERSION | \`npm install @evolvingmachines/local@$NPM_TAG\` |" >> $GITHUB_STEP_SUMMARY
             echo "| @evolvingmachines/sandbox | $NPM_VERSION | \`npm install @evolvingmachines/sandbox@$NPM_TAG\` |" >> $GITHUB_STEP_SUMMARY
-            echo "| @evolvingmachines/microvm | $NPM_VERSION | \`npm install @evolvingmachines/microvm@$NPM_TAG\` |" >> $GITHUB_STEP_SUMMARY
+
             echo "| @evolvingmachines/sdk | $NPM_VERSION | \`npm install @evolvingmachines/sdk@$NPM_TAG\` |" >> $GITHUB_STEP_SUMMARY
             echo "| evolve-sdk (PyPI) | $PY_VERSION | \`pip install evolve-sdk==$PY_VERSION\` |" >> $GITHUB_STEP_SUMMARY
           fi

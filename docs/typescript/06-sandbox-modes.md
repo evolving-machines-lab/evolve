@@ -121,7 +121,6 @@ const provider = createDockerProvider({
 | `DAYTONA_API_KEY` | Daytona | API key string |
 | `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` | Modal | Token pair |
 | `EVOLVE_SANDBOX_DOCKER` | Docker | `true` or `1` |
-| `EVOLVE_SANDBOX_MICROVM` | MicroVM | `true` or `1` |
 | `EVOLVE_SANDBOX_OS` | OS Sandbox | `true` or `1` |
 | `EVOLVE_SANDBOX_LOCAL` | Local | `true` or `1` |
 | `EVOLVE_API_KEY` | Gateway (E2B) | API key string |
@@ -134,10 +133,9 @@ The SDK resolves providers in this order (first match wins):
 2. `DAYTONA_API_KEY` → Daytona (direct)
 3. `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` → Modal (direct)
 4. `EVOLVE_SANDBOX_DOCKER=true` → Docker
-5. `EVOLVE_SANDBOX_MICROVM=true` → MicroVM
-6. `EVOLVE_SANDBOX_OS=true` → OS Sandbox
-7. `EVOLVE_SANDBOX_LOCAL=true` → Local
-8. `EVOLVE_API_KEY` → Gateway (E2B fallback)
+5. `EVOLVE_SANDBOX_OS=true` → OS Sandbox
+6. `EVOLVE_SANDBOX_LOCAL=true` → Local
+7. `EVOLVE_API_KEY` → Gateway (E2B fallback)
 
 You can always override auto-resolution with `.withSandbox(provider)`.
 
@@ -157,7 +155,7 @@ You can always override auto-resolution with `.withSandbox(provider)`.
 - Own root filesystem (from Docker image).
 - Network isolation via Docker bridge/host networking.
 
-**MicroVM isolation (E2B, Daytona):** Strongest isolation:
+**Cloud VM isolation (E2B, Daytona):** Strongest isolation:
 - Hardware-virtualized boundary.
 - Separate kernel instance.
 - No shared kernel attack surface.

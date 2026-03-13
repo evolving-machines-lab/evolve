@@ -120,12 +120,6 @@ export const ENV_MODAL_TOKEN_SECRET = "MODAL_TOKEN_SECRET";
 export const ENV_DOCKER_SANDBOX = "EVOLVE_SANDBOX_DOCKER";
 
 /**
- * Environment variable to enable MicroVM sandbox (Boxlite)
- * @internal
- */
-export const ENV_MICROVM_SANDBOX = "EVOLVE_SANDBOX_MICROVM";
-
-/**
  * Environment variable to enable OS-level sandbox (Seatbelt/bubblewrap)
  * @internal
  */

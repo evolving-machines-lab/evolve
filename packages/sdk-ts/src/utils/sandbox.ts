@@ -12,7 +12,6 @@ import {
   ENV_E2B_API_KEY,
   ENV_EVOLVE_API_KEY,
   ENV_LOCAL_SANDBOX,
-  ENV_MICROVM_SANDBOX,
   ENV_MODAL_TOKEN_ID,
   ENV_MODAL_TOKEN_SECRET,
   ENV_OS_SANDBOX,
@@ -108,24 +107,6 @@ export async function resolveDefaultSandbox(): Promise<SandboxProvider> {
     }
   }
 
-  // MicroVM mode (EVOLVE_SANDBOX_MICROVM) - lightweight VM via Boxlite
-  const useMicroVM = process.env[ENV_MICROVM_SANDBOX];
-  if (useMicroVM === "1" || useMicroVM === "true") {
-    try {
-      const { createMicroVMProvider } = await import("@evolvingmachines/microvm");
-      return createMicroVMProvider();
-    } catch (e) {
-      const error = e as Error;
-      if (error.message?.includes("Cannot find module") || error.message?.includes("MODULE_NOT_FOUND")) {
-        throw new Error(
-          `${ENV_MICROVM_SANDBOX} is set but @evolvingmachines/microvm failed to load.\n` +
-            "Try installing: npm install @evolvingmachines/microvm"
-        );
-      }
-      throw error;
-    }
-  }
-
   // OS-level sandbox mode (EVOLVE_SANDBOX_OS) - kernel-enforced isolation
   const useOSSandbox = process.env[ENV_OS_SANDBOX];
   if (useOSSandbox === "1" || useOSSandbox === "true") {
@@ -193,9 +174,8 @@ export async function resolveDefaultSandbox(): Promise<SandboxProvider> {
       `3. Set ${ENV_DAYTONA_API_KEY} environment variable (direct Daytona access, get key at https://app.daytona.io)\n` +
       `4. Set ${ENV_MODAL_TOKEN_ID} and ${ENV_MODAL_TOKEN_SECRET} environment variables (direct Modal access, get tokens at https://modal.com/settings/tokens)\n` +
       `5. Set ${ENV_DOCKER_SANDBOX}=true for local Docker sandbox (requires Docker)\n` +
-      `6. Set ${ENV_MICROVM_SANDBOX}=true for MicroVM sandbox (requires Boxlite, macOS ARM64 / Linux)\n` +
-      `7. Set ${ENV_OS_SANDBOX}=true for OS-level sandbox (macOS Seatbelt / Linux bubblewrap)\n` +
-      `8. Set ${ENV_LOCAL_SANDBOX}=true for local subprocess execution (no isolation)\n` +
-      "9. Pass sandbox explicitly: .withSandbox(provider)"
+      `6. Set ${ENV_OS_SANDBOX}=true for OS-level sandbox (macOS Seatbelt / Linux bubblewrap)\n` +
+      `7. Set ${ENV_LOCAL_SANDBOX}=true for local subprocess execution (no isolation)\n` +
+      "8. Pass sandbox explicitly: .withSandbox(provider)"
   );
 }

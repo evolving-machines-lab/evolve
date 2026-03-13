@@ -45,7 +45,6 @@ function clearSandboxEnv() {
   delete process.env.MODAL_TOKEN_ID;
   delete process.env.MODAL_TOKEN_SECRET;
   delete process.env.EVOLVE_SANDBOX_DOCKER;
-  delete process.env.EVOLVE_SANDBOX_MICROVM;
   delete process.env.EVOLVE_SANDBOX_OS;
   delete process.env.EVOLVE_SANDBOX_LOCAL;
   delete process.env.EVOLVE_API_KEY;
@@ -85,7 +84,6 @@ async function main() {
     assert(msg.includes("DAYTONA_API_KEY"), "error mentions DAYTONA_API_KEY");
     assert(msg.includes("MODAL_TOKEN_ID"), "error mentions MODAL_TOKEN_ID");
     assert(msg.includes("EVOLVE_SANDBOX_DOCKER"), "error mentions EVOLVE_SANDBOX_DOCKER");
-    assert(msg.includes("EVOLVE_SANDBOX_MICROVM"), "error mentions EVOLVE_SANDBOX_MICROVM");
     assert(msg.includes("EVOLVE_SANDBOX_OS"), "error mentions EVOLVE_SANDBOX_OS");
     assert(msg.includes("EVOLVE_SANDBOX_LOCAL"), "error mentions EVOLVE_SANDBOX_LOCAL");
     assert(msg.includes("withSandbox"), "error mentions .withSandbox()");
@@ -138,7 +136,7 @@ async function main() {
     );
   }
 
-  // ─── 5. Priority: Docker > MicroVM > OS > Local ────────────
+  // ─── 5. Priority: Docker > OS > Local ──────────────────────
   console.log("\n[5] Resolution priority");
 
   // Local should be lowest priority among local modes
@@ -163,37 +161,8 @@ async function main() {
     assert((e as Error).message.includes("Docker"), "Docker tried first even if unavailable");
   }
 
-  // ─── 6. MicroVM resolution ─────────────────────────────────
-  console.log("\n[6] MicroVM resolution");
-
-  clearSandboxEnv();
-  process.env.EVOLVE_SANDBOX_MICROVM = "true";
-  const isMacARM = platform === "darwin" && process.arch === "arm64";
-  const isLinux = platform === "linux";
-  if (isMacARM || isLinux) {
-    try {
-      const mvmProvider = await resolveDefaultSandbox();
-      assertEqual(mvmProvider.providerType, "microvm", "EVOLVE_SANDBOX_MICROVM=true → microvm");
-    } catch (e) {
-      const msg = (e as Error).message;
-      // Boxlite not installed is expected
-      if (msg.includes("microvm") || msg.includes("boxlite") || msg.includes("MODULE_NOT_FOUND") || msg.includes("Cannot find")) {
-        assert(true, "MicroVM tried but Boxlite not installed (expected)");
-      } else {
-        assert(false, `unexpected MicroVM error: ${msg.slice(0, 100)}`);
-      }
-    }
-  } else {
-    try {
-      await resolveDefaultSandbox();
-      assert(false, "should have thrown for unsupported platform");
-    } catch (e) {
-      assert(true, "MicroVM throws on unsupported platform");
-    }
-  }
-
-  // ─── 7. EVOLVE_SANDBOX_DOCKER=true → docker ───────────────
-  console.log("\n[7] Docker resolution");
+  // ─── 6. EVOLVE_SANDBOX_DOCKER=true → docker ───────────────
+  console.log("\n[6] Docker resolution");
 
   clearSandboxEnv();
   process.env.EVOLVE_SANDBOX_DOCKER = "true";

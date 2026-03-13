@@ -12,11 +12,10 @@ All providers use the `evolve-all` image with pre-installed CLIs.
 | Modal | `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` | Both Modal vars set | None — auto-builds image on first run (~2 min) |
 | Daytona | `DAYTONA_API_KEY` | `DAYTONA_API_KEY` set | None — auto-creates snapshot on first run (~5 min) |
 | Docker | `EVOLVE_SANDBOX_DOCKER=true` | Env var set | Docker Desktop installed |
-| MicroVM | `EVOLVE_SANDBOX_MICROVM=true` | Env var set | macOS ARM64 / Linux |
 | OS Sandbox | `EVOLVE_SANDBOX_OS=true` | Env var set | macOS: built-in. Linux: `apt install bubblewrap` |
 | Local | `EVOLVE_SANDBOX_LOCAL=true` | Env var set | None — instant |
 
-See [assets/README.md](https://github.com/evolving-machines-lab/evolve/blob/main/assets/README.md) for detailed setup instructions. See [Sandbox Modes](./06-sandbox-modes) for a full comparison of all 6 providers.
+See [assets/README.md](https://github.com/evolving-machines-lab/evolve/blob/main/assets/README.md) for detailed setup instructions. See [Sandbox Modes](./06-sandbox-modes) for a full comparison of all providers.
 
 ---
 
@@ -29,10 +28,9 @@ Set env vars and the SDK auto-resolves the provider—no `.withSandbox()` needed
 2. `DAYTONA_API_KEY` → Daytona
 3. `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` → Modal
 4. `EVOLVE_SANDBOX_DOCKER=true` → Docker
-5. `EVOLVE_SANDBOX_MICROVM=true` → MicroVM
-6. `EVOLVE_SANDBOX_OS=true` → OS Sandbox
-7. `EVOLVE_SANDBOX_LOCAL=true` → Local
-8. `EVOLVE_API_KEY` → Gateway (E2B)
+5. `EVOLVE_SANDBOX_OS=true` → OS Sandbox
+6. `EVOLVE_SANDBOX_LOCAL=true` → Local
+7. `EVOLVE_API_KEY` → Gateway (E2B)
 
 ```bash
 # .env - Gateway mode with Modal (auto-resolves to Modal)
@@ -160,26 +158,6 @@ const sandbox = createDockerProvider({
     imageName: "my-custom-image",        // (optional) Default: "evolve-all"
 });
 ```
-
-### MicroVM
-```bash
-# .env
-EVOLVE_API_KEY=sk-...
-EVOLVE_SANDBOX_MICROVM=true
-```
-
-```ts
-import { createMicroVMProvider } from "@evolvingmachines/microvm";
-
-const sandbox = createMicroVMProvider({
-    image: "ubuntu:latest",              // (optional) OCI image. Default: "ubuntu:latest"
-    memoryMib: 512,                      // (optional) Memory in MiB. Default: 512
-    cpus: 1,                             // (optional) Number of vCPUs. Default: 1
-    workingDirectory: "/workspace",      // (optional) Default: "/workspace"
-});
-```
-
-> **Note:** MicroVM requires macOS ARM64 (Apple Silicon) or Linux with `@boxlite-ai/boxlite` installed.
 
 ### OS Sandbox
 ```bash
