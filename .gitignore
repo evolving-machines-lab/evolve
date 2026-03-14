@@ -46,6 +46,9 @@ docs/modal/
 docs/daytona/
 **/plans/
 
+# Private cookbooks
+cookbooks/python/agent-builder/
+
 # Docs site build artifacts
 docs-site/.next/
 docs-site/out/
