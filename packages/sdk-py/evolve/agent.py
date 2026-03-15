@@ -64,6 +64,7 @@ class Evolve:
         schema_options: Optional[SchemaOptions] = None,
         composio: Optional[ComposioSetup] = None,
         storage: Optional[StorageConfig] = None,
+        dockerfile: Optional[str] = None,
     ):
         """Initialize Evolve.
 
@@ -88,6 +89,10 @@ class Evolve:
             schema_options: Validation options (mode: 'strict' or 'loose', default: 'loose')
             composio: Composio Tool Router setup for 500+ external service integrations
             storage: Storage configuration for checkpoint persistence (BYOK S3 or gateway mode)
+            dockerfile: Custom Dockerfile path or inline content for sandbox image.
+                       The SDK enriches the Dockerfile with the agent CLI toolchain at build time
+                       and verifies it at runtime. Accepts a file path (e.g., './Dockerfile')
+                       or inline Dockerfile content (string containing FROM).
         """
         self.config = config
         self.sandbox = sandbox
@@ -104,6 +109,7 @@ class Evolve:
         self.schema_options = schema_options or SchemaOptions()
         self._composio = composio
         self._storage_config = storage
+        self.dockerfile = dockerfile
 
         # Schema handling: store original + convert to JSON Schema
         self._schema = schema
@@ -145,6 +151,7 @@ class Evolve:
                 'secrets': self.secrets,
                 'sandbox_id': self.sandbox_id,
                 'session_tag_prefix': self.session_tag_prefix,
+                'dockerfile': self.dockerfile,
                 'schema': self._schema_json,
                 'schema_options': {'mode': self.schema_options.mode} if self._schema_json else None,
                 # Composio Tool Router

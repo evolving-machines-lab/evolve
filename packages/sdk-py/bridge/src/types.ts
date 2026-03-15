@@ -76,6 +76,8 @@ export interface InitializeParams {
   skills?: string[];
   secrets?: Record<string, string>;
   sandbox_id?: string;
+  // Custom Dockerfile (path or inline content — enriched with agent toolchain by TS SDK)
+  dockerfile?: string;
   forward_stdout?: boolean;
   forward_stderr?: boolean;
   forward_content?: boolean;

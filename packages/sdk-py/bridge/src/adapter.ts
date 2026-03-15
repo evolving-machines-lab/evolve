@@ -202,6 +202,7 @@ export class EvolveAdapter {
         credentials: params.storage.credentials,
       } : {});
     }
+    if (params.dockerfile) kit.withDockerfile(params.dockerfile);
     if (params.composio) {
       kit.withComposio(params.composio.user_id, params.composio.config ? {
         toolkits: params.composio.config.toolkits,
