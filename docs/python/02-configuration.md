@@ -122,6 +122,156 @@ sandbox = DaytonaProvider(
 
 ---
 
+## Custom Dockerfile
+
+Pass `dockerfile=` to run agents inside a sandbox built from your own Dockerfile. The SDK automatically enriches your Dockerfile with the agent CLI toolchain at build time and verifies it at runtime.
+
+### Usage
+
+Pass a file path or inline content:
+
+```python
+from evolve import Evolve
+
+# From a file path
+evolve = Evolve(
+    dockerfile='./environments/Dockerfile',
+)
+
+# Inline content
+evolve = Evolve(
+    dockerfile='''
+FROM python:3.11-slim
+RUN apt-get update && apt-get install -y git build-essential
+RUN pip install numpy pandas scikit-learn
+''',
+)
+
+await evolve.run(prompt='Train a model on the uploaded dataset')
+```
+
+Works with any provider (E2B, Modal, Daytona) — the SDK handles provider-specific image building automatically.
+
+### How It Works
+
+**1. Build-time enrichment** — The SDK appends a `RUN` layer to install the agent CLI as the last step in your Dockerfile:
+
+```dockerfile
+# Your original Dockerfile
+FROM python:3.11-slim
+RUN pip install torch transformers
+
+# --- Evolve SDK: agent toolchain ---
+RUN npm install -g @anthropic-ai/claude-code@latest
+```
+
+The appended command depends on the agent type:
+
+| Agent | Install Command |
+|-------|----------------|
+| `claude` | `npm install -g @anthropic-ai/claude-code@latest` |
+| `codex` | `npm install -g @openai/codex` |
+| `gemini` | `npm install -g @google/gemini-cli@latest` |
+| `qwen` | `npm install -g @qwen-code/qwen-code@latest` |
+| `opencode` | `npm install -g opencode-ai@latest` |
+| `kimi` | `pip install --break-system-packages kimi-cli` |
+
+**2. Runtime safety net** — After the sandbox boots, the SDK runs `which <binary>` to verify the CLI exists. If missing (e.g., build cache miss, PATH conflict), it installs the CLI live as a fallback.
+
+**3. Provider-specific caching** — Each provider caches the built image using a content-hash alias (`evolve-df-<sha256[:12]>`), so subsequent runs with the same Dockerfile skip the build step entirely.
+
+### Examples
+
+**GPU / CUDA environment:**
+```python
+evolve = Evolve(
+    config=AgentConfig(type='claude'),
+    dockerfile='''
+FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04
+RUN apt-get update && apt-get install -y python3 python3-pip nodejs npm git
+RUN pip3 install torch transformers accelerate
+''',
+)
+```
+
+**SWE-Bench style evaluation:**
+```python
+evolve = Evolve(
+    config=AgentConfig(type='claude'),
+    dockerfile='''
+FROM python:3.9-bookworm
+RUN apt-get update && apt-get install -y git gcc g++ make
+RUN pip install django==4.2 pytest hypothesis
+WORKDIR /testbed
+''',
+)
+```
+
+**System with C extensions:**
+```python
+from evolve import Evolve, AgentConfig
+
+evolve = Evolve(
+    config=AgentConfig(type='codex'),
+    dockerfile='''
+FROM python:3.11-slim
+RUN apt-get update && apt-get install -y \
+    gfortran libopenblas-dev liblapack-dev pkg-config
+RUN pip install numpy scipy matplotlib
+''',
+)
+```
+
+### Risks & Compatibility Notes
+
+**Node.js / npm must be available in the base image.** Most agents (claude, codex, gemini, qwen, opencode) install via `npm`. If your base image doesn't include Node.js, the build-time install will fail. The runtime safety net will also fail. Fix: add `RUN apt-get install -y nodejs npm` (or use a base image that includes Node.js).
+
+```dockerfile
+# ✅ Works — Node.js available
+FROM python:3.11-bookworm
+RUN apt-get update && apt-get install -y nodejs npm
+
+# ❌ Fails — no Node.js in slim image
+FROM python:3.11-slim
+# npm not available, agent CLI install will fail
+```
+
+**Alpine / musl compatibility.** Some npm packages ship glibc-only binaries. If you use an Alpine base image, agent CLIs that depend on native modules may fail at runtime. Prefer Debian/Ubuntu-based images.
+
+```dockerfile
+# ⚠️ May have issues with native binaries
+FROM node:20-alpine
+
+# ✅ Safe
+FROM node:20-bookworm-slim
+```
+
+**Package version conflicts.** If your Dockerfile installs a global npm package that conflicts with the agent CLI's dependencies, the appended `npm install -g` may overwrite or break packages. This is rare but possible with peer dependency conflicts.
+
+**Multi-stage builds.** The SDK appends the toolchain install to the **end** of the Dockerfile. In a multi-stage build, this means the CLI is installed in the final stage, which is usually the desired behavior. However, if your final stage uses `COPY --from=builder` and doesn't include npm/pip, the install will fail.
+
+```dockerfile
+# ✅ Works — final stage has npm
+FROM node:20 AS builder
+RUN npm run build
+
+FROM node:20-slim
+COPY --from=builder /app/dist /app
+# SDK appends: RUN npm install -g @anthropic-ai/claude-code@latest ← works
+
+# ❌ Fails — final stage is distroless / has no package manager
+FROM node:20 AS builder
+RUN npm run build
+
+FROM gcr.io/distroless/nodejs20
+COPY --from=builder /app/dist /app
+# SDK appends: RUN npm install -g ... ← no shell or npm available
+```
+
+**Python-based agents (kimi).** The `kimi` agent installs via `pip`. The `--break-system-packages` flag is used to allow installation outside a virtual environment. If your Dockerfile uses a virtual environment, the CLI may be installed outside of it and not be on PATH.
+
+---
+
 ## Evolve Instance
 
 ```python
@@ -150,6 +300,9 @@ evolve = Evolve(
 
     # Sandbox provider (auto-resolved from E2B_API_KEY, or use sandbox from above)
     sandbox=sandbox,
+
+    # (optional) Custom Dockerfile for sandbox image (see "Custom Dockerfile" above)
+    # dockerfile='./my-env/Dockerfile',
 
     # (optional) Uploads to /home/user/workspace/context/ on first run
     context={

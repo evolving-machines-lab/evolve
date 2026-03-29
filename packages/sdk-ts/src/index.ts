@@ -179,6 +179,7 @@ export {
 
 export {
   AGENT_REGISTRY,
+  TOOLCHAIN_MAP,
   getAgentConfig,
   isValidAgentType,
   expandPath,

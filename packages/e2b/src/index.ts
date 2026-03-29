@@ -13,6 +13,7 @@
  */
 
 import { Sandbox as E2BSandbox } from "@e2b/code-interpreter";
+import { Template, type LogEntry } from "e2b";
 
 // ============================================================
 // MODULE-LEVEL CONSTANTS & HELPERS
@@ -143,7 +144,9 @@ export interface SandboxConnectOptions {
 
 /** Options for creating a sandbox */
 export interface SandboxCreateOptions {
-  image: string;
+  image?: string;
+  /** Dockerfile content for building a custom sandbox template. Mutually exclusive with image. */
+  dockerfile?: string;
   envs?: Record<string, string>;
   metadata?: Record<string, string>;
   timeoutMs?: number;
@@ -560,7 +563,43 @@ export class E2BProvider implements SandboxProvider {
 
   async create(options: SandboxCreateOptions): Promise<SandboxInstance> {
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
-    const templateId = options.image ?? this.templateId ?? "evolve-all";
+
+    let templateId: string;
+
+    if (options.dockerfile) {
+      // Dockerfile mode: build a custom E2B template from Dockerfile content.
+      // Uses content-hash alias for caching — same Dockerfile content reuses the template.
+      const { createHash } = await import("crypto");
+      const hash = createHash("sha256").update(options.dockerfile).digest("hex").slice(0, 12);
+      const alias = `evolve-df-${hash}`;
+
+      // Check if template with this alias already exists (cached)
+      try {
+        const exists = await Template.aliasExists(alias, { apiKey: this.apiKey });
+        if (exists) {
+          console.log(`[e2b] Using cached Dockerfile template: ${alias}`);
+          templateId = alias;
+        } else {
+          throw new Error("not cached");
+        }
+      } catch {
+        // Build new template from Dockerfile content
+        console.log(`[e2b] Building Dockerfile template: ${alias}`);
+        console.log("[e2b] First build will take a few minutes (cached for subsequent runs)...");
+
+        const templateBuilder = Template().fromDockerfile(options.dockerfile);
+        const buildInfo = await Template.build(templateBuilder, {
+          alias,
+          apiKey: this.apiKey,
+          onBuildLogs: (log: LogEntry) => console.log(`[e2b] ${log.message}`),
+        });
+        templateId = buildInfo.templateId ?? alias;
+        console.log(`[e2b] Template "${alias}" ready.`);
+      }
+    } else {
+      // Image mode (existing behavior)
+      templateId = options.image ?? this.templateId ?? "evolve-all";
+    }
 
     // Map generic 'image' to E2B's 'templateId'
     const sandbox = await E2BSandbox.create(templateId, {

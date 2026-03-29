@@ -10,6 +10,8 @@
 import type { z } from "zod";
 import Ajv, { type ValidateFunction } from "ajv";
 import { randomUUID, randomBytes } from "crypto";
+import { readFileSync, existsSync } from "fs";
+import { resolve } from "path";
 import type {
   AgentType,
   SandboxInstance,
@@ -38,7 +40,7 @@ import type {
   SessionCost,
 } from "./types";
 import { VALIDATION_PRESETS } from "./types";
-import { getAgentConfig, type AgentRegistryEntry } from "./registry";
+import { getAgentConfig, TOOLCHAIN_MAP, type AgentRegistryEntry } from "./registry";
 import { writeMcpConfig, writeCodexSpendProvider, writeJsonSpendHeaders, writeKimiSpendConfig } from "./mcp";
 import { createAgentParser, type AgentParser } from "./parsers";
 import { DEFAULT_TIMEOUT_MS, DEFAULT_WORKING_DIR, DEFAULT_DASHBOARD_URL, LITELLM_CUSTOMER_ID_HEADER, LITELLM_TAGS_HEADER, RUN_TAG_PREFIX, getGatewayUrl, getGeminiGatewayUrl } from "./constants";
@@ -329,6 +331,86 @@ export class Agent {
   }
 
   // ===========================================================================
+  // DOCKERFILE ENRICHMENT & TOOLCHAIN SAFETY NET
+  // ===========================================================================
+
+  /**
+   * Enrich a user-supplied Dockerfile with agent toolchain install commands.
+   *
+   * Appends RUN commands to install the agent CLI binary so it's available
+   * inside the sandbox. Relies on Docker layer caching for efficiency —
+   * subsequent builds with the same Dockerfile skip the install step.
+   *
+   * @param dockerfileContent - Raw Dockerfile content (or file path to read)
+   * @returns Enriched Dockerfile content with toolchain RUN commands appended
+   */
+  private enrichDockerfile(dockerfileContent: string): string {
+    const toolchain = TOOLCHAIN_MAP[this.agentConfig.type];
+
+    // Build the install command based on package manager
+    const installCmd = toolchain.method === "npm"
+      ? `npm install -g ${toolchain.package}`
+      : `pip install --break-system-packages ${toolchain.package}`;
+
+    // Append toolchain install as the last layer
+    const enriched = [
+      dockerfileContent.trimEnd(),
+      "",
+      "# --- Evolve SDK: agent toolchain ---",
+      `RUN ${installCmd}`,
+    ].join("\n");
+
+    return enriched;
+  }
+
+  /**
+   * Runtime safety net: verify the agent CLI binary exists in the sandbox.
+   * If not found (e.g., build cache miss, enrichment skipped), install it live.
+   *
+   * This is a fallback — the build-time enrichment should handle 99% of cases.
+   */
+  private async ensureToolchain(sandbox: SandboxInstance): Promise<void> {
+    const toolchain = TOOLCHAIN_MAP[this.agentConfig.type];
+
+    const check = await sandbox.commands.run(`which ${toolchain.binary}`, { timeoutMs: 10000 });
+    if (check.exitCode === 0) return; // Binary exists, nothing to do
+
+    console.warn(`[Evolve] Agent CLI "${toolchain.binary}" not found in sandbox, installing at runtime...`);
+
+    const installCmd = toolchain.method === "npm"
+      ? `npm install -g ${toolchain.package}`
+      : `pip install --break-system-packages ${toolchain.package}`;
+
+    const result = await sandbox.commands.run(installCmd, { timeoutMs: 300000 }); // 5 min timeout
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `Failed to install agent CLI "${toolchain.binary}" in sandbox: ${result.stderr || result.stdout}`
+      );
+    }
+  }
+
+  /**
+   * Resolve Dockerfile content from options.
+   * Supports both inline content and file paths.
+   */
+  private resolveDockerfileContent(): string | undefined {
+    const raw = this.options.dockerfile;
+    if (!raw) return undefined;
+
+    // If it looks like a file path (no newlines, ends with Dockerfile or common extension),
+    // try to read it from disk
+    if (!raw.includes("\n") && !raw.includes("FROM ")) {
+      const resolvedPath = resolve(raw);
+      if (existsSync(resolvedPath)) {
+        return readFileSync(resolvedPath, "utf-8");
+      }
+    }
+
+    // Otherwise treat as inline Dockerfile content
+    return raw;
+  }
+
+  // ===========================================================================
   // SANDBOX MANAGEMENT
   // ===========================================================================
 
@@ -368,10 +450,26 @@ export class Agent {
         // Create new sandbox with full initialization
         const envVars = this.buildEnvironmentVariables();
 
-        this.sandbox = await provider.create({
+        // Build create options — supports image, dockerfile, or default
+        const createOpts: import("./types").SandboxCreateOptions = {
           envs: envVars,
           workingDirectory: this.workingDir,
-        });
+        };
+
+        const dockerfileContent = this.resolveDockerfileContent();
+        if (dockerfileContent) {
+          // Dockerfile mode: enrich with agent toolchain, pass to provider
+          createOpts.dockerfile = this.enrichDockerfile(dockerfileContent);
+        }
+
+        this.sandbox = await provider.create(createOpts);
+
+        // Runtime safety net: verify agent CLI exists (handles edge cases where
+        // enrichment didn't work, e.g., Dockerfile overrides PATH, or user's
+        // base image conflicts with npm/pip install)
+        if (dockerfileContent) {
+          await this.ensureToolchain(this.sandbox);
+        }
 
         // Agent-specific setup (e.g., codex login)
         await this.setupAgentAuth(this.sandbox);
