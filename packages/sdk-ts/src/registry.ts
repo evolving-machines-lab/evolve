@@ -262,9 +262,11 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     image: "evolve-all",
     apiKeyEnv: "OPENAI_API_KEY",
     baseUrlEnv: "OPENAI_BASE_URL",
-    defaultModel: "qwen3.5-plus",
+    defaultModel: "qwen3.6-plus",
     models: [
-      { alias: "qwen3.5-plus", modelId: "qwen3.5-plus", description: "Flagship chat, code + reasoning" },
+      { alias: "qwen3.6-plus", modelId: "qwen3.6-plus", description: "Latest flagship (Apr 2026)" },
+      { alias: "qwen3.5-plus", modelId: "qwen3.5-plus", description: "Previous flagship, thinking-enabled" },
+      { alias: "qwen3-max-2026-01-23", modelId: "qwen3-max-2026-01-23", description: "Max model with thinking" },
       { alias: "qwen3-coder-next", modelId: "qwen3-coder-next", description: "Recommended coder: balances quality/speed/cost" },
       { alias: "qwen3-coder-plus", modelId: "qwen3-coder-plus", description: "Max-quality coder for complex tasks" },
       { alias: "qwen3-coder-flash", modelId: "qwen3-coder-flash", description: "Fast coder with context cache" },
