@@ -12,7 +12,7 @@
  *   CODEX_MODEL - Model for codex agent (default: gpt-5.1-codex)
  *   CODEX_REASONING_EFFORT - Reasoning effort for codex (default: medium)
  *   ANTHROPIC_MODEL - Model for claude agent (default: opus)
- *   GEMINI_MODEL - Model for gemini agent (default: gemini-3-pro-preview)
+ *   GEMINI_MODEL - Model for gemini agent (default: gemini-3.1-pro-preview)
  *   QWEN_OPENAI_MODEL - Model for qwen agent (default: qwen3.5-plus)
  */
 
@@ -159,7 +159,7 @@ export function getAgentConfig(type: AgentType): AgentConfig {
       return {
         type: "gemini",
         apiKey: env.EVOLVE_API_KEY || env.GEMINI_API_KEY || "",
-        model: process.env.GEMINI_MODEL || "gemini-3-pro-preview",
+        model: process.env.GEMINI_MODEL || "gemini-3.1-pro-preview",
       };
 
     case "qwen":

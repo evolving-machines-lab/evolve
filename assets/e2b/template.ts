@@ -88,7 +88,7 @@ export const template = Template()
   // ---------------------------------------------------------------------------
   // Gemini Extensions (Nano Banana for image generation)
   // ---------------------------------------------------------------------------
-  .runCmd('echo y | gemini extensions install https://github.com/gemini-cli-extensions/nanobanana || true')
+  .runCmd('yes | gemini extensions install https://github.com/gemini-cli-extensions/nanobanana || true')
 
   // ---------------------------------------------------------------------------
   // Browser Automation (Playwright)

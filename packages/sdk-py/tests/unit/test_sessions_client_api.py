@@ -81,7 +81,7 @@ class MockBridgeManager:
                 'id': params['id'],
                 'tag': 'demo-a',
                 'agent': 'codex',
-                'model': 'gpt-5.2-codex',
+                'model': 'gpt-5.3-codex',
                 'provider': 'gateway',
                 'sandbox_id': 'sbx-1',
                 'state': 'ended',
@@ -211,7 +211,7 @@ class TestSessionsClientGet:
 
         assert isinstance(info, SessionInfo)
         assert info.id == 'sess-1'
-        assert info.model == 'gpt-5.2-codex'
+        assert info.model == 'gpt-5.3-codex'
         assert info.sandbox_id == 'sbx-1'
         assert info.state == 'ended'
         assert info.runtime_status == 'dead'

@@ -29,7 +29,7 @@ SAMPLE_RUN_COST = {
     'index': 1,
     'cost': 0.4200,
     'tokens': {'prompt': 100, 'completion': 50},
-    'model': 'claude-opus-4-6',
+    'model': 'claude-opus-4-7',
     'requests': 2,
     'as_of': '2026-02-25T00:00:00.000Z',
     'is_complete': True,
@@ -46,7 +46,7 @@ SAMPLE_SESSION_COST = {
             'index': 1,
             'cost': 0.4,
             'tokens': {'prompt': 100, 'completion': 50},
-            'model': 'claude-sonnet-4-5-20250929',
+            'model': 'claude-sonnet-4-6',
             'requests': 1,
             'as_of': '2026-02-25T00:00:00.000Z',
             'is_complete': True,
@@ -57,7 +57,7 @@ SAMPLE_SESSION_COST = {
             'index': 2,
             'cost': 0.8345,
             'tokens': {'prompt': 100, 'completion': 50},
-            'model': 'claude-opus-4-6',
+            'model': 'claude-opus-4-7',
             'requests': 3,
             'as_of': '2026-02-25T00:00:00.000Z',
             'is_complete': True,
@@ -136,7 +136,7 @@ class TestRunCostDataclass:
             index=1,
             cost=0.42,
             tokens={'prompt': 100, 'completion': 50},
-            model='claude-opus-4-6',
+            model='claude-opus-4-7',
             requests=2,
             as_of='2026-02-25T00:00:00.000Z',
             is_complete=True,
@@ -146,7 +146,7 @@ class TestRunCostDataclass:
         assert rc.index == 1
         assert rc.cost == 0.42
         assert rc.tokens == {'prompt': 100, 'completion': 50}
-        assert rc.model == 'claude-opus-4-6'
+        assert rc.model == 'claude-opus-4-7'
         assert rc.requests == 2
         assert rc.as_of == '2026-02-25T00:00:00.000Z'
         assert rc.is_complete is True
@@ -277,7 +277,7 @@ class TestCostParsers:
         assert rc.index == 1
         assert rc.cost == 0.42
         assert rc.tokens == {'prompt': 100, 'completion': 50}
-        assert rc.model == 'claude-opus-4-6'
+        assert rc.model == 'claude-opus-4-7'
         assert rc.requests == 2
         assert rc.as_of == '2026-02-25T00:00:00.000Z'
         assert rc.is_complete is True
@@ -294,9 +294,9 @@ class TestCostParsers:
         assert sc.truncated is False
         assert len(sc.runs) == 2
         assert sc.runs[0].run_id == 'run-1'
-        assert sc.runs[0].model == 'claude-sonnet-4-5-20250929'
+        assert sc.runs[0].model == 'claude-sonnet-4-6'
         assert sc.runs[1].run_id == 'run-2'
-        assert sc.runs[1].model == 'claude-opus-4-6'
+        assert sc.runs[1].model == 'claude-opus-4-7'
         assert sc.runs[1].cost == 0.8345
 
     def test_parse_session_cost_empty_runs(self):

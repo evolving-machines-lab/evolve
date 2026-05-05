@@ -41,7 +41,7 @@ def get_agent_config() -> Optional[AgentConfig]:
         return AgentConfig(
             type='codex',
             api_key=evolve_api_key,
-            model=os.getenv('CODEX_MODEL', 'gpt-5-codex'),
+            model=os.getenv('CODEX_MODEL', 'gpt-5.3-codex'),
             reasoning_effort=os.getenv('CODEX_REASONING_EFFORT', 'medium'),
         )
 
@@ -49,7 +49,7 @@ def get_agent_config() -> Optional[AgentConfig]:
         return AgentConfig(
             type='claude',
             api_key=evolve_api_key,
-            model=os.getenv('ANTHROPIC_MODEL', 'claude-sonnet-4-5-20250929'),
+            model=os.getenv('ANTHROPIC_MODEL', 'claude-sonnet-4-6'),
         )
 
     elif agent_type == 'gemini':
