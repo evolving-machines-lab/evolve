@@ -41,7 +41,7 @@ def get_agent_config() -> Optional[AgentConfig]:
         return AgentConfig(
             type='codex',
             api_key=evolve_api_key,
-            model=os.getenv('CODEX_MODEL', 'gpt-5-codex'),
+            model=os.getenv('CODEX_MODEL', 'gpt-5.3-codex'),
             reasoning_effort=os.getenv('CODEX_REASONING_EFFORT', 'medium'),
         )
 

@@ -270,7 +270,7 @@ Use different agents per candidate:
 ```python
 claude_agent = AgentConfig(type='claude', model='opus')
 codex_agent = AgentConfig(type='codex', model='gpt-5.3-codex')
-gemini_agent = AgentConfig(type='gemini', model='gemini-3-flash')
+gemini_agent = AgentConfig(type='gemini', model='gemini-3-flash-preview')
 
 result = await swarm.best_of(
     item=input_item,

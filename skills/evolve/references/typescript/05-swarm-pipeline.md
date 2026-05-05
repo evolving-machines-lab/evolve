@@ -261,7 +261,7 @@ Use different agents per candidate:
 ```ts
 const claudeAgent = { type: "claude", model: "opus" };
 const codexAgent = { type: "codex", model: "gpt-5.3-codex" };
-const geminiAgent = { type: "gemini", model: "gemini-3-flash" };
+const geminiAgent = { type: "gemini", model: "gemini-3-flash-preview" };
 
 const result = await swarm.bestOf({
     item: input,

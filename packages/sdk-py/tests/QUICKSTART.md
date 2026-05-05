@@ -81,7 +81,7 @@ EVOLVE_API_KEY=sk_your_gateway_key            # Single key for all agents
 
 # Optional overrides
 # EVOLVE_GATEWAY_URL=http://localhost:4000    # Point at custom LiteLLM gateway
-CODEX_MODEL=gpt-5-codex
+CODEX_MODEL=gpt-5.3-codex
 CLAUDE_MODEL=claude-sonnet-4-6
 GEMINI_MODEL=gemini-2.5-flash
 QWEN_MODEL=qwen3-coder-plus
@@ -157,7 +157,7 @@ Tests use emoji-based logging for clear visual feedback:
 ```
 🚀 Starting Basic SDK Method Tests
 📋 Agent: Codex (codex)
-🔑 Model: gpt-5-codex
+🔑 Model: gpt-5.3-codex
 
 ======================================================================
 🧪 Test 1: Basic run() method - Codex
@@ -203,7 +203,7 @@ Comment out `await evolve.kill()` in failing tests to keep sandbox running.
 Set model environment variables:
 
 ```bash
-CODEX_MODEL=gpt-5-codex-mini TEST_AGENT_TYPE=codex python -m pytest tests/integration/
+CODEX_MODEL=gpt-5.4-mini TEST_AGENT_TYPE=codex python -m pytest tests/integration/
 ANTHROPIC_MODEL=claude-sonnet-4-6 TEST_AGENT_TYPE=claude python tests/integration/test_01_basic_methods.py
 ```
 
