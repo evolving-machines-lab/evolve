@@ -102,7 +102,7 @@ class RunCost:
         index: 1-based chronological position in session
         cost: Total cost in USD (includes platform margin)
         tokens: Token counts {'prompt': N, 'completion': N}
-        model: Model used (e.g., 'claude-opus-4-6')
+        model: Model used (e.g., 'claude-opus-4-7')
         requests: Number of LLM API requests in this run
         as_of: ISO timestamp when this data was fetched
         is_complete: False if recent LLM calls may still be batching (~60s delay)

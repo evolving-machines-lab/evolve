@@ -129,7 +129,7 @@ const evolve = new Evolve()
     // Agent configuration (optional if EVOLVE_API_KEY set, defaults to claude)
     .withAgent({
         type: "codex",                        // "claude" | "codex" | "gemini" | "qwen" | "kimi" | "opencode" - defaults to "claude"
-        model: "gpt-5.2-codex",               // (optional) Uses default if omitted. Use "sonnet[1m]" / "opus[1m]" for 1M context (Claude only)
+        model: "gpt-5.3-codex",               // (optional) Uses default if omitted. Use "sonnet[1m]" / "opus[1m]" for 1M context (Claude only)
         reasoningEffort: "medium",            // (optional) "low" | "medium" | "high" | "xhigh" - Codex only
         apiKey: process.env.EVOLVE_API_KEY!, // (optional) Gateway mode - auto-resolves from env
         // providerApiKey: process.env.ANTHROPIC_API_KEY!, // (optional) Direct mode (BYOK)

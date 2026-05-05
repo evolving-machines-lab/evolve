@@ -82,7 +82,7 @@ EVOLVE_API_KEY=sk_your_gateway_key            # Single key for all agents
 # Optional overrides
 # EVOLVE_GATEWAY_URL=http://localhost:4000    # Point at custom LiteLLM gateway
 CODEX_MODEL=gpt-5-codex
-CLAUDE_MODEL=claude-sonnet-4-5-20250929
+CLAUDE_MODEL=claude-sonnet-4-6
 GEMINI_MODEL=gemini-2.5-flash
 QWEN_MODEL=qwen3-coder-plus
 
@@ -204,7 +204,7 @@ Set model environment variables:
 
 ```bash
 CODEX_MODEL=gpt-5-codex-mini TEST_AGENT_TYPE=codex python -m pytest tests/integration/
-ANTHROPIC_MODEL=claude-sonnet-4-5-20250929 TEST_AGENT_TYPE=claude python tests/integration/test_01_basic_methods.py
+ANTHROPIC_MODEL=claude-sonnet-4-6 TEST_AGENT_TYPE=claude python tests/integration/test_01_basic_methods.py
 ```
 
 ### Adjust Timeouts
