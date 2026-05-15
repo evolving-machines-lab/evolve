@@ -9,6 +9,7 @@ from .config import (
     SandboxProvider,
     AgentType,
     WorkspaceMode,
+    BrowserProvider,
     ReasoningEffort,
     ValidationMode,
     SchemaOptions,

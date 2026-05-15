@@ -28,6 +28,7 @@ import type {
   StorageConfig,
   RunCost,
   SessionCost,
+  BrowserProvider,
 } from "./types";
 import { Agent, type AgentConfig, type AgentOptions, type AgentResponse } from "./agent";
 import type { OutputEvent } from "./parsers";
@@ -68,6 +69,8 @@ export interface EvolveConfig {
   context?: FileMap;
   files?: FileMap;
   mcpServers?: Record<string, McpServerConfig>;
+  /** Browser automation provider to enable explicitly */
+  browser?: BrowserProvider;
   /** Skills to enable (e.g., ["pdf", "dev-browser"]) */
   skills?: SkillName[];
   /** Schema for structured output (Zod or JSON Schema, auto-detected) */
@@ -223,6 +226,27 @@ export class Evolve extends EventEmitter {
    */
   withMcpServers(servers: Record<string, McpServerConfig>): this {
     this.config.mcpServers = { ...this.config.mcpServers, ...servers };
+    return this;
+  }
+
+  /**
+   * Enable browser automation.
+   *
+   * Gateway mode supports "browser-use", exposed as the same MCP server that
+   * was previously included automatically.
+   *
+   * @example
+   * kit.withBrowser("browser-use") // explicit provider
+   *
+   * @example
+   * kit.withBrowser() // defaults to "browser-use"
+   */
+  withBrowser(provider: BrowserProvider | false = "browser-use"): this {
+    if (provider === false) {
+      delete this.config.browser;
+    } else {
+      this.config.browser = provider;
+    }
     return this;
   }
 
@@ -393,10 +417,16 @@ export class Evolve extends EventEmitter {
     // Resolve sandbox provider (from config or env)
     const sandboxProvider = this.config.sandbox ?? await resolveDefaultSandbox();
 
-    // Gateway mode: merge platform defaults (user config takes precedence)
-    const gatewayMcpDefaults = !agentConfig.isDirectMode
-      ? getGatewayMcpServers(agentConfig.apiKey)
-      : {};
+    // Gateway browser MCP is opt-in; user config still takes precedence.
+    let browserMcpServers: Record<string, McpServerConfig> = {};
+    if (this.config.browser === "browser-use") {
+      if (agentConfig.isDirectMode) {
+        throw new Error(
+          'withBrowser("browser-use") requires gateway mode. Use apiKey/EVOLVE_API_KEY instead of providerApiKey/direct mode.'
+        );
+      }
+      browserMcpServers = getGatewayMcpServers(agentConfig.apiKey);
+    }
 
     // Resolve storage config if .withStorage() was called
     const resolvedStorage = this.config.storage !== undefined
@@ -417,7 +447,7 @@ export class Evolve extends EventEmitter {
       systemPrompt: this.config.systemPrompt,
       context: this.config.context,
       files: this.config.files,
-      mcpServers: { ...gatewayMcpDefaults, ...this.config.mcpServers },
+      mcpServers: { ...browserMcpServers, ...this.config.mcpServers },
       skills: this.config.skills,
       schema: this.config.schema,
       schemaOptions: this.config.schemaOptions,

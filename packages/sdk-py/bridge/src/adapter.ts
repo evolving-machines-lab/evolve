@@ -186,6 +186,9 @@ export class EvolveAdapter {
     if (params.mcp_servers) {
       kit.withMcpServers(params.mcp_servers);
     }
+    if (params.browser) {
+      kit.withBrowser(params.browser);
+    }
     if (params.skills?.length) {
       kit.withSkills(params.skills);
     }

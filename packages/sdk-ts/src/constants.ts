@@ -57,10 +57,10 @@ export function getE2BGatewayUrl(): string {
 }
 
 /**
- * Get default MCP servers for gateway mode users
+ * Get gateway MCP servers for opt-in platform integrations
  *
- * These MCP servers are automatically available to users authenticating via
- * EVOLVE_API_KEY. The gateway injects provider API keys server-side.
+ * These MCP servers are available to users authenticating via EVOLVE_API_KEY.
+ * The gateway injects provider API keys server-side.
  *
  * Users can override these by providing their own config with the same key
  * via .withMcpServers().

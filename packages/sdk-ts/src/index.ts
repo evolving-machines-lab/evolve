@@ -105,6 +105,7 @@ export type {
   ValidationMode,
   SchemaValidationOptions,
   SkillName,
+  BrowserProvider,
   SkillsConfig,
   ComposioConfig,
   ComposioSetup,

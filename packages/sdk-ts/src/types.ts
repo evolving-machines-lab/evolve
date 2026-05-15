@@ -138,6 +138,9 @@ export type WorkspaceMode = "knowledge" | "swe";
 /** Available skills that can be enabled */
 export type SkillName = "pdf" | "dev-browser" | (string & {});
 
+/** Browser automation providers that can be enabled explicitly */
+export type BrowserProvider = "browser-use";
+
 /** Skills configuration for an agent */
 export interface SkillsConfig {
   /** Source directory where skills are staged */
