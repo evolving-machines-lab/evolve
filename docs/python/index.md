@@ -45,6 +45,7 @@ await evolve.run(prompt='Hello world')
 | `system_prompt=` | [Configuration → Evolve Instance](./02-configuration.md#evolve-instance) |
 | `schema=` (Pydantic / JSON Schema) | [Configuration → Evolve Instance](./02-configuration.md#evolve-instance) |
 | `browser=` | [Configuration → Browser Automation](./02-configuration.md#browser-automation) |
+| `plugins=` | [Configuration → Agent Plugins](./02-configuration.md#agent-plugins) |
 | `skills=` | [Configuration → Agent Skills](./02-configuration.md#agent-skills) |
 | `composio=` (1000+ integrations) | [Configuration → Composio](./02-configuration.md#composio-tool-router) |
 | `mcp_servers=` (STDIO / HTTP / SSE) | [Configuration → Evolve Instance](./02-configuration.md#evolve-instance) |

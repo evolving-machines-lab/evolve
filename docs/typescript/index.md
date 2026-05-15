@@ -45,6 +45,7 @@ await evolve.run({ prompt: "Hello world" });
 | `.withSystemPrompt()` | [Configuration → Evolve Instance](./02-configuration.md#evolve-instance) |
 | `.withSchema()` (Zod / JSON Schema) | [Configuration → Evolve Instance](./02-configuration.md#evolve-instance) |
 | `.withBrowser("browser-use")` | [Configuration → Browser Automation](./02-configuration.md#browser-automation) |
+| `.withPlugins()` | [Configuration → Agent Plugins](./02-configuration.md#agent-plugins) |
 | `.withSkills()` | [Configuration → Agent Skills](./02-configuration.md#agent-skills) |
 | `.withComposio()` (1000+ integrations) | [Configuration → Composio](./02-configuration.md#composio-tool-router) |
 | `.withMcpServers()` (STDIO / HTTP / SSE) | [Configuration → Evolve Instance](./02-configuration.md#evolve-instance) |

@@ -167,6 +167,12 @@ evolve = Evolve(
     # (optional) Gateway browser automation
     browser='browser-use',
 
+    # (optional) Install plugins/extensions for the selected agent before first run
+    plugins={
+        'marketplace': 'https://github.com/org/codex-plugins.git',
+        'sparse': ['.agents/plugins'],
+    },
+
     # (optional) Skills for the agent
     skills=['pdf', 'docx', 'pptx'],
 
@@ -272,6 +278,38 @@ await evolve.run(prompt='Browse Hacker News top 5 articles and create a slide de
 | `agent-browser` | CLI-based headless browser automation for AI agents | [skills/agent-browser](https://github.com/evolving-machines-lab/evolve/tree/main/skills/agent-browser) |
 | `dev-browser` | Browser automation with persistent page state | [skills/dev-browser](https://github.com/evolving-machines-lab/evolve/tree/main/skills/dev-browser) |
 | `webapp-testing` | Test web applications | [skills/webapp-testing](https://github.com/evolving-machines-lab/evolve/tree/main/skills/webapp-testing) |
+
+### Agent Plugins
+
+`plugins=` installs plugins/extensions into the sandbox user profile before the first agent command. The selected agent determines the accepted shape:
+
+```python
+# droid
+plugins={
+    'marketplace': 'https://github.com/Factory-AI/factory-plugins',
+    'plugin': 'droid-control@factory-plugins',
+}
+
+# claude
+plugins={
+    'marketplace': 'anthropics/claude-code',
+    'plugin': 'commit-commands@anthropics-claude-code',
+}
+
+# gemini
+plugins={
+    'source': 'https://github.com/org/gemini-extension',
+    'ref': 'main',
+}
+
+# codex marketplace registration
+plugins={
+    'marketplace': 'https://github.com/org/codex-plugins.git',
+    'sparse': ['.agents/plugins'],
+}
+```
+
+If `config=AgentConfig(...)` is omitted, plugins target the default agent (`claude`).
 
 ### Research & Analysis
 | Skill | Description | Source |

@@ -584,3 +584,72 @@ class TestBrowserConfig:
     def test_invalid_browser_value_rejected(self):
         with pytest.raises(ValueError, match="browser must be 'browser-use' or None"):
             Evolve(browser='invalid')  # type: ignore[arg-type]
+
+
+class TestPluginConfig:
+    """Python wrapper plugin config transport."""
+
+    @pytest.mark.asyncio
+    async def test_plugins_omitted_by_default(self):
+        mock_bridge = MockBridgeManager()
+        with patch('evolve.agent.BridgeManager', return_value=mock_bridge):
+            kit = Evolve()
+            await kit._ensure_initialized()
+
+        initialize_calls = [c for c in mock_bridge.calls if c[0] == 'initialize']
+        params = initialize_calls[0][1]
+        assert 'plugins' not in params
+
+    @pytest.mark.asyncio
+    async def test_single_plugin_forwarded_as_list(self):
+        mock_bridge = MockBridgeManager()
+        with patch('evolve.agent.BridgeManager', return_value=mock_bridge):
+            kit = Evolve(plugins={
+                'marketplace': 'https://github.com/Factory-AI/factory-plugins',
+                'plugin': 'droid-control@factory-plugins',
+            })
+            await kit._ensure_initialized()
+
+        initialize_calls = [c for c in mock_bridge.calls if c[0] == 'initialize']
+        params = initialize_calls[0][1]
+        assert params['plugins'] == [{
+            'marketplace': 'https://github.com/Factory-AI/factory-plugins',
+            'plugin': 'droid-control@factory-plugins',
+        }]
+
+    @pytest.mark.asyncio
+    async def test_plugin_list_and_snake_case_flags_forwarded(self):
+        mock_bridge = MockBridgeManager()
+        with patch('evolve.agent.BridgeManager', return_value=mock_bridge):
+            kit = Evolve(plugins=[
+                {
+                    'source': 'https://github.com/org/gemini-extension',
+                    'ref': 'main',
+                    'auto_update': True,
+                    'pre_release': True,
+                    'skip_settings': True,
+                },
+                {
+                    'marketplace': 'https://github.com/org/codex-plugins.git',
+                    'sparse': ['.agents/plugins'],
+                },
+            ])
+            await kit._ensure_initialized()
+
+        initialize_calls = [c for c in mock_bridge.calls if c[0] == 'initialize']
+        params = initialize_calls[0][1]
+        assert params['plugins'][0] == {
+            'source': 'https://github.com/org/gemini-extension',
+            'ref': 'main',
+            'autoUpdate': True,
+            'preRelease': True,
+            'skipSettings': True,
+        }
+        assert params['plugins'][1] == {
+            'marketplace': 'https://github.com/org/codex-plugins.git',
+            'sparse': ['.agents/plugins'],
+        }
+
+    def test_invalid_plugins_value_rejected(self):
+        with pytest.raises(ValueError, match='plugins must be a plugin dict'):
+            Evolve(plugins='invalid')  # type: ignore[arg-type]

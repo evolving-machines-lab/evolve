@@ -2,10 +2,11 @@
 
 import asyncio
 import json
+from dataclasses import asdict, is_dataclass
 from typing import Any, Callable, Dict, List, Literal, Optional, Type, Union
 
 from .bridge import BridgeManager, SandboxNotFoundError
-from .config import AgentConfig, BrowserProvider, ComposioSetup, SandboxProvider, SchemaOptions, StorageConfig, WorkspaceMode
+from .config import AgentConfig, AgentPluginConfig, BrowserProvider, ComposioSetup, SandboxProvider, SchemaOptions, StorageConfig, WorkspaceMode
 from .results import AgentResponse, CheckpointInfo, ExecuteResult, OutputResult, RunCost, SessionCost, SessionStatus
 from .storage_client import StorageClient
 from . import composio as composio_helpers
@@ -65,6 +66,7 @@ class Evolve:
         composio: Optional[ComposioSetup] = None,
         storage: Optional[StorageConfig] = None,
         browser: Optional[BrowserProvider] = None,
+        plugins: Optional[Union[AgentPluginConfig, List[AgentPluginConfig]]] = None,
     ):
         """Initialize Evolve.
 
@@ -90,6 +92,7 @@ class Evolve:
             composio: Composio Tool Router setup for 500+ external service integrations
             storage: Storage configuration for checkpoint persistence (BYOK S3 or gateway mode)
             browser: Browser automation provider. Use 'browser-use' to enable gateway browser-use MCP.
+            plugins: Agent plugins/extensions to install in the sandbox user profile before first run.
         """
         self.config = config
         self.sandbox = sandbox
@@ -107,6 +110,7 @@ class Evolve:
         self.schema_options = schema_options or SchemaOptions()
         self._composio = composio
         self._storage_config = storage
+        self.plugins = self._normalize_plugins(plugins)
 
         # Schema handling: store original + convert to JSON Schema
         self._schema = schema
@@ -145,6 +149,7 @@ class Evolve:
                 'files': _encode_files_for_transport(self.files) if self.files else None,
                 'mcp_servers': self.mcp_servers,
                 'browser': self.browser,
+                'plugins': self.plugins,
                 'skills': self.skills,
                 'secrets': self.secrets,
                 'sandbox_id': self.sandbox_id,
@@ -173,6 +178,42 @@ class Evolve:
         if browser == 'browser-use':
             return browser
         raise ValueError("browser must be 'browser-use' or None")
+
+    @staticmethod
+    def _normalize_plugins(
+        plugins: Optional[Union[AgentPluginConfig, List[AgentPluginConfig]]]
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Normalize plugin config and convert Python snake_case flags for TS transport."""
+        if plugins is None:
+            return None
+
+        if isinstance(plugins, dict) or is_dataclass(plugins):
+            raw_plugins: List[Any] = [plugins]
+        elif isinstance(plugins, list):
+            raw_plugins = plugins
+        else:
+            raise ValueError('plugins must be a plugin dict, list of plugin dicts, or None')
+
+        normalized: List[Dict[str, Any]] = []
+        for plugin in raw_plugins:
+            if is_dataclass(plugin):
+                item = asdict(plugin)
+            elif isinstance(plugin, dict):
+                item = dict(plugin)
+            else:
+                raise ValueError('each plugin must be a dict-like object')
+
+            for python_key, ts_key in (
+                ('auto_update', 'autoUpdate'),
+                ('pre_release', 'preRelease'),
+                ('skip_settings', 'skipSettings'),
+            ):
+                if python_key in item:
+                    item[ts_key] = item.pop(python_key)
+
+            normalized.append(item)
+
+        return normalized
 
     def on(
         self,
