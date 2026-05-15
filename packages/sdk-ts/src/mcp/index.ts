@@ -6,7 +6,7 @@
  */
 
 import type { AgentType, SandboxInstance, McpServerConfig } from "../types";
-import { writeClaudeMcpConfig, writeGeminiMcpConfig, writeQwenMcpConfig, writeKimiMcpConfig, writeOpenCodeMcpConfig } from "./json";
+import { writeClaudeMcpConfig, writeGeminiMcpConfig, writeQwenMcpConfig, writeKimiMcpConfig, writeOpenCodeMcpConfig, writeDroidMcpConfig } from "./json";
 import { writeCodexMcpConfig } from "./toml";
 
 /**
@@ -17,6 +17,7 @@ import { writeCodexMcpConfig } from "./toml";
  * - Codex: TOML to ~/.codex/config.toml
  * - Gemini: JSON to ~/.gemini/settings.json
  * - Qwen: JSON to ~/.qwen/settings.json
+ * - Droid: JSON to ${workingDir}/.factory/mcp.json
  * - OpenCode: JSON to ${workingDir}/opencode.json (mcp key)
  */
 export async function writeMcpConfig(
@@ -54,11 +55,15 @@ export async function writeMcpConfig(
       await writeOpenCodeMcpConfig(sandbox, workingDir, servers);
       break;
 
+    case "droid":
+      await writeDroidMcpConfig(sandbox, workingDir, servers);
+      break;
+
     default:
       throw new Error(`Unknown agent type for MCP config: ${agentType}`);
   }
 }
 
 // Re-export individual writers for direct use if needed
-export { writeClaudeMcpConfig, writeGeminiMcpConfig, writeQwenMcpConfig, writeKimiMcpConfig, writeOpenCodeMcpConfig, writeJsonSpendHeaders } from "./json";
+export { writeClaudeMcpConfig, writeGeminiMcpConfig, writeQwenMcpConfig, writeKimiMcpConfig, writeOpenCodeMcpConfig, writeDroidMcpConfig, writeJsonSpendHeaders, writeDroidGatewaySettings } from "./json";
 export { writeCodexMcpConfig, writeCodexSpendProvider, writeKimiSpendConfig } from "./toml";

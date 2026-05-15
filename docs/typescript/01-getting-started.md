@@ -1,6 +1,6 @@
 # Evolve TypeScript SDK
 
-Run CLI agents ([Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi CLI](https://github.com/MoonshotAI/kimi-cli), [OpenCode](https://github.com/anomalyco/opencode)) in secure sandboxes with built-in observability.
+Run CLI agents ([Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi CLI](https://github.com/MoonshotAI/kimi-cli), [OpenCode](https://github.com/anomalyco/opencode), [Droid](https://docs.factory.ai/cli/droid-exec/overview)) in secure sandboxes with built-in observability.
 
 ---
 
@@ -279,12 +279,13 @@ Set env vars and the SDK picks them up automatically — no need to pass explici
 | `"codex"` | `"gpt-5.5"` `"gpt-5.4"` `"gpt-5.4-mini"` `"gpt-5.3-codex"` `"gpt-5.2"` | `"gpt-5.4"` | `EVOLVE_API_KEY` | `OPENAI_API_KEY` or `CODEX_OAUTH_FILE_PATH` |
 | `"gemini"` | `"gemini-3.1-pro-preview"` `"gemini-3.1-flash-lite-preview"` `"gemini-3-flash-preview"` `"gemini-2.5-pro"` `"gemini-2.5-flash"` `"gemini-2.5-flash-lite"` | `"gemini-3.1-pro-preview"` | `EVOLVE_API_KEY` | `GEMINI_API_KEY` or `GEMINI_OAUTH_FILE_PATH` |
 | `"qwen"` | `"qwen3.6-plus"` `"qwen3.5-plus"` `"qwen3-max-2026-01-23"` `"qwen3-coder-next"` `"qwen3-coder-plus"` `"qwen3-coder-flash"` `"qwen3-vl-plus"` | `"qwen3.6-plus"` | `EVOLVE_API_KEY` | `OPENAI_API_KEY` |
-| `"kimi"` | `"moonshot/kimi-k2.6"` `"moonshot/kimi-k2.5"` | `"moonshot/kimi-k2.6"` | `EVOLVE_API_KEY` | `KIMI_API_KEY` |
+| `"kimi"` | `"kimi-k2.6"` `"kimi-k2.5"` | `"kimi-k2.6"` | `EVOLVE_API_KEY` | `KIMI_API_KEY` |
 | `"opencode"` | `"openrouter/anthropic/claude-opus-4.7"` `"openrouter/anthropic/claude-sonnet-4.6"` `"openrouter/anthropic/claude-haiku-4.5"` `"openrouter/openai/gpt-5.5"` `"openrouter/openai/gpt-5.4"` `"openrouter/openai/gpt-5.4-mini"` `"openrouter/openai/gpt-5.3-codex"` `"openrouter/openai/gpt-5.2"` `"openrouter/google/gemini-3.1-pro-preview"` `"openrouter/google/gemini-3-flash-preview"` `"openrouter/qwen/qwen3-coder-next"` `"openrouter/qwen/qwen3-coder-plus"` `"openrouter/moonshotai/kimi-k2.6"` `"openrouter/moonshotai/kimi-k2.5"` `"openrouter/z-ai/glm-5"` | `"openrouter/anthropic/claude-sonnet-4.6"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
+| `"droid"` | `"claude-opus-4-7"` `"claude-opus-4-7-fast"` `"claude-sonnet-4-6"` `"claude-opus-4-6"` `"claude-opus-4-6-fast"` `"claude-opus-4-5"` `"claude-sonnet-4-5"` `"claude-haiku-4-5"` `"gpt-5.5"` `"gpt-5.5-fast"` `"gpt-5.5-pro"` `"gpt-5.4"` `"gpt-5.4-fast"` `"gpt-5.4-mini"` `"gpt-5.3-codex"` `"gpt-5.3-codex-fast"` `"gpt-5.2"` `"gpt-5.2-codex"` `"gemini-3.1-pro-preview"` `"gemini-3-pro-preview"` `"gemini-3-flash-preview"` `"kimi-k2.6"` `"kimi-k2.5"` `"deepseek-v4-pro"` `"minimax-m2.7"` `"minimax-m2.5"` `"glm-5.1"` | `"gpt-5.5"` | `EVOLVE_API_KEY` | `FACTORY_API_KEY` |
 
 > **Note:** In Gateway mode (`EVOLVE_API_KEY`), the default claude model is `"opus"`. In BYOK mode, it defaults to `"sonnet"`.
 
-Agent-specific options: `reasoningEffort` (Codex: `"low"` `"medium"` `"high"` `"xhigh"`). For 1M context window, use `model: "sonnet[1m]"` or `model: "opus[1m]"`.
+Agent-specific options: `reasoningEffort` (Codex and Droid; valid values vary by model). For 1M context window, use `model: "sonnet[1m]"` or `model: "opus[1m]"`.
 
 ### Agent Examples
 
@@ -295,6 +296,7 @@ OPENAI_API_KEY=sk-...      # codex, qwen
 GEMINI_API_KEY=...         # gemini
 KIMI_API_KEY=...           # kimi
 OPENROUTER_API_KEY=sk-...  # opencode
+FACTORY_API_KEY=...        # droid
 E2B_API_KEY=e2b_...        # sandbox
 ```
 
@@ -349,7 +351,7 @@ const evolve = new Evolve()
     .withAgent({ type: "kimi" });
 
 const evolve = new Evolve()
-    .withAgent({ type: "kimi", model: "moonshot/kimi-k2.6" });
+    .withAgent({ type: "kimi", model: "kimi-k2.6" });
 ```
 
 ```ts
@@ -359,6 +361,15 @@ const evolve = new Evolve()
 
 const evolve = new Evolve()
     .withAgent({ type: "opencode", model: "openrouter/openai/gpt-5.2" });
+```
+
+```ts
+// droid (auto-picks FACTORY_API_KEY + E2B_API_KEY)
+const evolve = new Evolve()
+    .withAgent({ type: "droid" });
+
+const evolve = new Evolve()
+    .withAgent({ type: "droid", model: "gpt-5.5" });
 ```
 
 ---

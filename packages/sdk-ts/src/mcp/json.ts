@@ -1,7 +1,7 @@
 /**
  * MCP JSON Configuration Writer
  *
- * Handles MCP config for Claude, Gemini, Qwen, and Kimi agents.
+ * Handles MCP config for Claude, Gemini, Qwen, Kimi, Droid, and OpenCode agents.
  * Uses registry for paths - no hardcoded values.
  *
  * Transport formats by agent:
@@ -12,7 +12,7 @@
  */
 
 import type { SandboxInstance, McpServerConfig } from "../types";
-import { getMcpSettingsDir, getMcpSettingsPath } from "../registry";
+import { expandPath, getMcpSettingsDir, getMcpSettingsPath } from "../registry";
 import { validateServers, isNotFoundError } from "./validation";
 
 // =============================================================================
@@ -91,6 +91,37 @@ function toKimiFormat(config: McpServerConfig): Record<string, unknown> {
   }
 
   return rest;
+}
+
+/**
+ * Transform to Droid MCP format
+ *
+ * Droid uses .factory/mcp.json:
+ * - Remote servers use `{ type: "http" | "sse", url, headers }`
+ * - Stdio servers use `{ type: "stdio", command, args, env }`
+ */
+function toDroidFormat(config: McpServerConfig): Record<string, unknown> {
+  const transport = detectTransport(config);
+  const { type, httpHeaders, envHttpHeaders, bearerTokenEnvVar, envVars, ...rest } = config;
+
+  if (transport === "stdio" && config.command) {
+    return { type: "stdio", ...rest };
+  }
+
+  if (config.url) {
+    const result: Record<string, unknown> = {
+      ...rest,
+      type: transport === "sse" ? "sse" : "http",
+      url: config.url,
+    };
+    const headers = config.headers ?? httpHeaders;
+    if (headers && Object.keys(headers).length > 0) {
+      result.headers = headers;
+    }
+    return result;
+  }
+
+  return { type: transport === "stdio" ? "stdio" : "http", ...rest };
 }
 
 // =============================================================================
@@ -260,6 +291,88 @@ export async function writeKimiMcpConfig(
   servers: Record<string, McpServerConfig>
 ): Promise<void> {
   await writeJsonMcpConfig(sandbox, "kimi", servers, toKimiFormat);
+}
+
+/**
+ * Write MCP config for Droid agent
+ *
+ * Droid supports project-level `.factory/mcp.json`, which keeps MCP config
+ * scoped to the sandbox workspace instead of mutating global user config.
+ */
+export async function writeDroidMcpConfig(
+  sandbox: SandboxInstance,
+  workingDir: string,
+  servers: Record<string, McpServerConfig>
+): Promise<void> {
+  validateServers(servers);
+
+  const settingsDir = `${workingDir}/.factory`;
+  const settingsPath = `${settingsDir}/mcp.json`;
+
+  await sandbox.files.makeDir(settingsDir);
+
+  let existingConfig: Record<string, unknown> = {};
+  try {
+    const existing = await sandbox.files.read(settingsPath);
+    if (typeof existing === "string") {
+      existingConfig = JSON.parse(existing);
+    }
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
+
+  const transformedServers = Object.fromEntries(
+    Object.entries(servers).map(([name, config]) => [name, toDroidFormat(config)])
+  );
+
+  await sandbox.files.write(
+    settingsPath,
+    JSON.stringify({ ...existingConfig, mcpServers: transformedServers }, null, 2)
+  );
+}
+
+export interface DroidGatewaySettingsConfig {
+  settingsPath: string;
+  displayName: string;
+  model: string;
+  baseUrl: string;
+  apiKeyEnv: string;
+  provider: "generic-chat-completion-api" | "openai" | "anthropic";
+  maxOutputTokens?: number;
+}
+
+/**
+ * Write an Evolve-owned Droid settings file for gateway custom-model routing.
+ *
+ * The command passes this file with `droid --settings`, so it does not alter the
+ * user's normal ~/.factory/settings.json inside the sandbox.
+ */
+export async function writeDroidGatewaySettings(
+  sandbox: SandboxInstance,
+  config: DroidGatewaySettingsConfig,
+  headers: Record<string, string>,
+): Promise<void> {
+  const settingsPath = expandPath(config.settingsPath);
+  const settingsDir = settingsPath.slice(0, settingsPath.lastIndexOf("/"));
+
+  await sandbox.files.makeDir(settingsDir);
+
+  const content = {
+    cloudSessionSync: false,
+    customModels: [
+      {
+        model: config.model,
+        displayName: config.displayName,
+        baseUrl: config.baseUrl,
+        apiKey: `\${${config.apiKeyEnv}}`,
+        provider: config.provider,
+        ...(config.maxOutputTokens !== undefined && { maxOutputTokens: config.maxOutputTokens }),
+        extraHeaders: headers,
+      },
+    ],
+  };
+
+  await sandbox.files.write(settingsPath, JSON.stringify(content, null, 2));
 }
 
 /**

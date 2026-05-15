@@ -10,7 +10,7 @@
 #
 # This Dockerfile adds:
 #   - Google Chrome + Playwright for browser automation
-#   - Claude Code, Codex, Gemini CLI, Qwen Code, OpenCode
+#   - Claude Code, Codex, Gemini CLI, Qwen Code, OpenCode, Droid
 #   - Kimi CLI (Python)
 #   - ACP adapters for Claude and Codex
 #   - Skills from github.com/evolving-machines-lab/evolve
@@ -98,6 +98,7 @@ RUN mkdir -p /home/user/.evolve/skills \
              /home/user/.qwen/skills \
              /home/user/.kimi/skills \
              /home/user/.agents/skills \
+             /home/user/.factory/skills \
     && chown -R user:user /home/user
 
 # ---------------------------------------------------------------------------
@@ -109,6 +110,17 @@ USER user
 # Working directory
 # ---------------------------------------------------------------------------
 WORKDIR /home/user
+
+# ---------------------------------------------------------------------------
+# Factory Droid CLI
+# ---------------------------------------------------------------------------
+RUN curl -fsSL https://app.factory.ai/cli | sh
+
+# Make Droid available to non-login shell commands.
+USER root
+RUN ln -sf /home/user/.local/bin/droid /usr/local/bin/droid \
+    && chown -R user:user /home/user/.factory /home/user/.local
+USER user
 
 # ---------------------------------------------------------------------------
 # Skills (clone from evolve repo - sparse checkout for skills/ only)

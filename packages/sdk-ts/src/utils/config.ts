@@ -54,7 +54,8 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
 
   // Provider API key (direct mode)
   if (config?.providerApiKey) {
-    const baseUrl = config.providerBaseUrl ?? process.env[registry.baseUrlEnv] ?? registry.defaultBaseUrl;
+    const envBaseUrl = registry.baseUrlEnv ? process.env[registry.baseUrlEnv] : undefined;
+    const baseUrl = config.providerBaseUrl ?? envBaseUrl ?? registry.defaultBaseUrl;
     return {
       type,
       apiKey: config.providerApiKey,
@@ -100,7 +101,8 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
     const mapping = prefix ? registry.providerEnvMap[prefix] : undefined;
     const altKey = mapping ? process.env[mapping.keyEnv] : undefined;
     if (altKey) {
-      const baseUrl = process.env[registry.baseUrlEnv] ?? registry.defaultBaseUrl;
+      const envBaseUrl = registry.baseUrlEnv ? process.env[registry.baseUrlEnv] : undefined;
+      const baseUrl = envBaseUrl ?? registry.defaultBaseUrl;
       return {
         type,
         apiKey: altKey,
@@ -115,7 +117,8 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
   // Direct mode (generic provider env var — fallback for single-provider agents)
   const providerKey = process.env[registry.apiKeyEnv];
   if (providerKey) {
-    const baseUrl = process.env[registry.baseUrlEnv] ?? registry.defaultBaseUrl;
+    const envBaseUrl = registry.baseUrlEnv ? process.env[registry.baseUrlEnv] : undefined;
+    const baseUrl = envBaseUrl ?? registry.defaultBaseUrl;
     return {
       type,
       apiKey: providerKey,

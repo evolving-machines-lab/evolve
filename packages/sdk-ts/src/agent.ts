@@ -39,8 +39,9 @@ import type {
 } from "./types";
 import { VALIDATION_PRESETS } from "./types";
 import { getAgentConfig, type AgentRegistryEntry } from "./registry";
-import { writeMcpConfig, writeCodexSpendProvider, writeJsonSpendHeaders, writeKimiSpendConfig } from "./mcp";
+import { writeMcpConfig, writeCodexSpendProvider, writeJsonSpendHeaders, writeKimiSpendConfig, writeDroidGatewaySettings } from "./mcp";
 import { createAgentParser, type AgentParser } from "./parsers";
+import type { OutputEvent } from "./parsers/types";
 import { DEFAULT_TIMEOUT_MS, DEFAULT_WORKING_DIR, DEFAULT_DASHBOARD_URL, LITELLM_CUSTOMER_ID_HEADER, LITELLM_TAGS_HEADER, RUN_TAG_PREFIX, getGatewayUrl, getGeminiGatewayUrl } from "./constants";
 import { buildWorkerSystemPrompt } from "./prompts";
 import { isZodSchema } from "./utils";
@@ -65,6 +66,8 @@ export type {
 // =============================================================================
 // PROMPT ESCAPING
 // =============================================================================
+
+const DROID_SESSION_STATE_PATH = "/home/user/.factory/evolve-session.json";
 
 /**
  * Escape prompt for bash double-quoted strings
@@ -171,6 +174,7 @@ export class Agent {
   private interruptedOperations = new Set<number>();
   private sandboxState: SandboxLifecycleState;
   private agentState: AgentRuntimeState = "idle";
+  private droidSessionId?: string;
 
   // Skills storage
   private readonly skills?: SkillName[];
@@ -282,7 +286,8 @@ export class Agent {
     opId: number,
     kind: "run" | "command",
     handle: SandboxCommandHandle,
-    callbacks?: StreamCallbacks
+    callbacks?: StreamCallbacks,
+    sandbox?: SandboxInstance
   ): void {
     const completeReason: LifecycleReason =
       kind === "run" ? "run_background_complete" : "command_background_complete";
@@ -293,11 +298,14 @@ export class Agent {
 
     void handle
       .wait()
-      .then((result) => {
+      .then(async (result) => {
         const interrupted = this.interruptedOperations.delete(opId) || result.exitCode === 130;
         if (interrupted) {
           this.finalizeOperation(opId, callbacks, interruptedReason, "interrupted");
           return;
+        }
+        if (kind === "run" && sandbox) {
+          await this.writeDroidSessionState(sandbox);
         }
         const reason = result.exitCode === 0 ? completeReason : failedReason;
         const nextState = result.exitCode === 0 ? "idle" : "error";
@@ -361,6 +369,7 @@ export class Agent {
         this.sandbox = await provider.connect(this.options.sandboxId);
         // Existing sandbox may have prior runs - use resume/continue command
         this.hasRun = true;
+        await this.loadDroidSessionState(this.sandbox);
         this.sandboxState = "ready";
         this.agentState = "idle";
         this.emitLifecycle(callbacks, "sandbox_connected");
@@ -404,6 +413,9 @@ export class Agent {
       if (this.registry.oauthActivationEnv) {
         envVars[this.registry.oauthActivationEnv.key] = this.registry.oauthActivationEnv.value;
       }
+    } else if (this.registry.skipApiKeyEnvInGateway && !this.agentConfig.isDirectMode) {
+      // Gateway mode for generated-settings agents (Droid): EVOLVE_API_KEY is
+      // injected below and referenced from the settings file, not provider env.
     } else if (this.registry.providerEnvMap && !this.agentConfig.isDirectMode) {
       // Multi-provider CLI in gateway mode (e.g., OpenCode): set ALL provider API keys
       // so any model prefix (anthropic/*, openai/*, google/*) can find its key
@@ -424,7 +436,7 @@ export class Agent {
 
     if (this.agentConfig.isDirectMode && !this.agentConfig.isOAuth) {
       // Direct mode (non-OAuth): use resolved baseUrl if set (e.g., Qwen needs Dashscope endpoint)
-      if (this.agentConfig.baseUrl) {
+      if (this.agentConfig.baseUrl && this.registry.baseUrlEnv) {
         envVars[this.registry.baseUrlEnv] = this.agentConfig.baseUrl;
       }
     } else if (!this.agentConfig.isDirectMode) {
@@ -440,7 +452,9 @@ export class Agent {
         });
       } else {
         // Single-provider: set base URL env var
-        envVars[this.registry.baseUrlEnv] = gatewayUrl;
+        if (this.registry.baseUrlEnv) {
+          envVars[this.registry.baseUrlEnv] = gatewayUrl;
+        }
       }
 
       // Expose EVOLVE_API_KEY in sandbox for gateway services (e.g., browser-use)
@@ -486,7 +500,7 @@ export class Agent {
     const gatewayUrl = this.registry.usePassthroughGateway
       ? getGeminiGatewayUrl()
       : getGatewayUrl();
-    const selectedModel = this.agentConfig.model || this.registry.defaultModel;
+    const selectedModel = this.resolveCommandModel(this.agentConfig.model || this.registry.defaultModel);
 
     // Start from user-provided config if available, preserving non-litellm settings
     let config: Record<string, unknown> = {};
@@ -569,6 +583,77 @@ export class Agent {
     }
 
     return undefined;
+  }
+
+  private captureDroidSession(rawLine: string, events: OutputEvent[] | null): void {
+    if (this.agentConfig.type !== "droid") return;
+
+    const eventSessionId = events?.find((event) => (
+      typeof event.sessionId === "string" && event.sessionId.length > 0
+    ))?.sessionId;
+    if (eventSessionId) {
+      this.droidSessionId = eventSessionId;
+      return;
+    }
+
+    const rawSessionId = this.extractDroidSessionId(rawLine);
+    if (rawSessionId) {
+      this.droidSessionId = rawSessionId;
+    }
+  }
+
+  private extractDroidSessionId(rawLine: string): string | undefined {
+    try {
+      return this.findDroidSessionId(JSON.parse(rawLine));
+    } catch {
+      return undefined;
+    }
+  }
+
+  private findDroidSessionId(value: unknown): string | undefined {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const record = value as Record<string, unknown>;
+    const direct = record.sessionId ?? record.session_id;
+    if (typeof direct === "string" && direct.length > 0) return direct;
+
+    return this.findDroidSessionId(record.result) ??
+      this.findDroidSessionId(record.params) ??
+      this.findDroidSessionId(record.notification);
+  }
+
+  private async loadDroidSessionState(sandbox: SandboxInstance): Promise<void> {
+    if (this.agentConfig.type !== "droid" || this.droidSessionId) return;
+    try {
+      const existing = await sandbox.files.read(DROID_SESSION_STATE_PATH);
+      if (typeof existing !== "string") return;
+      const parsed = JSON.parse(existing) as { sessionId?: unknown };
+      if (typeof parsed.sessionId === "string" && parsed.sessionId.length > 0) {
+        this.droidSessionId = parsed.sessionId;
+      }
+    } catch {
+      // Missing or invalid session state means the next Droid run starts fresh.
+    }
+  }
+
+  private async writeDroidSessionState(sandbox: SandboxInstance): Promise<void> {
+    if (this.agentConfig.type !== "droid" || !this.droidSessionId) return;
+    await sandbox.files.makeDir("/home/user/.factory");
+    await sandbox.files.write(
+      DROID_SESSION_STATE_PATH,
+      JSON.stringify({ sessionId: this.droidSessionId }, null, 2)
+    );
+  }
+
+  private resolveGatewayModel(model: string): string {
+    if (this.agentConfig.isDirectMode) return model;
+    return this.registry.gatewayModelAliases?.[model] ?? model;
+  }
+
+  private resolveCommandModel(model: string): string {
+    const aliases = this.agentConfig.isDirectMode
+      ? this.registry.directModelAliases
+      : this.registry.gatewayModelAliases;
+    return aliases?.[model] ?? model;
   }
 
   /**
@@ -778,9 +863,10 @@ export class Agent {
    */
   private buildCommand(prompt: string): string {
     return this.registry.buildCommand({
-      prompt: escapePrompt(prompt),
-      model: this.agentConfig.model || this.registry.defaultModel,
+      prompt: this.agentConfig.type === "droid" ? prompt : escapePrompt(prompt),
+      model: this.resolveCommandModel(this.agentConfig.model || this.registry.defaultModel),
       isResume: this.hasRun,
+      sessionId: this.agentConfig.type === "droid" ? this.droidSessionId : undefined,
       reasoningEffort: this.agentConfig.reasoningEffort,
       isDirectMode: this.agentConfig.isDirectMode,
       skills: this.skills,
@@ -888,6 +974,7 @@ export class Agent {
         await this.setupWorkspace(this.sandbox, {
           skipSystemPrompt: !hasExplicitPromptConfig,
         });
+        await this.loadDroidSessionState(this.sandbox);
 
         // Mark as resumed so CLI uses --continue flag
         this.hasRun = true;
@@ -909,6 +996,7 @@ export class Agent {
     }
 
     const sandbox = await this.getSandbox(callbacks);
+    await this.loadDroidSessionState(sandbox);
 
     // Track turn start time BEFORE process starts (for output file filtering)
     // Files modified AFTER this time will be returned by getOutputFiles()
@@ -964,6 +1052,24 @@ export class Agent {
       );
     }
 
+    // Per-run Droid gateway settings: Droid custom models read extraHeaders from
+    // settings at startup, so rewrite the Evolve-owned settings file each run.
+    if (!this.agentConfig.isDirectMode && this.registry.droidGatewaySettings) {
+      await writeDroidGatewaySettings(
+        sandbox,
+        {
+          ...this.registry.droidGatewaySettings,
+          model: this.resolveCommandModel(this.agentConfig.model || this.registry.defaultModel),
+          baseUrl: `${getGatewayUrl()}/v1`,
+          apiKeyEnv: "EVOLVE_API_KEY",
+        },
+        {
+          [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
+          [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
+        },
+      );
+    }
+
     // Line buffer for NDJSON parsing (shared by both modes)
     let lineBuffer = "";
 
@@ -982,6 +1088,7 @@ export class Agent {
 
         // Parse once, use for both session logger and onContent
         const events = parser(line);
+        this.captureDroidSession(line, events);
 
         // Log to session logger with pre-parsed events (non-blocking)
         this.sessionLogger?.writeEventParsed(line, events);
@@ -1016,7 +1123,7 @@ export class Agent {
     this.hasRun = true;
 
     if (background) {
-      this.watchBackgroundOperation(opId, "run", handle, callbacks);
+      this.watchBackgroundOperation(opId, "run", handle, callbacks, sandbox);
       return {
         sandboxId: sandbox.sandboxId,
         runId,
@@ -1048,6 +1155,7 @@ export class Agent {
     if (lineBuffer.trim()) {
       // Parse once, use for both session logger and onContent
       const events = parser(lineBuffer);
+      this.captureDroidSession(lineBuffer, events);
 
       // Log to session logger with pre-parsed events (non-blocking)
       this.sessionLogger?.writeEventParsed(lineBuffer, events);
@@ -1062,6 +1170,8 @@ export class Agent {
         }
       }
     }
+
+    await this.writeDroidSessionState(sandbox);
 
     // Flush observability events so dashboard is complete before returning.
     // This ensures Python SDK (and any caller) gets deterministic flushing

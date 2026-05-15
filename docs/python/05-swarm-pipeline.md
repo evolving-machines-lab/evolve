@@ -716,10 +716,10 @@ Override the default agent for any operation (api_key inherited from Swarm confi
 ```python
 @dataclass
 class AgentConfig:
-    type: Literal['claude', 'codex', 'gemini', 'qwen', 'kimi', 'opencode']
+    type: Literal['claude', 'codex', 'gemini', 'qwen', 'kimi', 'opencode', 'droid']
     api_key: str | None = None
     model: str | None = None
-    reasoning_effort: Literal['low', 'medium', 'high', 'xhigh'] | None = None  # Codex only
+    reasoning_effort: Literal['off', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] | None = None
 ```
 
 ```python

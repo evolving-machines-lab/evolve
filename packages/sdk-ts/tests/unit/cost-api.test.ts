@@ -10,7 +10,7 @@
 
 import { Agent } from "../../dist/index.js";
 import { writeCodexSpendProvider, writeKimiSpendConfig } from "../../src/mcp/toml.js";
-import { writeJsonSpendHeaders } from "../../src/mcp/json.js";
+import { writeDroidGatewaySettings, writeJsonSpendHeaders } from "../../src/mcp/json.js";
 
 let passed = 0;
 let failed = 0;
@@ -640,8 +640,34 @@ async function testQwenDirectModeSkipsHeaders(): Promise<void> {
   assertEqual(envs, undefined, "no env overrides in direct mode");
 }
 
+async function testQwenBuildCommandUsesModelAliases(): Promise<void> {
+  console.log("\n[23] Qwen command model aliases route gateway only");
+  const { AGENT_REGISTRY } = await import("../../src/registry.js");
+  const qwen = AGENT_REGISTRY.qwen;
+  assertEqual(qwen.gatewayModelAliases?.["qwen3-coder-plus"], "dashscope/qwen3-coder-plus", "Qwen gateway maps to DashScope route");
+
+  const gatewayAgent = new Agent({
+    type: "qwen",
+    apiKey: "test-gateway-key",
+    isDirectMode: false,
+    model: "qwen3-coder-plus",
+  } as any, {});
+  const gatewayCmd = (gatewayAgent as any).buildCommand("hello") as string;
+  assert(gatewayCmd.includes("--model dashscope/qwen3-coder-plus"), "gateway mode passes DashScope-routed model");
+
+  const directAgent = new Agent({
+    type: "qwen",
+    apiKey: "direct-api-key",
+    isDirectMode: true,
+    model: "qwen3-coder-plus",
+  } as any, {});
+  const directCmd = (directAgent as any).buildCommand("hello") as string;
+  assert(directCmd.includes("--model qwen3-coder-plus"), "direct mode keeps user-facing model");
+  assert(!directCmd.includes("dashscope/qwen3-coder-plus"), "direct mode does not add gateway route");
+}
+
 async function testQwenWriteJsonOverwritesPreviousHeaders(): Promise<void> {
-  console.log("\n[23] writeJsonSpendHeaders() overwrites previous headers (per-run update)");
+  console.log("\n[24] writeJsonSpendHeaders() overwrites previous headers (per-run update)");
   // Simulate first run wrote headers, now second run overwrites
   const afterFirstRun = JSON.stringify({
     model: {
@@ -750,23 +776,29 @@ async function testKimiBuildCommandIncludesConfigFile(): Promise<void> {
   console.log("\n[27] Kimi buildCommand() includes --config-file in gateway mode");
   const { AGENT_REGISTRY } = await import("../../src/registry.js");
   const kimi = AGENT_REGISTRY.kimi;
+  assertEqual(kimi.defaultModel, "kimi-k2.6", "Kimi default is user-facing");
+  assertEqual(kimi.gatewayModelAliases?.["kimi-k2.5"], "moonshot/kimi-k2.5", "Kimi gateway maps to Moonshot route");
 
-  const gatewayCmd = kimi.buildCommand({
-    prompt: "hello",
-    model: "moonshot/kimi-k2.5",
-    isResume: false,
+  const gatewayAgent = new Agent({
+    type: "kimi",
+    apiKey: "test-gateway-key",
     isDirectMode: false,
-  });
+    model: "kimi-k2.5",
+  } as any, {});
+  const gatewayCmd = (gatewayAgent as any).buildCommand("hello") as string;
+  assert(gatewayCmd.includes("KIMI_MODEL_NAME=moonshot/kimi-k2.5"), "gateway resolves user-facing model to Moonshot route");
   assert(gatewayCmd.includes("--config-file /home/user/.kimi/evolve-config.toml"), "gateway mode has --config-file");
   assert(gatewayCmd.includes("--print"), "has --print flag");
   assert(gatewayCmd.includes("--yolo"), "has --yolo flag");
 
-  const directCmd = kimi.buildCommand({
-    prompt: "hello",
-    model: "moonshot/kimi-k2.5",
-    isResume: false,
+  const directAgent = new Agent({
+    type: "kimi",
+    apiKey: "direct-api-key",
     isDirectMode: true,
-  });
+    model: "kimi-k2.5",
+  } as any, {});
+  const directCmd = (directAgent as any).buildCommand("hello") as string;
+  assert(directCmd.includes("KIMI_MODEL_NAME=kimi-k2.5"), "direct mode keeps Moonshot-native model name");
   assert(!directCmd.includes("--config-file"), "direct mode omits --config-file");
 }
 
@@ -798,7 +830,7 @@ async function testKimiDirectModeSkipsHeaders(): Promise<void> {
 }
 
 async function testQwenWriteJsonPreservesUserDefinedHeaders(): Promise<void> {
-  console.log("\n[24] writeJsonSpendHeaders() preserves user-defined custom headers (no clobber)");
+  console.log("\n[24b] writeJsonSpendHeaders() preserves user-defined custom headers (no clobber)");
   // User has already configured their own custom headers in settings.json
   const existing = JSON.stringify({
     model: {
@@ -951,6 +983,186 @@ async function testOpenCodeMergesUserSecrets(): Promise<void> {
   assertEqual(parsed.provider.litellm.options.apiKey, "test-gateway-key", "gateway apiKey set");
 }
 
+// =============================================================================
+// Droid spend tracking (generated .factory settings custom model)
+// =============================================================================
+
+async function testDroidBuildEnvironmentVariablesGateway(): Promise<void> {
+  console.log("\n[34] Droid gateway env uses EVOLVE_API_KEY without FACTORY_API_KEY");
+  const config = {
+    type: "droid",
+    apiKey: "test-gateway-key",
+    isDirectMode: false,
+  };
+  const agent = new Agent(config as any, {});
+
+  const envs = (agent as any).buildEnvironmentVariables() as Record<string, string>;
+  assertEqual(envs.EVOLVE_API_KEY, "test-gateway-key", "sets EVOLVE_API_KEY for settings env expansion");
+  assert(!("FACTORY_API_KEY" in envs), "does not set FACTORY_API_KEY in gateway mode");
+}
+
+async function testDroidBuildEnvironmentVariablesDirect(): Promise<void> {
+  console.log("\n[35] Droid direct env uses FACTORY_API_KEY");
+  const config = {
+    type: "droid",
+    apiKey: "factory-direct-key",
+    isDirectMode: true,
+  };
+  const agent = new Agent(config as any, {});
+
+  const envs = (agent as any).buildEnvironmentVariables() as Record<string, string>;
+  assertEqual(envs.FACTORY_API_KEY, "factory-direct-key", "sets FACTORY_API_KEY in direct mode");
+  assert(!("EVOLVE_API_KEY" in envs), "does not set EVOLVE_API_KEY in direct mode");
+}
+
+async function testDroidWriteGatewaySettings(): Promise<void> {
+  console.log("\n[36] writeDroidGatewaySettings() writes custom model with spend headers");
+  const { sandbox, written } = createFakeSandbox(undefined);
+
+  await writeDroidGatewaySettings(
+    sandbox,
+    {
+      settingsPath: "~/.factory/evolve-settings.json",
+      displayName: "Evolve Gateway",
+      model: "gpt-5.5",
+      baseUrl: "https://gateway.example.com/v1",
+      apiKeyEnv: "EVOLVE_API_KEY",
+      provider: "generic-chat-completion-api",
+      maxOutputTokens: 32768,
+    },
+    { "x-litellm-customer-id": "session-abc", "x-litellm-tags": "run:run-001" },
+  );
+
+  assertEqual(written[0].path, "/home/user/.factory/evolve-settings.json", "writes dedicated Droid settings file");
+  const parsed = JSON.parse(written[0].content);
+  const model = parsed.customModels?.[0];
+  assertEqual(parsed.cloudSessionSync, false, "disables Factory cloud sync for gateway mode");
+  assertEqual(model.model, "gpt-5.5", "sets underlying gateway model");
+  assertEqual(model.displayName, "Evolve Gateway", "sets stable custom model display name");
+  assertEqual(model.baseUrl, "https://gateway.example.com/v1", "sets gateway base URL");
+  assertEqual(model.apiKey, "${EVOLVE_API_KEY}", "uses EVOLVE_API_KEY env reference");
+  assertEqual(model.provider, "generic-chat-completion-api", "uses provider-compatible gateway calls");
+  assertEqual(model.extraHeaders["x-litellm-customer-id"], "session-abc", "sets session header");
+  assertEqual(model.extraHeaders["x-litellm-tags"], "run:run-001", "sets run header");
+}
+
+async function testDroidBuildCommand(): Promise<void> {
+  console.log("\n[37] Droid buildCommand() uses custom model in gateway mode");
+  const { AGENT_REGISTRY } = await import("../../src/registry.js");
+  const droid = AGENT_REGISTRY.droid;
+  assertEqual(droid.defaultModel, "gpt-5.5", "Droid defaults to GPT-5.5");
+  assertEqual(
+    droid.droidGatewaySettings?.provider,
+    "generic-chat-completion-api",
+    "Droid gateway uses LiteLLM-compatible multi-provider API shape"
+  );
+  assertEqual(droid.gatewayModelAliases?.["kimi-k2.6"], "moonshot/kimi-k2.6", "Droid gateway maps Kimi alias");
+  assertEqual(droid.gatewayModelAliases?.["glm-5.1"], "openrouter/z-ai/glm-5.1", "Droid gateway maps GLM alias");
+
+  const gatewayCmd = droid.buildCommand({
+    prompt: "hello",
+    model: "claude-sonnet-4-6",
+    isResume: false,
+    isDirectMode: false,
+  });
+  assert(gatewayCmd.includes("droid --settings /home/user/.factory/evolve-settings.json exec"), "gateway mode passes Evolve settings file");
+  assert(gatewayCmd.includes("--cwd /home/user/workspace"), "gateway mode scopes Droid to workspace");
+  assert(gatewayCmd.includes("--model 'custom:Evolve-Gateway-0'"), "gateway mode uses generated custom model");
+  assert(gatewayCmd.includes("--skip-permissions-unsafe"), "gateway mode grants sandbox permissions");
+  assert(gatewayCmd.includes("--output-format stream-json"), "gateway mode emits streaming JSON for parser");
+  assert(!gatewayCmd.includes("--reasoning-effort"), "gateway mode does not pass reasoning effort to custom models");
+
+  const directCmd = droid.buildCommand({
+    prompt: "hello",
+    model: "claude-opus-4-7",
+    isResume: false,
+    isDirectMode: true,
+    reasoningEffort: "max",
+  });
+  assert(!directCmd.includes("--settings"), "direct mode does not pass Evolve settings file");
+  assert(directCmd.includes("--model 'claude-opus-4-7'"), "direct mode uses Factory model directly");
+  assert(directCmd.includes("--reasoning-effort max"), "direct mode forwards reasoning effort");
+
+  const resumedCmd = droid.buildCommand({
+    prompt: "hello again",
+    model: "claude-opus-4-7",
+    isResume: true,
+    sessionId: "droid-session-123",
+    isDirectMode: true,
+  });
+  assert(resumedCmd.includes("--session-id 'droid-session-123'"), "resume mode passes Droid session id");
+}
+
+async function testDroidGatewayModelAliases(): Promise<void> {
+  console.log("\n[38] Droid gateway model aliases keep Droid-native names usable");
+  const gatewayAgent = new Agent({
+    type: "droid",
+    apiKey: "test-gateway-key",
+    isDirectMode: false,
+  } as any, {});
+  const directAgent = new Agent({
+    type: "droid",
+    apiKey: "factory-direct-key",
+    isDirectMode: true,
+  } as any, {});
+
+  assertEqual((gatewayAgent as any).resolveGatewayModel("kimi-k2.6"), "moonshot/kimi-k2.6", "gateway maps Kimi to Moonshot route");
+  assertEqual((gatewayAgent as any).resolveGatewayModel("deepseek-v4-pro"), "deepseek/deepseek-v4-pro", "gateway maps DeepSeek route");
+  assertEqual((gatewayAgent as any).resolveGatewayModel("minimax-m2.7"), "minimax/minimax-m2.7", "gateway maps MiniMax route");
+  assertEqual((gatewayAgent as any).resolveGatewayModel("claude-sonnet-4-6"), "claude-sonnet-4-6", "gateway leaves Claude model unchanged");
+  assertEqual((directAgent as any).resolveGatewayModel("kimi-k2.6"), "kimi-k2.6", "direct mode leaves Droid-native Kimi model unchanged");
+}
+
+async function testDroidBuildRunEnvsReturnsUndefined(): Promise<void> {
+  console.log("\n[39] Droid buildRunEnvs() returns undefined (uses settings file)");
+  const config = {
+    type: "droid",
+    apiKey: "test-gateway-key",
+    isDirectMode: false,
+  };
+  const agent = new Agent(config as any, {});
+
+  const envs = (agent as any).buildRunEnvs("run-droid-001") as Record<string, string> | undefined;
+  assertEqual(envs, undefined, "no env overrides for droid (uses settings file)");
+}
+
+async function testDroidSessionStateRoundTrip(): Promise<void> {
+  console.log("\n[40] Droid session id is captured and persisted");
+  const files = new Map<string, string>();
+  const sandbox = {
+    files: {
+      makeDir: async () => {},
+      read: async (path: string) => {
+        const value = files.get(path);
+        if (!value) throw Object.assign(new Error("not found"), { code: "ENOENT" });
+        return value;
+      },
+      write: async (path: string, content: string) => { files.set(path, content); },
+    },
+  };
+  const config = {
+    type: "droid",
+    apiKey: "test-gateway-key",
+    isDirectMode: false,
+  };
+  const agent = new Agent(config as any, {});
+  (agent as any).captureDroidSession("", [{
+    sessionId: "droid-session-123",
+    update: {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "ok" },
+    },
+  }]);
+  await (agent as any).writeDroidSessionState(sandbox);
+
+  const agent2 = new Agent(config as any, {});
+  await (agent2 as any).loadDroidSessionState(sandbox);
+  (agent2 as any).hasRun = true;
+  const command = (agent2 as any).buildCommand("continue") as string;
+
+  assert(command.includes("--session-id 'droid-session-123'"), "loaded session id is used in next command");
+}
+
 async function main(): Promise<void> {
   console.log("\n============================================================");
   console.log("Cost API Unit Tests");
@@ -977,6 +1189,7 @@ async function main(): Promise<void> {
   await testQwenWriteJsonPreservesExistingConfig();
   await testQwenBuildRunEnvsReturnsUndefined();
   await testQwenDirectModeSkipsHeaders();
+  await testQwenBuildCommandUsesModelAliases();
   await testQwenWriteJsonOverwritesPreviousHeaders();
   await testQwenWriteJsonPreservesUserDefinedHeaders();
   await testKimiWriteSpendConfigFresh();
@@ -988,6 +1201,13 @@ async function main(): Promise<void> {
   await testOpenCodeBuildRunEnvsPerRunOverwrite();
   await testOpenCodeDirectModeSkipsHeaders();
   await testOpenCodeMergesUserSecrets();
+  await testDroidBuildEnvironmentVariablesGateway();
+  await testDroidBuildEnvironmentVariablesDirect();
+  await testDroidWriteGatewaySettings();
+  await testDroidBuildCommand();
+  await testDroidGatewayModelAliases();
+  await testDroidBuildRunEnvsReturnsUndefined();
+  await testDroidSessionStateRoundTrip();
   console.log("\n============================================================");
   console.log(`Results: ${passed} passed, ${failed} failed`);
   console.log("============================================================");

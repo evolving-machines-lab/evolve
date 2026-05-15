@@ -395,7 +395,7 @@ Persist sandbox state beyond sandbox lifetime. Checkpoints archive specific dire
 
 **What gets checkpointed:**
 - `/home/user/workspace/` — your project files
-- `/home/user/.<agent>/` — agent settings and session history (e.g. `.claude/`, `.codex/`, `.gemini/`, `.qwen/`, `.kimi/`)
+- `/home/user/.<agent>/` — agent settings and session history (e.g. `.claude/`, `.codex/`, `.gemini/`, `.qwen/`, `.kimi/`, `.factory/`)
 - For OpenCode: XDG directories (`~/.local/share/opencode/`, `~/.config/opencode/`, `~/.local/state/opencode/`)
 
 **Key properties:**
@@ -561,7 +561,7 @@ interface CheckpointInfo {
     tag: string;             // Session tag at checkpoint time
     timestamp: string;       // ISO 8601
     sizeBytes?: number;      // Archive size in bytes
-    agentType?: string;      // "claude" | "codex" | "gemini" | "qwen" | "kimi" | "opencode"
+    agentType?: string;      // "claude" | "codex" | "gemini" | "qwen" | "kimi" | "opencode" | "droid"
     model?: string;          // Model used
     workspaceMode?: string;  // "knowledge" | "swe"
     parentId?: string;       // Parent checkpoint ID (lineage)
@@ -653,7 +653,7 @@ Additionally, every run and command is logged locally to structured JSON lines u
 - `{tag}` – `my-prefix-` + 16 random hex characters (e.g. `my-prefix-a1b2c3d4e5f6g7h8`)
 - `{provider}` – the sandbox provider (e.g. `e2b`)
 - `{sandboxId}` – the active sandbox ID
-- `{agent}` – the agent type (`codex`, `claude`, `gemini`, `qwen`, `kimi`, `opencode`)
+- `{agent}` – the agent type (`codex`, `claude`, `gemini`, `qwen`, `kimi`, `opencode`, `droid`)
 - `{timestamp}` – ISO timestamp with `:` and `.` replaced by `-`
 
 Each file contains three entry types:

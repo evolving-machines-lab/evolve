@@ -38,6 +38,7 @@ export interface TestEnv {
   ANTHROPIC_API_KEY?: string;
   OPENAI_API_KEY?: string;
   GEMINI_API_KEY?: string;
+  FACTORY_API_KEY?: string;
 }
 
 /**
@@ -53,16 +54,17 @@ export function getTestEnv(): TestEnv {
   const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
   const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
   const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+  const FACTORY_API_KEY = process.env.FACTORY_API_KEY;
 
   // Need either gateway key or at least one provider key
-  if (!EVOLVE_API_KEY && !ANTHROPIC_API_KEY && !OPENAI_API_KEY && !GEMINI_API_KEY) {
-    throw new Error("Either EVOLVE_API_KEY or provider API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY) must be set");
+  if (!EVOLVE_API_KEY && !ANTHROPIC_API_KEY && !OPENAI_API_KEY && !GEMINI_API_KEY && !FACTORY_API_KEY) {
+    throw new Error("Either EVOLVE_API_KEY or provider API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, FACTORY_API_KEY) must be set");
   }
   if (!E2B_API_KEY && !DAYTONA_API_KEY && !(MODAL_TOKEN_ID && MODAL_TOKEN_SECRET)) {
     throw new Error("Either E2B_API_KEY, DAYTONA_API_KEY, or MODAL_TOKEN_ID+MODAL_TOKEN_SECRET must be set in .env");
   }
 
-  return { EVOLVE_API_KEY, E2B_API_KEY, DAYTONA_API_KEY, MODAL_TOKEN_ID, MODAL_TOKEN_SECRET, ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY };
+  return { EVOLVE_API_KEY, E2B_API_KEY, DAYTONA_API_KEY, MODAL_TOKEN_ID, MODAL_TOKEN_SECRET, ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, FACTORY_API_KEY };
 }
 
 export type ProviderName = "e2b" | "modal" | "daytona";
@@ -126,8 +128,8 @@ export function getSandboxProvider(): SandboxProvider {
 export function getDefaultAgentType(): AgentType | undefined {
   const type = process.env.TEST_AGENT_TYPE;
   if (!type) return undefined;
-  if (!["claude", "codex", "gemini", "qwen", "kimi", "opencode"].includes(type)) {
-    throw new Error(`Invalid TEST_AGENT_TYPE: ${type}. Valid types: claude, codex, gemini, qwen, kimi, opencode`);
+  if (!["claude", "codex", "gemini", "qwen", "kimi", "opencode", "droid"].includes(type)) {
+    throw new Error(`Invalid TEST_AGENT_TYPE: ${type}. Valid types: claude, codex, gemini, qwen, kimi, opencode, droid`);
   }
   return type as AgentType;
 }
@@ -173,7 +175,7 @@ export function getAgentConfig(type: AgentType): AgentConfig {
       return {
         type: "kimi",
         apiKey: env.EVOLVE_API_KEY || process.env.KIMI_API_KEY || process.env.MOONSHOT_API_KEY || "",
-        model: process.env.KIMI_MODEL || "moonshot/kimi-k2.5",
+        model: process.env.KIMI_MODEL || "kimi-k2.5",
       };
 
     case "opencode":
@@ -181,6 +183,13 @@ export function getAgentConfig(type: AgentType): AgentConfig {
         type: "opencode",
         apiKey: env.EVOLVE_API_KEY || process.env.OPENROUTER_API_KEY || "",
         model: process.env.OPENCODE_MODEL || "openrouter/anthropic/claude-sonnet-4.6",
+      };
+
+    case "droid":
+      return {
+        type: "droid",
+        apiKey: env.EVOLVE_API_KEY || env.FACTORY_API_KEY || "",
+        model: process.env.DROID_MODEL || "gpt-5.5",
       };
 
     default:

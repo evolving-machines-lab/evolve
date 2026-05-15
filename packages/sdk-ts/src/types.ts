@@ -115,7 +115,7 @@ export interface SandboxProvider {
 // =============================================================================
 
 /** Supported agent types (headless CLI agents only, no ACP) */
-export type AgentType = "claude" | "codex" | "gemini" | "qwen" | "kimi" | "opencode";
+export type AgentType = "claude" | "codex" | "gemini" | "qwen" | "kimi" | "opencode" | "droid";
 
 /** Agent type constants for use in code */
 export const AGENT_TYPES = {
@@ -125,6 +125,7 @@ export const AGENT_TYPES = {
   QWEN: "qwen",
   KIMI: "kimi",
   OPENCODE: "opencode",
+  DROID: "droid",
 } as const;
 
 // =============================================================================
@@ -145,8 +146,16 @@ export interface SkillsConfig {
   targetDir: string;
 }
 
-/** Reasoning effort for models that support it (Codex only) */
-export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";  // xhigh = maximum reasoning
+/** Reasoning effort for CLIs/models that support it; valid values vary by model. */
+export type ReasoningEffort =
+  | "off"
+  | "none"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max";
 
 /** MCP Server Configuration */
 export interface McpServerConfig {
@@ -259,7 +268,7 @@ export interface AgentConfig {
   providerBaseUrl?: string;
   /** Model to use (optional, uses agent's default if omitted) */
   model?: string;
-  /** Reasoning effort for Codex models */
+  /** Reasoning effort for models that support it */
   reasoningEffort?: ReasoningEffort;
 }
 
