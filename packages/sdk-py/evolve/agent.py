@@ -5,7 +5,7 @@ import json
 from typing import Any, Callable, Dict, List, Literal, Optional, Type, Union
 
 from .bridge import BridgeManager, SandboxNotFoundError
-from .config import AgentConfig, ComposioSetup, SandboxProvider, SchemaOptions, StorageConfig, WorkspaceMode
+from .config import AgentConfig, BrowserProvider, ComposioSetup, SandboxProvider, SchemaOptions, StorageConfig, WorkspaceMode
 from .results import AgentResponse, CheckpointInfo, ExecuteResult, OutputResult, RunCost, SessionCost, SessionStatus
 from .storage_client import StorageClient
 from . import composio as composio_helpers
@@ -64,6 +64,7 @@ class Evolve:
         schema_options: Optional[SchemaOptions] = None,
         composio: Optional[ComposioSetup] = None,
         storage: Optional[StorageConfig] = None,
+        browser: Optional[BrowserProvider] = None,
     ):
         """Initialize Evolve.
 
@@ -88,6 +89,7 @@ class Evolve:
             schema_options: Validation options (mode: 'strict' or 'loose', default: 'loose')
             composio: Composio Tool Router setup for 500+ external service integrations
             storage: Storage configuration for checkpoint persistence (BYOK S3 or gateway mode)
+            browser: Browser automation provider. Use 'browser-use' to enable gateway browser-use MCP.
         """
         self.config = config
         self.sandbox = sandbox
@@ -97,6 +99,7 @@ class Evolve:
         self.context = context
         self.files = files
         self.mcp_servers = mcp_servers
+        self.browser = self._normalize_browser(browser)
         self.skills = skills
         self.secrets = secrets
         self.sandbox_id = sandbox_id
@@ -141,6 +144,7 @@ class Evolve:
                 'context': _encode_files_for_transport(self.context) if self.context else None,
                 'files': _encode_files_for_transport(self.files) if self.files else None,
                 'mcp_servers': self.mcp_servers,
+                'browser': self.browser,
                 'skills': self.skills,
                 'secrets': self.secrets,
                 'sandbox_id': self.sandbox_id,
@@ -160,6 +164,15 @@ class Evolve:
 
             await self.bridge.call('initialize', params, timeout_s=self._get_rpc_timeout_s(None))
             self._initialized = True
+
+    @staticmethod
+    def _normalize_browser(browser: Optional[BrowserProvider]) -> Optional[BrowserProvider]:
+        """Normalize browser automation shorthand for bridge transport."""
+        if browser is None:
+            return None
+        if browser == 'browser-use':
+            return browser
+        raise ValueError("browser must be 'browser-use' or None")
 
     def on(
         self,

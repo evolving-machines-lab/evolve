@@ -73,6 +73,7 @@ export interface InitializeParams {
   context?: EncodedFileMap;
   files?: EncodedFileMap;
   mcp_servers?: Record<string, any>;
+  browser?: 'browser-use';
   skills?: string[];
   secrets?: Record<string, string>;
   sandbox_id?: string;

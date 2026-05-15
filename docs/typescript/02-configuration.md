@@ -165,7 +165,10 @@ const evolve = new Evolve()
     //     required: ["summary", "score"],
     // })
 
-    // (optional) Skills for the agent (browser-use included by default)
+    // (optional) Gateway browser automation (.withBrowser() defaults to "browser-use")
+    .withBrowser("browser-use")
+
+    // (optional) Skills for the agent
     .withSkills(["pdf", "docx", "pptx"])
 
     // (optional) Composio Tool Router for 1000+ integrations (GitHub, Gmail, Slack, etc.)
@@ -250,7 +253,8 @@ COMPOSIO_API_KEY=...
 import { Evolve } from "@evolvingmachines/sdk";
 
 const evolve = new Evolve()
-    .withSkills(["pptx"]);  // browser-use included by default
+    .withBrowser("browser-use")
+    .withSkills(["pptx"]);
 
 await evolve.run({ prompt: "Browse Hacker News top 5 articles and create a slide deck summarizing each" });
 ```
@@ -265,7 +269,7 @@ await evolve.run({ prompt: "Browse Hacker News top 5 articles and create a slide
 
 ### Browser Automation
 
-> **Note:** `browser-use` is included by default with Gateway mode (when using `EVOLVE_API_KEY`). These skills provide additional browser capabilities.
+> **Note:** `browser-use` is opt-in with `.withBrowser("browser-use")` in Gateway mode (when using `EVOLVE_API_KEY`). Calling `.withBrowser()` with no argument defaults to `"browser-use"`. These skills provide additional browser capabilities.
 
 | Skill | Description | Source |
 |-------|-------------|--------|

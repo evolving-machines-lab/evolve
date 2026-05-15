@@ -164,7 +164,10 @@ evolve = Evolve(
     # Accepts Pydantic models or JSON Schema dicts
     schema=MyPydanticModel,
 
-    # (optional) Skills for the agent (browser-use included by default)
+    # (optional) Gateway browser automation
+    browser='browser-use',
+
+    # (optional) Skills for the agent
     skills=['pdf', 'docx', 'pptx'],
 
     # (optional) Composio Tool Router for 1000+ integrations
@@ -245,7 +248,8 @@ COMPOSIO_API_KEY=...
 from evolve import Evolve
 
 evolve = Evolve(
-    skills=['pptx'],  # browser-use included by default
+    browser='browser-use',
+    skills=['pptx'],
 )
 
 await evolve.run(prompt='Browse Hacker News top 5 articles and create a slide deck summarizing each')
@@ -261,7 +265,7 @@ await evolve.run(prompt='Browse Hacker News top 5 articles and create a slide de
 
 ### Browser Automation
 
-> **Note:** `browser-use` is included by default with Gateway mode (when using `EVOLVE_API_KEY`). These skills provide additional browser capabilities.
+> **Note:** `browser-use` is opt-in with `browser='browser-use'` in Gateway mode (when using `EVOLVE_API_KEY`). These skills provide additional browser capabilities.
 
 | Skill | Description | Source |
 |-------|-------------|--------|
