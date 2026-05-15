@@ -164,8 +164,31 @@ async function testTodoWritePlan(): Promise<void> {
   assert(events?.[0]?.update.sessionUpdate === "plan" && events[0].update.entries.length === 2, "preserves todos");
 }
 
+async function testUserEchoIgnored(): Promise<void> {
+  console.log("\n[7] ignores plain user prompt echoes");
+
+  const parser = createDroidParser();
+  const streamMessage = parser(JSON.stringify({
+    type: "message",
+    role: "user",
+    text: "Reply with exactly: hello world",
+    session_id: "droid-session-user",
+  }));
+  const createMessage = parser(JSON.stringify({
+    type: "create_message",
+    message: {
+      role: "user",
+      content: [{ type: "text", text: "Reply with exactly: hello world" }],
+    },
+    session_id: "droid-session-user",
+  }));
+
+  assert(streamMessage === null, "ignores stream-json user message");
+  assert(createMessage === null, "ignores create_message user text");
+}
+
 async function testInvalidLine(): Promise<void> {
-  console.log("\n[7] ignores invalid JSON");
+  console.log("\n[8] ignores invalid JSON");
 
   const parser = createDroidParser();
   const events = parser("not-json");
@@ -184,6 +207,7 @@ async function main(): Promise<void> {
   await testJsonRpcSessionResponse();
   await testToolEvents();
   await testTodoWritePlan();
+  await testUserEchoIgnored();
   await testInvalidLine();
 
   console.log("\n" + "=".repeat(60));

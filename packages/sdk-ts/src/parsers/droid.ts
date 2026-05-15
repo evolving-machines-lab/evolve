@@ -105,8 +105,6 @@ export function createDroidParser(): (jsonLine: string) => OutputEvent[] | null 
           emittedAssistantText = true;
           lastAssistantText = text;
           events.push(agentText(sessionId, text));
-        } else if (role === "user") {
-          events.push(userText(sessionId, text));
         }
         break;
       }
@@ -274,14 +272,6 @@ function handleCreateMessage(
         content: { type: "text", text },
       });
     }
-  } else if (message.role === "user") {
-    const text = extractText(content);
-    if (text) {
-      updates.push({
-        sessionUpdate: "user_message_chunk",
-        content: { type: "text", text },
-      });
-    }
   }
 
   return updates;
@@ -423,16 +413,6 @@ function agentText(sessionId: string | undefined, text: string): OutputEvent {
     sessionId,
     update: {
       sessionUpdate: "agent_message_chunk",
-      content: { type: "text", text },
-    },
-  };
-}
-
-function userText(sessionId: string | undefined, text: string): OutputEvent {
-  return {
-    sessionId,
-    update: {
-      sessionUpdate: "user_message_chunk",
       content: { type: "text", text },
     },
   };
