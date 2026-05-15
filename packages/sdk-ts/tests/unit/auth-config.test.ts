@@ -103,6 +103,8 @@ function clearEnv(): void {
   delete process.env.OPENAI_BASE_URL;
   delete process.env.GEMINI_API_KEY;
   delete process.env.GOOGLE_GEMINI_BASE_URL;
+  delete process.env.FACTORY_API_KEY;
+  delete process.env.FACTORY_BASE_URL;
   delete process.env.E2B_API_KEY;
   delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
 }
@@ -177,6 +179,13 @@ async function runTests(): Promise<void> {
     () => resolveAgentConfig({ type: "qwen", oauthToken: "oauth-token" }),
     "oauthToken is only supported for claude",
     "throws when oauthToken used with qwen"
+  );
+
+  clearEnv();
+  assertThrows(
+    () => resolveAgentConfig({ type: "droid", oauthToken: "oauth-token" }),
+    "oauthToken is only supported for claude",
+    "throws when oauthToken used with droid"
   );
 
   // -------------------------------------------------------------------------
@@ -302,7 +311,7 @@ async function runTests(): Promise<void> {
   }
 
   clearEnv();
-  for (const type of ["claude", "codex", "gemini", "qwen"] as const) {
+  for (const type of ["claude", "codex", "gemini", "qwen", "kimi", "opencode", "droid"] as const) {
     const result = resolveAgentConfig({
       type,
       apiKey: `gateway-key-${type}`,
@@ -401,6 +410,14 @@ async function runTests(): Promise<void> {
     assertEqual(result.apiKey, "env-openai-key", "uses OPENAI_API_KEY for Qwen");
     assertEqual(result.isDirectMode, true, "isDirectMode is true");
     assertEqual(result.baseUrl, "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", "Qwen uses registry defaultBaseUrl");
+  }
+
+  clearEnv();
+  process.env.FACTORY_API_KEY = "env-factory-key";
+  {
+    const result = resolveAgentConfig({ type: "droid" });
+    assertEqual(result.apiKey, "env-factory-key", "uses FACTORY_API_KEY for Droid");
+    assertEqual(result.isDirectMode, true, "isDirectMode is true");
   }
 
   clearEnv();

@@ -11,6 +11,7 @@ import { Template } from 'e2b'
 //   - Gemini CLI (@google/gemini-cli) + Nano Banana extension
 //   - Qwen Code (@qwen-code/qwen-code)
 //   - OpenCode (opencode-ai)
+//   - Droid CLI
 //   - Kimi CLI (kimi-cli, Python)
 //   - ACP adapters for Claude and Codex
 //   - Google Chrome for browser automation
@@ -77,7 +78,17 @@ export const template = Template()
   .setWorkdir('/home/user')
 
   // Create skills directories for all CLIs
-  .runCmd('mkdir -p ~/.evolve/skills ~/.claude/skills ~/.codex/skills ~/.gemini/skills ~/.qwen/skills ~/.kimi/skills ~/.agents/skills')
+  .runCmd('mkdir -p ~/.evolve/skills ~/.claude/skills ~/.codex/skills ~/.gemini/skills ~/.qwen/skills ~/.kimi/skills ~/.agents/skills ~/.factory/skills')
+
+  // ---------------------------------------------------------------------------
+  // Factory Droid CLI
+  // ---------------------------------------------------------------------------
+  .runCmd('curl -fsSL https://app.factory.ai/cli | sh')
+
+  // Make Droid available to non-login shell commands.
+  .setUser('root')
+  .runCmd('ln -sf /home/user/.local/bin/droid /usr/local/bin/droid && chown -R user:user /home/user/.factory /home/user/.local')
+  .setUser('user')
 
   // ---------------------------------------------------------------------------
   // Skills

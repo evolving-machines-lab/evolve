@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional, Protocol, TypedDict, Union, runtime_checkable
 
 
-AgentType = Literal['codex', 'claude', 'gemini', 'qwen', 'kimi', 'opencode']
+AgentType = Literal['codex', 'claude', 'gemini', 'qwen', 'kimi', 'opencode', 'droid']
 WorkspaceMode = Literal['knowledge', 'swe']
-ReasoningEffort = Literal['low', 'medium', 'high', 'xhigh']
+ReasoningEffort = Literal['off', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 ValidationMode = Literal['strict', 'loose']
 
 
@@ -32,13 +32,13 @@ class AgentConfig:
     All fields are optional - TS SDK auto-detects from environment variables.
 
     Args:
-        type: Agent type (codex, claude, gemini, qwen, kimi, opencode) - defaults to 'claude'
+        type: Agent type (codex, claude, gemini, qwen, kimi, opencode, droid) - defaults to 'claude'
         api_key: Evolve API key for gateway mode (defaults to EVOLVE_API_KEY env var)
         provider_api_key: Provider API key for direct mode / BYOK (defaults to provider env var)
         oauth_token: OAuth token for Claude Max subscription (defaults to CLAUDE_CODE_OAUTH_TOKEN env var)
         provider_base_url: Provider base URL for direct mode (auto-detected for Qwen)
         model: Model name (optional - uses agent's default if not specified). Use 'sonnet[1m]' / 'opus[1m]' for 1M context window (Claude only).
-        reasoning_effort: Reasoning effort for Codex models (optional)
+        reasoning_effort: Reasoning effort for models that support it (optional)
     """
     type: Optional[AgentType] = None
     api_key: Optional[str] = None

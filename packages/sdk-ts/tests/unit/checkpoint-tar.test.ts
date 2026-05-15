@@ -228,6 +228,15 @@ async function testBuildTarCommandOpencode(): Promise<void> {
   assert(!cmd.includes("'./'"), "Does not include './' (mcpConfig.settingsDir overridden by checkpointDirs)");
 }
 
+async function testBuildTarCommandDroid(): Promise<void> {
+  console.log("\n[6d] buildTarCommand() - droid");
+
+  const cmd = buildTarCommand("droid", "/home/user/workspace");
+
+  assert(cmd.includes("workspace/"), "Includes workspace/ directory");
+  assert(cmd.includes(".factory/"), "Includes .factory/ settings, skills, and session state");
+}
+
 // =============================================================================
 // TESTS: Cache excludes in tar command
 // =============================================================================
@@ -327,6 +336,7 @@ async function main(): Promise<void> {
   await testBuildTarCommandQwen();
   await testBuildTarCommandKimi();
   await testBuildTarCommandOpencode();
+  await testBuildTarCommandDroid();
   await testTarExcludes();
   await testCustomWorkingDir();
   await testInvalidWorkingDir();

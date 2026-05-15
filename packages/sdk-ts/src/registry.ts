@@ -40,6 +40,7 @@ export interface BuildCommandOptions {
   prompt: string;
   model: string;
   isResume: boolean;
+  sessionId?: string;
   reasoningEffort?: string;
   isDirectMode?: boolean;
   /** Skills enabled for this run */
@@ -62,8 +63,8 @@ export interface AgentRegistryEntry {
   /** Environment variable to set when OAuth is active (e.g., GOOGLE_GENAI_USE_GCA=true for Gemini) */
   oauthActivationEnv?: { key: string; value: string };
 
-  /** Environment variable name for base URL */
-  baseUrlEnv: string;
+  /** Environment variable name for base URL, if this CLI supports one */
+  baseUrlEnv?: string;
 
   /** Default model alias */
   defaultModel: string;
@@ -95,6 +96,19 @@ export interface AgentRegistryEntry {
   providerEnvMap?: Record<string, { keyEnv: string }>;
   /** Env var for inline config (e.g., OPENCODE_CONFIG_CONTENT) — used in gateway mode to set provider base URLs */
   gatewayConfigEnv?: string;
+  /** Gateway-only model aliases for CLIs whose native model IDs differ from LiteLLM route names */
+  gatewayModelAliases?: Record<string, string>;
+  /** Direct-mode model aliases for CLIs whose public model names differ from CLI-native model IDs */
+  directModelAliases?: Record<string, string>;
+  /** Do not set provider API key env in gateway mode (used when routing via generated settings instead) */
+  skipApiKeyEnvInGateway?: boolean;
+  /** Dedicated Droid settings file for Evolve gateway custom model routing */
+  droidGatewaySettings?: {
+    settingsPath: string;
+    displayName: string;
+    provider: "generic-chat-completion-api" | "openai" | "anthropic";
+    maxOutputTokens?: number;
+  };
   /** Environment variable that CLI reads for custom outbound HTTP headers */
   customHeadersEnv?: string;
   /** Format for custom headers env var: "newline" (Claude) or "comma" (Gemini). Default: "newline" */
@@ -287,10 +301,20 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     spendTrackingJsonConfig: {
       headersPath: "model.generationConfig.customHeaders",
     },
+    gatewayModelAliases: {
+      "qwen3.6-plus": "dashscope/qwen3.6-plus",
+      "qwen3.5-plus": "dashscope/qwen3.5-plus",
+      "qwen3-max-2026-01-23": "dashscope/qwen3-max-2026-01-23",
+      "qwen3-coder-next": "dashscope/qwen3-coder-next",
+      "qwen3-coder-plus": "dashscope/qwen3-coder-plus",
+      "qwen3-coder-flash": "dashscope/qwen3-coder-flash",
+      "qwen3-vl-plus": "dashscope/qwen3-vl-plus",
+    },
     defaultBaseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     buildCommand: ({ prompt, model, isResume, isDirectMode }) => {
       const continueFlag = isResume ? "--continue " : "";
-      // Only add dashscope/ prefix for gateway mode (LiteLLM routing)
+      // Gateway model aliases normally add dashscope/ before this point; keep
+      // this fallback for callers that invoke the registry directly.
       const prefixedModel = isDirectMode || model.startsWith("dashscope/")
         ? model
         : `dashscope/${model}`;
@@ -303,10 +327,10 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     image: "evolve-all",
     apiKeyEnv: "KIMI_API_KEY",
     baseUrlEnv: "KIMI_BASE_URL",
-    defaultModel: "moonshot/kimi-k2.6",
+    defaultModel: "kimi-k2.6",
     models: [
-      { alias: "moonshot/kimi-k2.6", modelId: "moonshot/kimi-k2.6", description: "Latest: long-horizon coding, swarm orchestration" },
-      { alias: "moonshot/kimi-k2.5", modelId: "moonshot/kimi-k2.5", description: "Previous multimodal flagship" },
+      { alias: "kimi-k2.6", modelId: "moonshot/kimi-k2.6", description: "Latest: long-horizon coding, swarm orchestration" },
+      { alias: "kimi-k2.5", modelId: "moonshot/kimi-k2.5", description: "Previous multimodal flagship" },
     ],
     systemPromptFile: "AGENTS.md",
     mcpConfig: {
@@ -328,6 +352,10 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       providerName: "evolve-gateway",
       modelName: "evolve-default",
       maxContextSize: 262144,
+    },
+    gatewayModelAliases: {
+      "kimi-k2.6": "moonshot/kimi-k2.6",
+      "kimi-k2.5": "moonshot/kimi-k2.5",
     },
     buildCommand: ({ prompt, model, isResume, isDirectMode }) => {
       const continueFlag = isResume ? "--continue " : "";
@@ -390,6 +418,78 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       return `OPENCODE_PERMISSION='{"*":"allow"}' opencode run ${continueFlag}--model ${routedModel} --format json "${prompt}" < /dev/null`;
     },
   },
+
+  droid: {
+    image: "evolve-all",
+    apiKeyEnv: "FACTORY_API_KEY",
+    defaultModel: "gpt-5.5",
+    models: [
+      { alias: "claude-opus-4-7", modelId: "claude-opus-4-7", description: "Factory-managed Claude Opus 4.7" },
+      { alias: "claude-opus-4-7-fast", modelId: "claude-opus-4-7-fast", description: "Factory-managed Claude Opus 4.7 Fast Mode" },
+      { alias: "claude-sonnet-4-6", modelId: "claude-sonnet-4-6", description: "Factory-managed Claude Sonnet 4.6" },
+      { alias: "claude-opus-4-6", modelId: "claude-opus-4-6", description: "Factory-managed Claude Opus 4.6" },
+      { alias: "claude-opus-4-6-fast", modelId: "claude-opus-4-6-fast", description: "Factory-managed Claude Opus 4.6 Fast Mode" },
+      { alias: "claude-opus-4-5", modelId: "claude-opus-4-5-20251101", description: "Factory-managed Claude Opus 4.5" },
+      { alias: "claude-sonnet-4-5", modelId: "claude-sonnet-4-5-20250929", description: "Factory-managed Claude Sonnet 4.5" },
+      { alias: "claude-haiku-4-5", modelId: "claude-haiku-4-5-20251001", description: "Factory-managed Claude Haiku 4.5" },
+      { alias: "gpt-5.5", modelId: "gpt-5.5", description: "Factory-managed GPT-5.5" },
+      { alias: "gpt-5.5-fast", modelId: "gpt-5.5-fast", description: "Factory-managed GPT-5.5 Fast Mode" },
+      { alias: "gpt-5.5-pro", modelId: "gpt-5.5-pro", description: "Factory-managed GPT-5.5 Pro" },
+      { alias: "gpt-5.4", modelId: "gpt-5.4", description: "Factory-managed GPT-5.4" },
+      { alias: "gpt-5.4-fast", modelId: "gpt-5.4-fast", description: "Factory-managed GPT-5.4 Fast Mode" },
+      { alias: "gpt-5.4-mini", modelId: "gpt-5.4-mini", description: "Factory-managed GPT-5.4 Mini" },
+      { alias: "gpt-5.3-codex", modelId: "gpt-5.3-codex", description: "Factory-managed GPT-5.3-Codex" },
+      { alias: "gpt-5.3-codex-fast", modelId: "gpt-5.3-codex-fast", description: "Factory-managed GPT-5.3-Codex Fast" },
+      { alias: "gpt-5.2", modelId: "gpt-5.2", description: "Factory-managed GPT-5.2" },
+      { alias: "gpt-5.2-codex", modelId: "gpt-5.2-codex", description: "Factory-managed GPT-5.2-Codex" },
+      { alias: "gemini-3.1-pro-preview", modelId: "gemini-3.1-pro-preview", description: "Factory-managed Gemini 3.1 Pro" },
+      { alias: "gemini-3-pro-preview", modelId: "gemini-3-pro-preview", description: "Factory-managed Gemini 3 Pro" },
+      { alias: "gemini-3-flash-preview", modelId: "gemini-3-flash-preview", description: "Factory-managed Gemini 3 Flash" },
+      { alias: "kimi-k2.6", modelId: "kimi-k2.6", description: "Factory-managed Droid Core Kimi K2.6" },
+      { alias: "kimi-k2.5", modelId: "kimi-k2.5", description: "Factory-managed Droid Core Kimi K2.5" },
+      { alias: "deepseek-v4-pro", modelId: "deepseek-v4-pro", description: "Factory-managed Droid Core DeepSeek V4 Pro" },
+      { alias: "minimax-m2.7", modelId: "minimax-m2.7", description: "Factory-managed Droid Core MiniMax M2.7" },
+      { alias: "minimax-m2.5", modelId: "minimax-m2.5", description: "Factory-managed Droid Core MiniMax M2.5" },
+      { alias: "glm-5.1", modelId: "glm-5.1", description: "Factory-managed Droid Core GLM-5.1" },
+    ],
+    systemPromptFile: "AGENTS.md",
+    mcpConfig: {
+      settingsDir: "~/.factory",
+      filename: "mcp.json",
+      format: "json",
+    },
+    skillsConfig: {
+      sourceDir: "/home/user/.evolve/skills",
+      targetDir: "/home/user/.factory/skills",
+    },
+    skipApiKeyEnvInGateway: true,
+    gatewayModelAliases: {
+      "kimi-k2.6": "moonshot/kimi-k2.6",
+      "kimi-k2.5": "moonshot/kimi-k2.5",
+      "deepseek-v4-pro": "deepseek/deepseek-v4-pro",
+      "minimax-m2.7": "minimax/minimax-m2.7",
+      "minimax-m2.5": "minimax/minimax-m2.5",
+      "glm-5.1": "openrouter/z-ai/glm-5.1",
+    },
+    droidGatewaySettings: {
+      settingsPath: "~/.factory/evolve-settings.json",
+      displayName: "Evolve Gateway",
+      // Droid's provider field selects the API protocol. Evolve's LiteLLM
+      // gateway exposes a multi-provider OpenAI Chat Completions-compatible API.
+      provider: "generic-chat-completion-api",
+      maxOutputTokens: 32768,
+    },
+    checkpointDirs: [
+      "~/.factory",
+    ],
+    buildCommand: ({ prompt, model, isResume, sessionId, reasoningEffort, isDirectMode }) => {
+      const settingsFlag = isDirectMode ? "" : "--settings /home/user/.factory/evolve-settings.json ";
+      const commandModel = isDirectMode ? model : "custom:Evolve-Gateway-0";
+      const reasoningFlag = reasoningEffort && isDirectMode ? ` --reasoning-effort ${reasoningEffort}` : "";
+      const resumeFlag = isResume && sessionId ? `--session-id ${shellSingleQuote(sessionId)} ` : "";
+      return `printf '%s' ${shellSingleQuote(prompt)} | droid ${settingsFlag}exec ${resumeFlag}--skip-permissions-unsafe --cwd /home/user/workspace --output-format stream-json --model ${shellSingleQuote(commandModel)}${reasoningFlag}`;
+    },
+  },
 };
 
 // =============================================================================
@@ -419,6 +519,10 @@ export function isValidAgentType(type: string): type is AgentType {
  */
 export function expandPath(path: string): string {
   return path.replace(/^~/, "/home/user");
+}
+
+function shellSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 /**

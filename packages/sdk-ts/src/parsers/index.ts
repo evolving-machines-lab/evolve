@@ -9,6 +9,7 @@ import type { AgentType } from "../types";
 import type { OutputEvent } from "./types";
 import { createClaudeParser } from "./claude";
 import { createCodexParser } from "./codex";
+import { createDroidParser } from "./droid";
 import { createGeminiParser } from "./gemini";
 import { createKimiParser } from "./kimi";
 import { createOpenCodeParser } from "./opencode";
@@ -46,6 +47,9 @@ export function createAgentParser(agentType: AgentType): AgentParser {
 
     case "opencode":
       return createOpenCodeParser();
+
+    case "droid":
+      return createDroidParser();
 
     default:
       return () => null;
@@ -105,6 +109,7 @@ export function parseNdjsonOutput(
 // Re-export parser factory functions for direct use if needed
 export { createClaudeParser } from "./claude";
 export { createCodexParser } from "./codex";
+export { createDroidParser } from "./droid";
 export { createGeminiParser } from "./gemini";
 export { createKimiParser } from "./kimi";
 export { createOpenCodeParser } from "./opencode";
