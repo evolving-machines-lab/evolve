@@ -168,6 +168,12 @@ const evolve = new Evolve()
     // (optional) Gateway browser automation (.withBrowser() defaults to "browser-use")
     .withBrowser("browser-use")
 
+    // (optional) Install plugins/extensions for the selected agent before first run
+    .withPlugins({
+        marketplace: "https://github.com/org/codex-plugins.git",
+        sparse: [".agents/plugins"],
+    })
+
     // (optional) Skills for the agent
     .withSkills(["pdf", "docx", "pptx"])
 
@@ -276,6 +282,38 @@ await evolve.run({ prompt: "Browse Hacker News top 5 articles and create a slide
 | `agent-browser` | CLI-based headless browser automation for AI agents | [skills/agent-browser](https://github.com/evolving-machines-lab/evolve/tree/main/skills/agent-browser) |
 | `dev-browser` | Browser automation with persistent page state | [skills/dev-browser](https://github.com/evolving-machines-lab/evolve/tree/main/skills/dev-browser) |
 | `webapp-testing` | Test web applications | [skills/webapp-testing](https://github.com/evolving-machines-lab/evolve/tree/main/skills/webapp-testing) |
+
+### Agent Plugins
+
+`.withPlugins()` installs plugins/extensions into the sandbox user profile before the first agent command. The currently selected agent determines the accepted shape:
+
+```ts
+// droid
+.withPlugins({
+    marketplace: "https://github.com/Factory-AI/factory-plugins",
+    plugin: "droid-control@factory-plugins",
+})
+
+// claude
+.withPlugins({
+    marketplace: "anthropics/claude-code",
+    plugin: "commit-commands@anthropics-claude-code",
+})
+
+// gemini
+.withPlugins({
+    source: "https://github.com/org/gemini-extension",
+    ref: "main",
+})
+
+// codex marketplace registration
+.withPlugins({
+    marketplace: "https://github.com/org/codex-plugins.git",
+    sparse: [".agents/plugins"],
+})
+```
+
+If `.withAgent()` is omitted, plugins target the default agent (`claude`).
 
 ### Research & Analysis
 | Skill | Description | Source |
