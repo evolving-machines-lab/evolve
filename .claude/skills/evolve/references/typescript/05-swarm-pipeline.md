@@ -8,7 +8,7 @@ import { z } from "zod";  // Or use plain JSON Schema objects instead
 
 const swarm = new Swarm({
     agent: { type: "claude" },   // Default agent for all operations
-    skills: ["pdf"],                 // Default skills (browser-use included by default)
+    skills: ["pdf"],                 // Default skills
     composio: {                  // Default Composio config for all workers
         userId: "user_123",
         config: { toolkits: ["github", "linear"] },

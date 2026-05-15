@@ -216,7 +216,7 @@ class BrowserUseResponse(TypedDict):
 
 ## BrowserUseResponse Extraction
 
-Browser automation (`browser-use`) is included by default in Gateway mode. Browser tool responses embed a **JSON string** inside `ToolCallUpdate["content"][].content.text`. You must extract and parse it.
+Browser automation (`browser-use`) is available when enabled with `browser='browser-use'` in Gateway mode. Browser tool responses embed a **JSON string** inside `ToolCallUpdate["content"][].content.text`. You must extract and parse it.
 
 > **Detection:** Browser-use tools arrive with `kind="other"` and `title` like `"browser-use: browser_task"` or `"browser-use: monitor_task"`. Use `is_browser_use_tool(title)` to identify them, then extract URLs from the tool output.
 

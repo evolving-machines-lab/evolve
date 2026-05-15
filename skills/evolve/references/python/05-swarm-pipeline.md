@@ -13,7 +13,7 @@ swarm = Swarm(SwarmConfig(
     concurrency=4,                   # Max parallel sandboxes (default: 4)
     timeout_ms=3_600_000,            # Default timeout per worker (default: 1 hour)
     tag='my-pipeline',               # Tag prefix for observability
-    skills=['pdf'],                  # Default skills (browser-use included by default)
+    skills=['pdf'],                  # Default skills
     composio=ComposioSetup(          # Default Composio config for all workers
         user_id='user_123',
         config=ComposioConfig(toolkits=['gmail', 'notion']),
