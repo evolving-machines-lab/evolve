@@ -49,6 +49,11 @@ export interface EncodedFile {
 
 export type EncodedFileMap = Record<string, EncodedFile>;
 
+export type AgentPluginConfig =
+  | { marketplace: string; plugin: string }
+  | { source: string; ref?: string; autoUpdate?: boolean; preRelease?: boolean; skipSettings?: boolean }
+  | { marketplace: string; ref?: string; sparse?: string[] };
+
 // =============================================================================
 // RPC METHOD PARAMETERS
 // =============================================================================
@@ -74,6 +79,7 @@ export interface InitializeParams {
   files?: EncodedFileMap;
   mcp_servers?: Record<string, any>;
   browser?: 'browser-use';
+  plugins?: AgentPluginConfig[];
   skills?: string[];
   secrets?: Record<string, string>;
   sandbox_id?: string;

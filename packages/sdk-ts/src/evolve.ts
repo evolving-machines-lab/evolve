@@ -29,6 +29,7 @@ import type {
   RunCost,
   SessionCost,
   BrowserProvider,
+  AgentPluginConfig,
 } from "./types";
 import { Agent, type AgentConfig, type AgentOptions, type AgentResponse } from "./agent";
 import type { OutputEvent } from "./parsers";
@@ -71,6 +72,8 @@ export interface EvolveConfig {
   mcpServers?: Record<string, McpServerConfig>;
   /** Browser automation provider to enable explicitly */
   browser?: BrowserProvider;
+  /** Agent plugins/extensions to install before first run */
+  plugins?: AgentPluginConfig[];
   /** Skills to enable (e.g., ["pdf", "dev-browser"]) */
   skills?: SkillName[];
   /** Schema for structured output (Zod or JSON Schema, auto-detected) */
@@ -247,6 +250,20 @@ export class Evolve extends EventEmitter {
     } else {
       this.config.browser = provider;
     }
+    return this;
+  }
+
+  /**
+   * Install agent plugins/extensions in the sandbox user profile.
+   *
+   * The selected agent determines the installer:
+   * - droid/claude: { marketplace, plugin }
+   * - gemini: { source, ref? }
+   * - codex: { marketplace, ref?, sparse? }
+   */
+  withPlugins(plugins: AgentPluginConfig | AgentPluginConfig[]): this {
+    const next = Array.isArray(plugins) ? plugins : [plugins];
+    this.config.plugins = [...(this.config.plugins ?? []), ...next];
     return this;
   }
 
@@ -448,6 +465,7 @@ export class Evolve extends EventEmitter {
       context: this.config.context,
       files: this.config.files,
       mcpServers: { ...browserMcpServers, ...this.config.mcpServers },
+      plugins: this.config.plugins,
       skills: this.config.skills,
       schema: this.config.schema,
       schemaOptions: this.config.schemaOptions,

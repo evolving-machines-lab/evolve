@@ -141,6 +141,44 @@ export type SkillName = "pdf" | "dev-browser" | (string & {});
 /** Browser automation providers that can be enabled explicitly */
 export type BrowserProvider = "browser-use";
 
+/** Marketplace plugin shape for CLIs with explicit plugin install commands. */
+export interface MarketplaceAgentPluginConfig {
+  /** Marketplace URL/source to register in the sandbox user profile */
+  marketplace: string;
+  /** Plugin identifier, usually plugin@marketplace */
+  plugin: string;
+}
+
+/** Gemini extension install shape. */
+export interface GeminiAgentPluginConfig {
+  /** GitHub URL or local path for the extension */
+  source: string;
+  /** Optional git ref to install */
+  ref?: string;
+  /** Enable extension auto-update */
+  autoUpdate?: boolean;
+  /** Enable pre-release versions */
+  preRelease?: boolean;
+  /** Skip extension settings prompts during install */
+  skipSettings?: boolean;
+}
+
+/** Codex marketplace registration shape. */
+export interface CodexAgentPluginConfig {
+  /** Marketplace source to register */
+  marketplace: string;
+  /** Optional git ref to pin */
+  ref?: string;
+  /** Optional sparse checkout paths for Git-backed marketplaces */
+  sparse?: string[];
+}
+
+/** Agent plugin/extension config. Shape is validated against the selected agent at runtime. */
+export type AgentPluginConfig =
+  | MarketplaceAgentPluginConfig
+  | GeminiAgentPluginConfig
+  | CodexAgentPluginConfig;
+
 /** Skills configuration for an agent */
 export interface SkillsConfig {
   /** Source directory where skills are staged */
@@ -308,6 +346,8 @@ export interface AgentOptions {
   files?: FileMap;
   /** MCP server configurations */
   mcpServers?: Record<string, McpServerConfig>;
+  /** Plugins/extensions to install in the sandbox user profile before first run */
+  plugins?: AgentPluginConfig[];
   /** Skills to enable (e.g., ["pdf", "dev-browser"]) */
   skills?: SkillName[];
 

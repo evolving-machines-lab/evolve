@@ -48,6 +48,7 @@ import { isZodSchema } from "./utils";
 import { SessionLogger } from "./observability";
 import { setupComposio } from "./composio";
 import { createCheckpoint, restoreCheckpoint, getLatestCheckpoint, type RestoreMetadata } from "./storage";
+import { installAgentPlugins } from "./plugins";
 
 // Re-export types for external consumers
 export type {
@@ -358,12 +359,13 @@ export class Agent {
         // Connect to existing sandbox - skip setup
         if (
           this.options.mcpServers ||
+          this.options.plugins ||
           this.options.context ||
           this.options.files ||
           this.options.systemPrompt
         ) {
           console.warn(
-            "[Evolve] Connecting to existing sandbox - ignoring mcpServers, context, files, and systemPrompt"
+            "[Evolve] Connecting to existing sandbox - ignoring mcpServers, plugins, context, files, and systemPrompt"
           );
         }
         this.sandbox = await provider.connect(this.options.sandboxId);
@@ -384,6 +386,9 @@ export class Agent {
 
         // Agent-specific setup (e.g., codex login)
         await this.setupAgentAuth(this.sandbox);
+
+        // Agent plugins/extensions must be installed before the first agent command.
+        await this.setupAgentPlugins(this.sandbox);
 
         // Workspace setup
         await this.setupWorkspace(this.sandbox);
@@ -671,6 +676,10 @@ export class Agent {
     if (this.registry.setupCommand) {
       await sandbox.commands.run(this.registry.setupCommand, { timeoutMs: 30000 });
     }
+  }
+
+  private async setupAgentPlugins(sandbox: SandboxInstance): Promise<void> {
+    await installAgentPlugins(this.agentConfig.type, sandbox, this.options.plugins);
   }
 
   /**
@@ -963,6 +972,9 @@ export class Agent {
 
         // Fresh auth setup (overwrites stale tokens from archive)
         await this.setupAgentAuth(this.sandbox);
+
+        // Re-apply plugin setup so restored sandboxes match the current config.
+        await this.setupAgentPlugins(this.sandbox);
 
         // Workspace setup — skip system prompt write on restore UNLESS the user
         // explicitly configured prompt-affecting options on this instance
