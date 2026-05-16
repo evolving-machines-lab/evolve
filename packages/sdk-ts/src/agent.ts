@@ -1055,11 +1055,13 @@ export class Agent {
         throw new Error("No sandbox provider configured");
       }
 
-      // Create fresh sandbox
-      const envVars = this.buildEnvironmentVariables();
       this.sandboxState = "booting";
       this.emitLifecycle(callbacks, "sandbox_boot");
       try {
+        await this.prepareManagedBrowserSession();
+        const envVars = this.buildEnvironmentVariables();
+
+        // Create fresh sandbox
         this.sandbox = await this.options.sandboxProvider.create({
           envs: envVars,
           workingDirectory: this.workingDir,
@@ -1116,6 +1118,7 @@ export class Agent {
           await this.sandbox.kill().catch(() => {});
           this.sandbox = undefined;
         }
+        await this.stopManagedBrowserSession().catch(() => {});
         this.sandboxState = "error";
         this.agentState = "error";
         this.emitLifecycle(callbacks, "sandbox_error");
