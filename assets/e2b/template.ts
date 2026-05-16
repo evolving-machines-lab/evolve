@@ -67,9 +67,9 @@ export const template = Template()
   .runCmd('npm install -g mcp-remote')
 
   // ---------------------------------------------------------------------------
-  // Agent Browser CLI (headless browser automation for AI agents)
+  // Browser automation CLIs
   // ---------------------------------------------------------------------------
-  .runCmd('npm install -g agent-browser')
+  .runCmd('npm install -g agent-browser @actionbookdev/cli')
 
   // ---------------------------------------------------------------------------
   // User setup
