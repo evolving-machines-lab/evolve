@@ -41,6 +41,11 @@ async function getInitializedMcpServers(kit: Evolve): Promise<Record<string, any
   return ((kit as any).agent as any).options.mcpServers ?? {};
 }
 
+async function getInitializedAgentOptions(kit: Evolve): Promise<Record<string, any>> {
+  await (kit as any).initializeAgent();
+  return ((kit as any).agent as any).options ?? {};
+}
+
 async function testBrowserUseNotInjectedByDefault(): Promise<void> {
   console.log("\n[1] Gateway mode: browser-use is not injected by default");
 
@@ -119,6 +124,44 @@ async function testBrowserUseRequiresGatewayMode(): Promise<void> {
   }
 }
 
+async function testActionbookBrowserAddsConfig(): Promise<void> {
+  console.log("\n[5] withBrowser(\"actionbook\"): stores managed-browser config");
+
+  const kit = new Evolve()
+    .withAgent({ type: "claude", apiKey: "evolve-key" })
+    .withSandbox(fakeSandboxProvider)
+    .withBrowser("actionbook", { superStealth: true });
+
+  const options = await getInitializedAgentOptions(kit);
+  assertEqual(options.browser.provider, "actionbook", "actionbook provider stored");
+  assertEqual(options.browser.options.superStealth, true, "superStealth option stored");
+  assert(!options.mcpServers["browser-use"], "actionbook does not inject browser-use MCP");
+  assertEqual(options.skills[0].package, "actionbook/actionbook", "actionbook skills installed through withSkills path");
+  assert(
+    options.skills[0].skills.includes("active-research"),
+    "actionbook package exposes all published skills"
+  );
+}
+
+async function testActionbookRequiresGatewayMode(): Promise<void> {
+  console.log("\n[6] withBrowser(\"actionbook\"): direct mode rejects managed browser setup");
+
+  const kit = new Evolve()
+    .withAgent({ type: "claude", providerApiKey: "provider-key" })
+    .withSandbox(fakeSandboxProvider)
+    .withBrowser("actionbook", { superStealth: true });
+
+  try {
+    await getInitializedAgentOptions(kit);
+    assert(false, "direct mode with actionbook should throw");
+  } catch (error) {
+    assert(
+      error instanceof Error && error.message.includes("requires gateway mode"),
+      "direct mode error explains gateway requirement"
+    );
+  }
+}
+
 async function main(): Promise<void> {
   console.log("=".repeat(70));
   console.log("Browser Config Tests");
@@ -128,6 +171,8 @@ async function main(): Promise<void> {
   await testWithBrowserInjectsGatewayMcp();
   await testUserMcpOverridesBrowserUse();
   await testBrowserUseRequiresGatewayMode();
+  await testActionbookBrowserAddsConfig();
+  await testActionbookRequiresGatewayMode();
 
   console.log("\n" + "=".repeat(70));
   console.log(`Results: ${passed} passed, ${failed} failed`);

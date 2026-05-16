@@ -84,9 +84,11 @@ RUN pip install kimi-cli
 RUN npm install -g mcp-remote
 
 # ---------------------------------------------------------------------------
-# Agent Browser CLI (headless browser automation for AI agents)
+# Browser automation CLIs
 # ---------------------------------------------------------------------------
-RUN npm install -g agent-browser
+RUN npm install -g \
+    agent-browser \
+    @actionbookdev/cli
 
 # ---------------------------------------------------------------------------
 # User setup

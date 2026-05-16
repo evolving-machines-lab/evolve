@@ -138,8 +138,38 @@ export type WorkspaceMode = "knowledge" | "swe";
 /** Available skills that can be enabled */
 export type SkillName = "pdf" | "dev-browser" | (string & {});
 
+/** Runtime-installable skill package. */
+export interface SkillPackageConfig {
+  /** Package reference accepted by `skills add`, e.g. "actionbook/actionbook". */
+  package: string;
+  /** Skill installer. Defaults to skills.sh. */
+  source?: "skills.sh";
+  /** Installed skill directory names to expose to the selected agent. */
+  skills?: SkillName[];
+}
+
+/** Skill config: pre-staged skill name or runtime-installed package. */
+export type SkillConfig = SkillName | SkillPackageConfig;
+
 /** Browser automation providers that can be enabled explicitly */
-export type BrowserProvider = "browser-use";
+export type BrowserProvider = "browser-use" | "actionbook";
+
+/** Provider-specific browser automation options */
+export interface BrowserOptions {
+  /**
+   * Use an Evolve-managed remote browser endpoint.
+   *
+   * Currently supported by the actionbook provider in gateway mode. No profile
+   * or credential persistence is enabled by default.
+   */
+  superStealth?: boolean;
+}
+
+/** Normalized browser automation selection */
+export interface BrowserConfig {
+  provider: BrowserProvider;
+  options?: BrowserOptions;
+}
 
 /** Marketplace plugin shape for CLIs with explicit plugin install commands. */
 export interface MarketplaceAgentPluginConfig {
@@ -346,10 +376,12 @@ export interface AgentOptions {
   files?: FileMap;
   /** MCP server configurations */
   mcpServers?: Record<string, McpServerConfig>;
+  /** Browser automation config */
+  browser?: BrowserConfig;
   /** Plugins/extensions to install in the sandbox user profile before first run */
   plugins?: AgentPluginConfig[];
   /** Skills to enable (e.g., ["pdf", "dev-browser"]) */
-  skills?: SkillName[];
+  skills?: SkillConfig[];
 
   /**
    * Schema for structured output validation

@@ -54,6 +54,12 @@ export type AgentPluginConfig =
   | { source: string; ref?: string; autoUpdate?: boolean; preRelease?: boolean; skipSettings?: boolean }
   | { marketplace: string; ref?: string; sparse?: string[] };
 
+export type SkillConfig = string | {
+  source?: 'skills.sh';
+  package: string;
+  skills?: string[];
+};
+
 // =============================================================================
 // RPC METHOD PARAMETERS
 // =============================================================================
@@ -78,9 +84,12 @@ export interface InitializeParams {
   context?: EncodedFileMap;
   files?: EncodedFileMap;
   mcp_servers?: Record<string, any>;
-  browser?: 'browser-use';
+  browser?: 'browser-use' | 'actionbook' | {
+    provider: 'browser-use' | 'actionbook';
+    options?: { superStealth?: boolean };
+  };
   plugins?: AgentPluginConfig[];
-  skills?: string[];
+  skills?: SkillConfig[];
   secrets?: Record<string, string>;
   sandbox_id?: string;
   forward_stdout?: boolean;

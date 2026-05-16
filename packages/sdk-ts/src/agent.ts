@@ -25,7 +25,8 @@ import type {
   StreamCallbacks,
   JsonSchema,
   SchemaValidationOptions,
-  SkillName,
+  SkillConfig,
+  SkillPackageConfig,
   McpServerConfig,
   AgentRuntimeState,
   SandboxLifecycleState,
@@ -70,6 +71,12 @@ export type {
 
 const DROID_SESSION_STATE_PATH = "/home/user/.factory/evolve-session.json";
 
+interface ManagedBrowserSession {
+  id: string;
+  cdpUrl: string;
+  liveUrl?: string;
+}
+
 /**
  * Escape prompt for bash double-quoted strings
  *
@@ -82,6 +89,10 @@ function escapePrompt(prompt: string): string {
     .replace(/"/g, '\\"') // Escape double quotes
     .replace(/\$/g, "\\$") // Escape dollar signs
     .replace(/`/g, "\\`"); // Escape backticks (command substitution)
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 // =============================================================================
@@ -176,9 +187,10 @@ export class Agent {
   private sandboxState: SandboxLifecycleState;
   private agentState: AgentRuntimeState = "idle";
   private droidSessionId?: string;
+  private managedBrowserSession?: ManagedBrowserSession;
 
   // Skills storage
-  private readonly skills?: SkillName[];
+  private readonly skills?: SkillConfig[];
 
   // Storage / Checkpointing
   private readonly storage?: ResolvedStorageConfig;
@@ -359,13 +371,14 @@ export class Agent {
         // Connect to existing sandbox - skip setup
         if (
           this.options.mcpServers ||
+          this.options.browser ||
           this.options.plugins ||
           this.options.context ||
           this.options.files ||
           this.options.systemPrompt
         ) {
           console.warn(
-            "[Evolve] Connecting to existing sandbox - ignoring mcpServers, plugins, context, files, and systemPrompt"
+            "[Evolve] Connecting to existing sandbox - ignoring browser, mcpServers, plugins, context, files, and systemPrompt"
           );
         }
         this.sandbox = await provider.connect(this.options.sandboxId);
@@ -377,6 +390,7 @@ export class Agent {
         this.emitLifecycle(callbacks, "sandbox_connected");
       } else {
         // Create new sandbox with full initialization
+        await this.prepareManagedBrowserSession();
         const envVars = this.buildEnvironmentVariables();
 
         this.sandbox = await provider.create({
@@ -397,6 +411,11 @@ export class Agent {
         this.emitLifecycle(callbacks, "sandbox_ready");
       }
     } catch (error) {
+      if (this.sandbox) {
+        await this.sandbox.kill().catch(() => {});
+        this.sandbox = undefined;
+      }
+      await this.stopManagedBrowserSession().catch(() => {});
       this.sandboxState = "error";
       this.agentState = "error";
       this.emitLifecycle(callbacks, "sandbox_error");
@@ -404,6 +423,66 @@ export class Agent {
     }
 
     return this.sandbox;
+  }
+
+  private shouldUseManagedBrowser(): boolean {
+    return this.options.browser?.provider === "actionbook" &&
+      this.options.browser.options?.superStealth === true;
+  }
+
+  private async prepareManagedBrowserSession(): Promise<void> {
+    if (!this.shouldUseManagedBrowser() || this.managedBrowserSession) return;
+
+    if (this.agentConfig.isDirectMode) {
+      throw new Error('withBrowser("actionbook", { superStealth: true }) requires gateway mode.');
+    }
+
+    const dashboardUrl = process.env.EVOLVE_DASHBOARD_URL || DEFAULT_DASHBOARD_URL;
+    const res = await fetch(`${dashboardUrl}/api/browser-sessions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.agentConfig.apiKey}`,
+      },
+      body: JSON.stringify({
+        provider: "actionbook",
+        options: { superStealth: true },
+      }),
+      signal: AbortSignal.timeout(30000),
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`Failed to create managed browser session (${res.status}): ${body}`);
+    }
+
+    const data = await res.json() as Partial<ManagedBrowserSession>;
+    if (!data.id || !data.cdpUrl) {
+      throw new Error("Managed browser session response missing id or cdpUrl");
+    }
+
+    this.managedBrowserSession = {
+      id: data.id,
+      cdpUrl: data.cdpUrl,
+      liveUrl: data.liveUrl,
+    };
+  }
+
+  private async stopManagedBrowserSession(): Promise<void> {
+    const session = this.managedBrowserSession;
+    if (!session) return;
+    this.managedBrowserSession = undefined;
+
+    if (this.agentConfig.isDirectMode) return;
+
+    const dashboardUrl = process.env.EVOLVE_DASHBOARD_URL || DEFAULT_DASHBOARD_URL;
+    await fetch(`${dashboardUrl}/api/browser-sessions/${encodeURIComponent(session.id)}`, {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${this.agentConfig.apiKey}`,
+      },
+      signal: AbortSignal.timeout(10000),
+    }).catch(() => {});
   }
 
   /**
@@ -466,6 +545,12 @@ export class Agent {
       envVars['EVOLVE_API_KEY'] = this.agentConfig.apiKey;
     }
     // OAuth direct mode: no baseUrl needed (Claude Code CLI handles it)
+
+    if (this.managedBrowserSession && this.options.browser?.provider === "actionbook") {
+      envVars.ACTIONBOOK_BROWSER_MODE = "cloud";
+      envVars.ACTIONBOOK_BROWSER_CDP_ENDPOINT = this.managedBrowserSession.cdpUrl;
+      envVars.ACTIONBOOK_BROWSER_HEADLESS = "true";
+    }
 
     if (this.options.secrets) {
       Object.assign(envVars, this.options.secrets);
@@ -790,8 +875,8 @@ export class Agent {
   /**
    * Setup skills for the agent
    *
-   * Copies selected skills from source (~/.evolve/skills/) to CLI-specific directory.
-   * All CLIs use the same pattern: skills are auto-discovered from their target directory.
+   * Copies pre-staged skills from ~/.evolve/skills/ and installs package-backed
+   * skills through skills.sh. All CLIs discover skills from their target dir.
    */
   private async setupSkills(sandbox: SandboxInstance): Promise<void> {
     if (!this.skills?.length) return;
@@ -801,11 +886,42 @@ export class Agent {
 
     await sandbox.files.makeDir(targetDir);
 
-    // Copy selected skills from source to target directory
     for (const skill of this.skills) {
-      const copyCmd = `cp -r ${sourceDir}/${skill} ${targetDir}/ 2>/dev/null || true`;
-      await sandbox.commands.run(copyCmd, { timeoutMs: 30000 });
+      if (typeof skill === "string") {
+        const copyCmd = `cp -r ${shellQuote(`${sourceDir}/${skill}`)} ${shellQuote(targetDir)}/ 2>/dev/null || true`;
+        await sandbox.commands.run(copyCmd, { timeoutMs: 30000 });
+      } else {
+        await this.installSkillPackage(sandbox, skill, targetDir);
+      }
     }
+  }
+
+  private async installSkillPackage(
+    sandbox: SandboxInstance,
+    skillPackage: SkillPackageConfig,
+    targetDir: string
+  ): Promise<void> {
+    if ((skillPackage.source ?? "skills.sh") !== "skills.sh") {
+      throw new Error(`Unsupported skill package source: ${skillPackage.source}`);
+    }
+
+    const installedSkillsDir = "/home/user/.agents/skills";
+    const skillNames = skillPackage.skills ?? [];
+    const copySkills = skillNames.length > 0
+      ? `if [ ${shellQuote(targetDir)} != ${shellQuote(installedSkillsDir)} ]; then for skill in ${skillNames.map(shellQuote).join(" ")}; do rm -rf ${shellQuote(targetDir)}/$skill; cp -R ${shellQuote(installedSkillsDir)}/$skill ${shellQuote(targetDir)}/; done; fi`
+      : "";
+    const command = [
+      "set -euo pipefail",
+      "cd /home/user",
+      `npx -y skills add ${shellQuote(skillPackage.package)} -a '*' -y`,
+      `mkdir -p ${shellQuote(targetDir)}`,
+      copySkills,
+    ].filter(Boolean).join("; ");
+
+    await sandbox.commands.run(`bash -lc ${JSON.stringify(command)}`, {
+      timeoutMs: 120000,
+      cwd: "/home/user",
+    });
   }
 
   /**
@@ -878,7 +994,7 @@ export class Agent {
       sessionId: this.agentConfig.type === "droid" ? this.droidSessionId : undefined,
       reasoningEffort: this.agentConfig.reasoningEffort,
       isDirectMode: this.agentConfig.isDirectMode,
-      skills: this.skills,
+      skills: this.skills?.filter((skill): skill is string => typeof skill === "string"),
     });
   }
 
@@ -1024,7 +1140,12 @@ export class Agent {
         sandboxId: sandbox.sandboxId,
         tag: this.sessionTag,
         apiKey: this.agentConfig.isDirectMode ? undefined : this.agentConfig.apiKey,
-        observability: this.options.observability,
+        observability: {
+          ...this.options.observability,
+          ...(this.managedBrowserSession?.liveUrl
+            ? { browser_live_url: this.managedBrowserSession.liveUrl }
+            : {}),
+        },
       });
     }
 
@@ -1621,10 +1742,14 @@ export class Agent {
       await this.interrupt(callbacks);
     }
 
-    // Kill sandbox (terminates all processes inside)
-    if (this.sandbox) {
-      await this.sandbox.kill();
+    try {
+      // Kill sandbox (terminates all processes inside)
+      if (this.sandbox) {
+        await this.sandbox.kill();
+      }
+    } finally {
       this.sandbox = undefined;
+      await this.stopManagedBrowserSession();
     }
     // Session is no longer valid after sandbox termination.
     this.options.sandboxId = undefined;

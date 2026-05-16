@@ -6,7 +6,7 @@ from dataclasses import asdict, is_dataclass
 from typing import Any, Callable, Dict, List, Literal, Optional, Type, Union
 
 from .bridge import BridgeManager, SandboxNotFoundError
-from .config import AgentConfig, AgentPluginConfig, BrowserProvider, ComposioSetup, SandboxProvider, SchemaOptions, StorageConfig, WorkspaceMode
+from .config import AgentConfig, AgentPluginConfig, BrowserConfig, BrowserProvider, ComposioSetup, SandboxProvider, SchemaOptions, SkillConfig, StorageConfig, WorkspaceMode
 from .results import AgentResponse, CheckpointInfo, ExecuteResult, OutputResult, RunCost, SessionCost, SessionStatus
 from .storage_client import StorageClient
 from . import composio as composio_helpers
@@ -57,7 +57,7 @@ class Evolve:
         context: Optional[Dict[str, Union[str, bytes]]] = None,
         files: Optional[Dict[str, Union[str, bytes]]] = None,
         mcp_servers: Optional[Dict[str, Any]] = None,
-        skills: Optional[List[str]] = None,
+        skills: Optional[List[SkillConfig]] = None,
         secrets: Optional[Dict[str, str]] = None,
         sandbox_id: Optional[str] = None,
         session_tag_prefix: Optional[str] = None,
@@ -65,7 +65,7 @@ class Evolve:
         schema_options: Optional[SchemaOptions] = None,
         composio: Optional[ComposioSetup] = None,
         storage: Optional[StorageConfig] = None,
-        browser: Optional[BrowserProvider] = None,
+        browser: Optional[BrowserConfig] = None,
         plugins: Optional[Union[AgentPluginConfig, List[AgentPluginConfig]]] = None,
     ):
         """Initialize Evolve.
@@ -91,7 +91,8 @@ class Evolve:
             schema_options: Validation options (mode: 'strict' or 'loose', default: 'loose')
             composio: Composio Tool Router setup for 500+ external service integrations
             storage: Storage configuration for checkpoint persistence (BYOK S3 or gateway mode)
-            browser: Browser automation provider. Use 'browser-use' to enable gateway browser-use MCP.
+            browser: Browser automation provider. Use 'browser-use' for gateway browser-use MCP, or
+                     {'provider': 'actionbook', 'super_stealth': True} for an Evolve-managed browser.
             plugins: Agent plugins/extensions to install in the sandbox user profile before first run.
         """
         self.config = config
@@ -171,13 +172,28 @@ class Evolve:
             self._initialized = True
 
     @staticmethod
-    def _normalize_browser(browser: Optional[BrowserProvider]) -> Optional[BrowserProvider]:
+    def _normalize_browser(browser: Optional[BrowserConfig]) -> Optional[Union[BrowserProvider, Dict[str, Any]]]:
         """Normalize browser automation shorthand for bridge transport."""
         if browser is None:
             return None
-        if browser == 'browser-use':
+        if browser in ('browser-use', 'actionbook'):
             return browser
-        raise ValueError("browser must be 'browser-use' or None")
+        if isinstance(browser, dict):
+            provider = browser.get('provider')
+            if provider not in ('browser-use', 'actionbook'):
+                raise ValueError("browser provider must be 'browser-use' or 'actionbook'")
+
+            options = dict(browser.get('options') or {})
+            if 'super_stealth' in browser:
+                options['superStealth'] = browser['super_stealth']
+            if 'super_stealth' in options:
+                options['superStealth'] = options.pop('super_stealth')
+
+            normalized: Dict[str, Any] = {'provider': provider}
+            if options:
+                normalized['options'] = options
+            return normalized
+        raise ValueError("browser must be 'browser-use', 'actionbook', a browser config dict, or None")
 
     @staticmethod
     def _normalize_plugins(

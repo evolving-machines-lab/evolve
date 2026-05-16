@@ -187,7 +187,11 @@ export class EvolveAdapter {
       kit.withMcpServers(params.mcp_servers);
     }
     if (params.browser) {
-      kit.withBrowser(params.browser);
+      if (typeof params.browser === 'string') {
+        kit.withBrowser(params.browser);
+      } else {
+        kit.withBrowser(params.browser.provider, params.browser.options);
+      }
     }
     if (params.plugins?.length) {
       (kit as Evolve & { withPlugins: (plugins: unknown[]) => Evolve }).withPlugins(params.plugins);

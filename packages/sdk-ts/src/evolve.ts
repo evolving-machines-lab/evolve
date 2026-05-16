@@ -22,13 +22,16 @@ import type {
   SandboxLifecycleState,
   JsonSchema,
   SchemaValidationOptions,
-  SkillName,
+  SkillConfig,
+  SkillPackageConfig,
   ComposioConfig,
   ComposioSetup,
   StorageConfig,
   RunCost,
   SessionCost,
   BrowserProvider,
+  BrowserOptions,
+  BrowserConfig,
   AgentPluginConfig,
 } from "./types";
 import { Agent, type AgentConfig, type AgentOptions, type AgentResponse } from "./agent";
@@ -42,6 +45,16 @@ import type { CheckpointInfo, StorageClient } from "./types";
 // =============================================================================
 // TYPES
 // =============================================================================
+
+const ACTIONBOOK_SKILLS_PACKAGE: SkillPackageConfig = {
+  source: "skills.sh",
+  package: "actionbook/actionbook",
+  skills: ["actionbook", "active-research", "extract"],
+};
+
+function isSkillPackageConfig(skill: SkillConfig): skill is SkillPackageConfig {
+  return typeof skill === "object" && skill !== null && "package" in skill;
+}
 
 /**
  * Evolve events
@@ -71,11 +84,11 @@ export interface EvolveConfig {
   files?: FileMap;
   mcpServers?: Record<string, McpServerConfig>;
   /** Browser automation provider to enable explicitly */
-  browser?: BrowserProvider;
+  browser?: BrowserConfig;
   /** Agent plugins/extensions to install before first run */
   plugins?: AgentPluginConfig[];
   /** Skills to enable (e.g., ["pdf", "dev-browser"]) */
-  skills?: SkillName[];
+  skills?: SkillConfig[];
   /** Schema for structured output (Zod or JSON Schema, auto-detected) */
   schema?: z.ZodType<unknown> | JsonSchema;
   /** Validation options for JSON Schema (ignored for Zod) */
@@ -235,20 +248,29 @@ export class Evolve extends EventEmitter {
   /**
    * Enable browser automation.
    *
-   * Gateway mode supports "browser-use", exposed as the same MCP server that
-   * was previously included automatically.
+   * Gateway mode supports:
+   * - "browser-use": exposes the browser-use MCP server.
+   * - "actionbook": installs Actionbook skills during sandbox setup; with
+   *   { superStealth: true }, also attaches an Evolve-managed remote browser.
    *
    * @example
    * kit.withBrowser("browser-use") // explicit provider
+   * kit.withBrowser("actionbook", { superStealth: true })
    *
    * @example
    * kit.withBrowser() // defaults to "browser-use"
    */
-  withBrowser(provider: BrowserProvider | false = "browser-use"): this {
+  withBrowser(provider: BrowserProvider | false = "browser-use", options?: BrowserOptions): this {
     if (provider === false) {
       delete this.config.browser;
     } else {
-      this.config.browser = provider;
+      if (provider !== "actionbook" && options?.superStealth) {
+        throw new Error('superStealth browser sessions are only supported with withBrowser("actionbook", ...).');
+      }
+      this.config.browser = {
+        provider,
+        ...(options ? { options } : {}),
+      };
     }
     return this;
   }
@@ -276,9 +298,22 @@ export class Evolve extends EventEmitter {
    * @example
    * kit.withSkills(["pdf", "dev-browser"])
    */
-  withSkills(skills: SkillName[]): this {
+  withSkills(skills: SkillConfig[]): this {
     this.config.skills = skills;
     return this;
+  }
+
+  private resolveSkills(): SkillConfig[] | undefined {
+    const skills = [...(this.config.skills ?? [])];
+
+    if (
+      this.config.browser?.provider === "actionbook" &&
+      !skills.some((skill) => isSkillPackageConfig(skill) && skill.package === ACTIONBOOK_SKILLS_PACKAGE.package)
+    ) {
+      skills.push(ACTIONBOOK_SKILLS_PACKAGE);
+    }
+
+    return skills.length > 0 ? skills : undefined;
   }
 
   /**
@@ -436,12 +471,15 @@ export class Evolve extends EventEmitter {
 
     // Gateway browser MCP is opt-in; user config still takes precedence.
     let browserMcpServers: Record<string, McpServerConfig> = {};
-    if (this.config.browser === "browser-use") {
+    if (this.config.browser?.provider) {
       if (agentConfig.isDirectMode) {
         throw new Error(
-          'withBrowser("browser-use") requires gateway mode. Use apiKey/EVOLVE_API_KEY instead of providerApiKey/direct mode.'
+          `withBrowser("${this.config.browser.provider}") requires gateway mode. Use apiKey/EVOLVE_API_KEY instead of providerApiKey/direct mode.`
         );
       }
+    }
+
+    if (this.config.browser?.provider === "browser-use") {
       browserMcpServers = getGatewayMcpServers(agentConfig.apiKey);
     }
 
@@ -465,8 +503,9 @@ export class Evolve extends EventEmitter {
       context: this.config.context,
       files: this.config.files,
       mcpServers: { ...browserMcpServers, ...this.config.mcpServers },
+      browser: this.config.browser,
       plugins: this.config.plugins,
-      skills: this.config.skills,
+      skills: this.resolveSkills(),
       schema: this.config.schema,
       schemaOptions: this.config.schemaOptions,
       // Observability
