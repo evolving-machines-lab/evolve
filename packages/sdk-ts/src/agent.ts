@@ -471,18 +471,27 @@ export class Agent {
   private async stopManagedBrowserSession(): Promise<void> {
     const session = this.managedBrowserSession;
     if (!session) return;
-    this.managedBrowserSession = undefined;
 
-    if (this.agentConfig.isDirectMode) return;
+    if (this.agentConfig.isDirectMode) {
+      this.managedBrowserSession = undefined;
+      return;
+    }
 
     const dashboardUrl = process.env.EVOLVE_DASHBOARD_URL || DEFAULT_DASHBOARD_URL;
-    await fetch(`${dashboardUrl}/api/browser-sessions/${encodeURIComponent(session.id)}`, {
+    const res = await fetch(`${dashboardUrl}/api/browser-sessions/${encodeURIComponent(session.id)}`, {
       method: "DELETE",
       headers: {
         Authorization: `Bearer ${this.agentConfig.apiKey}`,
       },
       signal: AbortSignal.timeout(10000),
-    }).catch(() => {});
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`Failed to stop managed browser session (${res.status}): ${body}`);
+    }
+
+    this.managedBrowserSession = undefined;
   }
 
   /**
