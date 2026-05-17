@@ -86,7 +86,7 @@ RUN npm install -g mcp-remote
 # ---------------------------------------------------------------------------
 # Agent Browser CLI (headless browser automation for AI agents)
 # ---------------------------------------------------------------------------
-RUN npm install -g agent-browser
+RUN npm install -g agent-browser @actionbookdev/cli
 
 # ---------------------------------------------------------------------------
 # User setup
