@@ -37,6 +37,7 @@ class TestAgentConfigDataclass:
         assert config.provider_base_url is None
         assert config.model is None
         assert config.reasoning_effort is None
+        assert config.fast_inference is None
 
     def test_gateway_mode_config(self):
         """Test config for gateway mode (Evolve key)."""
@@ -80,10 +81,12 @@ class TestAgentConfigDataclass:
         config = AgentConfig(
             type='codex',
             provider_api_key='openai-key',
-            reasoning_effort='high'
+            reasoning_effort='high',
+            fast_inference=True
         )
 
         assert config.reasoning_effort == 'high'
+        assert config.fast_inference is True
 
     def test_qwen_direct_mode(self):
         """Test Qwen direct mode config - no baseUrl needed (auto from registry)."""
@@ -304,7 +307,8 @@ class TestAgentBridgeConfig:
         config = AgentConfig(
             type='codex',
             provider_api_key='openai-key',
-            reasoning_effort='xhigh'
+            reasoning_effort='xhigh',
+            fast_inference=True
         )
 
         config_dict = {
@@ -314,9 +318,12 @@ class TestAgentBridgeConfig:
             config_dict['providerApiKey'] = config.provider_api_key
         if config.reasoning_effort:
             config_dict['reasoningEffort'] = config.reasoning_effort
+        if config.fast_inference is not None:
+            config_dict['fastInference'] = config.fast_inference
 
         assert config_dict['providerApiKey'] == 'openai-key'
         assert config_dict['reasoningEffort'] == 'xhigh'
+        assert config_dict['fastInference'] is True
 
 
 class TestSwarmConfigInheritance:
@@ -517,6 +524,17 @@ class TestSessionRuntimeParity:
         assert params['forward_stderr'] is True
         assert params['forward_content'] is True
         assert params['forward_lifecycle'] is True
+
+    @pytest.mark.asyncio
+    async def test_initialize_forwards_fast_inference(self):
+        mock_bridge = MockBridgeManager()
+        with patch('evolve.agent.BridgeManager', return_value=mock_bridge):
+            kit = Evolve(config=AgentConfig(type='codex', fast_inference=True))
+            await kit._ensure_initialized()
+
+        initialize_calls = [c for c in mock_bridge.calls if c[0] == 'initialize']
+        params = initialize_calls[0][1]
+        assert params['fast_inference'] is True
 
     @pytest.mark.asyncio
     async def test_status_returns_typed_snapshot(self):

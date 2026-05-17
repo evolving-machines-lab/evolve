@@ -147,7 +147,7 @@ export class EvolveAdapter {
 
   private buildAgentConfig(params: InitializeParams): AgentConfig | undefined {
     // Only build config if any agent params provided (TS SDK resolves defaults from env)
-    if (!params.agent_type && !params.api_key && !params.provider_api_key && !params.oauth_token && !params.model && !params.reasoning_effort) {
+    if (!params.agent_type && !params.api_key && !params.provider_api_key && !params.oauth_token && !params.model && !params.reasoning_effort && params.fast_inference === undefined) {
       return undefined;
     }
     return {
@@ -158,6 +158,7 @@ export class EvolveAdapter {
       ...(params.provider_base_url && { providerBaseUrl: params.provider_base_url }),
       ...(params.model && { model: params.model }),
       ...(params.reasoning_effort && { reasoningEffort: params.reasoning_effort as ReasoningEffort }),
+      ...(params.fast_inference !== undefined && { fastInference: params.fast_inference }),
     } as AgentConfig;
   }
 

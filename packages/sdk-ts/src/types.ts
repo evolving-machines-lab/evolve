@@ -321,6 +321,8 @@ export interface AgentConfig {
   model?: string;
   /** Reasoning effort for models that support it */
   reasoningEffort?: ReasoningEffort;
+  /** Use Codex fast mode with Codex OAuth / ChatGPT auth */
+  fastInference?: boolean;
 }
 
 /** Resolved agent config (output of resolution, not an extension of input) */
@@ -334,6 +336,7 @@ export interface ResolvedAgentConfig {
   oauthFileContent?: string;
   model?: string;
   reasoningEffort?: ReasoningEffort;
+  fastInference?: boolean;
 }
 
 /** Options for Agent constructor */

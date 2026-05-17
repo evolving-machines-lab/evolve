@@ -720,12 +720,14 @@ class AgentConfig:
     api_key: str | None = None
     model: str | None = None
     reasoning_effort: Literal['off', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] | None = None
+    fast_inference: bool | None = None  # Codex fast mode; Codex OAuth / ChatGPT auth only, not API-key auth
 ```
 
 ```python
 codex_agent = AgentConfig(
     type='codex',
     reasoning_effort='high',
+    fast_inference=True,
 )
 
 results = await swarm.map(

@@ -42,7 +42,9 @@ export interface BuildCommandOptions {
   isResume: boolean;
   sessionId?: string;
   reasoningEffort?: string;
+  fastInference?: boolean;
   isDirectMode?: boolean;
+  isOAuth?: boolean;
   /** Skills enabled for this run */
   skills?: string[];
 }
@@ -228,10 +230,11 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       runTagEnv: "EVOLVE_LITELLM_TAGS",
     },
     setupCommand: `printf '%s\\n' "$OPENAI_API_KEY" | codex login --with-api-key`,
-    buildCommand: ({ prompt, model, isResume, reasoningEffort }) => {
+    buildCommand: ({ prompt, model, isResume, reasoningEffort, fastInference, isOAuth }) => {
       const effortFlag = reasoningEffort ? ` -c model_reasoning_effort="${reasoningEffort}"` : "";
+      const fastFlag = fastInference && isOAuth ? ` -c service_tier="fast" -c features.fast_mode=true` : "";
       const resumeFlag = isResume ? " resume --last" : "";
-      return `printf '%s' "${prompt}" | codex exec --model ${model}${effortFlag} --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check --json${resumeFlag}`;
+      return `printf '%s' "${prompt}" | codex exec --model ${model}${effortFlag}${fastFlag} --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check --json${resumeFlag}`;
     },
   },
 

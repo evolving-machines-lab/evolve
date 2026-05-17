@@ -16,6 +16,61 @@ function readOAuthFile(filePath: string): string {
   return fs.readFileSync(expandedPath, "utf-8");
 }
 
+function assertFastInferenceAllowed(type: AgentType, isOAuth: boolean, fastInference?: boolean): void {
+  if (!fastInference) {
+    return;
+  }
+  if (type !== "codex" || !isOAuth) {
+    throw new Error(
+      "fastInference is only supported for codex OAuth mode " +
+      "(CODEX_OAUTH_FILE_PATH / ChatGPT auth), not API-key or gateway mode."
+    );
+  }
+}
+
+function resolveOAuthEnvConfig(
+  type: AgentType,
+  registry: ReturnType<typeof getAgentConfig>,
+  config?: AgentConfig
+): ResolvedAgentConfig | undefined {
+  if (!registry.oauthEnv) {
+    return undefined;
+  }
+
+  const oauthValue = process.env[registry.oauthEnv];
+  if (!oauthValue) {
+    return undefined;
+  }
+
+  if (registry.oauthFileName) {
+    // File-based OAuth (Codex, Gemini): env var is file path, read content.
+    const oauthFileContent = readOAuthFile(oauthValue);
+    assertFastInferenceAllowed(type, true, config?.fastInference);
+    return {
+      type,
+      apiKey: "__oauth_file__",
+      isDirectMode: true,
+      isOAuth: true,
+      oauthFileContent,
+      model: config?.model,
+      reasoningEffort: config?.reasoningEffort,
+      fastInference: config?.fastInference,
+    };
+  }
+
+  // Token-based OAuth (Claude): env var is token itself.
+  assertFastInferenceAllowed(type, true, config?.fastInference);
+  return {
+    type,
+    apiKey: oauthValue,
+    isDirectMode: true,
+    isOAuth: true,
+    model: config?.model,
+    reasoningEffort: config?.reasoningEffort,
+    fastInference: config?.fastInference,
+  };
+}
+
 /**
  * Resolve AgentConfig with defaults and environment variables.
  *
@@ -42,6 +97,7 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
         `Use providerApiKey for ${type} instead.`
       );
     }
+    assertFastInferenceAllowed(type, true, config.fastInference);
     return {
       type,
       apiKey: config.oauthToken,
@@ -49,11 +105,13 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
       isOAuth: true,
       model: config.model,
       reasoningEffort: config.reasoningEffort,
+      fastInference: config.fastInference,
     };
   }
 
   // Provider API key (direct mode)
   if (config?.providerApiKey) {
+    assertFastInferenceAllowed(type, false, config.fastInference);
     const envBaseUrl = registry.baseUrlEnv ? process.env[registry.baseUrlEnv] : undefined;
     const baseUrl = config.providerBaseUrl ?? envBaseUrl ?? registry.defaultBaseUrl;
     return {
@@ -63,17 +121,20 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
       isDirectMode: true,
       model: config.model,
       reasoningEffort: config.reasoningEffort,
+      fastInference: config.fastInference,
     };
   }
 
   // Gateway API key (explicit)
   if (config?.apiKey) {
+    assertFastInferenceAllowed(type, false, config.fastInference);
     return {
       type,
       apiKey: config.apiKey,
       isDirectMode: false,
       model: config.model,
       reasoningEffort: config.reasoningEffort,
+      fastInference: config.fastInference,
     };
   }
 
@@ -81,15 +142,27 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
   // ENVIRONMENT VARIABLES (auto-resolve - gateway takes precedence)
   // ─────────────────────────────────────────────────────────────────────────
 
+  // Codex fast mode is OAuth-only; when requested, prefer Codex OAuth over
+  // default env-key resolution so ambient EVOLVE_API_KEY/OPENAI_API_KEY cannot
+  // silently force standard API pricing.
+  if (type === "codex" && config?.fastInference) {
+    const oauthConfig = resolveOAuthEnvConfig(type, registry, config);
+    if (oauthConfig) {
+      return oauthConfig;
+    }
+  }
+
   // Gateway mode (EVOLVE_API_KEY) - preferred for observability & billing
   const evolveKey = process.env[ENV_EVOLVE_API_KEY];
   if (evolveKey) {
+    assertFastInferenceAllowed(type, false, config?.fastInference);
     return {
       type,
       apiKey: evolveKey,
       isDirectMode: false,
       model: config?.model,
       reasoningEffort: config?.reasoningEffort,
+      fastInference: config?.fastInference,
     };
   }
 
@@ -101,6 +174,7 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
     const mapping = prefix ? registry.providerEnvMap[prefix] : undefined;
     const altKey = mapping ? process.env[mapping.keyEnv] : undefined;
     if (altKey) {
+      assertFastInferenceAllowed(type, false, config?.fastInference);
       const envBaseUrl = registry.baseUrlEnv ? process.env[registry.baseUrlEnv] : undefined;
       const baseUrl = envBaseUrl ?? registry.defaultBaseUrl;
       return {
@@ -110,6 +184,7 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
         isDirectMode: true,
         model: config?.model,
         reasoningEffort: config?.reasoningEffort,
+        fastInference: config?.fastInference,
       };
     }
   }
@@ -117,6 +192,7 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
   // Direct mode (generic provider env var — fallback for single-provider agents)
   const providerKey = process.env[registry.apiKeyEnv];
   if (providerKey) {
+    assertFastInferenceAllowed(type, false, config?.fastInference);
     const envBaseUrl = registry.baseUrlEnv ? process.env[registry.baseUrlEnv] : undefined;
     const baseUrl = envBaseUrl ?? registry.defaultBaseUrl;
     return {
@@ -126,36 +202,14 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
       isDirectMode: true,
       model: config?.model,
       reasoningEffort: config?.reasoningEffort,
+      fastInference: config?.fastInference,
     };
   }
 
   // OAuth mode (token or file-based)
-  if (registry.oauthEnv) {
-    const oauthValue = process.env[registry.oauthEnv];
-    if (oauthValue) {
-      if (registry.oauthFileName) {
-        // File-based OAuth (Codex, Gemini): env var is file path, read content
-        const oauthFileContent = readOAuthFile(oauthValue);
-        return {
-          type,
-          apiKey: "__oauth_file__",
-          isDirectMode: true,
-          isOAuth: true,
-          oauthFileContent,
-          model: config?.model,
-          reasoningEffort: config?.reasoningEffort,
-        };
-      }
-      // Token-based OAuth (Claude): env var is token itself
-      return {
-        type,
-        apiKey: oauthValue,
-        isDirectMode: true,
-        isOAuth: true,
-        model: config?.model,
-        reasoningEffort: config?.reasoningEffort,
-      };
-    }
+  const oauthConfig = resolveOAuthEnvConfig(type, registry, config);
+  if (oauthConfig) {
+    return oauthConfig;
   }
 
   // ─────────────────────────────────────────────────────────────────────────

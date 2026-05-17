@@ -139,6 +139,7 @@ class Evolve:
                 'provider_base_url': self.config.provider_base_url if self.config else None,
                 'model': self.config.model if self.config else None,
                 'reasoning_effort': self.config.reasoning_effort if self.config else None,
+                'fast_inference': self.config.fast_inference if self.config else None,
                 # Sandbox (optional - TS SDK auto-resolves from EVOLVE_API_KEY/E2B_API_KEY/DAYTONA_API_KEY)
                 'sandbox_provider': {'type': self.sandbox.type, 'config': self.sandbox.config} if self.sandbox else None,
                 # Other settings
