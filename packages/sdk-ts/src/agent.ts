@@ -30,6 +30,7 @@ import type {
   AgentRuntimeState,
   SandboxLifecycleState,
   LifecycleReason,
+  BrowserRuntimeInfo,
   SessionStatus,
   LifecycleEvent,
   ResolvedStorageConfig,
@@ -238,13 +239,20 @@ export class Agent {
     this.sessionTag = generateSessionTag(options.sessionTagPrefix || "evolve");
   }
 
+  private browserRuntimeInfo(): BrowserRuntimeInfo | undefined {
+    if (!this.managedBrowserSession) return undefined;
+    return { liveUrl: this.managedBrowserSession.liveUrl };
+  }
+
   private emitLifecycle(callbacks: StreamCallbacks | undefined, reason: LifecycleReason): void {
+    const browser = this.browserRuntimeInfo();
     callbacks?.onLifecycle?.({
       sandboxId: this.getSession(),
       sandbox: this.sandboxState,
       agent: this.agentState,
       timestamp: new Date().toISOString(),
       reason,
+      ...(browser ? { browser } : {}),
     });
   }
 
@@ -384,7 +392,7 @@ export class Agent {
         this.emitLifecycle(callbacks, "sandbox_connected");
       } else {
         // Create new sandbox with full initialization
-        await this.ensureManagedBrowserSession();
+        await this.ensureManagedBrowserSession(callbacks);
         const envVars = this.buildEnvironmentVariables();
 
         this.sandbox = await provider.create({
@@ -504,9 +512,10 @@ export class Agent {
     return envVars;
   }
 
-  private async ensureManagedBrowserSession(): Promise<void> {
+  private async ensureManagedBrowserSession(callbacks?: StreamCallbacks): Promise<void> {
     if (this.managedBrowserSession || !this.options.managedBrowser) return;
     this.managedBrowserSession = await createManagedBrowserSession(this.options.managedBrowser, this.sessionTag);
+    this.emitLifecycle(callbacks, "browser_ready");
   }
 
   private async closeManagedBrowserSession(): Promise<void> {
@@ -971,7 +980,7 @@ export class Agent {
       }
 
       // Create fresh sandbox
-      await this.ensureManagedBrowserSession();
+      await this.ensureManagedBrowserSession(callbacks);
       const envVars = this.buildEnvironmentVariables();
       this.sandboxState = "booting";
       this.emitLifecycle(callbacks, "sandbox_boot");
@@ -1642,6 +1651,7 @@ export class Agent {
    * Get current runtime status for sandbox and agent.
    */
   status(): SessionStatus {
+    const browser = this.browserRuntimeInfo();
     return {
       sandboxId: this.getSession(),
       sandbox: this.sandboxState,
@@ -1649,6 +1659,7 @@ export class Agent {
       activeProcessId: this.activeProcessId,
       hasRun: this.hasRun,
       timestamp: new Date().toISOString(),
+      ...(browser ? { browser } : {}),
     };
   }
 

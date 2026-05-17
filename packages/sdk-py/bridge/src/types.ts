@@ -261,6 +261,9 @@ export interface SessionStatusResponse {
   active_process_id: string | null;
   has_run: boolean;
   timestamp: string;
+  browser?: {
+    live_url: string;
+  };
 }
 
 // =============================================================================

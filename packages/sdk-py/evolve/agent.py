@@ -595,6 +595,7 @@ class Evolve:
             active_process_id=response.get('active_process_id'),
             has_run=bool(response.get('has_run', False)),
             timestamp=response.get('timestamp', ''),
+            browser=response.get('browser'),
         )
 
     async def resume(self):

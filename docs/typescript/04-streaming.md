@@ -55,9 +55,11 @@ interface LifecycleEvent {
   agent: AgentRuntimeState;          // "idle" | "running" | "interrupted" | "error"
   timestamp: string;                 // ISO 8601
   reason: LifecycleReason;
+  browser?: { liveUrl: string };     // Present after managed browser setup
 }
 
 type LifecycleReason =
+  | "browser_ready"                  // Managed browser live view is available
   | "sandbox_boot"                  // Sandbox is being created
   | "sandbox_ready"                 // Sandbox is ready for commands
   | "sandbox_connected"             // Reconnected to existing sandbox
@@ -266,7 +268,17 @@ interface DiffContent {
 
 ## Managed Browser Live View
 
-Managed Actionbook browser automation is enabled with `.withBrowser()` in Gateway mode. The dashboard live-view URL is emitted in trace metadata, not as a browser-use tool response:
+Managed Actionbook browser automation is enabled with `.withBrowser()` in Gateway mode. The live-view URL is emitted as soon as the managed browser is ready:
+
+```typescript
+evolve.on("lifecycle", (event) => {
+  if (event.reason === "browser_ready") {
+    openLiveView(event.browser!.liveUrl);
+  }
+});
+```
+
+The same URL is also stored in trace metadata for replay or embedding after the trace exists:
 
 ```typescript
 type TraceMetadata = {
@@ -276,7 +288,7 @@ type TraceMetadata = {
 };
 ```
 
-Use `_meta.browser_live_url` from the session trace metadata to embed the live browser view in your UI.
+Use `event.browser.liveUrl` for immediate UI display, and `_meta.browser_live_url` from the session trace metadata for historical trace views.
 
 ---
 

@@ -44,7 +44,9 @@ class LifecycleEvent(TypedDict):
     sandbox: Literal["booting", "error", "ready", "running", "paused", "stopped"]
     agent: Literal["idle", "running", "interrupted", "error"]
     timestamp: str
+    browser: dict[str, str]  # optional, present after managed browser setup
     reason: Literal[
+        "browser_ready",
         "sandbox_boot",
         "sandbox_ready",
         "sandbox_connected",
@@ -216,7 +218,18 @@ class BrowserUseResponse(TypedDict):
 
 ## Managed Browser Live View
 
-Managed Actionbook browser automation is enabled with `browser={'provider': 'actionbook', 'superstealth': True}` in Gateway mode. The dashboard live-view URL is emitted in trace metadata, not as a browser-use tool response:
+Managed Actionbook browser automation is enabled with `browser={'provider': 'actionbook', 'superstealth': True}` in Gateway mode. The live-view URL is emitted as soon as the managed browser is ready:
+
+```python
+evolve.on(
+    'lifecycle',
+    lambda event: open_live_view(event['browser']['live_url'])
+    if event['reason'] == 'browser_ready'
+    else None,
+)
+```
+
+The same URL is also stored in trace metadata for replay or embedding after the trace exists:
 
 ```python
 TraceMetadata = {
@@ -226,7 +239,7 @@ TraceMetadata = {
 }
 ```
 
-Use `_meta["browser_live_url"]` from the session trace metadata to embed the live browser view in your UI.
+Use `event["browser"]["live_url"]` for immediate UI display, and `_meta["browser_live_url"]` from the session trace metadata for historical trace views.
 
 ---
 

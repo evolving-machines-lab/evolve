@@ -478,6 +478,7 @@ export class EvolveAdapter {
       active_process_id: snapshot.activeProcessId,
       has_run: snapshot.hasRun,
       timestamp: snapshot.timestamp,
+      ...(snapshot.browser ? { browser: { live_url: snapshot.browser.liveUrl } } : {}),
     };
   }
 

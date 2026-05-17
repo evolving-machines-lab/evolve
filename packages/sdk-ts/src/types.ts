@@ -460,6 +460,7 @@ export type AgentRuntimeState = "idle" | "running" | "interrupted" | "error";
 
 /** Lifecycle transition reason */
 export type LifecycleReason =
+  | "browser_ready"
   | "sandbox_boot"
   | "sandbox_connected"
   | "sandbox_ready"
@@ -480,6 +481,11 @@ export type LifecycleReason =
   | "command_background_complete"
   | "command_background_failed";
 
+/** Browser runtime info exposed to host applications. */
+export interface BrowserRuntimeInfo {
+  liveUrl: string;
+}
+
 /** Lifecycle event emitted by the runtime */
 export interface LifecycleEvent {
   sandboxId: string | null;
@@ -487,6 +493,7 @@ export interface LifecycleEvent {
   agent: AgentRuntimeState;
   timestamp: string;
   reason: LifecycleReason;
+  browser?: BrowserRuntimeInfo;
 }
 
 /** Snapshot of current runtime status */
@@ -497,6 +504,7 @@ export interface SessionStatus {
   activeProcessId: string | null;
   hasRun: boolean;
   timestamp: string;
+  browser?: BrowserRuntimeInfo;
 }
 
 // =============================================================================

@@ -543,6 +543,7 @@ export class Evolve extends EventEmitter {
       agent: status.agent,
       timestamp: new Date().toISOString(),
       reason,
+      ...(status.browser ? { browser: status.browser } : {}),
     });
   }
 

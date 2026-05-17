@@ -98,6 +98,7 @@ export type {
   SessionStatus,
   LifecycleEvent,
   LifecycleReason,
+  BrowserRuntimeInfo,
   FileMap,
   McpServerConfig,
   OutputResult,

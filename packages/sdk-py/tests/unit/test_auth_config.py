@@ -493,6 +493,7 @@ class MockBridgeManager:
                 'active_process_id': None,
                 'has_run': True,
                 'timestamp': '2026-02-07T00:00:00.000Z',
+                'browser': {'live_url': 'https://dashboard.test/browser/live'},
             }
         if method == 'interrupt':
             return True
@@ -530,6 +531,7 @@ class TestSessionRuntimeParity:
         assert status.active_process_id is None
         assert status.has_run is True
         assert status.timestamp == '2026-02-07T00:00:00.000Z'
+        assert status.browser == {'live_url': 'https://dashboard.test/browser/live'}
 
     @pytest.mark.asyncio
     async def test_interrupt_returns_bool(self):
@@ -546,9 +548,15 @@ class TestSessionRuntimeParity:
         bridge = BridgeManager()
         captured = []
         bridge.on('lifecycle', lambda event: captured.append(event))
-        bridge._handle_event({'type': 'lifecycle', 'reason': 'run_start', 'sandbox': 'running'})
+        bridge._handle_event({
+            'type': 'lifecycle',
+            'reason': 'browser_ready',
+            'sandbox': 'stopped',
+            'browser': {'live_url': 'https://dashboard.test/browser/live'},
+        })
         assert len(captured) == 1
-        assert captured[0]['reason'] == 'run_start'
+        assert captured[0]['reason'] == 'browser_ready'
+        assert captured[0]['browser'] == {'live_url': 'https://dashboard.test/browser/live'}
 
     def test_bridge_manager_rejects_unknown_event_type(self):
         bridge = BridgeManager()
