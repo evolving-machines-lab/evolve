@@ -1,6 +1,6 @@
 {
   "name": "evolve-sdk-python-bridge",
-  "version": "0.0.34",
+  "version": "0.0.35",
   "private": true,
   "type": "module",
   "license": "Apache-2.0",
