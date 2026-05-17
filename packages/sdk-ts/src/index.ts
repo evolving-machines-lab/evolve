@@ -106,6 +106,8 @@ export type {
   SchemaValidationOptions,
   SkillName,
   BrowserProvider,
+  BrowserConfig,
+  ActionbookBrowserConfig,
   AgentPluginConfig,
   MarketplaceAgentPluginConfig,
   GeminiAgentPluginConfig,

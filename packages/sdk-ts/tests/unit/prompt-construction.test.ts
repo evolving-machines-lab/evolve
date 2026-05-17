@@ -347,6 +347,20 @@ const validationTests: ValidationTest[] = [
     },
   },
   {
+    name: "Browser prompt is appended before system prompt",
+    test: () => {
+      const prompt = buildWorkerSystemPrompt({
+        workingDir: WORKING_DIR,
+        mode: "knowledge",
+        browserPrompt: "BROWSER_MARKER_123",
+        systemPrompt: "CUSTOM_MARKER_123",
+      });
+      const browserIndex = prompt.indexOf("BROWSER_MARKER_123");
+      const customIndex = prompt.indexOf("CUSTOM_MARKER_123");
+      return browserIndex >= 0 && browserIndex < customIndex;
+    },
+  },
+  {
     name: "Working directory is substituted",
     test: () => {
       const prompt = buildWorkerSystemPrompt({ workingDir: "/custom/path", mode: "knowledge" });

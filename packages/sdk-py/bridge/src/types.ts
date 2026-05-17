@@ -78,7 +78,7 @@ export interface InitializeParams {
   context?: EncodedFileMap;
   files?: EncodedFileMap;
   mcp_servers?: Record<string, any>;
-  browser?: 'browser-use';
+  browser?: 'browser-use' | 'actionbook' | { provider: 'actionbook'; superstealth?: boolean };
   plugins?: AgentPluginConfig[];
   skills?: string[];
   secrets?: Record<string, string>;

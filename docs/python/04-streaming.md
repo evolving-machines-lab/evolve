@@ -214,9 +214,25 @@ class BrowserUseResponse(TypedDict):
 
 ---
 
+## Managed Browser Live View
+
+Managed Actionbook browser automation is enabled with `browser={'provider': 'actionbook', 'superstealth': True}` in Gateway mode. The dashboard live-view URL is emitted in trace metadata, not as a browser-use tool response:
+
+```python
+TraceMetadata = {
+    "browser_provider": "actionbook",
+    "browser_session_id": "...",
+    "browser_live_url": "...",
+}
+```
+
+Use `_meta["browser_live_url"]` from the session trace metadata to embed the live browser view in your UI.
+
+---
+
 ## BrowserUseResponse Extraction
 
-Browser automation (`browser-use`) is available when enabled with `browser='browser-use'` in Gateway mode. Browser tool responses embed a **JSON string** inside `ToolCallUpdate["content"][].content.text`. You must extract and parse it.
+Legacy browser automation (`browser-use`) is available when enabled with `browser='browser-use'` in Gateway mode. Browser tool responses embed a **JSON string** inside `ToolCallUpdate["content"][].content.text`. You must extract and parse it.
 
 > **Detection:** Browser-use tools arrive with `kind="other"` and `title` like `"browser-use: browser_task"` or `"browser-use: monitor_task"`. Use `is_browser_use_tool(title)` to identify them, then extract URLs from the tool output.
 

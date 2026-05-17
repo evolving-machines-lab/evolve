@@ -49,6 +49,11 @@ import { SessionLogger } from "./observability";
 import { setupComposio } from "./composio";
 import { createCheckpoint, restoreCheckpoint, getLatestCheckpoint, type RestoreMetadata } from "./storage";
 import { installAgentPlugins } from "./plugins";
+import {
+  createManagedBrowserSession,
+  stopManagedBrowserSession,
+  type ManagedBrowserSession,
+} from "./browser";
 
 // Re-export types for external consumers
 export type {
@@ -176,6 +181,7 @@ export class Agent {
   private sandboxState: SandboxLifecycleState;
   private agentState: AgentRuntimeState = "idle";
   private droidSessionId?: string;
+  private managedBrowserSession?: ManagedBrowserSession;
 
   // Skills storage
   private readonly skills?: SkillName[];
@@ -362,10 +368,11 @@ export class Agent {
           this.options.plugins ||
           this.options.context ||
           this.options.files ||
-          this.options.systemPrompt
+          this.options.systemPrompt ||
+          this.options.managedBrowser
         ) {
           console.warn(
-            "[Evolve] Connecting to existing sandbox - ignoring mcpServers, plugins, context, files, and systemPrompt"
+            "[Evolve] Connecting to existing sandbox - ignoring mcpServers, plugins, context, files, systemPrompt, and managed browser setup"
           );
         }
         this.sandbox = await provider.connect(this.options.sandboxId);
@@ -377,6 +384,7 @@ export class Agent {
         this.emitLifecycle(callbacks, "sandbox_connected");
       } else {
         // Create new sandbox with full initialization
+        await this.ensureManagedBrowserSession();
         const envVars = this.buildEnvironmentVariables();
 
         this.sandbox = await provider.create({
@@ -397,6 +405,7 @@ export class Agent {
         this.emitLifecycle(callbacks, "sandbox_ready");
       }
     } catch (error) {
+      await this.closeManagedBrowserSession().catch(() => {});
       this.sandboxState = "error";
       this.agentState = "error";
       this.emitLifecycle(callbacks, "sandbox_error");
@@ -467,6 +476,11 @@ export class Agent {
     }
     // OAuth direct mode: no baseUrl needed (Claude Code CLI handles it)
 
+    if (this.managedBrowserSession) {
+      envVars["ACTIONBOOK_BROWSER_MODE"] = "cloud";
+      envVars["ACTIONBOOK_BROWSER_CDP_ENDPOINT"] = this.managedBrowserSession.cdpUrl;
+    }
+
     if (this.options.secrets) {
       Object.assign(envVars, this.options.secrets);
     }
@@ -488,6 +502,22 @@ export class Agent {
     }
 
     return envVars;
+  }
+
+  private async ensureManagedBrowserSession(): Promise<void> {
+    if (this.managedBrowserSession || !this.options.managedBrowser) return;
+    this.managedBrowserSession = await createManagedBrowserSession(this.options.managedBrowser, this.sessionTag);
+  }
+
+  private async closeManagedBrowserSession(): Promise<void> {
+    if (!this.managedBrowserSession || !this.options.managedBrowser) return;
+    const session = this.managedBrowserSession;
+    this.managedBrowserSession = undefined;
+    try {
+      await stopManagedBrowserSession(this.options.managedBrowser, session);
+    } catch (error) {
+      console.warn(`[Evolve] Managed browser cleanup failed: ${(error as Error).message}`);
+    }
   }
 
   /**
@@ -706,6 +736,7 @@ export class Agent {
       const fullPrompt = buildWorkerSystemPrompt({
         workingDir: this.workingDir,
         systemPrompt: this.options.systemPrompt,
+        browserPrompt: this.options.browserPrompt,
         schema: this.zodSchema || this.jsonSchema,
         mode: workspaceMode,
       });
@@ -940,6 +971,7 @@ export class Agent {
       }
 
       // Create fresh sandbox
+      await this.ensureManagedBrowserSession();
       const envVars = this.buildEnvironmentVariables();
       this.sandboxState = "booting";
       this.emitLifecycle(callbacks, "sandbox_boot");
@@ -980,6 +1012,7 @@ export class Agent {
         // explicitly configured prompt-affecting options on this instance
         const hasExplicitPromptConfig = !!(
           this.options.systemPrompt ||
+          this.options.browserPrompt ||
           this.zodSchema ||
           this.jsonSchema
         );
@@ -1000,6 +1033,7 @@ export class Agent {
           await this.sandbox.kill().catch(() => {});
           this.sandbox = undefined;
         }
+        await this.closeManagedBrowserSession().catch(() => {});
         this.sandboxState = "error";
         this.agentState = "error";
         this.emitLifecycle(callbacks, "sandbox_error");
@@ -1024,7 +1058,14 @@ export class Agent {
         sandboxId: sandbox.sandboxId,
         tag: this.sessionTag,
         apiKey: this.agentConfig.isDirectMode ? undefined : this.agentConfig.apiKey,
-        observability: this.options.observability,
+        observability: {
+          ...this.options.observability,
+          ...(this.managedBrowserSession ? {
+            browser_provider: "actionbook",
+            browser_session_id: this.managedBrowserSession.id,
+            browser_live_url: this.managedBrowserSession.liveUrl,
+          } : {}),
+        },
       });
     }
 
@@ -1511,6 +1552,7 @@ export class Agent {
     }
 
     await this.rotateSession();
+    await this.closeManagedBrowserSession();
 
     this.options.sandboxId = sandboxId;
     this.sandbox = undefined;
@@ -1626,6 +1668,7 @@ export class Agent {
       await this.sandbox.kill();
       this.sandbox = undefined;
     }
+    await this.closeManagedBrowserSession();
     // Session is no longer valid after sandbox termination.
     this.options.sandboxId = undefined;
     this.interruptedOperations.clear();

@@ -581,9 +581,35 @@ class TestBrowserConfig:
         params = initialize_calls[0][1]
         assert params['browser'] == 'browser-use'
 
+    @pytest.mark.asyncio
+    async def test_actionbook_browser_forwarded_to_bridge(self):
+        mock_bridge = MockBridgeManager()
+        with patch('evolve.agent.BridgeManager', return_value=mock_bridge):
+            kit = Evolve(browser='actionbook')
+            await kit._ensure_initialized()
+
+        initialize_calls = [c for c in mock_bridge.calls if c[0] == 'initialize']
+        params = initialize_calls[0][1]
+        assert params['browser'] == 'actionbook'
+
+    @pytest.mark.asyncio
+    async def test_actionbook_browser_config_forwarded_to_bridge(self):
+        mock_bridge = MockBridgeManager()
+        with patch('evolve.agent.BridgeManager', return_value=mock_bridge):
+            kit = Evolve(browser={'provider': 'actionbook', 'super_stealth': True})
+            await kit._ensure_initialized()
+
+        initialize_calls = [c for c in mock_bridge.calls if c[0] == 'initialize']
+        params = initialize_calls[0][1]
+        assert params['browser'] == {'provider': 'actionbook', 'superstealth': True}
+
     def test_invalid_browser_value_rejected(self):
-        with pytest.raises(ValueError, match="browser must be 'browser-use' or None"):
+        with pytest.raises(ValueError, match="browser must be 'browser-use', 'actionbook', an actionbook config dict, or None"):
             Evolve(browser='invalid')  # type: ignore[arg-type]
+
+    def test_invalid_browser_provider_rejected(self):
+        with pytest.raises(ValueError, match="browser provider must be 'actionbook'"):
+            Evolve(browser={'provider': 'invalid'})  # type: ignore[arg-type]
 
 
 class TestPluginConfig:
