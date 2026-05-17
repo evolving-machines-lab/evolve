@@ -43,7 +43,7 @@ import { Evolve } from "@evolvingmachines/sdk";
 
 const evolve = new Evolve()
     .withSystemPrompt("You are Manus Evolve, a powerful AI agent. You can execute code, browse the web, manage files, and solve complex tasks.")
-    .withBrowser("browser-use")  // optional; .withBrowser() defaults to "browser-use"
+    .withBrowser()  // optional; defaults to managed Actionbook browser automation in Gateway mode
     .withSkills(["pdf", "docx", "pptx"])
     .withComposio("user_123", { toolkits: ["gmail", "notion", "exa"] });  // 1000+ integrations via Composio
 
@@ -114,7 +114,7 @@ See [Streaming Events](./04-streaming.md) for all event types, type definitions,
 When using `EVOLVE_API_KEY`:
 
 - **Tracing:** Automatic tracing and agent analytics at [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) for observability and replay — no extra setup needed. Use `withSessionTagPrefix()` to label sessions for easy filtering.
-- **Browser Automation:** Enable `browser-use` with `.withBrowser("browser-use")` — agents can browse the web, take screenshots, fill forms, and interact with pages. Calling `.withBrowser()` with no argument defaults to `"browser-use"`.
+- **Browser Automation:** Call `.withBrowser()` for managed Actionbook browser automation with dashboard live view. Use `.withBrowser("browser-use")` for the legacy browser-use MCP integration.
 - **Checkpointing:** Snapshot sandbox state to Evolve-managed storage with `.withStorage()` — no S3 credentials needed. See [Storage & Checkpointing](./03-runtime.md#storage--checkpointing).
 
 ---
@@ -125,7 +125,7 @@ When using `EVOLVE_API_KEY`:
 |---|---------|---------------|
 | Setup | `EVOLVE_API_KEY` | [Model provider keys](#agent-reference) + [`E2B_API_KEY`](https://e2b.dev) |
 | Observability | [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) | `~/.evolve-sdk/observability/` |
-| Browser | `.withBrowser("browser-use")` enables browser-use | Via skills or MCP |
+| Browser | `.withBrowser()` enables managed Actionbook; `.withBrowser("browser-use")` enables legacy browser-use MCP | Via skills or MCP |
 | Billing | Evolving Machines | Your provider accounts |
 
 ---

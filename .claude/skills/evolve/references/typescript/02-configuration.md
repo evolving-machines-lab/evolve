@@ -165,8 +165,8 @@ const evolve = new Evolve()
     //     required: ["summary", "score"],
     // })
 
-    // (optional) Gateway browser automation (.withBrowser() defaults to "browser-use")
-    .withBrowser("browser-use")
+    // (optional) Gateway browser automation (.withBrowser() defaults to managed Actionbook)
+    .withBrowser()
 
     // (optional) Install plugins/extensions for the selected agent before first run
     .withPlugins({
@@ -259,7 +259,7 @@ COMPOSIO_API_KEY=...
 import { Evolve } from "@evolvingmachines/sdk";
 
 const evolve = new Evolve()
-    .withBrowser("browser-use")
+    .withBrowser()
     .withSkills(["pptx"]);
 
 await evolve.run({ prompt: "Browse Hacker News top 5 articles and create a slide deck summarizing each" });
@@ -275,10 +275,20 @@ await evolve.run({ prompt: "Browse Hacker News top 5 articles and create a slide
 
 ### Browser Automation
 
-> **Note:** `browser-use` is opt-in with `.withBrowser("browser-use")` in Gateway mode (when using `EVOLVE_API_KEY`). Calling `.withBrowser()` with no argument defaults to `"browser-use"`. These skills provide additional browser capabilities.
+> **Note:** Browser automation is opt-in and Gateway-only when managed by Evolve. Calling `.withBrowser()` with no argument defaults to managed Actionbook browser automation with dashboard live view. Use `.withBrowser("browser-use")` for the legacy browser-use MCP integration, or `.withBrowser("actionbook")` to install Actionbook skills without managed live browser transport.
+
+```ts
+new Evolve().withBrowser(); // managed Actionbook browser with live view
+new Evolve().withBrowser({ provider: "actionbook", superstealth: true }); // explicit managed mode
+new Evolve().withBrowser("actionbook"); // Actionbook skills only
+new Evolve().withBrowser("browser-use"); // legacy browser-use MCP
+```
 
 | Skill | Description | Source |
 |-------|-------------|--------|
+| `actionbook` | Browser action engine for web automation | [skills/actionbook](https://github.com/evolving-machines-lab/evolve/tree/main/skills/actionbook) |
+| `active-research` | Browser-enabled research workflows | [skills/active-research](https://github.com/evolving-machines-lab/evolve/tree/main/skills/active-research) |
+| `extract` | Browser data extraction workflows | [skills/extract](https://github.com/evolving-machines-lab/evolve/tree/main/skills/extract) |
 | `agent-browser` | CLI-based headless browser automation for AI agents | [skills/agent-browser](https://github.com/evolving-machines-lab/evolve/tree/main/skills/agent-browser) |
 | `dev-browser` | Browser automation with persistent page state | [skills/dev-browser](https://github.com/evolving-machines-lab/evolve/tree/main/skills/dev-browser) |
 | `webapp-testing` | Test web applications | [skills/webapp-testing](https://github.com/evolving-machines-lab/evolve/tree/main/skills/webapp-testing) |
