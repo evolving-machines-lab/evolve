@@ -286,7 +286,7 @@ Set env vars and the SDK picks them up automatically — no need to pass explici
 
 > **Note:** In Gateway mode (`EVOLVE_API_KEY`), the default claude model is `"opus"`. In BYOK mode, it defaults to `"sonnet"`.
 
-Agent-specific options: `reasoningEffort` (Codex and Droid; valid values vary by model) and `fastInference` (Codex OAuth / ChatGPT auth only; unavailable with API-key auth; 1.5x speed; GPT-5.5 uses 2.5x credits, GPT-5.4 uses 2x credits). For 1M context window, use `model: "sonnet[1m]"` or `model: "opus[1m]"`.
+Agent-specific options: `reasoningEffort` (Codex and Droid; valid values vary by model). For 1M context window, use `model: "sonnet[1m]"` or `model: "opus[1m]"`.
 
 ### Agent Examples
 
@@ -326,9 +326,6 @@ const evolve = new Evolve()
 
 const evolve = new Evolve()
     .withAgent({ type: "codex", reasoningEffort: "high" });
-
-const evolve = new Evolve()
-    .withAgent({ type: "codex", fastInference: true }); // Codex OAuth / ChatGPT auth only; API-key auth uses standard pricing
 ```
 
 ```ts

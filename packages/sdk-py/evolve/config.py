@@ -42,7 +42,6 @@ class AgentConfig:
         provider_base_url: Provider base URL for direct mode (auto-detected for Qwen)
         model: Model name (optional - uses agent's default if not specified). Use 'sonnet[1m]' / 'opus[1m]' for 1M context window (Claude only).
         reasoning_effort: Reasoning effort for models that support it (optional)
-        fast_inference: Use Codex fast mode with Codex OAuth / ChatGPT auth (optional)
     """
     type: Optional[AgentType] = None
     api_key: Optional[str] = None
@@ -51,7 +50,6 @@ class AgentConfig:
     provider_base_url: Optional[str] = None
     model: Optional[str] = None
     reasoning_effort: Optional[ReasoningEffort] = None
-    fast_inference: Optional[bool] = None
 
 
 @runtime_checkable

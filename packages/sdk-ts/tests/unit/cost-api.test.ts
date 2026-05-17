@@ -666,24 +666,6 @@ async function testQwenBuildCommandUsesModelAliases(): Promise<void> {
   assert(!directCmd.includes("dashscope/qwen3-coder-plus"), "direct mode does not add gateway route");
 }
 
-async function testCodexBuildCommandUsesFastInferenceFlag(): Promise<void> {
-  console.log("\n[23b] Codex buildCommand() uses fast inference config override");
-  const agent = new Agent({
-    type: "codex",
-    apiKey: "__oauth_file__",
-    isDirectMode: true,
-    isOAuth: true,
-    model: "gpt-5.5",
-    reasoningEffort: "xhigh",
-    fastInference: true,
-  } as any, {});
-
-  const command = (agent as any).buildCommand("hello") as string;
-  assert(command.includes('-c model_reasoning_effort="xhigh"'), "includes reasoning effort override");
-  assert(command.includes('-c service_tier="fast"'), "includes fast inference service tier override");
-  assert(command.includes("-c features.fast_mode=true"), "enables Codex fast mode feature flag");
-}
-
 async function testQwenWriteJsonOverwritesPreviousHeaders(): Promise<void> {
   console.log("\n[24] writeJsonSpendHeaders() overwrites previous headers (per-run update)");
   // Simulate first run wrote headers, now second run overwrites
@@ -1208,7 +1190,6 @@ async function main(): Promise<void> {
   await testQwenBuildRunEnvsReturnsUndefined();
   await testQwenDirectModeSkipsHeaders();
   await testQwenBuildCommandUsesModelAliases();
-  await testCodexBuildCommandUsesFastInferenceFlag();
   await testQwenWriteJsonOverwritesPreviousHeaders();
   await testQwenWriteJsonPreservesUserDefinedHeaders();
   await testKimiWriteSpendConfigFresh();

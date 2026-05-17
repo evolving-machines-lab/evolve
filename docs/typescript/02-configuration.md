@@ -131,8 +131,7 @@ const evolve = new Evolve()
         type: "codex",                        // "claude" | "codex" | "gemini" | "qwen" | "kimi" | "opencode" | "droid" - defaults to "claude"
         model: "gpt-5.3-codex",               // (optional) Uses default if omitted. Use "sonnet[1m]" / "opus[1m]" for 1M context (Claude only)
         reasoningEffort: "medium",            // (optional) Codex and Droid; valid values vary by model
-        // fastInference: true,                // (optional) Codex OAuth / ChatGPT auth only; do not combine with apiKey/providerApiKey
-        apiKey: process.env.EVOLVE_API_KEY!,   // (optional) Gateway mode - auto-resolves from env
+        apiKey: process.env.EVOLVE_API_KEY!, // (optional) Gateway mode - auto-resolves from env
         // providerApiKey: process.env.ANTHROPIC_API_KEY!, // (optional) Direct mode (BYOK)
         // oauthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN!, // (optional) Claude Max subscription
     })

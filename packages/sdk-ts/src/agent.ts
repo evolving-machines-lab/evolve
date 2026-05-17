@@ -917,9 +917,7 @@ export class Agent {
       isResume: this.hasRun,
       sessionId: this.agentConfig.type === "droid" ? this.droidSessionId : undefined,
       reasoningEffort: this.agentConfig.reasoningEffort,
-      fastInference: this.agentConfig.fastInference,
       isDirectMode: this.agentConfig.isDirectMode,
-      isOAuth: this.agentConfig.isOAuth,
       skills: this.skills,
     });
   }

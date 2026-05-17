@@ -23,9 +23,6 @@
 import { resolveAgentConfig } from "../../src/utils/config.js";
 import { resolveDefaultSandbox } from "../../src/utils/sandbox.js";
 import { getE2BGatewayUrl } from "../../src/constants.js";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
 
 // =============================================================================
 // TEST HELPERS
@@ -110,7 +107,6 @@ function clearEnv(): void {
   delete process.env.FACTORY_BASE_URL;
   delete process.env.E2B_API_KEY;
   delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
-  delete process.env.CODEX_OAUTH_FILE_PATH;
 }
 
 function restoreEnv(): void {
@@ -257,17 +253,6 @@ async function runTests(): Promise<void> {
   }
 
   clearEnv();
-  assertThrows(
-    () => resolveAgentConfig({
-      type: "codex",
-      providerApiKey: "openai-key",
-      fastInference: true,
-    }),
-    "fastInference is only supported for codex OAuth mode",
-    "throws when fastInference is used with Codex providerApiKey mode"
-  );
-
-  clearEnv();
   {
     const result = resolveAgentConfig({
       type: "claude",
@@ -370,33 +355,6 @@ async function runTests(): Promise<void> {
     assertEqual(result.reasoningEffort, "high", "preserves reasoningEffort in gateway mode");
   }
 
-  clearEnv();
-  process.env.EVOLVE_API_KEY = "env-evolve-key";
-  assertThrows(
-    () => resolveAgentConfig({
-      type: "codex",
-      fastInference: true,
-    }),
-    "fastInference is only supported for codex OAuth mode",
-    "throws when fastInference is used with Codex gateway mode"
-  );
-
-  clearEnv();
-  process.env.EVOLVE_API_KEY = "env-evolve-key";
-  {
-    const authDir = mkdtempSync(join(tmpdir(), "evolve-codex-oauth-"));
-    const authPath = join(authDir, "auth.json");
-    try {
-      writeFileSync(authPath, "{}");
-      process.env.CODEX_OAUTH_FILE_PATH = authPath;
-      const result = resolveAgentConfig({ type: "codex", fastInference: true });
-      assertEqual(result.apiKey, "__oauth_file__", "fastInference prefers Codex OAuth over ambient EVOLVE_API_KEY");
-      assertEqual(result.isOAuth, true, "fastInference env override resolves OAuth mode");
-    } finally {
-      rmSync(authDir, { recursive: true, force: true });
-    }
-  }
-
   // EVOLVE_API_KEY takes priority over provider env vars
   clearEnv();
   process.env.EVOLVE_API_KEY = "env-evolve-key";
@@ -492,21 +450,6 @@ async function runTests(): Promise<void> {
     "No API key found for codex",
     "CLAUDE_CODE_OAUTH_TOKEN is ignored for non-claude agents"
   );
-
-  clearEnv();
-  {
-    const authDir = mkdtempSync(join(tmpdir(), "evolve-codex-oauth-"));
-    const authPath = join(authDir, "auth.json");
-    try {
-      writeFileSync(authPath, "{}");
-      process.env.CODEX_OAUTH_FILE_PATH = authPath;
-      const result = resolveAgentConfig({ type: "codex", fastInference: true });
-      assertEqual(result.isOAuth, true, "Codex CODEX_OAUTH_FILE_PATH resolves OAuth mode");
-      assertEqual(result.fastInference, true, "allows fastInference with Codex OAuth mode");
-    } finally {
-      rmSync(authDir, { recursive: true, force: true });
-    }
-  }
 
   // ─────────────────────────────────────────────────────────────────────────
   // ERROR CASES

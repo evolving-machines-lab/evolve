@@ -718,7 +718,6 @@ interface AgentOverride {
     type: "claude" | "codex" | "gemini" | "qwen" | "kimi" | "opencode" | "droid";
     model?: string;
     reasoningEffort?: "off" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-    fastInference?: boolean; // Codex fast mode; Codex OAuth / ChatGPT auth only, not API-key auth
 }
 ```
 
@@ -726,7 +725,6 @@ interface AgentOverride {
 const codexAgent: AgentOverride = {
     type: "codex",
     reasoningEffort: "high",
-    fastInference: true,
 };
 
 const results = await swarm.map({
