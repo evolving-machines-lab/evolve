@@ -139,7 +139,17 @@ export type WorkspaceMode = "knowledge" | "swe";
 export type SkillName = "pdf" | "dev-browser" | (string & {});
 
 /** Browser automation providers that can be enabled explicitly */
-export type BrowserProvider = "browser-use";
+export type BrowserProvider = "browser-use" | "actionbook";
+
+/** Actionbook browser configuration. */
+export interface ActionbookBrowserConfig {
+  provider: "actionbook";
+  /** Use Evolve-managed browser transport. Enabled by default for object config. */
+  superstealth?: boolean;
+}
+
+/** Browser automation configuration. */
+export type BrowserConfig = BrowserProvider | ActionbookBrowserConfig;
 
 /** Marketplace plugin shape for CLIs with explicit plugin install commands. */
 export interface MarketplaceAgentPluginConfig {
@@ -346,6 +356,13 @@ export interface AgentOptions {
   files?: FileMap;
   /** MCP server configurations */
   mcpServers?: Record<string, McpServerConfig>;
+  /** Runtime browser prompt fragment appended to the agent system prompt */
+  browserPrompt?: string;
+  /** Evolve-managed browser transport for browser automation */
+  managedBrowser?: {
+    apiKey: string;
+    dashboardUrl?: string;
+  };
   /** Plugins/extensions to install in the sandbox user profile before first run */
   plugins?: AgentPluginConfig[];
   /** Skills to enable (e.g., ["pdf", "dev-browser"]) */
@@ -443,6 +460,7 @@ export type AgentRuntimeState = "idle" | "running" | "interrupted" | "error";
 
 /** Lifecycle transition reason */
 export type LifecycleReason =
+  | "browser_ready"
   | "sandbox_boot"
   | "sandbox_connected"
   | "sandbox_ready"
@@ -463,6 +481,11 @@ export type LifecycleReason =
   | "command_background_complete"
   | "command_background_failed";
 
+/** Browser runtime info exposed to host applications. */
+export interface BrowserRuntimeInfo {
+  liveUrl: string;
+}
+
 /** Lifecycle event emitted by the runtime */
 export interface LifecycleEvent {
   sandboxId: string | null;
@@ -470,6 +493,7 @@ export interface LifecycleEvent {
   agent: AgentRuntimeState;
   timestamp: string;
   reason: LifecycleReason;
+  browser?: BrowserRuntimeInfo;
 }
 
 /** Snapshot of current runtime status */
@@ -480,6 +504,7 @@ export interface SessionStatus {
   activeProcessId: string | null;
   hasRun: boolean;
   timestamp: string;
+  browser?: BrowserRuntimeInfo;
 }
 
 // =============================================================================

@@ -69,7 +69,7 @@ export const template = Template()
   // ---------------------------------------------------------------------------
   // Agent Browser CLI (headless browser automation for AI agents)
   // ---------------------------------------------------------------------------
-  .runCmd('npm install -g agent-browser')
+  .runCmd('npm install -g agent-browser @actionbookdev/cli')
 
   // ---------------------------------------------------------------------------
   // User setup

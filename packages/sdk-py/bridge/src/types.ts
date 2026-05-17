@@ -78,7 +78,7 @@ export interface InitializeParams {
   context?: EncodedFileMap;
   files?: EncodedFileMap;
   mcp_servers?: Record<string, any>;
-  browser?: 'browser-use';
+  browser?: 'browser-use' | 'actionbook' | { provider: 'actionbook'; superstealth?: boolean };
   plugins?: AgentPluginConfig[];
   skills?: string[];
   secrets?: Record<string, string>;
@@ -261,6 +261,9 @@ export interface SessionStatusResponse {
   active_process_id: string | null;
   has_run: boolean;
   timestamp: string;
+  browser?: {
+    live_url: string;
+  };
 }
 
 // =============================================================================

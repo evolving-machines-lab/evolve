@@ -70,6 +70,7 @@ class SessionStatus:
     active_process_id: Optional[str]
     has_run: bool
     timestamp: str
+    browser: Optional[Dict[str, str]] = None
 
 
 @dataclass

@@ -235,8 +235,71 @@ async function testStatusAndLifecycle(): Promise<void> {
   assert(events.every((e) => e.sandboxId !== undefined), "all lifecycle events include sandboxId");
 }
 
+async function testManagedBrowserLifecycle(): Promise<void> {
+  console.log("\n[2] managed browser live URL lifecycle");
+  const previousFetch = globalThis.fetch;
+  const previousDashboardUrl = process.env.EVOLVE_DASHBOARD_URL;
+  process.env.EVOLVE_DASHBOARD_URL = "https://dashboard.test";
+
+  const liveUrl = "https://dashboard.test/browser-sessions/browser_123/live?token=view-token";
+  const cdpUrl = "wss://dashboard.test/api/browser-sessions/browser_123/cdp?token=proxy-token";
+
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url === "https://dashboard.test/api/browser-sessions" && init?.method === "POST") {
+      return new Response(JSON.stringify({ id: "browser_123", cdpUrl, liveUrl }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (url === "https://dashboard.test/api/browser-sessions/browser_123" && init?.method === "DELETE") {
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (url.endsWith("/api/sessions/ingest")) {
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  }) as typeof fetch;
+
+  const commands = new MockCommands();
+  commands.mode = "instant";
+  const sandbox = new MockSandbox("sess-browser", commands);
+  const provider = new MockProvider(sandbox);
+  const events: LifecycleEvent[] = [];
+
+  const kit = new Evolve()
+    .withAgent({ type: "claude", apiKey: "evolve-key" })
+    .withSandbox(provider)
+    .withBrowser();
+
+  kit.on("lifecycle", (event) => events.push(event));
+
+  try {
+    const result = await kit.run({ prompt: "test prompt", timeoutMs: 10_000 });
+    assertEqual(result.exitCode, 0, "run() with managed browser returns success");
+
+    const browserReady = events.find((event) => event.reason === "browser_ready");
+    assertEqual(browserReady?.browser?.liveUrl, liveUrl, "browser_ready exposes live URL immediately");
+    assert(
+      events.findIndex((event) => event.reason === "browser_ready") < events.findIndex((event) => event.reason === "sandbox_ready"),
+      "browser_ready is emitted before sandbox ready"
+    );
+
+    const status = await kit.status();
+    assertEqual(status.browser?.liveUrl, liveUrl, "status() exposes managed browser live URL");
+  } finally {
+    await kit.kill();
+    globalThis.fetch = previousFetch;
+    if (previousDashboardUrl === undefined) {
+      delete process.env.EVOLVE_DASHBOARD_URL;
+    } else {
+      process.env.EVOLVE_DASHBOARD_URL = previousDashboardUrl;
+    }
+  }
+}
+
 async function testInterrupt(): Promise<void> {
-  console.log("\n[2] interrupt() semantics and lifecycle");
+  console.log("\n[3] interrupt() semantics and lifecycle");
   const commands = new MockCommands();
   commands.mode = "hang";
   const sandbox = new MockSandbox("sess-2", commands);
@@ -289,7 +352,7 @@ async function testInterrupt(): Promise<void> {
 }
 
 async function testBackgroundCompletionLifecycle(): Promise<void> {
-  console.log("\n[3] background completion emits lifecycle event");
+  console.log("\n[4] background completion emits lifecycle event");
   const commands = new MockCommands();
   commands.mode = "instant";
   const sandbox = new MockSandbox("sess-3", commands);
@@ -308,7 +371,7 @@ async function testBackgroundCompletionLifecycle(): Promise<void> {
 }
 
 async function testPauseAndKillDoNotGetOverwritten(): Promise<void> {
-  console.log("\n[4] pause()/kill() state is not overwritten by stale completion");
+  console.log("\n[5] pause()/kill() state is not overwritten by stale completion");
   const commands = new MockCommands();
   commands.mode = "hang";
   const sandbox = new MockSandbox("sess-4", commands);
@@ -416,6 +479,7 @@ async function main(): Promise<void> {
 
   try {
     await testStatusAndLifecycle();
+    await testManagedBrowserLifecycle();
     await testInterrupt();
     await testBackgroundCompletionLifecycle();
     await testPauseAndKillDoNotGetOverwritten();

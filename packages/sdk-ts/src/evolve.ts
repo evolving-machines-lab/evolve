@@ -28,7 +28,7 @@ import type {
   StorageConfig,
   RunCost,
   SessionCost,
-  BrowserProvider,
+  BrowserConfig,
   AgentPluginConfig,
 } from "./types";
 import { Agent, type AgentConfig, type AgentOptions, type AgentResponse } from "./agent";
@@ -38,6 +38,8 @@ import { composioHelpers } from "./composio";
 import { getGatewayMcpServers, DEFAULT_DASHBOARD_URL } from "./constants";
 import { resolveStorageConfig, createBoundStorageClient } from "./storage";
 import type { CheckpointInfo, StorageClient } from "./types";
+import { BROWSER_ACTIONBOOK_PROMPT } from "./prompts";
+import { mergeActionbookSkills, normalizeBrowserConfig } from "./browser";
 
 // =============================================================================
 // TYPES
@@ -71,7 +73,7 @@ export interface EvolveConfig {
   files?: FileMap;
   mcpServers?: Record<string, McpServerConfig>;
   /** Browser automation provider to enable explicitly */
-  browser?: BrowserProvider;
+  browser?: BrowserConfig;
   /** Agent plugins/extensions to install before first run */
   plugins?: AgentPluginConfig[];
   /** Skills to enable (e.g., ["pdf", "dev-browser"]) */
@@ -235,16 +237,16 @@ export class Evolve extends EventEmitter {
   /**
    * Enable browser automation.
    *
-   * Gateway mode supports "browser-use", exposed as the same MCP server that
-   * was previously included automatically.
+   * Default browser automation uses Actionbook with Evolve-managed browser
+   * transport in gateway mode. Pass "browser-use" to use the legacy MCP server.
    *
    * @example
-   * kit.withBrowser("browser-use") // explicit provider
+   * kit.withBrowser("browser-use") // legacy MCP provider
    *
    * @example
-   * kit.withBrowser() // defaults to "browser-use"
+   * kit.withBrowser() // defaults to managed Actionbook
    */
-  withBrowser(provider: BrowserProvider | false = "browser-use"): this {
+  withBrowser(provider: BrowserConfig | false = { provider: "actionbook", superstealth: true }): this {
     if (provider === false) {
       delete this.config.browser;
     } else {
@@ -436,13 +438,37 @@ export class Evolve extends EventEmitter {
 
     // Gateway browser MCP is opt-in; user config still takes precedence.
     let browserMcpServers: Record<string, McpServerConfig> = {};
-    if (this.config.browser === "browser-use") {
-      if (agentConfig.isDirectMode) {
-        throw new Error(
-          'withBrowser("browser-use") requires gateway mode. Use apiKey/EVOLVE_API_KEY instead of providerApiKey/direct mode.'
-        );
+    let browserPrompt: string | undefined;
+    let managedBrowser: AgentOptions["managedBrowser"] | undefined;
+    let skills = this.config.skills;
+
+    if (this.config.browser) {
+      const browser = normalizeBrowserConfig(this.config.browser);
+
+      if (browser.provider === "browser-use") {
+        if (agentConfig.isDirectMode) {
+          throw new Error(
+            'withBrowser("browser-use") requires gateway mode. Use apiKey/EVOLVE_API_KEY instead of providerApiKey/direct mode.'
+          );
+        }
+        browserMcpServers = getGatewayMcpServers(agentConfig.apiKey);
       }
-      browserMcpServers = getGatewayMcpServers(agentConfig.apiKey);
+
+      if (browser.provider === "actionbook") {
+        skills = mergeActionbookSkills(skills);
+        if (browser.managed) {
+          if (agentConfig.isDirectMode) {
+            throw new Error(
+              'Managed Actionbook browser requires gateway mode. Use apiKey/EVOLVE_API_KEY instead of providerApiKey/direct mode.'
+            );
+          }
+          browserPrompt = BROWSER_ACTIONBOOK_PROMPT;
+          managedBrowser = {
+            apiKey: agentConfig.apiKey,
+            dashboardUrl: process.env.EVOLVE_DASHBOARD_URL || DEFAULT_DASHBOARD_URL,
+          };
+        }
+      }
     }
 
     // Resolve storage config if .withStorage() was called
@@ -465,8 +491,10 @@ export class Evolve extends EventEmitter {
       context: this.config.context,
       files: this.config.files,
       mcpServers: { ...browserMcpServers, ...this.config.mcpServers },
+      browserPrompt,
+      managedBrowser,
       plugins: this.config.plugins,
-      skills: this.config.skills,
+      skills,
       schema: this.config.schema,
       schemaOptions: this.config.schemaOptions,
       // Observability
@@ -515,6 +543,7 @@ export class Evolve extends EventEmitter {
       agent: status.agent,
       timestamp: new Date().toISOString(),
       reason,
+      ...(status.browser ? { browser: status.browser } : {}),
     });
   }
 

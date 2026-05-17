@@ -493,6 +493,7 @@ class MockBridgeManager:
                 'active_process_id': None,
                 'has_run': True,
                 'timestamp': '2026-02-07T00:00:00.000Z',
+                'browser': {'live_url': 'https://dashboard.test/browser/live'},
             }
         if method == 'interrupt':
             return True
@@ -530,6 +531,7 @@ class TestSessionRuntimeParity:
         assert status.active_process_id is None
         assert status.has_run is True
         assert status.timestamp == '2026-02-07T00:00:00.000Z'
+        assert status.browser == {'live_url': 'https://dashboard.test/browser/live'}
 
     @pytest.mark.asyncio
     async def test_interrupt_returns_bool(self):
@@ -546,9 +548,15 @@ class TestSessionRuntimeParity:
         bridge = BridgeManager()
         captured = []
         bridge.on('lifecycle', lambda event: captured.append(event))
-        bridge._handle_event({'type': 'lifecycle', 'reason': 'run_start', 'sandbox': 'running'})
+        bridge._handle_event({
+            'type': 'lifecycle',
+            'reason': 'browser_ready',
+            'sandbox': 'stopped',
+            'browser': {'live_url': 'https://dashboard.test/browser/live'},
+        })
         assert len(captured) == 1
-        assert captured[0]['reason'] == 'run_start'
+        assert captured[0]['reason'] == 'browser_ready'
+        assert captured[0]['browser'] == {'live_url': 'https://dashboard.test/browser/live'}
 
     def test_bridge_manager_rejects_unknown_event_type(self):
         bridge = BridgeManager()
@@ -581,9 +589,35 @@ class TestBrowserConfig:
         params = initialize_calls[0][1]
         assert params['browser'] == 'browser-use'
 
+    @pytest.mark.asyncio
+    async def test_actionbook_browser_forwarded_to_bridge(self):
+        mock_bridge = MockBridgeManager()
+        with patch('evolve.agent.BridgeManager', return_value=mock_bridge):
+            kit = Evolve(browser='actionbook')
+            await kit._ensure_initialized()
+
+        initialize_calls = [c for c in mock_bridge.calls if c[0] == 'initialize']
+        params = initialize_calls[0][1]
+        assert params['browser'] == 'actionbook'
+
+    @pytest.mark.asyncio
+    async def test_actionbook_browser_config_forwarded_to_bridge(self):
+        mock_bridge = MockBridgeManager()
+        with patch('evolve.agent.BridgeManager', return_value=mock_bridge):
+            kit = Evolve(browser={'provider': 'actionbook', 'super_stealth': True})
+            await kit._ensure_initialized()
+
+        initialize_calls = [c for c in mock_bridge.calls if c[0] == 'initialize']
+        params = initialize_calls[0][1]
+        assert params['browser'] == {'provider': 'actionbook', 'superstealth': True}
+
     def test_invalid_browser_value_rejected(self):
-        with pytest.raises(ValueError, match="browser must be 'browser-use' or None"):
+        with pytest.raises(ValueError, match="browser must be 'browser-use', 'actionbook', an actionbook config dict, or None"):
             Evolve(browser='invalid')  # type: ignore[arg-type]
+
+    def test_invalid_browser_provider_rejected(self):
+        with pytest.raises(ValueError, match="browser provider must be 'actionbook'"):
+            Evolve(browser={'provider': 'invalid'})  # type: ignore[arg-type]
 
 
 class TestPluginConfig:

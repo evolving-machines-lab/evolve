@@ -14,6 +14,7 @@ import WORKSPACE_MD from "./agent_md/workspace-knowledge.md";
 import WORKSPACE_SWE_MD from "./agent_md/workspace-swe.md";
 import BASE_MD from "./agent_md/base.md";
 import SCHEMA_MD from "./agent_md/schema.md";
+import BROWSER_ACTIONBOOK_MD from "./agent_md/browser-actionbook.md";
 import JUDGE_AGENT_MD from "./agent_md/judge.md";
 import VERIFY_AGENT_MD from "./agent_md/verify.md";
 import REDUCE_AGENT_MD from "./agent_md/reduce.md";
@@ -54,6 +55,11 @@ export const SYSTEM_PROMPT: string = BASE_MD;
  * - {{schema}} - JSON schema for the expected output
  */
 export const SCHEMA_PROMPT: string = SCHEMA_MD;
+
+/**
+ * Actionbook browser automation prompt fragment
+ */
+export const BROWSER_ACTIONBOOK_PROMPT: string = BROWSER_ACTIONBOOK_MD;
 
 /**
  * Judge system prompt template (for Swarm best_of)
@@ -129,12 +135,18 @@ export function applyTemplate(
 export function buildWorkerSystemPrompt(options: {
   workingDir: string;
   systemPrompt?: string;
+  browserPrompt?: string;
   schema?: z.ZodType<unknown> | Record<string, unknown>;
   mode?: "knowledge" | "swe";
 }): string {
   // Pick workspace template based on mode
   const workspaceTemplate = options.mode === "swe" ? WORKSPACE_SWE_PROMPT : WORKSPACE_PROMPT;
   let fullPrompt = applyTemplate(workspaceTemplate, { workingDir: options.workingDir }).trim();
+
+  // Add runtime browser instructions before user-provided system prompt.
+  if (options.browserPrompt) {
+    fullPrompt += `\n\n\n${options.browserPrompt.trim()}`;
+  }
 
   // Add custom system prompt if provided
   if (options.systemPrompt) {

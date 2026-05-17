@@ -165,7 +165,7 @@ evolve = Evolve(
     schema=MyPydanticModel,
 
     # (optional) Gateway browser automation
-    browser='browser-use',
+    browser={'provider': 'actionbook', 'superstealth': True},
 
     # (optional) Install plugins/extensions for the selected agent before first run
     plugins={
@@ -254,7 +254,7 @@ COMPOSIO_API_KEY=...
 from evolve import Evolve
 
 evolve = Evolve(
-    browser='browser-use',
+    browser={'provider': 'actionbook', 'superstealth': True},
     skills=['pptx'],
 )
 
@@ -271,10 +271,19 @@ await evolve.run(prompt='Browse Hacker News top 5 articles and create a slide de
 
 ### Browser Automation
 
-> **Note:** `browser-use` is opt-in with `browser='browser-use'` in Gateway mode (when using `EVOLVE_API_KEY`). These skills provide additional browser capabilities.
+> **Note:** Browser automation is opt-in and Gateway-only when managed by Evolve. Use `browser={'provider': 'actionbook', 'superstealth': True}` for managed Actionbook browser automation with dashboard live view. Use `browser='browser-use'` for the legacy browser-use MCP integration, or `browser='actionbook'` to install Actionbook skills without managed live browser transport.
+
+```python
+Evolve(browser={'provider': 'actionbook', 'superstealth': True})  # managed Actionbook browser with live view
+Evolve(browser='actionbook')  # Actionbook skills only
+Evolve(browser='browser-use')  # legacy browser-use MCP
+```
 
 | Skill | Description | Source |
 |-------|-------------|--------|
+| `actionbook` | Browser action engine for web automation | [skills/actionbook](https://github.com/evolving-machines-lab/evolve/tree/main/skills/actionbook) |
+| `active-research` | Browser-enabled research workflows | [skills/active-research](https://github.com/evolving-machines-lab/evolve/tree/main/skills/active-research) |
+| `extract` | Browser data extraction workflows | [skills/extract](https://github.com/evolving-machines-lab/evolve/tree/main/skills/extract) |
 | `agent-browser` | CLI-based headless browser automation for AI agents | [skills/agent-browser](https://github.com/evolving-machines-lab/evolve/tree/main/skills/agent-browser) |
 | `dev-browser` | Browser automation with persistent page state | [skills/dev-browser](https://github.com/evolving-machines-lab/evolve/tree/main/skills/dev-browser) |
 | `webapp-testing` | Test web applications | [skills/webapp-testing](https://github.com/evolving-machines-lab/evolve/tree/main/skills/webapp-testing) |
