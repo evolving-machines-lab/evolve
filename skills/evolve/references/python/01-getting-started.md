@@ -37,7 +37,7 @@ from evolve import Evolve, ComposioSetup, ComposioConfig
 
 evolve = Evolve(
     system_prompt='You are Manus Evolve, a powerful AI agent. You can execute code, browse the web, manage files, and solve complex tasks.',
-    browser={'provider': 'actionbook', 'superstealth': True},  # optional: managed browser automation in Gateway mode
+    browser={'provider': 'actionbook', 'remote': True},  # optional: remote managed browser automation in Gateway mode
     skills=['pdf', 'docx', 'pptx'],
     composio=ComposioSetup(
         user_id='user_123',
@@ -101,7 +101,7 @@ See [Streaming Events](./04-streaming.md) for all event types, type definitions,
 When using `EVOLVE_API_KEY`:
 
 - **Tracing:** Automatic tracing and agent analytics at [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) for observability and replay — no extra setup needed. Use `session_tag_prefix` to label sessions for easy filtering.
-- **Browser Automation:** Use `browser={'provider': 'actionbook', 'superstealth': True}` for managed Actionbook browser automation with dashboard live view. Use `browser='browser-use'` for the legacy browser-use MCP integration.
+- **Browser Automation:** Use `browser={'provider': 'actionbook', 'remote': True}` for remote managed Actionbook browser automation with dashboard live view, `browser={'provider': 'agent-browser', 'remote': True}` for remote managed agent-browser, or `browser='browser-use'` for browser-use MCP.
 - **Checkpointing:** Snapshot sandbox state to Evolve-managed storage with `storage=StorageConfig()` — no S3 credentials needed. See [Storage & Checkpointing](./03-runtime.md#storage--checkpointing).
 
 ---
@@ -112,7 +112,7 @@ When using `EVOLVE_API_KEY`:
 |---|---------|---------------|
 | Setup | `EVOLVE_API_KEY` | Model provider keys + [`E2B_API_KEY`](https://e2b.dev) |
 | Observability | [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) | `~/.evolve-sdk/observability/` |
-| Browser | `browser={'provider': 'actionbook', 'superstealth': True}` enables managed Actionbook; `browser='browser-use'` enables legacy browser-use MCP | Via skills or MCP |
+| Browser | `browser={'provider': 'actionbook', 'remote': True}` enables remote managed Actionbook; `browser={'provider': 'agent-browser', 'remote': True}` enables remote managed agent-browser; `browser='browser-use'` enables browser-use MCP | Via skills or MCP |
 | Billing | Evolving Machines | Your provider accounts |
 
 ---
