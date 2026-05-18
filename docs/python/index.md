@@ -67,7 +67,7 @@ await evolve.run(prompt='Hello world')
 | OutputEvent / SessionUpdate types | [Streaming → Type Definitions](./04-streaming.md#type-definitions) |
 | LifecycleEvent / LifecycleReason | [Streaming → LifecycleEvent](./04-streaming.md#lifecycleevent-typeddict-shape) |
 | Tool events (ToolCall, ToolCallUpdate, ToolKind) | [Streaming → Type Definitions](./04-streaming.md#tool-types) |
-| Browser-use detection & URL extraction | [Streaming → BrowserUseResponse Extraction](./04-streaming.md#browseruseresponse-extraction) |
+| Browser automation streaming & URL extraction | [Streaming → Browser Automation Streaming](./04-streaming.md#browser-automation-streaming) |
 | UI integration example | [Streaming → UI Integration Example](./04-streaming.md#ui-integration-example) |
 | Upload files (`upload_context()`, `upload_files()`) | [Runtime → Upload](./03-runtime.md#upload-local--sandbox) |
 | Download files (`get_output_files()`, `save_local_dir()`) | [Runtime → Download](./03-runtime.md#download-sandbox--local) |

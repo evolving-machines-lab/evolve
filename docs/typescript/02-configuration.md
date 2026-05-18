@@ -165,7 +165,7 @@ const evolve = new Evolve()
     //     required: ["summary", "score"],
     // })
 
-    // (optional) Gateway browser automation (.withBrowser() defaults to managed Actionbook)
+    // (optional) Gateway browser automation (.withBrowser() defaults to remote managed Actionbook)
     .withBrowser()
 
     // (optional) Install plugins/extensions for the selected agent before first run
@@ -275,13 +275,23 @@ await evolve.run({ prompt: "Browse Hacker News top 5 articles and create a slide
 
 ### Browser Automation
 
-> **Note:** Browser automation is opt-in and Gateway-only when managed by Evolve. Calling `.withBrowser()` with no argument defaults to managed Actionbook browser automation with dashboard live view. Use `.withBrowser("browser-use")` for the legacy browser-use MCP integration, or `.withBrowser("actionbook")` to install Actionbook skills without managed live browser transport.
+Browser automation is opt-in. `.withBrowser()` defaults to remote managed Actionbook for extra stealth capabilities and dashboard live view. For local dogfooding or local app testing, use the provider string form; object configs default `remote` to `false` unless you set `remote: true`. browser-use also requires Gateway mode because Evolve injects the MCP server.
+
+| Option | Configure | What you get |
+|--------|-----------|--------------|
+| Remote managed Actionbook (default) | `.withBrowser()` or `.withBrowser({ provider: "actionbook", remote: true })` | Actionbook skills, Evolve-managed remote browser transport, extra stealth capabilities, dashboard live view |
+| Remote managed agent-browser | `.withBrowser({ provider: "agent-browser", remote: true })` | agent-browser skill, Evolve-managed remote browser transport, extra stealth capabilities, dashboard live view |
+| browser-use MCP | `.withBrowser("browser-use")` | browser-use MCP server, with live/screenshot URLs parsed from browser-use tool responses |
+
+Use `.withBrowser("actionbook")` or `.withBrowser("agent-browser")` to install only that provider's skills without managed live browser transport.
 
 ```ts
-new Evolve().withBrowser(); // managed Actionbook browser with live view
-new Evolve().withBrowser({ provider: "actionbook", superstealth: true }); // explicit managed mode
+new Evolve().withBrowser(); // remote managed Actionbook browser with live view
+new Evolve().withBrowser({ provider: "actionbook", remote: true }); // explicit remote managed mode
+new Evolve().withBrowser({ provider: "agent-browser", remote: true }); // remote managed agent-browser with live view
 new Evolve().withBrowser("actionbook"); // Actionbook skills only
-new Evolve().withBrowser("browser-use"); // legacy browser-use MCP
+new Evolve().withBrowser("agent-browser"); // agent-browser skills only
+new Evolve().withBrowser("browser-use"); // browser-use MCP
 ```
 
 | Skill | Description | Source |

@@ -91,7 +91,9 @@ class Evolve:
             schema_options: Validation options (mode: 'strict' or 'loose', default: 'loose')
             composio: Composio Tool Router setup for 500+ external service integrations
             storage: Storage configuration for checkpoint persistence (BYOK S3 or gateway mode)
-            browser: Browser automation provider. Use 'actionbook' or {'provider': 'actionbook', 'superstealth': True} for Actionbook, or 'browser-use' for the legacy gateway MCP.
+            browser: Browser automation provider. Use 'actionbook' or 'agent-browser'
+                for local skills-only mode, {'provider': 'actionbook'|'agent-browser', 'remote': True}
+                for managed remote browser automation, or 'browser-use' for browser-use MCP.
             plugins: Agent plugins/extensions to install in the sandbox user profile before first run.
         """
         self.config = config
@@ -175,17 +177,14 @@ class Evolve:
         """Normalize browser automation shorthand for bridge transport."""
         if browser is None:
             return None
-        if browser in ('browser-use', 'actionbook'):
+        if browser in ('browser-use', 'actionbook', 'agent-browser'):
             return browser
         if isinstance(browser, dict):
             provider = browser.get('provider')
-            if provider != 'actionbook':
-                raise ValueError("browser provider must be 'actionbook'")
-            normalized = dict(browser)
-            if 'super_stealth' in normalized and 'superstealth' not in normalized:
-                normalized['superstealth'] = normalized.pop('super_stealth')
-            return normalized
-        raise ValueError("browser must be 'browser-use', 'actionbook', an actionbook config dict, or None")
+            if provider not in ('actionbook', 'agent-browser'):
+                raise ValueError("browser provider must be 'actionbook' or 'agent-browser'")
+            return dict(browser)
+        raise ValueError("browser must be 'browser-use', 'actionbook', 'agent-browser', a managed browser config dict, or None")
 
     @staticmethod
     def _normalize_plugins(

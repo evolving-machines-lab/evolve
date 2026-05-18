@@ -1,4 +1,4 @@
-import type { ActionbookBrowserConfig, BrowserConfig, SkillName } from "./types";
+import type { ActionbookBrowserConfig, AgentBrowserConfig, BrowserConfig, ManagedBrowserProvider, SkillName } from "./types";
 import { DEFAULT_DASHBOARD_URL } from "./constants";
 
 export const ACTIONBOOK_BROWSER_SKILLS: SkillName[] = [
@@ -7,12 +7,32 @@ export const ACTIONBOOK_BROWSER_SKILLS: SkillName[] = [
   "extract",
 ];
 
+export const AGENT_BROWSER_SKILLS: SkillName[] = [
+  "agent-browser",
+];
+
+const BROWSER_SKILLS: Record<ManagedBrowserProvider, SkillName[]> = {
+  actionbook: ACTIONBOOK_BROWSER_SKILLS,
+  "agent-browser": AGENT_BROWSER_SKILLS,
+};
+
+const AGENT_BROWSER_CONFIG_DIR = "/home/user/.agent-browser";
+const AGENT_BROWSER_CONFIG_PATH = `${AGENT_BROWSER_CONFIG_DIR}/config.json`;
+const ACTIONBOOK_CONFIG_DIR = "/home/user/.actionbook";
+const ACTIONBOOK_CONFIG_PATH = `${ACTIONBOOK_CONFIG_DIR}/config.toml`;
+
+// Dashboard create requests keep the existing managed-browser contract; the
+// SDK-level automation provider is tracked separately on ManagedBrowserConfig.
+const MANAGED_BROWSER_CREATE_PROVIDER = "actionbook";
+const MANAGED_BROWSER_SESSION_ID = "s1";
+
 export interface NormalizedBrowserConfig {
-  provider: "browser-use" | "actionbook";
+  provider: "browser-use" | ManagedBrowserProvider;
   managed: boolean;
 }
 
 export interface ManagedBrowserConfig {
+  provider: ManagedBrowserProvider;
   apiKey: string;
   dashboardUrl?: string;
 }
@@ -23,21 +43,72 @@ export interface ManagedBrowserSession {
   liveUrl: string;
 }
 
+export interface ManagedBrowserSandboxSetup {
+  envs: Record<string, string>;
+  files: Array<{ path: string; data: string }>;
+  directories: string[];
+}
+
+function isManagedProvider(provider: string): provider is ManagedBrowserProvider {
+  return provider === "actionbook" || provider === "agent-browser";
+}
+
+function usesManagedRemote(browser: ActionbookBrowserConfig | AgentBrowserConfig): boolean {
+  return browser.remote === true;
+}
+
 export function normalizeBrowserConfig(browser: BrowserConfig): NormalizedBrowserConfig {
-  if (browser === "browser-use") {
-    return { provider: "browser-use", managed: false };
+  if (typeof browser === "string") {
+    if (browser === "browser-use") {
+      return { provider: "browser-use", managed: false };
+    }
+    if (isManagedProvider(browser)) {
+      return { provider: browser, managed: false };
+    }
+    throw new Error("Unsupported browser configuration");
   }
-  if (browser === "actionbook") {
-    return { provider: "actionbook", managed: false };
-  }
-  if (browser.provider === "actionbook") {
-    return { provider: "actionbook", managed: browser.superstealth !== false };
+  if (isManagedProvider(browser.provider)) {
+    return { provider: browser.provider, managed: usesManagedRemote(browser) };
   }
   throw new Error("Unsupported browser configuration");
 }
 
-export function mergeActionbookSkills(skills?: SkillName[]): SkillName[] {
-  return Array.from(new Set([...(skills ?? []), ...ACTIONBOOK_BROWSER_SKILLS]));
+export function mergeBrowserSkills(provider: ManagedBrowserProvider, skills?: SkillName[]): SkillName[] {
+  return Array.from(new Set([...(skills ?? []), ...BROWSER_SKILLS[provider]]));
+}
+
+export function getManagedBrowserSandboxSetup(
+  provider: ManagedBrowserProvider,
+  session: ManagedBrowserSession
+): ManagedBrowserSandboxSetup {
+  if (provider === "actionbook") {
+    return {
+      envs: {},
+      files: [
+        {
+          path: ACTIONBOOK_CONFIG_PATH,
+          data: `version = 1\n\n[browser]\nmode = "cloud"\ncdp_endpoint = ${JSON.stringify(session.cdpUrl)}\n`,
+        },
+      ],
+      directories: [ACTIONBOOK_CONFIG_DIR],
+    };
+  }
+
+  return {
+    envs: {
+      AGENT_BROWSER_CONFIG: AGENT_BROWSER_CONFIG_PATH,
+    },
+    files: [
+      {
+        path: AGENT_BROWSER_CONFIG_PATH,
+        data: `${JSON.stringify({
+          session: MANAGED_BROWSER_SESSION_ID,
+          cdp: session.cdpUrl,
+        }, null, 2)}\n`,
+      },
+    ],
+    directories: [AGENT_BROWSER_CONFIG_DIR],
+  };
 }
 
 function dashboardBaseUrl(config?: ManagedBrowserConfig): string {
@@ -60,9 +131,9 @@ export async function createManagedBrowserSession(
       accept: "application/json",
     },
     body: JSON.stringify({
-      provider: "actionbook",
+      provider: MANAGED_BROWSER_CREATE_PROVIDER,
       sessionTag,
-      options: { superstealth: true },
+      options: { remote: true },
     }),
     signal: AbortSignal.timeout(30_000),
   });
@@ -101,4 +172,4 @@ export async function stopManagedBrowserSession(
   }
 }
 
-export type { ActionbookBrowserConfig, BrowserConfig };
+export type { ActionbookBrowserConfig, AgentBrowserConfig, BrowserConfig, ManagedBrowserProvider };

@@ -604,20 +604,46 @@ class TestBrowserConfig:
     async def test_actionbook_browser_config_forwarded_to_bridge(self):
         mock_bridge = MockBridgeManager()
         with patch('evolve.agent.BridgeManager', return_value=mock_bridge):
-            kit = Evolve(browser={'provider': 'actionbook', 'super_stealth': True})
+            kit = Evolve(browser={'provider': 'actionbook', 'remote': True})
             await kit._ensure_initialized()
 
         initialize_calls = [c for c in mock_bridge.calls if c[0] == 'initialize']
         params = initialize_calls[0][1]
-        assert params['browser'] == {'provider': 'actionbook', 'superstealth': True}
+        assert params['browser'] == {'provider': 'actionbook', 'remote': True}
+
+    @pytest.mark.asyncio
+    async def test_agent_browser_forwarded_to_bridge(self):
+        mock_bridge = MockBridgeManager()
+        with patch('evolve.agent.BridgeManager', return_value=mock_bridge):
+            kit = Evolve(browser='agent-browser')
+            await kit._ensure_initialized()
+
+        initialize_calls = [c for c in mock_bridge.calls if c[0] == 'initialize']
+        params = initialize_calls[0][1]
+        assert params['browser'] == 'agent-browser'
+
+    @pytest.mark.asyncio
+    async def test_agent_browser_config_forwarded_to_bridge(self):
+        mock_bridge = MockBridgeManager()
+        with patch('evolve.agent.BridgeManager', return_value=mock_bridge):
+            kit = Evolve(browser={'provider': 'agent-browser', 'remote': True})
+            await kit._ensure_initialized()
+
+        initialize_calls = [c for c in mock_bridge.calls if c[0] == 'initialize']
+        params = initialize_calls[0][1]
+        assert params['browser'] == {'provider': 'agent-browser', 'remote': True}
 
     def test_invalid_browser_value_rejected(self):
-        with pytest.raises(ValueError, match="browser must be 'browser-use', 'actionbook', an actionbook config dict, or None"):
+        with pytest.raises(ValueError, match="browser must be 'browser-use', 'actionbook', 'agent-browser', a managed browser config dict, or None"):
             Evolve(browser='invalid')  # type: ignore[arg-type]
 
     def test_invalid_browser_provider_rejected(self):
-        with pytest.raises(ValueError, match="browser provider must be 'actionbook'"):
+        with pytest.raises(ValueError, match="browser provider must be 'actionbook' or 'agent-browser'"):
             Evolve(browser={'provider': 'invalid'})  # type: ignore[arg-type]
+
+    def test_browser_use_remote_object_rejected(self):
+        with pytest.raises(ValueError, match="browser provider must be 'actionbook' or 'agent-browser'"):
+            Evolve(browser={'provider': 'browser-use', 'remote': True})  # type: ignore[arg-type]
 
 
 class TestPluginConfig:
