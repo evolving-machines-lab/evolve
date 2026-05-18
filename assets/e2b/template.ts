@@ -104,7 +104,8 @@ export const template = Template()
   // ---------------------------------------------------------------------------
   // Gemini Extensions (Nano Banana for image generation)
   // ---------------------------------------------------------------------------
-  .runCmd('yes | gemini extensions install https://github.com/gemini-cli-extensions/nanobanana || true')
+  // Best-effort: newer Gemini CLI builds can prompt for an API key here.
+  .runCmd('timeout 30s sh -c \'printf "y\\ny\\n\\n" | gemini extensions install https://github.com/gemini-cli-extensions/nanobanana\' || true')
 
   // ---------------------------------------------------------------------------
   // Browser Automation (Playwright)

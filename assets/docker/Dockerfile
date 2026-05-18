@@ -150,7 +150,8 @@ RUN git clone --depth 1 --filter=blob:none --sparse https://github.com/evolving-
 # ---------------------------------------------------------------------------
 # Gemini Extensions (Nano Banana for image generation)
 # ---------------------------------------------------------------------------
-RUN yes | gemini extensions install https://github.com/gemini-cli-extensions/nanobanana || true
+# Best-effort: newer Gemini CLI builds can prompt for an API key here.
+RUN timeout 30s sh -c 'printf "y\ny\n\n" | gemini extensions install https://github.com/gemini-cli-extensions/nanobanana' || true
 
 # ---------------------------------------------------------------------------
 # Browser Automation (Playwright)
