@@ -71,6 +71,11 @@ export const template = Template()
   // ---------------------------------------------------------------------------
   .runCmd('npm install -g agent-browser @actionbookdev/cli')
 
+  // TEMPORARY ACTIONBOOK DAEMON WORKAROUND.
+  // Remove this runCmd and the matching Dockerfile block only after
+  // @actionbookdev/cli includes actionbook/actionbook#611.
+  .runCmd('REAL_ACTIONBOOK="$(command -v actionbook)" && mkdir -p /home/user/.local/bin && printf \'%s\\n\' \'#!/usr/bin/env bash\' \'set -euo pipefail\' "REAL_ACTIONBOOK=\\"$REAL_ACTIONBOOK\\"" \'if [[ "${1:-}" == "browser" && "${2:-}" == "start" ]]; then exec /usr/bin/setsid "$REAL_ACTIONBOOK" "$@"; fi\' \'exec "$REAL_ACTIONBOOK" "$@"\' > /home/user/.local/bin/actionbook && chmod +x /home/user/.local/bin/actionbook && chown -R user:user /home/user/.local')
+
   // ---------------------------------------------------------------------------
   // User setup
   // ---------------------------------------------------------------------------
