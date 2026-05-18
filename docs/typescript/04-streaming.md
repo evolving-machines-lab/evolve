@@ -266,9 +266,19 @@ interface DiffContent {
 
 ---
 
-## Managed Browser Live View
+## Browser Automation Streaming
 
-Managed Actionbook browser automation is enabled with `.withBrowser()` in Gateway mode. The live-view URL is emitted as soon as the managed browser is ready:
+Browser automation URLs are parsed differently depending on which browser option you enable:
+
+| Option | Enable | Parse from stream |
+|--------|--------|-------------------|
+| Remote managed Actionbook | `.withBrowser()` or `.withBrowser({ provider: "actionbook", remote: true })` | `lifecycle` event with `reason === "browser_ready"`; read `event.browser.liveUrl` |
+| Remote managed agent-browser | `.withBrowser({ provider: "agent-browser", remote: true })` | `lifecycle` event with `reason === "browser_ready"`; read `event.browser.liveUrl` |
+| browser-use MCP | `.withBrowser("browser-use")` | `tool_call_update` content from browser-use tools; parse embedded `live_url` and `screenshot_url` JSON fields |
+
+### Remote managed Actionbook and agent-browser
+
+Managed browser sessions emit the live-view URL as soon as the browser is ready:
 
 ```typescript
 evolve.on("lifecycle", (event) => {
@@ -282,7 +292,7 @@ The same URL is also stored in trace metadata for replay or embedding after the 
 
 ```typescript
 type TraceMetadata = {
-  browser_provider?: "actionbook";
+  browser_provider?: "actionbook" | "agent-browser";
   browser_session_id?: string;
   browser_live_url?: string;
 };
@@ -294,7 +304,7 @@ Use `event.browser.liveUrl` for immediate UI display, and `_meta.browser_live_ur
 
 ## BrowserUseResponse
 
-Legacy browser automation (`browser-use`) is available when enabled with `.withBrowser("browser-use")` in Gateway mode. Browser tool responses embed a **JSON string** inside `ToolCallUpdate.content[].content.text`. You must extract and parse it.
+browser-use is available when enabled with `.withBrowser("browser-use")` in Gateway mode. Browser tool responses embed a **JSON string** inside `ToolCallUpdate.content[].content.text`. You must extract and parse it.
 
 > **Detection:** Browser-use tools arrive with `kind: "other"` and `title` like `"browser-use: browser_task"` or `"browser-use: monitor_task"`. Use the `isBrowserUseTool(title)` helper above to identify them, then extract URLs from the tool output.
 

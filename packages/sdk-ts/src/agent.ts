@@ -52,6 +52,7 @@ import { createCheckpoint, restoreCheckpoint, getLatestCheckpoint, type RestoreM
 import { installAgentPlugins } from "./plugins";
 import {
   createManagedBrowserSession,
+  getManagedBrowserSandboxSetup,
   stopManagedBrowserSession,
   type ManagedBrowserSession,
 } from "./browser";
@@ -400,6 +401,8 @@ export class Agent {
           workingDirectory: this.workingDir,
         });
 
+        await this.setupManagedBrowser(this.sandbox);
+
         // Agent-specific setup (e.g., codex login)
         await this.setupAgentAuth(this.sandbox);
 
@@ -484,9 +487,11 @@ export class Agent {
     }
     // OAuth direct mode: no baseUrl needed (Claude Code CLI handles it)
 
-    if (this.managedBrowserSession) {
-      envVars["ACTIONBOOK_BROWSER_MODE"] = "cloud";
-      envVars["ACTIONBOOK_BROWSER_CDP_ENDPOINT"] = this.managedBrowserSession.cdpUrl;
+    if (this.managedBrowserSession && this.options.managedBrowser) {
+      Object.assign(
+        envVars,
+        getManagedBrowserSandboxSetup(this.options.managedBrowser.provider, this.managedBrowserSession).envs
+      );
     }
 
     if (this.options.secrets) {
@@ -516,6 +521,18 @@ export class Agent {
     if (this.managedBrowserSession || !this.options.managedBrowser) return;
     this.managedBrowserSession = await createManagedBrowserSession(this.options.managedBrowser, this.sessionTag);
     this.emitLifecycle(callbacks, "browser_ready");
+  }
+
+  private async setupManagedBrowser(sandbox: SandboxInstance): Promise<void> {
+    if (!this.managedBrowserSession || !this.options.managedBrowser) return;
+
+    const setup = getManagedBrowserSandboxSetup(this.options.managedBrowser.provider, this.managedBrowserSession);
+    for (const dir of setup.directories) {
+      await sandbox.files.makeDir(dir);
+    }
+    for (const file of setup.files) {
+      await sandbox.files.write(file.path, file.data);
+    }
   }
 
   private async closeManagedBrowserSession(): Promise<void> {
@@ -993,6 +1010,8 @@ export class Agent {
         // Restore checkpoint archive into sandbox (returns metadata for validation)
         const ckptMeta = await restoreCheckpoint(this.sandbox, this.storage, from);
 
+        await this.setupManagedBrowser(this.sandbox);
+
         // Validate agent type — changing agent type on restore is structural (wrong
         // dirs, wrong CLI, wrong config format). Model changes are fine.
         if (ckptMeta.agentType && ckptMeta.agentType !== this.agentConfig.type) {
@@ -1069,8 +1088,8 @@ export class Agent {
         apiKey: this.agentConfig.isDirectMode ? undefined : this.agentConfig.apiKey,
         observability: {
           ...this.options.observability,
-          ...(this.managedBrowserSession ? {
-            browser_provider: "actionbook",
+          ...(this.managedBrowserSession && this.options.managedBrowser ? {
+            browser_provider: this.options.managedBrowser.provider,
             browser_session_id: this.managedBrowserSession.id,
             browser_live_url: this.managedBrowserSession.liveUrl,
           } : {}),

@@ -139,17 +139,27 @@ export type WorkspaceMode = "knowledge" | "swe";
 export type SkillName = "pdf" | "dev-browser" | (string & {});
 
 /** Browser automation providers that can be enabled explicitly */
-export type BrowserProvider = "browser-use" | "actionbook";
+export type BrowserProvider = "browser-use" | "actionbook" | "agent-browser";
+
+/** Browser providers backed by Evolve-managed browser transport. */
+export type ManagedBrowserProvider = "actionbook" | "agent-browser";
 
 /** Actionbook browser configuration. */
 export interface ActionbookBrowserConfig {
   provider: "actionbook";
-  /** Use Evolve-managed browser transport. Enabled by default for object config. */
-  superstealth?: boolean;
+  /** Use Evolve-managed remote browser transport. Defaults to false for object config. */
+  remote?: boolean;
+}
+
+/** Agent-browser browser configuration. */
+export interface AgentBrowserConfig {
+  provider: "agent-browser";
+  /** Use Evolve-managed remote browser transport. Defaults to false for object config. */
+  remote?: boolean;
 }
 
 /** Browser automation configuration. */
-export type BrowserConfig = BrowserProvider | ActionbookBrowserConfig;
+export type BrowserConfig = BrowserProvider | ActionbookBrowserConfig | AgentBrowserConfig;
 
 /** Marketplace plugin shape for CLIs with explicit plugin install commands. */
 export interface MarketplaceAgentPluginConfig {
@@ -360,6 +370,7 @@ export interface AgentOptions {
   browserPrompt?: string;
   /** Evolve-managed browser transport for browser automation */
   managedBrowser?: {
+    provider: ManagedBrowserProvider;
     apiKey: string;
     dashboardUrl?: string;
   };

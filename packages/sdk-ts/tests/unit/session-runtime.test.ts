@@ -66,12 +66,19 @@ function sleep(ms: number): Promise<void> {
 }
 
 class MockFiles implements SandboxFiles {
+  public writes = new Map<string, string>();
+  public dirs: string[] = [];
+
   async read(_path: string): Promise<string | Uint8Array> {
     return "";
   }
-  async write(_path: string, _content: string | Buffer | ArrayBuffer | Uint8Array): Promise<void> {}
+  async write(path: string, content: string | Buffer | ArrayBuffer | Uint8Array): Promise<void> {
+    this.writes.set(path, String(content));
+  }
   async writeBatch(_files: Array<{ path: string; data: string | Buffer | ArrayBuffer | Uint8Array }>): Promise<void> {}
-  async makeDir(_path: string): Promise<void> {}
+  async makeDir(path: string): Promise<void> {
+    this.dirs.push(path);
+  }
 }
 
 type SpawnMode = "instant" | "hang";
@@ -156,7 +163,7 @@ class MockCommands implements SandboxCommands {
 class MockSandbox implements SandboxInstance {
   readonly sandboxId: string;
   readonly commands: MockCommands;
-  readonly files: SandboxFiles;
+  readonly files: MockFiles;
 
   constructor(id: string, commands: MockCommands) {
     this.sandboxId = id;
@@ -182,11 +189,13 @@ class MockProvider implements SandboxProvider {
   readonly name = "mock";
   public connectCalls = 0;
   public createCalls = 0;
+  public createOptions?: SandboxCreateOptions;
 
   constructor(private readonly sandbox: MockSandbox) {}
 
-  async create(_options: SandboxCreateOptions): Promise<SandboxInstance> {
+  async create(options: SandboxCreateOptions): Promise<SandboxInstance> {
     this.createCalls++;
+    this.createOptions = options;
     return this.sandbox;
   }
 
@@ -277,6 +286,14 @@ async function testManagedBrowserLifecycle(): Promise<void> {
   try {
     const result = await kit.run({ prompt: "test prompt", timeoutMs: 10_000 });
     assertEqual(result.exitCode, 0, "run() with managed browser returns success");
+    assert(!JSON.stringify(provider.createOptions?.envs).includes("proxy-token"), "sandbox env does not include CDP token");
+
+    const config = sandbox.files.writes.get("/home/user/.actionbook/config.toml");
+    assert(sandbox.files.dirs.includes("/home/user/.actionbook"), "Actionbook config directory created");
+    assert(config !== undefined, "Actionbook config file written");
+    assert(config?.includes('mode = "cloud"') ?? false, "Actionbook config sets cloud mode");
+    assert(config?.includes(cdpUrl) ?? false, "Actionbook config uses proxied CDP endpoint");
+    assert(!config?.toLowerCase().includes("driver"), "Actionbook config does not expose provider name");
 
     const browserReady = events.find((event) => event.reason === "browser_ready");
     assertEqual(browserReady?.browser?.liveUrl, liveUrl, "browser_ready exposes live URL immediately");
@@ -298,8 +315,81 @@ async function testManagedBrowserLifecycle(): Promise<void> {
   }
 }
 
+async function testManagedAgentBrowserLifecycle(): Promise<void> {
+  console.log("\n[3] managed agent-browser config lifecycle");
+  const previousFetch = globalThis.fetch;
+  const previousDashboardUrl = process.env.EVOLVE_DASHBOARD_URL;
+  process.env.EVOLVE_DASHBOARD_URL = "https://dashboard.test";
+
+  const liveUrl = "https://dashboard.test/browser-sessions/browser_456/live?token=view-token";
+  const cdpUrl = "wss://dashboard.test/api/browser-sessions/browser_456/cdp?token=proxy-token";
+  let createBody: any;
+
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url === "https://dashboard.test/api/browser-sessions" && init?.method === "POST") {
+      createBody = JSON.parse(String(init.body));
+      return new Response(JSON.stringify({ id: "browser_456", cdpUrl, liveUrl }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (url === "https://dashboard.test/api/browser-sessions/browser_456" && init?.method === "DELETE") {
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (url.endsWith("/api/sessions/ingest")) {
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  }) as typeof fetch;
+
+  const commands = new MockCommands();
+  commands.mode = "instant";
+  const sandbox = new MockSandbox("sess-agent-browser", commands);
+  const provider = new MockProvider(sandbox);
+  const events: LifecycleEvent[] = [];
+
+  const kit = new Evolve()
+    .withAgent({ type: "claude", apiKey: "evolve-key" })
+    .withSandbox(provider)
+    .withBrowser({ provider: "agent-browser", remote: true });
+
+  kit.on("lifecycle", (event) => events.push(event));
+
+  try {
+    const result = await kit.run({ prompt: "test prompt", timeoutMs: 10_000 });
+    assertEqual(result.exitCode, 0, "run() with managed agent-browser returns success");
+    assertEqual(createBody.provider, "actionbook", "managed browser create contract is preserved");
+    assertEqual(createBody.options?.remote, true, "managed browser create uses remote option");
+    assertEqual(
+      provider.createOptions?.envs?.AGENT_BROWSER_CONFIG,
+      "/home/user/.agent-browser/config.json",
+      "sandbox env points agent-browser to managed config"
+    );
+    assert(!JSON.stringify(provider.createOptions?.envs).includes("proxy-token"), "sandbox env does not include CDP token");
+
+    const config = sandbox.files.writes.get("/home/user/.agent-browser/config.json");
+    assert(sandbox.files.dirs.includes("/home/user/.agent-browser"), "agent-browser config directory created");
+    assert(config !== undefined, "agent-browser config file written");
+    assert(config?.includes('"session": "s1"') ?? false, "agent-browser config pins session s1");
+    assert(config?.includes(cdpUrl) ?? false, "agent-browser config uses proxied CDP endpoint");
+    assert(!config?.toLowerCase().includes("driver"), "agent-browser config does not expose provider name");
+
+    const browserReady = events.find((event) => event.reason === "browser_ready");
+    assertEqual(browserReady?.browser?.liveUrl, liveUrl, "browser_ready exposes agent-browser live URL");
+  } finally {
+    await kit.kill();
+    globalThis.fetch = previousFetch;
+    if (previousDashboardUrl === undefined) {
+      delete process.env.EVOLVE_DASHBOARD_URL;
+    } else {
+      process.env.EVOLVE_DASHBOARD_URL = previousDashboardUrl;
+    }
+  }
+}
+
 async function testInterrupt(): Promise<void> {
-  console.log("\n[3] interrupt() semantics and lifecycle");
+  console.log("\n[4] interrupt() semantics and lifecycle");
   const commands = new MockCommands();
   commands.mode = "hang";
   const sandbox = new MockSandbox("sess-2", commands);
@@ -352,7 +442,7 @@ async function testInterrupt(): Promise<void> {
 }
 
 async function testBackgroundCompletionLifecycle(): Promise<void> {
-  console.log("\n[4] background completion emits lifecycle event");
+  console.log("\n[5] background completion emits lifecycle event");
   const commands = new MockCommands();
   commands.mode = "instant";
   const sandbox = new MockSandbox("sess-3", commands);
@@ -371,7 +461,7 @@ async function testBackgroundCompletionLifecycle(): Promise<void> {
 }
 
 async function testPauseAndKillDoNotGetOverwritten(): Promise<void> {
-  console.log("\n[5] pause()/kill() state is not overwritten by stale completion");
+  console.log("\n[6] pause()/kill() state is not overwritten by stale completion");
   const commands = new MockCommands();
   commands.mode = "hang";
   const sandbox = new MockSandbox("sess-4", commands);
@@ -406,7 +496,7 @@ async function testPauseAndKillDoNotGetOverwritten(): Promise<void> {
 }
 
 async function testConcurrentRunFailsFast(): Promise<void> {
-  console.log("\n[5] same-instance concurrent run() fails fast");
+  console.log("\n[7] same-instance concurrent run() fails fast");
   const commands = new MockCommands();
   commands.mode = "hang";
   const sandbox = new MockSandbox("sess-5", commands);
@@ -439,7 +529,7 @@ async function testConcurrentRunFailsFast(): Promise<void> {
 }
 
 async function testSetSessionFailsWhenActiveCannotInterrupt(): Promise<void> {
-  console.log("\n[6] setSession() fails if active process cannot be interrupted");
+  console.log("\n[8] setSession() fails if active process cannot be interrupted");
   const commands = new MockCommands();
   commands.mode = "hang";
   commands.killSucceeds = false;
@@ -480,6 +570,7 @@ async function main(): Promise<void> {
   try {
     await testStatusAndLifecycle();
     await testManagedBrowserLifecycle();
+    await testManagedAgentBrowserLifecycle();
     await testInterrupt();
     await testBackgroundCompletionLifecycle();
     await testPauseAndKillDoNotGetOverwritten();

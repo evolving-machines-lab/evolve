@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Literal, Optional, Protocol, TypedDict, Unio
 
 AgentType = Literal['codex', 'claude', 'gemini', 'qwen', 'kimi', 'opencode', 'droid']
 WorkspaceMode = Literal['knowledge', 'swe']
-BrowserProvider = Literal['browser-use', 'actionbook']
+BrowserProvider = Literal['browser-use', 'actionbook', 'agent-browser']
 BrowserConfig = Union[BrowserProvider, Dict[str, Any]]
 AgentPluginConfig = Dict[str, Any]
 ReasoningEffort = Literal['off', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']

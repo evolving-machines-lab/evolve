@@ -15,6 +15,7 @@ import WORKSPACE_SWE_MD from "./agent_md/workspace-swe.md";
 import BASE_MD from "./agent_md/base.md";
 import SCHEMA_MD from "./agent_md/schema.md";
 import BROWSER_ACTIONBOOK_MD from "./agent_md/browser-actionbook.md";
+import BROWSER_AGENT_BROWSER_MD from "./agent_md/browser-agent-browser.md";
 import JUDGE_AGENT_MD from "./agent_md/judge.md";
 import VERIFY_AGENT_MD from "./agent_md/verify.md";
 import REDUCE_AGENT_MD from "./agent_md/reduce.md";
@@ -60,6 +61,11 @@ export const SCHEMA_PROMPT: string = SCHEMA_MD;
  * Actionbook browser automation prompt fragment
  */
 export const BROWSER_ACTIONBOOK_PROMPT: string = BROWSER_ACTIONBOOK_MD;
+
+/**
+ * Agent-browser browser automation prompt fragment
+ */
+export const BROWSER_AGENT_BROWSER_PROMPT: string = BROWSER_AGENT_BROWSER_MD;
 
 /**
  * Judge system prompt template (for Swarm best_of)

@@ -38,8 +38,8 @@ import { composioHelpers } from "./composio";
 import { getGatewayMcpServers, DEFAULT_DASHBOARD_URL } from "./constants";
 import { resolveStorageConfig, createBoundStorageClient } from "./storage";
 import type { CheckpointInfo, StorageClient } from "./types";
-import { BROWSER_ACTIONBOOK_PROMPT } from "./prompts";
-import { mergeActionbookSkills, normalizeBrowserConfig } from "./browser";
+import { BROWSER_ACTIONBOOK_PROMPT, BROWSER_AGENT_BROWSER_PROMPT } from "./prompts";
+import { mergeBrowserSkills, normalizeBrowserConfig } from "./browser";
 
 // =============================================================================
 // TYPES
@@ -237,16 +237,20 @@ export class Evolve extends EventEmitter {
   /**
    * Enable browser automation.
    *
-   * Default browser automation uses Actionbook with Evolve-managed browser
-   * transport in gateway mode. Pass "browser-use" to use the legacy MCP server.
+   * .withBrowser() defaults to Actionbook with Evolve-managed remote browser
+   * transport in gateway mode. Pass "actionbook" or "agent-browser" for local
+   * skills-only mode, or "browser-use" to use the browser-use MCP server.
    *
    * @example
-   * kit.withBrowser("browser-use") // legacy MCP provider
+   * kit.withBrowser("browser-use") // browser-use MCP provider
    *
    * @example
-   * kit.withBrowser() // defaults to managed Actionbook
+   * kit.withBrowser() // defaults to remote managed Actionbook
+   *
+   * @example
+   * kit.withBrowser({ provider: "agent-browser", remote: true }) // managed remote agent-browser
    */
-  withBrowser(provider: BrowserConfig | false = { provider: "actionbook", superstealth: true }): this {
+  withBrowser(provider: BrowserConfig | false = { provider: "actionbook", remote: true }): this {
     if (provider === false) {
       delete this.config.browser;
     } else {
@@ -454,16 +458,19 @@ export class Evolve extends EventEmitter {
         browserMcpServers = getGatewayMcpServers(agentConfig.apiKey);
       }
 
-      if (browser.provider === "actionbook") {
-        skills = mergeActionbookSkills(skills);
+      if (browser.provider === "actionbook" || browser.provider === "agent-browser") {
+        skills = mergeBrowserSkills(browser.provider, skills);
         if (browser.managed) {
           if (agentConfig.isDirectMode) {
             throw new Error(
-              'Managed Actionbook browser requires gateway mode. Use apiKey/EVOLVE_API_KEY instead of providerApiKey/direct mode.'
+              `Managed browser provider "${browser.provider}" requires gateway mode. Use apiKey/EVOLVE_API_KEY instead of providerApiKey/direct mode.`
             );
           }
-          browserPrompt = BROWSER_ACTIONBOOK_PROMPT;
+          browserPrompt = browser.provider === "actionbook"
+            ? BROWSER_ACTIONBOOK_PROMPT
+            : BROWSER_AGENT_BROWSER_PROMPT;
           managedBrowser = {
+            provider: browser.provider,
             apiKey: agentConfig.apiKey,
             dashboardUrl: process.env.EVOLVE_DASHBOARD_URL || DEFAULT_DASHBOARD_URL,
           };
