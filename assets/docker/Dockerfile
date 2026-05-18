@@ -28,6 +28,7 @@ USER root
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
+ENV PATH="/home/user/.local/bin:${PATH}"
 
 # ---------------------------------------------------------------------------
 # System packages
@@ -87,6 +88,21 @@ RUN npm install -g mcp-remote
 # Agent Browser CLI (headless browser automation for AI agents)
 # ---------------------------------------------------------------------------
 RUN npm install -g agent-browser @actionbookdev/cli
+
+# TEMPORARY ACTIONBOOK DAEMON WORKAROUND.
+# Remove this RUN block and the matching E2B template runCmd only after
+# @actionbookdev/cli includes actionbook/actionbook#611.
+RUN REAL_ACTIONBOOK="$(command -v actionbook)" \
+    && mkdir -p /home/user/.local/bin \
+    && printf '%s\n' \
+        '#!/usr/bin/env bash' \
+        'set -euo pipefail' \
+        "REAL_ACTIONBOOK=\"$REAL_ACTIONBOOK\"" \
+        'if [[ "${1:-}" == "browser" && "${2:-}" == "start" ]]; then exec /usr/bin/setsid "$REAL_ACTIONBOOK" "$@"; fi' \
+        'exec "$REAL_ACTIONBOOK" "$@"' \
+        > /home/user/.local/bin/actionbook \
+    && chmod +x /home/user/.local/bin/actionbook \
+    && chown -R user:user /home/user/.local
 
 # ---------------------------------------------------------------------------
 # User setup
