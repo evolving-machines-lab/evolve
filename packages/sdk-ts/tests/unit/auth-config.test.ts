@@ -22,7 +22,8 @@
 
 import { resolveAgentConfig } from "../../src/utils/config.js";
 import { resolveDefaultSandbox } from "../../src/utils/sandbox.js";
-import { getE2BGatewayUrl } from "../../src/constants.js";
+import { getE2BGatewayUrl, getGatewayUrl } from "../../src/constants.js";
+import { AGENT_REGISTRY } from "../../src/registry.js";
 
 // =============================================================================
 // TEST HELPERS
@@ -353,6 +354,21 @@ async function runTests(): Promise<void> {
     });
     assertEqual(result.model, "gpt-5.2", "preserves model in gateway mode");
     assertEqual(result.reasoningEffort, "high", "preserves reasoningEffort in gateway mode");
+  }
+
+  clearEnv();
+  process.env.EVOLVE_API_KEY = "env-evolve-key";
+  {
+    assertEqual(
+      AGENT_REGISTRY.gemini.gatewayPath,
+      "/gemini",
+      "Gemini declares native LiteLLM passthrough path in registry"
+    );
+    assertEqual(
+      getGatewayUrl(AGENT_REGISTRY.gemini.gatewayPath),
+      "https://swarmkit-gateway-692833842999.us-central1.run.app/gemini",
+      "Gemini gateway URL is derived from registry path"
+    );
   }
 
   // EVOLVE_API_KEY takes priority over provider env vars

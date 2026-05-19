@@ -84,8 +84,8 @@ export interface AgentRegistryEntry {
   /** Extra setup step (e.g., codex login) */
   setupCommand?: string;
 
-  /** Whether this agent uses passthrough gateway (Gemini) */
-  usePassthroughGateway?: boolean;
+  /** Gateway path prefix for CLIs that use a provider-native passthrough endpoint */
+  gatewayPath?: string;
   /** Default base URL for direct mode (only needed if provider requires specific endpoint, e.g., Qwen → Dashscope) */
   defaultBaseUrl?: string;
   /** Available beta headers for this agent (for reference) */
@@ -266,7 +266,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     // by customHeaderUtils.ts (comma-separated via /,(?=\s*[^,:]+:)/). Not in public docs.
     customHeadersEnv: "GEMINI_CLI_CUSTOM_HEADERS",
     customHeadersFormat: "comma",
-    usePassthroughGateway: true,
+    gatewayPath: "/gemini",
     buildCommand: ({ prompt, model, isResume }) => {
       const resumeFlag = isResume ? "--resume latest " : "";
       return `gemini "${prompt}" ${resumeFlag}--model ${model} --yolo --output-format stream-json`;
