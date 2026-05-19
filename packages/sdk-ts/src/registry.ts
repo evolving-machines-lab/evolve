@@ -246,6 +246,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     models: [
       { alias: "gemini-3.1-pro-preview", modelId: "gemini-3.1-pro-preview", description: "Latest pro, complex agentic + coding" },
       { alias: "gemini-3.1-flash-lite-preview", modelId: "gemini-3.1-flash-lite-preview", description: "Cost-efficient, low latency" },
+      { alias: "gemini-3.5-flash", modelId: "gemini-3.5-flash", description: "Latest Flash model" },
       { alias: "gemini-3-flash-preview", modelId: "gemini-3-flash-preview", description: "Frontier flash performance" },
       { alias: "gemini-2.5-pro", modelId: "gemini-2.5-pro", description: "Complex tasks, deep reasoning" },
       { alias: "gemini-2.5-flash", modelId: "gemini-2.5-flash", description: "Balance speed/reasoning" },
@@ -386,6 +387,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       { alias: "openrouter/openai/gpt-5.3-codex", modelId: "openrouter/openai/gpt-5.3-codex", description: "OpenAI Codex via OpenRouter" },
       { alias: "openrouter/openai/gpt-5.2", modelId: "openrouter/openai/gpt-5.2", description: "OpenAI GPT-5.2 via OpenRouter" },
       { alias: "openrouter/google/gemini-3.1-pro-preview", modelId: "openrouter/google/gemini-3.1-pro-preview", description: "Gemini 3.1 Pro via OpenRouter" },
+      { alias: "openrouter/google/gemini-3.5-flash", modelId: "openrouter/google/gemini-3.5-flash", description: "Gemini 3.5 Flash via OpenRouter" },
       { alias: "openrouter/google/gemini-3-flash-preview", modelId: "openrouter/google/gemini-3-flash-preview", description: "Gemini 3 Flash via OpenRouter" },
       { alias: "openrouter/qwen/qwen3-coder-next", modelId: "openrouter/qwen/qwen3-coder-next", description: "Qwen Coder Next via OpenRouter" },
       { alias: "openrouter/qwen/qwen3-coder-plus", modelId: "openrouter/qwen/qwen3-coder-plus", description: "Qwen Coder via OpenRouter" },
