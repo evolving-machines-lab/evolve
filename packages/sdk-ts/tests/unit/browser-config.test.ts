@@ -320,7 +320,8 @@ async function testManagedAgentBrowserConfigUsesProxyOnly(): Promise<void> {
   const config = writes.get("/home/user/.agent-browser/config.json");
   assert(dirs.includes("/home/user/.agent-browser"), "agent-browser config directory created");
   assert(config !== undefined, "agent-browser config written");
-  assert(config?.includes('"session": "s1"'), "agent-browser config pins session s1");
+  const parsedConfig = JSON.parse(config!);
+  assert(!("session" in parsedConfig), "agent-browser config leaves session default to agent-browser");
   assert(
     config?.includes("wss://dashboard.test/api/browser-sessions/browser_123/cdp?token=proxy-token") ?? false,
     "agent-browser config receives proxied CDP endpoint"
