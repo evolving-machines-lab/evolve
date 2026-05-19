@@ -43,7 +43,7 @@ import { getAgentConfig, type AgentRegistryEntry } from "./registry";
 import { writeMcpConfig, writeCodexSpendProvider, writeJsonSpendHeaders, writeKimiSpendConfig, writeDroidGatewaySettings } from "./mcp";
 import { createAgentParser, type AgentParser } from "./parsers";
 import type { OutputEvent } from "./parsers/types";
-import { DEFAULT_TIMEOUT_MS, DEFAULT_WORKING_DIR, DEFAULT_DASHBOARD_URL, LITELLM_CUSTOMER_ID_HEADER, LITELLM_TAGS_HEADER, RUN_TAG_PREFIX, getGatewayUrl, getGeminiGatewayUrl } from "./constants";
+import { DEFAULT_TIMEOUT_MS, DEFAULT_WORKING_DIR, DEFAULT_DASHBOARD_URL, LITELLM_CUSTOMER_ID_HEADER, LITELLM_TAGS_HEADER, RUN_TAG_PREFIX, getGatewayUrl } from "./constants";
 import { buildWorkerSystemPrompt } from "./prompts";
 import { isZodSchema } from "./utils";
 import { SessionLogger } from "./observability";
@@ -466,9 +466,7 @@ export class Agent {
       }
     } else if (!this.agentConfig.isDirectMode) {
       // Gateway mode: route through Evolve gateway
-      const gatewayUrl = this.registry.usePassthroughGateway
-        ? getGeminiGatewayUrl()
-        : getGatewayUrl();
+      const gatewayUrl = getGatewayUrl(this.registry.gatewayPath);
 
       if (this.registry.gatewayConfigEnv) {
         // Session-level: only customer-id header. Per-run tag added in buildRunEnvs().
@@ -558,9 +556,7 @@ export class Agent {
    * Source-verified: model.headers → provider.ts:1061 → llm.ts:221 → HTTP request.
    */
   private buildGatewayConfigJson(headers: Record<string, string>): string {
-    const gatewayUrl = this.registry.usePassthroughGateway
-      ? getGeminiGatewayUrl()
-      : getGatewayUrl();
+    const gatewayUrl = getGatewayUrl(this.registry.gatewayPath);
     const selectedModel = this.resolveCommandModel(this.agentConfig.model || this.registry.defaultModel);
 
     // Start from user-provided config if available, preserving non-litellm settings

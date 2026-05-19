@@ -9,7 +9,7 @@
 // =============================================================================
 
 /**
- * Get the gateway base URL at runtime
+ * Get the gateway URL at runtime
  *
  * All agent requests are routed through this gateway which provides:
  * - Single API key for all providers
@@ -19,26 +19,16 @@
  * Note: Uses a function to ensure env var is read at runtime (not build time)
  * when using bundlers with environment variable inlining.
  *
+ * @param path Optional gateway path prefix for provider passthrough routes
  * @internal
  */
-export function getGatewayUrl(): string {
-  return (
+export function getGatewayUrl(path = ""): string {
+  const baseUrl =
     process.env.EVOLVE_GATEWAY_URL ||
-    "https://swarmkit-gateway-692833842999.us-central1.run.app"
-  );
-}
-
-/**
- * Get the Gemini passthrough URL
- *
- * Uses LiteLLM's /gemini passthrough endpoint to preserve native @google/genai SDK
- * format including systemInstruction. Without this, system prompts get dropped
- * during OpenAI format translation.
- *
- * @internal
- */
-export function getGeminiGatewayUrl(): string {
-  return `${getGatewayUrl()}`;
+    "https://swarmkit-gateway-692833842999.us-central1.run.app";
+  if (!path) return baseUrl;
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return `${baseUrl}${normalizedPath}`;
 }
 
 /**
@@ -53,7 +43,7 @@ export function getGeminiGatewayUrl(): string {
  * @internal
  */
 export function getE2BGatewayUrl(): string {
-  return `${getGatewayUrl()}/e2b`;
+  return getGatewayUrl("/e2b");
 }
 
 /**
@@ -73,7 +63,7 @@ export function getGatewayMcpServers(apiKey: string): Record<string, { type: "ht
   return {
     "browser-use": {
       type: "http",
-      url: `${getGatewayUrl()}/browser_use/mcp`,
+      url: getGatewayUrl("/browser_use/mcp"),
       headers: { "x-litellm-api-key": `Bearer ${apiKey}` },
     },
   };
