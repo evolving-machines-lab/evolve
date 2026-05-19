@@ -371,7 +371,8 @@ async function testManagedAgentBrowserLifecycle(): Promise<void> {
     const config = sandbox.files.writes.get("/home/user/.agent-browser/config.json");
     assert(sandbox.files.dirs.includes("/home/user/.agent-browser"), "agent-browser config directory created");
     assert(config !== undefined, "agent-browser config file written");
-    assert(config?.includes('"session": "s1"') ?? false, "agent-browser config pins session s1");
+    const parsedConfig = JSON.parse(config!);
+    assert(!("session" in parsedConfig), "agent-browser config leaves session default to agent-browser");
     assert(config?.includes(cdpUrl) ?? false, "agent-browser config uses proxied CDP endpoint");
     assert(!config?.toLowerCase().includes("driver"), "agent-browser config does not expose provider name");
 

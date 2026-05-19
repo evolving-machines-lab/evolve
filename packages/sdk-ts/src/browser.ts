@@ -24,7 +24,6 @@ const ACTIONBOOK_CONFIG_PATH = `${ACTIONBOOK_CONFIG_DIR}/config.toml`;
 // Dashboard create requests keep the existing managed-browser contract; the
 // SDK-level automation provider is tracked separately on ManagedBrowserConfig.
 const MANAGED_BROWSER_CREATE_PROVIDER = "actionbook";
-const MANAGED_BROWSER_SESSION_ID = "s1";
 
 export interface NormalizedBrowserConfig {
   provider: "browser-use" | ManagedBrowserProvider;
@@ -102,7 +101,6 @@ export function getManagedBrowserSandboxSetup(
       {
         path: AGENT_BROWSER_CONFIG_PATH,
         data: `${JSON.stringify({
-          session: MANAGED_BROWSER_SESSION_ID,
           cdp: session.cdpUrl,
         }, null, 2)}\n`,
       },
