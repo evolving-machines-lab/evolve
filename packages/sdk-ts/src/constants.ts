@@ -32,6 +32,22 @@ export function getGatewayUrl(path = ""): string {
 }
 
 /**
+ * Get the dashboard URL at runtime.
+ *
+ * Dashboard-owned resource routes enforce per-user ownership for stateful
+ * managed services before calling the provider gateway.
+ *
+ * @param path Optional dashboard path
+ * @internal
+ */
+export function getDashboardUrl(path = ""): string {
+  const baseUrl = process.env.EVOLVE_DASHBOARD_URL || DEFAULT_DASHBOARD_URL;
+  if (!path) return baseUrl;
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return `${baseUrl.replace(/\/$/, "")}${normalizedPath}`;
+}
+
+/**
  * Get the E2B passthrough URL
  *
  * Routes E2B control plane requests (sandbox create/connect) through the gateway.
@@ -43,7 +59,7 @@ export function getGatewayUrl(path = ""): string {
  * @internal
  */
 export function getE2BGatewayUrl(): string {
-  return getGatewayUrl("/e2b");
+  return getDashboardUrl("/api/managed/e2b");
 }
 
 /**

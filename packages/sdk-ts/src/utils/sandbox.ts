@@ -92,9 +92,10 @@ export async function resolveDefaultSandbox(): Promise<SandboxProvider> {
     try {
       const { createE2BProvider } = await import("@evolvingmachines/e2b");
 
-      // Route E2B control plane through gateway
+      // Route E2B control plane through Dashboard so Evolve can enforce
+      // per-user sandbox ownership before the provider gateway injects E2B_API_KEY.
       // Note: Sandbox.list() only reads apiUrl from env var (not from options),
-      // so this is the only way to ensure all operations go through gateway
+      // so this is the only way to ensure all operations go through managed routing.
       process.env.E2B_API_URL = getE2BGatewayUrl();
 
       return createE2BProvider({ apiKey: evolveKey });
