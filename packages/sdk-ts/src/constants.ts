@@ -48,10 +48,10 @@ export function getDashboardUrl(path = ""): string {
 }
 
 /**
- * Get the E2B passthrough URL
+ * Get the managed E2B control-plane URL.
  *
- * Routes E2B control plane requests (sandbox create/connect) through the gateway.
- * Gateway validates EVOLVE_API_KEY and injects E2B_API_KEY.
+ * Routes E2B control plane requests through Dashboard so ownership checks
+ * happen before Dashboard calls the internal provider gateway.
  *
  * Note: Data plane operations (files, commands) go directly to the sandbox
  * using envdAccessToken - no gateway needed for those.
