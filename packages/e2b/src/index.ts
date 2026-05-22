@@ -502,7 +502,7 @@ class E2BSandboxImpl implements SandboxInstance {
   readonly commands: SandboxCommands;
   readonly files: SandboxFiles;
 
-  constructor(private sandbox: E2BSandbox) {
+  constructor(private sandbox: E2BSandbox, private apiKey: string) {
     this.commands = new E2BCommands(sandbox);
     this.files = new E2BFiles(sandbox);
   }
@@ -542,7 +542,7 @@ class E2BSandboxImpl implements SandboxInstance {
   }
 
   async pause(): Promise<void> {
-    await this.sandbox.betaPause();
+    await this.sandbox.betaPause({ apiKey: this.apiKey });
   }
 }
 
@@ -575,7 +575,7 @@ export class E2BProvider implements SandboxProvider {
       await sandbox.files.makeDir(options.workingDirectory);
     }
 
-    return new E2BSandboxImpl(sandbox);
+    return new E2BSandboxImpl(sandbox, this.apiKey);
   }
 
   async connect(sandboxId: string, timeoutMs?: number): Promise<SandboxInstance> {
@@ -583,7 +583,7 @@ export class E2BProvider implements SandboxProvider {
       apiKey: this.apiKey,
       timeoutMs: timeoutMs ?? this.defaultTimeoutMs,
     });
-    return new E2BSandboxImpl(sandbox);
+    return new E2BSandboxImpl(sandbox, this.apiKey);
   }
 
   async list(options?: SandboxListOptions): Promise<SandboxInfo[]> {
