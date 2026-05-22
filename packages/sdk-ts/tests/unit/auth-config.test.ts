@@ -13,8 +13,8 @@
  *     6. OAuth env var → OAuth direct mode (Claude only)
  *
  * Tests resolveDefaultSandbox() priority:
- *   1. EVOLVE_API_KEY → gateway mode (revenue)
- *   2. E2B_API_KEY → direct E2B
+ *   1. E2B_API_KEY → direct E2B
+ *   2. EVOLVE_API_KEY → gateway mode
  *
  * Usage:
  *   npx tsx tests/unit/auth-config.test.ts
@@ -107,6 +107,7 @@ function clearEnv(): void {
   delete process.env.FACTORY_API_KEY;
   delete process.env.FACTORY_BASE_URL;
   delete process.env.E2B_API_KEY;
+  delete process.env.E2B_API_URL;
   delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
 }
 
@@ -550,12 +551,11 @@ async function runTests(): Promise<void> {
     const provider = await resolveDefaultSandbox();
     assert(provider !== null, "returns a provider");
     assertEqual(provider.providerType, "e2b", "provider type is e2b");
-    assertEqual(process.env.E2B_API_URL, getE2BGatewayUrl(), "sets E2B_API_URL for gateway routing");
+    assertEqual(process.env.E2B_API_URL, undefined, "does not mutate E2B_API_URL for gateway routing");
   }
 
-  // EVOLVE_API_KEY takes priority over E2B_API_KEY
+  // E2B_API_KEY takes priority over EVOLVE_API_KEY for sandbox billing/BYOK
   clearEnv();
-  delete process.env.E2B_API_URL;
   process.env.EVOLVE_API_KEY = "evolve-gateway-key";
   process.env.E2B_API_KEY = "e2b-direct-key";
   {
@@ -569,7 +569,6 @@ async function runTests(): Promise<void> {
   // -------------------------------------------------------------------------
 
   clearEnv();
-  delete process.env.E2B_API_URL;
   process.env.E2B_API_KEY = "e2b-direct-key";
   {
     const provider = await resolveDefaultSandbox();
@@ -578,12 +577,35 @@ async function runTests(): Promise<void> {
     assert(process.env.E2B_API_URL === undefined, "E2B_API_URL not set in direct mode");
   }
 
+  clearEnv();
+  process.env.EVOLVE_API_KEY = "evolve-gateway-key";
+  {
+    await resolveDefaultSandbox();
+    assertEqual(process.env.E2B_API_URL, undefined, "managed mode keeps E2B_API_URL unset");
+  }
+
+  process.env.E2B_API_URL = getE2BGatewayUrl();
+  delete process.env.EVOLVE_API_KEY;
+  process.env.E2B_API_KEY = "e2b-direct-key";
+  {
+    const provider = await resolveDefaultSandbox();
+    assertEqual(provider.providerType, "e2b", "direct E2B still resolves after managed mode");
+    assertEqual(process.env.E2B_API_URL, undefined, "direct mode clears stale managed E2B_API_URL");
+  }
+
+  clearEnv();
+  process.env.E2B_API_URL = "https://api.e2b.example";
+  process.env.E2B_API_KEY = "e2b-direct-key";
+  {
+    await resolveDefaultSandbox();
+    assertEqual(process.env.E2B_API_URL, "https://api.e2b.example", "direct mode preserves custom E2B_API_URL");
+  }
+
   // -------------------------------------------------------------------------
   console.log("\nError cases (sandbox)");
   // -------------------------------------------------------------------------
 
   clearEnv();
-  delete process.env.E2B_API_URL;
   await assertRejects(
     () => resolveDefaultSandbox(),
     "No sandbox provider configured",
