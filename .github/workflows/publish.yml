@@ -56,6 +56,12 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Verify npm authentication
+        if: inputs.dry_run != true
+        run: npm whoami
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       # =======================================================================
       # GUARDS
       # =======================================================================
@@ -172,13 +178,37 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.new_version }}"
 
-          # Replace file: references with versioned npm references
-          sed -i 's|"file:../e2b"|"^'"$VERSION"'"|' packages/sdk-ts/package.json
-          sed -i 's|"file:../daytona"|"^'"$VERSION"'"|' packages/sdk-ts/package.json
-          sed -i 's|"file:../modal"|"^'"$VERSION"'"|' packages/sdk-ts/package.json
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs'
+
+          const version = process.env.VERSION
+          const providerPackages = [
+            '@evolvingmachines/e2b',
+            '@evolvingmachines/daytona',
+            '@evolvingmachines/modal',
+          ]
+
+          function updatePackage(path, packages) {
+            const pkg = JSON.parse(fs.readFileSync(path, 'utf8'))
+            pkg.dependencies ??= {}
+            for (const name of packages) {
+              pkg.dependencies[name] = `^${version}`
+            }
+            fs.writeFileSync(path, `${JSON.stringify(pkg, null, 2)}\n`)
+          }
+
+          updatePackage('packages/sdk-ts/package.json', providerPackages)
+          updatePackage('packages/sdk-py/bridge/package.json', [
+            ...providerPackages,
+            '@evolvingmachines/sdk',
+          ])
+          NODE
 
           echo "Fixed SDK dependencies:"
           grep -E "@evolvingmachines/(e2b|daytona|modal)" packages/sdk-ts/package.json
+          grep -E "@evolvingmachines/(e2b|daytona|modal|sdk)" packages/sdk-py/bridge/package.json
+        env:
+          VERSION: ${{ steps.version.outputs.new_version }}
 
       # =======================================================================
       # BUILD (order defined in package.json: e2b → daytona → modal → sdk → bridge)
@@ -195,7 +225,7 @@ jobs:
         if: inputs.dry_run != true
         run: |
           cd packages/e2b
-          npm publish --access public --tag ${{ steps.version.outputs.npm_tag }} || echo "::warning::Already published or failed — skipping"
+          npm publish --access public --tag ${{ steps.version.outputs.npm_tag }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -203,7 +233,7 @@ jobs:
         if: inputs.dry_run != true
         run: |
           cd packages/daytona
-          npm publish --access public --tag ${{ steps.version.outputs.npm_tag }} || echo "::warning::Already published or failed — skipping"
+          npm publish --access public --tag ${{ steps.version.outputs.npm_tag }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -211,7 +241,7 @@ jobs:
         if: inputs.dry_run != true
         run: |
           cd packages/modal
-          npm publish --access public --tag ${{ steps.version.outputs.npm_tag }} || echo "::warning::Already published or failed — skipping"
+          npm publish --access public --tag ${{ steps.version.outputs.npm_tag }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -219,7 +249,7 @@ jobs:
         if: inputs.dry_run != true
         run: |
           cd packages/sdk-ts
-          npm publish --access public --tag ${{ steps.version.outputs.npm_tag }} || echo "::warning::Already published or failed — skipping"
+          npm publish --access public --tag ${{ steps.version.outputs.npm_tag }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -233,7 +263,7 @@ jobs:
         if: inputs.dry_run != true
         run: |
           cd packages/sdk-py
-          twine upload dist/* || echo "::warning::Already published or failed — skipping"
+          twine upload dist/*
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
