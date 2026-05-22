@@ -36,6 +36,11 @@ export async function resolveDefaultSandbox(): Promise<SandboxProvider> {
   if (e2bKey) {
     try {
       const { createE2BProvider } = await import("@evolvingmachines/e2b");
+      // Older managed-mode SDKs wrote the Dashboard E2B route into this global.
+      // Direct/BYOK mode must never inherit that managed control-plane URL.
+      if (process.env.E2B_API_URL === getE2BGatewayUrl()) {
+        delete process.env.E2B_API_URL;
+      }
       return createE2BProvider({ apiKey: e2bKey });
     } catch (e) {
       const error = e as Error;
@@ -92,12 +97,11 @@ export async function resolveDefaultSandbox(): Promise<SandboxProvider> {
     try {
       const { createE2BProvider } = await import("@evolvingmachines/e2b");
 
-      // Route E2B control plane through gateway
-      // Note: Sandbox.list() only reads apiUrl from env var (not from options),
-      // so this is the only way to ensure all operations go through gateway
-      process.env.E2B_API_URL = getE2BGatewayUrl();
-
-      return createE2BProvider({ apiKey: evolveKey });
+      // Route E2B control plane through Dashboard so Evolve can enforce
+      // per-user sandbox ownership before the provider gateway injects E2B_API_KEY.
+      // Keep this on the provider instance rather than process.env so later BYOK
+      // E2B providers in the same process cannot inherit managed routing.
+      return createE2BProvider({ apiKey: evolveKey, apiUrl: getE2BGatewayUrl() });
     } catch (e) {
       const error = e as Error;
       if (error.message?.includes("Cannot find module") || error.message?.includes("MODULE_NOT_FOUND")) {

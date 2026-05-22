@@ -280,6 +280,8 @@ export interface SandboxProvider {
 export interface E2BConfig {
   /** E2B API key. Default: reads from E2B_API_KEY env var */
   apiKey?: string;
+  /** @internal E2B API base URL override, used for managed gateway routing */
+  apiUrl?: string;
   defaultTimeoutMs?: number;
   /** E2B template ID (default: 'evolve-all'). Create custom templates at https://e2b.dev/docs/sandbox-template */
   templateId?: string;
@@ -288,6 +290,7 @@ export interface E2BConfig {
 /** Internal resolved config with required apiKey */
 interface ResolvedE2BConfig {
   apiKey: string;
+  apiUrl?: string;
   defaultTimeoutMs?: number;
   templateId?: string;
 }
@@ -502,7 +505,7 @@ class E2BSandboxImpl implements SandboxInstance {
   readonly commands: SandboxCommands;
   readonly files: SandboxFiles;
 
-  constructor(private sandbox: E2BSandbox) {
+  constructor(private sandbox: E2BSandbox, private apiKey: string, private apiUrl?: string) {
     this.commands = new E2BCommands(sandbox);
     this.files = new E2BFiles(sandbox);
   }
@@ -542,18 +545,23 @@ class E2BSandboxImpl implements SandboxInstance {
   }
 
   async pause(): Promise<void> {
-    await this.sandbox.betaPause();
+    await this.sandbox.betaPause({
+      apiKey: this.apiKey,
+      apiUrl: this.apiUrl,
+    } as Parameters<E2BSandbox["betaPause"]>[0]);
   }
 }
 
 export class E2BProvider implements SandboxProvider {
   readonly providerType = "e2b" as const;
   private readonly apiKey: string;
+  private readonly apiUrl?: string;
   private readonly defaultTimeoutMs: number;
   private readonly templateId?: string;
 
   constructor(config: ResolvedE2BConfig) {
     this.apiKey = config.apiKey;
+    this.apiUrl = config.apiUrl;
     this.defaultTimeoutMs = config.defaultTimeoutMs ?? 3600000;
     this.templateId = config.templateId;
   }
@@ -565,6 +573,7 @@ export class E2BProvider implements SandboxProvider {
     // Map generic 'image' to E2B's 'templateId'
     const sandbox = await E2BSandbox.create(templateId, {
       apiKey: this.apiKey,
+      apiUrl: this.apiUrl,
       envs: options.envs,
       metadata: options.metadata,
       timeoutMs,
@@ -575,26 +584,28 @@ export class E2BProvider implements SandboxProvider {
       await sandbox.files.makeDir(options.workingDirectory);
     }
 
-    return new E2BSandboxImpl(sandbox);
+    return new E2BSandboxImpl(sandbox, this.apiKey, this.apiUrl);
   }
 
   async connect(sandboxId: string, timeoutMs?: number): Promise<SandboxInstance> {
     const sandbox = await E2BSandbox.connect(sandboxId, {
       apiKey: this.apiKey,
+      apiUrl: this.apiUrl,
       timeoutMs: timeoutMs ?? this.defaultTimeoutMs,
     });
-    return new E2BSandboxImpl(sandbox);
+    return new E2BSandboxImpl(sandbox, this.apiKey, this.apiUrl);
   }
 
   async list(options?: SandboxListOptions): Promise<SandboxInfo[]> {
     const paginator = E2BSandbox.list({
       apiKey: this.apiKey,
+      apiUrl: this.apiUrl,
       query: {
         state: options?.state,
         metadata: options?.metadata,
       },
       limit: options?.limit ?? 100,
-    });
+    } as Parameters<typeof E2BSandbox.list>[0]);
 
     const items = await paginator.nextItems();
 
