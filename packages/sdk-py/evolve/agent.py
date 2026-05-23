@@ -309,6 +309,8 @@ class Evolve:
             stdout=response['stdout'],
             stderr=response['stderr'],
             run_id=response.get('run_id'),
+            session_id=response.get('session_id'),
+            session_tag=response.get('session_tag'),
             checkpoint=_parse_checkpoint(response.get('checkpoint')),
         )
 
@@ -350,6 +352,8 @@ class Evolve:
             exit_code=response['exit_code'],
             stdout=response['stdout'],
             stderr=response['stderr'],
+            session_id=response.get('session_id'),
+            session_tag=response.get('session_tag'),
         )
 
     async def upload_context(
@@ -598,6 +602,7 @@ class Evolve:
             has_run=bool(response.get('has_run', False)),
             timestamp=response.get('timestamp', ''),
             browser=response.get('browser'),
+            session=response.get('session'),
         )
 
     async def resume(self):

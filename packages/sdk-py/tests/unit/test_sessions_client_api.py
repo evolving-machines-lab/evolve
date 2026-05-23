@@ -13,7 +13,7 @@ Coverage:
 import pytest
 from unittest.mock import patch
 
-from evolve import SessionInfo, SessionPage, SessionsClient, SessionsConfig
+from evolve import SessionArtifactInfo, SessionInfo, SessionPage, SessionsClient, SessionsConfig
 from evolve import sessions as sessions_factory
 
 
@@ -76,6 +76,23 @@ class MockBridgeManager:
                 'has_more': True,
             }
 
+        if method == 'sessions_get_by_tag':
+            return {
+                'id': 'sess-tag',
+                'tag': params['tag'],
+                'agent': 'codex',
+                'model': 'gpt-5.5',
+                'provider': 'gateway',
+                'sandbox_id': 'sbx-tag',
+                'state': 'ended',
+                'runtime_status': 'dead',
+                'cost': 0.5,
+                'created_at': '2026-03-05T10:00:00.000Z',
+                'ended_at': '2026-03-05T10:02:00.000Z',
+                'step_count': 8,
+                'tool_stats': {'bash': 1},
+            }
+
         if method == 'sessions_get':
             return {
                 'id': params['id'],
@@ -103,6 +120,27 @@ class MockBridgeManager:
 
         if method == 'sessions_download':
             return {'path': '/tmp/traces/demo-a.jsonl'}
+
+        if method == 'sessions_artifacts':
+            return {
+                'items': [
+                    {
+                        'id': 'artifact-1',
+                        'session_id': params['id'],
+                        'type': 'browser_recording',
+                        'status': 'ready',
+                        'mime_type': 'video/mp4',
+                        'size_bytes': 1234,
+                        'created_at': '2026-03-05T10:01:00.000Z',
+                        'ready_at': '2026-03-05T10:02:00.000Z',
+                        'replay_url': 'https://dash.example.com/replay',
+                        'download_url': 'https://dash.example.com/download',
+                    },
+                ],
+            }
+
+        if method == 'sessions_download_artifact':
+            return {'path': '/tmp/artifacts/browser_recording.mp4'}
 
         return {'status': 'ok'}
 
@@ -149,8 +187,18 @@ class TestSessionsClientList:
         assert params['cursor'] == 'cursor-1'
         assert params['state'] == 'ended'
         assert params['agent'] == 'claude'
+        assert 'tag' not in params
         assert params['tag_prefix'] == 'demo'
         assert params['sort'] == 'cost'
+
+    @pytest.mark.asyncio
+    async def test_exact_tag_filter(self):
+        client, bridge = _make_client()
+
+        await client.list(tag='demo-a')
+
+        params = _get_calls(bridge, 'sessions_list')[0][1]
+        assert params['tag'] == 'demo-a'
 
     @pytest.mark.asyncio
     async def test_parses_session_page(self):
@@ -218,6 +266,21 @@ class TestSessionsClientGet:
         assert info.step_count == 12
 
 
+class TestSessionsClientGetByTag:
+    @pytest.mark.asyncio
+    async def test_delegates_and_returns_session_info(self):
+        client, bridge = _make_client()
+
+        info = await client.get_by_tag('run-123')
+
+        calls = _get_calls(bridge, 'sessions_get_by_tag')
+        assert len(calls) == 1
+        assert calls[0][1]['tag'] == 'run-123'
+        assert isinstance(info, SessionInfo)
+        assert info.id == 'sess-tag'
+        assert info.tag == 'run-123'
+
+
 class TestSessionsClientEvents:
     @pytest.mark.asyncio
     async def test_returns_events(self):
@@ -262,6 +325,35 @@ class TestSessionsClientDownload:
         params = calls[0][1]
         assert params['id'] == 'sess-1'
         assert params['to'] == '/output/traces'
+
+
+class TestSessionsClientArtifacts:
+    @pytest.mark.asyncio
+    async def test_lists_artifacts(self):
+        client, bridge = _make_client()
+
+        artifacts = await client.artifacts('sess-1')
+
+        calls = _get_calls(bridge, 'sessions_artifacts')
+        assert len(calls) == 1
+        assert calls[0][1]['id'] == 'sess-1'
+        assert len(artifacts) == 1
+        assert isinstance(artifacts[0], SessionArtifactInfo)
+        assert artifacts[0].type == 'browser_recording'
+        assert artifacts[0].replay_url == 'https://dash.example.com/replay'
+
+    @pytest.mark.asyncio
+    async def test_downloads_artifact(self):
+        client, bridge = _make_client()
+
+        path = await client.download_artifact('sess-1', 'artifact-1', to='/tmp/artifacts')
+
+        calls = _get_calls(bridge, 'sessions_download_artifact')
+        assert len(calls) == 1
+        assert calls[0][1]['id'] == 'sess-1'
+        assert calls[0][1]['artifact_id'] == 'artifact-1'
+        assert calls[0][1]['to'] == '/tmp/artifacts'
+        assert path == '/tmp/artifacts/browser_recording.mp4'
 
 
 class TestStandaloneSessionsFactory:

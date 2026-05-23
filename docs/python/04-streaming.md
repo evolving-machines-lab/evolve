@@ -44,9 +44,13 @@ class LifecycleEvent(TypedDict):
     sandbox: Literal["booting", "error", "ready", "running", "paused", "stopped"]
     agent: Literal["idle", "running", "interrupted", "error"]
     timestamp: str
+    session: dict[str, str]  # optional, present after dashboard session setup
     browser: dict[str, str]  # optional, present after managed browser setup
+    artifacts: list[dict]    # optional, present when durable artifacts change
     reason: Literal[
+        "session_ready",
         "browser_ready",
+        "browser_artifacts_updated",
         "sandbox_boot",
         "sandbox_ready",
         "sandbox_connected",
@@ -231,13 +235,18 @@ Browser automation URLs are parsed differently depending on which browser option
 Managed browser sessions emit the live-view URL as soon as the browser is ready:
 
 ```python
-evolve.on(
-    'lifecycle',
-    lambda event: open_live_view(event['browser']['live_url'])
-    if event['reason'] == 'browser_ready'
-    else None,
-)
+def on_lifecycle(event):
+    if event['reason'] == 'session_ready':
+        remember_session_id(event['session']['id'])
+    elif event['reason'] == 'browser_ready':
+        open_live_view(event['browser']['live_url'])
+    elif event['reason'] == 'browser_artifacts_updated':
+        update_artifacts(event.get('artifacts', []))
+
+evolve.on('lifecycle', on_lifecycle)
 ```
+
+For durable artifacts after the run, use `sessions().artifacts(session_id)`. Ready artifacts include Dashboard `replay_url` and `download_url` fields.
 
 The same URL is also stored in trace metadata for replay or embedding after the trace exists:
 

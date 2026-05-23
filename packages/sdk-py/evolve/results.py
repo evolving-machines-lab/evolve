@@ -44,6 +44,8 @@ class AgentResponse:
     Attributes:
         sandbox_id: Sandbox ID
         run_id: Run ID for spend/cost attribution (present for run(), None for execute_command())
+        session_id: Dashboard session ID for sessions/artifacts in gateway mode
+        session_tag: Stable session tag for trace grouping and spend attribution
         exit_code: Command exit code
         stdout: Standard output
         stderr: Standard error
@@ -54,6 +56,8 @@ class AgentResponse:
     stdout: str
     stderr: str
     run_id: Optional[str] = None
+    session_id: Optional[str] = None
+    session_tag: Optional[str] = None
     checkpoint: Optional[CheckpointInfo] = None
 
 
@@ -71,6 +75,7 @@ class SessionStatus:
     has_run: bool
     timestamp: str
     browser: Optional[Dict[str, str]] = None
+    session: Optional[Dict[str, str]] = None
 
 
 @dataclass
@@ -145,6 +150,22 @@ class SessionCost:
 
 
 SessionEvent = Dict[str, Any]
+
+
+@dataclass
+class SessionArtifactInfo:
+    """Durable artifact attached to a historical session."""
+    id: str
+    session_id: str
+    type: str
+    status: str
+    mime_type: Optional[str]
+    size_bytes: Optional[int]
+    created_at: str
+    ready_at: Optional[str]
+    replay_url: Optional[str] = None
+    download_url: Optional[str] = None
+    error: Optional[str] = None
 
 
 @dataclass

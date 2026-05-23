@@ -13,6 +13,8 @@ import type {
   SessionEvent,
   GetEventsOptions,
   DownloadSessionOptions,
+  DownloadArtifactOptions,
+  SessionArtifactInfo,
 } from "./types";
 
 export type {
@@ -24,6 +26,8 @@ export type {
   SessionEvent,
   GetEventsOptions,
   DownloadSessionOptions,
+  DownloadArtifactOptions,
+  SessionArtifactInfo,
 } from "./types";
 
 /**
@@ -86,6 +90,28 @@ export function sessions(config?: SessionsConfig): SessionsClient {
     };
   }
 
+  function mapArtifactInfo(raw: Record<string, unknown>): SessionArtifactInfo {
+    return {
+      id: raw.id as string,
+      sessionId: raw.sessionId as string,
+      type: raw.type as string,
+      status: raw.status as SessionArtifactInfo["status"],
+      mimeType: (raw.mimeType as string) || null,
+      sizeBytes: typeof raw.sizeBytes === "number" ? raw.sizeBytes : null,
+      createdAt: raw.createdAt as string,
+      readyAt: (raw.readyAt as string) || null,
+      replayUrl: (raw.replayUrl as string) || undefined,
+      downloadUrl: (raw.downloadUrl as string) || undefined,
+      error: (raw.error as string) || undefined,
+    };
+  }
+
+  function artifactFilename(artifact: SessionArtifactInfo): string {
+    if (artifact.type === "browser_recording") return "browser_recording.mp4";
+    if (artifact.mimeType === "application/pdf") return `${artifact.type}.pdf`;
+    return `${artifact.type}.bin`;
+  }
+
   return {
     async list(options?: ListSessionsOptions): Promise<SessionPage> {
       const params = new URLSearchParams({
@@ -97,6 +123,7 @@ export function sessions(config?: SessionsConfig): SessionsClient {
       if (options?.state && options.state !== "all")
         params.set("state", options.state);
       if (options?.agent) params.set("agent", options.agent);
+      if (options?.tag) params.set("tag", options.tag);
       if (options?.tagPrefix) params.set("tagPrefix", options.tagPrefix);
       if (options?.sort) {
         const sortMap = {
@@ -126,6 +153,21 @@ export function sessions(config?: SessionsConfig): SessionsClient {
       );
       const data = await res.json();
       return mapSessionInfo(data as Record<string, unknown>);
+    },
+
+    async getByTag(tag: string): Promise<SessionInfo | null> {
+      const params = new URLSearchParams({
+        paginationMode: "cursor",
+        pageSize: "1",
+        paginated: "true",
+        tag,
+      });
+      const res = await request(`/api/sessions?${params}`);
+      const data = await res.json();
+      const items = ((data.items as Record<string, unknown>[]) || []).map(
+        mapSessionInfo
+      );
+      return items[0] ?? null;
     },
 
     async events(
@@ -171,6 +213,57 @@ export function sessions(config?: SessionsConfig): SessionsClient {
       const dir = options?.to || process.cwd();
       await mkdir(dir, { recursive: true });
       const filePath = join(dir, `${tag}.jsonl`);
+      if (!res.body) {
+        throw new Error("Download response has no body");
+      }
+      const nodeStream = Readable.fromWeb(res.body as import("stream/web").ReadableStream);
+      await pipeline(nodeStream, createWriteStream(filePath));
+      return filePath;
+    },
+
+    async artifacts(id: string): Promise<SessionArtifactInfo[]> {
+      const res = await request(
+        `/api/sessions/${encodeURIComponent(id)}/artifacts`
+      );
+      const data = await res.json() as { items?: Record<string, unknown>[] };
+      return (data.items || []).map(mapArtifactInfo);
+    },
+
+    async downloadArtifact(
+      id: string,
+      artifactId: string,
+      options?: DownloadArtifactOptions
+    ): Promise<string> {
+      const artifactsRes = await request(
+        `/api/sessions/${encodeURIComponent(id)}/artifacts`
+      );
+      const artifactsData = await artifactsRes.json() as { items?: Record<string, unknown>[] };
+      const artifacts = (artifactsData.items || []).map(mapArtifactInfo);
+      const artifact = artifacts.find((item) => item.id === artifactId);
+      if (!artifact) {
+        throw new Error(`Artifact not found: ${artifactId}`);
+      }
+      if (artifact.status !== "ready") {
+        throw new Error(`Artifact is ${artifact.status}`);
+      }
+
+      const res = await fetch(
+        `${dashboardUrl}/api/sessions/${encodeURIComponent(id)}/artifacts/${encodeURIComponent(artifactId)}/download`,
+        {
+          headers: { Authorization: `Bearer ${apiKey}` },
+          redirect: "follow",
+        }
+      );
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(
+          `Artifact download failed (${res.status}): ${text || res.statusText}`
+        );
+      }
+
+      const dir = options?.to || process.cwd();
+      await mkdir(dir, { recursive: true });
+      const filePath = join(dir, artifactFilename(artifact));
       if (!res.body) {
         throw new Error("Download response has no body");
       }

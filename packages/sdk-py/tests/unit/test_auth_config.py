@@ -493,6 +493,7 @@ class MockBridgeManager:
                 'active_process_id': None,
                 'has_run': True,
                 'timestamp': '2026-02-07T00:00:00.000Z',
+                'session': {'id': 'session-123', 'tag': 'tag-123'},
                 'browser': {'live_url': 'https://dashboard.test/browser/live'},
             }
         if method == 'interrupt':
@@ -531,6 +532,7 @@ class TestSessionRuntimeParity:
         assert status.active_process_id is None
         assert status.has_run is True
         assert status.timestamp == '2026-02-07T00:00:00.000Z'
+        assert status.session == {'id': 'session-123', 'tag': 'tag-123'}
         assert status.browser == {'live_url': 'https://dashboard.test/browser/live'}
 
     @pytest.mark.asyncio
@@ -552,11 +554,22 @@ class TestSessionRuntimeParity:
             'type': 'lifecycle',
             'reason': 'browser_ready',
             'sandbox': 'stopped',
+            'session': {'id': 'session-123', 'tag': 'tag-123'},
             'browser': {'live_url': 'https://dashboard.test/browser/live'},
+            'artifacts': [
+                {
+                    'id': 'artifact-1',
+                    'session_id': 'session-123',
+                    'type': 'browser_recording',
+                    'status': 'ready',
+                },
+            ],
         })
         assert len(captured) == 1
         assert captured[0]['reason'] == 'browser_ready'
+        assert captured[0]['session'] == {'id': 'session-123', 'tag': 'tag-123'}
         assert captured[0]['browser'] == {'live_url': 'https://dashboard.test/browser/live'}
+        assert captured[0]['artifacts'][0]['id'] == 'artifact-1'
 
     def test_bridge_manager_rejects_unknown_event_type(self):
         bridge = BridgeManager()

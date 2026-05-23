@@ -479,7 +479,9 @@ export type AgentRuntimeState = "idle" | "running" | "interrupted" | "error";
 
 /** Lifecycle transition reason */
 export type LifecycleReason =
+  | "session_ready"
   | "browser_ready"
+  | "browser_artifacts_updated"
   | "sandbox_boot"
   | "sandbox_connected"
   | "sandbox_ready"
@@ -500,9 +502,30 @@ export type LifecycleReason =
   | "command_background_complete"
   | "command_background_failed";
 
+/** Evolve dashboard session identity exposed to host applications. */
+export interface RuntimeSessionInfo {
+  id: string;
+  tag: string;
+}
+
 /** Browser runtime info exposed to host applications. */
 export interface BrowserRuntimeInfo {
   liveUrl: string;
+}
+
+/** Durable artifact attached to an Evolve session. */
+export interface SessionArtifactInfo {
+  id: string;
+  sessionId: string;
+  type: string;
+  status: "processing" | "ready" | "failed" | (string & {});
+  mimeType: string | null;
+  sizeBytes: number | null;
+  createdAt: string;
+  readyAt: string | null;
+  replayUrl?: string;
+  downloadUrl?: string;
+  error?: string;
 }
 
 /** Lifecycle event emitted by the runtime */
@@ -512,7 +535,9 @@ export interface LifecycleEvent {
   agent: AgentRuntimeState;
   timestamp: string;
   reason: LifecycleReason;
+  session?: RuntimeSessionInfo;
   browser?: BrowserRuntimeInfo;
+  artifacts?: SessionArtifactInfo[];
 }
 
 /** Snapshot of current runtime status */
@@ -523,6 +548,7 @@ export interface SessionStatus {
   activeProcessId: string | null;
   hasRun: boolean;
   timestamp: string;
+  session?: RuntimeSessionInfo;
   browser?: BrowserRuntimeInfo;
 }
 
@@ -537,6 +563,12 @@ export interface AgentResponse {
 
   /** Run ID for spend/cost attribution (present for run(), undefined for executeCommand()) */
   runId?: string;
+
+  /** Dashboard session ID for sessions(), artifacts, and replay/download links (gateway mode) */
+  sessionId?: string;
+
+  /** Stable session tag used for trace grouping and spend attribution */
+  sessionTag?: string;
 
   /** Exit code of the command */
   exitCode: number;

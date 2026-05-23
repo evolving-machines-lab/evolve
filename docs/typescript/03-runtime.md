@@ -710,14 +710,24 @@ const session = sessions(); // uses EVOLVE_API_KEY
 const page = await session.list({ limit: 10, state: "ended", agent: "claude", tagPrefix: "my-proj", sort: "cost" });
 const page2 = await session.list({ cursor: page.nextCursor });
 const info = await session.get(page.items[0].id);
+const sameInfo = await session.getByTag(info.tag);
 const events = await session.events(info.id, { since: 50 });
 const path = await session.download(info.id, { to: "./traces" });
+const artifacts = await session.artifacts(info.id);
+
+if (artifacts[0]?.status === "ready") {
+  console.log(artifacts[0].replayUrl); // Dashboard replay URL, when available
+  await session.downloadArtifact(info.id, artifacts[0].id, { to: "./artifacts" });
+}
 ```
 
 - `list()` returns `SessionPage { items: SessionInfo[], nextCursor, hasMore }`
+- `getByTag()` returns the newest session matching an exact tag, or `null`
 - `get()` returns `SessionInfo` with `sandboxId`, `runtimeStatus`, `cost`, `stepCount`, `toolStats`, etc.
 - `events()` returns parsed JSONL objects; pass `since` for delta fetching
 - `download()` streams the raw `.jsonl` trace to disk and returns the file path
+- `artifacts()` returns durable session artifacts such as browser recordings
+- `downloadArtifact()` streams one artifact to disk and returns the file path
 
 Gateway-only — requires `EVOLVE_API_KEY`. In BYOK/direct mode, traces remain
 available as local JSONL files in `~/.evolve-sdk/observability/sessions/`.

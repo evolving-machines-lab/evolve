@@ -268,4 +268,6 @@ export {
   type SessionEvent,
   type GetEventsOptions,
   type DownloadSessionOptions,
+  type DownloadArtifactOptions,
+  type SessionArtifactInfo,
 } from "./sessions";

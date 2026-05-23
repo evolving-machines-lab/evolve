@@ -55,11 +55,15 @@ interface LifecycleEvent {
   agent: AgentRuntimeState;          // "idle" | "running" | "interrupted" | "error"
   timestamp: string;                 // ISO 8601
   reason: LifecycleReason;
+  session?: { id: string; tag: string };
   browser?: { liveUrl: string };     // Present after managed browser setup
+  artifacts?: SessionArtifactInfo[]; // Present when durable artifacts change
 }
 
 type LifecycleReason =
+  | "session_ready"                  // Dashboard session id is available
   | "browser_ready"                  // Managed browser live view is available
+  | "browser_artifacts_updated"      // Durable browser artifacts changed
   | "sandbox_boot"                  // Sandbox is being created
   | "sandbox_ready"                 // Sandbox is ready for commands
   | "sandbox_connected"             // Reconnected to existing sandbox
@@ -282,11 +286,19 @@ Managed browser sessions emit the live-view URL as soon as the browser is ready:
 
 ```typescript
 evolve.on("lifecycle", (event) => {
+  if (event.reason === "session_ready") {
+    rememberSessionId(event.session!.id);
+  }
   if (event.reason === "browser_ready") {
     openLiveView(event.browser!.liveUrl);
   }
+  if (event.reason === "browser_artifacts_updated") {
+    updateArtifacts(event.artifacts ?? []);
+  }
 });
 ```
+
+For durable artifacts after the run, use `sessions().artifacts(sessionId)`. Ready artifacts include Dashboard `replayUrl` and `downloadUrl` fields.
 
 The same URL is also stored in trace metadata for replay or embedding after the trace exists:
 

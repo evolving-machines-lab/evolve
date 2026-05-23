@@ -1,3 +1,5 @@
+import type { SessionArtifactInfo } from "../types";
+
 /** Options for listing sessions */
 export interface ListSessionsOptions {
   /** Max items per page (default: 20, max: 200) */
@@ -10,6 +12,8 @@ export interface ListSessionsOptions {
   agent?: string;
   /** Filter by tag prefix */
   tagPrefix?: string;
+  /** Filter by exact tag */
+  tag?: string;
   /** Sort order (default: "newest") */
   sort?: "newest" | "oldest" | "cost";
 }
@@ -50,6 +54,14 @@ export interface DownloadSessionOptions {
   to?: string;
 }
 
+/** Options for downloading a session artifact */
+export interface DownloadArtifactOptions {
+  /** Directory to save the artifact (default: cwd) */
+  to?: string;
+}
+
+export type { SessionArtifactInfo };
+
 /** Options for fetching parsed events */
 export interface GetEventsOptions {
   /** Return only events after this index (delta fetching) */
@@ -70,8 +82,14 @@ export interface SessionsClient {
   list(options?: ListSessionsOptions): Promise<SessionPage>;
   /** Get a single session by ID */
   get(id: string): Promise<SessionInfo>;
+  /** Get a single session by exact tag */
+  getByTag(tag: string): Promise<SessionInfo | null>;
   /** Get parsed JSONL events for a session */
   events(id: string, options?: GetEventsOptions): Promise<SessionEvent[]>;
   /** Download raw JSONL trace file. Returns the file path. */
   download(id: string, options?: DownloadSessionOptions): Promise<string>;
+  /** List durable artifacts attached to a session */
+  artifacts(id: string): Promise<SessionArtifactInfo[]>;
+  /** Download one durable artifact. Returns the file path. */
+  downloadArtifact(id: string, artifactId: string, options?: DownloadArtifactOptions): Promise<string>;
 }

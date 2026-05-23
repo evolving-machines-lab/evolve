@@ -24,6 +24,7 @@ import {
   type StorageConfig,
   type SessionsClient as TSSessionsClient,
   type SessionInfo as TSSessionInfo,
+  type SessionArtifactInfo as TSSessionArtifactInfo,
 } from '../../../sdk-ts/dist/index.js';
 import { createE2BProvider } from '../../../e2b/dist/index.js';
 import { createDaytonaProvider } from '../../../daytona/dist/index.js';
@@ -64,11 +65,16 @@ import type {
   SessionsConfigParams,
   SessionsListParams,
   SessionsGetParams,
+  SessionsGetByTagParams,
   SessionsEventsParams,
   SessionsDownloadParams,
+  SessionsArtifactsParams,
+  SessionsDownloadArtifactParams,
   SessionInfoResponse,
+  SessionArtifactInfoResponse,
   SessionPageResponse,
   SessionEventsResponse,
+  SessionArtifactsResponse,
   GetRunCostParams,
   RunCostResponse,
   SessionCostResponse,
@@ -283,10 +289,16 @@ export class EvolveAdapter {
         return this.sessionsList(params);
       case 'sessions_get':
         return this.sessionsGet(params);
+      case 'sessions_get_by_tag':
+        return this.sessionsGetByTag(params);
       case 'sessions_events':
         return this.sessionsEvents(params);
       case 'sessions_download':
         return this.sessionsDownload(params);
+      case 'sessions_artifacts':
+        return this.sessionsArtifacts(params);
+      case 'sessions_download_artifact':
+        return this.sessionsDownloadArtifact(params);
       // Multi-instance methods (for Swarm)
       case 'create_instance':
         return this.createInstance(params);
@@ -380,6 +392,8 @@ export class EvolveAdapter {
     return {
       sandbox_id: result.sandboxId,
       run_id: result.runId,
+      session_id: result.sessionId,
+      session_tag: result.sessionTag,
       exit_code: result.exitCode,
       stdout: result.stdout,
       stderr: result.stderr,
@@ -397,6 +411,8 @@ export class EvolveAdapter {
 
     return {
       sandbox_id: result.sandboxId,
+      session_id: result.sessionId,
+      session_tag: result.sessionTag,
       exit_code: result.exitCode,
       stdout: result.stdout,
       stderr: result.stderr,
@@ -478,6 +494,7 @@ export class EvolveAdapter {
       active_process_id: snapshot.activeProcessId,
       has_run: snapshot.hasRun,
       timestamp: snapshot.timestamp,
+      ...(snapshot.session ? { session: { id: snapshot.session.id, tag: snapshot.session.tag } } : {}),
       ...(snapshot.browser ? { browser: { live_url: snapshot.browser.liveUrl } } : {}),
     };
   }
@@ -657,6 +674,7 @@ export class EvolveAdapter {
       cursor: params.cursor,
       state: params.state,
       agent: params.agent,
+      tag: params.tag,
       tagPrefix: params.tag_prefix,
       sort: params.sort,
     });
@@ -673,6 +691,12 @@ export class EvolveAdapter {
     return this.toSessionInfoResponse(info);
   }
 
+  async sessionsGetByTag(params: SessionsGetByTagParams): Promise<SessionInfoResponse | null> {
+    const client = this.getSessionsClient(params.sessions);
+    const info = await client.getByTag(params.tag);
+    return info ? this.toSessionInfoResponse(info) : null;
+  }
+
   async sessionsEvents(params: SessionsEventsParams): Promise<SessionEventsResponse> {
     const client = this.getSessionsClient(params.sessions);
     const events = await client.events(
@@ -685,6 +709,20 @@ export class EvolveAdapter {
   async sessionsDownload(params: SessionsDownloadParams): Promise<{ path: string }> {
     const client = this.getSessionsClient(params.sessions);
     const path = await client.download(params.id, {
+      to: params.to,
+    });
+    return { path };
+  }
+
+  async sessionsArtifacts(params: SessionsArtifactsParams): Promise<SessionArtifactsResponse> {
+    const client = this.getSessionsClient(params.sessions);
+    const artifacts = await client.artifacts(params.id);
+    return { items: artifacts.map(info => this.toSessionArtifactInfoResponse(info)) };
+  }
+
+  async sessionsDownloadArtifact(params: SessionsDownloadArtifactParams): Promise<{ path: string }> {
+    const client = this.getSessionsClient(params.sessions);
+    const path = await client.downloadArtifact(params.id, params.artifact_id, {
       to: params.to,
     });
     return { path };
@@ -729,6 +767,22 @@ export class EvolveAdapter {
     };
   }
 
+  private toSessionArtifactInfoResponse(info: TSSessionArtifactInfo): SessionArtifactInfoResponse {
+    return {
+      id: info.id,
+      session_id: info.sessionId,
+      type: info.type,
+      status: info.status,
+      mime_type: info.mimeType ?? null,
+      size_bytes: info.sizeBytes ?? null,
+      created_at: info.createdAt,
+      ready_at: info.readyAt ?? null,
+      replay_url: info.replayUrl,
+      download_url: info.downloadUrl,
+      error: info.error,
+    };
+  }
+
   // ===========================================================================
   // MULTI-INSTANCE METHODS (for Swarm)
   // ===========================================================================
@@ -769,6 +823,8 @@ export class EvolveAdapter {
     return {
       sandbox_id: result.sandboxId,
       run_id: result.runId,
+      session_id: result.sessionId,
+      session_tag: result.sessionTag,
       exit_code: result.exitCode,
       stdout: result.stdout,
       stderr: result.stderr,

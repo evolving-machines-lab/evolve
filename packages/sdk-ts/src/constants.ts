@@ -172,7 +172,7 @@ export const DEFAULT_DASHBOARD_URL = process.env.EVOLVE_DASHBOARD_URL || "https:
  *
  * @internal
  */
-export const DEFAULT_MANAGED_BROWSER_TRANSPORT = "managed-a";
+export const DEFAULT_MANAGED_BROWSER_TRANSPORT = "managed-b";
 
 // =============================================================================
 // SPEND TRACKING

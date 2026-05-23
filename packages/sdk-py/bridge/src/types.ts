@@ -78,7 +78,11 @@ export interface InitializeParams {
   context?: EncodedFileMap;
   files?: EncodedFileMap;
   mcp_servers?: Record<string, any>;
-  browser?: 'browser-use' | 'actionbook' | 'agent-browser' | { provider: 'actionbook' | 'agent-browser'; remote?: boolean };
+  browser?: 'browser-use' | 'actionbook' | 'agent-browser' | {
+    provider: 'actionbook' | 'agent-browser';
+    remote?: boolean;
+    transport?: 'managed-a' | 'managed-b';
+  };
   plugins?: AgentPluginConfig[];
   skills?: string[];
   secrets?: Record<string, string>;
@@ -227,6 +231,10 @@ export interface RunResponse {
   sandbox_id: string;
   /** Run ID for spend/cost attribution (present for run(), undefined for executeCommand()) */
   run_id?: string;
+  /** Dashboard session ID for sessions(), artifacts, and replay/download links (gateway mode) */
+  session_id?: string;
+  /** Stable session tag used for trace grouping and spend attribution */
+  session_tag?: string;
   exit_code: number;
   stdout: string;
   stderr: string;
@@ -261,6 +269,10 @@ export interface SessionStatusResponse {
   active_process_id: string | null;
   has_run: boolean;
   timestamp: string;
+  session?: {
+    id: string;
+    tag: string;
+  };
   browser?: {
     live_url: string;
   };
@@ -352,6 +364,7 @@ export interface SessionsListParams {
   cursor?: string;
   state?: 'live' | 'ended' | 'all';
   agent?: string;
+  tag?: string;
   tag_prefix?: string;
   sort?: 'newest' | 'oldest' | 'cost';
 }
@@ -359,6 +372,11 @@ export interface SessionsListParams {
 export interface SessionsGetParams {
   sessions?: SessionsConfigParams;
   id: string;
+}
+
+export interface SessionsGetByTagParams {
+  sessions?: SessionsConfigParams;
+  tag: string;
 }
 
 export interface SessionsEventsParams {
@@ -370,6 +388,18 @@ export interface SessionsEventsParams {
 export interface SessionsDownloadParams {
   sessions?: SessionsConfigParams;
   id: string;
+  to?: string;
+}
+
+export interface SessionsArtifactsParams {
+  sessions?: SessionsConfigParams;
+  id: string;
+}
+
+export interface SessionsDownloadArtifactParams {
+  sessions?: SessionsConfigParams;
+  id: string;
+  artifact_id: string;
   to?: string;
 }
 
@@ -397,6 +427,24 @@ export interface SessionPageResponse {
 
 export interface SessionEventsResponse {
   events: Record<string, any>[];
+}
+
+export interface SessionArtifactInfoResponse {
+  id: string;
+  session_id: string;
+  type: string;
+  status: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+  created_at: string;
+  ready_at: string | null;
+  replay_url?: string;
+  download_url?: string;
+  error?: string;
+}
+
+export interface SessionArtifactsResponse {
+  items: SessionArtifactInfoResponse[];
 }
 
 // =============================================================================

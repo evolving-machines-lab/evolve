@@ -255,16 +255,38 @@ async function testManagedBrowserLifecycle(): Promise<void> {
 
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    if (url === "https://dashboard.test/api/sessions/ensure" && init?.method === "POST") {
+      const body = JSON.parse(String(init.body));
+      return new Response(JSON.stringify({ id: "trace_session_123", tag: body.tag }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
     if (url === "https://dashboard.test/api/browser-sessions" && init?.method === "POST") {
       const body = JSON.parse(String(init.body));
-      assertEqual(body.options?.transport, "managed-a", "managed browser create uses default transport");
+      assertEqual(body.options?.transport, "managed-b", "managed browser create uses default transport");
       return new Response(JSON.stringify({ id: "browser_123", cdpUrl, liveUrl }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
     }
     if (url === "https://dashboard.test/api/browser-sessions/browser_123" && init?.method === "DELETE") {
-      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify({
+        artifacts: [
+          {
+            id: "artifact_123",
+            sessionId: "trace_session_123",
+            type: "browser_recording",
+            status: "ready",
+            mimeType: "video/mp4",
+            sizeBytes: 123,
+            createdAt: "2026-05-23T10:00:00.000Z",
+            readyAt: "2026-05-23T10:01:00.000Z",
+            replayUrl: "https://dashboard.test/sessions/trace_session_123/artifacts/artifact_123/replay?token=tok",
+            downloadUrl: "https://dashboard.test/api/sessions/trace_session_123/artifacts/artifact_123/download?token=tok",
+          },
+        ],
+      }), { status: 200, headers: { "content-type": "application/json" } });
     }
     if (url.endsWith("/api/sessions/ingest")) {
       return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
@@ -305,9 +327,13 @@ async function testManagedBrowserLifecycle(): Promise<void> {
     );
 
     const status = await kit.status();
+    assertEqual(status.session?.id, "trace_session_123", "status() exposes dashboard session id");
     assertEqual(status.browser?.liveUrl, liveUrl, "status() exposes managed browser live URL");
   } finally {
     await kit.kill();
+    const artifactUpdate = events.find((event) => event.reason === "browser_artifacts_updated");
+    assertEqual(artifactUpdate?.session?.id, "trace_session_123", "artifact lifecycle preserves dashboard session id");
+    assertEqual(artifactUpdate?.artifacts?.[0]?.id, "artifact_123", "artifact lifecycle exposes recording artifact");
     globalThis.fetch = previousFetch;
     if (previousDashboardUrl === undefined) {
       delete process.env.EVOLVE_DASHBOARD_URL;
@@ -363,7 +389,7 @@ async function testManagedAgentBrowserLifecycle(): Promise<void> {
     assertEqual(result.exitCode, 0, "run() with managed agent-browser returns success");
     assertEqual(createBody.provider, "actionbook", "managed browser create contract is preserved");
     assertEqual(createBody.options?.remote, true, "managed browser create uses remote option");
-    assertEqual(createBody.options?.transport, "managed-a", "managed browser create includes default transport");
+    assertEqual(createBody.options?.transport, "managed-b", "managed browser create includes default transport");
     assertEqual(
       provider.createOptions?.envs?.AGENT_BROWSER_CONFIG,
       "/home/user/.agent-browser/config.json",

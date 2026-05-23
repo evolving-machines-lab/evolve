@@ -96,6 +96,34 @@ def _require_session_info(data: Optional[Dict[str, Any]]) -> 'SessionInfo':
     return result
 
 
+def _parse_session_artifact_info(data: Optional[Dict[str, Any]]) -> Optional['SessionArtifactInfo']:
+    """Parse session artifact dict from bridge response into SessionArtifactInfo."""
+    if not data:
+        return None
+    from .results import SessionArtifactInfo  # noqa: E402
+    return SessionArtifactInfo(
+        id=data['id'],
+        session_id=data['session_id'],
+        type=data['type'],
+        status=data['status'],
+        mime_type=data.get('mime_type'),
+        size_bytes=data.get('size_bytes'),
+        created_at=data['created_at'],
+        ready_at=data.get('ready_at'),
+        replay_url=data.get('replay_url'),
+        download_url=data.get('download_url'),
+        error=data.get('error'),
+    )
+
+
+def _require_session_artifact_info(data: Optional[Dict[str, Any]]) -> 'SessionArtifactInfo':
+    """Like :func:`_parse_session_artifact_info` but raises on falsy *data*."""
+    result = _parse_session_artifact_info(data)
+    if result is None:
+        raise ValueError(f"Expected session artifact data, got: {data!r}")
+    return result
+
+
 def _encode_files_for_transport(
     files: Dict[str, Union[str, bytes]]
 ) -> Dict[str, Dict[str, str]]:

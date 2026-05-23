@@ -31,6 +31,8 @@ import type {
   SandboxLifecycleState,
   LifecycleReason,
   BrowserRuntimeInfo,
+  RuntimeSessionInfo,
+  SessionArtifactInfo,
   SessionStatus,
   LifecycleEvent,
   ResolvedStorageConfig,
@@ -184,6 +186,7 @@ export class Agent {
   private agentState: AgentRuntimeState = "idle";
   private droidSessionId?: string;
   private managedBrowserSession?: ManagedBrowserSession;
+  private dashboardSession?: RuntimeSessionInfo;
 
   // Skills storage
   private readonly skills?: SkillName[];
@@ -245,15 +248,40 @@ export class Agent {
     return { liveUrl: this.managedBrowserSession.liveUrl };
   }
 
+  private sessionRuntimeInfo(): RuntimeSessionInfo | undefined {
+    return this.dashboardSession;
+  }
+
   private emitLifecycle(callbacks: StreamCallbacks | undefined, reason: LifecycleReason): void {
     const browser = this.browserRuntimeInfo();
+    const session = this.sessionRuntimeInfo();
     callbacks?.onLifecycle?.({
       sandboxId: this.getSession(),
       sandbox: this.sandboxState,
       agent: this.agentState,
       timestamp: new Date().toISOString(),
       reason,
+      ...(session ? { session } : {}),
       ...(browser ? { browser } : {}),
+    });
+  }
+
+  private emitArtifactLifecycle(
+    callbacks: StreamCallbacks | undefined,
+    artifacts: SessionArtifactInfo[]
+  ): void {
+    if (artifacts.length === 0) return;
+    const browser = this.browserRuntimeInfo();
+    const session = this.sessionRuntimeInfo();
+    callbacks?.onLifecycle?.({
+      sandboxId: this.getSession(),
+      sandbox: this.sandboxState,
+      agent: this.agentState,
+      timestamp: new Date().toISOString(),
+      reason: "browser_artifacts_updated",
+      ...(session ? { session } : {}),
+      ...(browser ? { browser } : {}),
+      artifacts,
     });
   }
 
@@ -367,6 +395,7 @@ export class Agent {
     }
 
     const provider = this.options.sandboxProvider;
+    await this.ensureDashboardSession(callbacks);
     this.sandboxState = "booting";
     this.emitLifecycle(callbacks, "sandbox_boot");
     try {
@@ -518,7 +547,43 @@ export class Agent {
   private async ensureManagedBrowserSession(callbacks?: StreamCallbacks): Promise<void> {
     if (this.managedBrowserSession || !this.options.managedBrowser) return;
     this.managedBrowserSession = await createManagedBrowserSession(this.options.managedBrowser, this.sessionTag);
+    if (!this.dashboardSession && this.managedBrowserSession.sessionId && this.managedBrowserSession.sessionTag) {
+      this.dashboardSession = {
+        id: this.managedBrowserSession.sessionId,
+        tag: this.managedBrowserSession.sessionTag,
+      };
+    }
     this.emitLifecycle(callbacks, "browser_ready");
+  }
+
+  private async ensureDashboardSession(callbacks?: StreamCallbacks): Promise<void> {
+    if (this.dashboardSession || this.agentConfig.isDirectMode) return;
+
+    const dashboardUrl = (process.env.EVOLVE_DASHBOARD_URL || DEFAULT_DASHBOARD_URL).replace(/\/$/, "");
+    try {
+      const response = await fetch(`${dashboardUrl}/api/sessions/ensure`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.agentConfig.apiKey}`,
+          "content-type": "application/json",
+          accept: "application/json",
+        },
+        body: JSON.stringify({
+          tag: this.sessionTag,
+          agent: this.agentConfig.type,
+          model: this.agentConfig.model || this.registry.defaultModel,
+        }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) return;
+      const data = await response.json() as Partial<RuntimeSessionInfo>;
+      if (typeof data.id === "string" && typeof data.tag === "string") {
+        this.dashboardSession = { id: data.id, tag: data.tag };
+        this.emitLifecycle(callbacks, "session_ready");
+      }
+    } catch {
+      // Observability should not block agent execution; ingest will still create the row later.
+    }
   }
 
   private async setupManagedBrowser(sandbox: SandboxInstance): Promise<void> {
@@ -533,12 +598,13 @@ export class Agent {
     }
   }
 
-  private async closeManagedBrowserSession(): Promise<void> {
+  private async closeManagedBrowserSession(callbacks?: StreamCallbacks): Promise<void> {
     if (!this.managedBrowserSession || !this.options.managedBrowser) return;
     const session = this.managedBrowserSession;
     this.managedBrowserSession = undefined;
     try {
-      await stopManagedBrowserSession(this.options.managedBrowser, session);
+      const result = await stopManagedBrowserSession(this.options.managedBrowser, session);
+      this.emitArtifactLifecycle(callbacks, result.artifacts ?? []);
     } catch (error) {
       console.warn(`[Evolve] Managed browser cleanup failed: ${(error as Error).message}`);
     }
@@ -993,6 +1059,7 @@ export class Agent {
       }
 
       // Create fresh sandbox
+      await this.ensureDashboardSession(callbacks);
       await this.ensureManagedBrowserSession(callbacks);
       const envVars = this.buildEnvironmentVariables();
       this.sandboxState = "booting";
@@ -1204,6 +1271,8 @@ export class Agent {
       return {
         sandboxId: sandbox.sandboxId,
         runId,
+        sessionId: this.dashboardSession?.id,
+        sessionTag: this.sessionTag,
         exitCode: 0,
         stdout: `Background process started with ID ${handle.processId}`,
         stderr: "",
@@ -1290,6 +1359,8 @@ export class Agent {
     return {
       sandboxId: sandbox.sandboxId,
       runId,
+      sessionId: this.dashboardSession?.id,
+      sessionTag: this.sessionTag,
       exitCode: result.exitCode,
       stdout: result.stdout,
       stderr: result.stderr,
@@ -1346,6 +1417,8 @@ export class Agent {
       this.watchBackgroundOperation(opId, "command", handle, callbacks);
       return {
         sandboxId: sandbox.sandboxId,
+        sessionId: this.dashboardSession?.id,
+        sessionTag: this.sessionTag,
         exitCode: 0,
         stdout: `Background process started with ID ${handle.processId}`,
         stderr: "",
@@ -1372,6 +1445,8 @@ export class Agent {
 
     return {
       sandboxId: sandbox.sandboxId,
+      sessionId: this.dashboardSession?.id,
+      sessionTag: this.sessionTag,
       exitCode: result.exitCode,
       // Prefer streaming-collected output; fall back to wait() result
       // (handles race condition where command completes before stream connects)
@@ -1575,8 +1650,8 @@ export class Agent {
       }
     }
 
-    await this.rotateSession();
     await this.closeManagedBrowserSession();
+    await this.rotateSession();
 
     this.options.sandboxId = sandboxId;
     this.sandbox = undefined;
@@ -1667,6 +1742,7 @@ export class Agent {
    */
   status(): SessionStatus {
     const browser = this.browserRuntimeInfo();
+    const session = this.sessionRuntimeInfo();
     return {
       sandboxId: this.getSession(),
       sandbox: this.sandboxState,
@@ -1674,6 +1750,7 @@ export class Agent {
       activeProcessId: this.activeProcessId,
       hasRun: this.hasRun,
       timestamp: new Date().toISOString(),
+      ...(session ? { session } : {}),
       ...(browser ? { browser } : {}),
     };
   }
@@ -1682,8 +1759,6 @@ export class Agent {
    * Kill sandbox (terminates all processes)
    */
   async kill(callbacks?: StreamCallbacks): Promise<void> {
-    await this.rotateSession();
-
     // Interrupt active operation before killing sandbox
     if (this.activeCommand) {
       await this.interrupt(callbacks);
@@ -1694,7 +1769,7 @@ export class Agent {
       await this.sandbox.kill();
       this.sandbox = undefined;
     }
-    await this.closeManagedBrowserSession();
+    await this.closeManagedBrowserSession(callbacks);
     // Session is no longer valid after sandbox termination.
     this.options.sandboxId = undefined;
     this.interruptedOperations.clear();
@@ -1704,6 +1779,7 @@ export class Agent {
     this.hasRun = false;
     this.lastCheckpointId = undefined;
     this.emitLifecycle(callbacks, "sandbox_killed");
+    await this.rotateSession();
   }
 
   /**
@@ -1768,6 +1844,7 @@ export class Agent {
       this.previousSessionTag = this.sessionTag;
     }
     this.sessionTag = generateSessionTag(this.options.sessionTagPrefix || "evolve");
+    this.dashboardSession = undefined;
   }
 
   // ===========================================================================

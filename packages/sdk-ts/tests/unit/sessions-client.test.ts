@@ -139,6 +139,9 @@ async function testAcceptsConfigApiKey() {
     assert(typeof s.get === "function", "has get method");
     assert(typeof s.events === "function", "has events method");
     assert(typeof s.download === "function", "has download method");
+    assert(typeof s.getByTag === "function", "has getByTag method");
+    assert(typeof s.artifacts === "function", "has artifacts method");
+    assert(typeof s.downloadArtifact === "function", "has downloadArtifact method");
   } finally {
     restoreFetch();
   }
@@ -258,6 +261,10 @@ async function testListQueryParams() {
     assert(url.includes("sortField=cost"), "sort by cost field");
     assert(url.includes("sortDirection=desc"), "cost sort direction");
 
+    await s.list({ tag: "exact-tag" });
+    url = fetchCalls[fetchCalls.length - 1].url;
+    assert(url.includes("tag=exact-tag"), "exact tag filter");
+
     // Sort by oldest
     await s.list({ sort: "oldest" });
     url = fetchCalls[fetchCalls.length - 1].url;
@@ -308,6 +315,32 @@ async function testListPagination() {
     assertEqual(page.items[1].state, "live", "second item state");
     assertEqual(page.nextCursor, "cursor-xyz", "nextCursor");
     assertEqual(page.hasMore, true, "hasMore");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testGetByTag() {
+  console.log("\n--- getByTag() fetches newest exact-tag match ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/sessions", {
+      status: 200,
+      body: {
+        items: [
+          { id: "sess-tag", tag: "run-123", agent: "codex", provider: "e2b", isEnded: true, createdAt: "2026-01-01" },
+        ],
+        nextCursor: null,
+        hasMore: false,
+      },
+    });
+
+    const s = sessions({ apiKey: "test-key", dashboardUrl: "http://localhost:3000" });
+    const result = await s.getByTag("run-123");
+    const url = fetchCalls[fetchCalls.length - 1].url;
+
+    assert(url.includes("tag=run-123"), "exact tag forwarded");
+    assertEqual(result?.id, "sess-tag", "returns matching session");
   } finally {
     restoreFetch();
   }
@@ -382,6 +415,86 @@ async function testApiErrorHandling() {
     }
     assert(threw, "throws on 401");
   } finally {
+    restoreFetch();
+  }
+}
+
+async function testArtifacts() {
+  console.log("\n--- artifacts() maps durable session artifacts ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/sessions/sess-1/artifacts", {
+      status: 200,
+      body: {
+        items: [
+          {
+            id: "artifact-1",
+            sessionId: "sess-1",
+            type: "browser_recording",
+            status: "ready",
+            mimeType: "video/mp4",
+            sizeBytes: 1234,
+            createdAt: "2026-03-01T00:01:00.000Z",
+            readyAt: "2026-03-01T00:02:00.000Z",
+            replayUrl: "https://dash.example.com/replay",
+            downloadUrl: "https://dash.example.com/download",
+          },
+        ],
+      },
+    });
+
+    const s = sessions({ apiKey: "test-key", dashboardUrl: "http://localhost:3000" });
+    const artifacts = await s.artifacts("sess-1");
+
+    assertEqual(artifacts.length, 1, "returns one artifact");
+    assertEqual(artifacts[0].type, "browser_recording", "maps type");
+    assertEqual(artifacts[0].status, "ready", "maps status");
+    assertEqual(artifacts[0].replayUrl, "https://dash.example.com/replay", "maps replayUrl");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testDownloadArtifactStreaming() {
+  console.log("\n--- downloadArtifact() streams artifact to file ---");
+  installMockFetch();
+  const tmpDir = join(tmpdir(), `artifact-test-${Date.now()}`);
+  try {
+    setMockResponse("/api/sessions/sess-1/artifacts/artifact-1/download", {
+      status: 200,
+      body: null,
+      streamBody: "video-bytes",
+    });
+    setMockResponse("/api/sessions/sess-1/artifacts", {
+      status: 200,
+      body: {
+        items: [
+          {
+            id: "artifact-1",
+            sessionId: "sess-1",
+            type: "browser_recording",
+            status: "ready",
+            mimeType: "video/mp4",
+            sizeBytes: 11,
+            createdAt: "2026-03-01T00:01:00.000Z",
+            readyAt: "2026-03-01T00:02:00.000Z",
+          },
+        ],
+      },
+    });
+
+    const s = sessions({ apiKey: "test-key", dashboardUrl: "http://localhost:3000" });
+    const filePath = await s.downloadArtifact("sess-1", "artifact-1", { to: tmpDir });
+
+    assert(filePath.endsWith("browser_recording.mp4"), "filename uses artifact type");
+    const written = await readFile(filePath, "utf-8");
+    assertEqual(written, "video-bytes", "file content matches streamed artifact");
+    const dlCall = fetchCalls.find(c => c.url.includes("/artifact-1/download"));
+    assert(!!dlCall, "artifact download endpoint was called");
+    const headers = dlCall!.init?.headers as Record<string, string>;
+    assertEqual(headers?.Authorization, "Bearer test-key", "artifact download uses Bearer auth");
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
     restoreFetch();
   }
 }
@@ -466,11 +579,14 @@ async function main() {
   await testMapSessionInfoLiveState();
   await testListQueryParams();
   await testListPagination();
+  await testGetByTag();
   await testAuthHeader();
   await testEventsWithSince();
   await testApiErrorHandling();
   await testDownloadStreaming();
   await testDownloadNoBody();
+  await testArtifacts();
+  await testDownloadArtifactStreaming();
 
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

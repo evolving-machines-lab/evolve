@@ -3,8 +3,8 @@
 import asyncio
 from typing import Any, Dict, List, Literal, Optional
 
-from .results import SessionEvent, SessionInfo, SessionPage
-from .utils import _filter_none, _require_session_info
+from .results import SessionArtifactInfo, SessionEvent, SessionInfo, SessionPage
+from .utils import _filter_none, _require_session_artifact_info, _require_session_info
 
 
 class SessionsClient:
@@ -61,6 +61,7 @@ class SessionsClient:
         cursor: Optional[str] = None,
         state: Optional[Literal['live', 'ended', 'all']] = None,
         agent: Optional[str] = None,
+        tag: Optional[str] = None,
         tag_prefix: Optional[str] = None,
         sort: Optional[Literal['newest', 'oldest', 'cost']] = None,
     ) -> SessionPage:
@@ -71,6 +72,7 @@ class SessionsClient:
             cursor=cursor,
             state=state,
             agent=agent,
+            tag=tag,
             tag_prefix=tag_prefix,
             sort=sort,
         )
@@ -80,6 +82,12 @@ class SessionsClient:
             next_cursor=response.get('next_cursor'),
             has_more=bool(response.get('has_more', False)),
         )
+
+    async def get_by_tag(self, tag: str) -> Optional[SessionInfo]:
+        """Get the newest session matching an exact tag, or None."""
+        await self._ensure_ready()
+        response = await self._bridge.call('sessions_get_by_tag', self._build_params(tag=tag))
+        return _require_session_info(response) if response else None
 
     async def get(self, id: str) -> SessionInfo:
         """Get a single session's metadata by ID."""
@@ -107,6 +115,27 @@ class SessionsClient:
         """Download a session's raw JSONL trace file. Returns the local path."""
         await self._ensure_ready()
         response = await self._bridge.call('sessions_download', self._build_params(id=id, to=to))
+        return response['path']
+
+    async def artifacts(self, id: str) -> List[SessionArtifactInfo]:
+        """List durable artifacts attached to a historical session."""
+        await self._ensure_ready()
+        response = await self._bridge.call('sessions_artifacts', self._build_params(id=id))
+        return [_require_session_artifact_info(item) for item in response.get('items', [])]
+
+    async def download_artifact(
+        self,
+        id: str,
+        artifact_id: str,
+        *,
+        to: Optional[str] = None,
+    ) -> str:
+        """Download a durable session artifact. Returns the local path."""
+        await self._ensure_ready()
+        response = await self._bridge.call(
+            'sessions_download_artifact',
+            self._build_params(id=id, artifact_id=artifact_id, to=to),
+        )
         return response['path']
 
     async def close(self) -> None:

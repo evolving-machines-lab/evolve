@@ -251,6 +251,22 @@ class Bridge {
   }
 
   private emitLifecycleEvent(event: any) {
+    const artifacts = Array.isArray(event?.artifacts)
+      ? event.artifacts.map((artifact: any) => ({
+        id: artifact.id,
+        session_id: artifact.sessionId,
+        type: artifact.type,
+        status: artifact.status,
+        mime_type: artifact.mimeType ?? null,
+        size_bytes: artifact.sizeBytes ?? null,
+        created_at: artifact.createdAt,
+        ready_at: artifact.readyAt ?? null,
+        replay_url: artifact.replayUrl,
+        download_url: artifact.downloadUrl,
+        error: artifact.error,
+      }))
+      : undefined;
+
     void this.sendNotification({
       jsonrpc: '2.0',
       method: 'event',
@@ -261,7 +277,9 @@ class Bridge {
         agent: event?.agent,
         timestamp: event?.timestamp,
         reason: event?.reason,
+        ...(event?.session ? { session: { id: event.session.id, tag: event.session.tag } } : {}),
         ...(event?.browser ? { browser: { live_url: event.browser.liveUrl } } : {}),
+        ...(artifacts ? { artifacts } : {}),
       },
     }).catch(() => {});
   }

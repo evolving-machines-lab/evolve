@@ -4,6 +4,7 @@ import type {
   BrowserConfig,
   ManagedBrowserProvider,
   ManagedBrowserTransport,
+  SessionArtifactInfo,
   SkillName,
 } from "./types";
 import { DEFAULT_DASHBOARD_URL, DEFAULT_MANAGED_BROWSER_TRANSPORT } from "./constants";
@@ -47,8 +48,14 @@ export interface ManagedBrowserConfig {
 
 export interface ManagedBrowserSession {
   id: string;
+  sessionId?: string;
+  sessionTag?: string;
   cdpUrl: string;
   liveUrl: string;
+}
+
+export interface StopManagedBrowserSessionResult {
+  artifacts?: SessionArtifactInfo[];
 }
 
 export interface ManagedBrowserSandboxSetup {
@@ -168,6 +175,8 @@ export async function createManagedBrowserSession(
 
   return {
     id: data.id,
+    sessionId: typeof data.sessionId === "string" ? data.sessionId : undefined,
+    sessionTag: typeof data.sessionTag === "string" ? data.sessionTag : undefined,
     cdpUrl: data.cdpUrl,
     liveUrl: data.liveUrl,
   };
@@ -176,19 +185,22 @@ export async function createManagedBrowserSession(
 export async function stopManagedBrowserSession(
   config: ManagedBrowserConfig,
   session: ManagedBrowserSession
-): Promise<void> {
+): Promise<StopManagedBrowserSessionResult> {
   const response = await fetch(`${dashboardBaseUrl(config)}/api/browser-sessions/${encodeURIComponent(session.id)}`, {
     method: "DELETE",
     headers: {
       Authorization: `Bearer ${config.apiKey}`,
       accept: "application/json",
     },
-    signal: AbortSignal.timeout(15_000),
+    signal: AbortSignal.timeout(330_000),
   });
 
   if (!response.ok && response.status !== 404) {
     throw new Error(`Managed browser session stop failed (${response.status}): ${await readError(response)}`);
   }
+  if (response.status === 404) return {};
+  const data = await response.json().catch(() => ({})) as Partial<StopManagedBrowserSessionResult>;
+  return { artifacts: Array.isArray(data.artifacts) ? data.artifacts : undefined };
 }
 
 export type { ActionbookBrowserConfig, AgentBrowserConfig, BrowserConfig, ManagedBrowserProvider };
