@@ -108,6 +108,7 @@ export type {
   SkillName,
   BrowserProvider,
   ManagedBrowserProvider,
+  ManagedBrowserTransport,
   BrowserConfig,
   ActionbookBrowserConfig,
   AgentBrowserConfig,

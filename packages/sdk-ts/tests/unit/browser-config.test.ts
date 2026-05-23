@@ -193,6 +193,7 @@ async function testManagedActionbookDefault(): Promise<void> {
     const options = await getInitializedAgentOptions(kit);
     assert(options.skills.includes("actionbook"), "default browser adds actionbook skill");
     assertEqual(options.managedBrowser.provider, "actionbook", "managed browser tracks actionbook provider");
+    assertEqual(options.managedBrowser.transport, "managed-a", "managed browser uses default transport");
     assertEqual(options.managedBrowser.apiKey, "evolve-key", "managed browser uses Evolve API key");
     assertEqual(options.managedBrowser.dashboardUrl, "https://dashboard.test", "managed browser uses dashboard URL");
     assert(options.browserPrompt.includes("Actionbook is preconfigured"), "managed browser prompt added");
@@ -277,8 +278,39 @@ async function testManagedActionbookConfigUsesProxyOnly(): Promise<void> {
   assert(!config?.toLowerCase().includes("driver"), "Actionbook config does not expose provider name");
 }
 
+async function testManagedTransportOverride(): Promise<void> {
+  console.log("\n[12] remote managed browser accepts neutral transport override");
+
+  const kit = new Evolve()
+    .withAgent({ type: "claude", apiKey: "evolve-key" })
+    .withSandbox(fakeSandboxProvider)
+    .withBrowser({ provider: "actionbook", remote: true, transport: "managed-b" });
+
+  const options = await getInitializedAgentOptions(kit);
+  assertEqual(options.managedBrowser.transport, "managed-b", "managed browser stores neutral transport override");
+}
+
+async function testManagedTransportRejectsInvalidValue(): Promise<void> {
+  console.log("\n[13] remote managed browser rejects invalid transport override");
+
+  const kit = new Evolve()
+    .withAgent({ type: "claude", apiKey: "evolve-key" })
+    .withSandbox(fakeSandboxProvider)
+    .withBrowser({ provider: "actionbook", remote: true, transport: "raw-provider" } as any);
+
+  try {
+    await getInitializedAgentOptions(kit);
+    assert(false, "invalid managed transport should throw");
+  } catch (error) {
+    assert(
+      error instanceof Error && error.message.includes("Unsupported managed browser transport"),
+      "invalid transport error explains unsupported transport"
+    );
+  }
+}
+
 async function testManagedAgentBrowserConfigUsesProxyOnly(): Promise<void> {
-  console.log("\n[12] managed agent-browser config: sandbox sees only Evolve proxy endpoint");
+  console.log("\n[14] managed agent-browser config: sandbox sees only Evolve proxy endpoint");
 
   const kit = new Evolve()
     .withAgent({ type: "claude", apiKey: "evolve-key" })
@@ -289,6 +321,7 @@ async function testManagedAgentBrowserConfigUsesProxyOnly(): Promise<void> {
   const options = agent.options;
   assert(options.skills.includes("agent-browser"), "managed agent-browser adds agent-browser skill");
   assertEqual(options.managedBrowser.provider, "agent-browser", "managed browser tracks agent-browser provider");
+  assertEqual(options.managedBrowser.transport, "managed-a", "managed agent-browser uses default transport");
   assert(
     options.browserPrompt.includes("agent-browser CDP connection is already configured"),
     "managed agent-browser prompt added"
@@ -345,6 +378,8 @@ async function main(): Promise<void> {
   await testActionbookObjectRemoteDefaultsFalse();
   await testManagedActionbookRequiresGatewayMode();
   await testManagedActionbookConfigUsesProxyOnly();
+  await testManagedTransportOverride();
+  await testManagedTransportRejectsInvalidValue();
   await testManagedAgentBrowserConfigUsesProxyOnly();
 
   console.log("\n" + "=".repeat(70));

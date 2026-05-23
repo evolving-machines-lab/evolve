@@ -256,6 +256,8 @@ async function testManagedBrowserLifecycle(): Promise<void> {
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url === "https://dashboard.test/api/browser-sessions" && init?.method === "POST") {
+      const body = JSON.parse(String(init.body));
+      assertEqual(body.options?.transport, "managed-a", "managed browser create uses default transport");
       return new Response(JSON.stringify({ id: "browser_123", cdpUrl, liveUrl }), {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -361,6 +363,7 @@ async function testManagedAgentBrowserLifecycle(): Promise<void> {
     assertEqual(result.exitCode, 0, "run() with managed agent-browser returns success");
     assertEqual(createBody.provider, "actionbook", "managed browser create contract is preserved");
     assertEqual(createBody.options?.remote, true, "managed browser create uses remote option");
+    assertEqual(createBody.options?.transport, "managed-a", "managed browser create includes default transport");
     assertEqual(
       provider.createOptions?.envs?.AGENT_BROWSER_CONFIG,
       "/home/user/.agent-browser/config.json",

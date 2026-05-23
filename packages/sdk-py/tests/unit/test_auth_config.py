@@ -612,6 +612,17 @@ class TestBrowserConfig:
         assert params['browser'] == {'provider': 'actionbook', 'remote': True}
 
     @pytest.mark.asyncio
+    async def test_browser_transport_forwarded_to_bridge(self):
+        mock_bridge = MockBridgeManager()
+        with patch('evolve.agent.BridgeManager', return_value=mock_bridge):
+            kit = Evolve(browser={'provider': 'actionbook', 'remote': True, 'transport': 'managed-b'})
+            await kit._ensure_initialized()
+
+        initialize_calls = [c for c in mock_bridge.calls if c[0] == 'initialize']
+        params = initialize_calls[0][1]
+        assert params['browser'] == {'provider': 'actionbook', 'remote': True, 'transport': 'managed-b'}
+
+    @pytest.mark.asyncio
     async def test_agent_browser_forwarded_to_bridge(self):
         mock_bridge = MockBridgeManager()
         with patch('evolve.agent.BridgeManager', return_value=mock_bridge):
@@ -644,6 +655,10 @@ class TestBrowserConfig:
     def test_browser_use_remote_object_rejected(self):
         with pytest.raises(ValueError, match="browser provider must be 'actionbook' or 'agent-browser'"):
             Evolve(browser={'provider': 'browser-use', 'remote': True})  # type: ignore[arg-type]
+
+    def test_invalid_browser_transport_rejected(self):
+        with pytest.raises(ValueError, match="browser transport must be 'managed-a' or 'managed-b'"):
+            Evolve(browser={'provider': 'actionbook', 'remote': True, 'transport': 'provider-name'})  # type: ignore[arg-type]
 
 
 class TestPluginConfig:

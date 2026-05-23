@@ -471,6 +471,7 @@ export class Evolve extends EventEmitter {
             : BROWSER_AGENT_BROWSER_PROMPT;
           managedBrowser = {
             provider: browser.provider,
+            transport: browser.transport!,
             apiKey: agentConfig.apiKey,
             dashboardUrl: process.env.EVOLVE_DASHBOARD_URL || DEFAULT_DASHBOARD_URL,
           };

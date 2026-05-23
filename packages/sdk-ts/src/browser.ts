@@ -1,5 +1,12 @@
-import type { ActionbookBrowserConfig, AgentBrowserConfig, BrowserConfig, ManagedBrowserProvider, SkillName } from "./types";
-import { DEFAULT_DASHBOARD_URL } from "./constants";
+import type {
+  ActionbookBrowserConfig,
+  AgentBrowserConfig,
+  BrowserConfig,
+  ManagedBrowserProvider,
+  ManagedBrowserTransport,
+  SkillName,
+} from "./types";
+import { DEFAULT_DASHBOARD_URL, DEFAULT_MANAGED_BROWSER_TRANSPORT } from "./constants";
 
 export const ACTIONBOOK_BROWSER_SKILLS: SkillName[] = [
   "actionbook",
@@ -28,10 +35,12 @@ const MANAGED_BROWSER_CREATE_PROVIDER = "actionbook";
 export interface NormalizedBrowserConfig {
   provider: "browser-use" | ManagedBrowserProvider;
   managed: boolean;
+  transport?: ManagedBrowserTransport;
 }
 
 export interface ManagedBrowserConfig {
   provider: ManagedBrowserProvider;
+  transport: ManagedBrowserTransport;
   apiKey: string;
   dashboardUrl?: string;
 }
@@ -52,6 +61,10 @@ function isManagedProvider(provider: string): provider is ManagedBrowserProvider
   return provider === "actionbook" || provider === "agent-browser";
 }
 
+function isManagedTransport(transport: string): transport is ManagedBrowserTransport {
+  return transport === "managed-a" || transport === "managed-b";
+}
+
 function usesManagedRemote(browser: ActionbookBrowserConfig | AgentBrowserConfig): boolean {
   return browser.remote === true;
 }
@@ -67,7 +80,15 @@ export function normalizeBrowserConfig(browser: BrowserConfig): NormalizedBrowse
     throw new Error("Unsupported browser configuration");
   }
   if (isManagedProvider(browser.provider)) {
-    return { provider: browser.provider, managed: usesManagedRemote(browser) };
+    const managed = usesManagedRemote(browser);
+    if (!managed) return { provider: browser.provider, managed: false };
+
+    const transport = browser.transport ?? DEFAULT_MANAGED_BROWSER_TRANSPORT;
+    if (!isManagedTransport(transport)) {
+      throw new Error("Unsupported managed browser transport");
+    }
+
+    return { provider: browser.provider, managed: true, transport };
   }
   throw new Error("Unsupported browser configuration");
 }
@@ -131,7 +152,7 @@ export async function createManagedBrowserSession(
     body: JSON.stringify({
       provider: MANAGED_BROWSER_CREATE_PROVIDER,
       sessionTag,
-      options: { remote: true },
+      options: { remote: true, transport: config.transport },
     }),
     signal: AbortSignal.timeout(30_000),
   });

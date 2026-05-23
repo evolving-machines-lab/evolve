@@ -164,6 +164,16 @@ export const DEFAULT_WORKING_DIR = "/home/user/workspace";
  */
 export const DEFAULT_DASHBOARD_URL = process.env.EVOLVE_DASHBOARD_URL || "https://dashboard.evolvingmachines.ai";
 
+/**
+ * Default managed browser transport.
+ *
+ * Keep this neutral: Dashboard maps transport ids to internal browser CDP
+ * providers so sandbox config and public SDK docs do not expose backend names.
+ *
+ * @internal
+ */
+export const DEFAULT_MANAGED_BROWSER_TRANSPORT = "managed-a";
+
 // =============================================================================
 // SPEND TRACKING
 // =============================================================================
