@@ -200,7 +200,7 @@ export async function stopManagedBrowserSession(
       Authorization: `Bearer ${config.apiKey}`,
       accept: "application/json",
     },
-    signal: AbortSignal.timeout(330_000),
+    signal: AbortSignal.timeout(30_000),
   });
 
   if (!response.ok && response.status !== 404) {

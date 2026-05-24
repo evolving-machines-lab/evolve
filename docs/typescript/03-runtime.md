@@ -733,6 +733,7 @@ if (recording) {
 - `artifacts()` returns durable session artifacts such as browser recordings
 - `downloadArtifact()` streams one artifact to disk and returns the file path
 - Browser recording artifacts are served as Dashboard URLs; the storage backend is not exposed through the SDK
+- Recording capture can finish after `kill()` returns; poll `artifacts()` with the session id when you need replay availability
 
 Gateway-only — requires `EVOLVE_API_KEY`. In BYOK/direct mode, traces remain
 available as local JSONL files in `~/.evolve-sdk/observability/sessions/`.

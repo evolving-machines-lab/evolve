@@ -256,7 +256,7 @@ def on_lifecycle(event):
 evolve.on('lifecycle', on_lifecycle)
 ```
 
-For durable artifacts after the run, use `sessions().artifacts(session_id)`. Ready artifacts include Dashboard `replay_url` and `download_url` fields. The SDK exposes Dashboard URLs only; storage details remain server-side.
+Recording capture can finish after `kill()` returns. For durable artifacts after the run, use `sessions().artifacts(session_id)`. Ready artifacts include Dashboard `replay_url` and `download_url` fields. The SDK exposes Dashboard URLs only; storage details remain server-side.
 
 The same URL is also stored in trace metadata for replay or embedding after the trace exists:
 

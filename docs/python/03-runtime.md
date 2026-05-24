@@ -783,6 +783,7 @@ path = await session.download_artifact('session-id', 'artifact-id', to='./artifa
 - `artifacts()` returns durable session artifacts such as browser recordings
 - `download_artifact()` saves one artifact to disk and returns the path
 - Browser recording artifacts are served as Dashboard URLs; the storage backend is not exposed through the SDK
+- Recording capture can finish after `kill()` returns; poll `artifacts()` with the session id when you need replay availability
 
 This API is **gateway-only**. In BYOK/direct mode, historical traces remain
 available via local JSONL files in `~/.evolve-sdk/observability/sessions/`.

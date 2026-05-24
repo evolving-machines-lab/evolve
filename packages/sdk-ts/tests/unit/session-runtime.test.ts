@@ -271,22 +271,10 @@ async function testManagedBrowserLifecycle(): Promise<void> {
       });
     }
     if (url === "https://dashboard.test/api/browser-sessions/browser_123" && init?.method === "DELETE") {
-      return new Response(JSON.stringify({
-        artifacts: [
-          {
-            id: "artifact_123",
-            sessionId: "trace_session_123",
-            type: "browser_recording",
-            status: "ready",
-            mimeType: "video/mp4",
-            sizeBytes: 123,
-            createdAt: "2026-05-23T10:00:00.000Z",
-            readyAt: "2026-05-23T10:01:00.000Z",
-            replayUrl: "https://dashboard.test/sessions/trace_session_123/artifacts/artifact_123/replay?token=tok",
-            downloadUrl: "https://dashboard.test/api/sessions/trace_session_123/artifacts/artifact_123/download?token=tok",
-          },
-        ],
-      }), { status: 200, headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify({ ok: true, artifacts: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
     }
     if (url.endsWith("/api/sessions/ingest")) {
       return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
@@ -332,8 +320,7 @@ async function testManagedBrowserLifecycle(): Promise<void> {
   } finally {
     await kit.kill();
     const artifactUpdate = events.find((event) => event.reason === "browser_artifacts_updated");
-    assertEqual(artifactUpdate?.session?.id, "trace_session_123", "artifact lifecycle preserves dashboard session id");
-    assertEqual(artifactUpdate?.artifacts?.[0]?.id, "artifact_123", "artifact lifecycle exposes recording artifact");
+    assertEqual(artifactUpdate, undefined, "kill() does not wait for browser recording artifact capture");
     globalThis.fetch = previousFetch;
     if (previousDashboardUrl === undefined) {
       delete process.env.EVOLVE_DASHBOARD_URL;
