@@ -777,48 +777,8 @@ replay = await session.browser_replay(
   - Use `download_url` when users need the raw `.mp4` file
   - `suggested_start_seconds`, when present, is already applied to `replay_url`; keep the raw download unchanged
 
-End-to-end managed browser replay flow:
-
-```python
-from evolve import Evolve, sessions
-
-evolve = Evolve(
-    browser={'provider': 'agent-browser', 'remote': True},
-    session_tag_prefix='checkout-qa',
-)
-
-session_id = None
-
-try:
-    result = await evolve.run(
-        prompt='Open the app, test the checkout flow, and report issues.'
-    )
-
-    live_url = result.browser.get('live_url') if result.browser else None
-    session_id = result.session_id
-
-    if live_url:
-        show_live_browser(live_url)
-finally:
-    await evolve.kill()  # starts replay processing
-
-if not session_id:
-    raise RuntimeError('Missing dashboard session id')
-
-async with sessions() as session:
-    replay = await session.browser_replay(
-        session_id,
-        timeout_ms=600_000,
-        interval_ms=5_000,
-    )
-
-show_replay(replay.replay_url)
-save_download_link(replay.download_url)
-```
-
-Replay processing starts when the managed browser is cleaned up, usually during
-`kill()` or session cleanup. If the client times out, processing continues
-server-side; call `browser_replay()` again later to fetch the same replay.
+For the full browser setup, live-view, cleanup, and replay flow, see
+[Configuration → Browser Automation](./02-configuration.md#browser-automation).
 
 This API is **gateway-only**. In BYOK/direct mode, historical traces remain
 available via local JSONL files in `~/.evolve-sdk/observability/sessions/`.
