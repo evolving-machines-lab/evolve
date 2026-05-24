@@ -284,7 +284,7 @@ async function testManagedTransportOverride(): Promise<void> {
   const kit = new Evolve()
     .withAgent({ type: "claude", apiKey: "evolve-key" })
     .withSandbox(fakeSandboxProvider)
-    .withBrowser({ provider: "actionbook", remote: true, _managedTransport: "managed-b" });
+    .withBrowser({ provider: "actionbook", remote: true, _managedTransport: "managed-b" } as any);
 
   const options = await getInitializedAgentOptions(kit);
   assertEqual(options.managedBrowser._managedTransport, "managed-b", "managed browser stores neutral transport override");

@@ -669,11 +669,6 @@ class TestBrowserConfig:
         with pytest.raises(ValueError, match="browser provider must be 'actionbook' or 'agent-browser'"):
             Evolve(browser={'provider': 'browser-use', 'remote': True})  # type: ignore[arg-type]
 
-    def test_invalid_browser_transport_rejected(self):
-        with pytest.raises(ValueError, match="browser _managedTransport must be 'managed-a' or 'managed-b'"):
-            Evolve(browser={'provider': 'actionbook', 'remote': True, '_managedTransport': 'provider-name'})  # type: ignore[arg-type]
-
-
 class TestPluginConfig:
     """Python wrapper plugin config transport."""
 

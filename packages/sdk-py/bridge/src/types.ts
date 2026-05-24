@@ -81,8 +81,7 @@ export interface InitializeParams {
   browser?: 'browser-use' | 'actionbook' | 'agent-browser' | {
     provider: 'actionbook' | 'agent-browser';
     remote?: boolean;
-    _managedTransport?: 'managed-a' | 'managed-b';
-  };
+  } & Record<string, unknown>;
   plugins?: AgentPluginConfig[];
   skills?: string[];
   secrets?: Record<string, string>;

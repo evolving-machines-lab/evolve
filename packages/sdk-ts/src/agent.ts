@@ -56,6 +56,7 @@ import {
   createManagedBrowserSession,
   getManagedBrowserSandboxSetup,
   stopManagedBrowserSession,
+  type ManagedBrowserConfig,
   type ManagedBrowserSession,
 } from "./browser";
 
@@ -546,7 +547,10 @@ export class Agent {
 
   private async ensureManagedBrowserSession(callbacks?: StreamCallbacks): Promise<void> {
     if (this.managedBrowserSession || !this.options.managedBrowser) return;
-    this.managedBrowserSession = await createManagedBrowserSession(this.options.managedBrowser, this.sessionTag);
+    this.managedBrowserSession = await createManagedBrowserSession(
+      this.options.managedBrowser as ManagedBrowserConfig,
+      this.sessionTag
+    );
     if (!this.dashboardSession && this.managedBrowserSession.sessionId && this.managedBrowserSession.sessionTag) {
       this.dashboardSession = {
         id: this.managedBrowserSession.sessionId,
@@ -603,7 +607,7 @@ export class Agent {
     const session = this.managedBrowserSession;
     this.managedBrowserSession = undefined;
     try {
-      const result = await stopManagedBrowserSession(this.options.managedBrowser, session);
+      const result = await stopManagedBrowserSession(this.options.managedBrowser as ManagedBrowserConfig, session);
       this.emitArtifactLifecycle(callbacks, result.artifacts ?? []);
     } catch (error) {
       console.warn(`[Evolve] Managed browser cleanup failed: ${(error as Error).message}`);

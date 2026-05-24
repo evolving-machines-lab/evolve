@@ -183,9 +183,6 @@ class Evolve:
             provider = browser.get('provider')
             if provider not in ('actionbook', 'agent-browser'):
                 raise ValueError("browser provider must be 'actionbook' or 'agent-browser'")
-            transport = browser.get('_managedTransport')
-            if transport is not None and transport not in ('managed-a', 'managed-b'):
-                raise ValueError("browser _managedTransport must be 'managed-a' or 'managed-b'")
             return dict(browser)
         raise ValueError("browser must be 'browser-use', 'actionbook', 'agent-browser', a managed browser config dict, or None")
 

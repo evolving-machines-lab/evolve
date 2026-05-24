@@ -151,8 +151,6 @@ export interface ActionbookBrowserConfig {
   provider: "actionbook";
   /** Use Evolve-managed remote browser transport. Defaults to false for object config. */
   remote?: boolean;
-  /** @internal Evolve-managed browser backend selector. */
-  _managedTransport?: ManagedBrowserTransport;
 }
 
 /** Agent-browser browser configuration. */
@@ -160,8 +158,6 @@ export interface AgentBrowserConfig {
   provider: "agent-browser";
   /** Use Evolve-managed remote browser transport. Defaults to false for object config. */
   remote?: boolean;
-  /** @internal Evolve-managed browser backend selector. */
-  _managedTransport?: ManagedBrowserTransport;
 }
 
 /** Browser automation configuration. */
@@ -377,7 +373,6 @@ export interface AgentOptions {
   /** Evolve-managed browser transport for browser automation */
   managedBrowser?: {
     provider: ManagedBrowserProvider;
-    _managedTransport: ManagedBrowserTransport;
     apiKey: string;
     dashboardUrl?: string;
   };

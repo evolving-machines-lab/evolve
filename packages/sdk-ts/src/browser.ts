@@ -8,7 +8,10 @@ import type {
 } from "./types";
 import { DEFAULT_DASHBOARD_URL, DEFAULT_MANAGED_BROWSER_TRANSPORT } from "./constants";
 
-type ManagedBrowserTransport = NonNullable<ActionbookBrowserConfig["_managedTransport"]>;
+type ManagedBrowserTransport = "managed-a" | "managed-b";
+type BrowserConfigWithInternalTransport = (ActionbookBrowserConfig | AgentBrowserConfig) & {
+  _managedTransport?: unknown;
+};
 
 export const ACTIONBOOK_BROWSER_SKILLS: SkillName[] = [
   "actionbook",
@@ -91,7 +94,11 @@ export function normalizeBrowserConfig(browser: BrowserConfig): NormalizedBrowse
     const managed = usesManagedRemote(browser);
     if (!managed) return { provider: browser.provider, managed: false };
 
-    const transport = browser._managedTransport ?? DEFAULT_MANAGED_BROWSER_TRANSPORT;
+    const requestedTransport = (browser as BrowserConfigWithInternalTransport)._managedTransport;
+    const transport = requestedTransport === undefined ? DEFAULT_MANAGED_BROWSER_TRANSPORT : requestedTransport;
+    if (typeof transport !== "string") {
+      throw new Error("Unsupported managed browser transport");
+    }
     if (!isManagedTransport(transport)) {
       throw new Error("Unsupported managed browser transport");
     }

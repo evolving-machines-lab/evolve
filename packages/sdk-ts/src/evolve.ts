@@ -39,7 +39,7 @@ import { getGatewayMcpServers, DEFAULT_DASHBOARD_URL } from "./constants";
 import { resolveStorageConfig, createBoundStorageClient } from "./storage";
 import type { CheckpointInfo, StorageClient } from "./types";
 import { BROWSER_ACTIONBOOK_PROMPT, BROWSER_AGENT_BROWSER_PROMPT } from "./prompts";
-import { mergeBrowserSkills, normalizeBrowserConfig } from "./browser";
+import { mergeBrowserSkills, normalizeBrowserConfig, type ManagedBrowserConfig } from "./browser";
 
 // =============================================================================
 // TYPES
@@ -443,7 +443,7 @@ export class Evolve extends EventEmitter {
     // Gateway browser MCP is opt-in; user config still takes precedence.
     let browserMcpServers: Record<string, McpServerConfig> = {};
     let browserPrompt: string | undefined;
-    let managedBrowser: AgentOptions["managedBrowser"] | undefined;
+    let managedBrowser: ManagedBrowserConfig | undefined;
     let skills = this.config.skills;
 
     if (this.config.browser) {
