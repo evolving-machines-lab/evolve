@@ -77,7 +77,7 @@ evolve.on("lifecycle", (event: LifecycleEvent) => {
 | `stdout` | `string` | Raw JSONL output |
 | `stderr` | `string` | Error output |
 
-For full type definitions, all event interfaces, browser-use detection, and UI integration example, see [Streaming Events](./04-streaming.md).
+For full type definitions, all event interfaces, legacy `browser-use` detection, and UI integration example, see [Streaming Events](./04-streaming.md).
 
 ### Upload: Local → Sandbox
 
