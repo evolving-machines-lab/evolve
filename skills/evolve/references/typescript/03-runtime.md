@@ -77,7 +77,7 @@ evolve.on("lifecycle", (event: LifecycleEvent) => {
 | `stdout` | `string` | Raw JSONL output |
 | `stderr` | `string` | Error output |
 
-For full type definitions, all event interfaces, legacy `browser-use` detection, and UI integration example, see [Streaming Events](./04-streaming.md).
+For full type definitions, all event interfaces, browser live view, replay, and UI integration examples, see [Streaming Events](./04-streaming.md).
 
 ### Upload: Local → Sandbox
 
@@ -737,6 +737,42 @@ const replay = await session.browserReplay(info.id, {
   timeoutMs: 600_000, // optional; default 10 minutes
   intervalMs: 5_000,  // optional; default 5 seconds
 });
+```
+
+End-to-end managed browser replay flow:
+
+```ts
+import { Evolve, sessions } from "@evolvingmachines/sdk";
+
+const evolve = new Evolve()
+    .withBrowser()
+    .withSessionTagPrefix("checkout-qa");
+
+let sessionId: string | undefined;
+
+try {
+    const result = await evolve.run({
+        prompt: "Open the app, test the checkout flow, and report issues.",
+    });
+
+    const liveUrl = result.browser?.liveUrl;       // show while the browser is live
+    sessionId = result.sessionId;                  // use later for traces/replay
+
+    if (liveUrl) showLiveBrowser(liveUrl);
+} finally {
+    await evolve.kill();                           // starts replay processing
+}
+
+if (!sessionId) throw new Error("Missing dashboard session id");
+
+const session = sessions();
+const replay = await session.browserReplay(sessionId, {
+    timeoutMs: 600_000,
+    intervalMs: 5_000,
+});
+
+showReplay(replay.replayUrl);                      // embeddable playback URL
+saveDownloadLink(replay.downloadUrl);              // raw .mp4 download URL
 ```
 
 Replay processing starts when the managed browser is cleaned up, usually during

@@ -101,7 +101,7 @@ See [Streaming Events](./04-streaming.md) for all event types, type definitions,
 When using `EVOLVE_API_KEY`:
 
 - **Tracing:** Automatic tracing and agent analytics at [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) for observability and replay — no extra setup needed. Use `session_tag_prefix` to label sessions for easy filtering.
-- **Browser Automation:** Use `browser={'provider': 'agent-browser', 'remote': True}` for the default and recommended managed browser path with dashboard live view and replay. `browser='browser-use'` remains available as a legacy fallback for now, but it is not needed for new browser automation and may be removed as the default browser path gets stronger.
+- **Browser Automation:** Use `browser={'provider': 'agent-browser', 'remote': True}` for the default and recommended managed browser path with dashboard live view and replay.
 - **Checkpointing:** Snapshot sandbox state to Evolve-managed storage with `storage=StorageConfig()` — no S3 credentials needed. See [Storage & Checkpointing](./03-runtime.md#storage--checkpointing).
 
 ---
@@ -112,7 +112,7 @@ When using `EVOLVE_API_KEY`:
 |---|---------|---------------|
 | Setup | `EVOLVE_API_KEY` | Model provider keys + [`E2B_API_KEY`](https://e2b.dev) |
 | Observability | [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) | `~/.evolve-sdk/observability/` |
-| Browser | `browser={'provider': 'agent-browser', 'remote': True}` is the default and recommended managed browser path with live view and replay. `browser='browser-use'` remains available as a legacy fallback for now. | Via skills or MCP |
+| Browser | `browser={'provider': 'agent-browser', 'remote': True}` is the default and recommended managed browser path with live view and replay. | Self-managed browser runtime; no managed live/replay |
 | Billing | Evolving Machines | Your provider accounts |
 
 ---

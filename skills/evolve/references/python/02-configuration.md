@@ -279,10 +279,17 @@ Evolve(browser={'provider': 'agent-browser', 'remote': True})  # managed browser
 
 Evolve automatically configures the browser runtime. In Gateway mode, the managed browser emits a live URL through lifecycle events and provides replay through the sessions API.
 
-`browser-use` remains available only as a legacy fallback for now:
+Use the default managed remote browser unless you have a reason not to:
 
 ```python
-Evolve(browser='browser-use')  # legacy fallback: parse MCP output, no managed replay
+Evolve(browser={'provider': 'agent-browser', 'remote': True})
+# recommended: managed remote browser
+
+Evolve(browser={'provider': 'agent-browser', 'remote': False})
+# local agent-browser, no managed live/replay
+
+Evolve(browser=None)
+# disable browser automation
 ```
 
 ### Agent Plugins

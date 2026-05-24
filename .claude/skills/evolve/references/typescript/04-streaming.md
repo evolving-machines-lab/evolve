@@ -226,16 +226,7 @@ type ToolKind =
   | "think"       // Task (subagent)
   | "fetch"       // WebFetch, WebSearch
   | "switch_mode" // ExitPlanMode
-  | "other";      // MCP tools (including `browser-use`), unknown
-```
-
-> **Important:** `browser-use` MCP tools have `kind: "other"`, not `"browser"` or `"fetch"`. To identify browser tools in your UI, check if `title` starts with `"browser-use:"` (e.g., `"browser-use: browser_task"`, `"browser-use: monitor_task"`).
-
-```typescript
-// Helper to detect `browser-use` tools
-function isBrowserUseTool(title?: string): boolean {
-  return title?.toLowerCase().includes('browser-use') ?? false;
-}
+  | "other";      // Unknown or third-party MCP tools
 ```
 
 ### ToolCallStatus
@@ -272,14 +263,14 @@ interface DiffContent {
 
 ## Browser Automation Streaming
 
-Browser automation URLs are parsed differently depending on which browser option you enable:
+Use `.withBrowser()` for browser automation. Evolve emits live browser metadata through lifecycle events and returns the same browser metadata on `run()` results.
 
-Use `.withBrowser()` for browser automation UX. `browser-use` remains supported as a legacy fallback for now, but it requires parsing tool output and does not provide managed replay.
-
-| Option | Enable | Parse from stream |
-|--------|--------|-------------------|
-| Recommended managed browser | `.withBrowser()` | `lifecycle` event with `reason === "browser_ready"`; read `event.browser.liveUrl` and `event.browser.sessionId` |
-| Legacy `browser-use` fallback | `.withBrowser("browser-use")` | Parse embedded `live_url` and `screenshot_url` JSON fields from `tool_call_update` content |
+| Need | API | Use |
+|------|-----|-----|
+| Show live browser during a run | `lifecycle` event with `reason === "browser_ready"` | `event.browser.liveUrl` |
+| Save the browser/session id | same lifecycle event | `event.browser.sessionId` |
+| Show live browser after `run()` returns | `RunResult.browser` | `result.browser?.liveUrl` |
+| Fetch replay after cleanup | `sessions().browserReplay(sessionId)` | `replay.replayUrl`, `replay.downloadUrl` |
 
 ### Managed Browser
 
@@ -314,70 +305,10 @@ After browser cleanup, pass `event.browser.sessionId` or `result.sessionId` to
 
 ---
 
-## BrowserUseResponse
-
-`browser-use` is available when enabled with `.withBrowser("browser-use")` in Gateway mode. Prefer `.withBrowser()` for new browser automation; use `browser-use` only as a legacy fallback, because `browser-use` responses embed a **JSON string** inside `ToolCallUpdate.content[].content.text`. You must extract and parse it.
-
-> **Detection:** `browser-use` tools arrive with `kind: "other"` and `title` like `"browser-use: browser_task"` or `"browser-use: monitor_task"`. Use the `isBrowserUseTool(title)` helper above to identify them, then extract URLs from the tool output.
-
-```typescript
-interface BrowserUseResponse {
-  task_id?: string;                           // Task ID for monitoring
-  session_id?: string;                        // Browser session ID
-  live_url?: string;                          // VNC live view URL
-  screenshot_url?: string;                    // Final screenshot URL
-  steps?: Array<{                             // Per-step screenshots
-    step_number: number;
-    screenshot_url?: string;
-    url?: string;                             // Page URL at this step
-    memory?: string;                          // Agent's reasoning
-  }>;
-  is_success?: boolean | null;                // Task completion status
-  task_output?: string | null;                // Final task result
-}
-```
-
-**Extraction function** (use regex first for speed and malformed JSON tolerance, then JSON.parse fallback for nested access):
-
-```typescript
-function extractBrowserUseUrls(text: string): { liveUrl?: string; screenshotUrl?: string } {
-  let liveUrl: string | undefined;
-  let screenshotUrl: string | undefined;
-
-  // 1. Regex extraction (fast, handles malformed JSON)
-  const liveMatch = text.match(/"live_url"\s*:\s*"([^"]+)"/);
-  if (liveMatch) liveUrl = liveMatch[1];
-
-  const screenshotMatch = text.match(/"screenshot_url"\s*:\s*"([^"]+)"/);
-  if (screenshotMatch) screenshotUrl = screenshotMatch[1];
-
-  // 2. JSON.parse fallback (for steps[].screenshot_url)
-  if (!liveUrl || !screenshotUrl) {
-    try {
-      const parsed = JSON.parse(text) as BrowserUseResponse;
-      if (!liveUrl) liveUrl = parsed.live_url;
-      if (!screenshotUrl) screenshotUrl = parsed.screenshot_url ?? parsed.steps?.[parsed.steps.length - 1]?.screenshot_url;
-    } catch {}
-  }
-
-  return { liveUrl, screenshotUrl };
-}
-```
-
----
-
 ## UI Integration Example
 
 ```typescript
 import type { OutputEvent } from "@evolvingmachines/sdk";
-
-// Helper to detect `browser-use` tools (they have kind: "other")
-function isBrowserUseTool(title?: string): boolean {
-  return title?.toLowerCase().includes('browser-use') ?? false;
-}
-
-// Track tool titles for browser detection
-const toolTitles = new Map<string, string>();
 
 function handleEvent(event: OutputEvent): void {
   const { update } = event;
@@ -400,39 +331,20 @@ function handleEvent(event: OutputEvent): void {
       break;
 
     case "tool_call":
-      // Store title for `browser-use` detection on updates
-      toolTitles.set(update.toolCallId, update.title);
-
-      // Determine effective kind for UI (`browser-use` has kind: "other")
-      const effectiveKind = isBrowserUseTool(update.title) ? "browser" : update.kind;
-
       ui.addTool({
         id: update.toolCallId,
         title: update.title,
-        kind: effectiveKind,  // Use "browser" for `browser-use` tools
+        kind: update.kind,
         status: update.status,
         locations: update.locations,
       });
       break;
 
     case "tool_call_update":
-      // 1. Always update tool card with result
       ui.updateTool(update.toolCallId, {
         status: update.status,
         content: update.content,
       });
-
-      // 2. Extract `browser-use` URLs if this is a `browser-use` tool
-      const title = toolTitles.get(update.toolCallId);
-      if (isBrowserUseTool(title)) {
-        for (const c of update.content ?? []) {
-          if (c.type === "content" && c.content?.type === "text") {
-            const urls = extractBrowserUseUrls(c.content.text);
-            if (urls.liveUrl) ui.showLiveViewButton(urls.liveUrl);
-            if (urls.screenshotUrl) ui.showScreenshot(urls.screenshotUrl);
-          }
-        }
-      }
       break;
 
     case "plan":
@@ -455,6 +367,5 @@ evolve.on("content", handleEvent);
 5. **Support images** — `ContentBlock` includes `ImageContent`
 6. **Use `kind` for icons** — Categorize tools visually (read, edit, execute, etc.)
 7. **Track `locations`** — Show affected file paths in UI
-8. **Detect `browser-use` by title** — `browser-use` MCP tools have `kind: "other"`, check `title.includes("browser-use")` to identify them
 
 ---

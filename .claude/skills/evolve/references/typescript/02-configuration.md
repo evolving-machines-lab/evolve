@@ -283,10 +283,20 @@ new Evolve().withBrowser(); // managed browser with dashboard live view and repl
 
 Evolve automatically configures the browser runtime. In Gateway mode, the managed browser emits a live URL through lifecycle events and provides replay through the sessions API.
 
-`browser-use` remains available only as a legacy fallback for now:
+Use the default unless you have a reason not to:
 
 ```ts
-new Evolve().withBrowser("browser-use"); // legacy fallback: parse MCP output, no managed replay
+new Evolve().withBrowser();
+// recommended: managed remote browser
+
+new Evolve().withBrowser({
+    provider: "agent-browser",
+    remote: false,
+});
+// local agent-browser, no managed live/replay
+
+new Evolve().withBrowser(false);
+// disable browser automation
 ```
 
 ### Agent Plugins
