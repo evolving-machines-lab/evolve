@@ -275,40 +275,19 @@ await evolve.run({ prompt: "Browse Hacker News top 5 articles and create a slide
 
 ### Browser Automation
 
-Browser automation is opt-in. `.withBrowser()` defaults to remote managed agent-browser with dashboard live view.
-
-- Use the default agent-browser path for most browser, QA, dogfooding, and website automation tasks.
-- Use remote managed mode for real websites because Evolve provides managed browser infrastructure with extra stealth capabilities.
-- Prefer `.withBrowser()` for browser automation UX. `browser-use` is an advanced MCP option and is inferior because live/screenshot URLs must be parsed from MCP tool output and managed replay is not available.
-- Use the provider string form for local dogfooding or local app testing.
-- Object configs default `remote` to `false` unless you set `remote: true`.
-- browser-use requires Gateway mode because Evolve injects the MCP server.
-
-| Option | Configure | What you get |
-|--------|-----------|--------------|
-| Remote managed agent-browser (default) | `.withBrowser()` or `.withBrowser({ provider: "agent-browser", remote: true })` | agent-browser skill, Evolve-managed remote browser transport, dashboard live view |
-| Remote managed Actionbook | `.withBrowser({ provider: "actionbook", remote: true })` | Actionbook skills, Evolve-managed remote browser transport, dashboard live view |
-| browser-use MCP | `.withBrowser("browser-use")` | Advanced MCP option; live/screenshot URLs must be parsed from browser-use tool responses, and managed replay is not available |
-
-Use `.withBrowser("actionbook")` or `.withBrowser("agent-browser")` to install only that provider's skills without managed live browser transport.
+Browser automation is opt-in. Use `.withBrowser()` for browser, QA, dogfooding, and website automation tasks.
 
 ```ts
-new Evolve().withBrowser(); // remote managed agent-browser with live view
-new Evolve().withBrowser({ provider: "agent-browser", remote: true }); // explicit default
-new Evolve().withBrowser({ provider: "actionbook", remote: true }); // remote managed Actionbook with live view
-new Evolve().withBrowser("actionbook"); // Actionbook skills only
-new Evolve().withBrowser("agent-browser"); // agent-browser skills only
-new Evolve().withBrowser("browser-use"); // browser-use MCP
+new Evolve().withBrowser(); // managed browser with dashboard live view and replay
 ```
 
-| Skill | Description | Source |
-|-------|-------------|--------|
-| `actionbook` | Browser action engine for web automation | [skills/actionbook](https://github.com/evolving-machines-lab/evolve/tree/main/skills/actionbook) |
-| `active-research` | Browser-enabled research workflows | [skills/active-research](https://github.com/evolving-machines-lab/evolve/tree/main/skills/active-research) |
-| `extract` | Browser data extraction workflows | [skills/extract](https://github.com/evolving-machines-lab/evolve/tree/main/skills/extract) |
-| `agent-browser` | CLI-based headless browser automation for AI agents | [skills/agent-browser](https://github.com/evolving-machines-lab/evolve/tree/main/skills/agent-browser) |
-| `dev-browser` | Browser automation with persistent page state | [skills/dev-browser](https://github.com/evolving-machines-lab/evolve/tree/main/skills/dev-browser) |
-| `webapp-testing` | Test web applications | [skills/webapp-testing](https://github.com/evolving-machines-lab/evolve/tree/main/skills/webapp-testing) |
+Evolve automatically configures the browser runtime. In Gateway mode, the managed browser emits a live URL through lifecycle events and provides replay through the sessions API.
+
+`browser-use` remains available only as a legacy fallback for now:
+
+```ts
+new Evolve().withBrowser("browser-use"); // legacy fallback: parse MCP output, no managed replay
+```
 
 ### Agent Plugins
 

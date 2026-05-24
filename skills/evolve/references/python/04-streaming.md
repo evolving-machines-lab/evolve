@@ -120,15 +120,15 @@ ToolKind = Literal[
     "think",       # Task (subagent)
     "fetch",       # WebFetch, WebSearch
     "switch_mode", # ExitPlanMode
-    "other",       # MCP tools (including browser-use), unknown
+    "other",       # MCP tools (including `browser-use`), unknown
 ]
 
-# IMPORTANT: Browser-use MCP tools have kind="other", not "browser" or "fetch".
+# IMPORTANT: `browser-use` MCP tools have kind="other", not "browser" or "fetch".
 # To identify browser tools in your UI, check if title starts with "browser-use:"
 # (e.g., "browser-use: browser_task", "browser-use: monitor_task")
 
 def is_browser_use_tool(title: str | None) -> bool:
-    """Helper to detect browser-use tools."""
+    """Helper to detect `browser-use` tools."""
     return "browser-use" in (title or "").lower()
 
 ToolCallStatus = Literal["pending", "in_progress", "completed", "failed"]
@@ -220,15 +220,14 @@ class BrowserUseResponse(TypedDict):
 
 Browser automation URLs are parsed differently depending on which browser option you enable:
 
-Use remote managed agent-browser for browser automation UX. `browser-use` remains supported for advanced MCP workflows, but it requires parsing tool output and does not provide managed replay.
+Use the recommended managed browser config for browser automation UX. `browser-use` remains supported as a legacy fallback for now, but it requires parsing tool output and does not provide managed replay.
 
 | Option | Enable | Parse from stream |
 |--------|--------|-------------------|
-| Remote managed agent-browser | `browser={'provider': 'agent-browser', 'remote': True}` | `lifecycle` event with `reason == "browser_ready"`; read `event["browser"]["live_url"]` and `event["browser"]["session_id"]` |
-| Remote managed Actionbook | `browser={'provider': 'actionbook', 'remote': True}` | `lifecycle` event with `reason == "browser_ready"`; read `event["browser"]["live_url"]` and `event["browser"]["session_id"]` |
-| browser-use MCP | `browser='browser-use'` | Advanced MCP option; parse embedded `live_url` and `screenshot_url` JSON fields from `tool_call_update` content |
+| Recommended managed browser | `browser={'provider': 'agent-browser', 'remote': True}` | `lifecycle` event with `reason == "browser_ready"`; read `event["browser"]["live_url"]` and `event["browser"]["session_id"]` |
+| Legacy `browser-use` fallback | `browser='browser-use'` | Parse embedded `live_url` and `screenshot_url` JSON fields from `tool_call_update` content |
 
-### Remote managed Actionbook and agent-browser
+### Managed Browser
 
 Managed browser sessions emit the live-view URL as soon as the browser is ready:
 
@@ -245,7 +244,6 @@ The same URL is also stored in trace metadata for replay or embedding after the 
 
 ```python
 TraceMetadata = {
-    "browser_provider": "actionbook | agent-browser",
     "browser_session_id": "...",
     "dashboard_session_id": "...",
     "browser_session_tag": "...",
@@ -261,9 +259,9 @@ UI display. After browser cleanup, pass `event["browser"]["session_id"]` or
 
 ## BrowserUseResponse Extraction
 
-browser-use is available when enabled with `browser='browser-use'` in Gateway mode. Prefer remote managed agent-browser unless you specifically need browser-use MCP, because browser-use responses embed a **JSON string** inside `ToolCallUpdate["content"][].content.text`. You must extract and parse it.
+`browser-use` is available when enabled with `browser='browser-use'` in Gateway mode. Prefer remote managed agent-browser for new browser automation; use `browser-use` only as a legacy fallback, because `browser-use` responses embed a **JSON string** inside `ToolCallUpdate["content"][].content.text`. You must extract and parse it.
 
-> **Detection:** Browser-use tools arrive with `kind="other"` and `title` like `"browser-use: browser_task"` or `"browser-use: monitor_task"`. Use `is_browser_use_tool(title)` to identify them, then extract URLs from the tool output.
+> **Detection:** `browser-use` tools arrive with `kind="other"` and `title` like `"browser-use: browser_task"` or `"browser-use: monitor_task"`. Use `is_browser_use_tool(title)` to identify them, then extract URLs from the tool output.
 
 **Extraction function** (use regex first for speed and malformed JSON tolerance, then JSON fallback):
 
@@ -273,7 +271,7 @@ import json
 from typing import Optional
 
 def extract_browser_use_urls(text: str) -> dict[str, Optional[str]]:
-    """Extract browser-use URLs from tool response text.
+    """Extract `browser-use` URLs from tool response text.
 
     Returns:
         {"live_url": str | None, "screenshot_url": str | None}
@@ -382,7 +380,7 @@ def handle_event(event: OutputEvent) -> None:
             content=update_data.get("content"),
         )
 
-        # 2. Extract browser-use URLs if present (first-party integration)
+        # 2. Extract `browser-use` URLs if present (first-party integration)
         for c in update_data.get("content") or []:
             if c.get("type") == "content":
                 inner = c.get("content", {})
@@ -412,6 +410,6 @@ evolve.on("content", handle_event)
 6. **Use `kind` for icons** — Categorize tools visually (read, edit, execute, etc.)
 7. **Track `locations`** — Show affected file paths in UI
 8. **Use `cast()` for narrowing** — TypedDict unions need explicit casting after checking `sessionUpdate`
-9. **Detect browser-use by title** — Browser-use MCP tools have `kind="other"`, check `"browser-use" in title.lower()` to identify them
+9. **Detect `browser-use` by title** — `browser-use` MCP tools have `kind="other"`, check `"browser-use" in title.lower()` to identify them
 
 ---

@@ -238,11 +238,11 @@ export class Evolve extends EventEmitter {
    * Enable browser automation.
    *
    * .withBrowser() defaults to agent-browser with Evolve-managed remote browser
-   * transport in gateway mode. Pass "agent-browser" or "actionbook" for local
-   * skills-only mode, or "browser-use" to use the browser-use MCP server.
+   * transport in gateway mode. Pass "browser-use" only as a legacy `browser-use`
+   * MCP fallback.
    *
    * @example
-   * kit.withBrowser("browser-use") // browser-use MCP provider
+   * kit.withBrowser("browser-use") // legacy `browser-use` MCP fallback
    *
    * @example
    * kit.withBrowser() // defaults to remote managed agent-browser

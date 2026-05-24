@@ -82,7 +82,7 @@ evolve.on('lifecycle', lambda event: print(event['reason'], event['sandbox']))
 | `stdout` | `str` | Raw JSONL output |
 | `stderr` | `str` | Error output |
 
-For full type definitions, all event interfaces, browser-use detection, and UI integration example, see [Streaming Events](./04-streaming.md).
+For full type definitions, all event interfaces, legacy `browser-use` detection, and UI integration example, see [Streaming Events](./04-streaming.md).
 
 ### Upload: Local → Sandbox
 

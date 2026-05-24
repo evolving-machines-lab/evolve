@@ -226,13 +226,13 @@ type ToolKind =
   | "think"       // Task (subagent)
   | "fetch"       // WebFetch, WebSearch
   | "switch_mode" // ExitPlanMode
-  | "other";      // MCP tools (including browser-use), unknown
+  | "other";      // MCP tools (including `browser-use`), unknown
 ```
 
-> **Important:** Browser-use MCP tools have `kind: "other"`, not `"browser"` or `"fetch"`. To identify browser tools in your UI, check if `title` starts with `"browser-use:"` (e.g., `"browser-use: browser_task"`, `"browser-use: monitor_task"`).
+> **Important:** `browser-use` MCP tools have `kind: "other"`, not `"browser"` or `"fetch"`. To identify browser tools in your UI, check if `title` starts with `"browser-use:"` (e.g., `"browser-use: browser_task"`, `"browser-use: monitor_task"`).
 
 ```typescript
-// Helper to detect browser-use tools
+// Helper to detect `browser-use` tools
 function isBrowserUseTool(title?: string): boolean {
   return title?.toLowerCase().includes('browser-use') ?? false;
 }
@@ -274,15 +274,14 @@ interface DiffContent {
 
 Browser automation URLs are parsed differently depending on which browser option you enable:
 
-Use `.withBrowser()` for browser automation UX. `browser-use` remains supported for advanced MCP workflows, but it requires parsing tool output and does not provide managed replay.
+Use `.withBrowser()` for browser automation UX. `browser-use` remains supported as a legacy fallback for now, but it requires parsing tool output and does not provide managed replay.
 
 | Option | Enable | Parse from stream |
 |--------|--------|-------------------|
-| Remote managed agent-browser | `.withBrowser()` or `.withBrowser({ provider: "agent-browser", remote: true })` | `lifecycle` event with `reason === "browser_ready"`; read `event.browser.liveUrl` and `event.browser.sessionId` |
-| Remote managed Actionbook | `.withBrowser({ provider: "actionbook", remote: true })` | `lifecycle` event with `reason === "browser_ready"`; read `event.browser.liveUrl` and `event.browser.sessionId` |
-| browser-use MCP | `.withBrowser("browser-use")` | Advanced MCP option; parse embedded `live_url` and `screenshot_url` JSON fields from `tool_call_update` content |
+| Recommended managed browser | `.withBrowser()` | `lifecycle` event with `reason === "browser_ready"`; read `event.browser.liveUrl` and `event.browser.sessionId` |
+| Legacy `browser-use` fallback | `.withBrowser("browser-use")` | Parse embedded `live_url` and `screenshot_url` JSON fields from `tool_call_update` content |
 
-### Remote managed Actionbook and agent-browser
+### Managed Browser
 
 Managed browser sessions emit the live-view URL as soon as the browser is ready:
 
@@ -302,7 +301,6 @@ The same URL is also stored in trace metadata for replay or embedding after the 
 
 ```typescript
 type TraceMetadata = {
-  browser_provider?: "actionbook" | "agent-browser";
   browser_session_id?: string;
   dashboard_session_id?: string;
   browser_session_tag?: string;
@@ -318,9 +316,9 @@ After browser cleanup, pass `event.browser.sessionId` or `result.sessionId` to
 
 ## BrowserUseResponse
 
-browser-use is available when enabled with `.withBrowser("browser-use")` in Gateway mode. Prefer `.withBrowser()` unless you specifically need browser-use MCP, because browser-use responses embed a **JSON string** inside `ToolCallUpdate.content[].content.text`. You must extract and parse it.
+`browser-use` is available when enabled with `.withBrowser("browser-use")` in Gateway mode. Prefer `.withBrowser()` for new browser automation; use `browser-use` only as a legacy fallback, because `browser-use` responses embed a **JSON string** inside `ToolCallUpdate.content[].content.text`. You must extract and parse it.
 
-> **Detection:** Browser-use tools arrive with `kind: "other"` and `title` like `"browser-use: browser_task"` or `"browser-use: monitor_task"`. Use the `isBrowserUseTool(title)` helper above to identify them, then extract URLs from the tool output.
+> **Detection:** `browser-use` tools arrive with `kind: "other"` and `title` like `"browser-use: browser_task"` or `"browser-use: monitor_task"`. Use the `isBrowserUseTool(title)` helper above to identify them, then extract URLs from the tool output.
 
 ```typescript
 interface BrowserUseResponse {
@@ -373,7 +371,7 @@ function extractBrowserUseUrls(text: string): { liveUrl?: string; screenshotUrl?
 ```typescript
 import type { OutputEvent } from "@evolvingmachines/sdk";
 
-// Helper to detect browser-use tools (they have kind: "other")
+// Helper to detect `browser-use` tools (they have kind: "other")
 function isBrowserUseTool(title?: string): boolean {
   return title?.toLowerCase().includes('browser-use') ?? false;
 }
@@ -402,16 +400,16 @@ function handleEvent(event: OutputEvent): void {
       break;
 
     case "tool_call":
-      // Store title for browser-use detection on updates
+      // Store title for `browser-use` detection on updates
       toolTitles.set(update.toolCallId, update.title);
 
-      // Determine effective kind for UI (browser-use has kind: "other")
+      // Determine effective kind for UI (`browser-use` has kind: "other")
       const effectiveKind = isBrowserUseTool(update.title) ? "browser" : update.kind;
 
       ui.addTool({
         id: update.toolCallId,
         title: update.title,
-        kind: effectiveKind,  // Use "browser" for browser-use tools
+        kind: effectiveKind,  // Use "browser" for `browser-use` tools
         status: update.status,
         locations: update.locations,
       });
@@ -424,7 +422,7 @@ function handleEvent(event: OutputEvent): void {
         content: update.content,
       });
 
-      // 2. Extract browser-use URLs if this is a browser-use tool
+      // 2. Extract `browser-use` URLs if this is a `browser-use` tool
       const title = toolTitles.get(update.toolCallId);
       if (isBrowserUseTool(title)) {
         for (const c of update.content ?? []) {
@@ -457,6 +455,6 @@ evolve.on("content", handleEvent);
 5. **Support images** — `ContentBlock` includes `ImageContent`
 6. **Use `kind` for icons** — Categorize tools visually (read, edit, execute, etc.)
 7. **Track `locations`** — Show affected file paths in UI
-8. **Detect browser-use by title** — Browser-use MCP tools have `kind: "other"`, check `title.includes("browser-use")` to identify them
+8. **Detect `browser-use` by title** — `browser-use` MCP tools have `kind: "other"`, check `title.includes("browser-use")` to identify them
 
 ---
