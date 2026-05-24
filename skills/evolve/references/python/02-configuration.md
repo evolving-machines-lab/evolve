@@ -240,36 +240,7 @@ McpServerConfig = {
 }
 ```
 
-## Agent Skills
-
-Skills extend agent capabilities with specialized tools and workflows. See [agentskills.io](https://agentskills.io/home) for the open standard.
-
-```bash
-# .env
-EVOLVE_API_KEY=sk-...
-COMPOSIO_API_KEY=...
-```
-
-```python
-from evolve import Evolve
-
-evolve = Evolve(
-    browser={'provider': 'agent-browser', 'remote': True},
-    skills=['pptx'],
-)
-
-await evolve.run(prompt='Browse Hacker News top 5 articles and create a slide deck summarizing each')
-```
-
-### Documents
-| Skill | Description | Source |
-|-------|-------------|--------|
-| `pdf` | Read, extract, and analyze PDF documents | [skills/pdf](https://github.com/evolving-machines-lab/evolve/tree/main/skills/pdf) |
-| `docx` | Create and edit Word documents | [skills/docx](https://github.com/evolving-machines-lab/evolve/tree/main/skills/docx) |
-| `pptx` | Create and edit PowerPoint presentations | [skills/pptx](https://github.com/evolving-machines-lab/evolve/tree/main/skills/pptx) |
-| `xlsx` | Create and edit Excel spreadsheets | [skills/xlsx](https://github.com/evolving-machines-lab/evolve/tree/main/skills/xlsx) |
-
-### Browser Automation
+## Browser Automation
 
 Browser automation is opt-in. Use `browser={'provider': 'agent-browser', 'remote': True}` for browser, QA, dogfooding, and website automation tasks.
 
@@ -292,10 +263,9 @@ Evolve(browser={'provider': 'agent-browser', 'remote': True})
 
 Evolve(browser={'provider': 'agent-browser', 'remote': False})
 # local agent-browser, no managed live/replay
-
-Evolve(browser=None)
-# disable browser automation
 ```
+
+To disable browser automation, omit the `browser` argument.
 
 Full browser run with live view and replay:
 
@@ -345,7 +315,7 @@ save_download_link(replay.download_url)
 Replay processing starts when the managed browser is cleaned up, usually during `kill()`.
 If replay is not ready before `timeout_ms`, call `browser_replay()` again later with the same `session_id`.
 
-### Agent Plugins
+## Agent Plugins
 
 `plugins=` installs plugins/extensions into the sandbox user profile before the first agent command. The selected agent determines the accepted shape:
 
@@ -376,6 +346,33 @@ plugins={
 ```
 
 If `config=AgentConfig(...)` is omitted, plugins target the default agent (`claude`).
+
+## Agent Skills
+
+Skills extend agent capabilities with specialized tools and workflows. See [agentskills.io](https://agentskills.io/home) for the open standard.
+
+```bash
+# .env
+EVOLVE_API_KEY=sk-...
+```
+
+```python
+from evolve import Evolve
+
+evolve = Evolve(
+    skills=['pptx'],
+)
+
+await evolve.run(prompt='Create a slide deck summarizing the uploaded notes.')
+```
+
+### Documents
+| Skill | Description | Source |
+|-------|-------------|--------|
+| `pdf` | Read, extract, and analyze PDF documents | [skills/pdf](https://github.com/evolving-machines-lab/evolve/tree/main/skills/pdf) |
+| `docx` | Create and edit Word documents | [skills/docx](https://github.com/evolving-machines-lab/evolve/tree/main/skills/docx) |
+| `pptx` | Create and edit PowerPoint presentations | [skills/pptx](https://github.com/evolving-machines-lab/evolve/tree/main/skills/pptx) |
+| `xlsx` | Create and edit Excel spreadsheets | [skills/xlsx](https://github.com/evolving-machines-lab/evolve/tree/main/skills/xlsx) |
 
 ### Research & Analysis
 | Skill | Description | Source |

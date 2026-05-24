@@ -245,35 +245,7 @@ interface McpServerConfig {
 }
 ```
 
-## Agent Skills
-
-Skills extend agent capabilities with specialized tools and workflows. See [agentskills.io](https://agentskills.io/home) for the open standard.
-
-```bash
-# .env
-EVOLVE_API_KEY=sk-...
-COMPOSIO_API_KEY=...
-```
-
-```ts
-import { Evolve } from "@evolvingmachines/sdk";
-
-const evolve = new Evolve()
-    .withBrowser()
-    .withSkills(["pptx"]);
-
-await evolve.run({ prompt: "Browse Hacker News top 5 articles and create a slide deck summarizing each" });
-```
-
-### Documents
-| Skill | Description | Source |
-|-------|-------------|--------|
-| `pdf` | Read, extract, and analyze PDF documents | [skills/pdf](https://github.com/evolving-machines-lab/evolve/tree/main/skills/pdf) |
-| `docx` | Create and edit Word documents | [skills/docx](https://github.com/evolving-machines-lab/evolve/tree/main/skills/docx) |
-| `pptx` | Create and edit PowerPoint presentations | [skills/pptx](https://github.com/evolving-machines-lab/evolve/tree/main/skills/pptx) |
-| `xlsx` | Create and edit Excel spreadsheets | [skills/xlsx](https://github.com/evolving-machines-lab/evolve/tree/main/skills/xlsx) |
-
-### Browser Automation
+## Browser Automation
 
 Browser automation is opt-in. Use `.withBrowser()` for browser, QA, dogfooding, and website automation tasks.
 
@@ -299,10 +271,9 @@ new Evolve().withBrowser({
     remote: false,
 });
 // local agent-browser, no managed live/replay
-
-new Evolve().withBrowser(false);
-// disable browser automation
 ```
+
+To disable browser automation, omit `.withBrowser()`.
 
 Full browser run with live view and replay:
 
@@ -349,7 +320,7 @@ saveDownloadLink(replay.downloadUrl);
 Replay processing starts when the managed browser is cleaned up, usually during `kill()`.
 If replay is not ready before `timeoutMs`, call `browserReplay()` again later with the same `sessionId`.
 
-### Agent Plugins
+## Agent Plugins
 
 `.withPlugins()` installs plugins/extensions into the sandbox user profile before the first agent command. The currently selected agent determines the accepted shape:
 
@@ -380,6 +351,32 @@ If replay is not ready before `timeoutMs`, call `browserReplay()` again later wi
 ```
 
 If `.withAgent()` is omitted, plugins target the default agent (`claude`).
+
+## Agent Skills
+
+Skills extend agent capabilities with specialized tools and workflows. See [agentskills.io](https://agentskills.io/home) for the open standard.
+
+```bash
+# .env
+EVOLVE_API_KEY=sk-...
+```
+
+```ts
+import { Evolve } from "@evolvingmachines/sdk";
+
+const evolve = new Evolve()
+    .withSkills(["pptx"]);
+
+await evolve.run({ prompt: "Create a slide deck summarizing the uploaded notes." });
+```
+
+### Documents
+| Skill | Description | Source |
+|-------|-------------|--------|
+| `pdf` | Read, extract, and analyze PDF documents | [skills/pdf](https://github.com/evolving-machines-lab/evolve/tree/main/skills/pdf) |
+| `docx` | Create and edit Word documents | [skills/docx](https://github.com/evolving-machines-lab/evolve/tree/main/skills/docx) |
+| `pptx` | Create and edit PowerPoint presentations | [skills/pptx](https://github.com/evolving-machines-lab/evolve/tree/main/skills/pptx) |
+| `xlsx` | Create and edit Excel spreadsheets | [skills/xlsx](https://github.com/evolving-machines-lab/evolve/tree/main/skills/xlsx) |
 
 ### Research & Analysis
 | Skill | Description | Source |

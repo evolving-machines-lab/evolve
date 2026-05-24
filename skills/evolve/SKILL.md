@@ -72,6 +72,7 @@ Read on demand when the user's task requires them:
 | Provider auto-resolution from env | [TS](references/typescript/02-configuration.md#auto-resolution) | [PY](references/python/02-configuration.md#auto-resolution) |
 | Full builder/constructor API | [TS](references/typescript/02-configuration.md#evolve-instance) | [PY](references/python/02-configuration.md#evolve-instance) |
 | Browser automation guide (setup, live view, replay) | [TS](references/typescript/02-configuration.md#browser-automation) | [PY](references/python/02-configuration.md#browser-automation) |
+| Agent plugins/extensions | [TS](references/typescript/02-configuration.md#agent-plugins) | [PY](references/python/02-configuration.md#agent-plugins) |
 | Agent skills catalog | [TS](references/typescript/02-configuration.md#agent-skills) | [PY](references/python/02-configuration.md#agent-skills) |
 | Composio (auth paths, tool filtering, types) | [TS](references/typescript/02-configuration.md#composio-tool-router) | [PY](references/python/02-configuration.md#composio-tool-router) |
 | MCP server config (STDIO / HTTP / SSE) | [TS](references/typescript/02-configuration.md#evolve-instance) | [PY](references/python/02-configuration.md#evolve-instance) |
