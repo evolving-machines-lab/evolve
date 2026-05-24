@@ -7,141 +7,167 @@ from .bridge import BridgeManager
 
 
 @dataclass
-class IntegrationConnectResult:
-    """Result from an integration connect request."""
+class IntegrationAuthResult:
+    """Result from an integration auth request."""
     url: str
-    connection_id: Optional[str] = None
-
-
-@dataclass
-class IntegrationConnectionStatus:
-    """Connection status for an app."""
-    app: str
-    status: str
-    app_name: Optional[str] = None
-    app_icon: Optional[str] = None
     account_id: Optional[str] = None
 
 
 @dataclass
-class IntegrationActivity:
-    """Recent tool-call activity for an app integration."""
-    app: str
-    tool: str
-    status: str
+class IntegrationAccount:
+    """Connected account for a managed app integration."""
     user_id: str
-    occurred_at: str
+    app: str
+    status: str
     app_name: Optional[str] = None
-    duration_ms: Optional[int] = None
+    app_icon: Optional[str] = None
+    alias: Optional[str] = None
+    account_id: Optional[str] = None
 
 
-async def connect(
+@dataclass
+class IntegrationAccountUpdateResult:
+    """Result from updating a connected account."""
+    success: bool
+    account_id: str
+    alias: Optional[str] = None
+
+
+@dataclass
+class IntegrationAccountDeleteResult:
+    """Result from deleting a connected account."""
+    success: bool
+    account_id: str
+
+
+async def auth(
+    *,
+    user_id: str,
     app: str,
-    user_id: Optional[str] = None,
-    user_token: Optional[str] = None,
-    callback_url: Optional[str] = None,
+    alias: Optional[str] = None,
     api_key: Optional[str] = None,
     dashboard_url: Optional[str] = None,
-) -> IntegrationConnectResult:
-    """Create an auth URL for an app connection."""
+) -> IntegrationAuthResult:
+    """Create an auth URL for one app account."""
     bridge = BridgeManager()
     try:
         await bridge.start()
-        params: Dict[str, str] = {'app': app}
-        if user_id:
-            params['user_id'] = user_id
-        if user_token:
-            params['user_token'] = user_token
-        if callback_url:
-            params['callback_url'] = callback_url
+        params: Dict[str, object] = {'user_id': user_id, 'app': app}
+        if alias is not None:
+            params['alias'] = alias
         if api_key:
             params['api_key'] = api_key
         if dashboard_url:
             params['dashboard_url'] = dashboard_url
-        response = await bridge.call('integrations_connect', params)
-        return IntegrationConnectResult(
+        response = await bridge.call('integrations_auth', params)
+        return IntegrationAuthResult(
             url=response['url'],
-            connection_id=response.get('connection_id'),
+            account_id=response.get('account_id'),
         )
     finally:
         await bridge.stop()
 
 
-async def status(
-    user_id: Optional[str] = None,
-    user_token: Optional[str] = None,
-    api_key: Optional[str] = None,
-    dashboard_url: Optional[str] = None,
-) -> List[IntegrationConnectionStatus]:
-    """List connection status for an integration user."""
-    bridge = BridgeManager()
-    try:
-        await bridge.start()
-        params: Dict[str, str] = {}
-        if user_id:
-            params['user_id'] = user_id
-        if user_token:
-            params['user_token'] = user_token
-        if api_key:
-            params['api_key'] = api_key
-        if dashboard_url:
-            params['dashboard_url'] = dashboard_url
-        response = await bridge.call('integrations_status', params)
-        return [
-            IntegrationConnectionStatus(
-                app=connection['app'],
-                status=connection['status'],
-                app_name=connection.get('app_name'),
-                app_icon=connection.get('app_icon'),
-                account_id=connection.get('account_id'),
+class _Accounts:
+    async def list(
+        self,
+        *,
+        user_ids: List[str],
+        app: Optional[str] = None,
+        statuses: Optional[List[str]] = None,
+        api_key: Optional[str] = None,
+        dashboard_url: Optional[str] = None,
+    ) -> List[IntegrationAccount]:
+        """List connected accounts for one or more integration users."""
+        bridge = BridgeManager()
+        try:
+            await bridge.start()
+            params: Dict[str, object] = {'user_ids': user_ids}
+            if app:
+                params['app'] = app
+            if statuses:
+                params['statuses'] = statuses
+            if api_key:
+                params['api_key'] = api_key
+            if dashboard_url:
+                params['dashboard_url'] = dashboard_url
+            response = await bridge.call('integrations_accounts_list', params)
+            return [
+                IntegrationAccount(
+                    user_id=account['user_id'],
+                    app=account['app'],
+                    status=account['status'],
+                    app_name=account.get('app_name'),
+                    app_icon=account.get('app_icon'),
+                    alias=account.get('alias'),
+                    account_id=account.get('account_id'),
+                )
+                for account in response['accounts']
+            ]
+        finally:
+            await bridge.stop()
+
+    async def update(
+        self,
+        *,
+        account_id: str,
+        alias: Optional[str] = None,
+        api_key: Optional[str] = None,
+        dashboard_url: Optional[str] = None,
+    ) -> IntegrationAccountUpdateResult:
+        """Set, update, or clear a connected account alias."""
+        bridge = BridgeManager()
+        try:
+            await bridge.start()
+            params: Dict[str, object] = {'account_id': account_id}
+            if alias is not None:
+                params['alias'] = alias
+            if api_key:
+                params['api_key'] = api_key
+            if dashboard_url:
+                params['dashboard_url'] = dashboard_url
+            response = await bridge.call('integrations_account_update', params)
+            return IntegrationAccountUpdateResult(
+                success=response['success'],
+                account_id=response['account_id'],
+                alias=response.get('alias'),
             )
-            for connection in response['connections']
-        ]
-    finally:
-        await bridge.stop()
+        finally:
+            await bridge.stop()
+
+    async def delete(
+        self,
+        *,
+        account_id: str,
+        api_key: Optional[str] = None,
+        dashboard_url: Optional[str] = None,
+    ) -> IntegrationAccountDeleteResult:
+        """Delete a connected account."""
+        bridge = BridgeManager()
+        try:
+            await bridge.start()
+            params: Dict[str, object] = {'account_id': account_id}
+            if api_key:
+                params['api_key'] = api_key
+            if dashboard_url:
+                params['dashboard_url'] = dashboard_url
+            response = await bridge.call('integrations_account_delete', params)
+            return IntegrationAccountDeleteResult(
+                success=response['success'],
+                account_id=response['account_id'],
+            )
+        finally:
+            await bridge.stop()
 
 
-async def activity(
-    user_id: Optional[str] = None,
-    user_token: Optional[str] = None,
-    api_key: Optional[str] = None,
-    dashboard_url: Optional[str] = None,
-) -> List[IntegrationActivity]:
-    """List recent integration tool-call activity."""
-    bridge = BridgeManager()
-    try:
-        await bridge.start()
-        params: Dict[str, str] = {}
-        if user_id:
-            params['user_id'] = user_id
-        if user_token:
-            params['user_token'] = user_token
-        if api_key:
-            params['api_key'] = api_key
-        if dashboard_url:
-            params['dashboard_url'] = dashboard_url
-        response = await bridge.call('integrations_activity', params)
-        return [
-            IntegrationActivity(
-                app=event['app'],
-                app_name=event.get('app_name'),
-                tool=event['tool'],
-                status=event['status'],
-                user_id=event['user_id'],
-                duration_ms=event.get('duration_ms'),
-                occurred_at=event['occurred_at'],
-            )
-            for event in response['activity']
-        ]
-    finally:
-        await bridge.stop()
+accounts = _Accounts()
 
 
 __all__ = [
-    'connect',
-    'status',
-    'activity',
-    'IntegrationConnectResult',
-    'IntegrationConnectionStatus',
-    'IntegrationActivity',
+    'auth',
+    'accounts',
+    'IntegrationAuthResult',
+    'IntegrationAccount',
+    'IntegrationAccountUpdateResult',
+    'IntegrationAccountDeleteResult',
 ]

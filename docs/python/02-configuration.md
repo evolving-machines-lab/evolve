@@ -177,7 +177,7 @@ evolve = Evolve(
     skills=['pdf', 'docx', 'pptx'],
 
     # (optional) Managed integrations (gateway mode only)
-    integrations=IntegrationsSetup(apps=['gmail', 'notion']),
+    integrations=IntegrationsSetup(user_id='root', apps=['gmail', 'notion']),
 
     # (optional) Prefix for observability logs
     session_tag_prefix='my-agent',
@@ -509,7 +509,7 @@ await evolve.run(prompt='Create a slide deck summarizing the uploaded notes.')
 
 ## Managed Integrations
 
-Managed integrations are available only in gateway mode (`EVOLVE_API_KEY`); provider credentials stay server-side and agents receive an Evolve-scoped MCP proxy.
+Managed integrations are available only in gateway mode (`EVOLVE_API_KEY`); integration credentials stay server-side and agents receive an Evolve-scoped MCP proxy.
 
 ```bash
 # .env
@@ -521,9 +521,10 @@ from evolve import Evolve, IntegrationsSetup
 
 evolve = Evolve(
     integrations=IntegrationsSetup(
+        user_id='root',
         apps=['github', 'gmail'],
         tools={
-            'github': {'enable': ['github_create_issue', 'github_list_repos']},
+            'github': ['github_create_issue', 'github_list_repos'],
             'gmail': {'disable': ['gmail_delete_email']},
         },
     ),
@@ -532,37 +533,54 @@ evolve = Evolve(
 await evolve.run(prompt='Create a GitHub issue for the login bug')
 ```
 
-### Root vs App Users
+### Root vs SDK Users
 
-`user_id` defaults to `"root"`, which uses accounts connected in the Evolve dashboard for private agents and test accounts.
+Use `user_id='root'` for accounts connected in the Evolve dashboard for private agents and test accounts.
 
-For an application with end users, generate a random `user_token` in your backend, store it with that user, and pass it whenever you create connect links or runs for that user:
+For an application with end users, pass your stable SDK user ID. Evolve namespaces that ID under the authenticated Evolve account before creating private integration sessions.
 
 ```python
-import uuid
 from evolve import Evolve, IntegrationsSetup
 
-user_token = str(uuid.uuid4())
-link = await Evolve.integrations.connect(
-    app='gmail',
+link = await Evolve.integrations.auth(
     user_id='customer_123',
-    user_token=user_token,
+    app='gmail',
+    alias='work',
 )
 
 evolve = Evolve(
     integrations=IntegrationsSetup(
         user_id='customer_123',
-        user_token=user_token,
         apps=['gmail'],
     ),
 )
 ```
 
-### Observability Helpers
+### Account Helpers
 
 ```python
-connections = await Evolve.integrations.status(user_id='customer_123', user_token=user_token)
-activity = await Evolve.integrations.activity(user_id='customer_123', user_token=user_token)
+accounts = await Evolve.integrations.accounts.list(
+    user_ids=['customer_123'],
+    app='gmail',
+    statuses=['ACTIVE'],
+)
+
+await Evolve.integrations.accounts.update(
+    account_id='account_id_from_list',
+    alias='work',
+)
+
+# If the user connected multiple Gmail accounts, choose an alias or account ID returned by accounts.list().
+evolve = Evolve(
+    integrations=IntegrationsSetup(
+        user_id='customer_123',
+        apps=['gmail'],
+        accounts={'gmail': ['work']},
+    ),
+)
+
+# Disconnect by account ID.
+await Evolve.integrations.accounts.delete(account_id='account_id_from_list')
 ```
 
 ### Type Reference
@@ -570,13 +588,13 @@ activity = await Evolve.integrations.activity(user_id='customer_123', user_token
 ```python
 @dataclass
 class IntegrationsSetup:
+    user_id: str  # "root" or your stable SDK user ID
     apps: List[str]
-    user_id: Optional[str] = None
-    user_token: Optional[str] = None
     tools: Optional[Dict[str, IntegrationToolsFilter]] = None
-    manage_connections: Optional[bool] = None
+    accounts: Optional[Dict[str, List[str]]] = None  # app -> account aliases or account IDs
 
 IntegrationToolsFilter = Union[
+    List[str],
     EnableFilter,
     DisableFilter,
     TagsFilter,

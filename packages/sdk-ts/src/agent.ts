@@ -43,7 +43,7 @@ import { getAgentConfig, type AgentRegistryEntry } from "./registry";
 import { writeMcpConfig, writeCodexSpendProvider, writeJsonSpendHeaders, writeKimiSpendConfig, writeDroidGatewaySettings } from "./mcp";
 import { createAgentParser, type AgentParser } from "./parsers";
 import type { OutputEvent } from "./parsers/types";
-import { DEFAULT_TIMEOUT_MS, DEFAULT_WORKING_DIR, DEFAULT_DASHBOARD_URL, LITELLM_CUSTOMER_ID_HEADER, LITELLM_TAGS_HEADER, RUN_TAG_PREFIX, SANDBOX_GATEWAY_API_KEY_PLACEHOLDER, getGatewayUrl } from "./constants";
+import { DEFAULT_TIMEOUT_MS, DEFAULT_WORKING_DIR, DEFAULT_DASHBOARD_URL, ENV_EVOLVE_API_KEY, LITELLM_CUSTOMER_ID_HEADER, LITELLM_TAGS_HEADER, RUN_TAG_PREFIX, SANDBOX_GATEWAY_API_KEY_PLACEHOLDER, getGatewayUrl } from "./constants";
 import { buildWorkerSystemPrompt } from "./prompts";
 import { isZodSchema } from "./utils";
 import { SessionLogger } from "./observability";
@@ -510,7 +510,7 @@ export class Agent {
       }
 
       // Expose EVOLVE_API_KEY in sandbox for gateway services (e.g., browser-use)
-      envVars['EVOLVE_API_KEY'] = gatewayApiKey;
+      envVars[ENV_EVOLVE_API_KEY] = gatewayApiKey;
     }
     // OAuth direct mode: no baseUrl needed (Claude Code CLI handles it)
 
@@ -522,6 +522,9 @@ export class Agent {
     }
 
     if (this.options.secrets) {
+      if (Object.prototype.hasOwnProperty.call(this.options.secrets, ENV_EVOLVE_API_KEY)) {
+        throw new Error(`${ENV_EVOLVE_API_KEY} is reserved for Evolve-managed sandbox services and cannot be set with secrets`);
+      }
       Object.assign(envVars, this.options.secrets);
     }
 

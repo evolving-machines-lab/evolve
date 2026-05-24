@@ -651,17 +651,18 @@ export interface StreamCallbacks {
 // =============================================================================
 
 /**
- * Configuration for managed app integrations.
+ * Configuration for managed integrations.
  */
-/** Tool filter configuration per toolkit */
+/** Tool filter configuration per app */
 export type IntegrationToolsFilter =
+  | string[]                            // Enable only these tools
   | { enable: string[] }              // Enable only these tools
   | { disable: string[] }             // Disable these tools
   | { tags: string[] };               // Filter by behavior tags
 
 export interface IntegrationsConfig {
   /**
-   * Apps/toolkits to expose to the agent.
+   * Apps to expose to the agent.
    *
    * @example
    * apps: ["github", "gmail", "linear"]
@@ -681,10 +682,9 @@ export interface IntegrationsConfig {
   tools?: Record<string, IntegrationToolsFilter>;
 
   /**
-   * Let agents initiate auth links when an account is missing.
-   * Defaults to true.
+   * Pin specific connected accounts by account ID or alias.
    */
-  manageConnections?: boolean;
+  accounts?: Record<string, string[]>;
 }
 
 /**
@@ -692,13 +692,10 @@ export interface IntegrationsConfig {
  */
 export interface IntegrationsSetup extends IntegrationsConfig {
   /**
-   * Application user ID. Defaults to "root" for dashboard-owned/private use.
+   * Integration user ID. Use "root" for dashboard-owned/private accounts,
+   * or your app's stable end-user ID for per-user accounts.
    */
-  userId?: string;
-  /**
-   * Required for non-root users. Generate and store this in your app backend.
-   */
-  userToken?: string;
+  userId: string;
 }
 
 // =============================================================================

@@ -12,39 +12,66 @@ export interface IntegrationRuntimeSetup extends IntegrationsSetup {
   sessionTag?: string;
 }
 
-export interface IntegrationConnectParams {
-  userId?: string;
-  userToken?: string;
+export interface IntegrationAuthParams {
+  userId: string;
   app: string;
-  callbackUrl?: string;
+  alias?: string;
   apiKey?: string;
   dashboardUrl?: string;
 }
 
-export interface IntegrationConnectResult {
-  url: string;
-  connectionId?: string;
+export interface IntegrationHelperOptions {
+  apiKey?: string;
+  dashboardUrl?: string;
 }
 
-export interface IntegrationConnectionStatus {
-  app: string;
-  appName?: string;
-  appIcon?: string;
-  status: string;
+export interface IntegrationAuthResult {
+  url: string;
   accountId?: string;
 }
 
-export interface IntegrationActivity {
+export interface IntegrationAccount {
+  userId: string;
   app: string;
   appName?: string;
-  tool: string;
+  appIcon?: string;
+  alias?: string;
   status: string;
-  userId: string;
-  durationMs?: number;
-  occurredAt: string;
+  accountId?: string;
+  updatedAt?: string;
 }
 
-const ROOT_INTEGRATION_USER_ID = "root";
+export interface IntegrationAccountListParams {
+  userIds: string[];
+  app?: string;
+  statuses?: string[];
+  apiKey?: string;
+  dashboardUrl?: string;
+}
+
+export interface IntegrationAccountUpdateParams {
+  accountId: string;
+  alias?: string;
+  apiKey?: string;
+  dashboardUrl?: string;
+}
+
+export interface IntegrationAccountDeleteParams {
+  accountId: string;
+  apiKey?: string;
+  dashboardUrl?: string;
+}
+
+export interface IntegrationAccountUpdateResult {
+  success: boolean;
+  accountId: string;
+  alias?: string;
+}
+
+export interface IntegrationAccountDeleteResult {
+  success: boolean;
+  accountId: string;
+}
 
 function dashboardBaseUrl(dashboardUrl?: string): string {
   return (dashboardUrl || process.env.EVOLVE_DASHBOARD_URL || DEFAULT_DASHBOARD_URL).replace(/\/$/, "");
@@ -63,7 +90,11 @@ async function readError(response: Response): Promise<string> {
 }
 
 function normalizeUserId(userId?: string): string {
-  return userId?.trim() || ROOT_INTEGRATION_USER_ID;
+  const normalized = userId?.trim();
+  if (!normalized) {
+    throw new Error("Integration userId is required; use \"root\" for dashboard-owned accounts");
+  }
+  return normalized;
 }
 
 function normalizeApps(apps?: string[]): string[] {
@@ -84,11 +115,10 @@ export async function setupIntegrations(config: IntegrationRuntimeSetup): Promis
     },
     body: JSON.stringify({
       userId: normalizeUserId(config.userId),
-      userToken: config.userToken,
       apps: normalizeApps(config.apps),
       tools: config.tools,
+      accounts: config.accounts,
       sessionTag: config.sessionTag,
-      manageConnections: config.manageConnections,
     }),
     signal: AbortSignal.timeout(30_000),
   });
@@ -114,7 +144,7 @@ export async function setupIntegrations(config: IntegrationRuntimeSetup): Promis
   };
 }
 
-export async function connectIntegration(params: IntegrationConnectParams): Promise<IntegrationConnectResult> {
+async function createIntegrationAuthLink(params: IntegrationAuthParams): Promise<IntegrationAuthResult> {
   const response = await fetch(`${dashboardBaseUrl(params.dashboardUrl)}/api/integrations/connect`, {
     method: "POST",
     headers: {
@@ -124,9 +154,8 @@ export async function connectIntegration(params: IntegrationConnectParams): Prom
     },
     body: JSON.stringify({
       userId: normalizeUserId(params.userId),
-      userToken: params.userToken,
       app: params.app,
-      callbackUrl: params.callbackUrl,
+      alias: params.alias,
     }),
     signal: AbortSignal.timeout(30_000),
   });
@@ -135,21 +164,20 @@ export async function connectIntegration(params: IntegrationConnectParams): Prom
     throw new Error(`Managed integration connect failed (${response.status}): ${await readError(response)}`);
   }
 
-  return await response.json() as IntegrationConnectResult;
+  return await response.json() as IntegrationAuthResult;
 }
 
-export async function getIntegrationStatus(params: {
-  userId?: string;
-  userToken?: string;
-  apiKey?: string;
-  dashboardUrl?: string;
-} = {}): Promise<IntegrationConnectionStatus[]> {
-  const search = new URLSearchParams({ userId: normalizeUserId(params.userId) });
+async function listIntegrationAccounts(params: IntegrationAccountListParams): Promise<IntegrationAccount[]> {
+  const userIds = Array.from(new Set((params.userIds ?? []).map((userId) => normalizeUserId(userId))));
+  if (userIds.length === 0) throw new Error("Integration accounts.list() requires at least one userId");
+
+  const search = new URLSearchParams({ userIds: userIds.join(",") });
+  if (params.app) search.set("app", params.app);
+  if (params.statuses?.length) search.set("statuses", params.statuses.join(","));
   const headers: Record<string, string> = {
     Authorization: `Bearer ${resolveApiKey(params.apiKey)}`,
     accept: "application/json",
   };
-  if (params.userToken) headers["x-evolve-integration-user-token"] = params.userToken;
 
   const response = await fetch(`${dashboardBaseUrl(params.dashboardUrl)}/api/integrations/status?${search}`, {
     headers,
@@ -160,54 +188,67 @@ export async function getIntegrationStatus(params: {
     throw new Error(`Managed integration status failed (${response.status}): ${await readError(response)}`);
   }
 
-  const data = await response.json() as { connections?: Array<Record<string, unknown>> };
-  return (data.connections ?? []).map((connection) => ({
+  const data = await response.json() as { accounts?: Array<Record<string, unknown>> };
+  return (data.accounts ?? []).map((connection) => ({
+    userId: String(connection.userId ?? ""),
     app: String(connection.app ?? ""),
     appName: typeof connection.appName === "string" ? connection.appName : undefined,
     appIcon: typeof connection.appIcon === "string" ? connection.appIcon : undefined,
+    alias: typeof connection.alias === "string" ? connection.alias : undefined,
     status: String(connection.status ?? ""),
     accountId: typeof connection.accountId === "string" ? connection.accountId : undefined,
+    updatedAt: typeof connection.updatedAt === "string" ? connection.updatedAt : undefined,
   }));
 }
 
-export async function getIntegrationActivity(params: {
-  userId?: string;
-  userToken?: string;
-  apiKey?: string;
-  dashboardUrl?: string;
-} = {}): Promise<IntegrationActivity[]> {
-  const search = new URLSearchParams({ userId: normalizeUserId(params.userId) });
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${resolveApiKey(params.apiKey)}`,
-    accept: "application/json",
-  };
-  if (params.userToken) headers["x-evolve-integration-user-token"] = params.userToken;
-
-  const response = await fetch(`${dashboardBaseUrl(params.dashboardUrl)}/api/integrations/activity?${search}`, {
-    headers,
+async function updateIntegrationAccount(params: IntegrationAccountUpdateParams): Promise<IntegrationAccountUpdateResult> {
+  const response = await fetch(`${dashboardBaseUrl(params.dashboardUrl)}/api/integrations/accounts/update`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${resolveApiKey(params.apiKey)}`,
+      "content-type": "application/json",
+      accept: "application/json",
+    },
+    body: JSON.stringify({
+      accountId: params.accountId,
+      alias: params.alias,
+    }),
     signal: AbortSignal.timeout(30_000),
   });
 
   if (!response.ok) {
-    throw new Error(`Managed integration activity failed (${response.status}): ${await readError(response)}`);
+    throw new Error(`Managed integration account update failed (${response.status}): ${await readError(response)}`);
   }
 
-  const data = await response.json() as { activity?: Array<Record<string, unknown>> };
-  return (data.activity ?? []).map((event) => ({
-    app: String(event.app ?? ""),
-    appName: typeof event.appName === "string" ? event.appName : undefined,
-    tool: String(event.tool ?? ""),
-    status: String(event.status ?? ""),
-    userId: String(event.sdkUserId ?? ""),
-    durationMs: typeof event.durationMs === "number" ? event.durationMs : undefined,
-    occurredAt: String(event.occurredAt ?? ""),
-  }));
+  return await response.json() as IntegrationAccountUpdateResult;
+}
+
+async function deleteIntegrationAccount(params: IntegrationAccountDeleteParams): Promise<IntegrationAccountDeleteResult> {
+  const response = await fetch(`${dashboardBaseUrl(params.dashboardUrl)}/api/integrations/disconnect`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${resolveApiKey(params.apiKey)}`,
+      "content-type": "application/json",
+      accept: "application/json",
+    },
+    body: JSON.stringify({ accountId: params.accountId }),
+    signal: AbortSignal.timeout(30_000),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Managed integration account delete failed (${response.status}): ${await readError(response)}`);
+  }
+
+  return await response.json() as IntegrationAccountDeleteResult;
 }
 
 export const integrationHelpers = {
-  connect: connectIntegration,
-  status: getIntegrationStatus,
-  activity: getIntegrationActivity,
+  auth: createIntegrationAuthLink,
+  accounts: {
+    list: listIntegrationAccounts,
+    update: updateIntegrationAccount,
+    delete: deleteIntegrationAccount,
+  },
 };
 
 export type { IntegrationToolsFilter };

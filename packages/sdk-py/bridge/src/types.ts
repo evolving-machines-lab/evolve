@@ -140,6 +140,7 @@ export interface BrowserCredentialsConfig {
 
 /** Tool filter configuration per app */
 export type IntegrationToolsFilter =
+  | string[]
   | { enable: string[] }              // Enable only these tools
   | { disable: string[] }             // Disable these tools
   | { tags: string[] };               // Filter by behavior tags
@@ -147,40 +148,45 @@ export type IntegrationToolsFilter =
 export interface IntegrationsConfig {
   apps: string[];
   tools?: Record<string, IntegrationToolsFilter>;
-  manage_connections?: boolean;
+  accounts?: Record<string, string[]>;
 }
 
 export interface IntegrationsSetup {
-  user_id?: string;
-  user_token?: string;
+  user_id: string;
   apps: string[];
   tools?: Record<string, IntegrationToolsFilter>;
-  manage_connections?: boolean;
+  accounts?: Record<string, string[]>;
 }
 
 // =============================================================================
 // INTEGRATIONS RPC PARAMETERS
 // =============================================================================
 
-export interface IntegrationsConnectParams {
-  user_id?: string;
-  user_token?: string;
+export interface IntegrationsAuthParams {
+  user_id: string;
   app: string;
-  callback_url?: string;
+  alias?: string;
   api_key?: string;
   dashboard_url?: string;
 }
 
-export interface IntegrationsStatusParams {
-  user_id?: string;
-  user_token?: string;
+export interface IntegrationsAccountsListParams {
+  user_ids: string[];
+  app?: string;
+  statuses?: string[];
   api_key?: string;
   dashboard_url?: string;
 }
 
-export interface IntegrationsActivityParams {
-  user_id?: string;
-  user_token?: string;
+export interface IntegrationsDisconnectParams {
+  account_id: string;
+  api_key?: string;
+  dashboard_url?: string;
+}
+
+export interface IntegrationsAccountUpdateParams {
+  account_id: string;
+  alias?: string;
   api_key?: string;
   dashboard_url?: string;
 }
@@ -189,35 +195,34 @@ export interface IntegrationsActivityParams {
 // INTEGRATIONS RPC RESPONSES
 // =============================================================================
 
-export interface IntegrationsConnectResponse {
+export interface IntegrationsAuthResponse {
   url: string;
-  connection_id?: string;
+  account_id?: string;
 }
 
-export interface IntegrationConnectionInfo {
+export interface IntegrationsDisconnectResponse {
+  success: boolean;
+  account_id: string;
+}
+
+export interface IntegrationsAccountUpdateResponse {
+  success: boolean;
+  account_id: string;
+  alias?: string;
+}
+
+export interface IntegrationAccountInfo {
+  user_id: string;
   app: string;
   app_name?: string;
   app_icon?: string;
+  alias?: string;
   status: string;
   account_id?: string;
 }
 
-export interface IntegrationsStatusResponse {
-  connections: IntegrationConnectionInfo[];
-}
-
-export interface IntegrationActivityInfo {
-  app: string;
-  app_name?: string;
-  tool: string;
-  status: string;
-  user_id: string;
-  duration_ms?: number;
-  occurred_at: string;
-}
-
-export interface IntegrationsActivityResponse {
-  activity: IntegrationActivityInfo[];
+export interface IntegrationsAccountsListResponse {
+  accounts: IntegrationAccountInfo[];
 }
 
 // =============================================================================

@@ -47,12 +47,14 @@ import type {
   InstanceRunParams,
   InstanceGetOutputParams,
   InstanceIdParams,
-  IntegrationsConnectParams,
-  IntegrationsStatusParams,
-  IntegrationsActivityParams,
-  IntegrationsConnectResponse,
-  IntegrationsStatusResponse,
-  IntegrationsActivityResponse,
+  IntegrationsAuthParams,
+  IntegrationsAccountsListParams,
+  IntegrationsDisconnectParams,
+  IntegrationsAccountUpdateParams,
+  IntegrationsAuthResponse,
+  IntegrationsAccountsListResponse,
+  IntegrationsDisconnectResponse,
+  IntegrationsAccountUpdateResponse,
   CheckpointInfoResponse,
   CheckpointParams,
   ListCheckpointsParams,
@@ -216,10 +218,9 @@ export class EvolveAdapter {
     if (params.integrations) {
       kit.withIntegrations({
         userId: params.integrations.user_id,
-        userToken: params.integrations.user_token,
         apps: params.integrations.apps,
         tools: params.integrations.tools,
-        manageConnections: params.integrations.manage_connections,
+        accounts: params.integrations.accounts,
       });
     }
 
@@ -310,12 +311,14 @@ export class EvolveAdapter {
       case 'get_run_cost':
         return this.getRunCost(params);
       // Integrations static methods (no instance required)
-      case 'integrations_connect':
-        return this.integrationsConnect(params);
-      case 'integrations_status':
-        return this.integrationsStatus(params);
-      case 'integrations_activity':
-        return this.integrationsActivity(params);
+      case 'integrations_auth':
+        return this.integrationsAuth(params);
+      case 'integrations_accounts_list':
+        return this.integrationsAccountsList(params);
+      case 'integrations_account_update':
+        return this.integrationsAccountUpdate(params);
+      case 'integrations_account_delete':
+        return this.integrationsAccountDelete(params);
       default:
         throw new Error(`Unknown method: ${method}`);
     }
@@ -862,56 +865,64 @@ export class EvolveAdapter {
   // INTEGRATIONS STATIC METHODS (no instance required)
   // ===========================================================================
 
-  async integrationsConnect(params: IntegrationsConnectParams): Promise<IntegrationsConnectResponse> {
-    const result = await Evolve.integrations.connect({
+  async integrationsAuth(params: IntegrationsAuthParams): Promise<IntegrationsAuthResponse> {
+    const result = await Evolve.integrations.auth({
       userId: params.user_id,
-      userToken: params.user_token,
       app: params.app,
-      callbackUrl: params.callback_url,
+      alias: params.alias,
       apiKey: params.api_key,
       dashboardUrl: params.dashboard_url,
     });
     return {
       url: result.url,
-      connection_id: result.connectionId,
+      account_id: result.accountId,
     };
   }
 
-  async integrationsStatus(params: IntegrationsStatusParams): Promise<IntegrationsStatusResponse> {
-    const result = await Evolve.integrations.status({
-      userId: params.user_id,
-      userToken: params.user_token,
+  async integrationsAccountsList(params: IntegrationsAccountsListParams): Promise<IntegrationsAccountsListResponse> {
+    const result = await Evolve.integrations.accounts.list({
+      userIds: params.user_ids,
+      app: params.app,
+      statuses: params.statuses,
       apiKey: params.api_key,
       dashboardUrl: params.dashboard_url,
     });
     return {
-      connections: result.map((connection) => ({
-        app: connection.app,
-        app_name: connection.appName,
-        app_icon: connection.appIcon,
-        status: connection.status,
-        account_id: connection.accountId,
+      accounts: result.map((account) => ({
+        user_id: account.userId,
+        app: account.app,
+        app_name: account.appName,
+        app_icon: account.appIcon,
+        alias: account.alias,
+        status: account.status,
+        account_id: account.accountId,
       })),
     };
   }
 
-  async integrationsActivity(params: IntegrationsActivityParams): Promise<IntegrationsActivityResponse> {
-    const result = await Evolve.integrations.activity({
-      userId: params.user_id,
-      userToken: params.user_token,
+  async integrationsAccountUpdate(params: IntegrationsAccountUpdateParams): Promise<IntegrationsAccountUpdateResponse> {
+    const result = await Evolve.integrations.accounts.update({
+      accountId: params.account_id,
+      alias: params.alias,
       apiKey: params.api_key,
       dashboardUrl: params.dashboard_url,
     });
     return {
-      activity: result.map((event) => ({
-        app: event.app,
-        app_name: event.appName,
-        tool: event.tool,
-        status: event.status,
-        user_id: event.userId,
-        duration_ms: event.durationMs,
-        occurred_at: event.occurredAt,
-      })),
+      success: result.success,
+      account_id: result.accountId,
+      alias: result.alias,
+    };
+  }
+
+  async integrationsAccountDelete(params: IntegrationsDisconnectParams): Promise<IntegrationsDisconnectResponse> {
+    const result = await Evolve.integrations.accounts.delete({
+      accountId: params.account_id,
+      apiKey: params.api_key,
+      dashboardUrl: params.dashboard_url,
+    });
+    return {
+      success: result.success,
+      account_id: result.accountId,
     };
   }
 

@@ -282,6 +282,24 @@ async function testGatewaySandboxUsesScopedKey(): Promise<void> {
   }
 }
 
+async function testWithSecretsCannotOverrideEvolveApiKey(): Promise<void> {
+  console.log("\n[3] withSecrets() rejects EVOLVE_API_KEY override");
+
+  let threw = false;
+  try {
+    new Evolve().withSecrets({ EVOLVE_API_KEY: "owner-key" });
+  } catch (error) {
+    threw = true;
+    const message = error instanceof Error ? error.message : String(error);
+    assert(
+      message.includes("EVOLVE_API_KEY is reserved"),
+      "withSecrets() throws clear reserved-key error"
+    );
+  }
+
+  assertEqual(threw, true, "withSecrets() rejects EVOLVE_API_KEY");
+}
+
 async function testManagedBrowserLifecycle(): Promise<void> {
   console.log("\n[2] managed browser live URL lifecycle");
   const previousFetch = globalThis.fetch;
@@ -632,6 +650,7 @@ async function main(): Promise<void> {
   try {
     await testStatusAndLifecycle();
     await testGatewaySandboxUsesScopedKey();
+    await testWithSecretsCannotOverrideEvolveApiKey();
     await testManagedBrowserLifecycle();
     await testManagedAgentBrowserLifecycle();
     await testInterrupt();

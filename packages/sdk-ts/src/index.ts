@@ -135,10 +135,14 @@ export type {
 
 // Managed integration helper return types
 export type {
-  IntegrationConnectParams,
-  IntegrationConnectResult,
-  IntegrationConnectionStatus,
-  IntegrationActivity,
+  IntegrationAuthParams,
+  IntegrationAuthResult,
+  IntegrationAccount,
+  IntegrationAccountListParams,
+  IntegrationAccountUpdateParams,
+  IntegrationAccountDeleteParams,
+  IntegrationAccountUpdateResult,
+  IntegrationAccountDeleteResult,
 } from "./integrations";
 
 // Schema validation presets

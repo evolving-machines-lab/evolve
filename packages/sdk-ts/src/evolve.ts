@@ -35,7 +35,7 @@ import { Agent, type AgentConfig, type AgentOptions, type AgentResponse } from "
 import type { OutputEvent } from "./parsers";
 import { isZodSchema, resolveAgentConfig, resolveDefaultSandbox } from "./utils";
 import { integrationHelpers } from "./integrations";
-import { getGatewayMcpServers, DEFAULT_DASHBOARD_URL, SANDBOX_GATEWAY_API_KEY_PLACEHOLDER } from "./constants";
+import { getGatewayMcpServers, DEFAULT_DASHBOARD_URL, ENV_EVOLVE_API_KEY, SANDBOX_GATEWAY_API_KEY_PLACEHOLDER } from "./constants";
 import { resolveStorageConfig, createBoundStorageClient } from "./storage";
 import type { CheckpointInfo, StorageClient } from "./types";
 import { BROWSER_ACTIONBOOK_PROMPT, BROWSER_AGENT_BROWSER_PROMPT } from "./prompts";
@@ -188,6 +188,9 @@ export class Evolve extends EventEmitter {
    * Add environment secrets
    */
   withSecrets(secrets: Record<string, string>): this {
+    if (Object.prototype.hasOwnProperty.call(secrets, ENV_EVOLVE_API_KEY)) {
+      throw new Error(`${ENV_EVOLVE_API_KEY} is reserved for Evolve-managed sandbox services and cannot be set with withSecrets()`);
+    }
     this.config.secrets = { ...this.config.secrets, ...secrets };
     return this;
   }
@@ -352,9 +355,9 @@ export class Evolve extends EventEmitter {
   }
 
   /**
-   * Enable Evolve-managed app integrations.
+   * Enable Evolve-managed integrations.
    *
-   * Available only in gateway mode. The provider key stays server-side; the
+   * Available only in gateway mode. Integration credentials stay server-side; the
    * sandbox receives an Evolve-scoped MCP proxy.
    */
   withIntegrations(config: IntegrationsSetup): this {

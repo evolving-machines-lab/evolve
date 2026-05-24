@@ -351,58 +351,53 @@ class TagsFilter(TypedDict):
 
 
 # Tool filter configuration per app - matches TS SDK IntegrationToolsFilter
-IntegrationToolsFilter = Union[EnableFilter, DisableFilter, TagsFilter]
+IntegrationToolsFilter = Union[List[str], EnableFilter, DisableFilter, TagsFilter]
 
 
-@dataclass
+@dataclass(kw_only=True)
 class IntegrationsConfig:
     """Managed integrations configuration.
 
     Args:
-        apps: Apps/toolkits to expose to the agent (e.g., ["github", "gmail"])
+        apps: Apps to expose to the agent (e.g., ["github", "gmail"])
         tools: Per-app tool filtering
-        manage_connections: Let agents initiate auth links when an account is missing
+        accounts: Pin connected accounts by account ID or alias
     """
     apps: List[str]
     tools: Optional[Dict[str, IntegrationToolsFilter]] = None
-    manage_connections: Optional[bool] = None
+    accounts: Optional[Dict[str, List[str]]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dict for JSON-RPC transport."""
         result: Dict[str, Any] = {'apps': self.apps}
         if self.tools:
             result['tools'] = self.tools
-        if self.manage_connections is not None:
-            result['manage_connections'] = self.manage_connections
+        if self.accounts:
+            result['accounts'] = self.accounts
         return result
 
 
-@dataclass
+@dataclass(kw_only=True)
 class IntegrationsSetup:
     """Managed integrations setup.
 
     Args:
-        apps: Apps/toolkits to expose to the agent
-        user_id: Application user ID. Defaults to "root" for dashboard-owned/private use.
-        user_token: Required for non-root users. Generate and store this in your app backend.
+        user_id: Integration user ID. Use "root" for dashboard-owned/private accounts,
+            or your app's stable end-user ID for per-user accounts.
+        apps: Apps to expose to the agent
         tools: Per-app tool filtering
-        manage_connections: Let agents initiate auth links when an account is missing
+        accounts: Pin connected accounts by account ID or alias
     """
+    user_id: str
     apps: List[str]
-    user_id: Optional[str] = None
-    user_token: Optional[str] = None
     tools: Optional[Dict[str, IntegrationToolsFilter]] = None
-    manage_connections: Optional[bool] = None
+    accounts: Optional[Dict[str, List[str]]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dict for JSON-RPC transport."""
-        result: Dict[str, Any] = {'apps': self.apps}
-        if self.user_id:
-            result['user_id'] = self.user_id
-        if self.user_token:
-            result['user_token'] = self.user_token
+        result: Dict[str, Any] = {'user_id': self.user_id, 'apps': self.apps}
         if self.tools:
             result['tools'] = self.tools
-        if self.manage_connections is not None:
-            result['manage_connections'] = self.manage_connections
+        if self.accounts:
+            result['accounts'] = self.accounts
         return result
