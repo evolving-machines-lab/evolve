@@ -196,14 +196,13 @@ class OutputEvent(TypedDict):
 
 ## Browser Automation Streaming
 
-Use `browser={'provider': 'agent-browser', 'remote': True}` for browser automation. Evolve emits live browser metadata through lifecycle events and returns the same browser metadata on `run()` results.
+The full browser guide is [Configuration → Browser Automation](./02-configuration.md#browser-automation).
+This section only documents the streaming fields for browser live view.
 
 | Need | API | Use |
 |------|-----|-----|
 | Show live browser during a run | `lifecycle` event with `reason == "browser_ready"` | `event["browser"]["live_url"]` |
 | Save the browser/session id | same lifecycle event | `event["browser"]["session_id"]` |
-| Show live browser after `run()` returns | `AgentResponse.browser` | `result.browser["live_url"]` |
-| Fetch replay after cleanup | `sessions().browser_replay(session_id)` | `replay.replay_url`, `replay.download_url` |
 
 ### Managed Browser
 
@@ -211,7 +210,7 @@ Managed browser sessions emit the live-view URL as soon as the browser is ready:
 
 ```python
 def on_lifecycle(event):
-    if event['reason'] == 'browser_ready':
+    if event['reason'] == 'browser_ready' and event.get('browser'):
         open_live_view(event['browser']['live_url'])
         remember_session_id(event['browser']['session_id'])
 
@@ -230,8 +229,9 @@ TraceMetadata = {
 ```
 
 Use `event["browser"]["live_url"]` or `result.browser["live_url"]` for immediate
-UI display. After browser cleanup, pass `event["browser"]["session_id"]` or
-`result.session_id` to `sessions().browser_replay()`.
+UI display. For replay after cleanup, use the `session_id` with
+`sessions().browser_replay()`; the full example lives in
+[Configuration → Browser Automation](./02-configuration.md#browser-automation).
 
 ---
 

@@ -281,7 +281,12 @@ Browser automation is opt-in. Use `.withBrowser()` for browser, QA, dogfooding, 
 new Evolve().withBrowser(); // managed browser with dashboard live view and replay
 ```
 
-Evolve automatically configures the browser runtime. In Gateway mode, the managed browser emits a live URL through lifecycle events and provides replay through the sessions API.
+Evolve automatically configures the browser runtime. In Gateway mode, the managed browser gives you:
+
+- `event.browser.liveUrl` from the `browser_ready` lifecycle event
+- `result.browser?.liveUrl` after `run()` returns
+- `result.sessionId`, which is the id to use for traces and browser replay
+- `sessions().browserReplay(sessionId)`, which returns replay and raw `.mp4` download URLs after cleanup
 
 Use the default unless you have a reason not to:
 
@@ -298,6 +303,51 @@ new Evolve().withBrowser({
 new Evolve().withBrowser(false);
 // disable browser automation
 ```
+
+Full browser run with live view and replay:
+
+```ts
+import { Evolve, sessions } from "@evolvingmachines/sdk";
+
+const evolve = new Evolve()
+    .withBrowser()
+    .withSessionTagPrefix("checkout-qa");
+
+let sessionId: string | undefined;
+
+evolve.on("lifecycle", (event) => {
+    if (event.reason === "browser_ready" && event.browser) {
+        showLiveBrowser(event.browser.liveUrl);
+        sessionId = event.browser.sessionId;
+    }
+});
+
+try {
+    const result = await evolve.run({
+        prompt: "Open the app, test the checkout flow, and report issues.",
+    });
+
+    sessionId = result.sessionId ?? sessionId;
+    if (result.browser?.liveUrl) {
+        showLiveBrowser(result.browser.liveUrl);
+    }
+} finally {
+    await evolve.kill();
+}
+
+if (!sessionId) throw new Error("Missing dashboard session id");
+
+const replay = await sessions().browserReplay(sessionId, {
+    timeoutMs: 600_000,
+    intervalMs: 5_000,
+});
+
+showReplay(replay.replayUrl);
+saveDownloadLink(replay.downloadUrl);
+```
+
+Replay processing starts when the managed browser is cleaned up, usually during `kill()`.
+If replay is not ready before `timeoutMs`, call `browserReplay()` again later with the same `sessionId`.
 
 ### Agent Plugins
 
