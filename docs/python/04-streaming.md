@@ -44,7 +44,7 @@ class LifecycleEvent(TypedDict):
     sandbox: Literal["booting", "error", "ready", "running", "paused", "stopped"]
     agent: Literal["idle", "running", "interrupted", "error"]
     timestamp: str
-    browser: dict[str, str]  # optional, present after managed browser setup
+    browser: NotRequired[dict[str, str]]  # live_url/session_id/session_tag
     reason: Literal[
         "browser_ready",
         "sandbox_boot",

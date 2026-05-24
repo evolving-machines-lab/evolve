@@ -12,7 +12,7 @@ class AgentResponse:
     stdout: str
     stderr: str
     session_id: str | None        # Dashboard session ID for traces/replays, when known
-    browser: dict | None          # Live browser URL, when remote browser is configured
+    browser: dict[str, str] | None  # live_url, when remote browser is configured
     checkpoint: CheckpointInfo | None  # Present when storage= configured and run succeeded
 
 @dataclass
@@ -23,6 +23,7 @@ class SessionStatus:
     active_process_id: str | None
     has_run: bool
     timestamp: str
+    browser: dict[str, str] | None  # live_url/session_id/session_tag, when available
 ```
 
 ### run
