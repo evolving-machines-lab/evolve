@@ -394,6 +394,11 @@ export interface AgentOptions {
     dashboardUrl?: string;
     config?: BrowserCredentialsConfig;
   };
+  /** Evolve-managed app integrations */
+  integrations?: IntegrationsSetup & {
+    apiKey: string;
+    dashboardUrl?: string;
+  };
   /** Plugins/extensions to install in the sandbox user profile before first run */
   plugins?: AgentPluginConfig[];
   /** Skills to enable (e.g., ["pdf", "dev-browser"]) */
@@ -429,13 +434,6 @@ export interface AgentOptions {
   sessionTagPrefix?: string;
   /** Observability metadata for trace grouping (generic key-value, domain-agnostic) */
   observability?: Record<string, unknown>;
-
-  // Composio integration
-  /**
-   * Composio Tool Router configuration
-   * Set via withComposio() - provides access to 1000+ tools
-   */
-  composio?: ComposioSetup;
 
   // Storage / Checkpointing
   /** Resolved storage configuration (set via Evolve.withStorage()) */
@@ -649,72 +647,58 @@ export interface StreamCallbacks {
 }
 
 // =============================================================================
-// COMPOSIO INTEGRATION
+// MANAGED INTEGRATIONS
 // =============================================================================
 
 /**
- * Configuration for Composio Tool Router integration
- *
- * Provides access to 1000+ tools (GitHub, Gmail, Slack, etc.) via MCP.
- * Evidence: tool-router/quickstart.mdx
+ * Configuration for managed app integrations.
  */
 /** Tool filter configuration per toolkit */
-export type ToolsFilter =
-  | string[]                          // Enable only these tools
+export type IntegrationToolsFilter =
   | { enable: string[] }              // Enable only these tools
   | { disable: string[] }             // Disable these tools
   | { tags: string[] };               // Filter by behavior tags
 
-export interface ComposioConfig {
+export interface IntegrationsConfig {
   /**
-   * Restrict to specific toolkits
+   * Apps/toolkits to expose to the agent.
    *
    * @example
-   * toolkits: ["github", "gmail", "linear"]
+   * apps: ["github", "gmail", "linear"]
    */
-  toolkits?: string[];
+  apps: string[];
 
   /**
-   * Per-toolkit tool filtering
+   * Per-app tool filtering.
    *
    * @example
    * tools: {
-   *   github: ["github_create_issue", "github_list_repos"],
+   *   github: { enable: ["github_create_issue", "github_list_repos"] },
    *   gmail: { disable: ["gmail_delete_email"] },
    *   slack: { tags: ["readOnlyHint"] }
    * }
    */
-  tools?: Record<string, ToolsFilter>;
+  tools?: Record<string, IntegrationToolsFilter>;
 
   /**
-   * API keys for direct authentication (bypasses OAuth)
-   * For tools that support API key auth (e.g., Stripe, OpenAI)
-   *
-   * @example
-   * keys: { stripe: "sk_live_...", openai: "sk-..." }
+   * Let agents initiate auth links when an account is missing.
+   * Defaults to true.
    */
-  keys?: Record<string, string>;
-
-  /**
-   * Custom OAuth auth config IDs for white-labeling
-   * Created in Composio dashboard
-   *
-   * @example
-   * authConfigs: { github: "ac_your_github_config" }
-   */
-  authConfigs?: Record<string, string>;
+  manageConnections?: boolean;
 }
 
 /**
- * Composio setup for Tool Router integration
- *
- * Combines user identification with optional configuration.
+ * Managed integrations setup.
  */
-export interface ComposioSetup {
-  /** User's unique identifier for Composio session */
-  userId: string;
-  /** Optional Composio configuration */
-  config?: ComposioConfig;
+export interface IntegrationsSetup extends IntegrationsConfig {
+  /**
+   * Application user ID. Defaults to "root" for dashboard-owned/private use.
+   */
+  userId?: string;
+  /**
+   * Required for non-root users. Generate and store this in your app backend.
+   */
+  userToken?: string;
 }
 
 // =============================================================================

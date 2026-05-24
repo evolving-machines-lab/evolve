@@ -23,8 +23,7 @@ import type {
   JsonSchema,
   SchemaValidationOptions,
   SkillName,
-  ComposioConfig,
-  ComposioSetup,
+  IntegrationsSetup,
   StorageConfig,
   RunCost,
   SessionCost,
@@ -35,8 +34,8 @@ import type {
 import { Agent, type AgentConfig, type AgentOptions, type AgentResponse } from "./agent";
 import type { OutputEvent } from "./parsers";
 import { isZodSchema, resolveAgentConfig, resolveDefaultSandbox } from "./utils";
-import { composioHelpers } from "./composio";
-import { getGatewayMcpServers, DEFAULT_DASHBOARD_URL } from "./constants";
+import { integrationHelpers } from "./integrations";
+import { getGatewayMcpServers, DEFAULT_DASHBOARD_URL, SANDBOX_GATEWAY_API_KEY_PLACEHOLDER } from "./constants";
 import { resolveStorageConfig, createBoundStorageClient } from "./storage";
 import type { CheckpointInfo, StorageClient } from "./types";
 import { BROWSER_ACTIONBOOK_PROMPT, BROWSER_AGENT_BROWSER_PROMPT } from "./prompts";
@@ -90,9 +89,9 @@ export interface EvolveConfig {
   sessionTagPrefix?: string;
   /** Observability metadata for trace grouping (generic key-value, domain-agnostic) */
   observability?: Record<string, unknown>;
-  // Composio integration
-  /** Composio user ID and config */
-  composio?: ComposioSetup;
+  // Managed integrations
+  /** Managed integrations config */
+  integrations?: IntegrationsSetup;
   // Storage / Checkpointing
   /** Storage configuration for checkpointing */
   storage?: StorageConfig;
@@ -353,39 +352,13 @@ export class Evolve extends EventEmitter {
   }
 
   /**
-   * Enable Composio Tool Router for 1000+ tool integrations
+   * Enable Evolve-managed app integrations.
    *
-   * Provides access to GitHub, Gmail, Slack, Notion, and 1000+ other
-   * tools via a single MCP server. Handles authentication automatically.
-   *
-   * Evidence: tool-router/quickstart.mdx
-   *
-   * @param userId - Your user's unique identifier
-   * @param config - Optional configuration for toolkits, API keys, and auth
-   *
-   * @example
-   * // Basic - all tools, in-chat auth
-   * kit.withComposio("user_123")
-   *
-   * @example
-   * // Restrict to specific toolkits
-   * kit.withComposio("user_123", { toolkits: ["github", "gmail"] })
-   *
-   * @example
-   * // With API keys for direct auth
-   * kit.withComposio("user_123", {
-   *   toolkits: ["github", "stripe"],
-   *   keys: { stripe: "sk_live_..." }
-   * })
-   *
-   * @example
-   * // With white-label OAuth
-   * kit.withComposio("user_123", {
-   *   authConfigs: { github: "ac_your_oauth_config" }
-   * })
+   * Available only in gateway mode. The provider key stays server-side; the
+   * sandbox receives an Evolve-scoped MCP proxy.
    */
-  withComposio(userId: string, config?: ComposioConfig): this {
-    this.config.composio = { userId, config };
+  withIntegrations(config: IntegrationsSetup): this {
+    this.config.integrations = config;
     return this;
   }
 
@@ -414,28 +387,8 @@ export class Evolve extends EventEmitter {
   // STATIC HELPERS
   // ===========================================================================
 
-  /**
-   * Static helpers for Composio auth management
-   *
-   * Use these in your app's settings UI to manage user connections.
-   *
-   * Evidence: tool-router/manually-authenticating-users.mdx
-   *
-   * @example
-   * // Get OAuth URL for "Connect GitHub" button
-   * const { url } = await Evolve.composio.auth("user_123", "github");
-   *
-   * @example
-   * // Check connection status
-   * const status = await Evolve.composio.status("user_123");
-   * // { github: true, gmail: false, ... }
-   *
-   * @example
-   * // Check single toolkit
-   * const isConnected = await Evolve.composio.status("user_123", "github");
-   * // true | false
-   */
-  static composio = composioHelpers;
+  /** Static helpers for managed integration auth and observability. */
+  static integrations = integrationHelpers;
 
   /** Static browser credential client for listing, creating, and deleting saved browser logins. */
   static browserCredentials = createBrowserCredentialsClient;
@@ -453,6 +406,10 @@ export class Evolve extends EventEmitter {
 
     // Resolve sandbox provider (from config or env)
     const sandboxProvider = this.config.sandbox ?? await resolveDefaultSandbox();
+
+    if (this.config.integrations && agentConfig.isDirectMode) {
+      throw new Error("withIntegrations() is available only in gateway mode with EVOLVE_API_KEY");
+    }
 
     // Gateway browser MCP is opt-in; user config still takes precedence.
     let browserMcpServers: Record<string, McpServerConfig> = {};
@@ -472,7 +429,7 @@ export class Evolve extends EventEmitter {
             'withBrowser("browser-use") requires gateway mode. Use apiKey/EVOLVE_API_KEY instead of providerApiKey/direct mode.'
           );
         }
-        browserMcpServers = getGatewayMcpServers(agentConfig.apiKey);
+        browserMcpServers = getGatewayMcpServers(SANDBOX_GATEWAY_API_KEY_PLACEHOLDER);
       }
 
       if (browser.provider === "actionbook" || browser.provider === "agent-browser") {
@@ -546,8 +503,14 @@ export class Evolve extends EventEmitter {
       // Observability
       sessionTagPrefix: this.config.sessionTagPrefix,
       observability: this.config.observability,
-      // Composio integration
-      composio: this.config.composio,
+      // Managed integrations
+      integrations: this.config.integrations
+        ? {
+            ...this.config.integrations,
+            apiKey: agentConfig.apiKey,
+            dashboardUrl: process.env.EVOLVE_DASHBOARD_URL || DEFAULT_DASHBOARD_URL,
+          }
+        : undefined,
       // Storage / Checkpointing
       storage: resolvedStorage,
     };

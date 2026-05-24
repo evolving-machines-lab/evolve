@@ -3,7 +3,7 @@
 Functional programming for AI agents: `map`, `filter`, `reduce`, `best_of`, `verify`.
 
 ```python
-from evolve import Swarm, SwarmConfig, AgentConfig, ComposioSetup, ComposioConfig
+from evolve import Swarm, SwarmConfig, AgentConfig, IntegrationsSetup
 from pydantic import BaseModel  # Or use plain JSON Schema dicts instead
 
 agent = AgentConfig(type='claude')
@@ -14,9 +14,9 @@ swarm = Swarm(SwarmConfig(
     timeout_ms=3_600_000,            # Default timeout per worker (default: 1 hour)
     tag='my-pipeline',               # Tag prefix for observability
     skills=['pdf'],                  # Default skills
-    composio=ComposioSetup(          # Default Composio config for all workers
-        user_id='user_123',
-        config=ComposioConfig(toolkits=['gmail', 'notion']),
+    integrations=IntegrationsSetup(          # Default Integrations config for all workers
+        user_id='root',
+        apps=['gmail', 'notion'],
     ),
     mcp_servers={...},               # Default MCP servers for all workers
     retry=RetryConfig(               # Default retry config for all operations
@@ -27,14 +27,14 @@ swarm = Swarm(SwarmConfig(
 ))
 ```
 
-> **Defaults**: `agent`, `skills`, `composio`, `mcp_servers`, `timeout_ms`, and `retry` set here are inherited by all operations (`map`, `filter`, `reduce`, `best_of`). Pass these options to individual operations to override.
+> **Defaults**: `agent`, `skills`, `integrations`, `mcp_servers`, `timeout_ms`, and `retry` set here are inherited by all operations (`map`, `filter`, `reduce`, `best_of`). Pass these options to individual operations to override.
 
 **SwarmConfig** — configuration for Swarm instance:
 ```python
 SwarmConfig(
     agent=AgentConfig,
     skills=list[str],
-    composio=ComposioSetup,
+    integrations=IntegrationsSetup,
     mcp_servers=dict[str, McpServerConfig],
     concurrency=int,
     timeout_ms=int,
@@ -48,7 +48,7 @@ SwarmConfig(
 | `agent.type` | `'claude'` | Auto-resolved from env |
 | `agent.model` | per type | `'sonnet'` (claude), `'gpt-5.2'` (codex), etc. |
 | `skills` | `None` | Set here or per-operation |
-| `composio` | `None` | Set here or per-operation |
+| `integrations` | `None` | Set here or per-operation |
 | `mcp_servers` | `None` | Set here or per-operation |
 | `concurrency` | `4` | Max parallel sandboxes |
 | `timeout_ms` | `3_600_000` | 1 hour per worker |
@@ -178,8 +178,8 @@ BestOfConfig(
     judge_agent=AgentConfig,
     skills=list[str],
     judge_skills=list[str],
-    composio=ComposioSetup,
-    judge_composio=ComposioSetup,
+    integrations=IntegrationsSetup,
+    judge_integrations=IntegrationsSetup,
     mcp_servers=dict[str, McpServerConfig],
     judge_mcp_servers=dict[str, McpServerConfig],
     on_candidate_complete=Callable[[int, int, str], None],
@@ -194,7 +194,7 @@ VerifyConfig(
     max_attempts=int,
     verifier_agent=AgentConfig,
     verifier_skills=list[str],
-    verifier_composio=ComposioSetup,
+    verifier_integrations=IntegrationsSetup,
     verifier_mcp_servers=dict[str, McpServerConfig],
     on_worker_complete=Callable[[int, int, str], None],
     on_verifier_complete=Callable[[int, int, bool, str | None], None],
@@ -283,8 +283,8 @@ result = await swarm.best_of(
         judge_mcp_servers={...},     # (optional) MCP servers for judge
         skills=['pdf'],              # (optional) Skills for candidates
         judge_skills=['pdf'],        # (optional) Skills for judge
-        composio=ComposioSetup(...), # (optional) Composio config for candidates
-        judge_composio=ComposioSetup(...),  # (optional) Composio config for judge
+        integrations=IntegrationsSetup(...), # (optional) Integrations config for candidates
+        judge_integrations=IntegrationsSetup(...),  # (optional) Integrations config for judge
     ),
 )
 ```
@@ -323,7 +323,7 @@ await swarm.map(
     retry=RetryConfig,                      # Auto-retry on error with backoff
     mcp_servers=dict[str, McpServerConfig], # Optional
     skills=list[str],                       # Optional - e.g. ['pdf']
-    composio=ComposioSetup,                 # Composio Tool Router config
+    integrations=IntegrationsSetup,                 # managed integrations config
     timeout_ms=int,                         # Optional
 ) -> SwarmResultList
 ```
@@ -449,7 +449,7 @@ await swarm.filter(
     retry=RetryConfig,                      # Auto-retry on error with backoff
     mcp_servers=dict[str, McpServerConfig], # Optional
     skills=list[str],                       # Optional - e.g. ['pdf']
-    composio=ComposioSetup,                 # Composio Tool Router config
+    integrations=IntegrationsSetup,                 # managed integrations config
     timeout_ms=int,                         # Optional
 ) -> SwarmResultList
 ```
@@ -512,7 +512,7 @@ await swarm.reduce(
     retry=RetryConfig,                      # Auto-retry on error with backoff
     mcp_servers=dict[str, McpServerConfig], # Optional
     skills=list[str],                       # Optional - e.g. ['pdf']
-    composio=ComposioSetup,                 # Composio Tool Router config
+    integrations=IntegrationsSetup,                 # managed integrations config
     timeout_ms=int,                         # Optional
 ) -> ReduceResult
 ```
@@ -757,7 +757,7 @@ swarm = Swarm(SwarmConfig(
 
 ## Pipeline
 
-Fluent wrapper over Swarm for chaining operations. **All Swarm features work in Pipeline steps** — `schema`, `best_of`, `verify`, `retry`, `agent`, `mcp_servers`, `skills`, `composio`, dynamic prompts.
+Fluent wrapper over Swarm for chaining operations. **All Swarm features work in Pipeline steps** — `schema`, `best_of`, `verify`, `retry`, `agent`, `mcp_servers`, `skills`, `integrations`, dynamic prompts.
 
 ```python
 from dotenv import load_dotenv
@@ -807,7 +807,7 @@ MapConfig(
     agent=AgentConfig,
     mcp_servers=dict[str, McpServerConfig],
     skills=list[str],                       # Skills for workers
-    composio=ComposioSetup,                 # Composio Tool Router config
+    integrations=IntegrationsSetup,                 # managed integrations config
     system_prompt=str,
     timeout_ms=int,
 )
@@ -824,7 +824,7 @@ FilterConfig(
     agent=AgentConfig,
     mcp_servers=dict[str, McpServerConfig],
     skills=list[str],                       # Skills for workers
-    composio=ComposioSetup,                 # Composio Tool Router config
+    integrations=IntegrationsSetup,                 # managed integrations config
     system_prompt=str,
     timeout_ms=int,
 )
@@ -839,7 +839,7 @@ ReduceConfig(
     agent=AgentConfig,
     mcp_servers=dict[str, McpServerConfig],
     skills=list[str],                       # Skills for workers
-    composio=ComposioSetup,                 # Composio Tool Router config
+    integrations=IntegrationsSetup,                 # managed integrations config
     system_prompt=str,
     timeout_ms=int,
 )

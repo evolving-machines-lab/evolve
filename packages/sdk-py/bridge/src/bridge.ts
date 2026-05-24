@@ -13,7 +13,7 @@
 // =============================================================================
 // Redirect all console output to stderr BEFORE any imports.
 // This protects the framed binary protocol on stdout from corruption by
-// dependencies (e.g., @composio/core logs errors to stdout, not stderr).
+// dependencies sometimes log diagnostics to stdout, not stderr.
 // Must be at the top of the file to execute before any module initialization.
 
 const originalLog = console.log;

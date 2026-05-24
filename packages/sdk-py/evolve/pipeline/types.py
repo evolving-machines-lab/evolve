@@ -10,7 +10,7 @@ from ..swarm.types import (
     Prompt,
 )
 from ..swarm.results import SwarmResult, ReduceResult
-from ..config import ComposioSetup
+from ..config import IntegrationsSetup
 from ..retry import RetryConfig
 
 
@@ -53,8 +53,8 @@ class MapConfig(Generic[T]):
     """MCP servers override (replaces swarm default for this step)."""
     skills: Optional[List[str]] = None
     """Skills override (replaces swarm default for this step)."""
-    composio: Optional[ComposioSetup] = None
-    """Composio override (replaces swarm default for this step)."""
+    integrations: Optional[IntegrationsSetup] = None
+    """Integrations override (replaces swarm default for this step)."""
     best_of: Optional[BestOfConfig] = None
     """BestOf configuration (mutually exclusive with verify)."""
     verify: Optional[VerifyConfig] = None
@@ -86,8 +86,8 @@ class FilterConfig(Generic[T]):
     """MCP servers override (replaces swarm default for this step)."""
     skills: Optional[List[str]] = None
     """Skills override (replaces swarm default for this step)."""
-    composio: Optional[ComposioSetup] = None
-    """Composio override (replaces swarm default for this step)."""
+    integrations: Optional[IntegrationsSetup] = None
+    """Integrations override (replaces swarm default for this step)."""
     emit: EmitOption = "success"
     """What to emit to next step (default: "success")."""
     verify: Optional[VerifyConfig] = None
@@ -117,8 +117,8 @@ class ReduceConfig(Generic[T]):
     """MCP servers override (replaces swarm default for this step)."""
     skills: Optional[List[str]] = None
     """Skills override (replaces swarm default for this step)."""
-    composio: Optional[ComposioSetup] = None
-    """Composio override (replaces swarm default for this step)."""
+    integrations: Optional[IntegrationsSetup] = None
+    """Integrations override (replaces swarm default for this step)."""
     verify: Optional[VerifyConfig] = None
     """Verify configuration."""
     retry: Optional[RetryConfig] = None

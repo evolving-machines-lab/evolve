@@ -75,8 +75,8 @@ async function testWithBrowserInjectsGatewayMcp(): Promise<void> {
     assertEqual(browserUse.url, "https://gateway.test/browser_use/mcp", "browser-use gateway URL preserved");
     assertEqual(
       browserUse.headers["x-litellm-api-key"],
-      "Bearer evolve-key",
-      "browser-use auth header preserved"
+      "Bearer __EVOLVE_SANDBOX_GATEWAY_API_KEY__",
+      "browser-use auth header is deferred until sandbox key creation"
     );
   } finally {
     if (previousGatewayUrl === undefined) {

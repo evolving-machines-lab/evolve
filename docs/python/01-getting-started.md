@@ -25,7 +25,6 @@ Storage & checkpointing is available in [gateway mode](./03-runtime.md#storage--
 ```bash
 # .env
 EVOLVE_API_KEY=sk-...        # Evolve gateway key (dashboard.evolvingmachines.ai)
-COMPOSIO_API_KEY=...         # (optional) Composio integrations (app.composio.dev)
 ```
 
 **3. Run your first agent:**
@@ -33,16 +32,13 @@ COMPOSIO_API_KEY=...         # (optional) Composio integrations (app.composio.de
 Evolve auto-resolves API keys and sandbox providers from environment variables — no need to pass them explicitly.
 
 ```python
-from evolve import Evolve, ComposioSetup, ComposioConfig
+from evolve import Evolve, IntegrationsSetup
 
 evolve = Evolve(
     system_prompt='You are Manus Evolve, a powerful AI agent. You can execute code, browse the web, manage files, and solve complex tasks.',
     browser={'provider': 'agent-browser', 'remote': True},  # optional: remote managed browser automation in Gateway mode
     skills=['pdf', 'docx', 'pptx'],
-    composio=ComposioSetup(
-        user_id='user_123',
-        config=ComposioConfig(toolkits=['gmail', 'notion', 'exa']),
-    ),
+    integrations=IntegrationsSetup(apps=['gmail', 'notion']),  # optional; managed integrations in Gateway mode
 )
 
 result = await evolve.run(

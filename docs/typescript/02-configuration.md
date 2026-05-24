@@ -177,15 +177,13 @@ const evolve = new Evolve()
     // (optional) Skills for the agent
     .withSkills(["pdf", "docx", "pptx"])
 
-    // (optional) Composio Tool Router for 1000+ integrations (GitHub, Gmail, Slack, etc.)
-    .withComposio("user_123", {
-        toolkits: ["github", "gmail"],                    // Restrict to specific toolkits
-        tools: {                                          // Per-toolkit tool filtering
-            github: ["github_create_issue"],              // Enable specific tools
-            gmail: { disable: ["gmail_delete_email"] },   // Disable specific tools
+    // (optional) Managed integrations (gateway mode only)
+    .withIntegrations({
+        apps: ["github", "gmail"],
+        tools: {
+            github: { enable: ["github_create_issue"] },
+            gmail: { disable: ["gmail_delete_email"] },
         },
-        keys: { stripe: "sk_live_..." },                  // API keys for direct auth (bypasses OAuth)
-        authConfigs: { github: "ac_custom_oauth" },       // Custom OAuth configs (white-labeling)
     })
 
     // (optional) Prefix for observability logs
@@ -509,138 +507,77 @@ await evolve.run({ prompt: "Create a slide deck summarizing the uploaded notes."
 
 ---
 
-## Composio (Tool Router)
+## Managed Integrations
 
-Access 1000+ integrations (GitHub, Gmail, Slack, etc.) via [Composio](https://composio.dev).
-
-[Tool Router Overview](https://docs.composio.dev/tool-router/overview) — How Tool Router works and integration guide.
-
-[Available Toolkits](https://docs.composio.dev/toolkits/introduction) — Browse all 1000+ supported integrations.
+Managed integrations are available only in gateway mode (`EVOLVE_API_KEY`); provider credentials stay server-side and agents receive an Evolve-scoped MCP proxy.
 
 ```bash
 # .env
-EVOLVE_API_KEY=sk-...      # Evolve gateway key
-COMPOSIO_API_KEY=...         # Get from https://app.composio.dev
+EVOLVE_API_KEY=sk-...
 ```
 
 ```ts
 import { Evolve } from "@evolvingmachines/sdk";
 
 const evolve = new Evolve()
-    .withComposio("user_123");  // All tools, in-chat OAuth
+    .withIntegrations({
+        apps: ["github", "gmail"],
+        tools: {
+            github: { enable: ["github_create_issue", "github_list_repos"] },
+            gmail: { disable: ["gmail_delete_email"] },
+        },
+    });
 
 await evolve.run({ prompt: "Create a GitHub issue for the login bug" });
 ```
 
-### Authentication Paths
+### Root vs App Users
 
-**1. In-chat auth (default)** — Composio prompts user to authenticate via agent output:
+`userId` defaults to `"root"`, which uses accounts connected in the Evolve dashboard for private agents and test accounts.
+
+For an application with end users, generate a random `userToken` in your backend, store it with that user, and pass it whenever you create connect links or runs for that user:
+
 ```ts
-import { Evolve } from "@evolvingmachines/sdk";
+import { randomUUID } from "node:crypto";
 
+const userToken = randomUUID();
+const link = await Evolve.integrations.connect({
+    userId: "customer_123",
+    userToken,
+    app: "gmail",
+});
+
+// Show link.url to the user, then store userToken server-side.
 const evolve = new Evolve()
-    .withComposio("user_123");  // Agent prompts "Connect to GitHub" when needed
-
-await evolve.run({ prompt: "Star my favorite repos on GitHub" });
+    .withIntegrations({
+        userId: "customer_123",
+        userToken,
+        apps: ["gmail"],
+    });
 ```
 
-**2. API key auth** — Bypass OAuth for tools that support API keys:
-```ts
-import { Evolve } from "@evolvingmachines/sdk";
-
-const evolve = new Evolve()
-    .withComposio("user_123", {
-        toolkits: ["stripe", "sendgrid"],
-        keys: {
-            stripe: process.env.STRIPE_API_KEY!,
-            sendgrid: process.env.SENDGRID_API_KEY!,
-        },
-    });
-
-await evolve.run({ prompt: "List my recent Stripe payments" });
-```
-
-**3. Manual OAuth (app UI)** — Get OAuth URL to show in your settings page:
-```ts
-import { Evolve } from "@evolvingmachines/sdk";
-
-// Get OAuth URL for "Connect GitHub" button
-const { url } = await Evolve.composio.auth("user_123", "github");
-// Render: <a href={url}>Connect GitHub</a>
-
-// Check connection status (simple)
-const status = await Evolve.composio.status("user_123");
-// { github: true, gmail: false, slack: true }
-
-// Check single toolkit
-const isGitHubConnected = await Evolve.composio.status("user_123", "github");
-// true | false
-
-// Get detailed connection info (with account IDs)
-const connections = await Evolve.composio.connections("user_123");
-// [{ toolkit: "github", connected: true, accountId: "ca_..." }, ...]
-
-// Then use in agent (user already connected via UI)
-const evolve = new Evolve()
-    .withComposio("user_123", {
-        toolkits: ["github"],
-    });
-
-await evolve.run({ prompt: "List my open PRs" });
-```
-
-**4. White-label OAuth** — Use custom OAuth configs from [Composio dashboard](https://app.composio.dev):
-```ts
-import { Evolve } from "@evolvingmachines/sdk";
-
-const evolve = new Evolve()
-    .withComposio("user_123", {
-        toolkits: ["github"],
-        authConfigs: { github: "ac_your_custom_oauth_app" },
-    });
-
-await evolve.run({ prompt: "Create a new private repo" });
-```
-
-### Tool Filtering
+### Observability Helpers
 
 ```ts
-import { Evolve } from "@evolvingmachines/sdk";
-
-const evolve = new Evolve()
-    .withComposio("user_123", {
-        toolkits: ["github", "gmail", "slack"],
-        tools: {
-            github: ["github_create_issue", "github_list_repos"],  // Enable only these
-            gmail: { disable: ["gmail_delete_email"] },            // Disable dangerous tools
-            slack: { tags: ["readOnlyHint"] },                     // Filter by behavior tags
-        },
-    });
-
-await evolve.run({ prompt: "Send a Slack message about the GitHub issue" });
+const connections = await Evolve.integrations.status({ userId: "customer_123", userToken });
+const activity = await Evolve.integrations.activity({ userId: "customer_123", userToken });
 ```
 
 ### Type Reference
 
-**ComposioSetup** — configuration for `.withComposio(userId, config?)`:
 ```ts
-interface ComposioSetup {
-    userId: string,                                         // User's unique identifier
-    config?: ComposioConfig,                                // Optional configuration
+interface IntegrationsSetup {
+    apps: string[];
+    userId?: string;           // defaults to "root"
+    userToken?: string;        // required for non-root users
+    tools?: Record<string, IntegrationToolsFilter>;
+    manageConnections?: boolean;
 }
 
-interface ComposioConfig {
-    toolkits?: string[],                                    // e.g. ["gmail", "notion", "stripe"]
-    tools?: Record<string, ToolsFilter>,                    // Per-toolkit tool filtering
-    keys?: Record<string, string>,                          // API keys (bypasses OAuth)
-    authConfigs?: Record<string, string>,                   // Custom OAuth auth config IDs
-}
-
-type ToolsFilter =
-    | string[]                                              // Enable only these tools
-    | { enable: string[] }                                  // Enable only these tools
-    | { disable: string[] }                                 // Disable these tools
-    | { tags: string[] };                                   // Filter by behavior tags
+type IntegrationToolsFilter =
+    | { enable: string[] }
+    | { disable: string[] }
+    | { tags: string[] };
 ```
 
 ---

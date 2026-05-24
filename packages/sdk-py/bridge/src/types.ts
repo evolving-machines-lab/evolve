@@ -93,8 +93,8 @@ export interface InitializeParams {
   schema_options?: { mode?: 'strict' | 'loose' };
   // Observability metadata (passed to JSONL logs via withObservability)
   observability?: Record<string, unknown>;
-  // Composio Tool Router setup
-  composio?: ComposioSetup;
+  // Managed integrations setup
+  integrations?: IntegrationsSetup;
   // Storage / Checkpointing
   storage?: StorageConfigParams;
 }
@@ -135,73 +135,89 @@ export interface BrowserCredentialsConfig {
 }
 
 // =============================================================================
-// COMPOSIO TYPES (matches sdk-ts/src/types.ts)
+// MANAGED INTEGRATIONS TYPES (matches sdk-ts/src/types.ts)
 // =============================================================================
 
-/** Tool filter configuration per toolkit - matches TS SDK ToolsFilter */
-export type ToolsFilter =
-  | string[]                          // Enable only these tools
+/** Tool filter configuration per app */
+export type IntegrationToolsFilter =
   | { enable: string[] }              // Enable only these tools
   | { disable: string[] }             // Disable these tools
   | { tags: string[] };               // Filter by behavior tags
 
-export interface ComposioConfig {
-  toolkits?: string[];
-  tools?: Record<string, ToolsFilter>;
-  keys?: Record<string, string>;
-  auth_configs?: Record<string, string>;
+export interface IntegrationsConfig {
+  apps: string[];
+  tools?: Record<string, IntegrationToolsFilter>;
+  manage_connections?: boolean;
 }
 
-export interface ComposioSetup {
-  user_id: string;
-  config?: ComposioConfig;
-}
-
-// =============================================================================
-// COMPOSIO RPC PARAMETERS
-// =============================================================================
-
-export interface ComposioAuthParams {
-  user_id: string;
-  toolkit: string;
-}
-
-export interface ComposioStatusParams {
-  user_id: string;
-  toolkit?: string;
-}
-
-export interface ComposioConnectionsParams {
-  user_id: string;
+export interface IntegrationsSetup {
+  user_id?: string;
+  user_token?: string;
+  apps: string[];
+  tools?: Record<string, IntegrationToolsFilter>;
+  manage_connections?: boolean;
 }
 
 // =============================================================================
-// COMPOSIO RPC RESPONSES
+// INTEGRATIONS RPC PARAMETERS
 // =============================================================================
 
-/** Auth result - url to redirect user, connectionId for tracking */
-export interface ComposioAuthResponse {
+export interface IntegrationsConnectParams {
+  user_id?: string;
+  user_token?: string;
+  app: string;
+  callback_url?: string;
+  api_key?: string;
+  dashboard_url?: string;
+}
+
+export interface IntegrationsStatusParams {
+  user_id?: string;
+  user_token?: string;
+  api_key?: string;
+  dashboard_url?: string;
+}
+
+export interface IntegrationsActivityParams {
+  user_id?: string;
+  user_token?: string;
+  api_key?: string;
+  dashboard_url?: string;
+}
+
+// =============================================================================
+// INTEGRATIONS RPC RESPONSES
+// =============================================================================
+
+export interface IntegrationsConnectResponse {
   url: string;
-  connection_id: string;
+  connection_id?: string;
 }
 
-/** Status result - boolean if toolkit specified, map if not */
-export interface ComposioStatusResponse {
-  /** If toolkit was specified, this is the result */
-  connected?: boolean;
-  /** If no toolkit specified, this is the map */
-  status_map?: Record<string, boolean>;
-}
-
-/** Connection info from getConnections */
-export interface ComposioConnectionInfo {
-  toolkit: string;
-  connected: boolean;
+export interface IntegrationConnectionInfo {
+  app: string;
+  app_name?: string;
+  app_icon?: string;
+  status: string;
   account_id?: string;
 }
 
-export interface ComposioConnectionsResponse {
-  connections: ComposioConnectionInfo[];
+export interface IntegrationsStatusResponse {
+  connections: IntegrationConnectionInfo[];
+}
+
+export interface IntegrationActivityInfo {
+  app: string;
+  app_name?: string;
+  tool: string;
+  status: string;
+  user_id: string;
+  duration_ms?: number;
+  occurred_at: string;
+}
+
+export interface IntegrationsActivityResponse {
+  activity: IntegrationActivityInfo[];
 }
 
 // =============================================================================

@@ -13,7 +13,7 @@ from typing import (
     Union,
 )
 
-from ..config import SandboxProvider, AgentConfig, WorkspaceMode, ComposioSetup
+from ..config import SandboxProvider, AgentConfig, WorkspaceMode, IntegrationsSetup
 from ..retry import RetryConfig
 
 
@@ -53,8 +53,8 @@ class SwarmConfig:
     """Default MCP servers for all operations (per-operation config takes precedence)."""
     skills: Optional[List[str]] = None
     """Default skills for all operations (per-operation config takes precedence)."""
-    composio: Optional[ComposioSetup] = None
-    """Default Composio configuration for all operations (per-operation config takes precedence)."""
+    integrations: Optional[IntegrationsSetup] = None
+    """Default Integrations configuration for all operations (per-operation config takes precedence)."""
 
 
 # Callback types for BestOf
@@ -80,10 +80,10 @@ class BestOfConfig:
     """Skills for candidates (defaults to operation skills)."""
     judge_skills: Optional[List[str]] = None
     """Skills for judge (defaults to skills)."""
-    composio: Optional[ComposioSetup] = None
-    """Composio config for candidates (defaults to operation composio)."""
-    judge_composio: Optional[ComposioSetup] = None
-    """Composio config for judge (defaults to composio)."""
+    integrations: Optional[IntegrationsSetup] = None
+    """Integrations config for candidates (defaults to operation integrations)."""
+    judge_integrations: Optional[IntegrationsSetup] = None
+    """Integrations config for judge (defaults to integrations)."""
     on_candidate_complete: Optional[OnCandidateCompleteCallback] = None
     """Callback when a candidate completes."""
     on_judge_complete: Optional[OnJudgeCompleteCallback] = None
@@ -115,8 +115,8 @@ class VerifyConfig:
     """MCP servers for verifier (defaults to operation mcp_servers)."""
     verifier_skills: Optional[List[str]] = None
     """Skills for verifier (defaults to operation skills)."""
-    verifier_composio: Optional[ComposioSetup] = None
-    """Composio config for verifier (defaults to operation composio)."""
+    verifier_integrations: Optional[IntegrationsSetup] = None
+    """Integrations config for verifier (defaults to operation integrations)."""
     on_worker_complete: Optional[OnWorkerCompleteCallback] = None
     """Callback invoked after each worker completion (before verification)."""
     on_verifier_complete: Optional[OnVerifierCompleteCallback] = None

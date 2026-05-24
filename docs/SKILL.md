@@ -1,6 +1,6 @@
 ---
 name: evolve
-description: "Evolve SDK development for TypeScript and Python. Use when building applications with Evolve to run AI agents (Claude, Codex, Gemini, Qwen, Kimi, OpenCode, Droid) in secure sandboxes. Triggers: (1) Creating Evolve applications, (2) Configuring agents with skills, Composio, MCP servers, (3) Using Swarm abstractions (map, filter, reduce, bestOf/best_of, verify), (4) Building Pipelines, (5) Structured output with schemas, (6) Session management, streaming, observability, (7) Checkpointing, storage & StorageClient, (8) Cost tracking (per-run and per-session spend), (9) Historical sessions & trace download via sessions() client."
+description: "Evolve SDK development for TypeScript and Python. Use when building applications with Evolve to run AI agents (Claude, Codex, Gemini, Qwen, Kimi, OpenCode, Droid) in secure sandboxes. Triggers: (1) Creating Evolve applications, (2) Configuring agents with skills, Integrations, MCP servers, (3) Using Swarm abstractions (map, filter, reduce, bestOf/best_of, verify), (4) Building Pipelines, (5) Structured output with schemas, (6) Session management, streaming, observability, (7) Checkpointing, storage & StorageClient, (8) Cost tracking (per-run and per-session spend), (9) Historical sessions & trace download via sessions() client."
 ---
 
 # Evolve SDK
@@ -26,12 +26,12 @@ Always read these three references **for the detected language** before writing 
 
 **TypeScript:**
 - [01-getting-started.md](references/typescript/01-getting-started.md) — Installation, authentication (Gateway/BYOK), core lifecycle, streaming basics, agent reference table
-- [02-configuration.md](references/typescript/02-configuration.md) — Sandbox providers, full builder API, agent skills catalog, Composio (1000+ integrations), MCP servers
+- [02-configuration.md](references/typescript/02-configuration.md) — Sandbox providers, full builder API, agent skills catalog, Managed integrations, MCP servers
 - [03-runtime.md](references/typescript/03-runtime.md) — run(), executeCommand(), upload/download files, session controls, workspace layout, structured output, session management, storage & checkpointing, StorageClient, sessions() client, cost tracking, observability, error handling
 
 **Python:**
 - [01-getting-started.md](references/python/01-getting-started.md) — Installation, authentication (Gateway/BYOK), core lifecycle, streaming basics, agent reference table
-- [02-configuration.md](references/python/02-configuration.md) — Sandbox providers, full constructor API, agent skills catalog, Composio (1000+ integrations), MCP servers
+- [02-configuration.md](references/python/02-configuration.md) — Sandbox providers, full constructor API, agent skills catalog, Managed integrations, MCP servers
 - [03-runtime.md](references/python/03-runtime.md) — run(), execute_command(), upload/download files, session controls, workspace layout, structured output, session management, storage & checkpointing, StorageClient, sessions() client, cost tracking, observability, error handling
 
 ## Critical Constraints
@@ -75,7 +75,7 @@ Read on demand when the user's task requires them:
 | Browser credentials (saved website logins) | [TS](references/typescript/02-configuration.md#browser-credentials) | [PY](references/python/02-configuration.md#browser-credentials) |
 | Agent plugins/extensions | [TS](references/typescript/02-configuration.md#agent-plugins) | [PY](references/python/02-configuration.md#agent-plugins) |
 | Agent skills catalog | [TS](references/typescript/02-configuration.md#agent-skills) | [PY](references/python/02-configuration.md#agent-skills) |
-| Composio (auth paths, tool filtering, types) | [TS](references/typescript/02-configuration.md#composio-tool-router) | [PY](references/python/02-configuration.md#composio-tool-router) |
+| Managed integrations (auth paths, tool filtering, types) | [TS](references/typescript/02-configuration.md#managed-integrations) | [PY](references/python/02-configuration.md#managed-integrations) |
 | MCP server config (STDIO / HTTP / SSE) | [TS](references/typescript/02-configuration.md#evolve-instance) | [PY](references/python/02-configuration.md#evolve-instance) |
 
 ### Runtime

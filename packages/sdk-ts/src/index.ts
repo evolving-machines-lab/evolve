@@ -118,9 +118,9 @@ export type {
   GeminiAgentPluginConfig,
   CodexAgentPluginConfig,
   SkillsConfig,
-  ComposioConfig,
-  ComposioSetup,
-  ToolsFilter,
+  IntegrationsConfig,
+  IntegrationsSetup,
+  IntegrationToolsFilter,
   // Storage & Checkpointing
   StorageConfig,
   ResolvedStorageConfig,
@@ -133,11 +133,13 @@ export type {
   SessionCost,
 } from "./types";
 
-// Composio types (for static helper return types)
+// Managed integration helper return types
 export type {
-  ComposioAuthResult,
-  ComposioConnectionStatus,
-} from "./composio";
+  IntegrationConnectParams,
+  IntegrationConnectResult,
+  IntegrationConnectionStatus,
+  IntegrationActivity,
+} from "./integrations";
 
 // Schema validation presets
 export { VALIDATION_PRESETS } from "./types";

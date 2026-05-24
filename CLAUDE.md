@@ -16,7 +16,7 @@ evolve/
 │   │       ├── constants.ts     # Constants
 │   │       ├── index.ts         # Public exports
 │   │       ├── parsers/         # CLI output parsers (claude, codex, gemini, qwen, kimi, opencode)
-│   │       ├── composio/        # Composio integration (auth, session, types)
+│   │       ├── integrations.ts  # Managed integration helpers
 │   │       ├── mcp/             # MCP server config (json, toml, validation)
 │   │       ├── swarm/           # Swarm (map/filter/reduce/bestOf/verify, semaphore)
 │   │       ├── pipeline/        # Pipeline (fluent chaining)
@@ -25,7 +25,7 @@ evolve/
 │   │       ├── prompts/         # Agent & user prompt templates (agent_md/, user/)
 │   │       └── utils/           # Config, files, retry, sandbox, schema helpers
 │   ├── sdk-py/                  # Python SDK (evolve-sdk) — bridges to TS via JSON-RPC
-│   │   ├── evolve/              # Python package (agent, bridge, composio, pipeline, swarm, schema)
+│   │   ├── evolve/              # Python package (agent, bridge, integrations, pipeline, swarm, schema)
 │   │   ├── bridge/              # Node.js bridge subprocess (bundle.mjs)
 │   │   └── tests/
 │   ├── e2b/                     # E2B sandbox provider (@evolvingmachines/e2b)

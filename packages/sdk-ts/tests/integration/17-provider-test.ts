@@ -73,7 +73,7 @@ async function testProvider(provider: ProviderName): Promise<TestResult> {
   let stdoutChunks = 0;
 
   // =========================================================================
-  // SETUP: Create Evolve instance with files, skills, composio
+  // SETUP: Create Evolve instance with files and skills
   // =========================================================================
   log(provider, "Setting up Evolve instance...");
 
@@ -89,12 +89,6 @@ async function testProvider(provider: ProviderName): Promise<TestResult> {
     .withFiles({
       "workspace.txt": Buffer.from("Test workspace file - XYZ789"),
     });
-
-  // Add Composio if available
-  if (process.env.COMPOSIO_API_KEY) {
-    evolve.withComposio(`test-${provider}-${Date.now()}`, { toolkits: ["gmail"] });
-    log(provider, "Composio enabled");
-  }
 
   // Setup streaming listeners
   evolve.on("content", (_event: OutputEvent) => contentEvents++);
@@ -338,7 +332,6 @@ async function main() {
   console.log("=".repeat(60));
   console.log("Provider Integration Test");
   console.log(`Providers: ${providers.join(", ")}`);
-  console.log(`Composio: ${process.env.COMPOSIO_API_KEY ? "yes" : "no"}`);
   console.log("=".repeat(60) + "\n");
 
   // Run all providers in parallel
