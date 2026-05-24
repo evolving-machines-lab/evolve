@@ -43,7 +43,7 @@ import { Evolve } from "@evolvingmachines/sdk";
 
 const evolve = new Evolve()
     .withSystemPrompt("You are Manus Evolve, a powerful AI agent. You can execute code, browse the web, manage files, and solve complex tasks.")
-    .withBrowser()  // optional; defaults to remote managed Actionbook browser automation in Gateway mode
+    .withBrowser()  // optional; defaults to remote managed agent-browser automation in Gateway mode
     .withSkills(["pdf", "docx", "pptx"])
     .withComposio("user_123", { toolkits: ["gmail", "notion", "exa"] });  // 1000+ integrations via Composio
 
@@ -114,7 +114,7 @@ See [Streaming Events](./04-streaming.md) for all event types, type definitions,
 When using `EVOLVE_API_KEY`:
 
 - **Tracing:** Automatic tracing and agent analytics at [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) for observability and replay — no extra setup needed. Use `withSessionTagPrefix()` to label sessions for easy filtering.
-- **Browser Automation:** Call `.withBrowser()` for remote managed Actionbook browser automation with dashboard live view. Use `.withBrowser({ provider: "agent-browser", remote: true })` for remote managed agent-browser, or `.withBrowser("browser-use")` for browser-use MCP.
+- **Browser Automation:** Call `.withBrowser()` for remote managed agent-browser automation with dashboard live view. Use `.withBrowser({ provider: "actionbook", remote: true })` for remote managed Actionbook, or `.withBrowser("browser-use")` for browser-use MCP.
 - **Checkpointing:** Snapshot sandbox state to Evolve-managed storage with `.withStorage()` — no S3 credentials needed. See [Storage & Checkpointing](./03-runtime.md#storage--checkpointing).
 
 ---
@@ -125,7 +125,7 @@ When using `EVOLVE_API_KEY`:
 |---|---------|---------------|
 | Setup | `EVOLVE_API_KEY` | [Model provider keys](#agent-reference) + [`E2B_API_KEY`](https://e2b.dev) |
 | Observability | [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) | `~/.evolve-sdk/observability/` |
-| Browser | `.withBrowser()` enables remote managed Actionbook; `.withBrowser({ provider: "agent-browser", remote: true })` enables remote managed agent-browser; `.withBrowser("browser-use")` enables browser-use MCP | Via skills or MCP |
+| Browser | `.withBrowser()` enables remote managed agent-browser; `.withBrowser({ provider: "actionbook", remote: true })` enables remote managed Actionbook; `.withBrowser("browser-use")` enables browser-use MCP | Via skills or MCP |
 | Billing | Evolving Machines | Your provider accounts |
 
 ---

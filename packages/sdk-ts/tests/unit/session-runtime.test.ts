@@ -290,12 +290,16 @@ async function testManagedBrowserLifecycle(): Promise<void> {
     assertEqual(result.browser?.liveUrl, liveUrl, "run() exposes managed browser live URL");
     assert(!JSON.stringify(provider.createOptions?.envs).includes("proxy-token"), "sandbox env does not include CDP token");
 
-    const config = sandbox.files.writes.get("/home/user/.actionbook/config.toml");
-    assert(sandbox.files.dirs.includes("/home/user/.actionbook"), "Actionbook config directory created");
-    assert(config !== undefined, "Actionbook config file written");
-    assert(config?.includes('mode = "cloud"') ?? false, "Actionbook config sets cloud mode");
-    assert(config?.includes(cdpUrl) ?? false, "Actionbook config uses proxied CDP endpoint");
-    assert(!config?.includes("_managedTransport"), "Actionbook config does not expose transport selector");
+    assertEqual(
+      provider.createOptions?.envs?.AGENT_BROWSER_CONFIG,
+      "/home/user/.agent-browser/config.json",
+      "sandbox env points agent-browser to managed config"
+    );
+    const config = sandbox.files.writes.get("/home/user/.agent-browser/config.json");
+    assert(sandbox.files.dirs.includes("/home/user/.agent-browser"), "agent-browser config directory created");
+    assert(config !== undefined, "agent-browser config file written");
+    assert(config?.includes(cdpUrl) ?? false, "agent-browser config uses proxied CDP endpoint");
+    assert(!config?.includes("_managedTransport"), "agent-browser config does not expose transport selector");
 
     const browserReady = events.find((event) => event.reason === "browser_ready");
     assertEqual(browserReady?.browser?.liveUrl, liveUrl, "browser_ready exposes live URL immediately");

@@ -165,7 +165,7 @@ evolve = Evolve(
     schema=MyPydanticModel,
 
     # (optional) Gateway browser automation
-    browser={'provider': 'actionbook', 'remote': True},
+    browser={'provider': 'agent-browser', 'remote': True},
 
     # (optional) Install plugins/extensions for the selected agent before first run
     plugins={
@@ -254,7 +254,7 @@ COMPOSIO_API_KEY=...
 from evolve import Evolve
 
 evolve = Evolve(
-    browser={'provider': 'actionbook', 'remote': True},
+    browser={'provider': 'agent-browser', 'remote': True},
     skills=['pptx'],
 )
 
@@ -271,19 +271,25 @@ await evolve.run(prompt='Browse Hacker News top 5 articles and create a slide de
 
 ### Browser Automation
 
-Browser automation is opt-in. `browser={'provider': 'actionbook', 'remote': True}` enables remote managed Actionbook for extra stealth capabilities and dashboard live view. For local dogfooding or local app testing, use the provider string form; object configs default `remote` to `False` unless you set `remote=True`. browser-use also requires Gateway mode because Evolve injects the MCP server.
+Browser automation is opt-in. `browser={'provider': 'agent-browser', 'remote': True}` enables remote managed agent-browser with dashboard live view.
+
+- Use the default agent-browser path for most browser, QA, dogfooding, and website automation tasks.
+- Use remote managed mode for real websites because Evolve provides managed browser infrastructure with extra stealth capabilities.
+- Use the provider string form for local dogfooding or local app testing.
+- Object configs default `remote` to `False` unless you set `remote=True`.
+- browser-use requires Gateway mode because Evolve injects the MCP server.
 
 | Option | Configure | What you get |
 |--------|-----------|--------------|
-| Remote managed Actionbook | `browser={'provider': 'actionbook', 'remote': True}` | Actionbook skills, Evolve-managed remote browser transport, extra stealth capabilities, dashboard live view |
-| Remote managed agent-browser | `browser={'provider': 'agent-browser', 'remote': True}` | agent-browser skill, Evolve-managed remote browser transport, extra stealth capabilities, dashboard live view |
+| Remote managed agent-browser | `browser={'provider': 'agent-browser', 'remote': True}` | agent-browser skill, Evolve-managed remote browser transport, dashboard live view |
+| Remote managed Actionbook | `browser={'provider': 'actionbook', 'remote': True}` | Actionbook skills, Evolve-managed remote browser transport, dashboard live view |
 | browser-use MCP | `browser='browser-use'` | browser-use MCP server, with live/screenshot URLs parsed from browser-use tool responses |
 
 Use `browser='actionbook'` or `browser='agent-browser'` to install only that provider's skills without managed live browser transport.
 
 ```python
-Evolve(browser={'provider': 'actionbook', 'remote': True})  # remote managed Actionbook browser with live view
 Evolve(browser={'provider': 'agent-browser', 'remote': True})  # remote managed agent-browser with live view
+Evolve(browser={'provider': 'actionbook', 'remote': True})  # remote managed Actionbook with live view
 Evolve(browser='actionbook')  # Actionbook skills only
 Evolve(browser='agent-browser')  # agent-browser skills only
 Evolve(browser='browser-use')  # browser-use MCP

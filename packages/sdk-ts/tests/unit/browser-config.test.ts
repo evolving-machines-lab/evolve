@@ -179,8 +179,8 @@ async function testAgentBrowserStringAddsSkillsOnly(): Promise<void> {
   assert(!options.browserPrompt, "string agent-browser does not add managed browser prompt");
 }
 
-async function testManagedActionbookDefault(): Promise<void> {
-  console.log("\n[8] withBrowser(): defaults to remote managed Actionbook");
+async function testManagedAgentBrowserDefault(): Promise<void> {
+  console.log("\n[8] withBrowser(): defaults to remote managed agent-browser");
 
   const previousDashboardUrl = process.env.EVOLVE_DASHBOARD_URL;
   process.env.EVOLVE_DASHBOARD_URL = "https://dashboard.test";
@@ -191,11 +191,12 @@ async function testManagedActionbookDefault(): Promise<void> {
       .withBrowser();
 
     const options = await getInitializedAgentOptions(kit);
-    assert(options.skills.includes("actionbook"), "default browser adds actionbook skill");
-    assertEqual(options.managedBrowser.provider, "actionbook", "managed browser tracks actionbook provider");
+    assert(options.skills.includes("agent-browser"), "default browser adds agent-browser skill");
+    assert(!options.skills.includes("actionbook"), "default browser does not add actionbook skill");
+    assertEqual(options.managedBrowser.provider, "agent-browser", "managed browser tracks agent-browser provider");
     assertEqual(options.managedBrowser.apiKey, "evolve-key", "managed browser uses Evolve API key");
     assertEqual(options.managedBrowser.dashboardUrl, "https://dashboard.test", "managed browser uses dashboard URL");
-    assert(options.browserPrompt.includes("Actionbook is preconfigured"), "managed browser prompt added");
+    assert(options.browserPrompt.includes("agent-browser CDP connection is already configured"), "managed browser prompt added");
   } finally {
     if (previousDashboardUrl === undefined) {
       delete process.env.EVOLVE_DASHBOARD_URL;
@@ -225,7 +226,7 @@ async function testManagedActionbookRequiresGatewayMode(): Promise<void> {
   const kit = new Evolve()
     .withAgent({ type: "claude", providerApiKey: "provider-key" })
     .withSandbox(fakeSandboxProvider)
-    .withBrowser();
+    .withBrowser({ provider: "actionbook", remote: true });
 
   try {
     await getInitializedAgentOptions(kit);
@@ -244,7 +245,7 @@ async function testManagedActionbookConfigUsesProxyOnly(): Promise<void> {
   const kit = new Evolve()
     .withAgent({ type: "claude", apiKey: "evolve-key" })
     .withSandbox(fakeSandboxProvider)
-    .withBrowser();
+    .withBrowser({ provider: "actionbook", remote: true });
   await (kit as any).initializeAgent();
   const agent = ((kit as any).agent as any);
   agent.managedBrowserSession = {
@@ -341,7 +342,7 @@ async function main(): Promise<void> {
   await testBrowserUseRemoteObjectRejected();
   await testActionbookStringAddsSkillsOnly();
   await testAgentBrowserStringAddsSkillsOnly();
-  await testManagedActionbookDefault();
+  await testManagedAgentBrowserDefault();
   await testActionbookObjectRemoteDefaultsFalse();
   await testManagedActionbookRequiresGatewayMode();
   await testManagedActionbookConfigUsesProxyOnly();

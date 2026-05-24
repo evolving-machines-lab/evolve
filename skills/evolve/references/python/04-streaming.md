@@ -222,8 +222,8 @@ Browser automation URLs are parsed differently depending on which browser option
 
 | Option | Enable | Parse from stream |
 |--------|--------|-------------------|
-| Remote managed Actionbook | `browser={'provider': 'actionbook', 'remote': True}` | `lifecycle` event with `reason == "browser_ready"`; read `event["browser"]["live_url"]` and `event["browser"]["session_id"]` |
 | Remote managed agent-browser | `browser={'provider': 'agent-browser', 'remote': True}` | `lifecycle` event with `reason == "browser_ready"`; read `event["browser"]["live_url"]` and `event["browser"]["session_id"]` |
+| Remote managed Actionbook | `browser={'provider': 'actionbook', 'remote': True}` | `lifecycle` event with `reason == "browser_ready"`; read `event["browser"]["live_url"]` and `event["browser"]["session_id"]` |
 | browser-use MCP | `browser='browser-use'` | `tool_call_update` content from browser-use tools; parse embedded `live_url` and `screenshot_url` JSON fields |
 
 ### Remote managed Actionbook and agent-browser

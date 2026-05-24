@@ -91,8 +91,8 @@ class Evolve:
             schema_options: Validation options (mode: 'strict' or 'loose', default: 'loose')
             composio: Composio Tool Router setup for 500+ external service integrations
             storage: Storage configuration for checkpoint persistence (BYOK S3 or gateway mode)
-            browser: Browser automation provider. Use 'actionbook' or 'agent-browser'
-                for local skills-only mode, {'provider': 'actionbook'|'agent-browser', 'remote': True}
+            browser: Browser automation provider. Use 'agent-browser' or 'actionbook'
+                for local skills-only mode, {'provider': 'agent-browser'|'actionbook', 'remote': True}
                 for managed remote browser automation, or 'browser-use' for browser-use MCP.
             plugins: Agent plugins/extensions to install in the sandbox user profile before first run.
         """
