@@ -220,11 +220,13 @@ class BrowserUseResponse(TypedDict):
 
 Browser automation URLs are parsed differently depending on which browser option you enable:
 
+Use remote managed agent-browser for browser automation UX. `browser-use` remains supported for advanced MCP workflows, but it requires parsing tool output and does not provide managed replay.
+
 | Option | Enable | Parse from stream |
 |--------|--------|-------------------|
 | Remote managed agent-browser | `browser={'provider': 'agent-browser', 'remote': True}` | `lifecycle` event with `reason == "browser_ready"`; read `event["browser"]["live_url"]` and `event["browser"]["session_id"]` |
 | Remote managed Actionbook | `browser={'provider': 'actionbook', 'remote': True}` | `lifecycle` event with `reason == "browser_ready"`; read `event["browser"]["live_url"]` and `event["browser"]["session_id"]` |
-| browser-use MCP | `browser='browser-use'` | `tool_call_update` content from browser-use tools; parse embedded `live_url` and `screenshot_url` JSON fields |
+| browser-use MCP | `browser='browser-use'` | Advanced MCP option; parse embedded `live_url` and `screenshot_url` JSON fields from `tool_call_update` content |
 
 ### Remote managed Actionbook and agent-browser
 
@@ -259,7 +261,7 @@ UI display. After browser cleanup, pass `event["browser"]["session_id"]` or
 
 ## BrowserUseResponse Extraction
 
-browser-use is available when enabled with `browser='browser-use'` in Gateway mode. Browser tool responses embed a **JSON string** inside `ToolCallUpdate["content"][].content.text`. You must extract and parse it.
+browser-use is available when enabled with `browser='browser-use'` in Gateway mode. Prefer remote managed agent-browser unless you specifically need browser-use MCP, because browser-use responses embed a **JSON string** inside `ToolCallUpdate["content"][].content.text`. You must extract and parse it.
 
 > **Detection:** Browser-use tools arrive with `kind="other"` and `title` like `"browser-use: browser_task"` or `"browser-use: monitor_task"`. Use `is_browser_use_tool(title)` to identify them, then extract URLs from the tool output.
 

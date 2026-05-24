@@ -101,7 +101,7 @@ See [Streaming Events](./04-streaming.md) for all event types, type definitions,
 When using `EVOLVE_API_KEY`:
 
 - **Tracing:** Automatic tracing and agent analytics at [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) for observability and replay — no extra setup needed. Use `session_tag_prefix` to label sessions for easy filtering.
-- **Browser Automation:** Use `browser={'provider': 'agent-browser', 'remote': True}` for remote managed agent-browser with dashboard live view, `browser={'provider': 'actionbook', 'remote': True}` for remote managed Actionbook, or `browser='browser-use'` for browser-use MCP.
+- **Browser Automation:** Use `browser={'provider': 'agent-browser', 'remote': True}` for the recommended managed browser path with dashboard live view and replay. `browser='browser-use'` remains available for advanced MCP workflows, but it is inferior for browser automation UX because you must parse MCP tool output and do not get managed replay.
 - **Checkpointing:** Snapshot sandbox state to Evolve-managed storage with `storage=StorageConfig()` — no S3 credentials needed. See [Storage & Checkpointing](./03-runtime.md#storage--checkpointing).
 
 ---
@@ -112,7 +112,7 @@ When using `EVOLVE_API_KEY`:
 |---|---------|---------------|
 | Setup | `EVOLVE_API_KEY` | Model provider keys + [`E2B_API_KEY`](https://e2b.dev) |
 | Observability | [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) | `~/.evolve-sdk/observability/` |
-| Browser | `browser={'provider': 'agent-browser', 'remote': True}` enables remote managed agent-browser; `browser={'provider': 'actionbook', 'remote': True}` enables remote managed Actionbook; `browser='browser-use'` enables browser-use MCP | Via skills or MCP |
+| Browser | `browser={'provider': 'agent-browser', 'remote': True}` is the recommended managed browser path with live view and replay. `browser='browser-use'` enables browser-use MCP for advanced MCP workflows, but requires MCP output parsing and does not provide managed replay. | Via skills or MCP |
 | Billing | Evolving Machines | Your provider accounts |
 
 ---
