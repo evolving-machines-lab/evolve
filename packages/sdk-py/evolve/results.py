@@ -43,6 +43,8 @@ class AgentResponse:
 
     Attributes:
         sandbox_id: Sandbox ID
+        session_id: Dashboard session ID for trace/replay APIs, when known
+        browser: Managed browser runtime info, when a remote browser is configured
         run_id: Run ID for spend/cost attribution (present for run(), None for execute_command())
         exit_code: Command exit code
         stdout: Standard output
@@ -53,6 +55,8 @@ class AgentResponse:
     exit_code: int
     stdout: str
     stderr: str
+    session_id: Optional[str] = None
+    browser: Optional[Dict[str, str]] = None
     run_id: Optional[str] = None
     checkpoint: Optional[CheckpointInfo] = None
 
@@ -175,3 +179,14 @@ class SessionPage:
     items: List[SessionInfo]
     next_cursor: Optional[str]
     has_more: bool
+
+
+@dataclass
+class BrowserReplay:
+    """Browser replay metadata and Dashboard-owned access URLs."""
+    session_id: str
+    status: Literal['ready']
+    replay_url: str
+    download_url: str
+    size_bytes: Optional[int] = None
+    ready_at: Optional[str] = None

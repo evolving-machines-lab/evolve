@@ -225,6 +225,12 @@ export interface StatusResponse {
 
 export interface RunResponse {
   sandbox_id: string;
+  /** Dashboard session ID for trace/replay APIs, when known */
+  session_id?: string;
+  /** Managed browser runtime info, when a remote browser is configured */
+  browser?: {
+    live_url: string;
+  };
   /** Run ID for spend/cost attribution (present for run(), undefined for executeCommand()) */
   run_id?: string;
   exit_code: number;
@@ -263,6 +269,8 @@ export interface SessionStatusResponse {
   timestamp: string;
   browser?: {
     live_url: string;
+    session_id?: string;
+    session_tag?: string;
   };
 }
 
@@ -373,6 +381,13 @@ export interface SessionsDownloadParams {
   to?: string;
 }
 
+export interface SessionsBrowserReplayParams {
+  sessions?: SessionsConfigParams;
+  id: string;
+  timeout_ms?: number;
+  interval_ms?: number;
+}
+
 export interface SessionInfoResponse {
   id: string;
   tag: string;
@@ -397,6 +412,15 @@ export interface SessionPageResponse {
 
 export interface SessionEventsResponse {
   events: Record<string, any>[];
+}
+
+export interface BrowserReplayResponse {
+  session_id: string;
+  status: 'ready';
+  replay_url: string;
+  download_url: string;
+  size_bytes?: number;
+  ready_at?: string;
 }
 
 // =============================================================================

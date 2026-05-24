@@ -222,8 +222,8 @@ Browser automation URLs are parsed differently depending on which browser option
 
 | Option | Enable | Parse from stream |
 |--------|--------|-------------------|
-| Remote managed Actionbook | `browser={'provider': 'actionbook', 'remote': True}` | `lifecycle` event with `reason == "browser_ready"`; read `event["browser"]["live_url"]` |
-| Remote managed agent-browser | `browser={'provider': 'agent-browser', 'remote': True}` | `lifecycle` event with `reason == "browser_ready"`; read `event["browser"]["live_url"]` |
+| Remote managed Actionbook | `browser={'provider': 'actionbook', 'remote': True}` | `lifecycle` event with `reason == "browser_ready"`; read `event["browser"]["live_url"]` and `event["browser"]["session_id"]` |
+| Remote managed agent-browser | `browser={'provider': 'agent-browser', 'remote': True}` | `lifecycle` event with `reason == "browser_ready"`; read `event["browser"]["live_url"]` and `event["browser"]["session_id"]` |
 | browser-use MCP | `browser='browser-use'` | `tool_call_update` content from browser-use tools; parse embedded `live_url` and `screenshot_url` JSON fields |
 
 ### Remote managed Actionbook and agent-browser
@@ -231,12 +231,12 @@ Browser automation URLs are parsed differently depending on which browser option
 Managed browser sessions emit the live-view URL as soon as the browser is ready:
 
 ```python
-evolve.on(
-    'lifecycle',
-    lambda event: open_live_view(event['browser']['live_url'])
-    if event['reason'] == 'browser_ready'
-    else None,
-)
+def on_lifecycle(event):
+    if event['reason'] == 'browser_ready':
+        open_live_view(event['browser']['live_url'])
+        remember_session_id(event['browser']['session_id'])
+
+evolve.on('lifecycle', on_lifecycle)
 ```
 
 The same URL is also stored in trace metadata for replay or embedding after the trace exists:
@@ -245,11 +245,15 @@ The same URL is also stored in trace metadata for replay or embedding after the 
 TraceMetadata = {
     "browser_provider": "actionbook | agent-browser",
     "browser_session_id": "...",
+    "dashboard_session_id": "...",
+    "browser_session_tag": "...",
     "browser_live_url": "...",
 }
 ```
 
-Use `event["browser"]["live_url"]` for immediate UI display, and `_meta["browser_live_url"]` from the session trace metadata for historical trace views.
+Use `event["browser"]["live_url"]` or `result.browser["live_url"]` for immediate
+UI display. After browser cleanup, pass `event["browser"]["session_id"]` or
+`result.session_id` to `sessions().browser_replay()`.
 
 ---
 

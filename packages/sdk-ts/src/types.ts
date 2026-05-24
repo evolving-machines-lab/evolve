@@ -495,6 +495,10 @@ export type LifecycleReason =
 /** Browser runtime info exposed to host applications. */
 export interface BrowserRuntimeInfo {
   liveUrl: string;
+  /** Dashboard session ID for trace/replay APIs, present for managed browsers. */
+  sessionId?: string;
+  /** Session tag for checkpoint correlation, present for managed browsers. */
+  sessionTag?: string;
 }
 
 /** Lifecycle event emitted by the runtime */
@@ -526,6 +530,12 @@ export interface SessionStatus {
 export interface AgentResponse {
   /** Sandbox ID for session management */
   sandboxId: string;
+
+  /** Dashboard session ID for trace/replay APIs, present in gateway mode when known. */
+  sessionId?: string;
+
+  /** Managed browser runtime info, present when a remote browser is configured. */
+  browser?: Pick<BrowserRuntimeInfo, "liveUrl">;
 
   /** Run ID for spend/cost attribution (present for run(), undefined for executeCommand()) */
   runId?: string;

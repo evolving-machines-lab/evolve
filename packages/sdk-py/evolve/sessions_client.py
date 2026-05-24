@@ -3,8 +3,8 @@
 import asyncio
 from typing import Any, Dict, List, Literal, Optional
 
-from .results import SessionEvent, SessionInfo, SessionPage
-from .utils import _filter_none, _require_session_info
+from .results import BrowserReplay, SessionEvent, SessionInfo, SessionPage
+from .utils import _filter_none, _require_browser_replay, _require_session_info
 
 
 class SessionsClient:
@@ -108,6 +108,29 @@ class SessionsClient:
         await self._ensure_ready()
         response = await self._bridge.call('sessions_download', self._build_params(id=id, to=to))
         return response['path']
+
+    async def browser_replay(
+        self,
+        id: str,
+        *,
+        timeout_ms: Optional[int] = None,
+        interval_ms: Optional[int] = None,
+    ) -> BrowserReplay:
+        """Wait for browser replay readiness and return replay/download URLs."""
+        await self._ensure_ready()
+        effective_timeout_ms = timeout_ms if timeout_ms is not None else 600_000
+        effective_interval_ms = interval_ms if interval_ms is not None else 5_000
+        if effective_timeout_ms <= 0:
+            raise ValueError('timeout_ms must be positive')
+        if effective_interval_ms <= 0:
+            raise ValueError('interval_ms must be positive')
+        rpc_timeout_s = max(1.0, (effective_timeout_ms / 1000) + 30)
+        response = await self._bridge.call(
+            'sessions_browser_replay',
+            self._build_params(id=id, timeout_ms=timeout_ms, interval_ms=interval_ms),
+            timeout_s=rpc_timeout_s,
+        )
+        return _require_browser_replay(response)
 
     async def close(self) -> None:
         """Close the sessions client and release resources."""

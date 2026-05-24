@@ -50,6 +50,24 @@ export interface DownloadSessionOptions {
   to?: string;
 }
 
+/** Options for waiting on browser replay readiness */
+export interface BrowserReplayOptions {
+  /** Max time to wait for replay readiness (default: 600000ms) */
+  timeoutMs?: number;
+  /** Poll interval while replay is processing (default: 5000ms) */
+  intervalMs?: number;
+}
+
+/** Browser replay metadata and access URLs */
+export interface BrowserReplay {
+  sessionId: string;
+  status: "ready";
+  replayUrl: string;
+  downloadUrl: string;
+  sizeBytes?: number;
+  readyAt?: string;
+}
+
 /** Options for fetching parsed events */
 export interface GetEventsOptions {
   /** Return only events after this index (delta fetching) */
@@ -74,4 +92,6 @@ export interface SessionsClient {
   events(id: string, options?: GetEventsOptions): Promise<SessionEvent[]>;
   /** Download raw JSONL trace file. Returns the file path. */
   download(id: string, options?: DownloadSessionOptions): Promise<string>;
+  /** Wait for browser replay and return Dashboard-owned replay/download URLs. */
+  browserReplay(id: string, options?: BrowserReplayOptions): Promise<BrowserReplay>;
 }

@@ -13,7 +13,7 @@ Coverage:
 import pytest
 from unittest.mock import patch
 
-from evolve import SessionInfo, SessionPage, SessionsClient, SessionsConfig
+from evolve import BrowserReplay, SessionInfo, SessionPage, SessionsClient, SessionsConfig
 from evolve import sessions as sessions_factory
 
 
@@ -103,6 +103,16 @@ class MockBridgeManager:
 
         if method == 'sessions_download':
             return {'path': '/tmp/traces/demo-a.jsonl'}
+
+        if method == 'sessions_browser_replay':
+            return {
+                'session_id': params['id'],
+                'status': 'ready',
+                'replay_url': 'https://dashboard.test/replay',
+                'download_url': 'https://dashboard.test/download',
+                'size_bytes': 1234,
+                'ready_at': '2026-05-24T00:00:00.000Z',
+            }
 
         return {'status': 'ok'}
 
@@ -262,6 +272,56 @@ class TestSessionsClientDownload:
         params = calls[0][1]
         assert params['id'] == 'sess-1'
         assert params['to'] == '/output/traces'
+
+
+class TestSessionsClientBrowserReplay:
+    @pytest.mark.asyncio
+    async def test_returns_browser_replay(self):
+        client, _ = _make_client()
+
+        replay = await client.browser_replay('sess-1')
+
+        assert isinstance(replay, BrowserReplay)
+        assert replay.session_id == 'sess-1'
+        assert replay.status == 'ready'
+        assert replay.replay_url.endswith('/replay')
+        assert replay.download_url.endswith('/download')
+        assert replay.size_bytes == 1234
+
+    @pytest.mark.asyncio
+    async def test_passes_wait_options(self):
+        client, bridge = _make_client()
+
+        await client.browser_replay('sess-1', timeout_ms=600000, interval_ms=5000)
+
+        calls = _get_calls(bridge, 'sessions_browser_replay')
+        assert len(calls) == 1
+        params = calls[0][1]
+        assert params['id'] == 'sess-1'
+        assert params['timeout_ms'] == 600000
+        assert params['interval_ms'] == 5000
+        assert calls[0][2] == 630.0
+
+    @pytest.mark.asyncio
+    async def test_bridge_timeout_covers_default_wait(self):
+        client, bridge = _make_client()
+
+        await client.browser_replay('sess-1')
+
+        calls = _get_calls(bridge, 'sessions_browser_replay')
+        assert calls[0][2] == 630.0
+
+    @pytest.mark.asyncio
+    async def test_rejects_invalid_polling_options(self):
+        client, bridge = _make_client()
+
+        with pytest.raises(ValueError, match='timeout_ms must be positive'):
+            await client.browser_replay('sess-1', timeout_ms=0)
+
+        with pytest.raises(ValueError, match='interval_ms must be positive'):
+            await client.browser_replay('sess-1', interval_ms=-1)
+
+        assert _get_calls(bridge, 'sessions_browser_replay') == []
 
 
 class TestStandaloneSessionsFactory:

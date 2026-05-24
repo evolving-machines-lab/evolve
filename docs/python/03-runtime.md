@@ -11,6 +11,8 @@ class AgentResponse:
     exit_code: int
     stdout: str
     stderr: str
+    session_id: str | None        # Dashboard session ID for traces/replays, when known
+    browser: dict | None          # Live browser URL, when remote browser is configured
     checkpoint: CheckpointInfo | None  # Present when storage= configured and run succeeded
 
 @dataclass
@@ -733,13 +735,15 @@ async with sessions() as session:
         info = await session.get(page.items[0].id)
         recent_events = await session.events(info.id, since=10)
         path = await session.download(info.id, to='./traces')
+        replay = await session.browser_replay(info.id)
 
         print(info.runtime_status)   # 'alive' | 'dead' | 'unknown'
         print(len(recent_events))    # Parsed JSONL objects
         print(path)                  # ./traces/{tag}.jsonl
+        print(replay.replay_url)     # Browser replay URL
 ```
 
-The `sessions()` factory returns a `SessionsClient` with four methods:
+The `sessions()` factory returns a `SessionsClient` with five methods:
 
 ```python
 page = await session.list(
@@ -754,6 +758,11 @@ page = await session.list(
 info = await session.get('session-id')
 events = await session.events('session-id', since=50)
 path = await session.download('session-id', to='./traces')
+replay = await session.browser_replay(
+    'session-id',
+    timeout_ms=600_000,  # optional; default 10 minutes
+    interval_ms=5_000,   # optional; default 5 seconds
+)
 ```
 
 - `list()` returns `SessionPage(items, next_cursor, has_more)`
@@ -761,6 +770,12 @@ path = await session.download('session-id', to='./traces')
   `runtime_status`, `created_at`, and `tool_stats`
 - `events()` returns parsed JSONL objects for programmatic inspection
 - `download()` saves the raw `.jsonl` trace file to disk and returns the path
+- `browser_replay()` waits for the managed browser replay and returns
+  `replay_url` plus `download_url`
+
+Replay processing starts when the managed browser is cleaned up, usually during
+`kill()` or session cleanup. If the client times out, processing continues
+server-side; call `browser_replay()` again later to fetch the same replay.
 
 This API is **gateway-only**. In BYOK/direct mode, historical traces remain
 available via local JSONL files in `~/.evolve-sdk/observability/sessions/`.

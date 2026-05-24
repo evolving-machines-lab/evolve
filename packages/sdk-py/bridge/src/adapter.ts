@@ -24,6 +24,7 @@ import {
   type StorageConfig,
   type SessionsClient as TSSessionsClient,
   type SessionInfo as TSSessionInfo,
+  type BrowserReplay as TSBrowserReplay,
 } from '../../../sdk-ts/dist/index.js';
 import { createE2BProvider } from '../../../e2b/dist/index.js';
 import { createDaytonaProvider } from '../../../daytona/dist/index.js';
@@ -66,9 +67,11 @@ import type {
   SessionsGetParams,
   SessionsEventsParams,
   SessionsDownloadParams,
+  SessionsBrowserReplayParams,
   SessionInfoResponse,
   SessionPageResponse,
   SessionEventsResponse,
+  BrowserReplayResponse,
   GetRunCostParams,
   RunCostResponse,
   SessionCostResponse,
@@ -287,6 +290,8 @@ export class EvolveAdapter {
         return this.sessionsEvents(params);
       case 'sessions_download':
         return this.sessionsDownload(params);
+      case 'sessions_browser_replay':
+        return this.sessionsBrowserReplay(params);
       // Multi-instance methods (for Swarm)
       case 'create_instance':
         return this.createInstance(params);
@@ -379,6 +384,8 @@ export class EvolveAdapter {
 
     return {
       sandbox_id: result.sandboxId,
+      session_id: result.sessionId,
+      browser: result.browser ? { live_url: result.browser.liveUrl } : undefined,
       run_id: result.runId,
       exit_code: result.exitCode,
       stdout: result.stdout,
@@ -397,6 +404,8 @@ export class EvolveAdapter {
 
     return {
       sandbox_id: result.sandboxId,
+      session_id: result.sessionId,
+      browser: result.browser ? { live_url: result.browser.liveUrl } : undefined,
       exit_code: result.exitCode,
       stdout: result.stdout,
       stderr: result.stderr,
@@ -478,7 +487,13 @@ export class EvolveAdapter {
       active_process_id: snapshot.activeProcessId,
       has_run: snapshot.hasRun,
       timestamp: snapshot.timestamp,
-      ...(snapshot.browser ? { browser: { live_url: snapshot.browser.liveUrl } } : {}),
+      ...(snapshot.browser ? {
+        browser: {
+          live_url: snapshot.browser.liveUrl,
+          session_id: snapshot.browser.sessionId,
+          session_tag: snapshot.browser.sessionTag,
+        },
+      } : {}),
     };
   }
 
@@ -690,6 +705,15 @@ export class EvolveAdapter {
     return { path };
   }
 
+  async sessionsBrowserReplay(params: SessionsBrowserReplayParams): Promise<BrowserReplayResponse> {
+    const client = this.getSessionsClient(params.sessions);
+    const replay = await client.browserReplay(params.id, {
+      timeoutMs: params.timeout_ms,
+      intervalMs: params.interval_ms,
+    });
+    return this.toBrowserReplayResponse(replay);
+  }
+
   /**
    * Convert TS SDK CheckpointInfo (camelCase) to bridge response (snake_case)
    */
@@ -705,6 +729,17 @@ export class EvolveAdapter {
       workspace_mode: info.workspaceMode,
       parent_id: info.parentId,
       comment: info.comment,
+    };
+  }
+
+  private toBrowserReplayResponse(info: TSBrowserReplay): BrowserReplayResponse {
+    return {
+      session_id: info.sessionId,
+      status: info.status,
+      replay_url: info.replayUrl,
+      download_url: info.downloadUrl,
+      size_bytes: info.sizeBytes,
+      ready_at: info.readyAt,
     };
   }
 
@@ -768,6 +803,8 @@ export class EvolveAdapter {
 
     return {
       sandbox_id: result.sandboxId,
+      session_id: result.sessionId,
+      browser: result.browser ? { live_url: result.browser.liveUrl } : undefined,
       run_id: result.runId,
       exit_code: result.exitCode,
       stdout: result.stdout,

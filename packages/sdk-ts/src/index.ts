@@ -267,4 +267,6 @@ export {
   type SessionEvent,
   type GetEventsOptions,
   type DownloadSessionOptions,
+  type BrowserReplay,
+  type BrowserReplayOptions,
 } from "./sessions";
