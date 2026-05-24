@@ -47,7 +47,7 @@ Read on demand when the user's task requires them:
 
 | When to read | TypeScript | Python |
 |-------------|-----------|--------|
-| Building a UI, handling real-time events, browser live/replay | [04-streaming.md](references/typescript/04-streaming.md) | [04-streaming.md](references/python/04-streaming.md) |
+| Building a UI, handling real-time events | [04-streaming.md](references/typescript/04-streaming.md) | [04-streaming.md](references/python/04-streaming.md) |
 | Parallel agents (map/filter/reduce/bestOf/verify), Pipeline chaining | [05-swarm-pipeline.md](references/typescript/05-swarm-pipeline.md) | [05-swarm-pipeline.md](references/python/05-swarm-pipeline.md) |
 
 ## Topic Index
@@ -71,6 +71,7 @@ Read on demand when the user's task requires them:
 | Sandbox providers (E2B, Modal, Daytona) | [TS](references/typescript/02-configuration.md#sandbox-providers) | [PY](references/python/02-configuration.md#sandbox-providers) |
 | Provider auto-resolution from env | [TS](references/typescript/02-configuration.md#auto-resolution) | [PY](references/python/02-configuration.md#auto-resolution) |
 | Full builder/constructor API | [TS](references/typescript/02-configuration.md#evolve-instance) | [PY](references/python/02-configuration.md#evolve-instance) |
+| Browser automation guide (setup, live view, replay) | [TS](references/typescript/02-configuration.md#browser-automation) | [PY](references/python/02-configuration.md#browser-automation) |
 | Agent skills catalog | [TS](references/typescript/02-configuration.md#agent-skills) | [PY](references/python/02-configuration.md#agent-skills) |
 | Composio (auth paths, tool filtering, types) | [TS](references/typescript/02-configuration.md#composio-tool-router) | [PY](references/python/02-configuration.md#composio-tool-router) |
 | MCP server config (STDIO / HTTP / SSE) | [TS](references/typescript/02-configuration.md#evolve-instance) | [PY](references/python/02-configuration.md#evolve-instance) |
@@ -105,7 +106,7 @@ Read on demand when the user's task requires them:
 | LifecycleEvent & LifecycleReason | [TS](references/typescript/04-streaming.md#lifecycleevent) | [PY](references/python/04-streaming.md#lifecycleevent-typeddict-shape) |
 | OutputEvent & SessionUpdate types | [TS](references/typescript/04-streaming.md#sessionupdate-types) | [PY](references/python/04-streaming.md#event-types-summary) |
 | Tool events (ToolCall, ToolCallUpdate, ToolKind) | [TS](references/typescript/04-streaming.md#tool-events) | [PY](references/python/04-streaming.md#toolkind-reference) |
-| Browser automation live URLs and replay URLs | [TS](references/typescript/04-streaming.md#browser-automation-streaming) | [PY](references/python/04-streaming.md#browser-automation-streaming) |
+| Browser lifecycle event fields | [TS](references/typescript/04-streaming.md#browser-automation-streaming) | [PY](references/python/04-streaming.md#browser-automation-streaming) |
 | UI integration example | [TS](references/typescript/04-streaming.md#ui-integration-example) | [PY](references/python/04-streaming.md#ui-integration-example) |
 
 ### Swarm & Pipeline

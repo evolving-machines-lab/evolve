@@ -44,7 +44,7 @@ await evolve.run(prompt='Hello world')
 | `context=` / `files=` | [Configuration → Evolve Instance](./02-configuration.md#evolve-instance) |
 | `system_prompt=` | [Configuration → Evolve Instance](./02-configuration.md#evolve-instance) |
 | `schema=` (Pydantic / JSON Schema) | [Configuration → Evolve Instance](./02-configuration.md#evolve-instance) |
-| `browser=` | [Configuration → Browser Automation](./02-configuration.md#browser-automation) |
+| `browser=` browser guide | [Configuration → Browser Automation](./02-configuration.md#browser-automation) |
 | `plugins=` | [Configuration → Agent Plugins](./02-configuration.md#agent-plugins) |
 | `skills=` | [Configuration → Agent Skills](./02-configuration.md#agent-skills) |
 | `composio=` (1000+ integrations) | [Configuration → Composio](./02-configuration.md#composio-tool-router) |
@@ -67,7 +67,7 @@ await evolve.run(prompt='Hello world')
 | OutputEvent / SessionUpdate types | [Streaming → Type Definitions](./04-streaming.md#type-definitions) |
 | LifecycleEvent / LifecycleReason | [Streaming → LifecycleEvent](./04-streaming.md#lifecycleevent-typeddict-shape) |
 | Tool events (ToolCall, ToolCallUpdate, ToolKind) | [Streaming → Type Definitions](./04-streaming.md#tool-types) |
-| Browser automation live URLs and replay URLs | [Streaming → Browser Automation Streaming](./04-streaming.md#browser-automation-streaming) |
+| Browser lifecycle event fields | [Streaming → Browser Automation Streaming](./04-streaming.md#browser-automation-streaming) |
 | UI integration example | [Streaming → UI Integration Example](./04-streaming.md#ui-integration-example) |
 | Upload files (`upload_context()`, `upload_files()`) | [Runtime → Upload](./03-runtime.md#upload-local--sandbox) |
 | Download files (`get_output_files()`, `save_local_dir()`) | [Runtime → Download](./03-runtime.md#download-sandbox--local) |

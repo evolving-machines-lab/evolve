@@ -739,45 +739,8 @@ const replay = await session.browserReplay(info.id, {
 });
 ```
 
-End-to-end managed browser replay flow:
-
-```ts
-import { Evolve, sessions } from "@evolvingmachines/sdk";
-
-const evolve = new Evolve()
-    .withBrowser()
-    .withSessionTagPrefix("checkout-qa");
-
-let sessionId: string | undefined;
-
-try {
-    const result = await evolve.run({
-        prompt: "Open the app, test the checkout flow, and report issues.",
-    });
-
-    const liveUrl = result.browser?.liveUrl;       // show while the browser is live
-    sessionId = result.sessionId;                  // use later for traces/replay
-
-    if (liveUrl) showLiveBrowser(liveUrl);
-} finally {
-    await evolve.kill();                           // starts replay processing
-}
-
-if (!sessionId) throw new Error("Missing dashboard session id");
-
-const session = sessions();
-const replay = await session.browserReplay(sessionId, {
-    timeoutMs: 600_000,
-    intervalMs: 5_000,
-});
-
-showReplay(replay.replayUrl);                      // embeddable playback URL
-saveDownloadLink(replay.downloadUrl);              // raw .mp4 download URL
-```
-
-Replay processing starts when the managed browser is cleaned up, usually during
-`kill()` or session cleanup. If the client times out, processing continues
-server-side; call `browserReplay()` again later to fetch the same replay.
+For the full browser setup, live-view, cleanup, and replay flow, see
+[Configuration → Browser Automation](./02-configuration.md#browser-automation).
 
 Gateway-only — requires `EVOLVE_API_KEY`. In BYOK/direct mode, traces remain
 available as local JSONL files in `~/.evolve-sdk/observability/sessions/`.

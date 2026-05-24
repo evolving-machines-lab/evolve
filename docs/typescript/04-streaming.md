@@ -263,14 +263,13 @@ interface DiffContent {
 
 ## Browser Automation Streaming
 
-Use `.withBrowser()` for browser automation. Evolve emits live browser metadata through lifecycle events and returns the same browser metadata on `run()` results.
+The full browser guide is [Configuration → Browser Automation](./02-configuration.md#browser-automation).
+This section only documents the streaming fields for browser live view.
 
 | Need | API | Use |
 |------|-----|-----|
 | Show live browser during a run | `lifecycle` event with `reason === "browser_ready"` | `event.browser.liveUrl` |
 | Save the browser/session id | same lifecycle event | `event.browser.sessionId` |
-| Show live browser after `run()` returns | `RunResult.browser` | `result.browser?.liveUrl` |
-| Fetch replay after cleanup | `sessions().browserReplay(sessionId)` | `replay.replayUrl`, `replay.downloadUrl` |
 
 ### Managed Browser
 
@@ -278,9 +277,9 @@ Managed browser sessions emit the live-view URL as soon as the browser is ready:
 
 ```typescript
 evolve.on("lifecycle", (event) => {
-  if (event.reason === "browser_ready") {
-    openLiveView(event.browser!.liveUrl);
-    rememberSessionId(event.browser!.sessionId);
+  if (event.reason === "browser_ready" && event.browser) {
+    openLiveView(event.browser.liveUrl);
+    rememberSessionId(event.browser.sessionId);
   }
 });
 
@@ -300,8 +299,8 @@ type TraceMetadata = {
 ```
 
 Use `event.browser.liveUrl` or `result.browser?.liveUrl` for immediate UI display.
-After browser cleanup, pass `event.browser.sessionId` or `result.sessionId` to
-`sessions().browserReplay()`.
+For replay after cleanup, use the `sessionId` with `sessions().browserReplay()`;
+the full example lives in [Configuration → Browser Automation](./02-configuration.md#browser-automation).
 
 ---
 

@@ -277,7 +277,12 @@ Browser automation is opt-in. Use `browser={'provider': 'agent-browser', 'remote
 Evolve(browser={'provider': 'agent-browser', 'remote': True})  # managed browser with dashboard live view and replay
 ```
 
-Evolve automatically configures the browser runtime. In Gateway mode, the managed browser emits a live URL through lifecycle events and provides replay through the sessions API.
+Evolve automatically configures the browser runtime. In Gateway mode, the managed browser gives you:
+
+- `event["browser"]["live_url"]` from the `browser_ready` lifecycle event
+- `result.browser["live_url"]` after `run()` returns
+- `result.session_id`, which is the id to use for traces and browser replay
+- `sessions().browser_replay(session_id)`, which returns replay and raw `.mp4` download URLs after cleanup
 
 Use the default managed remote browser unless you have a reason not to:
 
@@ -291,6 +296,54 @@ Evolve(browser={'provider': 'agent-browser', 'remote': False})
 Evolve(browser=None)
 # disable browser automation
 ```
+
+Full browser run with live view and replay:
+
+```python
+from evolve import Evolve, sessions
+
+evolve = Evolve(
+    browser={'provider': 'agent-browser', 'remote': True},
+    session_tag_prefix='checkout-qa',
+)
+
+browser_session = {'id': None}
+session_id = None
+
+def on_lifecycle(event):
+    if event['reason'] == 'browser_ready' and event.get('browser'):
+        show_live_browser(event['browser']['live_url'])
+        browser_session['id'] = event['browser']['session_id']
+
+evolve.on('lifecycle', on_lifecycle)
+
+try:
+    result = await evolve.run(
+        prompt='Open the app, test the checkout flow, and report issues.'
+    )
+
+    session_id = result.session_id or browser_session['id']
+    if result.browser and result.browser.get('live_url'):
+        show_live_browser(result.browser['live_url'])
+finally:
+    await evolve.kill()
+
+if not session_id:
+    raise RuntimeError('Missing dashboard session id')
+
+async with sessions() as session:
+    replay = await session.browser_replay(
+        session_id,
+        timeout_ms=600_000,
+        interval_ms=5_000,
+    )
+
+show_replay(replay.replay_url)
+save_download_link(replay.download_url)
+```
+
+Replay processing starts when the managed browser is cleaned up, usually during `kill()`.
+If replay is not ready before `timeout_ms`, call `browser_replay()` again later with the same `session_id`.
 
 ### Agent Plugins
 
