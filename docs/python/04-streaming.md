@@ -241,12 +241,22 @@ def on_lifecycle(event):
     elif event['reason'] == 'browser_ready':
         open_live_view(event['browser']['live_url'])
     elif event['reason'] == 'browser_artifacts_updated':
-        update_artifacts(event.get('artifacts', []))
+        recording = next(
+            (
+                artifact for artifact in event.get('artifacts', [])
+                if artifact.get('type') == 'browser_recording' and artifact.get('status') == 'ready'
+            ),
+            None,
+        )
+
+        if recording:
+            show_replay(recording.get('replay_url'))
+            show_download(recording.get('download_url'))
 
 evolve.on('lifecycle', on_lifecycle)
 ```
 
-For durable artifacts after the run, use `sessions().artifacts(session_id)`. Ready artifacts include Dashboard `replay_url` and `download_url` fields.
+For durable artifacts after the run, use `sessions().artifacts(session_id)`. Ready artifacts include Dashboard `replay_url` and `download_url` fields. The SDK exposes Dashboard URLs only; storage details remain server-side.
 
 The same URL is also stored in trace metadata for replay or embedding after the trace exists:
 

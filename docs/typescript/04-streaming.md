@@ -289,16 +289,25 @@ evolve.on("lifecycle", (event) => {
   if (event.reason === "session_ready") {
     rememberSessionId(event.session!.id);
   }
+
   if (event.reason === "browser_ready") {
     openLiveView(event.browser!.liveUrl);
   }
+
   if (event.reason === "browser_artifacts_updated") {
-    updateArtifacts(event.artifacts ?? []);
+    const recording = event.artifacts?.find(
+      (artifact) => artifact.type === "browser_recording" && artifact.status === "ready"
+    );
+
+    if (recording) {
+      showReplay(recording.replayUrl);
+      showDownload(recording.downloadUrl);
+    }
   }
 });
 ```
 
-For durable artifacts after the run, use `sessions().artifacts(sessionId)`. Ready artifacts include Dashboard `replayUrl` and `downloadUrl` fields.
+For durable artifacts after the run, use `sessions().artifacts(sessionId)`. Ready artifacts include Dashboard `replayUrl` and `downloadUrl` fields. The SDK exposes Dashboard URLs only; storage details remain server-side.
 
 The same URL is also stored in trace metadata for replay or embedding after the trace exists:
 

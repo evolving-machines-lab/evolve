@@ -735,10 +735,18 @@ async with sessions() as session:
         recent_events = await session.events(info.id, since=10)
         path = await session.download(info.id, to='./traces')
         artifacts = await session.artifacts(info.id)
+        recording = next(
+            (
+                artifact for artifact in artifacts
+                if artifact.type == 'browser_recording' and artifact.status == 'ready'
+            ),
+            None,
+        )
 
-        if artifacts and artifacts[0].status == 'ready':
-            print(artifacts[0].replay_url)  # Dashboard replay URL, when available
-            await session.download_artifact(info.id, artifacts[0].id, to='./artifacts')
+        if recording:
+            print(recording.replay_url)    # Display in your own UI
+            print(recording.download_url)  # Link for direct download
+            await session.download_artifact(info.id, recording.id, to='./artifacts')
 
         print(info.runtime_status)   # 'alive' | 'dead' | 'unknown'
         print(len(recent_events))    # Parsed JSONL objects
@@ -774,6 +782,7 @@ path = await session.download_artifact('session-id', 'artifact-id', to='./artifa
 - `download()` saves the raw `.jsonl` trace file to disk and returns the path
 - `artifacts()` returns durable session artifacts such as browser recordings
 - `download_artifact()` saves one artifact to disk and returns the path
+- Browser recording artifacts are served as Dashboard URLs; the storage backend is not exposed through the SDK
 
 This API is **gateway-only**. In BYOK/direct mode, historical traces remain
 available via local JSONL files in `~/.evolve-sdk/observability/sessions/`.
