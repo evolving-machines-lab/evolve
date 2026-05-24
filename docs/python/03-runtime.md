@@ -82,7 +82,7 @@ evolve.on('lifecycle', lambda event: print(event['reason'], event['sandbox']))
 | `stdout` | `str` | Raw JSONL output |
 | `stderr` | `str` | Error output |
 
-For full type definitions, all event interfaces, legacy `browser-use` detection, and UI integration example, see [Streaming Events](./04-streaming.md).
+For full type definitions, all event interfaces, browser live view, replay, and UI integration example, see [Streaming Events](./04-streaming.md).
 
 ### Upload: Local → Sandbox
 
@@ -776,6 +776,45 @@ replay = await session.browser_replay(
   - Use `replay_url` in your UI for browser playback
   - Use `download_url` when users need the raw `.mp4` file
   - `suggested_start_seconds`, when present, is already applied to `replay_url`; keep the raw download unchanged
+
+End-to-end managed browser replay flow:
+
+```python
+from evolve import Evolve, sessions
+
+evolve = Evolve(
+    browser={'provider': 'agent-browser', 'remote': True},
+    session_tag_prefix='checkout-qa',
+)
+
+session_id = None
+
+try:
+    result = await evolve.run(
+        prompt='Open the app, test the checkout flow, and report issues.'
+    )
+
+    live_url = result.browser.get('live_url') if result.browser else None
+    session_id = result.session_id
+
+    if live_url:
+        show_live_browser(live_url)
+finally:
+    await evolve.kill()  # starts replay processing
+
+if not session_id:
+    raise RuntimeError('Missing dashboard session id')
+
+async with sessions() as session:
+    replay = await session.browser_replay(
+        session_id,
+        timeout_ms=600_000,
+        interval_ms=5_000,
+    )
+
+show_replay(replay.replay_url)
+save_download_link(replay.download_url)
+```
 
 Replay processing starts when the managed browser is cleaned up, usually during
 `kill()` or session cleanup. If the client times out, processing continues
