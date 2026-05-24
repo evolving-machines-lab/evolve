@@ -256,7 +256,7 @@ async function testManagedBrowserLifecycle(): Promise<void> {
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url === "https://dashboard.test/api/browser-sessions" && init?.method === "POST") {
-      return new Response(JSON.stringify({ id: "browser_123", cdpUrl, liveUrl }), {
+      return new Response(JSON.stringify({ id: "browser_123", sessionId: "session_db_123", sessionTag: "evolve-browser", cdpUrl, liveUrl }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
@@ -286,6 +286,8 @@ async function testManagedBrowserLifecycle(): Promise<void> {
   try {
     const result = await kit.run({ prompt: "test prompt", timeoutMs: 10_000 });
     assertEqual(result.exitCode, 0, "run() with managed browser returns success");
+    assertEqual(result.sessionId, "session_db_123", "run() exposes Dashboard session id");
+    assertEqual(result.browser?.liveUrl, liveUrl, "run() exposes managed browser live URL");
     assert(!JSON.stringify(provider.createOptions?.envs).includes("proxy-token"), "sandbox env does not include CDP token");
 
     const config = sandbox.files.writes.get("/home/user/.actionbook/config.toml");
@@ -293,10 +295,11 @@ async function testManagedBrowserLifecycle(): Promise<void> {
     assert(config !== undefined, "Actionbook config file written");
     assert(config?.includes('mode = "cloud"') ?? false, "Actionbook config sets cloud mode");
     assert(config?.includes(cdpUrl) ?? false, "Actionbook config uses proxied CDP endpoint");
-    assert(!config?.toLowerCase().includes("driver"), "Actionbook config does not expose provider name");
+    assert(!config?.includes("_managedTransport"), "Actionbook config does not expose transport selector");
 
     const browserReady = events.find((event) => event.reason === "browser_ready");
     assertEqual(browserReady?.browser?.liveUrl, liveUrl, "browser_ready exposes live URL immediately");
+    assertEqual(browserReady?.browser?.sessionId, "session_db_123", "browser_ready exposes Dashboard session id");
     assert(
       events.findIndex((event) => event.reason === "browser_ready") < events.findIndex((event) => event.reason === "sandbox_ready"),
       "browser_ready is emitted before sandbox ready"
@@ -329,7 +332,7 @@ async function testManagedAgentBrowserLifecycle(): Promise<void> {
     const url = String(input);
     if (url === "https://dashboard.test/api/browser-sessions" && init?.method === "POST") {
       createBody = JSON.parse(String(init.body));
-      return new Response(JSON.stringify({ id: "browser_456", cdpUrl, liveUrl }), {
+      return new Response(JSON.stringify({ id: "browser_456", sessionId: "session_db_456", sessionTag: "evolve-agent-browser", cdpUrl, liveUrl }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
@@ -359,8 +362,10 @@ async function testManagedAgentBrowserLifecycle(): Promise<void> {
   try {
     const result = await kit.run({ prompt: "test prompt", timeoutMs: 10_000 });
     assertEqual(result.exitCode, 0, "run() with managed agent-browser returns success");
-    assertEqual(createBody.provider, "actionbook", "managed browser create contract is preserved");
+    assert(!("provider" in createBody), "managed browser create does not expose automation provider");
     assertEqual(createBody.options?.remote, true, "managed browser create uses remote option");
+    assert(!("_managedTransport" in createBody.options), "managed browser create does not expose transport selector");
+    assertEqual(result.browser?.liveUrl, liveUrl, "run() exposes managed agent-browser live URL");
     assertEqual(
       provider.createOptions?.envs?.AGENT_BROWSER_CONFIG,
       "/home/user/.agent-browser/config.json",
@@ -374,10 +379,11 @@ async function testManagedAgentBrowserLifecycle(): Promise<void> {
     const parsedConfig = JSON.parse(config!);
     assert(!("session" in parsedConfig), "agent-browser config leaves session default to agent-browser");
     assert(config?.includes(cdpUrl) ?? false, "agent-browser config uses proxied CDP endpoint");
-    assert(!config?.toLowerCase().includes("driver"), "agent-browser config does not expose provider name");
+    assert(!config?.includes("_managedTransport"), "agent-browser config does not expose transport selector");
 
     const browserReady = events.find((event) => event.reason === "browser_ready");
     assertEqual(browserReady?.browser?.liveUrl, liveUrl, "browser_ready exposes agent-browser live URL");
+    assertEqual(browserReady?.browser?.sessionId, "session_db_456", "browser_ready exposes agent-browser Dashboard session id");
   } finally {
     await kit.kill();
     globalThis.fetch = previousFetch;

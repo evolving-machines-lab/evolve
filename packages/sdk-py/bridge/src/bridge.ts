@@ -261,7 +261,13 @@ class Bridge {
         agent: event?.agent,
         timestamp: event?.timestamp,
         reason: event?.reason,
-        ...(event?.browser ? { browser: { live_url: event.browser.liveUrl } } : {}),
+        ...(event?.browser ? {
+          browser: {
+            live_url: event.browser.liveUrl,
+            session_id: event.browser.sessionId,
+            session_tag: event.browser.sessionTag,
+          },
+        } : {}),
       },
     }).catch(() => {});
   }

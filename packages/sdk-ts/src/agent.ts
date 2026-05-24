@@ -242,6 +242,15 @@ export class Agent {
 
   private browserRuntimeInfo(): BrowserRuntimeInfo | undefined {
     if (!this.managedBrowserSession) return undefined;
+    return {
+      liveUrl: this.managedBrowserSession.liveUrl,
+      sessionId: this.managedBrowserSession.sessionId,
+      sessionTag: this.managedBrowserSession.sessionTag,
+    };
+  }
+
+  private browserResponseInfo(): Pick<BrowserRuntimeInfo, "liveUrl"> | undefined {
+    if (!this.managedBrowserSession) return undefined;
     return { liveUrl: this.managedBrowserSession.liveUrl };
   }
 
@@ -1087,6 +1096,8 @@ export class Agent {
           ...(this.managedBrowserSession && this.options.managedBrowser ? {
             browser_provider: this.options.managedBrowser.provider,
             browser_session_id: this.managedBrowserSession.id,
+            dashboard_session_id: this.managedBrowserSession.sessionId,
+            browser_session_tag: this.managedBrowserSession.sessionTag,
             browser_live_url: this.managedBrowserSession.liveUrl,
           } : {}),
         },
@@ -1203,6 +1214,8 @@ export class Agent {
       this.watchBackgroundOperation(opId, "run", handle, callbacks, sandbox);
       return {
         sandboxId: sandbox.sandboxId,
+        sessionId: this.managedBrowserSession?.sessionId,
+        browser: this.browserResponseInfo(),
         runId,
         exitCode: 0,
         stdout: `Background process started with ID ${handle.processId}`,
@@ -1289,6 +1302,8 @@ export class Agent {
 
     return {
       sandboxId: sandbox.sandboxId,
+      sessionId: this.managedBrowserSession?.sessionId,
+      browser: this.browserResponseInfo(),
       runId,
       exitCode: result.exitCode,
       stdout: result.stdout,
@@ -1346,6 +1361,8 @@ export class Agent {
       this.watchBackgroundOperation(opId, "command", handle, callbacks);
       return {
         sandboxId: sandbox.sandboxId,
+        sessionId: this.managedBrowserSession?.sessionId,
+        browser: this.browserResponseInfo(),
         exitCode: 0,
         stdout: `Background process started with ID ${handle.processId}`,
         stderr: "",
@@ -1372,6 +1389,8 @@ export class Agent {
 
     return {
       sandboxId: sandbox.sandboxId,
+      sessionId: this.managedBrowserSession?.sessionId,
+      browser: this.browserResponseInfo(),
       exitCode: result.exitCode,
       // Prefer streaming-collected output; fall back to wait() result
       // (handles race condition where command completes before stream connects)
@@ -1684,17 +1703,29 @@ export class Agent {
   async kill(callbacks?: StreamCallbacks): Promise<void> {
     await this.rotateSession();
 
-    // Interrupt active operation before killing sandbox
-    if (this.activeCommand) {
-      await this.interrupt(callbacks);
+    let killError: unknown;
+
+    try {
+      // Interrupt active operation before killing sandbox
+      if (this.activeCommand) {
+        await this.interrupt(callbacks);
+      }
+
+      // Kill sandbox (terminates all processes inside)
+      if (this.sandbox) {
+        await this.sandbox.kill();
+        this.sandbox = undefined;
+      }
+    } catch (error) {
+      killError = error;
+    } finally {
+      await this.closeManagedBrowserSession();
     }
 
-    // Kill sandbox (terminates all processes inside)
-    if (this.sandbox) {
-      await this.sandbox.kill();
-      this.sandbox = undefined;
+    if (killError) {
+      throw killError;
     }
-    await this.closeManagedBrowserSession();
+
     // Session is no longer valid after sandbox termination.
     this.options.sandboxId = undefined;
     this.interruptedOperations.clear();

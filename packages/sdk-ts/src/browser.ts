@@ -21,10 +21,6 @@ const AGENT_BROWSER_CONFIG_PATH = `${AGENT_BROWSER_CONFIG_DIR}/config.json`;
 const ACTIONBOOK_CONFIG_DIR = "/home/user/.actionbook";
 const ACTIONBOOK_CONFIG_PATH = `${ACTIONBOOK_CONFIG_DIR}/config.toml`;
 
-// Dashboard create requests keep the existing managed-browser contract; the
-// SDK-level automation provider is tracked separately on ManagedBrowserConfig.
-const MANAGED_BROWSER_CREATE_PROVIDER = "actionbook";
-
 export interface NormalizedBrowserConfig {
   provider: "browser-use" | ManagedBrowserProvider;
   managed: boolean;
@@ -38,6 +34,8 @@ export interface ManagedBrowserConfig {
 
 export interface ManagedBrowserSession {
   id: string;
+  sessionId?: string;
+  sessionTag?: string;
   cdpUrl: string;
   liveUrl: string;
 }
@@ -129,7 +127,6 @@ export async function createManagedBrowserSession(
       accept: "application/json",
     },
     body: JSON.stringify({
-      provider: MANAGED_BROWSER_CREATE_PROVIDER,
       sessionTag,
       options: { remote: true },
     }),
@@ -141,12 +138,14 @@ export async function createManagedBrowserSession(
   }
 
   const data = await response.json() as Partial<ManagedBrowserSession>;
-  if (!data.id || !data.cdpUrl || !data.liveUrl) {
-    throw new Error("Managed browser session response missing id, cdpUrl, or liveUrl");
+  if (!data.id || !data.sessionId || !data.cdpUrl || !data.liveUrl) {
+    throw new Error("Managed browser session response missing id, sessionId, cdpUrl, or liveUrl");
   }
 
   return {
     id: data.id,
+    sessionId: data.sessionId,
+    sessionTag: data.sessionTag,
     cdpUrl: data.cdpUrl,
     liveUrl: data.liveUrl,
   };
@@ -162,7 +161,7 @@ export async function stopManagedBrowserSession(
       Authorization: `Bearer ${config.apiKey}`,
       accept: "application/json",
     },
-    signal: AbortSignal.timeout(15_000),
+    signal: AbortSignal.timeout(5_000),
   });
 
   if (!response.ok && response.status !== 404) {

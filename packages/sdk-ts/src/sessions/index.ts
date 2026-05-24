@@ -13,6 +13,8 @@ import type {
   SessionEvent,
   GetEventsOptions,
   DownloadSessionOptions,
+  BrowserReplay,
+  BrowserReplayOptions,
 } from "./types";
 
 export type {
@@ -24,7 +26,20 @@ export type {
   SessionEvent,
   GetEventsOptions,
   DownloadSessionOptions,
+  BrowserReplay,
+  BrowserReplayOptions,
 } from "./types";
+
+const DEFAULT_BROWSER_REPLAY_TIMEOUT_MS = 600_000;
+const DEFAULT_BROWSER_REPLAY_INTERVAL_MS = 5_000;
+
+function positiveNumber(name: string, value: number | undefined, fallback: number): number {
+  const resolved = value ?? fallback;
+  if (!Number.isFinite(resolved) || resolved <= 0) {
+    throw new Error(`${name} must be a positive number`);
+  }
+  return resolved;
+}
 
 /**
  * Create a SessionsClient for querying past sessions and downloading traces.
@@ -85,6 +100,26 @@ export function sessions(config?: SessionsConfig): SessionsClient {
       toolStats: (raw.toolStats as Record<string, number>) || null,
     };
   }
+
+  function mapBrowserReplay(raw: Record<string, unknown>, id: string): BrowserReplay {
+    if (raw.status !== "ready") {
+      throw new Error(`Browser replay is not ready (status: ${String(raw.status || "unknown")})`);
+    }
+    if (typeof raw.replayUrl !== "string" || typeof raw.downloadUrl !== "string") {
+      throw new Error("Browser replay response missing replayUrl or downloadUrl");
+    }
+    return {
+      sessionId: (raw.sessionId as string) || id,
+      status: "ready",
+      replayUrl: raw.replayUrl,
+      downloadUrl: raw.downloadUrl,
+      suggestedStartSeconds: typeof raw.suggestedStartSeconds === "number" ? raw.suggestedStartSeconds : undefined,
+      sizeBytes: typeof raw.sizeBytes === "number" ? raw.sizeBytes : undefined,
+      readyAt: typeof raw.readyAt === "string" ? raw.readyAt : undefined,
+    };
+  }
+
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
   return {
     async list(options?: ListSessionsOptions): Promise<SessionPage> {
@@ -177,6 +212,61 @@ export function sessions(config?: SessionsConfig): SessionsClient {
       const nodeStream = Readable.fromWeb(res.body as import("stream/web").ReadableStream);
       await pipeline(nodeStream, createWriteStream(filePath));
       return filePath;
+    },
+
+    async browserReplay(
+      id: string,
+      options?: BrowserReplayOptions
+    ): Promise<BrowserReplay> {
+      const timeoutMs = positiveNumber("timeoutMs", options?.timeoutMs, DEFAULT_BROWSER_REPLAY_TIMEOUT_MS);
+      const intervalMs = positiveNumber("intervalMs", options?.intervalMs, DEFAULT_BROWSER_REPLAY_INTERVAL_MS);
+      const deadline = Date.now() + timeoutMs;
+      const path = `/api/sessions/${encodeURIComponent(id)}/browser-replay`;
+
+      while (true) {
+        const remainingMs = deadline - Date.now();
+        if (remainingMs <= 0) {
+          throw new Error(`Browser replay timed out after ${timeoutMs}ms`);
+        }
+
+        let res: Response;
+        try {
+          res = await fetch(`${dashboardUrl}${path}`, {
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              accept: "application/json",
+            },
+            signal: AbortSignal.timeout(Math.max(1, remainingMs)),
+          });
+        } catch (error) {
+          const name = (error as { name?: string }).name;
+          if (name === "AbortError" || name === "TimeoutError") {
+            throw new Error(`Browser replay timed out after ${timeoutMs}ms`);
+          }
+          throw error;
+        }
+
+        let data: Record<string, unknown> = {};
+        if (!res.ok) {
+          const text = await res.text().catch(() => "");
+          throw new Error(
+            `Dashboard API error (${res.status}): ${text || res.statusText}`
+          );
+        } else {
+          data = await res.json() as Record<string, unknown>;
+        }
+
+        if (data.status === "ready") return mapBrowserReplay(data, id);
+        if (data.status === "failed") {
+          const error = typeof data.error === "string" ? data.error : "unknown error";
+          throw new Error(`Browser replay failed: ${error}`);
+        }
+
+        if (Date.now() >= deadline) {
+          throw new Error(`Browser replay timed out after ${timeoutMs}ms`);
+        }
+        await sleep(Math.min(intervalMs, Math.max(0, deadline - Date.now())));
+      }
     },
   };
 }

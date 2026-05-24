@@ -33,6 +33,7 @@ from .results import (
     SessionInfo,
     SessionPage,
     SessionEvent,
+    BrowserReplay,
 )
 from .storage_client import StorageClient
 from .sessions_client import SessionsClient
@@ -132,7 +133,7 @@ def sessions(config: Optional[SessionsConfig] = None) -> SessionsClient:
         config: Optional API key / dashboard URL overrides
 
     Returns:
-        SessionsClient with list, get, events, download methods
+        SessionsClient with list, get, events, download, browser_replay methods
 
     Example:
         >>> from evolve import sessions
@@ -141,6 +142,7 @@ def sessions(config: Optional[SessionsConfig] = None) -> SessionsClient:
         ...     page = await client.list(limit=10, state='ended')
         ...     trace = await client.get(page.items[0].id)
         ...     await client.download(trace.id, to='./traces')
+        ...     await client.browser_replay(trace.id)
     """
     from .bridge import BridgeManager
     bridge = BridgeManager()
@@ -222,6 +224,7 @@ __all__ = [
     'SessionInfo',
     'SessionPage',
     'SessionEvent',
+    'BrowserReplay',
 
     # Standalone clients
     'StorageClient',

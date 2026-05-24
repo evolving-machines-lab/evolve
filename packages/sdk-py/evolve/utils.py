@@ -96,6 +96,30 @@ def _require_session_info(data: Optional[Dict[str, Any]]) -> 'SessionInfo':
     return result
 
 
+def _parse_browser_replay(data: Optional[Dict[str, Any]]) -> Optional['BrowserReplay']:
+    """Parse browser replay dict from bridge response into BrowserReplay."""
+    if not data:
+        return None
+    from .results import BrowserReplay  # noqa: E402
+    return BrowserReplay(
+        session_id=data['session_id'],
+        status=data['status'],
+        replay_url=data['replay_url'],
+        download_url=data['download_url'],
+        suggested_start_seconds=data.get('suggested_start_seconds'),
+        size_bytes=data.get('size_bytes'),
+        ready_at=data.get('ready_at'),
+    )
+
+
+def _require_browser_replay(data: Optional[Dict[str, Any]]) -> 'BrowserReplay':
+    """Like :func:`_parse_browser_replay` but raises on falsy *data*."""
+    result = _parse_browser_replay(data)
+    if result is None:
+        raise ValueError(f"Expected browser replay data, got: {data!r}")
+    return result
+
+
 def _encode_files_for_transport(
     files: Dict[str, Union[str, bytes]]
 ) -> Dict[str, Dict[str, str]]:

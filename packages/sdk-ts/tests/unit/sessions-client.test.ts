@@ -139,6 +139,7 @@ async function testAcceptsConfigApiKey() {
     assert(typeof s.get === "function", "has get method");
     assert(typeof s.events === "function", "has events method");
     assert(typeof s.download === "function", "has download method");
+    assert(typeof s.browserReplay === "function", "has browserReplay method");
   } finally {
     restoreFetch();
   }
@@ -453,6 +454,150 @@ async function testDownloadNoBody() {
   }
 }
 
+async function testBrowserReplayReady() {
+  console.log("\n--- browserReplay() returns ready replay URLs ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/sessions/sess-browser/browser-replay", {
+      status: 200,
+      body: {
+        sessionId: "sess-browser",
+        status: "ready",
+        replayUrl: "https://dashboard.test/sessions/sess-browser/browser-replay/replay_1?token=t",
+        downloadUrl: "https://dashboard.test/api/sessions/sess-browser/browser-replay/replay_1/download?token=t",
+        suggestedStartSeconds: 20,
+        sizeBytes: 1234,
+        readyAt: "2026-05-24T00:00:00.000Z",
+      },
+    });
+
+    const s = sessions({ apiKey: "test-key", dashboardUrl: "http://localhost:3000" });
+    const replay = await s.browserReplay("sess-browser", { timeoutMs: 100, intervalMs: 1 });
+
+    assertEqual(replay.sessionId, "sess-browser", "maps sessionId");
+    assertEqual(replay.status, "ready", "maps status");
+    assertEqual(replay.sizeBytes, 1234, "maps sizeBytes");
+    assertEqual(replay.suggestedStartSeconds, 20, "maps suggestedStartSeconds");
+    assert(replay.replayUrl.includes("/browser-replay/"), "maps replayUrl");
+    assert(replay.downloadUrl.includes("/download"), "maps downloadUrl");
+    assert(fetchCalls[0]?.init?.signal instanceof AbortSignal, "sets fetch timeout signal");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testBrowserReplayPollsUntilReady() {
+  console.log("\n--- browserReplay() polls processing until ready ---");
+  installMockFetch();
+  try {
+    let calls = 0;
+    (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+      fetchCalls.push({ url: url.toString(), init });
+      calls++;
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => calls === 1
+          ? { sessionId: "sess-browser", status: "processing" }
+          : {
+              sessionId: "sess-browser",
+              status: "ready",
+              replayUrl: "https://dashboard.test/replay",
+              downloadUrl: "https://dashboard.test/download",
+            },
+        text: async () => "{}",
+        body: null,
+      } as unknown as Response;
+    };
+
+    const s = sessions({ apiKey: "test-key", dashboardUrl: "http://localhost:3000" });
+    const replay = await s.browserReplay("sess-browser", { timeoutMs: 100, intervalMs: 1 });
+
+    assertEqual(calls, 2, "polls twice");
+    assertEqual(replay.status, "ready", "returns ready replay");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testBrowserReplayThrowsOn404() {
+  console.log("\n--- browserReplay() throws on 404 ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/sessions/sess-missing/browser-replay", {
+      status: 404,
+      body: { error: "Browser replay not found" },
+    });
+
+    const s = sessions({ apiKey: "test-key", dashboardUrl: "http://localhost:3000" });
+    let threw = false;
+    try {
+      await s.browserReplay("sess-missing", { timeoutMs: 100, intervalMs: 1 });
+    } catch (e: any) {
+      threw = true;
+      assert(e.message.includes("404"), "error includes 404");
+    }
+
+    assert(threw, "throws instead of polling wrong session");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testBrowserReplayFailedThrows() {
+  console.log("\n--- browserReplay() throws on failed replay ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/sessions/sess-failed/browser-replay", {
+      status: 200,
+      body: { sessionId: "sess-failed", status: "failed", error: "copy failed" },
+    });
+
+    const s = sessions({ apiKey: "test-key", dashboardUrl: "http://localhost:3000" });
+    let threw = false;
+    try {
+      await s.browserReplay("sess-failed", { timeoutMs: 50, intervalMs: 1 });
+    } catch (e: any) {
+      threw = true;
+      assert(e.message.includes("copy failed"), "error includes failure reason");
+    }
+    assert(threw, "throws on failed replay");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testBrowserReplayRejectsInvalidPollingOptions() {
+  console.log("\n--- browserReplay() rejects invalid polling options ---");
+  installMockFetch();
+  try {
+    const s = sessions({ apiKey: "test-key", dashboardUrl: "http://localhost:3000" });
+
+    let threwTimeout = false;
+    try {
+      await s.browserReplay("sess-browser", { timeoutMs: 0 });
+    } catch (e: any) {
+      threwTimeout = true;
+      assert(e.message.includes("timeoutMs must be a positive number"), "rejects timeoutMs=0");
+    }
+    assert(threwTimeout, "throws on invalid timeoutMs");
+
+    let threwInterval = false;
+    try {
+      await s.browserReplay("sess-browser", { intervalMs: -1 });
+    } catch (e: any) {
+      threwInterval = true;
+      assert(e.message.includes("intervalMs must be a positive number"), "rejects intervalMs=-1");
+    }
+    assert(threwInterval, "throws on invalid intervalMs");
+    assertEqual(fetchCalls.length, 0, "does not call dashboard for invalid options");
+  } finally {
+    restoreFetch();
+  }
+}
+
 // =============================================================================
 // RUN
 // =============================================================================
@@ -471,6 +616,11 @@ async function main() {
   await testApiErrorHandling();
   await testDownloadStreaming();
   await testDownloadNoBody();
+  await testBrowserReplayReady();
+  await testBrowserReplayPollsUntilReady();
+  await testBrowserReplayThrowsOn404();
+  await testBrowserReplayFailedThrows();
+  await testBrowserReplayRejectsInvalidPollingOptions();
 
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);
