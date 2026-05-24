@@ -114,7 +114,7 @@ See [Streaming Events](./04-streaming.md) for all event types, type definitions,
 When using `EVOLVE_API_KEY`:
 
 - **Tracing:** Automatic tracing and agent analytics at [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) for observability and replay — no extra setup needed. Use `withSessionTagPrefix()` to label sessions for easy filtering.
-- **Browser Automation:** Call `.withBrowser()` for remote managed agent-browser automation with dashboard live view. Use `.withBrowser({ provider: "actionbook", remote: true })` for remote managed Actionbook, or `.withBrowser("browser-use")` for browser-use MCP.
+- **Browser Automation:** Call `.withBrowser()` for the recommended managed browser path with dashboard live view and replay. `.withBrowser("browser-use")` remains available for advanced MCP workflows, but it is inferior for browser automation UX because you must parse MCP tool output and do not get managed replay.
 - **Checkpointing:** Snapshot sandbox state to Evolve-managed storage with `.withStorage()` — no S3 credentials needed. See [Storage & Checkpointing](./03-runtime.md#storage--checkpointing).
 
 ---
@@ -125,7 +125,7 @@ When using `EVOLVE_API_KEY`:
 |---|---------|---------------|
 | Setup | `EVOLVE_API_KEY` | [Model provider keys](#agent-reference) + [`E2B_API_KEY`](https://e2b.dev) |
 | Observability | [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) | `~/.evolve-sdk/observability/` |
-| Browser | `.withBrowser()` enables remote managed agent-browser; `.withBrowser({ provider: "actionbook", remote: true })` enables remote managed Actionbook; `.withBrowser("browser-use")` enables browser-use MCP | Via skills or MCP |
+| Browser | `.withBrowser()` is the recommended managed browser path with live view and replay. `.withBrowser("browser-use")` enables browser-use MCP for advanced MCP workflows, but requires MCP output parsing and does not provide managed replay. | Via skills or MCP |
 | Billing | Evolving Machines | Your provider accounts |
 
 ---

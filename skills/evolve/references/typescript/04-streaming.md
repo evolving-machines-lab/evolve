@@ -274,11 +274,13 @@ interface DiffContent {
 
 Browser automation URLs are parsed differently depending on which browser option you enable:
 
+Use `.withBrowser()` for browser automation UX. `browser-use` remains supported for advanced MCP workflows, but it requires parsing tool output and does not provide managed replay.
+
 | Option | Enable | Parse from stream |
 |--------|--------|-------------------|
 | Remote managed agent-browser | `.withBrowser()` or `.withBrowser({ provider: "agent-browser", remote: true })` | `lifecycle` event with `reason === "browser_ready"`; read `event.browser.liveUrl` and `event.browser.sessionId` |
 | Remote managed Actionbook | `.withBrowser({ provider: "actionbook", remote: true })` | `lifecycle` event with `reason === "browser_ready"`; read `event.browser.liveUrl` and `event.browser.sessionId` |
-| browser-use MCP | `.withBrowser("browser-use")` | `tool_call_update` content from browser-use tools; parse embedded `live_url` and `screenshot_url` JSON fields |
+| browser-use MCP | `.withBrowser("browser-use")` | Advanced MCP option; parse embedded `live_url` and `screenshot_url` JSON fields from `tool_call_update` content |
 
 ### Remote managed Actionbook and agent-browser
 
@@ -316,7 +318,7 @@ After browser cleanup, pass `event.browser.sessionId` or `result.sessionId` to
 
 ## BrowserUseResponse
 
-browser-use is available when enabled with `.withBrowser("browser-use")` in Gateway mode. Browser tool responses embed a **JSON string** inside `ToolCallUpdate.content[].content.text`. You must extract and parse it.
+browser-use is available when enabled with `.withBrowser("browser-use")` in Gateway mode. Prefer `.withBrowser()` unless you specifically need browser-use MCP, because browser-use responses embed a **JSON string** inside `ToolCallUpdate.content[].content.text`. You must extract and parse it.
 
 > **Detection:** Browser-use tools arrive with `kind: "other"` and `title` like `"browser-use: browser_task"` or `"browser-use: monitor_task"`. Use the `isBrowserUseTool(title)` helper above to identify them, then extract URLs from the tool output.
 

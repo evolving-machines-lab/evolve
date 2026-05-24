@@ -279,6 +279,7 @@ Browser automation is opt-in. `.withBrowser()` defaults to remote managed agent-
 
 - Use the default agent-browser path for most browser, QA, dogfooding, and website automation tasks.
 - Use remote managed mode for real websites because Evolve provides managed browser infrastructure with extra stealth capabilities.
+- Prefer `.withBrowser()` for browser automation UX. `browser-use` is an advanced MCP option and is inferior because live/screenshot URLs must be parsed from MCP tool output and managed replay is not available.
 - Use the provider string form for local dogfooding or local app testing.
 - Object configs default `remote` to `false` unless you set `remote: true`.
 - browser-use requires Gateway mode because Evolve injects the MCP server.
@@ -287,7 +288,7 @@ Browser automation is opt-in. `.withBrowser()` defaults to remote managed agent-
 |--------|-----------|--------------|
 | Remote managed agent-browser (default) | `.withBrowser()` or `.withBrowser({ provider: "agent-browser", remote: true })` | agent-browser skill, Evolve-managed remote browser transport, dashboard live view |
 | Remote managed Actionbook | `.withBrowser({ provider: "actionbook", remote: true })` | Actionbook skills, Evolve-managed remote browser transport, dashboard live view |
-| browser-use MCP | `.withBrowser("browser-use")` | browser-use MCP server, with live/screenshot URLs parsed from browser-use tool responses |
+| browser-use MCP | `.withBrowser("browser-use")` | Advanced MCP option; live/screenshot URLs must be parsed from browser-use tool responses, and managed replay is not available |
 
 Use `.withBrowser("actionbook")` or `.withBrowser("agent-browser")` to install only that provider's skills without managed live browser transport.
 
