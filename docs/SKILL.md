@@ -47,7 +47,7 @@ Read on demand when the user's task requires them:
 
 | When to read | TypeScript | Python |
 |-------------|-----------|--------|
-| Building a UI, handling real-time events, parsing tool calls, browser-use | [04-streaming.md](references/typescript/04-streaming.md) | [04-streaming.md](references/python/04-streaming.md) |
+| Building a UI, handling real-time events, browser live/replay, parsing tool calls, browser-use | [04-streaming.md](references/typescript/04-streaming.md) | [04-streaming.md](references/python/04-streaming.md) |
 | Parallel agents (map/filter/reduce/bestOf/verify), Pipeline chaining | [05-swarm-pipeline.md](references/typescript/05-swarm-pipeline.md) | [05-swarm-pipeline.md](references/python/05-swarm-pipeline.md) |
 
 ## Topic Index
@@ -105,7 +105,7 @@ Read on demand when the user's task requires them:
 | LifecycleEvent & LifecycleReason | [TS](references/typescript/04-streaming.md#lifecycleevent) | [PY](references/python/04-streaming.md#lifecycleevent-typeddict-shape) |
 | OutputEvent & SessionUpdate types | [TS](references/typescript/04-streaming.md#sessionupdate-types) | [PY](references/python/04-streaming.md#event-types-summary) |
 | Tool events (ToolCall, ToolCallUpdate, ToolKind) | [TS](references/typescript/04-streaming.md#tool-events) | [PY](references/python/04-streaming.md#toolkind-reference) |
-| Browser-use detection & URL extraction | [TS](references/typescript/04-streaming.md#browseruseresponse) | [PY](references/python/04-streaming.md#browseruseresponse-extraction) |
+| Browser automation live URLs, replay URLs, and browser-use URL extraction | [TS](references/typescript/04-streaming.md#browser-automation-streaming) | [PY](references/python/04-streaming.md#browser-automation-streaming) |
 | UI integration example | [TS](references/typescript/04-streaming.md#ui-integration-example) | [PY](references/python/04-streaming.md#ui-integration-example) |
 
 ### Swarm & Pipeline

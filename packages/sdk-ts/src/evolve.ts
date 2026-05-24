@@ -237,20 +237,20 @@ export class Evolve extends EventEmitter {
   /**
    * Enable browser automation.
    *
-   * .withBrowser() defaults to Actionbook with Evolve-managed remote browser
-   * transport in gateway mode. Pass "actionbook" or "agent-browser" for local
+   * .withBrowser() defaults to agent-browser with Evolve-managed remote browser
+   * transport in gateway mode. Pass "agent-browser" or "actionbook" for local
    * skills-only mode, or "browser-use" to use the browser-use MCP server.
    *
    * @example
    * kit.withBrowser("browser-use") // browser-use MCP provider
    *
    * @example
-   * kit.withBrowser() // defaults to remote managed Actionbook
+   * kit.withBrowser() // defaults to remote managed agent-browser
    *
    * @example
    * kit.withBrowser({ provider: "agent-browser", remote: true }) // managed remote agent-browser
    */
-  withBrowser(provider: BrowserConfig | false = { provider: "actionbook", remote: true }): this {
+  withBrowser(provider: BrowserConfig | false = { provider: "agent-browser", remote: true }): this {
     if (provider === false) {
       delete this.config.browser;
     } else {
