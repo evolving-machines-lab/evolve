@@ -144,16 +144,15 @@ export type BrowserProvider = "browser-use" | "actionbook" | "agent-browser";
 /** Browser providers backed by Evolve-managed browser transport. */
 export type ManagedBrowserProvider = "actionbook" | "agent-browser";
 
-/** Neutral managed browser transport id. Dashboard maps this to an internal CDP backend. */
-export type ManagedBrowserTransport = "managed-a" | "managed-b";
+type ManagedBrowserTransport = "managed-a" | "managed-b";
 
 /** Actionbook browser configuration. */
 export interface ActionbookBrowserConfig {
   provider: "actionbook";
   /** Use Evolve-managed remote browser transport. Defaults to false for object config. */
   remote?: boolean;
-  /** Internal managed browser transport selector. */
-  transport?: ManagedBrowserTransport;
+  /** @internal Evolve-managed browser backend selector. */
+  _managedTransport?: ManagedBrowserTransport;
 }
 
 /** Agent-browser browser configuration. */
@@ -161,8 +160,8 @@ export interface AgentBrowserConfig {
   provider: "agent-browser";
   /** Use Evolve-managed remote browser transport. Defaults to false for object config. */
   remote?: boolean;
-  /** Internal managed browser transport selector. */
-  transport?: ManagedBrowserTransport;
+  /** @internal Evolve-managed browser backend selector. */
+  _managedTransport?: ManagedBrowserTransport;
 }
 
 /** Browser automation configuration. */
@@ -378,7 +377,7 @@ export interface AgentOptions {
   /** Evolve-managed browser transport for browser automation */
   managedBrowser?: {
     provider: ManagedBrowserProvider;
-    transport: ManagedBrowserTransport;
+    _managedTransport: ManagedBrowserTransport;
     apiKey: string;
     dashboardUrl?: string;
   };

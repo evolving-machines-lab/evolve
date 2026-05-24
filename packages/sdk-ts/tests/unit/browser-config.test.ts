@@ -193,7 +193,7 @@ async function testManagedActionbookDefault(): Promise<void> {
     const options = await getInitializedAgentOptions(kit);
     assert(options.skills.includes("actionbook"), "default browser adds actionbook skill");
     assertEqual(options.managedBrowser.provider, "actionbook", "managed browser tracks actionbook provider");
-    assertEqual(options.managedBrowser.transport, "managed-b", "managed browser uses default transport");
+    assertEqual(options.managedBrowser._managedTransport, "managed-b", "managed browser uses default transport");
     assertEqual(options.managedBrowser.apiKey, "evolve-key", "managed browser uses Evolve API key");
     assertEqual(options.managedBrowser.dashboardUrl, "https://dashboard.test", "managed browser uses dashboard URL");
     assert(options.browserPrompt.includes("Actionbook is preconfigured"), "managed browser prompt added");
@@ -284,10 +284,10 @@ async function testManagedTransportOverride(): Promise<void> {
   const kit = new Evolve()
     .withAgent({ type: "claude", apiKey: "evolve-key" })
     .withSandbox(fakeSandboxProvider)
-    .withBrowser({ provider: "actionbook", remote: true, transport: "managed-b" });
+    .withBrowser({ provider: "actionbook", remote: true, _managedTransport: "managed-b" });
 
   const options = await getInitializedAgentOptions(kit);
-  assertEqual(options.managedBrowser.transport, "managed-b", "managed browser stores neutral transport override");
+  assertEqual(options.managedBrowser._managedTransport, "managed-b", "managed browser stores neutral transport override");
 }
 
 async function testManagedTransportRejectsInvalidValue(): Promise<void> {
@@ -296,7 +296,7 @@ async function testManagedTransportRejectsInvalidValue(): Promise<void> {
   const kit = new Evolve()
     .withAgent({ type: "claude", apiKey: "evolve-key" })
     .withSandbox(fakeSandboxProvider)
-    .withBrowser({ provider: "actionbook", remote: true, transport: "raw-provider" } as any);
+    .withBrowser({ provider: "actionbook", remote: true, _managedTransport: "raw-provider" } as any);
 
   try {
     await getInitializedAgentOptions(kit);
@@ -321,7 +321,7 @@ async function testManagedAgentBrowserConfigUsesProxyOnly(): Promise<void> {
   const options = agent.options;
   assert(options.skills.includes("agent-browser"), "managed agent-browser adds agent-browser skill");
   assertEqual(options.managedBrowser.provider, "agent-browser", "managed browser tracks agent-browser provider");
-  assertEqual(options.managedBrowser.transport, "managed-b", "managed agent-browser uses default transport");
+  assertEqual(options.managedBrowser._managedTransport, "managed-b", "managed agent-browser uses default transport");
   assert(
     options.browserPrompt.includes("agent-browser CDP connection is already configured"),
     "managed agent-browser prompt added"
