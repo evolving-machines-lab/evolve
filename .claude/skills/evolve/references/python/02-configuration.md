@@ -255,6 +255,11 @@ Evolve automatically configures the browser runtime. In Gateway mode, the manage
 - `result.session_id`, which is the id to use for traces and browser replay
 - `sessions().browser_replay(session_id)`, which returns replay and raw `.mp4` download URLs after cleanup
 
+`remote` controls where the browser session runs:
+
+- `remote: True` creates an Evolve-managed cloud browser session, wires it into the sandbox, and exposes dashboard live view plus replay.
+- `remote: False` runs browser automation locally inside the sandbox. Use it only when you do not need managed live view or replay.
+
 Use the default managed remote browser unless you have a reason not to:
 
 ```python
