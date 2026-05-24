@@ -106,6 +106,7 @@ def _parse_browser_replay(data: Optional[Dict[str, Any]]) -> Optional['BrowserRe
         status=data['status'],
         replay_url=data['replay_url'],
         download_url=data['download_url'],
+        suggested_start_seconds=data.get('suggested_start_seconds'),
         size_bytes=data.get('size_bytes'),
         ready_at=data.get('ready_at'),
     )

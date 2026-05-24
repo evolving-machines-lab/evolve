@@ -773,6 +773,9 @@ replay = await session.browser_replay(
 - `download()` saves the raw `.jsonl` trace file to disk and returns the path
 - `browser_replay()` waits for the managed browser replay and returns
   `replay_url` plus `download_url`
+  - Use `replay_url` in your UI for browser playback
+  - Use `download_url` when users need the raw `.mp4` file
+  - `suggested_start_seconds`, when present, is already applied to `replay_url`; keep the raw download unchanged
 
 Replay processing starts when the managed browser is cleaned up, usually during
 `kill()` or session cleanup. If the client times out, processing continues

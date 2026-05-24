@@ -419,6 +419,7 @@ export interface BrowserReplayResponse {
   status: 'ready';
   replay_url: string;
   download_url: string;
+  suggested_start_seconds?: number;
   size_bytes?: number;
   ready_at?: string;
 }

@@ -110,6 +110,7 @@ class MockBridgeManager:
                 'status': 'ready',
                 'replay_url': 'https://dashboard.test/replay',
                 'download_url': 'https://dashboard.test/download',
+                'suggested_start_seconds': 20,
                 'size_bytes': 1234,
                 'ready_at': '2026-05-24T00:00:00.000Z',
             }
@@ -286,6 +287,7 @@ class TestSessionsClientBrowserReplay:
         assert replay.status == 'ready'
         assert replay.replay_url.endswith('/replay')
         assert replay.download_url.endswith('/download')
+        assert replay.suggested_start_seconds == 20
         assert replay.size_bytes == 1234
 
     @pytest.mark.asyncio

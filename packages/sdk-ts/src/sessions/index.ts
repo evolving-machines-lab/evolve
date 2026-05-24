@@ -113,6 +113,7 @@ export function sessions(config?: SessionsConfig): SessionsClient {
       status: "ready",
       replayUrl: raw.replayUrl,
       downloadUrl: raw.downloadUrl,
+      suggestedStartSeconds: typeof raw.suggestedStartSeconds === "number" ? raw.suggestedStartSeconds : undefined,
       sizeBytes: typeof raw.sizeBytes === "number" ? raw.sizeBytes : undefined,
       readyAt: typeof raw.readyAt === "string" ? raw.readyAt : undefined,
     };

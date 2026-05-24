@@ -15,12 +15,12 @@ import { homedir } from "os";
 import { randomBytes } from "crypto";
 import type { AgentType } from "../types";
 import {
-  DEFAULT_DASHBOARD_URL,
   SESSION_LOGS_DIR,
   DASHBOARD_BATCH_SIZE,
   DASHBOARD_FLUSH_INTERVAL_MS,
   DASHBOARD_MAX_RETRIES,
   DASHBOARD_RETRY_DELAY_MS,
+  getDashboardUrl,
 } from "../constants";
 import { createAgentParser, type AgentParser, type OutputEvent } from "../parsers";
 
@@ -88,7 +88,7 @@ export class SessionLogger {
     this.model = config.model;
     this.sandboxId = config.sandboxId;
     this.apiKey = config.apiKey;
-    this.dashboardUrl = DEFAULT_DASHBOARD_URL;
+    this.dashboardUrl = getDashboardUrl();
     this.observability = config.observability;
 
     // Use provided tag or generate one
@@ -371,11 +371,12 @@ export class SessionLogger {
   // ===========================================================================
 
   private validateConfig(config: SessionLoggerConfig): void {
+    const dashboardUrl = getDashboardUrl();
     if (
       config.apiKey &&
-      !DEFAULT_DASHBOARD_URL.startsWith("https://") &&
-      !DEFAULT_DASHBOARD_URL.includes("localhost") &&
-      !DEFAULT_DASHBOARD_URL.includes("127.0.0.1")
+      !dashboardUrl.startsWith("https://") &&
+      !dashboardUrl.includes("localhost") &&
+      !dashboardUrl.includes("127.0.0.1")
     ) {
       throw new Error("Dashboard URL must use HTTPS when API key is provided");
     }

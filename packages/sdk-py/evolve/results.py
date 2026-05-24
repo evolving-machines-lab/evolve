@@ -188,5 +188,6 @@ class BrowserReplay:
     status: Literal['ready']
     replay_url: str
     download_url: str
+    suggested_start_seconds: Optional[float] = None
     size_bytes: Optional[int] = None
     ready_at: Optional[str] = None

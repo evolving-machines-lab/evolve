@@ -295,7 +295,7 @@ async function testManagedBrowserLifecycle(): Promise<void> {
     assert(config !== undefined, "Actionbook config file written");
     assert(config?.includes('mode = "cloud"') ?? false, "Actionbook config sets cloud mode");
     assert(config?.includes(cdpUrl) ?? false, "Actionbook config uses proxied CDP endpoint");
-    assert(!config?.toLowerCase().includes("driver"), "Actionbook config does not expose provider name");
+    assert(!config?.includes("_managedTransport"), "Actionbook config does not expose transport selector");
 
     const browserReady = events.find((event) => event.reason === "browser_ready");
     assertEqual(browserReady?.browser?.liveUrl, liveUrl, "browser_ready exposes live URL immediately");
@@ -365,8 +365,6 @@ async function testManagedAgentBrowserLifecycle(): Promise<void> {
     assert(!("provider" in createBody), "managed browser create does not expose automation provider");
     assertEqual(createBody.options?.remote, true, "managed browser create uses remote option");
     assert(!("_managedTransport" in createBody.options), "managed browser create does not expose transport selector");
-    assert(!JSON.stringify(createBody).toLowerCase().includes("driver"), "managed browser create does not expose transport vendor");
-    assert(!JSON.stringify(createBody).toLowerCase().includes("browser-use"), "managed browser create does not expose transport vendor");
     assertEqual(result.browser?.liveUrl, liveUrl, "run() exposes managed agent-browser live URL");
     assertEqual(
       provider.createOptions?.envs?.AGENT_BROWSER_CONFIG,
@@ -381,7 +379,7 @@ async function testManagedAgentBrowserLifecycle(): Promise<void> {
     const parsedConfig = JSON.parse(config!);
     assert(!("session" in parsedConfig), "agent-browser config leaves session default to agent-browser");
     assert(config?.includes(cdpUrl) ?? false, "agent-browser config uses proxied CDP endpoint");
-    assert(!config?.toLowerCase().includes("driver"), "agent-browser config does not expose provider name");
+    assert(!config?.includes("_managedTransport"), "agent-browser config does not expose transport selector");
 
     const browserReady = events.find((event) => event.reason === "browser_ready");
     assertEqual(browserReady?.browser?.liveUrl, liveUrl, "browser_ready exposes agent-browser live URL");

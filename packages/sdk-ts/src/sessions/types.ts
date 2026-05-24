@@ -64,6 +64,7 @@ export interface BrowserReplay {
   status: "ready";
   replayUrl: string;
   downloadUrl: string;
+  suggestedStartSeconds?: number;
   sizeBytes?: number;
   readyAt?: string;
 }

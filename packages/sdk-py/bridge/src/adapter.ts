@@ -738,6 +738,7 @@ export class EvolveAdapter {
       status: info.status,
       replay_url: info.replayUrl,
       download_url: info.downloadUrl,
+      suggested_start_seconds: info.suggestedStartSeconds,
       size_bytes: info.sizeBytes,
       ready_at: info.readyAt,
     };

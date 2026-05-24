@@ -465,6 +465,7 @@ async function testBrowserReplayReady() {
         status: "ready",
         replayUrl: "https://dashboard.test/sessions/sess-browser/browser-replay/replay_1?token=t",
         downloadUrl: "https://dashboard.test/api/sessions/sess-browser/browser-replay/replay_1/download?token=t",
+        suggestedStartSeconds: 20,
         sizeBytes: 1234,
         readyAt: "2026-05-24T00:00:00.000Z",
       },
@@ -476,6 +477,7 @@ async function testBrowserReplayReady() {
     assertEqual(replay.sessionId, "sess-browser", "maps sessionId");
     assertEqual(replay.status, "ready", "maps status");
     assertEqual(replay.sizeBytes, 1234, "maps sizeBytes");
+    assertEqual(replay.suggestedStartSeconds, 20, "maps suggestedStartSeconds");
     assert(replay.replayUrl.includes("/browser-replay/"), "maps replayUrl");
     assert(replay.downloadUrl.includes("/download"), "maps downloadUrl");
     assert(fetchCalls[0]?.init?.signal instanceof AbortSignal, "sets fetch timeout signal");

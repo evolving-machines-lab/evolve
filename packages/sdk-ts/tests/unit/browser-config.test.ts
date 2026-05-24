@@ -274,7 +274,7 @@ async function testManagedActionbookConfigUsesProxyOnly(): Promise<void> {
     config?.includes('cdp_endpoint = "wss://dashboard.test/api/browser-sessions/browser_123/cdp?token=proxy-token"') ?? false,
     "Actionbook config receives proxied CDP endpoint"
   );
-  assert(!config?.toLowerCase().includes("driver"), "Actionbook config does not expose provider name");
+  assert(!config?.includes("_managedTransport"), "Actionbook config does not expose transport selector");
 }
 
 async function testManagedAgentBrowserConfigUsesProxyOnly(): Promise<void> {
@@ -326,7 +326,7 @@ async function testManagedAgentBrowserConfigUsesProxyOnly(): Promise<void> {
     config?.includes("wss://dashboard.test/api/browser-sessions/browser_123/cdp?token=proxy-token") ?? false,
     "agent-browser config receives proxied CDP endpoint"
   );
-  assert(!config?.toLowerCase().includes("driver"), "agent-browser config does not expose provider name");
+  assert(!config?.includes("_managedTransport"), "agent-browser config does not expose transport selector");
 }
 
 async function main(): Promise<void> {

@@ -728,6 +728,9 @@ const replay = await session.browserReplay(info.id);
 - `events()` returns parsed JSONL objects; pass `since` for delta fetching
 - `download()` streams the raw `.jsonl` trace to disk and returns the file path
 - `browserReplay()` waits for the managed browser replay and returns `replayUrl` plus `downloadUrl`
+  - Use `replayUrl` in your UI for browser playback
+  - Use `downloadUrl` when users need the raw `.mp4` file
+  - `suggestedStartSeconds`, when present, is already applied to `replayUrl`; keep the raw download unchanged
 
 ```ts
 const replay = await session.browserReplay(info.id, {
