@@ -221,6 +221,8 @@ export class EvolveAdapter {
         apps: params.integrations.apps,
         tools: params.integrations.tools,
         accounts: params.integrations.accounts,
+        keys: params.integrations.keys,
+        authConfigs: params.integrations.auth_configs,
       });
     }
 

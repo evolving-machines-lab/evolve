@@ -136,6 +136,8 @@ sandbox = E2BProvider(
 ```
 
 ```python
+import os
+
 evolve = Evolve(
 
     # Agent configuration (optional if EVOLVE_API_KEY set, defaults to claude)
@@ -583,6 +585,21 @@ evolve = Evolve(
 await Evolve.integrations.accounts.delete(account_id='account_id_from_list')
 ```
 
+### Custom Auth Configs and API Keys
+
+Use `auth_configs` to select a custom auth config for an app. For apps with an API-key auth config, pass the matching key in `keys`; Evolve creates the connected account server-side and does not store the raw key in the session.
+
+```python
+evolve = Evolve(
+    integrations=IntegrationsSetup(
+        user_id='customer_123',
+        apps=['github'],
+        auth_configs={'github': 'ac_custom_github'},
+        keys={'github': os.environ['GITHUB_TOKEN']},
+    ),
+)
+```
+
 ### Type Reference
 
 ```python
@@ -592,6 +609,8 @@ class IntegrationsSetup:
     apps: List[str]
     tools: Optional[Dict[str, IntegrationToolsFilter]] = None
     accounts: Optional[Dict[str, List[str]]] = None  # app -> account aliases or account IDs
+    auth_configs: Optional[Dict[str, str]] = None  # app -> custom auth config ID
+    keys: Optional[Dict[str, str]] = None          # app -> API key, requires auth_configs[app]
 
 IntegrationToolsFilter = Union[
     List[str],

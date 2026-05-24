@@ -118,6 +118,8 @@ export async function setupIntegrations(config: IntegrationRuntimeSetup): Promis
       apps: normalizeApps(config.apps),
       tools: config.tools,
       accounts: config.accounts,
+      keys: config.keys,
+      authConfigs: config.authConfigs,
       sessionTag: config.sessionTag,
     }),
     signal: AbortSignal.timeout(30_000),

@@ -685,6 +685,17 @@ export interface IntegrationsConfig {
    * Pin specific connected accounts by account ID or alias.
    */
   accounts?: Record<string, string[]>;
+
+  /**
+   * API keys for apps that use API-key auth.
+   * Requires a matching authConfigs entry for each app.
+   */
+  keys?: Record<string, string>;
+
+  /**
+   * Custom auth config IDs per app.
+   */
+  authConfigs?: Record<string, string>;
 }
 
 /**

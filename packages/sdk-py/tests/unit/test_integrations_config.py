@@ -16,6 +16,8 @@ def test_integrations_setup_to_dict():
         apps=["gmail"],
         tools={"gmail": ["gmail_search_emails"]},
         accounts={"gmail": ["work"]},
+        keys={"github": "github-token"},
+        auth_configs={"github": "ac_github"},
     )
 
     assert setup.to_dict() == {
@@ -23,10 +25,11 @@ def test_integrations_setup_to_dict():
         "apps": ["gmail"],
         "tools": {"gmail": ["gmail_search_emails"]},
         "accounts": {"gmail": ["work"]},
+        "keys": {"github": "github-token"},
+        "auth_configs": {"github": "ac_github"},
     }
 
 
 def test_integrations_config_is_keyword_only():
     with pytest.raises(TypeError):
         IntegrationsConfig(["gmail"])  # type: ignore[misc]
-

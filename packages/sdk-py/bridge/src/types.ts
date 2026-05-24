@@ -149,6 +149,8 @@ export interface IntegrationsConfig {
   apps: string[];
   tools?: Record<string, IntegrationToolsFilter>;
   accounts?: Record<string, string[]>;
+  keys?: Record<string, string>;
+  auth_configs?: Record<string, string>;
 }
 
 export interface IntegrationsSetup {
@@ -156,6 +158,8 @@ export interface IntegrationsSetup {
   apps: string[];
   tools?: Record<string, IntegrationToolsFilter>;
   accounts?: Record<string, string[]>;
+  keys?: Record<string, string>;
+  auth_configs?: Record<string, string>;
 }
 
 // =============================================================================

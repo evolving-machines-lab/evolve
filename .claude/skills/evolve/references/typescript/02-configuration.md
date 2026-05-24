@@ -580,6 +580,20 @@ const evolve = new Evolve()
 await Evolve.integrations.accounts.delete({ accountId: "account_id_from_list" });
 ```
 
+### Custom Auth Configs and API Keys
+
+Use `authConfigs` to select a custom auth config for an app. For apps with an API-key auth config, pass the matching key in `keys`; Evolve creates the connected account server-side and does not store the raw key in the session.
+
+```ts
+const evolve = new Evolve()
+    .withIntegrations({
+        userId: "customer_123",
+        apps: ["github"],
+        authConfigs: { github: "ac_custom_github" },
+        keys: { github: process.env.GITHUB_TOKEN! },
+    });
+```
+
 ### Type Reference
 
 ```ts
@@ -588,6 +602,8 @@ interface IntegrationsSetup {
     apps: string[];
     tools?: Record<string, IntegrationToolsFilter>;
     accounts?: Record<string, string[]>; // app -> account aliases or account IDs
+    authConfigs?: Record<string, string>; // app -> custom auth config ID
+    keys?: Record<string, string>;        // app -> API key, requires authConfigs[app]
 }
 
 type IntegrationToolsFilter =

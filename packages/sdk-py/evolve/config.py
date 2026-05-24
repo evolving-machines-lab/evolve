@@ -362,10 +362,14 @@ class IntegrationsConfig:
         apps: Apps to expose to the agent (e.g., ["github", "gmail"])
         tools: Per-app tool filtering
         accounts: Pin connected accounts by account ID or alias
+        keys: API keys for apps that use API-key auth
+        auth_configs: Custom auth config IDs per app
     """
     apps: List[str]
     tools: Optional[Dict[str, IntegrationToolsFilter]] = None
     accounts: Optional[Dict[str, List[str]]] = None
+    keys: Optional[Dict[str, str]] = None
+    auth_configs: Optional[Dict[str, str]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dict for JSON-RPC transport."""
@@ -374,6 +378,10 @@ class IntegrationsConfig:
             result['tools'] = self.tools
         if self.accounts:
             result['accounts'] = self.accounts
+        if self.keys:
+            result['keys'] = self.keys
+        if self.auth_configs:
+            result['auth_configs'] = self.auth_configs
         return result
 
 
@@ -387,11 +395,15 @@ class IntegrationsSetup:
         apps: Apps to expose to the agent
         tools: Per-app tool filtering
         accounts: Pin connected accounts by account ID or alias
+        keys: API keys for apps that use API-key auth
+        auth_configs: Custom auth config IDs per app
     """
     user_id: str
     apps: List[str]
     tools: Optional[Dict[str, IntegrationToolsFilter]] = None
     accounts: Optional[Dict[str, List[str]]] = None
+    keys: Optional[Dict[str, str]] = None
+    auth_configs: Optional[Dict[str, str]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dict for JSON-RPC transport."""
@@ -400,4 +412,8 @@ class IntegrationsSetup:
             result['tools'] = self.tools
         if self.accounts:
             result['accounts'] = self.accounts
+        if self.keys:
+            result['keys'] = self.keys
+        if self.auth_configs:
+            result['auth_configs'] = self.auth_configs
         return result

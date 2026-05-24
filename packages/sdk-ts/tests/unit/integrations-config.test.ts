@@ -55,7 +55,7 @@ async function testStatusUsesOwnerScopedUserId(): Promise<void> {
 }
 
 async function testSessionSetupForwardsAccountPinning(): Promise<void> {
-  console.log("\n[2] withIntegrations(): forwards account pinning");
+  console.log("\n[2] withIntegrations(): forwards account pinning and advanced auth options");
 
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; init?: RequestInit }> = [];
@@ -70,8 +70,10 @@ async function testSessionSetupForwardsAccountPinning(): Promise<void> {
   try {
     await setupIntegrations({
       userId: "customer_123",
-      apps: ["gmail"],
+      apps: ["gmail", "github"],
       accounts: { gmail: ["work"] },
+      keys: { github: "github-token" },
+      authConfigs: { github: "ac_github" },
       apiKey: "evolve-key",
       dashboardUrl: "https://dashboard.test",
     });
@@ -84,6 +86,8 @@ async function testSessionSetupForwardsAccountPinning(): Promise<void> {
     assertEqual(body.userId, "customer_123", "setup forwards SDK user id");
     assertEqual(body.apps[0], "gmail", "setup forwards apps");
     assertEqual(body.accounts.gmail[0], "work", "setup forwards account alias");
+    assertEqual(body.keys.github, "github-token", "setup forwards API-key auth");
+    assertEqual(body.authConfigs.github, "ac_github", "setup forwards custom auth config");
   } finally {
     globalThis.fetch = originalFetch;
   }
