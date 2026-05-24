@@ -55,7 +55,11 @@ interface LifecycleEvent {
   agent: AgentRuntimeState;          // "idle" | "running" | "interrupted" | "error"
   timestamp: string;                 // ISO 8601
   reason: LifecycleReason;
-  browser?: { liveUrl: string };     // Present after managed browser setup
+  browser?: {
+    liveUrl: string;                 // Live browser view URL
+    sessionId?: string;              // Use with sessions().browserReplay()
+    sessionTag?: string;             // Use to correlate checkpoints
+  };
 }
 
 type LifecycleReason =
@@ -272,8 +276,8 @@ Browser automation URLs are parsed differently depending on which browser option
 
 | Option | Enable | Parse from stream |
 |--------|--------|-------------------|
-| Remote managed Actionbook | `.withBrowser()` or `.withBrowser({ provider: "actionbook", remote: true })` | `lifecycle` event with `reason === "browser_ready"`; read `event.browser.liveUrl` |
-| Remote managed agent-browser | `.withBrowser({ provider: "agent-browser", remote: true })` | `lifecycle` event with `reason === "browser_ready"`; read `event.browser.liveUrl` |
+| Remote managed Actionbook | `.withBrowser()` or `.withBrowser({ provider: "actionbook", remote: true })` | `lifecycle` event with `reason === "browser_ready"`; read `event.browser.liveUrl` and `event.browser.sessionId` |
+| Remote managed agent-browser | `.withBrowser({ provider: "agent-browser", remote: true })` | `lifecycle` event with `reason === "browser_ready"`; read `event.browser.liveUrl` and `event.browser.sessionId` |
 | browser-use MCP | `.withBrowser("browser-use")` | `tool_call_update` content from browser-use tools; parse embedded `live_url` and `screenshot_url` JSON fields |
 
 ### Remote managed Actionbook and agent-browser
@@ -284,8 +288,12 @@ Managed browser sessions emit the live-view URL as soon as the browser is ready:
 evolve.on("lifecycle", (event) => {
   if (event.reason === "browser_ready") {
     openLiveView(event.browser!.liveUrl);
+    rememberSessionId(event.browser!.sessionId);
   }
 });
+
+const result = await evolve.run({ prompt: "QA the checkout flow" });
+openLiveView(result.browser?.liveUrl);
 ```
 
 The same URL is also stored in trace metadata for replay or embedding after the trace exists:
@@ -294,11 +302,15 @@ The same URL is also stored in trace metadata for replay or embedding after the 
 type TraceMetadata = {
   browser_provider?: "actionbook" | "agent-browser";
   browser_session_id?: string;
+  dashboard_session_id?: string;
+  browser_session_tag?: string;
   browser_live_url?: string;
 };
 ```
 
-Use `event.browser.liveUrl` for immediate UI display, and `_meta.browser_live_url` from the session trace metadata for historical trace views.
+Use `event.browser.liveUrl` or `result.browser?.liveUrl` for immediate UI display.
+After browser cleanup, pass `event.browser.sessionId` or `result.sessionId` to
+`sessions().browserReplay()`.
 
 ---
 

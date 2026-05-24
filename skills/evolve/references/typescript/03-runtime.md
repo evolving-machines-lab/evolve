@@ -7,6 +7,8 @@
 ```ts
 type AgentResponse = {
   sandboxId: string;
+  sessionId?: string;            // Dashboard session ID for traces/replays, when known
+  browser?: { liveUrl: string }; // Live browser URL, when remote browser is configured
   runId?: string;              // UUID for cost attribution (present for run(), undefined for executeCommand())
   exitCode: number;
   stdout: string;
@@ -707,17 +709,39 @@ import { sessions } from "@evolvingmachines/sdk";
 
 const session = sessions(); // uses EVOLVE_API_KEY
 
-const page = await session.list({ limit: 10, state: "ended", agent: "claude", tagPrefix: "my-proj", sort: "cost" });
+const page = await session.list({
+  limit: 10,
+  state: "ended",
+  agent: "claude",
+  tagPrefix: "my-proj",
+  sort: "cost",
+});
 const page2 = await session.list({ cursor: page.nextCursor });
 const info = await session.get(page.items[0].id);
 const events = await session.events(info.id, { since: 50 });
 const path = await session.download(info.id, { to: "./traces" });
+const replay = await session.browserReplay(info.id);
 ```
 
 - `list()` returns `SessionPage { items: SessionInfo[], nextCursor, hasMore }`
 - `get()` returns `SessionInfo` with `sandboxId`, `runtimeStatus`, `cost`, `stepCount`, `toolStats`, etc.
 - `events()` returns parsed JSONL objects; pass `since` for delta fetching
 - `download()` streams the raw `.jsonl` trace to disk and returns the file path
+- `browserReplay()` waits for the managed browser replay and returns `replayUrl` plus `downloadUrl`
+  - Use `replayUrl` in your UI for browser playback
+  - Use `downloadUrl` when users need the raw `.mp4` file
+  - `suggestedStartSeconds`, when present, is already applied to `replayUrl`; keep the raw download unchanged
+
+```ts
+const replay = await session.browserReplay(info.id, {
+  timeoutMs: 600_000, // optional; default 10 minutes
+  intervalMs: 5_000,  // optional; default 5 seconds
+});
+```
+
+Replay processing starts when the managed browser is cleaned up, usually during
+`kill()` or session cleanup. If the client times out, processing continues
+server-side; call `browserReplay()` again later to fetch the same replay.
 
 Gateway-only — requires `EVOLVE_API_KEY`. In BYOK/direct mode, traces remain
 available as local JSONL files in `~/.evolve-sdk/observability/sessions/`.
