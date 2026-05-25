@@ -2,15 +2,15 @@
 
 ## Sandbox Providers
 
-Works with both Gateway mode (`EVOLVE_API_KEY`) and BYOK mode (provider API keys). When `EVOLVE_API_KEY` is set, the SDK defaults to Evolve-managed **E2B**. Use `sandbox=` to opt into a BYOK sandbox explicitly.
+Works with both Gateway mode (`EVOLVE_API_KEY`) and BYOK mode (provider API keys). With `EVOLVE_API_KEY` only, sandbox defaults to **E2B**. Add a sandbox provider key to auto-resolve to that provider.
 
 All providers use the `evolve-all` image with pre-installed CLIs.
 
 | Provider | Env Vars | Auto-Resolves When | First Time Setup |
 |----------|----------|-------------------|------------------|
-| E2B | `EVOLVE_API_KEY` or `E2B_API_KEY` | `EVOLVE_API_KEY` first; otherwise `E2B_API_KEY` | None — instant |
-| Modal | `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` | Both Modal vars set and `EVOLVE_API_KEY` absent | None — auto-builds image on first run (~2 min) |
-| Daytona | `DAYTONA_API_KEY` | `DAYTONA_API_KEY` set and `EVOLVE_API_KEY` absent | None — auto-creates snapshot on first run (~5 min) |
+| E2B | `E2B_API_KEY` | Default, or `E2B_API_KEY` set | None — instant |
+| Modal | `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` | Both Modal vars set | None — auto-builds image on first run (~2 min) |
+| Daytona | `DAYTONA_API_KEY` | `DAYTONA_API_KEY` set | None — auto-creates snapshot on first run (~5 min) |
 
 See [assets/README.md](https://github.com/evolving-machines-lab/evolve/blob/main/assets/README.md) for detailed setup instructions.
 
@@ -21,10 +21,16 @@ See [assets/README.md](https://github.com/evolving-machines-lab/evolve/blob/main
 Set env vars and the SDK auto-resolves the provider—no `sandbox=` needed:
 
 ```bash
-# .env - Gateway mode (auto-resolves to Evolve-managed E2B)
+# .env - Gateway mode with Modal (auto-resolves to Modal)
 EVOLVE_API_KEY=sk-...
+MODAL_TOKEN_ID=ak-...
+MODAL_TOKEN_SECRET=as-...
 
-# .env - BYOK mode with E2B (auto-resolves only when EVOLVE_API_KEY is absent)
+# .env - Gateway mode with Daytona (auto-resolves to Daytona)
+EVOLVE_API_KEY=sk-...
+DAYTONA_API_KEY=...
+
+# .env - BYOK mode with E2B (auto-resolves to E2B)
 ANTHROPIC_API_KEY=sk-ant-...
 E2B_API_KEY=e2b_...
 ```
@@ -32,7 +38,7 @@ E2B_API_KEY=e2b_...
 ```python
 from evolve import Evolve, AgentConfig
 
-# No sandbox= needed — EVOLVE_API_KEY uses Evolve-managed E2B.
+# No sandbox= needed — SDK picks the right provider from env
 evolve = Evolve(
     agent=AgentConfig(type="claude"),
 )
@@ -48,6 +54,7 @@ Only use explicit provider creation (below) if you need custom settings like tim
 ```bash
 # .env - Gateway mode
 EVOLVE_API_KEY=sk-...
+E2B_API_KEY=e2b_...              # Optional with EVOLVE_API_KEY (auto-resolves)
 
 # .env - BYOK mode
 ANTHROPIC_API_KEY=sk-ant-...     # Or OPENAI_API_KEY, GEMINI_API_KEY, CLAUDE_CODE_OAUTH_TOKEN
@@ -66,7 +73,7 @@ sandbox = E2BProvider(
 
 ### Modal
 ```bash
-# .env - Direct Modal sandbox with Evolve gateway model routing
+# .env - Gateway mode
 EVOLVE_API_KEY=sk-...
 MODAL_TOKEN_ID=ak-...
 MODAL_TOKEN_SECRET=as-...
@@ -92,7 +99,7 @@ sandbox = ModalProvider(
 
 ### Daytona
 ```bash
-# .env - Direct Daytona sandbox with Evolve gateway model routing
+# .env - Gateway mode
 EVOLVE_API_KEY=sk-...
 DAYTONA_API_KEY=...
 
