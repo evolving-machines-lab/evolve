@@ -260,6 +260,7 @@ Evolve automatically configures the browser runtime. In Gateway mode, the manage
 - `result.sessionId`, which is the id to use for traces and browser replay
 - `sessions().browserReplay(sessionId)`, which returns replay and raw `.mp4` download URLs after cleanup
 - `replay.suggestedStartSeconds`, when present, which is the recommended replay start time in seconds
+- `replay.sizeBytes` and `replay.readyAt`, when present, which describe the raw recording size and replay readiness time
 
 `remote` controls where the browser session runs:
 
@@ -322,11 +323,16 @@ const replay = await sessions().browserReplay(sessionId, {
 showReplay(replay.replayUrl);
 saveDownloadLink(replay.downloadUrl);
 setReplayStartTime(replay.suggestedStartSeconds ?? 0);
+showReplayMetadata({
+    sizeBytes: replay.sizeBytes,
+    readyAt: replay.readyAt,
+});
 ```
 
 Replay processing starts when the managed browser is cleaned up, usually during `kill()`.
 If replay is not ready before `timeoutMs`, call `browserReplay()` again later with the same `sessionId`.
 The `replayUrl` already applies `suggestedStartSeconds`; use the field separately only if your UI needs to display or store the recommended start time.
+The `status` is `"ready"` once `browserReplay()` returns.
 
 ## Agent Plugins
 
