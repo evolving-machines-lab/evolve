@@ -776,6 +776,8 @@ replay = await session.browser_replay(
   - Use `replay_url` in your UI for browser playback
   - Use `download_url` when users need the raw `.mp4` file
   - `suggested_start_seconds`, when present, is the recommended replay start time in seconds and is already applied to `replay_url`; keep the raw download unchanged
+  - `size_bytes` and `ready_at`, when present, describe the raw recording size and replay readiness time
+  - `status` is `'ready'` once the call returns
 
 For the full browser setup, live-view, cleanup, and replay flow, see
 [Configuration → Browser Automation](./02-configuration.md#browser-automation).

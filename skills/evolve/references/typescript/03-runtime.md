@@ -731,6 +731,8 @@ const replay = await session.browserReplay(info.id);
   - Use `replayUrl` in your UI for browser playback
   - Use `downloadUrl` when users need the raw `.mp4` file
   - `suggestedStartSeconds`, when present, is the recommended replay start time in seconds and is already applied to `replayUrl`; keep the raw download unchanged
+  - `sizeBytes` and `readyAt`, when present, describe the raw recording size and replay readiness time
+  - `status` is `"ready"` once the call returns
 
 ```ts
 const replay = await session.browserReplay(info.id, {
