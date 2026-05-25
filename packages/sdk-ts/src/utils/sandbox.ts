@@ -18,19 +18,41 @@ import {
 /**
  * Resolve default sandbox provider from environment.
  *
- * Priority (user's sandbox keys first, gateway as fallback):
- *   1. E2B_API_KEY → Direct to E2B (user's own account)
- *   2. DAYTONA_API_KEY → Direct to Daytona (user's own account)
- *   3. MODAL_TOKEN_ID + MODAL_TOKEN_SECRET → Direct to Modal (user's own account)
- *   4. EVOLVE_API_KEY → Through gateway (fallback)
+ * Priority:
+ *   1. EVOLVE_API_KEY → Through Evolve-managed gateway
+ *   2. E2B_API_KEY → Direct to E2B (user's own account)
+ *   3. DAYTONA_API_KEY → Direct to Daytona (user's own account)
+ *   4. MODAL_TOKEN_ID + MODAL_TOKEN_SECRET → Direct to Modal (user's own account)
  *
- * This allows users to set both EVOLVE_API_KEY (for model routing + dashboard)
- * and their own sandbox key (E2B_API_KEY, DAYTONA_API_KEY, or Modal tokens) to control
- * sandbox billing separately.
+ * This keeps the default SDK path managed by Evolve when EVOLVE_API_KEY is set.
+ * Use .withSandbox(provider) to opt into BYOK sandbox billing explicitly.
  *
  * @throws Error if no provider can be resolved
  */
 export async function resolveDefaultSandbox(): Promise<SandboxProvider> {
+  // Gateway mode (EVOLVE_API_KEY) - recommended managed E2B
+  const evolveKey = process.env[ENV_EVOLVE_API_KEY];
+  if (evolveKey) {
+    try {
+      const { createE2BProvider } = await import("@evolvingmachines/e2b");
+
+      // Route E2B control plane through Dashboard so Evolve can enforce
+      // per-user sandbox ownership before the provider gateway injects E2B_API_KEY.
+      // Keep this on the provider instance rather than process.env so later BYOK
+      // E2B providers in the same process cannot inherit managed routing.
+      return createE2BProvider({ apiKey: evolveKey, apiUrl: getE2BGatewayUrl() });
+    } catch (e) {
+      const error = e as Error;
+      if (error.message?.includes("Cannot find module") || error.message?.includes("MODULE_NOT_FOUND")) {
+        throw new Error(
+          `${ENV_EVOLVE_API_KEY} is set but @evolvingmachines/e2b failed to load.\n` +
+            "Try reinstalling: npm install @evolvingmachines/sdk"
+        );
+      }
+      throw error;
+    }
+  }
+
   // Direct mode (E2B_API_KEY) - user's own E2B account
   const e2bKey = process.env[ENV_E2B_API_KEY];
   if (e2bKey) {
@@ -85,29 +107,6 @@ export async function resolveDefaultSandbox(): Promise<SandboxProvider> {
         throw new Error(
           `${ENV_MODAL_TOKEN_ID} is set but @evolvingmachines/modal failed to load.\n` +
             "Try installing: npm install @evolvingmachines/modal"
-        );
-      }
-      throw error;
-    }
-  }
-
-  // Gateway mode (EVOLVE_API_KEY) - fallback to gateway E2B
-  const evolveKey = process.env[ENV_EVOLVE_API_KEY];
-  if (evolveKey) {
-    try {
-      const { createE2BProvider } = await import("@evolvingmachines/e2b");
-
-      // Route E2B control plane through Dashboard so Evolve can enforce
-      // per-user sandbox ownership before the provider gateway injects E2B_API_KEY.
-      // Keep this on the provider instance rather than process.env so later BYOK
-      // E2B providers in the same process cannot inherit managed routing.
-      return createE2BProvider({ apiKey: evolveKey, apiUrl: getE2BGatewayUrl() });
-    } catch (e) {
-      const error = e as Error;
-      if (error.message?.includes("Cannot find module") || error.message?.includes("MODULE_NOT_FOUND")) {
-        throw new Error(
-          `${ENV_EVOLVE_API_KEY} is set but @evolvingmachines/e2b failed to load.\n` +
-            "Try reinstalling: npm install @evolvingmachines/sdk"
         );
       }
       throw error;
