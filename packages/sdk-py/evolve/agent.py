@@ -73,10 +73,9 @@ class Evolve:
         Args:
             config: Agent configuration (optional - defaults to EVOLVE_API_KEY env var with 'claude' type)
             sandbox: Sandbox provider (optional - auto-resolves from env vars:
-                     EVOLVE_API_KEY → E2B via gateway,
                      E2B_API_KEY → E2B direct, DAYTONA_API_KEY → Daytona direct,
-                     MODAL_TOKEN_ID+MODAL_TOKEN_SECRET → Modal direct.
-                     Use sandbox=... to opt into BYOK sandboxing explicitly.)
+                     MODAL_TOKEN_ID+MODAL_TOKEN_SECRET → Modal direct,
+                     EVOLVE_API_KEY → E2B via gateway. User sandbox keys take priority.)
             working_directory: Working directory in sandbox (default: /home/user/workspace)
             workspace_mode: Workspace setup mode - 'knowledge' (creates output/context/scripts/temp folders + default prompt)
                           or 'swe' (clean workspace for cloned repos) (default: 'knowledge')

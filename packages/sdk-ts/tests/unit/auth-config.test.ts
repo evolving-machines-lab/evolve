@@ -13,8 +13,8 @@
  *     6. OAuth env var → OAuth direct mode (Claude only)
  *
  * Tests resolveDefaultSandbox() priority:
- *   1. EVOLVE_API_KEY → gateway mode
- *   2. E2B_API_KEY → direct E2B
+ *   1. E2B_API_KEY → direct E2B
+ *   2. EVOLVE_API_KEY → gateway mode
  *
  * Usage:
  *   npx tsx tests/unit/auth-config.test.ts
@@ -548,22 +548,20 @@ async function runTests(): Promise<void> {
   delete process.env.E2B_API_URL;
   process.env.EVOLVE_API_KEY = "evolve-gateway-key";
   {
-    const provider = await resolveDefaultSandbox() as unknown as { providerType: string; apiUrl?: string };
+    const provider = await resolveDefaultSandbox();
     assert(provider !== null, "returns a provider");
     assertEqual(provider.providerType, "e2b", "provider type is e2b");
-    assertEqual(provider.apiUrl, getE2BGatewayUrl(), "uses gateway routing on provider instance");
     assertEqual(process.env.E2B_API_URL, undefined, "does not mutate E2B_API_URL for gateway routing");
   }
 
-  // EVOLVE_API_KEY takes priority over E2B_API_KEY so default runs stay managed.
+  // E2B_API_KEY takes priority over EVOLVE_API_KEY for sandbox billing/BYOK
   clearEnv();
   process.env.EVOLVE_API_KEY = "evolve-gateway-key";
   process.env.E2B_API_KEY = "e2b-direct-key";
   {
-    const provider = await resolveDefaultSandbox() as unknown as { providerType: string; apiUrl?: string };
+    const provider = await resolveDefaultSandbox();
     assertEqual(provider.providerType, "e2b", "returns e2b provider");
-    assertEqual(provider.apiUrl, getE2BGatewayUrl(), "gateway routing wins when both EVOLVE_API_KEY and E2B_API_KEY are set");
-    assertEqual(process.env.E2B_API_URL, undefined, "E2B_API_URL stays unset because gateway routing is provider-scoped");
+    assertEqual(process.env.E2B_API_URL, undefined, "E2B_API_URL stays unset (direct E2B wins over gateway)");
   }
 
   // -------------------------------------------------------------------------

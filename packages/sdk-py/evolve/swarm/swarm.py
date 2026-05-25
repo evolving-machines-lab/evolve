@@ -747,7 +747,7 @@ class Swarm:
             'provider_base_url': agent_config.provider_base_url if agent_config else None,
             'model': agent_config.model if agent_config else None,
             'reasoning_effort': agent_config.reasoning_effort if agent_config else None,
-            # Sandbox (optional - TS SDK auto-resolves from EVOLVE_API_KEY, then BYOK provider keys)
+            # Sandbox (optional - TS SDK auto-resolves from EVOLVE_API_KEY/E2B_API_KEY/DAYTONA_API_KEY)
             'sandbox_provider': {'type': self.config.sandbox.type, 'config': self.config.sandbox.config} if self.config.sandbox else None,
             # Other settings
             'workspace_mode': self.config.workspace_mode,
@@ -2109,3 +2109,4 @@ class Swarm:
             meta=meta,
             error=error,
         )
+
