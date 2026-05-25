@@ -183,7 +183,7 @@ async def list_checkpoints(
         await store.close()
 
 
-__version__ = '0.0.38'
+__version__ = '0.0.39'
 
 __all__ = [
     # Main classes
