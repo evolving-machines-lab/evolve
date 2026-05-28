@@ -329,6 +329,84 @@ If replay is not ready before `timeout_ms`, call `browser_replay()` again later 
 The `replay_url` already applies `suggested_start_seconds`; use the field separately only if your UI needs to display or store the recommended start time.
 The `status` is `'ready'` once `browser_replay()` returns.
 
+## Browser Credentials
+
+Browser credentials let managed remote `agent-browser` runs sign in with saved website logins without exposing passwords to the agent.
+
+Availability:
+
+- Requires Gateway mode and managed remote `agent-browser`.
+- Use `browser={'provider': 'agent-browser', 'remote': True}`.
+- Not available with `browser-use`, `actionbook`, `remote: False`, direct/BYOK provider mode, or existing sandbox sessions.
+
+Dashboard setup:
+
+1. Open the Evolve Dashboard.
+2. Go to **Secrets**.
+3. Add a browser login with `Account label`, `Website`, `Email`, and `Password`.
+4. Use `Website` for the domain, such as `github.com`; use `Account label` as one word with no spaces, such as `qa-admin`, `work`, or `personal`, to distinguish multiple saved accounts for the same website. It is not the website username or email.
+
+Passwords are encrypted before upload. The dashboard and SDK list only login metadata: account label, website, email, and last-used time.
+
+Expose saved logins to a run:
+
+```python
+from evolve import Evolve, BrowserCredentialsConfig
+
+evolve = Evolve(
+    browser={'provider': 'agent-browser', 'remote': True},
+    browser_credentials=BrowserCredentialsConfig(
+        allow=[{'website': 'github.com', 'account_label': 'qa-admin'}],
+    ),
+)
+
+await evolve.run(
+    prompt='Open GitHub, sign in with the saved qa-admin login, and verify the repository settings page.'
+)
+
+await evolve.kill()
+```
+
+If `allow` is omitted, all enabled browser logins for the Evolve account are available to that run:
+
+```python
+from evolve import Evolve, BrowserCredentialsConfig
+
+evolve = Evolve(
+    browser={'provider': 'agent-browser', 'remote': True},
+    browser_credentials=BrowserCredentialsConfig(),
+)
+```
+
+The agent receives a run-scoped `browser-login` MCP server with these tools:
+
+- `browser_list_logins` returns website, account_label, and email metadata only.
+- `browser_login` fills and submits a saved login on the current sign-in tab without returning the password.
+- `browser_complete_signup` completes password-based signup after the agent has filled non-secret fields, then saves the generated login for future `browser_login` calls.
+
+Manage browser logins from the SDK:
+
+```python
+import os
+from evolve import browser_credentials
+
+credentials = browser_credentials()
+
+await credentials.create(
+    website='github.com',
+    account_label='qa-admin',
+    email='qualityassurance@example.com',
+    password=os.environ['QA_GITHUB_PASSWORD'],
+)
+
+page = await credentials.list(website='github.com')
+
+await credentials.delete(
+    website='github.com',
+    account_label='qa-admin',
+)
+```
+
 ## Agent Plugins
 
 `plugins=` installs plugins/extensions into the sandbox user profile before the first agent command. The selected agent determines the accepted shape:

@@ -79,6 +79,7 @@ export interface InitializeParams {
   files?: EncodedFileMap;
   mcp_servers?: Record<string, any>;
   browser?: 'browser-use' | 'actionbook' | 'agent-browser' | { provider: 'actionbook' | 'agent-browser'; remote?: boolean };
+  browser_credentials?: BrowserCredentialsConfig;
   plugins?: AgentPluginConfig[];
   skills?: string[];
   secrets?: Record<string, string>;
@@ -122,6 +123,15 @@ export interface SetSessionParams {
 
 export interface GetHostParams {
   port: number;
+}
+
+export interface BrowserCredentialScopeEntry {
+  website: string;
+  account_label?: string;
+}
+
+export interface BrowserCredentialsConfig {
+  allow?: BrowserCredentialScopeEntry[];
 }
 
 // =============================================================================

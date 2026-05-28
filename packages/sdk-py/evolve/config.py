@@ -24,6 +24,63 @@ class SchemaOptions:
 
 
 @dataclass
+class BrowserCredentialScopeEntry:
+    """Saved browser login selector for a run.
+
+    Args:
+        website: Website/domain, e.g. "github.com"
+        account_label: Optional one-word label for a saved credential, such as "qa-admin" or "work"; not the website username or email
+    """
+    website: str
+    account_label: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        result: Dict[str, Any] = {'website': self.website}
+        if self.account_label:
+            result['account_label'] = self.account_label
+        return result
+
+
+@dataclass
+class BrowserCredentialsConfig:
+    """Browser login MCP configuration for managed remote agent-browser runs.
+
+    Args:
+        allow: Optional list of website/account_label selectors. None or [] exposes all enabled browser logins.
+    """
+    allow: Optional[List[Union[BrowserCredentialScopeEntry, Dict[str, Any]]]] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        result: Dict[str, Any] = {}
+        if self.allow:
+            result['allow'] = [
+                entry.to_dict() if isinstance(entry, BrowserCredentialScopeEntry) else dict(entry)
+                for entry in self.allow
+            ]
+        return result
+
+
+@dataclass
+class BrowserCredentialsClientConfig:
+    """Standalone browser credentials client configuration.
+
+    Args:
+        api_key: Evolve API key override
+        dashboard_url: Dashboard URL override
+    """
+    api_key: Optional[str] = None
+    dashboard_url: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        result: Dict[str, Any] = {}
+        if self.api_key:
+            result['api_key'] = self.api_key
+        if self.dashboard_url:
+            result['dashboard_url'] = self.dashboard_url
+        return result
+
+
+@dataclass
 class AgentConfig:
     """Agent configuration.
 

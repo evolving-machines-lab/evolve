@@ -330,6 +330,101 @@ async function testManagedAgentBrowserConfigUsesProxyOnly(): Promise<void> {
   assert(!config?.includes("_managedTransport"), "agent-browser config does not expose transport selector");
 }
 
+async function testBrowserCredentialsRequireManagedAgentBrowser(): Promise<void> {
+  console.log("\n[13] withBrowserCredentials(): requires managed remote agent-browser");
+
+  const missingBrowser = new Evolve()
+    .withAgent({ type: "claude", apiKey: "evolve-key" })
+    .withSandbox(fakeSandboxProvider)
+    .withBrowserCredentials();
+
+  try {
+    await getInitializedAgentOptions(missingBrowser);
+    assert(false, "browser credentials without browser should throw");
+  } catch (error) {
+    assert(
+      error instanceof Error && error.message.includes("requires .withBrowser()"),
+      "missing browser error explains managed agent-browser requirement"
+    );
+  }
+
+  const localBrowser = new Evolve()
+    .withAgent({ type: "claude", apiKey: "evolve-key" })
+    .withSandbox(fakeSandboxProvider)
+    .withBrowser("agent-browser")
+    .withBrowserCredentials();
+
+  try {
+    await getInitializedAgentOptions(localBrowser);
+    assert(false, "browser credentials with local browser should throw");
+  } catch (error) {
+    assert(
+      error instanceof Error && error.message.includes("requires .withBrowser()"),
+      "local browser error explains managed agent-browser requirement"
+    );
+  }
+}
+
+async function testBrowserCredentialsRejectDirectMode(): Promise<void> {
+  console.log("\n[14] withBrowserCredentials(): direct mode rejected");
+
+  const kit = new Evolve()
+    .withAgent({ type: "claude", providerApiKey: "provider-key" })
+    .withSandbox(fakeSandboxProvider)
+    .withBrowser()
+    .withBrowserCredentials();
+
+  try {
+    await getInitializedAgentOptions(kit);
+    assert(false, "browser credentials direct mode should throw");
+  } catch (error) {
+    assert(
+      error instanceof Error && error.message.includes("requires gateway mode"),
+      "direct mode error explains gateway requirement"
+    );
+  }
+}
+
+async function testBrowserCredentialsConfigPreserved(): Promise<void> {
+  console.log("\n[15] withBrowserCredentials(): stores allow scope for run-scoped MCP minting");
+
+  const kit = new Evolve()
+    .withAgent({ type: "claude", apiKey: "evolve-key" })
+    .withSandbox(fakeSandboxProvider)
+    .withBrowser()
+    .withBrowserCredentials({
+      allow: [{ website: "github.com", accountLabel: "qa" }],
+    });
+
+  const options = await getInitializedAgentOptions(kit);
+  assertEqual(options.browserCredentials.apiKey, "evolve-key", "browser credentials use Evolve API key");
+  assertEqual(options.browserCredentials.config.allow[0].website, "github.com", "browser credential website scope preserved");
+  assertEqual(options.browserCredentials.config.allow[0].accountLabel, "qa", "browser credential account label scope preserved");
+}
+
+async function testBrowserCredentialsReserveMcpName(): Promise<void> {
+  console.log("\n[16] withBrowserCredentials(): reserves browser-login MCP name");
+
+  const kit = new Evolve()
+    .withAgent({ type: "claude", apiKey: "evolve-key" })
+    .withSandbox(fakeSandboxProvider)
+    .withBrowser()
+    .withBrowserCredentials()
+    .withMcpServers({
+      "browser-login": { type: "http", url: "https://custom.example/mcp" },
+    });
+
+  try {
+    await getInitializedAgentOptions(kit);
+    assert(false, "browser-login MCP collision should throw");
+  } catch (error) {
+    assert(
+      error instanceof Error && error.message.includes("reserves"),
+      "reserved MCP name error is explicit"
+    );
+  }
+}
+
 async function main(): Promise<void> {
   console.log("=".repeat(70));
   console.log("Browser Config Tests");
@@ -347,6 +442,10 @@ async function main(): Promise<void> {
   await testManagedActionbookRequiresGatewayMode();
   await testManagedActionbookConfigUsesProxyOnly();
   await testManagedAgentBrowserConfigUsesProxyOnly();
+  await testBrowserCredentialsRequireManagedAgentBrowser();
+  await testBrowserCredentialsRejectDirectMode();
+  await testBrowserCredentialsConfigPreserved();
+  await testBrowserCredentialsReserveMcpName();
 
   console.log("\n" + "=".repeat(70));
   console.log(`Results: ${passed} passed, ${failed} failed`);

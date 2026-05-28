@@ -368,6 +368,7 @@ async function testManagedAgentBrowserLifecycle(): Promise<void> {
     assertEqual(result.exitCode, 0, "run() with managed agent-browser returns success");
     assert(!("provider" in createBody), "managed browser create does not expose automation provider");
     assertEqual(createBody.options?.remote, true, "managed browser create uses remote option");
+    assertEqual(createBody.browserAuth, false, "managed browser create does not request browser auth by default");
     assert(!("_managedTransport" in createBody.options), "managed browser create does not expose transport selector");
     assertEqual(result.browser?.liveUrl, liveUrl, "run() exposes managed agent-browser live URL");
     assertEqual(

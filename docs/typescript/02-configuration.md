@@ -334,6 +334,79 @@ If replay is not ready before `timeoutMs`, call `browserReplay()` again later wi
 The `replayUrl` already applies `suggestedStartSeconds`; use the field separately only if your UI needs to display or store the recommended start time.
 The `status` is `"ready"` once `browserReplay()` returns.
 
+## Browser Credentials
+
+Browser credentials let managed remote `agent-browser` runs sign in with saved website logins without exposing passwords to the agent.
+
+Availability:
+
+- Requires Gateway mode and managed remote `agent-browser`.
+- `.withBrowser()` uses that recommended remote setup by default.
+- Not available with `browser-use`, `actionbook`, `remote: false`, direct/BYOK provider mode, or `.withSession()`.
+
+Dashboard setup:
+
+1. Open the Evolve Dashboard.
+2. Go to **Secrets**.
+3. Add a browser login with `Account label`, `Website`, `Email`, and `Password`.
+4. Use `Website` for the domain, such as `github.com`; use `Account label` as one word with no spaces, such as `qa-admin`, `work`, or `personal`, to distinguish multiple saved accounts for the same website. It is not the website username or email.
+
+Passwords are encrypted before upload. The dashboard and SDK list only login metadata: account label, website, email, and last-used time.
+
+Expose saved logins to a run:
+
+```ts
+import { Evolve } from "@evolvingmachines/sdk";
+
+const evolve = new Evolve()
+    .withBrowser()
+    .withBrowserCredentials({
+        allow: [{ website: "github.com", accountLabel: "qa-admin" }],
+    });
+
+await evolve.run({
+    prompt: "Open GitHub, sign in with the saved qa-admin login, and verify the repository settings page.",
+});
+
+await evolve.kill();
+```
+
+If `allow` is omitted, all enabled browser logins for the Evolve account are available to that run:
+
+```ts
+const evolve = new Evolve()
+    .withBrowser()
+    .withBrowserCredentials();
+```
+
+The agent receives a run-scoped `browser-login` MCP server with these tools:
+
+- `browser_list_logins` returns website, account_label, and email metadata only.
+- `browser_login` fills and submits a saved login on the current sign-in tab without returning the password.
+- `browser_complete_signup` completes password-based signup after the agent has filled non-secret fields, then saves the generated login for future `browser_login` calls.
+
+Manage browser logins from the SDK:
+
+```ts
+import { Evolve } from "@evolvingmachines/sdk";
+
+const credentials = Evolve.browserCredentials();
+
+await credentials.create({
+    website: "github.com",
+    accountLabel: "qa-admin",
+    email: "qualityassurance@example.com",
+    password: process.env.QA_GITHUB_PASSWORD!,
+});
+
+const page = await credentials.list({ website: "github.com" });
+
+await credentials.delete({
+    website: "github.com",
+    accountLabel: "qa-admin",
+});
+```
+
 ## Agent Plugins
 
 `.withPlugins()` installs plugins/extensions into the sandbox user profile before the first agent command. The currently selected agent determines the accepted shape:
