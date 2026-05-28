@@ -8,7 +8,7 @@ export const BROWSER_LOGIN_MCP_SERVER_NAME = "browser-login";
 export interface BrowserCredentialMetadata {
   id: string;
   website: string;
-  alias: string;
+  accountLabel: string;
   email: string;
   enabled: boolean;
   createdBy: string;
@@ -24,14 +24,14 @@ export interface BrowserCredentialsClientConfig {
 
 export interface BrowserCredentialCreateInput {
   website: string;
-  alias: string;
+  accountLabel: string;
   email: string;
   password: string;
 }
 
 export type BrowserCredentialDeleteInput =
   | { id: string }
-  | { website: string; alias: string };
+  | { website: string; accountLabel: string };
 
 export interface BrowserCredentialListOptions {
   website?: string;
@@ -49,6 +49,10 @@ type EncryptedPassword = {
   algorithm: typeof BROWSER_AUTH_ALGORITHM;
   keyId: string;
   ciphertext: string;
+};
+
+type BrowserCredentialApiMetadata = Omit<BrowserCredentialMetadata, "accountLabel"> & {
+  account_label: string;
 };
 
 function dashboardBaseUrl(url?: string): string {
@@ -108,6 +112,14 @@ async function encryptPassword(
 export class BrowserCredentialsClient {
   constructor(private readonly config: BrowserCredentialsClientConfig = {}) {}
 
+  private toMetadata(credential: BrowserCredentialApiMetadata): BrowserCredentialMetadata {
+    const { account_label: accountLabel, ...rest } = credential;
+    return {
+      ...rest,
+      accountLabel,
+    };
+  }
+
   async list(options: BrowserCredentialListOptions = {}): Promise<{
     credentials: BrowserCredentialMetadata[];
     total: number;
@@ -121,14 +133,14 @@ export class BrowserCredentialsClient {
     if (options.offset !== undefined) params.set("offset", String(options.offset));
     const suffix = params.toString() ? `?${params.toString()}` : "";
     const result = await requestJson<{
-      credentials: BrowserCredentialMetadata[];
+      credentials: BrowserCredentialApiMetadata[];
       total: number;
       count: number;
       offset: number;
       has_more?: boolean;
     }>(this.config, `/api/browser-credentials${suffix}`);
     return {
-      credentials: result.credentials,
+      credentials: result.credentials.map((credential) => this.toMetadata(credential)),
       total: result.total,
       count: result.count,
       offset: result.offset,
@@ -141,21 +153,31 @@ export class BrowserCredentialsClient {
     credential: BrowserCredentialMetadata;
   }> {
     const encryptedPassword = await encryptPassword(this.config, input.password);
-    return await requestJson(this.config, "/api/browser-credentials", {
+    const result = await requestJson<{
+      status: "created" | "already_exists";
+      credential: BrowserCredentialApiMetadata;
+    }>(this.config, "/api/browser-credentials", {
       method: "POST",
       body: JSON.stringify({
         website: input.website,
-        alias: input.alias,
+        account_label: input.accountLabel,
         email: input.email,
         encryptedPassword,
       }),
     });
+    return {
+      status: result.status,
+      credential: this.toMetadata(result.credential),
+    };
   }
 
   async delete(input: BrowserCredentialDeleteInput): Promise<{ ok: boolean }> {
+    const body = "id" in input
+      ? input
+      : { website: input.website, account_label: input.accountLabel };
     return await requestJson(this.config, "/api/browser-credentials", {
       method: "DELETE",
-      body: JSON.stringify(input),
+      body: JSON.stringify(body),
     });
   }
 }
@@ -183,7 +205,7 @@ export async function createBrowserLoginMcpServer(options: {
       browserSessionId: options.browserSessionId,
       sessionTag: options.sessionTag,
       grantToken: options.grantToken,
-      allow: options.config?.allow,
+      allow: normalizeBrowserCredentialScope(options.config),
     }),
   });
   return response.server;
@@ -194,6 +216,6 @@ export function normalizeBrowserCredentialScope(
 ): BrowserCredentialScopeEntry[] | undefined {
   return config?.allow?.map((entry) => ({
     website: entry.website,
-    ...(entry.alias ? { alias: entry.alias } : {}),
+    ...((entry.accountLabel || entry.account_label) ? { account_label: entry.accountLabel || entry.account_label } : {}),
   }));
 }

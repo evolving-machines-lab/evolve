@@ -127,7 +127,7 @@ export interface GetHostParams {
 
 export interface BrowserCredentialScopeEntry {
   website: string;
-  alias?: string;
+  account_label?: string;
 }
 
 export interface BrowserCredentialsConfig {

@@ -23,7 +23,7 @@ BROWSER_AUTH_ALGORITHM = 'RSA-OAEP-256'
 class BrowserCredentialMetadata:
     id: str
     website: str
-    alias: str
+    account_label: str
     email: str
     enabled: bool
     created_by: str
@@ -45,7 +45,7 @@ def _metadata_from_dict(data: Dict[str, Any]) -> BrowserCredentialMetadata:
     return BrowserCredentialMetadata(
         id=data['id'],
         website=data['website'],
-        alias=data['alias'],
+        account_label=data['account_label'],
         email=data['email'],
         enabled=bool(data.get('enabled', True)),
         created_by=data.get('createdBy') or data.get('created_by') or 'user',
@@ -101,14 +101,14 @@ class BrowserCredentialsClient:
         self,
         *,
         website: str,
-        alias: str,
+        account_label: str,
         email: str,
         password: str,
     ) -> Dict[str, Any]:
         encrypted_password = await self._encrypt_password(password)
         result = await self._request_json('/api/browser-credentials', method='POST', body={
             'website': website,
-            'alias': alias,
+            'account_label': account_label,
             'email': email,
             'encryptedPassword': encrypted_password,
         })
@@ -122,14 +122,14 @@ class BrowserCredentialsClient:
         *,
         id: Optional[str] = None,
         website: Optional[str] = None,
-        alias: Optional[str] = None,
+        account_label: Optional[str] = None,
     ) -> Dict[str, bool]:
         if id:
             body = {'id': id}
-        elif website and alias:
-            body = {'website': website, 'alias': alias}
+        elif website and account_label:
+            body = {'website': website, 'account_label': account_label}
         else:
-            raise ValueError('delete requires either id or website and alias')
+            raise ValueError('delete requires either id or website and account_label')
         return await self._request_json('/api/browser-credentials', method='DELETE', body=body)
 
     async def _encrypt_password(self, password: str) -> Dict[str, str]:

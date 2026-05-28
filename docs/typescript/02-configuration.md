@@ -348,10 +348,10 @@ Dashboard setup:
 
 1. Open the Evolve Dashboard.
 2. Go to **Secrets**.
-3. Add a browser login with `Website`, `Alias`, `Email`, and `Password`.
-4. Use `Website` for the domain, such as `github.com`; use `Alias` to distinguish multiple accounts for the same website.
+3. Add a browser login with `Account label`, `Website`, `Email`, and `Password`.
+4. Use `Website` for the domain, such as `github.com`; use `Account label` as a connected string like `qa-admin`, `work`, or `personal` to distinguish multiple saved accounts for the same website. It is not the website username or email.
 
-Passwords are encrypted before upload. The dashboard and SDK list only login metadata: website, alias, email, and last-used time.
+Passwords are encrypted before upload. The dashboard and SDK list only login metadata: account label, website, email, and last-used time.
 
 Expose saved logins to a run:
 
@@ -361,7 +361,7 @@ import { Evolve } from "@evolvingmachines/sdk";
 const evolve = new Evolve()
     .withBrowser()
     .withBrowserCredentials({
-        allow: [{ website: "github.com", alias: "qa-admin" }],
+        allow: [{ website: "github.com", accountLabel: "qa-admin" }],
     });
 
 await evolve.run({
@@ -381,7 +381,7 @@ const evolve = new Evolve()
 
 The agent receives a run-scoped `browser-login` MCP server with these tools:
 
-- `browser_list_logins` returns website, alias, and email metadata only.
+- `browser_list_logins` returns website, account_label, and email metadata only.
 - `browser_login` fills and submits a saved login on the current sign-in tab without returning the password.
 - `browser_complete_signup` completes password-based signup after the agent has filled non-secret fields, then saves the generated login for future `browser_login` calls.
 
@@ -394,7 +394,7 @@ const credentials = Evolve.browserCredentials();
 
 await credentials.create({
     website: "github.com",
-    alias: "qa-admin",
+    accountLabel: "qa-admin",
     email: "qualityassurance@example.com",
     password: process.env.QA_GITHUB_PASSWORD!,
 });
@@ -403,7 +403,7 @@ const page = await credentials.list({ website: "github.com" });
 
 await credentials.delete({
     website: "github.com",
-    alias: "qa-admin",
+    accountLabel: "qa-admin",
 });
 ```
 

@@ -29,15 +29,15 @@ class BrowserCredentialScopeEntry:
 
     Args:
         website: Website/domain, e.g. "github.com"
-        alias: Optional account alias for that website
+        account_label: Optional label for a saved credential, such as "qa-admin" or "work"; not the website username or email
     """
     website: str
-    alias: Optional[str] = None
+    account_label: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {'website': self.website}
-        if self.alias:
-            result['alias'] = self.alias
+        if self.account_label:
+            result['account_label'] = self.account_label
         return result
 
 
@@ -46,7 +46,7 @@ class BrowserCredentialsConfig:
     """Browser login MCP configuration for managed remote agent-browser runs.
 
     Args:
-        allow: Optional list of website/alias selectors. None or [] exposes all enabled browser logins.
+        allow: Optional list of website/account_label selectors. None or [] exposes all enabled browser logins.
     """
     allow: Optional[List[Union[BrowserCredentialScopeEntry, Dict[str, Any]]]] = None
 

@@ -393,13 +393,13 @@ async function testBrowserCredentialsConfigPreserved(): Promise<void> {
     .withSandbox(fakeSandboxProvider)
     .withBrowser()
     .withBrowserCredentials({
-      allow: [{ website: "github.com", alias: "qa" }],
+      allow: [{ website: "github.com", accountLabel: "qa" }],
     });
 
   const options = await getInitializedAgentOptions(kit);
   assertEqual(options.browserCredentials.apiKey, "evolve-key", "browser credentials use Evolve API key");
   assertEqual(options.browserCredentials.config.allow[0].website, "github.com", "browser credential website scope preserved");
-  assertEqual(options.browserCredentials.config.allow[0].alias, "qa", "browser credential alias scope preserved");
+  assertEqual(options.browserCredentials.config.allow[0].accountLabel, "qa", "browser credential account label scope preserved");
 }
 
 async function testBrowserCredentialsReserveMcpName(): Promise<void> {

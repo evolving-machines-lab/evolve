@@ -263,7 +263,7 @@ export class Evolve extends EventEmitter {
    * Enable saved browser logins for managed remote agent-browser runs.
    *
    * Empty config exposes all enabled browser logins for this Evolve account.
-   * Use allow to restrict a run to specific websites and optional aliases.
+   * Use allow to restrict a run to specific websites and optional account labels.
    */
   withBrowserCredentials(config: BrowserCredentialsConfig = {}): this {
     this.config.browserCredentials = config;
