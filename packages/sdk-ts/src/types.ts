@@ -164,7 +164,7 @@ export type BrowserConfig = BrowserProvider | ActionbookBrowserConfig | AgentBro
 /** Saved browser login selector exposed to a run. Empty/omitted means all enabled browser logins. */
 export interface BrowserCredentialScopeEntry {
   website: string;
-  /** Label for the saved credential, such as "qa-admin" or "work"; not the website username or email. */
+  /** One-word label for the saved credential, such as "qa-admin" or "work"; not the website username or email. */
   accountLabel?: string;
   /** Python bridge wire shape. Prefer accountLabel in TypeScript. */
   account_label?: string;

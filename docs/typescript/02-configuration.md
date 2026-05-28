@@ -349,7 +349,7 @@ Dashboard setup:
 1. Open the Evolve Dashboard.
 2. Go to **Secrets**.
 3. Add a browser login with `Account label`, `Website`, `Email`, and `Password`.
-4. Use `Website` for the domain, such as `github.com`; use `Account label` as a connected string like `qa-admin`, `work`, or `personal` to distinguish multiple saved accounts for the same website. It is not the website username or email.
+4. Use `Website` for the domain, such as `github.com`; use `Account label` as one word with no spaces, such as `qa-admin`, `work`, or `personal`, to distinguish multiple saved accounts for the same website. It is not the website username or email.
 
 Passwords are encrypted before upload. The dashboard and SDK list only login metadata: account label, website, email, and last-used time.
 

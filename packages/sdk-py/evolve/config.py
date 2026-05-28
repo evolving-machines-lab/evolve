@@ -29,7 +29,7 @@ class BrowserCredentialScopeEntry:
 
     Args:
         website: Website/domain, e.g. "github.com"
-        account_label: Optional label for a saved credential, such as "qa-admin" or "work"; not the website username or email
+        account_label: Optional one-word label for a saved credential, such as "qa-admin" or "work"; not the website username or email
     """
     website: str
     account_label: Optional[str] = None
