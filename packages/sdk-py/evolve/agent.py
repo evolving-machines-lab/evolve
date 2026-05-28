@@ -6,7 +6,7 @@ from dataclasses import asdict, is_dataclass
 from typing import Any, Callable, Dict, List, Literal, Optional, Type, Union
 
 from .bridge import BridgeManager, SandboxNotFoundError
-from .config import AgentConfig, AgentPluginConfig, BrowserConfig, ComposioSetup, SandboxProvider, SchemaOptions, StorageConfig, WorkspaceMode
+from .config import AgentConfig, AgentPluginConfig, BrowserConfig, BrowserCredentialsConfig, ComposioSetup, SandboxProvider, SchemaOptions, StorageConfig, WorkspaceMode
 from .results import AgentResponse, CheckpointInfo, ExecuteResult, OutputResult, RunCost, SessionCost, SessionStatus
 from .storage_client import StorageClient
 from . import composio as composio_helpers
@@ -66,6 +66,7 @@ class Evolve:
         composio: Optional[ComposioSetup] = None,
         storage: Optional[StorageConfig] = None,
         browser: Optional[BrowserConfig] = None,
+        browser_credentials: Optional[BrowserCredentialsConfig] = None,
         plugins: Optional[Union[AgentPluginConfig, List[AgentPluginConfig]]] = None,
     ):
         """Initialize Evolve.
@@ -93,6 +94,7 @@ class Evolve:
             storage: Storage configuration for checkpoint persistence (BYOK S3 or gateway mode)
             browser: Browser automation provider. Use {'provider': 'agent-browser', 'remote': True}
                 for managed remote browser automation.
+            browser_credentials: Saved browser login MCP setup. Requires managed remote agent-browser.
             plugins: Agent plugins/extensions to install in the sandbox user profile before first run.
         """
         self.config = config
@@ -104,6 +106,7 @@ class Evolve:
         self.files = files
         self.mcp_servers = mcp_servers
         self.browser = self._normalize_browser(browser)
+        self.browser_credentials = browser_credentials
         self.skills = skills
         self.secrets = secrets
         self.sandbox_id = sandbox_id
@@ -150,6 +153,7 @@ class Evolve:
                 'files': _encode_files_for_transport(self.files) if self.files else None,
                 'mcp_servers': self.mcp_servers,
                 'browser': self.browser,
+                'browser_credentials': self.browser_credentials.to_dict() if self.browser_credentials else None,
                 'plugins': self.plugins,
                 'skills': self.skills,
                 'secrets': self.secrets,

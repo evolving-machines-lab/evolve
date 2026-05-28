@@ -109,6 +109,8 @@ export type {
   BrowserProvider,
   ManagedBrowserProvider,
   BrowserConfig,
+  BrowserCredentialScopeEntry,
+  BrowserCredentialsConfig,
   ActionbookBrowserConfig,
   AgentBrowserConfig,
   AgentPluginConfig,
@@ -252,6 +254,21 @@ export {
 // =============================================================================
 
 export { resolveStorageConfig, storage } from "./storage";
+
+// =============================================================================
+// BROWSER CREDENTIALS
+// =============================================================================
+
+export {
+  BrowserCredentialsClient,
+  browserCredentials,
+  BROWSER_LOGIN_MCP_SERVER_NAME,
+  type BrowserCredentialCreateInput,
+  type BrowserCredentialDeleteInput,
+  type BrowserCredentialListOptions,
+  type BrowserCredentialMetadata,
+  type BrowserCredentialsClientConfig,
+} from "./browser-credentials";
 
 // =============================================================================
 // SESSIONS

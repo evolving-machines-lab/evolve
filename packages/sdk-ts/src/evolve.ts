@@ -29,6 +29,7 @@ import type {
   RunCost,
   SessionCost,
   BrowserConfig,
+  BrowserCredentialsConfig,
   AgentPluginConfig,
 } from "./types";
 import { Agent, type AgentConfig, type AgentOptions, type AgentResponse } from "./agent";
@@ -40,6 +41,7 @@ import { resolveStorageConfig, createBoundStorageClient } from "./storage";
 import type { CheckpointInfo, StorageClient } from "./types";
 import { BROWSER_ACTIONBOOK_PROMPT, BROWSER_AGENT_BROWSER_PROMPT } from "./prompts";
 import { mergeBrowserSkills, normalizeBrowserConfig } from "./browser";
+import { browserCredentials as createBrowserCredentialsClient } from "./browser-credentials";
 
 // =============================================================================
 // TYPES
@@ -74,6 +76,8 @@ export interface EvolveConfig {
   mcpServers?: Record<string, McpServerConfig>;
   /** Browser automation provider to enable explicitly */
   browser?: BrowserConfig;
+  /** Browser login MCP setup for managed remote agent-browser runs */
+  browserCredentials?: BrowserCredentialsConfig;
   /** Agent plugins/extensions to install before first run */
   plugins?: AgentPluginConfig[];
   /** Skills to enable (e.g., ["pdf", "dev-browser"]) */
@@ -256,6 +260,17 @@ export class Evolve extends EventEmitter {
   }
 
   /**
+   * Enable saved browser logins for managed remote agent-browser runs.
+   *
+   * Empty config exposes all enabled browser logins for this Evolve account.
+   * Use allow to restrict a run to specific websites and optional aliases.
+   */
+  withBrowserCredentials(config: BrowserCredentialsConfig = {}): this {
+    this.config.browserCredentials = config;
+    return this;
+  }
+
+  /**
    * Install agent plugins/extensions in the sandbox user profile.
    *
    * The selected agent determines the installer:
@@ -422,6 +437,9 @@ export class Evolve extends EventEmitter {
    */
   static composio = composioHelpers;
 
+  /** Static browser credential client for listing, creating, and deleting saved browser logins. */
+  static browserCredentials = createBrowserCredentialsClient;
+
   // ===========================================================================
   // AGENT INITIALIZATION
   // ===========================================================================
@@ -442,8 +460,11 @@ export class Evolve extends EventEmitter {
     let managedBrowser: AgentOptions["managedBrowser"] | undefined;
     let skills = this.config.skills;
 
+    let normalizedBrowser: ReturnType<typeof normalizeBrowserConfig> | undefined;
+
     if (this.config.browser) {
       const browser = normalizeBrowserConfig(this.config.browser);
+      normalizedBrowser = browser;
 
       if (browser.provider === "browser-use") {
         if (agentConfig.isDirectMode) {
@@ -474,6 +495,21 @@ export class Evolve extends EventEmitter {
       }
     }
 
+    if (this.config.browserCredentials !== undefined) {
+      if (this.config.sandboxId) {
+        throw new Error("withBrowserCredentials() cannot be used with withSession(); browser login tokens are run-scoped.");
+      }
+      if (agentConfig.isDirectMode) {
+        throw new Error("withBrowserCredentials() requires gateway mode. Use apiKey/EVOLVE_API_KEY instead of providerApiKey/direct mode.");
+      }
+      if (!normalizedBrowser || normalizedBrowser.provider !== "agent-browser" || !normalizedBrowser.managed) {
+        throw new Error('withBrowserCredentials() requires .withBrowser() or .withBrowser({ provider: "agent-browser", remote: true }).');
+      }
+      if (this.config.mcpServers?.["browser-login"]) {
+        throw new Error('withBrowserCredentials() reserves the "browser-login" MCP server name.');
+      }
+    }
+
     // Resolve storage config if .withStorage() was called
     const resolvedStorage = this.config.storage !== undefined
       ? resolveStorageConfig(
@@ -496,6 +532,13 @@ export class Evolve extends EventEmitter {
       mcpServers: { ...browserMcpServers, ...this.config.mcpServers },
       browserPrompt,
       managedBrowser,
+      browserCredentials: this.config.browserCredentials !== undefined
+        ? {
+            apiKey: agentConfig.apiKey,
+            dashboardUrl: process.env.EVOLVE_DASHBOARD_URL || DEFAULT_DASHBOARD_URL,
+            config: this.config.browserCredentials,
+          }
+        : undefined,
       plugins: this.config.plugins,
       skills,
       schema: this.config.schema,

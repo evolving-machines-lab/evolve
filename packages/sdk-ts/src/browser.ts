@@ -38,6 +38,7 @@ export interface ManagedBrowserSession {
   sessionTag?: string;
   cdpUrl: string;
   liveUrl: string;
+  browserAuthGrantToken?: string;
 }
 
 export interface ManagedBrowserSandboxSetup {
@@ -117,7 +118,8 @@ async function readError(response: Response): Promise<string> {
 
 export async function createManagedBrowserSession(
   config: ManagedBrowserConfig,
-  sessionTag: string
+  sessionTag: string,
+  options: { browserCredentials?: boolean } = {}
 ): Promise<ManagedBrowserSession> {
   const response = await fetch(`${dashboardBaseUrl(config)}/api/browser-sessions`, {
     method: "POST",
@@ -129,6 +131,7 @@ export async function createManagedBrowserSession(
     body: JSON.stringify({
       sessionTag,
       options: { remote: true },
+      browserAuth: options.browserCredentials === true,
     }),
     signal: AbortSignal.timeout(30_000),
   });
@@ -148,6 +151,7 @@ export async function createManagedBrowserSession(
     sessionTag: data.sessionTag,
     cdpUrl: data.cdpUrl,
     liveUrl: data.liveUrl,
+    browserAuthGrantToken: data.browserAuthGrantToken,
   };
 }
 

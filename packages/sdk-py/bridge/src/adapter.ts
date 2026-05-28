@@ -192,6 +192,9 @@ export class EvolveAdapter {
     if (params.browser) {
       kit.withBrowser(params.browser);
     }
+    if (params.browser_credentials !== undefined) {
+      kit.withBrowserCredentials(params.browser_credentials);
+    }
     if (params.plugins?.length) {
       (kit as Evolve & { withPlugins: (plugins: unknown[]) => Evolve }).withPlugins(params.plugins);
     }

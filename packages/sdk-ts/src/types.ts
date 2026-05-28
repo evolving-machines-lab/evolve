@@ -161,6 +161,17 @@ export interface AgentBrowserConfig {
 /** Browser automation configuration. */
 export type BrowserConfig = BrowserProvider | ActionbookBrowserConfig | AgentBrowserConfig;
 
+/** Saved browser login selector exposed to a run. Empty/omitted means all enabled browser logins. */
+export interface BrowserCredentialScopeEntry {
+  website: string;
+  alias?: string;
+}
+
+/** Browser login MCP configuration for managed remote agent-browser runs. */
+export interface BrowserCredentialsConfig {
+  allow?: BrowserCredentialScopeEntry[];
+}
+
 /** Marketplace plugin shape for CLIs with explicit plugin install commands. */
 export interface MarketplaceAgentPluginConfig {
   /** Marketplace URL/source to register in the sandbox user profile */
@@ -373,6 +384,12 @@ export interface AgentOptions {
     provider: ManagedBrowserProvider;
     apiKey: string;
     dashboardUrl?: string;
+  };
+  /** Run-scoped browser login MCP setup. Requires managed remote agent-browser. */
+  browserCredentials?: {
+    apiKey: string;
+    dashboardUrl?: string;
+    config?: BrowserCredentialsConfig;
   };
   /** Plugins/extensions to install in the sandbox user profile before first run */
   plugins?: AgentPluginConfig[];

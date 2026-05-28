@@ -45,6 +45,7 @@ await evolve.run(prompt='Hello world')
 | `system_prompt=` | [Configuration → Evolve Instance](./02-configuration.md#evolve-instance) |
 | `schema=` (Pydantic / JSON Schema) | [Configuration → Evolve Instance](./02-configuration.md#evolve-instance) |
 | `browser=` browser guide | [Configuration → Browser Automation](./02-configuration.md#browser-automation) |
+| `browser_credentials=` browser logins | [Configuration → Browser Credentials](./02-configuration.md#browser-credentials) |
 | `plugins=` | [Configuration → Agent Plugins](./02-configuration.md#agent-plugins) |
 | `skills=` | [Configuration → Agent Skills](./02-configuration.md#agent-skills) |
 | `composio=` (1000+ integrations) | [Configuration → Composio](./02-configuration.md#composio-tool-router) |

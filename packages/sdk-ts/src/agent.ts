@@ -56,6 +56,7 @@ import {
   stopManagedBrowserSession,
   type ManagedBrowserSession,
 } from "./browser";
+import { BROWSER_LOGIN_MCP_SERVER_NAME, createBrowserLoginMcpServer } from "./browser-credentials";
 
 // Re-export types for external consumers
 export type {
@@ -387,10 +388,11 @@ export class Agent {
           this.options.context ||
           this.options.files ||
           this.options.systemPrompt ||
-          this.options.managedBrowser
+          this.options.managedBrowser ||
+          this.options.browserCredentials
         ) {
           console.warn(
-            "[Evolve] Connecting to existing sandbox - ignoring mcpServers, plugins, context, files, systemPrompt, and managed browser setup"
+            "[Evolve] Connecting to existing sandbox - ignoring mcpServers, plugins, context, files, systemPrompt, managed browser setup, and browser credentials"
           );
         }
         this.sandbox = await provider.connect(this.options.sandboxId);
@@ -526,7 +528,9 @@ export class Agent {
 
   private async ensureManagedBrowserSession(callbacks?: StreamCallbacks): Promise<void> {
     if (this.managedBrowserSession || !this.options.managedBrowser) return;
-    this.managedBrowserSession = await createManagedBrowserSession(this.options.managedBrowser, this.sessionTag);
+    this.managedBrowserSession = await createManagedBrowserSession(this.options.managedBrowser, this.sessionTag, {
+      browserCredentials: this.options.browserCredentials !== undefined,
+    });
     this.emitLifecycle(callbacks, "browser_ready");
   }
 
@@ -801,6 +805,27 @@ export class Agent {
           url: composioMcp.url,
           headers: composioMcp.headers,
         },
+      };
+    }
+
+    if (this.options.browserCredentials) {
+      if (!this.options.managedBrowser || this.options.managedBrowser.provider !== "agent-browser") {
+        throw new Error("Browser credentials require managed remote agent-browser.");
+      }
+      if (!this.managedBrowserSession?.id || !this.managedBrowserSession.sessionTag || !this.managedBrowserSession.browserAuthGrantToken) {
+        throw new Error("Managed browser session is missing browser credential grant data.");
+      }
+      const browserLoginMcp = await createBrowserLoginMcpServer({
+        apiKey: this.options.browserCredentials.apiKey,
+        dashboardUrl: this.options.browserCredentials.dashboardUrl,
+        browserSessionId: this.managedBrowserSession.id,
+        sessionTag: this.managedBrowserSession.sessionTag,
+        grantToken: this.managedBrowserSession.browserAuthGrantToken,
+        config: this.options.browserCredentials.config,
+      });
+      mcpServers = {
+        ...mcpServers,
+        [BROWSER_LOGIN_MCP_SERVER_NAME]: browserLoginMcp,
       };
     }
 
