@@ -68,7 +68,7 @@ import {
   type AgentOverride,
   type RetryConfig,
   type PipelineContext,
-  type ComposioSetup,
+  type IntegrationsSetup,
 } from "./types";
 
 export * from "./types";
@@ -89,7 +89,7 @@ interface ResolvedSwarmConfig {
   retry?: RetryConfig;
   mcpServers?: Record<string, McpServerConfig>;
   skills?: SkillName[];
-  composio?: ComposioSetup;
+  integrations?: IntegrationsSetup;
 }
 
 export class Swarm {
@@ -115,7 +115,7 @@ export class Swarm {
       retry: config.retry,
       mcpServers: config.mcpServers,
       skills: config.skills,
-      composio: config.composio,
+      integrations: config.integrations,
     };
     this.semaphore = new Semaphore(this.config.concurrency);
   }
@@ -287,7 +287,7 @@ export class Swarm {
 
     const mcpServers = params.mcpServers ?? this.config.mcpServers;
     const skills = params.skills ?? this.config.skills;
-    const composio = params.composio ?? this.config.composio;
+    const integrations = params.integrations ?? this.config.integrations;
 
     // Shared execution logic
     const executeOnce = async (promptToUse: string, tagPrefix: string, errorRetry?: number, attemptIndex?: number): Promise<ReduceResult<T>> => {
@@ -299,7 +299,7 @@ export class Swarm {
           agent: params.agent,
           mcpServers,
           skills,
-          composio,
+          integrations,
           tagPrefix,
           timeoutMs,
           observability: {
@@ -336,7 +336,7 @@ export class Swarm {
           schema: params.schema,
           mcpServers,
           skills,
-          composio,
+          integrations,
           operationId,
           baseTag,
           retry,
@@ -386,9 +386,9 @@ export class Swarm {
     const candidateSkills = config.skills ?? this.config.skills;
     const judgeSkills = config.judgeSkills ?? config.skills ?? this.config.skills;
 
-    // Resolve composio for candidates and judge (same pattern as mcpServers/skills)
-    const candidateComposio = config.composio ?? this.config.composio;
-    const judgeComposio = config.judgeComposio ?? config.composio ?? this.config.composio;
+    // Resolve integrations for candidates and judge (same pattern as mcpServers/skills)
+    const candidateIntegrations = config.integrations ?? this.config.integrations;
+    const judgeIntegrations = config.judgeIntegrations ?? config.integrations ?? this.config.integrations;
 
     // Run candidates (semaphore inside executeBestOfCandidate)
     const candidates = await Promise.all(
@@ -400,7 +400,7 @@ export class Swarm {
                 systemPrompt: params.systemPrompt, schema: params.schema,
                 schemaOptions: params.schemaOptions, mcpServers: candidateMcpServers,
                 skills: candidateSkills,
-                composio: candidateComposio,
+                integrations: candidateIntegrations,
                 timeoutMs, attempt,
               }),
               retry,
@@ -411,7 +411,7 @@ export class Swarm {
               systemPrompt: params.systemPrompt, schema: params.schema,
               schemaOptions: params.schemaOptions, mcpServers: candidateMcpServers,
               skills: candidateSkills,
-              composio: candidateComposio,
+              integrations: candidateIntegrations,
               timeoutMs,
             });
         // Emit candidate complete event (itemIndex=0 for standalone bestOf)
@@ -429,7 +429,7 @@ export class Swarm {
             systemPrompt: params.systemPrompt, schema: params.schema,
             schemaOptions: params.schemaOptions, mcpServers: judgeMcpServers,
             skills: judgeSkills,
-            composio: judgeComposio,
+            integrations: judgeIntegrations,
             attempt,
           }),
           { ...retry, retryOn: undefined },
@@ -440,7 +440,7 @@ export class Swarm {
           systemPrompt: params.systemPrompt, schema: params.schema,
           schemaOptions: params.schemaOptions, mcpServers: judgeMcpServers,
           skills: judgeSkills,
-          composio: judgeComposio,
+          integrations: judgeIntegrations,
         });
 
     const firstSuccess = candidates.findIndex((c) => c.status === "success");
@@ -482,7 +482,7 @@ export class Swarm {
       agent?: AgentOverride;
       mcpServers?: Record<string, McpServerConfig>;
       skills?: SkillName[];
-      composio?: ComposioSetup;
+      integrations?: IntegrationsSetup;
       tagPrefix: string;
       timeoutMs: number;
       /** Observability metadata for trace grouping */
@@ -527,9 +527,9 @@ export class Swarm {
         kit.withSkills(opts.skills);
       }
 
-      // Configure Composio
-      if (opts.composio) {
-        kit.withComposio(opts.composio.userId, opts.composio.config);
+      // Configure Integrations
+      if (opts.integrations) {
+        kit.withIntegrations(opts.integrations);
       }
 
       // Pass observability metadata for trace grouping
@@ -617,7 +617,7 @@ export class Swarm {
 
     const mcpServers = params.mcpServers ?? this.config.mcpServers;
     const skills = params.skills ?? this.config.skills;
-    const composio = params.composio ?? this.config.composio;
+    const integrations = params.integrations ?? this.config.integrations;
 
     const result = await this.semaphore.use(() =>
       this.execute(files, promptStr, {
@@ -627,7 +627,7 @@ export class Swarm {
         agent: params.agent,
         mcpServers,
         skills,
-        composio,
+        integrations,
         tagPrefix,
         timeoutMs,
         observability: {
@@ -672,7 +672,7 @@ export class Swarm {
     const verifyConfig = params.verify!;
     const mcpServers = params.mcpServers ?? this.config.mcpServers;
     const skills = params.skills ?? this.config.skills;
-    const composio = params.composio ?? this.config.composio;
+    const integrations = params.integrations ?? this.config.integrations;
 
     const promptStr = this.evaluatePrompt(prompt, files, index);
     if (promptStr instanceof Error) {
@@ -692,7 +692,7 @@ export class Swarm {
           agent: params.agent,
           mcpServers,
           skills,
-          composio,
+          integrations,
           tagPrefix,
           timeoutMs,
           observability: {
@@ -733,7 +733,7 @@ export class Swarm {
       schema: params.schema,
       mcpServers,
       skills,
-      composio,
+      integrations,
       operationId,
       baseTag,
       retry,
@@ -782,10 +782,10 @@ export class Swarm {
     const candidateSkills = bestOfConfig.skills ?? operationSkills;
     const judgeSkills = bestOfConfig.judgeSkills ?? bestOfConfig.skills ?? operationSkills;
 
-    // Resolve composio for candidates and judge
-    const operationComposio = params.composio ?? this.config.composio;
-    const candidateComposio = bestOfConfig.composio ?? operationComposio;
-    const judgeComposio = bestOfConfig.judgeComposio ?? bestOfConfig.composio ?? operationComposio;
+    // Resolve integrations for candidates and judge
+    const operationIntegrations = params.integrations ?? this.config.integrations;
+    const candidateIntegrations = bestOfConfig.integrations ?? operationIntegrations;
+    const judgeIntegrations = bestOfConfig.judgeIntegrations ?? bestOfConfig.integrations ?? operationIntegrations;
 
     // Run candidates (semaphore inside executeBestOfCandidate)
     const candidates = await Promise.all(
@@ -798,7 +798,7 @@ export class Swarm {
                 schema: params.schema, schemaOptions: params.schemaOptions,
                 mcpServers: candidateMcpServers,
                 skills: candidateSkills,
-                composio: candidateComposio,
+                integrations: candidateIntegrations,
                 timeoutMs, parentIndex: index, attempt,
                 _pipelineContext: params._pipelineContext,
               }),
@@ -811,7 +811,7 @@ export class Swarm {
               schema: params.schema, schemaOptions: params.schemaOptions,
               mcpServers: candidateMcpServers,
               skills: candidateSkills,
-              composio: candidateComposio,
+              integrations: candidateIntegrations,
               timeoutMs, parentIndex: index,
               _pipelineContext: params._pipelineContext,
             });
@@ -831,7 +831,7 @@ export class Swarm {
             schema: params.schema, schemaOptions: params.schemaOptions,
             mcpServers: judgeMcpServers,
             skills: judgeSkills,
-            composio: judgeComposio,
+            integrations: judgeIntegrations,
             parentIndex: index, attempt,
             _pipelineContext: params._pipelineContext,
           }),
@@ -844,7 +844,7 @@ export class Swarm {
           schema: params.schema, schemaOptions: params.schemaOptions,
           mcpServers: judgeMcpServers,
           skills: judgeSkills,
-          composio: judgeComposio,
+          integrations: judgeIntegrations,
           parentIndex: index,
           _pipelineContext: params._pipelineContext,
         });
@@ -906,7 +906,7 @@ export class Swarm {
       : `${this.config.tag}-filter-${index}`;
     const mcpServers = params.mcpServers ?? this.config.mcpServers;
     const skills = params.skills ?? this.config.skills;
-    const composio = params.composio ?? this.config.composio;
+    const integrations = params.integrations ?? this.config.integrations;
 
     const result = await this.semaphore.use(() =>
       this.execute(originalFiles, prompt, {
@@ -916,7 +916,7 @@ export class Swarm {
         agent: params.agent,
         mcpServers,
         skills,
-        composio,
+        integrations,
         tagPrefix,
         timeoutMs,
         observability: {
@@ -962,7 +962,7 @@ export class Swarm {
     const verifyConfig = params.verify!;
     const mcpServers = params.mcpServers ?? this.config.mcpServers;
     const skills = params.skills ?? this.config.skills;
-    const composio = params.composio ?? this.config.composio;
+    const integrations = params.integrations ?? this.config.integrations;
 
     // Worker function that executes filter item (tagPrefix managed by runWithVerification)
     const workerFn = async (currentPrompt: string, tagPrefix: string, attemptIndex?: number): Promise<SwarmResult<T>> => {
@@ -974,7 +974,7 @@ export class Swarm {
           agent: params.agent,
           mcpServers,
           skills,
-          composio,
+          integrations,
           tagPrefix,
           timeoutMs,
           observability: {
@@ -1016,7 +1016,7 @@ export class Swarm {
       schema: params.schema,
       mcpServers,
       skills,
-      composio,
+      integrations,
       operationId,
       baseTag,
       retry,
@@ -1045,7 +1045,7 @@ export class Swarm {
     schemaOptions?: SchemaValidationOptions;
     mcpServers?: Record<string, McpServerConfig>;
     skills?: SkillName[];
-    composio?: ComposioSetup;
+    integrations?: IntegrationsSetup;
     timeoutMs: number;
     parentIndex?: number;
     attempt?: number;
@@ -1068,7 +1068,7 @@ export class Swarm {
         agent: config.taskAgents?.[candidateIndex],
         mcpServers: params.mcpServers,
         skills: params.skills,
-        composio: params.composio,
+        integrations: params.integrations,
         tagPrefix,
         timeoutMs,
         observability: {
@@ -1146,7 +1146,7 @@ export class Swarm {
     schemaOptions?: SchemaValidationOptions;
     mcpServers?: Record<string, McpServerConfig>;
     skills?: SkillName[];
-    composio?: ComposioSetup;
+    integrations?: IntegrationsSetup;
     parentIndex?: number;
     attempt?: number;
     _pipelineContext?: PipelineContext;
@@ -1189,7 +1189,7 @@ export class Swarm {
         agent: config.judgeAgent,
         mcpServers: params.mcpServers,
         skills: params.skills,
-        composio: params.composio,
+        integrations: params.integrations,
         tagPrefix,
         timeoutMs,
         observability: {
@@ -1278,7 +1278,7 @@ export class Swarm {
     schema?: z.ZodType<unknown> | JsonSchema;
     mcpServers?: Record<string, McpServerConfig>;
     skills?: SkillName[];
-    composio?: ComposioSetup;
+    integrations?: IntegrationsSetup;
     operationId: string;
     workerTag: string;
     retryAttempt?: number;
@@ -1302,8 +1302,8 @@ export class Swarm {
     const verifierMcpServers = config.verifierMcpServers ?? params.mcpServers;
     // Resolve skills: verifierSkills takes precedence
     const verifierSkills = config.verifierSkills ?? params.skills;
-    // Resolve composio: verifierComposio takes precedence
-    const verifierComposio = config.verifierComposio ?? params.composio;
+    // Resolve integrations: verifierIntegrations takes precedence
+    const verifierIntegrations = config.verifierIntegrations ?? params.integrations;
 
     // Build verify context
     const context = this.buildVerifyContext({
@@ -1328,7 +1328,7 @@ export class Swarm {
         agent: config.verifierAgent,
         mcpServers: verifierMcpServers,
         skills: verifierSkills,
-        composio: verifierComposio,
+        integrations: verifierIntegrations,
         tagPrefix,
         timeoutMs,
         observability: {
@@ -1395,7 +1395,7 @@ export class Swarm {
       schema?: z.ZodType<unknown> | JsonSchema;
       mcpServers?: Record<string, McpServerConfig>;
       skills?: SkillName[];
-      composio?: ComposioSetup;
+      integrations?: IntegrationsSetup;
       operationId: string;
       baseTag: string;
       retry?: { maxAttempts?: number; backoffMs?: number; backoffMultiplier?: number };
@@ -1460,7 +1460,7 @@ export class Swarm {
               schema: params.schema,
               mcpServers: params.mcpServers,
               skills: params.skills,
-              composio: params.composio,
+              integrations: params.integrations,
               operationId,
               workerTag,
               retryAttempt,
@@ -1481,7 +1481,7 @@ export class Swarm {
             schema: params.schema,
             mcpServers: params.mcpServers,
             skills: params.skills,
-            composio: params.composio,
+            integrations: params.integrations,
             operationId,
             workerTag,
             operation,

@@ -331,7 +331,7 @@ class SessionsConfig:
 
 
 # =============================================================================
-# COMPOSIO TOOL ROUTER
+# MANAGED INTEGRATIONS
 # =============================================================================
 
 
@@ -350,53 +350,70 @@ class TagsFilter(TypedDict):
     tags: List[str]
 
 
-# Tool filter configuration per toolkit - matches TS SDK ToolsFilter
-ToolsFilter = Union[List[str], EnableFilter, DisableFilter, TagsFilter]
+# Tool filter configuration per app - matches TS SDK IntegrationToolsFilter
+IntegrationToolsFilter = Union[List[str], EnableFilter, DisableFilter, TagsFilter]
 
 
-@dataclass
-class ComposioConfig:
-    """Composio Tool Router configuration.
+@dataclass(kw_only=True)
+class IntegrationsConfig:
+    """Managed integrations configuration.
 
     Args:
-        toolkits: Restrict to specific toolkits (e.g., ["github", "gmail"])
-        tools: Per-toolkit tool filtering
-        keys: API keys for direct auth (bypasses OAuth)
-        auth_configs: Custom OAuth auth config IDs for white-labeling
+        apps: Apps to expose to the agent (e.g., ["github", "gmail"])
+        tools: Per-app tool filtering
+        accounts: Pin connected accounts by account ID or account label
+        keys: API keys for apps that use API-key auth
+        auth_configs: Custom auth config IDs per app
     """
-    toolkits: Optional[List[str]] = None
-    tools: Optional[Dict[str, ToolsFilter]] = None
+    apps: List[str]
+    tools: Optional[Dict[str, IntegrationToolsFilter]] = None
+    accounts: Optional[Dict[str, List[str]]] = None
     keys: Optional[Dict[str, str]] = None
     auth_configs: Optional[Dict[str, str]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dict for JSON-RPC transport."""
-        result: Dict[str, Any] = {}
-        if self.toolkits:
-            result['toolkits'] = self.toolkits
+        result: Dict[str, Any] = {'apps': self.apps}
         if self.tools:
             result['tools'] = self.tools
+        if self.accounts:
+            result['accounts'] = self.accounts
         if self.keys:
             result['keys'] = self.keys
         if self.auth_configs:
-            result['authConfigs'] = self.auth_configs
+            result['auth_configs'] = self.auth_configs
         return result
 
 
-@dataclass
-class ComposioSetup:
-    """Composio setup combining user ID and configuration.
+@dataclass(kw_only=True)
+class IntegrationsSetup:
+    """Managed integrations setup.
 
     Args:
-        user_id: User's unique identifier for Composio session
-        config: Optional Composio configuration
+        user_id: Integration user ID. Use "root" for dashboard-owned/private accounts,
+            or your app's stable end-user ID for per-user accounts.
+        apps: Apps to expose to the agent
+        tools: Per-app tool filtering
+        accounts: Pin connected accounts by account ID or account label
+        keys: API keys for apps that use API-key auth
+        auth_configs: Custom auth config IDs per app
     """
     user_id: str
-    config: Optional[ComposioConfig] = None
+    apps: List[str]
+    tools: Optional[Dict[str, IntegrationToolsFilter]] = None
+    accounts: Optional[Dict[str, List[str]]] = None
+    keys: Optional[Dict[str, str]] = None
+    auth_configs: Optional[Dict[str, str]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dict for JSON-RPC transport."""
-        result: Dict[str, Any] = {'user_id': self.user_id}
-        if self.config:
-            result['config'] = self.config.to_dict()
+        result: Dict[str, Any] = {'user_id': self.user_id, 'apps': self.apps}
+        if self.tools:
+            result['tools'] = self.tools
+        if self.accounts:
+            result['accounts'] = self.accounts
+        if self.keys:
+            result['keys'] = self.keys
+        if self.auth_configs:
+            result['auth_configs'] = self.auth_configs
         return result

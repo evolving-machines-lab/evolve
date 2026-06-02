@@ -1,27 +1,29 @@
-# Composio Cookbook (TypeScript)
+# Managed Integrations Cookbook
 
-Evolve + Composio Tool Router integration.
+Evolve-managed app integrations.
 
-AI agent with access to 500+ external services (Gmail, Slack, GitHub, Notion, etc.)
+AI agent with access to external services (Gmail, Slack, GitHub, Notion, etc.)
 
 ## Setup
 
 ```bash
-cd cookbooks/typescript/composio
-npm install
+cd cookbooks/python/integrations
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
 cp .env.example .env
-# Fill in EVOLVE_API_KEY and COMPOSIO_API_KEY
+# Fill in EVOLVE_API_KEY
 ```
 
 ## Run
 
 ```bash
-npx tsx swarm.ts
+python agent.py
 ```
 
 ## What Happens
 
-1. Script creates Composio session with filtered toolkits
+1. Script creates an Evolve-managed integration session
 2. Checks which services need authentication
 3. Prompts you to connect (opens OAuth links)
 4. Agent runs with full access to connected services
@@ -37,7 +39,7 @@ npx tsx swarm.ts
 
 ## Configuration
 
-Edit `swarm.ts` to change:
+Edit `agent.py` to change:
 
-- `USER_ID` - Unique ID for user's Composio session
-- `ENABLED_TOOLKITS` - Which services to enable (or `[]` for all 500+)
+- `USER_ID` - Stable integration user ID
+- `ENABLED_APPS` - Which services to enable

@@ -17,7 +17,7 @@
 - Persistent filesystem for infinite context
 - Full computer access: terminal, browser, MCP tools
 - [Agent skills](https://agentskills.io/home): extend agents with custom capabilities (PDF, dev-browser, etc.)
-- 500+ integrations (Gmail, GitHub, Slack, Notion & more) via [Composio](https://github.com/ComposioHQ/composio)
+- Managed integrations for Gmail, GitHub, Slack, Notion, and more
 - Functional programming abstractions (map, filter, reduce) for massively parallel workloads
 - Streaming and structured output
 - Built-in [agent observability and analytics dashboard](https://dashboard.evolvingmachines.ai/)

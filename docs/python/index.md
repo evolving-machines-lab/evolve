@@ -48,14 +48,14 @@ await evolve.run(prompt='Hello world')
 | `browser_credentials=` browser logins | [Configuration → Browser Credentials](./02-configuration.md#browser-credentials) |
 | `plugins=` | [Configuration → Agent Plugins](./02-configuration.md#agent-plugins) |
 | `skills=` | [Configuration → Agent Skills](./02-configuration.md#agent-skills) |
-| `composio=` (1000+ integrations) | [Configuration → Composio](./02-configuration.md#composio-tool-router) |
+| `integrations=` (managed app integrations) | [Configuration → Managed Integrations](./02-configuration.md#managed-integrations) |
 | `mcp_servers=` (STDIO / HTTP / SSE) | [Configuration → Evolve Instance](./02-configuration.md#evolve-instance) |
 | `secrets=` | [Configuration → Evolve Instance](./02-configuration.md#evolve-instance) |
 | `storage=` (checkpointing) | [Runtime → Storage & Checkpointing](./03-runtime.md#storage--checkpointing) |
 | `session_tag_prefix=` (observability) | [Runtime → Observability](./03-runtime.md#observability) |
 | Skills catalog (PDF, browser, research, etc.) | [Configuration → Agent Skills](./02-configuration.md#agent-skills) |
-| Composio auth paths (OAuth, API key, white-label) | [Configuration → Authentication Paths](./02-configuration.md#authentication-paths) |
-| Composio tool filtering | [Configuration → Tool Filtering](./02-configuration.md#tool-filtering) |
+| Integration auth/account helpers | [Configuration → Managed Integrations](./02-configuration.md#managed-integrations) |
+| Integration tool filtering | [Configuration → Managed Integrations](./02-configuration.md#managed-integrations) |
 | MCP server config (McpServerConfig) | [Configuration → Evolve Instance](./02-configuration.md#evolve-instance) |
 
 ### Runtime

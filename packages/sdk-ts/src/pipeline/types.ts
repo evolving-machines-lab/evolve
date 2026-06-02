@@ -14,7 +14,7 @@ import type {
   SwarmResult,
   ReduceResult,
   Prompt,
-  ComposioSetup,
+  IntegrationsSetup,
 } from "../swarm/types";
 
 // =============================================================================
@@ -46,8 +46,8 @@ interface BaseStepConfig {
   mcpServers?: Record<string, McpServerConfig>;
   /** Skills override (replaces swarm default for this step) */
   skills?: SkillName[];
-  /** Composio override (replaces swarm default for this step) */
-  composio?: ComposioSetup;
+  /** Integrations override (replaces swarm default for this step) */
+  integrations?: IntegrationsSetup;
   /** Timeout in ms */
   timeoutMs?: number;
 }

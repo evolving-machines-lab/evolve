@@ -17,13 +17,13 @@ import type {
   WorkspaceMode,
   McpServerConfig,
   SkillName,
-  ComposioConfig,
-  ComposioSetup,
+  IntegrationsConfig,
+  IntegrationsSetup,
 } from "../types";
 import type { RetryConfig } from "../utils/retry";
 
 // Re-export for convenience
-export type { FileMap, ComposioConfig, ComposioSetup } from "../types";
+export type { FileMap, IntegrationsConfig, IntegrationsSetup } from "../types";
 export type { RetryConfig, OnItemRetryCallback } from "../utils/retry";
 
 // =============================================================================
@@ -62,8 +62,8 @@ export interface SwarmConfig {
   mcpServers?: Record<string, McpServerConfig>;
   /** Default skills for all operations (per-operation config takes precedence) */
   skills?: SkillName[];
-  /** Default Composio configuration for all operations (per-operation config takes precedence) */
-  composio?: ComposioSetup;
+  /** Default Integrations configuration for all operations (per-operation config takes precedence) */
+  integrations?: IntegrationsSetup;
 }
 
 /** Callback for bestOf candidate completion */
@@ -89,10 +89,10 @@ export interface BestOfConfig {
   skills?: SkillName[];
   /** Skills for judge (defaults to skills) */
   judgeSkills?: SkillName[];
-  /** Composio config for candidates (defaults to operation composio) */
-  composio?: ComposioSetup;
-  /** Composio config for judge (defaults to composio) */
-  judgeComposio?: ComposioSetup;
+  /** Integrations config for candidates (defaults to operation integrations) */
+  integrations?: IntegrationsSetup;
+  /** Integrations config for judge (defaults to integrations) */
+  judgeIntegrations?: IntegrationsSetup;
   /** Callback when a candidate completes */
   onCandidateComplete?: OnCandidateCompleteCallback;
   /** Callback when judge completes */
@@ -116,8 +116,8 @@ export interface VerifyConfig {
   verifierMcpServers?: Record<string, McpServerConfig>;
   /** Skills for verifier (defaults to operation skills) */
   verifierSkills?: SkillName[];
-  /** Composio config for verifier (defaults to operation composio) */
-  verifierComposio?: ComposioSetup;
+  /** Integrations config for verifier (defaults to operation integrations) */
+  verifierIntegrations?: IntegrationsSetup;
   /** Callback invoked after each worker completion (before verification) */
   onWorkerComplete?: OnWorkerCompleteCallback;
   /** Callback invoked after each verifier completion */
@@ -342,8 +342,8 @@ export interface MapParams<T> {
   mcpServers?: Record<string, McpServerConfig>;
   /** Skills override (replaces swarm default) */
   skills?: SkillName[];
-  /** Composio override (replaces swarm default) */
-  composio?: ComposioSetup;
+  /** Integrations override (replaces swarm default) */
+  integrations?: IntegrationsSetup;
   /** Optional bestOf configuration for N candidates + judge (mutually exclusive with verify) */
   bestOf?: BestOfConfig;
   /** Optional verify configuration for LLM-as-judge quality verification with retry (mutually exclusive with bestOf) */
@@ -378,8 +378,8 @@ export interface FilterParams<T> {
   mcpServers?: Record<string, McpServerConfig>;
   /** Skills override (replaces swarm default) */
   skills?: SkillName[];
-  /** Composio override (replaces swarm default) */
-  composio?: ComposioSetup;
+  /** Integrations override (replaces swarm default) */
+  integrations?: IntegrationsSetup;
   /** Optional verify configuration for LLM-as-judge quality verification with retry */
   verify?: VerifyConfig;
   /** Per-item retry configuration. Typed to allow retryOn access to SwarmResult fields. */
@@ -410,8 +410,8 @@ export interface ReduceParams<T> {
   mcpServers?: Record<string, McpServerConfig>;
   /** Skills override (replaces swarm default) */
   skills?: SkillName[];
-  /** Composio override (replaces swarm default) */
-  composio?: ComposioSetup;
+  /** Integrations override (replaces swarm default) */
+  integrations?: IntegrationsSetup;
   /** Optional verify configuration for LLM-as-judge quality verification with retry */
   verify?: VerifyConfig;
   /** Retry configuration (retries entire reduce on error). Typed to allow retryOn access to ReduceResult fields. */
@@ -428,7 +428,7 @@ export interface BestOfParams<T> {
   prompt: string;
   /** Optional operation name for observability */
   name?: string;
-  /** BestOf configuration (n, judgeCriteria, taskAgents, judgeAgent, mcpServers, skills, composio) */
+  /** BestOf configuration (n, judgeCriteria, taskAgents, judgeAgent, mcpServers, skills, integrations) */
   config: BestOfConfig;
   /** Optional system prompt */
   systemPrompt?: string;

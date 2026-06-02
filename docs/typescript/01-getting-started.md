@@ -31,7 +31,6 @@ npm install zod
 ```bash
 # .env
 EVOLVE_API_KEY=sk-...        # Evolve gateway key (dashboard.evolvingmachines.ai)
-COMPOSIO_API_KEY=...         # (optional) Composio integrations (app.composio.dev)
 ```
 
 **3. Run your first agent:**
@@ -45,7 +44,7 @@ const evolve = new Evolve()
     .withSystemPrompt("You are Manus Evolve, a powerful AI agent. You can execute code, browse the web, manage files, and solve complex tasks.")
     .withBrowser()  // optional; defaults to remote managed agent-browser automation in Gateway mode
     .withSkills(["pdf", "docx", "pptx"])
-    .withComposio("user_123", { toolkits: ["gmail", "notion", "exa"] });  // 1000+ integrations via Composio
+    .withIntegrations({ userId: "root", apps: ["gmail", "notion"] });  // optional; managed integrations in Gateway mode
 
 // Run agent
 const result = await evolve.run({

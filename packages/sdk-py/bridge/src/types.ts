@@ -93,8 +93,8 @@ export interface InitializeParams {
   schema_options?: { mode?: 'strict' | 'loose' };
   // Observability metadata (passed to JSONL logs via withObservability)
   observability?: Record<string, unknown>;
-  // Composio Tool Router setup
-  composio?: ComposioSetup;
+  // Managed integrations setup
+  integrations?: IntegrationsSetup;
   // Storage / Checkpointing
   storage?: StorageConfigParams;
 }
@@ -135,73 +135,98 @@ export interface BrowserCredentialsConfig {
 }
 
 // =============================================================================
-// COMPOSIO TYPES (matches sdk-ts/src/types.ts)
+// MANAGED INTEGRATIONS TYPES (matches sdk-ts/src/types.ts)
 // =============================================================================
 
-/** Tool filter configuration per toolkit - matches TS SDK ToolsFilter */
-export type ToolsFilter =
-  | string[]                          // Enable only these tools
+/** Tool filter configuration per app */
+export type IntegrationToolsFilter =
+  | string[]
   | { enable: string[] }              // Enable only these tools
   | { disable: string[] }             // Disable these tools
   | { tags: string[] };               // Filter by behavior tags
 
-export interface ComposioConfig {
-  toolkits?: string[];
-  tools?: Record<string, ToolsFilter>;
+export interface IntegrationsConfig {
+  apps: string[];
+  tools?: Record<string, IntegrationToolsFilter>;
+  accounts?: Record<string, string[]>;
   keys?: Record<string, string>;
   auth_configs?: Record<string, string>;
 }
 
-export interface ComposioSetup {
+export interface IntegrationsSetup {
   user_id: string;
-  config?: ComposioConfig;
+  apps: string[];
+  tools?: Record<string, IntegrationToolsFilter>;
+  accounts?: Record<string, string[]>;
+  keys?: Record<string, string>;
+  auth_configs?: Record<string, string>;
 }
 
 // =============================================================================
-// COMPOSIO RPC PARAMETERS
+// INTEGRATIONS RPC PARAMETERS
 // =============================================================================
 
-export interface ComposioAuthParams {
+export interface IntegrationsAuthParams {
   user_id: string;
-  toolkit: string;
+  app: string;
+  account_label?: string;
+  api_key?: string;
+  dashboard_url?: string;
 }
 
-export interface ComposioStatusParams {
-  user_id: string;
-  toolkit?: string;
+export interface IntegrationsAccountsListParams {
+  user_ids: string[];
+  app?: string;
+  statuses?: string[];
+  api_key?: string;
+  dashboard_url?: string;
 }
 
-export interface ComposioConnectionsParams {
-  user_id: string;
+export interface IntegrationsDisconnectParams {
+  account_id: string;
+  api_key?: string;
+  dashboard_url?: string;
+}
+
+export interface IntegrationsAccountUpdateParams {
+  account_id: string;
+  account_label?: string;
+  api_key?: string;
+  dashboard_url?: string;
 }
 
 // =============================================================================
-// COMPOSIO RPC RESPONSES
+// INTEGRATIONS RPC RESPONSES
 // =============================================================================
 
-/** Auth result - url to redirect user, connectionId for tracking */
-export interface ComposioAuthResponse {
+export interface IntegrationsAuthResponse {
   url: string;
-  connection_id: string;
-}
-
-/** Status result - boolean if toolkit specified, map if not */
-export interface ComposioStatusResponse {
-  /** If toolkit was specified, this is the result */
-  connected?: boolean;
-  /** If no toolkit specified, this is the map */
-  status_map?: Record<string, boolean>;
-}
-
-/** Connection info from getConnections */
-export interface ComposioConnectionInfo {
-  toolkit: string;
-  connected: boolean;
   account_id?: string;
 }
 
-export interface ComposioConnectionsResponse {
-  connections: ComposioConnectionInfo[];
+export interface IntegrationsDisconnectResponse {
+  success: boolean;
+  account_id: string;
+}
+
+export interface IntegrationsAccountUpdateResponse {
+  success: boolean;
+  account_id: string;
+  account_label?: string;
+}
+
+export interface IntegrationAccountInfo {
+  user_id: string;
+  app: string;
+  app_name?: string;
+  app_icon?: string;
+  account_label?: string;
+  status: string;
+  account_id?: string;
+}
+
+export interface IntegrationsAccountsListResponse {
+  accounts: IntegrationAccountInfo[];
 }
 
 // =============================================================================

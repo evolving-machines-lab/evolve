@@ -47,13 +47,14 @@ import type {
   InstanceRunParams,
   InstanceGetOutputParams,
   InstanceIdParams,
-  ComposioAuthParams,
-  ComposioStatusParams,
-  ComposioConnectionsParams,
-  ComposioAuthResponse,
-  ComposioStatusResponse,
-  ComposioConnectionsResponse,
-  ComposioConfig,
+  IntegrationsAuthParams,
+  IntegrationsAccountsListParams,
+  IntegrationsDisconnectParams,
+  IntegrationsAccountUpdateParams,
+  IntegrationsAuthResponse,
+  IntegrationsAccountsListResponse,
+  IntegrationsDisconnectResponse,
+  IntegrationsAccountUpdateResponse,
   CheckpointInfoResponse,
   CheckpointParams,
   ListCheckpointsParams,
@@ -214,13 +215,15 @@ export class EvolveAdapter {
         credentials: params.storage.credentials,
       } : {});
     }
-    if (params.composio) {
-      kit.withComposio(params.composio.user_id, params.composio.config ? {
-        toolkits: params.composio.config.toolkits,
-        tools: params.composio.config.tools,
-        keys: params.composio.config.keys,
-        authConfigs: params.composio.config.auth_configs,
-      } : undefined);
+    if (params.integrations) {
+      kit.withIntegrations({
+        userId: params.integrations.user_id,
+        apps: params.integrations.apps,
+        tools: params.integrations.tools,
+        accounts: params.integrations.accounts,
+        keys: params.integrations.keys,
+        authConfigs: params.integrations.auth_configs,
+      });
     }
 
     return kit;
@@ -309,13 +312,15 @@ export class EvolveAdapter {
         return this.getSessionCost();
       case 'get_run_cost':
         return this.getRunCost(params);
-      // Composio static methods (no instance required)
-      case 'composio_auth':
-        return this.composioAuth(params);
-      case 'composio_status':
-        return this.composioStatus(params);
-      case 'composio_connections':
-        return this.composioConnections(params);
+      // Integrations static methods (no instance required)
+      case 'integrations_auth':
+        return this.integrationsAuth(params);
+      case 'integrations_accounts_list':
+        return this.integrationsAccountsList(params);
+      case 'integrations_account_update':
+        return this.integrationsAccountUpdate(params);
+      case 'integrations_account_delete':
+        return this.integrationsAccountDelete(params);
       default:
         throw new Error(`Unknown method: ${method}`);
     }
@@ -859,43 +864,67 @@ export class EvolveAdapter {
   }
 
   // ===========================================================================
-  // COMPOSIO STATIC METHODS (no instance required)
+  // INTEGRATIONS STATIC METHODS (no instance required)
   // ===========================================================================
 
-  /**
-   * Get OAuth URL for authenticating a toolkit
-   */
-  async composioAuth(params: ComposioAuthParams): Promise<ComposioAuthResponse> {
-    const result = await Evolve.composio.auth(params.user_id, params.toolkit);
+  async integrationsAuth(params: IntegrationsAuthParams): Promise<IntegrationsAuthResponse> {
+    const result = await Evolve.integrations.auth({
+      userId: params.user_id,
+      app: params.app,
+      accountLabel: params.account_label,
+      apiKey: params.api_key,
+      dashboardUrl: params.dashboard_url,
+    });
     return {
       url: result.url,
-      connection_id: result.connectionId,
+      account_id: result.accountId,
     };
   }
 
-  /**
-   * Check connection status for a user
-   */
-  async composioStatus(params: ComposioStatusParams): Promise<ComposioStatusResponse> {
-    const result = await Evolve.composio.status(params.user_id, params.toolkit);
-    // TS SDK returns boolean if toolkit specified, Record<string,boolean> if not
-    if (typeof result === 'boolean') {
-      return { connected: result };
-    }
-    return { status_map: result };
+  async integrationsAccountsList(params: IntegrationsAccountsListParams): Promise<IntegrationsAccountsListResponse> {
+    const result = await Evolve.integrations.accounts.list({
+      userIds: params.user_ids,
+      app: params.app,
+      statuses: params.statuses,
+      apiKey: params.api_key,
+      dashboardUrl: params.dashboard_url,
+    });
+    return {
+      accounts: result.map((account) => ({
+        user_id: account.userId,
+        app: account.app,
+        app_name: account.appName,
+        app_icon: account.appIcon,
+        account_label: account.accountLabel,
+        status: account.status,
+        account_id: account.accountId,
+      })),
+    };
   }
 
-  /**
-   * List all connections for a user
-   */
-  async composioConnections(params: ComposioConnectionsParams): Promise<ComposioConnectionsResponse> {
-    const result = await Evolve.composio.connections(params.user_id);
+  async integrationsAccountUpdate(params: IntegrationsAccountUpdateParams): Promise<IntegrationsAccountUpdateResponse> {
+    const result = await Evolve.integrations.accounts.update({
+      accountId: params.account_id,
+      accountLabel: params.account_label,
+      apiKey: params.api_key,
+      dashboardUrl: params.dashboard_url,
+    });
     return {
-      connections: result.map((c) => ({
-        toolkit: c.toolkit,
-        connected: c.connected,
-        account_id: c.accountId,
-      })),
+      success: result.success,
+      account_id: result.accountId,
+      account_label: result.accountLabel,
+    };
+  }
+
+  async integrationsAccountDelete(params: IntegrationsDisconnectParams): Promise<IntegrationsDisconnectResponse> {
+    const result = await Evolve.integrations.accounts.delete({
+      accountId: params.account_id,
+      apiKey: params.api_key,
+      dashboardUrl: params.dashboard_url,
+    });
+    return {
+      success: result.success,
+      account_id: result.accountId,
     };
   }
 

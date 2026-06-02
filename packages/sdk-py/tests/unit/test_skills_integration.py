@@ -103,7 +103,7 @@ def create_mock_swarm(
         agent: Any = None,
         mcp_servers: Any = None,
         skills: Optional[List[str]] = None,
-        composio: Any = None,
+        integrations: Any = None,
         tag_prefix: str = "",
         timeout: int = 60000,
         observability: Optional[Dict[str, Any]] = None,

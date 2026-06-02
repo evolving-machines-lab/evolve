@@ -9,9 +9,9 @@ import { z } from "zod";  // Or use plain JSON Schema objects instead
 const swarm = new Swarm({
     agent: { type: "claude" },   // Default agent for all operations
     skills: ["pdf"],                 // Default skills
-    composio: {                  // Default Composio config for all workers
-        userId: "user_123",
-        config: { toolkits: ["github", "linear"] },
+    integrations: {                  // Default Integrations config for all workers
+        userId: "root",
+        apps: ["github", "linear"],
     },
     mcpServers: {...},           // Default MCP servers for all workers
     concurrency: 4,              // Max parallel sandboxes (default: 4)
@@ -25,14 +25,14 @@ const swarm = new Swarm({
 });
 ```
 
-> **Defaults**: `agent`, `skills`, `composio`, `mcpServers`, `timeoutMs`, and `retry` set here are inherited by all operations (`map`, `filter`, `reduce`, `bestOf`). Pass these options to individual operations to override.
+> **Defaults**: `agent`, `skills`, `integrations`, `mcpServers`, `timeoutMs`, and `retry` set here are inherited by all operations (`map`, `filter`, `reduce`, `bestOf`). Pass these options to individual operations to override.
 
 **SwarmConfig** — configuration for Swarm instance:
 ```ts
 {
     agent?: AgentOverride,
     skills?: string[],
-    composio?: ComposioSetup,
+    integrations?: IntegrationsSetup,
     mcpServers?: Record<string, McpServerConfig>,
     concurrency?: number,
     timeoutMs?: number,
@@ -46,7 +46,7 @@ const swarm = new Swarm({
 | `agent.type` | `'claude'` | Auto-resolved from env |
 | `agent.model` | per type | `'sonnet'` (claude), `'gpt-5.2'` (codex), etc. |
 | `skills` | `undefined` | Set here or per-operation |
-| `composio` | `undefined` | Set here or per-operation |
+| `integrations` | `undefined` | Set here or per-operation |
 | `mcpServers` | `undefined` | Set here or per-operation |
 | `concurrency` | `4` | Max parallel sandboxes |
 | `timeoutMs` | `3_600_000` | 1 hour per worker |
@@ -174,8 +174,8 @@ Two types of operations:
     judgeAgent?: AgentOverride,
     skills?: string[],
     judgeSkills?: string[],
-    composio?: ComposioSetup,
-    judgeComposio?: ComposioSetup,
+    integrations?: IntegrationsSetup,
+    judgeIntegrations?: IntegrationsSetup,
     mcpServers?: Record<string, McpServerConfig>,
     judgeMcpServers?: Record<string, McpServerConfig>,
     onCandidateComplete?: (idx, candIdx, status) => void,
@@ -190,7 +190,7 @@ Two types of operations:
     maxAttempts?: number,
     verifierAgent?: AgentOverride,
     verifierSkills?: string[],
-    verifierComposio?: ComposioSetup,
+    verifierIntegrations?: IntegrationsSetup,
     verifierMcpServers?: Record<string, McpServerConfig>,
     onWorkerComplete?: (idx, attempt, status) => void,
     onVerifierComplete?: (idx, attempt, passed, feedback?) => void,
@@ -227,7 +227,7 @@ Run N agents on the same `item` in parallel, then a judge picks the best. `Agent
 swarm.bestOf<T>({
     item: FileMap | SwarmResult,
     prompt: string,
-    config: BestOfConfig,               // { n?, judgeCriteria, taskAgents?, judgeAgent?, mcpServers?, judgeMcpServers?, skills?, judgeSkills?, composio?, judgeComposio?, ... }
+    config: BestOfConfig,               // { n?, judgeCriteria, taskAgents?, judgeAgent?, mcpServers?, judgeMcpServers?, skills?, judgeSkills?, integrations?, judgeIntegrations?, ... }
     name?: string,                      // Operation name for observability (appears in meta.operationName)
     schema?: z.ZodType<T> | JsonSchema,
     systemPrompt?: string,
@@ -274,8 +274,8 @@ const result = await swarm.bestOf({
         judgeMcpServers: {...},   // (optional) MCP servers for judge
         skills: ["pdf"],          // (optional) Skills for candidates
         judgeSkills: ["pdf"],     // (optional) Skills for judge
-        composio: {...},          // (optional) Composio config for candidates
-        judgeComposio: {...},     // (optional) Composio config for judge
+        integrations: {...},          // (optional) Integrations config for candidates
+        judgeIntegrations: {...},     // (optional) Integrations config for judge
     },
 });
 ```
@@ -314,7 +314,7 @@ swarm.map<T>({
     retry?: RetryConfig,                // Auto-retry on error with backoff
     mcpServers?: Record<string, McpServerConfig>,
     skills?: string[],                  // e.g. ["pdf"]
-    composio?: ComposioSetup,           // Composio Tool Router config
+    integrations?: IntegrationsSetup,           // managed integrations config
     timeoutMs?: number,
 }): Promise<SwarmResultList<T>>
 ```
@@ -397,8 +397,8 @@ const results = await swarm.map({
         // judgeMcpServers?: {...},          // MCP servers for judge
         // skills?: [...],                   // Skills for candidates
         // judgeSkills?: [...],              // Skills for judge
-        // composio?: {...},                 // Composio for candidates
-        // judgeComposio?: {...},            // Composio for judge
+        // integrations?: {...},                 // Integrations for candidates
+        // judgeIntegrations?: {...},            // Integrations for judge
     },
 });
 
@@ -446,7 +446,7 @@ swarm.filter<T>({
     retry?: RetryConfig,                // Auto-retry on error with backoff
     mcpServers?: Record<string, McpServerConfig>,
     skills?: string[],                  // e.g. ["pdf"]
-    composio?: ComposioSetup,           // Composio Tool Router config
+    integrations?: IntegrationsSetup,           // managed integrations config
     timeoutMs?: number,
 }): Promise<SwarmResultList<T>>
 ```
@@ -510,7 +510,7 @@ swarm.reduce<T>({
     retry?: RetryConfig,                // Auto-retry on error with backoff
     mcpServers?: Record<string, McpServerConfig>,
     skills?: string[],                  // e.g. ["pdf"]
-    composio?: ComposioSetup,           // Composio Tool Router config
+    integrations?: IntegrationsSetup,           // managed integrations config
     timeoutMs?: number,
 }): Promise<ReduceResult<T>>
 ```
@@ -757,7 +757,7 @@ const swarm = new Swarm({
 
 ## Pipeline
 
-Fluent wrapper over Swarm for chaining operations. **All Swarm features work in Pipeline steps** — `schema`, `bestOf`, `verify`, `retry`, `agent`, `mcpServers`, `skills`, `composio`, dynamic prompts.
+Fluent wrapper over Swarm for chaining operations. **All Swarm features work in Pipeline steps** — `schema`, `bestOf`, `verify`, `retry`, `agent`, `mcpServers`, `skills`, `integrations`, dynamic prompts.
 
 ```ts
 import "dotenv/config";
@@ -803,7 +803,7 @@ Each step accepts the same options as the corresponding Swarm method, plus `name
     agent?: AgentOverride,
     mcpServers?: Record<string, McpServerConfig>,
     skills?: string[],                    // Skills for workers
-    composio?: ComposioSetup,             // Composio Tool Router config
+    integrations?: IntegrationsSetup,             // managed integrations config
     systemPrompt?: string,
     timeoutMs?: number,
 })
@@ -820,7 +820,7 @@ Each step accepts the same options as the corresponding Swarm method, plus `name
     agent?: AgentOverride,
     mcpServers?: Record<string, McpServerConfig>,
     skills?: string[],                    // Skills for workers
-    composio?: ComposioSetup,             // Composio Tool Router config
+    integrations?: IntegrationsSetup,             // managed integrations config
     systemPrompt?: string,
     timeoutMs?: number,
 })
@@ -835,7 +835,7 @@ Each step accepts the same options as the corresponding Swarm method, plus `name
     agent?: AgentOverride,
     mcpServers?: Record<string, McpServerConfig>,
     skills?: string[],                    // Skills for workers
-    composio?: ComposioSetup,             // Composio Tool Router config
+    integrations?: IntegrationsSetup,             // managed integrations config
     systemPrompt?: string,
     timeoutMs?: number,
 })

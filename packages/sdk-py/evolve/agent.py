@@ -6,10 +6,10 @@ from dataclasses import asdict, is_dataclass
 from typing import Any, Callable, Dict, List, Literal, Optional, Type, Union
 
 from .bridge import BridgeManager, SandboxNotFoundError
-from .config import AgentConfig, AgentPluginConfig, BrowserConfig, BrowserCredentialsConfig, ComposioSetup, SandboxProvider, SchemaOptions, StorageConfig, WorkspaceMode
+from .config import AgentConfig, AgentPluginConfig, BrowserConfig, BrowserCredentialsConfig, IntegrationsSetup, SandboxProvider, SchemaOptions, StorageConfig, WorkspaceMode
 from .results import AgentResponse, CheckpointInfo, ExecuteResult, OutputResult, RunCost, SessionCost, SessionStatus
 from .storage_client import StorageClient
-from . import composio as composio_helpers
+from . import integrations as integrations_helpers
 from .schema import is_pydantic_model, is_dataclass, to_json_schema, validate_and_parse
 from .utils import _encode_files_for_transport, _decode_files_from_transport, _filter_none, _parse_checkpoint, _require_checkpoint
 
@@ -44,8 +44,8 @@ class Evolve:
         >>> evolve = Evolve(sandbox=ModalProvider())
     """
 
-    # Static helpers for Composio pre-auth flows (no instance required)
-    composio = composio_helpers
+    # Static helpers for Integrations pre-auth flows (no instance required)
+    integrations = integrations_helpers
 
     def __init__(
         self,
@@ -63,7 +63,7 @@ class Evolve:
         session_tag_prefix: Optional[str] = None,
         schema: Optional[Union[Type, Dict[str, Any]]] = None,
         schema_options: Optional[SchemaOptions] = None,
-        composio: Optional[ComposioSetup] = None,
+        integrations: Optional[IntegrationsSetup] = None,
         storage: Optional[StorageConfig] = None,
         browser: Optional[BrowserConfig] = None,
         browser_credentials: Optional[BrowserCredentialsConfig] = None,
@@ -90,7 +90,7 @@ class Evolve:
             session_tag_prefix: Optional semantic label for observability log files (e.g., 'experiment-7')
             schema: Schema for structured output - Pydantic model, dataclass, or JSON Schema dict
             schema_options: Validation options (mode: 'strict' or 'loose', default: 'loose')
-            composio: Composio Tool Router setup for 500+ external service integrations
+            integrations: managed app integrations setup
             storage: Storage configuration for checkpoint persistence (BYOK S3 or gateway mode)
             browser: Browser automation provider. Use {'provider': 'agent-browser', 'remote': True}
                 for managed remote browser automation.
@@ -112,7 +112,7 @@ class Evolve:
         self.sandbox_id = sandbox_id
         self.session_tag_prefix = session_tag_prefix
         self.schema_options = schema_options or SchemaOptions()
-        self._composio = composio
+        self._integrations = integrations
         self._storage_config = storage
         self.plugins = self._normalize_plugins(plugins)
 
@@ -161,8 +161,8 @@ class Evolve:
                 'session_tag_prefix': self.session_tag_prefix,
                 'schema': self._schema_json,
                 'schema_options': {'mode': self.schema_options.mode} if self._schema_json else None,
-                # Composio Tool Router
-                'composio': self._composio.to_dict() if self._composio else None,
+                # Managed integrations
+                'integrations': self._integrations.to_dict() if self._integrations else None,
                 # Storage / Checkpointing
                 'storage': self._storage_config.to_dict() if self._storage_config else None,
                 # Always forward events

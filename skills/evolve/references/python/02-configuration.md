@@ -126,7 +126,7 @@ sandbox = DaytonaProvider(
 
 ```python
 import os
-from evolve import Evolve, AgentConfig, E2BProvider, StorageConfig, ComposioSetup, ComposioConfig
+from evolve import Evolve, AgentConfig, E2BProvider, StorageConfig, IntegrationsSetup
 
 # Sandbox provider (auto-resolved from E2B_API_KEY, or explicit)
 sandbox = E2BProvider(
@@ -136,6 +136,8 @@ sandbox = E2BProvider(
 ```
 
 ```python
+import os
+
 evolve = Evolve(
 
     # Agent configuration (optional if EVOLVE_API_KEY set, defaults to claude)
@@ -176,11 +178,8 @@ evolve = Evolve(
     # (optional) Skills for the agent
     skills=['pdf', 'docx', 'pptx'],
 
-    # (optional) Composio Tool Router for 1000+ integrations
-    composio=ComposioSetup(
-        user_id='user_123',
-        config=ComposioConfig(toolkits=['gmail', 'notion', 'stripe']),
-    ),
+    # (optional) Managed integrations (gateway mode only)
+    integrations=IntegrationsSetup(user_id='root', apps=['gmail', 'notion']),
 
     # (optional) Prefix for observability logs
     session_tag_prefix='my-agent',
@@ -510,155 +509,114 @@ await evolve.run(prompt='Create a slide deck summarizing the uploaded notes.')
 
 ---
 
-## Composio (Tool Router)
+## Managed Integrations
 
-Access 1000+ integrations (GitHub, Gmail, Slack, etc.) via [Composio](https://composio.dev).
-
-[Tool Router Overview](https://docs.composio.dev/tool-router/overview) — How Tool Router works and integration guide.
-
-[Available Toolkits](https://docs.composio.dev/toolkits/introduction) — Browse all 1000+ supported integrations.
+Managed integrations are available only in gateway mode (`EVOLVE_API_KEY`); integration credentials stay server-side and agents receive an Evolve-scoped MCP proxy.
 
 ```bash
 # .env
-EVOLVE_API_KEY=sk-...      # Evolve gateway key
-COMPOSIO_API_KEY=...         # Get from https://app.composio.dev
+EVOLVE_API_KEY=sk-...
 ```
 
 ```python
-from evolve import Evolve, ComposioSetup
+from evolve import Evolve, IntegrationsSetup
 
 evolve = Evolve(
-    composio=ComposioSetup(user_id='user_123'),  # All tools, in-chat OAuth
+    integrations=IntegrationsSetup(
+        user_id='root',
+        apps=['github', 'gmail'],
+        tools={
+            'github': ['github_create_issue', 'github_list_repos'],
+            'gmail': {'disable': ['gmail_delete_email']},
+        },
+    ),
 )
 
 await evolve.run(prompt='Create a GitHub issue for the login bug')
 ```
 
-### Authentication Paths
+### Root vs SDK Users
 
-**1. In-chat auth (default)** — Composio prompts user to authenticate via agent output:
+Use `user_id='root'` for accounts connected in the Evolve dashboard for private agents and test accounts.
+
+For an application with end users, pass your stable SDK user ID. Evolve namespaces that ID under the authenticated Evolve account before creating private integration sessions.
+
 ```python
-from evolve import Evolve, ComposioSetup
+from evolve import Evolve, IntegrationsSetup
 
-evolve = Evolve(
-    composio=ComposioSetup(user_id='user_123'),  # Agent prompts "Connect to GitHub" when needed
+link = await Evolve.integrations.auth(
+    user_id='customer_123',
+    app='gmail',
+    account_label='work',
 )
 
-await evolve.run(prompt='Star my favorite repos on GitHub')
+evolve = Evolve(
+    integrations=IntegrationsSetup(
+        user_id='customer_123',
+        apps=['gmail'],
+    ),
+)
 ```
 
-**2. API key auth** — Bypass OAuth for tools that support API keys:
-```python
-import os
-from evolve import Evolve, ComposioSetup, ComposioConfig
+### Account Helpers
 
+```python
+accounts = await Evolve.integrations.accounts.list(
+    user_ids=['customer_123'],
+    app='gmail',
+    statuses=['ACTIVE'],
+)
+
+await Evolve.integrations.accounts.update(
+    account_id='account_id_from_list',
+    account_label='work',
+)
+
+# If the user connected multiple Gmail accounts, choose an account label or account ID returned by accounts.list().
 evolve = Evolve(
-    composio=ComposioSetup(
-        user_id='user_123',
-        config=ComposioConfig(
-            toolkits=['stripe', 'sendgrid'],
-            keys={
-                'stripe': os.getenv('STRIPE_API_KEY'),
-                'sendgrid': os.getenv('SENDGRID_API_KEY'),
-            },
-        ),
+    integrations=IntegrationsSetup(
+        user_id='customer_123',
+        apps=['gmail'],
+        accounts={'gmail': ['work']},
     ),
 )
 
-await evolve.run(prompt='List my recent Stripe payments')
+# Disconnect by account ID.
+await Evolve.integrations.accounts.delete(account_id='account_id_from_list')
 ```
 
-**3. Manual OAuth (app UI)** — Get OAuth URL to show in your settings page:
-```python
-from evolve import Evolve, ComposioSetup, ComposioConfig
+### Custom Auth Configs and API Keys
 
-# Get OAuth URL for "Connect GitHub" button
-result = await Evolve.composio.auth('user_123', 'github')
-# Render: <a href={result.url}>Connect GitHub</a>
-
-# Check connection status (simple)
-status = await Evolve.composio.status('user_123')
-# {'github': True, 'gmail': False, 'slack': True}
-
-# Check single toolkit
-is_github_connected = await Evolve.composio.status('user_123', 'github')
-# True | False
-
-# Get detailed connection info (with account IDs)
-connections = await Evolve.composio.connections('user_123')
-# [ComposioConnectionStatus(toolkit='github', connected=True, account_id='ca_...'), ...]
-
-# Then use in agent (user already connected via UI)
-evolve = Evolve(
-    composio=ComposioSetup(
-        user_id='user_123',
-        config=ComposioConfig(toolkits=['github']),
-    ),
-)
-
-await evolve.run(prompt='List my open PRs')
-```
-
-**4. White-label OAuth** — Use custom OAuth configs from [Composio dashboard](https://app.composio.dev):
-```python
-from evolve import Evolve, ComposioSetup, ComposioConfig
-
-evolve = Evolve(
-    composio=ComposioSetup(
-        user_id='user_123',
-        config=ComposioConfig(
-            toolkits=['github'],
-            auth_configs={'github': 'ac_your_custom_oauth_app'},
-        ),
-    ),
-)
-
-await evolve.run(prompt='Create a new private repo')
-```
-
-### Tool Filtering
+Use `auth_configs` to select a custom auth config for an app. For apps with an API-key auth config, pass the matching key in `keys`; Evolve creates the connected account server-side and does not store the raw key in the session.
 
 ```python
-from evolve import Evolve, ComposioSetup, ComposioConfig
-
 evolve = Evolve(
-    composio=ComposioSetup(
-        user_id='user_123',
-        config=ComposioConfig(
-            toolkits=['github', 'gmail', 'slack'],
-            tools={
-                'github': ['github_create_issue', 'github_list_repos'],  # Enable only these
-                'gmail': {'disable': ['gmail_delete_email']},            # Disable dangerous tools
-                'slack': {'tags': ['readOnlyHint']},                     # Filter by behavior tags
-            },
-        ),
+    integrations=IntegrationsSetup(
+        user_id='customer_123',
+        apps=['github'],
+        auth_configs={'github': 'ac_custom_github'},
+        keys={'github': os.environ['GITHUB_TOKEN']},
     ),
 )
-
-await evolve.run(prompt='Send a Slack message about the GitHub issue')
 ```
 
 ### Type Reference
 
-**ComposioSetup** — configuration for `composio=ComposioSetup(...)`:
 ```python
 @dataclass
-class ComposioSetup:
-    user_id: str                                            # User's unique identifier
-    config: Optional[ComposioConfig] = None                 # Optional configuration
+class IntegrationsSetup:
+    user_id: str  # "root" or your stable SDK user ID
+    apps: List[str]
+    tools: Optional[Dict[str, IntegrationToolsFilter]] = None
+    accounts: Optional[Dict[str, List[str]]] = None  # app -> account labels or account IDs
+    auth_configs: Optional[Dict[str, str]] = None  # app -> custom auth config ID
+    keys: Optional[Dict[str, str]] = None          # app -> API key, requires auth_configs[app]
 
-@dataclass
-class ComposioConfig:
-    toolkits: Optional[List[str]] = None                    # e.g. ['gmail', 'notion', 'stripe']
-    tools: Optional[Dict[str, ToolsFilter]] = None          # Per-toolkit tool filtering
-    keys: Optional[Dict[str, str]] = None                   # API keys (bypasses OAuth)
-    auth_configs: Optional[Dict[str, str]] = None           # Custom OAuth auth config IDs
-
-ToolsFilter = Union[
-    List[str],                                              # Enable only these tools
-    EnableFilter,                                           # {'enable': [...]}
-    DisableFilter,                                          # {'disable': [...]}
-    TagsFilter,                                             # {'tags': [...]}
+IntegrationToolsFilter = Union[
+    List[str],
+    EnableFilter,
+    DisableFilter,
+    TagsFilter,
 ]
 ```
 

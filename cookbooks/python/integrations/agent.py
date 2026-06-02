@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
 """
-Swarm CLI Agent + Composio Integrations
+Swarm CLI Agent + Managed Integrations
 
-AI agent with access to 500+ external services via Composio Tool Router.
+AI agent with access to external services via Evolve-managed integrations.
 Can send emails, post to Slack, create GitHub issues, update Notion, and more.
 
-Run: python swarm.py
+Run: python agent.py
 """
 import asyncio
-import os
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-from evolve import Evolve, AgentConfig, ComposioSetup, ComposioConfig, read_local_dir, save_local_dir
+from evolve import Evolve, AgentConfig, IntegrationsSetup, read_local_dir, save_local_dir
 from ui import console, make_renderer, read_prompt
 
 load_dotenv()
@@ -23,11 +22,10 @@ load_dotenv()
 # ─────────────────────────────────────────────────────────────
 
 USER_ID = "swarm-user-002"
-# Choose from 1000+ integrations: https://docs.composio.dev/toolkits/introduction
-ENABLED_TOOLKITS = ["gmail"]
+ENABLED_APPS = ["gmail"]
 
 SYSTEM_PROMPT = """Your name is Manus Evolve, a powerful autonomous AI agent.
-You can execute code, manage files, and take actions across external services via Composio MCP.
+You can execute code, manage files, and take actions across external services via managed integrations.
 """
 
 # ─────────────────────────────────────────────────────────────
@@ -37,31 +35,34 @@ You can execute code, manage files, and take actions across external services vi
 agent = Evolve(
     config=AgentConfig(type="claude", model="sonnet"),
     system_prompt=SYSTEM_PROMPT,
-    composio=ComposioSetup(
-        user_id=USER_ID,
-        config=ComposioConfig(toolkits=ENABLED_TOOLKITS),
-    ),
-    session_tag_prefix="swarm-composio-py",
+    integrations=IntegrationsSetup(user_id=USER_ID, apps=ENABLED_APPS),
+    session_tag_prefix="swarm-integrations-py",
 )
 
 # ─────────────────────────────────────────────────────────────
 
 
 async def main():
-    # Pre-authenticate Composio services
-    status = await Evolve.composio.status(USER_ID)
-    for toolkit in ENABLED_TOOLKITS:
-        if not status.get(toolkit, False):
-            result = await Evolve.composio.auth(USER_ID, toolkit)
-            console.print(f"\n[cyan]{toolkit}[/cyan]: {result.url}")
-            console.print("[dim]Press Enter after authenticating...[/dim]")
-            await asyncio.to_thread(input)
+    # Pre-authenticate managed services.
+    for app in ENABLED_APPS:
+        accounts = await Evolve.integrations.accounts.list(
+            user_ids=[USER_ID],
+            app=app,
+            statuses=["ACTIVE"],
+        )
+        if accounts:
+            continue
+
+        result = await Evolve.integrations.auth(user_id=USER_ID, app=app)
+        console.print(f"\n[cyan]{app}[/cyan]: {result.url}")
+        console.print("[dim]Press Enter after authenticating...[/dim]")
+        await asyncio.to_thread(input)
 
     renderer = make_renderer()
     agent.on("content", lambda event: renderer.handle_event(event))
 
     console.print()
-    console.print("[bold cyan]Swarm[/bold cyan] + [bold magenta]Composio[/bold magenta]")
+    console.print("[bold cyan]Swarm[/bold cyan] + [bold magenta]Integrations[/bold magenta]")
     console.print("[dim]AI Agent with external integrations[/dim]")
     console.print()
 

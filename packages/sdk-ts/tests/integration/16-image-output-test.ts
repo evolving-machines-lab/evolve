@@ -70,8 +70,7 @@ async function testAgent(type: AgentType): Promise<{ ok: boolean; error?: string
     .withSandbox(createE2BProvider({ apiKey: env.E2B_API_KEY }))
     .withContext({ "test_image.png": readFileSync(resolve(FIXTURES_DIR, "test_image.png")) })
     .withSkills(["dev-browser"])
-    .withMcpServers(mcpServers)
-    .withComposio("test-image-output", { toolkits: ["gmail"] });
+    .withMcpServers(mcpServers);
 
   const allEvents: OutputEvent[] = [];
   const rawLines: string[] = [];

@@ -54,7 +54,7 @@ from typing import Any, Callable, Dict, List, Optional, Type, Union
 
 from ..bridge import BridgeManager
 from ..schema import is_pydantic_model, is_dataclass, to_json_schema, validate_and_parse
-from ..config import AgentConfig, ComposioSetup
+from ..config import AgentConfig, IntegrationsSetup
 from ..utils import _encode_files_for_transport, _decode_files_from_transport, _filter_none
 from ..prompts import JUDGE_PROMPT, JUDGE_USER_PROMPT, VERIFY_PROMPT, VERIFY_USER_PROMPT, REDUCE_PROMPT, RETRY_FEEDBACK_PROMPT, apply_template, build_file_tree
 from ..retry import RetryConfig, execute_with_retry
@@ -143,7 +143,7 @@ class Swarm:
         agent: Optional[AgentConfig] = None,
         mcp_servers: Optional[Dict[str, Any]] = None,
         skills: Optional[List[str]] = None,
-        composio: Optional[ComposioSetup] = None,
+        integrations: Optional[IntegrationsSetup] = None,
         best_of: Optional[BestOfConfig] = None,
         verify: Optional[VerifyConfig] = None,
         retry: Optional[RetryConfig] = None,
@@ -162,7 +162,7 @@ class Swarm:
             agent: Optional agent override
             mcp_servers: Optional MCP servers override (replaces swarm default)
             skills: Optional skills override (replaces swarm default)
-            composio: Optional Composio override (replaces swarm default)
+            integrations: Optional Integrations override (replaces swarm default)
             best_of: Optional bestOf configuration for N candidates + judge per item (mutually exclusive with verify)
             verify: Optional verify configuration for LLM-as-judge quality verification with retry (mutually exclusive with best_of)
             retry: Optional retry configuration for failed items
@@ -179,7 +179,7 @@ class Swarm:
         retry = retry or self.config.retry
         resolved_mcp_servers = mcp_servers if mcp_servers is not None else self.config.mcp_servers
         resolved_skills = skills if skills is not None else self.config.skills
-        resolved_composio = composio if composio is not None else self.config.composio
+        resolved_integrations = integrations if integrations is not None else self.config.integrations
 
         # best_of and verify are mutually exclusive
         if best_of and verify:
@@ -190,7 +190,7 @@ class Swarm:
             if best_of:
                 return await self._execute_map_item_with_best_of(
                     item, prompt, index, operation_id, system_prompt, schema,
-                    schema_options, agent, resolved_mcp_servers, resolved_skills, resolved_composio, best_of, retry, timeout,
+                    schema_options, agent, resolved_mcp_servers, resolved_skills, resolved_integrations, best_of, retry, timeout,
                     name, _pipeline_context
                 )
 
@@ -198,7 +198,7 @@ class Swarm:
             if verify:
                 return await self._execute_map_item_with_verify(
                     item, prompt, index, operation_id, system_prompt, schema,
-                    schema_options, agent, resolved_mcp_servers, resolved_skills, resolved_composio, verify, timeout, retry,
+                    schema_options, agent, resolved_mcp_servers, resolved_skills, resolved_integrations, verify, timeout, retry,
                     name, _pipeline_context
                 )
 
@@ -207,7 +207,7 @@ class Swarm:
                 return await execute_with_retry(
                     lambda attempt: self._execute_map_item(
                         item, prompt, index, operation_id, system_prompt, schema,
-                        schema_options, agent, resolved_mcp_servers, resolved_skills, resolved_composio, timeout, attempt,
+                        schema_options, agent, resolved_mcp_servers, resolved_skills, resolved_integrations, timeout, attempt,
                         name, _pipeline_context
                     ),
                     retry,
@@ -215,7 +215,7 @@ class Swarm:
                 )
             return await self._execute_map_item(
                 item, prompt, index, operation_id, system_prompt, schema,
-                schema_options, agent, resolved_mcp_servers, resolved_skills, resolved_composio, timeout, 1,
+                schema_options, agent, resolved_mcp_servers, resolved_skills, resolved_integrations, timeout, 1,
                 name, _pipeline_context
             )
 
@@ -236,7 +236,7 @@ class Swarm:
         agent: Optional[AgentConfig] = None,
         mcp_servers: Optional[Dict[str, Any]] = None,
         skills: Optional[List[str]] = None,
-        composio: Optional[ComposioSetup] = None,
+        integrations: Optional[IntegrationsSetup] = None,
         verify: Optional[VerifyConfig] = None,
         retry: Optional[RetryConfig] = None,
         timeout_ms: Optional[int] = None,
@@ -265,7 +265,7 @@ class Swarm:
             agent: Optional agent override
             mcp_servers: Optional MCP servers override (replaces swarm default)
             skills: Optional skills override (replaces swarm default)
-            composio: Optional Composio override (replaces swarm default)
+            integrations: Optional Integrations override (replaces swarm default)
             verify: Optional verify configuration for LLM-as-judge quality verification with retry
             retry: Optional retry configuration for failed items
             timeout_ms: Optional timeout in ms
@@ -281,14 +281,14 @@ class Swarm:
         retry = retry or self.config.retry
         resolved_mcp_servers = mcp_servers if mcp_servers is not None else self.config.mcp_servers
         resolved_skills = skills if skills is not None else self.config.skills
-        resolved_composio = composio if composio is not None else self.config.composio
+        resolved_integrations = integrations if integrations is not None else self.config.integrations
 
         async def process_item(item: ItemInput, index: int) -> SwarmResult:
             # verify has internal retry loop with feedback - don't double-wrap with retry
             if verify:
                 return await self._execute_filter_item_with_verify(
                     item, prompt, index, operation_id, system_prompt, schema,
-                    schema_options, agent, resolved_mcp_servers, resolved_skills, resolved_composio, verify, timeout, retry,
+                    schema_options, agent, resolved_mcp_servers, resolved_skills, resolved_integrations, verify, timeout, retry,
                     name, _pipeline_context
                 )
 
@@ -297,7 +297,7 @@ class Swarm:
                 return await execute_with_retry(
                     lambda attempt: self._execute_filter_item(
                         item, prompt, index, operation_id, system_prompt, schema,
-                        schema_options, agent, resolved_mcp_servers, resolved_skills, resolved_composio, timeout, attempt,
+                        schema_options, agent, resolved_mcp_servers, resolved_skills, resolved_integrations, timeout, attempt,
                         name, _pipeline_context
                     ),
                     retry,
@@ -305,7 +305,7 @@ class Swarm:
                 )
             return await self._execute_filter_item(
                 item, prompt, index, operation_id, system_prompt, schema,
-                schema_options, agent, resolved_mcp_servers, resolved_skills, resolved_composio, timeout, 1,
+                schema_options, agent, resolved_mcp_servers, resolved_skills, resolved_integrations, timeout, 1,
                 name, _pipeline_context
             )
 
@@ -356,7 +356,7 @@ class Swarm:
         agent: Optional[AgentConfig] = None,
         mcp_servers: Optional[Dict[str, Any]] = None,
         skills: Optional[List[str]] = None,
-        composio: Optional[ComposioSetup] = None,
+        integrations: Optional[IntegrationsSetup] = None,
         verify: Optional[VerifyConfig] = None,
         retry: Optional[RetryConfig] = None,
         timeout_ms: Optional[int] = None,
@@ -374,7 +374,7 @@ class Swarm:
             agent: Optional agent override
             mcp_servers: Optional MCP servers override (replaces swarm default)
             skills: Optional skills override (replaces swarm default)
-            composio: Optional Composio override (replaces swarm default)
+            integrations: Optional Integrations override (replaces swarm default)
             verify: Optional verify configuration for LLM-as-judge quality verification with retry
             retry: Optional retry configuration
             timeout_ms: Optional timeout in ms
@@ -390,7 +390,7 @@ class Swarm:
         retry = retry or self.config.retry
         resolved_mcp_servers = mcp_servers if mcp_servers is not None else self.config.mcp_servers
         resolved_skills = skills if skills is not None else self.config.skills
-        resolved_composio = composio if composio is not None else self.config.composio
+        resolved_integrations = integrations if integrations is not None else self.config.integrations
 
         # Collect files and track original indices
         all_files: List[FileMap] = []
@@ -458,7 +458,7 @@ class Swarm:
                     agent=agent,
                     mcp_servers=resolved_mcp_servers,
                     skills=resolved_skills,
-                    composio=resolved_composio,
+                    integrations=resolved_integrations,
                     tag_prefix=tag_prefix,
                     timeout=timeout,
                     observability=observability,
@@ -496,7 +496,7 @@ class Swarm:
                 verify_config=verify,
                 mcp_servers=resolved_mcp_servers,
                 skills=resolved_skills,
-                composio=resolved_composio,
+                integrations=resolved_integrations,
                 timeout=timeout,
                 system_prompt=final_system_prompt,
                 schema=schema,
@@ -561,13 +561,13 @@ class Swarm:
         timeout = timeout_ms or self.config.timeout_ms
         input_files = self._get_files(item)
 
-        # Resolve MCP servers, skills, and composio for candidates and judge
+        # Resolve MCP servers, skills, and integrations for candidates and judge
         candidate_mcp_servers = config.mcp_servers if config.mcp_servers is not None else self.config.mcp_servers
         judge_mcp_servers = config.judge_mcp_servers if config.judge_mcp_servers is not None else config.mcp_servers if config.mcp_servers is not None else self.config.mcp_servers
         candidate_skills = config.skills if config.skills is not None else self.config.skills
         judge_skills = config.judge_skills if config.judge_skills is not None else config.skills if config.skills is not None else self.config.skills
-        candidate_composio = config.composio if config.composio is not None else self.config.composio
-        judge_composio = config.judge_composio if config.judge_composio is not None else config.composio if config.composio is not None else self.config.composio
+        candidate_integrations = config.integrations if config.integrations is not None else self.config.integrations
+        judge_integrations = config.judge_integrations if config.judge_integrations is not None else config.integrations if config.integrations is not None else self.config.integrations
 
         # Run candidates (semaphore acquired inside _execute_best_of_candidate)
         async def run_candidate(candidate_index: int) -> SwarmResult:
@@ -581,7 +581,7 @@ class Swarm:
                         config=config,
                         mcp_servers=candidate_mcp_servers,
                         skills=candidate_skills,
-                        composio=candidate_composio,
+                        integrations=candidate_integrations,
                         system_prompt=system_prompt,
                         schema=schema,
                         schema_options=schema_options,
@@ -602,7 +602,7 @@ class Swarm:
                     config=config,
                     mcp_servers=candidate_mcp_servers,
                     skills=candidate_skills,
-                    composio=candidate_composio,
+                    integrations=candidate_integrations,
                     system_prompt=system_prompt,
                     schema=schema,
                     schema_options=schema_options,
@@ -638,7 +638,7 @@ class Swarm:
                     config=config,
                     mcp_servers=judge_mcp_servers,
                     skills=judge_skills,
-                    composio=judge_composio,
+                    integrations=judge_integrations,
                     timeout=timeout,
                     system_prompt=system_prompt,
                     schema=schema,
@@ -657,7 +657,7 @@ class Swarm:
                 config=config,
                 mcp_servers=judge_mcp_servers,
                 skills=judge_skills,
-                composio=judge_composio,
+                integrations=judge_integrations,
                 timeout=timeout,
                 system_prompt=system_prompt,
                 schema=schema,
@@ -722,7 +722,7 @@ class Swarm:
         agent: Optional[AgentConfig],
         mcp_servers: Optional[Dict[str, Any]],
         skills: Optional[List[str]],
-        composio: Optional[ComposioSetup],
+        integrations: Optional[IntegrationsSetup],
         tag_prefix: str,
         timeout: int,
         observability: Optional[Dict[str, Any]] = None,
@@ -758,7 +758,7 @@ class Swarm:
             'context': _encode_files_for_transport(context) if context else None,
             'mcp_servers': mcp_servers,
             'skills': skills,
-            'composio': composio.to_dict() if composio else None,
+            'integrations': integrations.to_dict() if integrations else None,
             'observability': observability,
         })
 
@@ -855,7 +855,7 @@ class Swarm:
         agent: Optional[AgentConfig],
         mcp_servers: Optional[Dict[str, Any]],
         skills: Optional[List[str]],
-        composio: Optional[ComposioSetup],
+        integrations: Optional[IntegrationsSetup],
         timeout: int,
         attempt: int = 1,
         name: Optional[str] = None,
@@ -904,7 +904,7 @@ class Swarm:
                 agent=agent,
                 mcp_servers=mcp_servers,
                 skills=skills,
-                composio=composio,
+                integrations=integrations,
                 tag_prefix=tag_prefix,
                 timeout=timeout,
                 observability=observability,
@@ -936,7 +936,7 @@ class Swarm:
         agent: Optional[AgentConfig],
         mcp_servers: Optional[Dict[str, Any]],
         skills: Optional[List[str]],
-        composio: Optional[ComposioSetup],
+        integrations: Optional[IntegrationsSetup],
         best_of_config: BestOfConfig,
         retry: Optional[RetryConfig],
         timeout: int,
@@ -970,13 +970,13 @@ class Swarm:
                 )
             )
 
-        # Resolve MCP servers, skills, and composio: bestOf config overrides operation-level
+        # Resolve MCP servers, skills, and integrations: bestOf config overrides operation-level
         candidate_mcp_servers = best_of_config.mcp_servers if best_of_config.mcp_servers is not None else mcp_servers
         judge_mcp_servers = best_of_config.judge_mcp_servers if best_of_config.judge_mcp_servers is not None else best_of_config.mcp_servers if best_of_config.mcp_servers is not None else mcp_servers
         candidate_skills = best_of_config.skills if best_of_config.skills is not None else skills
         judge_skills = best_of_config.judge_skills if best_of_config.judge_skills is not None else best_of_config.skills if best_of_config.skills is not None else skills
-        candidate_composio = best_of_config.composio if best_of_config.composio is not None else composio
-        judge_composio = best_of_config.judge_composio if best_of_config.judge_composio is not None else best_of_config.composio if best_of_config.composio is not None else composio
+        candidate_integrations = best_of_config.integrations if best_of_config.integrations is not None else integrations
+        judge_integrations = best_of_config.judge_integrations if best_of_config.judge_integrations is not None else best_of_config.integrations if best_of_config.integrations is not None else integrations
 
         # Run candidates in parallel (semaphore acquired inside _execute_best_of_candidate)
         async def run_candidate(candidate_index: int) -> SwarmResult:
@@ -990,7 +990,7 @@ class Swarm:
                         config=best_of_config,
                         mcp_servers=candidate_mcp_servers,
                         skills=candidate_skills,
-                        composio=candidate_composio,
+                        integrations=candidate_integrations,
                         system_prompt=system_prompt,
                         schema=schema,
                         schema_options=schema_options,
@@ -1012,7 +1012,7 @@ class Swarm:
                     config=best_of_config,
                     mcp_servers=candidate_mcp_servers,
                     skills=candidate_skills,
-                    composio=candidate_composio,
+                    integrations=candidate_integrations,
                     system_prompt=system_prompt,
                     schema=schema,
                     schema_options=schema_options,
@@ -1047,7 +1047,7 @@ class Swarm:
                     config=best_of_config,
                     mcp_servers=judge_mcp_servers,
                     skills=judge_skills,
-                    composio=judge_composio,
+                    integrations=judge_integrations,
                     timeout=timeout,
                     system_prompt=system_prompt,
                     schema=schema,
@@ -1067,7 +1067,7 @@ class Swarm:
                 config=best_of_config,
                 mcp_servers=judge_mcp_servers,
                 skills=judge_skills,
-                composio=judge_composio,
+                integrations=judge_integrations,
                 timeout=timeout,
                 system_prompt=system_prompt,
                 schema=schema,
@@ -1133,7 +1133,7 @@ class Swarm:
         agent: Optional[AgentConfig],
         mcp_servers: Optional[Dict[str, Any]],
         skills: Optional[List[str]],
-        composio: Optional[ComposioSetup],
+        integrations: Optional[IntegrationsSetup],
         verify_config: VerifyConfig,
         timeout: int,
         retry: Optional[RetryConfig] = None,
@@ -1182,7 +1182,7 @@ class Swarm:
                     agent=agent,
                     mcp_servers=mcp_servers,
                     skills=skills,
-                    composio=composio,
+                    integrations=integrations,
                     tag_prefix=tag_prefix,
                     timeout=timeout,
                     observability=observability,
@@ -1210,7 +1210,7 @@ class Swarm:
             verify_config=verify_config,
             mcp_servers=mcp_servers,
             skills=skills,
-            composio=composio,
+            integrations=integrations,
             timeout=timeout,
             system_prompt=system_prompt,
             schema=schema,
@@ -1238,7 +1238,7 @@ class Swarm:
         agent: Optional[AgentConfig],
         mcp_servers: Optional[Dict[str, Any]],
         skills: Optional[List[str]],
-        composio: Optional[ComposioSetup],
+        integrations: Optional[IntegrationsSetup],
         timeout: int,
         attempt: int = 1,
         name: Optional[str] = None,
@@ -1275,7 +1275,7 @@ class Swarm:
                 agent=agent,
                 mcp_servers=mcp_servers,
                 skills=skills,
-                composio=composio,
+                integrations=integrations,
                 tag_prefix=tag_prefix,
                 timeout=timeout,
                 observability=observability,
@@ -1308,7 +1308,7 @@ class Swarm:
         agent: Optional[AgentConfig],
         mcp_servers: Optional[Dict[str, Any]],
         skills: Optional[List[str]],
-        composio: Optional[ComposioSetup],
+        integrations: Optional[IntegrationsSetup],
         verify_config: VerifyConfig,
         timeout: int,
         retry: Optional[RetryConfig] = None,
@@ -1345,7 +1345,7 @@ class Swarm:
                     agent=agent,
                     mcp_servers=mcp_servers,
                     skills=skills,
-                    composio=composio,
+                    integrations=integrations,
                     tag_prefix=tag_prefix,
                     timeout=timeout,
                     observability=observability,
@@ -1374,7 +1374,7 @@ class Swarm:
             verify_config=verify_config,
             mcp_servers=mcp_servers,
             skills=skills,
-            composio=composio,
+            integrations=integrations,
             timeout=timeout,
             system_prompt=system_prompt,
             schema=schema,
@@ -1398,7 +1398,7 @@ class Swarm:
         verify_config: VerifyConfig,
         mcp_servers: Optional[Dict[str, Any]],
         skills: Optional[List[str]],
-        composio: Optional[ComposioSetup],
+        integrations: Optional[IntegrationsSetup],
         timeout: int,
         system_prompt: Optional[str],
         schema: Optional[SchemaType],
@@ -1432,10 +1432,10 @@ class Swarm:
         Returns:
             Result with verify info attached
         """
-        # Resolve verifier MCP servers, skills, and composio
+        # Resolve verifier MCP servers, skills, and integrations
         verifier_mcp_servers = verify_config.verifier_mcp_servers if verify_config.verifier_mcp_servers is not None else mcp_servers
         verifier_skills = verify_config.verifier_skills if verify_config.verifier_skills is not None else skills
-        verifier_composio = verify_config.verifier_composio if verify_config.verifier_composio is not None else composio
+        verifier_integrations = verify_config.verifier_integrations if verify_config.verifier_integrations is not None else integrations
         max_attempts = verify_config.max_attempts
 
         current_prompt = original_prompt
@@ -1481,7 +1481,7 @@ class Swarm:
                         config=verify_config,
                         mcp_servers=verifier_mcp_servers,
                         skills=verifier_skills,
-                        composio=verifier_composio,
+                        integrations=verifier_integrations,
                         timeout=timeout,
                         system_prompt=system_prompt,
                         schema=schema,
@@ -1506,7 +1506,7 @@ class Swarm:
                     config=verify_config,
                     mcp_servers=verifier_mcp_servers,
                     skills=verifier_skills,
-                    composio=verifier_composio,
+                    integrations=verifier_integrations,
                     timeout=timeout,
                     system_prompt=system_prompt,
                     schema=schema,
@@ -1588,7 +1588,7 @@ class Swarm:
         config: VerifyConfig,
         mcp_servers: Optional[Dict[str, Any]],
         skills: Optional[List[str]],
-        composio: Optional[ComposioSetup],
+        integrations: Optional[IntegrationsSetup],
         timeout: int,
         system_prompt: Optional[str],
         schema: Optional[SchemaType],
@@ -1655,7 +1655,7 @@ class Swarm:
                 agent=config.verifier_agent,
                 mcp_servers=mcp_servers,
                 skills=skills,
-                composio=composio,
+                integrations=integrations,
                 tag_prefix=tag_prefix,
                 timeout=timeout,
                 observability=observability,
@@ -1799,7 +1799,7 @@ class Swarm:
         config: BestOfConfig,
         mcp_servers: Optional[Dict[str, Any]],
         skills: Optional[List[str]],
-        composio: Optional[ComposioSetup],
+        integrations: Optional[IntegrationsSetup],
         system_prompt: Optional[str],
         schema: Optional[SchemaType],
         schema_options: Optional[Dict[str, Any]],
@@ -1844,7 +1844,7 @@ class Swarm:
                 agent=candidate_agent,
                 mcp_servers=mcp_servers,
                 skills=skills,
-                composio=composio,
+                integrations=integrations,
                 tag_prefix=tag_prefix,
                 timeout=timeout,
                 observability=observability,
@@ -1873,7 +1873,7 @@ class Swarm:
         config: BestOfConfig,
         mcp_servers: Optional[Dict[str, Any]],
         skills: Optional[List[str]],
-        composio: Optional[ComposioSetup],
+        integrations: Optional[IntegrationsSetup],
         timeout: int,
         system_prompt: Optional[str],
         schema: Optional[SchemaType],
@@ -1944,7 +1944,7 @@ class Swarm:
                 agent=config.judge_agent,
                 mcp_servers=mcp_servers,
                 skills=skills,
-                composio=composio,
+                integrations=integrations,
                 tag_prefix=tag_prefix,
                 timeout=timeout,
                 observability=observability,

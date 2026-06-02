@@ -1,11 +1,11 @@
 #!/usr/bin/env npx tsx
 /**
- * Swarm CLI Agent + Composio Integrations
+ * Swarm CLI Agent + Managed Integrations
  *
- * AI agent with access to 500+ external services via Composio Tool Router.
+ * AI agent with access to external services via Evolve-managed integrations.
  * Can send emails, post to Slack, create GitHub issues, update Notion, and more.
  *
- * Run: npx tsx swarm.ts
+ * Run: npm start
  */
 import { Evolve, readLocalDir, saveLocalDir } from "@evolvingmachines/sdk";
 import { mkdirSync } from "fs";
@@ -19,11 +19,10 @@ import { makeRenderer, readPrompt, console_, printPanel } from "./ui";
 // ─────────────────────────────────────────────────────────────
 
 const USER_ID = "swarm-user-002";
-// Choose from 1000+ integrations: https://docs.composio.dev/toolkits/introduction
-const ENABLED_TOOLKITS = ["gmail"];
+const ENABLED_APPS = ["gmail"];
 
 const SYSTEM_PROMPT = `Your name is Manus Evolve, a powerful autonomous AI agent.
-You can execute code, manage files, and take actions across external services via Composio MCP.
+You can execute code, manage files, and take actions across external services via managed integrations.
 `;
 
 // ─────────────────────────────────────────────────────────────
@@ -33,17 +32,23 @@ You can execute code, manage files, and take actions across external services vi
 const agent = new Evolve()
   .withAgent({ type: "claude", model: "sonnet" })
   .withSystemPrompt(SYSTEM_PROMPT)
-  .withComposio(USER_ID, { toolkits: ENABLED_TOOLKITS })
-  .withSessionTagPrefix("swarm-composio-ts");
+  .withIntegrations({ userId: USER_ID, apps: ENABLED_APPS })
+  .withSessionTagPrefix("swarm-integrations-ts");
 
 // ─────────────────────────────────────────────────────────────
 
 async function main() {
-  // Pre-authenticate Composio services
-  const status = await Evolve.composio.status(USER_ID) as Record<string, boolean>;
-  for (const toolkit of ENABLED_TOOLKITS.filter(t => !status[t])) {
-    const { url } = await Evolve.composio.auth(USER_ID, toolkit);
-    console_.print(`\n${chalk.cyan(toolkit)}: ${url}`);
+  // Pre-authenticate managed services.
+  for (const app of ENABLED_APPS) {
+    const accounts = await Evolve.integrations.accounts.list({
+      userIds: [USER_ID],
+      app,
+      statuses: ["ACTIVE"],
+    });
+    if (accounts.length > 0) continue;
+
+    const { url } = await Evolve.integrations.auth({ userId: USER_ID, app });
+    console_.print(`\n${chalk.cyan(app)}: ${url}`);
     console_.print(chalk.dim("Press Enter after authenticating..."));
     await new Promise<void>(r => process.stdin.once("data", () => r()));
   }
@@ -53,7 +58,7 @@ async function main() {
 
   console_.print();
   printPanel(
-    `${chalk.bold.cyan("Swarm")} + ${chalk.bold.magenta("Composio")}\n${chalk.dim("AI Agent with external integrations")}`,
+    `${chalk.bold.cyan("Swarm")} + ${chalk.bold.magenta("Integrations")}\n${chalk.dim("AI Agent with external integrations")}`,
     { borderColor: "cyan" }
   );
   console_.print();
