@@ -95,7 +95,7 @@ async function testDroidPluginInstallCommands(): Promise<void> {
 
   const { provider, commands } = createRecordingProvider();
   const kit = new Evolve()
-    .withAgent({ type: "droid", apiKey: "evolve-key" })
+    .withAgent({ type: "droid", providerApiKey: "provider-key" })
     .withPlugins({
       marketplace: "https://github.com/Factory-AI/factory-plugins",
       plugin: "droid-control@factory-plugins",
@@ -112,8 +112,8 @@ async function testDroidPluginInstallCommands(): Promise<void> {
 async function testDefaultAgentUsesClaudeInstaller(): Promise<void> {
   console.log("\n[2] default agent: plugins target claude");
 
-  const previousKey = process.env.EVOLVE_API_KEY;
-  process.env.EVOLVE_API_KEY = "evolve-key";
+  const previousKey = process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = "provider-key";
   try {
     const { provider, commands } = createRecordingProvider();
     const kit = new Evolve().withPlugins({
@@ -127,9 +127,9 @@ async function testDefaultAgentUsesClaudeInstaller(): Promise<void> {
     assertIncludes(commands[1], "claude plugin install 'commit-commands@anthropics-claude-code' --scope user", "default agent uses claude plugin install command");
   } finally {
     if (previousKey === undefined) {
-      delete process.env.EVOLVE_API_KEY;
+      delete process.env.ANTHROPIC_API_KEY;
     } else {
-      process.env.EVOLVE_API_KEY = previousKey;
+      process.env.ANTHROPIC_API_KEY = previousKey;
     }
   }
 }
@@ -139,7 +139,7 @@ async function testGeminiExtensionCommand(): Promise<void> {
 
   const { provider, commands } = createRecordingProvider();
   const kit = new Evolve()
-    .withAgent({ type: "gemini", apiKey: "evolve-key" })
+    .withAgent({ type: "gemini", providerApiKey: "provider-key" })
     .withPlugins({
       source: "https://github.com/org/gemini-extension",
       ref: "main",
@@ -163,7 +163,7 @@ async function testCodexMarketplaceCommand(): Promise<void> {
 
   const { provider, commands } = createRecordingProvider();
   const kit = new Evolve()
-    .withAgent({ type: "codex", apiKey: "evolve-key" })
+    .withAgent({ type: "codex", providerApiKey: "provider-key" })
     .withPlugins({
       marketplace: "https://github.com/org/codex-plugins.git",
       ref: "main",
@@ -184,7 +184,7 @@ async function testInvalidShapeFailsForSelectedAgent(): Promise<void> {
 
   const { provider } = createRecordingProvider();
   const kit = new Evolve()
-    .withAgent({ type: "droid", apiKey: "evolve-key" })
+    .withAgent({ type: "droid", providerApiKey: "provider-key" })
     .withPlugins({ source: "https://github.com/org/gemini-extension" });
 
   try {
