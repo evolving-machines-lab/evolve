@@ -361,7 +361,7 @@ class IntegrationsConfig:
     Args:
         apps: Apps to expose to the agent (e.g., ["github", "gmail"])
         tools: Per-app tool filtering
-        accounts: Pin connected accounts by account ID or alias
+        accounts: Pin connected accounts by account ID or account label
         keys: API keys for apps that use API-key auth
         auth_configs: Custom auth config IDs per app
     """
@@ -394,7 +394,7 @@ class IntegrationsSetup:
             or your app's stable end-user ID for per-user accounts.
         apps: Apps to expose to the agent
         tools: Per-app tool filtering
-        accounts: Pin connected accounts by account ID or alias
+        accounts: Pin connected accounts by account ID or account label
         keys: API keys for apps that use API-key auth
         auth_configs: Custom auth config IDs per app
     """

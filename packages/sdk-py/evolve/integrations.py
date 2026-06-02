@@ -21,7 +21,7 @@ class IntegrationAccount:
     status: str
     app_name: Optional[str] = None
     app_icon: Optional[str] = None
-    alias: Optional[str] = None
+    account_label: Optional[str] = None
     account_id: Optional[str] = None
 
 
@@ -30,7 +30,7 @@ class IntegrationAccountUpdateResult:
     """Result from updating a connected account."""
     success: bool
     account_id: str
-    alias: Optional[str] = None
+    account_label: Optional[str] = None
 
 
 @dataclass
@@ -44,7 +44,7 @@ async def auth(
     *,
     user_id: str,
     app: str,
-    alias: Optional[str] = None,
+    account_label: Optional[str] = None,
     api_key: Optional[str] = None,
     dashboard_url: Optional[str] = None,
 ) -> IntegrationAuthResult:
@@ -53,8 +53,8 @@ async def auth(
     try:
         await bridge.start()
         params: Dict[str, object] = {'user_id': user_id, 'app': app}
-        if alias is not None:
-            params['alias'] = alias
+        if account_label is not None:
+            params['account_label'] = account_label
         if api_key:
             params['api_key'] = api_key
         if dashboard_url:
@@ -99,7 +99,7 @@ class _Accounts:
                     status=account['status'],
                     app_name=account.get('app_name'),
                     app_icon=account.get('app_icon'),
-                    alias=account.get('alias'),
+                    account_label=account.get('account_label'),
                     account_id=account.get('account_id'),
                 )
                 for account in response['accounts']
@@ -111,17 +111,17 @@ class _Accounts:
         self,
         *,
         account_id: str,
-        alias: Optional[str] = None,
+        account_label: Optional[str] = None,
         api_key: Optional[str] = None,
         dashboard_url: Optional[str] = None,
     ) -> IntegrationAccountUpdateResult:
-        """Set, update, or clear a connected account alias."""
+        """Set, update, or clear a connected account label."""
         bridge = BridgeManager()
         try:
             await bridge.start()
             params: Dict[str, object] = {'account_id': account_id}
-            if alias is not None:
-                params['alias'] = alias
+            if account_label is not None:
+                params['account_label'] = account_label
             if api_key:
                 params['api_key'] = api_key
             if dashboard_url:
@@ -130,7 +130,7 @@ class _Accounts:
             return IntegrationAccountUpdateResult(
                 success=response['success'],
                 account_id=response['account_id'],
-                alias=response.get('alias'),
+                account_label=response.get('account_label'),
             )
         finally:
             await bridge.stop()

@@ -871,7 +871,7 @@ export class EvolveAdapter {
     const result = await Evolve.integrations.auth({
       userId: params.user_id,
       app: params.app,
-      alias: params.alias,
+      accountLabel: params.account_label,
       apiKey: params.api_key,
       dashboardUrl: params.dashboard_url,
     });
@@ -895,7 +895,7 @@ export class EvolveAdapter {
         app: account.app,
         app_name: account.appName,
         app_icon: account.appIcon,
-        alias: account.alias,
+        account_label: account.accountLabel,
         status: account.status,
         account_id: account.accountId,
       })),
@@ -905,14 +905,14 @@ export class EvolveAdapter {
   async integrationsAccountUpdate(params: IntegrationsAccountUpdateParams): Promise<IntegrationsAccountUpdateResponse> {
     const result = await Evolve.integrations.accounts.update({
       accountId: params.account_id,
-      alias: params.alias,
+      accountLabel: params.account_label,
       apiKey: params.api_key,
       dashboardUrl: params.dashboard_url,
     });
     return {
       success: result.success,
       account_id: result.accountId,
-      alias: result.alias,
+      account_label: result.accountLabel,
     };
   }
 

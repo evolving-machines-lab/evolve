@@ -543,7 +543,7 @@ For an application with end users, pass your stable SDK user ID. Evolve namespac
 const link = await Evolve.integrations.auth({
     userId: "customer_123",
     app: "gmail",
-    alias: "work",
+    accountLabel: "work",
 });
 
 // Show link.url to the user.
@@ -565,10 +565,10 @@ const accounts = await Evolve.integrations.accounts.list({
 
 await Evolve.integrations.accounts.update({
     accountId: "account_id_from_list",
-    alias: "work",
+    accountLabel: "work",
 });
 
-// If the user connected multiple Gmail accounts, choose an alias or account ID returned by accounts.list().
+// If the user connected multiple Gmail accounts, choose an account label or account ID returned by accounts.list().
 const evolve = new Evolve()
     .withIntegrations({
         userId: "customer_123",
@@ -601,7 +601,7 @@ interface IntegrationsSetup {
     userId: string;            // "root" or your stable SDK user ID
     apps: string[];
     tools?: Record<string, IntegrationToolsFilter>;
-    accounts?: Record<string, string[]>; // app -> account aliases or account IDs
+    accounts?: Record<string, string[]>; // app -> account labels or account IDs
     authConfigs?: Record<string, string>; // app -> custom auth config ID
     keys?: Record<string, string>;        // app -> API key, requires authConfigs[app]
 }

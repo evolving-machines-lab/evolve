@@ -682,7 +682,7 @@ export interface IntegrationsConfig {
   tools?: Record<string, IntegrationToolsFilter>;
 
   /**
-   * Pin specific connected accounts by account ID or alias.
+   * Pin specific connected accounts by account ID or account label.
    */
   accounts?: Record<string, string[]>;
 

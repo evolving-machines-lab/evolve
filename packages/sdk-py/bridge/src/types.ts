@@ -169,7 +169,7 @@ export interface IntegrationsSetup {
 export interface IntegrationsAuthParams {
   user_id: string;
   app: string;
-  alias?: string;
+  account_label?: string;
   api_key?: string;
   dashboard_url?: string;
 }
@@ -190,7 +190,7 @@ export interface IntegrationsDisconnectParams {
 
 export interface IntegrationsAccountUpdateParams {
   account_id: string;
-  alias?: string;
+  account_label?: string;
   api_key?: string;
   dashboard_url?: string;
 }
@@ -212,7 +212,7 @@ export interface IntegrationsDisconnectResponse {
 export interface IntegrationsAccountUpdateResponse {
   success: boolean;
   account_id: string;
-  alias?: string;
+  account_label?: string;
 }
 
 export interface IntegrationAccountInfo {
@@ -220,7 +220,7 @@ export interface IntegrationAccountInfo {
   app: string;
   app_name?: string;
   app_icon?: string;
-  alias?: string;
+  account_label?: string;
   status: string;
   account_id?: string;
 }

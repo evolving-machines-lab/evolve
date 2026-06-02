@@ -15,7 +15,7 @@ export interface IntegrationRuntimeSetup extends IntegrationsSetup {
 export interface IntegrationAuthParams {
   userId: string;
   app: string;
-  alias?: string;
+  accountLabel?: string;
   apiKey?: string;
   dashboardUrl?: string;
 }
@@ -35,7 +35,7 @@ export interface IntegrationAccount {
   app: string;
   appName?: string;
   appIcon?: string;
-  alias?: string;
+  accountLabel?: string;
   status: string;
   accountId?: string;
   updatedAt?: string;
@@ -51,7 +51,7 @@ export interface IntegrationAccountListParams {
 
 export interface IntegrationAccountUpdateParams {
   accountId: string;
-  alias?: string;
+  accountLabel?: string;
   apiKey?: string;
   dashboardUrl?: string;
 }
@@ -65,7 +65,7 @@ export interface IntegrationAccountDeleteParams {
 export interface IntegrationAccountUpdateResult {
   success: boolean;
   accountId: string;
-  alias?: string;
+  accountLabel?: string;
 }
 
 export interface IntegrationAccountDeleteResult {
@@ -157,7 +157,7 @@ async function createIntegrationAuthLink(params: IntegrationAuthParams): Promise
     body: JSON.stringify({
       userId: normalizeUserId(params.userId),
       app: params.app,
-      alias: params.alias,
+      accountLabel: params.accountLabel,
     }),
     signal: AbortSignal.timeout(30_000),
   });
@@ -196,7 +196,7 @@ async function listIntegrationAccounts(params: IntegrationAccountListParams): Pr
     app: String(connection.app ?? ""),
     appName: typeof connection.appName === "string" ? connection.appName : undefined,
     appIcon: typeof connection.appIcon === "string" ? connection.appIcon : undefined,
-    alias: typeof connection.alias === "string" ? connection.alias : undefined,
+    accountLabel: typeof connection.accountLabel === "string" ? connection.accountLabel : undefined,
     status: String(connection.status ?? ""),
     accountId: typeof connection.accountId === "string" ? connection.accountId : undefined,
     updatedAt: typeof connection.updatedAt === "string" ? connection.updatedAt : undefined,
@@ -213,7 +213,7 @@ async function updateIntegrationAccount(params: IntegrationAccountUpdateParams):
     },
     body: JSON.stringify({
       accountId: params.accountId,
-      alias: params.alias,
+      accountLabel: params.accountLabel,
     }),
     signal: AbortSignal.timeout(30_000),
   });

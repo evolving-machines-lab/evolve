@@ -85,7 +85,7 @@ async function testSessionSetupForwardsAccountPinning(): Promise<void> {
     const body = JSON.parse(String(call.init?.body));
     assertEqual(body.userId, "customer_123", "setup forwards SDK user id");
     assertEqual(body.apps[0], "gmail", "setup forwards apps");
-    assertEqual(body.accounts.gmail[0], "work", "setup forwards account alias");
+    assertEqual(body.accounts.gmail[0], "work", "setup forwards account label");
     assertEqual(body.keys.github, "github-token", "setup forwards API-key auth");
     assertEqual(body.authConfigs.github, "ac_github", "setup forwards custom auth config");
   } finally {

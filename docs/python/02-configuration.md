@@ -547,7 +547,7 @@ from evolve import Evolve, IntegrationsSetup
 link = await Evolve.integrations.auth(
     user_id='customer_123',
     app='gmail',
-    alias='work',
+    account_label='work',
 )
 
 evolve = Evolve(
@@ -569,10 +569,10 @@ accounts = await Evolve.integrations.accounts.list(
 
 await Evolve.integrations.accounts.update(
     account_id='account_id_from_list',
-    alias='work',
+    account_label='work',
 )
 
-# If the user connected multiple Gmail accounts, choose an alias or account ID returned by accounts.list().
+# If the user connected multiple Gmail accounts, choose an account label or account ID returned by accounts.list().
 evolve = Evolve(
     integrations=IntegrationsSetup(
         user_id='customer_123',
@@ -608,7 +608,7 @@ class IntegrationsSetup:
     user_id: str  # "root" or your stable SDK user ID
     apps: List[str]
     tools: Optional[Dict[str, IntegrationToolsFilter]] = None
-    accounts: Optional[Dict[str, List[str]]] = None  # app -> account aliases or account IDs
+    accounts: Optional[Dict[str, List[str]]] = None  # app -> account labels or account IDs
     auth_configs: Optional[Dict[str, str]] = None  # app -> custom auth config ID
     keys: Optional[Dict[str, str]] = None          # app -> API key, requires auth_configs[app]
 
