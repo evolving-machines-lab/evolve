@@ -3,7 +3,7 @@
 - [Quickstart](./quickstart) - Minimal examples (8 scripts)
 - [CLI Agent](./cli-agent) - Sandboxed CLI agent with browser automation
 - [Browser Use](./browser-use) - Web automation with Playwright
-- [Composio](./composio) - 500+ integrations (Gmail, Slack, GitHub, etc.)
+- [Integrations](./integrations) - Managed integrations (Gmail, Slack, GitHub, etc.)
 - [Agent Builder](./agent-builder) - Build custom agents
 - [HN Time Capsule](./hn-time-capsule) - Scrape & analyze 200 Hacker News articles → HTML dashboard
 - [CRE Portfolio](./cre-portfolio) - Extract & analyze commercial real estate rent rolls → JSON + dashboard

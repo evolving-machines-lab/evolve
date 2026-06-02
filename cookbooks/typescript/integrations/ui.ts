@@ -531,8 +531,10 @@ export class Renderer {
     this.lastPrintWasBlank = false;
   }
 
-  handleEvent(event: { update?: Record<string, unknown> }): void {
-    const update = event.update ?? {};
+  handleEvent(event: { update?: unknown }): void {
+    const update = event.update && typeof event.update === "object"
+      ? event.update as Record<string, unknown>
+      : {};
     const eventType = update.sessionUpdate as string | undefined;
 
     if (eventType === "agent_message_chunk") {

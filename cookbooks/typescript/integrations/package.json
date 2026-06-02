@@ -1,12 +1,11 @@
 {
-  "name": "evolve-sdk-composio-cookbook",
+  "name": "evolve-sdk-integrations-cookbook",
   "version": "1.0.0",
   "type": "module",
   "scripts": {
     "start": "tsx agent.ts"
   },
   "dependencies": {
-    "@composio/core": "latest",
     "@evolvingmachines/sdk": "latest",
     "boxen": "latest",
     "chalk": "latest",
