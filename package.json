@@ -2,7 +2,7 @@
   "name": "evolve-sdk-workspace",
   "private": true,
   "type": "module",
-  "version": "0.0.40",
+  "version": "0.0.41",
   "license": "Apache-2.0",
   "workspaces": [
     "packages/e2b",
