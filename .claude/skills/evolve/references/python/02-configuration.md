@@ -513,6 +513,18 @@ await evolve.run(prompt='Create a slide deck summarizing the uploaded notes.')
 
 Managed integrations are available only in gateway mode (`EVOLVE_API_KEY`); integration credentials stay server-side and agents receive an Evolve-scoped MCP proxy.
 
+Available apps:
+
+| `apps` value | App | What agents can do |
+| --- | --- | --- |
+| `gmail` | Gmail | Read, search, draft, and send email. |
+| `agent_mail` | Agent Mail | Use an agent inbox to send, receive, and act on email. |
+| `slack` | Slack | Search channels, read conversations, and send team messages. |
+| `github` | GitHub | Work with repositories, issues, pull requests, and code. |
+| `googlecalendar` | Google Calendar | Read and manage calendar events. |
+| `notion` | Notion | Read and update pages, databases, docs, and workspace content. |
+| `linear` | Linear | Read and manage issues, teams, projects, and comments. |
+
 ```bash
 # .env
 EVOLVE_API_KEY=sk-...
