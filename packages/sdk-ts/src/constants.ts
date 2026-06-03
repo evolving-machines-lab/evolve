@@ -85,9 +85,6 @@ export function getGatewayMcpServers(apiKey: string): Record<string, { type: "ht
   };
 }
 
-/** Placeholder replaced with the sandbox-scoped gateway key at runtime. */
-export const SANDBOX_GATEWAY_API_KEY_PLACEHOLDER = "__EVOLVE_SANDBOX_GATEWAY_API_KEY__";
-
 // =============================================================================
 // ENVIRONMENT VARIABLES
 // =============================================================================

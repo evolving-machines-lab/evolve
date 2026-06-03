@@ -35,7 +35,7 @@ import { Agent, type AgentConfig, type AgentOptions, type AgentResponse } from "
 import type { OutputEvent } from "./parsers";
 import { isZodSchema, resolveAgentConfig, resolveDefaultSandbox } from "./utils";
 import { integrationHelpers } from "./integrations";
-import { getGatewayMcpServers, DEFAULT_DASHBOARD_URL, ENV_EVOLVE_API_KEY, SANDBOX_GATEWAY_API_KEY_PLACEHOLDER } from "./constants";
+import { getGatewayMcpServers, DEFAULT_DASHBOARD_URL, ENV_EVOLVE_API_KEY } from "./constants";
 import { resolveStorageConfig, createBoundStorageClient } from "./storage";
 import type { CheckpointInfo, StorageClient } from "./types";
 import { BROWSER_ACTIONBOOK_PROMPT, BROWSER_AGENT_BROWSER_PROMPT } from "./prompts";
@@ -432,7 +432,7 @@ export class Evolve extends EventEmitter {
             'withBrowser("browser-use") requires gateway mode. Use apiKey/EVOLVE_API_KEY instead of providerApiKey/direct mode.'
           );
         }
-        browserMcpServers = getGatewayMcpServers(SANDBOX_GATEWAY_API_KEY_PLACEHOLDER);
+        browserMcpServers = getGatewayMcpServers(agentConfig.apiKey);
       }
 
       if (browser.provider === "actionbook" || browser.provider === "agent-browser") {

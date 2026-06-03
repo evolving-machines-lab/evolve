@@ -43,12 +43,11 @@ import { getAgentConfig, type AgentRegistryEntry } from "./registry";
 import { writeMcpConfig, writeCodexSpendProvider, writeJsonSpendHeaders, writeKimiSpendConfig, writeDroidGatewaySettings } from "./mcp";
 import { createAgentParser, type AgentParser } from "./parsers";
 import type { OutputEvent } from "./parsers/types";
-import { DEFAULT_TIMEOUT_MS, DEFAULT_WORKING_DIR, DEFAULT_DASHBOARD_URL, ENV_EVOLVE_API_KEY, LITELLM_CUSTOMER_ID_HEADER, LITELLM_TAGS_HEADER, RUN_TAG_PREFIX, SANDBOX_GATEWAY_API_KEY_PLACEHOLDER, getGatewayUrl } from "./constants";
+import { DEFAULT_TIMEOUT_MS, DEFAULT_WORKING_DIR, DEFAULT_DASHBOARD_URL, ENV_EVOLVE_API_KEY, LITELLM_CUSTOMER_ID_HEADER, LITELLM_TAGS_HEADER, RUN_TAG_PREFIX, getGatewayUrl } from "./constants";
 import { buildWorkerSystemPrompt } from "./prompts";
 import { isZodSchema } from "./utils";
 import { SessionLogger } from "./observability";
 import { setupIntegrations } from "./integrations";
-import { createSandboxGatewayKey } from "./sandbox-gateway-key";
 import { createCheckpoint, restoreCheckpoint, getLatestCheckpoint, type RestoreMetadata } from "./storage";
 import { installAgentPlugins } from "./plugins";
 import {
@@ -153,19 +152,6 @@ function mergeCustomHeaders(existing: string | undefined, updates: Record<string
   return Array.from(merged.values()).join(format === "comma" ? ", " : "\n");
 }
 
-function replaceStringValue(value: string, search: string, replacement: string): string {
-  return value.includes(search) ? value.split(search).join(replacement) : value;
-}
-
-function replaceConfigValue(value: unknown, search: string, replacement: string): unknown {
-  if (typeof value === "string") return replaceStringValue(value, search, replacement);
-  if (Array.isArray(value)) return value.map((item) => replaceConfigValue(item, search, replacement));
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(
-    Object.entries(value).map(([key, item]) => [key, replaceConfigValue(item, search, replacement)])
-  );
-}
-
 // =============================================================================
 // AGENT CLASS
 // =============================================================================
@@ -199,7 +185,6 @@ export class Agent {
   private agentState: AgentRuntimeState = "idle";
   private droidSessionId?: string;
   private managedBrowserSession?: ManagedBrowserSession;
-  private sandboxGatewayApiKey?: string;
 
   // Skills storage
   private readonly skills?: SkillName[];
@@ -421,7 +406,6 @@ export class Agent {
       } else {
         // Create new sandbox with full initialization
         await this.ensureManagedBrowserSession(callbacks);
-        await this.ensureSandboxGatewayApiKey();
         const envVars = this.buildEnvironmentVariables();
 
         this.sandbox = await provider.create({
@@ -459,7 +443,6 @@ export class Agent {
    */
   private buildEnvironmentVariables(): Record<string, string> {
     const envVars: Record<string, string> = {};
-    const gatewayApiKey = this.getSandboxGatewayApiKey();
 
     // File-based OAuth (Codex, Gemini): auth file handles auth, no API key env var needed
     if (this.agentConfig.oauthFileContent) {
@@ -474,7 +457,7 @@ export class Agent {
       // Multi-provider CLI in gateway mode (e.g., OpenCode): set ALL provider API keys
       // so any model prefix (anthropic/*, openai/*, google/*) can find its key
       for (const mapping of Object.values(this.registry.providerEnvMap)) {
-        envVars[mapping.keyEnv] = gatewayApiKey;
+        envVars[mapping.keyEnv] = this.agentConfig.apiKey;
       }
     } else {
       // Single-provider: resolve model-specific key env for multi-provider CLIs in direct mode
@@ -485,7 +468,7 @@ export class Agent {
       const keyEnv = this.agentConfig.isOAuth && this.registry.oauthEnv
         ? this.registry.oauthEnv
         : effectiveKeyEnv;
-      envVars[keyEnv] = this.agentConfig.isDirectMode ? this.agentConfig.apiKey : gatewayApiKey;
+      envVars[keyEnv] = this.agentConfig.apiKey;
     }
 
     if (this.agentConfig.isDirectMode && !this.agentConfig.isOAuth) {
@@ -510,7 +493,7 @@ export class Agent {
       }
 
       // Expose EVOLVE_API_KEY in sandbox for gateway services (e.g., browser-use)
-      envVars[ENV_EVOLVE_API_KEY] = gatewayApiKey;
+      envVars['EVOLVE_API_KEY'] = this.agentConfig.apiKey;
     }
     // OAuth direct mode: no baseUrl needed (Claude Code CLI handles it)
 
@@ -545,29 +528,6 @@ export class Agent {
     }
 
     return envVars;
-  }
-
-  private getSandboxGatewayApiKey(): string {
-    return this.sandboxGatewayApiKey ?? this.agentConfig.apiKey;
-  }
-
-  private async ensureSandboxGatewayApiKey(): Promise<void> {
-    if (this.agentConfig.isDirectMode || this.sandboxGatewayApiKey) return;
-    this.sandboxGatewayApiKey = await createSandboxGatewayKey({
-      apiKey: this.agentConfig.apiKey,
-      sessionTag: this.sessionTag,
-    });
-  }
-
-  private resolveSandboxGatewayMcpServers(
-    servers: Record<string, McpServerConfig>
-  ): Record<string, McpServerConfig> {
-    const gatewayApiKey = this.getSandboxGatewayApiKey();
-    return replaceConfigValue(
-      servers,
-      SANDBOX_GATEWAY_API_KEY_PLACEHOLDER,
-      gatewayApiKey
-    ) as Record<string, McpServerConfig>;
   }
 
   private async ensureManagedBrowserSession(callbacks?: StreamCallbacks): Promise<void> {
@@ -638,7 +598,7 @@ export class Agent {
         options: {
           ...existingOptions,
           baseURL: `${gatewayUrl}/v1`,
-          apiKey: this.getSandboxGatewayApiKey(),
+          apiKey: this.agentConfig.apiKey,
         },
         models: {
           ...existingModels,
@@ -835,9 +795,9 @@ export class Agent {
     }
 
     // Setup managed integrations and MCP servers
-    let mcpServers: Record<string, McpServerConfig> = this.resolveSandboxGatewayMcpServers({
+    let mcpServers: Record<string, McpServerConfig> = {
       ...this.options.mcpServers,
-    });
+    };
 
     if (this.options.integrations) {
       const integrationsMcp = await setupIntegrations({
@@ -1074,7 +1034,6 @@ export class Agent {
 
       // Create fresh sandbox
       await this.ensureManagedBrowserSession(callbacks);
-      await this.ensureSandboxGatewayApiKey();
       const envVars = this.buildEnvironmentVariables();
       this.sandboxState = "booting";
       this.emitLifecycle(callbacks, "sandbox_boot");

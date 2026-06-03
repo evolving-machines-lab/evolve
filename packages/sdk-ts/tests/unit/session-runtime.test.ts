@@ -246,44 +246,8 @@ async function testStatusAndLifecycle(): Promise<void> {
   assert(events.every((e) => e.sandboxId !== undefined), "all lifecycle events include sandboxId");
 }
 
-async function testGatewaySandboxUsesScopedKey(): Promise<void> {
-  console.log("\n[2] gateway sandboxes use sandbox-scoped gateway key");
-  const originalFetch = globalThis.fetch;
-  const commands = new MockCommands();
-  const sandbox = new MockSandbox("sess-gateway", commands);
-  const provider = new MockProvider(sandbox);
-  const fetchCalls: string[] = [];
-
-  globalThis.fetch = (async (url: string | URL | Request) => {
-    fetchCalls.push(String(url));
-    return new Response(JSON.stringify({ apiKey: "sandbox-key" }), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    });
-  }) as typeof fetch;
-
-  try {
-    const kit = new Evolve()
-      .withAgent({ type: "claude", apiKey: "real-evolve-key" })
-      .withSandbox(provider)
-      .withBrowser("browser-use");
-
-    await (kit as any).initializeAgent();
-    await ((kit as any).agent as any).getSandbox();
-
-    assertEqual(provider.createOptions?.envs?.EVOLVE_API_KEY, "sandbox-key", "EVOLVE_API_KEY env uses sandbox key");
-    assertEqual(provider.createOptions?.envs?.ANTHROPIC_API_KEY, "sandbox-key", "provider key env uses sandbox key");
-    assert(!JSON.stringify(provider.createOptions?.envs ?? {}).includes("real-evolve-key"), "sandbox envs do not include real Evolve key");
-    assert(fetchCalls.some((url) => url.includes("/api/sandbox-gateway-key")), "SDK requests sandbox gateway key from Dashboard");
-    assert([...sandbox.files.writes.values()].some((content) => content.includes("sandbox-key")), "MCP config uses sandbox key");
-    assert([...sandbox.files.writes.values()].every((content) => !content.includes("real-evolve-key")), "MCP config does not include real Evolve key");
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-}
-
 async function testWithSecretsCannotOverrideEvolveApiKey(): Promise<void> {
-  console.log("\n[3] withSecrets() rejects EVOLVE_API_KEY override");
+  console.log("\n[2] withSecrets() rejects EVOLVE_API_KEY override");
 
   let threw = false;
   try {
@@ -319,12 +283,6 @@ async function testManagedBrowserLifecycle(): Promise<void> {
     }
     if (url === "https://dashboard.test/api/browser-sessions/browser_123" && init?.method === "DELETE") {
       return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
-    }
-    if (url === "https://dashboard.test/api/sandbox-gateway-key" && init?.method === "POST") {
-      return new Response(JSON.stringify({ apiKey: "sandbox-key" }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
     }
     if (url.endsWith("/api/sessions/ingest")) {
       return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
@@ -405,12 +363,6 @@ async function testManagedAgentBrowserLifecycle(): Promise<void> {
     }
     if (url === "https://dashboard.test/api/browser-sessions/browser_456" && init?.method === "DELETE") {
       return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
-    }
-    if (url === "https://dashboard.test/api/sandbox-gateway-key" && init?.method === "POST") {
-      return new Response(JSON.stringify({ apiKey: "sandbox-key" }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
     }
     if (url.endsWith("/api/sessions/ingest")) {
       return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
@@ -649,7 +601,6 @@ async function main(): Promise<void> {
 
   try {
     await testStatusAndLifecycle();
-    await testGatewaySandboxUsesScopedKey();
     await testWithSecretsCannotOverrideEvolveApiKey();
     await testManagedBrowserLifecycle();
     await testManagedAgentBrowserLifecycle();
