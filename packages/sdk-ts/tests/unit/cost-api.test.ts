@@ -778,7 +778,7 @@ async function testKimiBuildCommandIncludesConfigFile(): Promise<void> {
   const kimi = AGENT_REGISTRY.kimi;
   assertEqual(kimi.defaultModel, "kimi-k2.6", "Kimi default is user-facing");
   assertEqual(kimi.gatewayModelAliases?.["kimi-k2.5"], "moonshot/kimi-k2.5", "Kimi gateway maps to Moonshot route");
-  assertEqual(kimi.gatewayModelAliases?.["kimi-k2.6-fast"], "kimi-k2.6-fast", "Kimi fast route stays provider-agnostic");
+  assertEqual(kimi.gatewayModelAliases?.["kimi-k2.6-fast"], "kimi-k2.6-turbo", "Kimi fast alias maps to gateway turbo route");
 
   const gatewayAgent = new Agent({
     type: "kimi",
@@ -799,7 +799,7 @@ async function testKimiBuildCommandIncludesConfigFile(): Promise<void> {
     model: "kimi-k2.6-fast",
   } as any, {});
   const fastGatewayCmd = (fastGatewayAgent as any).buildCommand("hello") as string;
-  assert(fastGatewayCmd.includes("KIMI_MODEL_NAME=kimi-k2.6-fast"), "gateway keeps fast Kimi alias for LiteLLM route");
+  assert(fastGatewayCmd.includes("KIMI_MODEL_NAME=kimi-k2.6-turbo"), "gateway resolves fast Kimi alias to LiteLLM turbo route");
 
   const directAgent = new Agent({
     type: "kimi",

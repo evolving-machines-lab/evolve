@@ -357,7 +357,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     },
     gatewayModelAliases: {
       "kimi-k2.6": "moonshot/kimi-k2.6",
-      "kimi-k2.6-fast": "kimi-k2.6-fast",
+      "kimi-k2.6-fast": "kimi-k2.6-turbo",
       "kimi-k2.5": "moonshot/kimi-k2.5",
     },
     buildCommand: ({ prompt, model, isResume, isDirectMode }) => {
