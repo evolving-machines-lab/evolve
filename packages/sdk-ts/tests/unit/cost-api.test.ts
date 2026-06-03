@@ -1090,13 +1090,14 @@ async function testDroidBuildCommand(): Promise<void> {
     model: "claude-sonnet-4-6",
     isResume: false,
     isDirectMode: false,
+    reasoningEffort: "high",
   });
   assert(gatewayCmd.includes("droid --settings /home/user/.factory/evolve-settings.json exec"), "gateway mode passes Evolve settings file");
   assert(gatewayCmd.includes("--cwd /home/user/workspace"), "gateway mode scopes Droid to workspace");
   assert(gatewayCmd.includes("--model 'custom:Evolve-Gateway-0'"), "gateway mode uses generated custom model");
   assert(gatewayCmd.includes("--skip-permissions-unsafe"), "gateway mode grants sandbox permissions");
   assert(gatewayCmd.includes("--output-format stream-json"), "gateway mode emits streaming JSON for parser");
-  assert(!gatewayCmd.includes("--reasoning-effort"), "gateway mode does not pass reasoning effort to custom models");
+  assert(gatewayCmd.includes("--reasoning-effort high"), "gateway mode forwards reasoning effort to Droid custom models");
 
   const directCmd = droid.buildCommand({
     prompt: "hello",

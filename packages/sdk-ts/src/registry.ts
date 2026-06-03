@@ -484,7 +484,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     buildCommand: ({ prompt, model, isResume, sessionId, reasoningEffort, isDirectMode }) => {
       const settingsFlag = isDirectMode ? "" : "--settings /home/user/.factory/evolve-settings.json ";
       const commandModel = isDirectMode ? model : "custom:Evolve-Gateway-0";
-      const reasoningFlag = reasoningEffort && isDirectMode ? ` --reasoning-effort ${reasoningEffort}` : "";
+      const reasoningFlag = reasoningEffort ? ` --reasoning-effort ${reasoningEffort}` : "";
       const resumeFlag = isResume && sessionId ? `--session-id ${shellSingleQuote(sessionId)} ` : "";
       return `printf '%s' ${shellSingleQuote(prompt)} | droid ${settingsFlag}exec ${resumeFlag}--skip-permissions-unsafe --cwd /home/user/workspace --output-format stream-json --model ${shellSingleQuote(commandModel)}${reasoningFlag}`;
     },
