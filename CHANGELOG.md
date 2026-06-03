@@ -1,21 +1,20 @@
 # Changelog
 
-## v0.0.44 - 2026-06-03
+## v0.0.45 - 2026-06-03
 
 ### Highlights
 
-- Added the `kimi-k2.6-fast` user-facing model alias for gateway-mode Kimi runs.
-- Routed `kimi-k2.6-fast` through Evolve's managed Kimi turbo gateway route, so users only need `EVOLVE_API_KEY`.
-- Published TypeScript and Python packages at `0.0.44`.
+- Added the `kimi-k2.6-turbo` gateway-mode Kimi model.
+- Kept the managed LiteLLM route and public SDK model name aligned as `kimi-k2.6-turbo`.
+- Published TypeScript and Python packages at `0.0.45`.
 
 ### Fixes
 
-- Fixed the `v0.0.43` Kimi fast alias mapping so the SDK points at the deployed `kimi-k2.6-turbo` LiteLLM route.
+- Removed the stale non-turbo Kimi SDK/docs alias.
 
 ### Notes
 
-- Use `kimi-k2.6-fast` with `EVOLVE_API_KEY` in gateway mode.
-- Skip `v0.0.43` for this model alias; `v0.0.44` contains the corrected gateway mapping.
+- Use `kimi-k2.6-turbo` with `EVOLVE_API_KEY` in gateway mode.
 
 ## v0.0.42 - 2026-06-03
 
