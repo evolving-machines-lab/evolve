@@ -379,9 +379,9 @@ evolve = Evolve(
 
 The agent receives a run-scoped `browser-login` MCP server with these tools:
 
-- `browser_list_logins` returns website, account_label, and email metadata only.
-- `browser_login` fills and submits a saved login on the current sign-in tab without returning the password.
-- `browser_complete_signup` completes password-based signup after the agent has filled non-secret fields, then saves the generated login for future `browser_login` calls.
+- `browser_list_logins` lists available website logins: website, account_label, and email only.
+- `browser_login` fills the stored password and submits the current browser sign-in tab.
+- `browser_complete_signup` generates a password, submits the current browser signup tab, and saves the new login.
 
 Manage browser logins from the SDK:
 
