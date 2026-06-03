@@ -13,7 +13,7 @@
  *   CODEX_REASONING_EFFORT - Reasoning effort for codex (default: medium)
  *   ANTHROPIC_MODEL - Model for claude agent (default: opus)
  *   GEMINI_MODEL - Model for gemini agent (default: gemini-3.1-pro-preview)
- *   QWEN_OPENAI_MODEL - Model for qwen agent (default: qwen3.5-plus)
+ *   QWEN_OPENAI_MODEL - Model for qwen agent (default: qwen3.7-max)
  */
 
 import type { AgentType, SandboxProvider } from "../../dist/index.js";
@@ -168,7 +168,7 @@ export function getAgentConfig(type: AgentType): AgentConfig {
       return {
         type: "qwen",
         apiKey: env.EVOLVE_API_KEY || env.OPENAI_API_KEY || "",
-        model: process.env.QWEN_OPENAI_MODEL || "qwen3.5-plus",
+        model: process.env.QWEN_OPENAI_MODEL || "qwen3.7-max",
       };
 
     case "kimi":

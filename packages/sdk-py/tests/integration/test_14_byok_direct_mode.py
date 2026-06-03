@@ -123,7 +123,7 @@ def get_byok_agent_config(agent_type: str) -> Optional[AgentConfig]:
         return AgentConfig(
             type='qwen',
             provider_api_key=env['DASHSCOPE_API_KEY'],
-            model=os.getenv('QWEN_OPENAI_MODEL', 'qwen3-coder-plus'),
+            model=os.getenv('QWEN_OPENAI_MODEL', 'qwen3.7-max'),
         )
 
     return None

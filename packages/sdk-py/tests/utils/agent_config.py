@@ -63,7 +63,7 @@ def get_agent_config() -> Optional[AgentConfig]:
         return AgentConfig(
             type='qwen',
             api_key=evolve_api_key,
-            model=os.getenv('QWEN_MODEL', 'qwen3-coder-plus'),
+            model=os.getenv('QWEN_MODEL', 'qwen3.7-max'),
         )
 
     elif agent_type == 'kimi':

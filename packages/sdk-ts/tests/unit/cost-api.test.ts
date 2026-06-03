@@ -644,26 +644,26 @@ async function testQwenBuildCommandUsesModelAliases(): Promise<void> {
   console.log("\n[23] Qwen command model aliases route gateway only");
   const { AGENT_REGISTRY } = await import("../../src/registry.js");
   const qwen = AGENT_REGISTRY.qwen;
-  assertEqual(qwen.gatewayModelAliases?.["qwen3-coder-plus"], "dashscope/qwen3-coder-plus", "Qwen gateway maps to DashScope route");
+  assertEqual(qwen.gatewayModelAliases?.["qwen3.7-max"], "dashscope/qwen3.7-max", "Qwen gateway maps to DashScope route");
 
   const gatewayAgent = new Agent({
     type: "qwen",
     apiKey: "test-gateway-key",
     isDirectMode: false,
-    model: "qwen3-coder-plus",
+    model: "qwen3.7-max",
   } as any, {});
   const gatewayCmd = (gatewayAgent as any).buildCommand("hello") as string;
-  assert(gatewayCmd.includes("--model dashscope/qwen3-coder-plus"), "gateway mode passes DashScope-routed model");
+  assert(gatewayCmd.includes("--model dashscope/qwen3.7-max"), "gateway mode passes DashScope-routed model");
 
   const directAgent = new Agent({
     type: "qwen",
     apiKey: "direct-api-key",
     isDirectMode: true,
-    model: "qwen3-coder-plus",
+    model: "qwen3.7-max",
   } as any, {});
   const directCmd = (directAgent as any).buildCommand("hello") as string;
-  assert(directCmd.includes("--model qwen3-coder-plus"), "direct mode keeps user-facing model");
-  assert(!directCmd.includes("dashscope/qwen3-coder-plus"), "direct mode does not add gateway route");
+  assert(directCmd.includes("--model qwen3.7-max"), "direct mode keeps user-facing model");
+  assert(!directCmd.includes("dashscope/qwen3.7-max"), "direct mode does not add gateway route");
 }
 
 async function testQwenWriteJsonOverwritesPreviousHeaders(): Promise<void> {

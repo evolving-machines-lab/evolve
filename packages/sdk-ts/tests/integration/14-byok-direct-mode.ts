@@ -101,7 +101,7 @@ function getBYOKAgentConfig(type: AgentType): BYOKAgentConfig | null {
       return {
         type: "qwen",
         providerApiKey: env.DASHSCOPE_API_KEY,
-        model: process.env.QWEN_OPENAI_MODEL || "qwen3-coder-plus",
+        model: process.env.QWEN_OPENAI_MODEL || "qwen3.7-max",
       };
 
     default:

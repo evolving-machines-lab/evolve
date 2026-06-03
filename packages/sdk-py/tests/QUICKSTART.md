@@ -84,7 +84,7 @@ EVOLVE_API_KEY=sk_your_gateway_key            # Single key for all agents
 CODEX_MODEL=gpt-5.3-codex
 CLAUDE_MODEL=claude-sonnet-4-6
 GEMINI_MODEL=gemini-2.5-flash
-QWEN_MODEL=qwen3-coder-plus
+QWEN_MODEL=qwen3.7-max
 
 # Optional: MCP server testing
 BRAVE_API_KEY=your_brave_api_key                # For Brave MCP tests
