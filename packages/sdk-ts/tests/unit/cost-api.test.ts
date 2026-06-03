@@ -54,6 +54,22 @@ function createAgent(): Agent {
   return new Agent(config as any, {});
 }
 
+async function testClaudeBuildCommandUsesReasoningEffort(): Promise<void> {
+  console.log("\n[0] Claude buildCommand passes reasoning effort");
+  const defaultAgent = createAgent();
+  const defaultCmd = (defaultAgent as any).buildCommand("hello") as string;
+  assert(!defaultCmd.includes("--effort"), "omits effort flag when unset");
+
+  const maxAgent = new Agent({
+    type: "claude",
+    apiKey: "test-gateway-key",
+    isDirectMode: false,
+    reasoningEffort: "max",
+  } as any, {});
+  const maxCmd = (maxAgent as any).buildCommand("hello") as string;
+  assert(maxCmd.includes("--effort max"), "passes Claude effort flag when set");
+}
+
 async function testSessionCostNormalization(): Promise<void> {
   console.log("\n[1] getSessionCost() normalizes run metadata");
   const agent = createAgent();
@@ -1177,6 +1193,7 @@ async function main(): Promise<void> {
   console.log("\n============================================================");
   console.log("Cost API Unit Tests");
   console.log("============================================================");
+  await testClaudeBuildCommandUsesReasoningEffort();
   await testSessionCostNormalization();
   await testRunCostSelectors();
   await testNoActivitySessionSwitchDoesNotClobberTag();

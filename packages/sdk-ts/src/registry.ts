@@ -193,9 +193,10 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       sourceDir: "/home/user/.evolve/skills",
       targetDir: "/home/user/.claude/skills",
     },
-    buildCommand: ({ prompt, model, isResume }) => {
+    buildCommand: ({ prompt, model, isResume, reasoningEffort }) => {
       const continueFlag = isResume ? "--continue " : "";
-      return `echo "${prompt}" | claude -p ${continueFlag}--model ${model} --output-format stream-json --verbose --dangerously-skip-permissions`;
+      const effortFlag = reasoningEffort ? ` --effort ${reasoningEffort}` : "";
+      return `echo "${prompt}" | claude -p ${continueFlag}--model ${model}${effortFlag} --output-format stream-json --verbose --dangerously-skip-permissions`;
     },
   },
 

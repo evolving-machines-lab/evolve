@@ -282,7 +282,7 @@ Set env vars and the SDK picks them up automatically — no need to pass explici
 
 > **Note:** In Gateway mode (`EVOLVE_API_KEY`), the default claude model is `'opus'`. In BYOK mode, it defaults to `'sonnet'`.
 
-Agent-specific options: `reasoning_effort` (Codex and Droid; valid values vary by model). For 1M context window, use `model='sonnet[1m]'` or `model='opus[1m]'`.
+Agent-specific options: `reasoning_effort` (Claude Code, Codex, and Droid; valid values vary by model). Claude Code supports `'low'` `'medium'` `'high'` `'xhigh'` `'max'`. For 1M context window, use `model='sonnet[1m]'` or `model='opus[1m]'`.
 
 #### Evolve-Provided Gateway Models
 
@@ -313,6 +313,10 @@ evolve = Evolve(
 
 evolve = Evolve(
     config=AgentConfig(type='claude', model='opus'),
+)
+
+evolve = Evolve(
+    config=AgentConfig(type='claude', reasoning_effort='max'),
 )
 
 evolve = Evolve(
