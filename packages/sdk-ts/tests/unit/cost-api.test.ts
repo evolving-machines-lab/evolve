@@ -73,7 +73,7 @@ async function testSessionCostNormalization(): Promise<void> {
           index: 1,
           cost: 1.2345,
           tokens: { prompt: 100, completion: 50 },
-          model: "claude-opus-4-7",
+          model: "claude-opus-4-8",
           requests: 2,
         },
       ],
@@ -130,7 +130,7 @@ async function testRunCostSelectors(): Promise<void> {
           index: 2,
           cost: 0.6,
           tokens: { prompt: 20, completion: 6 },
-          model: "claude-opus-4-7",
+          model: "claude-opus-4-8",
           requests: 1,
         },
       ],
@@ -1074,18 +1074,18 @@ async function testDroidBuildCommand(): Promise<void> {
 
   const directCmd = droid.buildCommand({
     prompt: "hello",
-    model: "claude-opus-4-7",
+    model: "claude-opus-4-8",
     isResume: false,
     isDirectMode: true,
     reasoningEffort: "max",
   });
   assert(!directCmd.includes("--settings"), "direct mode does not pass Evolve settings file");
-  assert(directCmd.includes("--model 'claude-opus-4-7'"), "direct mode uses Factory model directly");
+  assert(directCmd.includes("--model 'claude-opus-4-8'"), "direct mode uses Factory model directly");
   assert(directCmd.includes("--reasoning-effort max"), "direct mode forwards reasoning effort");
 
   const resumedCmd = droid.buildCommand({
     prompt: "hello again",
-    model: "claude-opus-4-7",
+    model: "claude-opus-4-8",
     isResume: true,
     sessionId: "droid-session-123",
     isDirectMode: true,

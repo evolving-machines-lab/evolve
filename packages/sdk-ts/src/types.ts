@@ -585,7 +585,7 @@ export interface RunCost {
   cost: number;
   /** Token counts */
   tokens: { prompt: number; completion: number };
-  /** Model used (e.g., "claude-opus-4-7"). Last observed model if multiple models used in a run. */
+  /** Model used (e.g., "claude-opus-4-8"). Last observed model if multiple models used in a run. */
   model: string;
   /** Number of LLM API requests in this run */
   requests: number;

@@ -176,7 +176,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     customHeadersEnv: "ANTHROPIC_CUSTOM_HEADERS",
     defaultModel: "opus",
     models: [
-      { alias: "opus", modelId: "claude-opus-4-7", description: "Complex reasoning, R&D, architecting" },
+      { alias: "opus", modelId: "claude-opus-4-8", description: "Complex reasoning, R&D, architecting" },
       { alias: "sonnet", modelId: "claude-sonnet-4-6", description: "Daily coding, features, tests" },
       { alias: "haiku", modelId: "claude-haiku-4-5-20251001", description: "Quick tasks, syntax correction" },
       { alias: "opus[1m]", modelId: "opus[1m]", description: "Complex reasoning with 1M context window" },
@@ -379,7 +379,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     gatewayConfigEnv: "OPENCODE_CONFIG_CONTENT",
     models: [
       { alias: "openrouter/anthropic/claude-sonnet-4.6", modelId: "openrouter/anthropic/claude-sonnet-4.6", description: "Anthropic Sonnet via OpenRouter" },
-      { alias: "openrouter/anthropic/claude-opus-4.7", modelId: "openrouter/anthropic/claude-opus-4.7", description: "Anthropic Opus via OpenRouter" },
+      { alias: "openrouter/anthropic/claude-opus-4.8", modelId: "openrouter/anthropic/claude-opus-4.8", description: "Anthropic Opus via OpenRouter" },
       { alias: "openrouter/anthropic/claude-haiku-4.5", modelId: "openrouter/anthropic/claude-haiku-4.5", description: "Anthropic Haiku via OpenRouter" },
       { alias: "openrouter/openai/gpt-5.5", modelId: "openrouter/openai/gpt-5.5", description: "OpenAI GPT-5.5 via OpenRouter" },
       { alias: "openrouter/openai/gpt-5.4", modelId: "openrouter/openai/gpt-5.4", description: "OpenAI GPT-5.4 via OpenRouter" },
@@ -426,8 +426,8 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     apiKeyEnv: "FACTORY_API_KEY",
     defaultModel: "gpt-5.5",
     models: [
-      { alias: "claude-opus-4-7", modelId: "claude-opus-4-7", description: "Factory-managed Claude Opus 4.7" },
-      { alias: "claude-opus-4-7-fast", modelId: "claude-opus-4-7-fast", description: "Factory-managed Claude Opus 4.7 Fast Mode" },
+      { alias: "claude-opus-4-8", modelId: "claude-opus-4-8", description: "Factory-managed Claude Opus 4.8" },
+      { alias: "claude-opus-4-8-fast", modelId: "claude-opus-4-8-fast", description: "Factory-managed Claude Opus 4.8 Fast Mode" },
       { alias: "claude-sonnet-4-6", modelId: "claude-sonnet-4-6", description: "Factory-managed Claude Sonnet 4.6" },
       { alias: "claude-opus-4-6", modelId: "claude-opus-4-6", description: "Factory-managed Claude Opus 4.6" },
       { alias: "claude-opus-4-6-fast", modelId: "claude-opus-4-6-fast", description: "Factory-managed Claude Opus 4.6 Fast Mode" },
