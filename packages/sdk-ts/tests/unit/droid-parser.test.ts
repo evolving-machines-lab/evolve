@@ -89,8 +89,66 @@ async function testJsonRpcNotification(): Promise<void> {
   assert(content?.type === "text" && content.text === "jsonrpc hello", "emits textDelta");
 }
 
+async function testReasoningStreamJson(): Promise<void> {
+  console.log("\n[4] parses stream-json reasoning events");
+
+  const parser = createDroidParser();
+  const reasoningEvent = {
+    type: "reasoning",
+    id: "reasoning-1",
+    text: "droid reasoning text",
+    session_id: "droid-session-reasoning",
+  };
+  const events = parser(JSON.stringify(reasoningEvent));
+  const duplicate = parser(JSON.stringify(reasoningEvent));
+  const assistant = parser(JSON.stringify({
+    type: "message",
+    role: "assistant",
+    text: "between thoughts",
+    session_id: "droid-session-reasoning",
+  }));
+  const repeatedLater = parser(JSON.stringify(reasoningEvent));
+
+  assert(events?.length === 1, "emits one reasoning event");
+  assert(events?.[0]?.sessionId === "droid-session-reasoning", "sets reasoning session id");
+  assert(events?.[0]?.update.sessionUpdate === "agent_thought_chunk", "emits thought chunk");
+  const content = events?.[0]?.update.content;
+  assert(content?.type === "text" && content.text === "droid reasoning text", "emits reasoning text");
+  assert(duplicate === null, "dedupes consecutive duplicate reasoning event");
+  assert(assistant?.length === 1, "emits intervening assistant message");
+  assert(repeatedLater?.length === 1, "allows same reasoning after another emitted event");
+}
+
+async function testThinkingJsonRpcNotification(): Promise<void> {
+  console.log("\n[5] parses stream-jsonrpc thinking notifications");
+
+  const parser = createDroidParser();
+  const thinkingNotification = {
+    jsonrpc: "2.0",
+    type: "notification",
+    factoryApiVersion: "1.0.0",
+    method: "droid.session_notification",
+    params: {
+      notification: {
+        type: "thinking_text_delta",
+        messageId: "message-1",
+        blockIndex: 0,
+        textDelta: "sdk thinking text",
+      },
+    },
+  };
+  const events = parser(JSON.stringify(thinkingNotification));
+  const duplicate = parser(JSON.stringify(thinkingNotification));
+
+  assert(events?.length === 1, "emits one thinking notification");
+  assert(events?.[0]?.update.sessionUpdate === "agent_thought_chunk", "emits sdk thought chunk");
+  const content = events?.[0]?.update.content;
+  assert(content?.type === "text" && content.text === "sdk thinking text", "emits sdk thinking text");
+  assert(duplicate === null, "dedupes consecutive duplicate thinking notification");
+}
+
 async function testJsonRpcSessionResponse(): Promise<void> {
-  console.log("\n[4] captures JSON-RPC response session for following events");
+  console.log("\n[6] captures JSON-RPC response session for following events");
 
   const parser = createDroidParser();
   const init = parser(JSON.stringify({
@@ -118,7 +176,7 @@ async function testJsonRpcSessionResponse(): Promise<void> {
 }
 
 async function testToolEvents(): Promise<void> {
-  console.log("\n[5] parses tool call/result stream events");
+  console.log("\n[7] parses tool call/result stream events");
 
   const parser = createDroidParser();
   const callEvents = parser(JSON.stringify({
@@ -143,7 +201,7 @@ async function testToolEvents(): Promise<void> {
 }
 
 async function testTodoWritePlan(): Promise<void> {
-  console.log("\n[6] maps TodoWrite to plan updates");
+  console.log("\n[8] maps TodoWrite to plan updates");
 
   const parser = createDroidParser();
   const events = parser(JSON.stringify({
@@ -165,7 +223,7 @@ async function testTodoWritePlan(): Promise<void> {
 }
 
 async function testUserEchoIgnored(): Promise<void> {
-  console.log("\n[7] ignores plain user prompt echoes");
+  console.log("\n[9] ignores plain user prompt echoes");
 
   const parser = createDroidParser();
   const streamMessage = parser(JSON.stringify({
@@ -188,7 +246,7 @@ async function testUserEchoIgnored(): Promise<void> {
 }
 
 async function testInvalidLine(): Promise<void> {
-  console.log("\n[8] ignores invalid JSON");
+  console.log("\n[10] ignores invalid JSON");
 
   const parser = createDroidParser();
   const events = parser("not-json");
@@ -204,6 +262,8 @@ async function main(): Promise<void> {
   await testHeadlessStreamJson();
   await testJsonResultFallback();
   await testJsonRpcNotification();
+  await testReasoningStreamJson();
+  await testThinkingJsonRpcNotification();
   await testJsonRpcSessionResponse();
   await testToolEvents();
   await testTodoWritePlan();

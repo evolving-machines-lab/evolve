@@ -63,6 +63,7 @@ export function createDroidParser(): (jsonLine: string) => OutputEvent[] | null 
   let sessionId: string | undefined;
   let emittedAssistantText = false;
   let lastAssistantText = "";
+  let lastThoughtSignature: string | undefined;
 
   return function parseDroidEvent(jsonLine: string): OutputEvent[] | null {
     let data: unknown;
@@ -130,15 +131,27 @@ export function createDroidParser(): (jsonLine: string) => OutputEvent[] | null 
       }
 
       case "thinking_text_delta": {
+        // Factory SDK stream-jsonrpc emits thinking_text_delta; droid exec
+        // stream-json currently emits the same content as top-level reasoning.
         const text = stringField(event, "textDelta") || stringField(event, "text");
         if (text) {
-          events.push({
-            sessionId,
-            update: {
-              sessionUpdate: "agent_thought_chunk",
-              content: { type: "text", text },
-            },
-          });
+          const update = createThoughtUpdate(event, text, lastThoughtSignature);
+          if (update) {
+            lastThoughtSignature = update.signature;
+            events.push({ sessionId, update: update.event });
+          }
+        }
+        break;
+      }
+
+      case "reasoning": {
+        const text = stringField(event, "text");
+        if (text) {
+          const update = createThoughtUpdate(event, text, lastThoughtSignature);
+          if (update) {
+            lastThoughtSignature = update.signature;
+            events.push({ sessionId, update: update.event });
+          }
         }
         break;
       }
@@ -207,7 +220,30 @@ export function createDroidParser(): (jsonLine: string) => OutputEvent[] | null 
         if (type && !IGNORED_NOTIFICATION_TYPES.has(type)) return null;
     }
 
+    if (events.length > 0 && type !== "reasoning" && type !== "thinking_text_delta") {
+      lastThoughtSignature = undefined;
+    }
+
     return events.length > 0 ? events : null;
+  };
+}
+
+function createThoughtUpdate(
+  event: Record<string, unknown>,
+  text: string,
+  lastSignature: string | undefined
+): { signature: string; event: SessionUpdate } | null {
+  const id = signatureField(event, "id") || signatureField(event, "messageId");
+  const blockIndex = signatureField(event, "blockIndex");
+  const signature = `${stringField(event, "type")}:${id}:${blockIndex}:${text}`;
+  if (signature === lastSignature) return null;
+
+  return {
+    signature,
+    event: {
+      sessionUpdate: "agent_thought_chunk",
+      content: { type: "text", text },
+    },
   };
 }
 
@@ -460,6 +496,13 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 function stringField(obj: Record<string, unknown>, key: string): string {
   const value = obj[key];
   return typeof value === "string" ? value : "";
+}
+
+function signatureField(obj: Record<string, unknown>, key: string): string {
+  const value = obj[key];
+  return typeof value === "string" || typeof value === "number" || typeof value === "boolean"
+    ? String(value)
+    : "";
 }
 
 function normalizeToolName(name: string): string {
