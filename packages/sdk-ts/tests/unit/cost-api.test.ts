@@ -10,7 +10,7 @@
 
 import { Agent } from "../../dist/index.js";
 import { writeCodexSpendProvider, writeKimiSpendConfig } from "../../src/mcp/toml.js";
-import { writeDroidGatewaySettings, writeJsonSpendHeaders } from "../../src/mcp/json.js";
+import { writeDroidGatewaySettings, writeJsonSpendHeaders, writeQwenThinkingConfig } from "../../src/mcp/json.js";
 
 let passed = 0;
 let failed = 0;
@@ -807,6 +807,7 @@ async function testKimiBuildCommandIncludesConfigFile(): Promise<void> {
   assert(gatewayCmd.includes("--config-file /home/user/.kimi/evolve-config.toml"), "gateway mode has --config-file");
   assert(gatewayCmd.includes("--print"), "has --print flag");
   assert(gatewayCmd.includes("--yolo"), "has --yolo flag");
+  assert(gatewayCmd.includes("--thinking"), "defaults Kimi to thinking mode");
 
   const turboGatewayAgent = new Agent({
     type: "kimi",
@@ -826,6 +827,15 @@ async function testKimiBuildCommandIncludesConfigFile(): Promise<void> {
   const directCmd = (directAgent as any).buildCommand("hello") as string;
   assert(directCmd.includes("KIMI_MODEL_NAME=kimi-k2.5"), "direct mode keeps Moonshot-native model name");
   assert(!directCmd.includes("--config-file"), "direct mode omits --config-file");
+
+  const noThinkingAgent = new Agent({
+    type: "kimi",
+    apiKey: "test-gateway-key",
+    isDirectMode: false,
+    reasoningEffort: "no-thinking",
+  } as any, {});
+  const noThinkingCmd = (noThinkingAgent as any).buildCommand("hello") as string;
+  assert(noThinkingCmd.includes("--no-thinking"), "passes Kimi no-thinking mode");
 }
 
 async function testKimiBuildRunEnvsReturnsUndefined(): Promise<void> {
@@ -894,6 +904,33 @@ async function testQwenWriteJsonPreservesUserDefinedHeaders(): Promise<void> {
   assertEqual(headers?.["x-litellm-tags"], "run:run-001", "spend run tag added");
 }
 
+async function testQwenThinkingConfigPreservesSettings(): Promise<void> {
+  console.log("\n[24c] writeQwenThinkingConfig() writes enable_thinking without clobbering settings");
+  const existing = JSON.stringify({
+    mcpServers: { browser: { url: "https://example.com/mcp" } },
+    model: {
+      generationConfig: {
+        customHeaders: { "x-user-header": "keep-me" },
+      },
+    },
+  });
+  const written: { path: string; content: string }[] = [];
+  const sandbox = {
+    files: {
+      makeDir: async () => {},
+      read: async () => existing,
+      write: async (path: string, content: string) => { written.push({ path, content }); },
+    },
+  };
+
+  await writeQwenThinkingConfig(sandbox as any, true);
+
+  const config = JSON.parse(written[0].content);
+  assertEqual(config.mcpServers.browser.url, "https://example.com/mcp", "MCP config preserved");
+  assertEqual(config.model.generationConfig.customHeaders["x-user-header"], "keep-me", "custom headers preserved");
+  assertEqual(config.model.generationConfig.extra_body.enable_thinking, true, "enable_thinking written");
+}
+
 // =============================================================================
 // OpenCode spend tracking (model.headers via OPENCODE_CONFIG_CONTENT env var)
 // =============================================================================
@@ -923,6 +960,7 @@ async function testOpenCodeBuildRunEnvsIncludesHeaders(): Promise<void> {
   const modelEntry = litellm.models[modelKeys[0]];
   assertEqual(modelEntry.headers?.["x-litellm-customer-id"], "evolve-opencode-session", "session tag in headers");
   assert(modelEntry.headers?.["x-litellm-tags"]?.includes("run:run-oc-001"), "run tag in headers");
+  assertEqual(modelEntry.variants?.medium?.reasoningEffort, "medium", "default variant sets medium reasoning effort");
 }
 
 async function testOpenCodeBuildRunEnvsPerRunOverwrite(): Promise<void> {
@@ -1003,10 +1041,42 @@ async function testOpenCodeMergesUserSecrets(): Promise<void> {
   assertEqual(model.headers["x-user-header"], "keep-me", "user model header preserved");
   assertEqual(model.headers["x-litellm-customer-id"], "evolve-oc-merge", "spend session header injected");
   assert(model.headers["x-litellm-tags"]?.includes("run:run-merge-001"), "spend run tag injected");
+  assertEqual(model.variants?.medium?.reasoningEffort, "medium", "reasoning variant injected");
 
   // SDK overrides litellm options (gateway URL + API key)
   assert(parsed.provider.litellm.options.baseURL.includes("/v1"), "gateway baseURL set");
   assertEqual(parsed.provider.litellm.options.apiKey, "test-gateway-key", "gateway apiKey set");
+}
+
+async function testOpenCodeReasoningFlags(): Promise<void> {
+  console.log("\n[33b] OpenCode buildCommand() passes reasoning flags");
+  const defaultAgent = new Agent({ type: "opencode", apiKey: "test-gateway-key", isDirectMode: false } as any, {});
+  const defaultCmd = (defaultAgent as any).buildCommand("hello") as string;
+  assert(defaultCmd.includes("--variant medium"), "defaults OpenCode to medium variant");
+  assert(defaultCmd.includes("--thinking"), "shows thinking output");
+
+  const noThinkingAgent = new Agent({
+    type: "opencode",
+    apiKey: "test-gateway-key",
+    isDirectMode: false,
+    reasoningEffort: "no-thinking",
+  } as any, {});
+  const noThinkingCmd = (noThinkingAgent as any).buildCommand("hello") as string;
+  assert(!noThinkingCmd.includes("--variant"), "no-thinking omits variant");
+  assert(!noThinkingCmd.includes("--thinking"), "no-thinking omits thinking output");
+
+  const xhighAgent = new Agent({
+    type: "opencode",
+    apiKey: "test-gateway-key",
+    isDirectMode: false,
+    reasoningEffort: "xhigh",
+  } as any, {});
+  const xhighCmd = (xhighAgent as any).buildCommand("hello") as string;
+  assert(xhighCmd.includes("--variant max"), "xhigh maps to max variant");
+  const envs = (xhighAgent as any).buildRunEnvs("run-opencode-xhigh") as Record<string, string>;
+  const config = JSON.parse(envs.OPENCODE_CONFIG_CONTENT);
+  const model = Object.values(config.provider.litellm.models)[0] as any;
+  assertEqual(model.variants?.max?.reasoningEffort, "max", "xhigh config maps to max reasoning effort");
 }
 
 // =============================================================================
@@ -1220,6 +1290,7 @@ async function main(): Promise<void> {
   await testQwenBuildCommandUsesModelAliases();
   await testQwenWriteJsonOverwritesPreviousHeaders();
   await testQwenWriteJsonPreservesUserDefinedHeaders();
+  await testQwenThinkingConfigPreservesSettings();
   await testKimiWriteSpendConfigFresh();
   await testKimiWriteSpendConfigPerRunOverwrite();
   await testKimiBuildCommandIncludesConfigFile();
@@ -1229,6 +1300,7 @@ async function main(): Promise<void> {
   await testOpenCodeBuildRunEnvsPerRunOverwrite();
   await testOpenCodeDirectModeSkipsHeaders();
   await testOpenCodeMergesUserSecrets();
+  await testOpenCodeReasoningFlags();
   await testDroidBuildEnvironmentVariablesGateway();
   await testDroidBuildEnvironmentVariablesDirect();
   await testDroidWriteGatewaySettings();

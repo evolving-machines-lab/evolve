@@ -717,7 +717,7 @@ Override the default agent for any operation (apiKey inherited from Swarm config
 interface AgentOverride {
     type: "claude" | "codex" | "gemini" | "qwen" | "kimi" | "opencode" | "droid";
     model?: string;
-    reasoningEffort?: "off" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+    reasoningEffort?: "off" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "thinking" | "no-thinking";
 }
 ```
 

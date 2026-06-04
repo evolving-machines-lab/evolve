@@ -230,7 +230,9 @@ export type ReasoningEffort =
   | "medium"
   | "high"
   | "xhigh"
-  | "max";
+  | "max"
+  | "thinking"
+  | "no-thinking";
 
 /** MCP Server Configuration */
 export interface McpServerConfig {

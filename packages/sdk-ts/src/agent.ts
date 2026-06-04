@@ -39,8 +39,8 @@ import type {
   SessionCost,
 } from "./types";
 import { VALIDATION_PRESETS } from "./types";
-import { getAgentConfig, type AgentRegistryEntry } from "./registry";
-import { writeMcpConfig, writeCodexSpendProvider, writeJsonSpendHeaders, writeKimiSpendConfig, writeDroidGatewaySettings } from "./mcp";
+import { getAgentConfig, getOpenCodeReasoningVariant, isThinkingEnabled, type AgentRegistryEntry } from "./registry";
+import { writeMcpConfig, writeCodexSpendProvider, writeJsonSpendHeaders, writeQwenThinkingConfig, writeKimiSpendConfig, writeDroidGatewaySettings } from "./mcp";
 import { createAgentParser, type AgentParser } from "./parsers";
 import type { OutputEvent } from "./parsers/types";
 import { DEFAULT_TIMEOUT_MS, DEFAULT_WORKING_DIR, DEFAULT_DASHBOARD_URL, ENV_EVOLVE_API_KEY, LITELLM_CUSTOMER_ID_HEADER, LITELLM_TAGS_HEADER, RUN_TAG_PREFIX, getGatewayUrl } from "./constants";
@@ -568,7 +568,7 @@ export class Agent {
    *
    * Deep-merges with user-provided config from secrets (if any) so that
    * non-litellm providers, plugins, and other settings are preserved.
-   * Only patches provider.litellm.models[selectedModel].headers.
+   * Only patches provider.litellm.models[selectedModel].headers and selected variant metadata.
    *
    * Source-verified: model.headers → provider.ts:1061 → llm.ts:221 → HTTP request.
    */
@@ -589,6 +589,13 @@ export class Agent {
     const existingModels = (litellm.models as Record<string, unknown>) ?? {};
     const existingModel = (existingModels[selectedModel] as Record<string, unknown>) ?? {};
     const existingHeaders = (existingModel.headers as Record<string, string>) ?? {};
+    const reasoningVariant = this.agentConfig.type === "opencode"
+      ? getOpenCodeReasoningVariant(this.agentConfig.reasoningEffort)
+      : undefined;
+    const existingVariants = (existingModel.variants as Record<string, unknown>) ?? {};
+    const selectedVariant = reasoningVariant
+      ? (existingVariants[reasoningVariant] as Record<string, unknown>) ?? {}
+      : undefined;
 
     config.provider = {
       ...providers,
@@ -606,6 +613,15 @@ export class Agent {
             ...existingModel,
             name: selectedModel,
             headers: { ...existingHeaders, ...headers },
+            ...(reasoningVariant ? {
+              variants: {
+                ...existingVariants,
+                [reasoningVariant]: {
+                  ...selectedVariant,
+                  reasoningEffort: reasoningVariant,
+                },
+              },
+            } : {}),
           },
         },
       },
@@ -1156,6 +1172,10 @@ export class Agent {
           [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
         },
       );
+    }
+
+    if (this.agentConfig.type === "qwen") {
+      await writeQwenThinkingConfig(sandbox, isThinkingEnabled(this.agentConfig.reasoningEffort));
     }
 
     // Per-run TOML provider spend tracking (Kimi): write provider with custom_headers

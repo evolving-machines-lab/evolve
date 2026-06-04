@@ -285,6 +285,43 @@ export async function writeJsonSpendHeaders(
   await sandbox.files.write(settingsPath, JSON.stringify(config, null, 2));
 }
 
+export async function writeQwenThinkingConfig(
+  sandbox: SandboxInstance,
+  enableThinking: boolean,
+): Promise<void> {
+  const settingsDir = getMcpSettingsDir("qwen");
+  const settingsPath = getMcpSettingsPath("qwen");
+
+  await sandbox.files.makeDir(settingsDir);
+
+  let config: Record<string, unknown> = {};
+  try {
+    const existing = await sandbox.files.read(settingsPath);
+    if (typeof existing === "string") {
+      config = JSON.parse(existing);
+    }
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
+
+  const model = (config.model as Record<string, unknown>) ?? {};
+  const generationConfig = (model.generationConfig as Record<string, unknown>) ?? {};
+  const extraBody = (generationConfig.extra_body as Record<string, unknown>) ?? {};
+
+  config.model = {
+    ...model,
+    generationConfig: {
+      ...generationConfig,
+      extra_body: {
+        ...extraBody,
+        enable_thinking: enableThinking,
+      },
+    },
+  };
+
+  await sandbox.files.write(settingsPath, JSON.stringify(config, null, 2));
+}
+
 /** Write MCP config for Kimi agent (FastMCP-compatible transport field) */
 export async function writeKimiMcpConfig(
   sandbox: SandboxInstance,

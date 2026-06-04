@@ -65,5 +65,5 @@ export async function writeMcpConfig(
 }
 
 // Re-export individual writers for direct use if needed
-export { writeClaudeMcpConfig, writeGeminiMcpConfig, writeQwenMcpConfig, writeKimiMcpConfig, writeOpenCodeMcpConfig, writeDroidMcpConfig, writeJsonSpendHeaders, writeDroidGatewaySettings } from "./json";
+export { writeClaudeMcpConfig, writeGeminiMcpConfig, writeQwenMcpConfig, writeKimiMcpConfig, writeOpenCodeMcpConfig, writeDroidMcpConfig, writeJsonSpendHeaders, writeQwenThinkingConfig, writeDroidGatewaySettings } from "./json";
 export { writeCodexMcpConfig, writeCodexSpendProvider, writeKimiSpendConfig } from "./toml";

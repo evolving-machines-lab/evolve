@@ -157,6 +157,30 @@ export interface AgentRegistryEntry {
   checkpointDirs?: string[];
 }
 
+export function isThinkingEnabled(reasoningEffort?: string): boolean {
+  return reasoningEffort !== "off"
+    && reasoningEffort !== "none"
+    && reasoningEffort !== "minimal"
+    && reasoningEffort !== "no-thinking";
+}
+
+export function getOpenCodeReasoningVariant(reasoningEffort?: string): string | undefined {
+  if (reasoningEffort === "off" || reasoningEffort === "none" || reasoningEffort === "no-thinking") return undefined;
+  if (!reasoningEffort || reasoningEffort === "thinking" || reasoningEffort === "medium") return "medium";
+  if (reasoningEffort === "low" || reasoningEffort === "minimal") return "minimal";
+  if (reasoningEffort === "xhigh") return "max";
+  return reasoningEffort;
+}
+
+function getKimiThinkingFlag(reasoningEffort?: string): string {
+  return isThinkingEnabled(reasoningEffort) ? "--thinking" : "--no-thinking";
+}
+
+function getOpenCodeReasoningFlags(reasoningEffort?: string): string {
+  const variant = getOpenCodeReasoningVariant(reasoningEffort);
+  return variant ? ` --variant ${variant} --thinking` : "";
+}
+
 // =============================================================================
 // AGENT REGISTRY
 // =============================================================================
@@ -355,12 +379,12 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       "kimi-k2.6-turbo": "kimi-k2.6-turbo",
       "kimi-k2.5": "moonshot/kimi-k2.5",
     },
-    buildCommand: ({ prompt, model, isResume, isDirectMode }) => {
+    buildCommand: ({ prompt, model, isResume, isDirectMode, reasoningEffort }) => {
       const continueFlag = isResume ? "--continue " : "";
       // In gateway mode, use --config-file to point to our dedicated spend tracking config.
       // Source-verified: cli/__init__.py:133-143 — --config-file fully replaces default config.
       const configFlag = isDirectMode ? "" : "--config-file /home/user/.kimi/evolve-config.toml ";
-      return `printf '%s' "${prompt}" | KIMI_MODEL_NAME=${model} kimi --print --output-format stream-json --yolo ${configFlag}${continueFlag}`;
+      return `printf '%s' "${prompt}" | KIMI_MODEL_NAME=${model} kimi --print --output-format stream-json --yolo ${getKimiThinkingFlag(reasoningEffort)} ${configFlag}${continueFlag}`;
     },
   },
 
@@ -408,13 +432,14 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       "~/.config/opencode",       // config.json, AGENTS.md, theme
       "~/.local/state/opencode",  // prompt history, model prefs, TUI state
     ],
-    buildCommand: ({ prompt, model, isResume, isDirectMode }) => {
+    buildCommand: ({ prompt, model, isResume, isDirectMode, reasoningEffort }) => {
       const continueFlag = isResume ? "--continue " : "";
       const routedModel = model.startsWith("openrouter/") ? model : `openrouter/${model}`;
+      const reasoningFlags = getOpenCodeReasoningFlags(reasoningEffort);
       if (!isDirectMode) {
-        return `OPENCODE_PERMISSION='{"*":"allow"}' opencode run ${continueFlag}--model litellm/${routedModel} --format json "${prompt}" < /dev/null`;
+        return `OPENCODE_PERMISSION='{"*":"allow"}' opencode run ${continueFlag}--model litellm/${routedModel} --format json${reasoningFlags} "${prompt}" < /dev/null`;
       }
-      return `OPENCODE_PERMISSION='{"*":"allow"}' opencode run ${continueFlag}--model ${routedModel} --format json "${prompt}" < /dev/null`;
+      return `OPENCODE_PERMISSION='{"*":"allow"}' opencode run ${continueFlag}--model ${routedModel} --format json${reasoningFlags} "${prompt}" < /dev/null`;
     },
   },
 
