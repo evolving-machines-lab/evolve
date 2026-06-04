@@ -285,7 +285,19 @@ Set env vars and the SDK picks them up automatically — no need to pass explici
 
 > **Note:** In Gateway mode (`EVOLVE_API_KEY`), the default claude model is `"opus"`. In BYOK mode, it defaults to `"sonnet"`.
 
-Agent-specific options: `reasoningEffort` (Claude Code, Codex, and Droid; valid values vary by model). Claude Code supports `"low"` `"medium"` `"high"` `"xhigh"` `"max"`. For 1M context window, use `model: "sonnet[1m]"` or `model: "opus[1m]"`.
+Agent-specific option: `reasoningEffort` controls how much reasoning/thinking the selected agent uses when that agent supports it. Valid values vary by agent and model.
+
+| Agent | Default when omitted | `reasoningEffort` behavior |
+|-------|----------------------|----------------------------|
+| `"claude"` | Agent/model default | Use `"low"` `"medium"` `"high"` `"xhigh"` `"max"` when supported by the selected model |
+| `"codex"` | Agent/model default | Use the reasoning effort values supported by the selected OpenAI model |
+| `"gemini"` | Agent/model default | No explicit SDK reasoning override |
+| `"qwen"` | Thinking enabled | Use `"thinking"` or `"no-thinking"` |
+| `"kimi"` | Thinking enabled | Use `"thinking"` or `"no-thinking"`. Applies to `"kimi-k2.6-turbo"` too |
+| `"opencode"` | Medium thinking | Use `"low"` / `"minimal"` / `"medium"` / `"high"` / `"xhigh"` / `"max"` to tune thinking; `"no-thinking"` / `"off"` / `"none"` disables it |
+| `"droid"` | Agent/model default | Use the reasoning effort values supported by the selected Droid model |
+
+For Claude 1M context window, use `model: "sonnet[1m]"` or `model: "opus[1m]"`.
 
 #### Evolve-Provided Gateway Models
 
@@ -354,6 +366,9 @@ const evolve = new Evolve()
 
 const evolve = new Evolve()
     .withAgent({ type: "qwen", model: "qwen3.7-max" });
+
+const evolve = new Evolve()
+    .withAgent({ type: "qwen", reasoningEffort: "no-thinking" });
 ```
 
 ```ts
@@ -363,6 +378,13 @@ const evolve = new Evolve()
 
 const evolve = new Evolve()
     .withAgent({ type: "kimi", model: "kimi-k2.6" });
+
+const evolve = new Evolve()
+    .withAgent({
+        type: "kimi",
+        model: "kimi-k2.6-turbo",
+        reasoningEffort: "thinking",
+    });
 ```
 
 ```ts
@@ -372,6 +394,9 @@ const evolve = new Evolve()
 
 const evolve = new Evolve()
     .withAgent({ type: "opencode", model: "openrouter/openai/gpt-5.2" });
+
+const evolve = new Evolve()
+    .withAgent({ type: "opencode", reasoningEffort: "xhigh" });
 ```
 
 ```ts
