@@ -719,7 +719,7 @@ class AgentConfig:
     type: Literal['claude', 'codex', 'gemini', 'qwen', 'kimi', 'opencode', 'droid']
     api_key: str | None = None
     model: str | None = None
-    reasoning_effort: Literal['off', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'thinking', 'no-thinking'] | None = None
+    reasoning_effort: Literal['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'thinking', 'no-thinking'] | None = None
 ```
 
 ```python

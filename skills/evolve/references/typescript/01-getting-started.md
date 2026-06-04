@@ -294,7 +294,7 @@ Agent-specific option: `reasoningEffort` controls how much reasoning/thinking th
 | `"gemini"` | Agent/model default | No explicit SDK reasoning override |
 | `"qwen"` | Thinking enabled | Use `"thinking"` or `"no-thinking"` |
 | `"kimi"` | Thinking enabled | Use `"thinking"` or `"no-thinking"`. Applies to `"kimi-k2.6-turbo"` too |
-| `"opencode"` | Medium thinking | Use `"low"` / `"minimal"` / `"medium"` / `"high"` / `"xhigh"` / `"max"` to tune thinking; `"no-thinking"` / `"off"` / `"none"` disables it |
+| `"opencode"` | Medium thinking | Use `"minimal"` / `"low"` / `"medium"` / `"high"` / `"max"` to request an OpenCode reasoning variant; `"no-thinking"` skips the explicit thinking request |
 | `"droid"` | Agent/model default | Use the reasoning effort values supported by the selected Droid model |
 
 For Claude 1M context window, use `model: "sonnet[1m]"` or `model: "opus[1m]"`.
