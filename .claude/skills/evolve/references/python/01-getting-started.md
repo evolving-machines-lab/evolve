@@ -291,8 +291,8 @@ Agent-specific option: `reasoning_effort` controls how much reasoning/thinking t
 | `'gemini'` | Gemini CLI/model default | Not supported |
 | `'qwen'` | `'thinking'` | `'thinking'` `'no-thinking'` |
 | `'kimi'` | `'thinking'` | `'thinking'` `'no-thinking'` |
-| `'opencode'` | `'medium'` | `'no-thinking'` `'minimal'` `'low'` `'medium'` `'high'` `'xhigh'` `'max'` |
-| `'droid'` | Droid/model default | Model-dependent Droid values |
+| `'opencode'` | `'thinking'` + `'medium'` | `'thinking'` `'no-thinking'` `'minimal'` `'low'` `'medium'` `'high'` `'xhigh'` `'max'` |
+| `'droid'` | Droid/model default | `'off'` `'minimal'` `'low'` `'medium'` `'high'` `'xhigh'` `'max'`; exact values depend on the Droid model |
 
 For Claude 1M context window, use `model='sonnet[1m]'` or `model='opus[1m]'`.
 
