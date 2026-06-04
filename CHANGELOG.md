@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.0.46 - 2026-06-04
+
+### Highlights
+
+- Added Droid reasoning parsing for `droid exec --output-format stream-json` `reasoning` events.
+- Kept Droid `stream-jsonrpc` `thinking_text_delta` parsing aligned with the Factory SDK protocol.
+- Published TypeScript and Python packages at `0.0.46`.
+
+### Fixes
+
+- Deduplicated consecutive identical Droid reasoning chunks so dashboard traces do not show duplicate Thinking blocks when Droid emits the same raw reasoning event twice.
+- Updated Claude agent docs to show `opus` as the default in both Gateway and BYOK modes.
+- Synced the Evolve skill reference docs with the public docs.
+- Refreshed `package-lock.json` after the release dependency bump to `0.0.46`.
+
+### Notes
+
+- Droid reasoning dedupe only drops exact consecutive duplicate thought chunks; distinct thinking chunks and later repeated thoughts still pass through.
+
 ## v0.0.45 - 2026-06-03
 
 ### Highlights
