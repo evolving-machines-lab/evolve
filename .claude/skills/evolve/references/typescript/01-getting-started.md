@@ -285,17 +285,17 @@ Set env vars and the SDK picks them up automatically — no need to pass explici
 
 > **Note:** In Gateway mode (`EVOLVE_API_KEY`), the default claude model is `"opus"`. In BYOK mode, it defaults to `"sonnet"`.
 
-Agent-specific option: `reasoningEffort` controls how much reasoning/thinking the selected agent uses when that agent supports it. Valid values vary by agent and model.
+Agent-specific option: `reasoningEffort` controls how much reasoning/thinking the selected agent uses when that agent supports it.
 
-| Agent | Default when omitted | `reasoningEffort` behavior |
-|-------|----------------------|----------------------------|
-| `"claude"` | Agent/model default | Use `"low"` `"medium"` `"high"` `"xhigh"` `"max"` when supported by the selected model |
-| `"codex"` | Agent/model default | Use the reasoning effort values supported by the selected OpenAI model |
-| `"gemini"` | Agent/model default | No explicit SDK reasoning override |
-| `"qwen"` | Thinking enabled | Use `"thinking"` or `"no-thinking"` |
-| `"kimi"` | Thinking enabled | Use `"thinking"` or `"no-thinking"`. Applies to `"kimi-k2.6-turbo"` too |
-| `"opencode"` | Medium thinking | Use `"minimal"` / `"low"` / `"medium"` / `"high"` / `"max"` to request an OpenCode reasoning variant; `"no-thinking"` skips the explicit thinking request |
-| `"droid"` | Agent/model default | Use the reasoning effort values supported by the selected Droid model |
+| Agent | Default when omitted | Supported `reasoningEffort` |
+|-------|----------------------|-----------------------------|
+| `"claude"` | Claude/model default | `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
+| `"codex"` | OpenAI model default | `"low"` `"medium"` `"high"` `"xhigh"` |
+| `"gemini"` | Gemini CLI/model default | Not supported |
+| `"qwen"` | `"thinking"` | `"thinking"` `"no-thinking"` |
+| `"kimi"` | `"thinking"` | `"thinking"` `"no-thinking"` |
+| `"opencode"` | `"medium"` | `"no-thinking"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
+| `"droid"` | Droid/model default | Model-dependent Droid values |
 
 For Claude 1M context window, use `model: "sonnet[1m]"` or `model: "opus[1m]"`.
 
