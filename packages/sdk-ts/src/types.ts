@@ -224,7 +224,6 @@ export interface SkillsConfig {
 /** Reasoning effort for CLIs/models that support it; valid values vary by model. */
 export type ReasoningEffort =
   | "off"
-  | "none"
   | "minimal"
   | "low"
   | "medium"

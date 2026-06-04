@@ -9,7 +9,7 @@ WorkspaceMode = Literal['knowledge', 'swe']
 BrowserProvider = Literal['browser-use', 'actionbook', 'agent-browser']
 BrowserConfig = Union[BrowserProvider, Dict[str, Any]]
 AgentPluginConfig = Dict[str, Any]
-ReasoningEffort = Literal['off', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'thinking', 'no-thinking']
+ReasoningEffort = Literal['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'thinking', 'no-thinking']
 ValidationMode = Literal['strict', 'loose']
 
 
