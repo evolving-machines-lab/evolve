@@ -183,10 +183,16 @@ class Evolve:
         if browser in ('browser-use', 'actionbook', 'agent-browser'):
             return browser
         if isinstance(browser, dict):
-            provider = browser.get('provider')
+            provider = browser.get('provider', 'agent-browser')
             if provider not in ('actionbook', 'agent-browser'):
                 raise ValueError("browser provider must be 'actionbook' or 'agent-browser'")
-            return dict(browser)
+            normalized = dict(browser)
+            normalized['provider'] = provider
+            if 'profile' in normalized and 'remote' not in normalized and browser.get('provider') is None:
+                normalized['remote'] = True
+            if 'profile' in normalized and normalized.get('remote') is not True:
+                raise ValueError("browser profile requires managed remote browser mode")
+            return normalized
         raise ValueError("browser must be 'browser-use', 'actionbook', 'agent-browser', a managed browser config dict, or None")
 
     @staticmethod

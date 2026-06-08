@@ -633,6 +633,25 @@ class TestBrowserConfig:
         params = initialize_calls[0][1]
         assert params['browser'] == {'provider': 'agent-browser', 'remote': True}
 
+    @pytest.mark.asyncio
+    async def test_browser_profile_defaults_to_managed_agent_browser(self):
+        mock_bridge = MockBridgeManager()
+        with patch('evolve.agent.BridgeManager', return_value=mock_bridge):
+            kit = Evolve(browser={'profile': 'ramp-qa'})
+            await kit._ensure_initialized()
+
+        initialize_calls = [c for c in mock_bridge.calls if c[0] == 'initialize']
+        params = initialize_calls[0][1]
+        assert params['browser'] == {
+            'provider': 'agent-browser',
+            'remote': True,
+            'profile': 'ramp-qa',
+        }
+
+    def test_browser_profile_requires_managed_remote(self):
+        with pytest.raises(ValueError, match="browser profile requires managed remote browser mode"):
+            Evolve(browser={'provider': 'agent-browser', 'profile': 'ramp-qa'})
+
     def test_invalid_browser_value_rejected(self):
         with pytest.raises(ValueError, match="browser must be 'browser-use', 'actionbook', 'agent-browser', a managed browser config dict, or None"):
             Evolve(browser='invalid')  # type: ignore[arg-type]

@@ -41,6 +41,7 @@ import type { CheckpointInfo, StorageClient } from "./types";
 import { BROWSER_ACTIONBOOK_PROMPT, BROWSER_AGENT_BROWSER_PROMPT } from "./prompts";
 import { mergeBrowserSkills, normalizeBrowserConfig } from "./browser";
 import { browserCredentials as createBrowserCredentialsClient } from "./browser-credentials";
+import { browserProfiles as createBrowserProfilesClient } from "./browser-profiles";
 
 // =============================================================================
 // TYPES
@@ -396,6 +397,9 @@ export class Evolve extends EventEmitter {
   /** Static browser credential client for listing, creating, and deleting saved browser logins. */
   static browserCredentials = createBrowserCredentialsClient;
 
+  /** Static browser profile client for listing and deleting reusable browser profiles. */
+  static browserProfiles = createBrowserProfilesClient;
+
   // ===========================================================================
   // AGENT INITIALIZATION
   // ===========================================================================
@@ -450,8 +454,13 @@ export class Evolve extends EventEmitter {
             provider: browser.provider,
             apiKey: agentConfig.apiKey,
             dashboardUrl: process.env.EVOLVE_DASHBOARD_URL || DEFAULT_DASHBOARD_URL,
+            ...(browser.profile ? { profile: browser.profile } : {}),
           };
         }
+      }
+
+      if (browser.profile && !browser.managed) {
+        throw new Error("withBrowser({ profile }) requires managed remote browser mode. Use .withBrowser({ profile }) or .withBrowser({ provider: \"agent-browser\", remote: true, profile }).");
       }
     }
 
