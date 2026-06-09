@@ -297,6 +297,33 @@ Profile lifecycle:
 - Persist: browser state changes made during the session, such as successful logins, are saved when the managed browser is stopped. Call `kill()` when done so cleanup and replay processing run.
 - Visibility: the profile appears in Dashboard **Secrets** under Browser Profiles and in `Evolve.browserProfiles().list()`. Only metadata is returned; cookies and storage stay server-side.
 
+Recommended profile creation flow:
+
+1. Add the browser login in Dashboard **Secrets**, or manage browser logins from the SDK and note the `accountLabel`.
+2. Start a managed browser with both a `profile` and scoped browser credentials.
+3. Ask the agent to sign in with the saved login.
+4. Call `kill()` when done so the authenticated browser state is saved into the profile.
+
+```ts
+const evolve = new Evolve()
+    .withBrowser({
+        profile: "ramp-qa",
+    })
+    .withBrowserCredentials({
+        allow: [{ website: "github.com", accountLabel: "qa-admin" }],
+    });
+
+try {
+    await evolve.run({
+        prompt: "Open GitHub, sign in with the saved qa-admin login, and confirm the account is authenticated.",
+    });
+} finally {
+    await evolve.kill();
+}
+```
+
+Future runs can reuse the saved state with `.withBrowser({ profile: "ramp-qa" })`; include `.withBrowserCredentials()` again only when the agent needs access to saved login tools.
+
 List or delete profiles from the SDK:
 
 ```ts
