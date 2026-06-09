@@ -271,6 +271,26 @@ Evolve(browser={'provider': 'agent-browser', 'remote': False})
 # local agent-browser, no managed live/replay
 ```
 
+Use a browser profile to reuse logged-in browser state across managed browser sessions:
+
+```python
+evolve = Evolve(
+    browser={'profile': 'ramp-qa'},
+)
+```
+
+Profiles are gateway-only and work only with managed remote browser sessions. Evolve stores and resolves profile state server-side; the SDK never receives raw browser state.
+
+List or delete profiles from the SDK:
+
+```python
+from evolve import browser_profiles
+
+profiles = await browser_profiles().list()
+
+await browser_profiles().delete(profile='ramp-qa')
+```
+
 To disable browser automation, omit the `browser` argument.
 
 Full browser run with live view and replay:
@@ -336,7 +356,7 @@ Availability:
 
 - Requires Gateway mode and managed remote `agent-browser`.
 - Use `browser={'provider': 'agent-browser', 'remote': True}`.
-- Not available with `browser-use`, `actionbook`, `remote: False`, direct/BYOK provider mode, or existing sandbox sessions.
+- Not available with local browser mode, direct/BYOK provider mode, or existing sandbox sessions.
 
 Dashboard setup:
 
