@@ -149,6 +149,8 @@ export interface ActionbookBrowserConfig {
   provider: "actionbook";
   /** Use Evolve-managed remote browser transport. Defaults to false for object config. */
   remote?: boolean;
+  /** Reusable provider-native browser profile for managed remote browser sessions. */
+  profile?: string;
 }
 
 /** Agent-browser browser configuration. */
@@ -156,10 +158,21 @@ export interface AgentBrowserConfig {
   provider: "agent-browser";
   /** Use Evolve-managed remote browser transport. Defaults to false for object config. */
   remote?: boolean;
+  /** Reusable provider-native browser profile for managed remote browser sessions. */
+  profile?: string;
+}
+
+/** Default managed browser configuration. */
+export interface DefaultBrowserConfig {
+  provider?: undefined;
+  /** Defaults to true for the default managed agent-browser path. */
+  remote?: boolean;
+  /** Reusable provider-native browser profile for managed remote browser sessions. */
+  profile?: string;
 }
 
 /** Browser automation configuration. */
-export type BrowserConfig = BrowserProvider | ActionbookBrowserConfig | AgentBrowserConfig;
+export type BrowserConfig = BrowserProvider | DefaultBrowserConfig | ActionbookBrowserConfig | AgentBrowserConfig;
 
 /** Saved browser login selector exposed to a run. Empty/omitted means all enabled browser logins. */
 export interface BrowserCredentialScopeEntry {
@@ -388,6 +401,7 @@ export interface AgentOptions {
     provider: ManagedBrowserProvider;
     apiKey: string;
     dashboardUrl?: string;
+    profile?: string;
   };
   /** Run-scoped browser login MCP setup. Requires managed remote agent-browser. */
   browserCredentials?: {

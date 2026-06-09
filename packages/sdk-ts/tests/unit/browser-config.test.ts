@@ -206,8 +206,41 @@ async function testManagedAgentBrowserDefault(): Promise<void> {
   }
 }
 
+async function testBrowserProfileDefaultsManagedAgentBrowser(): Promise<void> {
+  console.log("\n[9] withBrowser({ profile }): defaults to remote managed agent-browser");
+
+  const kit = new Evolve()
+    .withAgent({ type: "claude", apiKey: "evolve-key" })
+    .withSandbox(fakeSandboxProvider)
+    .withBrowser({ profile: "ramp-qa" });
+
+  const options = await getInitializedAgentOptions(kit);
+  assertEqual(options.managedBrowser.provider, "agent-browser", "browser profile uses managed agent-browser by default");
+  assertEqual(options.managedBrowser.profile, "ramp-qa", "browser profile name is preserved");
+  assert(options.skills.includes("agent-browser"), "browser profile path adds agent-browser skill");
+}
+
+async function testBrowserProfileRequiresManagedRemote(): Promise<void> {
+  console.log("\n[10] withBrowser({ provider: \"agent-browser\", profile }): requires remote managed browser");
+
+  const kit = new Evolve()
+    .withAgent({ type: "claude", apiKey: "evolve-key" })
+    .withSandbox(fakeSandboxProvider)
+    .withBrowser({ provider: "agent-browser", profile: "ramp-qa" });
+
+  try {
+    await getInitializedAgentOptions(kit);
+    assert(false, "browser profile without managed remote browser should throw");
+  } catch (error) {
+    assert(
+      error instanceof Error && error.message.includes("requires managed remote browser"),
+      "browser profile error explains managed remote requirement"
+    );
+  }
+}
+
 async function testActionbookObjectRemoteDefaultsFalse(): Promise<void> {
-  console.log("\n[9] withBrowser({ provider: \"actionbook\" }): remote defaults false");
+  console.log("\n[11] withBrowser({ provider: \"actionbook\" }): remote defaults false");
 
   const kit = new Evolve()
     .withAgent({ type: "claude", apiKey: "evolve-key" })
@@ -221,7 +254,7 @@ async function testActionbookObjectRemoteDefaultsFalse(): Promise<void> {
 }
 
 async function testManagedActionbookRequiresGatewayMode(): Promise<void> {
-  console.log("\n[10] remote managed Actionbook: direct mode rejected");
+  console.log("\n[12] remote managed Actionbook: direct mode rejected");
 
   const kit = new Evolve()
     .withAgent({ type: "claude", providerApiKey: "provider-key" })
@@ -240,7 +273,7 @@ async function testManagedActionbookRequiresGatewayMode(): Promise<void> {
 }
 
 async function testManagedActionbookConfigUsesProxyOnly(): Promise<void> {
-  console.log("\n[11] remote managed Actionbook config: sandbox sees only Evolve proxy endpoint");
+  console.log("\n[13] remote managed Actionbook config: sandbox sees only Evolve proxy endpoint");
 
   const kit = new Evolve()
     .withAgent({ type: "claude", apiKey: "evolve-key" })
@@ -279,7 +312,7 @@ async function testManagedActionbookConfigUsesProxyOnly(): Promise<void> {
 }
 
 async function testManagedAgentBrowserConfigUsesProxyOnly(): Promise<void> {
-  console.log("\n[12] managed agent-browser config: sandbox sees only Evolve proxy endpoint");
+  console.log("\n[14] managed agent-browser config: sandbox sees only Evolve proxy endpoint");
 
   const kit = new Evolve()
     .withAgent({ type: "claude", apiKey: "evolve-key" })
@@ -331,7 +364,7 @@ async function testManagedAgentBrowserConfigUsesProxyOnly(): Promise<void> {
 }
 
 async function testBrowserCredentialsRequireManagedAgentBrowser(): Promise<void> {
-  console.log("\n[13] withBrowserCredentials(): requires managed remote agent-browser");
+  console.log("\n[15] withBrowserCredentials(): requires managed remote agent-browser");
 
   const missingBrowser = new Evolve()
     .withAgent({ type: "claude", apiKey: "evolve-key" })
@@ -366,7 +399,7 @@ async function testBrowserCredentialsRequireManagedAgentBrowser(): Promise<void>
 }
 
 async function testBrowserCredentialsRejectDirectMode(): Promise<void> {
-  console.log("\n[14] withBrowserCredentials(): direct mode rejected");
+  console.log("\n[16] withBrowserCredentials(): direct mode rejected");
 
   const kit = new Evolve()
     .withAgent({ type: "claude", providerApiKey: "provider-key" })
@@ -386,7 +419,7 @@ async function testBrowserCredentialsRejectDirectMode(): Promise<void> {
 }
 
 async function testBrowserCredentialsConfigPreserved(): Promise<void> {
-  console.log("\n[15] withBrowserCredentials(): stores allow scope for run-scoped MCP minting");
+  console.log("\n[17] withBrowserCredentials(): stores allow scope for run-scoped MCP minting");
 
   const kit = new Evolve()
     .withAgent({ type: "claude", apiKey: "evolve-key" })
@@ -403,7 +436,7 @@ async function testBrowserCredentialsConfigPreserved(): Promise<void> {
 }
 
 async function testBrowserCredentialsReserveMcpName(): Promise<void> {
-  console.log("\n[16] withBrowserCredentials(): reserves browser-login MCP name");
+  console.log("\n[18] withBrowserCredentials(): reserves browser-login MCP name");
 
   const kit = new Evolve()
     .withAgent({ type: "claude", apiKey: "evolve-key" })
@@ -438,6 +471,8 @@ async function main(): Promise<void> {
   await testActionbookStringAddsSkillsOnly();
   await testAgentBrowserStringAddsSkillsOnly();
   await testManagedAgentBrowserDefault();
+  await testBrowserProfileDefaultsManagedAgentBrowser();
+  await testBrowserProfileRequiresManagedRemote();
   await testActionbookObjectRemoteDefaultsFalse();
   await testManagedActionbookRequiresGatewayMode();
   await testManagedActionbookConfigUsesProxyOnly();

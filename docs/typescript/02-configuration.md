@@ -279,6 +279,27 @@ new Evolve().withBrowser({
 // local agent-browser, no managed live/replay
 ```
 
+Use a browser profile to reuse logged-in browser state across managed browser sessions:
+
+```ts
+const evolve = new Evolve()
+    .withBrowser({
+        profile: "ramp-qa",
+    });
+```
+
+Profiles are gateway-only and work only with managed remote browser sessions. Evolve stores and resolves profile state server-side; the SDK never receives raw browser state.
+
+List or delete profiles from the SDK:
+
+```ts
+const profiles = await Evolve.browserProfiles().list();
+
+await Evolve.browserProfiles().delete({
+    profile: "ramp-qa",
+});
+```
+
 To disable browser automation, omit `.withBrowser()`.
 
 Full browser run with live view and replay:
@@ -341,7 +362,7 @@ Availability:
 
 - Requires Gateway mode and managed remote `agent-browser`.
 - `.withBrowser()` uses that recommended remote setup by default.
-- Not available with `browser-use`, `actionbook`, `remote: false`, direct/BYOK provider mode, or `.withSession()`.
+- Not available with local browser mode, direct/BYOK provider mode, or `.withSession()`.
 
 Dashboard setup:
 

@@ -111,6 +111,7 @@ export type {
   BrowserConfig,
   BrowserCredentialScopeEntry,
   BrowserCredentialsConfig,
+  DefaultBrowserConfig,
   ActionbookBrowserConfig,
   AgentBrowserConfig,
   AgentPluginConfig,
@@ -275,6 +276,18 @@ export {
   type BrowserCredentialMetadata,
   type BrowserCredentialsClientConfig,
 } from "./browser-credentials";
+
+// =============================================================================
+// BROWSER PROFILES
+// =============================================================================
+
+export {
+  BrowserProfilesClient,
+  browserProfiles,
+  type BrowserProfileDeleteInput,
+  type BrowserProfileMetadata,
+  type BrowserProfilesClientConfig,
+} from "./browser-profiles";
 
 // =============================================================================
 // SESSIONS

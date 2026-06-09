@@ -24,12 +24,14 @@ const ACTIONBOOK_CONFIG_PATH = `${ACTIONBOOK_CONFIG_DIR}/config.toml`;
 export interface NormalizedBrowserConfig {
   provider: "browser-use" | ManagedBrowserProvider;
   managed: boolean;
+  profile?: string;
 }
 
 export interface ManagedBrowserConfig {
   provider: ManagedBrowserProvider;
   apiKey: string;
   dashboardUrl?: string;
+  profile?: string;
 }
 
 export interface ManagedBrowserSession {
@@ -55,6 +57,14 @@ function usesManagedRemote(browser: ActionbookBrowserConfig | AgentBrowserConfig
   return browser.remote === true;
 }
 
+function normalizeProfile(profile: unknown): string | undefined {
+  if (profile === undefined || profile === null) return undefined;
+  if (typeof profile !== "string") throw new Error("browser profile must be a string");
+  const trimmed = profile.trim();
+  if (!trimmed) throw new Error("browser profile cannot be empty");
+  return trimmed;
+}
+
 export function normalizeBrowserConfig(browser: BrowserConfig): NormalizedBrowserConfig {
   if (typeof browser === "string") {
     if (browser === "browser-use") {
@@ -65,8 +75,19 @@ export function normalizeBrowserConfig(browser: BrowserConfig): NormalizedBrowse
     }
     throw new Error("Unsupported browser configuration");
   }
+  if (browser.provider === undefined) {
+    return {
+      provider: "agent-browser",
+      managed: browser.remote !== false,
+      profile: normalizeProfile(browser.profile),
+    };
+  }
   if (isManagedProvider(browser.provider)) {
-    return { provider: browser.provider, managed: usesManagedRemote(browser) };
+    return {
+      provider: browser.provider,
+      managed: usesManagedRemote(browser),
+      profile: normalizeProfile(browser.profile),
+    };
   }
   throw new Error("Unsupported browser configuration");
 }
@@ -132,6 +153,7 @@ export async function createManagedBrowserSession(
       sessionTag,
       options: { remote: true },
       browserAuth: options.browserCredentials === true,
+      ...(config.profile ? { profile: config.profile } : {}),
     }),
     signal: AbortSignal.timeout(30_000),
   });

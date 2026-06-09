@@ -14,6 +14,7 @@ from .config import (
     BrowserCredentialScopeEntry,
     BrowserCredentialsConfig,
     BrowserCredentialsClientConfig,
+    BrowserProfilesClientConfig,
     AgentPluginConfig,
     ReasoningEffort,
     ValidationMode,
@@ -41,6 +42,7 @@ from .results import (
 from .storage_client import StorageClient
 from .sessions_client import SessionsClient
 from .browser_credentials import BrowserCredentialsClient, BrowserCredentialMetadata, BrowserCredentialsPage
+from .browser_profiles import BrowserProfilesClient, BrowserProfileMetadata, BrowserProfilesPage
 from .utils import read_local_dir, save_local_dir
 from .bridge import (
     SandboxNotFoundError,
@@ -162,6 +164,14 @@ def browser_credentials(config: Optional[BrowserCredentialsClientConfig] = None)
     return BrowserCredentialsClient(config or BrowserCredentialsClientConfig())
 
 
+def browser_profiles(config: Optional[BrowserProfilesClientConfig] = None) -> BrowserProfilesClient:
+    """Create a standalone browser profiles client.
+
+    Uses EVOLVE_API_KEY unless BrowserProfilesClientConfig(api_key=...) is provided.
+    """
+    return BrowserProfilesClient(config or BrowserProfilesClientConfig())
+
+
 async def list_checkpoints(
     storage: Optional[StorageConfig] = None,
     limit: Optional[int] = None,
@@ -218,6 +228,7 @@ __all__ = [
     'BrowserCredentialScopeEntry',
     'BrowserCredentialsConfig',
     'BrowserCredentialsClientConfig',
+    'BrowserProfilesClientConfig',
     'AgentPluginConfig',
     'ReasoningEffort',
     'ValidationMode',
@@ -231,6 +242,9 @@ __all__ = [
     'BrowserCredentialsClient',
     'BrowserCredentialMetadata',
     'BrowserCredentialsPage',
+    'BrowserProfilesClient',
+    'BrowserProfileMetadata',
+    'BrowserProfilesPage',
 
     # Evolve Results
     'AgentResponse',
@@ -249,6 +263,7 @@ __all__ = [
     'StorageClient',
     'SessionsClient',
     'browser_credentials',
+    'browser_profiles',
 
     # Standalone functions
     'storage',
