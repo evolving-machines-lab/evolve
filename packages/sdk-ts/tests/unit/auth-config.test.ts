@@ -123,6 +123,30 @@ async function runTests(): Promise<void> {
   console.log("\n=== Auth Config Unit Tests ===\n");
 
   // ─────────────────────────────────────────────────────────────────────────
+  // REGISTRY METADATA
+  // ─────────────────────────────────────────────────────────────────────────
+
+  console.log("Registry: Claude models");
+
+  {
+    const claude = AGENT_REGISTRY.claude;
+    const fable = claude.models.find((model) => model.alias === "fable");
+    assertEqual(claude.defaultModel, "opus", "Claude default stays opus");
+    assert(fable !== undefined, "Claude registry includes fable alias");
+    assertEqual(fable?.modelId, "claude-fable-5", "fable maps to claude-fable-5");
+
+    const opencodeFable = AGENT_REGISTRY.opencode.models.find(
+      (model) => model.alias === "openrouter/anthropic/claude-fable-5"
+    );
+    assert(opencodeFable !== undefined, "OpenCode registry includes OpenRouter Fable alias");
+    assertEqual(
+      opencodeFable?.modelId,
+      "openrouter/anthropic/claude-fable-5",
+      "OpenCode Fable alias keeps provider-prefixed OpenRouter model"
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   // EXPLICIT CONFIG TESTS (always take priority)
   // ─────────────────────────────────────────────────────────────────────────
 

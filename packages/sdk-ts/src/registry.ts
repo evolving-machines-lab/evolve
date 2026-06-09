@@ -200,6 +200,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     customHeadersEnv: "ANTHROPIC_CUSTOM_HEADERS",
     defaultModel: "opus",
     models: [
+      { alias: "fable", modelId: "claude-fable-5", description: "Highest capability, long-horizon agentic work" },
       { alias: "opus", modelId: "claude-opus-4-8", description: "Complex reasoning, R&D, architecting" },
       { alias: "sonnet", modelId: "claude-sonnet-4-6", description: "Daily coding, features, tests" },
       { alias: "haiku", modelId: "claude-haiku-4-5-20251001", description: "Quick tasks, syntax correction" },
@@ -399,6 +400,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     },
     gatewayConfigEnv: "OPENCODE_CONFIG_CONTENT",
     models: [
+      { alias: "openrouter/anthropic/claude-fable-5", modelId: "openrouter/anthropic/claude-fable-5", description: "Anthropic Fable via OpenRouter" },
       { alias: "openrouter/anthropic/claude-sonnet-4.6", modelId: "openrouter/anthropic/claude-sonnet-4.6", description: "Anthropic Sonnet via OpenRouter" },
       { alias: "openrouter/anthropic/claude-opus-4.8", modelId: "openrouter/anthropic/claude-opus-4.8", description: "Anthropic Opus via OpenRouter" },
       { alias: "openrouter/anthropic/claude-haiku-4.5", modelId: "openrouter/anthropic/claude-haiku-4.5", description: "Anthropic Haiku via OpenRouter" },

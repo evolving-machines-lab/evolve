@@ -143,7 +143,7 @@ evolve = Evolve(
     # Agent configuration (optional if EVOLVE_API_KEY set, defaults to claude)
     config=AgentConfig(
         type='codex',                        # 'claude' | 'codex' | 'gemini' | 'qwen' | 'kimi' | 'opencode' | 'droid' - defaults to 'claude'
-        model='gpt-5.3-codex',               # (optional) Uses default if omitted. Use 'sonnet[1m]' / 'opus[1m]' for 1M context (Claude only)
+        model='gpt-5.3-codex',               # (optional) Uses default if omitted. Use 'fable' for Claude Fable 5 or 'sonnet[1m]' / 'opus[1m]' for 1M context (Claude only)
         reasoning_effort='medium',           # (optional) Native reasoning/thinking control; valid values vary by agent/model
         api_key=os.getenv('EVOLVE_API_KEY'), # (optional) Gateway mode - auto-resolves from env
         # provider_api_key=os.getenv('ANTHROPIC_API_KEY'), # (optional) Direct mode (BYOK)
