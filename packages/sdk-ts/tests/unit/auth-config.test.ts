@@ -21,7 +21,7 @@
  */
 
 import { resolveAgentConfig } from "../../src/utils/config.js";
-import { resolveDefaultSandbox } from "../../src/utils/sandbox.js";
+import { resolveDefaultSandbox, toManagedE2BKey } from "../../src/utils/sandbox.js";
 import { getE2BGatewayUrl, getGatewayUrl } from "../../src/constants.js";
 import { AGENT_REGISTRY } from "../../src/registry.js";
 
@@ -576,6 +576,17 @@ async function runTests(): Promise<void> {
     assert(provider !== null, "returns a provider");
     assertEqual(provider.providerType, "e2b", "provider type is e2b");
     assertEqual(process.env.E2B_API_URL, undefined, "does not mutate E2B_API_URL for gateway routing");
+  }
+
+  console.log("\ntoManagedE2BKey (gateway key wrapped for upstream e2b client)");
+  {
+    const encoded = toManagedE2BKey("sk-test-key");
+    assert(/^e2b_[0-9a-f]+$/.test(encoded), "encoded key matches upstream e2b client format");
+    assertEqual(
+      Buffer.from(encoded.slice(4), "hex").toString("utf8"),
+      "sk-test-key",
+      "encoding is reversible to the original gateway key"
+    );
   }
 
   // E2B_API_KEY takes priority over EVOLVE_API_KEY for sandbox billing/BYOK
