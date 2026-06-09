@@ -290,6 +290,13 @@ const evolve = new Evolve()
 
 Profiles are gateway-only and work only with managed remote browser sessions. Evolve stores and resolves profile state server-side; the SDK never receives raw browser state.
 
+Profile lifecycle:
+
+- First use: if the profile does not exist for the authenticated Evolve user, Dashboard creates an empty server-side browser profile and starts the managed browser with it.
+- Reuse: if the profile already exists, Dashboard starts the browser with the existing state and updates `lastUsedAt`.
+- Persist: browser state changes made during the session, such as successful logins, are saved when the managed browser is stopped. Call `kill()` when done so cleanup and replay processing run.
+- Visibility: the profile appears in Dashboard **Secrets** under Browser Profiles and in `Evolve.browserProfiles().list()`. Only metadata is returned; cookies and storage stay server-side.
+
 List or delete profiles from the SDK:
 
 ```ts
