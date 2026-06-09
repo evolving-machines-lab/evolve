@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.0.48 - 2026-06-09
+
+### Highlights
+
+- Added Claude Fable 5 model support for Claude Code via `model: "fable"` / `model='fable'`.
+- Added Claude Fable 5 via OpenCode/OpenRouter as `openrouter/anthropic/claude-fable-5`.
+- Published TypeScript and Python packages at `0.0.48`.
+
+### SDK
+
+- Added `fable -> claude-fable-5` to the Claude model registry while keeping Claude's default model as `opus`.
+- Added `openrouter/anthropic/claude-fable-5` to the OpenCode model registry.
+
+### Documentation And Skills
+
+- Updated TypeScript and Python Agent Reference tables and examples for Claude Fable 5.
+- Synced Evolve skill reference docs from the updated public docs.
+
 ## v0.0.47 - 2026-06-09
 
 ### Highlights
