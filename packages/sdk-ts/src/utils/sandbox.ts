@@ -16,6 +16,18 @@ import {
 } from "../constants";
 
 /**
+ * Encode an Evolve gateway key as an e2b-shaped key for the managed E2B route.
+ *
+ * The upstream e2b client validates `apiKey` against /^e2b_[0-9a-f]+$/ before
+ * sending any request, so the raw `sk-…` Evolve key can no longer ride in
+ * directly. Hex wrapping satisfies the client; the Dashboard managed route
+ * decodes it back before verifying the key against the gateway.
+ */
+export function toManagedE2BKey(evolveKey: string): string {
+  return `e2b_${Buffer.from(evolveKey, "utf8").toString("hex")}`;
+}
+
+/**
  * Resolve default sandbox provider from environment.
  *
  * Priority (user's sandbox keys first, gateway as fallback):
@@ -101,7 +113,7 @@ export async function resolveDefaultSandbox(): Promise<SandboxProvider> {
       // per-user sandbox ownership before the provider gateway injects E2B_API_KEY.
       // Keep this on the provider instance rather than process.env so later BYOK
       // E2B providers in the same process cannot inherit managed routing.
-      return createE2BProvider({ apiKey: evolveKey, apiUrl: getE2BGatewayUrl() });
+      return createE2BProvider({ apiKey: toManagedE2BKey(evolveKey), apiUrl: getE2BGatewayUrl() });
     } catch (e) {
       const error = e as Error;
       if (error.message?.includes("Cannot find module") || error.message?.includes("MODULE_NOT_FOUND")) {
