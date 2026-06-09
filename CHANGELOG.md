@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.0.47 - 2026-06-09
+
+### Highlights
+
+- Added first-class managed browser profile support for reusable authenticated browser state.
+- Added `.withBrowser({ profile: "..." })` in TypeScript for managed remote `agent-browser` runs.
+- Added browser profile clients for TypeScript and Python so users can list and delete reusable browser profiles from the SDK.
+- Published TypeScript and Python packages at `0.0.47`.
+
+### SDK
+
+- Added `Evolve.browserProfiles().list()` and `Evolve.browserProfiles().delete({ profile })` in TypeScript.
+- Added Python browser profile helpers via `evolve.browser_profiles`.
+- Enforced that browser profiles are available only in managed remote browser mode.
+- Kept browser profile metadata scoped to the authenticated Evolve user and free of provider internals.
+
+### Documentation And Skills
+
+- Documented managed browser profile usage in the TypeScript and Python browser automation sections.
+- Synced Evolve skill reference docs from the updated public docs.
+
 ## v0.0.46 - 2026-06-04
 
 ### Highlights
