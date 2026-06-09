@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.0.49 - 2026-06-09
+
+### Highlights
+
+- Fixed gateway-mode sandbox creation on fresh installs with the latest upstream `e2b` client.
+- Published TypeScript and Python packages at `0.0.49`.
+
+### SDK
+
+- Wrapped the Evolve gateway key as an `e2b`-shaped key for the managed E2B route, satisfying the upstream `e2b` client's new API-key format validation. The Dashboard managed route unwraps it before the existing key verification; BYOK E2B usage is unchanged.
+
 ## v0.0.48 - 2026-06-09
 
 ### Highlights
