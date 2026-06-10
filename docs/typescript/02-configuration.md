@@ -181,10 +181,6 @@ const evolve = new Evolve()
     .withIntegrations({
         userId: "root",
         apps: ["github", "gmail"],
-        tools: {
-            github: { enable: ["github_create_issue"] },
-            gmail: { disable: ["gmail_delete_email"] },
-        },
     })
 
     // (optional) Prefix for observability logs
@@ -591,10 +587,6 @@ const evolve = new Evolve()
     .withIntegrations({
         userId: "customer_123",
         apps: ["github", "gmail"],
-        tools: {
-            github: ["github_create_issue", "github_list_repos"],
-            gmail: { disable: ["gmail_delete_email"] },
-        },
     });
 
 await evolve.run({ prompt: "Create a GitHub issue for the login bug" });
@@ -667,17 +659,10 @@ const evolve = new Evolve()
 interface IntegrationsSetup {
     userId: string;            // "root" or your stable SDK user ID
     apps: string[];
-    tools?: Record<string, IntegrationToolsFilter>;
     accounts?: Record<string, string[]>; // app -> account labels or account IDs
     authConfigs?: Record<string, string>; // app -> custom auth config ID
     keys?: Record<string, string>;        // app -> API key, requires authConfigs[app]
 }
-
-type IntegrationToolsFilter =
-    | string[]
-    | { enable: string[] }
-    | { disable: string[] }
-    | { tags: string[] };
 ```
 
 ---

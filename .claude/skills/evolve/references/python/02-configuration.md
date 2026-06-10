@@ -591,10 +591,6 @@ evolve = Evolve(
     integrations=IntegrationsSetup(
         user_id='root',
         apps=['github', 'gmail'],
-        tools={
-            'github': ['github_create_issue', 'github_list_repos'],
-            'gmail': {'disable': ['gmail_delete_email']},
-        },
     ),
 )
 
@@ -673,17 +669,9 @@ evolve = Evolve(
 class IntegrationsSetup:
     user_id: str  # "root" or your stable SDK user ID
     apps: List[str]
-    tools: Optional[Dict[str, IntegrationToolsFilter]] = None
     accounts: Optional[Dict[str, List[str]]] = None  # app -> account labels or account IDs
     auth_configs: Optional[Dict[str, str]] = None  # app -> custom auth config ID
     keys: Optional[Dict[str, str]] = None          # app -> API key, requires auth_configs[app]
-
-IntegrationToolsFilter = Union[
-    List[str],
-    EnableFilter,
-    DisableFilter,
-    TagsFilter,
-]
 ```
 
 ---
