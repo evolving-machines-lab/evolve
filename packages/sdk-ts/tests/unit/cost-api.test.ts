@@ -814,7 +814,8 @@ async function testKimiBuildCommandUsesPromptMode(): Promise<void> {
   const kimi = AGENT_REGISTRY.kimi;
   assertEqual(kimi.defaultModel, "kimi-k2.6", "Kimi default is user-facing");
   assertEqual(kimi.gatewayModelAliases?.["kimi-k2.5"], "moonshot/kimi-k2.5", "Kimi gateway maps to Moonshot route");
-  assertEqual(kimi.gatewayModelAliases?.["kimi-k2.6-turbo"], "kimi-k2.6-turbo", "Kimi turbo alias maps to gateway turbo route");
+  assertEqual(kimi.gatewayModelAliases?.["kimi-k2p6-raptor"], "kimi-k2p6-raptor", "Kimi K2.6 Raptor alias maps to gateway route");
+  assertEqual(kimi.gatewayModelAliases?.["kimi-k2p7-code-raptor"], "kimi-k2p7-code-raptor", "Kimi K2.7 Code Raptor alias maps to gateway route");
   assertEqual(kimi.mcpConfig.settingsDir, "~/.kimi-code", "Kimi Code settings dir");
   assertEqual(kimi.skillsConfig.targetDir, "/home/user/.kimi-code/skills", "Kimi Code skills dir");
   assert(kimi.checkpointExcludes?.includes(".kimi-code/config.toml") === true, "Kimi Code config.toml is excluded from checkpoints");
@@ -833,14 +834,14 @@ async function testKimiBuildCommandUsesPromptMode(): Promise<void> {
   assert(!gatewayCmd.includes("--yolo"), "omits prompt-incompatible --yolo flag");
   assert(!gatewayCmd.includes("--thinking"), "omits old thinking flag");
 
-  const turboGatewayAgent = new Agent({
+  const raptorGatewayAgent = new Agent({
     type: "kimi",
     apiKey: "test-gateway-key",
     isDirectMode: false,
-    model: "kimi-k2.6-turbo",
+    model: "kimi-k2p7-code-raptor",
   } as any, {});
-  const turboGatewayCmd = (turboGatewayAgent as any).buildCommand("hello") as string;
-  assert(turboGatewayCmd.includes("else kimi -p 'hello' --output-format stream-json"), "turbo gateway uses config default model in new Kimi branch");
+  const raptorGatewayCmd = (raptorGatewayAgent as any).buildCommand("hello") as string;
+  assert(raptorGatewayCmd.includes("else kimi -p 'hello' --output-format stream-json"), "raptor gateway uses config default model in new Kimi branch");
 
   const directAgent = new Agent({
     type: "kimi",
@@ -855,7 +856,7 @@ async function testKimiBuildCommandUsesPromptMode(): Promise<void> {
     type: "kimi",
     apiKey: "test-gateway-key",
     isDirectMode: false,
-    model: "kimi-k2.6-turbo",
+    model: "kimi-k2p6-raptor",
     reasoningEffort: "no-thinking",
   } as any, {});
   const noThinkingCmd = (noThinkingAgent as any).buildCommand("hello") as string;
