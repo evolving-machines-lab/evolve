@@ -278,6 +278,7 @@ export function buildTarCommand(
   const excludes = [
     ...TAR_EXCLUDES.map((e) => `--exclude=${shellEscape(e)}`),
     `--exclude=${shellEscape(workspaceDir + "/temp")}`,
+    ...(registry.checkpointExcludes ?? []).map((e) => `--exclude=${shellEscape(normalizeAgentDir(e))}`),
   ].join(" ");
 
   const dirs = [

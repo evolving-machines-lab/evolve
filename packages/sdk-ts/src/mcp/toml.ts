@@ -250,21 +250,18 @@ export async function writeCodexSpendProvider(
 }
 
 // =============================================================================
-// KIMI SPEND TRACKING (dedicated config file via --config-file)
+// KIMI CODE SPEND TRACKING (config.toml)
 // =============================================================================
 
 /**
- * Write a dedicated Evolve-owned config file for Kimi spend tracking.
+ * Write the Kimi Code config file used for gateway routing and spend tracking.
  *
- * Instead of merging into the user's ~/.kimi/config.toml (which required
- * fragile regex-based TOML parsing), we write a self-contained config file
- * and pass it to the Kimi CLI via --config-file. The sandbox is ours — there
- * is no user config to preserve.
+ * The sandbox is ours, so we write ~/.kimi-code/config.toml from scratch. This
+ * keeps Kimi coherent with Codex/Qwen/Droid: the SDK owns gateway provider
+ * settings, and run-specific LiteLLM headers are rewritten before each spawn.
  *
- * The file contains: default_model, a provider entry with custom_headers
- * for LiteLLM tracking, and a model entry pointing to the provider.
- * base_url/api_key are empty — KIMI_BASE_URL and KIMI_API_KEY env vars
- * override them at runtime.
+ * Source-verified: Kimi Code reads default_model, providers.<name>,
+ * providers.<name>.custom_headers, and models.<name> from config.toml.
  */
 export async function writeKimiSpendConfig(
   sandbox: SandboxInstance,
@@ -275,6 +272,13 @@ export async function writeKimiSpendConfig(
     maxContextSize: number;
   },
   headers: Record<string, string>,
+  connection: {
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+    defaultThinking: boolean;
+    thinkingEffort?: string;
+  },
 ): Promise<void> {
   const configPath = expandPath(config.configPath);
   const configDir = configPath.slice(0, configPath.lastIndexOf("/"));
@@ -282,20 +286,35 @@ export async function writeKimiSpendConfig(
   await sandbox.files.makeDir(configDir);
 
   // Write from scratch — no reading, no parsing, no merging.
-  const content = [
+  const contentLines = [
     `default_model = ${serializeTomlValue(config.modelName)}`,
+    `default_thinking = ${serializeTomlValue(connection.defaultThinking)}`,
+    `default_permission_mode = "auto"`,
+    "",
+    `[thinking]`,
+    `mode = ${serializeTomlValue(connection.defaultThinking ? "on" : "off")}`,
+  ];
+
+  if (connection.defaultThinking && connection.thinkingEffort) {
+    contentLines.push(`effort = ${serializeTomlValue(connection.thinkingEffort)}`);
+  }
+
+  contentLines.push(
     "",
     `[providers.${config.providerName}]`,
     `type = "kimi"`,
-    `base_url = ""`,
-    `api_key = ""`,
+    `base_url = ${serializeTomlValue(connection.baseUrl)}`,
+    `api_key = ${serializeTomlValue(connection.apiKey)}`,
     `custom_headers = ${serializeTomlValue(headers)}`,
     "",
     `[models.${config.modelName}]`,
     `provider = ${serializeTomlValue(config.providerName)}`,
-    `model = ""`,
+    `model = ${serializeTomlValue(connection.model)}`,
     `max_context_size = ${config.maxContextSize}`,
-  ].join("\n") + "\n";
+    `capabilities = ${serializeTomlValue(["image_in", "thinking"])}`,
+  );
+
+  const content = contentLines.join("\n") + "\n";
 
   await sandbox.files.write(configPath, content);
 }

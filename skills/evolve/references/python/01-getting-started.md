@@ -1,6 +1,6 @@
 # Evolve Python SDK
 
-Run CLI agents ([Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi CLI](https://github.com/MoonshotAI/kimi-cli), [OpenCode](https://github.com/anomalyco/opencode), [Droid](https://docs.factory.ai/cli/droid-exec/overview)) in secure sandboxes with built-in observability.
+Run CLI agents ([Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi Code](https://github.com/MoonshotAI/kimi-code), [OpenCode](https://github.com/anomalyco/opencode), [Droid](https://docs.factory.ai/cli/droid-exec/overview)) in secure sandboxes with built-in observability.
 
 ---
 
@@ -291,6 +291,8 @@ Agent-specific option: `reasoning_effort` controls how much reasoning/thinking t
 | `'kimi'` | `'thinking'` | `'thinking'` `'no-thinking'` |
 | `'opencode'` | `'thinking'` + `'medium'` | `'thinking'` `'no-thinking'` `'minimal'` `'low'` `'medium'` `'high'` `'xhigh'` `'max'` |
 | `'droid'` | Droid/model default | `'off'` `'minimal'` `'low'` `'medium'` `'high'` `'xhigh'` `'max'`; exact values depend on the Droid model |
+
+Kimi Code has provider-dependent internal effort settings, but the Moonshot/Kimi API documents thinking on/off and preserved-thinking controls, not public effort levels.
 
 For Claude Fable 5, use `model='fable'`. For OpenCode via OpenRouter, use `model='openrouter/anthropic/claude-fable-5'`. For Claude 1M context window, use `model='sonnet[1m]'` or `model='opus[1m]'`.
 

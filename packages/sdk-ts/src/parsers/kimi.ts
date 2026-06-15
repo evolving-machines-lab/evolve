@@ -1,14 +1,22 @@
 /**
- * Kimi Kosong Messages → ACP-style events parser.
+ * Kimi CLI stream-json → ACP-style events parser.
  *
- * Native schema source (MoonshotAI/kimi-cli):
- *   KNOWLEDGE/kimi-cli/packages/kosong/src/kosong/message.py (ContentPart, ToolCall, Message)
- *   KNOWLEDGE/kimi-cli/src/kimi_cli/ui/print/visualize.py (JsonPrinter — stream-json output)
- *   KNOWLEDGE/kimi-cli/src/kimi_cli/tools/__init__.py (tool name registry)
+ * Native schema source (MoonshotAI/kimi-code):
+ *   apps/kimi-code/src/cli/run-prompt.ts (stream-json prompt output)
+ *   apps/kimi-code/test/cli/run-prompt.test.ts (stream-json fixtures)
  *
- * Output mode: `kimi --print --output-format stream-json`
+ * Output mode: `kimi -p "<prompt>" --output-format stream-json`
  *
- * Actual output format (Kosong Messages, NOT Wire Protocol):
+ * Current Kimi Code output format:
+ *
+ *   role: "assistant" with optional string content and optional tool_calls[]
+ *     content             → agent_message_chunk
+ *     tool_calls[].type: "function" → tool_call (pending)
+ *
+ *   role: "tool" with string content and tool_call_id
+ *     → tool_call_update (completed/failed)
+ *
+ * Legacy Python kimi-cli compatibility:
  *
  *   role: "assistant" with content[] and optional tool_calls[]
  *     content[].type: "think"    → agent_thought_chunk
@@ -32,24 +40,36 @@ import {
 /** Map Kimi tool names to ACP ToolKind */
 const TOOL_KINDS: Record<string, ToolKind> = {
   // File operations
+  Read: "read",
   ReadFile: "read",
   ReadMediaFile: "read",
+  Write: "edit",
   WriteFile: "edit",
+  Edit: "edit",
   StrReplaceFile: "edit",
   // Shell
+  Bash: "execute",
   Shell: "execute",
   // Search
   Glob: "search",
   Grep: "search",
   // Web
+  WebSearch: "fetch",
   SearchWeb: "fetch",
   FetchURL: "fetch",
   // Agent
+  Agent: "think",
+  AgentSwarm: "think",
   Task: "think",
   Think: "think",
   CreateSubagent: "think",
+  TodoList: "other",
   SetTodoList: "other",
 };
+
+function isTodoListTool(toolName: string): boolean {
+  return toolName === "TodoList" || toolName === "SetTodoList";
+}
 
 function isKimiToolErrorText(text: string): boolean {
   return /<system>\s*ERROR:/i.test(text) || text.includes("<error>") || text.includes("ToolError");
@@ -259,13 +279,12 @@ export function createKimiParser() {
     }
 
     if (!data || typeof data !== "object") return null;
+    const role = data.role as string | undefined;
 
     // Skip metadata lines
-    if ("_meta" in data || "_prompt" in data) {
+    if ("_meta" in data || "_prompt" in data || role === "meta") {
       return null;
     }
-
-    const role = data.role as string | undefined;
 
     // Kosong Messages format: { role, content, tool_calls?, tool_call_id? }
     if (role === "assistant") {
@@ -285,7 +304,7 @@ export function createKimiParser() {
   };
 
   /**
-   * Parse assistant message: content[] (think/text) + tool_calls[]
+   * Parse assistant message: string content or legacy content[] + tool_calls[]
    */
   function parseAssistantMessage(data: any): OutputEvent[] | null {
     const events: OutputEvent[] = [];
@@ -323,7 +342,7 @@ export function createKimiParser() {
           input = fn.arguments;
         }
 
-        if (toolName === "SetTodoList") {
+        if (isTodoListTool(toolName)) {
           const entries = parseTodosToPlanEntries(input);
           if (entries.length > 0) {
             events.push({
@@ -450,7 +469,7 @@ export function createKimiParser() {
         } catch {
           input = fn.arguments;
         }
-        if (toolName === "SetTodoList") {
+        if (isTodoListTool(toolName)) {
           const entries = parseTodosToPlanEntries(input);
           if (entries.length > 0) {
             events.push({
@@ -552,6 +571,7 @@ export function createKimiParser() {
     let title = toolName;
 
     switch (toolName) {
+      case "Read":
       case "ReadFile": {
         const path = (input.path ?? input.file_path) as string | undefined;
         title = `Read ${path || "file"}`;
@@ -566,6 +586,7 @@ export function createKimiParser() {
         break;
       }
 
+      case "Write":
       case "WriteFile": {
         const path = (input.path ?? input.file_path) as string | undefined;
         title = `Write ${path || "file"}`;
@@ -583,6 +604,7 @@ export function createKimiParser() {
         break;
       }
 
+      case "Edit":
       case "StrReplaceFile": {
         const path = (input.path ?? input.file_path) as string | undefined;
         title = `Edit ${path || "file"}`;
@@ -590,6 +612,7 @@ export function createKimiParser() {
         break;
       }
 
+      case "Bash":
       case "Shell":
         title = input.command ? `\`${input.command}\`` : "Run command";
         break;
@@ -604,6 +627,7 @@ export function createKimiParser() {
         if (input.path) locations.push({ path: input.path as string });
         break;
 
+      case "WebSearch":
       case "SearchWeb":
         title = input.query ? `"${input.query}"` : "Web search";
         break;
@@ -612,6 +636,8 @@ export function createKimiParser() {
         title = input.url ? `Fetch ${input.url}` : "Web fetch";
         break;
 
+      case "Agent":
+      case "AgentSwarm":
       case "Task":
         title = (input.description as string) || "Subagent task";
         break;
@@ -624,6 +650,7 @@ export function createKimiParser() {
         title = input.name ? `Subagent: ${input.name}` : "Create subagent";
         break;
 
+      case "TodoList":
       case "SetTodoList":
         title = "Update todos";
         break;

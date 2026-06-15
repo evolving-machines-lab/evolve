@@ -211,7 +211,8 @@ async function testBuildTarCommandKimi(): Promise<void> {
   const cmd = buildTarCommand("kimi", "/home/user/workspace");
 
   assert(cmd.includes("workspace/"), "Includes workspace/ directory");
-  assert(cmd.includes(".kimi/"), "Includes .kimi/ settings directory");
+  assert(cmd.includes(".kimi-code/"), "Includes .kimi-code/ settings directory");
+  assert(cmd.includes("--exclude='.kimi-code/config.toml'"), "Excludes Kimi Code config.toml with gateway secret");
 }
 
 async function testBuildTarCommandOpencode(): Promise<void> {

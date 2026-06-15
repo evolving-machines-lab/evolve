@@ -2,7 +2,7 @@
 /**
  * Unit Test: Kimi MCP Config Writer
  *
- * Validates Kimi FastMCP config shape in ~/.kimi/mcp.json:
+ * Validates Kimi Code MCP config shape in ~/.kimi-code/mcp.json:
  * - Remote: uses `transport` (not `type`) when explicit type provided
  * - Remote: omits transport when type is omitted (FastMCP infers from URL)
  * - Stdio: uses `transport: "stdio"`
@@ -88,7 +88,7 @@ async function testExplicitRemoteTransport(): Promise<void> {
     },
   });
 
-  const json = readJson("/home/user/.kimi/mcp.json");
+  const json = readJson("/home/user/.kimi-code/mcp.json");
   const servers = (json.mcpServers as Record<string, Record<string, unknown>>) || {};
 
   assert(servers.httpServer?.transport === "http", "HTTP server uses transport=http");
@@ -108,7 +108,7 @@ async function testInferredRemoteTransport(): Promise<void> {
     },
   });
 
-  const json = readJson("/home/user/.kimi/mcp.json");
+  const json = readJson("/home/user/.kimi-code/mcp.json");
   const server = ((json.mcpServers as Record<string, Record<string, unknown>>) || {}).inferred || {};
 
   assert(server.url === "https://example.com/mcp", "Preserves URL");
@@ -127,7 +127,7 @@ async function testStdioTransport(): Promise<void> {
     },
   });
 
-  const json = readJson("/home/user/.kimi/mcp.json");
+  const json = readJson("/home/user/.kimi-code/mcp.json");
   const server = ((json.mcpServers as Record<string, Record<string, unknown>>) || {}).localTool || {};
 
   assert(server.command === "npx", "Preserves stdio command");

@@ -12,7 +12,7 @@
 
 <br>
 
-- Run any CLI agent ([Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi CLI](https://github.com/MoonshotAI/kimi-cli), [OpenCode](https://github.com/anomalyco/opencode)) in secure cloud sandboxes
+- Run any CLI agent ([Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi Code](https://github.com/MoonshotAI/kimi-code), [OpenCode](https://github.com/anomalyco/opencode)) in secure cloud sandboxes
 - Checkpointing: snapshot agent state to S3, restore into fresh sandboxes, content-addressed dedup, lineage tracking
 - Persistent filesystem for infinite context
 - Full computer access: terminal, browser, MCP tools
@@ -31,7 +31,7 @@ cp -r evolve/skills/evolve ~/.claude/skills/       # Claude Code
 cp -r evolve/skills/evolve ~/.codex/skills/        # Codex
 cp -r evolve/skills/evolve ~/.gemini/skills/       # Gemini CLI
 cp -r evolve/skills/evolve ~/.qwen-code/skills/    # Qwen Code
-cp -r evolve/skills/evolve ~/.kimi/skills/         # Kimi CLI
+cp -r evolve/skills/evolve ~/.kimi-code/skills/    # Kimi Code
 cp -r evolve/skills/evolve ~/.agents/skills/       # OpenCode
 ```
 

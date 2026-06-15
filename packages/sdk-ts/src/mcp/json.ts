@@ -8,7 +8,7 @@
  * - Claude: { type: "http"|"sse"|"stdio", url: "..." }
  * - Gemini: { url: "...", type: "http"|"sse" } | { command: "..." }
  * - Qwen:   { httpUrl: "..." } | { url: "..." } | { command: "..." }
- * - Kimi:   { url: "...", transport?: "http"|"sse" } | { command: "...", transport: "stdio" }
+ * - Kimi Code: { url: "...", transport?: "http"|"sse" } | { command: "...", transport: "stdio" }
  */
 
 import type { SandboxInstance, McpServerConfig } from "../types";
@@ -69,9 +69,9 @@ function toTypeFormat(config: McpServerConfig): Record<string, unknown> {
 }
 
 /**
- * Transform to Kimi/FastMCP format
+ * Transform to Kimi Code MCP format
  *
- * Kimi validates config via FastMCP's MCPConfig:
+ * Kimi Code validates config via its MCPConfig loader:
  * - Remote servers use `transport: "http" | "sse"` (optional; inferred from URL when omitted)
  * - Stdio servers use `transport: "stdio"` (optional but explicit is clearer)
  */

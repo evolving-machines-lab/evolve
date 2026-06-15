@@ -137,13 +137,13 @@ export interface AgentRegistryEntry {
   };
   /**
    * TOML provider-based spend tracking for CLIs that read custom_headers from a
-   * provider entry in config.toml (e.g., Kimi).
+   * provider entry in config.toml (e.g., Kimi Code).
    * The SDK writes a provider+model entry with custom_headers before each run.
-   * Source-verified: Kimi reads custom_headers from providers[name].custom_headers
-   * in ~/.kimi/config.toml (config.py:45, llm.py:101).
+   * Source-verified: Kimi Code reads custom_headers from
+   * providers[name].custom_headers in ~/.kimi-code/config.toml.
    */
   spendTrackingTomlProvider?: {
-    /** Config file path (e.g., "~/.kimi/config.toml") */
+    /** Config file path (e.g., "~/.kimi-code/config.toml") */
     configPath: string;
     /** Provider name in config (e.g., "evolve-gateway") */
     providerName: string;
@@ -155,6 +155,8 @@ export interface AgentRegistryEntry {
   /** Additional directories to include in checkpoint tar (beyond mcpConfig.settingsDir).
    *  Used for agents like OpenCode that spread state across XDG directories. */
   checkpointDirs?: string[];
+  /** Additional relative paths to exclude from checkpoint tar. */
+  checkpointExcludes?: string[];
 }
 
 export function isThinkingEnabled(reasoningEffort?: string): boolean {
@@ -170,10 +172,6 @@ export function getOpenCodeReasoningVariant(reasoningEffort?: string): string | 
   if (reasoningEffort === "low" || reasoningEffort === "minimal") return "minimal";
   if (reasoningEffort === "xhigh") return "max";
   return reasoningEffort;
-}
-
-function getKimiThinkingFlag(reasoningEffort?: string): string {
-  return isThinkingEnabled(reasoningEffort) ? "--thinking" : "--no-thinking";
 }
 
 function getOpenCodeReasoningFlags(reasoningEffort?: string): string {
@@ -346,6 +344,8 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
 
   kimi: {
     image: "evolve-all",
+    // SDK-facing direct-mode inputs. Kimi Code itself receives KIMI_MODEL_* envs
+    // or ~/.kimi-code/config.toml from Agent.buildEnvironmentVariables()/run().
     apiKeyEnv: "KIMI_API_KEY",
     baseUrlEnv: "KIMI_BASE_URL",
     defaultModel: "kimi-k2.6",
@@ -356,36 +356,41 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     ],
     systemPromptFile: "AGENTS.md",
     mcpConfig: {
-      settingsDir: "~/.kimi",
+      settingsDir: "~/.kimi-code",
       filename: "mcp.json",
       format: "json",
     },
     skillsConfig: {
       sourceDir: "/home/user/.evolve/skills",
-      targetDir: "/home/user/.kimi/skills",
+      targetDir: "/home/user/.kimi-code/skills",
     },
     defaultBaseUrl: "https://api.moonshot.ai/v1",
-    // Source-verified: Kimi reads custom_headers from providers[name].custom_headers
-    // in config.toml (config.py:45, llm.py:101). No env var for custom headers.
-    // We write a dedicated Evolve-owned config file and pass it via --config-file
-    // to avoid merging with user config. Requires default_model → model → provider chain.
+    // Source-verified: Kimi Code reads custom_headers from
+    // providers[name].custom_headers in ~/.kimi-code/config.toml. Prompt mode
+    // has auto approval by default, so no --yolo flag is valid or needed.
     spendTrackingTomlProvider: {
-      configPath: "~/.kimi/evolve-config.toml",
+      configPath: "~/.kimi-code/config.toml",
       providerName: "evolve-gateway",
       modelName: "evolve-default",
       maxContextSize: 262144,
     },
+    checkpointExcludes: [
+      ".kimi-code/config.toml",
+    ],
     gatewayModelAliases: {
       "kimi-k2.6": "moonshot/kimi-k2.6",
       "kimi-k2.6-turbo": "kimi-k2.6-turbo",
       "kimi-k2.5": "moonshot/kimi-k2.5",
     },
-    buildCommand: ({ prompt, model, isResume, isDirectMode, reasoningEffort }) => {
+    buildCommand: ({ prompt, isResume, reasoningEffort }) => {
       const continueFlag = isResume ? "--continue " : "";
-      // In gateway mode, use --config-file to point to our dedicated spend tracking config.
-      // Source-verified: cli/__init__.py:133-143 — --config-file fully replaces default config.
-      const configFlag = isDirectMode ? "" : "--config-file /home/user/.kimi/evolve-config.toml ";
-      return `printf '%s' "${prompt}" | KIMI_MODEL_NAME=${model} kimi --print --output-format stream-json --yolo ${getKimiThinkingFlag(reasoningEffort)} ${configFlag}${continueFlag}`;
+      const promptArg = shellSingleQuote(prompt);
+      const legacyConfigFlag = "--config-file /home/user/.kimi-code/config.toml";
+      const legacyMcpFlag = "$(if [ -f /home/user/.kimi-code/mcp.json ]; then printf ' --mcp-config-file /home/user/.kimi-code/mcp.json'; fi)";
+      const legacyThinkingFlag = isThinkingEnabled(reasoningEffort) ? "" : " --no-thinking";
+      // Managed images may briefly carry the Python kimi-cli surface, where
+      // --output-format only works with --print and config lives behind flags.
+      return `if kimi --help 2>&1 | grep -q -- '--print'; then kimi --print ${continueFlag}${legacyConfigFlag}${legacyMcpFlag}${legacyThinkingFlag} -p ${promptArg} --output-format stream-json; else kimi ${continueFlag}-p ${promptArg} --output-format stream-json; fi`;
     },
   },
 

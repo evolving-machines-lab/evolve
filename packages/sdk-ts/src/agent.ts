@@ -152,6 +152,21 @@ function mergeCustomHeaders(existing: string | undefined, updates: Record<string
   return Array.from(merged.values()).join(format === "comma" ? ", " : "\n");
 }
 
+const KIMI_CODE_DEFAULT_CONTEXT_SIZE = 262144;
+// Kimi Code accepts these as provider-dependent config/env values; Moonshot's
+// public Kimi API documents thinking on/off/keep, not stable effort levels.
+const KIMI_CODE_THINKING_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
+
+function getKimiCodeThinkingEffort(reasoningEffort?: string): string | undefined {
+  if (!reasoningEffort) return undefined;
+  return KIMI_CODE_THINKING_EFFORTS.has(reasoningEffort) ? reasoningEffort : undefined;
+}
+
+function withOpenAiV1Path(baseUrl: string): string {
+  const trimmed = baseUrl.replace(/\/+$/, "");
+  return trimmed.endsWith("/v1") ? trimmed : `${trimmed}/v1`;
+}
+
 // =============================================================================
 // AGENT CLASS
 // =============================================================================
@@ -444,12 +459,30 @@ export class Agent {
   private buildEnvironmentVariables(): Record<string, string> {
     const envVars: Record<string, string> = {};
 
-    // File-based OAuth (Codex, Gemini): auth file handles auth, no API key env var needed
-    if (this.agentConfig.oauthFileContent) {
+    if (this.agentConfig.type === "kimi" && this.agentConfig.isDirectMode) {
+      const thinkingEnabled = isThinkingEnabled(this.agentConfig.reasoningEffort);
+      const thinkingEffort = getKimiCodeThinkingEffort(this.agentConfig.reasoningEffort);
+      envVars.KIMI_MODEL_NAME = this.resolveCommandModel(this.agentConfig.model || this.registry.defaultModel);
+      envVars.KIMI_MODEL_API_KEY = this.agentConfig.apiKey;
+      envVars.KIMI_MODEL_PROVIDER_TYPE = "kimi";
+      envVars.KIMI_MODEL_MAX_CONTEXT_SIZE = String(this.registry.spendTrackingTomlProvider?.maxContextSize ?? KIMI_CODE_DEFAULT_CONTEXT_SIZE);
+      envVars.KIMI_MODEL_DEFAULT_THINKING = thinkingEnabled ? "true" : "false";
+      envVars.KIMI_MODEL_THINKING_MODE = thinkingEnabled ? "on" : "off";
+      if (thinkingEffort) {
+        envVars.KIMI_MODEL_THINKING_EFFORT = thinkingEffort;
+      }
+      if (this.agentConfig.baseUrl) {
+        envVars.KIMI_MODEL_BASE_URL = this.agentConfig.baseUrl;
+      }
+    } else if (this.agentConfig.oauthFileContent) {
+      // File-based OAuth (Codex, Gemini): auth file handles auth, no API key env var needed
       // Some agents need an activation env var (e.g., Gemini needs GOOGLE_GENAI_USE_GCA=true)
       if (this.registry.oauthActivationEnv) {
         envVars[this.registry.oauthActivationEnv.key] = this.registry.oauthActivationEnv.value;
       }
+    } else if (this.agentConfig.type === "kimi" && !this.agentConfig.isDirectMode) {
+      // Kimi Code gateway auth is written to ~/.kimi-code/config.toml per run.
+      // The old KIMI_API_KEY/KIMI_BASE_URL envs are not read by Kimi Code.
     } else if (this.registry.skipApiKeyEnvInGateway && !this.agentConfig.isDirectMode) {
       // Gateway mode for generated-settings agents (Droid): EVOLVE_API_KEY is
       // injected below and referenced from the settings file, not provider env.
@@ -471,7 +504,7 @@ export class Agent {
       envVars[keyEnv] = this.agentConfig.apiKey;
     }
 
-    if (this.agentConfig.isDirectMode && !this.agentConfig.isOAuth) {
+    if (this.agentConfig.isDirectMode && !this.agentConfig.isOAuth && this.agentConfig.type !== "kimi") {
       // Direct mode (non-OAuth): use resolved baseUrl if set (e.g., Qwen needs Dashscope endpoint)
       if (this.agentConfig.baseUrl && this.registry.baseUrlEnv) {
         envVars[this.registry.baseUrlEnv] = this.agentConfig.baseUrl;
@@ -487,7 +520,7 @@ export class Agent {
         });
       } else {
         // Single-provider: set base URL env var
-        if (this.registry.baseUrlEnv) {
+        if (this.registry.baseUrlEnv && this.agentConfig.type !== "kimi") {
           envVars[this.registry.baseUrlEnv] = gatewayUrl;
         }
       }
@@ -1187,6 +1220,13 @@ export class Agent {
         {
           [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
           [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
+        },
+        {
+          baseUrl: withOpenAiV1Path(getGatewayUrl(this.registry.gatewayPath)),
+          apiKey: this.agentConfig.apiKey,
+          model: this.resolveCommandModel(this.agentConfig.model || this.registry.defaultModel),
+          defaultThinking: isThinkingEnabled(this.agentConfig.reasoningEffort),
+          thinkingEffort: getKimiCodeThinkingEffort(this.agentConfig.reasoningEffort),
         },
       );
     }

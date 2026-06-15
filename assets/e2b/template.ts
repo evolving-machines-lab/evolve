@@ -12,7 +12,7 @@ import { Template } from 'e2b'
 //   - Qwen Code (@qwen-code/qwen-code)
 //   - OpenCode (opencode-ai)
 //   - Droid CLI
-//   - Kimi CLI (kimi-cli, Python)
+//   - Kimi Code
 //   - ACP adapters for Claude and Codex
 //   - Google Chrome for browser automation
 //   - Skills cloned from github.com/evolving-machines-lab/evolve
@@ -57,9 +57,9 @@ export const template = Template()
   `.replace(/\n\s+/g, ' ').trim())
 
   // ---------------------------------------------------------------------------
-  // Kimi CLI (Python package — requires Python >= 3.12)
+  // Kimi Code
   // ---------------------------------------------------------------------------
-  .runCmd('pip install kimi-cli')
+  .runCmd('curl -fsSL https://code.kimi.com/kimi-code/install.sh | KIMI_INSTALL_DIR=/home/user/.kimi-code KIMI_NO_MODIFY_PATH=1 bash && ln -sf /home/user/.kimi-code/bin/kimi /usr/local/bin/kimi && kimi --version && chown -R user:user /home/user/.kimi-code')
 
   // ---------------------------------------------------------------------------
   // MCP Tools (HTTP-to-STDIO bridge for remote MCP servers)
@@ -83,7 +83,7 @@ export const template = Template()
   .setWorkdir('/home/user')
 
   // Create skills directories for all CLIs
-  .runCmd('mkdir -p ~/.evolve/skills ~/.claude/skills ~/.codex/skills ~/.gemini/skills ~/.qwen/skills ~/.kimi/skills ~/.agents/skills ~/.factory/skills')
+  .runCmd('mkdir -p ~/.evolve/skills ~/.claude/skills ~/.codex/skills ~/.gemini/skills ~/.qwen/skills ~/.kimi-code/skills ~/.agents/skills ~/.factory/skills')
 
   // ---------------------------------------------------------------------------
   // Factory Droid CLI

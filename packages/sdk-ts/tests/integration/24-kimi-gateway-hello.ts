@@ -4,7 +4,7 @@
  *
  * Requirements:
  * - Gateway mode (EVOLVE_API_KEY required)
- * - Run Kimi CLI
+ * - Run Kimi Code
  * - Ask agent to create output/hello.txt
  * - Download output files via getOutputFiles()
  * - Save all artifacts to test logs folder
@@ -113,7 +113,7 @@ async function main(): Promise<void> {
       checkpoint: run.checkpoint ?? null,
     }, null, 2));
 
-    const mcpConfig = await evolve.executeCommand("cat /home/user/.kimi/mcp.json", { timeoutMs: 60_000 });
+    const mcpConfig = await evolve.executeCommand("cat /home/user/.kimi-code/mcp.json", { timeoutMs: 60_000 });
     save("kimi-mcp.json", redactSecrets(mcpConfig.stdout, env.EVOLVE_API_KEY));
     save("kimi-mcp-stderr.txt", redactSecrets(mcpConfig.stderr, env.EVOLVE_API_KEY));
 

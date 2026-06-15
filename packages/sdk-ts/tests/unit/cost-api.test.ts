@@ -717,14 +717,22 @@ async function testQwenWriteJsonOverwritesPreviousHeaders(): Promise<void> {
 }
 
 // =============================================================================
-// Kimi spend tracking (dedicated config via --config-file, no merge/parsing)
+// Kimi Code spend tracking (gateway config.toml, no merge/parsing)
 // =============================================================================
 
 const kimiConfig = {
-  configPath: "~/.kimi/evolve-config.toml",
+  configPath: "~/.kimi-code/config.toml",
   providerName: "evolve-gateway",
   modelName: "evolve-default",
   maxContextSize: 262144,
+};
+
+const kimiConnection = {
+  baseUrl: "https://gateway.test/v1",
+  apiKey: "test-gateway-key",
+  model: "moonshot/kimi-k2.5",
+  defaultThinking: true,
+  thinkingEffort: "high",
 };
 
 async function testKimiWriteSpendConfigFresh(): Promise<void> {
@@ -741,21 +749,31 @@ async function testKimiWriteSpendConfigFresh(): Promise<void> {
     sandbox as any,
     kimiConfig,
     { "x-litellm-customer-id": "session-abc", "x-litellm-tags": "run:run-001" },
+    kimiConnection,
   );
 
   assertEqual(written.length, 1, "writes one file");
-  assertEqual(written[0].path, "/home/user/.kimi/evolve-config.toml", "writes to dedicated Evolve config path");
+  assertEqual(written[0].path, "/home/user/.kimi-code/config.toml", "writes Kimi Code config path");
   const content = written[0].content;
   assert(content.includes('default_model = "evolve-default"'), "has default_model");
+  assert(content.includes("default_thinking = true"), "enables default thinking");
+  assert(content.includes('default_permission_mode = "auto"'), "sets auto permission mode");
+  assert(content.includes("[thinking]"), "has thinking section");
+  assert(content.includes('mode = "on"'), "sets thinking mode");
+  assert(content.includes('effort = "high"'), "sets thinking effort");
   assert(content.includes("[providers.evolve-gateway]"), "has provider section");
   assert(content.includes('type = "kimi"'), "provider type is kimi");
+  assert(content.includes('base_url = "https://gateway.test/v1"'), "provider has gateway base URL");
+  assert(content.includes('api_key = "test-gateway-key"'), "provider has gateway API key");
   assert(content.includes("x-litellm-customer-id"), "has customer-id header");
   assert(content.includes("session-abc"), "has session tag value");
   assert(content.includes("x-litellm-tags"), "has tags header");
   assert(content.includes("run:run-001"), "has run tag value");
   assert(content.includes("[models.evolve-default]"), "has model section");
   assert(content.includes('provider = "evolve-gateway"'), "model points to provider");
+  assert(content.includes('model = "moonshot/kimi-k2.5"'), "model resolves to gateway route");
   assert(content.includes("max_context_size = 262144"), "model has max_context_size");
+  assert(content.includes('capabilities = ["image_in", "thinking"]'), "model has Kimi Code capabilities");
 }
 
 async function testKimiWriteSpendConfigPerRunOverwrite(): Promise<void> {
@@ -773,12 +791,14 @@ async function testKimiWriteSpendConfigPerRunOverwrite(): Promise<void> {
     sandbox as any,
     kimiConfig,
     { "x-litellm-customer-id": "session-abc", "x-litellm-tags": "run:run-001" },
+    kimiConnection,
   );
   // Second run
   await writeKimiSpendConfig(
     sandbox as any,
     kimiConfig,
     { "x-litellm-customer-id": "session-abc", "x-litellm-tags": "run:run-002" },
+    { ...kimiConnection, model: "moonshot/kimi-k2.6" },
   );
 
   assertEqual(written.length, 2, "writes file twice (once per run)");
@@ -788,13 +808,16 @@ async function testKimiWriteSpendConfigPerRunOverwrite(): Promise<void> {
   assert(content.includes("session-abc"), "session tag present");
 }
 
-async function testKimiBuildCommandIncludesConfigFile(): Promise<void> {
-  console.log("\n[27] Kimi buildCommand() includes --config-file in gateway mode");
+async function testKimiBuildCommandUsesPromptMode(): Promise<void> {
+  console.log("\n[27] Kimi buildCommand() uses Kimi Code prompt mode");
   const { AGENT_REGISTRY } = await import("../../src/registry.js");
   const kimi = AGENT_REGISTRY.kimi;
   assertEqual(kimi.defaultModel, "kimi-k2.6", "Kimi default is user-facing");
   assertEqual(kimi.gatewayModelAliases?.["kimi-k2.5"], "moonshot/kimi-k2.5", "Kimi gateway maps to Moonshot route");
   assertEqual(kimi.gatewayModelAliases?.["kimi-k2.6-turbo"], "kimi-k2.6-turbo", "Kimi turbo alias maps to gateway turbo route");
+  assertEqual(kimi.mcpConfig.settingsDir, "~/.kimi-code", "Kimi Code settings dir");
+  assertEqual(kimi.skillsConfig.targetDir, "/home/user/.kimi-code/skills", "Kimi Code skills dir");
+  assert(kimi.checkpointExcludes?.includes(".kimi-code/config.toml") === true, "Kimi Code config.toml is excluded from checkpoints");
 
   const gatewayAgent = new Agent({
     type: "kimi",
@@ -803,11 +826,12 @@ async function testKimiBuildCommandIncludesConfigFile(): Promise<void> {
     model: "kimi-k2.5",
   } as any, {});
   const gatewayCmd = (gatewayAgent as any).buildCommand("hello") as string;
-  assert(gatewayCmd.includes("KIMI_MODEL_NAME=moonshot/kimi-k2.5"), "gateway resolves user-facing model to Moonshot route");
-  assert(gatewayCmd.includes("--config-file /home/user/.kimi/evolve-config.toml"), "gateway mode has --config-file");
-  assert(gatewayCmd.includes("--print"), "has --print flag");
-  assert(gatewayCmd.includes("--yolo"), "has --yolo flag");
-  assert(gatewayCmd.includes("--thinking"), "defaults Kimi to thinking mode");
+  assert(gatewayCmd.includes("grep -q -- '--print'"), "gateway detects legacy Python kimi-cli");
+  assert(gatewayCmd.includes("kimi --print --config-file /home/user/.kimi-code/config.toml$(if [ -f /home/user/.kimi-code/mcp.json ]; then printf ' --mcp-config-file /home/user/.kimi-code/mcp.json'; fi) -p 'hello' --output-format stream-json"), "legacy branch uses print mode with explicit new config path and optional MCP file");
+  assert(gatewayCmd.includes("else kimi -p 'hello' --output-format stream-json"), "new Kimi Code branch uses prompt mode");
+  assert(!gatewayCmd.includes("KIMI_MODEL_NAME"), "gateway command omits KIMI_MODEL_NAME");
+  assert(!gatewayCmd.includes("--yolo"), "omits prompt-incompatible --yolo flag");
+  assert(!gatewayCmd.includes("--thinking"), "omits old thinking flag");
 
   const turboGatewayAgent = new Agent({
     type: "kimi",
@@ -816,7 +840,7 @@ async function testKimiBuildCommandIncludesConfigFile(): Promise<void> {
     model: "kimi-k2.6-turbo",
   } as any, {});
   const turboGatewayCmd = (turboGatewayAgent as any).buildCommand("hello") as string;
-  assert(turboGatewayCmd.includes("KIMI_MODEL_NAME=kimi-k2.6-turbo"), "gateway resolves Kimi turbo alias to LiteLLM turbo route");
+  assert(turboGatewayCmd.includes("else kimi -p 'hello' --output-format stream-json"), "turbo gateway uses config default model in new Kimi branch");
 
   const directAgent = new Agent({
     type: "kimi",
@@ -825,21 +849,58 @@ async function testKimiBuildCommandIncludesConfigFile(): Promise<void> {
     model: "kimi-k2.5",
   } as any, {});
   const directCmd = (directAgent as any).buildCommand("hello") as string;
-  assert(directCmd.includes("KIMI_MODEL_NAME=kimi-k2.5"), "direct mode keeps Moonshot-native model name");
-  assert(!directCmd.includes("--config-file"), "direct mode omits --config-file");
+  assert(directCmd.includes("else kimi -p 'hello' --output-format stream-json"), "direct uses KIMI_MODEL_* envs in new Kimi branch");
 
   const noThinkingAgent = new Agent({
     type: "kimi",
     apiKey: "test-gateway-key",
     isDirectMode: false,
+    model: "kimi-k2.6-turbo",
     reasoningEffort: "no-thinking",
   } as any, {});
   const noThinkingCmd = (noThinkingAgent as any).buildCommand("hello") as string;
-  assert(noThinkingCmd.includes("--no-thinking"), "passes Kimi no-thinking mode");
+  assert(noThinkingCmd.includes("--no-thinking -p 'hello'"), "legacy branch forwards no-thinking flag");
+  assert(noThinkingCmd.includes("else kimi -p 'hello' --output-format stream-json"), "new Kimi branch still uses config-backed no-thinking");
+
+  (gatewayAgent as any).hasRun = true;
+  const resumeCmd = (gatewayAgent as any).buildCommand("hello again") as string;
+  assert(resumeCmd.includes("kimi --print --continue --config-file /home/user/.kimi-code/config.toml$(if [ -f /home/user/.kimi-code/mcp.json ]; then printf ' --mcp-config-file /home/user/.kimi-code/mcp.json'; fi) -p 'hello again' --output-format stream-json"), "legacy resume uses --continue with print mode");
+  assert(resumeCmd.includes("else kimi --continue -p 'hello again' --output-format stream-json"), "new Kimi resume uses supported --continue with prompt mode");
+}
+
+async function testKimiEnvironmentVariables(): Promise<void> {
+  console.log("\n[28] Kimi environment variables match Kimi Code docs");
+  const gatewayAgent = new Agent({
+    type: "kimi",
+    apiKey: "test-gateway-key",
+    isDirectMode: false,
+  } as any, {});
+  const gatewayEnvs = (gatewayAgent as any).buildEnvironmentVariables() as Record<string, string>;
+  assertEqual(gatewayEnvs.EVOLVE_API_KEY, "test-gateway-key", "gateway exposes EVOLVE_API_KEY");
+  assert(!("KIMI_API_KEY" in gatewayEnvs), "gateway omits old KIMI_API_KEY");
+  assert(!("KIMI_BASE_URL" in gatewayEnvs), "gateway omits old KIMI_BASE_URL");
+  assert(!("KIMI_MODEL_NAME" in gatewayEnvs), "gateway lets config.toml select model");
+
+  const directAgent = new Agent({
+    type: "kimi",
+    apiKey: "direct-api-key",
+    isDirectMode: true,
+    model: "kimi-k2.5",
+    baseUrl: "https://api.moonshot.ai/v1",
+    reasoningEffort: "no-thinking",
+  } as any, {});
+  const directEnvs = (directAgent as any).buildEnvironmentVariables() as Record<string, string>;
+  assertEqual(directEnvs.KIMI_MODEL_NAME, "kimi-k2.5", "direct mode sets KIMI_MODEL_NAME");
+  assertEqual(directEnvs.KIMI_MODEL_API_KEY, "direct-api-key", "direct mode sets KIMI_MODEL_API_KEY");
+  assertEqual(directEnvs.KIMI_MODEL_PROVIDER_TYPE, "kimi", "direct mode sets provider type");
+  assertEqual(directEnvs.KIMI_MODEL_BASE_URL, "https://api.moonshot.ai/v1", "direct mode sets base URL");
+  assertEqual(directEnvs.KIMI_MODEL_DEFAULT_THINKING, "false", "no-thinking disables default thinking");
+  assertEqual(directEnvs.KIMI_MODEL_THINKING_MODE, "off", "no-thinking sets mode off");
+  assert(!("KIMI_API_KEY" in directEnvs), "direct mode omits undocumented KIMI_API_KEY");
 }
 
 async function testKimiBuildRunEnvsReturnsUndefined(): Promise<void> {
-  console.log("\n[28] Kimi buildRunEnvs() returns undefined (uses config file, not env vars)");
+  console.log("\n[29] Kimi buildRunEnvs() returns undefined (uses config file, not env vars)");
   const config = {
     type: "kimi",
     apiKey: "test-gateway-key",
@@ -853,7 +914,7 @@ async function testKimiBuildRunEnvsReturnsUndefined(): Promise<void> {
 }
 
 async function testKimiDirectModeSkipsHeaders(): Promise<void> {
-  console.log("\n[29] Kimi direct mode skips config-file headers");
+  console.log("\n[30] Kimi direct mode skips config-file headers");
   const config = {
     type: "kimi",
     apiKey: "direct-api-key",
@@ -1293,7 +1354,8 @@ async function main(): Promise<void> {
   await testQwenThinkingConfigPreservesSettings();
   await testKimiWriteSpendConfigFresh();
   await testKimiWriteSpendConfigPerRunOverwrite();
-  await testKimiBuildCommandIncludesConfigFile();
+  await testKimiBuildCommandUsesPromptMode();
+  await testKimiEnvironmentVariables();
   await testKimiBuildRunEnvsReturnsUndefined();
   await testKimiDirectModeSkipsHeaders();
   await testOpenCodeBuildRunEnvsIncludesHeaders();

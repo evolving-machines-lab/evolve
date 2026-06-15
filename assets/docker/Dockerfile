@@ -11,7 +11,7 @@
 # This Dockerfile adds:
 #   - Google Chrome + Playwright for browser automation
 #   - Claude Code, Codex, Gemini CLI, Qwen Code, OpenCode, Droid
-#   - Kimi CLI (Python)
+#   - Kimi Code
 #   - ACP adapters for Claude and Codex
 #   - Skills from github.com/evolving-machines-lab/evolve
 #
@@ -75,9 +75,12 @@ RUN npm install -g \
     opencode-ai@latest
 
 # ---------------------------------------------------------------------------
-# Kimi CLI (Python package — requires Python >= 3.12)
+# Kimi Code
 # ---------------------------------------------------------------------------
-RUN pip install kimi-cli
+RUN curl -fsSL https://code.kimi.com/kimi-code/install.sh | KIMI_INSTALL_DIR=/home/user/.kimi-code KIMI_NO_MODIFY_PATH=1 bash \
+    && ln -sf /home/user/.kimi-code/bin/kimi /usr/local/bin/kimi \
+    && kimi --version \
+    && chown -R user:user /home/user/.kimi-code
 
 # ---------------------------------------------------------------------------
 # MCP Tools (HTTP-to-STDIO bridge for remote MCP servers)
@@ -112,7 +115,7 @@ RUN mkdir -p /home/user/.evolve/skills \
              /home/user/.codex/skills \
              /home/user/.gemini/skills \
              /home/user/.qwen/skills \
-             /home/user/.kimi/skills \
+             /home/user/.kimi-code/skills \
              /home/user/.agents/skills \
              /home/user/.factory/skills \
     && chown -R user:user /home/user
