@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.0.50 - 2026-06-15
+
+### Highlights
+
+- Updated the Kimi agent integration from legacy `kimi-cli` assumptions to Kimi Code.
+- Published TypeScript and Python packages at `0.0.50`.
+
+### SDK
+
+- Installed Kimi Code in the Docker and E2B runtime templates and switched SDK-managed Kimi files to `~/.kimi-code`.
+- Added Kimi Code TOML config generation for provider, model, thinking, MCP, and spend tracking setup while preserving a narrow legacy fallback for old sandboxes.
+- Updated Kimi stream parsing for Kimi Code `stream-json` assistant messages and tool calls.
+- Mapped SDK thinking/no-thinking setup to Kimi Code thinking mode configuration.
+- Kept checkpoint archives from capturing Kimi Code config secrets.
+
+### Documentation And Skills
+
+- Updated public docs and mirrored Evolve skill references for Kimi Code naming, config paths, and CLI behavior.
+
 ## v0.0.49 - 2026-06-09
 
 ### Highlights
