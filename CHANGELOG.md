@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.0.51 - 2026-06-30
+
+### Highlights
+
+- Added Dashboard-managed BYO Provider Keys for Claude and Codex gateway sessions.
+- Preserved Direct Provider Key Mode for local BYOK users.
+- Published TypeScript and Python packages at `0.0.51`.
+
+### SDK
+
+- Requests sandbox-bound provider runtime tokens from Dashboard for managed Claude/Anthropic and Codex/OpenAI routes.
+- Routes managed BYO provider-key calls through Dashboard model proxy without exposing the raw provider key or Evolve API key in the sandbox for that provider route.
+- Binds provider runtime tokens to sandbox lifecycle and revokes them on cleanup, session switch, and failure paths.
+- Keeps the existing gateway fallback path when managed provider keys are disabled or unavailable.
+
+### Documentation And Skills
+
+- Clarified the two BYO paths: Managed BYO Provider Keys vs Direct Provider Key Mode.
+- Synced TypeScript, Python, and Evolve skill references for the updated authentication model.
+
 ## v0.0.50 - 2026-06-15
 
 ### Highlights
