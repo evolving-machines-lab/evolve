@@ -46,6 +46,17 @@ async function getInitializedAgentOptions(kit: Evolve): Promise<Record<string, a
   return ((kit as any).agent as any).options ?? {};
 }
 
+function installAnthropicRuntimeToken(agent: any): void {
+  agent.providerRuntimeToken = {
+    provider: "anthropic",
+    credentialMode: "evolve_key",
+    token: "evrt_anthropic",
+    bindingSecret: "evrb_anthropic",
+    baseUrl: "https://dashboard.test/api/model-proxy/anthropic",
+    expiresAt: "9999-12-31T23:59:59.999Z",
+  };
+}
+
 async function testBrowserUseNotInjectedByDefault(): Promise<void> {
   console.log("\n[1] Gateway mode: browser-use is not injected by default");
 
@@ -286,6 +297,7 @@ async function testManagedActionbookConfigUsesProxyOnly(): Promise<void> {
     cdpUrl: "wss://dashboard.test/api/browser-sessions/browser_123/cdp?token=proxy-token",
     liveUrl: "https://dashboard.test/browser-sessions/browser_123/live?token=view-token",
   };
+  installAnthropicRuntimeToken(agent);
   const envs = agent.buildEnvironmentVariables();
   assert(!("ACTIONBOOK_BROWSER_MODE" in envs), "Actionbook mode is not passed through env");
   assert(!("ACTIONBOOK_BROWSER_CDP_ENDPOINT" in envs), "Actionbook CDP endpoint is not passed through env");
@@ -332,6 +344,7 @@ async function testManagedAgentBrowserConfigUsesProxyOnly(): Promise<void> {
     cdpUrl: "wss://dashboard.test/api/browser-sessions/browser_123/cdp?token=proxy-token",
     liveUrl: "https://dashboard.test/browser-sessions/browser_123/live?token=view-token",
   };
+  installAnthropicRuntimeToken(agent);
 
   const envs = agent.buildEnvironmentVariables();
   assertEqual(

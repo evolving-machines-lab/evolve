@@ -2,6 +2,7 @@ import { DEFAULT_DASHBOARD_URL } from "./constants";
 
 export type ProviderRuntimeToken = {
   provider: "anthropic" | "openai";
+  credentialMode: "provider_key" | "evolve_key";
   token: string;
   bindingSecret: string;
   baseUrl: string;
@@ -70,25 +71,46 @@ async function requestJson<T>(
   return (await response.json()) as T;
 }
 
+function isRuntimeTokenResponse(value: unknown): value is ProviderRuntimeToken {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    record.enabled === true &&
+    (record.provider === "anthropic" || record.provider === "openai") &&
+    (record.credentialMode === "provider_key" ||
+      record.credentialMode === "evolve_key") &&
+    typeof record.token === "string" &&
+    record.token.length > 0 &&
+    typeof record.bindingSecret === "string" &&
+    record.bindingSecret.length > 0 &&
+    typeof record.baseUrl === "string" &&
+    record.baseUrl.length > 0 &&
+    typeof record.expiresAt === "string" &&
+    record.expiresAt.length > 0
+  );
+}
+
 export async function createProviderRuntimeToken(
   config: ProviderRuntimeTokenClientConfig,
   input: { provider: "anthropic" | "openai"; sessionTag: string },
-): Promise<ProviderRuntimeToken | null> {
-  const result = await requestJson<
-    | { enabled: false; provider: "anthropic" | "openai" }
-    | {
-        enabled: true;
-        provider: "anthropic" | "openai";
-        token: string;
-        bindingSecret: string;
-        baseUrl: string;
-        expiresAt: string;
-      }
-  >(config, "/api/provider-secrets/runtime-token", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-  return result.enabled ? result : null;
+): Promise<ProviderRuntimeToken> {
+  const result = await requestJson<unknown>(
+    config,
+    "/api/provider-secrets/runtime-token",
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+  );
+  if (!isRuntimeTokenResponse(result)) {
+    throw new ProviderRuntimeTokenRequestError(
+      502,
+      "Provider runtime token response was invalid",
+    );
+  }
+  return result;
 }
 
 export async function bindProviderRuntimeToken(

@@ -66,6 +66,22 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function runtimeTokenResponse(provider: "anthropic" | "openai" = "anthropic") {
+  const baseUrl =
+    provider === "openai"
+      ? "https://dashboard.test/api/model-proxy/openai/v1"
+      : "https://dashboard.test/api/model-proxy/anthropic";
+  return {
+    enabled: true,
+    provider,
+    credentialMode: "evolve_key",
+    token: `evrt_${provider}`,
+    bindingSecret: `evrb_${provider}`,
+    baseUrl,
+    expiresAt: "9999-12-31T23:59:59.999Z",
+  };
+}
+
 class MockFiles implements SandboxFiles {
   public writes = new Map<string, string>();
   public dirs: string[] = [];
@@ -314,12 +330,21 @@ async function testKillFlushesSessionEnd(): Promise<void> {
       init?.method === "POST"
     ) {
       return new Response(
-        JSON.stringify({ enabled: false, provider: "anthropic" }),
+        JSON.stringify(runtimeTokenResponse()),
         {
           status: 200,
           headers: { "content-type": "application/json" },
         },
       );
+    }
+    if (
+      url === "https://dashboard.test/api/provider-secrets/runtime-token" &&
+      (init?.method === "PATCH" || init?.method === "DELETE")
+    ) {
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
     }
     if (url === "https://dashboard.test/api/sessions/ingest") {
       ingestBodies.push(JSON.parse(String(init?.body || "{}")));
@@ -376,12 +401,21 @@ async function testManagedBrowserLifecycle(): Promise<void> {
       init?.method === "POST"
     ) {
       return new Response(
-        JSON.stringify({ enabled: false, provider: "anthropic" }),
+        JSON.stringify(runtimeTokenResponse()),
         {
           status: 200,
           headers: { "content-type": "application/json" },
         },
       );
+    }
+    if (
+      url === "https://dashboard.test/api/provider-secrets/runtime-token" &&
+      (init?.method === "PATCH" || init?.method === "DELETE")
+    ) {
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
     }
     if (
       url === "https://dashboard.test/api/browser-sessions" &&
@@ -531,12 +565,21 @@ async function testManagedAgentBrowserLifecycle(): Promise<void> {
       init?.method === "POST"
     ) {
       return new Response(
-        JSON.stringify({ enabled: false, provider: "anthropic" }),
+        JSON.stringify(runtimeTokenResponse()),
         {
           status: 200,
           headers: { "content-type": "application/json" },
         },
       );
+    }
+    if (
+      url === "https://dashboard.test/api/provider-secrets/runtime-token" &&
+      (init?.method === "PATCH" || init?.method === "DELETE")
+    ) {
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
     }
     if (
       url === "https://dashboard.test/api/browser-sessions" &&
@@ -896,9 +939,9 @@ async function testSetSessionFailsWhenActiveCannotInterrupt(): Promise<void> {
   await firstRun;
 }
 
-async function testProviderRuntimeEndpointMissingFallsBackToGatewayKey(): Promise<void> {
+async function testProviderRuntimeEndpointMissingFailsClosed(): Promise<void> {
   console.log(
-    "\n[10] missing provider runtime token endpoint preserves gateway path",
+    "\n[10] missing provider runtime token endpoint fails closed",
   );
   const previousFetch = globalThis.fetch;
   const previousDashboardUrl = process.env.EVOLVE_DASHBOARD_URL;
@@ -916,12 +959,6 @@ async function testProviderRuntimeEndpointMissingFallsBackToGatewayKey(): Promis
         headers: { "content-type": "application/json" },
       });
     }
-    if (url === "https://dashboard.test/api/sessions/ingest") {
-      return new Response("{}", {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    }
     throw new Error(`unexpected fetch: ${url}`);
   }) as typeof fetch;
 
@@ -933,23 +970,24 @@ async function testProviderRuntimeEndpointMissingFallsBackToGatewayKey(): Promis
     .withSandbox(provider);
 
   try {
-    await kit.run({ prompt: "test", timeoutMs: 10_000 });
+    let threw = false;
+    try {
+      await kit.run({ prompt: "test", timeoutMs: 10_000 });
+    } catch (error) {
+      threw = true;
+      const message = error instanceof Error ? error.message : String(error);
+      assert(
+        message.includes("runtime token endpoint is required"),
+        "missing runtime-token endpoint throws clear fail-closed error",
+      );
+    }
+    assertEqual(threw, true, "run() rejects before sandbox creation");
     assertEqual(
       runtimeTokenCalls,
       1,
-      "missing runtime-token endpoint is cached for the session",
+      "missing runtime-token endpoint is requested once",
     );
-    assertEqual(provider.createCalls, 1, "sandbox is still created");
-    assertEqual(
-      provider.createOptions?.envs?.EVOLVE_API_KEY,
-      "evolve-key",
-      "gateway key remains available for old path",
-    );
-    assertEqual(
-      provider.createOptions?.envs?.ANTHROPIC_API_KEY,
-      "evolve-key",
-      "Anthropic gateway env keeps using Evolve key",
-    );
+    assertEqual(provider.createCalls, 0, "sandbox is not created");
   } finally {
     globalThis.fetch = previousFetch;
     if (previousDashboardUrl === undefined)
@@ -1025,6 +1063,7 @@ async function testProviderRuntimeBindFailureKillsSandbox(): Promise<void> {
         JSON.stringify({
           enabled: true,
           provider: "anthropic",
+          credentialMode: "evolve_key",
           token: "evrt_token",
           bindingSecret: "evrb_binding",
           baseUrl: "https://dashboard.test/api/model-proxy/anthropic",
@@ -1112,6 +1151,7 @@ async function testProviderRuntimeTokenDoesNotRefreshAndAddsCommandBindingEnv():
         JSON.stringify({
           enabled: true,
           provider: "anthropic",
+          credentialMode: "evolve_key",
           token: "evrt_session_token",
           bindingSecret: "evrb_session_binding",
           baseUrl: "https://dashboard.test/api/model-proxy/anthropic",
@@ -1229,6 +1269,7 @@ async function testProviderRuntimeTokenStaysBoundToSandbox(): Promise<void> {
         JSON.stringify({
           enabled: true,
           provider: "anthropic",
+          credentialMode: "evolve_key",
           token: `evrt_session_token_${createCalls}`,
           bindingSecret: `evrb_session_binding_${createCalls}`,
           baseUrl: "https://dashboard.test/api/model-proxy/anthropic",
@@ -1325,6 +1366,7 @@ async function testSetSessionRevokesProviderRuntimeToken(): Promise<void> {
         JSON.stringify({
           enabled: true,
           provider: "anthropic",
+          credentialMode: "evolve_key",
           token: "evrt_session_token",
           bindingSecret: "evrb_session_binding",
           baseUrl: "https://dashboard.test/api/model-proxy/anthropic",
@@ -1407,9 +1449,10 @@ async function testCodexProviderRuntimeRoutesThroughDashboardProxy(): Promise<vo
         JSON.stringify({
           enabled: true,
           provider: "openai",
+          credentialMode: "evolve_key",
           token: "evrt_openai_session_token",
           bindingSecret: "evrb_openai_session_binding",
-          baseUrl: "https://dashboard.test/api/model-proxy/openai",
+          baseUrl: "https://dashboard.test/api/model-proxy/openai/v1",
           expiresAt: new Date(
             Date.now() + 30 * 24 * 60 * 60 * 1000,
           ).toISOString(),
@@ -1459,18 +1502,18 @@ async function testCodexProviderRuntimeRoutesThroughDashboardProxy(): Promise<vo
 
     assertEqual(createBodies[0]?.provider, "openai", "runtime token request uses openai provider");
     assertEqual(provider.createOptions?.envs?.OPENAI_API_KEY, "evrt_openai_session_token", "sandbox env uses OpenAI runtime token");
-    assertEqual(provider.createOptions?.envs?.OPENAI_BASE_URL, "https://dashboard.test/api/model-proxy/openai", "sandbox env uses Dashboard OpenAI proxy");
+    assertEqual(provider.createOptions?.envs?.OPENAI_BASE_URL, "https://dashboard.test/api/model-proxy/openai/v1", "sandbox env uses Dashboard OpenAI proxy");
     assert(!provider.createOptions?.envs?.EVOLVE_API_KEY, "sandbox env does not expose Evolve API key");
     assertEqual(provider.createOptions?.envs?.EVOLVE_PROVIDER_RUNTIME_BINDING, "evrb_openai_session_binding", "sandbox env includes binding secret env");
 
     const codexConfig = sandbox.files.writes.get("/home/user/.codex/config.toml") || "";
-    assert(codexConfig.includes('base_url = "https://dashboard.test/api/model-proxy/openai"'), "Codex TOML uses Dashboard proxy base URL");
+    assert(codexConfig.includes('base_url = "https://dashboard.test/api/model-proxy/openai/v1"'), "Codex TOML uses Dashboard proxy base URL");
     assert(codexConfig.includes("x-evolve-provider-runtime-binding"), "Codex TOML maps provider runtime binding header");
     assert(codexConfig.includes("EVOLVE_PROVIDER_RUNTIME_BINDING"), "Codex TOML reads binding header from env");
 
     const runEnvs = commands.spawnOptions[0]?.envs || {};
     assertEqual(runEnvs.OPENAI_API_KEY, "evrt_openai_session_token", "run env uses OpenAI runtime token");
-    assertEqual(runEnvs.OPENAI_BASE_URL, "https://dashboard.test/api/model-proxy/openai", "run env uses Dashboard OpenAI proxy");
+    assertEqual(runEnvs.OPENAI_BASE_URL, "https://dashboard.test/api/model-proxy/openai/v1", "run env uses Dashboard OpenAI proxy");
     assertEqual(runEnvs.EVOLVE_PROVIDER_RUNTIME_BINDING, "evrb_openai_session_binding", "run env includes binding secret");
 
     await kit.kill();
@@ -1478,6 +1521,96 @@ async function testCodexProviderRuntimeRoutesThroughDashboardProxy(): Promise<vo
       deletedTokens.includes("evrt_openai_session_token"),
       "kill() revokes OpenAI provider runtime token",
     );
+  } finally {
+    await kit.kill().catch(() => {});
+    globalThis.fetch = previousFetch;
+    if (previousDashboardUrl === undefined)
+      delete process.env.EVOLVE_DASHBOARD_URL;
+    else process.env.EVOLVE_DASHBOARD_URL = previousDashboardUrl;
+  }
+}
+
+async function testCodexConnectedSessionReassertsDashboardProxy(): Promise<void> {
+  console.log("\n[16] Codex withSession reasserts Dashboard proxy config");
+  const previousFetch = globalThis.fetch;
+  const previousDashboardUrl = process.env.EVOLVE_DASHBOARD_URL;
+  process.env.EVOLVE_DASHBOARD_URL = "https://dashboard.test";
+  const createBodies: Array<{ provider?: string; sessionTag?: string }> = [];
+
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (
+      url === "https://dashboard.test/api/provider-secrets/runtime-token" &&
+      init?.method === "POST"
+    ) {
+      createBodies.push(JSON.parse(String(init.body)));
+      return new Response(
+        JSON.stringify({
+          enabled: true,
+          provider: "openai",
+          credentialMode: "evolve_key",
+          token: "evrt_openai_existing_session",
+          bindingSecret: "evrb_openai_existing_session",
+          baseUrl: "https://dashboard.test/api/model-proxy/openai/v1",
+          expiresAt: new Date(
+            Date.now() + 30 * 24 * 60 * 60 * 1000,
+          ).toISOString(),
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (
+      url === "https://dashboard.test/api/provider-secrets/runtime-token" &&
+      init?.method === "PATCH"
+    ) {
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (
+      url === "https://dashboard.test/api/provider-secrets/runtime-token" &&
+      init?.method === "DELETE"
+    ) {
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (url === "https://dashboard.test/api/sessions/ingest") {
+      return new Response("{}", {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  }) as typeof fetch;
+
+  const commands = new MockCommands();
+  commands.mode = "instant";
+  const sandbox = new MockSandbox("sess-codex-existing", commands);
+  const provider = new MockProvider(sandbox);
+  const kit = new Evolve()
+    .withAgent({ type: "codex", apiKey: "evolve-key" })
+    .withSandbox(provider)
+    .withSession("sess-codex-existing");
+
+  try {
+    await kit.run({ prompt: "hello", timeoutMs: 10_000 });
+
+    assertEqual(provider.connectCalls, 1, "existing sandbox is connected");
+    assertEqual(provider.createCalls, 0, "existing sandbox is not recreated");
+    assertEqual(createBodies[0]?.provider, "openai", "runtime token request uses openai provider");
+
+    const codexConfig = sandbox.files.writes.get("/home/user/.codex/config.toml") || "";
+    assert(codexConfig.includes('base_url = "https://dashboard.test/api/model-proxy/openai/v1"'), "connected Codex session writes Dashboard proxy base URL");
+    assert(codexConfig.includes("x-evolve-provider-runtime-binding"), "connected Codex session maps provider runtime binding header");
+    assert(codexConfig.includes("EVOLVE_PROVIDER_RUNTIME_BINDING"), "connected Codex session reads binding header from env");
+
+    const runEnvs = commands.spawnOptions[0]?.envs || {};
+    assertEqual(runEnvs.OPENAI_API_KEY, "evrt_openai_existing_session", "connected Codex run env uses runtime token");
+    assertEqual(runEnvs.OPENAI_BASE_URL, "https://dashboard.test/api/model-proxy/openai/v1", "connected Codex run env uses Dashboard proxy");
+    assertEqual(runEnvs.EVOLVE_PROVIDER_RUNTIME_BINDING, "evrb_openai_existing_session", "connected Codex run env includes binding secret");
   } finally {
     await kit.kill().catch(() => {});
     globalThis.fetch = previousFetch;
@@ -1503,13 +1636,14 @@ async function main(): Promise<void> {
     await testPauseAndKillDoNotGetOverwritten();
     await testConcurrentRunFailsFast();
     await testSetSessionFailsWhenActiveCannotInterrupt();
-    await testProviderRuntimeEndpointMissingFallsBackToGatewayKey();
+    await testProviderRuntimeEndpointMissingFailsClosed();
     await testProviderRuntimeTokenServerErrorFailsClosed();
     await testProviderRuntimeBindFailureKillsSandbox();
     await testProviderRuntimeTokenDoesNotRefreshAndAddsCommandBindingEnv();
     await testProviderRuntimeTokenStaysBoundToSandbox();
     await testSetSessionRevokesProviderRuntimeToken();
     await testCodexProviderRuntimeRoutesThroughDashboardProxy();
+    await testCodexConnectedSessionReassertsDashboardProxy();
   } catch (error) {
     failed++;
     console.log(

@@ -941,6 +941,7 @@ async function testClaudeProviderRuntimeEnvIsolation(): Promise<void> {
   } as any, {});
   (agent as any).providerRuntimeToken = {
     provider: "anthropic",
+    credentialMode: "evolve_key",
     token: "evrt_runtime_token",
     bindingSecret: "evrb_binding_secret",
     baseUrl: "https://dashboard.test/api/model-proxy/anthropic",
@@ -963,6 +964,7 @@ async function testCodexProviderRuntimeEnvIsolation(): Promise<void> {
   } as any, {});
   (agent as any).providerRuntimeToken = {
     provider: "openai",
+    credentialMode: "evolve_key",
     token: "evrt_openai_runtime_token",
     bindingSecret: "evrb_openai_binding_secret",
     baseUrl: "https://dashboard.test/api/model-proxy/openai",
@@ -1003,6 +1005,25 @@ async function testGatewaySecretsCannotOverrideManagedProviderEnv(): Promise<voi
     assert(message.includes("ANTHROPIC_API_KEY is reserved"), "throws clear reserved env error");
   }
   assertEqual(threw, true, "rejects provider key override");
+}
+
+async function testClaudeGatewayRequiresRuntimeToken(): Promise<void> {
+  console.log("\n[30c] Claude gateway mode requires runtime token before sandbox env");
+  const agent = new Agent({
+    type: "claude",
+    apiKey: "test-gateway-key",
+    isDirectMode: false,
+  } as any, {});
+
+  let threw = false;
+  try {
+    (agent as any).buildEnvironmentVariables();
+  } catch (error) {
+    threw = true;
+    const message = error instanceof Error ? error.message : String(error);
+    assert(message.includes("requires a Dashboard runtime token"), "throws clear runtime token guard");
+  }
+  assertEqual(threw, true, "does not expose raw gateway key without runtime token");
 }
 
 async function testQwenWriteJsonPreservesUserDefinedHeaders(): Promise<void> {
@@ -1440,6 +1461,7 @@ async function main(): Promise<void> {
   await testClaudeProviderRuntimeEnvIsolation();
   await testCodexProviderRuntimeEnvIsolation();
   await testGatewaySecretsCannotOverrideManagedProviderEnv();
+  await testClaudeGatewayRequiresRuntimeToken();
   await testOpenCodeBuildRunEnvsIncludesHeaders();
   await testOpenCodeBuildRunEnvsPerRunOverwrite();
   await testOpenCodeDirectModeSkipsHeaders();
