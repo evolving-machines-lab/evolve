@@ -25,12 +25,12 @@ Determine the language from (in priority order):
 Always read these three references **for the detected language** before writing any Evolve code:
 
 **TypeScript:**
-- [01-getting-started.md](references/typescript/01-getting-started.md) — Installation, authentication (Gateway/BYOK), core lifecycle, streaming basics, agent reference table
+- [01-getting-started.md](references/typescript/01-getting-started.md) — Installation, authentication (Gateway, managed BYO provider keys, direct provider-key mode), core lifecycle, streaming basics, agent reference table
 - [02-configuration.md](references/typescript/02-configuration.md) — Sandbox providers, full builder API, agent skills catalog, Managed integrations, MCP servers
 - [03-runtime.md](references/typescript/03-runtime.md) — run(), executeCommand(), upload/download files, session controls, workspace layout, structured output, session management, storage & checkpointing, StorageClient, sessions() client, cost tracking, observability, error handling
 
 **Python:**
-- [01-getting-started.md](references/python/01-getting-started.md) — Installation, authentication (Gateway/BYOK), core lifecycle, streaming basics, agent reference table
+- [01-getting-started.md](references/python/01-getting-started.md) — Installation, authentication (Gateway, managed BYO provider keys, direct provider-key mode), core lifecycle, streaming basics, agent reference table
 - [02-configuration.md](references/python/02-configuration.md) — Sandbox providers, full constructor API, agent skills catalog, Managed integrations, MCP servers
 - [03-runtime.md](references/python/03-runtime.md) — run(), execute_command(), upload/download files, session controls, workspace layout, structured output, session management, storage & checkpointing, StorageClient, sessions() client, cost tracking, observability, error handling
 
@@ -60,7 +60,7 @@ Read on demand when the user's task requires them:
 | Quick start (3 steps) | [TS](references/typescript/01-getting-started.md#quick-start) | [PY](references/python/01-getting-started.md#quick-start) |
 | Core lifecycle (run, output, kill) | [TS](references/typescript/01-getting-started.md#core-lifecycle) | [PY](references/python/01-getting-started.md#core-lifecycle) |
 | Streaming basics | [TS](references/typescript/01-getting-started.md#streaming) | [PY](references/python/01-getting-started.md#streaming) |
-| Gateway vs BYOK mode | [TS](references/typescript/01-getting-started.md#authentication) | [PY](references/python/01-getting-started.md#authentication) |
+| Gateway, managed BYO provider keys, and direct provider-key mode | [TS](references/typescript/01-getting-started.md#authentication) | [PY](references/python/01-getting-started.md#authentication) |
 | BYO subscriptions (Claude Max, Codex, Gemini) | [TS](references/typescript/01-getting-started.md#byo-claude-max-subscription) | [PY](references/python/01-getting-started.md#byo-claude-max-subscription) |
 | Supported agents, models & defaults | [TS](references/typescript/01-getting-started.md#agent-reference) | [PY](references/python/01-getting-started.md#agent-reference) |
 

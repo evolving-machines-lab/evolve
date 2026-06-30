@@ -120,12 +120,14 @@ When using `EVOLVE_API_KEY`:
 
 ## Authentication
 
-| | Gateway Mode | BYOK Mode |
-|---|---------|---------------|
-| Setup | `EVOLVE_API_KEY` | [Model provider keys](#agent-reference) + [`E2B_API_KEY`](https://e2b.dev) |
-| Observability | [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) | `~/.evolve-sdk/observability/` |
-| Browser | `.withBrowser()` is the default and recommended managed browser path with live view and replay. | Self-managed browser runtime; no managed live/replay |
-| Billing | Evolving Machines | Your provider accounts |
+| | Gateway Mode | Managed BYO Provider Keys | Direct Provider Key Mode |
+|---|---------|---------------------------|--------------------------|
+| Setup | `EVOLVE_API_KEY` | `EVOLVE_API_KEY` + provider key saved in Dashboard → Secrets → BYO Provider Keys | [Model provider keys](#agent-reference) + [`E2B_API_KEY`](https://e2b.dev) |
+| Provider key location | Evolve-managed | Encrypted Dashboard secret | Your local environment or app config |
+| Sandbox receives | Evolve gateway runtime config | Temporary `evrt_...` token and Dashboard proxy URL, not the raw provider key or `EVOLVE_API_KEY` for that provider route | Raw provider key environment variable |
+| Observability | [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) | [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) | `~/.evolve-sdk/observability/` |
+| Browser | `.withBrowser()` is the default and recommended managed browser path with live view and replay. | Same as Gateway Mode | Self-managed browser runtime; no managed live/replay |
+| Model billing | Evolving Machines | Your provider account for enabled providers | Your provider accounts |
 
 ---
 
@@ -149,9 +151,21 @@ await evolve.run({ prompt: "Hello" });
 
 ---
 
-### BYOK Mode
+### Managed BYO Provider Keys
 
-Use your own provider keys. Requires [E2B API key](https://e2b.dev) for sandbox.
+Use this when you want Anthropic or OpenAI usage billed to your provider account while keeping gateway features.
+
+1. Save your provider key in Dashboard → Secrets → BYO Provider Keys.
+2. Keep `EVOLVE_API_KEY` in your app.
+3. Run Claude or Codex normally.
+
+When enabled, Evolve routes supported provider calls through a sandbox-bound `evrt_...` runtime token. The SDK does not receive the raw provider key, and the sandbox does not receive `EVOLVE_API_KEY` for that provider route. If no managed key is enabled for that provider, gateway mode falls back to Evolve-managed model routing.
+
+---
+
+### Direct Provider Key Mode (Local BYOK)
+
+Use this when you want to pass provider keys from your own local environment or app config. Requires [E2B API key](https://e2b.dev) for sandbox.
 
 ```bash
 # .env
@@ -273,7 +287,9 @@ Set env vars and the SDK picks them up automatically — no need to pass explici
 
 > **IMPORTANT: Only use the exact model names listed below.** The SDK will error on unrecognized model names. Do not invent or guess model identifiers.
 
-| type | models | default | Gateway | BYOK |
+The Direct key column applies to Direct Provider Key Mode. Managed BYO Provider Keys use Gateway Mode plus Dashboard-stored provider keys.
+
+| type | models | default | Gateway | Direct key |
 |------|--------|---------|---------|------|
 | `"claude"` | `"fable"` `"opus"` `"sonnet"` `"haiku"` `"opus[1m]"` `"sonnet[1m]"` | `"opus"` | `EVOLVE_API_KEY` | `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` |
 | `"codex"` | `"gpt-5.5"` `"gpt-5.4"` `"gpt-5.4-mini"` `"gpt-5.3-codex"` `"gpt-5.2"` | `"gpt-5.4"` | `EVOLVE_API_KEY` | `OPENAI_API_KEY` or `CODEX_OAUTH_FILE_PATH` |
@@ -301,7 +317,7 @@ For Claude Fable 5, use `model: "fable"`. For OpenCode via OpenRouter, use `mode
 
 #### Evolve-Provided Gateway Models
 
-These models require Gateway mode (`EVOLVE_API_KEY`) and are routed by Evolve for latency-sensitive runs. BYOK provider keys do not apply.
+These models require Gateway mode (`EVOLVE_API_KEY`) and are routed by Evolve for latency-sensitive runs. Direct provider keys do not apply.
 
 | Agent | Model | Use |
 |-------|-------|-----|

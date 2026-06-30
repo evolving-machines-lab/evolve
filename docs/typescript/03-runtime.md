@@ -745,7 +745,7 @@ const replay = await session.browserReplay(info.id, {
 For the full browser setup, live-view, cleanup, and replay flow, see
 [Configuration → Browser Automation](./02-configuration.md#browser-automation).
 
-Gateway-only — requires `EVOLVE_API_KEY`. In BYOK/direct mode, traces remain
+Gateway-only — requires `EVOLVE_API_KEY`. In Direct Provider Key Mode, traces remain
 available as local JSONL files in `~/.evolve-sdk/observability/sessions/`.
 
 ---

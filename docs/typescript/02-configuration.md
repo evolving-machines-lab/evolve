@@ -2,7 +2,7 @@
 
 ## Sandbox Providers
 
-Works with both Gateway mode (`EVOLVE_API_KEY`) and BYOK mode (provider API keys). With `EVOLVE_API_KEY` only, sandbox defaults to **E2B**. Add a sandbox provider key to auto-resolve to that provider.
+Works with both Gateway mode (`EVOLVE_API_KEY`) and Direct Provider Key Mode (local BYOK provider keys). With `EVOLVE_API_KEY` only, sandbox defaults to **E2B**. Add a sandbox provider key to auto-resolve to that provider.
 
 All providers use the `evolve-all` image with pre-installed CLIs.
 
@@ -30,7 +30,7 @@ MODAL_TOKEN_SECRET=as-...
 EVOLVE_API_KEY=sk-...
 DAYTONA_API_KEY=...
 
-# .env - BYOK mode with E2B (auto-resolves to E2B)
+# .env - Direct Provider Key Mode with E2B (auto-resolves to E2B)
 ANTHROPIC_API_KEY=sk-ant-...
 E2B_API_KEY=e2b_...
 ```
@@ -55,9 +55,9 @@ Only use explicit provider creation (below) if you need custom settings like tim
 EVOLVE_API_KEY=sk-...
 E2B_API_KEY=e2b_...              # Optional with EVOLVE_API_KEY (auto-resolves)
 
-# .env - BYOK mode
+# .env - Direct Provider Key Mode
 ANTHROPIC_API_KEY=sk-ant-...     # Or OPENAI_API_KEY, GEMINI_API_KEY, CLAUDE_CODE_OAUTH_TOKEN
-E2B_API_KEY=e2b_...              # Required in BYOK mode
+E2B_API_KEY=e2b_...              # Required in Direct Provider Key Mode
 ```
 
 ```ts
@@ -77,7 +77,7 @@ EVOLVE_API_KEY=sk-...
 MODAL_TOKEN_ID=ak-...
 MODAL_TOKEN_SECRET=as-...
 
-# .env - BYOK mode
+# .env - Direct Provider Key Mode
 ANTHROPIC_API_KEY=sk-ant-...     # Or OPENAI_API_KEY, GEMINI_API_KEY, CLAUDE_CODE_OAUTH_TOKEN
 MODAL_TOKEN_ID=ak-...
 MODAL_TOKEN_SECRET=as-...
@@ -102,7 +102,7 @@ const sandbox = createModalProvider({
 EVOLVE_API_KEY=sk-...
 DAYTONA_API_KEY=...
 
-# .env - BYOK mode
+# .env - Direct Provider Key Mode
 ANTHROPIC_API_KEY=sk-ant-...     # Or OPENAI_API_KEY, GEMINI_API_KEY, CLAUDE_CODE_OAUTH_TOKEN
 DAYTONA_API_KEY=...
 ```
@@ -132,7 +132,7 @@ const evolve = new Evolve()
         model: "gpt-5.3-codex",               // (optional) Uses default if omitted. Use "fable" for Claude Fable 5 or "sonnet[1m]" / "opus[1m]" for 1M context (Claude only)
         reasoningEffort: "medium",            // (optional) Native reasoning/thinking control; valid values vary by agent/model
         apiKey: process.env.EVOLVE_API_KEY!, // (optional) Gateway mode - auto-resolves from env
-        // providerApiKey: process.env.ANTHROPIC_API_KEY!, // (optional) Direct mode (BYOK)
+        // providerApiKey: process.env.ANTHROPIC_API_KEY!, // (optional) Direct Provider Key Mode
         // oauthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN!, // (optional) Claude Max subscription
     })
 
@@ -392,7 +392,7 @@ Availability:
 
 - Requires Gateway mode and managed remote `agent-browser`.
 - `.withBrowser()` uses that recommended remote setup by default.
-- Not available with local browser mode, direct/BYOK provider mode, or `.withSession()`.
+- Not available with local browser mode, Direct Provider Key Mode, or `.withSession()`.
 
 Dashboard setup:
 
