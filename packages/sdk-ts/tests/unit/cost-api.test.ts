@@ -338,6 +338,8 @@ async function testTomlSkipsWhenAlreadyCorrect(): Promise<void> {
     "[model_providers.evolve-gateway]",
     'name = "Evolve Gateway"',
     'base_url = "https://gateway.example.com"',
+    'env_key = "OPENAI_API_KEY"',
+    'env_http_headers = { x-litellm-customer-id = "EVOLVE_LITELLM_CUSTOMER_ID", x-litellm-tags = "EVOLVE_LITELLM_TAGS" }',
     "",
   ].join("\n");
   const { sandbox, written } = createFakeSandbox(existing);
@@ -553,7 +555,8 @@ async function testTomlRootKeyDriftRepair(): Promise<void> {
     "",
     "[model_providers.evolve-gateway]",
     'name = "Evolve Gateway"',
-    'base_url = "https://gateway.example.com"',
+    'base_url = "https://old-gateway.example.com"',
+    'env_key = "OPENAI_API_KEY"',
     "",
   ].join("\n");
   const { sandbox, written } = createFakeSandbox(existing);
@@ -566,6 +569,8 @@ async function testTomlRootKeyDriftRepair(): Promise<void> {
   // Provider section should NOT be duplicated
   const sectionMatches = content.match(/\[model_providers\.evolve-gateway\]/g) || [];
   assertEqual(sectionMatches.length, 1, "provider section not duplicated");
+  assert(content.includes('base_url = "https://gateway.example.com"'), "provider base_url repaired");
+  assert(content.includes("EVOLVE_LITELLM_CUSTOMER_ID"), "provider headers repaired");
 }
 
 // =============================================================================
@@ -925,6 +930,79 @@ async function testKimiDirectModeSkipsHeaders(): Promise<void> {
 
   const envs = (agent as any).buildRunEnvs("run-direct") as Record<string, string> | undefined;
   assertEqual(envs, undefined, "no env overrides in direct mode");
+}
+
+async function testClaudeProviderRuntimeEnvIsolation(): Promise<void> {
+  console.log("\n[30a] Claude provider runtime token replaces sandbox gateway key");
+  const agent = new Agent({
+    type: "claude",
+    apiKey: "test-gateway-key",
+    isDirectMode: false,
+  } as any, {});
+  (agent as any).providerRuntimeToken = {
+    provider: "anthropic",
+    token: "evrt_runtime_token",
+    bindingSecret: "evrb_binding_secret",
+    baseUrl: "https://dashboard.test/api/model-proxy/anthropic",
+    expiresAt: new Date(Date.now() + 60000).toISOString(),
+  };
+
+  const envs = (agent as any).buildEnvironmentVariables() as Record<string, string>;
+  assertEqual(envs.ANTHROPIC_API_KEY, "evrt_runtime_token", "sets Anthropic env to runtime token");
+  assertEqual(envs.ANTHROPIC_BASE_URL, "https://dashboard.test/api/model-proxy/anthropic", "sets Anthropic base URL to proxy");
+  assert(envs.ANTHROPIC_CUSTOM_HEADERS.includes("x-evolve-provider-runtime-binding: evrb_binding_secret"), "sets binding header for provider runtime token");
+  assert(!("EVOLVE_API_KEY" in envs), "does not expose Evolve gateway key when provider runtime token is active");
+}
+
+async function testCodexProviderRuntimeEnvIsolation(): Promise<void> {
+  console.log("\n[30aa] Codex provider runtime token replaces sandbox gateway key");
+  const agent = new Agent({
+    type: "codex",
+    apiKey: "test-gateway-key",
+    isDirectMode: false,
+  } as any, {});
+  (agent as any).providerRuntimeToken = {
+    provider: "openai",
+    token: "evrt_openai_runtime_token",
+    bindingSecret: "evrb_openai_binding_secret",
+    baseUrl: "https://dashboard.test/api/model-proxy/openai",
+    expiresAt: new Date(Date.now() + 60000).toISOString(),
+  };
+
+  const envs = (agent as any).buildEnvironmentVariables() as Record<string, string>;
+  assertEqual(envs.OPENAI_API_KEY, "evrt_openai_runtime_token", "sets OpenAI env to runtime token");
+  assertEqual(envs.OPENAI_BASE_URL, "https://dashboard.test/api/model-proxy/openai", "sets OpenAI base URL to proxy");
+  assertEqual(envs.EVOLVE_PROVIDER_RUNTIME_BINDING, "evrb_openai_binding_secret", "sets provider runtime binding env for Codex TOML headers");
+  assert(!("EVOLVE_API_KEY" in envs), "does not expose Evolve gateway key when OpenAI provider runtime token is active");
+
+  const runEnvs = (agent as any).buildRunEnvs("run-openai-1") as Record<string, string>;
+  assertEqual(runEnvs.OPENAI_API_KEY, "evrt_openai_runtime_token", "Codex run env uses runtime token");
+  assertEqual(runEnvs.OPENAI_BASE_URL, "https://dashboard.test/api/model-proxy/openai", "Codex run env uses proxy base URL");
+  assertEqual(runEnvs.EVOLVE_PROVIDER_RUNTIME_BINDING, "evrb_openai_binding_secret", "Codex run env includes binding secret");
+  assertEqual(runEnvs.EVOLVE_LITELLM_TAGS, "run:run-openai-1", "Codex run env keeps run tag");
+}
+
+async function testGatewaySecretsCannotOverrideManagedProviderEnv(): Promise<void> {
+  console.log("\n[30b] withSecrets cannot override gateway/provider managed env");
+  const agent = new Agent({
+    type: "claude",
+    apiKey: "test-gateway-key",
+    isDirectMode: false,
+  } as any, {
+    secrets: {
+      ANTHROPIC_API_KEY: "attacker-provider-key",
+    },
+  });
+
+  let threw = false;
+  try {
+    (agent as any).buildEnvironmentVariables();
+  } catch (error) {
+    threw = true;
+    const message = error instanceof Error ? error.message : String(error);
+    assert(message.includes("ANTHROPIC_API_KEY is reserved"), "throws clear reserved env error");
+  }
+  assertEqual(threw, true, "rejects provider key override");
 }
 
 async function testQwenWriteJsonPreservesUserDefinedHeaders(): Promise<void> {
@@ -1359,6 +1437,9 @@ async function main(): Promise<void> {
   await testKimiEnvironmentVariables();
   await testKimiBuildRunEnvsReturnsUndefined();
   await testKimiDirectModeSkipsHeaders();
+  await testClaudeProviderRuntimeEnvIsolation();
+  await testCodexProviderRuntimeEnvIsolation();
+  await testGatewaySecretsCannotOverrideManagedProviderEnv();
   await testOpenCodeBuildRunEnvsIncludesHeaders();
   await testOpenCodeBuildRunEnvsPerRunOverwrite();
   await testOpenCodeDirectModeSkipsHeaders();

@@ -22,7 +22,11 @@ import {
   DASHBOARD_RETRY_DELAY_MS,
   getDashboardUrl,
 } from "../constants";
-import { createAgentParser, type AgentParser, type OutputEvent } from "../parsers";
+import {
+  createAgentParser,
+  type AgentParser,
+  type OutputEvent,
+} from "../parsers";
 
 const LOCAL_STORAGE_PATH = join(homedir(), SESSION_LOGS_DIR);
 
@@ -72,7 +76,9 @@ export class SessionLogger {
 
   // Local file: sequential write queue
   private localQueue: Promise<void> = Promise.resolve();
-  private dirReady = mkdir(LOCAL_STORAGE_PATH, { recursive: true }).catch(() => {});
+  private dirReady = mkdir(LOCAL_STORAGE_PATH, { recursive: true }).catch(
+    () => {},
+  );
 
   // Dashboard: event buffer + flush queue
   private eventBuffer: unknown[] = [];
@@ -92,7 +98,9 @@ export class SessionLogger {
     this.observability = config.observability;
 
     // Use provided tag or generate one
-    this.tag = config.tag || `${config.tagPrefix || "evolve"}-${randomBytes(8).toString("hex")}`;
+    this.tag =
+      config.tag ||
+      `${config.tagPrefix || "evolve"}-${randomBytes(8).toString("hex")}`;
 
     // Generate timestamp
     this.timestamp = new Date().toISOString();
@@ -127,7 +135,10 @@ export class SessionLogger {
    * Write event with pre-parsed events (avoids double parsing).
    * Use this when caller already has parsed events.
    */
-  writeEventParsed(eventLine: string, parsedEvents: OutputEvent[] | null): void {
+  writeEventParsed(
+    eventLine: string,
+    parsedEvents: OutputEvent[] | null,
+  ): void {
     if (this.isClosed) return;
 
     // LOCAL FILE: Write raw line
@@ -173,7 +184,6 @@ export class SessionLogger {
 
   async close(): Promise<void> {
     if (this.isClosed) return;
-    this.isClosed = true;
 
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
@@ -182,6 +192,7 @@ export class SessionLogger {
 
     // Write session end marker
     this.write({ _sessionEnd: { timestamp: new Date().toISOString() } });
+    this.isClosed = true;
 
     await this.flush();
   }
@@ -340,7 +351,9 @@ export class SessionLogger {
         // Retryable: rate limit, auth timeout, server error
         if (res.status === 429 || res.status === 401 || res.status >= 500) {
           if (attempt === DASHBOARD_MAX_RETRIES) {
-            console.debug(`[SessionLogger] Dashboard ${res.status} after ${attempt} retries, requeueing`);
+            console.debug(
+              `[SessionLogger] Dashboard ${res.status} after ${attempt} retries, requeueing`,
+            );
             this.requeueEvents(events);
             return;
           }
@@ -349,11 +362,16 @@ export class SessionLogger {
         }
 
         // Non-retryable client error - drop
-        console.debug(`[SessionLogger] Dashboard ${res.status}, dropping events`);
+        console.debug(
+          `[SessionLogger] Dashboard ${res.status}, dropping events`,
+        );
         return;
       } catch (error) {
         if (attempt === DASHBOARD_MAX_RETRIES) {
-          console.debug("[SessionLogger] Dashboard sync failed after retries, requeueing:", error);
+          console.debug(
+            "[SessionLogger] Dashboard sync failed after retries, requeueing:",
+            error,
+          );
           this.requeueEvents(events);
         } else {
           await this.delay(DASHBOARD_RETRY_DELAY_MS * attempt);
@@ -387,10 +405,12 @@ export class SessionLogger {
   }
 
   /** Filter out undefined values from an object */
-  private filterUndefined(obj?: Record<string, unknown>): Record<string, unknown> {
+  private filterUndefined(
+    obj?: Record<string, unknown>,
+  ): Record<string, unknown> {
     if (!obj) return {};
     return Object.fromEntries(
-      Object.entries(obj).filter(([, v]) => v !== undefined)
+      Object.entries(obj).filter(([, v]) => v !== undefined),
     );
   }
 }

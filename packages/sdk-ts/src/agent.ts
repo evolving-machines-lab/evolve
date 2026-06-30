@@ -39,16 +39,42 @@ import type {
   SessionCost,
 } from "./types";
 import { VALIDATION_PRESETS } from "./types";
-import { getAgentConfig, getOpenCodeReasoningVariant, isThinkingEnabled, type AgentRegistryEntry } from "./registry";
-import { writeMcpConfig, writeCodexSpendProvider, writeJsonSpendHeaders, writeQwenThinkingConfig, writeKimiSpendConfig, writeDroidGatewaySettings } from "./mcp";
+import {
+  getAgentConfig,
+  getOpenCodeReasoningVariant,
+  isThinkingEnabled,
+  type AgentRegistryEntry,
+} from "./registry";
+import {
+  writeMcpConfig,
+  writeCodexSpendProvider,
+  writeJsonSpendHeaders,
+  writeQwenThinkingConfig,
+  writeKimiSpendConfig,
+  writeDroidGatewaySettings,
+} from "./mcp";
 import { createAgentParser, type AgentParser } from "./parsers";
 import type { OutputEvent } from "./parsers/types";
-import { DEFAULT_TIMEOUT_MS, DEFAULT_WORKING_DIR, DEFAULT_DASHBOARD_URL, ENV_EVOLVE_API_KEY, LITELLM_CUSTOMER_ID_HEADER, LITELLM_TAGS_HEADER, RUN_TAG_PREFIX, getGatewayUrl } from "./constants";
+import {
+  DEFAULT_TIMEOUT_MS,
+  DEFAULT_WORKING_DIR,
+  DEFAULT_DASHBOARD_URL,
+  ENV_EVOLVE_API_KEY,
+  LITELLM_CUSTOMER_ID_HEADER,
+  LITELLM_TAGS_HEADER,
+  RUN_TAG_PREFIX,
+  getGatewayUrl,
+} from "./constants";
 import { buildWorkerSystemPrompt } from "./prompts";
 import { isZodSchema } from "./utils";
 import { SessionLogger } from "./observability";
 import { setupIntegrations } from "./integrations";
-import { createCheckpoint, restoreCheckpoint, getLatestCheckpoint, type RestoreMetadata } from "./storage";
+import {
+  createCheckpoint,
+  restoreCheckpoint,
+  getLatestCheckpoint,
+  type RestoreMetadata,
+} from "./storage";
 import { installAgentPlugins } from "./plugins";
 import {
   createManagedBrowserSession,
@@ -56,7 +82,18 @@ import {
   stopManagedBrowserSession,
   type ManagedBrowserSession,
 } from "./browser";
-import { BROWSER_LOGIN_MCP_SERVER_NAME, createBrowserLoginMcpServer } from "./browser-credentials";
+import {
+  BROWSER_LOGIN_MCP_SERVER_NAME,
+  createBrowserLoginMcpServer,
+} from "./browser-credentials";
+import {
+  bindProviderRuntimeToken as bindProviderRuntimeTokenRequest,
+  createProviderRuntimeToken,
+  isProviderRuntimeTokenEndpointMissing,
+  PROVIDER_RUNTIME_BINDING_HEADER,
+  revokeProviderRuntimeToken as revokeProviderRuntimeTokenRequest,
+  type ProviderRuntimeToken,
+} from "./provider-secrets";
 
 // Re-export types for external consumers
 export type {
@@ -77,6 +114,20 @@ export type {
 // =============================================================================
 
 const DROID_SESSION_STATE_PATH = "/home/user/.factory/evolve-session.json";
+const PROVIDER_RUNTIME_BINDING_ENV = "EVOLVE_PROVIDER_RUNTIME_BINDING";
+
+function providerRuntimeProviderForAgent(
+  agentType: AgentType,
+): ProviderRuntimeToken["provider"] | null {
+  switch (agentType) {
+    case "claude":
+      return "anthropic";
+    case "codex":
+      return "openai";
+    default:
+      return null;
+  }
+}
 
 /**
  * Escape prompt for bash double-quoted strings
@@ -112,16 +163,21 @@ function generateSessionTag(prefix: string): string {
  *
  * @param format - "newline" for Claude (ANTHROPIC_CUSTOM_HEADERS), "comma" for Gemini (GEMINI_CLI_CUSTOM_HEADERS)
  */
-function mergeCustomHeaders(existing: string | undefined, updates: Record<string, string>, format: "newline" | "comma" = "newline"): string {
+function mergeCustomHeaders(
+  existing: string | undefined,
+  updates: Record<string, string>,
+  format: "newline" | "comma" = "newline",
+): string {
   const merged = new Map<string, string>();
 
   // Parse existing headers (case-insensitive key lookup)
   if (existing) {
     // Newline format (Claude): "Name: Value\nName2: Value2"
     // Comma format (Gemini):   "Name: Value, Name2: Value2"
-    const entries = format === "comma"
-      ? existing.split(/,(?=\s*[^,:]+:)/)  // Gemini: split on commas before "key:" pattern
-      : existing.split(/\r?\n/);            // Claude: split on newlines
+    const entries =
+      format === "comma"
+        ? existing.split(/,(?=\s*[^,:]+:)/) // Gemini: split on commas before "key:" pattern
+        : existing.split(/\r?\n/); // Claude: split on newlines
     for (const entry of entries) {
       const trimmed = entry.trim();
       if (!trimmed) continue;
@@ -136,7 +192,11 @@ function mergeCustomHeaders(existing: string | undefined, updates: Record<string
   // Apply updates (overwrites matching keys, except tags which are appended in newline format)
   for (const [name, value] of Object.entries(updates)) {
     const key = name.toLowerCase();
-    if (key === LITELLM_TAGS_HEADER && merged.has(key) && format === "newline") {
+    if (
+      key === LITELLM_TAGS_HEADER &&
+      merged.has(key) &&
+      format === "newline"
+    ) {
       // Append to existing tags (comma-separated list) — safe in newline format only.
       // In comma format (Gemini), appending "run:<id>" after a comma creates ambiguity:
       // Gemini's regex /,(?=\s*[^,:]+:)/ would split "run:<id>" as a new header.
@@ -155,11 +215,21 @@ function mergeCustomHeaders(existing: string | undefined, updates: Record<string
 const KIMI_CODE_DEFAULT_CONTEXT_SIZE = 262144;
 // Kimi Code accepts these as provider-dependent config/env values; Moonshot's
 // public Kimi API documents thinking on/off/keep, not stable effort levels.
-const KIMI_CODE_THINKING_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
+const KIMI_CODE_THINKING_EFFORTS = new Set([
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]);
 
-function getKimiCodeThinkingEffort(reasoningEffort?: string): string | undefined {
+function getKimiCodeThinkingEffort(
+  reasoningEffort?: string,
+): string | undefined {
   if (!reasoningEffort) return undefined;
-  return KIMI_CODE_THINKING_EFFORTS.has(reasoningEffort) ? reasoningEffort : undefined;
+  return KIMI_CODE_THINKING_EFFORTS.has(reasoningEffort)
+    ? reasoningEffort
+    : undefined;
 }
 
 function withOpenAiV1Path(baseUrl: string): string {
@@ -200,6 +270,8 @@ export class Agent {
   private agentState: AgentRuntimeState = "idle";
   private droidSessionId?: string;
   private managedBrowserSession?: ManagedBrowserSession;
+  private providerRuntimeToken?: ProviderRuntimeToken;
+  private providerRuntimeRoutingUnavailable = false;
 
   // Skills storage
   private readonly skills?: SkillName[];
@@ -231,7 +303,9 @@ export class Agent {
       if (isZodSchema(options.schema)) {
         this.zodSchema = options.schema;
         if (options.schemaOptions) {
-          console.warn("[Evolve] schemaOptions ignored for Zod schemas - use .passthrough(), .strip(), z.coerce instead");
+          console.warn(
+            "[Evolve] schemaOptions ignored for Zod schemas - use .passthrough(), .strip(), z.coerce instead",
+          );
         }
       } else {
         // JSON Schema - validate at config time (fail fast)
@@ -265,12 +339,16 @@ export class Agent {
     };
   }
 
-  private browserResponseInfo(): Pick<BrowserRuntimeInfo, "liveUrl"> | undefined {
+  private browserResponseInfo():
+    Pick<BrowserRuntimeInfo, "liveUrl"> | undefined {
     if (!this.managedBrowserSession) return undefined;
     return { liveUrl: this.managedBrowserSession.liveUrl };
   }
 
-  private emitLifecycle(callbacks: StreamCallbacks | undefined, reason: LifecycleReason): void {
+  private emitLifecycle(
+    callbacks: StreamCallbacks | undefined,
+    reason: LifecycleReason,
+  ): void {
     const browser = this.browserRuntimeInfo();
     callbacks?.onLifecycle?.({
       sandboxId: this.getSession(),
@@ -293,7 +371,7 @@ export class Agent {
     kind: "run" | "command",
     handle: SandboxCommandHandle,
     callbacks: StreamCallbacks | undefined,
-    reason: LifecycleReason
+    reason: LifecycleReason,
   ): number {
     const opId = ++this.nextOperationId;
     this.activeOperationId = opId;
@@ -311,7 +389,7 @@ export class Agent {
     callbacks: StreamCallbacks | undefined,
     reason: LifecycleReason,
     nextAgentState: AgentRuntimeState = "idle",
-    nextSandboxState: SandboxLifecycleState = "ready"
+    nextSandboxState: SandboxLifecycleState = "ready",
   ): boolean {
     if (this.activeOperationId !== opId) {
       return false;
@@ -328,10 +406,12 @@ export class Agent {
     kind: "run" | "command",
     handle: SandboxCommandHandle,
     callbacks?: StreamCallbacks,
-    sandbox?: SandboxInstance
+    sandbox?: SandboxInstance,
   ): void {
     const completeReason: LifecycleReason =
-      kind === "run" ? "run_background_complete" : "command_background_complete";
+      kind === "run"
+        ? "run_background_complete"
+        : "command_background_complete";
     const failedReason: LifecycleReason =
       kind === "run" ? "run_background_failed" : "command_background_failed";
     const interruptedReason: LifecycleReason =
@@ -340,9 +420,15 @@ export class Agent {
     void handle
       .wait()
       .then(async (result) => {
-        const interrupted = this.interruptedOperations.delete(opId) || result.exitCode === 130;
+        const interrupted =
+          this.interruptedOperations.delete(opId) || result.exitCode === 130;
         if (interrupted) {
-          this.finalizeOperation(opId, callbacks, interruptedReason, "interrupted");
+          this.finalizeOperation(
+            opId,
+            callbacks,
+            interruptedReason,
+            "interrupted",
+          );
           return;
         }
         if (kind === "run" && sandbox) {
@@ -367,10 +453,18 @@ export class Agent {
     const opts = {
       ...preset,
       // Individual options override preset
-      ...(this.schemaOptions?.coerceTypes !== undefined && { coerceTypes: this.schemaOptions.coerceTypes }),
-      ...(this.schemaOptions?.removeAdditional !== undefined && { removeAdditional: this.schemaOptions.removeAdditional }),
-      ...(this.schemaOptions?.useDefaults !== undefined && { useDefaults: this.schemaOptions.useDefaults }),
-      ...(this.schemaOptions?.allErrors !== undefined && { allErrors: this.schemaOptions.allErrors }),
+      ...(this.schemaOptions?.coerceTypes !== undefined && {
+        coerceTypes: this.schemaOptions.coerceTypes,
+      }),
+      ...(this.schemaOptions?.removeAdditional !== undefined && {
+        removeAdditional: this.schemaOptions.removeAdditional,
+      }),
+      ...(this.schemaOptions?.useDefaults !== undefined && {
+        useDefaults: this.schemaOptions.useDefaults,
+      }),
+      ...(this.schemaOptions?.allErrors !== undefined && {
+        allErrors: this.schemaOptions.allErrors,
+      }),
     };
     // Disable strict mode - allows unknown formats (e.g., date-time from Pydantic schemas)
     // Ajv validates structure, Pydantic handles format validation for rich types
@@ -394,6 +488,7 @@ export class Agent {
     const provider = this.options.sandboxProvider;
     this.sandboxState = "booting";
     this.emitLifecycle(callbacks, "sandbox_boot");
+    let createdSandboxInThisCall = false;
     try {
       if (this.options.sandboxId) {
         // Connect to existing sandbox - skip setup
@@ -408,7 +503,7 @@ export class Agent {
           this.options.browserCredentials
         ) {
           console.warn(
-            "[Evolve] Connecting to existing sandbox - ignoring mcpServers, integrations, plugins, context, files, systemPrompt, managed browser setup, and browser credentials"
+            "[Evolve] Connecting to existing sandbox - ignoring mcpServers, integrations, plugins, context, files, systemPrompt, managed browser setup, and browser credentials",
           );
         }
         this.sandbox = await provider.connect(this.options.sandboxId);
@@ -421,12 +516,15 @@ export class Agent {
       } else {
         // Create new sandbox with full initialization
         await this.ensureManagedBrowserSession(callbacks);
+        await this.ensureProviderRuntimeToken();
         const envVars = this.buildEnvironmentVariables();
 
         this.sandbox = await provider.create({
           envs: envVars,
           workingDirectory: this.workingDir,
         });
+        createdSandboxInThisCall = true;
+        await this.bindProviderRuntimeToken(this.sandbox.sandboxId);
 
         await this.setupManagedBrowser(this.sandbox);
 
@@ -443,7 +541,12 @@ export class Agent {
         this.emitLifecycle(callbacks, "sandbox_ready");
       }
     } catch (error) {
+      if (createdSandboxInThisCall && this.sandbox) {
+        await this.sandbox.kill().catch(() => {});
+        this.sandbox = undefined;
+      }
       await this.closeManagedBrowserSession().catch(() => {});
+      await this.closeProviderRuntimeToken().catch(() => {});
       this.sandboxState = "error";
       this.agentState = "error";
       this.emitLifecycle(callbacks, "sandbox_error");
@@ -458,14 +561,24 @@ export class Agent {
    */
   private buildEnvironmentVariables(): Record<string, string> {
     const envVars: Record<string, string> = {};
+    const userSecrets = this.validatedUserSecretsForEnvironment();
 
     if (this.agentConfig.type === "kimi" && this.agentConfig.isDirectMode) {
-      const thinkingEnabled = isThinkingEnabled(this.agentConfig.reasoningEffort);
-      const thinkingEffort = getKimiCodeThinkingEffort(this.agentConfig.reasoningEffort);
-      envVars.KIMI_MODEL_NAME = this.resolveCommandModel(this.agentConfig.model || this.registry.defaultModel);
+      const thinkingEnabled = isThinkingEnabled(
+        this.agentConfig.reasoningEffort,
+      );
+      const thinkingEffort = getKimiCodeThinkingEffort(
+        this.agentConfig.reasoningEffort,
+      );
+      envVars.KIMI_MODEL_NAME = this.resolveCommandModel(
+        this.agentConfig.model || this.registry.defaultModel,
+      );
       envVars.KIMI_MODEL_API_KEY = this.agentConfig.apiKey;
       envVars.KIMI_MODEL_PROVIDER_TYPE = "kimi";
-      envVars.KIMI_MODEL_MAX_CONTEXT_SIZE = String(this.registry.spendTrackingTomlProvider?.maxContextSize ?? KIMI_CODE_DEFAULT_CONTEXT_SIZE);
+      envVars.KIMI_MODEL_MAX_CONTEXT_SIZE = String(
+        this.registry.spendTrackingTomlProvider?.maxContextSize ??
+          KIMI_CODE_DEFAULT_CONTEXT_SIZE,
+      );
       envVars.KIMI_MODEL_DEFAULT_THINKING = thinkingEnabled ? "true" : "false";
       envVars.KIMI_MODEL_THINKING_MODE = thinkingEnabled ? "on" : "off";
       if (thinkingEffort) {
@@ -478,12 +591,19 @@ export class Agent {
       // File-based OAuth (Codex, Gemini): auth file handles auth, no API key env var needed
       // Some agents need an activation env var (e.g., Gemini needs GOOGLE_GENAI_USE_GCA=true)
       if (this.registry.oauthActivationEnv) {
-        envVars[this.registry.oauthActivationEnv.key] = this.registry.oauthActivationEnv.value;
+        envVars[this.registry.oauthActivationEnv.key] =
+          this.registry.oauthActivationEnv.value;
       }
-    } else if (this.agentConfig.type === "kimi" && !this.agentConfig.isDirectMode) {
+    } else if (
+      this.agentConfig.type === "kimi" &&
+      !this.agentConfig.isDirectMode
+    ) {
       // Kimi Code gateway auth is written to ~/.kimi-code/config.toml per run.
       // The old KIMI_API_KEY/KIMI_BASE_URL envs are not read by Kimi Code.
-    } else if (this.registry.skipApiKeyEnvInGateway && !this.agentConfig.isDirectMode) {
+    } else if (
+      this.registry.skipApiKeyEnvInGateway &&
+      !this.agentConfig.isDirectMode
+    ) {
       // Gateway mode for generated-settings agents (Droid): EVOLVE_API_KEY is
       // injected below and referenced from the settings file, not provider env.
     } else if (this.registry.providerEnvMap && !this.agentConfig.isDirectMode) {
@@ -495,16 +615,25 @@ export class Agent {
     } else {
       // Single-provider: resolve model-specific key env for multi-provider CLIs in direct mode
       const providerPrefix = this.agentConfig.model?.split("/")[0];
-      const providerMapping = providerPrefix ? this.registry.providerEnvMap?.[providerPrefix] : undefined;
-      const effectiveKeyEnv = providerMapping ? providerMapping.keyEnv : this.registry.apiKeyEnv;
+      const providerMapping = providerPrefix
+        ? this.registry.providerEnvMap?.[providerPrefix]
+        : undefined;
+      const effectiveKeyEnv = providerMapping
+        ? providerMapping.keyEnv
+        : this.registry.apiKeyEnv;
       // OAuth mode uses oauthEnv (e.g., CLAUDE_CODE_OAUTH_TOKEN), else apiKeyEnv
-      const keyEnv = this.agentConfig.isOAuth && this.registry.oauthEnv
-        ? this.registry.oauthEnv
-        : effectiveKeyEnv;
+      const keyEnv =
+        this.agentConfig.isOAuth && this.registry.oauthEnv
+          ? this.registry.oauthEnv
+          : effectiveKeyEnv;
       envVars[keyEnv] = this.agentConfig.apiKey;
     }
 
-    if (this.agentConfig.isDirectMode && !this.agentConfig.isOAuth && this.agentConfig.type !== "kimi") {
+    if (
+      this.agentConfig.isDirectMode &&
+      !this.agentConfig.isOAuth &&
+      this.agentConfig.type !== "kimi"
+    ) {
       // Direct mode (non-OAuth): use resolved baseUrl if set (e.g., Qwen needs Dashscope endpoint)
       if (this.agentConfig.baseUrl && this.registry.baseUrlEnv) {
         envVars[this.registry.baseUrlEnv] = this.agentConfig.baseUrl;
@@ -512,6 +641,8 @@ export class Agent {
     } else if (!this.agentConfig.isDirectMode) {
       // Gateway mode: route through Evolve gateway
       const gatewayUrl = getGatewayUrl(this.registry.gatewayPath);
+      const providerRuntime =
+        this.activeProviderRuntimeToken();
 
       if (this.registry.gatewayConfigEnv) {
         // Session-level: only customer-id header. Per-run tag added in buildRunEnvs().
@@ -521,27 +652,39 @@ export class Agent {
       } else {
         // Single-provider: set base URL env var
         if (this.registry.baseUrlEnv && this.agentConfig.type !== "kimi") {
-          envVars[this.registry.baseUrlEnv] = gatewayUrl;
+          envVars[this.registry.baseUrlEnv] =
+            providerRuntime?.baseUrl ?? gatewayUrl;
         }
       }
 
-      // Expose EVOLVE_API_KEY in sandbox for gateway services (e.g., browser-use)
-      envVars['EVOLVE_API_KEY'] = this.agentConfig.apiKey;
+      if (providerRuntime) {
+        envVars[this.registry.apiKeyEnv] = providerRuntime.token;
+        if (this.registry.spendTrackingEnvs) {
+          envVars[PROVIDER_RUNTIME_BINDING_ENV] =
+            providerRuntime.bindingSecret;
+        }
+      }
+
+      // BYOK provider routing uses a run-scoped proxy token instead of exposing
+      // the account gateway key to the sandbox.
+      if (!providerRuntime) {
+        envVars[ENV_EVOLVE_API_KEY] = this.agentConfig.apiKey;
+      }
     }
     // OAuth direct mode: no baseUrl needed (Claude Code CLI handles it)
 
     if (this.managedBrowserSession && this.options.managedBrowser) {
       Object.assign(
         envVars,
-        getManagedBrowserSandboxSetup(this.options.managedBrowser.provider, this.managedBrowserSession).envs
+        getManagedBrowserSandboxSetup(
+          this.options.managedBrowser.provider,
+          this.managedBrowserSession,
+        ).envs,
       );
     }
 
-    if (this.options.secrets) {
-      if (Object.prototype.hasOwnProperty.call(this.options.secrets, ENV_EVOLVE_API_KEY)) {
-        throw new Error(`${ENV_EVOLVE_API_KEY} is reserved for Evolve-managed sandbox services and cannot be set with secrets`);
-      }
-      Object.assign(envVars, this.options.secrets);
+    if (userSecrets) {
+      Object.assign(envVars, userSecrets);
     }
 
     // Spend tracking: merge session-level LiteLLM header (gateway mode only).
@@ -549,9 +692,14 @@ export class Agent {
     if (!this.agentConfig.isDirectMode && this.registry.customHeadersEnv) {
       const headerEnv = this.registry.customHeadersEnv;
       const fmt = this.registry.customHeadersFormat || "newline";
-      envVars[headerEnv] = mergeCustomHeaders(envVars[headerEnv], {
-        [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
-      }, fmt);
+      envVars[headerEnv] = mergeCustomHeaders(
+        envVars[headerEnv],
+        {
+          [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
+          ...this.providerRuntimeHeaderUpdates(),
+        },
+        fmt,
+      );
     }
 
     // Spend tracking via per-env-var headers (e.g., Codex env_http_headers in TOML).
@@ -563,18 +711,105 @@ export class Agent {
     return envVars;
   }
 
-  private async ensureManagedBrowserSession(callbacks?: StreamCallbacks): Promise<void> {
+  private validatedUserSecretsForEnvironment():
+    Record<string, string> | undefined {
+    if (!this.options.secrets) return undefined;
+
+    const reserved = new Set<string>([ENV_EVOLVE_API_KEY]);
+    const add = (value?: string) => {
+      if (value) reserved.add(value);
+    };
+
+    add(this.registry.apiKeyEnv);
+    add(this.registry.baseUrlEnv);
+    for (const mapping of Object.values(this.registry.providerEnvMap ?? {})) {
+      add(mapping.keyEnv);
+    }
+
+    const safeSecrets: Record<string, string> = {};
+    for (const [key, value] of Object.entries(this.options.secrets)) {
+      if (reserved.has(key)) {
+        throw new Error(
+          `${key} is reserved for Evolve-managed sandbox services and cannot be set with secrets`,
+        );
+      }
+      if (key === this.registry.gatewayConfigEnv) {
+        continue;
+      }
+      safeSecrets[key] = value;
+    }
+    return safeSecrets;
+  }
+
+  private async ensureManagedBrowserSession(
+    callbacks?: StreamCallbacks,
+  ): Promise<void> {
     if (this.managedBrowserSession || !this.options.managedBrowser) return;
-    this.managedBrowserSession = await createManagedBrowserSession(this.options.managedBrowser, this.sessionTag, {
-      browserCredentials: this.options.browserCredentials !== undefined,
-    });
+    this.managedBrowserSession = await createManagedBrowserSession(
+      this.options.managedBrowser,
+      this.sessionTag,
+      {
+        browserCredentials: this.options.browserCredentials !== undefined,
+      },
+    );
     this.emitLifecycle(callbacks, "browser_ready");
+  }
+
+  private async ensureProviderRuntimeToken(): Promise<void> {
+    const provider = providerRuntimeProviderForAgent(this.agentConfig.type);
+    if (this.agentConfig.isDirectMode || !provider) return;
+    if (!this.options.providerRouting) return;
+    if (this.providerRuntimeRoutingUnavailable && !this.providerRuntimeToken) {
+      return;
+    }
+
+    if (this.providerRuntimeToken) return;
+
+    let token: ProviderRuntimeToken | null;
+    try {
+      token = await createProviderRuntimeToken(this.options.providerRouting, {
+        provider,
+        sessionTag: this.sessionTag,
+      });
+    } catch (error) {
+      if (isProviderRuntimeTokenEndpointMissing(error)) {
+        this.providerRuntimeRoutingUnavailable = true;
+        console.warn(
+          `[Evolve] ${provider} BYOK provider routing endpoint is not available; falling back to Evolve gateway key: ${(error as Error).message}`,
+        );
+        return;
+      }
+      throw error;
+    }
+
+    this.providerRuntimeRoutingUnavailable = token === null;
+    this.providerRuntimeToken = token ?? undefined;
+    if (this.providerRuntimeToken && this.sandbox?.sandboxId) {
+      await this.bindProviderRuntimeToken(this.sandbox.sandboxId);
+    }
+  }
+
+  private async bindProviderRuntimeToken(sandboxId: string): Promise<void> {
+    if (!this.providerRuntimeToken || !this.options.providerRouting) return;
+    const ok = await bindProviderRuntimeTokenRequest(
+      this.options.providerRouting,
+      {
+        token: this.providerRuntimeToken.token,
+        sandboxId,
+      },
+    );
+    if (!ok) {
+      throw new Error("Failed to bind provider runtime token to sandbox");
+    }
   }
 
   private async setupManagedBrowser(sandbox: SandboxInstance): Promise<void> {
     if (!this.managedBrowserSession || !this.options.managedBrowser) return;
 
-    const setup = getManagedBrowserSandboxSetup(this.options.managedBrowser.provider, this.managedBrowserSession);
+    const setup = getManagedBrowserSandboxSetup(
+      this.options.managedBrowser.provider,
+      this.managedBrowserSession,
+    );
     for (const dir of setup.directories) {
       await sandbox.files.makeDir(dir);
     }
@@ -590,7 +825,24 @@ export class Agent {
     try {
       await stopManagedBrowserSession(this.options.managedBrowser, session);
     } catch (error) {
-      console.warn(`[Evolve] Managed browser cleanup failed: ${(error as Error).message}`);
+      console.warn(
+        `[Evolve] Managed browser cleanup failed: ${(error as Error).message}`,
+      );
+    }
+  }
+
+  private async closeProviderRuntimeToken(): Promise<void> {
+    if (!this.providerRuntimeToken || !this.options.providerRouting) return;
+    const token = this.providerRuntimeToken;
+    this.providerRuntimeToken = undefined;
+    try {
+      await revokeProviderRuntimeTokenRequest(this.options.providerRouting, {
+        token: token.token,
+      });
+    } catch (error) {
+      console.warn(
+        `[Evolve] Provider runtime token cleanup failed: ${(error as Error).message}`,
+      );
     }
   }
 
@@ -607,27 +859,37 @@ export class Agent {
    */
   private buildGatewayConfigJson(headers: Record<string, string>): string {
     const gatewayUrl = getGatewayUrl(this.registry.gatewayPath);
-    const selectedModel = this.resolveCommandModel(this.agentConfig.model || this.registry.defaultModel);
+    const selectedModel = this.resolveCommandModel(
+      this.agentConfig.model || this.registry.defaultModel,
+    );
 
     // Start from user-provided config if available, preserving non-litellm settings
     let config: Record<string, unknown> = {};
     const userValue = this.options.secrets?.[this.registry.gatewayConfigEnv!];
     if (userValue) {
-      try { config = JSON.parse(userValue); } catch { /* invalid JSON — start fresh */ }
+      try {
+        config = JSON.parse(userValue);
+      } catch {
+        /* invalid JSON — start fresh */
+      }
     }
 
     const providers = (config.provider as Record<string, unknown>) ?? {};
     const litellm = (providers.litellm as Record<string, unknown>) ?? {};
     const existingOptions = (litellm.options as Record<string, unknown>) ?? {};
     const existingModels = (litellm.models as Record<string, unknown>) ?? {};
-    const existingModel = (existingModels[selectedModel] as Record<string, unknown>) ?? {};
-    const existingHeaders = (existingModel.headers as Record<string, string>) ?? {};
-    const reasoningVariant = this.agentConfig.type === "opencode"
-      ? getOpenCodeReasoningVariant(this.agentConfig.reasoningEffort)
-      : undefined;
-    const existingVariants = (existingModel.variants as Record<string, unknown>) ?? {};
+    const existingModel =
+      (existingModels[selectedModel] as Record<string, unknown>) ?? {};
+    const existingHeaders =
+      (existingModel.headers as Record<string, string>) ?? {};
+    const reasoningVariant =
+      this.agentConfig.type === "opencode"
+        ? getOpenCodeReasoningVariant(this.agentConfig.reasoningEffort)
+        : undefined;
+    const existingVariants =
+      (existingModel.variants as Record<string, unknown>) ?? {};
     const selectedVariant = reasoningVariant
-      ? (existingVariants[reasoningVariant] as Record<string, unknown>) ?? {}
+      ? ((existingVariants[reasoningVariant] as Record<string, unknown>) ?? {})
       : undefined;
 
     config.provider = {
@@ -646,21 +908,96 @@ export class Agent {
             ...existingModel,
             name: selectedModel,
             headers: { ...existingHeaders, ...headers },
-            ...(reasoningVariant ? {
-              variants: {
-                ...existingVariants,
-                [reasoningVariant]: {
-                  ...selectedVariant,
-                  reasoningEffort: reasoningVariant,
-                },
-              },
-            } : {}),
+            ...(reasoningVariant
+              ? {
+                  variants: {
+                    ...existingVariants,
+                    [reasoningVariant]: {
+                      ...selectedVariant,
+                      reasoningEffort: reasoningVariant,
+                    },
+                  },
+                }
+              : {}),
           },
         },
       },
     };
 
     return JSON.stringify(config);
+  }
+
+  private activeProviderRuntimeToken(): ProviderRuntimeToken | undefined {
+    const provider = providerRuntimeProviderForAgent(this.agentConfig.type);
+    return provider && this.providerRuntimeToken?.provider === provider
+      ? this.providerRuntimeToken
+      : undefined;
+  }
+
+  private ensureSessionLogger(sandbox: SandboxInstance): void {
+    if (this.sessionLogger) return;
+    const provider = this.options.sandboxProvider;
+    this.sessionLogger = new SessionLogger({
+      provider: provider?.name || provider?.providerType || "unknown",
+      agent: this.agentConfig.type,
+      model: this.agentConfig.model || this.registry.defaultModel,
+      sandboxId: sandbox.sandboxId,
+      tag: this.sessionTag,
+      apiKey: this.agentConfig.isDirectMode
+        ? undefined
+        : this.agentConfig.apiKey,
+      observability: {
+        ...this.options.observability,
+        ...(this.managedBrowserSession && this.options.managedBrowser
+          ? {
+              browser_provider: this.options.managedBrowser.provider,
+              browser_session_id: this.managedBrowserSession.id,
+              dashboard_session_id: this.managedBrowserSession.sessionId,
+              browser_session_tag: this.managedBrowserSession.sessionTag,
+              browser_live_url: this.managedBrowserSession.liveUrl,
+            }
+          : {}),
+      },
+    });
+  }
+
+  private async flushSessionLoggerWithTimeout(timeoutMs = 2000): Promise<void> {
+    if (!this.sessionLogger) return;
+    await Promise.race([
+      this.sessionLogger.flush(),
+      new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
+    ]);
+  }
+
+  private providerRuntimeHeaderUpdates(): Record<string, string> {
+    const providerRuntime = this.activeProviderRuntimeToken();
+    return providerRuntime
+      ? { [PROVIDER_RUNTIME_BINDING_HEADER]: providerRuntime.bindingSecret }
+      : {};
+  }
+
+  private buildProviderRuntimeProcessEnvs(): Record<string, string> {
+    const providerRuntime = this.activeProviderRuntimeToken();
+    if (!providerRuntime) return {};
+    const envs: Record<string, string> = {
+      [this.registry.apiKeyEnv]: providerRuntime.token,
+    };
+    if (this.registry.baseUrlEnv) {
+      envs[this.registry.baseUrlEnv] = providerRuntime.baseUrl;
+    }
+    if (this.registry.spendTrackingEnvs) {
+      envs[PROVIDER_RUNTIME_BINDING_ENV] = providerRuntime.bindingSecret;
+    }
+    if (this.registry.customHeadersEnv) {
+      const headerEnv = this.registry.customHeadersEnv;
+      const fmt = this.registry.customHeadersFormat || "newline";
+      envs[headerEnv] = mergeCustomHeaders(
+        this.options.secrets?.[headerEnv],
+        this.providerRuntimeHeaderUpdates(),
+        fmt,
+      );
+    }
+    return envs;
   }
 
   /**
@@ -671,24 +1008,30 @@ export class Agent {
    */
   private buildRunEnvs(runId: string): Record<string, string> | undefined {
     if (this.agentConfig.isDirectMode) return undefined;
+    const envs = this.buildProviderRuntimeProcessEnvs();
 
     // Path 1: single custom headers env var (Claude, Gemini)
     const headerEnv = this.registry.customHeadersEnv;
     if (headerEnv) {
       const base = this.options.secrets?.[headerEnv];
       const fmt = this.registry.customHeadersFormat || "newline";
-      return {
-        [headerEnv]: mergeCustomHeaders(base, {
+      envs[headerEnv] = mergeCustomHeaders(
+        base,
+        {
           [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
           [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
-        }, fmt),
-      };
+          ...this.providerRuntimeHeaderUpdates(),
+        },
+        fmt,
+      );
+      return envs;
     }
 
     // Path 2: per-env-var headers (Codex TOML env_http_headers)
     const trackingEnvs = this.registry.spendTrackingEnvs;
     if (trackingEnvs) {
       return {
+        ...envs,
         [trackingEnvs.sessionTagEnv]: this.sessionTag,
         [trackingEnvs.runTagEnv]: `${RUN_TAG_PREFIX}${runId}`,
       };
@@ -698,6 +1041,7 @@ export class Agent {
     // Per-run override with both session + run headers.
     if (this.registry.gatewayConfigEnv) {
       return {
+        ...envs,
         [this.registry.gatewayConfigEnv]: this.buildGatewayConfigJson({
           [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
           [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
@@ -705,15 +1049,19 @@ export class Agent {
       };
     }
 
-    return undefined;
+    return Object.keys(envs).length > 0 ? envs : undefined;
   }
 
-  private captureDroidSession(rawLine: string, events: OutputEvent[] | null): void {
+  private captureDroidSession(
+    rawLine: string,
+    events: OutputEvent[] | null,
+  ): void {
     if (this.agentConfig.type !== "droid") return;
 
-    const eventSessionId = events?.find((event) => (
-      typeof event.sessionId === "string" && event.sessionId.length > 0
-    ))?.sessionId;
+    const eventSessionId = events?.find(
+      (event) =>
+        typeof event.sessionId === "string" && event.sessionId.length > 0,
+    )?.sessionId;
     if (eventSessionId) {
       this.droidSessionId = eventSessionId;
       return;
@@ -734,14 +1082,17 @@ export class Agent {
   }
 
   private findDroidSessionId(value: unknown): string | undefined {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      return undefined;
     const record = value as Record<string, unknown>;
     const direct = record.sessionId ?? record.session_id;
     if (typeof direct === "string" && direct.length > 0) return direct;
 
-    return this.findDroidSessionId(record.result) ??
+    return (
+      this.findDroidSessionId(record.result) ??
       this.findDroidSessionId(record.params) ??
-      this.findDroidSessionId(record.notification);
+      this.findDroidSessionId(record.notification)
+    );
   }
 
   private async loadDroidSessionState(sandbox: SandboxInstance): Promise<void> {
@@ -758,12 +1109,14 @@ export class Agent {
     }
   }
 
-  private async writeDroidSessionState(sandbox: SandboxInstance): Promise<void> {
+  private async writeDroidSessionState(
+    sandbox: SandboxInstance,
+  ): Promise<void> {
     if (this.agentConfig.type !== "droid" || !this.droidSessionId) return;
     await sandbox.files.makeDir("/home/user/.factory");
     await sandbox.files.write(
       DROID_SESSION_STATE_PATH,
-      JSON.stringify({ sessionId: this.droidSessionId }, null, 2)
+      JSON.stringify({ sessionId: this.droidSessionId }, null, 2),
     );
   }
 
@@ -785,19 +1138,47 @@ export class Agent {
   private async setupAgentAuth(sandbox: SandboxInstance): Promise<void> {
     // File-based OAuth: write auth file directly
     if (this.agentConfig.oauthFileContent && this.registry.oauthFileName) {
-      const settingsDir = this.registry.mcpConfig.settingsDir.replace(/^~/, "/home/user");
+      const settingsDir = this.registry.mcpConfig.settingsDir.replace(
+        /^~/,
+        "/home/user",
+      );
       await sandbox.files.makeDir(settingsDir);
-      await sandbox.files.write(`${settingsDir}/${this.registry.oauthFileName}`, this.agentConfig.oauthFileContent);
+      await sandbox.files.write(
+        `${settingsDir}/${this.registry.oauthFileName}`,
+        this.agentConfig.oauthFileContent,
+      );
       return;
     }
     // Default: run setup command (e.g., "codex login --with-api-key")
     if (this.registry.setupCommand) {
-      await sandbox.commands.run(this.registry.setupCommand, { timeoutMs: 30000 });
+      await sandbox.commands.run(this.registry.setupCommand, {
+        timeoutMs: 30000,
+      });
     }
   }
 
   private async setupAgentPlugins(sandbox: SandboxInstance): Promise<void> {
-    await installAgentPlugins(this.agentConfig.type, sandbox, this.options.plugins);
+    await installAgentPlugins(
+      this.agentConfig.type,
+      sandbox,
+      this.options.plugins,
+    );
+  }
+
+  private assertProviderRuntimeDoesNotExposeGatewayKey(
+    mcpServers: Record<string, McpServerConfig>,
+  ): void {
+    if (!this.activeProviderRuntimeToken()) return;
+    const gatewayKey = this.agentConfig.apiKey;
+    for (const [name, config] of Object.entries(mcpServers)) {
+      for (const value of Object.values(config.headers || {})) {
+        if (value.includes(gatewayKey)) {
+          throw new Error(
+            `MCP server "${name}" would expose the Evolve API key inside a provider BYOK sandbox. Use managed agent-browser or remove this gateway-authenticated MCP server.`,
+          );
+        }
+      }
+    }
   }
 
   /**
@@ -808,14 +1189,15 @@ export class Agent {
    */
   private async setupWorkspace(
     sandbox: SandboxInstance,
-    opts?: { skipSystemPrompt?: boolean }
+    opts?: { skipSystemPrompt?: boolean },
   ): Promise<void> {
     const workspaceMode = this.options.workspaceMode || "knowledge";
 
     // Create workspace folders (swe mode includes repo/)
-    const folders = workspaceMode === "swe"
-      ? `${this.workingDir}/repo ${this.workingDir}/context ${this.workingDir}/scripts ${this.workingDir}/temp ${this.workingDir}/output`
-      : `${this.workingDir}/context ${this.workingDir}/scripts ${this.workingDir}/temp ${this.workingDir}/output`;
+    const folders =
+      workspaceMode === "swe"
+        ? `${this.workingDir}/repo ${this.workingDir}/context ${this.workingDir}/scripts ${this.workingDir}/temp ${this.workingDir}/output`
+        : `${this.workingDir}/context ${this.workingDir}/scripts ${this.workingDir}/temp ${this.workingDir}/output`;
 
     await sandbox.commands.run(`mkdir -p ${folders}`, { timeoutMs: 30000 });
 
@@ -864,11 +1246,22 @@ export class Agent {
     }
 
     if (this.options.browserCredentials) {
-      if (!this.options.managedBrowser || this.options.managedBrowser.provider !== "agent-browser") {
-        throw new Error("Browser credentials require managed remote agent-browser.");
+      if (
+        !this.options.managedBrowser ||
+        this.options.managedBrowser.provider !== "agent-browser"
+      ) {
+        throw new Error(
+          "Browser credentials require managed remote agent-browser.",
+        );
       }
-      if (!this.managedBrowserSession?.id || !this.managedBrowserSession.sessionTag || !this.managedBrowserSession.browserAuthGrantToken) {
-        throw new Error("Managed browser session is missing browser credential grant data.");
+      if (
+        !this.managedBrowserSession?.id ||
+        !this.managedBrowserSession.sessionTag ||
+        !this.managedBrowserSession.browserAuthGrantToken
+      ) {
+        throw new Error(
+          "Managed browser session is missing browser credential grant data.",
+        );
       }
       const browserLoginMcp = await createBrowserLoginMcpServer({
         apiKey: this.options.browserCredentials.apiKey,
@@ -890,28 +1283,41 @@ export class Agent {
     // current Evolve instance generates — stale tokens from the checkpoint won't
     // work. Gateway mode and managed integrations both produce session-scoped URLs.
     if (Object.keys(mcpServers).length > 0) {
+      this.assertProviderRuntimeDoesNotExposeGatewayKey(mcpServers);
       await writeMcpConfig(
         this.agentConfig.type,
         sandbox,
         this.workingDir,
-        mcpServers
+        mcpServers,
       );
     }
 
     // Spend tracking: write model provider config for agents using env_http_headers
     // (e.g., Codex). Must run after MCP config so we append to existing config.toml.
-    if (!this.agentConfig.isDirectMode && this.registry.spendTrackingEnvs && this.agentConfig.type === "codex") {
+    if (
+      !this.agentConfig.isDirectMode &&
+      this.registry.spendTrackingEnvs &&
+      this.agentConfig.type === "codex"
+    ) {
       await writeCodexSpendProvider(
         sandbox,
-        this.agentConfig.baseUrl || getGatewayUrl(),
+        this.activeProviderRuntimeToken()?.baseUrl ||
+          this.agentConfig.baseUrl ||
+          getGatewayUrl(),
         this.registry.spendTrackingEnvs,
+        this.activeProviderRuntimeToken()
+          ? { [PROVIDER_RUNTIME_BINDING_HEADER]: PROVIDER_RUNTIME_BINDING_ENV }
+          : undefined,
       );
     }
 
     // Spend tracking: write customHeaders to JSON settings file for agents that read
     // headers from config (e.g., Qwen). Session-level only — per-run tags are written
     // before each spawn in run().
-    if (!this.agentConfig.isDirectMode && this.registry.spendTrackingJsonConfig) {
+    if (
+      !this.agentConfig.isDirectMode &&
+      this.registry.spendTrackingJsonConfig
+    ) {
       await writeJsonSpendHeaders(
         sandbox,
         this.agentConfig.type as "qwen",
@@ -955,7 +1361,7 @@ export class Agent {
    */
   private async uploadContextFiles(
     sandbox: SandboxInstance,
-    files: FileMap
+    files: FileMap,
   ): Promise<void> {
     const entries = Object.entries(files).map(([name, content]) => ({
       path: `${this.workingDir}/context/${name}`,
@@ -966,7 +1372,9 @@ export class Agent {
 
     // Create parent directories
     const dirs = new Set(
-      entries.map((e) => e.path.substring(0, e.path.lastIndexOf("/"))).filter(Boolean)
+      entries
+        .map((e) => e.path.substring(0, e.path.lastIndexOf("/")))
+        .filter(Boolean),
     );
     if (dirs.size > 0) {
       await sandbox.commands.run(`mkdir -p ${Array.from(dirs).join(" ")}`, {
@@ -982,7 +1390,7 @@ export class Agent {
    */
   private async uploadWorkspaceFiles(
     sandbox: SandboxInstance,
-    files: FileMap
+    files: FileMap,
   ): Promise<void> {
     const entries = Object.entries(files).map(([path, content]) => ({
       // Support absolute paths (use as-is) and relative paths (prefix with workingDir)
@@ -994,7 +1402,9 @@ export class Agent {
 
     // Create parent directories
     const dirs = new Set(
-      entries.map((e) => e.path.substring(0, e.path.lastIndexOf("/"))).filter(Boolean)
+      entries
+        .map((e) => e.path.substring(0, e.path.lastIndexOf("/")))
+        .filter(Boolean),
     );
     if (dirs.size > 0) {
       await sandbox.commands.run(`mkdir -p ${Array.from(dirs).join(" ")}`, {
@@ -1015,9 +1425,12 @@ export class Agent {
   private buildCommand(prompt: string): string {
     return this.registry.buildCommand({
       prompt: this.agentConfig.type === "droid" ? prompt : escapePrompt(prompt),
-      model: this.resolveCommandModel(this.agentConfig.model || this.registry.defaultModel),
+      model: this.resolveCommandModel(
+        this.agentConfig.model || this.registry.defaultModel,
+      ),
       isResume: this.hasRun,
-      sessionId: this.agentConfig.type === "droid" ? this.droidSessionId : undefined,
+      sessionId:
+        this.agentConfig.type === "droid" ? this.droidSessionId : undefined,
       reasoningEffort: this.agentConfig.reasoningEffort,
       isDirectMode: this.agentConfig.isDirectMode,
       skills: this.skills,
@@ -1035,13 +1448,18 @@ export class Agent {
    */
   async run(
     options: RunOptions,
-    callbacks?: StreamCallbacks
+    callbacks?: StreamCallbacks,
   ): Promise<AgentResponse> {
-    const { prompt, timeoutMs = DEFAULT_TIMEOUT_MS, background = false, checkpointComment } = options;
+    const {
+      prompt,
+      timeoutMs = DEFAULT_TIMEOUT_MS,
+      background = false,
+      checkpointComment,
+    } = options;
     let { from } = options;
     if (this.activeCommand) {
       throw new Error(
-        "Agent is already running. Call interrupt(), wait for the active/background run to finish, or create a new Evolve instance."
+        "Agent is already running. Call interrupt(), wait for the active/background run to finish, or create a new Evolve instance.",
       );
     }
 
@@ -1051,7 +1469,7 @@ export class Agent {
     if (from) {
       if (this.sandbox || this.options.sandboxId) {
         throw new Error(
-          "Cannot restore into existing sandbox. Call kill() first, or create a new Evolve instance."
+          "Cannot restore into existing sandbox. Call kill() first, or create a new Evolve instance.",
         );
       }
     }
@@ -1061,11 +1479,13 @@ export class Agent {
     // =========================================================================
     if (from === "latest") {
       if (!this.storage) {
-        throw new Error("Storage not configured. Call .withStorage() before using from: \"latest\".");
+        throw new Error(
+          'Storage not configured. Call .withStorage() before using from: "latest".',
+        );
       }
       const latest = await getLatestCheckpoint(this.storage);
       if (!latest) {
-        throw new Error("No checkpoints found for from: \"latest\".");
+        throw new Error('No checkpoints found for from: "latest".');
       }
       from = latest.id;
     }
@@ -1075,7 +1495,9 @@ export class Agent {
     // =========================================================================
     if (from) {
       if (!this.storage) {
-        throw new Error("Storage not configured. Call .withStorage() before using 'from'.");
+        throw new Error(
+          "Storage not configured. Call .withStorage() before using 'from'.",
+        );
       }
       if (!this.options.sandboxProvider) {
         throw new Error("No sandbox provider configured");
@@ -1083,6 +1505,7 @@ export class Agent {
 
       // Create fresh sandbox
       await this.ensureManagedBrowserSession(callbacks);
+      await this.ensureProviderRuntimeToken();
       const envVars = this.buildEnvironmentVariables();
       this.sandboxState = "booting";
       this.emitLifecycle(callbacks, "sandbox_boot");
@@ -1091,17 +1514,25 @@ export class Agent {
           envs: envVars,
           workingDirectory: this.workingDir,
         });
+        await this.bindProviderRuntimeToken(this.sandbox.sandboxId);
 
         // Restore checkpoint archive into sandbox (returns metadata for validation)
-        const ckptMeta = await restoreCheckpoint(this.sandbox, this.storage, from);
+        const ckptMeta = await restoreCheckpoint(
+          this.sandbox,
+          this.storage,
+          from,
+        );
 
         await this.setupManagedBrowser(this.sandbox);
 
         // Validate agent type — changing agent type on restore is structural (wrong
         // dirs, wrong CLI, wrong config format). Model changes are fine.
-        if (ckptMeta.agentType && ckptMeta.agentType !== this.agentConfig.type) {
+        if (
+          ckptMeta.agentType &&
+          ckptMeta.agentType !== this.agentConfig.type
+        ) {
           throw new Error(
-            `Cannot restore checkpoint: agent type mismatch (checkpoint: ${ckptMeta.agentType}, current: ${this.agentConfig.type})`
+            `Cannot restore checkpoint: agent type mismatch (checkpoint: ${ckptMeta.agentType}, current: ${this.agentConfig.type})`,
           );
         }
 
@@ -1111,7 +1542,7 @@ export class Agent {
         const currentMode = this.options.workspaceMode || "knowledge";
         if (ckptMeta.workspaceMode && ckptMeta.workspaceMode !== currentMode) {
           throw new Error(
-            `Cannot restore checkpoint: workspace mode mismatch (checkpoint: ${ckptMeta.workspaceMode}, current: ${currentMode})`
+            `Cannot restore checkpoint: workspace mode mismatch (checkpoint: ${ckptMeta.workspaceMode}, current: ${currentMode})`,
           );
         }
 
@@ -1147,6 +1578,7 @@ export class Agent {
           this.sandbox = undefined;
         }
         await this.closeManagedBrowserSession().catch(() => {});
+        await this.closeProviderRuntimeToken().catch(() => {});
         this.sandboxState = "error";
         this.agentState = "error";
         this.emitLifecycle(callbacks, "sandbox_error");
@@ -1155,6 +1587,7 @@ export class Agent {
     }
 
     const sandbox = await this.getSandbox(callbacks);
+    await this.ensureProviderRuntimeToken();
     await this.loadDroidSessionState(sandbox);
 
     // Track turn start time BEFORE process starts (for output file filtering)
@@ -1162,30 +1595,13 @@ export class Agent {
     this.lastRunTimestamp = Date.now();
 
     // Initialize session logger on first run (local logging always, dashboard sync only in gateway mode)
-    if (!this.sessionLogger) {
-      const provider = this.options.sandboxProvider;
-      this.sessionLogger = new SessionLogger({
-        provider: provider?.name || provider?.providerType || "unknown",
-        agent: this.agentConfig.type,
-        model: this.agentConfig.model || this.registry.defaultModel,
-        sandboxId: sandbox.sandboxId,
-        tag: this.sessionTag,
-        apiKey: this.agentConfig.isDirectMode ? undefined : this.agentConfig.apiKey,
-        observability: {
-          ...this.options.observability,
-          ...(this.managedBrowserSession && this.options.managedBrowser ? {
-            browser_provider: this.options.managedBrowser.provider,
-            browser_session_id: this.managedBrowserSession.id,
-            dashboard_session_id: this.managedBrowserSession.sessionId,
-            browser_session_tag: this.managedBrowserSession.sessionTag,
-            browser_live_url: this.managedBrowserSession.liveUrl,
-          } : {}),
-        },
-      });
-    }
+    this.ensureSessionLogger(sandbox);
 
     // Log the prompt (non-blocking)
-    this.sessionLogger.writePrompt(prompt);
+    this.sessionLogger?.writePrompt(prompt);
+    if (this.activeProviderRuntimeToken()) {
+      await this.flushSessionLoggerWithTimeout();
+    }
 
     // Build command and per-run spend tracking env
     const command = this.buildCommand(prompt);
@@ -1195,7 +1611,10 @@ export class Agent {
     // Per-run config-file spend tracking (Qwen): write both session + run headers
     // to settings.json before spawning. Each run gets a fresh file write because
     // the CLI reads the config at startup (not per-request from env).
-    if (!this.agentConfig.isDirectMode && this.registry.spendTrackingJsonConfig) {
+    if (
+      !this.agentConfig.isDirectMode &&
+      this.registry.spendTrackingJsonConfig
+    ) {
       await writeJsonSpendHeaders(
         sandbox,
         this.agentConfig.type as "qwen",
@@ -1208,12 +1627,18 @@ export class Agent {
     }
 
     if (this.agentConfig.type === "qwen") {
-      await writeQwenThinkingConfig(sandbox, isThinkingEnabled(this.agentConfig.reasoningEffort));
+      await writeQwenThinkingConfig(
+        sandbox,
+        isThinkingEnabled(this.agentConfig.reasoningEffort),
+      );
     }
 
     // Per-run TOML provider spend tracking (Kimi): write provider with custom_headers
     // before spawning. CLI reads config at startup, so each run gets a fresh write.
-    if (!this.agentConfig.isDirectMode && this.registry.spendTrackingTomlProvider) {
+    if (
+      !this.agentConfig.isDirectMode &&
+      this.registry.spendTrackingTomlProvider
+    ) {
       await writeKimiSpendConfig(
         sandbox,
         this.registry.spendTrackingTomlProvider,
@@ -1224,9 +1649,13 @@ export class Agent {
         {
           baseUrl: withOpenAiV1Path(getGatewayUrl(this.registry.gatewayPath)),
           apiKey: this.agentConfig.apiKey,
-          model: this.resolveCommandModel(this.agentConfig.model || this.registry.defaultModel),
+          model: this.resolveCommandModel(
+            this.agentConfig.model || this.registry.defaultModel,
+          ),
           defaultThinking: isThinkingEnabled(this.agentConfig.reasoningEffort),
-          thinkingEffort: getKimiCodeThinkingEffort(this.agentConfig.reasoningEffort),
+          thinkingEffort: getKimiCodeThinkingEffort(
+            this.agentConfig.reasoningEffort,
+          ),
         },
       );
     }
@@ -1238,7 +1667,9 @@ export class Agent {
         sandbox,
         {
           ...this.registry.droidGatewaySettings,
-          model: this.resolveCommandModel(this.agentConfig.model || this.registry.defaultModel),
+          model: this.resolveCommandModel(
+            this.agentConfig.model || this.registry.defaultModel,
+          ),
           baseUrl: `${getGatewayUrl()}/v1`,
           apiKeyEnv: "EVOLVE_API_KEY",
         },
@@ -1323,7 +1754,8 @@ export class Agent {
       throw error;
     }
 
-    const interrupted = this.interruptedOperations.delete(opId) || result.exitCode === 130;
+    const interrupted =
+      this.interruptedOperations.delete(opId) || result.exitCode === 130;
     if (interrupted) {
       this.finalizeOperation(opId, callbacks, "run_interrupted", "interrupted");
     } else if (result.exitCode === 0) {
@@ -1359,10 +1791,7 @@ export class Agent {
     // as part of run() — no reliance on timers or explicit kill().
     // Capped at 2s so dashboard slowness never delays the caller.
     if (this.sessionLogger && !background) {
-      await Promise.race([
-        this.sessionLogger.flush(),
-        new Promise<void>((resolve) => setTimeout(resolve, 2000)),
-      ]);
+      await this.flushSessionLoggerWithTimeout();
     }
 
     // =========================================================================
@@ -1382,12 +1811,14 @@ export class Agent {
             workspaceMode: this.options.workspaceMode || "knowledge",
             comment: checkpointComment,
             parentId: this.lastCheckpointId,
-          }
+          },
         );
         this.lastCheckpointId = checkpoint.id;
       } catch (e) {
         // Non-fatal: log warning, return response without checkpoint
-        console.warn(`[Evolve] Auto-checkpoint failed: ${(e as Error).message}`);
+        console.warn(
+          `[Evolve] Auto-checkpoint failed: ${(e as Error).message}`,
+        );
       }
     }
 
@@ -1413,19 +1844,26 @@ export class Agent {
   async executeCommand(
     command: string,
     options: ExecuteCommandOptions = {},
-    callbacks?: StreamCallbacks
+    callbacks?: StreamCallbacks,
   ): Promise<AgentResponse> {
     const { timeoutMs = DEFAULT_TIMEOUT_MS, background = false } = options;
     if (this.activeCommand) {
       throw new Error(
-        "Agent is already running. Call interrupt(), wait for the active/background command to finish, or create a new Evolve instance."
+        "Agent is already running. Call interrupt(), wait for the active/background command to finish, or create a new Evolve instance.",
       );
     }
     const sandbox = await this.getSandbox(callbacks);
+    await this.ensureProviderRuntimeToken();
 
     // Track turn start time BEFORE process starts (for output file filtering)
     // Files modified AFTER this time will be returned by getOutputFiles()
     this.lastRunTimestamp = Date.now();
+
+    if (this.activeProviderRuntimeToken()) {
+      this.ensureSessionLogger(sandbox);
+      this.sessionLogger?.writePrompt(command);
+      await this.flushSessionLoggerWithTimeout();
+    }
 
     let stdout = "";
     let stderr = "";
@@ -1440,13 +1878,20 @@ export class Agent {
       callbacks?.onStderr?.(chunk);
     };
 
+    const commandEnvs = this.buildProviderRuntimeProcessEnvs();
     const handle = await sandbox.commands.spawn(command, {
       cwd: this.workingDir,
       timeoutMs,
+      envs: Object.keys(commandEnvs).length > 0 ? commandEnvs : undefined,
       onStdout,
       onStderr,
     });
-    const opId = this.beginOperation("command", handle, callbacks, "command_start");
+    const opId = this.beginOperation(
+      "command",
+      handle,
+      callbacks,
+      "command_start",
+    );
 
     if (background) {
       this.watchBackgroundOperation(opId, "command", handle, callbacks);
@@ -1469,9 +1914,15 @@ export class Agent {
       throw error;
     }
 
-    const interrupted = this.interruptedOperations.delete(opId) || result.exitCode === 130;
+    const interrupted =
+      this.interruptedOperations.delete(opId) || result.exitCode === 130;
     if (interrupted) {
-      this.finalizeOperation(opId, callbacks, "command_interrupted", "interrupted");
+      this.finalizeOperation(
+        opId,
+        callbacks,
+        "command_interrupted",
+        "interrupted",
+      );
     } else if (result.exitCode === 0) {
       this.finalizeOperation(opId, callbacks, "command_complete", "idle");
     } else {
@@ -1518,7 +1969,9 @@ export class Agent {
    *
    * @param recursive - Include files in subdirectories (default: false)
    */
-  async getOutputFiles<T = unknown>(recursive = false): Promise<OutputResult<T>> {
+  async getOutputFiles<T = unknown>(
+    recursive = false,
+  ): Promise<OutputResult<T>> {
     const sandbox = await this.getSandbox();
     const outputDir = `${this.workingDir}/output`;
 
@@ -1528,7 +1981,7 @@ export class Agent {
     const depthArg = recursive ? "" : "-maxdepth 1";
     const result = await sandbox.commands.run(
       `find ${outputDir} ${depthArg} -type f -exec stat -c '%n|%Z' {} \\; 2>/dev/null || true`,
-      { timeoutMs: 30000 }
+      { timeoutMs: 30000 },
     );
 
     const lines = result.stdout.split("\n").filter(Boolean);
@@ -1571,7 +2024,7 @@ export class Agent {
         } catch {
           return null;
         }
-      })
+      }),
     );
 
     for (const r of results) {
@@ -1584,11 +2037,18 @@ export class Agent {
     // Validate result.json against schema
     const json = files["result.json"];
     if (!json) {
-      return { files, data: null, error: "Schema provided but agent did not create output/result.json" };
+      return {
+        files,
+        data: null,
+        error: "Schema provided but agent did not create output/result.json",
+      };
     }
 
     // Convert to string once (for parsing and rawData)
-    const rawData = typeof json === "string" ? json : new TextDecoder().decode(json as Uint8Array);
+    const rawData =
+      typeof json === "string"
+        ? json
+        : new TextDecoder().decode(json as Uint8Array);
 
     try {
       const parsed = JSON.parse(rawData);
@@ -1598,7 +2058,12 @@ export class Agent {
         const validated = this.zodSchema.safeParse(parsed);
         return validated.success
           ? { files, data: validated.data as T }
-          : { files, data: null, error: `Schema validation failed: ${validated.error.message}`, rawData };
+          : {
+              files,
+              data: null,
+              error: `Schema validation failed: ${validated.error.message}`,
+              rawData,
+            };
       }
 
       // Validate with Ajv (JSON Schema)
@@ -1607,16 +2072,27 @@ export class Agent {
         if (valid) {
           return { files, data: parsed as T };
         } else {
-          const errors = this.compiledValidator.errors
-            ?.map((e) => `${e.instancePath} ${e.message}`)
-            .join(", ") || "Unknown validation error";
-          return { files, data: null, error: `Schema validation failed: ${errors}`, rawData };
+          const errors =
+            this.compiledValidator.errors
+              ?.map((e) => `${e.instancePath} ${e.message}`)
+              .join(", ") || "Unknown validation error";
+          return {
+            files,
+            data: null,
+            error: `Schema validation failed: ${errors}`,
+            rawData,
+          };
         }
       }
 
       return { files, data: null };
     } catch (e) {
-      return { files, data: null, error: `Failed to parse result.json: ${(e as Error).message}`, rawData };
+      return {
+        files,
+        data: null,
+        error: `Failed to parse result.json: ${(e as Error).message}`,
+        rawData,
+      };
     }
   }
 
@@ -1650,7 +2126,7 @@ export class Agent {
         workspaceMode: this.options.workspaceMode || "knowledge",
         comment: options?.comment,
         parentId: this.lastCheckpointId,
-      }
+      },
     );
     this.lastCheckpointId = result.id;
     return result;
@@ -1680,12 +2156,13 @@ export class Agent {
       const interrupted = await this.interrupt();
       if (!interrupted) {
         throw new Error(
-          "Cannot switch session while an active process is running and could not be interrupted."
+          "Cannot switch session while an active process is running and could not be interrupted.",
         );
       }
     }
 
     await this.rotateSession();
+    await this.closeProviderRuntimeToken();
     await this.closeManagedBrowserSession();
 
     this.options.sandboxId = sandboxId;
@@ -1696,6 +2173,7 @@ export class Agent {
     this.agentState = "idle";
     // Assume existing sandbox may have prior runs - use continue command
     this.hasRun = true;
+    this.providerRuntimeRoutingUnavailable = false;
     // Reset lineage — switching sandbox breaks checkpoint chain
     this.lastCheckpointId = undefined;
   }
@@ -1721,7 +2199,7 @@ export class Agent {
   async resume(callbacks?: StreamCallbacks): Promise<void> {
     if (this.sandbox && this.options.sandboxProvider) {
       this.sandbox = await this.options.sandboxProvider.connect(
-        this.sandbox.sandboxId
+        this.sandbox.sandboxId,
       );
       this.sandboxState = "ready";
       this.agentState = "idle";
@@ -1764,9 +2242,8 @@ export class Agent {
     this.sandboxState = "ready";
     this.agentState = "interrupted";
 
-    const reason: LifecycleReason = operationKind === "run"
-      ? "run_interrupted"
-      : "command_interrupted";
+    const reason: LifecycleReason =
+      operationKind === "run" ? "run_interrupted" : "command_interrupted";
     this.emitLifecycle(callbacks, reason);
 
     return killed;
@@ -1810,6 +2287,7 @@ export class Agent {
     } catch (error) {
       killError = error;
     } finally {
+      await this.closeProviderRuntimeToken();
       await this.closeManagedBrowserSession();
     }
 
@@ -1824,6 +2302,7 @@ export class Agent {
     this.sandboxState = "stopped";
     this.agentState = "idle";
     this.hasRun = false;
+    this.providerRuntimeRoutingUnavailable = false;
     this.lastCheckpointId = undefined;
     this.emitLifecycle(callbacks, "sandbox_killed");
   }
@@ -1889,7 +2368,9 @@ export class Agent {
     if (hadActivity) {
       this.previousSessionTag = this.sessionTag;
     }
-    this.sessionTag = generateSessionTag(this.options.sessionTagPrefix || "evolve");
+    this.sessionTag = generateSessionTag(
+      this.options.sessionTagPrefix || "evolve",
+    );
   }
 
   // ===========================================================================
@@ -1902,13 +2383,16 @@ export class Agent {
    */
   private async fetchSpend(params: URLSearchParams): Promise<Response> {
     if (this.agentConfig.isDirectMode) {
-      throw new Error("Cost tracking requires gateway mode (set EVOLVE_API_KEY).");
+      throw new Error(
+        "Cost tracking requires gateway mode (set EVOLVE_API_KEY).",
+      );
     }
     const apiKey = this.agentConfig.apiKey;
     if (!apiKey) {
       throw new Error("Cost tracking requires an API key.");
     }
-    const dashboardUrl = process.env.EVOLVE_DASHBOARD_URL || DEFAULT_DASHBOARD_URL;
+    const dashboardUrl =
+      process.env.EVOLVE_DASHBOARD_URL || DEFAULT_DASHBOARD_URL;
     const res = await fetch(`${dashboardUrl}/api/sessions/spend?${params}`, {
       headers: { Authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(10000),
@@ -1939,9 +2423,9 @@ export class Agent {
    * @internal
    */
   private normalizeRunCost(
-    run: Omit<RunCost, "asOf" | "isComplete" | "truncated">
-      & Partial<Pick<RunCost, "asOf" | "isComplete" | "truncated">>,
-    defaults: Pick<RunCost, "asOf" | "isComplete" | "truncated">
+    run: Omit<RunCost, "asOf" | "isComplete" | "truncated"> &
+      Partial<Pick<RunCost, "asOf" | "isComplete" | "truncated">>,
+    defaults: Pick<RunCost, "asOf" | "isComplete" | "truncated">,
   ): RunCost {
     return {
       ...run,
@@ -1980,7 +2464,7 @@ export class Agent {
     const tag = this.resolveSpendTag();
     const params = new URLSearchParams({ tag });
     const res = await this.fetchSpend(params);
-    const raw = await res.json() as SessionCost;
+    const raw = (await res.json()) as SessionCost;
     return this.normalizeSessionCost(raw);
   }
 
@@ -1992,14 +2476,19 @@ export class Agent {
    * Also works after kill() for the most recent session only.
    * Requires gateway mode (EVOLVE_API_KEY).
    */
-  async getRunCost(run: { runId: string } | { index: number }): Promise<RunCost> {
+  async getRunCost(
+    run: { runId: string } | { index: number },
+  ): Promise<RunCost> {
     const tag = this.resolveSpendTag();
 
     if ("runId" in run) {
       const params = new URLSearchParams({ tag, runId: run.runId });
       const res = await this.fetchSpend(params);
-      const raw = await res.json() as Omit<RunCost, "asOf" | "isComplete" | "truncated">
-        & Partial<Pick<RunCost, "asOf" | "isComplete" | "truncated">>;
+      const raw = (await res.json()) as Omit<
+        RunCost,
+        "asOf" | "isComplete" | "truncated"
+      > &
+        Partial<Pick<RunCost, "asOf" | "isComplete" | "truncated">>;
       return this.normalizeRunCost(raw, {
         asOf: new Date().toISOString(),
         isComplete: false,
@@ -2013,7 +2502,7 @@ export class Agent {
     const found = session.runs[idx];
     if (!found) {
       throw new Error(
-        `Run index ${run.index} out of range. Session has ${session.runs.length} run(s).`
+        `Run index ${run.index} out of range. Session has ${session.runs.length} run(s).`,
       );
     }
     return found;

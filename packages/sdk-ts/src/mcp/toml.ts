@@ -177,6 +177,7 @@ export async function writeCodexSpendProvider(
   sandbox: SandboxInstance,
   baseUrl: string,
   spendTrackingEnvs: { sessionTagEnv: string; runTagEnv: string },
+  envHttpHeaders: Record<string, string> = {},
 ): Promise<void> {
   const settingsDir = getMcpSettingsDir("codex");
   const settingsPath = getMcpSettingsPath("codex");
@@ -199,32 +200,43 @@ export async function writeCodexSpendProvider(
   const rootPortion = firstSectionIdx >= 0 ? existingToml.slice(0, firstSectionIdx) : existingToml;
   const restPortion = firstSectionIdx >= 0 ? existingToml.slice(firstSectionIdx) : "";
 
-  // Skip if both the provider section and root key are already correct.
   // hasRootKey checks only the root portion so a profile-scoped model_provider doesn't match.
   const hasProviderSection = existingToml.includes("[model_providers.evolve-gateway]");
   const hasRootKey = /^model_provider\s*=\s*"evolve-gateway"/m.test(rootPortion);
-  if (hasProviderSection && hasRootKey) {
+  const providerHeaders = {
+    [LITELLM_CUSTOMER_ID_HEADER]: spendTrackingEnvs.sessionTagEnv,
+    [LITELLM_TAGS_HEADER]: spendTrackingEnvs.runTagEnv,
+    ...envHttpHeaders,
+  };
+  const desiredProviderSection = [
+    "[model_providers.evolve-gateway]",
+    `name = "Evolve Gateway"`,
+    `base_url = ${serializeTomlValue(baseUrl)}`,
+    `env_key = "OPENAI_API_KEY"`,
+    `env_http_headers = ${serializeTomlValue(providerHeaders)}`,
+  ].join("\n");
+  if (
+    hasProviderSection &&
+    hasRootKey &&
+    existingToml.includes(desiredProviderSection)
+  ) {
     return;
   }
 
   // Strip any existing model_provider root key to avoid duplicate TOML keys.
   const cleanedRoot = rootPortion.replace(/^model_provider\s*=\s*.*$/m, "").replace(/\n{3,}/g, "\n\n");
 
-  existingToml = (cleanedRoot + restPortion).replace(/^\n+/, "");
+  existingToml = (cleanedRoot + restPortion)
+    .replace(
+      /\n?\[model_providers\.evolve-gateway\][\s\S]*?(?=\n\[|\s*$)/,
+      "",
+    )
+    .replace(/^\n+/, "");
 
   // model_provider must be a root-level TOML key (before any [section] headers).
   // The [model_providers.evolve-gateway] table goes at the end.
   const rootKey = `model_provider = "evolve-gateway"`;
-  const providerSection = hasProviderSection ? "" : [
-    "[model_providers.evolve-gateway]",
-    `name = "Evolve Gateway"`,
-    `base_url = ${serializeTomlValue(baseUrl)}`,
-    `env_key = "OPENAI_API_KEY"`,
-    `env_http_headers = ${serializeTomlValue({
-      [LITELLM_CUSTOMER_ID_HEADER]: spendTrackingEnvs.sessionTagEnv,
-      [LITELLM_TAGS_HEADER]: spendTrackingEnvs.runTagEnv,
-    })}`,
-  ].join("\n");
+  const providerSection = desiredProviderSection;
 
   let content: string;
   if (!existingToml.trim()) {
