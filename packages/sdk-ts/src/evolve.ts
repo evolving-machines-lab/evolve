@@ -523,6 +523,12 @@ export class Evolve extends EventEmitter {
             dashboardUrl: process.env.EVOLVE_DASHBOARD_URL || DEFAULT_DASHBOARD_URL,
           }
         : undefined,
+      providerRouting: !agentConfig.isDirectMode
+        ? {
+            apiKey: agentConfig.apiKey,
+            dashboardUrl: process.env.EVOLVE_DASHBOARD_URL || DEFAULT_DASHBOARD_URL,
+          }
+        : undefined,
       // Storage / Checkpointing
       storage: resolvedStorage,
     };

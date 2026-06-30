@@ -17,17 +17,19 @@ pip install evolve-sdk         # Python
 
 ### 2. Run your first agent
 
-Bring your own keys:
-```bash
-# .env - Direct (BYOK)
-ANTHROPIC_API_KEY=sk-ant-...         # or CLAUDE_CODE_OAUTH_TOKEN (Claude Max), OPENAI_API_KEY, GEMINI_API_KEY
-E2B_API_KEY=e2b_...                  # sandbox provider, get at https://e2b.dev
-```
-
-Or get your Evolve API key at [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) ([see 3. below](#evolve-gateway)):
+Get your Evolve API key at [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) ([see 3. below](#evolve-gateway)):
 ```bash
 # .env - Gateway
 EVOLVE_API_KEY=sk-...
+```
+
+To bring your own provider billing while keeping gateway features, save Anthropic/OpenAI keys in Dashboard → Secrets → BYO Provider Keys. Your app still uses only `EVOLVE_API_KEY`.
+
+For fully local direct provider keys:
+```bash
+# .env - Direct Provider Key Mode (local BYOK)
+ANTHROPIC_API_KEY=sk-ant-...         # or CLAUDE_CODE_OAUTH_TOKEN (Claude Max), OPENAI_API_KEY, GEMINI_API_KEY
+E2B_API_KEY=e2b_...                  # sandbox provider, get at https://e2b.dev
 ```
 
 Then run:

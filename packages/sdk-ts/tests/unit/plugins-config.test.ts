@@ -113,7 +113,9 @@ async function testDefaultAgentUsesClaudeInstaller(): Promise<void> {
   console.log("\n[2] default agent: plugins target claude");
 
   const previousKey = process.env.ANTHROPIC_API_KEY;
+  const previousEvolveKey = process.env.EVOLVE_API_KEY;
   process.env.ANTHROPIC_API_KEY = "provider-key";
+  delete process.env.EVOLVE_API_KEY;
   try {
     const { provider, commands } = createRecordingProvider();
     const kit = new Evolve().withPlugins({
@@ -130,6 +132,11 @@ async function testDefaultAgentUsesClaudeInstaller(): Promise<void> {
       delete process.env.ANTHROPIC_API_KEY;
     } else {
       process.env.ANTHROPIC_API_KEY = previousKey;
+    }
+    if (previousEvolveKey === undefined) {
+      delete process.env.EVOLVE_API_KEY;
+    } else {
+      process.env.EVOLVE_API_KEY = previousEvolveKey;
     }
   }
 }

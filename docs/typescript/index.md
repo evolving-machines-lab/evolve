@@ -25,10 +25,11 @@ await evolve.run({ prompt: "Hello world" });
 | Quick Start (3 steps) | [Getting Started → Quick Start](./01-getting-started.md#quick-start) |
 | Core Lifecycle (run → getOutputFiles → kill) | [Getting Started → Core Lifecycle](./01-getting-started.md#core-lifecycle) |
 | Streaming basics | [Getting Started → Streaming](./01-getting-started.md#streaming) |
-| Gateway vs BYOK mode | [Getting Started → Authentication](./01-getting-started.md#authentication) |
+| Gateway, managed BYO provider keys, and direct keys | [Getting Started → Authentication](./01-getting-started.md#authentication) |
 | Gateway mode (EVOLVE_API_KEY) | [Getting Started → Gateway Mode](./01-getting-started.md#gateway-mode-evolve_api_key) |
-| BYOK mode (your own keys) | [Getting Started → BYOK Mode](./01-getting-started.md#byok-mode) |
-| BYO Claude Max / Codex / Gemini subscription | [Getting Started → BYOK Mode](./01-getting-started.md#byo-claude-max-subscription) |
+| Managed BYO provider keys | [Getting Started → Managed BYO Provider Keys](./01-getting-started.md#managed-byo-provider-keys) |
+| Direct provider key mode (local BYOK) | [Getting Started → Direct Provider Key Mode](./01-getting-started.md#direct-provider-key-mode-local-byok) |
+| BYO Claude Max / Codex / Gemini subscription | [Getting Started → BYO Claude Max Subscription](./01-getting-started.md#byo-claude-max-subscription) |
 | Supported agents & models | [Getting Started → Agent Reference](./01-getting-started.md#agent-reference) |
 | Agent-specific options (reasoningEffort) | [Getting Started → Agent Reference](./01-getting-started.md#agent-reference) |
 

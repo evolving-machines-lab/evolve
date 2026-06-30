@@ -783,7 +783,7 @@ replay = await session.browser_replay(
 For the full browser setup, live-view, cleanup, and replay flow, see
 [Configuration → Browser Automation](./02-configuration.md#browser-automation).
 
-This API is **gateway-only**. In BYOK/direct mode, historical traces remain
+This API is **gateway-only**. In Direct Provider Key Mode, historical traces remain
 available via local JSONL files in `~/.evolve-sdk/observability/sessions/`.
 
 ---

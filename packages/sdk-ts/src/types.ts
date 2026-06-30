@@ -414,6 +414,11 @@ export interface AgentOptions {
     apiKey: string;
     dashboardUrl?: string;
   };
+  /** Evolve-managed provider routing tokens for dashboard-stored BYOK provider keys. */
+  providerRouting?: {
+    apiKey: string;
+    dashboardUrl?: string;
+  };
   /** Plugins/extensions to install in the sandbox user profile before first run */
   plugins?: AgentPluginConfig[];
   /** Skills to enable (e.g., ["pdf", "dev-browser"]) */
