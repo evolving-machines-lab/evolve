@@ -271,7 +271,6 @@ export class Agent {
   private droidSessionId?: string;
   private managedBrowserSession?: ManagedBrowserSession;
   private providerRuntimeToken?: ProviderRuntimeToken;
-  private providerRuntimeRoutingUnavailable = false;
 
   // Skills storage
   private readonly skills?: SkillName[];
@@ -665,9 +664,14 @@ export class Agent {
         }
       }
 
-      // BYOK provider routing uses a run-scoped proxy token instead of exposing
-      // the account gateway key to the sandbox.
+      // Dashboard model proxy routing uses a session-scoped token instead of
+      // exposing the account gateway key to the sandbox.
       if (!providerRuntime) {
+        if (providerRuntimeProviderForAgent(this.agentConfig.type)) {
+          throw new Error(
+            `${this.agentConfig.type} gateway mode requires a Dashboard runtime token before sandbox setup`,
+          );
+        }
         envVars[ENV_EVOLVE_API_KEY] = this.agentConfig.apiKey;
       }
     }
@@ -759,13 +763,10 @@ export class Agent {
     const provider = providerRuntimeProviderForAgent(this.agentConfig.type);
     if (this.agentConfig.isDirectMode || !provider) return;
     if (!this.options.providerRouting) return;
-    if (this.providerRuntimeRoutingUnavailable && !this.providerRuntimeToken) {
-      return;
-    }
 
     if (this.providerRuntimeToken) return;
 
-    let token: ProviderRuntimeToken | null;
+    let token: ProviderRuntimeToken;
     try {
       token = await createProviderRuntimeToken(this.options.providerRouting, {
         provider,
@@ -773,17 +774,14 @@ export class Agent {
       });
     } catch (error) {
       if (isProviderRuntimeTokenEndpointMissing(error)) {
-        this.providerRuntimeRoutingUnavailable = true;
-        console.warn(
-          `[Evolve] ${provider} BYOK provider routing endpoint is not available; falling back to Evolve gateway key: ${(error as Error).message}`,
+        throw new Error(
+          `${provider} runtime token endpoint is required in gateway mode: ${(error as Error).message}`,
         );
-        return;
       }
       throw error;
     }
 
-    this.providerRuntimeRoutingUnavailable = token === null;
-    this.providerRuntimeToken = token ?? undefined;
+    this.providerRuntimeToken = token;
     if (this.providerRuntimeToken && this.sandbox?.sandboxId) {
       await this.bindProviderRuntimeToken(this.sandbox.sandboxId);
     }
@@ -834,15 +832,32 @@ export class Agent {
   private async closeProviderRuntimeToken(): Promise<void> {
     if (!this.providerRuntimeToken || !this.options.providerRouting) return;
     const token = this.providerRuntimeToken;
-    this.providerRuntimeToken = undefined;
+    let lastError: unknown;
     try {
-      await revokeProviderRuntimeTokenRequest(this.options.providerRouting, {
-        token: token.token,
-      });
-    } catch (error) {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const ok = await revokeProviderRuntimeTokenRequest(
+            this.options.providerRouting,
+            {
+              token: token.token,
+            },
+          );
+          if (!ok) throw new Error("Dashboard returned ok=false");
+          return;
+        } catch (error) {
+          lastError = error;
+          if (attempt < 2) {
+            await new Promise((resolve) =>
+              setTimeout(resolve, 100 * (attempt + 1)),
+            );
+          }
+        }
+      }
       console.warn(
-        `[Evolve] Provider runtime token cleanup failed: ${(error as Error).message}`,
+        `[Evolve] Provider runtime token cleanup failed: ${(lastError as Error).message}`,
       );
+    } finally {
+      this.providerRuntimeToken = undefined;
     }
   }
 
@@ -1052,6 +1067,28 @@ export class Agent {
     return Object.keys(envs).length > 0 ? envs : undefined;
   }
 
+  private async writeCodexGatewayProviderConfig(
+    sandbox: SandboxInstance,
+  ): Promise<void> {
+    if (
+      this.agentConfig.isDirectMode ||
+      !this.registry.spendTrackingEnvs ||
+      this.agentConfig.type !== "codex"
+    ) {
+      return;
+    }
+    await writeCodexSpendProvider(
+      sandbox,
+      this.activeProviderRuntimeToken()?.baseUrl ||
+        this.agentConfig.baseUrl ||
+        getGatewayUrl(),
+      this.registry.spendTrackingEnvs,
+      this.activeProviderRuntimeToken()
+        ? { [PROVIDER_RUNTIME_BINDING_HEADER]: PROVIDER_RUNTIME_BINDING_ENV }
+        : undefined,
+    );
+  }
+
   private captureDroidSession(
     rawLine: string,
     events: OutputEvent[] | null,
@@ -1174,7 +1211,7 @@ export class Agent {
       for (const value of Object.values(config.headers || {})) {
         if (value.includes(gatewayKey)) {
           throw new Error(
-            `MCP server "${name}" would expose the Evolve API key inside a provider BYOK sandbox. Use managed agent-browser or remove this gateway-authenticated MCP server.`,
+            `MCP server "${name}" would expose the Evolve API key inside the sandbox. Use managed agent-browser or remove this gateway-authenticated MCP server.`,
           );
         }
       }
@@ -1299,16 +1336,7 @@ export class Agent {
       this.registry.spendTrackingEnvs &&
       this.agentConfig.type === "codex"
     ) {
-      await writeCodexSpendProvider(
-        sandbox,
-        this.activeProviderRuntimeToken()?.baseUrl ||
-          this.agentConfig.baseUrl ||
-          getGatewayUrl(),
-        this.registry.spendTrackingEnvs,
-        this.activeProviderRuntimeToken()
-          ? { [PROVIDER_RUNTIME_BINDING_HEADER]: PROVIDER_RUNTIME_BINDING_ENV }
-          : undefined,
-      );
+      await this.writeCodexGatewayProviderConfig(sandbox);
     }
 
     // Spend tracking: write customHeaders to JSON settings file for agents that read
@@ -1607,6 +1635,8 @@ export class Agent {
     const command = this.buildCommand(prompt);
     const runId = randomUUID();
     const runEnvs = this.buildRunEnvs(runId);
+
+    await this.writeCodexGatewayProviderConfig(sandbox);
 
     // Per-run config-file spend tracking (Qwen): write both session + run headers
     // to settings.json before spawning. Each run gets a fresh file write because
@@ -2173,7 +2203,6 @@ export class Agent {
     this.agentState = "idle";
     // Assume existing sandbox may have prior runs - use continue command
     this.hasRun = true;
-    this.providerRuntimeRoutingUnavailable = false;
     // Reset lineage — switching sandbox breaks checkpoint chain
     this.lastCheckpointId = undefined;
   }
@@ -2302,7 +2331,6 @@ export class Agent {
     this.sandboxState = "stopped";
     this.agentState = "idle";
     this.hasRun = false;
-    this.providerRuntimeRoutingUnavailable = false;
     this.lastCheckpointId = undefined;
     this.emitLifecycle(callbacks, "sandbox_killed");
   }
