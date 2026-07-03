@@ -32,12 +32,13 @@ EVOLVE_API_KEY=sk-...        # Evolve gateway key (dashboard.evolvingmachines.ai
 Evolve auto-resolves API keys and sandbox providers from environment variables — no need to pass them explicitly.
 
 ```python
-from evolve import Evolve, IntegrationsSetup
+from evolve import Evolve, IntegrationsSetup, ManagedSecretRef
 
 evolve = Evolve(
     system_prompt='You are Manus Evolve, a powerful AI agent. You can execute code, browse the web, manage files, and solve complex tasks.',
     browser={'provider': 'agent-browser', 'remote': True},  # optional: remote managed browser automation in Gateway mode
     skills=['pdf', 'docx', 'pptx'],
+    managed_secrets=[ManagedSecretRef(name='GITHUB_TOKEN', as_name='GH_TOKEN')],  # optional; Dashboard-managed secrets in Gateway mode
     integrations=IntegrationsSetup(user_id='root', apps=['gmail', 'notion']),  # optional; managed integrations in Gateway mode
 )
 
