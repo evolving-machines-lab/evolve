@@ -1,7 +1,14 @@
 import { DEFAULT_DASHBOARD_URL } from "./constants";
 
 export type ProviderRuntimeToken = {
-  provider: "anthropic" | "openai";
+  provider:
+    | "anthropic"
+    | "openai"
+    | "gemini"
+    | "dashscope"
+    | "kimi"
+    | "openrouter"
+    | "droid";
   credentialMode: "provider_key" | "evolve_key";
   token: string;
   bindingSecret: string;
@@ -78,7 +85,15 @@ function isRuntimeTokenResponse(value: unknown): value is ProviderRuntimeToken {
   const record = value as Record<string, unknown>;
   return (
     record.enabled === true &&
-    (record.provider === "anthropic" || record.provider === "openai") &&
+    (
+      record.provider === "anthropic" ||
+      record.provider === "openai" ||
+      record.provider === "gemini" ||
+      record.provider === "dashscope" ||
+      record.provider === "kimi" ||
+      record.provider === "openrouter" ||
+      record.provider === "droid"
+    ) &&
     (record.credentialMode === "provider_key" ||
       record.credentialMode === "evolve_key") &&
     typeof record.token === "string" &&
@@ -94,7 +109,7 @@ function isRuntimeTokenResponse(value: unknown): value is ProviderRuntimeToken {
 
 export async function createProviderRuntimeToken(
   config: ProviderRuntimeTokenClientConfig,
-  input: { provider: "anthropic" | "openai"; sessionTag: string },
+  input: { provider: ProviderRuntimeToken["provider"]; sessionTag: string },
 ): Promise<ProviderRuntimeToken> {
   const result = await requestJson<unknown>(
     config,

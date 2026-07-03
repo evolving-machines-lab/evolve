@@ -54,6 +54,21 @@ function createAgent(): Agent {
   return new Agent(config as any, {});
 }
 
+function attachProviderRuntimeToken(
+  agent: Agent,
+  provider: string,
+  baseUrl = `https://dashboard.test/api/model-proxy/${provider}`,
+): void {
+  (agent as any).providerRuntimeToken = {
+    provider,
+    credentialMode: "evolve_key",
+    token: `evrt_${provider}_runtime_token`,
+    bindingSecret: `evrb_${provider}_binding_secret`,
+    baseUrl,
+    expiresAt: new Date(Date.now() + 60000).toISOString(),
+  };
+}
+
 async function testClaudeBuildCommandUsesReasoningEffort(): Promise<void> {
   console.log("\n[0] Claude buildCommand passes reasoning effort");
   const defaultAgent = createAgent();
@@ -396,6 +411,7 @@ async function testGeminiBuildRunEnvsCommaFormat(): Promise<void> {
     isDirectMode: false,
   };
   const agent = new Agent(config as any, {});
+  attachProviderRuntimeToken(agent, "gemini");
   (agent as any).sessionTag = "evolve-gemini-session";
 
   const envs = (agent as any).buildRunEnvs("run-gem-456") as Record<string, string> | undefined;
@@ -407,6 +423,9 @@ async function testGeminiBuildRunEnvsCommaFormat(): Promise<void> {
   assert(!headers.includes("\n"), "no newlines in comma format");
   assert(headers.includes("x-litellm-customer-id: evolve-gemini-session"), "has customer-id");
   assert(headers.includes("x-litellm-tags: run:run-gem-456"), "has run tag");
+  assert(headers.includes("x-evolve-provider-runtime-binding: evrb_gemini_binding_secret"), "has provider runtime binding header");
+  assertEqual(envs!.GEMINI_API_KEY, "evrt_gemini_runtime_token", "Gemini env uses runtime token");
+  assertEqual(envs!.GEMINI_DEFAULT_AUTH_TYPE, "gemini-api-key", "Gemini run env pins API-key auth");
 
   // Verify it does NOT set ANTHROPIC_CUSTOM_HEADERS
   assert(!envs?.ANTHROPIC_CUSTOM_HEADERS, "no ANTHROPIC_CUSTOM_HEADERS for gemini");
@@ -424,6 +443,7 @@ async function testGeminiCommaFormatPreservesUserHeaders(): Promise<void> {
       GEMINI_CLI_CUSTOM_HEADERS: "x-custom-one: foo, x-custom-two: bar",
     },
   });
+  attachProviderRuntimeToken(agent, "gemini");
   (agent as any).sessionTag = "evolve-gemini-session";
 
   const envs = (agent as any).buildRunEnvs("run-gem-789") as Record<string, string> | undefined;
@@ -450,6 +470,7 @@ async function testGeminiCommaFormatOverwritesTags(): Promise<void> {
       GEMINI_CLI_CUSTOM_HEADERS: "x-litellm-tags: project-acme, x-custom: keep",
     },
   });
+  attachProviderRuntimeToken(agent, "gemini");
   (agent as any).sessionTag = "evolve-gemini-session";
 
   const envs = (agent as any).buildRunEnvs("run-gem-overwrite") as Record<string, string> | undefined;
@@ -491,6 +512,7 @@ async function testGeminiRoundTripThroughParser(): Promise<void> {
 
   // Case 1: basic run envs (no user headers)
   const agent1 = new Agent(config as any, {});
+  attachProviderRuntimeToken(agent1, "gemini");
   (agent1 as any).sessionTag = "evolve-session-rt";
   const envs1 = (agent1 as any).buildRunEnvs("run-rt-001") as Record<string, string>;
   const parsed1 = parseAsGeminiCli(envs1.GEMINI_CLI_CUSTOM_HEADERS);
@@ -504,6 +526,7 @@ async function testGeminiRoundTripThroughParser(): Promise<void> {
       GEMINI_CLI_CUSTOM_HEADERS: "x-litellm-tags: user-tag, x-custom: val",
     },
   });
+  attachProviderRuntimeToken(agent2, "gemini");
   (agent2 as any).sessionTag = "evolve-session-rt2";
   const envs2 = (agent2 as any).buildRunEnvs("run-rt-002") as Record<string, string>;
   const parsed2 = parseAsGeminiCli(envs2.GEMINI_CLI_CUSTOM_HEADERS);
@@ -527,12 +550,74 @@ async function testGeminiBuildEnvVarsSessionLevel(): Promise<void> {
     isDirectMode: false,
   };
   const agent = new Agent(config as any, {});
+  attachProviderRuntimeToken(agent, "gemini");
   (agent as any).sessionTag = "evolve-gemini-session";
 
   const envs = (agent as any).buildEnvironmentVariables() as Record<string, string>;
   assert(!!envs.GEMINI_CLI_CUSTOM_HEADERS, "sets GEMINI_CLI_CUSTOM_HEADERS at session level");
   assert(envs.GEMINI_CLI_CUSTOM_HEADERS.includes("x-litellm-customer-id: evolve-gemini-session"), "session-level customer-id");
+  assert(envs.GEMINI_CLI_CUSTOM_HEADERS.includes("x-evolve-provider-runtime-binding: evrb_gemini_binding_secret"), "session-level provider runtime binding header");
+  assertEqual(envs.GEMINI_API_KEY, "evrt_gemini_runtime_token", "session env uses runtime token");
+  assertEqual(envs.GEMINI_DEFAULT_AUTH_TYPE, "gemini-api-key", "session env pins Gemini API-key auth");
+  assert(!("EVOLVE_API_KEY" in envs), "does not expose Evolve gateway key");
   assert(!envs.GEMINI_CLI_CUSTOM_HEADERS.includes("\n"), "comma format at session level");
+}
+
+async function testGeminiGatewayAuthSettings(): Promise<void> {
+  console.log("\n[16b] setupAgentAuth() pins Gemini gateway auth mode in settings.json");
+  const config = {
+    type: "gemini",
+    apiKey: "test-gateway-key",
+    isDirectMode: false,
+  };
+  const agent = new Agent(config as any, {});
+  const existing = JSON.stringify({
+    mcpServers: { existing: { url: "https://mcp.example.com", type: "http" } },
+    security: { auth: { selectedType: "gateway", other: true } },
+  });
+  const { sandbox, written } = createFakeSandbox(existing);
+
+  await (agent as any).setupAgentAuth(sandbox);
+
+  assertEqual(written.length, 1, "writes Gemini settings file");
+  assertEqual(written[0].path, "/home/user/.gemini/settings.json", "writes .gemini/settings.json");
+  const settings = JSON.parse(written[0].content);
+  assertEqual(settings.security.auth.selectedType, "gemini-api-key", "pins selectedType to gemini-api-key");
+  assertEqual(settings.security.auth.other, true, "preserves existing auth fields");
+  assertEqual(settings.mcpServers.existing.url, "https://mcp.example.com", "preserves existing settings");
+
+  const missingWrites: { path: string; content: string }[] = [];
+  const missingSandbox = {
+    files: {
+      makeDir: async () => {},
+      read: async () => {
+        throw new Error("path '/home/user/.gemini/settings.json' does not exist");
+      },
+      write: async (path: string, content: string) => {
+        missingWrites.push({ path, content });
+      },
+    },
+  };
+  await (agent as any).setupAgentAuth(missingSandbox);
+  const missingSettings = JSON.parse(missingWrites[0].content);
+  assertEqual(missingSettings.security.auth.selectedType, "gemini-api-key", "handles E2B missing-file error text");
+}
+
+async function testGeminiBuildCommandUsesPromptFlag(): Promise<void> {
+  console.log("\n[16a] Gemini buildCommand() uses headless prompt mode");
+  const config = {
+    type: "gemini",
+    apiKey: "test-gateway-key",
+    isDirectMode: false,
+    model: "gemini-2.5-flash-lite",
+  };
+  const agent = new Agent(config as any, {});
+
+  const command = (agent as any).buildCommand("say 'ok'") as string;
+  assert(command.includes("--prompt 'say '\\''ok'\\'''"), "uses --prompt with shell-escaped prompt");
+  assert(command.includes("--model gemini-2.5-flash-lite"), "passes selected Gemini model");
+  assert(command.includes("--output-format stream-json"), "keeps stream-json output");
+  assert(!command.startsWith('gemini "'), "does not use positional prompt interactive mode");
 }
 
 async function testGeminiDirectModeSkipsHeaders(): Promise<void> {
@@ -646,6 +731,25 @@ async function testQwenBuildRunEnvsReturnsUndefined(): Promise<void> {
   // Qwen has no customHeadersEnv and no spendTrackingEnvs, so buildRunEnvs returns undefined.
   // Per-run tracking is done via config file write in run(), not via env overrides.
   assertEqual(envs, undefined, "no env overrides for qwen (uses config file)");
+}
+
+async function testQwenGatewayEnvironmentUsesRuntimeToken(): Promise<void> {
+  console.log("\n[21b] Qwen gateway env uses DashScope runtime token");
+  const agent = new Agent({
+    type: "qwen",
+    apiKey: "test-gateway-key",
+    isDirectMode: false,
+  } as any, {});
+  attachProviderRuntimeToken(
+    agent,
+    "dashscope",
+    "https://dashboard.test/api/model-proxy/dashscope/v1",
+  );
+
+  const envs = (agent as any).buildEnvironmentVariables() as Record<string, string>;
+  assertEqual(envs.OPENAI_API_KEY, "evrt_dashscope_runtime_token", "Qwen env uses runtime token");
+  assertEqual(envs.OPENAI_BASE_URL, "https://dashboard.test/api/model-proxy/dashscope/v1", "Qwen base URL uses DashScope proxy");
+  assert(!("EVOLVE_API_KEY" in envs), "does not expose Evolve gateway key");
 }
 
 async function testQwenDirectModeSkipsHeaders(): Promise<void> {
@@ -881,8 +985,13 @@ async function testKimiEnvironmentVariables(): Promise<void> {
     apiKey: "test-gateway-key",
     isDirectMode: false,
   } as any, {});
+  attachProviderRuntimeToken(
+    gatewayAgent,
+    "kimi",
+    "https://dashboard.test/api/model-proxy/kimi/v1",
+  );
   const gatewayEnvs = (gatewayAgent as any).buildEnvironmentVariables() as Record<string, string>;
-  assertEqual(gatewayEnvs.EVOLVE_API_KEY, "test-gateway-key", "gateway exposes EVOLVE_API_KEY");
+  assert(!("EVOLVE_API_KEY" in gatewayEnvs), "gateway does not expose EVOLVE_API_KEY");
   assert(!("KIMI_API_KEY" in gatewayEnvs), "gateway omits old KIMI_API_KEY");
   assert(!("KIMI_BASE_URL" in gatewayEnvs), "gateway omits old KIMI_BASE_URL");
   assert(!("KIMI_MODEL_NAME" in gatewayEnvs), "gateway lets config.toml select model");
@@ -1104,6 +1213,11 @@ async function testOpenCodeBuildRunEnvsIncludesHeaders(): Promise<void> {
     isDirectMode: false,
   };
   const agent = new Agent(config as any, {});
+  attachProviderRuntimeToken(
+    agent,
+    "openrouter",
+    "https://dashboard.test/api/model-proxy/openrouter/v1",
+  );
   (agent as any).sessionTag = "evolve-opencode-session";
 
   const envs = (agent as any).buildRunEnvs("run-oc-001") as Record<string, string> | undefined;
@@ -1113,7 +1227,8 @@ async function testOpenCodeBuildRunEnvsIncludesHeaders(): Promise<void> {
   const parsed = JSON.parse(envs!.OPENCODE_CONFIG_CONTENT);
   const litellm = parsed?.provider?.litellm;
   assert(litellm !== undefined, "has litellm provider");
-  assert(litellm.options?.baseURL?.includes("/v1"), "has gateway base URL");
+  assertEqual(litellm.options?.baseURL, "https://dashboard.test/api/model-proxy/openrouter/v1", "has model proxy base URL");
+  assertEqual(litellm.options?.apiKey, "evrt_openrouter_runtime_token", "uses provider runtime token");
 
   // Find the model entry (key is the model string)
   const modelKeys = Object.keys(litellm.models || {});
@@ -1121,7 +1236,10 @@ async function testOpenCodeBuildRunEnvsIncludesHeaders(): Promise<void> {
   const modelEntry = litellm.models[modelKeys[0]];
   assertEqual(modelEntry.headers?.["x-litellm-customer-id"], "evolve-opencode-session", "session tag in headers");
   assert(modelEntry.headers?.["x-litellm-tags"]?.includes("run:run-oc-001"), "run tag in headers");
+  assertEqual(modelEntry.headers?.["x-evolve-provider-runtime-binding"], "evrb_openrouter_binding_secret", "binding header in model config");
   assertEqual(modelEntry.variants?.medium?.reasoningEffort, "medium", "default variant sets medium reasoning effort");
+  assert(!("EVOLVE_API_KEY" in envs!), "does not expose Evolve gateway key");
+  assert(!("OPENROUTER_API_KEY" in envs!), "does not expose OpenRouter env for config-file auth");
 }
 
 async function testOpenCodeBuildRunEnvsPerRunOverwrite(): Promise<void> {
@@ -1132,6 +1250,11 @@ async function testOpenCodeBuildRunEnvsPerRunOverwrite(): Promise<void> {
     isDirectMode: false,
   };
   const agent = new Agent(config as any, {});
+  attachProviderRuntimeToken(
+    agent,
+    "openrouter",
+    "https://dashboard.test/api/model-proxy/openrouter/v1",
+  );
   (agent as any).sessionTag = "evolve-opencode-session";
 
   const envs1 = (agent as any).buildRunEnvs("run-001") as Record<string, string>;
@@ -1185,6 +1308,11 @@ async function testOpenCodeMergesUserSecrets(): Promise<void> {
   const agent = new Agent(config as any, {
     secrets: { OPENCODE_CONFIG_CONTENT: JSON.stringify(userConfig) },
   });
+  attachProviderRuntimeToken(
+    agent,
+    "openrouter",
+    "https://dashboard.test/api/model-proxy/openrouter/v1",
+  );
   (agent as any).sessionTag = "evolve-oc-merge";
 
   const envs = (agent as any).buildRunEnvs("run-merge-001") as Record<string, string>;
@@ -1202,11 +1330,12 @@ async function testOpenCodeMergesUserSecrets(): Promise<void> {
   assertEqual(model.headers["x-user-header"], "keep-me", "user model header preserved");
   assertEqual(model.headers["x-litellm-customer-id"], "evolve-oc-merge", "spend session header injected");
   assert(model.headers["x-litellm-tags"]?.includes("run:run-merge-001"), "spend run tag injected");
+  assertEqual(model.headers["x-evolve-provider-runtime-binding"], "evrb_openrouter_binding_secret", "provider runtime binding injected");
   assertEqual(model.variants?.medium?.reasoningEffort, "medium", "reasoning variant injected");
 
-  // SDK overrides litellm options (gateway URL + API key)
-  assert(parsed.provider.litellm.options.baseURL.includes("/v1"), "gateway baseURL set");
-  assertEqual(parsed.provider.litellm.options.apiKey, "test-gateway-key", "gateway apiKey set");
+  // SDK overrides litellm options (proxy URL + runtime token)
+  assertEqual(parsed.provider.litellm.options.baseURL, "https://dashboard.test/api/model-proxy/openrouter/v1", "model proxy baseURL set");
+  assertEqual(parsed.provider.litellm.options.apiKey, "evrt_openrouter_runtime_token", "runtime token set");
 }
 
 async function testOpenCodeReasoningFlags(): Promise<void> {
@@ -1232,6 +1361,11 @@ async function testOpenCodeReasoningFlags(): Promise<void> {
     isDirectMode: false,
     reasoningEffort: "xhigh",
   } as any, {});
+  attachProviderRuntimeToken(
+    xhighAgent,
+    "openrouter",
+    "https://dashboard.test/api/model-proxy/openrouter/v1",
+  );
   const xhighCmd = (xhighAgent as any).buildCommand("hello") as string;
   assert(xhighCmd.includes("--variant max"), "xhigh maps to max variant");
   const envs = (xhighAgent as any).buildRunEnvs("run-opencode-xhigh") as Record<string, string>;
@@ -1245,17 +1379,22 @@ async function testOpenCodeReasoningFlags(): Promise<void> {
 // =============================================================================
 
 async function testDroidBuildEnvironmentVariablesGateway(): Promise<void> {
-  console.log("\n[34] Droid gateway env uses EVOLVE_API_KEY without FACTORY_API_KEY");
+  console.log("\n[34] Droid gateway env uses FACTORY_API_KEY runtime token without EVOLVE_API_KEY");
   const config = {
     type: "droid",
     apiKey: "test-gateway-key",
     isDirectMode: false,
   };
   const agent = new Agent(config as any, {});
+  attachProviderRuntimeToken(
+    agent,
+    "droid",
+    "https://dashboard.test/api/model-proxy/droid/v1",
+  );
 
   const envs = (agent as any).buildEnvironmentVariables() as Record<string, string>;
-  assertEqual(envs.EVOLVE_API_KEY, "test-gateway-key", "sets EVOLVE_API_KEY for settings env expansion");
-  assert(!("FACTORY_API_KEY" in envs), "does not set FACTORY_API_KEY in gateway mode");
+  assertEqual(envs.FACTORY_API_KEY, "evrt_droid_runtime_token", "sets FACTORY_API_KEY to runtime token for settings env expansion");
+  assert(!("EVOLVE_API_KEY" in envs), "does not expose EVOLVE_API_KEY in gateway mode");
 }
 
 async function testDroidBuildEnvironmentVariablesDirect(): Promise<void> {
@@ -1283,11 +1422,15 @@ async function testDroidWriteGatewaySettings(): Promise<void> {
       displayName: "Evolve Gateway",
       model: "gpt-5.5",
       baseUrl: "https://gateway.example.com/v1",
-      apiKeyEnv: "EVOLVE_API_KEY",
+      apiKeyEnv: "FACTORY_API_KEY",
       provider: "generic-chat-completion-api",
       maxOutputTokens: 32768,
     },
-    { "x-litellm-customer-id": "session-abc", "x-litellm-tags": "run:run-001" },
+    {
+      "x-litellm-customer-id": "session-abc",
+      "x-litellm-tags": "run:run-001",
+      "x-evolve-provider-runtime-binding": "evrb_droid_binding_secret",
+    },
   );
 
   assertEqual(written[0].path, "/home/user/.factory/evolve-settings.json", "writes dedicated Droid settings file");
@@ -1297,10 +1440,11 @@ async function testDroidWriteGatewaySettings(): Promise<void> {
   assertEqual(model.model, "gpt-5.5", "sets underlying gateway model");
   assertEqual(model.displayName, "Evolve Gateway", "sets stable custom model display name");
   assertEqual(model.baseUrl, "https://gateway.example.com/v1", "sets gateway base URL");
-  assertEqual(model.apiKey, "${EVOLVE_API_KEY}", "uses EVOLVE_API_KEY env reference");
+  assertEqual(model.apiKey, "${FACTORY_API_KEY}", "uses runtime token env reference");
   assertEqual(model.provider, "generic-chat-completion-api", "uses provider-compatible gateway calls");
   assertEqual(model.extraHeaders["x-litellm-customer-id"], "session-abc", "sets session header");
   assertEqual(model.extraHeaders["x-litellm-tags"], "run:run-001", "sets run header");
+  assertEqual(model.extraHeaders["x-evolve-provider-runtime-binding"], "evrb_droid_binding_secret", "sets provider runtime binding header");
 }
 
 async function testDroidBuildCommand(): Promise<void> {
@@ -1442,11 +1586,14 @@ async function main(): Promise<void> {
   await testGeminiCommaFormatPreservesUserHeaders();
   await testGeminiCommaFormatOverwritesTags();
   await testGeminiBuildEnvVarsSessionLevel();
+  await testGeminiBuildCommandUsesPromptFlag();
+  await testGeminiGatewayAuthSettings();
   await testGeminiDirectModeSkipsHeaders();
   await testGeminiRoundTripThroughParser();
   await testQwenWriteJsonSpendHeaders();
   await testQwenWriteJsonPreservesExistingConfig();
   await testQwenBuildRunEnvsReturnsUndefined();
+  await testQwenGatewayEnvironmentUsesRuntimeToken();
   await testQwenDirectModeSkipsHeaders();
   await testQwenBuildCommandUsesModelAliases();
   await testQwenWriteJsonOverwritesPreviousHeaders();

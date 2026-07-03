@@ -115,6 +115,7 @@ export type {
 
 const DROID_SESSION_STATE_PATH = "/home/user/.factory/evolve-session.json";
 const PROVIDER_RUNTIME_BINDING_ENV = "EVOLVE_PROVIDER_RUNTIME_BINDING";
+const GEMINI_GATEWAY_AUTH_TYPE = "gemini-api-key";
 
 function providerRuntimeProviderForAgent(
   agentType: AgentType,
@@ -124,6 +125,16 @@ function providerRuntimeProviderForAgent(
       return "anthropic";
     case "codex":
       return "openai";
+    case "gemini":
+      return "gemini";
+    case "qwen":
+      return "dashscope";
+    case "kimi":
+      return "kimi";
+    case "opencode":
+      return "openrouter";
+    case "droid":
+      return "droid";
     default:
       return null;
   }
@@ -600,11 +611,17 @@ export class Agent {
       // Kimi Code gateway auth is written to ~/.kimi-code/config.toml per run.
       // The old KIMI_API_KEY/KIMI_BASE_URL envs are not read by Kimi Code.
     } else if (
+      !this.agentConfig.isDirectMode &&
+      providerRuntimeProviderForAgent(this.agentConfig.type)
+    ) {
+      // Managed gateway agents receive a session-scoped Dashboard model-proxy
+      // token below, not the account-level Evolve API key.
+    } else if (
       this.registry.skipApiKeyEnvInGateway &&
       !this.agentConfig.isDirectMode
     ) {
-      // Gateway mode for generated-settings agents (Droid): EVOLVE_API_KEY is
-      // injected below and referenced from the settings file, not provider env.
+      // Gateway mode for generated-settings agents (Droid): auth is injected
+      // below and referenced from the settings file, not provider env.
     } else if (this.registry.providerEnvMap && !this.agentConfig.isDirectMode) {
       // Multi-provider CLI in gateway mode (e.g., OpenCode): set ALL provider API keys
       // so any model prefix (anthropic/*, openai/*, google/*) can find its key
@@ -641,12 +658,13 @@ export class Agent {
       // Gateway mode: route through Evolve gateway
       const gatewayUrl = getGatewayUrl(this.registry.gatewayPath);
       const providerRuntime =
-        this.activeProviderRuntimeToken();
+        this.requireActiveProviderRuntimeToken();
 
       if (this.registry.gatewayConfigEnv) {
         // Session-level: only customer-id header. Per-run tag added in buildRunEnvs().
         envVars[this.registry.gatewayConfigEnv] = this.buildGatewayConfigJson({
           [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
+          ...this.providerRuntimeHeaderUpdates(),
         });
       } else {
         // Single-provider: set base URL env var
@@ -657,7 +675,12 @@ export class Agent {
       }
 
       if (providerRuntime) {
-        envVars[this.registry.apiKeyEnv] = providerRuntime.token;
+        if (this.shouldExposeProviderRuntimeTokenEnv()) {
+          envVars[this.registry.apiKeyEnv] = providerRuntime.token;
+        }
+        if (this.agentConfig.type === "gemini") {
+          envVars.GEMINI_DEFAULT_AUTH_TYPE = GEMINI_GATEWAY_AUTH_TYPE;
+        }
         if (this.registry.spendTrackingEnvs) {
           envVars[PROVIDER_RUNTIME_BINDING_ENV] =
             providerRuntime.bindingSecret;
@@ -873,7 +896,10 @@ export class Agent {
    * Source-verified: model.headers → provider.ts:1061 → llm.ts:221 → HTTP request.
    */
   private buildGatewayConfigJson(headers: Record<string, string>): string {
-    const gatewayUrl = getGatewayUrl(this.registry.gatewayPath);
+    const providerRuntime = this.requireActiveProviderRuntimeToken();
+    const baseUrl =
+      providerRuntime?.baseUrl ??
+      withOpenAiV1Path(getGatewayUrl(this.registry.gatewayPath));
     const selectedModel = this.resolveCommandModel(
       this.agentConfig.model || this.registry.defaultModel,
     );
@@ -914,8 +940,8 @@ export class Agent {
         npm: "@ai-sdk/openai-compatible",
         options: {
           ...existingOptions,
-          baseURL: `${gatewayUrl}/v1`,
-          apiKey: this.agentConfig.apiKey,
+          baseURL: baseUrl,
+          apiKey: providerRuntime?.token ?? this.agentConfig.apiKey,
         },
         models: {
           ...existingModels,
@@ -947,6 +973,18 @@ export class Agent {
     return provider && this.providerRuntimeToken?.provider === provider
       ? this.providerRuntimeToken
       : undefined;
+  }
+
+  private requireActiveProviderRuntimeToken():
+    ProviderRuntimeToken | undefined {
+    const provider = providerRuntimeProviderForAgent(this.agentConfig.type);
+    const token = this.activeProviderRuntimeToken();
+    if (!this.agentConfig.isDirectMode && provider && !token) {
+      throw new Error(
+        `${this.agentConfig.type} gateway mode requires a Dashboard runtime token before sandbox setup`,
+      );
+    }
+    return token;
   }
 
   private ensureSessionLogger(sandbox: SandboxInstance): void {
@@ -991,13 +1029,24 @@ export class Agent {
       : {};
   }
 
+  private shouldExposeProviderRuntimeTokenEnv(): boolean {
+    return (
+      this.agentConfig.type !== "kimi" &&
+      !this.registry.gatewayConfigEnv
+    );
+  }
+
   private buildProviderRuntimeProcessEnvs(): Record<string, string> {
     const providerRuntime = this.activeProviderRuntimeToken();
     if (!providerRuntime) return {};
-    const envs: Record<string, string> = {
-      [this.registry.apiKeyEnv]: providerRuntime.token,
-    };
-    if (this.registry.baseUrlEnv) {
+    const envs: Record<string, string> = {};
+    if (this.shouldExposeProviderRuntimeTokenEnv()) {
+      envs[this.registry.apiKeyEnv] = providerRuntime.token;
+    }
+    if (this.agentConfig.type === "gemini") {
+      envs.GEMINI_DEFAULT_AUTH_TYPE = GEMINI_GATEWAY_AUTH_TYPE;
+    }
+    if (this.registry.baseUrlEnv && this.shouldExposeProviderRuntimeTokenEnv()) {
       envs[this.registry.baseUrlEnv] = providerRuntime.baseUrl;
     }
     if (this.registry.spendTrackingEnvs) {
@@ -1060,6 +1109,7 @@ export class Agent {
         [this.registry.gatewayConfigEnv]: this.buildGatewayConfigJson({
           [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
           [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
+          ...this.providerRuntimeHeaderUpdates(),
         }),
       };
     }
@@ -1186,12 +1236,62 @@ export class Agent {
       );
       return;
     }
+    if (
+      this.agentConfig.type === "gemini" &&
+      !this.agentConfig.isDirectMode
+    ) {
+      await this.writeGeminiGatewayAuthSettings(sandbox);
+    }
     // Default: run setup command (e.g., "codex login --with-api-key")
     if (this.registry.setupCommand) {
       await sandbox.commands.run(this.registry.setupCommand, {
         timeoutMs: 30000,
       });
     }
+  }
+
+  private async writeGeminiGatewayAuthSettings(
+    sandbox: SandboxInstance,
+  ): Promise<void> {
+    const settingsDir = this.registry.mcpConfig.settingsDir.replace(
+      /^~/,
+      "/home/user",
+    );
+    const settingsPath = `${settingsDir}/${this.registry.mcpConfig.filename}`;
+
+    await sandbox.files.makeDir(settingsDir);
+
+    let settings: Record<string, unknown> = {};
+    try {
+      const existing = await sandbox.files.read(settingsPath);
+      if (typeof existing === "string" && existing.trim()) {
+        settings = JSON.parse(existing);
+      }
+    } catch (error) {
+      const message = (error as Error).message || "";
+      if (!/not found|no such file|does not exist/i.test(message)) {
+        throw error;
+      }
+    }
+
+    const security =
+      typeof settings.security === "object" && settings.security !== null
+        ? (settings.security as Record<string, unknown>)
+        : {};
+    const auth =
+      typeof security.auth === "object" && security.auth !== null
+        ? (security.auth as Record<string, unknown>)
+        : {};
+
+    settings.security = {
+      ...security,
+      auth: {
+        ...auth,
+        selectedType: GEMINI_GATEWAY_AUTH_TYPE,
+      },
+    };
+
+    await sandbox.files.write(settingsPath, JSON.stringify(settings, null, 2));
   }
 
   private async setupAgentPlugins(sandbox: SandboxInstance): Promise<void> {
@@ -1350,7 +1450,10 @@ export class Agent {
         sandbox,
         this.agentConfig.type as "qwen",
         this.registry.spendTrackingJsonConfig.headersPath,
-        { [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag },
+        {
+          [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
+          ...this.providerRuntimeHeaderUpdates(),
+        },
       );
     }
 
@@ -1652,6 +1755,7 @@ export class Agent {
         {
           [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
           [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
+          ...this.providerRuntimeHeaderUpdates(),
         },
       );
     }
@@ -1669,16 +1773,21 @@ export class Agent {
       !this.agentConfig.isDirectMode &&
       this.registry.spendTrackingTomlProvider
     ) {
+      const providerRuntime = this.requireActiveProviderRuntimeToken();
       await writeKimiSpendConfig(
         sandbox,
         this.registry.spendTrackingTomlProvider,
         {
           [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
           [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
+          ...this.providerRuntimeHeaderUpdates(),
         },
         {
-          baseUrl: withOpenAiV1Path(getGatewayUrl(this.registry.gatewayPath)),
-          apiKey: this.agentConfig.apiKey,
+          baseUrl: withOpenAiV1Path(
+            providerRuntime?.baseUrl ??
+              getGatewayUrl(this.registry.gatewayPath),
+          ),
+          apiKey: providerRuntime?.token ?? this.agentConfig.apiKey,
           model: this.resolveCommandModel(
             this.agentConfig.model || this.registry.defaultModel,
           ),
@@ -1693,6 +1802,7 @@ export class Agent {
     // Per-run Droid gateway settings: Droid custom models read extraHeaders from
     // settings at startup, so rewrite the Evolve-owned settings file each run.
     if (!this.agentConfig.isDirectMode && this.registry.droidGatewaySettings) {
+      const providerRuntime = this.requireActiveProviderRuntimeToken();
       await writeDroidGatewaySettings(
         sandbox,
         {
@@ -1700,12 +1810,13 @@ export class Agent {
           model: this.resolveCommandModel(
             this.agentConfig.model || this.registry.defaultModel,
           ),
-          baseUrl: `${getGatewayUrl()}/v1`,
-          apiKeyEnv: "EVOLVE_API_KEY",
+          baseUrl: withOpenAiV1Path(providerRuntime?.baseUrl ?? getGatewayUrl()),
+          apiKeyEnv: this.registry.apiKeyEnv,
         },
         {
           [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
           [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
+          ...this.providerRuntimeHeaderUpdates(),
         },
       );
     }
