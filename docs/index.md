@@ -23,7 +23,7 @@ Get your Evolve API key at [dashboard.evolvingmachines.ai](https://dashboard.evo
 EVOLVE_API_KEY=sk-...
 ```
 
-To bring your own provider billing while keeping gateway features, save Anthropic/OpenAI keys in Dashboard → Secrets → BYO Provider Keys. Your app still uses only `EVOLVE_API_KEY`.
+To bring your own provider billing while keeping gateway features, save supported provider keys (Anthropic, OpenAI, Gemini, DashScope, Kimi, OpenRouter, or Droid/Factory) in Dashboard → Secrets → BYO Provider Keys. Your app still uses only `EVOLVE_API_KEY`.
 
 For fully local direct provider keys:
 ```bash
