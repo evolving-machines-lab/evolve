@@ -293,7 +293,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     gatewayPath: "/gemini",
     buildCommand: ({ prompt, model, isResume }) => {
       const resumeFlag = isResume ? "--resume latest " : "";
-      return `gemini "${prompt}" ${resumeFlag}--model ${model} --yolo --output-format stream-json`;
+      return `gemini ${resumeFlag}--prompt ${shellSingleQuote(prompt)} --model ${model} --yolo --output-format stream-json`;
     },
   },
 

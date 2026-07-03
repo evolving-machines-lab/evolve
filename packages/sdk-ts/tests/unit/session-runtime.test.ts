@@ -66,11 +66,25 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function runtimeTokenResponse(provider: "anthropic" | "openai" = "anthropic") {
-  const baseUrl =
-    provider === "openai"
-      ? "https://dashboard.test/api/model-proxy/openai/v1"
-      : "https://dashboard.test/api/model-proxy/anthropic";
+type RuntimeProvider =
+  | "anthropic"
+  | "openai"
+  | "gemini"
+  | "dashscope"
+  | "kimi"
+  | "openrouter"
+  | "droid";
+
+function runtimeTokenResponse(provider: RuntimeProvider = "anthropic") {
+  const openAiCompatible = new Set<RuntimeProvider>([
+    "openai",
+    "dashscope",
+    "kimi",
+    "openrouter",
+    "droid",
+  ]);
+  const suffix = openAiCompatible.has(provider) ? "/v1" : "";
+  const baseUrl = `https://dashboard.test/api/model-proxy/${provider}${suffix}`;
   return {
     enabled: true,
     provider,
@@ -1620,6 +1634,153 @@ async function testCodexConnectedSessionReassertsDashboardProxy(): Promise<void>
   }
 }
 
+async function testManagedGatewayAgentsUseRuntimeProxyLifecycle(): Promise<void> {
+  console.log("\n[17] all managed gateway agents use runtime proxy lifecycle");
+  const previousFetch = globalThis.fetch;
+  const previousDashboardUrl = process.env.EVOLVE_DASHBOARD_URL;
+  process.env.EVOLVE_DASHBOARD_URL = "https://dashboard.test";
+
+  const createBodies: Array<{ provider?: RuntimeProvider; sessionTag?: string }> = [];
+  const bindBodies: Array<{ token?: string; sandboxId?: string }> = [];
+  const deletedTokens: string[] = [];
+
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (
+      url === "https://dashboard.test/api/provider-secrets/runtime-token" &&
+      init?.method === "POST"
+    ) {
+      const body = JSON.parse(String(init.body)) as {
+        provider?: RuntimeProvider;
+        sessionTag?: string;
+      };
+      if (!body.provider) throw new Error("missing provider");
+      createBodies.push(body);
+      return new Response(JSON.stringify(runtimeTokenResponse(body.provider)), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (
+      url === "https://dashboard.test/api/provider-secrets/runtime-token" &&
+      init?.method === "PATCH"
+    ) {
+      bindBodies.push(JSON.parse(String(init.body)));
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (
+      url === "https://dashboard.test/api/provider-secrets/runtime-token" &&
+      init?.method === "DELETE"
+    ) {
+      const body = JSON.parse(String(init.body));
+      deletedTokens.push(String(body.token));
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (url === "https://dashboard.test/api/sessions/ingest") {
+      return new Response("{}", {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  }) as typeof fetch;
+
+  const cases: Array<{
+    agentType: string;
+    provider: RuntimeProvider;
+    tokenMustBeInSandboxConfig: boolean;
+  }> = [
+    { agentType: "claude", provider: "anthropic", tokenMustBeInSandboxConfig: true },
+    { agentType: "codex", provider: "openai", tokenMustBeInSandboxConfig: true },
+    { agentType: "gemini", provider: "gemini", tokenMustBeInSandboxConfig: true },
+    { agentType: "qwen", provider: "dashscope", tokenMustBeInSandboxConfig: true },
+    { agentType: "kimi", provider: "kimi", tokenMustBeInSandboxConfig: true },
+    { agentType: "opencode", provider: "openrouter", tokenMustBeInSandboxConfig: true },
+    { agentType: "droid", provider: "droid", tokenMustBeInSandboxConfig: true },
+  ];
+
+  try {
+    for (const item of cases) {
+      const startCreate = createBodies.length;
+      const startBind = bindBodies.length;
+      const commands = new MockCommands();
+      commands.mode = "instant";
+      const sandbox = new MockSandbox(`sess-managed-${item.agentType}`, commands);
+      const provider = new MockProvider(sandbox);
+      const kit = new Evolve()
+        .withAgent({ type: item.agentType, apiKey: "evolve-key" } as any)
+        .withSandbox(provider);
+
+      await kit.run({ prompt: "managed proxy lifecycle probe", timeoutMs: 10_000 });
+      await kit.kill();
+
+      const createBody = createBodies[startCreate];
+      const bindBody = bindBodies[startBind];
+      const envs = provider.createOptions?.envs ?? {};
+      const sandboxConfig = JSON.stringify({
+        envs,
+        runEnvs: commands.spawnOptions[0]?.envs ?? {},
+        writes: Object.fromEntries(sandbox.files.writes),
+      });
+      const expectedToken = `evrt_${item.provider}`;
+      const expectedBinding = `evrb_${item.provider}`;
+
+      assertEqual(
+        createBody?.provider,
+        item.provider,
+        `${item.agentType} requests ${item.provider} runtime token`,
+      );
+      assertEqual(
+        bindBody?.sandboxId,
+        sandbox.sandboxId,
+        `${item.agentType} binds runtime token to sandbox`,
+      );
+      assertEqual(
+        bindBody?.token,
+        expectedToken,
+        `${item.agentType} binds the minted runtime token`,
+      );
+      assert(
+        deletedTokens.includes(expectedToken),
+        `${item.agentType} kill() revokes runtime token`,
+      );
+      assert(
+        !Object.prototype.hasOwnProperty.call(envs, "EVOLVE_API_KEY"),
+        `${item.agentType} sandbox env omits EVOLVE_API_KEY`,
+      );
+      assert(
+        !sandboxConfig.includes("evolve-key"),
+        `${item.agentType} sandbox config does not contain raw Evolve API key`,
+      );
+      assert(
+        sandboxConfig.includes(expectedBinding),
+        `${item.agentType} sandbox config includes runtime binding secret`,
+      );
+      if (item.tokenMustBeInSandboxConfig) {
+        assert(
+          sandboxConfig.includes(expectedToken),
+          `${item.agentType} sandbox config uses provider runtime token`,
+        );
+      }
+      assert(
+        sandboxConfig.includes(`/api/model-proxy/${item.provider}`),
+        `${item.agentType} sandbox config routes through Dashboard model proxy`,
+      );
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousDashboardUrl === undefined)
+      delete process.env.EVOLVE_DASHBOARD_URL;
+    else process.env.EVOLVE_DASHBOARD_URL = previousDashboardUrl;
+  }
+}
+
 async function main(): Promise<void> {
   console.log("\n============================================================");
   console.log("Session Runtime Unit Tests");
@@ -1644,6 +1805,7 @@ async function main(): Promise<void> {
     await testSetSessionRevokesProviderRuntimeToken();
     await testCodexProviderRuntimeRoutesThroughDashboardProxy();
     await testCodexConnectedSessionReassertsDashboardProxy();
+    await testManagedGatewayAgentsUseRuntimeProxyLifecycle();
   } catch (error) {
     failed++;
     console.log(
