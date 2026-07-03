@@ -183,6 +183,11 @@ const evolve = new Evolve()
         apps: ["github", "gmail"],
     })
 
+    // (optional) Dashboard-managed secrets (gateway mode only)
+    .withManagedSecrets([
+        { name: "GITHUB_TOKEN", label: "prod", as: "GH_TOKEN" },
+    ])
+
     // (optional) Prefix for observability logs
     .withSessionTagPrefix("my-agent")
 
@@ -205,7 +210,7 @@ const evolve = new Evolve()
         },
     })
 
-    // (optional) Environment variables injected into sandbox
+    // (optional) Raw environment variables injected into sandbox
     .withSecrets({
         GITHUB_TOKEN: process.env.GITHUB_TOKEN!
     })
@@ -455,6 +460,89 @@ await credentials.delete({
     website: "github.com",
     accountLabel: "qa-admin",
 });
+```
+
+## Managed Secrets
+
+Managed secrets let agents use Dashboard-stored API secrets without exposing raw values to the sandbox.
+
+Availability:
+
+- Requires Gateway mode (`EVOLVE_API_KEY`).
+- Requires a fresh Evolve session; not available with `.withSession()`.
+- Not available in Direct Provider Key Mode.
+- Allowed destinations are enforced by each secret's Dashboard policy.
+
+Dashboard setup:
+
+1. Open the Evolve Dashboard.
+2. Go to **Secrets**.
+3. Add a managed secret with a name, value, and allowed HTTPS destinations.
+4. Use labels such as `default`, `prod`, or `staging` for variants of the same secret name.
+
+List managed secret metadata:
+
+```ts
+import { Evolve } from "@evolvingmachines/sdk";
+
+const secrets = await Evolve.managedSecrets().list();
+```
+
+Use `managedSecrets({ apiKey, dashboardUrl })` for explicit client configuration.
+
+Attach managed secrets to a run:
+
+```ts
+import { Evolve } from "@evolvingmachines/sdk";
+
+const evolve = new Evolve()
+    .withManagedSecrets([
+        { name: "GITHUB_TOKEN", label: "prod", as: "GH_TOKEN" },
+    ]);
+
+await evolve.run({
+    prompt: "Call the GitHub API using the managed GH_TOKEN secret.",
+});
+
+await evolve.kill();
+```
+
+Reference fields:
+
+| Field | Meaning | Example |
+| --- | --- | --- |
+| `name` | Dashboard secret key | `GITHUB_TOKEN` |
+| `label` | Optional variant; defaults to `default` | `prod` |
+| `as` | Optional sandbox env alias; defaults to `name` | `GH_TOKEN` |
+
+Runtime behavior:
+
+- `list()` returns metadata only; it never returns secret values.
+- The sandbox receives placeholder env vars and run-scoped proxy credentials only.
+- The Dashboard proxy substitutes the real value server-side only for allowed HTTPS targets.
+- Use `.withSecrets()` only for raw env vars you intentionally want inside the sandbox.
+
+Type reference:
+
+```ts
+interface ManagedSecretRef {
+    name: string;
+    label?: string;
+    as?: string;
+}
+
+interface ManagedSecretMetadata {
+    id: string;
+    name: string;
+    label: string;
+    enabled: boolean;
+    allowedHosts: string[];
+    allowedPathPrefixes: string[];
+    allowedMethods: string[];
+    createdAt: string;
+    updatedAt: string;
+    lastUsedAt: string | null;
+}
 ```
 
 ## Agent Plugins

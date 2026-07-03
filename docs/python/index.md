@@ -47,6 +47,7 @@ await evolve.run(prompt='Hello world')
 | `schema=` (Pydantic / JSON Schema) | [Configuration → Evolve Instance](./02-configuration.md#evolve-instance) |
 | `browser=` browser guide | [Configuration → Browser Automation](./02-configuration.md#browser-automation) |
 | `browser_credentials=` browser logins | [Configuration → Browser Credentials](./02-configuration.md#browser-credentials) |
+| `managed_secrets=` server-side API secrets | [Configuration → Managed Secrets](./02-configuration.md#managed-secrets) |
 | `plugins=` | [Configuration → Agent Plugins](./02-configuration.md#agent-plugins) |
 | `skills=` | [Configuration → Agent Skills](./02-configuration.md#agent-skills) |
 | `integrations=` (managed app integrations) | [Configuration → Managed Integrations](./02-configuration.md#managed-integrations) |
@@ -55,6 +56,7 @@ await evolve.run(prompt='Hello world')
 | `storage=` (checkpointing) | [Runtime → Storage & Checkpointing](./03-runtime.md#storage--checkpointing) |
 | `session_tag_prefix=` (observability) | [Runtime → Observability](./03-runtime.md#observability) |
 | Skills catalog (PDF, browser, research, etc.) | [Configuration → Agent Skills](./02-configuration.md#agent-skills) |
+| Managed secret metadata client | [Configuration → Managed Secrets](./02-configuration.md#managed-secrets) |
 | Integration auth/account helpers | [Configuration → Managed Integrations](./02-configuration.md#managed-integrations) |
 | Integration tool filtering | [Configuration → Managed Integrations](./02-configuration.md#managed-integrations) |
 | MCP server config (McpServerConfig) | [Configuration → Evolve Instance](./02-configuration.md#evolve-instance) |

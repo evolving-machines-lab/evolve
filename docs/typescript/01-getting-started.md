@@ -44,6 +44,7 @@ const evolve = new Evolve()
     .withSystemPrompt("You are Manus Evolve, a powerful AI agent. You can execute code, browse the web, manage files, and solve complex tasks.")
     .withBrowser()  // optional; defaults to remote managed agent-browser automation in Gateway mode
     .withSkills(["pdf", "docx", "pptx"])
+    .withManagedSecrets([{ name: "GITHUB_TOKEN", as: "GH_TOKEN" }])  // optional; Dashboard-managed secrets in Gateway mode
     .withIntegrations({ userId: "root", apps: ["gmail", "notion"] });  // optional; managed integrations in Gateway mode
 
 // Run agent

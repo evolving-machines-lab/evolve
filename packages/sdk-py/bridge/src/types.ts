@@ -54,6 +54,12 @@ export type AgentPluginConfig =
   | { source: string; ref?: string; autoUpdate?: boolean; preRelease?: boolean; skipSettings?: boolean }
   | { marketplace: string; ref?: string; sparse?: string[] };
 
+export interface ManagedSecretRef {
+  name: string;
+  label?: string;
+  as?: string;
+}
+
 // =============================================================================
 // RPC METHOD PARAMETERS
 // =============================================================================
@@ -80,6 +86,7 @@ export interface InitializeParams {
   mcp_servers?: Record<string, any>;
   browser?: 'browser-use' | 'actionbook' | 'agent-browser' | { provider?: 'actionbook' | 'agent-browser'; remote?: boolean; profile?: string };
   browser_credentials?: BrowserCredentialsConfig;
+  managed_secrets?: ManagedSecretRef[];
   plugins?: AgentPluginConfig[];
   skills?: string[];
   secrets?: Record<string, string>;
