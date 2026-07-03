@@ -81,48 +81,6 @@ class BrowserCredentialsClientConfig:
 
 
 @dataclass
-class ManagedSecretRef:
-    """Dashboard-stored secret selector for a run.
-
-    Args:
-        name: Secret name as stored in Dashboard, e.g. "GITHUB_TOKEN"
-        label: Dashboard label. Defaults to "default"
-        as_name: Env var name exposed in this run. Defaults to name
-    """
-    name: str
-    label: Optional[str] = None
-    as_name: Optional[str] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        result: Dict[str, Any] = {'name': self.name}
-        if self.label:
-            result['label'] = self.label
-        if self.as_name:
-            result['as'] = self.as_name
-        return result
-
-
-@dataclass
-class ManagedSecretsClientConfig:
-    """Standalone managed secrets client configuration.
-
-    Args:
-        api_key: Evolve API key override
-        dashboard_url: Dashboard URL override
-    """
-    api_key: Optional[str] = None
-    dashboard_url: Optional[str] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        result: Dict[str, Any] = {}
-        if self.api_key:
-            result['api_key'] = self.api_key
-        if self.dashboard_url:
-            result['dashboard_url'] = self.dashboard_url
-        return result
-
-
-@dataclass
 class BrowserProfilesClientConfig:
     """Standalone browser profiles client configuration.
 

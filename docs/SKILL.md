@@ -26,12 +26,12 @@ Always read these three references **for the detected language** before writing 
 
 **TypeScript:**
 - [01-getting-started.md](references/typescript/01-getting-started.md) — Installation, authentication (Gateway, managed BYO provider keys, direct provider-key mode), core lifecycle, streaming basics, agent reference table
-- [02-configuration.md](references/typescript/02-configuration.md) — Sandbox providers, full builder API, agent skills catalog, managed secrets, managed integrations, MCP servers
+- [02-configuration.md](references/typescript/02-configuration.md) — Sandbox providers, full builder API, agent skills catalog, Managed integrations, MCP servers
 - [03-runtime.md](references/typescript/03-runtime.md) — run(), executeCommand(), upload/download files, session controls, workspace layout, structured output, session management, storage & checkpointing, StorageClient, sessions() client, cost tracking, observability, error handling
 
 **Python:**
 - [01-getting-started.md](references/python/01-getting-started.md) — Installation, authentication (Gateway, managed BYO provider keys, direct provider-key mode), core lifecycle, streaming basics, agent reference table
-- [02-configuration.md](references/python/02-configuration.md) — Sandbox providers, full constructor API, agent skills catalog, managed secrets, managed integrations, MCP servers
+- [02-configuration.md](references/python/02-configuration.md) — Sandbox providers, full constructor API, agent skills catalog, Managed integrations, MCP servers
 - [03-runtime.md](references/python/03-runtime.md) — run(), execute_command(), upload/download files, session controls, workspace layout, structured output, session management, storage & checkpointing, StorageClient, sessions() client, cost tracking, observability, error handling
 
 ## Critical Constraints
@@ -73,7 +73,6 @@ Read on demand when the user's task requires them:
 | Full builder/constructor API | [TS](references/typescript/02-configuration.md#evolve-instance) | [PY](references/python/02-configuration.md#evolve-instance) |
 | Browser automation guide (setup, live view, replay) | [TS](references/typescript/02-configuration.md#browser-automation) | [PY](references/python/02-configuration.md#browser-automation) |
 | Browser credentials (saved website logins) | [TS](references/typescript/02-configuration.md#browser-credentials) | [PY](references/python/02-configuration.md#browser-credentials) |
-| Managed secrets (server-side API secrets) | [TS](references/typescript/02-configuration.md#managed-secrets) | [PY](references/python/02-configuration.md#managed-secrets) |
 | Agent plugins/extensions | [TS](references/typescript/02-configuration.md#agent-plugins) | [PY](references/python/02-configuration.md#agent-plugins) |
 | Agent skills catalog | [TS](references/typescript/02-configuration.md#agent-skills) | [PY](references/python/02-configuration.md#agent-skills) |
 | Managed integrations (auth paths, tool filtering, types) | [TS](references/typescript/02-configuration.md#managed-integrations) | [PY](references/python/02-configuration.md#managed-integrations) |

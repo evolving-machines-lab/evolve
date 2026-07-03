@@ -18,7 +18,6 @@
 - Full computer access: terminal, browser, MCP tools
 - [Agent skills](https://agentskills.io/home): extend agents with custom capabilities (PDF, dev-browser, etc.)
 - Managed integrations for Gmail, GitHub, Slack, Notion, and more
-- Managed secrets: keep API keys server-side while agents use scoped proxies
 - Functional programming abstractions (map, filter, reduce) for massively parallel workloads
 - Streaming and structured output
 - Built-in [agent observability and analytics dashboard](https://dashboard.evolvingmachines.ai/)
@@ -56,8 +55,6 @@ EVOLVE_API_KEY=sk-...
 ```
 
 To bring your own provider billing while keeping gateway features, save supported provider keys (Anthropic, OpenAI, Gemini, DashScope, Kimi, OpenRouter, or Droid/Factory) in Dashboard → Secrets → BYO Provider Keys. Your app still uses only `EVOLVE_API_KEY`.
-
-To expose other API secrets without putting raw values in the sandbox, save them in Dashboard → Secrets with allowed HTTPS hosts, paths, and methods, then attach them by name with `.withManagedSecrets(...)` or `managed_secrets=...`.
 
 For fully local direct provider keys:
 ```bash

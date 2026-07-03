@@ -68,8 +68,8 @@ async function testBrowserUseNotInjectedByDefault(): Promise<void> {
   assert(!mcpServers["browser-use"], "browser-use MCP absent without withBrowser()");
 }
 
-async function testWithBrowserUseGatewayMcpIsDisabled(): Promise<void> {
-  console.log("\n[2] withBrowser(\"browser-use\"): managed gateway MCP is disabled");
+async function testWithBrowserInjectsGatewayMcp(): Promise<void> {
+  console.log("\n[2] withBrowser(\"browser-use\"): injects existing gateway browser-use MCP config");
 
   const previousGatewayUrl = process.env.EVOLVE_GATEWAY_URL;
   process.env.EVOLVE_GATEWAY_URL = "https://gateway.test";
@@ -79,15 +79,16 @@ async function testWithBrowserUseGatewayMcpIsDisabled(): Promise<void> {
       .withSandbox(fakeSandboxProvider)
       .withBrowser("browser-use");
 
-    try {
-      await getInitializedMcpServers(kit);
-      assert(false, "managed browser-use gateway MCP should throw");
-    } catch (error) {
-      assert(
-        error instanceof Error && error.message.includes("would expose the Evolve API key"),
-        "error explains Evolve API key exposure"
-      );
-    }
+    const mcpServers = await getInitializedMcpServers(kit);
+    const browserUse = mcpServers["browser-use"];
+
+    assertEqual(browserUse.type, "http", "browser-use transport preserved");
+    assertEqual(browserUse.url, "https://gateway.test/browser_use/mcp", "browser-use gateway URL preserved");
+    assertEqual(
+      browserUse.headers["x-litellm-api-key"],
+      "Bearer evolve-key",
+      "browser-use auth header uses the Evolve API key"
+    );
   } finally {
     if (previousGatewayUrl === undefined) {
       delete process.env.EVOLVE_GATEWAY_URL;
@@ -116,7 +117,7 @@ async function testUserMcpOverridesBrowserUse(): Promise<void> {
 }
 
 async function testBrowserUseRequiresGatewayMode(): Promise<void> {
-  console.log("\n[4] withBrowser(\"browser-use\"): direct mode without custom MCP rejects managed browser-use");
+  console.log("\n[4] withBrowser(\"browser-use\"): direct mode rejects gateway browser-use");
 
   const kit = new Evolve()
     .withAgent({ type: "claude", providerApiKey: "provider-key" })
@@ -125,11 +126,11 @@ async function testBrowserUseRequiresGatewayMode(): Promise<void> {
 
   try {
     await getInitializedMcpServers(kit);
-    assert(false, "browser-use without custom MCP should throw");
+    assert(false, "direct mode with browser-use should throw");
   } catch (error) {
     assert(
-      error instanceof Error && error.message.includes("would expose the Evolve API key"),
-      "error explains disabled managed browser-use gateway MCP"
+      error instanceof Error && error.message.includes("requires gateway mode"),
+      "direct mode error explains gateway requirement"
     );
   }
 }
@@ -476,7 +477,7 @@ async function main(): Promise<void> {
   console.log("=".repeat(70));
 
   await testBrowserUseNotInjectedByDefault();
-  await testWithBrowserUseGatewayMcpIsDisabled();
+  await testWithBrowserInjectsGatewayMcp();
   await testUserMcpOverridesBrowserUse();
   await testBrowserUseRequiresGatewayMode();
   await testBrowserUseRemoteObjectRejected();

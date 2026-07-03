@@ -111,7 +111,6 @@ export type {
   BrowserConfig,
   BrowserCredentialScopeEntry,
   BrowserCredentialsConfig,
-  ManagedSecretRef,
   DefaultBrowserConfig,
   ActionbookBrowserConfig,
   AgentBrowserConfig,
@@ -289,23 +288,6 @@ export {
   type BrowserProfileMetadata,
   type BrowserProfilesClientConfig,
 } from "./browser-profiles";
-
-// =============================================================================
-// MANAGED SECRETS
-// =============================================================================
-
-export {
-  ManagedSecretsClient,
-  managedSecrets,
-  MANAGED_SECRET_RUNTIME_TOKEN_HEADER,
-  MANAGED_SECRET_RUNTIME_BINDING_HEADER,
-  MANAGED_SECRET_TARGET_HEADER,
-  MANAGED_SECRET_PROXY_URL_ENV,
-  MANAGED_SECRET_TOKEN_ENV,
-  MANAGED_SECRET_BINDING_ENV,
-  type ManagedSecretMetadata,
-  type ManagedSecretsClientConfig,
-} from "./managed-secrets";
 
 // =============================================================================
 // SESSIONS

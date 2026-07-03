@@ -188,16 +188,6 @@ export interface BrowserCredentialsConfig {
   allow?: BrowserCredentialScopeEntry[];
 }
 
-/** Dashboard-stored secret exposed to a run as a placeholder env var. */
-export interface ManagedSecretRef {
-  /** Secret name as stored in Dashboard, e.g. GITHUB_TOKEN. */
-  name: string;
-  /** Dashboard label. Defaults to "default". */
-  label?: string;
-  /** Env var name to expose in this run. Defaults to name. */
-  as?: string;
-}
-
 /** Marketplace plugin shape for CLIs with explicit plugin install commands. */
 export interface MarketplaceAgentPluginConfig {
   /** Marketplace URL/source to register in the sandbox user profile */
@@ -418,12 +408,6 @@ export interface AgentOptions {
     apiKey: string;
     dashboardUrl?: string;
     config?: BrowserCredentialsConfig;
-  };
-  /** Run-scoped dashboard-managed secret placeholders and proxy access. */
-  managedSecrets?: {
-    apiKey: string;
-    dashboardUrl?: string;
-    secrets: ManagedSecretRef[];
   };
   /** Evolve-managed app integrations */
   integrations?: IntegrationsSetup & {
