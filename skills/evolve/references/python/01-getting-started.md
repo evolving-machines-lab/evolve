@@ -138,11 +138,13 @@ await evolve.run(prompt='Hello')
 
 ### Managed BYO Provider Keys
 
-Use this when you want Anthropic or OpenAI usage billed to your provider account while keeping gateway features.
+Use this when you want supported provider usage billed to your provider account while keeping gateway features.
 
 1. Save your provider key in Dashboard → Secrets → BYO Provider Keys.
 2. Keep `EVOLVE_API_KEY` in your app.
-3. Run Claude or Codex normally.
+3. Run any supported agent normally.
+
+Supported managed provider routes include Anthropic, OpenAI, Gemini, DashScope, Kimi, OpenRouter, and Droid/Factory.
 
 When enabled, Evolve routes supported provider calls through a sandbox-bound `evrt_...` runtime token. The SDK does not receive the raw provider key, and the sandbox does not receive `EVOLVE_API_KEY` for that provider route. If no managed key is enabled for that provider, gateway mode falls back to Evolve-managed model routing.
 
