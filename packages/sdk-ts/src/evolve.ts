@@ -29,19 +29,26 @@ import type {
   SessionCost,
   BrowserConfig,
   BrowserCredentialsConfig,
+  ManagedSecretRef,
   AgentPluginConfig,
 } from "./types";
 import { Agent, type AgentConfig, type AgentOptions, type AgentResponse } from "./agent";
 import type { OutputEvent } from "./parsers";
 import { isZodSchema, resolveAgentConfig, resolveDefaultSandbox } from "./utils";
 import { integrationHelpers } from "./integrations";
-import { getGatewayMcpServers, DEFAULT_DASHBOARD_URL, ENV_EVOLVE_API_KEY } from "./constants";
+import { DEFAULT_DASHBOARD_URL, ENV_EVOLVE_API_KEY } from "./constants";
 import { resolveStorageConfig, createBoundStorageClient } from "./storage";
 import type { CheckpointInfo, StorageClient } from "./types";
 import { BROWSER_ACTIONBOOK_PROMPT, BROWSER_AGENT_BROWSER_PROMPT } from "./prompts";
 import { mergeBrowserSkills, normalizeBrowserConfig } from "./browser";
 import { browserCredentials as createBrowserCredentialsClient } from "./browser-credentials";
 import { browserProfiles as createBrowserProfilesClient } from "./browser-profiles";
+import {
+  MANAGED_SECRET_BINDING_ENV,
+  MANAGED_SECRET_PROXY_URL_ENV,
+  MANAGED_SECRET_TOKEN_ENV,
+  managedSecrets as createManagedSecretsClient,
+} from "./managed-secrets";
 
 // =============================================================================
 // TYPES
@@ -78,6 +85,8 @@ export interface EvolveConfig {
   browser?: BrowserConfig;
   /** Browser login MCP setup for managed remote agent-browser runs */
   browserCredentials?: BrowserCredentialsConfig;
+  /** Dashboard-stored secrets exposed as run-scoped placeholder env vars */
+  managedSecrets?: ManagedSecretRef[];
   /** Agent plugins/extensions to install before first run */
   plugins?: AgentPluginConfig[];
   /** Skills to enable (e.g., ["pdf", "dev-browser"]) */
@@ -189,8 +198,17 @@ export class Evolve extends EventEmitter {
    * Add environment secrets
    */
   withSecrets(secrets: Record<string, string>): this {
-    if (Object.prototype.hasOwnProperty.call(secrets, ENV_EVOLVE_API_KEY)) {
-      throw new Error(`${ENV_EVOLVE_API_KEY} is reserved for Evolve-managed sandbox services and cannot be set with withSecrets()`);
+    const reserved = [
+      ENV_EVOLVE_API_KEY,
+      MANAGED_SECRET_PROXY_URL_ENV,
+      MANAGED_SECRET_TOKEN_ENV,
+      MANAGED_SECRET_BINDING_ENV,
+    ];
+    const reservedKey = reserved.find((key) =>
+      Object.prototype.hasOwnProperty.call(secrets, key)
+    );
+    if (reservedKey) {
+      throw new Error(`${reservedKey} is reserved for Evolve-managed sandbox services and cannot be set with withSecrets()`);
     }
     this.config.secrets = { ...this.config.secrets, ...secrets };
     return this;
@@ -270,6 +288,20 @@ export class Evolve extends EventEmitter {
    */
   withBrowserCredentials(config: BrowserCredentialsConfig = {}): this {
     this.config.browserCredentials = config;
+    return this;
+  }
+
+  /**
+   * Expose dashboard-stored managed secrets as placeholder env vars.
+   *
+   * Real values stay server-side and are inserted only by the dashboard proxy
+   * for requests to each secret's allowed hosts.
+   */
+  withManagedSecrets(secrets: ManagedSecretRef[]): this {
+    if (!Array.isArray(secrets) || secrets.length === 0) {
+      throw new Error("withManagedSecrets() requires at least one secret");
+    }
+    this.config.managedSecrets = secrets;
     return this;
   }
 
@@ -400,6 +432,9 @@ export class Evolve extends EventEmitter {
   /** Static browser profile client for listing and deleting reusable browser profiles. */
   static browserProfiles = createBrowserProfilesClient;
 
+  /** Static managed secrets client for listing dashboard-stored secret metadata. */
+  static managedSecrets = createManagedSecretsClient;
+
   // ===========================================================================
   // AGENT INITIALIZATION
   // ===========================================================================
@@ -431,12 +466,11 @@ export class Evolve extends EventEmitter {
       normalizedBrowser = browser;
 
       if (browser.provider === "browser-use") {
-        if (agentConfig.isDirectMode) {
+        if (!this.config.mcpServers?.["browser-use"]) {
           throw new Error(
-            'withBrowser("browser-use") requires gateway mode. Use apiKey/EVOLVE_API_KEY instead of providerApiKey/direct mode.'
+            'withBrowser("browser-use") gateway MCP is disabled because it would expose the Evolve API key in the sandbox. Use managed agent-browser instead, or provide your own "browser-use" MCP server via withMcpServers().'
           );
         }
-        browserMcpServers = getGatewayMcpServers(agentConfig.apiKey);
       }
 
       if (browser.provider === "actionbook" || browser.provider === "agent-browser") {
@@ -479,6 +513,15 @@ export class Evolve extends EventEmitter {
       }
     }
 
+    if (this.config.managedSecrets !== undefined) {
+      if (this.config.sandboxId) {
+        throw new Error("withManagedSecrets() cannot be used with withSession(); managed secret tokens are run-scoped.");
+      }
+      if (agentConfig.isDirectMode) {
+        throw new Error("withManagedSecrets() requires gateway mode. Use apiKey/EVOLVE_API_KEY instead of providerApiKey/direct mode.");
+      }
+    }
+
     // Resolve storage config if .withStorage() was called
     const resolvedStorage = this.config.storage !== undefined
       ? resolveStorageConfig(
@@ -506,6 +549,13 @@ export class Evolve extends EventEmitter {
             apiKey: agentConfig.apiKey,
             dashboardUrl: process.env.EVOLVE_DASHBOARD_URL || DEFAULT_DASHBOARD_URL,
             config: this.config.browserCredentials,
+          }
+        : undefined,
+      managedSecrets: this.config.managedSecrets !== undefined
+        ? {
+            apiKey: agentConfig.apiKey,
+            dashboardUrl: process.env.EVOLVE_DASHBOARD_URL || DEFAULT_DASHBOARD_URL,
+            secrets: this.config.managedSecrets,
           }
         : undefined,
       plugins: this.config.plugins,

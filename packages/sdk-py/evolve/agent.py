@@ -2,15 +2,26 @@
 
 import asyncio
 import json
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, is_dataclass as dataclasses_is_dataclass
 from typing import Any, Callable, Dict, List, Literal, Optional, Type, Union
 
 from .bridge import BridgeManager, SandboxNotFoundError
-from .config import AgentConfig, AgentPluginConfig, BrowserConfig, BrowserCredentialsConfig, IntegrationsSetup, SandboxProvider, SchemaOptions, StorageConfig, WorkspaceMode
+from .config import (
+    AgentConfig,
+    AgentPluginConfig,
+    BrowserConfig,
+    BrowserCredentialsConfig,
+    IntegrationsSetup,
+    ManagedSecretRef,
+    SandboxProvider,
+    SchemaOptions,
+    StorageConfig,
+    WorkspaceMode,
+)
 from .results import AgentResponse, CheckpointInfo, ExecuteResult, OutputResult, RunCost, SessionCost, SessionStatus
 from .storage_client import StorageClient
 from . import integrations as integrations_helpers
-from .schema import is_pydantic_model, is_dataclass, to_json_schema, validate_and_parse
+from .schema import is_pydantic_model, is_dataclass as is_schema_dataclass, to_json_schema, validate_and_parse
 from .utils import _encode_files_for_transport, _decode_files_from_transport, _filter_none, _parse_checkpoint, _require_checkpoint
 
 
@@ -67,6 +78,7 @@ class Evolve:
         storage: Optional[StorageConfig] = None,
         browser: Optional[BrowserConfig] = None,
         browser_credentials: Optional[BrowserCredentialsConfig] = None,
+        managed_secrets: Optional[List[Union[ManagedSecretRef, Dict[str, Any]]]] = None,
         plugins: Optional[Union[AgentPluginConfig, List[AgentPluginConfig]]] = None,
     ):
         """Initialize Evolve.
@@ -95,6 +107,7 @@ class Evolve:
             browser: Browser automation provider. Use {'provider': 'agent-browser', 'remote': True}
                 for managed remote browser automation.
             browser_credentials: Saved browser login MCP setup. Requires managed remote agent-browser.
+            managed_secrets: Dashboard-stored secrets to expose as placeholder env vars.
             plugins: Agent plugins/extensions to install in the sandbox user profile before first run.
         """
         self.config = config
@@ -106,7 +119,13 @@ class Evolve:
         self.files = files
         self.mcp_servers = mcp_servers
         self.browser = self._normalize_browser(browser)
+        if self.browser == 'browser-use' and not (self.mcp_servers and 'browser-use' in self.mcp_servers):
+            raise ValueError(
+                'browser-use managed gateway MCP is disabled because it would expose the Evolve API key in the sandbox; '
+                'use managed agent-browser or provide your own browser-use MCP server via mcp_servers'
+            )
         self.browser_credentials = browser_credentials
+        self.managed_secrets = self._normalize_managed_secrets(managed_secrets)
         self.skills = skills
         self.secrets = secrets
         self.sandbox_id = sandbox_id
@@ -154,6 +173,7 @@ class Evolve:
                 'mcp_servers': self.mcp_servers,
                 'browser': self.browser,
                 'browser_credentials': self.browser_credentials.to_dict() if self.browser_credentials else None,
+                'managed_secrets': self.managed_secrets,
                 'plugins': self.plugins,
                 'skills': self.skills,
                 'secrets': self.secrets,
@@ -196,6 +216,31 @@ class Evolve:
         raise ValueError("browser must be 'browser-use', 'actionbook', 'agent-browser', a managed browser config dict, or None")
 
     @staticmethod
+    def _normalize_managed_secrets(
+        managed_secrets: Optional[List[Union[ManagedSecretRef, Dict[str, Any]]]]
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Normalize managed secret refs and convert Python as_name to TS as."""
+        if managed_secrets is None:
+            return None
+        if not isinstance(managed_secrets, list) or not managed_secrets:
+            raise ValueError('managed_secrets must be a non-empty list')
+
+        normalized: List[Dict[str, Any]] = []
+        for secret in managed_secrets:
+            if dataclasses_is_dataclass(secret):
+                item = asdict(secret)
+            elif isinstance(secret, dict):
+                item = dict(secret)
+            else:
+                raise ValueError('each managed secret must be a ManagedSecretRef or dict')
+
+            if 'as_name' in item:
+                item['as'] = item.pop('as_name')
+
+            normalized.append(_filter_none(item))
+        return normalized
+
+    @staticmethod
     def _normalize_plugins(
         plugins: Optional[Union[AgentPluginConfig, List[AgentPluginConfig]]]
     ) -> Optional[List[Dict[str, Any]]]:
@@ -203,7 +248,7 @@ class Evolve:
         if plugins is None:
             return None
 
-        if isinstance(plugins, dict) or is_dataclass(plugins):
+        if isinstance(plugins, dict) or dataclasses_is_dataclass(plugins):
             raw_plugins: List[Any] = [plugins]
         elif isinstance(plugins, list):
             raw_plugins = plugins
@@ -212,7 +257,7 @@ class Evolve:
 
         normalized: List[Dict[str, Any]] = []
         for plugin in raw_plugins:
-            if is_dataclass(plugin):
+            if dataclasses_is_dataclass(plugin):
                 item = asdict(plugin)
             elif isinstance(plugin, dict):
                 item = dict(plugin)
@@ -442,7 +487,7 @@ class Evolve:
         raw_data = None
 
         # CASE 1: Pydantic model or dataclass → Native Python validation
-        if is_pydantic_model(self._schema) or is_dataclass(self._schema):
+        if is_pydantic_model(self._schema) or is_schema_dataclass(self._schema):
             raw_json = files.get('result.json')
             if raw_json is None:
                 error = "Schema provided but agent did not create output/result.json"

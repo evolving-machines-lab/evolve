@@ -17,6 +17,7 @@ import {
   type AgentConfig,
   type AgentType,
   type ReasoningEffort,
+  type ManagedSecretRef,
   type CheckpointInfo,
   type RunCost,
   type SessionCost,
@@ -195,6 +196,9 @@ export class EvolveAdapter {
     }
     if (params.browser_credentials !== undefined) {
       kit.withBrowserCredentials(params.browser_credentials);
+    }
+    if (params.managed_secrets?.length) {
+      kit.withManagedSecrets(params.managed_secrets as ManagedSecretRef[]);
     }
     if (params.plugins?.length) {
       (kit as Evolve & { withPlugins: (plugins: unknown[]) => Evolve }).withPlugins(params.plugins);

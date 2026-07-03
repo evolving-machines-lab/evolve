@@ -578,16 +578,29 @@ class TestBrowserConfig:
         params = initialize_calls[0][1]
         assert 'browser' not in params
 
+    def test_browser_use_without_custom_mcp_rejected(self):
+        with pytest.raises(ValueError, match='would expose the Evolve API key'):
+            Evolve(browser='browser-use')
+
     @pytest.mark.asyncio
-    async def test_browser_use_forwarded_to_bridge(self):
+    async def test_browser_use_with_custom_mcp_forwarded_to_bridge(self):
         mock_bridge = MockBridgeManager()
         with patch('evolve.agent.BridgeManager', return_value=mock_bridge):
-            kit = Evolve(browser='browser-use')
+            kit = Evolve(
+                browser='browser-use',
+                mcp_servers={
+                    'browser-use': {
+                        'type': 'http',
+                        'url': 'https://custom.example/mcp',
+                    },
+                },
+            )
             await kit._ensure_initialized()
 
         initialize_calls = [c for c in mock_bridge.calls if c[0] == 'initialize']
         params = initialize_calls[0][1]
         assert params['browser'] == 'browser-use'
+        assert params['mcp_servers']['browser-use']['url'] == 'https://custom.example/mcp'
 
     @pytest.mark.asyncio
     async def test_actionbook_browser_forwarded_to_bridge(self):
