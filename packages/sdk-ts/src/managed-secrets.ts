@@ -159,6 +159,8 @@ def ensure_cert(host):
     ext = os.path.join(CERT_DIR, name + ".ext")
     san = "IP:" + host if host.replace(".", "").isdigit() else "DNS:" + host
     with open(ext, "w", encoding="utf-8") as f:
+        f.write("basicConstraints=critical,CA:FALSE\n")
+        f.write("keyUsage=critical,digitalSignature,keyEncipherment\n")
         f.write("subjectAltName=" + san + "\n")
         f.write("extendedKeyUsage=serverAuth\n")
     subprocess.run(
@@ -687,7 +689,7 @@ export function managedSecretCaSetupCommand(): string {
     `chmod 700 ${MANAGED_SECRET_PROXY_SCRIPT_PATH} 2>/dev/null || true`,
     `chmod 600 ${MANAGED_SECRET_PROXY_CONFIG_PATH} 2>/dev/null || true`,
     `if [ ! -f ${MANAGED_SECRET_CA_KEY_PATH} ]; then openssl genrsa -out ${MANAGED_SECRET_CA_KEY_PATH} 2048 >/dev/null 2>&1; fi`,
-    `if [ ! -f ${MANAGED_SECRET_CA_CERT_PATH} ]; then openssl req -x509 -new -nodes -key ${MANAGED_SECRET_CA_KEY_PATH} -sha256 -days 30 -subj "/CN=Evolve Managed Secrets" -out ${MANAGED_SECRET_CA_CERT_PATH} >/dev/null 2>&1; fi`,
+    `if [ ! -f ${MANAGED_SECRET_CA_CERT_PATH} ]; then openssl req -x509 -new -nodes -key ${MANAGED_SECRET_CA_KEY_PATH} -sha256 -days 30 -subj "/CN=Evolve Managed Secrets" -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign" -out ${MANAGED_SECRET_CA_CERT_PATH} >/dev/null 2>&1; fi`,
     `SYSTEM_CA_BUNDLE=""; for p in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/ca-bundle.pem; do if [ -f "$p" ]; then SYSTEM_CA_BUNDLE="$p"; break; fi; done; if [ -n "$SYSTEM_CA_BUNDLE" ]; then cat "$SYSTEM_CA_BUNDLE" ${MANAGED_SECRET_CA_CERT_PATH} > ${MANAGED_SECRET_CA_BUNDLE_PATH}; else cp ${MANAGED_SECRET_CA_CERT_PATH} ${MANAGED_SECRET_CA_BUNDLE_PATH}; fi`,
     `if command -v update-ca-certificates >/dev/null 2>&1; then cp ${MANAGED_SECRET_CA_CERT_PATH} /usr/local/share/ca-certificates/evolve-managed-secrets.crt 2>/dev/null && update-ca-certificates >/dev/null 2>&1 || true; fi`,
   ].join(" && ");
