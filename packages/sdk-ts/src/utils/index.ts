@@ -7,7 +7,11 @@
 export { isZodSchema, zodSchemaToJson, jsonSchemaToString } from "./schema";
 export { readLocalDir, saveLocalDir } from "./files";
 export { resolveAgentConfig } from "./config";
-export { resolveDefaultSandbox } from "./sandbox";
+export {
+  isEvolveManagedSandboxProvider,
+  resolveDefaultSandbox,
+  resolveManagedSandbox,
+} from "./sandbox";
 export {
   executeWithRetry,
   type RetryConfig,

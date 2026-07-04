@@ -6,6 +6,7 @@
  */
 
 import type { OutputEvent } from "./parsers/types";
+import type { ManagedSecretRef } from "./managed-secrets";
 
 // =============================================================================
 // SANDBOX ABSTRACTION (provider-agnostic)
@@ -380,6 +381,12 @@ export interface AgentOptions {
   sandboxProvider?: SandboxProvider;
   /** Additional environment secrets */
   secrets?: Record<string, string>;
+  /** Dashboard-stored managed secrets exposed through opaque env vars. */
+  managedSecrets?: {
+    secrets: ManagedSecretRef[];
+    apiKey: string;
+    dashboardUrl?: string;
+  };
   /** Existing sandbox ID to connect to */
   sandboxId?: string;
   /** Working directory path */

@@ -15,6 +15,8 @@ from .config import (
     BrowserCredentialsConfig,
     BrowserCredentialsClientConfig,
     BrowserProfilesClientConfig,
+    ManagedSecretRef,
+    ManagedSecretsClientConfig,
     AgentPluginConfig,
     ReasoningEffort,
     ValidationMode,
@@ -43,6 +45,7 @@ from .storage_client import StorageClient
 from .sessions_client import SessionsClient
 from .browser_credentials import BrowserCredentialsClient, BrowserCredentialMetadata, BrowserCredentialsPage
 from .browser_profiles import BrowserProfilesClient, BrowserProfileMetadata, BrowserProfilesPage
+from .managed_secrets import ManagedSecretsClient, ManagedSecretMetadata
 from .utils import read_local_dir, save_local_dir
 from .bridge import (
     SandboxNotFoundError,
@@ -172,6 +175,15 @@ def browser_profiles(config: Optional[BrowserProfilesClientConfig] = None) -> Br
     return BrowserProfilesClient(config or BrowserProfilesClientConfig())
 
 
+def managed_secrets(config: Optional[ManagedSecretsClientConfig] = None) -> ManagedSecretsClient:
+    """Create a standalone managed secrets client.
+
+    Uses EVOLVE_API_KEY unless ManagedSecretsClientConfig(api_key=...) is provided.
+    Values are never returned.
+    """
+    return ManagedSecretsClient(config or ManagedSecretsClientConfig())
+
+
 async def list_checkpoints(
     storage: Optional[StorageConfig] = None,
     limit: Optional[int] = None,
@@ -229,6 +241,8 @@ __all__ = [
     'BrowserCredentialsConfig',
     'BrowserCredentialsClientConfig',
     'BrowserProfilesClientConfig',
+    'ManagedSecretRef',
+    'ManagedSecretsClientConfig',
     'AgentPluginConfig',
     'ReasoningEffort',
     'ValidationMode',
@@ -245,6 +259,8 @@ __all__ = [
     'BrowserProfilesClient',
     'BrowserProfileMetadata',
     'BrowserProfilesPage',
+    'ManagedSecretsClient',
+    'ManagedSecretMetadata',
 
     # Evolve Results
     'AgentResponse',
@@ -264,6 +280,7 @@ __all__ = [
     'SessionsClient',
     'browser_credentials',
     'browser_profiles',
+    'managed_secrets',
 
     # Standalone functions
     'storage',

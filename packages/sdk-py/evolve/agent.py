@@ -6,7 +6,7 @@ from dataclasses import asdict, is_dataclass
 from typing import Any, Callable, Dict, List, Literal, Optional, Type, Union
 
 from .bridge import BridgeManager, SandboxNotFoundError
-from .config import AgentConfig, AgentPluginConfig, BrowserConfig, BrowserCredentialsConfig, IntegrationsSetup, SandboxProvider, SchemaOptions, StorageConfig, WorkspaceMode
+from .config import AgentConfig, AgentPluginConfig, BrowserConfig, BrowserCredentialsConfig, IntegrationsSetup, ManagedSecretRef, SandboxProvider, SchemaOptions, StorageConfig, WorkspaceMode
 from .results import AgentResponse, CheckpointInfo, ExecuteResult, OutputResult, RunCost, SessionCost, SessionStatus
 from .storage_client import StorageClient
 from . import integrations as integrations_helpers
@@ -59,6 +59,7 @@ class Evolve:
         mcp_servers: Optional[Dict[str, Any]] = None,
         skills: Optional[List[str]] = None,
         secrets: Optional[Dict[str, str]] = None,
+        managed_secrets: Optional[List[Union[ManagedSecretRef, Dict[str, Any]]]] = None,
         sandbox_id: Optional[str] = None,
         session_tag_prefix: Optional[str] = None,
         schema: Optional[Union[Type, Dict[str, Any]]] = None,
@@ -86,6 +87,7 @@ class Evolve:
             mcp_servers: MCP server configurations
             skills: Skills to enable (e.g., ['pdf', 'dev-browser'])
             secrets: Environment variables for sandbox
+            managed_secrets: Dashboard-stored managed secrets exposed as opaque env vars
             sandbox_id: Existing sandbox ID to reconnect to
             session_tag_prefix: Optional semantic label for observability log files (e.g., 'experiment-7')
             schema: Schema for structured output - Pydantic model, dataclass, or JSON Schema dict
@@ -109,6 +111,7 @@ class Evolve:
         self.browser_credentials = browser_credentials
         self.skills = skills
         self.secrets = secrets
+        self.managed_secrets = self._normalize_managed_secrets(managed_secrets)
         self.sandbox_id = sandbox_id
         self.session_tag_prefix = session_tag_prefix
         self.schema_options = schema_options or SchemaOptions()
@@ -157,6 +160,7 @@ class Evolve:
                 'plugins': self.plugins,
                 'skills': self.skills,
                 'secrets': self.secrets,
+                'managed_secrets': self.managed_secrets,
                 'sandbox_id': self.sandbox_id,
                 'session_tag_prefix': self.session_tag_prefix,
                 'schema': self._schema_json,
@@ -194,6 +198,27 @@ class Evolve:
                 raise ValueError("browser profile requires managed remote browser mode")
             return normalized
         raise ValueError("browser must be 'browser-use', 'actionbook', 'agent-browser', a managed browser config dict, or None")
+
+    @staticmethod
+    def _normalize_managed_secrets(
+        managed_secrets: Optional[List[Union[ManagedSecretRef, Dict[str, Any]]]]
+    ) -> Optional[List[Dict[str, Any]]]:
+        if managed_secrets is None:
+            return None
+        if not managed_secrets:
+            raise ValueError('managed_secrets requires at least one secret')
+        normalized: List[Dict[str, Any]] = []
+        for secret in managed_secrets:
+            if isinstance(secret, ManagedSecretRef):
+                normalized.append(secret.to_dict())
+            elif isinstance(secret, dict):
+                item = dict(secret)
+                if 'as_name' in item:
+                    item['as'] = item.pop('as_name')
+                normalized.append(item)
+            else:
+                raise ValueError('managed_secrets entries must be ManagedSecretRef or dict')
+        return normalized
 
     @staticmethod
     def _normalize_plugins(

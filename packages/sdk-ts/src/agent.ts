@@ -66,7 +66,7 @@ import {
   getGatewayUrl,
 } from "./constants";
 import { buildWorkerSystemPrompt } from "./prompts";
-import { isZodSchema } from "./utils";
+import { isEvolveManagedSandboxProvider, isZodSchema } from "./utils";
 import { SessionLogger } from "./observability";
 import { setupIntegrations } from "./integrations";
 import {
@@ -94,6 +94,23 @@ import {
   revokeProviderRuntimeToken as revokeProviderRuntimeTokenRequest,
   type ProviderRuntimeToken,
 } from "./provider-secrets";
+import {
+  bindManagedSecretRuntimeToken,
+  createManagedSecretRuntimeToken,
+  managedSecretCaSetupCommand,
+  managedSecretProxyConfigCleanupCommand,
+  managedSecretProxyConfig,
+  managedSecretProxyStartCommand,
+  managedSecretProxyEnvNames,
+  managedSecretSandboxEnvs,
+  MANAGED_SECRET_PROXY_CONFIG_PATH,
+  MANAGED_SECRET_PROXY_DIR,
+  MANAGED_SECRET_PROXY_SCRIPT,
+  MANAGED_SECRET_PROXY_SCRIPT_PATH,
+  MANAGED_SECRET_PROXY_PORT,
+  revokeManagedSecretRuntimeToken,
+  type ManagedSecretRuntimeToken,
+} from "./managed-secrets";
 
 // Re-export types for external consumers
 export type {
@@ -282,6 +299,8 @@ export class Agent {
   private droidSessionId?: string;
   private managedBrowserSession?: ManagedBrowserSession;
   private providerRuntimeToken?: ProviderRuntimeToken;
+  private managedSecretRuntimeToken?: ManagedSecretRuntimeToken;
+  private managedSecretProxy?: SandboxCommandHandle;
 
   // Skills storage
   private readonly skills?: SkillName[];
@@ -297,6 +316,17 @@ export class Agent {
   private readonly compiledValidator?: ValidateFunction;
 
   constructor(agentConfig: ResolvedAgentConfig, options: AgentOptions = {}) {
+    if (options.managedSecrets) {
+      if (agentConfig.isDirectMode) {
+        throw new Error("managed secrets are available only in gateway mode with EVOLVE_API_KEY");
+      }
+      if (options.sandboxId) {
+        throw new Error("managed secrets cannot be used with an existing sandbox; grants are sandbox-scoped.");
+      }
+      if (options.sandboxProvider && !isEvolveManagedSandboxProvider(options.sandboxProvider)) {
+        throw new Error("managed secrets require an Evolve-managed sandbox provider");
+      }
+    }
     this.agentConfig = agentConfig;
     this.options = options;
     this.workingDir = options.workingDirectory || DEFAULT_WORKING_DIR;
@@ -527,6 +557,7 @@ export class Agent {
         // Create new sandbox with full initialization
         await this.ensureManagedBrowserSession(callbacks);
         await this.ensureProviderRuntimeToken();
+        await this.ensureManagedSecretRuntimeToken();
         const envVars = this.buildEnvironmentVariables();
 
         this.sandbox = await provider.create({
@@ -535,6 +566,8 @@ export class Agent {
         });
         createdSandboxInThisCall = true;
         await this.bindProviderRuntimeToken(this.sandbox.sandboxId);
+        await this.bindManagedSecretRuntimeToken(this.sandbox.sandboxId);
+        await this.setupManagedSecretEgress(this.sandbox);
 
         await this.setupManagedBrowser(this.sandbox);
 
@@ -557,6 +590,7 @@ export class Agent {
       }
       await this.closeManagedBrowserSession().catch(() => {});
       await this.closeProviderRuntimeToken().catch(() => {});
+      await this.closeManagedSecretRuntimeToken().catch(() => {});
       this.sandboxState = "error";
       this.agentState = "error";
       this.emitLifecycle(callbacks, "sandbox_error");
@@ -710,6 +744,10 @@ export class Agent {
       );
     }
 
+    if (this.managedSecretRuntimeToken) {
+      Object.assign(envVars, managedSecretSandboxEnvs(this.managedSecretRuntimeToken));
+    }
+
     if (userSecrets) {
       Object.assign(envVars, userSecrets);
     }
@@ -742,7 +780,14 @@ export class Agent {
     Record<string, string> | undefined {
     if (!this.options.secrets) return undefined;
 
-    const reserved = new Set<string>([ENV_EVOLVE_API_KEY]);
+    const reserved = new Set<string>();
+    if (!this.agentConfig.isDirectMode) {
+      reserved.add(ENV_EVOLVE_API_KEY);
+      reserved.add(PROVIDER_RUNTIME_BINDING_ENV);
+      if (this.agentConfig.type === "gemini") {
+        reserved.add("GEMINI_DEFAULT_AUTH_TYPE");
+      }
+    }
     const add = (value?: string) => {
       if (value) reserved.add(value);
     };
@@ -751,6 +796,14 @@ export class Agent {
     add(this.registry.baseUrlEnv);
     for (const mapping of Object.values(this.registry.providerEnvMap ?? {})) {
       add(mapping.keyEnv);
+    }
+    if (this.managedSecretRuntimeToken) {
+      for (const key of managedSecretProxyEnvNames()) {
+        reserved.add(key);
+      }
+    }
+    for (const item of this.managedSecretRuntimeToken?.env ?? []) {
+      add(item.envName);
     }
 
     const safeSecrets: Record<string, string> = {};
@@ -881,6 +934,106 @@ export class Agent {
       );
     } finally {
       this.providerRuntimeToken = undefined;
+    }
+  }
+
+  private async ensureManagedSecretRuntimeToken(): Promise<void> {
+    if (this.managedSecretRuntimeToken || !this.options.managedSecrets) return;
+    this.managedSecretRuntimeToken = await createManagedSecretRuntimeToken(
+      {
+        apiKey: this.options.managedSecrets.apiKey,
+        dashboardUrl: this.options.managedSecrets.dashboardUrl,
+      },
+      {
+        sessionTag: this.sessionTag,
+        secrets: this.options.managedSecrets.secrets,
+      },
+    );
+  }
+
+  private async bindManagedSecretRuntimeToken(sandboxId: string): Promise<void> {
+    if (!this.managedSecretRuntimeToken || !this.options.managedSecrets) return;
+    const ok = await bindManagedSecretRuntimeToken(
+      {
+        apiKey: this.options.managedSecrets.apiKey,
+        dashboardUrl: this.options.managedSecrets.dashboardUrl,
+      },
+      {
+        token: this.managedSecretRuntimeToken.token,
+        sandboxId,
+      },
+    );
+    if (!ok) {
+      throw new Error("Failed to bind managed secret runtime token to sandbox");
+    }
+  }
+
+  private async setupManagedSecretEgress(sandbox: SandboxInstance): Promise<void> {
+    if (!this.managedSecretRuntimeToken) return;
+    await sandbox.files.makeDir(MANAGED_SECRET_PROXY_DIR);
+    await sandbox.commands.run(
+      `umask 077 && mkdir -p ${MANAGED_SECRET_PROXY_DIR}/certs && chmod 700 ${MANAGED_SECRET_PROXY_DIR} ${MANAGED_SECRET_PROXY_DIR}/certs`,
+      { timeoutMs: 5_000 },
+    );
+    await sandbox.files.write(MANAGED_SECRET_PROXY_SCRIPT_PATH, MANAGED_SECRET_PROXY_SCRIPT);
+    await sandbox.files.write(
+      MANAGED_SECRET_PROXY_CONFIG_PATH,
+      managedSecretProxyConfig(this.managedSecretRuntimeToken),
+    );
+    await sandbox.commands.run(
+      `chmod 700 ${MANAGED_SECRET_PROXY_SCRIPT_PATH} && chmod 600 ${MANAGED_SECRET_PROXY_CONFIG_PATH}`,
+      { timeoutMs: 5_000 },
+    );
+    await sandbox.commands.run(managedSecretCaSetupCommand(), { timeoutMs: 30_000 });
+    this.managedSecretProxy = await sandbox.commands.spawn(
+      managedSecretProxyStartCommand(),
+      { timeoutMs: 30_000 },
+    );
+    const health = await sandbox.commands.run(
+      `python3 - <<'PY'\nimport socket, sys, time\nfor _ in range(50):\n    try:\n        s = socket.create_connection(("127.0.0.1", ${MANAGED_SECRET_PROXY_PORT}), timeout=0.2)\n        s.close()\n        sys.exit(0)\n    except OSError:\n        time.sleep(0.1)\nsys.exit(1)\nPY`,
+      { timeoutMs: 10_000 },
+    );
+    if (health.exitCode !== 0) {
+      throw new Error("Managed secret egress proxy failed to start");
+    }
+    await sandbox.commands.run(managedSecretProxyConfigCleanupCommand(), { timeoutMs: 5_000 });
+  }
+
+  private async closeManagedSecretRuntimeToken(): Promise<void> {
+    const proxy = this.managedSecretProxy;
+    this.managedSecretProxy = undefined;
+    if (proxy) {
+      await proxy.kill().catch(() => false);
+    }
+    if (!this.managedSecretRuntimeToken || !this.options.managedSecrets) return;
+    const token = this.managedSecretRuntimeToken;
+    let lastError: unknown;
+    try {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const ok = await revokeManagedSecretRuntimeToken(
+            {
+              apiKey: this.options.managedSecrets.apiKey,
+              dashboardUrl: this.options.managedSecrets.dashboardUrl,
+            },
+            { token: token.token },
+          );
+          if (!ok) throw new Error("Dashboard returned ok=false");
+          return;
+        } catch (error) {
+          lastError = error;
+          if (attempt < 2) {
+            await new Promise((resolve) =>
+              setTimeout(resolve, 100 * (attempt + 1)),
+            );
+          }
+        }
+      }
+      console.warn(
+        `[Evolve] Managed secret runtime token cleanup failed: ${(lastError as Error).message}`,
+      );
+    } finally {
+      this.managedSecretRuntimeToken = undefined;
     }
   }
 
@@ -1020,6 +1173,10 @@ export class Agent {
       this.sessionLogger.flush(),
       new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
     ]);
+  }
+
+  private requiresPreRunDashboardIngest(): boolean {
+    return Boolean(this.activeProviderRuntimeToken() || this.managedSecretRuntimeToken);
   }
 
   private providerRuntimeHeaderUpdates(): Record<string, string> {
@@ -1637,6 +1794,7 @@ export class Agent {
       // Create fresh sandbox
       await this.ensureManagedBrowserSession(callbacks);
       await this.ensureProviderRuntimeToken();
+      await this.ensureManagedSecretRuntimeToken();
       const envVars = this.buildEnvironmentVariables();
       this.sandboxState = "booting";
       this.emitLifecycle(callbacks, "sandbox_boot");
@@ -1646,6 +1804,8 @@ export class Agent {
           workingDirectory: this.workingDir,
         });
         await this.bindProviderRuntimeToken(this.sandbox.sandboxId);
+        await this.bindManagedSecretRuntimeToken(this.sandbox.sandboxId);
+        await this.setupManagedSecretEgress(this.sandbox);
 
         // Restore checkpoint archive into sandbox (returns metadata for validation)
         const ckptMeta = await restoreCheckpoint(
@@ -1710,6 +1870,7 @@ export class Agent {
         }
         await this.closeManagedBrowserSession().catch(() => {});
         await this.closeProviderRuntimeToken().catch(() => {});
+        await this.closeManagedSecretRuntimeToken().catch(() => {});
         this.sandboxState = "error";
         this.agentState = "error";
         this.emitLifecycle(callbacks, "sandbox_error");
@@ -1730,7 +1891,7 @@ export class Agent {
 
     // Log the prompt (non-blocking)
     this.sessionLogger?.writePrompt(prompt);
-    if (this.activeProviderRuntimeToken()) {
+    if (this.requiresPreRunDashboardIngest()) {
       await this.flushSessionLoggerWithTimeout();
     }
 
@@ -2000,7 +2161,7 @@ export class Agent {
     // Files modified AFTER this time will be returned by getOutputFiles()
     this.lastRunTimestamp = Date.now();
 
-    if (this.activeProviderRuntimeToken()) {
+    if (this.requiresPreRunDashboardIngest()) {
       this.ensureSessionLogger(sandbox);
       this.sessionLogger?.writePrompt(command);
       await this.flushSessionLoggerWithTimeout();
@@ -2292,6 +2453,9 @@ export class Agent {
    * the continue/resume command template instead of first-run.
    */
   async setSession(sandboxId: string): Promise<void> {
+    if (this.options.managedSecrets) {
+      throw new Error("setSession() cannot be used with managed secrets; managed secret grants are sandbox-scoped.");
+    }
     // Interrupt active operation before switching sessions
     if (this.activeCommand) {
       const interrupted = await this.interrupt();
@@ -2304,6 +2468,7 @@ export class Agent {
 
     await this.rotateSession();
     await this.closeProviderRuntimeToken();
+    await this.closeManagedSecretRuntimeToken();
     await this.closeManagedBrowserSession();
 
     this.options.sandboxId = sandboxId;
@@ -2428,6 +2593,7 @@ export class Agent {
       killError = error;
     } finally {
       await this.closeProviderRuntimeToken();
+      await this.closeManagedSecretRuntimeToken();
       await this.closeManagedBrowserSession();
     }
 

@@ -54,6 +54,11 @@ export type AgentPluginConfig =
   | { source: string; ref?: string; autoUpdate?: boolean; preRelease?: boolean; skipSettings?: boolean }
   | { marketplace: string; ref?: string; sparse?: string[] };
 
+export interface ManagedSecretRef {
+  name: string;
+  as?: string;
+}
+
 // =============================================================================
 // RPC METHOD PARAMETERS
 // =============================================================================
@@ -83,6 +88,7 @@ export interface InitializeParams {
   plugins?: AgentPluginConfig[];
   skills?: string[];
   secrets?: Record<string, string>;
+  managed_secrets?: ManagedSecretRef[];
   sandbox_id?: string;
   forward_stdout?: boolean;
   forward_stderr?: boolean;
