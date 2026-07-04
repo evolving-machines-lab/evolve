@@ -183,6 +183,12 @@ const evolve = new Evolve()
         apps: ["github", "gmail"],
     })
 
+    // (optional) Dashboard-stored managed secrets (gateway mode only)
+    .withManagedSecrets([
+        { name: "GITHUB_TOKEN" },
+        { name: "SLACK_BOT_TOKEN", as: "SLACK_TOKEN" },
+    ])
+
     // (optional) Prefix for observability logs
     .withSessionTagPrefix("my-agent")
 
@@ -556,6 +562,30 @@ await evolve.run({ prompt: "Create a slide deck summarizing the uploaded notes."
 | Skill | Description | Source |
 |-------|-------------|--------|
 | `raffle-winner-picker` | Pick raffle winners randomly | [skills/raffle-winner-picker](https://github.com/evolving-machines-lab/evolve/tree/main/skills/raffle-winner-picker) |
+
+## Managed Secrets
+
+Managed secrets are available only in gateway mode (`EVOLVE_API_KEY`). Save the secret in Dashboard **Secrets** with a unique **Name** plus allowed hosts, paths, and methods. The SDK can list available names and attach the selected secrets to a run; raw values stay server-side.
+
+```ts
+import { Evolve } from "@evolvingmachines/sdk";
+
+const secrets = await Evolve.managedSecrets().list();
+
+const evolve = new Evolve()
+    .withManagedSecrets([
+        { name: "GITHUB_TOKEN" },
+        { name: "SLACK_BOT_TOKEN", as: "SLACK_TOKEN" },
+    ]);
+```
+
+Runtime behavior:
+
+- The sandbox receives the requested env var names with opaque sandbox-scoped values.
+- Code and tools read those env vars normally; Evolve substitutes real values only for allowed HTTPS egress.
+- Evolve validates allowed host, path, method, and live sandbox binding before injecting the real value.
+- Managed-secret egress is for API calls; request and response bodies are limited to 10 MiB each.
+- `.withSecrets()` is still for local raw env injection; `.withManagedSecrets()` is for Dashboard-stored values.
 
 ---
 

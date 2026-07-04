@@ -126,7 +126,7 @@ sandbox = DaytonaProvider(
 
 ```python
 import os
-from evolve import Evolve, AgentConfig, E2BProvider, StorageConfig, IntegrationsSetup
+from evolve import Evolve, AgentConfig, E2BProvider, StorageConfig, IntegrationsSetup, ManagedSecretRef
 
 # Sandbox provider (auto-resolved from E2B_API_KEY, or explicit)
 sandbox = E2BProvider(
@@ -180,6 +180,12 @@ evolve = Evolve(
 
     # (optional) Managed integrations (gateway mode only)
     integrations=IntegrationsSetup(user_id='root', apps=['gmail', 'notion']),
+
+    # (optional) Dashboard-stored managed secrets (gateway mode only)
+    managed_secrets=[
+        ManagedSecretRef(name='GITHUB_TOKEN'),
+        ManagedSecretRef(name='SLACK_BOT_TOKEN', as_name='SLACK_TOKEN'),
+    ],
 
     # (optional) Prefix for observability logs
     session_tag_prefix='my-agent',
@@ -560,6 +566,33 @@ await evolve.run(prompt='Create a slide deck summarizing the uploaded notes.')
 | Skill | Description | Source |
 |-------|-------------|--------|
 | `raffle-winner-picker` | Pick raffle winners randomly | [skills/raffle-winner-picker](https://github.com/evolving-machines-lab/evolve/tree/main/skills/raffle-winner-picker) |
+
+---
+
+## Managed Secrets
+
+Managed secrets are available only in gateway mode (`EVOLVE_API_KEY`). Save the secret in Dashboard **Secrets** with a unique **Name** plus allowed hosts, paths, and methods. The SDK can list available names and attach the selected secrets to a run; raw values stay server-side.
+
+```python
+from evolve import Evolve, ManagedSecretRef, managed_secrets
+
+available = await managed_secrets().list()
+
+evolve = Evolve(
+    managed_secrets=[
+        ManagedSecretRef(name='GITHUB_TOKEN'),
+        ManagedSecretRef(name='SLACK_BOT_TOKEN', as_name='SLACK_TOKEN'),
+    ],
+)
+```
+
+Runtime behavior:
+
+- The sandbox receives the requested env var names with opaque sandbox-scoped values.
+- Code and tools read those env vars normally; Evolve substitutes real values only for allowed HTTPS egress.
+- Evolve validates allowed host, path, method, and live sandbox binding before injecting the real value.
+- Managed-secret egress is for API calls; request and response bodies are limited to 10 MiB each.
+- `secrets` is still for local raw env injection; `managed_secrets` is for Dashboard-stored values.
 
 ---
 
