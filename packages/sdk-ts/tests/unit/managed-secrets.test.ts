@@ -303,6 +303,7 @@ function testSandboxEnvAndProxyConfigUsePlaceholders(): void {
   );
   assert(managedSecretProxyConfigCleanupCommand().includes(`rm -f ${MANAGED_SECRET_PROXY_CONFIG_PATH}`), "proxy config cleanup removes token material");
   assert(managedSecretCaSetupCommand().includes("ca-bundle.crt"), "proxy CA setup preserves system roots in a combined bundle");
+  assert(managedSecretCaSetupCommand().includes("keyUsage=critical,keyCertSign,cRLSign"), "proxy CA has key usage for strict TLS clients");
 }
 
 async function testReservedAliasRejected(): Promise<void> {
