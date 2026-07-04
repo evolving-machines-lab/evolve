@@ -33,7 +33,13 @@ import type {
 } from "./types";
 import { Agent, type AgentConfig, type AgentOptions, type AgentResponse } from "./agent";
 import type { OutputEvent } from "./parsers";
-import { isZodSchema, resolveAgentConfig, resolveDefaultSandbox } from "./utils";
+import {
+  isEvolveManagedSandboxProvider,
+  isZodSchema,
+  resolveAgentConfig,
+  resolveDefaultSandbox,
+  resolveManagedSandbox,
+} from "./utils";
 import { integrationHelpers } from "./integrations";
 import { getGatewayMcpServers, DEFAULT_DASHBOARD_URL, ENV_EVOLVE_API_KEY } from "./constants";
 import { resolveStorageConfig, createBoundStorageClient } from "./storage";
@@ -42,6 +48,12 @@ import { BROWSER_ACTIONBOOK_PROMPT, BROWSER_AGENT_BROWSER_PROMPT } from "./promp
 import { mergeBrowserSkills, normalizeBrowserConfig } from "./browser";
 import { browserCredentials as createBrowserCredentialsClient } from "./browser-credentials";
 import { browserProfiles as createBrowserProfilesClient } from "./browser-profiles";
+import {
+  managedSecrets as createManagedSecretsClient,
+  validateManagedSecretRefsForRegistry,
+  type ManagedSecretRef,
+} from "./managed-secrets";
+import { getAgentConfig } from "./registry";
 
 // =============================================================================
 // TYPES
@@ -69,6 +81,7 @@ export interface EvolveConfig {
   workingDirectory?: string;
   workspaceMode?: WorkspaceMode;
   secrets?: Record<string, string>;
+  managedSecrets?: ManagedSecretRef[];
   sandboxId?: string;
   systemPrompt?: string;
   context?: FileMap;
@@ -189,10 +202,17 @@ export class Evolve extends EventEmitter {
    * Add environment secrets
    */
   withSecrets(secrets: Record<string, string>): this {
-    if (Object.prototype.hasOwnProperty.call(secrets, ENV_EVOLVE_API_KEY)) {
-      throw new Error(`${ENV_EVOLVE_API_KEY} is reserved for Evolve-managed sandbox services and cannot be set with withSecrets()`);
-    }
     this.config.secrets = { ...this.config.secrets, ...secrets };
+    return this;
+  }
+
+  /**
+   * Attach Dashboard-stored managed secrets to the sandbox.
+   *
+   * The sandbox receives opaque env var values; raw secret values stay server-side.
+   */
+  withManagedSecrets(secrets: ManagedSecretRef[]): this {
+    this.config.managedSecrets = secrets;
     return this;
   }
 
@@ -400,6 +420,9 @@ export class Evolve extends EventEmitter {
   /** Static browser profile client for listing and deleting reusable browser profiles. */
   static browserProfiles = createBrowserProfilesClient;
 
+  /** Static managed secrets client for listing Dashboard-stored secret metadata. */
+  static managedSecrets = createManagedSecretsClient;
+
   // ===========================================================================
   // AGENT INITIALIZATION
   // ===========================================================================
@@ -410,13 +433,30 @@ export class Evolve extends EventEmitter {
   private async initializeAgent(): Promise<void> {
     // Resolve agent config (type defaults to "claude", apiKey from EVOLVE_API_KEY)
     const agentConfig = resolveAgentConfig(this.config.agent);
-
-    // Resolve sandbox provider (from config or env)
-    const sandboxProvider = this.config.sandbox ?? await resolveDefaultSandbox();
+    const registry = getAgentConfig(agentConfig.type);
 
     if (this.config.integrations && agentConfig.isDirectMode) {
       throw new Error("withIntegrations() is available only in gateway mode with EVOLVE_API_KEY");
     }
+    if (this.config.managedSecrets && agentConfig.isDirectMode) {
+      throw new Error("withManagedSecrets() is available only in gateway mode with EVOLVE_API_KEY");
+    }
+    if (this.config.managedSecrets && this.config.sandboxId) {
+      throw new Error("withManagedSecrets() cannot be used with withSession(); managed secret grants are sandbox-scoped.");
+    }
+    const managedSecrets = validateManagedSecretRefsForRegistry(
+      this.config.managedSecrets,
+      registry,
+    );
+    if (managedSecrets && this.config.sandbox && !isEvolveManagedSandboxProvider(this.config.sandbox)) {
+      throw new Error("withManagedSecrets() requires an Evolve-managed sandbox; remove withSandbox() or pass a managed sandbox provider.");
+    }
+
+    // Resolve sandbox provider (from config or env)
+    const sandboxProvider = this.config.sandbox
+      ?? (managedSecrets
+        ? await resolveManagedSandbox(agentConfig.apiKey)
+        : await resolveDefaultSandbox());
 
     // Gateway browser MCP is opt-in; user config still takes precedence.
     let browserMcpServers: Record<string, McpServerConfig> = {};
@@ -492,6 +532,13 @@ export class Evolve extends EventEmitter {
     const agentOptions: AgentOptions = {
       sandboxProvider,
       secrets: this.config.secrets,
+      managedSecrets: managedSecrets
+        ? {
+            secrets: managedSecrets,
+            apiKey: agentConfig.apiKey,
+            dashboardUrl: process.env.EVOLVE_DASHBOARD_URL || DEFAULT_DASHBOARD_URL,
+          }
+        : undefined,
       sandboxId: this.config.sandboxId,
       workingDirectory: this.config.workingDirectory,
       workspaceMode: this.config.workspaceMode,
@@ -755,6 +802,9 @@ export class Evolve extends EventEmitter {
    * Set session to connect to
    */
   async setSession(sandboxId: string): Promise<void> {
+    if (this.config.managedSecrets) {
+      throw new Error("setSession() cannot be used with withManagedSecrets(); managed secret grants are sandbox-scoped.");
+    }
     if (this.agent) {
       await this.agent.setSession(sandboxId);
     } else {

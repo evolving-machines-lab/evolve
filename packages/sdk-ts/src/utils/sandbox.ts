@@ -27,6 +27,39 @@ export function toManagedE2BKey(evolveKey: string): string {
   return `e2b_${Buffer.from(evolveKey, "utf8").toString("hex")}`;
 }
 
+const evolveManagedSandboxProviders = new WeakSet<SandboxProvider>();
+
+function markEvolveManagedSandbox(provider: SandboxProvider): SandboxProvider {
+  evolveManagedSandboxProviders.add(provider);
+  return provider;
+}
+
+export function isEvolveManagedSandboxProvider(provider: SandboxProvider): boolean {
+  return evolveManagedSandboxProviders.has(provider);
+}
+
+export async function resolveManagedSandbox(evolveKey?: string): Promise<SandboxProvider> {
+  const apiKey = evolveKey || process.env[ENV_EVOLVE_API_KEY];
+  if (!apiKey) {
+    throw new Error(`${ENV_EVOLVE_API_KEY} is required for Evolve-managed sandbox features`);
+  }
+  try {
+    const { createE2BProvider } = await import("@evolvingmachines/e2b");
+    return markEvolveManagedSandbox(
+      createE2BProvider({ apiKey: toManagedE2BKey(apiKey), apiUrl: getE2BGatewayUrl() }),
+    );
+  } catch (e) {
+    const error = e as Error;
+    if (error.message?.includes("Cannot find module") || error.message?.includes("MODULE_NOT_FOUND")) {
+      throw new Error(
+        `${ENV_EVOLVE_API_KEY} is set but @evolvingmachines/e2b failed to load.\n` +
+          "Try reinstalling: npm install @evolvingmachines/sdk"
+      );
+    }
+    throw error;
+  }
+}
+
 /**
  * Resolve default sandbox provider from environment.
  *
@@ -106,24 +139,7 @@ export async function resolveDefaultSandbox(): Promise<SandboxProvider> {
   // Gateway mode (EVOLVE_API_KEY) - fallback to gateway E2B
   const evolveKey = process.env[ENV_EVOLVE_API_KEY];
   if (evolveKey) {
-    try {
-      const { createE2BProvider } = await import("@evolvingmachines/e2b");
-
-      // Route E2B control plane through Dashboard so Evolve can enforce
-      // per-user sandbox ownership before the provider gateway injects E2B_API_KEY.
-      // Keep this on the provider instance rather than process.env so later BYOK
-      // E2B providers in the same process cannot inherit managed routing.
-      return createE2BProvider({ apiKey: toManagedE2BKey(evolveKey), apiUrl: getE2BGatewayUrl() });
-    } catch (e) {
-      const error = e as Error;
-      if (error.message?.includes("Cannot find module") || error.message?.includes("MODULE_NOT_FOUND")) {
-        throw new Error(
-          `${ENV_EVOLVE_API_KEY} is set but @evolvingmachines/e2b failed to load.\n` +
-            "Try reinstalling: npm install @evolvingmachines/sdk"
-        );
-      }
-      throw error;
-    }
+    return resolveManagedSandbox(evolveKey);
   }
 
   throw new Error(

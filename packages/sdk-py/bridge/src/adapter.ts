@@ -225,6 +225,9 @@ export class EvolveAdapter {
         authConfigs: params.integrations.auth_configs,
       });
     }
+    if (params.managed_secrets !== undefined) {
+      kit.withManagedSecrets(params.managed_secrets);
+    }
 
     return kit;
   }

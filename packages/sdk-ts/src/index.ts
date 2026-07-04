@@ -146,6 +146,14 @@ export type {
   IntegrationAccountDeleteResult,
 } from "./integrations";
 
+export { managedSecrets } from "./managed-secrets";
+export type {
+  ManagedSecretRef,
+  ManagedSecretMetadata,
+  ManagedSecretsClient,
+  ManagedSecretsClientConfig,
+} from "./managed-secrets";
+
 // Schema validation presets
 export { VALIDATION_PRESETS } from "./types";
 

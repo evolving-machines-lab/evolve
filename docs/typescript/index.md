@@ -28,6 +28,7 @@ await evolve.run({ prompt: "Hello world" });
 | Gateway, managed BYO provider keys, and direct keys | [Getting Started → Authentication](./01-getting-started.md#authentication) |
 | Gateway mode (EVOLVE_API_KEY) | [Getting Started → Gateway Mode](./01-getting-started.md#gateway-mode-evolve_api_key) |
 | Managed BYO provider keys | [Getting Started → Managed BYO Provider Keys](./01-getting-started.md#managed-byo-provider-keys) |
+| Managed secrets | [Configuration → Managed Secrets](./02-configuration.md#managed-secrets) |
 | Direct provider key mode (local BYOK) | [Getting Started → Direct Provider Key Mode](./01-getting-started.md#direct-provider-key-mode-local-byok) |
 | BYO Claude Max / Codex / Gemini subscription | [Getting Started → BYO Claude Max Subscription](./01-getting-started.md#byo-claude-max-subscription) |
 | Supported agents & models | [Getting Started → Agent Reference](./01-getting-started.md#agent-reference) |
@@ -50,6 +51,7 @@ await evolve.run({ prompt: "Hello world" });
 | `.withPlugins()` | [Configuration → Agent Plugins](./02-configuration.md#agent-plugins) |
 | `.withSkills()` | [Configuration → Agent Skills](./02-configuration.md#agent-skills) |
 | `.withIntegrations()` (managed app integrations) | [Configuration → Managed Integrations](./02-configuration.md#managed-integrations) |
+| `.withManagedSecrets()` | [Configuration → Managed Secrets](./02-configuration.md#managed-secrets) |
 | `.withMcpServers()` (STDIO / HTTP / SSE) | [Configuration → Evolve Instance](./02-configuration.md#evolve-instance) |
 | `.withSecrets()` | [Configuration → Evolve Instance](./02-configuration.md#evolve-instance) |
 | `.withStorage()` (checkpointing) | [Runtime → Storage & Checkpointing](./03-runtime.md#storage--checkpointing) |

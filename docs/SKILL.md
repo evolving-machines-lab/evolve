@@ -75,6 +75,7 @@ Read on demand when the user's task requires them:
 | Browser credentials (saved website logins) | [TS](references/typescript/02-configuration.md#browser-credentials) | [PY](references/python/02-configuration.md#browser-credentials) |
 | Agent plugins/extensions | [TS](references/typescript/02-configuration.md#agent-plugins) | [PY](references/python/02-configuration.md#agent-plugins) |
 | Agent skills catalog | [TS](references/typescript/02-configuration.md#agent-skills) | [PY](references/python/02-configuration.md#agent-skills) |
+| Managed secrets (Dashboard-stored env secrets) | [TS](references/typescript/02-configuration.md#managed-secrets) | [PY](references/python/02-configuration.md#managed-secrets) |
 | Managed integrations (auth paths, tool filtering, types) | [TS](references/typescript/02-configuration.md#managed-integrations) | [PY](references/python/02-configuration.md#managed-integrations) |
 | MCP server config (STDIO / HTTP / SSE) | [TS](references/typescript/02-configuration.md#evolve-instance) | [PY](references/python/02-configuration.md#evolve-instance) |
 

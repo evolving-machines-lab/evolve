@@ -101,6 +101,36 @@ class BrowserProfilesClientConfig:
 
 
 @dataclass
+class ManagedSecretRef:
+    """Dashboard-stored managed secret to expose as an opaque sandbox env var.
+
+    Args:
+        name: Stable Dashboard secret name, e.g. "GITHUB_TOKEN"
+        as_name: Optional env var alias in the sandbox. Defaults to name.
+    """
+    name: str
+    as_name: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        result: Dict[str, Any] = {'name': self.name}
+        if self.as_name:
+            result['as'] = self.as_name
+        return result
+
+
+@dataclass
+class ManagedSecretsClientConfig:
+    """Standalone managed secrets client configuration.
+
+    Args:
+        api_key: Evolve API key override
+        dashboard_url: Dashboard URL override
+    """
+    api_key: Optional[str] = None
+    dashboard_url: Optional[str] = None
+
+
+@dataclass
 class AgentConfig:
     """Agent configuration.
 

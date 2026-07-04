@@ -88,6 +88,7 @@ Sign up at [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai
 - Agent execution traces, observability and analytics
 - Centralized billing across all providers
 - Mix any model with any CLI agent
+- Managed secrets attached by name; raw values stay server-side
 - $10 FREE CREDITS, no CC required
 
 ### 4. Learn more

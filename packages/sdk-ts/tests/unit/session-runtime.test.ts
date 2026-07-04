@@ -312,22 +312,78 @@ async function testStatusAndLifecycle(): Promise<void> {
   );
 }
 
-async function testWithSecretsCannotOverrideEvolveApiKey(): Promise<void> {
-  console.log("\n[2] withSecrets() rejects EVOLVE_API_KEY override");
+async function testWithSecretsEvolveApiKeyBoundary(): Promise<void> {
+  console.log("\n[2] withSecrets() preserves direct EVOLVE_API_KEY but blocks gateway override");
 
-  let threw = false;
+  const directCommands = new MockCommands();
+  const directProvider = new MockProvider(
+    new MockSandbox("direct-secrets", directCommands),
+  );
+  const direct = new Evolve()
+    .withAgent({ type: "claude", providerApiKey: "anthropic-key" })
+    .withSandbox(directProvider)
+    .withSecrets({ EVOLVE_API_KEY: "raw-user-env" });
+
+  await direct.executeCommand("true", { timeoutMs: 1000 });
+  const directEnvs = directProvider.createOptions?.envs ?? {};
+  assertEqual(
+    directEnvs.EVOLVE_API_KEY,
+    "raw-user-env",
+    "direct mode preserves user-supplied EVOLVE_API_KEY",
+  );
+
+  const previousFetch = globalThis.fetch;
+  const previousDashboardUrl = process.env.EVOLVE_DASHBOARD_URL;
+  process.env.EVOLVE_DASHBOARD_URL = "https://dashboard.test";
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (
+      url === "https://dashboard.test/api/provider-secrets/runtime-token" &&
+      init?.method === "POST"
+    ) {
+      return new Response(JSON.stringify(runtimeTokenResponse("anthropic")), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch;
+
   try {
-    new Evolve().withSecrets({ EVOLVE_API_KEY: "owner-key" });
-  } catch (error) {
-    threw = true;
-    const message = error instanceof Error ? error.message : String(error);
-    assert(
-      message.includes("EVOLVE_API_KEY is reserved"),
-      "withSecrets() throws clear reserved-key error",
+    const gatewayProvider = new MockProvider(
+      new MockSandbox("gateway-secrets", new MockCommands()),
     );
-  }
+    const gateway = new Evolve()
+      .withAgent({ type: "claude", apiKey: "evolve-key" })
+      .withSandbox(gatewayProvider)
+      .withSecrets({ EVOLVE_API_KEY: "raw-user-env" });
 
-  assertEqual(threw, true, "withSecrets() rejects EVOLVE_API_KEY");
+    let threw = false;
+    try {
+      await gateway.executeCommand("true", { timeoutMs: 1000 });
+    } catch (error) {
+      threw = true;
+      const message = error instanceof Error ? error.message : String(error);
+      assert(
+        message.includes("EVOLVE_API_KEY is reserved"),
+        "gateway mode throws clear reserved-key error",
+      );
+    }
+
+    assertEqual(threw, true, "gateway mode rejects EVOLVE_API_KEY");
+    assertEqual(
+      gatewayProvider.createCalls,
+      0,
+      "gateway mode rejects before sandbox creation",
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousDashboardUrl === undefined) delete process.env.EVOLVE_DASHBOARD_URL;
+    else process.env.EVOLVE_DASHBOARD_URL = previousDashboardUrl;
+  }
 }
 
 async function testKillFlushesSessionEnd(): Promise<void> {
@@ -1788,7 +1844,7 @@ async function main(): Promise<void> {
 
   try {
     await testStatusAndLifecycle();
-    await testWithSecretsCannotOverrideEvolveApiKey();
+    await testWithSecretsEvolveApiKeyBoundary();
     await testKillFlushesSessionEnd();
     await testManagedBrowserLifecycle();
     await testManagedAgentBrowserLifecycle();
