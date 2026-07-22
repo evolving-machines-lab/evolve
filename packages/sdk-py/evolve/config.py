@@ -81,6 +81,26 @@ class BrowserCredentialsConfig:
 
 
 @dataclass
+class HostedClientConfig:
+    """Standalone hosted evals client configuration (benchmarks/evaluations).
+
+    Args:
+        api_key: Evolve API key override (default: EVOLVE_API_KEY)
+        dashboard_url: Dashboard URL override (default: EVOLVE_DASHBOARD_URL)
+    """
+    api_key: Optional[str] = None
+    dashboard_url: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        result: Dict[str, Any] = {}
+        if self.api_key:
+            result['api_key'] = self.api_key
+        if self.dashboard_url:
+            result['dashboard_url'] = self.dashboard_url
+        return result
+
+
+@dataclass
 class BrowserCredentialsClientConfig:
     """Standalone browser credentials client configuration.
 

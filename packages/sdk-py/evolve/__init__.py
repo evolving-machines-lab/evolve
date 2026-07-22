@@ -29,6 +29,19 @@ from .config import (
     StorageConfig,
     StorageCredentials,
     SessionsConfig,
+    HostedClientConfig,
+)
+from .hosted import (
+    AgentSystem,
+    Benchmark,
+    BenchmarkVersion,
+    BenchmarksClient,
+    Evaluation,
+    EvaluationPage,
+    EvaluationsClient,
+    Task,
+    TaskRun,
+    TaskRunPage,
 )
 from .results import (
     AgentResponse,
@@ -177,6 +190,24 @@ def browser_profiles(config: Optional[BrowserProfilesClientConfig] = None) -> Br
     return BrowserProfilesClient(config or BrowserProfilesClientConfig())
 
 
+def benchmarks(config: Optional[HostedClientConfig] = None) -> BenchmarksClient:
+    """Create a standalone hosted-evals benchmarks client (shared catalog).
+
+    Uses EVOLVE_API_KEY unless HostedClientConfig(api_key=...) is provided.
+    """
+    return BenchmarksClient(config)
+
+
+def evaluations(config: Optional[HostedClientConfig] = None) -> EvaluationsClient:
+    """Create a standalone hosted-evals evaluations client.
+
+    Uses EVOLVE_API_KEY unless HostedClientConfig(api_key=...) is provided.
+    watch() polls get() until the evaluation is terminal (the TypeScript SDK
+    additionally streams the SSE event feed).
+    """
+    return EvaluationsClient(config)
+
+
 def managed_secrets(config: Optional[ManagedSecretsClientConfig] = None) -> ManagedSecretsClient:
     """Create a standalone managed secrets client.
 
@@ -285,6 +316,21 @@ __all__ = [
     'browser_credentials',
     'browser_profiles',
     'managed_secrets',
+
+    # Hosted evals (benchmarks + evaluations)
+    'HostedClientConfig',
+    'BenchmarksClient',
+    'EvaluationsClient',
+    'Benchmark',
+    'BenchmarkVersion',
+    'Task',
+    'AgentSystem',
+    'Evaluation',
+    'TaskRun',
+    'EvaluationPage',
+    'TaskRunPage',
+    'benchmarks',
+    'evaluations',
 
     # Standalone functions
     'storage',

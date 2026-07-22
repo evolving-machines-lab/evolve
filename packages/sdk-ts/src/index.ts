@@ -316,3 +316,42 @@ export {
   type BrowserReplay,
   type BrowserReplayOptions,
 } from "./sessions";
+
+// =============================================================================
+// HOSTED EVALS (benchmarks + evaluations)
+// =============================================================================
+
+export {
+  benchmarks,
+  evaluations,
+  NotImplementedError,
+  type HostedClientConfig,
+  type BenchmarksClient,
+  type EvaluationsClient,
+  type Benchmark,
+  type BenchmarkVersion,
+  type BenchmarkVersionState,
+  type Task,
+  type AgentSystem,
+  type EvaluationInput,
+  type Evaluation,
+  type EvaluationStatus,
+  type TaskRun,
+  type TaskRunStatus,
+  type TaskRunCounts,
+  type EvaluationEvent,
+  type ModelUsage,
+  type OutputFile,
+  type ComparisonRow,
+  type BenchmarkImport,
+  type BenchmarkImportInput,
+  type BenchmarkImportSource,
+  type EvaluationPage,
+  type TaskRunPage,
+  type GetBenchmarkOptions,
+  type RunEvaluationOptions,
+  type ListEvaluationsOptions,
+  type ListTaskRunsOptions,
+  type WatchEvaluationOptions,
+  type ExportEvaluationOptions,
+} from "./hosted";
