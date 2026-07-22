@@ -121,6 +121,61 @@ const sandbox = createDaytonaProvider({
 
 ---
 
+## Sandbox Create Options
+
+`.withSandboxCreateOptions()` sets provider-neutral options used whenever Evolve creates a fresh sandbox — image, env vars, metadata, timeout, working directory, outbound network policy, and the user/home the agent runs as:
+
+```ts
+const evolve = new Evolve()
+    .withSandboxCreateOptions({
+        image: "my-eval-template",          // (optional) Sandbox image/template ID (provider default if omitted)
+        envs: { TASK_ID: "swe-042" },       // (optional) Extra env vars (Evolve-owned runtime vars win on conflict)
+        metadata: { suite: "nightly" },     // (optional) Provider metadata
+        timeoutMs: 3_600_000,               // (optional) Sandbox timeout
+        workingDirectory: "/repo",          // (optional) Working directory for agent commands
+        network: {                          // (optional) Outbound network policy applied at boot
+            outbound: "blocked",            // "open" | "blocked"
+            allowedDestinations: ["registry.npmjs.org", "10.0.0.0/8"],
+        },
+        user: "root",                       // (optional) Run all commands and file ops as this user
+        homeDir: "/root",                   // (optional) Home dir for agent config paths
+    });
+```
+
+**Network policy.** `outbound: "blocked"` denies all outbound traffic except `allowedDestinations` (hostnames, IPs, or CIDR ranges). Providers that cannot enforce a requested policy reject it with an error — a policy is never silently ignored.
+
+**User and home directory.** `user` runs every command and file operation as that user; providers that cannot enforce it reject it (E2B supports run-as-root). `homeDir` controls where agent config files (settings, session state, skills) are written. Defaults: `/root` when `user` is `"root"`, `/home/<user>` for other users, `/home/user` when no user is given. The default working directory follows as `<homeDir>/workspace`.
+
+Constraints:
+
+- A `user` can only be enforced at sandbox creation — combining it with `.withSession()`/`setSession()` (an existing sandbox) throws.
+- Checkpoint storage (`.withStorage()`) and managed browser features require the default `/home/user` home; combining them with a custom `user`/`homeDir` throws.
+- `envs` entries are validated like `.withSecrets()` values — Evolve-reserved variable names are rejected.
+
+---
+
+## Workspace Modes
+
+`.withWorkspaceMode()` controls what Evolve sets up in the working directory on first run:
+
+| Mode | Workspace setup | Use it for |
+|------|-----------------|------------|
+| `"knowledge"` (default) | Creates `context/`, `scripts/`, `temp/`, `output/` + writes the system prompt file | General agent work with structured deliverables |
+| `"swe"` | Same as knowledge + `repo/` for code repositories | Software-engineering tasks on cloned repos |
+| `"task"` | Nothing — the working directory is left exactly as the sandbox image provides it | Benchmark/eval task images that own the working directory |
+
+```ts
+const evolve = new Evolve()
+    .withWorkspaceMode("task")
+    .withSandboxCreateOptions({ image: "my-eval-template", workingDirectory: "/repo" });
+```
+
+In `"task"` mode the task image is the source of truth, so combining it with `.withContext()`, `.withFiles()`, `.withSystemPrompt()`, `.withSchema()`, or a browser prompt throws — those all write into the working directory.
+
+See [Runtime → Task Sandboxes & Credential Lifecycle](./03-runtime.md#task-sandboxes--credential-lifecycle) for the full eval-run pattern.
+
+---
+
 ## Evolve Instance
 
 ```ts
@@ -134,10 +189,14 @@ const evolve = new Evolve()
         apiKey: process.env.EVOLVE_API_KEY!, // (optional) Gateway mode - auto-resolves from env
         // providerApiKey: process.env.ANTHROPIC_API_KEY!, // (optional) Direct Provider Key Mode
         // oauthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN!, // (optional) Claude Max subscription
+        // externalGateway: { apiKey, baseUrl, revoke },    // (optional) Caller-minted revocable gateway credential (see Getting Started → External Gateway Mode)
     })
 
     // Sandbox provider (see 2.1 above, or auto-resolves from env)
     .withSandbox(sandbox)
+
+    // (optional) Workspace mode: "knowledge" (default) | "swe" | "task" (see Workspace Modes above)
+    .withWorkspaceMode("knowledge")
 
     // (optional) Uploads to /home/user/workspace/context/ on first run
     .withContext({
@@ -196,6 +255,13 @@ const evolve = new Evolve()
     .withStorage()
 
     // ─── Advanced ───────────────────────────────────────────────────────────────
+
+    // (optional) Provider-neutral options for fresh sandbox creation (see Sandbox Create Options above)
+    .withSandboxCreateOptions({
+        image: "my-benchmark-image",
+        network: { outbound: "blocked", allowedDestinations: ["pypi.org"] },
+        user: "root",
+    })
 
     // (optional) MCP servers for agent tools
     .withMcpServers({

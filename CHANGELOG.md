@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.0.53 - 2026-07-22
+
+### Highlights
+
+- Added agent-side eval enablers: `task` workspace mode, provider-neutral sandbox create options with outbound network policy, `prepareSandbox()`, `sealCredentials()`, and `collectArtifacts()`.
+- Added sandbox `user`/`homeDir` support (including E2B run-as-root) and the `externalGateway` credential mode for caller-minted, spend-capped, revocable gateway keys.
+- Added the hosted evals client — standalone `benchmarks()` and `evaluations()` in TypeScript and Python — and the `evolve-evals` CLI.
+- Bumped the TypeScript package to `0.0.53`.
+
+### SDK
+
+- Added `workspaceMode: "task"`: Evolve leaves the task-owned working directory untouched (no folders, prompt files, or uploads) and rejects conflicting inputs (`context`, `files`, `systemPrompt`, `schema`).
+- Added `.withSandboxCreateOptions()` / `sandbox_create_options` for fresh sandbox creation: image, envs, metadata, timeout, working directory, and an outbound network policy (`open`/`blocked` + allowed destinations) that providers must reject when they cannot enforce.
+- Added sandbox `user` and `homeDir` options; agent config, skills, session state, and spend-tracking paths now resolve against the configured home. Enforced only on fresh creates; storage and managed browser features require the default `/home/user` home.
+- Added `prepareSandbox()` / `prepare_sandbox()` to create and fully initialize the sandbox before any agent command, so orchestrators can persist the sandbox ID first.
+- Added `sealCredentials()` / `seal_credentials()`: irreversibly revokes the sandbox's model credential (gateway runtime token, or the caller's `revoke()` in external gateway mode). Fail-closed hardening: sealing throws without a revocable token, on revocation failure, or when the configuration placed other credentials in the sandbox.
+- Added `collectArtifacts()` / `collect_artifacts()`: collects declared files/directories only after sealing, with path validation, size/count limits, and loud failures for missing or unreadable roots.
+- Added `externalGateway` agent-config mode (TypeScript): caller-minted OpenAI-compatible gateway key injected like a direct-mode key, mutually exclusive with gateway and direct modes, revoked via the caller's `revoke()` on seal; Codex is routed at the external gateway with its wire API pinned.
+- Added the hosted evals client: `benchmarks()` (catalog list/get, git-source benchmark import with import polling/watch) and `evaluations()` (run with the six-input contract plus optional per-task-run spend cap, get, list, task runs, single-task-run detail, seq-paged trace, side-by-side compare, cancel, rerun-failed, export incl. Harbor bundle format, Idempotency-Key support). TypeScript `watch()` streams SSE with Last-Event-ID resume and terminal drain; the Python mirror polls.
+
+### CLI
+
+- Added the `evolve-evals` binary to `@evolvingmachines/sdk`: `run` (with `--watch` event streaming), `list`, `get`, `task-runs`, `cancel`, `rerun-failed`, `export` (`--format harbor`), and `benchmarks` catalog commands, with `--json` machine-readable output.
+
+### Documentation And Skills
+
+- Added Hosted Evals chapters (TypeScript and Python) covering both clients, the evaluation inputs, status tables, the quickstart, and the CLI.
+- Documented sandbox create options, workspace modes, external gateway mode, and the task-sandbox credential lifecycle (capped key → run → seal-revokes → collect-after-seal); synced the Evolve skill references.
+
 ## v0.0.51 - 2026-06-30
 
 ### Highlights

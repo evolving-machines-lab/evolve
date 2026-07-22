@@ -122,6 +122,65 @@ sandbox = DaytonaProvider(
 
 ---
 
+## Sandbox Create Options
+
+`sandbox_create_options` sets provider-neutral options used whenever Evolve creates a fresh sandbox — image, env vars, metadata, timeout, working directory, outbound network policy, and the user/home the agent runs as:
+
+```python
+from evolve import Evolve
+
+evolve = Evolve(
+    sandbox_create_options={
+        'image': 'my-eval-template',        # (optional) Sandbox image/template ID (provider default if omitted)
+        'envs': {'TASK_ID': 'swe-042'},     # (optional) Extra env vars (Evolve-owned runtime vars win on conflict)
+        'metadata': {'suite': 'nightly'},   # (optional) Provider metadata
+        'timeoutMs': 3600000,               # (optional) Sandbox timeout
+        'workingDirectory': '/repo',        # (optional) Working directory for agent commands
+        'network': {                        # (optional) Outbound network policy applied at boot
+            'outbound': 'blocked',          # 'open' | 'blocked'
+            'allowedDestinations': ['registry.npmjs.org', '10.0.0.0/8'],
+        },
+        'user': 'root',                     # (optional) Run all commands and file ops as this user
+        'homeDir': '/root',                 # (optional) Home dir for agent config paths
+    },
+)
+```
+
+**Network policy.** `'outbound': 'blocked'` denies all outbound traffic except `allowedDestinations` (hostnames, IPs, or CIDR ranges). Providers that cannot enforce a requested policy reject it with an error — a policy is never silently ignored.
+
+**User and home directory.** `user` runs every command and file operation as that user; providers that cannot enforce it reject it (E2B supports run-as-root). `homeDir` controls where agent config files (settings, session state, skills) are written. Defaults: `/root` when `user` is `'root'`, `/home/<user>` for other users, `/home/user` when no user is given. The default working directory follows as `<homeDir>/workspace`.
+
+Constraints:
+
+- A `user` can only be enforced at sandbox creation — combining it with `sandbox_id=`/`set_session()` (an existing sandbox) raises.
+- Checkpoint storage (`storage=`) and managed browser features require the default `/home/user` home; combining them with a custom `user`/`homeDir` raises.
+- `envs` entries are validated like `secrets=` values — Evolve-reserved variable names are rejected.
+
+---
+
+## Workspace Modes
+
+`workspace_mode` controls what Evolve sets up in the working directory on first run:
+
+| Mode | Workspace setup | Use it for |
+|------|-----------------|------------|
+| `'knowledge'` (default) | Creates `context/`, `scripts/`, `temp/`, `output/` + writes the system prompt file | General agent work with structured deliverables |
+| `'swe'` | Same as knowledge + `repo/` for code repositories | Software-engineering tasks on cloned repos |
+| `'task'` | Nothing — the working directory is left exactly as the sandbox image provides it | Benchmark/eval task images that own the working directory |
+
+```python
+evolve = Evolve(
+    workspace_mode='task',
+    sandbox_create_options={'image': 'my-eval-template', 'workingDirectory': '/repo'},
+)
+```
+
+In `'task'` mode the task image is the source of truth, so combining it with `context=`, `files=`, `system_prompt=`, `schema=`, or a browser prompt raises — those all write into the working directory.
+
+See [Runtime → Task Sandboxes & Credential Lifecycle](./03-runtime.md#task-sandboxes--credential-lifecycle) for the full eval-run pattern.
+
+---
+
 ## Evolve Instance
 
 ```python
@@ -152,6 +211,16 @@ evolve = Evolve(
 
     # Sandbox provider (auto-resolved from E2B_API_KEY, or use sandbox from above)
     sandbox=sandbox,
+
+    # (optional) Workspace mode: 'knowledge' (default) | 'swe' | 'task' (see Workspace Modes above)
+    workspace_mode='knowledge',
+
+    # (optional) Provider-neutral options for fresh sandbox creation (see Sandbox Create Options above)
+    sandbox_create_options={
+        'image': 'my-benchmark-image',
+        'network': {'outbound': 'blocked', 'allowedDestinations': ['pypi.org']},
+        'user': 'root',
+    },
 
     # (optional) Uploads to /home/user/workspace/context/ on first run
     context={

@@ -190,6 +190,34 @@ const evolve = new Evolve()
     .withSandbox(sandbox);
 ```
 
+### External Gateway Mode
+
+Use this when your application mints its own OpenAI-compatible gateway credential per run — for example a spend-capped LiteLLM virtual key per benchmark task — and needs Evolve to be able to revoke it.
+
+```ts
+const key = await myGateway.mintKey({ maxBudgetUsd: 2 }); // caller-minted, spend-capped
+
+const evolve = new Evolve()
+    .withAgent({
+        type: "codex",
+        model: "gpt-5.5",
+        externalGateway: {
+            apiKey: key.value,                        // injected like a direct-mode key
+            baseUrl: "https://gateway.example.com",   // OpenAI-compatible base URL
+            revoke: () => myGateway.revokeKey(key.id), // called by sealCredentials()
+        },
+    });
+```
+
+The credential lifecycle:
+
+1. **Mint** a capped key on your gateway and pass it via `externalGateway`.
+2. **Run** — the agent's model calls flow through your gateway under your cap. Evolve adds no spend headers or runtime tokens; budget enforcement is your gateway's.
+3. **Seal** — `evolve.sealCredentials()` calls your `revoke()`. If `revoke()` throws, sealing fails: the sandbox is never reported sealed on a failed revocation.
+4. **Collect** — after sealing, `evolve.collectArtifacts()` and credential-free `executeCommand()` (e.g. a verifier) still work; agent runs are disabled.
+
+`externalGateway` is a standalone credential mode — combining it with `apiKey` (gateway mode) or `providerApiKey`/`providerBaseUrl`/`oauthToken` (direct mode) throws at configuration time. See [Runtime → Task Sandboxes & Credential Lifecycle](./03-runtime.md#task-sandboxes--credential-lifecycle) for the sealing rules and the full eval-run pattern.
+
 ### BYO Claude Max Subscription
 
 ```bash

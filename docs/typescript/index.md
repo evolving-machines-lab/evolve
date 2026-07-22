@@ -30,6 +30,7 @@ await evolve.run({ prompt: "Hello world" });
 | Managed BYO provider keys | [Getting Started → Managed BYO Provider Keys](./01-getting-started.md#managed-byo-provider-keys) |
 | Managed secrets | [Configuration → Managed Secrets](./02-configuration.md#managed-secrets) |
 | Direct provider key mode (local BYOK) | [Getting Started → Direct Provider Key Mode](./01-getting-started.md#direct-provider-key-mode-local-byok) |
+| External gateway mode (caller-minted revocable keys) | [Getting Started → External Gateway Mode](./01-getting-started.md#external-gateway-mode) |
 | BYO Claude Max / Codex / Gemini subscription | [Getting Started → BYO Claude Max Subscription](./01-getting-started.md#byo-claude-max-subscription) |
 | Supported agents & models | [Getting Started → Agent Reference](./01-getting-started.md#agent-reference) |
 | Agent-specific options (reasoningEffort) | [Getting Started → Agent Reference](./01-getting-started.md#agent-reference) |
@@ -40,6 +41,8 @@ await evolve.run({ prompt: "Hello world" });
 |-------|------|
 | Sandbox providers (E2B, Modal, Daytona) | [Configuration → Sandbox Providers](./02-configuration.md#sandbox-providers) |
 | Provider auto-resolution from env | [Configuration → Sandbox Providers](./02-configuration.md#auto-resolution) |
+| `.withSandboxCreateOptions()` (image, network, user, homeDir) | [Configuration → Sandbox Create Options](./02-configuration.md#sandbox-create-options) |
+| `.withWorkspaceMode()` (knowledge / swe / task) | [Configuration → Workspace Modes](./02-configuration.md#workspace-modes) |
 | Evolve instance (full `.with*()` API) | [Configuration → Evolve Instance](./02-configuration.md#evolve-instance) |
 | `.withAgent()` | [Configuration → Evolve Instance](./02-configuration.md#evolve-instance) |
 | `.withSandbox()` | [Configuration → Sandbox Providers](./02-configuration.md#sandbox-providers) |
@@ -67,6 +70,8 @@ await evolve.run({ prompt: "Hello world" });
 |-------|------|
 | `run()` | [Runtime → run](./03-runtime.md#run) |
 | `executeCommand()` | [Runtime → executeCommand](./03-runtime.md#executecommand) |
+| `prepareSandbox()` | [Runtime → prepareSandbox](./03-runtime.md#preparesandbox) |
+| Task sandboxes, `sealCredentials()`, `collectArtifacts()` | [Runtime → Task Sandboxes & Credential Lifecycle](./03-runtime.md#task-sandboxes--credential-lifecycle) |
 | Streaming events (content, lifecycle, stdout, stderr) | [Streaming Events](./04-streaming.md) |
 | OutputEvent / SessionUpdate types | [Streaming → SessionUpdate Types](./04-streaming.md#sessionupdate-types) |
 | LifecycleEvent / LifecycleReason | [Streaming → LifecycleEvent](./04-streaming.md#lifecycleevent) |
@@ -89,6 +94,21 @@ await evolve.run({ prompt: "Hello world" });
 | `sessions()` client for past sessions & traces | [Runtime → Historical Sessions & Trace Download](./03-runtime.md#historical-sessions--trace-download) |
 | Observability (dashboard + local logs) | [Runtime → Observability](./03-runtime.md#observability) |
 | Error handling | [Runtime → Error Handling](./03-runtime.md#error-handling) |
+
+### Hosted Evals
+
+| Topic | Link |
+|-------|------|
+| Quickstart (run deep-swe, watch, export) | [Hosted Evals → Quickstart](./06-hosted-evals.md#quickstart) |
+| Evaluation inputs (six + per-run cap) | [Hosted Evals → Evaluation Inputs](./06-hosted-evals.md#evaluation-inputs) |
+| Statuses (evaluation, task run, benchmark version) | [Hosted Evals → Statuses](./06-hosted-evals.md#statuses) |
+| `benchmarks()` (list, get, import) | [Hosted Evals → Benchmarks Client](./06-hosted-evals.md#benchmarks-client) |
+| `evaluations()` (run, get, list, taskRuns) | [Hosted Evals → Evaluations Client](./06-hosted-evals.md#evaluations-client) |
+| `watch()` (SSE stream with resume) | [Hosted Evals → watch](./06-hosted-evals.md#watch) |
+| Task run detail & trace | [Hosted Evals → taskRuns / taskRun](./06-hosted-evals.md#taskruns--taskrun) |
+| `compare()` (aggregates + task matrix) | [Hosted Evals → compare](./06-hosted-evals.md#compare) |
+| `export()` (archive, Harbor bundle) | [Hosted Evals → export](./06-hosted-evals.md#export) |
+| `evolve-evals` CLI | [Hosted Evals → CLI](./06-hosted-evals.md#cli) |
 
 ### Swarm & Pipeline
 

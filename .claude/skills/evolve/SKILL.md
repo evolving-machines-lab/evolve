@@ -1,6 +1,6 @@
 ---
 name: evolve
-description: "Evolve SDK development for TypeScript and Python. Use when building applications with Evolve to run AI agents (Claude, Codex, Gemini, Qwen, Kimi, OpenCode, Droid) in secure sandboxes. Triggers: (1) Creating Evolve applications, (2) Configuring agents with skills, Integrations, MCP servers, (3) Using Swarm abstractions (map, filter, reduce, bestOf/best_of, verify), (4) Building Pipelines, (5) Structured output with schemas, (6) Session management, streaming, observability, (7) Checkpointing, storage & StorageClient, (8) Cost tracking (per-run and per-session spend), (9) Historical sessions & trace download via sessions() client."
+description: "Evolve SDK development for TypeScript and Python. Use when building applications with Evolve to run AI agents (Claude, Codex, Gemini, Qwen, Kimi, OpenCode, Droid) in secure sandboxes. Triggers: (1) Creating Evolve applications, (2) Configuring agents with skills, Integrations, MCP servers, (3) Using Swarm abstractions (map, filter, reduce, bestOf/best_of, verify), (4) Building Pipelines, (5) Structured output with schemas, (6) Session management, streaming, observability, (7) Checkpointing, storage & StorageClient, (8) Cost tracking (per-run and per-session spend), (9) Historical sessions & trace download via sessions() client, (10) Hosted evals via benchmarks()/evaluations() clients and the evolve-evals CLI, (11) Eval/task sandboxes (task workspace mode, sandbox create options, credential sealing, artifact collection)."
 ---
 
 # Evolve SDK
@@ -49,6 +49,7 @@ Read on demand when the user's task requires them:
 |-------------|-----------|--------|
 | Building a UI, handling real-time events | [04-streaming.md](references/typescript/04-streaming.md) | [04-streaming.md](references/python/04-streaming.md) |
 | Parallel agents (map/filter/reduce/bestOf/verify), Pipeline chaining | [05-swarm-pipeline.md](references/typescript/05-swarm-pipeline.md) | [05-swarm-pipeline.md](references/python/05-swarm-pipeline.md) |
+| Hosted benchmark evaluations (benchmarks()/evaluations(), watch, export, evolve-evals CLI) | [06-hosted-evals.md](references/typescript/06-hosted-evals.md) | [06-hosted-evals.md](references/python/06-hosted-evals.md) |
 
 ## Topic Index
 
@@ -70,6 +71,8 @@ Read on demand when the user's task requires them:
 |-------|-----------|--------|
 | Sandbox providers (E2B, Modal, Daytona) | [TS](references/typescript/02-configuration.md#sandbox-providers) | [PY](references/python/02-configuration.md#sandbox-providers) |
 | Provider auto-resolution from env | [TS](references/typescript/02-configuration.md#auto-resolution) | [PY](references/python/02-configuration.md#auto-resolution) |
+| Sandbox create options (image, network, user, homeDir) | [TS](references/typescript/02-configuration.md#sandbox-create-options) | [PY](references/python/02-configuration.md#sandbox-create-options) |
+| Workspace modes (knowledge / swe / task) | [TS](references/typescript/02-configuration.md#workspace-modes) | [PY](references/python/02-configuration.md#workspace-modes) |
 | Full builder/constructor API | [TS](references/typescript/02-configuration.md#evolve-instance) | [PY](references/python/02-configuration.md#evolve-instance) |
 | Browser automation guide (setup, live view, replay) | [TS](references/typescript/02-configuration.md#browser-automation) | [PY](references/python/02-configuration.md#browser-automation) |
 | Browser credentials (saved website logins) | [TS](references/typescript/02-configuration.md#browser-credentials) | [PY](references/python/02-configuration.md#browser-credentials) |
@@ -96,6 +99,9 @@ Read on demand when the user's task requires them:
 | Storage & checkpointing (gateway mode) | [TS](references/typescript/03-runtime.md#storage--checkpointing) | [PY](references/python/03-runtime.md#storage--checkpointing) |
 | StorageClient (list, get, download checkpoints) | [TS](references/typescript/03-runtime.md#listing--browsing-checkpoints) | [PY](references/python/03-runtime.md#listing--browsing-checkpoints) |
 | Checkpoint lineage & restore | [TS](references/typescript/03-runtime.md#checkpoint-lineage) | [PY](references/python/03-runtime.md#checkpoint-lineage) |
+| Prepare sandbox before running (`prepareSandbox` / `prepare_sandbox`) | [TS](references/typescript/03-runtime.md#preparesandbox) | [PY](references/python/03-runtime.md#prepare_sandbox) |
+| Task sandboxes, credential sealing & artifact collection | [TS](references/typescript/03-runtime.md#task-sandboxes--credential-lifecycle) | [PY](references/python/03-runtime.md#task-sandboxes--credential-lifecycle) |
+| External gateway mode (caller-minted revocable keys) | [TS](references/typescript/01-getting-started.md#external-gateway-mode) | TypeScript-only |
 | Historical sessions & trace download | [TS](references/typescript/03-runtime.md#historical-sessions--trace-download) | [PY](references/python/03-runtime.md#historical-sessions--trace-download) |
 | Cost tracking (per-run & per-session spend) | [TS](references/typescript/03-runtime.md#cost-tracking) | [PY](references/python/03-runtime.md#cost-tracking) |
 | Observability (dashboard + local logs) | [TS](references/typescript/03-runtime.md#observability) | [PY](references/python/03-runtime.md#observability) |
@@ -111,6 +117,17 @@ Read on demand when the user's task requires them:
 | Tool events (ToolCall, ToolCallUpdate, ToolKind) | [TS](references/typescript/04-streaming.md#tool-events) | [PY](references/python/04-streaming.md#toolkind-reference) |
 | Browser lifecycle event fields | [TS](references/typescript/04-streaming.md#browser-automation-streaming) | [PY](references/python/04-streaming.md#browser-automation-streaming) |
 | UI integration example | [TS](references/typescript/04-streaming.md#ui-integration-example) | [PY](references/python/04-streaming.md#ui-integration-example) |
+
+### Hosted Evals
+
+| Topic | TypeScript | Python |
+|-------|-----------|--------|
+| Quickstart (run deep-swe, watch, export) | [TS](references/typescript/06-hosted-evals.md#quickstart) | [PY](references/python/06-hosted-evals.md#quickstart) |
+| Evaluation inputs & idempotency | [TS](references/typescript/06-hosted-evals.md#evaluation-inputs) | [PY](references/python/06-hosted-evals.md#evaluation-inputs) |
+| Statuses (evaluation, task run, benchmark version) | [TS](references/typescript/06-hosted-evals.md#statuses) | [PY](references/python/06-hosted-evals.md#statuses) |
+| benchmarks() catalog client | [TS](references/typescript/06-hosted-evals.md#benchmarks-client) | [PY](references/python/06-hosted-evals.md#benchmarks-client) |
+| evaluations() client (run, watch, cancel, rerun, export) | [TS](references/typescript/06-hosted-evals.md#evaluations-client) | [PY](references/python/06-hosted-evals.md#evaluations-client) |
+| evolve-evals CLI | [TS](references/typescript/06-hosted-evals.md#cli) | [PY](references/python/06-hosted-evals.md#cli) |
 
 ### Swarm & Pipeline
 

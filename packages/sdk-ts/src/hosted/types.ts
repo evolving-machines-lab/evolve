@@ -3,8 +3,9 @@
  *
  * Mirrors the hosted benchmarks/evaluations API 1-1. Exposed types follow the
  * evals-rebuild plan's public surface exactly: Benchmark, BenchmarkVersion,
- * Task, AgentSystem, EvaluationInput, Evaluation, TaskRun, EvaluationEvent,
- * ModelUsage, OutputFile, ComparisonRow, BenchmarkImport + cursor pages.
+ * Task, AgentSystem, EvaluationInput, Evaluation, TaskRun, TaskRunDetail,
+ * TaskRunTraceEvent/Page, EvaluationEvent, ModelUsage, OutputFile,
+ * EvaluationComparison, BenchmarkImport + cursor pages.
  * Nothing Evolve-internal (worker, templates, credentials) leaks here.
  */
 
@@ -113,6 +114,8 @@ export interface EvaluationInput {
   concurrency?: number;
   /** Hard model-spend cap in USD for the whole evaluation */
   maxModelSpendUsd: number;
+  /** Optional per-task-run model-spend cap in USD */
+  maxModelSpendUsdPerTaskRun?: number;
 }
 
 /** TaskRun count histogram by status */
@@ -133,6 +136,8 @@ export interface Evaluation {
   runsPerTask: number;
   concurrency: number;
   maxModelSpendUsd: number;
+  /** Per-task-run model-spend cap, when one was set */
+  maxModelSpendUsdPerTaskRun?: number;
   spentUsd: number;
   createdAt: string;
   /** Summary-shape counts (run/cancel/rerunFailed/list) */
@@ -215,14 +220,13 @@ export interface TaskRunPage {
 }
 
 // =============================================================================
-// RESERVED SURFACE — typed, but the server endpoints do not exist yet.
-// Calling the matching client methods throws NotImplementedError.
+// TASK RUN DETAIL + TRACE
 // =============================================================================
 
 /**
  * RESERVED: an output file collected from a task run.
- * Belongs to the taskRun(runId) detail surface, which the server does not
- * expose yet. Shape may be refined when the endpoint ships.
+ * No server endpoint exposes output files yet. Shape may be refined when one
+ * ships.
  */
 export interface OutputFile {
   path: string;
@@ -231,44 +235,127 @@ export interface OutputFile {
 }
 
 /**
- * RESERVED: one row of evaluations().compare([ids]).
- * The compare endpoint does not exist on the server yet. Shape may be refined
- * when the endpoint ships.
+ * Full detail of one task run — evaluations().taskRun(id, runId).
+ * Unlike list rows, failureDetail is untruncated here.
  */
-export interface ComparisonRow {
+export interface TaskRunDetail extends TaskRun {
+  /** The evaluation this run belongs to */
   evaluationId: string;
-  benchmark: string;
-  agentSystem: AgentSystem;
-  meanScore: number | null;
-  /** Aggregates cover scored runs only; coverage is always shown */
-  scoredTaskRuns: number;
-  taskRuns: number;
+  /** Harness version actually resolved and used for the run; null until resolved */
+  harnessVersionResolved: string | null;
+}
+
+/** One trace event of a task run (seq-ordered timeline) */
+export interface TaskRunTraceEvent {
+  /** Monotonic sequence number (the ?after= resume position) */
+  seq: number;
+  /** Event type */
+  type: string;
+  data: Record<string, unknown>;
+}
+
+/** One seq-paged slice of a task run's trace — evaluations().taskRunTrace() */
+export interface TaskRunTracePage {
+  events: TaskRunTraceEvent[];
+  /**
+   * Resume position: pass back as { after } to continue. An empty page echoes
+   * the requested position (null when reading an empty trace from the start).
+   */
+  nextAfter: number | null;
+}
+
+// =============================================================================
+// COMPARE
+// =============================================================================
+
+/** Scored-run coverage behind an aggregate (means cover SCORED runs only) */
+export interface ComparisonCoverage {
+  scored: number;
+  total: number;
 }
 
 /**
- * RESERVED: source for benchmarks().import() — exactly three source kinds
- * (archive upload, git URL + ref, Harbor Hub ref). The import endpoints do not
- * exist on the server yet.
+ * One (taskKey x evaluation) cell of the compare matrix. status is the shared
+ * TaskRunStatus when the cell's runs agree, "MIXED" when they differ, and
+ * "MISSING" when the evaluation has no runs for the task.
+ */
+export interface ComparisonCell {
+  evaluationId: string;
+  status: TaskRunStatus | "MIXED" | "MISSING";
+  /** Mean score over the cell's SCORED runs; null when none. Zero is a score. */
+  score: number | null;
+  coverage: ComparisonCoverage;
+}
+
+/** One matrix row of evaluations().compare(): a task across the compared evaluations */
+export interface ComparisonTaskRow {
+  taskKey: string;
+  /** True when the evaluations' cells differ in status or score for this task */
+  disagreement: boolean;
+  /** Cells in the caller's evaluation-id order */
+  cells: ComparisonCell[];
+}
+
+/** Per-evaluation aggregate of evaluations().compare() */
+export interface ComparisonAggregate {
+  id: string;
+  /** "name@version" */
+  benchmark: string;
+  status: EvaluationStatus;
+  /** Mean score over SCORED runs only; null when none. Zero is a score. */
+  meanScore: number | null;
+  coverage: ComparisonCoverage;
+  spentUsd: number;
+  agentSystems: AgentSystem[];
+  createdAt: string;
+}
+
+/**
+ * Result of evaluations().compare([ids]): per-evaluation aggregates plus a
+ * per-task matrix (disagreement rows first).
+ */
+export interface EvaluationComparison {
+  /** Aggregates in the caller's id order */
+  evaluations: ComparisonAggregate[];
+  taskMatrix: ComparisonTaskRow[];
+}
+
+// =============================================================================
+// BENCHMARK IMPORT
+// =============================================================================
+
+/**
+ * Source for benchmarks().import() — three source kinds. Git (URL + ref) is
+ * live; archive upload and Harbor Hub refs remain RESERVED (no server
+ * endpoint yet) and throw NotImplementedError.
  */
 export type BenchmarkImportSource =
   | { archivePath: string }
   | { gitUrl: string; ref: string }
   | { harborHubRef: string };
 
-/** RESERVED: input for benchmarks().import() */
+/** Input for benchmarks().import() */
 export interface BenchmarkImportInput {
   source: BenchmarkImportSource;
+  /** Catalog benchmark name the import creates or extends */
+  benchmarkName: string;
+  /** Version label for the imported version (server-assigned when omitted) */
+  version?: string;
 }
 
 /**
- * RESERVED: a benchmark import job (parse -> validate -> activate pipeline).
- * The import endpoints do not exist on the server yet.
+ * A benchmark import job (parse -> validate -> activate pipeline).
+ * Terminal states: "READY" and "FAILED".
  */
 export interface BenchmarkImport {
+  /** Import job id (importId on the wire) */
   id: string;
-  status: string;
-  benchmark?: string;
+  /** Pipeline state, e.g. "IMPORTING", "BUILDING", "VALIDATING", "READY", "FAILED" */
+  state: string;
+  /** Failure detail when state is "FAILED" */
   error?: string | null;
+  /** Number of tasks parsed, once counted (getImport() responses) */
+  taskCount?: number;
 }
 
 // =============================================================================
@@ -309,6 +396,24 @@ export interface ListTaskRunsOptions {
   cursor?: string;
 }
 
+/** Options for evaluations().taskRunTrace() and taskRunTraceEvents() */
+export interface TaskRunTraceOptions {
+  /** Return events with seq strictly greater than this (omit = from the beginning) */
+  after?: number;
+  /** Max events per page (server default: 200, max: 1000) */
+  limit?: number;
+}
+
+/** Options for benchmarks().watchImport() */
+export interface WatchImportOptions {
+  /** Called on every observed state change (including the first state seen) */
+  onState?: (benchmarkImport: BenchmarkImport) => void;
+  /** Abort the watch (rejects with the abort reason) */
+  signal?: AbortSignal;
+  /** Poll interval between getImport() calls (default: 2000ms) */
+  pollIntervalMs?: number;
+}
+
 /** Options for evaluations().watch() */
 export interface WatchEvaluationOptions {
   /** Called for every event (replayed + live) */
@@ -347,12 +452,19 @@ export interface BenchmarksClient {
    * ref is "name" (active version's tasks) or "name@version".
    */
   get(ref: string, options?: GetBenchmarkOptions): Promise<Benchmark>;
-  /** RESERVED — throws NotImplementedError (no server endpoint yet) */
+  /**
+   * Start a benchmark import job. Git sources ({ gitUrl, ref }) are live;
+   * archive and Harbor Hub sources still throw NotImplementedError (no server
+   * endpoint yet).
+   */
   import(input: BenchmarkImportInput): Promise<BenchmarkImport>;
-  /** RESERVED — throws NotImplementedError (no server endpoint yet) */
+  /** Get an import job's state (error and taskCount when available) */
   getImport(id: string): Promise<BenchmarkImport>;
-  /** RESERVED — throws NotImplementedError (no server endpoint yet) */
-  watchImport(id: string): Promise<BenchmarkImport>;
+  /**
+   * Poll getImport() until the job reaches a terminal state ("READY" or
+   * "FAILED") and resolve with the final import.
+   */
+  watchImport(id: string, options?: WatchImportOptions): Promise<BenchmarkImport>;
 }
 
 /** Client for hosted evaluations */
@@ -365,8 +477,24 @@ export interface EvaluationsClient {
   list(options?: ListEvaluationsOptions): Promise<EvaluationPage>;
   /** List an evaluation's task runs (cursor-paged) */
   taskRuns(id: string, options?: ListTaskRunsOptions): Promise<TaskRunPage>;
-  /** RESERVED — throws NotImplementedError (no server endpoint yet) */
-  taskRun(runId: string): Promise<TaskRun>;
+  /** Get one task run's full detail (untruncated failureDetail, resolved harness version, sessionRef) */
+  taskRun(id: string, runId: string): Promise<TaskRunDetail>;
+  /** Get one seq-paged slice of a task run's trace; resume with { after: page.nextAfter } */
+  taskRunTrace(
+    id: string,
+    runId: string,
+    options?: TaskRunTraceOptions
+  ): Promise<TaskRunTracePage>;
+  /**
+   * Iterate a task run's trace events, fetching pages under the hood until
+   * the currently available trace is drained. Resume later by passing the
+   * last seen seq as { after }.
+   */
+  taskRunTraceEvents(
+    id: string,
+    runId: string,
+    options?: TaskRunTraceOptions
+  ): AsyncIterableIterator<TaskRunTraceEvent>;
   /**
    * Watch an evaluation's event stream (SSE). Replays from the beginning,
    * resumes with Last-Event-ID on reconnect (exponential backoff), and
@@ -380,8 +508,11 @@ export interface EvaluationsClient {
    * task runs of a terminal evaluation. Supports Idempotency-Key.
    */
   rerunFailed(id: string, options?: RunEvaluationOptions): Promise<Evaluation>;
-  /** RESERVED — throws NotImplementedError (no server endpoint yet) */
-  compare(ids: string[]): Promise<ComparisonRow[]>;
+  /**
+   * Side-by-side comparison of 2-5 owned evaluations: per-evaluation
+   * aggregates plus a per-task matrix with disagreement rows first.
+   */
+  compare(ids: string[]): Promise<EvaluationComparison>;
   /**
    * Download the full research archive (gzipped JSON) of a terminal
    * evaluation. Default: Buffer. { to } saves to a directory and returns the

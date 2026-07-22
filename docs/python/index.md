@@ -40,6 +40,8 @@ await evolve.run(prompt='Hello world')
 |-------|------|
 | Sandbox providers (E2B, Modal, Daytona) | [Configuration → Sandbox Providers](./02-configuration.md#sandbox-providers) |
 | Provider auto-resolution from env | [Configuration → Sandbox Providers](./02-configuration.md#auto-resolution) |
+| `sandbox_create_options=` (image, network, user, homeDir) | [Configuration → Sandbox Create Options](./02-configuration.md#sandbox-create-options) |
+| `workspace_mode=` (knowledge / swe / task) | [Configuration → Workspace Modes](./02-configuration.md#workspace-modes) |
 | Evolve instance (full constructor API) | [Configuration → Evolve Instance](./02-configuration.md#evolve-instance) |
 | `AgentConfig` | [Configuration → Evolve Instance](./02-configuration.md#evolve-instance) |
 | `sandbox=` provider | [Configuration → Sandbox Providers](./02-configuration.md#sandbox-providers) |
@@ -67,6 +69,8 @@ await evolve.run(prompt='Hello world')
 |-------|------|
 | `run()` | [Runtime → run](./03-runtime.md#run) |
 | `execute_command()` | [Runtime → execute_command](./03-runtime.md#execute_command) |
+| `prepare_sandbox()` | [Runtime → prepare_sandbox](./03-runtime.md#prepare_sandbox) |
+| Task sandboxes, `seal_credentials()`, `collect_artifacts()` | [Runtime → Task Sandboxes & Credential Lifecycle](./03-runtime.md#task-sandboxes--credential-lifecycle) |
 | Streaming events (content, lifecycle, stdout, stderr) | [Streaming Events](./04-streaming.md) |
 | OutputEvent / SessionUpdate types | [Streaming → Type Definitions](./04-streaming.md#type-definitions) |
 | LifecycleEvent / LifecycleReason | [Streaming → LifecycleEvent](./04-streaming.md#lifecycleevent-typeddict-shape) |
@@ -90,6 +94,21 @@ await evolve.run(prompt='Hello world')
 | `sessions()` client for past sessions & traces | [Runtime → Historical Sessions & Trace Download](./03-runtime.md#historical-sessions--trace-download) |
 | Observability (dashboard + local logs) | [Runtime → Observability](./03-runtime.md#observability) |
 | Error handling | [Runtime → Error Handling](./03-runtime.md#error-handling) |
+
+### Hosted Evals
+
+| Topic | Link |
+|-------|------|
+| Quickstart (run deep-swe, watch, export) | [Hosted Evals → Quickstart](./06-hosted-evals.md#quickstart) |
+| Evaluation inputs (six + per-run cap) | [Hosted Evals → Evaluation Inputs](./06-hosted-evals.md#evaluation-inputs) |
+| Statuses (evaluation, task run, benchmark version) | [Hosted Evals → Statuses](./06-hosted-evals.md#statuses) |
+| `benchmarks()` (list, get, import) | [Hosted Evals → Benchmarks Client](./06-hosted-evals.md#benchmarks-client) |
+| `evaluations()` (run, get, list, task_runs) | [Hosted Evals → Evaluations Client](./06-hosted-evals.md#evaluations-client) |
+| Task run detail & trace | [Hosted Evals → task_runs / task_run](./06-hosted-evals.md#task_runs--task_run) |
+| `watch()` (poll until terminal) | [Hosted Evals → watch](./06-hosted-evals.md#watch) |
+| `compare()` (aggregates + task matrix) | [Hosted Evals → compare](./06-hosted-evals.md#compare) |
+| `export()` (research archive, Harbor bundle) | [Hosted Evals → export](./06-hosted-evals.md#export) |
+| `evolve-evals` CLI | [Hosted Evals → CLI](./06-hosted-evals.md#cli) |
 
 ### Swarm & Pipeline
 

@@ -3,11 +3,13 @@
  * Unit Test: Hosted Evals Client (benchmarks + evaluations)
  *
  * Tests the benchmarks() and evaluations() factories against the hosted
- * evals API shapes: catalog mapping, the six-input run contract with
- * Idempotency-Key, cursor pagination, cancel/rerun-failed, gzip export
- * (buffer / file / stream), SSE watch with Last-Event-ID resume + reconnect
- * backoff, internal-field leak sentinels, and NotImplemented stubs for the
- * reserved surface (compare, taskRun detail, import trio).
+ * evals API shapes: catalog mapping, the run contract (incl. the per-task-run
+ * spend cap) with Idempotency-Key, cursor pagination, cancel/rerun-failed,
+ * gzip export (buffer / file / stream), SSE watch with Last-Event-ID resume +
+ * reconnect backoff, the git import trio (import/getImport/watchImport),
+ * compare aggregates + task matrix, taskRun detail + seq-paged trace with the
+ * async iterator, internal-field leak sentinels, and NotImplemented stubs for
+ * the still-reserved import sources (archive, Harbor Hub).
  *
  * Uses mock fetch to test without real network calls.
  *
@@ -269,27 +271,142 @@ async function testBenchmarksGet() {
   }
 }
 
-async function testBenchmarksReservedStubs() {
-  console.log("\n--- benchmarks() reserved import trio throws NotImplementedError ---");
+async function testImportGitSource() {
+  console.log("\n--- benchmarks().import() POSTs the git-source contract ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/benchmarks/import", {
+      status: 202,
+      body: { importId: "imp-1", state: "IMPORTING" },
+    });
+
+    const b = benchmarks({ apiKey: "test-key", dashboardUrl: BASE });
+    const imported = await b.import({
+      source: { gitUrl: "https://github.com/x/bench.git", ref: "main" },
+      benchmarkName: "deep-swe",
+      version: "1.2",
+    });
+
+    const call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.includes("/api/benchmarks/import"), "targets the import route");
+    assertEqual(call.init?.method, "POST", "uses POST");
+    assertEqual(
+      JSON.parse(call.init?.body as string),
+      {
+        source: { type: "git", url: "https://github.com/x/bench.git", ref: "main" },
+        benchmarkName: "deep-swe",
+        version: "1.2",
+      },
+      "body is the wire contract (type: 'git', url, ref + benchmarkName, version)"
+    );
+    const headers = call.init?.headers as Record<string, string>;
+    assertEqual(headers?.["Content-Type"], "application/json", "JSON content type");
+    assertEqual(headers?.Authorization, "Bearer test-key", "Bearer token sent");
+
+    assertEqual(imported, { id: "imp-1", state: "IMPORTING" }, "202 response mapped (importId -> id)");
+
+    // version omitted: no version key in the body
+    await b.import({
+      source: { gitUrl: "https://github.com/x/bench.git", ref: "v2" },
+      benchmarkName: "deep-swe",
+    });
+    const body2 = JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string);
+    assert(!("version" in body2), "omitted version stays out of the body");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testImportReservedSources() {
+  console.log("\n--- benchmarks().import() archive/hub sources stay reserved ---");
   installMockFetch();
   try {
     const b = benchmarks({ apiKey: "test-key", dashboardUrl: BASE });
-    for (const [name, call] of [
-      ["import", () => b.import({ source: { gitUrl: "https://x.git", ref: "main" } })],
-      ["getImport", () => b.getImport("imp-1")],
-      ["watchImport", () => b.watchImport("imp-1")],
+    for (const [name, source] of [
+      ["archivePath", { archivePath: "/tmp/bench.tar.gz" }],
+      ["harborHubRef", { harborHubRef: "hub://deep-swe@1.1" }],
     ] as const) {
       let threw = false;
       try {
-        await call();
+        await b.import({ source, benchmarkName: "deep-swe" });
       } catch (e: any) {
         threw = true;
-        assert(e instanceof NotImplementedError, `${name} throws NotImplementedError`);
+        assert(e instanceof NotImplementedError, `${name} source throws NotImplementedError`);
         assert(e.message.includes("reserved"), `${name} message explains the reservation`);
       }
-      assert(threw, `${name} throws`);
+      assert(threw, `${name} source throws`);
     }
-    assertEqual(fetchCalls.length, 0, "reserved stubs never hit the network");
+    assertEqual(fetchCalls.length, 0, "reserved sources never hit the network");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testGetImport() {
+  console.log("\n--- benchmarks().getImport() maps state/error/taskCount ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/benchmarks/import/imp-1", {
+      status: 200,
+      body: { state: "VALIDATING", error: null, taskCount: 113 },
+    });
+
+    const b = benchmarks({ apiKey: "test-key", dashboardUrl: BASE });
+    const imported = await b.getImport("imp-1");
+
+    assert(
+      fetchCalls[0].url.includes("/api/benchmarks/import/imp-1"),
+      "targets the import detail route"
+    );
+    assertEqual(
+      imported,
+      { id: "imp-1", state: "VALIDATING", error: null, taskCount: 113 },
+      "maps state/error/taskCount and backfills id from the argument"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testWatchImportPollsToTerminal() {
+  console.log("\n--- benchmarks().watchImport() polls getImport() to a terminal state ---");
+  installMockFetch();
+  try {
+    const states = [
+      { state: "IMPORTING", error: null, taskCount: 0 },
+      { state: "VALIDATING", error: null, taskCount: 113 },
+      { state: "VALIDATING", error: null, taskCount: 113 },
+      { state: "READY", error: null, taskCount: 113 },
+    ];
+    let calls = 0;
+    (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+      fetchCalls.push({ url: url.toString(), init });
+      const body = states[Math.min(calls, states.length - 1)];
+      calls++;
+      return buildMockResponse({ status: 200, body });
+    };
+
+    const b = benchmarks({ apiKey: "test-key", dashboardUrl: BASE });
+    const seen: string[] = [];
+    const final = await b.watchImport("imp-1", {
+      onState: (i) => seen.push(i.state),
+      pollIntervalMs: 1,
+    });
+
+    assertEqual(calls, 4, "polled until the terminal state");
+    assertEqual(seen, ["IMPORTING", "VALIDATING", "READY"], "onState fires only on state changes");
+    assertEqual(final.state, "READY", "resolves with the terminal import");
+    assertEqual(final.taskCount, 113, "terminal import carries taskCount");
+
+    // FAILED is terminal too, with the error surfaced
+    installMockFetch();
+    setMockResponse("/api/benchmarks/import/imp-2", {
+      status: 200,
+      body: { state: "FAILED", error: "task.yaml missing for task abc", taskCount: 0 },
+    });
+    const failed = await b.watchImport("imp-2", { pollIntervalMs: 1 });
+    assertEqual(failed.state, "FAILED", "FAILED ends the watch");
+    assertEqual(failed.error, "task.yaml missing for task abc", "failure detail surfaced");
   } finally {
     restoreFetch();
   }
@@ -328,12 +445,18 @@ async function testRunPostsSixInputs() {
       runsPerTask: 1,
       concurrency: 4,
       maxModelSpendUsd: 25,
+      maxModelSpendUsdPerTaskRun: 2.5,
     };
     const evaluation = await e.run(input, { idempotencyKey: "idem-abc" });
 
     const call = fetchCalls[fetchCalls.length - 1];
     assertEqual(call.init?.method, "POST", "uses POST");
     assertEqual(JSON.parse(call.init?.body as string), input, "body is the six-input contract");
+    assertEqual(
+      JSON.parse(call.init?.body as string).maxModelSpendUsdPerTaskRun,
+      2.5,
+      "maxModelSpendUsdPerTaskRun forwarded"
+    );
     const headers = call.init?.headers as Record<string, string>;
     assertEqual(headers?.["Idempotency-Key"], "idem-abc", "Idempotency-Key header sent");
     assertEqual(headers?.["Content-Type"], "application/json", "JSON content type");
@@ -387,6 +510,7 @@ async function testGetEvaluationDetail() {
         runsPerTask: 1,
         concurrency: 4,
         maxModelSpendUsd: 25,
+        maxModelSpendUsdPerTaskRun: 2.5,
         spentUsd: 3.5,
         agentSystems: [
           {
@@ -410,6 +534,7 @@ async function testGetEvaluationDetail() {
 
     assertEqual(evaluation.status, "RUNNING", "maps status");
     assertEqual(evaluation.benchmarkVersionState, "READY", "maps benchmarkVersionState");
+    assertEqual(evaluation.maxModelSpendUsdPerTaskRun, 2.5, "maps maxModelSpendUsdPerTaskRun");
     assertEqual(evaluation.spentUsd, 3.5, "maps spentUsd");
     assertEqual(
       evaluation.taskRunCounts,
@@ -969,25 +1094,242 @@ async function testWatchAbort() {
   }
 }
 
-async function testEvaluationsReservedStubs() {
-  console.log("\n--- evaluations() reserved compare/taskRun throw NotImplementedError ---");
+async function testTaskRunDetail() {
+  console.log("\n--- evaluations().taskRun(id, runId) maps the full run detail ---");
   installMockFetch();
   try {
+    setMockResponse("/api/evaluations/eval-1/task-runs/run-1", {
+      status: 200,
+      body: {
+        id: "run-1",
+        evaluationId: "eval-1",
+        taskKey: "abs-module-cache-flags",
+        agentSystem: { harness: "codex", model: "gpt-5.5", harnessVersion: null },
+        runNumber: 1,
+        status: "SCORED",
+        score: 1,
+        metrics: { f2p: 1 },
+        failurePhase: null,
+        failureDetail: "x".repeat(5000), // detail route: untruncated
+        phaseTimingsMs: { agentMs: 203000, verifyMs: 31000 },
+        modelUsage: { spendUsd: 0.93, spendSource: "key_info" },
+        harnessVersionResolved: "codex-cli 0.145.0",
+        sessionRef: "sess-9",
+        createdAt: "2026-07-22T00:00:00.000Z",
+        updatedAt: "2026-07-22T00:04:00.000Z",
+      },
+    });
+
     const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
-    for (const [name, call] of [
-      ["compare", () => e.compare(["eval-1", "eval-2"])],
-      ["taskRun", () => e.taskRun("run-1")],
-    ] as const) {
-      let threw = false;
-      try {
-        await call();
-      } catch (err: any) {
-        threw = true;
-        assert(err instanceof NotImplementedError, `${name} throws NotImplementedError`);
-      }
-      assert(threw, `${name} throws`);
+    const run = await e.taskRun("eval-1", "run-1");
+
+    assert(
+      fetchCalls[0].url.includes("/api/evaluations/eval-1/task-runs/run-1"),
+      "targets the task-run detail route"
+    );
+    assertEqual(run.id, "run-1", "maps id");
+    assertEqual(run.evaluationId, "eval-1", "maps evaluationId");
+    assertEqual(run.harnessVersionResolved, "codex-cli 0.145.0", "maps harnessVersionResolved");
+    assertEqual(run.sessionRef, "sess-9", "maps sessionRef");
+    assertEqual(run.failureDetail?.length, 5000, "failureDetail untruncated on the detail route");
+    assertEqual(run.score, 1, "maps score");
+    assertEqual(
+      run.agentSystem,
+      { harness: "codex", model: "gpt-5.5", harnessVersion: null },
+      "agentSystem reduced to the public triple"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testTaskRunTracePage() {
+  console.log("\n--- evaluations().taskRunTrace() forwards after/limit and maps the page ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/evaluations/eval-1/task-runs/run-1/trace", {
+      status: 200,
+      body: {
+        events: [
+          { seq: 3, type: "agent.message", data: { text: "patching" } },
+          { seq: 4, type: "phase.completed", data: { phase: "agent" } },
+        ],
+        nextAfter: 4,
+      },
+    });
+
+    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const page = await e.taskRunTrace("eval-1", "run-1", { after: 2, limit: 2 });
+
+    const url = fetchCalls[fetchCalls.length - 1].url;
+    assert(url.includes("/task-runs/run-1/trace"), "targets the trace route");
+    assert(url.includes("after=2"), "after forwarded");
+    assert(url.includes("limit=2"), "limit forwarded");
+
+    assertEqual(page.events.length, 2, "maps 2 events");
+    assertEqual(
+      page.events[0],
+      { seq: 3, type: "agent.message", data: { text: "patching" } },
+      "maps seq/type/data"
+    );
+    assertEqual(page.nextAfter, 4, "maps nextAfter");
+
+    // No options: no params at all
+    await e.taskRunTrace("eval-1", "run-1");
+    const bare = fetchCalls[fetchCalls.length - 1].url;
+    assert(!bare.includes("after=") && !bare.includes("limit="), "no params by default");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testTaskRunTraceEventsIterator() {
+  console.log("\n--- taskRunTraceEvents() drains the trace page by page ---");
+  installMockFetch();
+  try {
+    const traceCalls: (string | null)[] = [];
+    (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+      const urlStr = url.toString();
+      fetchCalls.push({ url: urlStr, init });
+      const after = new URL(urlStr).searchParams.get("after");
+      traceCalls.push(after);
+      const pages: Record<string, unknown> = {
+        // no after: first page; then resume from nextAfter
+        "": { events: [{ seq: 1, type: "a", data: {} }, { seq: 2, type: "b", data: {} }], nextAfter: 2 },
+        "2": { events: [{ seq: 3, type: "c", data: {} }], nextAfter: 3 },
+        "3": { events: [], nextAfter: 3 },
+      };
+      return buildMockResponse({ status: 200, body: pages[after ?? ""] });
+    };
+
+    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const seqs: number[] = [];
+    for await (const event of e.taskRunTraceEvents("eval-1", "run-1")) {
+      seqs.push(event.seq);
     }
-    assertEqual(fetchCalls.length, 0, "reserved stubs never hit the network");
+
+    assertEqual(seqs, [1, 2, 3], "yields every event exactly once, in seq order");
+    assertEqual(traceCalls, [null, "2", "3"], "pages resume from nextAfter");
+
+    // With an explicit page limit, a short page ends the drain without an
+    // extra empty-page request.
+    fetchCalls.length = 0;
+    traceCalls.length = 0;
+    const seqsLimited: number[] = [];
+    for await (const event of e.taskRunTraceEvents("eval-1", "run-1", { limit: 2 })) {
+      seqsLimited.push(event.seq);
+    }
+    assertEqual(seqsLimited, [1, 2, 3], "limited drain still yields every event");
+    assertEqual(traceCalls, [null, "2"], "short page (< limit) ends the drain early");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testCompare() {
+  console.log("\n--- evaluations().compare() maps aggregates + task matrix ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/evaluations/compare", {
+      status: 200,
+      body: {
+        evaluations: [
+          {
+            id: "eval-1",
+            benchmark: "deep-swe@1.1",
+            status: "COMPLETED",
+            meanScore: 0.5,
+            coverage: { scored: 4, total: 5 },
+            spentUsd: 12.5,
+            agentSystems: [
+              { id: "as-internal-1", harness: "codex", model: "gpt-5.5", harnessVersion: null },
+            ],
+            createdAt: "2026-07-22T00:00:00.000Z",
+          },
+          {
+            id: "eval-2",
+            benchmark: "deep-swe@1.1",
+            status: "COMPLETED",
+            meanScore: 0, // zero is a score, not a missing value
+            coverage: { scored: 5, total: 5 },
+            spentUsd: 9.1,
+            agentSystems: [
+              { id: "as-internal-2", harness: "claude", model: "sonnet", harnessVersion: "2.1.0" },
+            ],
+            createdAt: "2026-07-22T01:00:00.000Z",
+          },
+        ],
+        taskMatrix: [
+          {
+            taskKey: "abs-module-cache-flags",
+            disagreement: true,
+            cells: [
+              { evaluationId: "eval-1", status: "SCORED", score: 1, coverage: { scored: 1, total: 1 } },
+              { evaluationId: "eval-2", status: "MISSING", score: null, coverage: { scored: 0, total: 0 } },
+            ],
+          },
+          {
+            taskKey: "zlib-stream-reset",
+            disagreement: false,
+            cells: [
+              { evaluationId: "eval-1", status: "SCORED", score: 0, coverage: { scored: 1, total: 1 } },
+              { evaluationId: "eval-2", status: "SCORED", score: 0, coverage: { scored: 1, total: 1 } },
+            ],
+          },
+        ],
+      },
+    });
+
+    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const comparison = await e.compare(["eval-1", "eval-2"]);
+
+    const url = fetchCalls[fetchCalls.length - 1].url;
+    assert(url.includes("/api/evaluations/compare?ids=eval-1,eval-2"), "ids joined comma-separated");
+
+    assertEqual(comparison.evaluations.length, 2, "2 aggregates, in the caller's order");
+    assertEqual(comparison.evaluations[0].id, "eval-1", "maps aggregate id");
+    assertEqual(comparison.evaluations[0].meanScore, 0.5, "maps meanScore");
+    assertEqual(comparison.evaluations[0].coverage, { scored: 4, total: 5 }, "maps coverage");
+    assertEqual(comparison.evaluations[1].meanScore, 0, "zero meanScore preserved (never nulled)");
+    assertEqual(
+      comparison.evaluations[0].agentSystems,
+      [{ harness: "codex", model: "gpt-5.5", harnessVersion: null }],
+      "agentSystems reduced to the public triple"
+    );
+    const system = comparison.evaluations[0].agentSystems[0] as Record<string, unknown>;
+    assert(!("id" in system), "internal agent system id not exposed");
+
+    assertEqual(comparison.taskMatrix.length, 2, "maps matrix rows");
+    assertEqual(comparison.taskMatrix[0].disagreement, true, "maps disagreement flag");
+    assertEqual(
+      comparison.taskMatrix[0].cells[1],
+      { evaluationId: "eval-2", status: "MISSING", score: null, coverage: { scored: 0, total: 0 } },
+      "MISSING cell preserved"
+    );
+    assertEqual(comparison.taskMatrix[1].cells[0].score, 0, "zero cell score preserved");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testCompareBadIdsError() {
+  console.log("\n--- compare() surfaces the server's 400 for bad id lists ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/evaluations/compare", {
+      status: 400,
+      body: { error: "ids must list between 2 and 5 distinct evaluation ids (comma-separated)" },
+    });
+    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    let threw = false;
+    try {
+      await e.compare(["eval-1"]);
+    } catch (err: any) {
+      threw = true;
+      assert(err.message.includes("400"), "error includes status code");
+      assert(err.message.includes("between 2 and 5"), "error includes server detail");
+    }
+    assert(threw, "throws on 400");
   } finally {
     restoreFetch();
   }
@@ -1023,7 +1365,10 @@ async function main() {
   await testFactoriesRequireApiKey();
   await testBenchmarksList();
   await testBenchmarksGet();
-  await testBenchmarksReservedStubs();
+  await testImportGitSource();
+  await testImportReservedSources();
+  await testGetImport();
+  await testWatchImportPollsToTerminal();
   await testRunPostsSixInputs();
   await testRunIdempotentReplay();
   await testGetEvaluationDetail();
@@ -1043,7 +1388,11 @@ async function main() {
   await testWatchRetriesOn5xx();
   await testWatchThrowsOnNonRetryableError();
   await testWatchAbort();
-  await testEvaluationsReservedStubs();
+  await testTaskRunDetail();
+  await testTaskRunTracePage();
+  await testTaskRunTraceEventsIterator();
+  await testCompare();
+  await testCompareBadIdsError();
   await testApiErrorHandling();
 
   console.log(`\n${passed} passed, ${failed} failed`);

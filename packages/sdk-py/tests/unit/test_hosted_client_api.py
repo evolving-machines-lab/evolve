@@ -3,12 +3,14 @@ Unit tests for the standalone hosted-evals clients (benchmarks/evaluations).
 
 Coverage:
 - benchmarks().list()/get() — catalog + detail mapping, name@version refs
-- evaluations().run() — six-input body, Idempotency-Key header
+- benchmarks().import_benchmark()/get_import()/watch_import() — git import flow
+- evaluations().run() — six(+1)-input body, Idempotency-Key header
 - evaluations().get()/list()/task_runs() — mapping + cursor params
+- evaluations().task_run()/task_run_trace()/compare() — detail, trace paging, comparison
 - evaluations().cancel()/rerun_failed() — POST semantics
-- evaluations().export() — bytes and file modes
+- evaluations().export() — bytes, file, and format='harbor' modes
 - evaluations().watch() — polls get() until terminal (documented py difference)
-- Reserved surface raises NotImplementedError without touching the network
+- Reserved import sources (archive/Harbor Hub) raise NotImplementedError offline
 - Internal fields (agent system ids/digests) never leak
 
 Mocks urllib at the module boundary; no real network calls.
@@ -16,6 +18,7 @@ Mocks urllib at the module boundary; no real network calls.
 
 import gzip
 import json
+import urllib.parse as urllib_parse
 from unittest.mock import patch
 
 import pytest
@@ -150,14 +153,77 @@ class TestBenchmarks:
             await benchmarks_factory(CONFIG).get('deep-swe@1.1', version='1.0')
 
     @pytest.mark.asyncio
-    async def test_reserved_import_trio(self):
+    async def test_import_benchmark_posts_git_source(self):
+        fake = FakeUrlopen([
+            ('/api/benchmarks/import', {'importId': 'imp-1', 'state': 'IMPORTING'}),
+        ])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            job = await benchmarks_factory(CONFIG).import_benchmark(
+                {'git_url': 'https://github.com/org/bench.git', 'ref': 'v1.2.0'},
+                benchmark_name='my-benchmark',
+                version='1.2',
+            )
+
+        request = fake.requests[0]
+        assert request.get_method() == 'POST'
+        body = json.loads(request.data.decode('utf-8'))
+        assert body == {
+            'source': {'type': 'git', 'url': 'https://github.com/org/bench.git', 'ref': 'v1.2.0'},
+            'benchmarkName': 'my-benchmark',
+            'version': '1.2',
+        }
+        assert job.id == 'imp-1'
+        assert job.state == 'IMPORTING'
+
+    @pytest.mark.asyncio
+    async def test_get_import_maps_state(self):
+        fake = FakeUrlopen([
+            ('/api/benchmarks/import/imp-1', {'state': 'READY', 'error': None, 'taskCount': 113}),
+        ])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            job = await benchmarks_factory(CONFIG).get_import('imp-1')
+
+        assert job.id == 'imp-1'  # falls back to the requested id
+        assert job.state == 'READY'
+        assert job.task_count == 113
+        assert job.error is None
+
+    @pytest.mark.asyncio
+    async def test_watch_import_polls_until_terminal(self):
+        responses = iter([
+            {'state': 'IMPORTING'},
+            {'state': 'VALIDATING', 'taskCount': 113},
+            {'state': 'READY', 'taskCount': 113},
+        ])
+
+        class SequenceUrlopen(FakeUrlopen):
+            def __call__(self, request, timeout=None):
+                self.requests.append(request)
+                return FakeResponse(next(responses))
+
+        fake = SequenceUrlopen([])
+        states = []
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            done = await benchmarks_factory(CONFIG).watch_import(
+                'imp-1',
+                on_state=lambda job: states.append(job.state),
+                poll_interval_s=0.001,
+            )
+
+        assert done.state == 'READY'
+        assert done.task_count == 113
+        assert len(fake.requests) == 3
+        assert states == ['IMPORTING', 'VALIDATING', 'READY']
+
+    @pytest.mark.asyncio
+    async def test_reserved_import_sources(self):
         client = benchmarks_factory(CONFIG)
         with pytest.raises(NotImplementedError, match='reserved'):
-            await client.import_benchmark({'gitUrl': 'https://x.git', 'ref': 'main'})
+            await client.import_benchmark({'archive_path': '/tmp/b.tar.gz'}, benchmark_name='b')
         with pytest.raises(NotImplementedError, match='reserved'):
-            await client.get_import('imp-1')
-        with pytest.raises(NotImplementedError, match='reserved'):
-            await client.watch_import('imp-1')
+            await client.import_benchmark({'harbor_hub_ref': 'hub://b'}, benchmark_name='b')
+        with pytest.raises(ValueError, match='git source'):
+            await client.import_benchmark({'ref': 'main'}, benchmark_name='b')
 
 
 class TestEvaluations:
@@ -351,12 +417,217 @@ class TestEvaluations:
                 )
 
     @pytest.mark.asyncio
-    async def test_reserved_compare_and_task_run(self):
-        client = evaluations_factory(CONFIG)
-        with pytest.raises(NotImplementedError, match='reserved'):
-            await client.compare(['eval-1', 'eval-2'])
-        with pytest.raises(NotImplementedError, match='reserved'):
-            await client.task_run('run-1')
+    async def test_run_posts_per_task_run_cap(self):
+        fake = FakeUrlopen([
+            ('/api/evaluations', {**RUN_SUMMARY, 'maxModelSpendUsdPerTaskRun': 2}),
+        ])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            evaluation = await evaluations_factory(CONFIG).run(
+                benchmark='deep-swe@1.1',
+                agent_systems=[AgentSystem(harness='codex', model='gpt-5.5')],
+                max_model_spend_usd=25,
+                max_model_spend_usd_per_task_run=2,
+            )
+
+        body = json.loads(fake.requests[0].data.decode('utf-8'))
+        assert body['maxModelSpendUsdPerTaskRun'] == 2
+        assert evaluation.max_model_spend_usd_per_task_run == 2
+
+    @pytest.mark.asyncio
+    async def test_task_run_detail_mapping(self):
+        fake = FakeUrlopen([
+            ('/api/evaluations/eval-1/task-runs/run-1', {
+                'id': 'run-1',
+                'evaluationId': 'eval-1',
+                'taskKey': 'abs-module-cache-flags',
+                'agentSystem': {'harness': 'codex', 'model': 'gpt-5.5', 'harnessVersion': None},
+                'runNumber': 1,
+                'status': 'SCORED',
+                'score': 1,
+                'metrics': {'f2p': 1.0},
+                'failurePhase': None,
+                'failureDetail': None,
+                'phaseTimingsMs': {'agentMs': 203000, 'verifyMs': 41000},
+                'modelUsage': {'spendUsd': 0.93, 'spendSource': 'key_info'},
+                'harnessVersionResolved': '0.29.0',
+                'sessionRef': 'sess-9',
+                'createdAt': '2026-07-22T00:00:00.000Z',
+                'updatedAt': '2026-07-22T00:04:00.000Z',
+            }),
+        ])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            run = await evaluations_factory(CONFIG).task_run('eval-1', 'run-1')
+
+        assert '/api/evaluations/eval-1/task-runs/run-1' in fake.requests[0].full_url
+        assert run.evaluation_id == 'eval-1'
+        assert run.harness_version_resolved == '0.29.0'
+        assert run.session_ref == 'sess-9'
+        assert run.score == 1
+
+    @pytest.mark.asyncio
+    async def test_task_run_trace_paging(self):
+        fake = FakeUrlopen([
+            ('/trace', {
+                'events': [
+                    {'seq': 3, 'type': 'agent.message', 'data': {'text': 'hi'}},
+                    {'seq': 4, 'type': 'tool.call', 'data': {}},
+                ],
+                'nextAfter': 4,
+            }),
+        ])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            page = await evaluations_factory(CONFIG).task_run_trace(
+                'eval-1', 'run-1', after=2, limit=500,
+            )
+
+        url = fake.requests[0].full_url
+        assert '/api/evaluations/eval-1/task-runs/run-1/trace' in url
+        assert 'after=2' in url and 'limit=500' in url
+        assert [e.seq for e in page.events] == [3, 4]
+        assert page.events[0].type == 'agent.message'
+        assert page.next_after == 4
+
+    @pytest.mark.asyncio
+    async def test_task_run_trace_events_drains_pages(self):
+        pages = {
+            None: {'events': [{'seq': 1, 'type': 'a', 'data': {}},
+                              {'seq': 2, 'type': 'b', 'data': {}}], 'nextAfter': 2},
+            '2': {'events': [{'seq': 3, 'type': 'c', 'data': {}}], 'nextAfter': 3},
+            '3': {'events': [], 'nextAfter': 3},
+        }
+
+        class PagedUrlopen(FakeUrlopen):
+            def __call__(self, request, timeout=None):
+                self.requests.append(request)
+                url = request.full_url
+                query = urllib_parse.parse_qs(urllib_parse.urlsplit(url).query)
+                after = query.get('after', [None])[0]
+                return FakeResponse(pages[after])
+
+        fake = PagedUrlopen([])
+        seqs = []
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            async for event in evaluations_factory(CONFIG).task_run_trace_events(
+                'eval-1', 'run-1'
+            ):
+                seqs.append(event.seq)
+
+        # Every event exactly once, in seq order, resuming from nextAfter,
+        # and the drain stops on the empty page.
+        assert seqs == [1, 2, 3]
+        afters = [
+            urllib_parse.parse_qs(urllib_parse.urlsplit(r.full_url).query).get('after', [None])[0]
+            for r in fake.requests
+        ]
+        assert afters == [None, '2', '3']
+
+    @pytest.mark.asyncio
+    async def test_compare_drops_internal_agent_system_fields(self):
+        fake = FakeUrlopen([
+            ('/api/evaluations/compare', {
+                'evaluations': [
+                    {
+                        'id': 'eval-1',
+                        'benchmark': 'deep-swe@1.1',
+                        'status': 'COMPLETED',
+                        'meanScore': 0.0,  # zero is a score, never nulled
+                        'coverage': {'scored': 5, 'total': 5},
+                        'spentUsd': 3.2,
+                        'agentSystems': [
+                            {
+                                'id': 'as-internal-1',
+                                'harness': 'codex',
+                                'model': 'gpt-5.5',
+                                'harnessVersion': None,
+                                'systemDigest': 'abcd',
+                            },
+                        ],
+                        'createdAt': '2026-07-22T00:00:00.000Z',
+                    },
+                    {
+                        'id': 'eval-2',
+                        'benchmark': 'deep-swe@1.1',
+                        'status': 'COMPLETED',
+                        'meanScore': None,
+                        'coverage': {'scored': 0, 'total': 5},
+                        'spentUsd': 1.0,
+                        'agentSystems': [],
+                        'createdAt': '2026-07-22T01:00:00.000Z',
+                    },
+                ],
+                'taskMatrix': [],
+            }),
+        ])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            comparison = await evaluations_factory(CONFIG).compare(['eval-1', 'eval-2'])
+
+        system = comparison.evaluations[0].agent_systems[0]
+        assert (system.harness, system.model, system.harness_version) == ('codex', 'gpt-5.5', None)
+        assert not hasattr(system, 'id')
+        assert not hasattr(system, 'system_digest')
+        assert comparison.evaluations[0].mean_score == 0.0
+        assert comparison.evaluations[1].mean_score is None
+
+    @pytest.mark.asyncio
+    async def test_compare_maps_aggregates_and_matrix(self):
+        fake = FakeUrlopen([
+            ('/api/evaluations/compare', {
+                'evaluations': [
+                    {
+                        'id': 'eval-1',
+                        'benchmark': 'deep-swe@1.1',
+                        'status': 'COMPLETED',
+                        'meanScore': 0.62,
+                        'coverage': {'scored': 100, 'total': 113},
+                        'spentUsd': 21.4,
+                        'agentSystems': [{'harness': 'codex', 'model': 'gpt-5.5'}],
+                        'createdAt': '2026-07-22T00:00:00.000Z',
+                    },
+                ],
+                'taskMatrix': [
+                    {
+                        'taskKey': 'abs-module-cache-flags',
+                        'disagreement': True,
+                        'cells': [
+                            {
+                                'evaluationId': 'eval-1',
+                                'status': 'SCORED',
+                                'score': 1,
+                                'coverage': {'scored': 1, 'total': 1},
+                            },
+                            {
+                                'evaluationId': 'eval-2',
+                                'status': 'MISSING',
+                                'score': None,
+                                'coverage': {'scored': 0, 'total': 0},
+                            },
+                        ],
+                    },
+                ],
+            }),
+        ])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            comparison = await evaluations_factory(CONFIG).compare(['eval-1', 'eval-2'])
+
+        assert 'ids=eval-1,eval-2' in fake.requests[0].full_url
+        aggregate = comparison.evaluations[0]
+        assert aggregate.mean_score == 0.62
+        assert (aggregate.coverage.scored, aggregate.coverage.total) == (100, 113)
+        assert aggregate.agent_systems[0].harness == 'codex'
+        row = comparison.task_matrix[0]
+        assert row.disagreement is True
+        assert row.cells[1].status == 'MISSING'
+        assert row.cells[1].score is None
+
+    @pytest.mark.asyncio
+    async def test_export_harbor_format(self):
+        archive = gzip.compress(b'{}')
+        fake = FakeUrlopen([('/export', archive)])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            payload = await evaluations_factory(CONFIG).export('eval-1', format='harbor')
+
+        assert 'format=harbor' in fake.requests[0].full_url
+        assert payload == archive
 
     @pytest.mark.asyncio
     async def test_http_error_includes_status_and_detail(self):
