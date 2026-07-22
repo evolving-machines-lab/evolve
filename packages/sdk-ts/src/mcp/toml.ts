@@ -213,6 +213,10 @@ export async function writeCodexSpendProvider(
     `name = "Evolve Gateway"`,
     `base_url = ${serializeTomlValue(baseUrl)}`,
     `env_key = "OPENAI_API_KEY"`,
+    // Codex >=0.145 removed wire_api="chat"; "responses" is the only supported
+    // value and the default — pinned explicitly so a future default change
+    // cannot silently break gateway routing.
+    `wire_api = "responses"`,
     `env_http_headers = ${serializeTomlValue(providerHeaders)}`,
   ].join("\n");
   if (

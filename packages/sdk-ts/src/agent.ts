@@ -2321,9 +2321,23 @@ export class Agent {
         "Credential sealing requires a credential-minimal sandbox: omit secrets, managed secrets, integrations, MCP servers, and browser credentials",
       );
     }
+    // Mirror closeProviderRuntimeToken()'s early-return conditions exactly: if
+    // either is missing, revocation would silently no-op and sealing would be a
+    // false guarantee. Fail loudly instead.
+    if (!this.providerRuntimeToken || !this.options.providerRouting) {
+      throw new Error(
+        "Cannot seal credentials: no active provider runtime token to revoke. " +
+          "Without a gateway-issued runtime token the sandbox may hold credentials Evolve cannot revoke, so sealing would be a false guarantee.",
+      );
+    }
 
     await this.closeProviderRuntimeToken(true);
     this.credentialsSealed = true;
+  }
+
+  /** Whether sealCredentials() has completed — the sandbox holds no revocable model credential. */
+  isSealed(): boolean {
+    return this.credentialsSealed;
   }
 
   /** Collect caller-declared files or directories after the credential boundary. */

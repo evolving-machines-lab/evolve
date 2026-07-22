@@ -323,6 +323,7 @@ async function testTomlFreshConfig(): Promise<void> {
   assert(content.startsWith('model_provider = "evolve-gateway"'), "root key is first line");
   assert(content.includes("[model_providers.evolve-gateway]"), "has provider section");
   assert(content.includes('base_url = "https://gateway.example.com"'), "has base_url");
+  assert(content.includes('wire_api = "responses"'), "pins wire_api to responses");
   assert(content.includes("EVOLVE_LITELLM_CUSTOMER_ID"), "has session tag env");
   assert(content.includes("EVOLVE_LITELLM_TAGS"), "has run tag env");
 }
@@ -354,6 +355,7 @@ async function testTomlSkipsWhenAlreadyCorrect(): Promise<void> {
     'name = "Evolve Gateway"',
     'base_url = "https://gateway.example.com"',
     'env_key = "OPENAI_API_KEY"',
+    'wire_api = "responses"',
     'env_http_headers = { x-litellm-customer-id = "EVOLVE_LITELLM_CUSTOMER_ID", x-litellm-tags = "EVOLVE_LITELLM_TAGS" }',
     "",
   ].join("\n");

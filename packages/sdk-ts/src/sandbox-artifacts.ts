@@ -9,6 +9,13 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
+/**
+ * Collect declared files/directories from the sandbox as text content.
+ *
+ * TEXT-ONLY contract: contents are returned as strings. ASCII-armored formats
+ * (git patches incl. `--binary` hunks, JSON, logs) are safe; raw binary files
+ * are not and need a bytes path if ever required.
+ */
 export async function collectSandboxArtifacts(
   sandbox: SandboxInstance,
   workingDirectory: string,
@@ -31,10 +38,40 @@ export async function collectSandboxArtifacts(
     return posix.isAbsolute(value) ? value : posix.join(workingDirectory, value);
   });
 
-  const listing = await sandbox.commands.run(
-    `find -- ${roots.map(shellQuote).join(" ")} -type f -printf '%p\\0%s\\0' 2>/dev/null || true`,
-    { cwd: workingDirectory, timeoutMs: 30_000 },
+  // A missing or unreadable declared root is an infrastructure failure — it must
+  // never read as "the agent produced nothing". An empty result is legitimate
+  // only when every declared root exists and is readable.
+  const rootCheck = await sandbox.commands.run(
+    roots
+      .map(
+        (root) =>
+          `if [ ! -e ${shellQuote(root)} ]; then echo MISSING ${shellQuote(root)}; elif [ ! -r ${shellQuote(root)} ]; then echo UNREADABLE ${shellQuote(root)}; fi`,
+      )
+      .join("; "),
+    { cwd: workingDirectory, timeoutMs: 15_000 },
   );
+  const rootProblems = rootCheck.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (rootProblems.length > 0) {
+    throw new Error(`Artifact roots are not collectable: ${rootProblems.join("; ")}`);
+  }
+
+  let listing;
+  try {
+    listing = await sandbox.commands.run(
+      `find -- ${roots.map(shellQuote).join(" ")} -type f -printf '%p\\0%s\\0'`,
+      { cwd: workingDirectory, timeoutMs: 30_000 },
+    );
+  } catch (error) {
+    throw new Error(`Artifact listing failed: ${(error as Error).message}`);
+  }
+  if (listing.exitCode !== 0) {
+    throw new Error(
+      `Artifact listing failed (exit ${listing.exitCode}): ${(listing.stderr || "").slice(0, 500)}`,
+    );
+  }
   const fields = listing.stdout.split("\0");
   if (fields.at(-1) === "") fields.pop();
   if (fields.length % 2 !== 0) {

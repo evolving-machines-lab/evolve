@@ -665,6 +665,11 @@ export class Evolve extends EventEmitter {
     await this.agent.sealCredentials();
   }
 
+  /** Whether sealCredentials() has completed for the active sandbox. */
+  isSealed(): boolean {
+    return this.agent?.isSealed() ?? false;
+  }
+
   /** Collect files or directories from the working directory after credentials are sealed. */
   async collectArtifacts(paths: string[]): Promise<FileMap> {
     if (!this.agent) {

@@ -1162,7 +1162,7 @@ async function testProviderRuntimeBindFailureKillsSandbox(): Promise<void> {
         JSON.stringify({
           enabled: true,
           provider: "anthropic",
-          credentialMode: "hosted_evaluation",
+          credentialMode: "evolve_key",
           token: "evrt_token",
           bindingSecret: "evrb_binding",
           baseUrl: "https://dashboard.test/api/model-proxy/anthropic",
@@ -2048,6 +2048,62 @@ async function testCredentialSealAndArtifactCollection(): Promise<void> {
       oversizedThrew = String(error).includes("Artifact exceeds");
     }
     assert(oversizedThrew, "artifact collection rejects oversized files before download");
+
+    assert(kit.isSealed(), "isSealed() reports true after sealing");
+
+    // Missing/unreadable declared roots are infrastructure failures, never a
+    // silent empty result (a fake "agent produced nothing").
+    commands.runHandler = (command) => ({
+      exitCode: 0,
+      stdout: command.includes("MISSING") ? "MISSING '/task/gone'\n" : "",
+      stderr: "",
+    });
+    let missingRootThrew = false;
+    try {
+      await kit.collectArtifacts(["gone"]);
+    } catch (error) {
+      missingRootThrew = String(error).includes("not collectable");
+    }
+    assert(missingRootThrew, "artifact collection fails loudly on a missing declared root");
+
+    // A failing find (permissions, non-GNU find) surfaces instead of returning empty.
+    commands.runHandler = (command) => ({
+      exitCode: command.startsWith("find --") ? 1 : 0,
+      stdout: "",
+      stderr: command.startsWith("find --") ? "find: permission denied" : "",
+    });
+    let listingThrew = false;
+    try {
+      await kit.collectArtifacts(["patch.diff"]);
+    } catch (error) {
+      listingThrew = String(error).includes("Artifact listing failed");
+    }
+    assert(listingThrew, "artifact listing failure surfaces instead of silent empty map");
+
+    // Sealing without an active runtime token must throw, never fake success.
+    const commands2 = new MockCommands();
+    const sandbox2 = new MockSandbox("sealed-task-2", commands2);
+    const provider2 = new MockProvider(sandbox2);
+    const kit2 = new Evolve()
+      .withAgent({ type: "claude", apiKey: "evolve-key" })
+      .withSandbox(provider2)
+      .withWorkspaceMode("task")
+      .withWorkingDirectory("/task");
+    try {
+      await kit2.run({ prompt: "solve", timeoutMs: 10_000 });
+      assert(!kit2.isSealed(), "isSealed() reports false before sealing");
+      (kit2 as any).agent.providerRuntimeToken = undefined;
+      let tokenlessThrew = false;
+      try {
+        await kit2.sealCredentials();
+      } catch (error) {
+        tokenlessThrew = String(error).includes("no active provider runtime token");
+      }
+      assert(tokenlessThrew, "seal without an active runtime token throws instead of faking success");
+      assert(!kit2.isSealed(), "failed seal never reports sealed");
+    } finally {
+      await kit2.kill().catch(() => {});
+    }
   } finally {
     await kit.kill().catch(() => {});
     globalThis.fetch = previousFetch;
