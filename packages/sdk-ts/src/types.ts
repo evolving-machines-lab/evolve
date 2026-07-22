@@ -7,6 +7,39 @@
 
 import type { OutputEvent } from "./parsers/types";
 import type { ManagedSecretRef } from "./managed-secrets";
+import type { ZodType } from "zod";
+
+export interface EvolveEvents {
+  stdout: (chunk: string) => void;
+  stderr: (chunk: string) => void;
+  content: (event: OutputEvent) => void;
+  lifecycle: (event: LifecycleEvent) => void;
+}
+
+export interface EvolveConfig {
+  agent?: AgentConfig;
+  sandbox?: SandboxProvider;
+  sandboxCreateOptions?: SandboxCreateOptions;
+  workingDirectory?: string;
+  workspaceMode?: WorkspaceMode;
+  secrets?: Record<string, string>;
+  managedSecrets?: ManagedSecretRef[];
+  sandboxId?: string;
+  systemPrompt?: string;
+  context?: FileMap;
+  files?: FileMap;
+  mcpServers?: Record<string, McpServerConfig>;
+  browser?: BrowserConfig;
+  browserCredentials?: BrowserCredentialsConfig;
+  plugins?: AgentPluginConfig[];
+  skills?: SkillName[];
+  schema?: ZodType<unknown> | JsonSchema;
+  schemaOptions?: SchemaValidationOptions;
+  sessionTagPrefix?: string;
+  observability?: Record<string, unknown>;
+  integrations?: IntegrationsSetup;
+  storage?: StorageConfig;
+}
 
 // =============================================================================
 // SANDBOX ABSTRACTION (provider-agnostic)
@@ -64,6 +97,14 @@ export interface SandboxSpawnOptions extends SandboxRunOptions {
   stdin?: boolean;
 }
 
+/** Provider-neutral outbound network policy applied when the sandbox boots. */
+export interface SandboxNetworkPolicy {
+  /** Allow all outbound traffic, or deny it except for allowedDestinations. */
+  outbound: "open" | "blocked";
+  /** Hostnames, IP addresses, or CIDR ranges that remain reachable when blocked. */
+  allowedDestinations?: string[];
+}
+
 /** Options for creating a sandbox */
 export interface SandboxCreateOptions {
   /** Sandbox image/template ID. Provider uses its default if not specified. */
@@ -72,6 +113,8 @@ export interface SandboxCreateOptions {
   metadata?: Record<string, string>;
   timeoutMs?: number;
   workingDirectory?: string;
+  /** Providers must reject policies they cannot enforce; never silently ignore them. */
+  network?: SandboxNetworkPolicy;
 }
 
 /** Command execution capabilities */
@@ -134,7 +177,7 @@ export const AGENT_TYPES = {
 // =============================================================================
 
 /** Workspace mode determines folder structure and system prompt */
-export type WorkspaceMode = "knowledge" | "swe";
+export type WorkspaceMode = "knowledge" | "swe" | "task";
 
 /** Available skills that can be enabled */
 export type SkillName = "pdf" | "dev-browser" | (string & {});
@@ -379,6 +422,8 @@ export interface ResolvedAgentConfig {
 export interface AgentOptions {
   /** Sandbox provider (e.g., E2B) */
   sandboxProvider?: SandboxProvider;
+  /** Provider-neutral sandbox creation options forwarded on fresh creates. */
+  sandboxCreateOptions?: SandboxCreateOptions;
   /** Additional environment secrets */
   secrets?: Record<string, string>;
   /** Dashboard-stored managed secrets exposed through opaque env vars. */

@@ -152,6 +152,10 @@ export interface SandboxCreateOptions {
   workingDirectory?: string;
   /** Resource allocation for the sandbox */
   resources?: SandboxResources;
+  network?: {
+    outbound: "open" | "blocked";
+    allowedDestinations?: string[];
+  };
 }
 
 /** Options for listing sandboxes */
@@ -558,6 +562,9 @@ export class DaytonaProvider implements SandboxProvider {
   }
 
   async create(options: SandboxCreateOptions): Promise<SandboxInstance> {
+    if (options.network?.outbound === "blocked" || options.network?.allowedDestinations?.length) {
+      throw new Error("Daytona provider does not yet implement Evolve's outbound network policy");
+    }
     // Daytona uses inactivity-based auto-stop, not fixed lifetime
     // Convert timeoutMs to autoStopInterval in minutes for parity with E2B/Modal
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;

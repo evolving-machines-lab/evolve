@@ -55,7 +55,7 @@ export interface SwarmConfig {
   /** Per-worker timeout in ms (default: 1 hour) */
   timeoutMs?: number;
   /** Workspace mode (default: SDK default 'knowledge') */
-  workspaceMode?: WorkspaceMode;
+  workspaceMode?: Exclude<WorkspaceMode, "task">;
   /** Default retry configuration for all operations (per-operation config takes precedence) */
   retry?: RetryConfig;
   /** Default MCP servers for all operations (per-operation config takes precedence) */

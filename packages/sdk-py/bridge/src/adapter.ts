@@ -179,6 +179,9 @@ export class EvolveAdapter {
     if (params.sandbox_provider) {
       kit.withSandbox(this.createSandboxProvider(params.sandbox_provider));
     }
+    if (params.sandbox_create_options) {
+      kit.withSandboxCreateOptions(params.sandbox_create_options);
+    }
 
     if (params.working_directory) kit.withWorkingDirectory(params.working_directory);
     if (params.system_prompt) kit.withSystemPrompt(params.system_prompt);
@@ -248,6 +251,12 @@ export class EvolveAdapter {
         return this.run(params);
       case 'execute_command':
         return this.executeCommand(params);
+      case 'prepare_sandbox':
+        return this.prepareSandbox();
+      case 'seal_credentials':
+        return this.sealCredentials();
+      case 'collect_artifacts':
+        return this.collectArtifacts(params.paths);
       case 'upload_context':
         return this.uploadContext(params);
       case 'upload_files':
@@ -421,6 +430,23 @@ export class EvolveAdapter {
       stdout: result.stdout,
       stderr: result.stderr,
     };
+  }
+
+  async sealCredentials(): Promise<StatusResponse> {
+    this.ensureInitialized();
+    await this.evolve!.sealCredentials();
+    return { status: 'ok' };
+  }
+
+  async prepareSandbox(): Promise<string> {
+    this.ensureInitialized();
+    return this.evolve!.prepareSandbox();
+  }
+
+  async collectArtifacts(paths: string[]): Promise<{ files: EncodedFileMap }> {
+    this.ensureInitialized();
+    const files = await this.evolve!.collectArtifacts(paths);
+    return { files: encodeFiles(files) };
   }
 
   // ===========================================================================

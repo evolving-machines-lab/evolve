@@ -148,6 +148,10 @@ export interface SandboxCreateOptions {
   metadata?: Record<string, string>;
   timeoutMs?: number;
   workingDirectory?: string;
+  network?: {
+    outbound: "open" | "blocked";
+    allowedDestinations?: string[];
+  };
 }
 
 /** Options for listing sandboxes */
@@ -569,6 +573,12 @@ export class E2BProvider implements SandboxProvider {
   async create(options: SandboxCreateOptions): Promise<SandboxInstance> {
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
     const templateId = options.image ?? this.templateId ?? "evolve-all";
+    if (options.network?.outbound === "open" && options.network.allowedDestinations?.length) {
+      throw new Error("network.allowedDestinations is only valid when outbound is blocked");
+    }
+    const allowedDestinations = options.network?.allowedDestinations ?? [];
+    const usesAllowlist =
+      options.network?.outbound === "blocked" && allowedDestinations.length > 0;
 
     // Map generic 'image' to E2B's 'templateId'
     const sandbox = await E2BSandbox.create(templateId, {
@@ -577,6 +587,14 @@ export class E2BProvider implements SandboxProvider {
       envs: options.envs,
       metadata: options.metadata,
       timeoutMs,
+      allowInternetAccess:
+        options.network?.outbound !== "blocked" || usesAllowlist,
+      network: usesAllowlist
+        ? {
+            denyOut: ["0.0.0.0/0"],
+            allowOut: allowedDestinations,
+          }
+        : undefined,
     });
 
     if (options.workingDirectory) {

@@ -6,6 +6,8 @@ from .config import (
     E2BProvider,
     DaytonaProvider,
     ModalProvider,
+    SandboxCreateOptions,
+    SandboxNetworkPolicy,
     SandboxProvider,
     AgentType,
     WorkspaceMode,
@@ -261,6 +263,8 @@ __all__ = [
     'BrowserProfilesPage',
     'ManagedSecretsClient',
     'ManagedSecretMetadata',
+    'SandboxCreateOptions',
+    'SandboxNetworkPolicy',
 
     # Evolve Results
     'AgentResponse',

@@ -148,6 +148,10 @@ export interface SandboxCreateOptions {
   metadata?: Record<string, string>;
   timeoutMs?: number;
   workingDirectory?: string;
+  network?: {
+    outbound: "open" | "blocked";
+    allowedDestinations?: string[];
+  };
 }
 
 /** Options for listing sandboxes */
@@ -761,6 +765,9 @@ export class ModalProvider implements SandboxProvider {
   }
 
   async create(options: SandboxCreateOptions): Promise<SandboxInstance> {
+    if (options.network?.outbound === "blocked" || options.network?.allowedDestinations?.length) {
+      throw new Error("Modal provider does not yet implement Evolve's outbound network policy");
+    }
     const app = await this.getApp();
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
 

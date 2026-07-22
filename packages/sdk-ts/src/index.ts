@@ -169,6 +169,7 @@ export type {
   SandboxRunOptions,
   SandboxSpawnOptions,
   SandboxCreateOptions,
+  SandboxNetworkPolicy,
 } from "./types";
 
 // =============================================================================

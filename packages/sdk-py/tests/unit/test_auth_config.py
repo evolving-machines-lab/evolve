@@ -23,6 +23,17 @@ from evolve.config import AgentConfig, E2BProvider
 from evolve.bridge import BridgeManager
 
 
+class TestEvolveConstructorCompatibility:
+    """Protect the long-standing positional constructor order."""
+
+    def test_sandbox_options_do_not_shift_existing_positional_arguments(self):
+        sdk = Evolve(None, None, '/legacy/workspace', 'swe')
+
+        assert sdk.working_directory == '/legacy/workspace'
+        assert sdk.workspace_mode == 'swe'
+        assert sdk.sandbox_create_options is None
+
+
 class TestAgentConfigDataclass:
     """Test AgentConfig dataclass BYOK fields."""
 
@@ -517,6 +528,25 @@ class TestSessionRuntimeParity:
         assert params['forward_stderr'] is True
         assert params['forward_content'] is True
         assert params['forward_lifecycle'] is True
+
+    @pytest.mark.asyncio
+    async def test_initialize_forwards_sandbox_create_options(self):
+        options = {
+            'image': 'prepared-task-v1',
+            'timeoutMs': 60_000,
+            'workingDirectory': '/task',
+            'network': {
+                'outbound': 'blocked',
+                'allowedDestinations': ['dashboard.test'],
+            },
+        }
+        mock_bridge = MockBridgeManager()
+        with patch('evolve.agent.BridgeManager', return_value=mock_bridge):
+            kit = Evolve(sandbox_create_options=options)
+            await kit._ensure_initialized()
+
+        initialize_calls = [c for c in mock_bridge.calls if c[0] == 'initialize']
+        assert initialize_calls[0][1]['sandbox_create_options'] == options
 
     @pytest.mark.asyncio
     async def test_status_returns_typed_snapshot(self):

@@ -111,6 +111,7 @@ import {
   revokeManagedSecretRuntimeToken,
   type ManagedSecretRuntimeToken,
 } from "./managed-secrets";
+import { collectSandboxArtifacts } from "./sandbox-artifacts";
 
 // Re-export types for external consumers
 export type {
@@ -301,6 +302,7 @@ export class Agent {
   private providerRuntimeToken?: ProviderRuntimeToken;
   private managedSecretRuntimeToken?: ManagedSecretRuntimeToken;
   private managedSecretProxy?: SandboxCommandHandle;
+  private credentialsSealed = false;
 
   // Skills storage
   private readonly skills?: SkillName[];
@@ -329,8 +331,26 @@ export class Agent {
     }
     this.agentConfig = agentConfig;
     this.options = options;
-    this.workingDir = options.workingDirectory || DEFAULT_WORKING_DIR;
+    this.workingDir =
+      options.workingDirectory ||
+      options.sandboxCreateOptions?.workingDirectory ||
+      DEFAULT_WORKING_DIR;
     this.sandboxState = options.sandboxId ? "ready" : "stopped";
+
+    if (options.workspaceMode === "task") {
+      const generatedWorkspaceInputs = [
+        options.context,
+        options.files,
+        options.systemPrompt,
+        options.browserPrompt,
+        options.schema,
+      ];
+      if (generatedWorkspaceInputs.some(Boolean)) {
+        throw new Error(
+          'workspaceMode "task" cannot be combined with context, files, systemPrompt, browserPrompt, or schema; the task owns the working directory',
+        );
+      }
+    }
 
     // Store skills
     this.skills = options.skills;
@@ -520,6 +540,11 @@ export class Agent {
    */
   async getSandbox(callbacks?: StreamCallbacks): Promise<SandboxInstance> {
     if (this.sandbox) return this.sandbox;
+    if (this.credentialsSealed) {
+      throw new Error(
+        "Agent credentials are sealed and this Evolve instance cannot create or attach another sandbox",
+      );
+    }
 
     if (!this.options.sandboxProvider) {
       throw new Error("No sandbox provider configured");
@@ -560,10 +585,9 @@ export class Agent {
         await this.ensureManagedSecretRuntimeToken();
         const envVars = this.buildEnvironmentVariables();
 
-        this.sandbox = await provider.create({
-          envs: envVars,
-          workingDirectory: this.workingDir,
-        });
+        this.sandbox = await provider.create(
+          this.buildSandboxCreateOptions(envVars),
+        );
         createdSandboxInThisCall = true;
         await this.bindProviderRuntimeToken(this.sandbox.sandboxId);
         await this.bindManagedSecretRuntimeToken(this.sandbox.sandboxId);
@@ -776,9 +800,23 @@ export class Agent {
     return envVars;
   }
 
+  private buildSandboxCreateOptions(
+    envs: Record<string, string>,
+  ): import("./types").SandboxCreateOptions {
+    return {
+      ...this.options.sandboxCreateOptions,
+      envs,
+      workingDirectory: this.workingDir,
+    };
+  }
+
   private validatedUserSecretsForEnvironment():
     Record<string, string> | undefined {
-    if (!this.options.secrets) return undefined;
+    const supplied = {
+      ...this.options.sandboxCreateOptions?.envs,
+      ...this.options.secrets,
+    };
+    if (Object.keys(supplied).length === 0) return undefined;
 
     const reserved = new Set<string>();
     if (!this.agentConfig.isDirectMode) {
@@ -807,7 +845,7 @@ export class Agent {
     }
 
     const safeSecrets: Record<string, string> = {};
-    for (const [key, value] of Object.entries(this.options.secrets)) {
+    for (const [key, value] of Object.entries(supplied)) {
       if (reserved.has(key)) {
         throw new Error(
           `${key} is reserved for Evolve-managed sandbox services and cannot be set with secrets`,
@@ -905,36 +943,35 @@ export class Agent {
     }
   }
 
-  private async closeProviderRuntimeToken(): Promise<void> {
+  private async closeProviderRuntimeToken(strict = false): Promise<void> {
     if (!this.providerRuntimeToken || !this.options.providerRouting) return;
     const token = this.providerRuntimeToken;
     let lastError: unknown;
-    try {
-      for (let attempt = 0; attempt < 3; attempt++) {
-        try {
-          const ok = await revokeProviderRuntimeTokenRequest(
-            this.options.providerRouting,
-            {
-              token: token.token,
-            },
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const ok = await revokeProviderRuntimeTokenRequest(
+          this.options.providerRouting,
+          { token: token.token },
+        );
+        if (!ok) throw new Error("Dashboard returned ok=false");
+        this.providerRuntimeToken = undefined;
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt < 2) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, 100 * (attempt + 1)),
           );
-          if (!ok) throw new Error("Dashboard returned ok=false");
-          return;
-        } catch (error) {
-          lastError = error;
-          if (attempt < 2) {
-            await new Promise((resolve) =>
-              setTimeout(resolve, 100 * (attempt + 1)),
-            );
-          }
         }
       }
-      console.warn(
-        `[Evolve] Provider runtime token cleanup failed: ${(lastError as Error).message}`,
-      );
-    } finally {
-      this.providerRuntimeToken = undefined;
     }
+
+    const message = `Provider runtime token cleanup failed: ${(lastError as Error).message}`;
+    if (strict) {
+      throw new Error(message);
+    }
+    console.warn(`[Evolve] ${message}`);
+    this.providerRuntimeToken = undefined;
   }
 
   private async ensureManagedSecretRuntimeToken(): Promise<void> {
@@ -1487,36 +1524,35 @@ export class Agent {
   ): Promise<void> {
     const workspaceMode = this.options.workspaceMode || "knowledge";
 
-    // Create workspace folders (swe mode includes repo/)
-    const folders =
-      workspaceMode === "swe"
-        ? `${this.workingDir}/repo ${this.workingDir}/context ${this.workingDir}/scripts ${this.workingDir}/temp ${this.workingDir}/output`
-        : `${this.workingDir}/context ${this.workingDir}/scripts ${this.workingDir}/temp ${this.workingDir}/output`;
+    if (workspaceMode !== "task") {
+      // Create workspace folders (swe mode includes repo/)
+      const folders =
+        workspaceMode === "swe"
+          ? `${this.workingDir}/repo ${this.workingDir}/context ${this.workingDir}/scripts ${this.workingDir}/temp ${this.workingDir}/output`
+          : `${this.workingDir}/context ${this.workingDir}/scripts ${this.workingDir}/temp ${this.workingDir}/output`;
 
-    await sandbox.commands.run(`mkdir -p ${folders}`, { timeoutMs: 30000 });
+      await sandbox.commands.run(`mkdir -p ${folders}`, { timeoutMs: 30000 });
 
-    // Write system prompt file (skip on restore — checkpoint tar has the correct one)
-    if (!opts?.skipSystemPrompt) {
-      const fullPrompt = buildWorkerSystemPrompt({
-        workingDir: this.workingDir,
-        systemPrompt: this.options.systemPrompt,
-        browserPrompt: this.options.browserPrompt,
-        schema: this.zodSchema || this.jsonSchema,
-        mode: workspaceMode,
-      });
+      // Write system prompt file (skip on restore — checkpoint tar has the correct one)
+      if (!opts?.skipSystemPrompt) {
+        const fullPrompt = buildWorkerSystemPrompt({
+          workingDir: this.workingDir,
+          systemPrompt: this.options.systemPrompt,
+          browserPrompt: this.options.browserPrompt,
+          schema: this.zodSchema || this.jsonSchema,
+          mode: workspaceMode,
+        });
 
-      const filePath = `${this.workingDir}/${this.registry.systemPromptFile}`;
-      await sandbox.files.write(filePath, fullPrompt);
-    }
+        const filePath = `${this.workingDir}/${this.registry.systemPromptFile}`;
+        await sandbox.files.write(filePath, fullPrompt);
+      }
 
-    // Upload context files
-    if (this.options.context) {
-      await this.uploadContextFiles(sandbox, this.options.context);
-    }
-
-    // Upload workspace files
-    if (this.options.files) {
-      await this.uploadWorkspaceFiles(sandbox, this.options.files);
+      if (this.options.context) {
+        await this.uploadContextFiles(sandbox, this.options.context);
+      }
+      if (this.options.files) {
+        await this.uploadWorkspaceFiles(sandbox, this.options.files);
+      }
     }
 
     // Setup managed integrations and MCP servers
@@ -1738,6 +1774,11 @@ export class Agent {
     options: RunOptions,
     callbacks?: StreamCallbacks,
   ): Promise<AgentResponse> {
+    if (this.credentialsSealed) {
+      throw new Error(
+        "Agent credentials are sealed; this Evolve instance cannot run the agent again",
+      );
+    }
     const {
       prompt,
       timeoutMs = DEFAULT_TIMEOUT_MS,
@@ -1799,10 +1840,9 @@ export class Agent {
       this.sandboxState = "booting";
       this.emitLifecycle(callbacks, "sandbox_boot");
       try {
-        this.sandbox = await this.options.sandboxProvider.create({
-          envs: envVars,
-          workingDirectory: this.workingDir,
-        });
+        this.sandbox = await this.options.sandboxProvider.create(
+          this.buildSandboxCreateOptions(envVars),
+        );
         await this.bindProviderRuntimeToken(this.sandbox.sandboxId);
         await this.bindManagedSecretRuntimeToken(this.sandbox.sandboxId);
         await this.setupManagedSecretEgress(this.sandbox);
@@ -2155,7 +2195,9 @@ export class Agent {
       );
     }
     const sandbox = await this.getSandbox(callbacks);
-    await this.ensureProviderRuntimeToken();
+    if (!this.credentialsSealed) {
+      await this.ensureProviderRuntimeToken();
+    }
 
     // Track turn start time BEFORE process starts (for output file filtering)
     // Files modified AFTER this time will be returned by getOutputFiles()
@@ -2180,7 +2222,9 @@ export class Agent {
       callbacks?.onStderr?.(chunk);
     };
 
-    const commandEnvs = this.buildProviderRuntimeProcessEnvs();
+    const commandEnvs = this.credentialsSealed
+      ? {}
+      : this.buildProviderRuntimeProcessEnvs();
     const handle = await sandbox.commands.spawn(command, {
       cwd: this.workingDir,
       timeoutMs,
@@ -2241,6 +2285,59 @@ export class Agent {
       stdout: stdout || result.stdout || "",
       stderr: stderr || result.stderr || "",
     };
+  }
+
+  /**
+   * Permanently revoke the model capability attached to this sandbox.
+   * This is intentionally fail-closed: configurations that may have placed
+   * other credentials in the sandbox cannot claim to be sealed.
+   */
+  async sealCredentials(): Promise<void> {
+    if (this.credentialsSealed) return;
+    if (!this.sandbox) {
+      throw new Error("No active sandbox. Call run() or executeCommand() first.");
+    }
+    if (this.activeCommand) {
+      throw new Error("Cannot seal credentials while a process is running.");
+    }
+    if (this.agentConfig.isDirectMode) {
+      throw new Error(
+        "Credential sealing requires gateway mode; direct provider credentials cannot be revoked by Evolve",
+      );
+    }
+
+    const unsafeInputs = [
+      this.options.secrets && Object.keys(this.options.secrets).length > 0,
+      this.options.sandboxCreateOptions?.envs &&
+        Object.keys(this.options.sandboxCreateOptions.envs).length > 0,
+      this.options.managedSecrets,
+      this.options.integrations,
+      this.options.mcpServers && Object.keys(this.options.mcpServers).length > 0,
+      this.options.managedBrowser,
+      this.options.browserCredentials,
+    ];
+    if (unsafeInputs.some(Boolean)) {
+      throw new Error(
+        "Credential sealing requires a credential-minimal sandbox: omit secrets, managed secrets, integrations, MCP servers, and browser credentials",
+      );
+    }
+
+    await this.closeProviderRuntimeToken(true);
+    this.credentialsSealed = true;
+  }
+
+  /** Collect caller-declared files or directories after the credential boundary. */
+  async collectArtifacts(paths: string[]): Promise<FileMap> {
+    if (!this.credentialsSealed) {
+      throw new Error("Call sealCredentials() before collecting artifacts.");
+    }
+    if (!this.sandbox) {
+      throw new Error("No active sandbox.");
+    }
+    if (this.activeCommand) {
+      throw new Error("Cannot collect artifacts while a process is running.");
+    }
+    return collectSandboxArtifacts(this.sandbox, this.workingDir, paths);
   }
 
   // ===========================================================================
@@ -2453,6 +2550,11 @@ export class Agent {
    * the continue/resume command template instead of first-run.
    */
   async setSession(sandboxId: string): Promise<void> {
+    if (this.credentialsSealed) {
+      throw new Error(
+        "Agent credentials are sealed and this Evolve instance cannot switch sandboxes",
+      );
+    }
     if (this.options.managedSecrets) {
       throw new Error("setSession() cannot be used with managed secrets; managed secret grants are sandbox-scoped.");
     }

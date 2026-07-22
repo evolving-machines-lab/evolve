@@ -77,8 +77,19 @@ export interface InitializeParams {
     type: 'e2b' | 'daytona' | 'modal';
     config: Record<string, any>;
   };
+  sandbox_create_options?: {
+    image?: string;
+    envs?: Record<string, string>;
+    metadata?: Record<string, string>;
+    timeoutMs?: number;
+    workingDirectory?: string;
+    network?: {
+      outbound: 'open' | 'blocked';
+      allowedDestinations?: string[];
+    };
+  };
   working_directory?: string;
-  workspace_mode?: 'knowledge' | 'swe';
+  workspace_mode?: 'knowledge' | 'swe' | 'task';
   system_prompt?: string;
   context?: EncodedFileMap;
   files?: EncodedFileMap;

@@ -6,7 +6,7 @@ from dataclasses import asdict, is_dataclass
 from typing import Any, Callable, Dict, List, Literal, Optional, Type, Union
 
 from .bridge import BridgeManager, SandboxNotFoundError
-from .config import AgentConfig, AgentPluginConfig, BrowserConfig, BrowserCredentialsConfig, IntegrationsSetup, ManagedSecretRef, SandboxProvider, SchemaOptions, StorageConfig, WorkspaceMode
+from .config import AgentConfig, AgentPluginConfig, BrowserConfig, BrowserCredentialsConfig, IntegrationsSetup, ManagedSecretRef, SandboxCreateOptions, SandboxProvider, SchemaOptions, StorageConfig, WorkspaceMode
 from .results import AgentResponse, CheckpointInfo, ExecuteResult, OutputResult, RunCost, SessionCost, SessionStatus
 from .storage_client import StorageClient
 from . import integrations as integrations_helpers
@@ -69,6 +69,7 @@ class Evolve:
         browser: Optional[BrowserConfig] = None,
         browser_credentials: Optional[BrowserCredentialsConfig] = None,
         plugins: Optional[Union[AgentPluginConfig, List[AgentPluginConfig]]] = None,
+        sandbox_create_options: Optional[SandboxCreateOptions] = None,
     ):
         """Initialize Evolve.
 
@@ -79,8 +80,8 @@ class Evolve:
                      MODAL_TOKEN_ID+MODAL_TOKEN_SECRET → Modal direct,
                      EVOLVE_API_KEY → E2B via gateway. User sandbox keys take priority.)
             working_directory: Working directory in sandbox (default: /home/user/workspace)
-            workspace_mode: Workspace setup mode - 'knowledge' (creates output/context/scripts/temp folders + default prompt)
-                          or 'swe' (clean workspace for cloned repos) (default: 'knowledge')
+            workspace_mode: 'knowledge', 'swe', or 'task'. Task mode leaves the
+                task-owned working directory untouched.
             system_prompt: Custom system prompt (appended to default in 'knowledge' mode, sole prompt in 'swe' mode)
             context: Files to upload to context/ folder on first run - { "filename.txt": "content" }
             files: Files to upload to working directory on first run - { "scripts/run.sh": "content" }
@@ -98,9 +99,12 @@ class Evolve:
                 for managed remote browser automation.
             browser_credentials: Saved browser login MCP setup. Requires managed remote agent-browser.
             plugins: Agent plugins/extensions to install in the sandbox user profile before first run.
+            sandbox_create_options: Provider-neutral image, env, metadata, timeout,
+                working-directory and outbound-network options for fresh sandbox creation.
         """
         self.config = config
         self.sandbox = sandbox
+        self.sandbox_create_options = sandbox_create_options
         self.working_directory = working_directory
         self.workspace_mode = workspace_mode
         self.system_prompt = system_prompt
@@ -148,6 +152,7 @@ class Evolve:
                 'reasoning_effort': self.config.reasoning_effort if self.config else None,
                 # Sandbox (optional - TS SDK auto-resolves from EVOLVE_API_KEY/E2B_API_KEY/DAYTONA_API_KEY)
                 'sandbox_provider': {'type': self.sandbox.type, 'config': self.sandbox.config} if self.sandbox else None,
+                'sandbox_create_options': self.sandbox_create_options,
                 # Other settings
                 'working_directory': self.working_directory,
                 'workspace_mode': self.workspace_mode,
@@ -387,6 +392,24 @@ class Evolve:
             browser=response.get('browser'),
         )
 
+    async def seal_credentials(self) -> None:
+        """Irreversibly revoke Evolve-managed model credentials for this sandbox."""
+        await self._ensure_initialized()
+        await self.bridge.call('seal_credentials', {}, timeout_s=30)
+
+    async def collect_artifacts(
+        self,
+        paths: List[str],
+    ) -> Dict[str, Union[str, bytes]]:
+        """Collect declared task files after :meth:`seal_credentials`."""
+        await self._ensure_initialized()
+        response = await self.bridge.call(
+            'collect_artifacts',
+            {'paths': paths},
+            timeout_s=self._get_rpc_timeout_s(None),
+        )
+        return _decode_files_from_transport(response.get('files', {}))
+
     async def upload_context(
         self,
         files: Dict[str, Union[str, bytes]],
@@ -587,6 +610,14 @@ class Evolve:
         """
         await self._ensure_initialized()
         return await self.bridge.call('get_session')
+
+    async def prepare_sandbox(self) -> str:
+        """Create and initialize the sandbox without starting the agent."""
+        await self._ensure_initialized()
+        sandbox_id = await self.bridge.call('prepare_sandbox')
+        if not isinstance(sandbox_id, str) or not sandbox_id:
+            raise RuntimeError('Sandbox preparation did not return a sandbox ID')
+        return sandbox_id
 
     async def set_session(self, session_id: str):
         """Change sandbox session.

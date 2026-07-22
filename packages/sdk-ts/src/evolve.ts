@@ -11,6 +11,7 @@ import { EventEmitter } from "events";
 import type { z } from "zod";
 import type {
   SandboxProvider,
+  SandboxCreateOptions,
   McpServerConfig,
   WorkspaceMode,
   FileMap,
@@ -30,6 +31,8 @@ import type {
   BrowserConfig,
   BrowserCredentialsConfig,
   AgentPluginConfig,
+  EvolveConfig,
+  EvolveEvents,
 } from "./types";
 import { Agent, type AgentConfig, type AgentOptions, type AgentResponse } from "./agent";
 import type { OutputEvent } from "./parsers";
@@ -55,61 +58,7 @@ import {
 } from "./managed-secrets";
 import { getAgentConfig } from "./registry";
 
-// =============================================================================
-// TYPES
-// =============================================================================
-
-/**
- * Evolve events
- *
- * Runtime streams:
- * - stdout: Raw NDJSON lines
- * - stderr: Process stderr
- * - content: Parsed OutputEvent
- * - lifecycle: Sandbox/agent lifecycle transitions
- */
-export interface EvolveEvents {
-  stdout: (chunk: string) => void;
-  stderr: (chunk: string) => void;
-  content: (event: OutputEvent) => void;
-  lifecycle: (event: LifecycleEvent) => void;
-}
-
-export interface EvolveConfig {
-  agent?: AgentConfig;
-  sandbox?: SandboxProvider;
-  workingDirectory?: string;
-  workspaceMode?: WorkspaceMode;
-  secrets?: Record<string, string>;
-  managedSecrets?: ManagedSecretRef[];
-  sandboxId?: string;
-  systemPrompt?: string;
-  context?: FileMap;
-  files?: FileMap;
-  mcpServers?: Record<string, McpServerConfig>;
-  /** Browser automation provider to enable explicitly */
-  browser?: BrowserConfig;
-  /** Browser login MCP setup for managed remote agent-browser runs */
-  browserCredentials?: BrowserCredentialsConfig;
-  /** Agent plugins/extensions to install before first run */
-  plugins?: AgentPluginConfig[];
-  /** Skills to enable (e.g., ["pdf", "dev-browser"]) */
-  skills?: SkillName[];
-  /** Schema for structured output (Zod or JSON Schema, auto-detected) */
-  schema?: z.ZodType<unknown> | JsonSchema;
-  /** Validation options for JSON Schema (ignored for Zod) */
-  schemaOptions?: SchemaValidationOptions;
-  // Observability
-  sessionTagPrefix?: string;
-  /** Observability metadata for trace grouping (generic key-value, domain-agnostic) */
-  observability?: Record<string, unknown>;
-  // Managed integrations
-  /** Managed integrations config */
-  integrations?: IntegrationsSetup;
-  // Storage / Checkpointing
-  /** Storage configuration for checkpointing */
-  storage?: StorageConfig;
-}
+export type { EvolveConfig, EvolveEvents } from "./types";
 
 // =============================================================================
 // EVOLVE CLASS
@@ -181,6 +130,19 @@ export class Evolve extends EventEmitter {
   }
 
   /**
+   * Configure provider-neutral options used whenever Evolve creates a sandbox.
+   * Evolve-owned runtime variables override conflicting env entries.
+   */
+  withSandboxCreateOptions(options: SandboxCreateOptions): this {
+    this.config.sandboxCreateOptions = {
+      ...options,
+      envs: options.envs ? { ...options.envs } : undefined,
+      metadata: options.metadata ? { ...options.metadata } : undefined,
+    };
+    return this;
+  }
+
+  /**
    * Set working directory path
    */
   withWorkingDirectory(path: string): this {
@@ -192,6 +154,7 @@ export class Evolve extends EventEmitter {
    * Set workspace mode
    * - "knowledge": Creates context/, scripts/, temp/, output/ folders
    * - "swe": Same as knowledge + repo/ folder for code repositories
+   * - "task": Leaves the task-owned working directory untouched
    */
   withWorkspaceMode(mode: WorkspaceMode): this {
     this.config.workspaceMode = mode;
@@ -531,6 +494,7 @@ export class Evolve extends EventEmitter {
 
     const agentOptions: AgentOptions = {
       sandboxProvider,
+      sandboxCreateOptions: this.config.sandboxCreateOptions,
       secrets: this.config.secrets,
       managedSecrets: managedSecrets
         ? {
@@ -673,6 +637,40 @@ export class Evolve extends EventEmitter {
     const callbacks = this.createStreamCallbacks();
 
     return this.agent!.executeCommand(command, options, callbacks);
+  }
+
+  /**
+   * Create and fully initialize the configured sandbox without starting an
+   * agent command. Durable orchestrators use this to persist the sandbox ID
+   * before handing execution to the agent.
+   */
+  async prepareSandbox(): Promise<string> {
+    if (!this.agent) {
+      await this.initializeAgent();
+    }
+
+    const callbacks = this.createStreamCallbacks();
+    const sandbox = await this.agent!.getSandbox(callbacks);
+    return sandbox.sandboxId;
+  }
+
+  /**
+   * Irreversibly revoke Evolve-managed runtime credentials for this sandbox.
+   * Agent runs are disabled afterward; credential-free commands remain available.
+   */
+  async sealCredentials(): Promise<void> {
+    if (!this.agent) {
+      throw new Error("Agent not initialized. Call run() or executeCommand() first.");
+    }
+    await this.agent.sealCredentials();
+  }
+
+  /** Collect files or directories from the working directory after credentials are sealed. */
+  async collectArtifacts(paths: string[]): Promise<FileMap> {
+    if (!this.agent) {
+      throw new Error("Agent not initialized. Call run() or executeCommand() first.");
+    }
+    return this.agent.collectArtifacts(paths);
   }
 
   /**

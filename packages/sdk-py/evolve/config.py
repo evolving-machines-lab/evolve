@@ -5,12 +5,26 @@ from typing import Any, Dict, List, Literal, Optional, Protocol, TypedDict, Unio
 
 
 AgentType = Literal['codex', 'claude', 'gemini', 'qwen', 'kimi', 'opencode', 'droid']
-WorkspaceMode = Literal['knowledge', 'swe']
+WorkspaceMode = Literal['knowledge', 'swe', 'task']
 BrowserProvider = Literal['browser-use', 'actionbook', 'agent-browser']
 BrowserConfig = Union[BrowserProvider, Dict[str, Any]]
 AgentPluginConfig = Dict[str, Any]
 ReasoningEffort = Literal['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'thinking', 'no-thinking']
 ValidationMode = Literal['strict', 'loose']
+
+
+class SandboxNetworkPolicy(TypedDict, total=False):
+    outbound: Literal['open', 'blocked']
+    allowedDestinations: List[str]
+
+
+class SandboxCreateOptions(TypedDict, total=False):
+    image: str
+    envs: Dict[str, str]
+    metadata: Dict[str, str]
+    timeoutMs: int
+    workingDirectory: str
+    network: SandboxNetworkPolicy
 
 
 @dataclass

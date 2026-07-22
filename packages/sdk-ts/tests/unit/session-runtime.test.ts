@@ -127,14 +127,21 @@ type SpawnMode = "instant" | "hang";
 class MockCommands implements SandboxCommands {
   public spawned: string[] = [];
   public spawnOptions: Array<SandboxSpawnOptions | undefined> = [];
+  public runCommands: string[] = [];
+  public runHandler?: (
+    command: string,
+    options?: SandboxRunOptions,
+  ) => SandboxCommandResult;
   public mode: SpawnMode = "instant";
   public killSucceeds = true;
   public activeHandle: SandboxCommandHandle | null = null;
 
   async run(
-    _command: string,
-    _options?: SandboxRunOptions,
+    command: string,
+    options?: SandboxRunOptions,
   ): Promise<SandboxCommandResult> {
+    this.runCommands.push(command);
+    if (this.runHandler) return this.runHandler(command, options);
     return { exitCode: 0, stdout: "", stderr: "" };
   }
 
@@ -310,6 +317,28 @@ async function testStatusAndLifecycle(): Promise<void> {
     events.every((e) => e.sandboxId !== undefined),
     "all lifecycle events include sandboxId",
   );
+}
+
+async function testPrepareSandboxDoesNotStartAgent(): Promise<void> {
+  console.log("\n[1a] prepareSandbox() creates a durable execution boundary");
+  const commands = new MockCommands();
+  const sandbox = new MockSandbox("prepared-session", commands);
+  const provider = new MockProvider(sandbox);
+  const kit = new Evolve()
+    .withAgent({ type: "claude", providerApiKey: "test-key" })
+    .withSandbox(provider);
+
+  const sandboxId = await kit.prepareSandbox();
+
+  assertEqual(sandboxId, "prepared-session", "prepareSandbox() returns the sandbox ID");
+  assertEqual(provider.createCalls, 1, "prepareSandbox() creates the sandbox once");
+  assertEqual(commands.spawned.length, 0, "prepareSandbox() does not start the agent command");
+  assertEqual(kit.getSessionTag() !== null, true, "prepared sandbox exposes its session tag");
+
+  await kit.run({ prompt: "start after durable handoff", timeoutMs: 10_000 });
+  assertEqual(provider.createCalls, 1, "run() reuses the prepared sandbox");
+  assertEqual(commands.spawned.length, 1, "run() starts exactly one agent command");
+  await kit.kill();
 }
 
 async function testWithSecretsEvolveApiKeyBoundary(): Promise<void> {
@@ -1133,7 +1162,7 @@ async function testProviderRuntimeBindFailureKillsSandbox(): Promise<void> {
         JSON.stringify({
           enabled: true,
           provider: "anthropic",
-          credentialMode: "evolve_key",
+          credentialMode: "hosted_evaluation",
           token: "evrt_token",
           bindingSecret: "evrb_binding",
           baseUrl: "https://dashboard.test/api/model-proxy/anthropic",
@@ -1837,6 +1866,196 @@ async function testManagedGatewayAgentsUseRuntimeProxyLifecycle(): Promise<void>
   }
 }
 
+async function testTaskWorkspaceAndSandboxCreateOptions(): Promise<void> {
+  console.log("\n[17] task workspace + sandbox create options");
+  const commands = new MockCommands();
+  const sandbox = new MockSandbox("task-create", commands);
+  const provider = new MockProvider(sandbox);
+  const kit = new Evolve()
+    .withAgent({ type: "claude", providerApiKey: "provider-key" })
+    .withSandbox(provider)
+    .withSandboxCreateOptions({
+      image: "prepared-task-v1",
+      envs: { TASK_FLAG: "enabled" },
+      metadata: { evaluation: "eval-1" },
+      timeoutMs: 45_000,
+      workingDirectory: "/task",
+    })
+    .withWorkspaceMode("task");
+
+  try {
+    await kit.executeCommand("true", { timeoutMs: 1_000 });
+    assertEqual(provider.createOptions?.image, "prepared-task-v1", "image is forwarded");
+    assertEqual(provider.createOptions?.timeoutMs, 45_000, "timeout is forwarded");
+    assertEqual(
+      provider.createOptions?.metadata?.evaluation,
+      "eval-1",
+      "metadata is forwarded",
+    );
+    assertEqual(
+      provider.createOptions?.workingDirectory,
+      "/task",
+      "provider and command use the task working directory",
+    );
+    assertEqual(
+      provider.createOptions?.envs?.TASK_FLAG,
+      "enabled",
+      "caller env is forwarded",
+    );
+    assert(
+      !commands.runCommands.some((command) => command.includes("mkdir -p /task")),
+      "task mode does not generate workspace directories",
+    );
+    assertEqual(sandbox.files.writes.size, 0, "task mode writes no prompt or workspace files");
+  } finally {
+    await kit.kill().catch(() => {});
+  }
+
+  const invalidProvider = new MockProvider(
+    new MockSandbox("task-invalid", new MockCommands()),
+  );
+  let invalidThrew = false;
+  try {
+    await new Evolve()
+      .withAgent({ type: "claude", providerApiKey: "provider-key" })
+      .withSandbox(invalidProvider)
+      .withWorkspaceMode("task")
+      .withSystemPrompt("generated prompt")
+      .executeCommand("true");
+  } catch (error) {
+    invalidThrew = String(error).includes("task owns the working directory");
+  }
+  assert(invalidThrew, "task mode rejects generated workspace inputs");
+  assertEqual(invalidProvider.createCalls, 0, "invalid task mode fails before sandbox creation");
+}
+
+async function testCredentialSealAndArtifactCollection(): Promise<void> {
+  console.log("\n[18] credential seal + artifact collection");
+  const previousFetch = globalThis.fetch;
+  const previousDashboardUrl = process.env.EVOLVE_DASHBOARD_URL;
+  process.env.EVOLVE_DASHBOARD_URL = "https://dashboard.test";
+  let revokeCalls = 0;
+
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (
+      url === "https://dashboard.test/api/provider-secrets/runtime-token" &&
+      init?.method === "POST"
+    ) {
+      return new Response(JSON.stringify(runtimeTokenResponse()), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (
+      url === "https://dashboard.test/api/provider-secrets/runtime-token" &&
+      init?.method === "PATCH"
+    ) {
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (
+      url === "https://dashboard.test/api/provider-secrets/runtime-token" &&
+      init?.method === "DELETE"
+    ) {
+      revokeCalls++;
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (url === "https://dashboard.test/api/sessions/ingest") {
+      return new Response("{}", {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  }) as typeof fetch;
+
+  const commands = new MockCommands();
+  const sandbox = new MockSandbox("sealed-task", commands);
+  const provider = new MockProvider(sandbox);
+  const kit = new Evolve()
+    .withAgent({ type: "claude", apiKey: "evolve-key" })
+    .withSandbox(provider)
+    .withWorkspaceMode("task")
+    .withWorkingDirectory("/task");
+
+  try {
+    await kit.run({ prompt: "solve the task", timeoutMs: 10_000 });
+    await sandbox.files.write("/task/patch.diff", "diff --git a/a b/a");
+    await sandbox.files.write("/logs/artifacts/model.patch", "absolute patch");
+    commands.runHandler = (command) => ({
+      exitCode: 0,
+      stdout: command.startsWith("find --")
+        ? "/logs/artifacts/model.patch\0" + "14\0/task/patch.diff\0" + "21\0"
+        : "",
+      stderr: "",
+    });
+
+    await kit.sealCredentials();
+    assertEqual(revokeCalls, 1, "seal revokes the task runtime token exactly once");
+
+    const artifacts = await kit.collectArtifacts(["patch.diff", "/logs/artifacts/model.patch"]);
+    assertEqual(
+      artifacts["patch.diff"] as string,
+      "diff --git a/a b/a",
+      "sealed artifact collection returns declared files",
+    );
+    assertEqual(
+      artifacts["/logs/artifacts/model.patch"] as string,
+      "absolute patch",
+      "sealed artifact collection preserves declared absolute paths",
+    );
+
+    await kit.executeCommand("python verifier.py", { timeoutMs: 10_000 });
+    const verifierEnvs = commands.spawnOptions[1]?.envs;
+    assert(
+      !verifierEnvs || Object.keys(verifierEnvs).length === 0,
+      "post-seal command receives no model credential env",
+    );
+
+    let rerunThrew = false;
+    try {
+      await kit.run({ prompt: "run again" });
+    } catch (error) {
+      rerunThrew = String(error).includes("credentials are sealed");
+    }
+    assert(rerunThrew, "seal irreversibly disables future agent runs");
+
+    let escapeThrew = false;
+    try {
+      await kit.collectArtifacts(["../secret"]);
+    } catch (error) {
+      escapeThrew = String(error).includes("escapes the working directory");
+    }
+    assert(escapeThrew, "artifact collection rejects path traversal");
+
+    commands.runHandler = (command) => ({
+      exitCode: 0,
+      stdout: command.startsWith("find --")
+        ? `/task/patch.diff\0${100 * 1024 * 1024 + 1}\0`
+        : "",
+      stderr: "",
+    });
+    let oversizedThrew = false;
+    try {
+      await kit.collectArtifacts(["patch.diff"]);
+    } catch (error) {
+      oversizedThrew = String(error).includes("Artifact exceeds");
+    }
+    assert(oversizedThrew, "artifact collection rejects oversized files before download");
+  } finally {
+    await kit.kill().catch(() => {});
+    globalThis.fetch = previousFetch;
+    if (previousDashboardUrl === undefined) delete process.env.EVOLVE_DASHBOARD_URL;
+    else process.env.EVOLVE_DASHBOARD_URL = previousDashboardUrl;
+  }
+}
+
 async function main(): Promise<void> {
   console.log("\n============================================================");
   console.log("Session Runtime Unit Tests");
@@ -1844,6 +2063,7 @@ async function main(): Promise<void> {
 
   try {
     await testStatusAndLifecycle();
+    await testPrepareSandboxDoesNotStartAgent();
     await testWithSecretsEvolveApiKeyBoundary();
     await testKillFlushesSessionEnd();
     await testManagedBrowserLifecycle();
@@ -1862,6 +2082,8 @@ async function main(): Promise<void> {
     await testCodexProviderRuntimeRoutesThroughDashboardProxy();
     await testCodexConnectedSessionReassertsDashboardProxy();
     await testManagedGatewayAgentsUseRuntimeProxyLifecycle();
+    await testTaskWorkspaceAndSandboxCreateOptions();
+    await testCredentialSealAndArtifactCollection();
   } catch (error) {
     failed++;
     console.log(
