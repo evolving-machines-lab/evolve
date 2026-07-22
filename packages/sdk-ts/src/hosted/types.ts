@@ -327,6 +327,11 @@ export interface ExportEvaluationOptions {
   to?: string;
   /** Return the raw response stream instead of a Buffer */
   stream?: boolean;
+  /**
+   * Export layout. Omit for the canonical research archive; "harbor" requests
+   * the Harbor job-layout bundle (?format=harbor on the export endpoint).
+   */
+  format?: "harbor";
 }
 
 // =============================================================================
@@ -381,10 +386,15 @@ export interface EvaluationsClient {
    * Download the full research archive (gzipped JSON) of a terminal
    * evaluation. Default: Buffer. { to } saves to a directory and returns the
    * file path. { stream: true } returns the raw response stream.
+   * { format: "harbor" } selects the Harbor job-layout bundle instead of the
+   * canonical archive (composable with any of the delivery shapes).
    */
-  export(id: string): Promise<Buffer>;
-  export(id: string, options: { to: string }): Promise<string>;
-  export(id: string, options: { stream: true }): Promise<ReadableStream<Uint8Array>>;
+  export(id: string, options?: { format?: "harbor" }): Promise<Buffer>;
+  export(id: string, options: { to: string; format?: "harbor" }): Promise<string>;
+  export(
+    id: string,
+    options: { stream: true; format?: "harbor" }
+  ): Promise<ReadableStream<Uint8Array>>;
   export(
     id: string,
     options?: ExportEvaluationOptions

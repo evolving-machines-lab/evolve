@@ -675,6 +675,43 @@ async function testExportStream() {
   }
 }
 
+async function testExportHarborFormat() {
+  console.log("\n--- export({ format: 'harbor' }) passes ?format=harbor through ---");
+  installMockFetch();
+  try {
+    const bundle = gzipSync(
+      Buffer.from(JSON.stringify({ format: "evolve.evaluation.harbor-bundle" }))
+    );
+    setMockResponse("/api/evaluations/eval-1/export", {
+      status: 200,
+      body: null,
+      bodyBytes: bundle,
+      headers: {
+        "Content-Type": "application/gzip",
+        "Content-Disposition": 'attachment; filename="evaluation-eval-1.harbor.json.gz"',
+      },
+    });
+
+    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const buf = await e.export("eval-1", { format: "harbor" });
+
+    const harborCall = fetchCalls[fetchCalls.length - 1];
+    assert(
+      harborCall.url.includes("/api/evaluations/eval-1/export?format=harbor"),
+      "request URL carries ?format=harbor"
+    );
+    assert(Buffer.isBuffer(buf), "still returns a Buffer (delivery shape unchanged)");
+    assertEqual(buf.equals(bundle), true, "buffer bytes match the harbor bundle");
+
+    // Omitting format keeps the canonical archive: no format param at all.
+    await e.export("eval-1");
+    const plainCall = fetchCalls[fetchCalls.length - 1];
+    assert(!plainCall.url.includes("format="), "plain export() sends no format param");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testExportTerminalRequired() {
   console.log("\n--- export() surfaces 409 for non-terminal evaluations ---");
   installMockFetch();
@@ -998,6 +1035,7 @@ async function main() {
   await testExportBuffer();
   await testExportToFile();
   await testExportStream();
+  await testExportHarborFormat();
   await testExportTerminalRequired();
   await testWatchStreamsToTerminal();
   await testWatchResumesWithLastEventId();

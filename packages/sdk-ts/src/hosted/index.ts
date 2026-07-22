@@ -433,8 +433,9 @@ export function evaluations(config?: HostedClientConfig): EvaluationsClient {
     return mapEvaluation((await res.json()) as Record<string, unknown>);
   }
 
-  async function exportResponse(id: string): Promise<Response> {
-    return request(cfg, `/api/evaluations/${encodeURIComponent(id)}/export`);
+  async function exportResponse(id: string, format?: "harbor"): Promise<Response> {
+    const qs = format ? `?format=${encodeURIComponent(format)}` : "";
+    return request(cfg, `/api/evaluations/${encodeURIComponent(id)}/export${qs}`);
   }
 
   function exportFilename(res: Response, id: string): string {
@@ -631,7 +632,7 @@ export function evaluations(config?: HostedClientConfig): EvaluationsClient {
       id: string,
       options?: ExportEvaluationOptions
     ): Promise<Buffer | string | ReadableStream<Uint8Array>> => {
-      const res = await exportResponse(id);
+      const res = await exportResponse(id, options?.format);
       if (options?.stream) {
         if (!res.body) throw new Error("Export response has no body");
         return res.body as ReadableStream<Uint8Array>;
