@@ -170,6 +170,7 @@ export type {
   SandboxSpawnOptions,
   SandboxCreateOptions,
   SandboxNetworkPolicy,
+  ExternalGatewayConfig,
 } from "./types";
 
 // =============================================================================

@@ -7,6 +7,24 @@ import type { AgentConfig, AgentType, ResolvedAgentConfig } from "../types";
 import { DEFAULT_AGENT_TYPE, ENV_EVOLVE_API_KEY } from "../constants";
 import { getAgentConfig } from "../registry";
 
+/**
+ * externalGateway is a standalone credential mode: it must not be combined
+ * with gateway mode (apiKey) or direct mode (providerApiKey/providerBaseUrl/oauthToken).
+ */
+export function assertExternalGatewayExclusive(config: AgentConfig): void {
+  if (!config.externalGateway) return;
+  if (config.providerApiKey || config.providerBaseUrl || config.oauthToken) {
+    throw new Error(
+      "externalGateway cannot be combined with providerApiKey/providerBaseUrl/oauthToken (direct mode)",
+    );
+  }
+  if (config.apiKey) {
+    throw new Error(
+      "externalGateway cannot be combined with apiKey (Evolve gateway mode)",
+    );
+  }
+}
+
 /** Read OAuth file content (for file-based OAuth like Codex) */
 function readOAuthFile(filePath: string): string {
   const expandedPath = filePath.replace(/^~/, process.env.HOME || "");
@@ -33,6 +51,26 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
   // ─────────────────────────────────────────────────────────────────────────
   // EXPLICIT CONFIG (user passed values directly - always respect these)
   // ─────────────────────────────────────────────────────────────────────────
+
+  // External gateway mode (caller-minted revocable credential)
+  if (config?.externalGateway) {
+    assertExternalGatewayExclusive(config);
+    const { apiKey, baseUrl, revoke } = config.externalGateway;
+    if (!apiKey || !baseUrl || typeof revoke !== "function") {
+      throw new Error(
+        "externalGateway requires apiKey, baseUrl, and a revoke() function",
+      );
+    }
+    return {
+      type,
+      apiKey,
+      baseUrl,
+      isDirectMode: true,
+      externalGateway: { revoke },
+      model: config.model,
+      reasoningEffort: config.reasoningEffort,
+    };
+  }
 
   // OAuth token (Claude Max subscription only)
   if (config?.oauthToken) {

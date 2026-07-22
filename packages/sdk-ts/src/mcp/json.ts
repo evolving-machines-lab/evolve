@@ -134,12 +134,13 @@ async function writeJsonMcpConfig(
   sandbox: SandboxInstance,
   agentType: "gemini" | "qwen" | "kimi",
   servers: Record<string, McpServerConfig>,
-  transform: ConfigTransformer
+  transform: ConfigTransformer,
+  homeDir?: string
 ): Promise<void> {
   validateServers(servers);
 
-  const settingsDir = getMcpSettingsDir(agentType);
-  const settingsPath = getMcpSettingsPath(agentType);
+  const settingsDir = getMcpSettingsDir(agentType, homeDir);
+  const settingsPath = getMcpSettingsPath(agentType, homeDir);
 
   await sandbox.files.makeDir(settingsDir);
 
@@ -177,12 +178,13 @@ async function writeJsonMcpConfig(
 export async function writeClaudeMcpConfig(
   sandbox: SandboxInstance,
   workingDir: string,
-  servers: Record<string, McpServerConfig>
+  servers: Record<string, McpServerConfig>,
+  homeDir?: string
 ): Promise<void> {
   validateServers(servers);
 
-  const settingsDir = getMcpSettingsDir("claude");
-  const settingsPath = getMcpSettingsPath("claude");
+  const settingsDir = getMcpSettingsDir("claude", homeDir);
+  const settingsPath = getMcpSettingsPath("claude", homeDir);
 
   // Transform to type format
   const transformedServers = Object.fromEntries(
@@ -219,17 +221,19 @@ export async function writeClaudeMcpConfig(
 /** Write MCP config for Gemini agent */
 export async function writeGeminiMcpConfig(
   sandbox: SandboxInstance,
-  servers: Record<string, McpServerConfig>
+  servers: Record<string, McpServerConfig>,
+  homeDir?: string
 ): Promise<void> {
-  await writeJsonMcpConfig(sandbox, "gemini", servers, toGeminiFormat);
+  await writeJsonMcpConfig(sandbox, "gemini", servers, toGeminiFormat, homeDir);
 }
 
 /** Write MCP config for Qwen agent */
 export async function writeQwenMcpConfig(
   sandbox: SandboxInstance,
-  servers: Record<string, McpServerConfig>
+  servers: Record<string, McpServerConfig>,
+  homeDir?: string
 ): Promise<void> {
-  await writeJsonMcpConfig(sandbox, "qwen", servers, toQwenFormat);
+  await writeJsonMcpConfig(sandbox, "qwen", servers, toQwenFormat, homeDir);
 }
 
 // =============================================================================
@@ -250,9 +254,10 @@ export async function writeJsonSpendHeaders(
   agentType: "qwen",
   headersPath: string,
   headers: Record<string, string>,
+  homeDir?: string,
 ): Promise<void> {
-  const settingsDir = getMcpSettingsDir(agentType);
-  const settingsPath = getMcpSettingsPath(agentType);
+  const settingsDir = getMcpSettingsDir(agentType, homeDir);
+  const settingsPath = getMcpSettingsPath(agentType, homeDir);
 
   await sandbox.files.makeDir(settingsDir);
 
@@ -288,9 +293,10 @@ export async function writeJsonSpendHeaders(
 export async function writeQwenThinkingConfig(
   sandbox: SandboxInstance,
   enableThinking: boolean,
+  homeDir?: string,
 ): Promise<void> {
-  const settingsDir = getMcpSettingsDir("qwen");
-  const settingsPath = getMcpSettingsPath("qwen");
+  const settingsDir = getMcpSettingsDir("qwen", homeDir);
+  const settingsPath = getMcpSettingsPath("qwen", homeDir);
 
   await sandbox.files.makeDir(settingsDir);
 
@@ -325,9 +331,10 @@ export async function writeQwenThinkingConfig(
 /** Write MCP config for Kimi agent (FastMCP-compatible transport field) */
 export async function writeKimiMcpConfig(
   sandbox: SandboxInstance,
-  servers: Record<string, McpServerConfig>
+  servers: Record<string, McpServerConfig>,
+  homeDir?: string
 ): Promise<void> {
-  await writeJsonMcpConfig(sandbox, "kimi", servers, toKimiFormat);
+  await writeJsonMcpConfig(sandbox, "kimi", servers, toKimiFormat, homeDir);
 }
 
 /**
@@ -388,8 +395,9 @@ export async function writeDroidGatewaySettings(
   sandbox: SandboxInstance,
   config: DroidGatewaySettingsConfig,
   headers: Record<string, string>,
+  homeDir?: string,
 ): Promise<void> {
-  const settingsPath = expandPath(config.settingsPath);
+  const settingsPath = expandPath(config.settingsPath, homeDir);
   const settingsDir = settingsPath.slice(0, settingsPath.lastIndexOf("/"));
 
   await sandbox.files.makeDir(settingsDir);

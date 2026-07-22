@@ -25,6 +25,12 @@ class SandboxCreateOptions(TypedDict, total=False):
     timeoutMs: int
     workingDirectory: str
     network: SandboxNetworkPolicy
+    # Run all commands and file operations as this user; providers must reject
+    # it if they cannot enforce it, never silently ignore it.
+    user: str
+    # Home directory for agent config paths. Default: "/root" when user is
+    # "root", "/home/<user>" otherwise, "/home/user" when no user is given.
+    homeDir: str
 
 
 @dataclass

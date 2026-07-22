@@ -928,7 +928,8 @@ async function testKimiBuildCommandUsesPromptMode(): Promise<void> {
   assertEqual(kimi.gatewayModelAliases?.["kimi-k2p6-raptor"], "kimi-k2p6-raptor", "Kimi K2.6 Raptor alias maps to gateway route");
   assertEqual(kimi.gatewayModelAliases?.["kimi-k2p7-code-raptor"], "kimi-k2p7-code-raptor", "Kimi K2.7 Code Raptor alias maps to gateway route");
   assertEqual(kimi.mcpConfig.settingsDir, "~/.kimi-code", "Kimi Code settings dir");
-  assertEqual(kimi.skillsConfig.targetDir, "/home/user/.kimi-code/skills", "Kimi Code skills dir");
+  // Registry skill dirs are ~-relative and expanded against the sandbox homeDir at use sites.
+  assertEqual(kimi.skillsConfig.targetDir, "~/.kimi-code/skills", "Kimi Code skills dir");
   assert(kimi.checkpointExcludes?.includes(".kimi-code/config.toml") === true, "Kimi Code config.toml is excluded from checkpoints");
 
   const gatewayAgent = new Agent({

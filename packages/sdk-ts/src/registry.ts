@@ -8,6 +8,7 @@
  */
 
 import type { AgentType, SkillsConfig } from "./types";
+import { DEFAULT_HOME_DIR } from "./constants";
 
 // =============================================================================
 // REGISTRY TYPES
@@ -45,6 +46,8 @@ export interface BuildCommandOptions {
   isDirectMode?: boolean;
   /** Skills enabled for this run */
   skills?: string[];
+  /** Sandbox home directory (default: "/home/user") */
+  homeDir?: string;
 }
 
 export interface AgentRegistryEntry {
@@ -213,8 +216,8 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       projectConfig: true,
     },
     skillsConfig: {
-      sourceDir: "/home/user/.evolve/skills",
-      targetDir: "/home/user/.claude/skills",
+      sourceDir: "~/.evolve/skills",
+      targetDir: "~/.claude/skills",
     },
     buildCommand: ({ prompt, model, isResume, reasoningEffort }) => {
       const continueFlag = isResume ? "--continue " : "";
@@ -244,8 +247,8 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       format: "toml",
     },
     skillsConfig: {
-      sourceDir: "/home/user/.evolve/skills",
-      targetDir: "/home/user/.codex/skills",
+      sourceDir: "~/.evolve/skills",
+      targetDir: "~/.codex/skills",
     },
     spendTrackingEnvs: {
       sessionTagEnv: "EVOLVE_LITELLM_CUSTOMER_ID",
@@ -283,8 +286,8 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       format: "json",
     },
     skillsConfig: {
-      sourceDir: "/home/user/.evolve/skills",
-      targetDir: "/home/user/.gemini/skills",
+      sourceDir: "~/.evolve/skills",
+      targetDir: "~/.gemini/skills",
     },
     // Source-verified: GEMINI_CLI_CUSTOM_HEADERS is read in contentGenerator.ts and parsed
     // by customHeaderUtils.ts (comma-separated via /,(?=\s*[^,:]+:)/). Not in public docs.
@@ -315,8 +318,8 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       format: "json",
     },
     skillsConfig: {
-      sourceDir: "/home/user/.evolve/skills",
-      targetDir: "/home/user/.qwen/skills",
+      sourceDir: "~/.evolve/skills",
+      targetDir: "~/.qwen/skills",
     },
     // Source-verified: Qwen reads customHeaders from settings.json model.generationConfig,
     // not from env vars. The SDK writes headers to this path before each run.
@@ -362,8 +365,8 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       format: "json",
     },
     skillsConfig: {
-      sourceDir: "/home/user/.evolve/skills",
-      targetDir: "/home/user/.kimi-code/skills",
+      sourceDir: "~/.evolve/skills",
+      targetDir: "~/.kimi-code/skills",
     },
     defaultBaseUrl: "https://api.moonshot.ai/v1",
     // Source-verified: Kimi Code reads custom_headers from
@@ -384,11 +387,11 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       "kimi-k2p7-code-raptor": "kimi-k2p7-code-raptor",
       "kimi-k2.5": "moonshot/kimi-k2.5",
     },
-    buildCommand: ({ prompt, isResume, reasoningEffort }) => {
+    buildCommand: ({ prompt, isResume, reasoningEffort, homeDir = DEFAULT_HOME_DIR }) => {
       const continueFlag = isResume ? "--continue " : "";
       const promptArg = shellSingleQuote(prompt);
-      const legacyConfigFlag = "--config-file /home/user/.kimi-code/config.toml";
-      const legacyMcpFlag = "$(if [ -f /home/user/.kimi-code/mcp.json ]; then printf ' --mcp-config-file /home/user/.kimi-code/mcp.json'; fi)";
+      const legacyConfigFlag = `--config-file ${homeDir}/.kimi-code/config.toml`;
+      const legacyMcpFlag = `$(if [ -f ${homeDir}/.kimi-code/mcp.json ]; then printf ' --mcp-config-file ${homeDir}/.kimi-code/mcp.json'; fi)`;
       const legacyThinkingFlag = isThinkingEnabled(reasoningEffort) ? "" : " --no-thinking";
       // Managed images may briefly carry the Python kimi-cli surface, where
       // --output-format only works with --print and config lives behind flags.
@@ -432,8 +435,8 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       format: "json",
     },
     skillsConfig: {
-      sourceDir: "/home/user/.evolve/skills",
-      targetDir: "/home/user/.agents/skills",
+      sourceDir: "~/.evolve/skills",
+      targetDir: "~/.agents/skills",
     },
     // OpenCode uses XDG Base Directory spec — state is split across multiple dirs
     checkpointDirs: [
@@ -492,8 +495,8 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       format: "json",
     },
     skillsConfig: {
-      sourceDir: "/home/user/.evolve/skills",
-      targetDir: "/home/user/.factory/skills",
+      sourceDir: "~/.evolve/skills",
+      targetDir: "~/.factory/skills",
     },
     skipApiKeyEnvInGateway: true,
     gatewayModelAliases: {
@@ -515,12 +518,12 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     checkpointDirs: [
       "~/.factory",
     ],
-    buildCommand: ({ prompt, model, isResume, sessionId, reasoningEffort, isDirectMode }) => {
-      const settingsFlag = isDirectMode ? "" : "--settings /home/user/.factory/evolve-settings.json ";
+    buildCommand: ({ prompt, model, isResume, sessionId, reasoningEffort, isDirectMode, homeDir = DEFAULT_HOME_DIR }) => {
+      const settingsFlag = isDirectMode ? "" : `--settings ${homeDir}/.factory/evolve-settings.json `;
       const commandModel = isDirectMode ? model : "custom:Evolve-Gateway-0";
       const reasoningFlag = reasoningEffort ? ` --reasoning-effort ${reasoningEffort}` : "";
       const resumeFlag = isResume && sessionId ? `--session-id ${shellSingleQuote(sessionId)} ` : "";
-      return `printf '%s' ${shellSingleQuote(prompt)} | droid ${settingsFlag}exec ${resumeFlag}--skip-permissions-unsafe --cwd /home/user/workspace --output-format stream-json --model ${shellSingleQuote(commandModel)}${reasoningFlag}`;
+      return `printf '%s' ${shellSingleQuote(prompt)} | droid ${settingsFlag}exec ${resumeFlag}--skip-permissions-unsafe --cwd ${homeDir}/workspace --output-format stream-json --model ${shellSingleQuote(commandModel)}${reasoningFlag}`;
     },
   },
 };
@@ -548,10 +551,10 @@ export function isValidAgentType(type: string): type is AgentType {
 }
 
 /**
- * Expand path with ~ to /home/user
+ * Expand path with ~ to the sandbox home directory (default: /home/user)
  */
-export function expandPath(path: string): string {
-  return path.replace(/^~/, "/home/user");
+export function expandPath(path: string, homeDir: string = DEFAULT_HOME_DIR): string {
+  return path.replace(/^~/, homeDir);
 }
 
 function shellSingleQuote(value: string): string {
@@ -561,15 +564,15 @@ function shellSingleQuote(value: string): string {
 /**
  * Get MCP settings path for an agent
  */
-export function getMcpSettingsPath(agentType: AgentType): string {
+export function getMcpSettingsPath(agentType: AgentType, homeDir: string = DEFAULT_HOME_DIR): string {
   const config = getAgentConfig(agentType);
-  return `${expandPath(config.mcpConfig.settingsDir)}/${config.mcpConfig.filename}`;
+  return `${expandPath(config.mcpConfig.settingsDir, homeDir)}/${config.mcpConfig.filename}`;
 }
 
 /**
  * Get MCP settings directory for an agent
  */
-export function getMcpSettingsDir(agentType: AgentType): string {
+export function getMcpSettingsDir(agentType: AgentType, homeDir: string = DEFAULT_HOME_DIR): string {
   const config = getAgentConfig(agentType);
-  return expandPath(config.mcpConfig.settingsDir);
+  return expandPath(config.mcpConfig.settingsDir, homeDir);
 }

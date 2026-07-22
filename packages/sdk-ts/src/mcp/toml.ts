@@ -52,15 +52,16 @@ function serializeTomlValue(value: unknown): string {
  */
 export async function writeCodexMcpConfig(
   sandbox: SandboxInstance,
-  servers: Record<string, McpServerConfig>
+  servers: Record<string, McpServerConfig>,
+  homeDir?: string
 ): Promise<void> {
   // Validate all servers
   for (const [name, config] of Object.entries(servers)) {
     validateMcpServer(name, config);
   }
 
-  const settingsDir = getMcpSettingsDir("codex");
-  const settingsPath = getMcpSettingsPath("codex");
+  const settingsDir = getMcpSettingsDir("codex", homeDir);
+  const settingsPath = getMcpSettingsPath("codex", homeDir);
 
   // Ensure settings directory exists
   await sandbox.files.makeDir(settingsDir);
@@ -172,15 +173,20 @@ export async function writeCodexMcpConfig(
  * Codex supports env_http_headers per model provider — header values are read
  * from env vars at request time. We define a provider that injects LiteLLM
  * tracking headers via env vars set per-run by buildRunEnvs().
+ *
+ * When spendTrackingEnvs is undefined (external gateway mode: no LiteLLM
+ * tracking headers, no runtime binding exists), the provider is written
+ * without env_http_headers.
  */
 export async function writeCodexSpendProvider(
   sandbox: SandboxInstance,
   baseUrl: string,
-  spendTrackingEnvs: { sessionTagEnv: string; runTagEnv: string },
+  spendTrackingEnvs?: { sessionTagEnv: string; runTagEnv: string },
   envHttpHeaders: Record<string, string> = {},
+  homeDir?: string,
 ): Promise<void> {
-  const settingsDir = getMcpSettingsDir("codex");
-  const settingsPath = getMcpSettingsPath("codex");
+  const settingsDir = getMcpSettingsDir("codex", homeDir);
+  const settingsPath = getMcpSettingsPath("codex", homeDir);
 
   await sandbox.files.makeDir(settingsDir);
 
@@ -204,8 +210,12 @@ export async function writeCodexSpendProvider(
   const hasProviderSection = existingToml.includes("[model_providers.evolve-gateway]");
   const hasRootKey = /^model_provider\s*=\s*"evolve-gateway"/m.test(rootPortion);
   const providerHeaders = {
-    [LITELLM_CUSTOMER_ID_HEADER]: spendTrackingEnvs.sessionTagEnv,
-    [LITELLM_TAGS_HEADER]: spendTrackingEnvs.runTagEnv,
+    ...(spendTrackingEnvs
+      ? {
+          [LITELLM_CUSTOMER_ID_HEADER]: spendTrackingEnvs.sessionTagEnv,
+          [LITELLM_TAGS_HEADER]: spendTrackingEnvs.runTagEnv,
+        }
+      : {}),
     ...envHttpHeaders,
   };
   const desiredProviderSection = [
@@ -217,7 +227,9 @@ export async function writeCodexSpendProvider(
     // value and the default — pinned explicitly so a future default change
     // cannot silently break gateway routing.
     `wire_api = "responses"`,
-    `env_http_headers = ${serializeTomlValue(providerHeaders)}`,
+    ...(Object.keys(providerHeaders).length > 0
+      ? [`env_http_headers = ${serializeTomlValue(providerHeaders)}`]
+      : []),
   ].join("\n");
   if (
     hasProviderSection &&
@@ -295,8 +307,9 @@ export async function writeKimiSpendConfig(
     defaultThinking: boolean;
     thinkingEffort?: string;
   },
+  homeDir?: string,
 ): Promise<void> {
-  const configPath = expandPath(config.configPath);
+  const configPath = expandPath(config.configPath, homeDir);
   const configDir = configPath.slice(0, configPath.lastIndexOf("/"));
 
   await sandbox.files.makeDir(configDir);

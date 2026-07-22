@@ -152,6 +152,10 @@ export interface SandboxCreateOptions {
     outbound: "open" | "blocked";
     allowedDestinations?: string[];
   };
+  /** Run all commands and file operations as this user (passed on every E2B operation that supports it). */
+  user?: string;
+  /** Home directory used by the SDK for agent config paths; not consumed by the provider. */
+  homeDir?: string;
 }
 
 /** Options for listing sandboxes */
@@ -303,8 +307,8 @@ interface ResolvedE2BConfig {
 // IMPLEMENTATION
 // ============================================================
 
-class E2BCommands implements SandboxCommands {
-  constructor(private sandbox: E2BSandbox) {}
+export class E2BCommands implements SandboxCommands {
+  constructor(private sandbox: E2BSandbox, private defaultUser?: string) {}
 
   async run(command: string, options?: SandboxRunOptions): Promise<SandboxCommandResult> {
     // E2B SDK throws CommandExitError on non-zero exit - normalize to result
@@ -313,6 +317,7 @@ class E2BCommands implements SandboxCommands {
         timeoutMs: options?.timeoutMs,
         envs: options?.envs,
         cwd: options?.cwd,
+        user: this.defaultUser,
         onStdout: options?.onStdout,
         onStderr: options?.onStderr,
       });
@@ -341,6 +346,7 @@ class E2BCommands implements SandboxCommands {
       timeoutMs: options?.timeoutMs,
       envs: options?.envs,
       cwd: options?.cwd,
+      user: this.defaultUser,
       onStdout: options?.onStdout,
       onStderr: options?.onStderr,
     });
@@ -423,20 +429,20 @@ class E2BCommands implements SandboxCommands {
   }
 }
 
-class E2BFiles implements SandboxFiles {
-  constructor(private sandbox: E2BSandbox) {}
+export class E2BFiles implements SandboxFiles {
+  constructor(private sandbox: E2BSandbox, private defaultUser?: string) {}
 
   async read(path: string): Promise<string | Uint8Array> {
     // Increase timeout for large files (default 60s is too short for multi-MB downloads)
     if (isBinaryFile(path)) {
-      return this.sandbox.files.read(path, { format: "bytes", requestTimeoutMs: 300000 });
+      return this.sandbox.files.read(path, { format: "bytes", requestTimeoutMs: 300000, user: this.defaultUser });
     }
-    return this.sandbox.files.read(path, { format: "text", requestTimeoutMs: 300000 });
+    return this.sandbox.files.read(path, { format: "text", requestTimeoutMs: 300000, user: this.defaultUser });
   }
 
   async write(path: string, content: string | Buffer | ArrayBuffer | Uint8Array): Promise<void> {
     // Increase timeout for large files (default 60s is too short for multi-MB uploads)
-    await this.sandbox.files.write(path, toArrayBuffer(content), { requestTimeoutMs: 300000 });
+    await this.sandbox.files.write(path, toArrayBuffer(content), { requestTimeoutMs: 300000, user: this.defaultUser });
   }
 
   async writeBatch(files: Array<{ path: string; data: string | Buffer | ArrayBuffer | Uint8Array }>): Promise<void> {
@@ -445,27 +451,33 @@ class E2BFiles implements SandboxFiles {
       data: toArrayBuffer(f.data),
     }));
     // Increase timeout for large files (default 60s is too short for multi-MB uploads)
-    await this.sandbox.files.write(entries, { requestTimeoutMs: 300000 });
+    await this.sandbox.files.write(entries, { requestTimeoutMs: 300000, user: this.defaultUser });
   }
 
   async makeDir(path: string): Promise<void> {
-    await this.sandbox.files.makeDir(path);
+    await this.sandbox.files.makeDir(path, { user: this.defaultUser });
   }
 
   async uploadUrl(path: string, expiresInSeconds?: number): Promise<string> {
-    return this.sandbox.uploadUrl(path, expiresInSeconds ? { useSignatureExpiration: expiresInSeconds } : undefined);
+    return this.sandbox.uploadUrl(path, {
+      user: this.defaultUser,
+      ...(expiresInSeconds ? { useSignatureExpiration: expiresInSeconds } : {}),
+    });
   }
 
   async downloadUrl(path: string, expiresInSeconds?: number): Promise<string> {
-    return this.sandbox.downloadUrl(path, expiresInSeconds ? { useSignatureExpiration: expiresInSeconds } : undefined);
+    return this.sandbox.downloadUrl(path, {
+      user: this.defaultUser,
+      ...(expiresInSeconds ? { useSignatureExpiration: expiresInSeconds } : {}),
+    });
   }
 
   async exists(path: string): Promise<boolean> {
-    return this.sandbox.files.exists(path);
+    return this.sandbox.files.exists(path, { user: this.defaultUser });
   }
 
   async list(path: string): Promise<FileInfo[]> {
-    const entries = await this.sandbox.files.list(path);
+    const entries = await this.sandbox.files.list(path, { user: this.defaultUser });
     return entries.map((entry) => ({
       name: entry.name,
       path: entry.path,
@@ -474,19 +486,19 @@ class E2BFiles implements SandboxFiles {
   }
 
   async remove(path: string): Promise<void> {
-    await this.sandbox.files.remove(path);
+    await this.sandbox.files.remove(path, { user: this.defaultUser });
   }
 
   async rename(oldPath: string, newPath: string): Promise<void> {
-    await this.sandbox.files.rename(oldPath, newPath);
+    await this.sandbox.files.rename(oldPath, newPath, { user: this.defaultUser });
   }
 
   async readStream(path: string): Promise<ReadableStream<Uint8Array>> {
-    return this.sandbox.files.read(path, { format: "stream" });
+    return this.sandbox.files.read(path, { format: "stream", user: this.defaultUser });
   }
 
   async writeStream(path: string, stream: ReadableStream<Uint8Array>): Promise<void> {
-    await this.sandbox.files.write(path, stream);
+    await this.sandbox.files.write(path, stream, { user: this.defaultUser });
   }
 
   async watchDir(
@@ -497,6 +509,7 @@ class E2BFiles implements SandboxFiles {
     const handle = await this.sandbox.files.watchDir(path, onEvent, {
       recursive: options?.recursive,
       timeoutMs: options?.timeoutMs,
+      user: this.defaultUser,
       onExit: options?.onExit,
     });
     return {
@@ -509,9 +522,9 @@ class E2BSandboxImpl implements SandboxInstance {
   readonly commands: SandboxCommands;
   readonly files: SandboxFiles;
 
-  constructor(private sandbox: E2BSandbox, private apiKey: string, private apiUrl?: string) {
-    this.commands = new E2BCommands(sandbox);
-    this.files = new E2BFiles(sandbox);
+  constructor(private sandbox: E2BSandbox, private apiKey: string, private apiUrl?: string, defaultUser?: string) {
+    this.commands = new E2BCommands(sandbox, defaultUser);
+    this.files = new E2BFiles(sandbox, defaultUser);
   }
 
   get sandboxId(): string {
@@ -562,6 +575,13 @@ export class E2BProvider implements SandboxProvider {
   private readonly apiUrl?: string;
   private readonly defaultTimeoutMs: number;
   private readonly templateId?: string;
+  /**
+   * Sandbox user configured at create time, reapplied on connect() (e.g., resume).
+   * In-memory only: a connect() from a fresh process runs as the template default
+   * user — callers reconnecting across processes must recreate the provider config
+   * with the same user, or operations on user-owned files fail loudly.
+   */
+  private readonly sandboxUsers = new Map<string, string>();
 
   constructor(config: ResolvedE2BConfig) {
     this.apiKey = config.apiKey;
@@ -599,10 +619,14 @@ export class E2BProvider implements SandboxProvider {
 
     if (options.workingDirectory) {
       // Use E2B files.makeDir() to avoid shell injection risk
-      await sandbox.files.makeDir(options.workingDirectory);
+      await sandbox.files.makeDir(options.workingDirectory, { user: options.user });
     }
 
-    return new E2BSandboxImpl(sandbox, this.apiKey, this.apiUrl);
+    if (options.user) {
+      this.sandboxUsers.set(sandbox.sandboxId, options.user);
+    }
+
+    return new E2BSandboxImpl(sandbox, this.apiKey, this.apiUrl, options.user);
   }
 
   async connect(sandboxId: string, timeoutMs?: number): Promise<SandboxInstance> {
@@ -611,7 +635,12 @@ export class E2BProvider implements SandboxProvider {
       apiUrl: this.apiUrl,
       timeoutMs: timeoutMs ?? this.defaultTimeoutMs,
     });
-    return new E2BSandboxImpl(sandbox, this.apiKey, this.apiUrl);
+    return new E2BSandboxImpl(
+      sandbox,
+      this.apiKey,
+      this.apiUrl,
+      this.sandboxUsers.get(sandboxId),
+    );
   }
 
   async list(options?: SandboxListOptions): Promise<SandboxInfo[]> {

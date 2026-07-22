@@ -37,6 +37,7 @@ import type {
 import { Agent, type AgentConfig, type AgentOptions, type AgentResponse } from "./agent";
 import type { OutputEvent } from "./parsers";
 import {
+  assertExternalGatewayExclusive,
   isEvolveManagedSandboxProvider,
   isZodSchema,
   resolveAgentConfig,
@@ -115,6 +116,9 @@ export class Evolve extends EventEmitter {
    */
   withAgent(config?: AgentConfig): this {
     if (config) {
+      // Fail fast at configuration time: externalGateway is a standalone
+      // credential mode and cannot be combined with gateway or direct mode.
+      assertExternalGatewayExclusive(config);
       this.config.agent = config;
       this._cachedGatewayOverrides = null;
     }

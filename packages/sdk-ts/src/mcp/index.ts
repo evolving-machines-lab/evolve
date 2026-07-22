@@ -24,7 +24,8 @@ export async function writeMcpConfig(
   agentType: AgentType,
   sandbox: SandboxInstance,
   workingDir: string,
-  servers: Record<string, McpServerConfig>
+  servers: Record<string, McpServerConfig>,
+  homeDir?: string
 ): Promise<void> {
   if (!servers || Object.keys(servers).length === 0) {
     return;
@@ -32,23 +33,23 @@ export async function writeMcpConfig(
 
   switch (agentType) {
     case "claude":
-      await writeClaudeMcpConfig(sandbox, workingDir, servers);
+      await writeClaudeMcpConfig(sandbox, workingDir, servers, homeDir);
       break;
 
     case "codex":
-      await writeCodexMcpConfig(sandbox, servers);
+      await writeCodexMcpConfig(sandbox, servers, homeDir);
       break;
 
     case "gemini":
-      await writeGeminiMcpConfig(sandbox, servers);
+      await writeGeminiMcpConfig(sandbox, servers, homeDir);
       break;
 
     case "qwen":
-      await writeQwenMcpConfig(sandbox, servers);
+      await writeQwenMcpConfig(sandbox, servers, homeDir);
       break;
 
     case "kimi":
-      await writeKimiMcpConfig(sandbox, servers);
+      await writeKimiMcpConfig(sandbox, servers, homeDir);
       break;
 
     case "opencode":

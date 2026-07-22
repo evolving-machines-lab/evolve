@@ -134,5 +134,30 @@ assert(typeof createE2BProvider === "function", "createE2BProvider exists");
 assert(typeof createDaytonaProvider === "function", "createDaytonaProvider exists");
 assert(typeof createModalProvider === "function", "createModalProvider exists");
 
-console.log(`\n═══ ${passed} passed, ${failed} failed ═══\n`);
-if (failed > 0) process.exit(1);
+// ─── Sandbox user option: providers that cannot enforce it must reject it ───
+
+async function expectUserRejected(
+  label: string,
+  create: () => Promise<unknown>,
+): Promise<void> {
+  let threw = false;
+  try {
+    await create();
+  } catch (error) {
+    threw = String(error).includes("sandbox user option");
+  }
+  assert(threw, `${label} rejects the sandbox user option instead of silently ignoring it`);
+}
+
+(async () => {
+  console.log("\nSandbox user option:");
+  await expectUserRejected("Daytona", () =>
+    daytona.create({ image: "evolve-all", user: "worker" }),
+  );
+  await expectUserRejected("Modal", () =>
+    modal.create({ image: "evolve-all", user: "worker" }),
+  );
+
+  console.log(`\n═══ ${passed} passed, ${failed} failed ═══\n`);
+  if (failed > 0) process.exit(1);
+})();

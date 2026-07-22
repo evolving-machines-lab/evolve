@@ -10,6 +10,7 @@
  */
 
 import { Evolve, type LifecycleEvent } from "../../dist/index.js";
+import { E2BCommands, E2BFiles } from "@evolvingmachines/e2b";
 import type {
   SandboxProvider,
   SandboxInstance,
@@ -2112,6 +2113,451 @@ async function testCredentialSealAndArtifactCollection(): Promise<void> {
   }
 }
 
+interface RecordedE2bCall {
+  method: string;
+  command?: string;
+  path?: string;
+  opts?: Record<string, unknown>;
+}
+
+/**
+ * Fake of the raw E2B SDK sandbox surface. Wrapped by the REAL E2BCommands /
+ * E2BFiles adapters so tests verify the actual user-threading code path.
+ */
+function createFakeE2bSandbox() {
+  const calls: RecordedE2bCall[] = [];
+  const files = new Map<string, string>();
+  let runHandler:
+    | ((command: string) => SandboxCommandResult)
+    | undefined;
+
+  const fake = {
+    sandboxId: "e2b-fake",
+    commands: {
+      run: async (command: string, opts?: Record<string, unknown>) => {
+        calls.push({
+          method: opts?.background ? "spawn" : "run",
+          command,
+          opts,
+        });
+        const result = runHandler?.(command) ?? {
+          exitCode: 0,
+          stdout: "",
+          stderr: "",
+        };
+        if (opts?.background) {
+          return {
+            pid: calls.length,
+            wait: async () => result,
+            kill: async () => true,
+          };
+        }
+        return result;
+      },
+      kill: async () => true,
+    },
+    files: {
+      read: async (path: string, opts?: Record<string, unknown>) => {
+        calls.push({ method: "read", path, opts });
+        const value = files.get(path);
+        if (value === undefined) throw new Error(`not found: ${path}`);
+        return value;
+      },
+      write: async (
+        pathOrEntries: string | Array<{ path: string; data: unknown }>,
+        dataOrOpts?: unknown,
+        maybeOpts?: unknown,
+      ) => {
+        if (typeof pathOrEntries === "string") {
+          calls.push({
+            method: "write",
+            path: pathOrEntries,
+            opts: maybeOpts as Record<string, unknown>,
+          });
+          files.set(pathOrEntries, String(dataOrOpts));
+          return;
+        }
+        calls.push({
+          method: "writeBatch",
+          opts: dataOrOpts as Record<string, unknown>,
+        });
+        for (const entry of pathOrEntries) {
+          files.set(entry.path, String(entry.data));
+        }
+      },
+      makeDir: async (path: string, opts?: Record<string, unknown>) => {
+        calls.push({ method: "makeDir", path, opts });
+        return true;
+      },
+      exists: async (path: string, opts?: Record<string, unknown>) => {
+        calls.push({ method: "exists", path, opts });
+        return files.has(path);
+      },
+      list: async (path: string, opts?: Record<string, unknown>) => {
+        calls.push({ method: "list", path, opts });
+        return [];
+      },
+      remove: async (path: string, opts?: Record<string, unknown>) => {
+        calls.push({ method: "remove", path, opts });
+        files.delete(path);
+      },
+      rename: async (
+        oldPath: string,
+        newPath: string,
+        opts?: Record<string, unknown>,
+      ) => {
+        calls.push({ method: "rename", path: oldPath, opts });
+        return { name: newPath, path: newPath, type: "file" };
+      },
+      watchDir: async (
+        path: string,
+        _onEvent: unknown,
+        opts?: Record<string, unknown>,
+      ) => {
+        calls.push({ method: "watchDir", path, opts });
+        return { stop: async () => {} };
+      },
+    },
+  };
+
+  return {
+    fake,
+    calls,
+    files,
+    setRunHandler: (handler: (command: string) => SandboxCommandResult) => {
+      runHandler = handler;
+    },
+  };
+}
+
+/** Provider composing the REAL E2B command/file adapters over the fake SDK. */
+class FakeE2BUserProvider implements SandboxProvider {
+  readonly providerType = "e2b";
+  readonly name = "e2b-fake";
+  public createOptions?: SandboxCreateOptions;
+
+  constructor(private readonly fakeSandbox: ReturnType<typeof createFakeE2bSandbox>["fake"]) {}
+
+  async create(options: SandboxCreateOptions): Promise<SandboxInstance> {
+    this.createOptions = options;
+    // Mirrors E2BProvider.create(): workingDirectory makeDir runs as the user.
+    if (options.workingDirectory) {
+      await this.fakeSandbox.files.makeDir(options.workingDirectory, {
+        user: options.user,
+      });
+    }
+    return {
+      sandboxId: this.fakeSandbox.sandboxId,
+      commands: new E2BCommands(this.fakeSandbox as any, options.user),
+      files: new E2BFiles(this.fakeSandbox as any, options.user),
+      getHost: async (port: number) => `http://localhost:${port}`,
+      kill: async () => {},
+      pause: async () => {},
+    };
+  }
+
+  async connect(): Promise<SandboxInstance> {
+    throw new Error("connect not supported in FakeE2BUserProvider");
+  }
+}
+
+async function testRootUserThreadedThroughE2bOperations(): Promise<void> {
+  console.log(
+    "\n[19] sandbox user threaded through every e2b operation (root homeDir)",
+  );
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    throw new Error(`unexpected fetch in externalGateway mode: ${String(input)}`);
+  }) as typeof fetch;
+
+  const { fake, calls, files, setRunHandler } = createFakeE2bSandbox();
+  const provider = new FakeE2BUserProvider(fake);
+  let revokeCalls = 0;
+
+  const kit = new Evolve()
+    .withAgent({
+      type: "codex",
+      externalGateway: {
+        apiKey: "sk-litellm-task",
+        baseUrl: "https://litellm.test/v1",
+        revoke: async () => {
+          revokeCalls++;
+        },
+      },
+    })
+    .withSandbox(provider)
+    .withSandboxCreateOptions({ image: "task-image-v1", user: "root" })
+    .withWorkspaceMode("task")
+    .withWorkingDirectory("/task");
+
+  try {
+    const result = await kit.run({ prompt: "solve the task", timeoutMs: 10_000 });
+    assertEqual(result.exitCode, 0, "externalGateway run succeeds as root user");
+    assertEqual(
+      provider.createOptions?.user,
+      "root",
+      "sandbox create options carry the configured user",
+    );
+    const createEnvs = provider.createOptions?.envs ?? {};
+    assertEqual(
+      createEnvs.OPENAI_API_KEY,
+      "sk-litellm-task",
+      "create env injects external gateway key like direct mode",
+    );
+    assertEqual(
+      createEnvs.OPENAI_BASE_URL,
+      "https://litellm.test/v1",
+      "create env injects external gateway base URL",
+    );
+    assert(
+      !("EVOLVE_API_KEY" in createEnvs),
+      "externalGateway mode does not require or expose EVOLVE_API_KEY",
+    );
+
+    const codexToml = files.get("/root/.codex/config.toml") || "";
+    assert(
+      codexToml.includes('base_url = "https://litellm.test/v1"'),
+      "root homeDir: codex config lands at /root/.codex/config.toml with external base_url",
+    );
+    assert(
+      codexToml.includes('wire_api = "responses"'),
+      "external codex provider keeps wire_api pinned to responses",
+    );
+    assert(
+      !codexToml.includes("env_http_headers"),
+      "external codex provider omits litellm/binding env_http_headers",
+    );
+
+    const runSpawn = calls.find((call) => call.method === "spawn");
+    const runSpawnEnvs = (runSpawn?.opts?.envs ?? {}) as Record<string, string>;
+    assertEqual(
+      runSpawnEnvs.OPENAI_API_KEY,
+      "sk-litellm-task",
+      "per-spawn env re-injects external gateway key",
+    );
+
+    await kit.sealCredentials();
+    assertEqual(revokeCalls, 1, "sealCredentials calls external revoke exactly once");
+    await kit.sealCredentials();
+    assertEqual(revokeCalls, 1, "second seal is a no-op and does not re-revoke");
+
+    files.set("/task/patch.diff", "diff-data");
+    setRunHandler((command) => {
+      if (command.startsWith("find --")) {
+        return {
+          exitCode: 0,
+          stdout: "/task/patch.diff\0" + "9\0",
+          stderr: "",
+        };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    const artifacts = await kit.collectArtifacts(["patch.diff"]);
+    assertEqual(
+      artifacts["patch.diff"] as string,
+      "diff-data",
+      "collectArtifacts works post-seal in externalGateway mode",
+    );
+
+    const artifactFind = calls.find(
+      (call) => call.method === "run" && call.command?.startsWith("find --"),
+    );
+    assertEqual(
+      artifactFind?.opts?.user,
+      "root",
+      "artifact find runs as the configured user",
+    );
+    const artifactRead = calls.find(
+      (call) => call.method === "read" && call.path === "/task/patch.diff",
+    );
+    assertEqual(
+      artifactRead?.opts?.user,
+      "root",
+      "artifact file read runs as the configured user",
+    );
+
+    const optBearing = calls.filter((call) =>
+      ["run", "spawn", "read", "write", "writeBatch", "makeDir", "exists", "list", "remove", "rename", "watchDir"].includes(
+        call.method,
+      ),
+    );
+    assert(optBearing.length > 0, "e2b operations were recorded");
+    const missingUser = optBearing.filter((call) => call.opts?.user !== "root");
+    assertEqual(
+      missingUser.length,
+      0,
+      `every e2b command/file operation carries user=root${
+        missingUser.length
+          ? ` (missing on: ${missingUser.map((c) => c.method).join(", ")})`
+          : ""
+      }`,
+    );
+  } finally {
+    await kit.kill().catch(() => {});
+    globalThis.fetch = previousFetch;
+  }
+}
+
+async function testExternalGatewaySealFlow(): Promise<void> {
+  console.log("\n[20] externalGateway seal + post-seal command/collect flow");
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    throw new Error(`unexpected fetch in externalGateway mode: ${String(input)}`);
+  }) as typeof fetch;
+
+  const commands = new MockCommands();
+  const sandbox = new MockSandbox("external-seal", commands);
+  const provider = new MockProvider(sandbox);
+  let revokeCalls = 0;
+  let revokeShouldFail = true;
+
+  const kit = new Evolve()
+    .withAgent({
+      type: "codex",
+      externalGateway: {
+        apiKey: "sk-litellm-task",
+        baseUrl: "https://litellm.test/v1",
+        revoke: async () => {
+          revokeCalls++;
+          if (revokeShouldFail) throw new Error("revocation endpoint down");
+        },
+      },
+    })
+    .withSandbox(provider)
+    .withWorkspaceMode("task")
+    .withWorkingDirectory("/task");
+
+  try {
+    await kit.run({ prompt: "solve", timeoutMs: 10_000 });
+    const codexToml =
+      sandbox.files.writes.get("/home/user/.codex/config.toml") || "";
+    assert(
+      codexToml.includes('base_url = "https://litellm.test/v1"'),
+      "run works with the custom base_url in the codex toml",
+    );
+
+    let sealThrew = false;
+    try {
+      await kit.sealCredentials();
+    } catch (error) {
+      sealThrew = String(error).includes("revocation endpoint down");
+    }
+    assert(sealThrew, "failed revoke propagates out of sealCredentials");
+    assertEqual(revokeCalls, 1, "failed seal attempted revoke once");
+    assert(!kit.isSealed(), "failed revoke never marks credentials sealed");
+
+    revokeShouldFail = false;
+    await kit.sealCredentials();
+    assertEqual(revokeCalls, 2, "successful seal calls revoke exactly once more");
+    assert(kit.isSealed(), "seal reports sealed after successful revoke");
+
+    await kit.executeCommand("python verifier.py", { timeoutMs: 10_000 });
+    const postSealEnvs =
+      commands.spawnOptions[commands.spawnOptions.length - 1]?.envs;
+    assert(
+      !postSealEnvs || !("OPENAI_API_KEY" in postSealEnvs),
+      "post-seal executeCommand injects no OPENAI_API_KEY",
+    );
+    assert(
+      !postSealEnvs || Object.keys(postSealEnvs).length === 0,
+      "post-seal executeCommand injects no credential envs at all",
+    );
+
+    await sandbox.files.write("/task/patch.diff", "diff --git a/a b/a");
+    commands.runHandler = (command) => ({
+      exitCode: 0,
+      stdout: command.startsWith("find --")
+        ? "/task/patch.diff\0" + "18\0"
+        : "",
+      stderr: "",
+    });
+    const artifacts = await kit.collectArtifacts(["patch.diff"]);
+    assertEqual(
+      artifacts["patch.diff"] as string,
+      "diff --git a/a b/a",
+      "collectArtifacts remains seal-gated and functional",
+    );
+
+    let rerunThrew = false;
+    try {
+      await kit.run({ prompt: "again" });
+    } catch (error) {
+      rerunThrew = String(error).includes("credentials are sealed");
+    }
+    assert(rerunThrew, "run() throws after external seal");
+  } finally {
+    await kit.kill().catch(() => {});
+    globalThis.fetch = previousFetch;
+  }
+}
+
+async function testExternalGatewayMutualExclusivity(): Promise<void> {
+  console.log("\n[21] externalGateway mutual exclusivity + direct-mode seal refusal");
+
+  const externalGateway = {
+    apiKey: "sk-litellm-task",
+    baseUrl: "https://litellm.test/v1",
+    revoke: async () => {},
+  };
+
+  const conflicts: Array<{ label: string; config: Record<string, unknown> }> = [
+    {
+      label: "providerApiKey",
+      config: { type: "codex", externalGateway, providerApiKey: "sk-direct" },
+    },
+    {
+      label: "providerBaseUrl",
+      config: {
+        type: "codex",
+        externalGateway,
+        providerBaseUrl: "https://direct.test",
+      },
+    },
+    {
+      label: "apiKey (gateway mode)",
+      config: { type: "codex", externalGateway, apiKey: "evolve-key" },
+    },
+    {
+      label: "oauthToken",
+      config: { type: "claude", externalGateway, oauthToken: "oauth-token" },
+    },
+  ];
+
+  for (const item of conflicts) {
+    let threw = false;
+    try {
+      new Evolve().withAgent(item.config as any);
+    } catch (error) {
+      threw = String(error).includes("externalGateway cannot be combined");
+    }
+    assert(threw, `withAgent throws at config time for externalGateway + ${item.label}`);
+  }
+
+  // Plain direct mode must STILL refuse to seal.
+  const commands = new MockCommands();
+  const sandbox = new MockSandbox("direct-seal", commands);
+  const provider = new MockProvider(sandbox);
+  const kit = new Evolve()
+    .withAgent({ type: "claude", providerApiKey: "sk-direct" })
+    .withSandbox(provider)
+    .withWorkspaceMode("task")
+    .withWorkingDirectory("/task");
+
+  try {
+    await kit.run({ prompt: "solve", timeoutMs: 10_000 });
+    let threw = false;
+    try {
+      await kit.sealCredentials();
+    } catch (error) {
+      threw = String(error).includes("requires gateway mode");
+    }
+    assert(threw, "plain direct mode (no revoke) still refuses sealCredentials");
+    assert(!kit.isSealed(), "refused direct-mode seal never reports sealed");
+  } finally {
+    await kit.kill().catch(() => {});
+  }
+}
+
 async function main(): Promise<void> {
   console.log("\n============================================================");
   console.log("Session Runtime Unit Tests");
@@ -2140,6 +2586,9 @@ async function main(): Promise<void> {
     await testManagedGatewayAgentsUseRuntimeProxyLifecycle();
     await testTaskWorkspaceAndSandboxCreateOptions();
     await testCredentialSealAndArtifactCollection();
+    await testRootUserThreadedThroughE2bOperations();
+    await testExternalGatewaySealFlow();
+    await testExternalGatewayMutualExclusivity();
   } catch (error) {
     failed++;
     console.log(

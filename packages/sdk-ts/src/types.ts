@@ -115,6 +115,17 @@ export interface SandboxCreateOptions {
   workingDirectory?: string;
   /** Providers must reject policies they cannot enforce; never silently ignore them. */
   network?: SandboxNetworkPolicy;
+  /**
+   * Run all commands and file operations as this user.
+   * Providers must reject it if they cannot enforce it, never silently ignore it.
+   */
+  user?: string;
+  /**
+   * Home directory used for agent config paths inside the sandbox.
+   * Default: "/root" when user is "root", "/home/<user>" for other users,
+   * "/home/user" when no user is given.
+   */
+  homeDir?: string;
 }
 
 /** Command execution capabilities */
@@ -387,6 +398,22 @@ export const VALIDATION_PRESETS: Record<ValidationMode, Required<Omit<SchemaVali
 // AGENT CONFIGURATION
 // =============================================================================
 
+/**
+ * Caller-minted gateway credential for external gateway mode.
+ *
+ * For callers that mint their own spend-capped gateway key (e.g., a LiteLLM
+ * virtual key per task run). The credential is injected like direct mode and
+ * sealCredentials() calls revoke() — sealing fails if revocation fails.
+ */
+export interface ExternalGatewayConfig {
+  /** Gateway API key minted by the caller (e.g., a spend-capped LiteLLM key) */
+  apiKey: string;
+  /** OpenAI-compatible gateway base URL */
+  baseUrl: string;
+  /** Revoke the minted credential. Called by sealCredentials(); seal fails if this throws. */
+  revoke: () => Promise<void>;
+}
+
 /** Configuration passed to withAgent() */
 export interface AgentConfig {
   /** Agent type (default: "claude") */
@@ -399,6 +426,11 @@ export interface AgentConfig {
   oauthToken?: string;
   /** Provider base URL for direct mode (default: provider env var or registry default) */
   providerBaseUrl?: string;
+  /**
+   * Caller-minted revocable gateway credential. Mutually exclusive with
+   * apiKey (gateway mode) and providerApiKey/providerBaseUrl (direct mode).
+   */
+  externalGateway?: ExternalGatewayConfig;
   /** Model to use (optional, uses agent's default if omitted) */
   model?: string;
   /** Reasoning effort for models that support it */
@@ -414,6 +446,8 @@ export interface ResolvedAgentConfig {
   isOAuth?: boolean;
   /** File content for file-based OAuth (Codex) */
   oauthFileContent?: string;
+  /** External gateway mode: caller-minted revocable credential */
+  externalGateway?: { revoke: () => Promise<void> };
   model?: string;
   reasoningEffort?: ReasoningEffort;
 }

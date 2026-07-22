@@ -152,6 +152,10 @@ export interface SandboxCreateOptions {
     outbound: "open" | "blocked";
     allowedDestinations?: string[];
   };
+  /** Run all commands and file operations as this user. Not yet implemented for this provider. */
+  user?: string;
+  /** Home directory used by the SDK for agent config paths; not consumed by the provider. */
+  homeDir?: string;
 }
 
 /** Options for listing sandboxes */
@@ -765,6 +769,9 @@ export class ModalProvider implements SandboxProvider {
   }
 
   async create(options: SandboxCreateOptions): Promise<SandboxInstance> {
+    if (options.user) {
+      throw new Error("Modal provider does not yet implement Evolve's sandbox user option");
+    }
     if (options.network?.outbound === "blocked" || options.network?.allowedDestinations?.length) {
       throw new Error("Modal provider does not yet implement Evolve's outbound network policy");
     }

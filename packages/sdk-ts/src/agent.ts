@@ -40,6 +40,7 @@ import type {
 } from "./types";
 import { VALIDATION_PRESETS } from "./types";
 import {
+  expandPath,
   getAgentConfig,
   getOpenCodeReasoningVariant,
   isThinkingEnabled,
@@ -57,13 +58,14 @@ import { createAgentParser, type AgentParser } from "./parsers";
 import type { OutputEvent } from "./parsers/types";
 import {
   DEFAULT_TIMEOUT_MS,
-  DEFAULT_WORKING_DIR,
+  DEFAULT_HOME_DIR,
   DEFAULT_DASHBOARD_URL,
   ENV_EVOLVE_API_KEY,
   LITELLM_CUSTOMER_ID_HEADER,
   LITELLM_TAGS_HEADER,
   RUN_TAG_PREFIX,
   getGatewayUrl,
+  resolveHomeDir,
 } from "./constants";
 import { buildWorkerSystemPrompt } from "./prompts";
 import { isEvolveManagedSandboxProvider, isZodSchema } from "./utils";
@@ -131,7 +133,6 @@ export type {
 // PROMPT ESCAPING
 // =============================================================================
 
-const DROID_SESSION_STATE_PATH = "/home/user/.factory/evolve-session.json";
 const PROVIDER_RUNTIME_BINDING_ENV = "EVOLVE_PROVIDER_RUNTIME_BINDING";
 const GEMINI_GATEWAY_AUTH_TYPE = "gemini-api-key";
 
@@ -282,6 +283,7 @@ export class Agent {
   private sandbox?: SandboxInstance;
   private hasRun: boolean = false;
   private readonly workingDir: string;
+  private readonly homeDir: string;
   private lastRunTimestamp?: number;
   private readonly registry: AgentRegistryEntry;
   /** Unified session ID — used for both observability (SessionLogger) and spend tracking (LiteLLM customer-id) */
@@ -331,10 +333,35 @@ export class Agent {
     }
     this.agentConfig = agentConfig;
     this.options = options;
+    if (options.sandboxId && options.sandboxCreateOptions?.user) {
+      // A user can only be enforced at sandbox creation; attaching to an
+      // existing sandbox would silently run operations as its default user.
+      throw new Error(
+        "sandbox user cannot be enforced when attaching to an existing sandbox; create a fresh sandbox with the user instead",
+      );
+    }
+    this.homeDir = resolveHomeDir(
+      options.sandboxCreateOptions?.user,
+      options.sandboxCreateOptions?.homeDir,
+    );
+    if (this.homeDir !== DEFAULT_HOME_DIR) {
+      // Checkpoint storage and managed browser config paths are pinned to the
+      // default /home/user home; fail loudly instead of writing to dead paths.
+      if (options.storage) {
+        throw new Error(
+          "Checkpoint storage requires the default /home/user sandbox home directory; remove sandbox user/homeDir or storage",
+        );
+      }
+      if (options.managedBrowser || options.browserCredentials) {
+        throw new Error(
+          "Managed browser features require the default /home/user sandbox home directory",
+        );
+      }
+    }
     this.workingDir =
       options.workingDirectory ||
       options.sandboxCreateOptions?.workingDirectory ||
-      DEFAULT_WORKING_DIR;
+      `${this.homeDir}/workspace`;
     this.sandboxState = options.sandboxId ? "ready" : "stopped";
 
     if (options.workspaceMode === "task") {
@@ -1231,6 +1258,17 @@ export class Agent {
   }
 
   private buildProviderRuntimeProcessEnvs(): Record<string, string> {
+    // External gateway mode: re-inject the caller-minted credential per spawn,
+    // mirroring direct-mode env injection. No runtime token or binding exists.
+    if (this.agentConfig.externalGateway) {
+      const envs: Record<string, string> = {
+        [this.registry.apiKeyEnv]: this.agentConfig.apiKey,
+      };
+      if (this.registry.baseUrlEnv && this.agentConfig.baseUrl) {
+        envs[this.registry.baseUrlEnv] = this.agentConfig.baseUrl;
+      }
+      return envs;
+    }
     const providerRuntime = this.activeProviderRuntimeToken();
     if (!providerRuntime) return {};
     const envs: Record<string, string> = {};
@@ -1265,6 +1303,10 @@ export class Agent {
    * Passed to spawn() so each .run() gets a unique run tag.
    */
   private buildRunEnvs(runId: string): Record<string, string> | undefined {
+    if (this.agentConfig.externalGateway) {
+      // External gateway mode: credential envs only — no LiteLLM spend headers.
+      return this.buildProviderRuntimeProcessEnvs();
+    }
     if (this.agentConfig.isDirectMode) return undefined;
     const envs = this.buildProviderRuntimeProcessEnvs();
 
@@ -1314,11 +1356,22 @@ export class Agent {
   private async writeCodexGatewayProviderConfig(
     sandbox: SandboxInstance,
   ): Promise<void> {
-    if (
-      this.agentConfig.isDirectMode ||
-      !this.registry.spendTrackingEnvs ||
-      this.agentConfig.type !== "codex"
-    ) {
+    if (this.agentConfig.type !== "codex") {
+      return;
+    }
+    if (this.agentConfig.externalGateway) {
+      // External gateway mode: route Codex at the caller-minted gateway.
+      // No LiteLLM tracking or runtime binding headers exist in this mode.
+      await writeCodexSpendProvider(
+        sandbox,
+        this.agentConfig.baseUrl || getGatewayUrl(),
+        undefined,
+        undefined,
+        this.homeDir,
+      );
+      return;
+    }
+    if (this.agentConfig.isDirectMode || !this.registry.spendTrackingEnvs) {
       return;
     }
     await writeCodexSpendProvider(
@@ -1330,6 +1383,7 @@ export class Agent {
       this.activeProviderRuntimeToken()
         ? { [PROVIDER_RUNTIME_BINDING_HEADER]: PROVIDER_RUNTIME_BINDING_ENV }
         : undefined,
+      this.homeDir,
     );
   }
 
@@ -1376,10 +1430,14 @@ export class Agent {
     );
   }
 
+  private droidSessionStatePath(): string {
+    return `${this.homeDir}/.factory/evolve-session.json`;
+  }
+
   private async loadDroidSessionState(sandbox: SandboxInstance): Promise<void> {
     if (this.agentConfig.type !== "droid" || this.droidSessionId) return;
     try {
-      const existing = await sandbox.files.read(DROID_SESSION_STATE_PATH);
+      const existing = await sandbox.files.read(this.droidSessionStatePath());
       if (typeof existing !== "string") return;
       const parsed = JSON.parse(existing) as { sessionId?: unknown };
       if (typeof parsed.sessionId === "string" && parsed.sessionId.length > 0) {
@@ -1394,9 +1452,9 @@ export class Agent {
     sandbox: SandboxInstance,
   ): Promise<void> {
     if (this.agentConfig.type !== "droid" || !this.droidSessionId) return;
-    await sandbox.files.makeDir("/home/user/.factory");
+    await sandbox.files.makeDir(`${this.homeDir}/.factory`);
     await sandbox.files.write(
-      DROID_SESSION_STATE_PATH,
+      this.droidSessionStatePath(),
       JSON.stringify({ sessionId: this.droidSessionId }, null, 2),
     );
   }
@@ -1419,9 +1477,9 @@ export class Agent {
   private async setupAgentAuth(sandbox: SandboxInstance): Promise<void> {
     // File-based OAuth: write auth file directly
     if (this.agentConfig.oauthFileContent && this.registry.oauthFileName) {
-      const settingsDir = this.registry.mcpConfig.settingsDir.replace(
-        /^~/,
-        "/home/user",
+      const settingsDir = expandPath(
+        this.registry.mcpConfig.settingsDir,
+        this.homeDir,
       );
       await sandbox.files.makeDir(settingsDir);
       await sandbox.files.write(
@@ -1447,9 +1505,9 @@ export class Agent {
   private async writeGeminiGatewayAuthSettings(
     sandbox: SandboxInstance,
   ): Promise<void> {
-    const settingsDir = this.registry.mcpConfig.settingsDir.replace(
-      /^~/,
-      "/home/user",
+    const settingsDir = expandPath(
+      this.registry.mcpConfig.settingsDir,
+      this.homeDir,
     );
     const settingsPath = `${settingsDir}/${this.registry.mcpConfig.filename}`;
 
@@ -1619,18 +1677,14 @@ export class Agent {
         sandbox,
         this.workingDir,
         mcpServers,
+        this.homeDir,
       );
     }
 
     // Spend tracking: write model provider config for agents using env_http_headers
     // (e.g., Codex). Must run after MCP config so we append to existing config.toml.
-    if (
-      !this.agentConfig.isDirectMode &&
-      this.registry.spendTrackingEnvs &&
-      this.agentConfig.type === "codex"
-    ) {
-      await this.writeCodexGatewayProviderConfig(sandbox);
-    }
+    // Internally guarded — also covers external gateway routing for Codex.
+    await this.writeCodexGatewayProviderConfig(sandbox);
 
     // Spend tracking: write customHeaders to JSON settings file for agents that read
     // headers from config (e.g., Qwen). Session-level only — per-run tags are written
@@ -1647,6 +1701,7 @@ export class Agent {
           [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
           ...this.providerRuntimeHeaderUpdates(),
         },
+        this.homeDir,
       );
     }
 
@@ -1669,7 +1724,8 @@ export class Agent {
     if (!this.skills?.length) return;
 
     const { skillsConfig } = this.registry;
-    const { sourceDir, targetDir } = skillsConfig;
+    const sourceDir = expandPath(skillsConfig.sourceDir, this.homeDir);
+    const targetDir = expandPath(skillsConfig.targetDir, this.homeDir);
 
     await sandbox.files.makeDir(targetDir);
 
@@ -1758,6 +1814,7 @@ export class Agent {
       reasoningEffort: this.agentConfig.reasoningEffort,
       isDirectMode: this.agentConfig.isDirectMode,
       skills: this.skills,
+      homeDir: this.homeDir,
     });
   }
 
@@ -1958,6 +2015,7 @@ export class Agent {
           [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
           ...this.providerRuntimeHeaderUpdates(),
         },
+        this.homeDir,
       );
     }
 
@@ -1965,6 +2023,7 @@ export class Agent {
       await writeQwenThinkingConfig(
         sandbox,
         isThinkingEnabled(this.agentConfig.reasoningEffort),
+        this.homeDir,
       );
     }
 
@@ -1997,6 +2056,7 @@ export class Agent {
             this.agentConfig.reasoningEffort,
           ),
         },
+        this.homeDir,
       );
     }
 
@@ -2019,6 +2079,7 @@ export class Agent {
           [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
           ...this.providerRuntimeHeaderUpdates(),
         },
+        this.homeDir,
       );
     }
 
@@ -2300,7 +2361,7 @@ export class Agent {
     if (this.activeCommand) {
       throw new Error("Cannot seal credentials while a process is running.");
     }
-    if (this.agentConfig.isDirectMode) {
+    if (this.agentConfig.isDirectMode && !this.agentConfig.externalGateway) {
       throw new Error(
         "Credential sealing requires gateway mode; direct provider credentials cannot be revoked by Evolve",
       );
@@ -2320,6 +2381,14 @@ export class Agent {
       throw new Error(
         "Credential sealing requires a credential-minimal sandbox: omit secrets, managed secrets, integrations, MCP servers, and browser credentials",
       );
+    }
+    // External gateway mode: the caller minted the credential, so the caller's
+    // revoke() is the revocation authority. If it throws, sealing FAILS — the
+    // sandbox is never marked sealed on a failed revocation.
+    if (this.agentConfig.externalGateway) {
+      await this.agentConfig.externalGateway.revoke();
+      this.credentialsSealed = true;
+      return;
     }
     // Mirror closeProviderRuntimeToken()'s early-return conditions exactly: if
     // either is missing, revocation would silently no-op and sealing would be a
@@ -2571,6 +2640,11 @@ export class Agent {
     }
     if (this.options.managedSecrets) {
       throw new Error("setSession() cannot be used with managed secrets; managed secret grants are sandbox-scoped.");
+    }
+    if (this.options.sandboxCreateOptions?.user) {
+      throw new Error(
+        "setSession() cannot be used with a configured sandbox user; the user cannot be enforced on an existing sandbox.",
+      );
     }
     // Interrupt active operation before switching sessions
     if (this.activeCommand) {

@@ -149,10 +149,28 @@ export const DEFAULT_CONCURRENCY = 4;
 export const MAX_CONCURRENCY = 100;
 
 /**
- * Default working directory in sandbox
+ * Default sandbox home directory (used when no sandbox user is configured)
  * @internal
  */
-export const DEFAULT_WORKING_DIR = "/home/user/workspace";
+export const DEFAULT_HOME_DIR = "/home/user";
+
+/**
+ * Resolve the sandbox home directory for a configured sandbox user.
+ * Default: "/root" when user is "root", "/home/<user>" for other users,
+ * DEFAULT_HOME_DIR when no user is given.
+ * @internal
+ */
+export function resolveHomeDir(user?: string, homeDir?: string): string {
+  if (homeDir) return homeDir.replace(/\/+$/, "") || "/";
+  if (!user) return DEFAULT_HOME_DIR;
+  return user === "root" ? "/root" : `/home/${user}`;
+}
+
+/**
+ * Default working directory in sandbox (resolved per-agent as `${homeDir}/workspace`)
+ * @internal
+ */
+export const DEFAULT_WORKING_DIR = `${DEFAULT_HOME_DIR}/workspace`;
 
 // =============================================================================
 // OBSERVABILITY
