@@ -2607,6 +2607,30 @@ async function testExternalGatewayPerHarnessWiring(): Promise<void> {
     assertEqual(gemini.spawnEnvs.GOOGLE_GEMINI_BASE_URL, EXTERNAL_URL, "gemini spawn env re-injects GOOGLE_GEMINI_BASE_URL");
     assert(gemini.command.includes("--model gw-gemini-model"), "gemini command carries the VERBATIM caller model");
     assert(!("EVOLVE_API_KEY" in gemini.bootEnvs), "gemini externalGateway never exposes EVOLVE_API_KEY");
+    // Gemini selects its auth method from ~/.gemini/settings.json (NOT an env
+    // var); externalGateway resolves to isDirectMode=true, so the settings write
+    // must still fire or the CLI exits 41 ("Invalid auth method selected").
+    const geminiSettingsRaw = gemini.files.get("/home/user/.gemini/settings.json") ?? "";
+    assert(geminiSettingsRaw.length > 0, "gemini externalGateway writes ~/.gemini/settings.json");
+    const geminiSettings = JSON.parse(geminiSettingsRaw) as {
+      security?: { auth?: { selectedType?: string } };
+    };
+    assertEqual(
+      geminiSettings.security?.auth?.selectedType,
+      "gemini-api-key",
+      "gemini settings.json selects the gateway api-key auth method",
+    );
+    // Gemini 0.52+ refuses headless runs in an untrusted workspace (exit 55);
+    // the sandbox workspace is trusted explicitly, on both boot and spawn envs.
+    assertEqual(gemini.bootEnvs.GEMINI_CLI_TRUST_WORKSPACE, "true", "gemini boot env trusts the sandbox workspace");
+    assertEqual(gemini.spawnEnvs.GEMINI_CLI_TRUST_WORKSPACE, "true", "gemini spawn env re-trusts the sandbox workspace");
+
+    // claude: always declares sandbox mode (IS_SANDBOX) so the CLI permits
+    // --dangerously-skip-permissions under root — the eval boots as root and the
+    // CLI otherwise refuses ("cannot be used with root/sudo privileges") → exit 1.
+    const claude = await runHarness("claude", "gw-claude-model");
+    assertEqual(claude.bootEnvs.IS_SANDBOX, "1", "claude boot env declares sandbox mode for the root skip-permissions guard");
+    assert(claude.command.includes("--dangerously-skip-permissions"), "claude command runs with --dangerously-skip-permissions");
 
     // qwen: OpenAI-convention env wiring, model verbatim (no dashscope/ rewrite).
     const qwen = await runHarness("qwen", "gw-qwen-model");

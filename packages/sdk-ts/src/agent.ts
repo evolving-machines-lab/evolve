@@ -802,6 +802,22 @@ export class Agent {
       envVars[this.registry.gatewayConfigEnv] = this.buildGatewayConfigJson({});
     }
 
+    // External gateway + Gemini: the CLI picks its auth method from
+    // ~/.gemini/settings.json (written in setupAgentAuth) — NOT from an env var
+    // — and refuses to run headless in an untrusted workspace (exit 55). Trust
+    // the sandbox workspace explicitly so the run can proceed non-interactively.
+    if (this.agentConfig.externalGateway && this.agentConfig.type === "gemini") {
+      envVars.GEMINI_CLI_TRUST_WORKSPACE = "true";
+    }
+
+    // Claude Code always runs with --dangerously-skip-permissions, which the CLI
+    // refuses under root ("cannot be used with root/sudo privileges") unless the
+    // sandbox-mode bypass is set. Evolve always runs the agent inside a sandbox
+    // (the eval boots it as root), so declare sandbox mode for the claude harness.
+    if (this.agentConfig.type === "claude") {
+      envVars.IS_SANDBOX = "1";
+    }
+
     if (this.managedBrowserSession && this.options.managedBrowser) {
       Object.assign(
         envVars,
@@ -1296,6 +1312,12 @@ export class Agent {
       if (this.registry.gatewayConfigEnv) {
         envs[this.registry.gatewayConfigEnv] = this.buildGatewayConfigJson({});
       }
+      // Re-inject Gemini's workspace-trust flag per spawn (mirrors the boot env)
+      // so a run can never race a stale boot env and hit the untrusted-workspace
+      // exit-55 gate. Auth itself rides ~/.gemini/settings.json, not env.
+      if (this.agentConfig.type === "gemini") {
+        envs.GEMINI_CLI_TRUST_WORKSPACE = "true";
+      }
       return envs;
     }
     const providerRuntime = this.activeProviderRuntimeToken();
@@ -1519,8 +1541,12 @@ export class Agent {
     }
     if (
       this.agentConfig.type === "gemini" &&
-      !this.agentConfig.isDirectMode
+      (!this.agentConfig.isDirectMode || this.agentConfig.externalGateway)
     ) {
+      // External gateway mode resolves to isDirectMode=true, but Gemini still
+      // needs its gateway auth method written to ~/.gemini/settings.json — the
+      // CLI selects auth from this file, and without it fails with exit 41
+      // ("Invalid auth method selected"). The env var alone is insufficient.
       await this.writeGeminiGatewayAuthSettings(sandbox);
     }
     // Default: run setup command (e.g., "codex login --with-api-key")
