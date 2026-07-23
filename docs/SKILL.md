@@ -64,6 +64,7 @@ Read on demand when the user's task requires them:
 | Gateway, managed BYO provider keys, and direct provider-key mode | [TS](references/typescript/01-getting-started.md#authentication) | [PY](references/python/01-getting-started.md#authentication) |
 | BYO subscriptions (Claude Max, Codex, Gemini) | [TS](references/typescript/01-getting-started.md#byo-claude-max-subscription) | [PY](references/python/01-getting-started.md#byo-claude-max-subscription) |
 | Supported agents, models & defaults | [TS](references/typescript/01-getting-started.md#agent-reference) | [PY](references/python/01-getting-started.md#agent-reference) |
+| Harness and model pairing (per-harness constraints) | [TS](references/typescript/01-getting-started.md#harness-and-model-pairing) | [PY](references/python/01-getting-started.md#harness-and-model-pairing) |
 
 ### Configuration
 
@@ -126,8 +127,10 @@ Read on demand when the user's task requires them:
 | Evaluation inputs & idempotency | [TS](references/typescript/06-hosted-evals.md#evaluation-inputs) | [PY](references/python/06-hosted-evals.md#evaluation-inputs) |
 | Statuses (evaluation, task run, benchmark version) | [TS](references/typescript/06-hosted-evals.md#statuses) | [PY](references/python/06-hosted-evals.md#statuses) |
 | benchmarks() catalog client | [TS](references/typescript/06-hosted-evals.md#benchmarks-client) | [PY](references/python/06-hosted-evals.md#benchmarks-client) |
+| Benchmark import & conformance activation (VALIDATING → READY) | [TS](references/typescript/06-hosted-evals.md#import--getimport--watchimport) | [PY](references/python/06-hosted-evals.md#import_benchmark--get_import--watch_import) |
 | evaluations() client (run, watch, cancel, rerun, export) | [TS](references/typescript/06-hosted-evals.md#evaluations-client) | [PY](references/python/06-hosted-evals.md#evaluations-client) |
 | evolve-evals CLI | [TS](references/typescript/06-hosted-evals.md#cli) | [PY](references/python/06-hosted-evals.md#cli) |
+| Sandbox providers for evals (E2B/Daytona/Modal parity, EVAL_SANDBOX_PROVIDER) | [TS](references/typescript/06-hosted-evals.md#sandbox-providers) | [PY](references/python/06-hosted-evals.md#sandbox-providers) |
 
 ### Swarm & Pipeline
 

@@ -345,6 +345,15 @@ Kimi Code has provider-dependent internal effort settings, but the Moonshot/Kimi
 
 For Claude Fable 5, use `model: "fable"`. For OpenCode via OpenRouter, use `model: "openrouter/anthropic/claude-fable-5"`. For Claude 1M context window, use `model: "sonnet[1m]"` or `model: "opus[1m]"`.
 
+#### Harness and Model Pairing
+
+A harness and its model are chosen together, and a few harnesses only accept models from their own family:
+
+- **`qwen`** must run a Qwen-native model (the `qwen3.x` aliases, routed via DashScope). Qwen Code injects the DashScope-only `enable_thinking` request parameter on every call, which OpenAI-family models reject with a `400` — so pointing the `qwen` harness at a non-Qwen model fails.
+- **`opencode`** routes every model through OpenRouter, so its models are the `openrouter/…` ids in the table above (a bare id is prefixed with `openrouter/` for you).
+
+Two harness quirks the SDK handles automatically, with nothing for you to set: the `claude` harness runs with `IS_SANDBOX=1` so Claude Code's `--dangerously-skip-permissions` is allowed under root, and the `gemini` harness boots with workspace trust set so Gemini CLI runs headless instead of refusing an untrusted workspace.
+
 #### Evolve-Provided Gateway Models
 
 These models require Gateway mode (`EVOLVE_API_KEY`) and are routed by Evolve for latency-sensitive runs. Direct provider keys do not apply.

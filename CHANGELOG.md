@@ -19,15 +19,19 @@
 - Added `collectArtifacts()` / `collect_artifacts()`: collects declared files/directories only after sealing, with path validation, size/count limits, and loud failures for missing or unreadable roots.
 - Added `externalGateway` agent-config mode (TypeScript): caller-minted OpenAI-compatible gateway key injected like a direct-mode key, mutually exclusive with gateway and direct modes, revoked via the caller's `revoke()` on seal; Codex is routed at the external gateway with its wire API pinned.
 - Added the hosted evals client: `benchmarks()` (catalog list/get, git-source benchmark import with import polling/watch) and `evaluations()` (run with the six-input contract plus optional per-task-run spend cap, get, list, task runs, single-task-run detail, seq-paged trace, side-by-side compare, cancel, rerun-failed, export incl. Harbor bundle format, Idempotency-Key support). TypeScript `watch()` streams SSE with Last-Event-ID resume and terminal drain; the Python mirror polls.
+- Brought the Modal and Daytona sandbox providers to full capability: outbound network-policy enforcement (block-all and allowlists, with typed rejections for ports, IPv6, wildcards, invalid IPv4, and oversized lists), per-provider root/user execution semantics, private-registry image paths (AWS ECR / GCP Artifact Registry via a Modal Secret; Daytona pre-registered Registries), and honest lifecycle limits (Modal's hard 24h cap; Daytona's DNS-pinned IPv4-CIDR allowlist).
+- Closed the remaining harness gaps for eval and external-gateway runs: the `claude` harness declares `IS_SANDBOX` so `--dangerously-skip-permissions` works under root, and the `gemini` harness boots with workspace trust and file-based auth settings so it runs headless without the untrusted-workspace refusal.
 
 ### CLI
 
 - Added the `evolve-evals` binary to `@evolvingmachines/sdk`: `run` (with `--watch` event streaming), `list`, `get`, `task-runs`, `cancel`, `rerun-failed`, `export` (`--format harbor`), and `benchmarks` catalog commands, with `--json` machine-readable output.
+- Added the `evolve-evals import` command: start a git-source benchmark import, poll it to terminal with `--watch`, and inspect one job with `import status <id>`.
 
 ### Documentation And Skills
 
 - Added Hosted Evals chapters (TypeScript and Python) covering both clients, the evaluation inputs, status tables, the quickstart, and the CLI.
 - Documented sandbox create options, workspace modes, external gateway mode, and the task-sandbox credential lifecycle (capped key → run → seal-revokes → collect-after-seal); synced the Evolve skill references.
+- Documented the import → conformance-activation lifecycle (imports land at `VALIDATING`; a gold/no-op activation gate promotes to `READY`; only `READY` versions accept evaluations), the multi-provider sandbox story (E2B/Daytona/Modal capability parity and `EVAL_SANDBOX_PROVIDER` selection), per-harness model constraints, and the eval spend read-back caveat.
 
 ## v0.0.51 - 2026-06-30
 

@@ -86,6 +86,8 @@ interface AgentSystem {
 
 The harness version actually used for a run is reported back on the task run detail (`harnessVersionResolved`), so unpinned runs remain reproducible after the fact.
 
+Pair each `harness` with a model from its own family — the harness and model together form one agent system, and some harnesses only accept native models. Notably the `qwen` harness must run a Qwen-native model (Qwen Code injects the DashScope-only `enable_thinking` parameter, which OpenAI-family models reject with a `400`), and the `opencode` harness takes `openrouter/…` model ids. See [Getting Started → Harness and Model Pairing](./01-getting-started.md#harness-and-model-pairing) for the full rules.
+
 ### Idempotency
 
 `run()` and `rerunFailed()` accept an `Idempotency-Key`. Retrying with the same key returns the original evaluation (marked `idempotentReplay: true`) instead of creating a duplicate:
@@ -122,7 +124,7 @@ const evaluation = await evals.run(input, { idempotencyKey: "nightly-2026-07-22"
 | `INDETERMINATE` | Dispatch/completion uncertainty — the platform cannot prove what happened |
 | `CANCELLED` | Cancelled before settling |
 
-**Benchmark version** (`BenchmarkVersion.state`): `DRAFT` → `IMPORTING` → `BUILDING` → `VALIDATING` → `READY` (runnable), with `FAILED` and `ARCHIVED` as the off-ramps.
+**Benchmark version** (`BenchmarkVersion.state`): `DRAFT` → `IMPORTING` → `BUILDING` → `VALIDATING` → `READY` (runnable), with `FAILED` and `ARCHIVED` as the off-ramps. An import lands a new version at `VALIDATING`; the `VALIDATING` → `READY` promotion is the conformance activation gate's alone (see [import](#import--getimport--watchimport)), and only `READY` versions accept evaluations.
 
 ---
 
@@ -164,7 +166,7 @@ Use `get()` for the full multi-version detail with optional fields; `getActive()
 
 ### import / getImport / watchImport
 
-Import a benchmark from a git repository into the shared catalog. The import runs server-side as a parse → validate → activate pipeline:
+Import a benchmark from a git repository into the shared catalog. The import runs server-side as a parse → validate pipeline that lands the new version at `VALIDATING`; a separate conformance activation gate owns the promotion to `READY`:
 
 ```ts
 const job = await catalog.import({
@@ -185,7 +187,11 @@ const done = await catalog.watchImport(job.id, {
 });
 ```
 
-The import job's `state` follows the benchmark-version lifecycle above (`IMPORTING` → `BUILDING` → `VALIDATING` → `READY`, or `FAILED` with `error` populated). Archive-upload and Harbor Hub sources are part of the typed surface but not accepted by the server yet — git is the supported source.
+An import runs in two stages. The **importer** clones the pinned git source, parses the corpus, and lands the new version at `VALIDATING` (or `FAILED`, with `error` populated) — it never promotes to `READY`. Promotion is a separate **conformance activation** gate: for every task it runs the corpus' held-out gold solution through the real agent-and-verifier path and pushes an empty no-op patch straight to the verifier, then records a per-task activation verdict. A version is activated to `READY` only when every task's gold solution scores exactly `1.0` and its no-op does **not** — a task a do-nothing agent can pass measures nothing. A gold solution that passes only on a retry is flagged flaky (still eligible unless the gate runs in strict mode); a task where gold or the no-op check yields no usable score blocks activation.
+
+Because promotion is a distinct step, `watchImport()` resolves when the version reaches `READY` (activation succeeded) or `FAILED`; a freshly imported version rests at `VALIDATING` until the activation gate runs. Only `READY` versions accept evaluations — `evaluations().run()` rejects a non-`READY` benchmark and `getActive()` throws `NoActiveVersionError` until a version is activated.
+
+Imports are gated per deployment: only user ids listed in `EVAL_IMPORT_ALLOWED_USER_IDS` may import, and when that variable is unset or empty imports are disabled for everyone (the call returns `403`). Archive-upload and Harbor Hub sources are part of the typed surface but not accepted by the server yet — git is the supported source.
 
 ---
 
@@ -243,6 +249,8 @@ console.log(run.harnessVersionResolved);                  // harness version act
 console.log(run.sessionRef);                              // reference to the agent session/trace
 console.log(run.failurePhase, run.failureDetail);         // populated on failures
 ```
+
+**Reading spend.** `modelUsage.spendUsd` is LiteLLM's number — the only spend truth. Its `spendSource` is `"key_info"` when the value was read back from the gateway and `"assumed_cap"` when it falls back to the run's cap. Read-back can lag or be missing on the gemini-passthrough and OpenRouter routes, so a run's recorded spend may sit at the assumed cap (or zero) until spend-log reconciliation catches up — the task run's trace and token counts are the reliable engagement signal in the meantime.
 
 ### taskRunTrace / taskRunTraceEvents
 
@@ -404,6 +412,33 @@ npx evolve-evals export <id> --to ./results --format harbor
 - Human-readable tables by default; `--json` emits machine-readable JSON (NDJSON for `--watch` event streams).
 - Credentials: `$EVOLVE_API_KEY` (or `--api-key`), dashboard URL via `$EVOLVE_DASHBOARD_URL` (or `--url`).
 - Exit codes: `0` success (with `--watch`: evaluation `COMPLETED` / import `READY`), `1` runtime/API failure (with `--watch`: `FAILED` or `CANCELLED`), `2` usage error.
+
+---
+
+## Sandbox Providers
+
+Hosted eval task runs and managed agent sessions run on the same three sandbox providers — E2B, Daytona, and Modal. Managed sessions resolve a provider from env (Configuration → [Sandbox Providers](./02-configuration.md#sandbox-providers)); eval task runs resolve one from `EVAL_SANDBOX_PROVIDER` on the eval worker. All three honor the same provider-neutral create options (image, `user`/`homeDir`, outbound network policy, timeout), so one benchmark image and one network policy run unchanged across every provider. The honest differences:
+
+| Capability | E2B | Daytona | Modal |
+|------------|-----|---------|-------|
+| `EVAL_SANDBOX_PROVIDER` value | `e2b` (default) | `daytona` | `modal` |
+| Run agent as root | Native `user: "root"` | Image `USER` (root by default); no per-exec user switch | Native execution user is root |
+| Outbound allowlist | Hostnames, IPs, CIDRs | Kernel IPv4 CIDRs only, ≤ 10 entries | Hostnames, IPs, CIDRs |
+| Sandbox-death signal | Webhook | Webhook (Svix-style) | Polling sweep (no webhooks) |
+| Private image registry | Template build | Pre-registered dashboard Registries | Modal Secret via `imageSecretName` |
+| Max lifetime | Provider timeout | Provider timeout | Hard 24h cap |
+
+- **E2B** is the baseline: native run-as-root, hostname/IP/CIDR allowlists, and webhook death signals, with nothing to set up beyond `E2B_API_KEY`.
+- **Daytona** enforces its network allowlist as kernel-level IPv4 CIDRs only. Hostnames are resolved to IPs at create time and pinned for the sandbox's life, so a destination that rotates DNS (many CDNs and cloud APIs do) is silently blocked afterward; IPv6, ports, and wildcards are rejected, and the list caps at 10 entries. Private-registry images (e.g. AWS ECR) need their registry pre-registered on the Daytona dashboard **Registries** page before creation — there is no per-call pull secret — and images must be `linux/amd64` pinned to a tag or digest (a floating `latest` is rejected). With no per-exec user switch, eval task runs omit `user` (relying on the image's root `USER`) and pin `homeDir` to `/root`.
+- **Modal** hard-caps sandbox lifetime at 24 hours (a longer timeout throws `ModalSandboxLifetimeError` — checkpoint and resume for longer work), emits no death webhooks so the platform reconciles Modal sandboxes with a polling sweep, and pulls private-registry images on Modal's own infrastructure: AWS ECR and GCP Artifact Registry images need a Modal Secret, named via `imageSecretName`, holding read-only registry credentials, because the worker's own AWS/GCP env never reaches the pull.
+
+### Selecting the eval provider
+
+The eval worker reads `EVAL_SANDBOX_PROVIDER` once per phase: unset or empty means `e2b`; `daytona` and `modal` select those providers; any other value is a loud error, never a silent fallback, so a typo cannot bill the wrong account. Flip it only when nothing is in flight — sandbox ids recorded on in-flight runs belong to the provider that created them, and the orphan reaper kills with the currently selected provider. Provider credentials come from the worker environment, the same law as `E2B_API_KEY`: `DAYTONA_API_KEY` for Daytona; `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` (plus `MODAL_IMAGE_SECRET_NAME` for private task images) for Modal.
+
+### Operator setup
+
+Running the managed providers yourself means wiring each provider's sandbox-death signal so a dead sandbox settles its session, browser sessions, and runtime tokens. E2B posts a signed webhook out of the box. Daytona posts a Svix-style signed webhook — register the Dashboard endpoint with Daytona and set `DAYTONA_WEBHOOK_SECRET`; the Dashboard reaches Daytona's API through the gateway's signed `/internal/daytona` pass-through (Evolve API keys never call `/internal/*` directly). Modal has no webhooks — set `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET` so the reconcile sweep can poll sandbox liveness, and drive Modal through the Dashboard's Evolve-key-only broker routes at `/api/providers/modal/sandboxes`.
 
 ---
 
