@@ -7,10 +7,35 @@
  * - Mirror E2B provider interface for SDK compatibility
  * - Uses public Docker images via IMAGE_MAP
  * - Parallel structure to E2B provider
+ *
+ * Daytona-specific notes:
+ * - Network policy maps to Daytona's networkBlockAll / networkAllowList,
+ *   enforced by kernel iptables on the runner. The allowlist is IPv4 CIDR
+ *   ONLY (max 10 entries, DAYTONA_MAX_NETWORK_ALLOWLIST). Hostname
+ *   destinations are pinned to their IPv4 addresses by a DNS lookup at
+ *   create time — see the DNS-ROTATION CAVEAT on SandboxCreateOptions.network.
+ *   Destinations Daytona can never enforce (wildcards, IPv6, unresolvable
+ *   hostnames, >10 CIDRs) throw DaytonaNetworkPolicyError instead of
+ *   silently weakening the policy.
+ * - The `user` option is a CREATE-TIME OS user (Daytona's osUser field);
+ *   there is no per-exec user switch — the Daytona daemon runs commands as
+ *   the container's user (governed by the image's USER directive; default
+ *   images use "daytona" with passwordless sudo). `user: "root"` keeps the
+ *   image's default user and elevates every command through a `sudo -n`
+ *   wrapper instead (mirrors the Modal provider's su wrapper). File
+ *   operations always go through the Daytona daemon and are NOT elevated.
+ * - Private registry images (AWS ECR, GHCR, GCP Artifact Registry, ...)
+ *   require registry credentials pre-registered in the Daytona dashboard
+ *   (Registries page) — Daytona has no per-call image pull secret. Pull
+ *   failures for such images throw DaytonaImagePullError.
+ * - getInfo()/list() report the API's real createdAt timestamp (never a
+ *   fabricated client-side date); Daytona exposes no end timestamp, so
+ *   endAt is always undefined.
  */
 
 import { Daytona, Image } from "@daytonaio/sdk";
 import type { Sandbox as DaytonaSandbox } from "@daytonaio/sdk";
+import { resolve4 } from "node:dns/promises";
 
 // ============================================================
 // CONSTANTS
@@ -20,6 +45,12 @@ import type { Sandbox as DaytonaSandbox } from "@daytonaio/sdk";
 const IMAGE_MAP: Record<string, string> = {
   "evolve-all": "evolvingmachines/evolve-all",
 };
+
+/**
+ * Daytona's hard cap on network allowlist size (validated server-side too).
+ * Policies that resolve to more CIDRs throw DaytonaNetworkPolicyError.
+ */
+export const DAYTONA_MAX_NETWORK_ALLOWLIST = 10;
 
 const BINARY_EXTENSIONS = new Set([
   ".xlsx", ".xls", ".docx", ".doc", ".pptx", ".ppt",
@@ -47,14 +78,92 @@ function getBasename(path: string): string {
   return lastSlash >= 0 ? path.substring(lastSlash + 1) : path;
 }
 
+// ============================================================
+// TYPED ERRORS
+// ============================================================
+
+/** Why a network policy cannot be enforced by Daytona. */
+export type DaytonaNetworkPolicyReason =
+  | "wildcard-hostname"
+  | "ipv6-unsupported"
+  | "port-unsupported"
+  | "invalid-ipv4"
+  | "unresolvable-hostname"
+  | "allowlist-too-large";
+
 /**
- * Wrap command with cwd and envs shell prefixes.
+ * Typed error for network policies Daytona cannot enforce.
+ *
+ * Daytona's allowlist is kernel-level IPv4 CIDR filtering only (max 10
+ * entries) — no DNS/domain layer. Anything that cannot be pinned to stable
+ * IPv4 CIDRs at create time is rejected loudly instead of silently
+ * weakening the sandbox's egress policy.
+ */
+export class DaytonaNetworkPolicyError extends Error {
+  readonly reason: DaytonaNetworkPolicyReason;
+  /** The offending destination (absent for list-level violations). */
+  readonly destination?: string;
+
+  constructor(reason: DaytonaNetworkPolicyReason, message: string, destination?: string) {
+    super(message);
+    this.name = "DaytonaNetworkPolicyError";
+    this.reason = reason;
+    this.destination = destination;
+  }
+}
+
+/**
+ * Typed error for image pull failures on private registries.
+ *
+ * Daytona has no per-call image pull secret: credentials for private
+ * registries (AWS ECR, GHCR, GCP Artifact Registry, private Docker Hub)
+ * must be pre-registered in the Daytona dashboard BEFORE creating the
+ * sandbox (dashboard → Registries → Add Registry).
+ */
+export class DaytonaImagePullError extends Error {
+  /** The image reference that failed to pull. */
+  readonly image: string;
+
+  constructor(image: string, cause?: unknown) {
+    const causeMsg = cause instanceof Error ? cause.message : String(cause ?? "unknown error");
+    super(
+      `Failed to pull image "${image}" on Daytona: ${causeMsg}. ` +
+        "Private registry images (e.g. AWS ECR) require registry credentials pre-registered in the " +
+        "Daytona dashboard (Registries page) before sandbox creation — Daytona has no per-call image " +
+        "pull secret. Register the registry at https://app.daytona.io, then retry. " +
+        "Also ensure the image is linux/amd64 and pinned to a tag or digest (floating tags like " +
+        "\"latest\" are rejected by Daytona's snapshot builder)."
+    );
+    this.name = "DaytonaImagePullError";
+    this.image = image;
+  }
+}
+
+// ============================================================
+// COMMAND WRAPPING
+// ============================================================
+
+/**
+ * Wrap command with cwd and envs shell prefixes, and (for user "root") a
+ * `sudo -n` elevation wrapper.
  *
  * Daytona's executeSessionCommand doesn't support cwd or envs natively,
  * so we inline them as shell commands. Values are single-quoted to handle
  * spaces and special characters safely.
+ *
+ * Daytona has no per-exec user switch: commands run as the container's OS
+ * user (image USER directive; default "daytona" with passwordless sudo).
+ * When the sandbox user is "root", the fully wrapped command is base64
+ * encoded and piped through `sudo -n bash` — base64 avoids escaping issues
+ * and `-n` fails fast (typed non-zero exit) instead of hanging on a
+ * password prompt if the image lacks passwordless sudo.
  */
-function wrapCommand(command: string, cwd?: string, envs?: Record<string, string>): string {
+function wrapCommand(
+  command: string,
+  cwd?: string,
+  envs?: Record<string, string>,
+  user?: string
+): string {
   let wrapped = command;
   if (cwd) {
     // Single quotes handle spaces and most special chars; escape any single quotes in path
@@ -64,15 +173,251 @@ function wrapCommand(command: string, cwd?: string, envs?: Record<string, string
   if (envs && Object.keys(envs).length > 0) {
     const exports = Object.entries(envs)
       .filter(([, v]) => v !== undefined && v !== null)
-      .map(([k, v]) => `export ${k}='${v.replace(/'/g, "'\\''")}'`)
+      .map(([k, v]) => `export ${k}='${String(v).replace(/'/g, "'\\''")}'`)
       .join("; ");
     wrapped = `${exports}; ${wrapped}`;
+  }
+  if (user === "root") {
+    // Envs/cwd are inside the payload, so they survive the sudo boundary
+    const encoded = Buffer.from(wrapped).toString("base64");
+    wrapped = `echo ${encoded} | base64 -d | sudo -n bash`;
   }
   return wrapped;
 }
 
-/** @internal Test-only export for unit testing wrapCommand logic. */
-export const _testWrapCommand = wrapCommand;
+// ============================================================
+// NETWORK POLICY MAPPING
+// ============================================================
+
+/** Daytona create() params derived from Evolve's provider-neutral network policy. */
+interface DaytonaNetworkCreateParams {
+  networkBlockAll?: boolean;
+  networkAllowList?: string;
+}
+
+/** Resolves a hostname to its IPv4 addresses (injectable for tests). */
+type HostnameResolver = (hostname: string) => Promise<string[]>;
+
+const defaultResolveHostname: HostnameResolver = (hostname) => resolve4(hostname);
+
+/**
+ * Strict IPv4 literal or IPv4 CIDR (e.g. "10.0.0.1", "10.0.0.0/8"): every
+ * octet is 0-255 and the optional prefix is 0-32. "300.1.1.1" and
+ * "10.0.0.0/40" are rejected here rather than pinned/forwarded to the API.
+ */
+function isIpv4Destination(destination: string): boolean {
+  const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?:\/(\d{1,3}))?$/.exec(destination);
+  if (!match) return false;
+  if ([match[1], match[2], match[3], match[4]].some((octet) => Number(octet) > 255)) return false;
+  if (match[5] !== undefined && Number(match[5]) > 32) return false;
+  return true;
+}
+
+/**
+ * Dotted-quad shape (optionally with a /prefix) that is NOT a valid IPv4/CIDR
+ * — an out-of-range octet (>255) or prefix (>32). Used to reject
+ * "300.1.1.1" / "10.0.0.0/40" loudly instead of DNS-resolving them as
+ * hostnames.
+ */
+function looksLikeInvalidIpv4(destination: string): boolean {
+  return /^\d{1,3}(\.\d{1,3}){3}(\/\d+)?$/.test(destination) && !isIpv4Destination(destination);
+}
+
+/**
+ * True IPv6 literal or IPv6 CIDR (e.g. "2001:db8::1", "2001:db8::/32",
+ * "[2001:db8::1]"): bracketed, or at least two colons. A single colon is a
+ * "host:port" / "ip:port" destination, handled by hasPort() instead.
+ */
+function isIpv6Destination(destination: string): boolean {
+  if (destination.startsWith("[")) return true;
+  return (destination.match(/:/g)?.length ?? 0) >= 2;
+}
+
+/**
+ * "host:port" / "ip:port" shape (exactly one colon, numeric port). Daytona's
+ * allowlist filters hosts and IPs only, so a port cannot be honored.
+ */
+function hasPort(destination: string): boolean {
+  return /^[^:]+:\d+$/.test(destination);
+}
+
+/**
+ * Map Evolve's provider-neutral network policy onto Daytona create() params.
+ *
+ * - outbound "open" (or no policy)     → no restrictions
+ * - outbound "blocked", no allowlist   → networkBlockAll: true (kernel DROP of all egress)
+ * - outbound "blocked" with allowlist  → networkAllowList (comma-separated IPv4
+ *   CIDRs; bare IPv4 gets /32). Daytona enforces the allowlist with kernel
+ *   iptables and supports IPv4 CIDRs ONLY, max 10 entries.
+ *
+ * DNS-ROTATION CAVEAT (load-bearing): hostname destinations are resolved to
+ * their IPv4 A records ONCE, at create time, and pinned as /32 CIDRs. If the
+ * host rotates DNS afterwards (CDNs and cloud APIs often do), traffic to the
+ * new IPs is BLOCKED for the sandbox's lifetime. Prefer stable IPs/CIDRs for
+ * anything long-running.
+ *
+ * Anything that cannot be pinned to stable IPv4 CIDRs throws
+ * DaytonaNetworkPolicyError (wildcard hostnames, IPv6, unresolvable
+ * hostnames, >10 resolved CIDRs) — never silently weakened.
+ */
+async function mapNetworkPolicy(
+  network?: SandboxCreateOptions["network"],
+  resolveHostname: HostnameResolver = defaultResolveHostname
+): Promise<DaytonaNetworkCreateParams> {
+  if (!network || network.outbound === "open") {
+    if (network?.allowedDestinations?.length) {
+      throw new Error("network.allowedDestinations is only valid when outbound is blocked");
+    }
+    return {};
+  }
+
+  const destinations = network.allowedDestinations ?? [];
+  if (destinations.length === 0) {
+    return { networkBlockAll: true };
+  }
+
+  // Pass 1 (synchronous): classify destinations and reject what Daytona can
+  // never enforce, before any DNS lookups happen.
+  const cidrs: string[] = [];
+  const hostnames: string[] = [];
+  for (const destination of destinations) {
+    if (isIpv4Destination(destination)) {
+      cidrs.push(destination.includes("/") ? destination : `${destination}/32`);
+    } else if (looksLikeInvalidIpv4(destination)) {
+      throw new DaytonaNetworkPolicyError(
+        "invalid-ipv4",
+        `"${destination}" is not a valid IPv4 address or CIDR (octets must be 0-255, prefix 0-32). ` +
+          "Fix the address or list a hostname instead.",
+        destination
+      );
+    } else if (isIpv6Destination(destination)) {
+      throw new DaytonaNetworkPolicyError(
+        "ipv6-unsupported",
+        `Daytona's network allowlist supports IPv4 CIDRs only; cannot allow IPv6 destination "${destination}".`,
+        destination
+      );
+    } else if (hasPort(destination)) {
+      throw new DaytonaNetworkPolicyError(
+        "port-unsupported",
+        `Daytona's network allowlist filters hosts and IPs only and cannot match a port; ` +
+          `drop the ":<port>" from "${destination}" and list just the host or IP.`,
+        destination
+      );
+    } else if (destination.includes("*")) {
+      throw new DaytonaNetworkPolicyError(
+        "wildcard-hostname",
+        `Daytona cannot enforce wildcard hostname "${destination}": its allowlist is kernel-level IPv4 ` +
+          "CIDR filtering with no DNS/domain layer. List concrete hostnames or IPv4 CIDRs instead.",
+        destination
+      );
+    } else {
+      hostnames.push(destination);
+    }
+  }
+
+  // Pass 2: pin hostnames to their IPv4 addresses at create time.
+  for (const hostname of hostnames) {
+    let ips: string[] = [];
+    try {
+      ips = await resolveHostname(hostname);
+    } catch (error) {
+      throw new DaytonaNetworkPolicyError(
+        "unresolvable-hostname",
+        `Cannot pin hostname "${hostname}" to stable IPv4 addresses at create time ` +
+          `(${error instanceof Error ? error.message : String(error)}). Daytona enforces IPv4 CIDRs ` +
+          "only; use an IPv4 CIDR for this destination instead.",
+        hostname
+      );
+    }
+    if (ips.length === 0) {
+      throw new DaytonaNetworkPolicyError(
+        "unresolvable-hostname",
+        `Hostname "${hostname}" resolved to no IPv4 addresses. Daytona enforces IPv4 CIDRs only; ` +
+          "use an IPv4 CIDR for this destination instead.",
+        hostname
+      );
+    }
+    // LOUD caveat: the pin is a snapshot of DNS at create time
+    console.warn(
+      `[daytona] Network allowlist: pinning "${hostname}" to [${ips.join(", ")}] (DNS resolved at ` +
+        "create time). Daytona enforces IPv4 CIDRs only — if this host rotates DNS (CDNs and cloud " +
+        "APIs often do), traffic to its new IPs will be BLOCKED for the sandbox's lifetime."
+    );
+    for (const ip of ips) {
+      cidrs.push(`${ip}/32`);
+    }
+  }
+
+  const uniqueCidrs = [...new Set(cidrs)];
+  if (uniqueCidrs.length > DAYTONA_MAX_NETWORK_ALLOWLIST) {
+    throw new DaytonaNetworkPolicyError(
+      "allowlist-too-large",
+      `Daytona allows at most ${DAYTONA_MAX_NETWORK_ALLOWLIST} entries in its network allowlist; ` +
+        `this policy resolved to ${uniqueCidrs.length} CIDRs (${uniqueCidrs.join(", ")}). ` +
+        "Aggregate destinations into broader CIDRs or reduce the list."
+    );
+  }
+
+  // networkBlockAll must stay false: Daytona's runner checks blockAll first
+  // and would ignore the allowlist if both were set.
+  return { networkBlockAll: false, networkAllowList: uniqueCidrs.join(",") };
+}
+
+// ============================================================
+// IMAGE REGISTRY DETECTION
+// ============================================================
+
+/**
+ * Registry host of an image reference, or undefined for Docker Hub images.
+ * A reference carries a registry host only when its first path segment
+ * contains "." or ":" or is "localhost" (Docker's own heuristic).
+ */
+function imageRegistryHost(image: string): string | undefined {
+  const slash = image.indexOf("/");
+  if (slash < 0) return undefined;
+  const host = image.substring(0, slash);
+  return host.includes(".") || host.includes(":") || host === "localhost" ? host : undefined;
+}
+
+// ============================================================
+// SANDBOX INFO MAPPING
+// ============================================================
+
+/** Fields we read off a Daytona SDK sandbox to build a SandboxInfo. */
+interface DaytonaSandboxLike {
+  id: string;
+  name?: string;
+  snapshot?: string;
+  labels?: Record<string, string>;
+  createdAt?: string;
+}
+
+/**
+ * Build a SandboxInfo from a Daytona sandbox entity. Timestamps come from
+ * the API's createdAt (never fabricated client-side; empty string when the
+ * API omits it). Daytona exposes no end timestamp, so endAt is always
+ * undefined.
+ */
+function toSandboxInfo(sandbox: DaytonaSandboxLike): SandboxInfo {
+  return {
+    sandboxId: sandbox.id,
+    image: sandbox.snapshot ?? "",
+    name: sandbox.name,
+    metadata: sandbox.labels ?? {},
+    startedAt: sandbox.createdAt ?? "",
+  };
+}
+
+/**
+ * Map a Daytona sandbox state onto Evolve's list() filter states.
+ * "started" → running; "stopped"/"archived" → paused (our pause() stops the
+ * sandbox); transitional and terminal states match no filter.
+ */
+function daytonaStateToEvolveState(state?: string): "running" | "paused" | undefined {
+  if (state === "started") return "running";
+  if (state === "stopped" || state === "archived") return "paused";
+  return undefined;
+}
 
 // ============================================================
 // CORE TYPES
@@ -109,6 +454,7 @@ export interface SandboxInfo {
   name?: string;
   metadata: Record<string, string>;
   startedAt: string;
+  /** End time (undefined for running sandboxes; Daytona never exposes one) */
   endAt?: string;
 }
 
@@ -152,11 +498,32 @@ export interface SandboxCreateOptions {
   workingDirectory?: string;
   /** Resource allocation for the sandbox */
   resources?: SandboxResources;
+  /**
+   * Provider-neutral outbound network policy, enforced by kernel iptables on
+   * the Daytona runner. "blocked" with no allowedDestinations drops all
+   * egress. With allowedDestinations, Daytona supports IPv4 CIDRs ONLY (max
+   * 10): IPs/CIDRs pass through; hostnames are DNS-resolved ONCE at create
+   * time and pinned as /32 CIDRs — if the host rotates DNS later (CDNs and
+   * cloud APIs often do), its new IPs are BLOCKED for the sandbox's
+   * lifetime. Wildcards, IPv6, and unresolvable hostnames throw
+   * DaytonaNetworkPolicyError rather than silently weakening the policy.
+   * Note: on Daytona orgs below Tier 3, org network policy overrides
+   * per-sandbox settings server-side.
+   */
   network?: {
     outbound: "open" | "blocked";
     allowedDestinations?: string[];
   };
-  /** Run all commands and file operations as this user. Not yet implemented for this provider. */
+  /**
+   * OS user for the sandbox, applied at CREATE time (Daytona's osUser field)
+   * — Daytona has no per-exec user switch, so the user commands actually run
+   * as is governed by the sandbox image (USER directive; default Daytona
+   * images use "daytona" with passwordless sudo). A non-root value must
+   * exist in the image. Pass "root" to keep the image's default user and
+   * elevate every command through a `sudo -n` wrapper instead (requires
+   * passwordless sudo in the image; default images have it). File operations
+   * go through the Daytona daemon and are NOT elevated.
+   */
   user?: string;
   /** Home directory used by the SDK for agent config paths; not consumed by the provider. */
   homeDir?: string;
@@ -164,6 +531,7 @@ export interface SandboxCreateOptions {
 
 /** Options for listing sandboxes */
 export interface SandboxListOptions {
+  /** "running" matches Daytona "started"; "paused" matches "stopped"/"archived". */
   state?: ("running" | "paused")[];
   metadata?: Record<string, string>;
   limit?: number;
@@ -239,8 +607,8 @@ interface ResolvedDaytonaConfig {
 // IMPLEMENTATION
 // ============================================================
 
-class DaytonaCommands implements SandboxCommands {
-  constructor(private sandbox: DaytonaSandbox) {}
+export class DaytonaCommands implements SandboxCommands {
+  constructor(private sandbox: DaytonaSandbox, private user?: string) {}
 
   async run(command: string, options?: SandboxRunOptions): Promise<SandboxCommandResult> {
     const timeoutSec = options?.timeoutMs ? Math.floor(options.timeoutMs / 1000) : undefined;
@@ -253,7 +621,7 @@ class DaytonaCommands implements SandboxCommands {
 
     try {
       const resp = await this.sandbox.process.executeSessionCommand(sessionId, {
-        command: wrapCommand(command, options?.cwd, options?.envs),
+        command: wrapCommand(command, options?.cwd, options?.envs, this.user),
         runAsync: false,
       }, timeoutSec);
 
@@ -305,7 +673,7 @@ class DaytonaCommands implements SandboxCommands {
     const timeoutMs = options?.timeoutMs;
 
     const resp = await this.sandbox.process.executeSessionCommand(sessionId, {
-      command: wrapCommand(command, options?.cwd, options?.envs),
+      command: wrapCommand(command, options?.cwd, options?.envs, this.user),
       runAsync: true,
     }, timeoutSec);
 
@@ -413,7 +781,7 @@ class DaytonaCommands implements SandboxCommands {
   }
 }
 
-class DaytonaFiles implements SandboxFiles {
+export class DaytonaFiles implements SandboxFiles {
   constructor(private sandbox: DaytonaSandbox) {}
 
   async read(path: string): Promise<string | Uint8Array> {
@@ -505,8 +873,8 @@ class DaytonaSandboxImpl implements SandboxInstance {
   readonly commands: SandboxCommands;
   readonly files: SandboxFiles;
 
-  constructor(private sandbox: DaytonaSandbox) {
-    this.commands = new DaytonaCommands(sandbox);
+  constructor(private sandbox: DaytonaSandbox, user?: string) {
+    this.commands = new DaytonaCommands(sandbox, user);
     this.files = new DaytonaFiles(sandbox);
   }
 
@@ -522,20 +890,21 @@ class DaytonaSandboxImpl implements SandboxInstance {
   }
 
   async isRunning(): Promise<boolean> {
-    // Evidence: Daytona Sandbox has state property (SandboxState enum)
-    // Values: "started", "stopped", "starting", "stopping", "unknown", etc.
+    // Refresh from the API so the answer reflects current state, not the
+    // state captured when this instance was constructed.
+    try {
+      await this.sandbox.refreshData();
+    } catch {
+      return false;
+    }
     return this.sandbox.state === "started";
   }
 
   async getInfo(): Promise<SandboxInfo> {
-    // Evidence: Daytona Sandbox properties: id, name, snapshot, labels
-    return {
-      sandboxId: this.sandbox.id,
-      image: this.sandbox.snapshot || "unknown",
-      name: this.sandbox.name,
-      metadata: this.sandbox.labels || {},
-      startedAt: new Date().toISOString(), // Daytona doesn't expose startedAt directly
-    };
+    // Refresh from the API: real createdAt/labels/state, never a fabricated
+    // client-side timestamp. API errors propagate.
+    await this.sandbox.refreshData();
+    return toSandboxInfo(this.sandbox);
   }
 
   async kill(): Promise<void> {
@@ -554,6 +923,15 @@ export class DaytonaProvider implements SandboxProvider {
   private readonly client: Daytona;
   private readonly defaultTimeoutMs: number;
   private readonly snapshotName: string;
+  /**
+   * Sandbox user configured at create time, reapplied on connect() so the
+   * root sudo wrapper keeps applying. In-memory only: a connect() from a
+   * fresh process falls back to the sandbox's create-time OS user without
+   * the wrapper — callers reconnecting across processes must recreate the
+   * provider and sandbox with the same user, or root-only operations fail
+   * loudly.
+   */
+  private readonly sandboxUsers = new Map<string, string>();
 
   constructor(config: ResolvedDaytonaConfig) {
     this.client = new Daytona({
@@ -566,17 +944,32 @@ export class DaytonaProvider implements SandboxProvider {
   }
 
   async create(options: SandboxCreateOptions): Promise<SandboxInstance> {
-    if (options.user) {
-      throw new Error("Daytona provider does not yet implement Evolve's sandbox user option");
-    }
-    if (options.network?.outbound === "blocked" || options.network?.allowedDestinations?.length) {
-      throw new Error("Daytona provider does not yet implement Evolve's outbound network policy");
-    }
+    // Validate the network policy before any Daytona API call: the invalid
+    // open+allowlist combination and every unenforceable destination
+    // (wildcard/IPv6/unresolvable/too-many) fail fast with typed errors.
+    // Hostname destinations are DNS-pinned to IPv4 /32s here (see the
+    // DNS-rotation caveat on SandboxCreateOptions.network).
+    const networkParams = await mapNetworkPolicy(options.network);
+
+    // Daytona has no per-exec user switch: a non-root user is applied as the
+    // create-time OS user; "root" keeps the image default user and elevates
+    // commands via the sudo wrapper in wrapCommand() instead.
+    const user = options.user;
+    const osUser = user && user !== "root" ? user : undefined;
+
     // Daytona uses inactivity-based auto-stop, not fixed lifetime
     // Convert timeoutMs to autoStopInterval in minutes for parity with E2B/Modal
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
     const autoStopMinutes = Math.max(1, Math.ceil(timeoutMs / 60000)); // Min 1 minute
     const imageName = options.image || this.snapshotName;
+
+    const baseParams = {
+      envVars: options.envs,
+      labels: options.metadata,
+      autoStopInterval: autoStopMinutes,
+      ...(osUser ? { user: osUser } : {}),
+      ...networkParams,
+    };
 
     let sandbox: DaytonaSandbox;
 
@@ -588,9 +981,7 @@ export class DaytonaProvider implements SandboxProvider {
         sandbox = await this.client.create(
           {
             snapshot: imageName,
-            envVars: options.envs,
-            labels: options.metadata,
-            autoStopInterval: autoStopMinutes,
+            ...baseParams,
           },
           { timeout: 600 }
         );
@@ -598,7 +989,9 @@ export class DaytonaProvider implements SandboxProvider {
         throw new Error("Snapshot not active");
       }
     } catch {
-      // Snapshot doesn't exist — create a named one from the Docker image, then use it
+      // Snapshot doesn't exist — create a named one from the Docker image, then use it.
+      // Private registry images (ECR etc.) require credentials pre-registered in the
+      // Daytona dashboard (Registries) — there is no per-call image pull secret.
       const publicImage = IMAGE_MAP[imageName] ?? imageName;
 
       console.log(`[daytona] Snapshot "${imageName}" not found, building from image: ${publicImage}`);
@@ -625,32 +1018,38 @@ export class DaytonaProvider implements SandboxProvider {
         sandbox = await this.client.create(
           {
             snapshot: imageName,
-            envVars: options.envs,
-            labels: options.metadata,
-            autoStopInterval: autoStopMinutes,
+            ...baseParams,
           },
           { timeout: 600 }
         );
       } catch (snapshotErr) {
         // Snapshot creation failed — fall back to direct image creation
         console.warn(`[daytona] Snapshot creation failed, falling back to direct image: ${snapshotErr instanceof Error ? snapshotErr.message : snapshotErr}`);
-        sandbox = await this.client.create(
-          {
-            image: publicImage,
-            envVars: options.envs,
-            labels: options.metadata,
-            autoStopInterval: autoStopMinutes,
-            resources: {
-              cpu: options.resources?.cpu ?? 4,
-              memory: options.resources?.memory ?? 4,
-              disk: options.resources?.disk ?? 10,
+        try {
+          sandbox = await this.client.create(
+            {
+              image: publicImage,
+              ...baseParams,
+              resources: {
+                cpu: options.resources?.cpu ?? 4,
+                memory: options.resources?.memory ?? 4,
+                disk: options.resources?.disk ?? 10,
+              },
             },
-          },
-          {
-            timeout: 600,
-            onSnapshotCreateLogs: (log: string) => console.log(`[daytona] ${log}`),
+            {
+              timeout: 600,
+              onSnapshotCreateLogs: (log: string) => console.log(`[daytona] ${log}`),
+            }
+          );
+        } catch (directErr) {
+          // Both the snapshot build and the direct pull failed. For private
+          // registry images the overwhelmingly likely cause is missing
+          // dashboard-registered registry credentials — surface that loudly.
+          if (imageRegistryHost(publicImage)) {
+            throw new DaytonaImagePullError(publicImage, directErr);
           }
-        );
+          throw directErr;
+        }
       }
     }
 
@@ -658,7 +1057,11 @@ export class DaytonaProvider implements SandboxProvider {
       await sandbox.fs.createFolder(options.workingDirectory, "755");
     }
 
-    return new DaytonaSandboxImpl(sandbox);
+    if (user) {
+      this.sandboxUsers.set(sandbox.id, user);
+    }
+
+    return new DaytonaSandboxImpl(sandbox, user);
   }
 
   async connect(sandboxId: string, _timeoutMs?: number): Promise<SandboxInstance> {
@@ -666,21 +1069,26 @@ export class DaytonaProvider implements SandboxProvider {
     if (sandbox.state !== "started") {
       await sandbox.start();
     }
-    return new DaytonaSandboxImpl(sandbox);
+    return new DaytonaSandboxImpl(sandbox, this.sandboxUsers.get(sandboxId));
   }
 
   async list(options?: SandboxListOptions): Promise<SandboxInfo[]> {
-    // Evidence: Daytona SDK list(labels?, page?, limit?) returns PaginatedSandboxes
+    // Evidence: Daytona SDK list(labels?, page?, limit?) returns PaginatedSandboxes.
+    // API errors propagate; nothing is fabricated for missing fields.
     const limit = options?.limit ?? 100;
     const result = await this.client.list(options?.metadata, 1, limit);
 
-    return result.items.map(sandbox => ({
-      sandboxId: sandbox.id,
-      image: sandbox.snapshot || "unknown",
-      name: sandbox.name,
-      metadata: sandbox.labels || {},
-      startedAt: new Date().toISOString(),
-    }));
+    let items = result.items;
+    if (options?.state) {
+      // Daytona's list API has no state filter param — filter on the real
+      // API-reported state client-side.
+      items = items.filter((sandbox) => {
+        const evolveState = daytonaStateToEvolveState(sandbox.state);
+        return evolveState !== undefined && options.state!.includes(evolveState);
+      });
+    }
+
+    return items.map(toSandboxInfo);
   }
 }
 
@@ -707,3 +1115,14 @@ export function createDaytonaProvider(config: DaytonaConfig = {}): SandboxProvid
 
   return new DaytonaProvider({ ...config, apiKey });
 }
+
+// ============================================================
+// TEST-ONLY EXPORTS
+// ============================================================
+
+/** @internal Test-only export for unit testing wrapCommand logic. */
+export const _testWrapCommand = wrapCommand;
+export const _testMapNetworkPolicy = mapNetworkPolicy;
+export const _testImageRegistryHost = imageRegistryHost;
+export const _testToSandboxInfo = toSandboxInfo;
+export const _testDaytonaStateToEvolveState = daytonaStateToEvolveState;

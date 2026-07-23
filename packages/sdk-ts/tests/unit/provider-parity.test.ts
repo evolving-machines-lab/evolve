@@ -134,28 +134,85 @@ assert(typeof createE2BProvider === "function", "createE2BProvider exists");
 assert(typeof createDaytonaProvider === "function", "createDaytonaProvider exists");
 assert(typeof createModalProvider === "function", "createModalProvider exists");
 
-// ─── Sandbox user option: providers that cannot enforce it must reject it ───
-
-async function expectUserRejected(
-  label: string,
-  create: () => Promise<unknown>,
-): Promise<void> {
-  let threw = false;
-  try {
-    await create();
-  } catch (error) {
-    threw = String(error).includes("sandbox user option");
-  }
-  assert(threw, `${label} rejects the sandbox user option instead of silently ignoring it`);
-}
+// ─── Sandbox user + network options: all providers enforce them now ───
 
 (async () => {
-  console.log("\nSandbox user option:");
-  await expectUserRejected("Daytona", () =>
-    daytona.create({ image: "evolve-all", user: "worker" }),
+  // Daytona enforces the user option (create-time OS user / root sudo
+  // wrapper) and the network policy instead of rejecting them. Checks stay
+  // offline: create() validates the network policy before any API call, so
+  // an invalid combo / unenforceable destination proves the options passed
+  // capability validation.
+  console.log("\nDaytona enforcement (user + network accepted, constraints typed):");
+  let daytonaUserError = "";
+  try {
+    await daytona.create({
+      image: "evolve-all",
+      user: "worker",
+      network: { outbound: "open", allowedDestinations: ["api.example.com"] },
+    });
+  } catch (error) {
+    daytonaUserError = String(error);
+  }
+  assert(
+    !daytonaUserError.includes("sandbox user option") && !daytonaUserError.includes("does not yet implement"),
+    "Daytona accepts the sandbox user option (create-time OS user / sudo wrapper)",
   );
-  await expectUserRejected("Modal", () =>
-    modal.create({ image: "evolve-all", user: "worker" }),
+  assert(
+    daytonaUserError.includes("only valid when outbound is blocked"),
+    "Daytona validates network policy (open + allowedDestinations rejected) instead of rejecting all policies",
+  );
+
+  let daytonaIpv6Error = "";
+  try {
+    await daytona.create({
+      image: "evolve-all",
+      network: { outbound: "blocked", allowedDestinations: ["2001:db8::1"] },
+    });
+  } catch (error) {
+    daytonaIpv6Error = String(error);
+  }
+  assert(
+    daytonaIpv6Error.includes("DaytonaNetworkPolicyError") || daytonaIpv6Error.includes("IPv4"),
+    "Daytona typed-rejects destinations it cannot enforce (IPv6) instead of silently weakening",
+  );
+
+  // Modal enforces the user option (su wrapper) and the network policy instead
+  // of rejecting them. Both checks below stay offline: create() validates the
+  // 24h lifetime cap and the network combo before any API call, so an over-cap
+  // timeout / invalid combo proves the options passed capability validation.
+  console.log("\nModal enforcement (user + network accepted, constraints typed):");
+  let modalUserError = "";
+  try {
+    await modal.create({
+      image: "evolve-all",
+      user: "worker",
+      timeoutMs: 25 * 3600 * 1000,
+    });
+  } catch (error) {
+    modalUserError = String(error);
+  }
+  assert(
+    !modalUserError.includes("sandbox user option") && !modalUserError.includes("does not yet implement"),
+    "Modal accepts the sandbox user option (enforced via su wrapper)",
+  );
+  assert(
+    modalUserError.includes("24h"),
+    "Modal enforces the 24h lifetime cap with a typed error pointing at checkpoints",
+  );
+
+  let modalNetworkError = "";
+  try {
+    await modal.create({
+      image: "evolve-all",
+      timeoutMs: 1000,
+      network: { outbound: "open", allowedDestinations: ["api.example.com"] },
+    });
+  } catch (error) {
+    modalNetworkError = String(error);
+  }
+  assert(
+    modalNetworkError.includes("only valid when outbound is blocked"),
+    "Modal validates network policy (open + allowedDestinations rejected) instead of rejecting all policies",
   );
 
   console.log(`\n═══ ${passed} passed, ${failed} failed ═══\n`);

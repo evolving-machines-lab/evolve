@@ -33,10 +33,11 @@
   "scripts": {
     "build": "tsup --minify",
     "dev": "tsup --watch",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "test:unit": "tsx tests/unit/modal-provider.test.ts"
   },
   "dependencies": {
-    "modal": "^0.6.0",
+    "modal": "^0.9.0",
     "tar-stream": "^3.1.7"
   },
   "devDependencies": {

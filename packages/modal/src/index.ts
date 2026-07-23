@@ -1,7 +1,7 @@
 /**
  * Modal Sandbox Provider - Clean Architecture
  *
- * @requires modal >= 0.3.0
+ * @requires modal >= 0.9.0
  * @requires Node.js >= 18 (for ReadableStream support)
  *
  * Design principles:
@@ -13,14 +13,23 @@
  *
  * Modal-specific notes:
  * - No native file APIs - uses exec() with stdin/stdout
- * - pause() not supported - throws error
+ * - pause() not supported - throws error (use Evolve checkpoints for persistence)
  * - Requires app context for sandbox creation
+ * - Hard 24h sandbox lifetime cap (ModalSandboxLifetimeError when exceeded)
+ * - Everything executes as root inside the sandbox; the `user` option is
+ *   enforced through an `su <user> -c` wrapper (default user: "user")
+ * - Network policy maps to Modal's blockNetwork / outboundDomainAllowlist /
+ *   outboundCidrAllowlist (domain allowlist admits TLS on port 443 only —
+ *   plaintext destinations must be listed as IPs/CIDRs)
+ * - Modal exposes no metadata or public timestamps on sandboxes; both are
+ *   stamped into sandbox tags at create time and read back via getTags()
  */
 
 import {
   ModalClient,
   Sandbox,
   App,
+  Image,
   ContainerProcess,
 } from "modal";
 import { pack } from "tar-stream";
@@ -33,6 +42,23 @@ import { pack } from "tar-stream";
 const IMAGE_MAP: Record<string, string> = {
   "evolve-all": "evolvingmachines/evolve-all",
 };
+
+/**
+ * Modal's hard cap on sandbox lifetime (24 hours).
+ * Requests beyond this throw ModalSandboxLifetimeError.
+ */
+export const MODAL_MAX_LIFETIME_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Default sandbox user. Modal runs everything as root (ignoring the image's
+ * USER directive), but agent CLIs refuse certain operations as root, so
+ * commands and file ownership default to the image's "user" account.
+ */
+const DEFAULT_SANDBOX_USER = "user";
+
+/** Tag keys used to stamp Evolve-owned info onto Modal sandboxes. */
+const TAG_IMAGE = "evolve.image";
+const TAG_STARTED_AT = "evolve.startedAt";
 
 const BINARY_EXTENSIONS = new Set([
   ".xlsx", ".xls", ".docx", ".doc", ".pptx", ".ppt",
@@ -48,6 +74,242 @@ const BINARY_EXTENSIONS = new Set([
 function isBinaryFile(path: string): boolean {
   const ext = path.substring(path.lastIndexOf(".")).toLowerCase();
   return BINARY_EXTENSIONS.has(ext);
+}
+
+/**
+ * Typed error for Modal's hard 24h sandbox lifetime cap.
+ * Long-running sessions must persist progress with Evolve checkpoints and
+ * resume in a fresh sandbox instead of extending the timeout.
+ */
+export class ModalSandboxLifetimeError extends Error {
+  readonly requestedTimeoutMs: number;
+
+  constructor(requestedTimeoutMs: number) {
+    const requestedHours = (requestedTimeoutMs / 3_600_000).toFixed(1);
+    super(
+      `Modal sandboxes have a hard 24h lifetime cap; requested timeout was ${requestedHours}h. ` +
+        "For sessions longer than 24h, persist progress with Evolve checkpoints " +
+        "and resume in a fresh sandbox instead of extending the timeout."
+    );
+    this.name = "ModalSandboxLifetimeError";
+    this.requestedTimeoutMs = requestedTimeoutMs;
+  }
+}
+
+/** Throws ModalSandboxLifetimeError when the timeout exceeds Modal's 24h cap. */
+function validateTimeout(timeoutMs: number): void {
+  if (timeoutMs > MODAL_MAX_LIFETIME_MS) {
+    throw new ModalSandboxLifetimeError(timeoutMs);
+  }
+}
+
+/**
+ * Wrap a command with cwd + env handling and (when not root) an
+ * `su <user> -c` wrapper.
+ *
+ * Modal sandboxes run as root by default (ignoring the Dockerfile USER
+ * directive), but Claude CLI and other tools refuse certain operations when
+ * running as root.
+ *
+ * Uses `su <user> -c` instead of `sudo -u <user>` because Claude CLI's
+ * --dangerously-skip-permissions flag refuses to run when it detects sudo.
+ *
+ * Uses base64 encoding to avoid shell escaping issues with complex commands
+ * that contain quotes, special characters, etc. Env vars are inlined because
+ * su does not preserve the environment the way `sudo -E` does.
+ */
+function wrapCommand(
+  command: string,
+  user: string,
+  cwd?: string,
+  envs?: Record<string, string>
+): string[] {
+  // Build env prefix for inline variable passing
+  let envPrefix = "";
+  if (envs && Object.keys(envs).length > 0) {
+    envPrefix = Object.entries(envs)
+      .filter(([, v]) => v !== undefined && v !== null)
+      .map(([k, v]) => `export ${k}='${String(v).replace(/'/g, "'\\''")}'`)
+      .join("; ") + "; ";
+  }
+
+  // Build the full command with optional cd
+  const fullCmd = cwd
+    ? `cd '${cwd.replace(/'/g, "'\\''")}' && ${envPrefix}${command}`
+    : `${envPrefix}${command}`;
+
+  // Root is Modal's native execution user - no su wrapper needed
+  if (user === "root") {
+    return ["bash", "-c", fullCmd];
+  }
+
+  // Use base64 encoding to avoid all shell escaping issues
+  const encoded = Buffer.from(fullCmd).toString("base64");
+
+  // Use su <user> -c to avoid sudo detection by Claude CLI
+  // Decode and execute via bash to preserve all shell features
+  return ["su", user, "-c", `echo ${encoded} | base64 -d | bash`];
+}
+
+/** Modal create() params derived from Evolve's provider-neutral network policy. */
+interface ModalNetworkCreateParams {
+  blockNetwork?: boolean;
+  outboundCidrAllowlist?: string[];
+  outboundDomainAllowlist?: string[];
+}
+
+/** Why a network destination cannot be mapped onto Modal's allowlist. */
+export type ModalNetworkPolicyReason = "port-unsupported" | "invalid-ipv4";
+
+/**
+ * Typed error for destinations Modal's allowlist cannot express.
+ *
+ * Modal's allowlist filters hosts (domain allowlist) and IPs/CIDRs (CIDR
+ * allowlist) only — it has no notion of a port, and an invalid IPv4/CIDR
+ * would be silently forwarded to the API. Both are rejected loudly here
+ * instead of weakening or mangling the sandbox's egress policy.
+ */
+export class ModalNetworkPolicyError extends Error {
+  readonly reason: ModalNetworkPolicyReason;
+  /** The offending destination. */
+  readonly destination?: string;
+
+  constructor(reason: ModalNetworkPolicyReason, message: string, destination?: string) {
+    super(message);
+    this.name = "ModalNetworkPolicyError";
+    this.reason = reason;
+    this.destination = destination;
+  }
+}
+
+/**
+ * Strict IPv4 literal or IPv4 CIDR (e.g. "10.0.0.1", "10.0.0.0/8"): every
+ * octet is 0-255 and the optional prefix is 0-32. "300.1.1.1" and
+ * "10.0.0.0/40" are rejected here rather than forwarded to the API.
+ */
+function isIpv4Destination(destination: string): boolean {
+  const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?:\/(\d{1,3}))?$/.exec(destination);
+  if (!match) return false;
+  if ([match[1], match[2], match[3], match[4]].some((octet) => Number(octet) > 255)) return false;
+  if (match[5] !== undefined && Number(match[5]) > 32) return false;
+  return true;
+}
+
+/**
+ * Dotted-quad shape (optionally with a /prefix) that is NOT a valid IPv4/CIDR
+ * — an out-of-range octet (>255) or prefix (>32). Used to reject
+ * "300.1.1.1" / "10.0.0.0/40" loudly instead of treating them as hostnames.
+ */
+function looksLikeInvalidIpv4(destination: string): boolean {
+  return /^\d{1,3}(\.\d{1,3}){3}(\/\d+)?$/.test(destination) && !isIpv4Destination(destination);
+}
+
+/**
+ * True IPv6 literal or IPv6 CIDR (e.g. "2001:db8::1", "2001:db8::/32",
+ * "[2001:db8::1]"): bracketed, or at least two colons. A single colon is a
+ * "host:port" / "ip:port" destination, handled by hasPort() instead.
+ */
+function isIpv6Destination(destination: string): boolean {
+  if (destination.startsWith("[")) return true;
+  return (destination.match(/:/g)?.length ?? 0) >= 2;
+}
+
+/**
+ * "host:port" / "ip:port" shape (exactly one colon, numeric port). Modal's
+ * allowlist filters hosts and IPs only, so a port cannot be honored.
+ */
+function hasPort(destination: string): boolean {
+  return /^[^:]+:\d+$/.test(destination);
+}
+
+/**
+ * Map Evolve's provider-neutral network policy onto Modal create() params.
+ *
+ * - outbound "open" (or no policy)     → no restrictions
+ * - outbound "blocked", no allowlist   → blockNetwork: true (drops all egress)
+ * - outbound "blocked" with allowlist  → outboundDomainAllowlist (hostnames,
+ *   wildcards like "*.example.com") + outboundCidrAllowlist (IPs/CIDRs; bare
+ *   IPs get /32 or /128 appended). Both lists are always set because Modal
+ *   treats an unset list as "allow all" — an empty array means "allow none"
+ *   for that class of destination. Note: Modal's domain allowlist only admits
+ *   TLS traffic on port 443; plaintext destinations must be listed as CIDRs.
+ */
+function mapNetworkPolicy(
+  network?: SandboxCreateOptions["network"]
+): ModalNetworkCreateParams {
+  if (!network || network.outbound === "open") {
+    if (network?.allowedDestinations?.length) {
+      throw new Error("network.allowedDestinations is only valid when outbound is blocked");
+    }
+    return {};
+  }
+
+  const destinations = network.allowedDestinations ?? [];
+  if (destinations.length === 0) {
+    return { blockNetwork: true };
+  }
+
+  const cidrs: string[] = [];
+  const domains: string[] = [];
+  for (const destination of destinations) {
+    if (isIpv4Destination(destination)) {
+      cidrs.push(destination.includes("/") ? destination : `${destination}/32`);
+    } else if (looksLikeInvalidIpv4(destination)) {
+      throw new ModalNetworkPolicyError(
+        "invalid-ipv4",
+        `"${destination}" is not a valid IPv4 address or CIDR (octets must be 0-255, prefix 0-32). ` +
+          "Fix the address or list a hostname instead.",
+        destination
+      );
+    } else if (isIpv6Destination(destination)) {
+      cidrs.push(destination.includes("/") ? destination : `${destination}/128`);
+    } else if (hasPort(destination)) {
+      throw new ModalNetworkPolicyError(
+        "port-unsupported",
+        `Modal's network allowlist filters hosts and IPs only and cannot match a port; ` +
+          `drop the ":<port>" from "${destination}" and list just the host or IP.`,
+        destination
+      );
+    } else {
+      domains.push(destination);
+    }
+  }
+  return { outboundCidrAllowlist: cidrs, outboundDomainAllowlist: domains };
+}
+
+/** Container registry family for an image tag. */
+type ImageRegistry = "aws-ecr" | "gcp-artifact-registry" | "registry";
+
+/** Detect which Modal image constructor an image tag needs. */
+function resolveImageRegistry(tag: string): ImageRegistry {
+  const host = tag.split("/")[0];
+  if (/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com$/.test(host)) {
+    return "aws-ecr";
+  }
+  if (host === "gcr.io" || host.endsWith(".gcr.io") || host.endsWith("-docker.pkg.dev")) {
+    return "gcp-artifact-registry";
+  }
+  return "registry";
+}
+
+/**
+ * Build a SandboxInfo from a sandbox's tags. Modal exposes no metadata or
+ * public timestamps, so image and startedAt come from the tags stamped at
+ * create time; for sandboxes not created by this SDK they are empty strings
+ * (never fabricated). endAt is always undefined — Modal does not expose it.
+ */
+function buildSandboxInfo(
+  sandboxId: string,
+  tags: Record<string, string>,
+  fallbackImage?: string
+): SandboxInfo {
+  const { [TAG_IMAGE]: image, [TAG_STARTED_AT]: startedAt, ...metadata } = tags;
+  return {
+    sandboxId,
+    image: image ?? fallbackImage ?? "",
+    metadata,
+    startedAt: startedAt ?? "",
+  };
 }
 
 // ============================================================
@@ -146,13 +408,24 @@ export interface SandboxCreateOptions {
   image?: string;
   envs?: Record<string, string>;
   metadata?: Record<string, string>;
+  /** Sandbox lifetime in ms. Modal hard-caps lifetime at 24h (MODAL_MAX_LIFETIME_MS). */
   timeoutMs?: number;
   workingDirectory?: string;
+  /**
+   * Provider-neutral outbound network policy, enforced by Modal's network
+   * stack. "blocked" with no allowedDestinations drops all egress; with
+   * allowedDestinations, hostnames go to Modal's domain allowlist (TLS/443
+   * only) and IPs/CIDRs to the CIDR allowlist.
+   */
   network?: {
     outbound: "open" | "blocked";
     allowedDestinations?: string[];
   };
-  /** Run all commands and file operations as this user. Not yet implemented for this provider. */
+  /**
+   * Run all commands and file operations as this user (default "user"),
+   * enforced via an `su <user> -c` wrapper since Modal executes everything as
+   * root. Pass "root" to run directly as root with no wrapper.
+   */
   user?: string;
   /** Home directory used by the SDK for agent config paths; not consumed by the provider. */
   homeDir?: string;
@@ -160,6 +433,7 @@ export interface SandboxCreateOptions {
 
 /** Options for listing sandboxes */
 export interface SandboxListOptions {
+  /** Modal has no paused state; filters that exclude "running" match nothing. */
   state?: ("running" | "paused")[];
   metadata?: Record<string, string>;
   limit?: number;
@@ -298,6 +572,13 @@ export interface ModalConfig {
   endpoint?: string;
   /** Docker image name (default: 'evolve-all'). Resolved through IMAGE_MAP or used as-is for custom images. */
   imageName?: string;
+  /**
+   * Name of a Modal Secret holding registry credentials for private images.
+   * Required for AWS ECR (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
+   * AWS_REGION with read-only ECR IAM) and GCP Artifact Registry; optional
+   * for private Docker Hub images. Create one at https://modal.com/secrets
+   */
+  imageSecretName?: string;
 }
 
 /** Internal resolved config with required credentials */
@@ -308,57 +589,24 @@ interface ResolvedModalConfig {
   defaultTimeoutMs?: number;
   endpoint?: string;
   imageName?: string;
+  imageSecretName?: string;
 }
 
 // ============================================================
 // IMPLEMENTATION
 // ============================================================
 
-class ModalCommands implements SandboxCommands {
-  constructor(private sandbox: Sandbox) {}
-
-  /**
-   * Wrap command to run as non-root user.
-   * Modal sandboxes run as root by default (ignoring Dockerfile USER directive),
-   * but Claude CLI and other tools refuse certain operations when running as root.
-   *
-   * Uses `su user -c` instead of `sudo -u user` because Claude CLI's
-   * --dangerously-skip-permissions flag refuses to run when it detects sudo.
-   *
-   * Uses base64 encoding to avoid shell escaping issues with complex commands
-   * that contain quotes, special characters, etc.
-   */
-  private wrapAsUser(command: string, cwd?: string, envs?: Record<string, string>): string[] {
-    // Build env prefix for inline variable passing (su doesn't preserve env like sudo -E)
-    let envPrefix = "";
-    if (envs && Object.keys(envs).length > 0) {
-      envPrefix = Object.entries(envs)
-        .filter(([, v]) => v !== undefined && v !== null)
-        .map(([k, v]) => `export ${k}='${String(v).replace(/'/g, "'\\''")}'`)
-        .join("; ") + "; ";
-    }
-
-    // Build the full command with optional cd
-    const fullCmd = cwd
-      ? `cd '${cwd.replace(/'/g, "'\\''")}' && ${envPrefix}${command}`
-      : `${envPrefix}${command}`;
-
-    // Use base64 encoding to avoid all shell escaping issues
-    const encoded = Buffer.from(fullCmd).toString("base64");
-
-    // Use su user -c to avoid sudo detection by Claude CLI
-    // Decode and execute via bash to preserve all shell features
-    return ["su", "user", "-c", `echo ${encoded} | base64 -d | bash`];
-  }
+export class ModalCommands implements SandboxCommands {
+  constructor(private sandbox: Sandbox, private user: string) {}
 
   async run(command: string, options?: SandboxRunOptions): Promise<SandboxCommandResult> {
-    // Wrap command to run as non-root user with shell features
-    // Pass envs to wrapAsUser for inline variable passing (su doesn't preserve env)
-    const args = this.wrapAsUser(command, options?.cwd, options?.envs);
+    // Wrap command for the configured sandbox user with shell features.
+    // Envs are inlined by wrapCommand (su doesn't preserve env like sudo -E).
+    const args = wrapCommand(command, this.user, options?.cwd, options?.envs);
 
     const p = await this.sandbox.exec(args, {
       timeoutMs: options?.timeoutMs,
-      // Don't pass envs to exec - they're inlined in the command via wrapAsUser
+      // Don't pass envs to exec - they're inlined in the command via wrapCommand
     });
 
     // Always accumulate output using for-await pattern (more reliable with Modal streams)
@@ -369,12 +617,12 @@ class ModalCommands implements SandboxCommands {
   }
 
   async spawn(command: string, options?: SandboxSpawnOptions): Promise<SandboxCommandHandle> {
-    // Wrap command to run as non-root user with shell features
-    // Pass envs to wrapAsUser for inline variable passing (su doesn't preserve env)
-    const args = this.wrapAsUser(command, options?.cwd, options?.envs);
+    // Wrap command for the configured sandbox user with shell features.
+    // Envs are inlined by wrapCommand (su doesn't preserve env like sudo -E).
+    const args = wrapCommand(command, this.user, options?.cwd, options?.envs);
     const p = await this.sandbox.exec(args, {
       timeoutMs: options?.timeoutMs,
-      // Don't pass envs to exec - they're inlined in the command via wrapAsUser
+      // Don't pass envs to exec - they're inlined in the command via wrapCommand
     });
 
     // Accumulate streams in background for the wait() call
@@ -490,8 +738,22 @@ class ModalCommands implements SandboxCommands {
   }
 }
 
-class ModalFiles implements SandboxFiles {
-  constructor(private sandbox: Sandbox) {}
+export class ModalFiles implements SandboxFiles {
+  constructor(private sandbox: Sandbox, private user: string) {}
+
+  /**
+   * Chown a path to the sandbox user so agent CLIs (running via the su
+   * wrapper) can access files created by root-level exec. No-op when the
+   * sandbox user is root.
+   */
+  private async chownToUser(path: string, recursive = false): Promise<void> {
+    if (this.user === "root") return;
+    const args = recursive
+      ? ["chown", "-R", `${this.user}:${this.user}`, path]
+      : ["chown", `${this.user}:${this.user}`, path];
+    const p = await this.sandbox.exec(args, { timeoutMs: recursive ? 30000 : 10000 });
+    await p.wait();
+  }
 
   async read(path: string): Promise<string | Uint8Array> {
     if (isBinaryFile(path)) {
@@ -528,9 +790,8 @@ class ModalFiles implements SandboxFiles {
     await writer.close();
     await p.wait();
 
-    // Chown the file and parent directory to user:user so Claude can access them
-    const chownCmd = await this.sandbox.exec(["chown", "user:user", path], { timeoutMs: 10000 });
-    await chownCmd.wait();
+    // Chown the file to the sandbox user so agent CLIs can access it
+    await this.chownToUser(path);
   }
 
   async writeBatch(files: Array<{ path: string; data: string | Buffer | ArrayBuffer | Uint8Array }>): Promise<void> {
@@ -564,15 +825,14 @@ class ModalFiles implements SandboxFiles {
     await writer.close();
     await p.wait();
 
-    // Chown all created files and directories to user:user so Claude can write to them
-    // This is needed because Modal runs as root but Claude CLI needs to write as user
+    // Chown all created files and directories to the sandbox user so agent
+    // CLIs (running via the su wrapper) can write to them
     if (dirs.size > 0) {
       const dirsArray = Array.from(dirs);
       // Chown the root workspace directory recursively
       const rootDirs = new Set(dirsArray.map(d => d.split("/").slice(0, 4).join("/")));
       for (const dir of rootDirs) {
-        const chownCmd = await this.sandbox.exec(["chown", "-R", "user:user", dir], { timeoutMs: 30000 });
-        await chownCmd.wait();
+        await this.chownToUser(dir, true);
       }
     }
   }
@@ -581,9 +841,8 @@ class ModalFiles implements SandboxFiles {
     const p = await this.sandbox.exec(["mkdir", "-p", path], { timeoutMs: 10000 });
     await p.wait();
 
-    // Chown the directory to user:user so Claude can write to it
-    const chownCmd = await this.sandbox.exec(["chown", "-R", "user:user", path], { timeoutMs: 10000 });
-    await chownCmd.wait();
+    // Chown the directory to the sandbox user so agent CLIs can write to it
+    await this.chownToUser(path, true);
   }
 
   async exists(path: string): Promise<boolean> {
@@ -653,6 +912,9 @@ class ModalFiles implements SandboxFiles {
     const writer = p.stdin.getWriter();
     await writer.close();
     await p.wait();
+
+    // Chown the file to the sandbox user so agent CLIs can access it
+    await this.chownToUser(path);
   }
 
   async uploadUrl(_path: string, _expiresInSeconds?: number): Promise<string> {
@@ -683,14 +945,12 @@ class ModalFiles implements SandboxFiles {
 class ModalSandboxImpl implements SandboxInstance {
   readonly commands: SandboxCommands;
   readonly files: SandboxFiles;
-  private readonly image: string;
-  private readonly startTime: Date;
+  private readonly image?: string;
 
-  constructor(private sandbox: Sandbox, image: string) {
-    this.commands = new ModalCommands(sandbox);
-    this.files = new ModalFiles(sandbox);
+  constructor(private sandbox: Sandbox, image: string | undefined, user: string) {
+    this.commands = new ModalCommands(sandbox, user);
+    this.files = new ModalFiles(sandbox, user);
     this.image = image;
-    this.startTime = new Date();
   }
 
   get sandboxId(): string {
@@ -706,21 +966,18 @@ class ModalSandboxImpl implements SandboxInstance {
 
   async isRunning(): Promise<boolean> {
     try {
-      const p = await this.sandbox.exec(["echo", "ping"], { timeoutMs: 5000 });
-      await p.wait();
-      return true;
+      // poll() returns null while running, the exit code once finished
+      return (await this.sandbox.poll()) === null;
     } catch {
       return false;
     }
   }
 
   async getInfo(): Promise<SandboxInfo> {
-    return {
-      sandboxId: this.sandbox.sandboxId,
-      image: this.image,
-      metadata: {},
-      startedAt: this.startTime.toISOString(),
-    };
+    // Metadata and startedAt are stamped into tags at create time; Modal has
+    // no metadata API and exposes no public timestamps of its own.
+    const tags = await this.sandbox.getTags();
+    return buildSandboxInfo(this.sandbox.sandboxId, tags, this.image);
   }
 
   async kill(): Promise<void> {
@@ -733,7 +990,10 @@ class ModalSandboxImpl implements SandboxInstance {
   }
 
   async pause(): Promise<void> {
-    throw new Error("Modal does not support pause. Use kill() instead.");
+    throw new Error(
+      "Modal does not support pause/resume. Persist progress with Evolve checkpoints " +
+        "and resume in a fresh sandbox, or use kill() to terminate."
+    );
   }
 }
 
@@ -744,7 +1004,16 @@ export class ModalProvider implements SandboxProvider {
   private readonly appName: string;
   private readonly defaultTimeoutMs: number;
   private readonly imageName: string;
+  private readonly imageSecretName?: string;
   private _app: App | undefined;
+  /**
+   * Sandbox user configured at create time, reapplied on connect() so the su
+   * wrapper keeps targeting the same account. In-memory only: a connect()
+   * from a fresh process falls back to the default "user" account — callers
+   * reconnecting across processes must recreate the provider and sandbox with
+   * the same user, or operations on user-owned files fail loudly.
+   */
+  private readonly sandboxUsers = new Map<string, string>();
 
   constructor(config: ResolvedModalConfig) {
     // When running inside Modal containers, Modal sets MODAL_SERVER_URL to internal socket.
@@ -758,6 +1027,7 @@ export class ModalProvider implements SandboxProvider {
     this.appName = config.appName ?? "evolve-sandbox";
     this.defaultTimeoutMs = config.defaultTimeoutMs ?? 3600000;
     this.imageName = config.imageName ?? "evolve-all";
+    this.imageSecretName = config.imageSecretName;
   }
 
   private async getApp(): Promise<App> {
@@ -768,23 +1038,50 @@ export class ModalProvider implements SandboxProvider {
     return this._app;
   }
 
+  /**
+   * Build a Modal Image for the resolved tag, routing private registries
+   * (AWS ECR, GCP Artifact Registry) through the configured Modal Secret.
+   */
+  private async resolveImage(tag: string): Promise<Image> {
+    const registry = resolveImageRegistry(tag);
+
+    if (registry === "registry") {
+      // Public registries need no secret; a configured one enables private Docker Hub images
+      const secret = this.imageSecretName
+        ? await this.client.secrets.fromName(this.imageSecretName)
+        : undefined;
+      return this.client.images.fromRegistry(tag, secret);
+    }
+
+    if (!this.imageSecretName) {
+      throw new Error(
+        `Private registry image "${tag}" requires config.imageSecretName — the name of a Modal Secret ` +
+          "holding registry credentials (AWS ECR: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION " +
+          "with read-only ECR IAM). Create one at https://modal.com/secrets"
+      );
+    }
+    const secret = await this.client.secrets.fromName(this.imageSecretName);
+    return registry === "aws-ecr"
+      ? this.client.images.fromAwsEcr(tag, secret)
+      : this.client.images.fromGcpArtifactRegistry(tag, secret);
+  }
+
   async create(options: SandboxCreateOptions): Promise<SandboxInstance> {
-    if (options.user) {
-      throw new Error("Modal provider does not yet implement Evolve's sandbox user option");
-    }
-    if (options.network?.outbound === "blocked" || options.network?.allowedDestinations?.length) {
-      throw new Error("Modal provider does not yet implement Evolve's outbound network policy");
-    }
-    const app = await this.getApp();
+    // Validate before any network call so misconfigurations fail fast
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
+    validateTimeout(timeoutMs);
+    const networkParams = mapNetworkPolicy(options.network);
+    const user = options.user ?? DEFAULT_SANDBOX_USER;
+
+    const app = await this.getApp();
 
     // Resolve image name through IMAGE_MAP (e.g., "evolve-all" -> "evolvingmachines/evolve-all")
     const imageName = options.image || this.imageName;
     const resolvedImage = IMAGE_MAP[imageName] ?? imageName;
 
     // Eagerly build image on Modal's infra (idempotent — same tag returns same cached imageId).
-    // First run pulls from Docker Hub and caches; subsequent runs resolve in ~150ms.
-    const image = this.client.images.fromRegistry(resolvedImage);
+    // First run pulls from the registry and caches; subsequent runs resolve quickly.
+    const image = await this.resolveImage(resolvedImage);
     const builtImage = await image.build(app);
 
     // Filter out undefined values and only pass env if non-empty
@@ -796,6 +1093,14 @@ export class ModalProvider implements SandboxProvider {
       : undefined;
     const env = filteredEnvs && Object.keys(filteredEnvs).length > 0 ? filteredEnvs : undefined;
 
+    // Stamp metadata + Evolve-owned info into tags: Modal has no metadata API
+    // and no public timestamps, so tags are the durable record for list()/getInfo()
+    const tags: Record<string, string> = {
+      ...options.metadata,
+      [TAG_IMAGE]: resolvedImage,
+      [TAG_STARTED_AT]: new Date().toISOString(),
+    };
+
     // Use client.sandboxes.create() - the modern API
     // Resources match E2B defaults: 4 CPU, 4GB memory
     const sandbox = await this.client.sandboxes.create(app, builtImage, {
@@ -804,40 +1109,53 @@ export class ModalProvider implements SandboxProvider {
       timeoutMs,
       workdir: options.workingDirectory,
       env,
+      tags,
+      ...networkParams,
     });
 
-    // Fix workspace directory ownership (Modal creates it as root, but user needs write access)
-    if (options.workingDirectory) {
-      const chown = await sandbox.exec(["chown", "-R", "user:user", options.workingDirectory], { timeoutMs: 30000 });
+    // Fix workspace directory ownership (Modal creates it as root, but the
+    // sandbox user needs write access). Skipped when running as root.
+    if (options.workingDirectory && user !== "root") {
+      const chown = await sandbox.exec(
+        ["chown", "-R", `${user}:${user}`, options.workingDirectory],
+        { timeoutMs: 30000 }
+      );
       await chown.wait();
     }
 
-    return new ModalSandboxImpl(sandbox, resolvedImage);
+    this.sandboxUsers.set(sandbox.sandboxId, user);
+
+    return new ModalSandboxImpl(sandbox, resolvedImage, user);
   }
 
   async connect(sandboxId: string, _timeoutMs?: number): Promise<SandboxInstance> {
     // Use client.sandboxes.fromId() - the modern API
     const sandbox = await this.client.sandboxes.fromId(sandboxId);
-    return new ModalSandboxImpl(sandbox, "unknown");
+    // Image is recovered lazily from tags in getInfo(); user falls back to the
+    // default account when this process didn't create the sandbox.
+    const user = this.sandboxUsers.get(sandboxId) ?? DEFAULT_SANDBOX_USER;
+    return new ModalSandboxImpl(sandbox, undefined, user);
   }
 
-  async list(_options?: SandboxListOptions): Promise<SandboxInfo[]> {
-    const results: SandboxInfo[] = [];
-    const limit = _options?.limit ?? 100;
+  async list(options?: SandboxListOptions): Promise<SandboxInfo[]> {
+    // Modal has no paused state; a filter that excludes "running" matches nothing
+    if (options?.state && !options.state.includes("running")) {
+      return [];
+    }
 
-    try {
-      // Use client.sandboxes.list() - the modern API
-      for await (const sandbox of this.client.sandboxes.list()) {
-        results.push({
-          sandboxId: sandbox.sandboxId,
-          image: "unknown",
-          metadata: {},
-          startedAt: new Date().toISOString(),
-        });
-        if (results.length >= limit) break;
-      }
-    } catch {
-      // List not supported or failed
+    const app = await this.getApp();
+    const limit = options?.limit ?? 100;
+    const results: SandboxInfo[] = [];
+
+    // Scope to our app; tag filter narrows server-side to sandboxes carrying
+    // at least the requested metadata
+    for await (const sandbox of this.client.sandboxes.list({
+      appId: app.appId,
+      tags: options?.metadata,
+    })) {
+      const tags = await sandbox.getTags();
+      results.push(buildSandboxInfo(sandbox.sandboxId, tags));
+      if (results.length >= limit) break;
     }
 
     return results;
@@ -871,3 +1189,13 @@ export function createModalProvider(config: ModalConfig = {}): SandboxProvider {
 
   return new ModalProvider({ ...config, tokenId, tokenSecret });
 }
+
+// ============================================================
+// TEST-ONLY EXPORTS
+// ============================================================
+
+export const _testWrapCommand = wrapCommand;
+export const _testMapNetworkPolicy = mapNetworkPolicy;
+export const _testResolveImageRegistry = resolveImageRegistry;
+export const _testBuildSandboxInfo = buildSandboxInfo;
+export const _testValidateTimeout = validateTimeout;
