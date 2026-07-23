@@ -34,8 +34,14 @@ Then create the evaluation. `benchmark`, `agentSystems`, and `maxModelSpendUsd` 
 const evaluation = await evals.run({
     benchmark: "deep-swe",              // bare name = active version; "deep-swe@1.1" pins one
     agentSystems: [
-        { harness: "codex", model: "gpt-5.5" },
-        { harness: "claude", model: "fable" },
+        {
+            harness: "codex",
+            model: "gpt-5.5",
+        },
+        {
+            harness: "claude",
+            model: "fable",
+        },
     ],
     tasks: ["task-001", "task-002"],    // (optional) default: every task of the version
     runsPerTask: 1,                     // (optional) default 1
@@ -54,7 +60,10 @@ An evaluation expands to `tasks × agentSystems × runsPerTask` task runs, each 
 > **Retries are safe** — pass an idempotency key and a retry returns the original evaluation (`idempotentReplay: true`) instead of creating a duplicate:
 
 ```ts
-await evals.run(input, { idempotencyKey: "nightly-2026-07-23" });
+await evals.run(
+    input,
+    { idempotencyKey: "nightly-2026-07-23" },
+);
 ```
 
 ---
@@ -81,12 +90,15 @@ Options apply in every form — abort or tune backoff on an iterated watch the s
 ```ts
 const controller = new AbortController();
 
-const final = await evals.watch(evaluation.id, {
-    onEvent: (event) => console.log(event.type, event.data),
-    signal: controller.signal,     // (optional) abort the watch
-    reconnectDelayMs: 1_000,       // (optional) initial backoff, default 1s
-    maxReconnectDelayMs: 30_000,   // (optional) backoff ceiling, default 30s
-});
+const final = await evals.watch(
+    evaluation.id,
+    {
+        onEvent: (event) => console.log(event.type, event.data),
+        signal: controller.signal,     // (optional) abort the watch
+        reconnectDelayMs: 1_000,       // (optional) initial backoff, default 1s
+        maxReconnectDelayMs: 30_000,   // (optional) backoff ceiling, default 30s
+    },
+);
 ```
 
 - The stream replays from the beginning, so attaching late loses nothing.
@@ -121,7 +133,10 @@ for await (const run of evals.taskRuns(evaluation.id)) {
 One task run in depth:
 
 ```ts
-const run = await evals.taskRun(evaluation.id, runId);
+const run = await evals.taskRun(
+    evaluation.id,
+    runId,
+);
 console.log(run.score, run.metrics);                 // reward + named sub-scores
 console.log(run.phaseTimingsMs);                     // { agentMs, verifyMs }
 console.log(run.modelUsage?.spendUsd, run.modelUsage?.spendSource);
@@ -134,13 +149,24 @@ console.log(run.failurePhase, run.failureDetail);    // untruncated in this resp
 Fetch a run's recorded event timeline:
 
 ```ts
-for await (const event of evals.taskRunTraceEvents(evaluation.id, runId)) {
+for await (const event of evals.taskRunTraceEvents(
+    evaluation.id,
+    runId,
+)) {
     console.log(event.seq, event.type, event.data);
 }
 
 // Or page manually — resume later from the last seen seq
-const trace = await evals.taskRunTrace(evaluation.id, runId, { limit: 500 });
-const more = await evals.taskRunTrace(evaluation.id, runId, { after: trace.nextAfter! });
+const trace = await evals.taskRunTrace(
+    evaluation.id,
+    runId,
+    { limit: 500 },
+);
+const more = await evals.taskRunTrace(
+    evaluation.id,
+    runId,
+    { after: trace.nextAfter! },
+);
 ```
 
 `taskRunTraceEvents()` drains the currently available trace, then stops. To follow an in-flight run, resume with `{ after: lastSeenSeq }`.
@@ -151,7 +177,10 @@ const more = await evals.taskRunTrace(evaluation.id, runId, { after: trace.nextA
 await evals.cancel(evaluation.id);    // idempotent; a terminal evaluation is a no-op
 
 // New linked evaluation of only the failed (and never-dispatched) runs
-const rerun = await evals.rerunFailed(evaluation.id, { idempotencyKey: "rerun-1" });
+const rerun = await evals.rerunFailed(
+    evaluation.id,
+    { idempotencyKey: "rerun-1" },
+);
 console.log(rerun.sourceEvaluationId); // → evaluation.id
 ```
 
@@ -189,12 +218,24 @@ Mean scores cover `SCORED` runs only; `coverage` is always reported so a high me
 Download the full research archive (gzipped JSON) of a terminal evaluation:
 
 ```ts
-const buffer = await evals.export(evaluation.id);                    // Buffer (default)
-const path = await evals.export(evaluation.id, { to: "./results" }); // save; returns file path
-const stream = await evals.export(evaluation.id, { stream: true });  // raw response stream
+const buffer = await evals.export(evaluation.id); // Buffer (default)
+const path = await evals.export(
+    evaluation.id,
+    { to: "./results" },
+); // save; returns file path
+const stream = await evals.export(
+    evaluation.id,
+    { stream: true },
+); // raw response stream
 
 // Harbor job-layout bundle instead of the canonical archive
-const harborPath = await evals.export(evaluation.id, { to: "./results", format: "harbor" });
+const harborPath = await evals.export(
+    evaluation.id,
+    {
+        to: "./results",
+        format: "harbor",
+    },
+);
 ```
 
 `format: "harbor"` composes with any delivery shape (`Buffer`, `to`, or `stream`).
@@ -253,14 +294,23 @@ Every task run executes in its own sandbox. Pick the provider per evaluation —
 ```ts
 const evaluation = await evals.run({
     benchmark: "swe-bench-verified@1.0",
-    agentSystems: [{ harness: "codex", model: "gpt-5.5" }],
+    agentSystems: [
+        {
+            harness: "codex",
+            model: "gpt-5.5",
+        },
+    ],
     maxModelSpendUsd: 25,
     sandboxProvider: "daytona",   // "e2b" (default) | "daytona" | "modal"
 });
 ```
 
 ```bash
-npx evolve-evals run --benchmark swe-bench-verified@1.0 --system codex:gpt-5.5 --max-spend 25 --provider daytona
+npx evolve-evals run \
+    --benchmark swe-bench-verified@1.0 \
+    --system codex:gpt-5.5 \
+    --max-spend 25 \
+    --provider daytona
 ```
 
 An unknown value is rejected with a `400` at creation — never a silent fallback. Once chosen, the provider is fixed for the evaluation's life; `rerunFailed()` inherits it.
@@ -278,21 +328,31 @@ Two provider differences worth knowing before you pick:
 
 ```ts
 const job = await catalog.import({
-    source: { gitUrl: "https://github.com/acme/my-bench.git", ref: "v1.2.0" },
+    source: {
+        gitUrl: "https://github.com/acme/my-bench.git",
+        ref: "v1.2.0",
+    },
     benchmarkName: "my-bench",
     version: "1.2",               // (optional) server-assigned when omitted
 });
 
 // Block until READY or FAILED
-const done = await catalog.watchImport(job.id, {
-    onStatus: (importJob) => console.log(importJob.status, importJob.taskCount),
-    pollIntervalMs: 2_000,        // (optional) default 2s
-});
+const done = await catalog.watchImport(
+    job.id,
+    {
+        onStatus: (importJob) => console.log(importJob.status, importJob.taskCount),
+        pollIntervalMs: 2_000,        // (optional) default 2s
+    },
+);
 console.log(done.status, done.error?.message);   // per-task failures in done.error.failures
 ```
 
 ```bash
-npx evolve-evals import --git https://github.com/acme/my-bench.git --ref main --name my-bench --watch
+npx evolve-evals import \
+    --git https://github.com/acme/my-bench.git \
+    --ref main \
+    --name my-bench \
+    --watch
 npx evolve-evals import status <id>
 ```
 

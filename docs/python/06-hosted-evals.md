@@ -32,8 +32,14 @@ async with evaluations() as evals:
     evaluation = await evals.run(
         benchmark='deep-swe',                       # or pin a version: 'deep-swe@1.1'
         agent_systems=[
-            AgentSystem(harness='codex', model='gpt-5.5'),
-            AgentSystem(harness='claude', model='fable'),
+            AgentSystem(
+                harness='codex',
+                model='gpt-5.5',
+            ),
+            AgentSystem(
+                harness='claude',
+                model='fable',
+            ),
         ],
         concurrency=4,
         max_model_spend_usd=25,
@@ -61,7 +67,10 @@ An evaluation expands to `tasks × agent_systems × runs_per_task` task runs, ea
 Retrying with the same `idempotency_key` returns the original evaluation instead of creating a duplicate:
 
 ```python
-evaluation = await evals.run(..., idempotency_key='nightly-2026-07-23')
+evaluation = await evals.run(
+    ...,
+    idempotency_key='nightly-2026-07-23',
+)
 print(evaluation.idempotent_replay)   # True on a replay
 ```
 
@@ -75,7 +84,10 @@ Iterate the evaluation's state as it changes, or block for the final result. Bot
 async for state in evals.watch_iter(evaluation.id):
     print(state.status, state.task_run_counts)   # RUNNING {'SCORED': 12, 'RUNNING': 3, 'QUEUED': 5}
 
-final = await evals.watch(evaluation.id, timeout_s=3600)   # raises TimeoutError past the deadline
+final = await evals.watch(
+    evaluation.id,
+    timeout_s=3600,
+) # raises TimeoutError past the deadline
 print(final.status, final.spent_usd)
 ```
 
@@ -97,13 +109,19 @@ Iterate task runs (pages fetched for you), or `await` one page:
 async for run in evals.task_runs(evaluation.id):
     print(run.task_key, run.agent_system.model, run.run_number, run.status, run.score)
 
-page = await evals.task_runs(evaluation.id, limit=100)   # .task_runs, .total_count, .next_cursor
+page = await evals.task_runs(
+    evaluation.id,
+    limit=100,
+) # .task_runs, .total_count, .next_cursor
 ```
 
 Fetch one run's full detail — untruncated `failure_detail`, plus the harness version actually used:
 
 ```python
-detail = await evals.task_run(evaluation.id, run.id)
+detail = await evals.task_run(
+    evaluation.id,
+    run.id,
+)
 print(detail.failure_phase, detail.failure_detail)
 print(detail.resolved_harness_version)
 print(detail.metrics)             # named sub-scores
@@ -120,16 +138,27 @@ if detail.model_usage:
 Stream a run's recorded event trace; resume later from the last seen `seq`:
 
 ```python
-async for event in evals.task_run_trace_events(evaluation.id, run.id):
+async for event in evals.task_run_trace_events(
+    evaluation.id,
+    run.id,
+):
     print(event.seq, event.type, event.data)
 
-page = await evals.task_run_trace(evaluation.id, run.id, after=last_seq, limit=500)
+page = await evals.task_run_trace(
+    evaluation.id,
+    run.id,
+    after=last_seq,
+    limit=500,
+)
 ```
 
 Rerun only the failed (and never-dispatched) runs of a terminal evaluation — scored runs are never re-executed:
 
 ```python
-rerun = await evals.rerun_failed(evaluation.id, idempotency_key='rerun-1')
+rerun = await evals.rerun_failed(
+    evaluation.id,
+    idempotency_key='rerun-1',
+)
 print(rerun.source_evaluation_id)   # → evaluation.id
 ```
 
@@ -167,9 +196,16 @@ Means cover `SCORED` runs only; coverage is always reported so a high mean over 
 Download the research archive (gzipped JSON) of a terminal evaluation:
 
 ```python
-archive_path = await evals.export(evaluation.id, to='./results')                  # saved file path
-harbor_path = await evals.export(evaluation.id, to='./results', format='harbor')  # Harbor job layout
-archive_bytes = await evals.export(evaluation.id)                                 # bytes in memory
+archive_path = await evals.export(
+    evaluation.id,
+    to='./results',
+) # saved file path
+harbor_path = await evals.export(
+    evaluation.id,
+    to='./results',
+    format='harbor',
+) # Harbor job layout
+archive_bytes = await evals.export(evaluation.id) # bytes in memory
 ```
 
 ---
@@ -187,7 +223,12 @@ Every task run executes in its own isolated sandbox. Pick the provider per evalu
 ```python
 evaluation = await evals.run(
     benchmark='swe-bench-verified@1.0',
-    agent_systems=[AgentSystem(harness='codex', model='gpt-5.5')],
+    agent_systems=[
+        AgentSystem(
+            harness='codex',
+            model='gpt-5.5',
+        ),
+    ],
     max_model_spend_usd=25,
     sandbox_provider='daytona',   # 'e2b' (default) | 'daytona' | 'modal'
 )
@@ -213,7 +254,10 @@ async with benchmarks() as catalog:
         version='1.2',                # optional — omit to let the server assign one
     )
 
-    done = await catalog.watch_import(job.id, on_status=lambda j: print(j.status))
+    done = await catalog.watch_import(
+        job.id,
+        on_status=lambda j: print(j.status),
+    )
     if done.status == 'FAILED':
         print(done.error.message)     # e.g. "2/113 task(s) failed to parse"
         for failure in done.error.failures:
