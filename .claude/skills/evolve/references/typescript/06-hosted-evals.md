@@ -243,7 +243,7 @@ console.log(run.sessionRef);                              // reference to the ag
 console.log(run.failurePhase, run.failureDetail);         // populated on failures
 ```
 
-**Reading spend.** `modelUsage.spendUsd` is LiteLLM's number — the only spend truth. Its `spendSource` is `"key_info"` when the value was read back from the gateway and `"assumed_cap"` when it falls back to the run's cap. Read-back can lag or be missing on the gemini-passthrough and OpenRouter routes, so a run's recorded spend may sit at the assumed cap (or zero) until spend-log reconciliation catches up — the task run's trace and token counts are the reliable engagement signal in the meantime.
+**Reading spend.** `modelUsage.spendUsd` is the run's measured model spend, and `spendSource` says how it was measured: `"key_info"` means the number was read back from metering, `"assumed_cap"` means metering had not reported yet and the value conservatively assumes the run's cap. Metering can lag on some model routes, so a fresh run may briefly show the assumed cap (or zero) — the run's trace and token counts are the reliable engagement signal in the meantime.
 
 ### taskRunTrace / taskRunTraceEvents
 
@@ -502,7 +502,7 @@ interface TaskRunDetail extends TaskRun {   // evaluations().taskRun(id, runId)
 type SpendSource = "key_info" | "assumed_cap";
 
 interface ModelUsage {
-    spendUsd?: number;              // LiteLLM is the only spend truth
+    spendUsd?: number;              // measured model spend for the run, in USD
     spendSource?: SpendSource;      // "key_info" (read from gateway) or "assumed_cap" (conservative fallback)
     maxBudgetUsd?: number;
     resolvedHarnessVersion?: string; // resolved harness version actually used for the run

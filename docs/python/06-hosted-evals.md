@@ -226,7 +226,7 @@ if detail.model_usage:
     print(detail.model_usage.spend_usd, detail.model_usage.spend_source)  # 'key_info' | 'assumed_cap'
 ```
 
-**Reading spend.** `model_usage.spend_usd` is LiteLLM's number — the only spend truth. Its `spend_source` is `'key_info'` when the value was read back from the gateway and `'assumed_cap'` when it falls back to the run's cap. Read-back can lag or be missing on the gemini-passthrough and OpenRouter routes, so a run's recorded spend may sit at the assumed cap (or zero) until spend-log reconciliation catches up — the task run's trace and token counts are the reliable engagement signal in the meantime.
+**Reading spend.** `model_usage.spend_usd` is the run's measured model spend, and `spend_source` says how it was measured: `'key_info'` means the number was read back from metering, `'assumed_cap'` means metering had not reported yet and the value conservatively assumes the run's cap. Metering can lag on some model routes, so a fresh run may briefly show the assumed cap (or zero) — the run's trace and token counts are the reliable engagement signal in the meantime.
 
 ### task_run_trace
 
@@ -402,7 +402,7 @@ class Evaluation:
 
 @dataclass
 class ModelUsage:
-    spend_usd: float | None           # LiteLLM is the only spend truth
+    spend_usd: float | None           # measured model spend for the run, in USD
     spend_source: str | None          # 'key_info' (read from gateway) or 'assumed_cap' (conservative fallback)
     max_budget_usd: float | None
     resolved_harness_version: str | None  # resolved harness version actually used for the run
