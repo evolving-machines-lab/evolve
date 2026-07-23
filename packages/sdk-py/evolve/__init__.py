@@ -32,6 +32,7 @@ from .config import (
     HostedClientConfig,
 )
 from .hosted import (
+    ActiveBenchmark,
     AgentSystem,
     Benchmark,
     BenchmarkImport,
@@ -45,6 +46,7 @@ from .hosted import (
     EvaluationComparison,
     EvaluationPage,
     EvaluationsClient,
+    NoActiveVersionError,
     Task,
     TaskRun,
     TaskRunDetail,
@@ -330,7 +332,9 @@ __all__ = [
     'HostedClientConfig',
     'BenchmarksClient',
     'EvaluationsClient',
+    'NoActiveVersionError',
     'Benchmark',
+    'ActiveBenchmark',
     'BenchmarkImport',
     'BenchmarkVersion',
     'Task',

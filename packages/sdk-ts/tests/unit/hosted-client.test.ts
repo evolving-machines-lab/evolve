@@ -125,7 +125,12 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import { gzipSync } from "node:zlib";
 
-import { benchmarks, evaluations, NotImplementedError } from "../../src/hosted/index.ts";
+import {
+  benchmarks,
+  evaluations,
+  NoActiveVersionError,
+  NotImplementedError,
+} from "../../src/hosted/index.ts";
 import type { EvaluationEvent } from "../../src/hosted/index.ts";
 
 const BASE = "http://localhost:3000";
@@ -1356,6 +1361,281 @@ async function testApiErrorHandling() {
 }
 
 // =============================================================================
+// ERGONOMICS: getActive, iterator watch, auto-pagination
+// =============================================================================
+
+async function testGetActive() {
+  console.log("\n--- benchmarks().getActive() resolves the active version to a runnable shape ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/benchmarks/deep-swe", {
+      status: 200,
+      body: {
+        name: "deep-swe",
+        displayTitle: "DeepSWE",
+        description: "SWE tasks",
+        activeVersion: "1.1",
+        versions: [
+          { version: "1.1", state: "READY", createdAt: "2026-07-21T00:00:00.000Z", taskCount: 113 },
+          { version: "1.0", state: "ARCHIVED", createdAt: "2026-07-01T00:00:00.000Z", taskCount: 100 },
+        ],
+        tasksVersion: "1.1",
+        tasks: [
+          { taskKey: "abs-module-cache-flags", agentTimeoutSec: 5400, verifierTimeoutSec: 1800 },
+        ],
+        createdAt: "2026-07-01T00:00:00.000Z",
+        updatedAt: "2026-07-21T00:00:00.000Z",
+      },
+    });
+
+    const catalog = benchmarks({ apiKey: "test-key", dashboardUrl: BASE });
+    const active = await catalog.getActive("deep-swe");
+
+    const url = fetchCalls[fetchCalls.length - 1].url;
+    assert(!url.includes("version="), "getActive resolves the bare name (active version's tasks)");
+
+    assertEqual(active.version, "1.1", "version is the active version string (non-optional)");
+    assertEqual(active.activeVersion.state, "READY", "activeVersion carries the full version object");
+    assertEqual(active.tasks.length, 1, "tasks is populated (non-optional)");
+    assertEqual(active.tasks[0].taskKey, "abs-module-cache-flags", "maps public task fields");
+    assertEqual(active.versions.length, 2, "carries all versions");
+    assertEqual(active.tasksVersion, "1.1", "tasksVersion matches the active version");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testGetActiveNoActiveVersion() {
+  console.log("\n--- benchmarks().getActive() throws NoActiveVersionError when none is active ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/benchmarks/draft-bench", {
+      status: 200,
+      body: {
+        name: "draft-bench",
+        displayTitle: null,
+        description: null,
+        activeVersion: null,
+        versions: [
+          { version: "0.1", state: "DRAFT", createdAt: "2026-07-21T00:00:00.000Z", taskCount: 0 },
+        ],
+        tasksVersion: null,
+        tasks: [],
+        createdAt: "2026-07-21T00:00:00.000Z",
+        updatedAt: "2026-07-21T00:00:00.000Z",
+      },
+    });
+
+    const catalog = benchmarks({ apiKey: "test-key", dashboardUrl: BASE });
+    let threw = false;
+    try {
+      await catalog.getActive("draft-bench");
+    } catch (err: any) {
+      threw = true;
+      assert(err instanceof NoActiveVersionError, "throws NoActiveVersionError");
+      assert(err.message.includes("no active version"), "message explains there is no active version");
+      assertEqual(err.benchmark, "draft-bench", "error carries the benchmark name");
+    }
+    assert(threw, "getActive throws when no version is active");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testWatchAsIterator() {
+  console.log("\n--- watch() is usable as an async iterator (for await) ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/evaluations/eval-1/events", {
+      status: 200,
+      body: null,
+      streamBody:
+        sseText([
+          { seq: 0, type: "evaluation.created", data: { taskRunCount: 2 } },
+          { seq: 1, type: "task_run.settled", data: { taskRunId: "run-1", status: "SCORED" } },
+        ]) +
+        sseText([{ seq: 2, type: "evaluation.completed", data: { scored: 2 } }]),
+    });
+    setMockResponse("/api/evaluations/eval-1", {
+      status: 200,
+      body: { ...RUN_SUMMARY, status: "COMPLETED" },
+    });
+
+    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const events: EvaluationEvent[] = [];
+    for await (const event of e.watch("eval-1")) {
+      events.push(event);
+    }
+    assertEqual(events.map((ev) => ev.seq), [0, 1, 2], "iterator yields every event in seq order");
+    assertEqual(events[2].type, "evaluation.completed", "iterator ends on the terminal event");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testWatchIteratorEarlyBreak() {
+  console.log("\n--- watch() iterator stops cleanly on an early break ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/evaluations/eval-1/events", {
+      status: 200,
+      body: null,
+      streamBody: sseText([
+        { seq: 0, type: "task_run.settled", data: { taskRunId: "run-1" } },
+        { seq: 1, type: "task_run.settled", data: { taskRunId: "run-2" } },
+        { seq: 2, type: "evaluation.completed", data: {} },
+      ]),
+    });
+    setMockResponse("/api/evaluations/eval-1", {
+      status: 200,
+      body: { ...RUN_SUMMARY, status: "COMPLETED" },
+    });
+
+    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const seen: number[] = [];
+    for await (const event of e.watch("eval-1")) {
+      seen.push(event.seq);
+      break; // consume only the first event, then abandon the stream
+    }
+    assertEqual(seen, [0], "breaking after the first event stops the iterator (no throw)");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testWatchIteratorAbort() {
+  console.log("\n--- watch() iterator rejects when the signal aborts ---");
+  installMockFetch();
+  try {
+    // Stream ends without a terminal event; get() stays RUNNING, so the watch
+    // enters its backoff sleep where the abort lands.
+    setMockResponse("/api/evaluations/eval-1/events", {
+      status: 200,
+      body: null,
+      streamBody: sseText([{ seq: 0, type: "evaluation.created", data: {} }]),
+    });
+    setMockResponse("/api/evaluations/eval-1", {
+      status: 200,
+      body: { ...RUN_SUMMARY, status: "RUNNING" },
+    });
+
+    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 20);
+
+    const seen: number[] = [];
+    let threw = false;
+    try {
+      for await (const event of e.watch("eval-1", {
+        signal: controller.signal,
+        reconnectDelayMs: 60_000,
+      })) {
+        seen.push(event.seq);
+      }
+    } catch {
+      threw = true;
+    }
+    assert(threw, "iterator rejects on abort during backoff");
+    assertEqual(seen, [0], "delivered the pre-abort event before rejecting");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testListAutoPagination() {
+  console.log("\n--- evaluations().list() walks cursor pages when iterated ---");
+  installMockFetch();
+  try {
+    (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+      const urlStr = url.toString();
+      fetchCalls.push({ url: urlStr, init });
+      const cursor = new URL(urlStr).searchParams.get("cursor");
+      const pages: Record<string, unknown> = {
+        "": {
+          evaluations: [
+            { ...RUN_SUMMARY, id: "eval-2" },
+            { ...RUN_SUMMARY, id: "eval-1" },
+          ],
+          nextCursor: "eval-1",
+        },
+        "eval-1": {
+          evaluations: [{ ...RUN_SUMMARY, id: "eval-0" }],
+          nextCursor: null,
+        },
+      };
+      return buildMockResponse({ status: 200, body: pages[cursor ?? ""] });
+    };
+
+    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+
+    // Iterator form: walks every evaluation across both pages
+    const ids: string[] = [];
+    for await (const evaluation of e.list()) ids.push(evaluation.id);
+    assertEqual(ids, ["eval-2", "eval-1", "eval-0"], "iterates every row across cursor pages");
+    const cursors = fetchCalls.map((c) => new URL(c.url).searchParams.get("cursor"));
+    assertEqual(cursors, [null, "eval-1"], "second page fetched with the first page's nextCursor");
+
+    // Page form still returns a single page for the given options
+    fetchCalls.length = 0;
+    const page = await e.list({ limit: 2 });
+    assertEqual(page.evaluations.length, 2, "await returns a single page");
+    assertEqual(page.nextCursor, "eval-1", "single page carries nextCursor");
+    assertEqual(fetchCalls.length, 1, "page form makes exactly one request");
+    assert(fetchCalls[0].url.includes("limit=2"), "page form forwards the limit");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testTaskRunsAutoPagination() {
+  console.log("\n--- evaluations().taskRuns() walks cursor pages when iterated ---");
+  installMockFetch();
+  try {
+    const makeRun = (id: string, runNumber: number) => ({
+      id,
+      taskKey: "abs-module-cache-flags",
+      agentSystem: { harness: "codex", model: "gpt-5.5", harnessVersion: null },
+      runNumber,
+      status: "SCORED",
+      score: 1,
+      metrics: null,
+      failurePhase: null,
+      failureDetail: null,
+      phaseTimingsMs: null,
+      modelUsage: null,
+      sessionRef: null,
+      createdAt: "2026-07-22T00:00:00.000Z",
+      updatedAt: "2026-07-22T00:00:00.000Z",
+    });
+    (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+      const urlStr = url.toString();
+      fetchCalls.push({ url: urlStr, init });
+      const cursor = new URL(urlStr).searchParams.get("cursor");
+      const pages: Record<string, unknown> = {
+        "": { taskRuns: [makeRun("run-1", 1), makeRun("run-2", 2)], totalCount: 3, nextCursor: "run-2" },
+        "run-2": { taskRuns: [makeRun("run-3", 3)], totalCount: 3, nextCursor: null },
+      };
+      return buildMockResponse({ status: 200, body: pages[cursor ?? ""] });
+    };
+
+    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+
+    const runIds: string[] = [];
+    for await (const run of e.taskRuns("eval-1")) runIds.push(run.id);
+    assertEqual(runIds, ["run-1", "run-2", "run-3"], "iterates every task run across cursor pages");
+
+    // Page form still returns a single page with totalCount
+    fetchCalls.length = 0;
+    const page = await e.taskRuns("eval-1", { limit: 2 });
+    assertEqual(page.taskRuns.length, 2, "await returns a single page");
+    assertEqual(page.totalCount, 3, "single page carries totalCount");
+    assertEqual(page.nextCursor, "run-2", "single page carries nextCursor");
+  } finally {
+    restoreFetch();
+  }
+}
+
+// =============================================================================
 // RUN
 // =============================================================================
 
@@ -1365,6 +1645,8 @@ async function main() {
   await testFactoriesRequireApiKey();
   await testBenchmarksList();
   await testBenchmarksGet();
+  await testGetActive();
+  await testGetActiveNoActiveVersion();
   await testImportGitSource();
   await testImportReservedSources();
   await testGetImport();
@@ -1373,7 +1655,9 @@ async function main() {
   await testRunIdempotentReplay();
   await testGetEvaluationDetail();
   await testListEvaluations();
+  await testListAutoPagination();
   await testTaskRuns();
+  await testTaskRunsAutoPagination();
   await testCancel();
   await testRerunFailed();
   await testRerunFailedConflictError();
@@ -1383,6 +1667,9 @@ async function main() {
   await testExportHarborFormat();
   await testExportTerminalRequired();
   await testWatchStreamsToTerminal();
+  await testWatchAsIterator();
+  await testWatchIteratorEarlyBreak();
+  await testWatchIteratorAbort();
   await testWatchResumesWithLastEventId();
   await testWatchFallsBackToStatusOnQuietClose();
   await testWatchRetriesOn5xx();

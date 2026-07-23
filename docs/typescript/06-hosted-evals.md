@@ -19,16 +19,19 @@ const evals = evaluations();
 Run `deep-swe` with two agent systems, watch it live, then export the results archive:
 
 ```ts
-import { evaluations, benchmarks } from "@evolvingmachines/sdk";
+import { benchmarks, evaluations } from "@evolvingmachines/sdk";
 
-// 1. Pick a benchmark from the catalog
-const deepSwe = await benchmarks().get("deep-swe"); // active version + task list
-console.log(deepSwe.activeVersion?.version, deepSwe.tasks?.length);
+// Bind the clients once, then reuse them
+const catalog = benchmarks();
+const evals = evaluations();
+
+// 1. Resolve the benchmark's active version (throws if none is active)
+const deepSwe = await catalog.getActive("deep-swe");
+console.log(deepSwe.version, deepSwe.tasks.length); // version + tasks always present
 
 // 2. Create the evaluation
-const evals = evaluations();
 const evaluation = await evals.run({
-    benchmark: "deep-swe@1.1",
+    benchmark: `deep-swe@${deepSwe.version}`,
     agentSystems: [
         { harness: "codex", model: "gpt-5.5" },
         { harness: "claude", model: "fable" },
@@ -39,15 +42,15 @@ const evaluation = await evals.run({
 });
 console.log(evaluation.id, evaluation.status); // "QUEUED"
 
-// 3. Watch until terminal (SSE stream with automatic resume)
-const final = await evals.watch(evaluation.id, {
-    onEvent: (event) => console.log(event.seq, event.type, event.data),
-});
+// 3. Watch until terminal — iterate the live event stream (auto-resumes)
+for await (const event of evals.watch(evaluation.id)) {
+    console.log(event.seq, event.type, event.data);
+}
+const final = await evals.get(evaluation.id);
 console.log(final.status, final.taskRunCounts, final.spentUsd);
 
-// 4. Inspect task runs and export the full research archive
-const page = await evals.taskRuns(evaluation.id);
-for (const run of page.taskRuns) {
+// 4. Inspect task runs (auto-paginates) and export the full research archive
+for await (const run of evals.taskRuns(evaluation.id)) {
     console.log(run.taskKey, run.agentSystem.harness, run.status, run.score);
 }
 
@@ -145,6 +148,20 @@ const same = await catalog.get("deep-swe", { version: "1.0" }); // equivalent
 
 `get()` returns `versions` (newest first), `tasksVersion`, and `tasks`. Tasks expose public fields only — `taskKey`, `agentTimeoutSec`, `verifierTimeoutSec`. Instructions, environments, and tests never leave the server.
 
+### getActive
+
+`getActive(name)` resolves a benchmark's active version to a runnable shape. Unlike `get()`, `version` and `tasks` are non-optional — it throws `NoActiveVersionError` when the benchmark has no active version, so you never branch on a missing active version:
+
+```ts
+import { NoActiveVersionError } from "@evolvingmachines/sdk";
+
+const active = await catalog.getActive("deep-swe");
+console.log(active.version, active.tasks.length); // both always present
+const evaluation = await evals.run({ benchmark: `deep-swe@${active.version}`, /* … */ });
+```
+
+Use `get()` for the full multi-version detail with optional fields; `getActive()` for the happy path of running the current version.
+
 ### import / getImport / watchImport
 
 Import a benchmark from a git repository into the shared catalog. The import runs server-side as a parse → validate → activate pipeline:
@@ -193,17 +210,29 @@ const detail = await evals.get(evaluation.id);
 console.log(detail.taskRunCounts);  // { SCORED: 12, RUNNING: 3, QUEUED: 5 }
 console.log(detail.spentUsd, "/", detail.maxModelSpendUsd);
 
-// Your evaluations, newest first (cursor-paged)
+// Your evaluations, newest first — await one page (cursor-paged)
 const page = await evals.list({ limit: 50 });
 const next = await evals.list({ cursor: page.nextCursor! });
+
+// ...or iterate every evaluation across all pages — cursors are walked for you
+for await (const item of evals.list()) {
+    console.log(item.id, item.status);
+}
 ```
+
+`list()` returns a dual-use handle: `await` it for a single `EvaluationPage`, or `for await` it to walk every evaluation across cursor pages.
 
 ### taskRuns / taskRun
 
 ```ts
-// Cursor-paged task-run listing
+// Await one page (cursor-paged) — totalCount included
 const runs = await evals.taskRuns(evaluation.id, { limit: 100 });
 console.log(runs.totalCount);
+
+// ...or iterate every task run across all pages — cursors are walked for you
+for await (const run of evals.taskRuns(evaluation.id)) {
+    console.log(run.taskKey, run.status, run.score);
+}
 
 // Full detail for one task run (failureDetail untruncated here)
 const run = await evals.taskRun(evaluation.id, runs.taskRuns[0].id);
@@ -237,16 +266,29 @@ for await (const event of evals.taskRunTraceEvents(evaluation.id, runId)) {
 
 ### watch
 
-Stream the evaluation's server-sent event feed and resolve with the final evaluation once it reaches a terminal status:
+`watch()` returns a dual-use handle over the evaluation's server-sent event feed. Iterate it for the live events, or await it for the final evaluation — both drive the same stream, so pick one form per call.
+
+```ts
+// Primary form: iterate the events as they arrive
+for await (const event of evals.watch(evaluation.id)) {
+    // event.seq  — monotonic sequence number (resume position)
+    // event.type — "evaluation.created" | "task_run.settled" | "evaluation.completed" | ...
+    // event.data — event payload
+    if (event.type === "task_run.settled") updateProgress(event.data);
+}
+
+// Or await the same handle for the final Evaluation once it reaches a terminal status
+const final = await evals.watch(evaluation.id);
+console.log(final.status, final.taskRunCounts);
+```
+
+The callback form is equivalent and carries the reconnect/abort controls — `onEvent` fires in every form:
 
 ```ts
 const controller = new AbortController();
 
-const final = await evals.watch(evaluation.id, {
+const done = await evals.watch(evaluation.id, {
     onEvent: (event) => {
-        // event.seq  — monotonic sequence number (resume position)
-        // event.type — "evaluation.created" | "task_run.settled" | "evaluation.completed" | ...
-        // event.data — event payload
         if (event.type === "task_run.settled") updateProgress(event.data);
     },
     signal: controller.signal,     // (optional) abort the watch
@@ -255,9 +297,9 @@ const final = await evals.watch(evaluation.id, {
 });
 ```
 
-- Replays the stream from the beginning, so `onEvent` sees every event even when you attach late.
+- Replays the stream from the beginning, so you see every event even when you attach late.
 - On disconnect it resumes from the last sequence number (`Last-Event-ID`) with exponential backoff — no gaps, no duplicates from the caller's perspective.
-- After the stream ends, a final drain reconnect delivers any tail events written while the terminal status was being recorded, then `watch()` resolves with the final `Evaluation`.
+- After the stream ends, a final drain reconnect delivers any tail events written while the terminal status was being recorded, then the handle resolves with the final `Evaluation`.
 
 ### cancel / rerunFailed
 
@@ -359,6 +401,19 @@ npx evolve-evals export <id> --to ./results --format harbor
 ## Type Reference
 
 ```ts
+interface ActiveBenchmark {                  // benchmarks().getActive(name)
+    name: string;
+    displayTitle: string | null;
+    description: string | null;
+    activeVersion: BenchmarkVersion;         // always present (getActive throws otherwise)
+    version: string;                         // active version string (non-optional)
+    tasks: Task[];                           // active version's tasks (non-optional)
+    versions: BenchmarkVersion[];            // all versions, newest first
+    tasksVersion: string | null;
+    createdAt: string;
+    updatedAt: string;
+}
+
 interface Evaluation {
     id: string;
     status: EvaluationStatus;

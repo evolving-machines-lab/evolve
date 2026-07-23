@@ -94,6 +94,31 @@ export interface Benchmark {
   updatedAt?: string;
 }
 
+/**
+ * A benchmark's active version resolved to a runnable shape.
+ *
+ * Unlike Benchmark, `version` and `tasks` are non-optional: benchmarks()
+ * .getActive() throws NoActiveVersionError when there is no active version,
+ * so callers never branch on a missing active version.
+ */
+export interface ActiveBenchmark {
+  name: string;
+  displayTitle: string | null;
+  description: string | null;
+  /** The active version (always present) */
+  activeVersion: BenchmarkVersion;
+  /** The active version string (identical to activeVersion.version) */
+  version: string;
+  /** Tasks of the active version */
+  tasks: Task[];
+  /** All versions, newest first */
+  versions: BenchmarkVersion[];
+  /** The version whose tasks are listed (== version) */
+  tasksVersion: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** One agent system: harness + model (+ optional pinned harness version) */
 export interface AgentSystem {
   harness: string;
@@ -206,11 +231,36 @@ export interface EvaluationEvent {
   data: Record<string, unknown>;
 }
 
+/**
+ * The handle returned by evaluations().watch(). It is both:
+ * - a promise for the final Evaluation — `await evals.watch(id)` resolves once
+ *   the evaluation reaches a terminal status (the original form); and
+ * - an async iterable of events — `for await (const event of evals.watch(id))`
+ *   yields each EvaluationEvent and completes on the terminal event.
+ *
+ * Pick one form per call: both drive the same underlying SSE stream, so a
+ * single handle should not be awaited and iterated at once.
+ */
+export interface EvaluationWatch
+  extends PromiseLike<Evaluation>,
+    AsyncIterable<EvaluationEvent> {}
+
 /** Cursor page of evaluations (newest first) */
 export interface EvaluationPage {
   evaluations: Evaluation[];
   nextCursor: string | null;
 }
+
+/**
+ * The handle returned by evaluations().list(). Both:
+ * - a promise for a single EvaluationPage — `await evals.list({ limit })`
+ *   returns one page (the original form); and
+ * - an async iterable — `for await (const item of evals.list())` walks every
+ *   evaluation across cursor pages, fetching the next page for you.
+ */
+export interface EvaluationList
+  extends PromiseLike<EvaluationPage>,
+    AsyncIterable<Evaluation> {}
 
 /** Cursor page of task runs */
 export interface TaskRunPage {
@@ -218,6 +268,17 @@ export interface TaskRunPage {
   totalCount: number;
   nextCursor: string | null;
 }
+
+/**
+ * The handle returned by evaluations().taskRuns(). Both:
+ * - a promise for a single TaskRunPage — `await evals.taskRuns(id, { limit })`
+ *   returns one page (the original form); and
+ * - an async iterable — `for await (const run of evals.taskRuns(id))` walks
+ *   every task run across cursor pages, fetching the next page for you.
+ */
+export interface TaskRunList
+  extends PromiseLike<TaskRunPage>,
+    AsyncIterable<TaskRun> {}
 
 // =============================================================================
 // TASK RUN DETAIL + TRACE
@@ -453,6 +514,13 @@ export interface BenchmarksClient {
    */
   get(ref: string, options?: GetBenchmarkOptions): Promise<Benchmark>;
   /**
+   * Get a benchmark's active version resolved to a runnable shape: unlike
+   * get(), `version` and `tasks` are guaranteed present. Throws
+   * NoActiveVersionError when the benchmark has no active version. Use get()
+   * for the full multi-version detail with optional fields.
+   */
+  getActive(name: string): Promise<ActiveBenchmark>;
+  /**
    * Start a benchmark import job. Git sources ({ gitUrl, ref }) are live;
    * archive and Harbor Hub sources still throw NotImplementedError (no server
    * endpoint yet).
@@ -473,10 +541,18 @@ export interface EvaluationsClient {
   run(input: EvaluationInput, options?: RunEvaluationOptions): Promise<Evaluation>;
   /** Get one evaluation with agent systems + task-run status counts */
   get(id: string): Promise<Evaluation>;
-  /** List the caller's evaluations, newest first (cursor-paged) */
-  list(options?: ListEvaluationsOptions): Promise<EvaluationPage>;
-  /** List an evaluation's task runs (cursor-paged) */
-  taskRuns(id: string, options?: ListTaskRunsOptions): Promise<TaskRunPage>;
+  /**
+   * List the caller's evaluations, newest first (cursor-paged). Await the
+   * result for one page, or `for await` it to walk every evaluation across
+   * cursor pages transparently.
+   */
+  list(options?: ListEvaluationsOptions): EvaluationList;
+  /**
+   * List an evaluation's task runs (cursor-paged). Await the result for one
+   * page, or `for await` it to walk every task run across cursor pages
+   * transparently.
+   */
+  taskRuns(id: string, options?: ListTaskRunsOptions): TaskRunList;
   /** Get one task run's full detail (untruncated failureDetail, resolved harness version, sessionRef) */
   taskRun(id: string, runId: string): Promise<TaskRunDetail>;
   /** Get one seq-paged slice of a task run's trace; resume with { after: page.nextAfter } */
@@ -498,9 +574,13 @@ export interface EvaluationsClient {
   /**
    * Watch an evaluation's event stream (SSE). Replays from the beginning,
    * resumes with Last-Event-ID on reconnect (exponential backoff), and
-   * resolves with the final evaluation once it reaches a terminal status.
+   * finishes on the terminal event.
+   *
+   * The returned handle is dual-use: `await evals.watch(id)` resolves with the
+   * final Evaluation, or `for await (const event of evals.watch(id))` iterates
+   * the events. The `onEvent` callback still fires in both forms.
    */
-  watch(id: string, options?: WatchEvaluationOptions): Promise<Evaluation>;
+  watch(id: string, options?: WatchEvaluationOptions): EvaluationWatch;
   /** Request cancellation. Idempotent; a terminal evaluation is a no-op. */
   cancel(id: string): Promise<Evaluation>;
   /**

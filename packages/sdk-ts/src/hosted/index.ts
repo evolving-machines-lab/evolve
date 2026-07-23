@@ -5,6 +5,7 @@ import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { DEFAULT_DASHBOARD_URL, ENV_EVOLVE_API_KEY } from "../constants";
 import type {
+  ActiveBenchmark,
   AgentSystem,
   Benchmark,
   BenchmarkImport,
@@ -20,9 +21,11 @@ import type {
   EvaluationComparison,
   EvaluationEvent,
   EvaluationInput,
+  EvaluationList,
   EvaluationPage,
   EvaluationStatus,
   EvaluationsClient,
+  EvaluationWatch,
   ExportEvaluationOptions,
   GetBenchmarkOptions,
   HostedClientConfig,
@@ -34,6 +37,7 @@ import type {
   TaskRun,
   TaskRunCounts,
   TaskRunDetail,
+  TaskRunList,
   TaskRunPage,
   TaskRunStatus,
   TaskRunTraceEvent,
@@ -44,6 +48,7 @@ import type {
 } from "./types";
 
 export type {
+  ActiveBenchmark,
   AgentSystem,
   Benchmark,
   BenchmarkImport,
@@ -60,9 +65,11 @@ export type {
   EvaluationComparison,
   EvaluationEvent,
   EvaluationInput,
+  EvaluationList,
   EvaluationPage,
   EvaluationStatus,
   EvaluationsClient,
+  EvaluationWatch,
   ExportEvaluationOptions,
   GetBenchmarkOptions,
   HostedClientConfig,
@@ -75,6 +82,7 @@ export type {
   TaskRun,
   TaskRunCounts,
   TaskRunDetail,
+  TaskRunList,
   TaskRunPage,
   TaskRunStatus,
   TaskRunTraceEvent,
@@ -96,6 +104,21 @@ export class NotImplementedError extends Error {
         `but the server endpoint does not exist yet. It will activate in a future release without a signature change.`
     );
     this.name = "NotImplementedError";
+  }
+}
+
+/**
+ * Thrown by benchmarks().getActive() when the named benchmark exists but has no
+ * active version, so there is no runnable version to resolve. Use get() to
+ * inspect a benchmark that may not have an active version yet.
+ */
+export class NoActiveVersionError extends Error {
+  /** The benchmark name that had no active version */
+  readonly benchmark: string;
+  constructor(benchmark: string) {
+    super(`Benchmark "${benchmark}" has no active version`);
+    this.name = "NoActiveVersionError";
+    this.benchmark = benchmark;
   }
 }
 
@@ -400,6 +423,74 @@ function createSseParser(onFrame: (frame: SseFrame) => void): { push(chunk: stri
 }
 
 // =============================================================================
+// HYBRID HANDLES (awaitable + async-iterable)
+// =============================================================================
+
+/**
+ * Wrap a cursor-paged fetch as a value that is both awaitable (resolves the
+ * first page, honoring the caller's limit/cursor) and async-iterable (walks
+ * every row across pages, starting from the caller's cursor).
+ */
+function makePaginated<TRow, TPage extends { nextCursor: string | null }>(
+  fetchPage: (opts: { limit?: number; cursor?: string }) => Promise<TPage>,
+  rowsOf: (page: TPage) => TRow[],
+  options?: { limit?: number; cursor?: string }
+): PromiseLike<TPage> & AsyncIterable<TRow> {
+  return {
+    then<TResult1 = TPage, TResult2 = never>(
+      onfulfilled?: ((value: TPage) => TResult1 | PromiseLike<TResult1>) | null,
+      onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
+    ): Promise<TResult1 | TResult2> {
+      return fetchPage({ limit: options?.limit, cursor: options?.cursor }).then(
+        onfulfilled,
+        onrejected
+      );
+    },
+    async *[Symbol.asyncIterator](): AsyncIterator<TRow> {
+      let cursor = options?.cursor;
+      for (;;) {
+        const page = await fetchPage({ limit: options?.limit, cursor });
+        for (const row of rowsOf(page)) yield row;
+        if (!page.nextCursor) return;
+        cursor = page.nextCursor;
+      }
+    },
+  };
+}
+
+/**
+ * Wrap a watch event generator as a value that is both awaitable (resolves the
+ * final Evaluation) and async-iterable (yields each event). Both forms drive
+ * the same generator, so a single handle is meant for one form or the other.
+ */
+function makeWatch(
+  gen: AsyncGenerator<EvaluationEvent, Evaluation>
+): EvaluationWatch {
+  let drained: Promise<Evaluation> | undefined;
+  const drain = (): Promise<Evaluation> => {
+    if (!drained) {
+      drained = (async () => {
+        let result = await gen.next();
+        while (!result.done) result = await gen.next();
+        return result.value;
+      })();
+    }
+    return drained;
+  };
+  return {
+    then<TResult1 = Evaluation, TResult2 = never>(
+      onfulfilled?: ((value: Evaluation) => TResult1 | PromiseLike<TResult1>) | null,
+      onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
+    ): Promise<TResult1 | TResult2> {
+      return drain().then(onfulfilled, onrejected);
+    },
+    [Symbol.asyncIterator](): AsyncIterator<EvaluationEvent> {
+      return gen;
+    },
+  };
+}
+
+// =============================================================================
 // BENCHMARKS CLIENT
 // =============================================================================
 
@@ -425,6 +516,47 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
     return mapBenchmarkImport((await res.json()) as Record<string, unknown>, id);
   }
 
+  async function getBenchmark(ref: string, options?: GetBenchmarkOptions): Promise<Benchmark> {
+    const parsed = parseBenchmarkRef(ref);
+    if (
+      options?.version !== undefined &&
+      parsed.version !== undefined &&
+      options.version !== parsed.version
+    ) {
+      throw new Error(
+        `Conflicting versions: ref "${ref}" says "${parsed.version}" but options.version is "${options.version}"`
+      );
+    }
+    const version = options?.version ?? parsed.version;
+    const query = version !== undefined ? `?version=${encodeURIComponent(version)}` : "";
+    const res = await request(
+      cfg,
+      `/api/benchmarks/${encodeURIComponent(parsed.name)}${query}`
+    );
+    const raw = (await res.json()) as Record<string, unknown>;
+    const versions = ((raw.versions as Record<string, unknown>[]) || []).map(
+      mapBenchmarkVersion
+    );
+    // The detail route names the active version; resolve it to its full
+    // version object so activeVersion has one shape across list() and get().
+    const activeVersionName = (raw.activeVersion as string | null) ?? null;
+    const activeVersion =
+      activeVersionName !== null
+        ? versions.find((v) => v.version === activeVersionName) ?? null
+        : null;
+    return {
+      name: raw.name as string,
+      displayTitle: (raw.displayTitle as string | null) ?? null,
+      description: (raw.description as string | null) ?? null,
+      activeVersion,
+      versions,
+      tasksVersion: (raw.tasksVersion as string | null) ?? null,
+      tasks: ((raw.tasks as Record<string, unknown>[]) || []).map(mapTask),
+      createdAt: raw.createdAt as string,
+      updatedAt: raw.updatedAt as string,
+    };
+  }
+
   return {
     async list(): Promise<Benchmark[]> {
       const res = await request(cfg, "/api/benchmarks");
@@ -439,44 +571,26 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
       }));
     },
 
-    async get(ref: string, options?: GetBenchmarkOptions): Promise<Benchmark> {
-      const parsed = parseBenchmarkRef(ref);
-      if (
-        options?.version !== undefined &&
-        parsed.version !== undefined &&
-        options.version !== parsed.version
-      ) {
-        throw new Error(
-          `Conflicting versions: ref "${ref}" says "${parsed.version}" but options.version is "${options.version}"`
-        );
+    get: getBenchmark,
+
+    async getActive(name: string): Promise<ActiveBenchmark> {
+      // get(name) with a bare name resolves the active version's task list; the
+      // detail route echoes the active version so we can hard-require it here.
+      const bench = await getBenchmark(name);
+      if (bench.activeVersion === null) {
+        throw new NoActiveVersionError(name);
       }
-      const version = options?.version ?? parsed.version;
-      const query = version !== undefined ? `?version=${encodeURIComponent(version)}` : "";
-      const res = await request(
-        cfg,
-        `/api/benchmarks/${encodeURIComponent(parsed.name)}${query}`
-      );
-      const raw = (await res.json()) as Record<string, unknown>;
-      const versions = ((raw.versions as Record<string, unknown>[]) || []).map(
-        mapBenchmarkVersion
-      );
-      // The detail route names the active version; resolve it to its full
-      // version object so activeVersion has one shape across list() and get().
-      const activeVersionName = (raw.activeVersion as string | null) ?? null;
-      const activeVersion =
-        activeVersionName !== null
-          ? versions.find((v) => v.version === activeVersionName) ?? null
-          : null;
       return {
-        name: raw.name as string,
-        displayTitle: (raw.displayTitle as string | null) ?? null,
-        description: (raw.description as string | null) ?? null,
-        activeVersion,
-        versions,
-        tasksVersion: (raw.tasksVersion as string | null) ?? null,
-        tasks: ((raw.tasks as Record<string, unknown>[]) || []).map(mapTask),
-        createdAt: raw.createdAt as string,
-        updatedAt: raw.updatedAt as string,
+        name: bench.name,
+        displayTitle: bench.displayTitle,
+        description: bench.description,
+        activeVersion: bench.activeVersion,
+        version: bench.activeVersion.version,
+        tasks: bench.tasks ?? [],
+        versions: bench.versions ?? [],
+        tasksVersion: bench.tasksVersion ?? bench.activeVersion.version,
+        createdAt: bench.createdAt as string,
+        updatedAt: bench.updatedAt as string,
       };
     },
 
@@ -563,6 +677,46 @@ export function evaluations(config?: HostedClientConfig): EvaluationsClient {
     return mapEvaluation((await res.json()) as Record<string, unknown>);
   }
 
+  async function listPage(options?: ListEvaluationsOptions): Promise<EvaluationPage> {
+    const params = new URLSearchParams();
+    if (options?.limit !== undefined) params.set("limit", String(options.limit));
+    if (options?.cursor) params.set("cursor", options.cursor);
+    const qs = params.toString();
+    const res = await request(cfg, `/api/evaluations${qs ? `?${qs}` : ""}`);
+    const data = (await res.json()) as {
+      evaluations?: Record<string, unknown>[];
+      nextCursor?: string | null;
+    };
+    return {
+      evaluations: (data.evaluations || []).map(mapEvaluation),
+      nextCursor: data.nextCursor ?? null,
+    };
+  }
+
+  async function taskRunsPage(
+    id: string,
+    options?: ListTaskRunsOptions
+  ): Promise<TaskRunPage> {
+    const params = new URLSearchParams();
+    if (options?.limit !== undefined) params.set("limit", String(options.limit));
+    if (options?.cursor) params.set("cursor", options.cursor);
+    const qs = params.toString();
+    const res = await request(
+      cfg,
+      `/api/evaluations/${encodeURIComponent(id)}/task-runs${qs ? `?${qs}` : ""}`
+    );
+    const data = (await res.json()) as {
+      taskRuns?: Record<string, unknown>[];
+      totalCount?: number;
+      nextCursor?: string | null;
+    };
+    return {
+      taskRuns: (data.taskRuns || []).map(mapTaskRun),
+      totalCount: data.totalCount ?? 0,
+      nextCursor: data.nextCursor ?? null,
+    };
+  }
+
   async function getTaskRunTrace(
     id: string,
     runId: string,
@@ -597,6 +751,126 @@ export function evaluations(config?: HostedClientConfig): EvaluationsClient {
     return match ? match[1] : `evaluation-${id}-export.json.gz`;
   }
 
+  /**
+   * Drive the SSE watch stream, yielding each event and returning the final
+   * Evaluation. Same reconnect / Last-Event-ID / terminal-drain semantics as
+   * before; onEvent (when supplied) fires alongside every yield so the callback
+   * form keeps working. makeWatch() wraps this as the dual-use watch handle.
+   */
+  async function* watchEvents(
+    id: string,
+    options?: WatchEvaluationOptions
+  ): AsyncGenerator<EvaluationEvent, Evaluation> {
+    const { onEvent, signal } = options ?? {};
+    const initialDelayMs = options?.reconnectDelayMs ?? DEFAULT_RECONNECT_DELAY_MS;
+    const maxDelayMs = options?.maxReconnectDelayMs ?? MAX_RECONNECT_DELAY_MS;
+
+    let lastSeq: number | null = null;
+    let terminal = false;
+    let finalDrainDone = false;
+    let delayMs = initialDelayMs;
+
+    while (!terminal) {
+      throwIfAborted(signal);
+
+      let res: Response;
+      try {
+        res = await fetch(
+          `${cfg.dashboardUrl}/api/evaluations/${encodeURIComponent(id)}/events`,
+          {
+            headers: {
+              Authorization: `Bearer ${cfg.apiKey}`,
+              Accept: "text/event-stream",
+              ...(lastSeq !== null ? { "Last-Event-ID": String(lastSeq) } : {}),
+            },
+            signal,
+          }
+        );
+      } catch (error) {
+        if (isAbortError(error, signal)) throw error;
+        // Network failure: back off and reconnect from lastSeq.
+        await sleep(delayMs, signal);
+        delayMs = Math.min(delayMs * 2, maxDelayMs);
+        continue;
+      }
+
+      if (!res.ok) {
+        if (res.status === 429 || res.status >= 500) {
+          await res.text().catch(() => "");
+          await sleep(delayMs, signal);
+          delayMs = Math.min(delayMs * 2, maxDelayMs);
+          continue;
+        }
+        const text = await res.text().catch(() => "");
+        throw new Error(`Dashboard API error (${res.status}): ${text || res.statusText}`);
+      }
+      if (!res.body) {
+        throw new Error("Event stream response has no body");
+      }
+
+      let receivedEvent = false;
+      // The parser callback cannot yield, so it stages events here; the read
+      // loop drains and yields them after each chunk, in wire order.
+      const pending: EvaluationEvent[] = [];
+      const parser = createSseParser((frame) => {
+        const seq = Number(frame.id);
+        const event: EvaluationEvent = {
+          seq: Number.isInteger(seq) ? seq : -1,
+          type: frame.event || "message",
+          data: frame.data ? safeJsonParse(frame.data) : {},
+        };
+        if (Number.isInteger(seq)) lastSeq = seq;
+        receivedEvent = true;
+        if (TERMINAL_EVENT_TYPES.has(event.type)) terminal = true;
+        pending.push(event);
+      });
+
+      const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+      const decoder = new TextDecoder();
+      try {
+        while (!terminal) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          parser.push(decoder.decode(value, { stream: true }));
+          // Drain in-order: the terminal event (if any) is delivered here
+          // before the loop condition re-checks and exits.
+          for (const event of pending) {
+            onEvent?.(event);
+            yield event;
+          }
+          pending.length = 0;
+        }
+      } catch (error) {
+        if (isAbortError(error, signal)) throw error;
+        // Broken stream: fall through to reconnect from lastSeq.
+      } finally {
+        await reader.cancel().catch(() => {});
+      }
+
+      if (terminal) break;
+      throwIfAborted(signal);
+
+      // The stream closed without a terminal event (server drain fallback or
+      // connection loss). If the evaluation is already terminal, drain ONCE
+      // more from lastSeq first: the server writes the status flip and the
+      // terminal/tail events in adjacent transactions, so events past lastSeq
+      // may still be undelivered — returning immediately would silently drop
+      // them. One drain reconnect delivers them; if it also closes without a
+      // terminal event, finish on the status.
+      const current = await getEvaluation(id);
+      if (TERMINAL_EVALUATION_STATUSES.has(current.status)) {
+        if (finalDrainDone) return current;
+        finalDrainDone = true;
+        continue;
+      }
+      if (receivedEvent) delayMs = initialDelayMs;
+      await sleep(delayMs, signal);
+      delayMs = Math.min(delayMs * 2, maxDelayMs);
+    }
+
+    return getEvaluation(id);
+  }
+
   return {
     async run(input: EvaluationInput, options?: RunEvaluationOptions): Promise<Evaluation> {
       const res = await request(cfg, "/api/evaluations", {
@@ -614,41 +888,19 @@ export function evaluations(config?: HostedClientConfig): EvaluationsClient {
 
     get: getEvaluation,
 
-    async list(options?: ListEvaluationsOptions): Promise<EvaluationPage> {
-      const params = new URLSearchParams();
-      if (options?.limit !== undefined) params.set("limit", String(options.limit));
-      if (options?.cursor) params.set("cursor", options.cursor);
-      const qs = params.toString();
-      const res = await request(cfg, `/api/evaluations${qs ? `?${qs}` : ""}`);
-      const data = (await res.json()) as {
-        evaluations?: Record<string, unknown>[];
-        nextCursor?: string | null;
-      };
-      return {
-        evaluations: (data.evaluations || []).map(mapEvaluation),
-        nextCursor: data.nextCursor ?? null,
-      };
+    list(options?: ListEvaluationsOptions): EvaluationList {
+      // Await for one page (honoring options); for-await to walk every
+      // evaluation across cursor pages.
+      return makePaginated(listPage, (page) => page.evaluations, options);
     },
 
-    async taskRuns(id: string, options?: ListTaskRunsOptions): Promise<TaskRunPage> {
-      const params = new URLSearchParams();
-      if (options?.limit !== undefined) params.set("limit", String(options.limit));
-      if (options?.cursor) params.set("cursor", options.cursor);
-      const qs = params.toString();
-      const res = await request(
-        cfg,
-        `/api/evaluations/${encodeURIComponent(id)}/task-runs${qs ? `?${qs}` : ""}`
+    taskRuns(id: string, options?: ListTaskRunsOptions): TaskRunList {
+      // Await for one page; for-await to walk every task run across cursors.
+      return makePaginated(
+        (opts) => taskRunsPage(id, opts),
+        (page) => page.taskRuns,
+        options
       );
-      const data = (await res.json()) as {
-        taskRuns?: Record<string, unknown>[];
-        totalCount?: number;
-        nextCursor?: string | null;
-      };
-      return {
-        taskRuns: (data.taskRuns || []).map(mapTaskRun),
-        totalCount: data.totalCount ?? 0,
-        nextCursor: data.nextCursor ?? null,
-      };
     },
 
     async taskRun(id: string, runId: string): Promise<TaskRunDetail> {
@@ -684,105 +936,10 @@ export function evaluations(config?: HostedClientConfig): EvaluationsClient {
       }
     },
 
-    async watch(id: string, options?: WatchEvaluationOptions): Promise<Evaluation> {
-      const { onEvent, signal } = options ?? {};
-      const initialDelayMs = options?.reconnectDelayMs ?? DEFAULT_RECONNECT_DELAY_MS;
-      const maxDelayMs = options?.maxReconnectDelayMs ?? MAX_RECONNECT_DELAY_MS;
-
-      let lastSeq: number | null = null;
-      let terminal = false;
-      let finalDrainDone = false;
-      let delayMs = initialDelayMs;
-
-      while (!terminal) {
-        throwIfAborted(signal);
-
-        let res: Response;
-        try {
-          res = await fetch(
-            `${cfg.dashboardUrl}/api/evaluations/${encodeURIComponent(id)}/events`,
-            {
-              headers: {
-                Authorization: `Bearer ${cfg.apiKey}`,
-                Accept: "text/event-stream",
-                ...(lastSeq !== null ? { "Last-Event-ID": String(lastSeq) } : {}),
-              },
-              signal,
-            }
-          );
-        } catch (error) {
-          if (isAbortError(error, signal)) throw error;
-          // Network failure: back off and reconnect from lastSeq.
-          await sleep(delayMs, signal);
-          delayMs = Math.min(delayMs * 2, maxDelayMs);
-          continue;
-        }
-
-        if (!res.ok) {
-          if (res.status === 429 || res.status >= 500) {
-            await res.text().catch(() => "");
-            await sleep(delayMs, signal);
-            delayMs = Math.min(delayMs * 2, maxDelayMs);
-            continue;
-          }
-          const text = await res.text().catch(() => "");
-          throw new Error(`Dashboard API error (${res.status}): ${text || res.statusText}`);
-        }
-        if (!res.body) {
-          throw new Error("Event stream response has no body");
-        }
-
-        let receivedEvent = false;
-        const parser = createSseParser((frame) => {
-          const seq = Number(frame.id);
-          const event: EvaluationEvent = {
-            seq: Number.isInteger(seq) ? seq : -1,
-            type: frame.event || "message",
-            data: frame.data ? safeJsonParse(frame.data) : {},
-          };
-          if (Number.isInteger(seq)) lastSeq = seq;
-          receivedEvent = true;
-          if (TERMINAL_EVENT_TYPES.has(event.type)) terminal = true;
-          onEvent?.(event);
-        });
-
-        const reader = (res.body as ReadableStream<Uint8Array>).getReader();
-        const decoder = new TextDecoder();
-        try {
-          while (!terminal) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            parser.push(decoder.decode(value, { stream: true }));
-          }
-        } catch (error) {
-          if (isAbortError(error, signal)) throw error;
-          // Broken stream: fall through to reconnect from lastSeq.
-        } finally {
-          await reader.cancel().catch(() => {});
-        }
-
-        if (terminal) break;
-        throwIfAborted(signal);
-
-        // The stream closed without a terminal event (server drain fallback or
-        // connection loss). If the evaluation is already terminal, drain ONCE
-        // more from lastSeq first: the server writes the status flip and the
-        // terminal/tail events in adjacent transactions, so events past lastSeq
-        // may still be undelivered — returning immediately would silently drop
-        // them from onEvent. One drain reconnect delivers them; if it also
-        // closes without a terminal event, finish on the status.
-        const current = await getEvaluation(id);
-        if (TERMINAL_EVALUATION_STATUSES.has(current.status)) {
-          if (finalDrainDone) return current;
-          finalDrainDone = true;
-          continue;
-        }
-        if (receivedEvent) delayMs = initialDelayMs;
-        await sleep(delayMs, signal);
-        delayMs = Math.min(delayMs * 2, maxDelayMs);
-      }
-
-      return getEvaluation(id);
+    watch(id: string, options?: WatchEvaluationOptions): EvaluationWatch {
+      // Dual-use handle: await it for the final Evaluation, or `for await` its
+      // events. onEvent (when given) fires from the generator in both forms.
+      return makeWatch(watchEvents(id, options));
     },
 
     async cancel(id: string): Promise<Evaluation> {

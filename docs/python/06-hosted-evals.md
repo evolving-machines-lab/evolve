@@ -16,7 +16,7 @@ evals = evaluations()
 
 Both clients are usable directly or as async context managers (`async with evaluations() as evals:`).
 
-Python's `watch()` differs from TypeScript's in one way: it **polls** `get()` until the evaluation is terminal, where the TypeScript SDK streams the SSE event feed with per-event callbacks. For a live event stream from a Python script, use the [`evolve-evals` CLI](#cli) with `--watch --json`.
+Python's `watch()` differs from TypeScript's in one way: it **polls** `get()` until the evaluation is terminal, where the TypeScript SDK streams the SSE event feed with per-event callbacks. `watch()` returns the final evaluation; `watch_iter()` async-iterates the evaluation's state as it changes. For a live *event* stream from a Python script, use the [`evolve-evals` CLI](#cli) with `--watch --json`.
 
 ## Quickstart
 
@@ -27,14 +27,17 @@ import asyncio
 from evolve import benchmarks, evaluations, AgentSystem
 
 async def main():
-    # 1. Pick a benchmark from the catalog
-    deep_swe = await benchmarks().get('deep-swe')  # active version + task list
-    print(deep_swe.active_version.version, len(deep_swe.tasks))
+    # Bind the catalog client once
+    catalog = benchmarks()
+
+    # 1. Resolve the benchmark's active version (raises NoActiveVersionError if none)
+    deep_swe = await catalog.get_active('deep-swe')
+    print(deep_swe.version, len(deep_swe.tasks))  # version + tasks always present
 
     async with evaluations() as evals:
         # 2. Create the evaluation
         evaluation = await evals.run(
-            benchmark='deep-swe@1.1',
+            benchmark=f'deep-swe@{deep_swe.version}',
             agent_systems=[
                 AgentSystem(harness='codex', model='gpt-5.5'),
                 AgentSystem(harness='claude', model='fable'),
@@ -45,16 +48,14 @@ async def main():
         )
         print(evaluation.id, evaluation.status)  # 'QUEUED'
 
-        # 3. Watch until terminal (polls get(); on_change fires on status/count changes)
-        final = await evals.watch(
-            evaluation.id,
-            on_change=lambda ev: print(ev.status, ev.task_run_counts),
-        )
+        # 3. Watch until terminal — iterate state changes (polls get())
+        async for state in evals.watch_iter(evaluation.id):
+            print(state.status, state.task_run_counts)
+        final = await evals.get(evaluation.id)
         print(final.status, final.spent_usd)
 
-        # 4. Inspect task runs and export the full research archive
-        page = await evals.task_runs(evaluation.id)
-        for run in page.task_runs:
+        # 4. Inspect task runs (auto-paginates) and export the full research archive
+        async for run in evals.task_runs(evaluation.id):
             print(run.task_key, run.agent_system.harness, run.status, run.score)
 
         path = await evals.export(evaluation.id, to='./results')
@@ -129,9 +130,15 @@ all_benchmarks = await catalog.list()
 bench = await catalog.get('deep-swe')                 # active version's tasks
 pinned = await catalog.get('deep-swe@1.0')            # specific version
 same = await catalog.get('deep-swe', version='1.0')   # equivalent
+
+# The active version resolved to a runnable shape — version + tasks guaranteed
+active = await catalog.get_active('deep-swe')
+print(active.version, len(active.tasks))
 ```
 
 `get()` returns `versions` (newest first), `tasks_version`, and `tasks`. Tasks expose public fields only — `task_key`, `agent_timeout_sec`, `verifier_timeout_sec`. Instructions, environments, and tests never leave the server.
+
+`get_active(name)` resolves the active version to a runnable shape where `version` and `tasks` are non-optional; it raises `NoActiveVersionError` when the benchmark has no active version, so the happy path never branches on a missing version. Use `get()` for the full multi-version detail.
 
 ### import_benchmark / get_import / watch_import
 
@@ -183,19 +190,26 @@ detail = await evals.get(evaluation.id)
 print(detail.task_run_counts)   # {'SCORED': 12, 'RUNNING': 3, 'QUEUED': 5}
 print(detail.spent_usd, '/', detail.max_model_spend_usd)
 
-# Your evaluations, newest first (cursor-paged)
+# Your evaluations, newest first — await one page (cursor-paged)
 page = await evals.list(limit=50)
 next_page = await evals.list(cursor=page.next_cursor)
+
+# ...or iterate every evaluation across all pages (cursors walked for you)
+async for item in evals.list():
+    print(item.id, item.status)
 ```
+
+`list()` returns a dual-use handle: `await` it for a single `EvaluationPage`, or `async for` it to walk every evaluation across cursor pages.
 
 ### task_runs / task_run
 
 ```python
-# Cursor-paged task-run listing
-runs = await evals.task_runs(evaluation.id, limit=100)
-print(runs.total_count)
+# Await one page (cursor-paged) — total_count included
+page = await evals.task_runs(evaluation.id, limit=100)
+print(page.total_count)
 
-for run in runs.task_runs:
+# ...or iterate every task run across all pages (cursors walked for you)
+async for run in evals.task_runs(evaluation.id):
     print(run.task_key, run.run_number, run.status, run.score)
     print(run.metrics)                    # named sub-scores from reward.json
     print(run.phase_timings_ms)           # {'agentMs': ..., 'verifyMs': ...}
@@ -204,7 +218,7 @@ for run in runs.task_runs:
     print(run.failure_phase, run.failure_detail)  # populated on failures
 
 # Full detail for one task run (untruncated failure_detail)
-detail = await evals.task_run(evaluation.id, runs.task_runs[0].id)
+detail = await evals.task_run(evaluation.id, page.task_runs[0].id)
 print(detail.harness_version_resolved)    # harness version actually used
 print(detail.session_ref)
 ```
@@ -225,11 +239,16 @@ async for event in evals.task_run_trace_events(evaluation.id, run_id):
 
 Pass the last seen `next_after` as `after=` to resume — the same pattern works for incremental polling while a run is still executing.
 
-### watch
+### watch / watch_iter
 
-Polls `get()` until the evaluation reaches a terminal status:
+`watch()` polls `get()` until the evaluation reaches a terminal status and returns the final evaluation. `watch_iter()` is the async-iterator sibling — it yields the evaluation on every status/count change, then stops at the terminal state:
 
 ```python
+# Iterate the evaluation's state as it changes
+async for state in evals.watch_iter(evaluation.id):
+    print(state.status, state.task_run_counts)
+
+# Or block for the final evaluation, with an optional on_change callback
 final = await evals.watch(
     evaluation.id,
     on_change=lambda ev: print(ev.status, ev.task_run_counts),  # (optional) fires on status/count changes
@@ -237,6 +256,8 @@ final = await evals.watch(
     timeout_s=3600,        # (optional) raise TimeoutError after this long
 )
 ```
+
+Both poll `get()`; for a live *event* stream (SSE), use the [`evolve-evals` CLI](#cli) with `--watch`.
 
 ### cancel / rerun_failed
 
@@ -308,6 +329,20 @@ class AgentSystem:
     harness: str                      # e.g. 'codex', 'claude'
     model: str                        # e.g. 'gpt-5.5', 'fable'
     harness_version: str | None       # pin a harness version; None = platform default
+
+@dataclass
+class ActiveBenchmark:                 # benchmarks().get_active(name)
+    name: str
+    display_title: str | None
+    description: str | None
+    active_version: BenchmarkVersion  # always present (get_active raises otherwise)
+    version: str                      # active version string (non-optional)
+    tasks: list[Task]                 # active version's tasks (non-optional)
+    versions: list[BenchmarkVersion]  # all versions, newest first
+    tasks_version: str | None
+    created_at: str | None
+    updated_at: str | None
+    # get_active() raises NoActiveVersionError when the benchmark has no active version
 
 @dataclass
 class Evaluation:

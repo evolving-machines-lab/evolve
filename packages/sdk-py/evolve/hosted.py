@@ -38,6 +38,19 @@ _RESERVED_MESSAGE = (
 )
 
 
+class NoActiveVersionError(Exception):
+    """Raised by ``benchmarks().get_active()`` when the benchmark has no active version.
+
+    The benchmark exists but no version is active, so there is no runnable
+    version to resolve. Use ``get()`` to inspect a benchmark that may not have
+    an active version yet.
+    """
+
+    def __init__(self, name: str):
+        super().__init__(f'Benchmark {name!r} has no active version')
+        self.benchmark = name
+
+
 # =============================================================================
 # PUBLIC TYPES (mirror the plan's list; nothing internal leaks)
 # =============================================================================
@@ -72,6 +85,26 @@ class Benchmark:
     versions: Optional[List[BenchmarkVersion]] = None
     tasks_version: Optional[str] = None
     tasks: Optional[List[Task]] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+@dataclass
+class ActiveBenchmark:
+    """A benchmark's active version resolved to a runnable shape.
+
+    Unlike :class:`Benchmark`, ``version`` and ``tasks`` are non-optional:
+    ``get_active()`` raises :class:`NoActiveVersionError` when there is no
+    active version, so callers never branch on a missing active version.
+    """
+    name: str
+    display_title: Optional[str]
+    description: Optional[str]
+    active_version: BenchmarkVersion
+    version: str
+    tasks: List[Task]
+    versions: List[BenchmarkVersion]
+    tasks_version: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
@@ -464,6 +497,42 @@ class _HostedHttp:
 
 
 # =============================================================================
+# PAGINATION (awaitable + async-iterable)
+# =============================================================================
+
+class _PaginatedList:
+    """A cursor-paged result that is both awaitable and async-iterable.
+
+    ``await`` resolves the first page, honoring the caller's ``limit``/``cursor``
+    (the original page form). ``async for`` walks every row across pages,
+    following ``next_cursor`` from the caller's starting cursor.
+    """
+
+    def __init__(self, fetch_page, rows_of, *, limit=None, cursor=None):
+        # fetch_page: async (limit, cursor) -> page
+        self._fetch_page = fetch_page
+        self._rows_of = rows_of
+        self._limit = limit
+        self._cursor = cursor
+
+    def __await__(self):
+        return self._fetch_page(self._limit, self._cursor).__await__()
+
+    def __aiter__(self):
+        return self._iterate()
+
+    async def _iterate(self):
+        cursor = self._cursor
+        while True:
+            page = await self._fetch_page(self._limit, cursor)
+            for row in self._rows_of(page):
+                yield row
+            if not page.next_cursor:
+                return
+            cursor = page.next_cursor
+
+
+# =============================================================================
 # BENCHMARKS CLIENT
 # =============================================================================
 
@@ -537,6 +606,29 @@ class BenchmarksClient:
             tasks=[_map_task(item) for item in raw.get('tasks', [])],
             created_at=raw.get('createdAt'),
             updated_at=raw.get('updatedAt'),
+        )
+
+    async def get_active(self, name: str) -> ActiveBenchmark:
+        """Get a benchmark's active version resolved to a runnable shape.
+
+        Unlike :meth:`get`, ``version`` and ``tasks`` are guaranteed present.
+        Raises :class:`NoActiveVersionError` when the benchmark has no active
+        version. Use :meth:`get` for the full multi-version detail.
+        """
+        bench = await self.get(name)
+        if bench.active_version is None:
+            raise NoActiveVersionError(name)
+        return ActiveBenchmark(
+            name=bench.name,
+            display_title=bench.display_title,
+            description=bench.description,
+            active_version=bench.active_version,
+            version=bench.active_version.version,
+            tasks=bench.tasks or [],
+            versions=bench.versions or [],
+            tasks_version=bench.tasks_version or bench.active_version.version,
+            created_at=bench.created_at,
+            updated_at=bench.updated_at,
         )
 
     async def import_benchmark(
@@ -687,46 +779,66 @@ class EvaluationsClient:
         raw = await self._http.request_json(f'/api/evaluations/{urllib.parse.quote(id)}')
         return _map_evaluation(raw)
 
-    async def list(
+    def list(
         self,
         *,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
-    ) -> EvaluationPage:
-        """List the caller's evaluations, newest first (cursor-paged)."""
-        params: Dict[str, str] = {}
-        if limit is not None:
-            params['limit'] = str(limit)
-        if cursor is not None:
-            params['cursor'] = cursor
-        query = urllib.parse.urlencode(params)
-        raw = await self._http.request_json(f'/api/evaluations{("?" + query) if query else ""}')
-        return EvaluationPage(
-            evaluations=[_map_evaluation(item) for item in raw.get('evaluations', [])],
-            next_cursor=raw.get('nextCursor'),
+    ) -> _PaginatedList:
+        """List the caller's evaluations, newest first (cursor-paged).
+
+        ``await`` the result for one page (honoring ``limit``/``cursor``), or
+        ``async for`` it to walk every evaluation across cursor pages.
+        """
+        async def fetch_page(page_limit, page_cursor) -> EvaluationPage:
+            params: Dict[str, str] = {}
+            if page_limit is not None:
+                params['limit'] = str(page_limit)
+            if page_cursor is not None:
+                params['cursor'] = page_cursor
+            query = urllib.parse.urlencode(params)
+            raw = await self._http.request_json(
+                f'/api/evaluations{("?" + query) if query else ""}'
+            )
+            return EvaluationPage(
+                evaluations=[_map_evaluation(item) for item in raw.get('evaluations', [])],
+                next_cursor=raw.get('nextCursor'),
+            )
+
+        return _PaginatedList(
+            fetch_page, lambda page: page.evaluations, limit=limit, cursor=cursor
         )
 
-    async def task_runs(
+    def task_runs(
         self,
         id: str,
         *,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
-    ) -> TaskRunPage:
-        """List an evaluation's task runs (cursor-paged)."""
-        params: Dict[str, str] = {}
-        if limit is not None:
-            params['limit'] = str(limit)
-        if cursor is not None:
-            params['cursor'] = cursor
-        query = urllib.parse.urlencode(params)
-        raw = await self._http.request_json(
-            f'/api/evaluations/{urllib.parse.quote(id)}/task-runs{("?" + query) if query else ""}'
-        )
-        return TaskRunPage(
-            task_runs=[_map_task_run(item) for item in raw.get('taskRuns', [])],
-            total_count=int(raw.get('totalCount', 0)),
-            next_cursor=raw.get('nextCursor'),
+    ) -> _PaginatedList:
+        """List an evaluation's task runs (cursor-paged).
+
+        ``await`` the result for one page (honoring ``limit``/``cursor``), or
+        ``async for`` it to walk every task run across cursor pages.
+        """
+        async def fetch_page(page_limit, page_cursor) -> TaskRunPage:
+            params: Dict[str, str] = {}
+            if page_limit is not None:
+                params['limit'] = str(page_limit)
+            if page_cursor is not None:
+                params['cursor'] = page_cursor
+            query = urllib.parse.urlencode(params)
+            raw = await self._http.request_json(
+                f'/api/evaluations/{urllib.parse.quote(id)}/task-runs{("?" + query) if query else ""}'
+            )
+            return TaskRunPage(
+                task_runs=[_map_task_run(item) for item in raw.get('taskRuns', [])],
+                total_count=int(raw.get('totalCount', 0)),
+                next_cursor=raw.get('nextCursor'),
+            )
+
+        return _PaginatedList(
+            fetch_page, lambda page: page.task_runs, limit=limit, cursor=cursor
         )
 
     async def watch(
@@ -760,6 +872,44 @@ class EvaluationsClient:
                 return evaluation
             if deadline is not None and time.monotonic() >= deadline:
                 raise TimeoutError(f'watch({id!r}) timed out after {timeout_s}s')
+            await asyncio.sleep(poll_interval_s)
+
+    async def watch_iter(
+        self,
+        id: str,
+        *,
+        poll_interval_s: float = 2.0,
+        timeout_s: Optional[float] = None,
+    ):
+        """Async-iterate the evaluation's state as it changes, until terminal.
+
+        Yields the :class:`Evaluation` on every change to status or
+        task-run counts (including the initial and terminal states), then stops
+        once the evaluation is terminal. This is the iterator sibling of
+        :meth:`watch` (which polls and returns the final evaluation). Both poll
+        ``get()``; the TypeScript SDK's ``watch()`` streams SSE events instead.
+
+        Example::
+
+            async for state in evals.watch_iter(evaluation.id):
+                print(state.status, state.task_run_counts)
+        """
+        if poll_interval_s <= 0:
+            raise ValueError('poll_interval_s must be positive')
+        deadline = time.monotonic() + timeout_s if timeout_s is not None else None
+        last_fingerprint: Optional[str] = None
+        while True:
+            evaluation = await self.get(id)
+            fingerprint = json.dumps(
+                [evaluation.status, evaluation.task_run_counts], sort_keys=True
+            )
+            if fingerprint != last_fingerprint:
+                last_fingerprint = fingerprint
+                yield evaluation
+            if evaluation.status in _TERMINAL_EVALUATION_STATUSES:
+                return
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError(f'watch_iter({id!r}) timed out after {timeout_s}s')
             await asyncio.sleep(poll_interval_s)
 
     async def cancel(self, id: str) -> Evaluation:

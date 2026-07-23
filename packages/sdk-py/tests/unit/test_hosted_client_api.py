@@ -3,13 +3,15 @@ Unit tests for the standalone hosted-evals clients (benchmarks/evaluations).
 
 Coverage:
 - benchmarks().list()/get() — catalog + detail mapping, name@version refs
+- benchmarks().get_active() — runnable shape (non-optional version/tasks) + NoActiveVersionError
 - benchmarks().import_benchmark()/get_import()/watch_import() — git import flow
 - evaluations().run() — six(+1)-input body, Idempotency-Key header
 - evaluations().get()/list()/task_runs() — mapping + cursor params
+- evaluations().list()/task_runs() — await one page + async-for auto-pagination across cursors
 - evaluations().task_run()/task_run_trace()/compare() — detail, trace paging, comparison
 - evaluations().cancel()/rerun_failed() — POST semantics
 - evaluations().export() — bytes, file, and format='harbor' modes
-- evaluations().watch() — polls get() until terminal (documented py difference)
+- evaluations().watch()/watch_iter() — poll get() until terminal (documented py difference)
 - Reserved import sources (archive/Harbor Hub) raise NotImplementedError offline
 - Internal fields (agent system ids/digests) never leak
 
@@ -26,6 +28,7 @@ import pytest
 from evolve import (
     AgentSystem,
     HostedClientConfig,
+    NoActiveVersionError,
     benchmarks as benchmarks_factory,
     evaluations as evaluations_factory,
 )
@@ -151,6 +154,58 @@ class TestBenchmarks:
     async def test_get_version_conflict_raises(self):
         with pytest.raises(ValueError, match='Conflicting versions'):
             await benchmarks_factory(CONFIG).get('deep-swe@1.1', version='1.0')
+
+    @pytest.mark.asyncio
+    async def test_get_active_resolves_runnable_shape(self):
+        fake = FakeUrlopen([
+            ('/api/benchmarks/deep-swe', {
+                'name': 'deep-swe',
+                'displayTitle': 'DeepSWE',
+                'description': 'SWE tasks',
+                'activeVersion': '1.1',
+                'versions': [
+                    {'version': '1.1', 'state': 'READY', 'createdAt': '2026-07-21', 'taskCount': 113},
+                    {'version': '1.0', 'state': 'ARCHIVED', 'createdAt': '2026-07-01', 'taskCount': 100},
+                ],
+                'tasksVersion': '1.1',
+                'tasks': [
+                    {'taskKey': 'abs-module-cache-flags', 'agentTimeoutSec': 5400, 'verifierTimeoutSec': 1800},
+                ],
+                'createdAt': '2026-07-01',
+                'updatedAt': '2026-07-21',
+            }),
+        ])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            active = await benchmarks_factory(CONFIG).get_active('deep-swe')
+
+        # Bare name — resolves the active version's task list (no ?version=)
+        assert 'version=' not in fake.requests[0].full_url
+        assert active.version == '1.1'                 # non-optional
+        assert active.active_version.state == 'READY'
+        assert len(active.tasks) == 1                  # non-optional
+        assert active.tasks[0].task_key == 'abs-module-cache-flags'
+        assert len(active.versions) == 2
+        assert active.tasks_version == '1.1'
+
+    @pytest.mark.asyncio
+    async def test_get_active_raises_when_no_active_version(self):
+        fake = FakeUrlopen([
+            ('/api/benchmarks/draft-bench', {
+                'name': 'draft-bench',
+                'displayTitle': None,
+                'description': None,
+                'activeVersion': None,
+                'versions': [{'version': '0.1', 'state': 'DRAFT', 'createdAt': '2026-07-21', 'taskCount': 0}],
+                'tasksVersion': None,
+                'tasks': [],
+                'createdAt': '2026-07-21',
+                'updatedAt': '2026-07-21',
+            }),
+        ])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            with pytest.raises(NoActiveVersionError, match='no active version') as exc_info:
+                await benchmarks_factory(CONFIG).get_active('draft-bench')
+        assert exc_info.value.benchmark == 'draft-bench'
 
     @pytest.mark.asyncio
     async def test_import_benchmark_posts_git_source(self):
@@ -305,6 +360,82 @@ class TestEvaluations:
         assert 'limit=100' in url and 'cursor=eval-5' in url
         assert page.next_cursor == 'eval-0'
         assert page.evaluations[0].task_run_counts == {'SCORED': 5}
+        # Awaiting the handle fetches exactly one page (no cursor walk).
+        assert len(fake.requests) == 1
+
+    @pytest.mark.asyncio
+    async def test_list_auto_paginates_when_iterated(self):
+        pages = {
+            None: {'evaluations': [{**RUN_SUMMARY, 'id': 'eval-2'},
+                                   {**RUN_SUMMARY, 'id': 'eval-1'}], 'nextCursor': 'eval-1'},
+            'eval-1': {'evaluations': [{**RUN_SUMMARY, 'id': 'eval-0'}], 'nextCursor': None},
+        }
+
+        class PagedUrlopen(FakeUrlopen):
+            def __call__(self, request, timeout=None):
+                self.requests.append(request)
+                query = urllib_parse.parse_qs(urllib_parse.urlsplit(request.full_url).query)
+                cursor = query.get('cursor', [None])[0]
+                return FakeResponse(pages[cursor])
+
+        fake = PagedUrlopen([])
+        ids = []
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            async for evaluation in evaluations_factory(CONFIG).list():
+                ids.append(evaluation.id)
+
+        assert ids == ['eval-2', 'eval-1', 'eval-0']
+        cursors = [
+            urllib_parse.parse_qs(urllib_parse.urlsplit(r.full_url).query).get('cursor', [None])[0]
+            for r in fake.requests
+        ]
+        assert cursors == [None, 'eval-1']
+
+    @pytest.mark.asyncio
+    async def test_task_runs_auto_paginates_when_iterated(self):
+        def _run(run_id, run_number):
+            return {
+                'id': run_id,
+                'taskKey': 'abs-module-cache-flags',
+                'agentSystem': {'harness': 'codex', 'model': 'gpt-5.5', 'harnessVersion': None},
+                'runNumber': run_number,
+                'status': 'SCORED',
+                'score': 1,
+                'metrics': None,
+                'failurePhase': None,
+                'failureDetail': None,
+                'phaseTimingsMs': None,
+                'modelUsage': None,
+                'sessionRef': None,
+                'createdAt': '2026-07-22T00:00:00.000Z',
+                'updatedAt': '2026-07-22T00:00:00.000Z',
+            }
+
+        pages = {
+            None: {'taskRuns': [_run('run-1', 1), _run('run-2', 2)], 'totalCount': 3, 'nextCursor': 'run-2'},
+            'run-2': {'taskRuns': [_run('run-3', 3)], 'totalCount': 3, 'nextCursor': None},
+        }
+
+        class PagedUrlopen(FakeUrlopen):
+            def __call__(self, request, timeout=None):
+                self.requests.append(request)
+                query = urllib_parse.parse_qs(urllib_parse.urlsplit(request.full_url).query)
+                cursor = query.get('cursor', [None])[0]
+                return FakeResponse(pages[cursor])
+
+        fake = PagedUrlopen([])
+        run_ids = []
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            async for run in evaluations_factory(CONFIG).task_runs('eval-1'):
+                run_ids.append(run.id)
+
+        assert run_ids == ['run-1', 'run-2', 'run-3']
+        # Await form still returns a single page with totalCount.
+        with patch('evolve.hosted.urllib.request.urlopen', PagedUrlopen([])) as _:
+            single = await evaluations_factory(CONFIG).task_runs('eval-1', limit=2)
+        assert len(single.task_runs) == 2
+        assert single.total_count == 3
+        assert single.next_cursor == 'run-2'
 
     @pytest.mark.asyncio
     async def test_task_runs_mapping(self):
@@ -415,6 +546,31 @@ class TestEvaluations:
                 await evaluations_factory(CONFIG).watch(
                     'eval-1', poll_interval_s=0.001, timeout_s=0.01
                 )
+
+    @pytest.mark.asyncio
+    async def test_watch_iter_yields_states_until_terminal(self):
+        responses = iter([
+            {**RUN_SUMMARY, 'status': 'RUNNING', 'taskRunCounts': {'RUNNING': 5}},
+            {**RUN_SUMMARY, 'status': 'RUNNING', 'taskRunCounts': {'SCORED': 3, 'RUNNING': 2}},
+            {**RUN_SUMMARY, 'status': 'COMPLETED', 'taskRunCounts': {'SCORED': 5}},
+        ])
+
+        class SequenceUrlopen(FakeUrlopen):
+            def __call__(self, request, timeout=None):
+                self.requests.append(request)
+                return FakeResponse(next(responses))
+
+        fake = SequenceUrlopen([])
+        states = []
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            async for state in evaluations_factory(CONFIG).watch_iter(
+                'eval-1', poll_interval_s=0.001
+            ):
+                states.append(state.status)
+
+        # Yields on every status/count change, including the terminal one, then stops.
+        assert states == ['RUNNING', 'RUNNING', 'COMPLETED']
+        assert len(fake.requests) == 3
 
     @pytest.mark.asyncio
     async def test_run_posts_per_task_run_cap(self):
