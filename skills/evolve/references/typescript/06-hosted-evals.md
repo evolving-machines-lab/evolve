@@ -372,6 +372,14 @@ npx evolve-evals help                       # bundled with @evolvingmachines/sdk
 npx evolve-evals benchmarks
 npx evolve-evals benchmarks get deep-swe@1.1
 
+# Import a benchmark from git and poll it to READY
+npx evolve-evals import \
+    --git https://github.com/acme/my-bench.git \
+    --ref main \
+    --name my-bench \
+    --watch
+npx evolve-evals import status <id>
+
 # Create an evaluation and stream events until it finishes
 npx evolve-evals run \
     --benchmark deep-swe@1.1 \
@@ -392,9 +400,10 @@ npx evolve-evals export <id> --to ./results --format harbor
 ```
 
 - `--system` is `harness:model[:version]`, repeatable — one per agent system.
+- `import` wraps [`benchmarks().import()`](#import--getimport--watchimport): `--git` + `--ref` + `--name` are required, `--version` optional (server-assigned when omitted). With `--watch` it polls the job and prints a status line on each state change until `READY` or `FAILED`; `import status <id>` shows one job.
 - Human-readable tables by default; `--json` emits machine-readable JSON (NDJSON for `--watch` event streams).
 - Credentials: `$EVOLVE_API_KEY` (or `--api-key`), dashboard URL via `$EVOLVE_DASHBOARD_URL` (or `--url`).
-- Exit codes: `0` success (with `--watch`: evaluation `COMPLETED`), `1` runtime/API failure (with `--watch`: `FAILED` or `CANCELLED`), `2` usage error.
+- Exit codes: `0` success (with `--watch`: evaluation `COMPLETED` / import `READY`), `1` runtime/API failure (with `--watch`: `FAILED` or `CANCELLED`), `2` usage error.
 
 ---
 

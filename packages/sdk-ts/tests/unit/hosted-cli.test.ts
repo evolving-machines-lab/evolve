@@ -5,7 +5,9 @@
  * Tests command parsing (flags, repeatable --system, csv --tasks, numbers,
  * required flags, usage errors) and one mocked end-to-end `run --watch`:
  * POST /api/evaluations -> SSE event stream -> terminal status, asserting the
- * request bodies, the rendered status lines, and the exit code.
+ * request bodies, the rendered status lines, and the exit code. Also covers
+ * `import` / `import status`: POST /api/benchmarks/import, the getImport poll
+ * loop of --watch, and READY/FAILED exit codes.
  *
  * Uses mock fetch to test without real network calls.
  *
@@ -122,8 +124,10 @@ import { Readable } from "node:stream";
 
 import {
   buildEvaluationInput,
+  buildImportInput,
   CliUsageError,
   eventLine,
+  importStateLine,
   parseAgentSystem,
   parseArgs,
   runCli,
@@ -277,6 +281,64 @@ function testParseOtherCommands() {
     "benchmarks get subcommand"
   );
   assertEqual(parseArgs(["--help"]).command, "help", "--help maps to help");
+}
+
+function testParseImport() {
+  console.log("\n--- parseArgs + buildImportInput: import command ---");
+  const inv = parseArgs([
+    "import",
+    "--git", "https://github.com/acme/my-bench.git",
+    "--ref", "main",
+    "--name", "my-bench",
+    "--version", "1.0",
+    "--watch",
+    "--json",
+  ]);
+  assertEqual(inv.command, "import", "command is import");
+  assertEqual(inv.flags.watch, true, "--watch parsed as boolean");
+  assertEqual(
+    buildImportInput(inv),
+    {
+      source: { gitUrl: "https://github.com/acme/my-bench.git", ref: "main" },
+      benchmarkName: "my-bench",
+      version: "1.0",
+    },
+    "builds the git import input"
+  );
+
+  const minimal = parseArgs(["import", "--git=g", "--ref=main", "--name=b"]);
+  assert(!("version" in buildImportInput(minimal)), "no version key when --version omitted");
+
+  assertEqual(
+    parseArgs(["import", "status", "imp-1"]),
+    { command: "import", positionals: ["status", "imp-1"], flags: {} },
+    "import status subcommand"
+  );
+
+  assertThrowsUsage(
+    () => buildImportInput(parseArgs(["import", "--ref", "main", "--name", "b"])),
+    "--git",
+    "import without --git"
+  );
+  assertThrowsUsage(
+    () => buildImportInput(parseArgs(["import", "--git", "g", "--name", "b"])),
+    "--ref",
+    "import without --ref"
+  );
+  assertThrowsUsage(
+    () => buildImportInput(parseArgs(["import", "--git", "g", "--ref", "main"])),
+    "--name",
+    "import without --name"
+  );
+}
+
+function testImportStateLine() {
+  console.log("\n--- importStateLine: compact state lines ---");
+  const ready = importStateLine({ id: "imp-1", state: "READY", taskCount: 12 });
+  assert(ready.includes("READY"), "includes the state");
+  assert(ready.includes("tasks=12"), "includes the task count");
+  const failed = importStateLine({ id: "imp-1", state: "FAILED", error: "bad tasks.json" });
+  assert(failed.includes("FAILED") && failed.includes("bad tasks.json"), "FAILED line carries the error");
 }
 
 function testEventLine() {
@@ -463,6 +525,115 @@ async function testRunWatchJsonNdjson() {
   }
 }
 
+async function testImportWatchEndToEnd() {
+  console.log("\n--- runCli: end-to-end import --watch against mocked API ---");
+  installMockFetch();
+  try {
+    // Insertion order matters: most-specific patterns first.
+    setMockResponse("/api/benchmarks/import/imp-1", {
+      status: 200,
+      body: { importId: "imp-1", state: "READY", taskCount: 12 },
+    });
+    setMockResponse("/api/benchmarks/import", {
+      status: 202,
+      body: { importId: "imp-1", state: "IMPORTING" },
+    });
+
+    const { io, out, err } = captureIO();
+    const code = await runCli(
+      [
+        "import",
+        "--git", "https://github.com/acme/my-bench.git",
+        "--ref", "main",
+        "--name", "my-bench",
+        "--version", "1.0",
+        "--watch",
+        "--api-key", "test-key",
+        "--url", BASE,
+      ],
+      io
+    );
+
+    assertEqual(code, 0, "exit code 0 on READY");
+    assertEqual(err, [], "nothing on stderr");
+
+    // The create request
+    const createCall = fetchCalls.find((c) => c.url === `${BASE}/api/benchmarks/import`);
+    assert(createCall !== undefined, "POSTs /api/benchmarks/import");
+    assertEqual(createCall?.init?.method, "POST", "create uses POST");
+    assertEqual(
+      JSON.parse(createCall?.init?.body as string),
+      {
+        source: { type: "git", url: "https://github.com/acme/my-bench.git", ref: "main" },
+        benchmarkName: "my-bench",
+        version: "1.0",
+      },
+      "create body matches the CLI flags (git source + version)"
+    );
+
+    // The watch poll
+    const pollCall = fetchCalls.find((c) => c.url === `${BASE}/api/benchmarks/import/imp-1`);
+    assert(pollCall !== undefined, "polls GET /api/benchmarks/import/<id>");
+
+    // Rendered output
+    assert(out[0].includes("imp-1") && out[0].includes("my-bench") && out[0].includes("watching"), "prints the created header");
+    assert(out.some((l) => l.includes("READY") && l.includes("tasks=12")), "renders the READY state line");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testImportWatchFailedAndStatus() {
+  console.log("\n--- runCli: import --watch FAILED exits 1; import status --json ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/benchmarks/import/imp-2", {
+      status: 200,
+      body: { importId: "imp-2", state: "FAILED", error: "bad tasks.json" },
+    });
+    setMockResponse("/api/benchmarks/import", {
+      status: 202,
+      body: { importId: "imp-2", state: "IMPORTING" },
+    });
+
+    const failed = captureIO();
+    const codeFailed = await runCli(
+      ["import", "--git", "g", "--ref", "main", "--name", "b", "--watch",
+       "--api-key", "test-key", "--url", BASE],
+      failed.io
+    );
+    assertEqual(codeFailed, 1, "exit code 1 on FAILED");
+    assert(failed.out.some((l) => l.includes("bad tasks.json")), "final summary carries the error");
+
+    const status = captureIO();
+    const codeStatus = await runCli(
+      ["import", "status", "imp-2", "--json", "--api-key", "test-key", "--url", BASE],
+      status.io
+    );
+    assertEqual(codeStatus, 0, "import status exits 0");
+    assertEqual(
+      JSON.parse(status.out[0]),
+      { id: "imp-2", state: "FAILED", error: "bad tasks.json" },
+      "import status --json emits the job"
+    );
+
+    const noNetwork = fetchCalls.length;
+    const badSub = captureIO();
+    const codeBadSub = await runCli(["import", "frobnicate", "--api-key", "k", "--url", BASE], badSub.io);
+    assertEqual(codeBadSub, 2, "unknown import subcommand exits 2");
+    const noId = captureIO();
+    const codeNoId = await runCli(["import", "status", "--api-key", "k", "--url", BASE], noId.io);
+    assertEqual(codeNoId, 2, "import status without <id> exits 2");
+    const noGit = captureIO();
+    const codeNoGit = await runCli(["import", "--ref", "main", "--name", "b", "--api-key", "k", "--url", BASE], noGit.io);
+    assertEqual(codeNoGit, 2, "import without --git exits 2");
+    assert(noGit.err[0].includes("--git"), "stderr names the missing flag");
+    assertEqual(fetchCalls.length, noNetwork, "no network call on import usage errors");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testUsageErrorExitCode() {
   console.log("\n--- runCli: usage errors exit 2, API errors exit 1 ---");
   installMockFetch();
@@ -501,9 +672,13 @@ async function main() {
   testParseAgentSystem();
   testParseErrors();
   testParseOtherCommands();
+  testParseImport();
+  testImportStateLine();
   testEventLine();
   await testRunWatchEndToEnd();
   await testRunWatchJsonNdjson();
+  await testImportWatchEndToEnd();
+  await testImportWatchFailedAndStatus();
   await testUsageErrorExitCode();
 
   console.log(`\n${passed} passed, ${failed} failed`);

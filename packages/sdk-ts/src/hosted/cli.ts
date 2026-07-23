@@ -6,8 +6,8 @@
  * arg parsing, no dependencies. Human-readable tables by default; --json emits
  * machine-readable JSON (NDJSON for --watch event streams).
  *
- * Exit codes: 0 success (watch: evaluation COMPLETED), 1 runtime/API failure
- * (watch: FAILED or CANCELLED), 2 usage error.
+ * Exit codes: 0 success (watch: evaluation COMPLETED / import READY), 1
+ * runtime/API failure (watch: FAILED or CANCELLED), 2 usage error.
  */
 
 import { pathToFileURL } from "url";
@@ -15,6 +15,8 @@ import { benchmarks, evaluations } from "./index";
 import type {
   AgentSystem,
   Benchmark,
+  BenchmarkImport,
+  BenchmarkImportInput,
   Evaluation,
   EvaluationEvent,
   EvaluationInput,
@@ -40,6 +42,8 @@ Commands:
   export <id>                       Download the research archive (gzipped JSON)
   benchmarks                        List the benchmark catalog
   benchmarks get <name[@version]>   Show one benchmark (versions + tasks)
+  import                            Import a benchmark from git (add --watch to follow it)
+  import status <id>                Show one import job
   help                              Show this help
 
 Run options:
@@ -51,6 +55,13 @@ Run options:
   --max-spend <usd>                   Evaluation-wide model-spend cap (required)
   --max-spend-per-run <usd>           Per-task-run model-spend cap
   --watch                             Stream events until the evaluation finishes
+
+Import options:
+  --git <url>                         Git repository URL (required)
+  --ref <ref>                         Git ref: branch, tag, or commit (required)
+  --name <benchmark>                  Catalog benchmark name to create or extend (required)
+  --version <v>                       Version label (server-assigned when omitted)
+  --watch                             Poll until the import is READY or FAILED
 
 Other options:
   --limit <n>, --cursor <c>           Pagination (list, task-runs)
@@ -138,6 +149,19 @@ const COMMAND_SPECS: Record<string, CommandSpec> = {
   },
   // "benchmarks" lists; "benchmarks get <ref>" shows detail (validated in the handler)
   benchmarks: { flags: {}, minPositionals: 0, maxPositionals: 2 },
+  // "import" creates a job (required flags validated in the handler, since
+  // "import status <id>" takes none); "import status <id>" shows one job.
+  import: {
+    flags: {
+      git: "string",
+      ref: "string",
+      name: "string",
+      version: "string",
+      watch: "boolean",
+    },
+    minPositionals: 0,
+    maxPositionals: 2,
+  },
   help: { flags: {}, minPositionals: 0, maxPositionals: 0 },
 };
 
@@ -273,6 +297,22 @@ export function buildEvaluationInput(inv: Invocation): EvaluationInput {
   return input;
 }
 
+/** Build the benchmarks().import() input from a parsed `import` invocation. */
+export function buildImportInput(inv: Invocation): BenchmarkImportInput {
+  const f = inv.flags;
+  for (const req of ["git", "ref", "name"] as const) {
+    if (typeof f[req] !== "string") {
+      throw new CliUsageError(`"import" requires --${req}`);
+    }
+  }
+  const input: BenchmarkImportInput = {
+    source: { gitUrl: f.git as string, ref: f.ref as string },
+    benchmarkName: f.name as string,
+  };
+  if (f.version !== undefined) input.version = f.version as string;
+  return input;
+}
+
 // =============================================================================
 // OUTPUT FORMATTING
 // =============================================================================
@@ -375,6 +415,24 @@ function taskRunRow(run: TaskRun): string[] {
     fmtUsd(run.modelUsage?.spendUsd ?? null),
     run.id,
   ];
+}
+
+function importLines(job: BenchmarkImport): string[] {
+  const rows: string[][] = [
+    ["id", job.id],
+    ["state", job.state],
+  ];
+  if (job.taskCount !== undefined) rows.push(["tasks", String(job.taskCount)]);
+  if (job.error) rows.push(["error", job.error]);
+  return table(rows);
+}
+
+/** Compact one-line rendering of one import state change for --watch. */
+export function importStateLine(job: BenchmarkImport): string {
+  const parts: string[] = [];
+  if (job.taskCount !== undefined) parts.push(`tasks=${job.taskCount}`);
+  if (job.error) parts.push(truncate(job.error, 140));
+  return `state ${job.state.padEnd(12)} ${parts.join(" ")}`.trimEnd();
 }
 
 /** Compact one-line rendering of one SSE event for --watch. */
@@ -615,6 +673,61 @@ async function cmdBenchmarks(inv: Invocation, io: CliIO): Promise<number> {
   return 0;
 }
 
+async function cmdImport(inv: Invocation, io: CliIO): Promise<number> {
+  const [sub, id] = inv.positionals;
+  const json = inv.flags.json === true;
+  const client = benchmarks(clientConfig(inv));
+
+  if (sub === "status") {
+    if (!id) {
+      throw new CliUsageError('"import status" requires an <id>');
+    }
+    const job = await client.getImport(id);
+    if (json) {
+      io.out(JSON.stringify(job));
+    } else {
+      for (const line of importLines(job)) io.out(line);
+    }
+    return 0;
+  }
+  if (sub !== undefined) {
+    throw new CliUsageError(`Unknown import subcommand "${sub}" (supported: status)`);
+  }
+
+  const input = buildImportInput(inv);
+  const created = await client.import(input);
+  if (inv.flags.watch !== true) {
+    if (json) {
+      io.out(JSON.stringify(created));
+    } else {
+      for (const line of importLines(created)) io.out(line);
+      io.out("");
+      io.out(`Follow it with: evolve-evals import status ${created.id}`);
+    }
+    return 0;
+  }
+
+  if (json) {
+    io.out(JSON.stringify({ kind: "import.created", benchmarkImport: created }));
+  } else {
+    io.out(`Import ${created.id} (${input.benchmarkName}) ${created.state} — watching…`);
+  }
+
+  const final = await client.watchImport(created.id, {
+    onState: (job) => {
+      io.out(json ? JSON.stringify({ kind: "import.state", benchmarkImport: job }) : importStateLine(job));
+    },
+  });
+
+  if (json) {
+    io.out(JSON.stringify({ kind: "import.final", benchmarkImport: final }));
+  } else {
+    io.out("");
+    for (const line of importLines(final)) io.out(line);
+  }
+  return final.state === "FAILED" ? 1 : 0;
+}
+
 // =============================================================================
 // ENTRY
 // =============================================================================
@@ -653,6 +766,8 @@ export async function runCli(argv: string[], io: CliIO = defaultIO): Promise<num
         return await cmdExport(inv, io);
       case "benchmarks":
         return await cmdBenchmarks(inv, io);
+      case "import":
+        return await cmdImport(inv, io);
       default:
         // parseArgs guarantees a known command; defensive fallback
         io.err(`Error: unknown command "${inv.command}"`);

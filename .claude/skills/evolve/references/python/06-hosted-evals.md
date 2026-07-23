@@ -309,10 +309,11 @@ harbor_path = await evals.export(evaluation.id, to='./results', format='harbor')
 
 ## CLI
 
-The TypeScript package ships an `evolve-evals` binary usable from any environment with Node.js — including alongside Python projects. It covers the full command set — run, list, get, task-runs, cancel, rerun-failed, and export — plus the benchmark catalog, and `--watch` streams live events (the SSE path Python's `watch()` does not use):
+The TypeScript package ships an `evolve-evals` binary usable from any environment with Node.js — including alongside Python projects. It covers the full command set — run, list, get, task-runs, cancel, rerun-failed, and export — plus the benchmark catalog and git imports (`import` / `import status`), and `--watch` streams live events (the SSE path Python's `watch()` does not use):
 
 ```bash
 npx evolve-evals run --benchmark deep-swe@1.1 --system codex:gpt-5.5 --max-spend 25 --watch
+npx evolve-evals import --git https://github.com/acme/my-bench.git --ref main --name my-bench --watch
 npx evolve-evals task-runs <id> --json
 npx evolve-evals export <id> --to ./results --format harbor
 ```
