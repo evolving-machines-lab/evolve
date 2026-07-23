@@ -165,13 +165,13 @@ Files created before the last `run()` or `executeCommand()` are filtered out.
 ```ts
 const sessionId = evolve.getSession();  // Returns sandbox ID (string) or null (sync)
 
-const s = evolve.status();             // Synchronous snapshot of sandbox + agent state
-// s.sandbox   → "stopped" | "booting" | "ready" | "running" | "paused" | "error"
-// s.agent     → "idle" | "running" | "interrupted" | "error"
-// s.hasRun    → boolean (true after first run)
-// s.sandboxId → string | null
-// s.activeProcessId → string | null
-// s.timestamp → string (ISO 8601)
+const status = evolve.status();             // Synchronous snapshot of sandbox + agent state
+// status.sandbox   → "stopped" | "booting" | "ready" | "running" | "paused" | "error"
+// status.agent     → "idle" | "running" | "interrupted" | "error"
+// status.hasRun    → boolean (true after first run)
+// status.sandboxId → string | null
+// status.activeProcessId → string | null
+// status.timestamp → string (ISO 8601)
 
 const ok = await evolve.interrupt();   // Interrupts active run() or executeCommand() process; sandbox stays alive. Returns true/false.
 

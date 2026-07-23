@@ -385,12 +385,12 @@ await evolve.run(prompt='Start analysis')
 
 session_id = await evolve.get_session()
 # Save to file, database, environment variable, etc.
-with open('session.txt', 'w') as f:
-    f.write(session_id)
+with open('session.txt', 'w') as session_file:
+    session_file.write(session_id)
 
 # Script 2: Reconnect to saved session
-with open('session.txt') as f:
-    saved_id = f.read()
+with open('session.txt') as session_file:
+    saved_id = session_file.read()
 
 evolve2 = Evolve(
     config=AgentConfig(...),

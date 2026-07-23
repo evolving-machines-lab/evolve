@@ -10,11 +10,11 @@ Hosted evals run agent systems (harness + model) against versioned benchmarks on
 ```python
 from evolve import benchmarks, evaluations
 
-b = benchmarks()   # Uses EVOLVE_API_KEY (or HostedClientConfig(api_key=..., dashboard_url=...))
-e = evaluations()
+catalog = benchmarks()   # Uses EVOLVE_API_KEY (or HostedClientConfig(api_key=..., dashboard_url=...))
+evals = evaluations()
 ```
 
-Both clients are usable directly or as async context managers (`async with evaluations() as e:`).
+Both clients are usable directly or as async context managers (`async with evaluations() as evals:`).
 
 Python's `watch()` differs from TypeScript's in one way: it **polls** `get()` until the evaluation is terminal, where the TypeScript SDK streams the SSE event feed with per-event callbacks. For a live event stream from a Python script, use the [`evolve-evals` CLI](#cli) with `--watch --json`.
 
@@ -31,9 +31,9 @@ async def main():
     deep_swe = await benchmarks().get('deep-swe')  # active version + task list
     print(deep_swe.active_version.version, len(deep_swe.tasks))
 
-    async with evaluations() as e:
+    async with evaluations() as evals:
         # 2. Create the evaluation
-        evaluation = await e.run(
+        evaluation = await evals.run(
             benchmark='deep-swe@1.1',
             agent_systems=[
                 AgentSystem(harness='codex', model='gpt-5.5'),
@@ -46,18 +46,18 @@ async def main():
         print(evaluation.id, evaluation.status)  # 'QUEUED'
 
         # 3. Watch until terminal (polls get(); on_change fires on status/count changes)
-        final = await e.watch(
+        final = await evals.watch(
             evaluation.id,
             on_change=lambda ev: print(ev.status, ev.task_run_counts),
         )
         print(final.status, final.spent_usd)
 
         # 4. Inspect task runs and export the full research archive
-        page = await e.task_runs(evaluation.id)
+        page = await evals.task_runs(evaluation.id)
         for run in page.task_runs:
             print(run.task_key, run.agent_system.harness, run.status, run.score)
 
-        path = await e.export(evaluation.id, to='./results')
+        path = await evals.export(evaluation.id, to='./results')
         print('Saved:', path)  # ./results/evaluation-<id>-export.json.gz
 
 asyncio.run(main())
@@ -119,16 +119,16 @@ An evaluation expands to `tasks × agent_systems × runs_per_task` task runs. Ea
 
 ```python
 from evolve import benchmarks
-b = benchmarks()
+catalog = benchmarks()
 
 # Every benchmark with its active version
-catalog = await b.list()
+all_benchmarks = await catalog.list()
 # [Benchmark(name=..., display_title=..., description=..., active_version=BenchmarkVersion(...))]
 
 # One benchmark: all versions + the selected version's task list
-bench = await b.get('deep-swe')                 # active version's tasks
-pinned = await b.get('deep-swe@1.0')            # specific version
-same = await b.get('deep-swe', version='1.0')   # equivalent
+bench = await catalog.get('deep-swe')                 # active version's tasks
+pinned = await catalog.get('deep-swe@1.0')            # specific version
+same = await catalog.get('deep-swe', version='1.0')   # equivalent
 ```
 
 `get()` returns `versions` (newest first), `tasks_version`, and `tasks`. Tasks expose public fields only — `task_key`, `agent_timeout_sec`, `verifier_timeout_sec`. Instructions, environments, and tests never leave the server.
@@ -138,7 +138,7 @@ same = await b.get('deep-swe', version='1.0')   # equivalent
 Import a benchmark from a git repository into the shared catalog. The import runs server-side as a parse → validate → activate pipeline:
 
 ```python
-job = await b.import_benchmark(
+job = await catalog.import_benchmark(
     {'git_url': 'https://github.com/org/my-benchmark.git', 'ref': 'v1.2.0'},
     benchmark_name='my-benchmark',
     version='1.2',              # (optional) omit to let the server assign one
@@ -146,13 +146,13 @@ job = await b.import_benchmark(
 print(job.id, job.state)        # accepted for processing
 
 # Poll one import job
-status = await b.get_import(job.id)
+status = await catalog.get_import(job.id)
 print(status.state, status.task_count, status.error)
 
 # Or block until the import reaches a terminal state ('READY' or 'FAILED')
-done = await b.watch_import(
+done = await catalog.watch_import(
     job.id,
-    on_state=lambda j: print(j.state),  # (optional) fires on every state change
+    on_state=lambda import_job: print(import_job.state),  # (optional) fires on every state change
     poll_interval_s=2.0,                # (optional) default 2s
     timeout_s=1800,                     # (optional) raise TimeoutError after this long
 )
@@ -166,33 +166,33 @@ The import job's `state` follows the benchmark-version lifecycle above (`IMPORTI
 
 ```python
 from evolve import evaluations, AgentSystem
-e = evaluations()
+evals = evaluations()
 ```
 
 ### run / get / list
 
 ```python
-evaluation = await e.run(
+evaluation = await evals.run(
     benchmark='deep-swe@1.1',
     agent_systems=[AgentSystem(harness='codex', model='gpt-5.5')],
     max_model_spend_usd=25,
 )
 
 # Detail: agent systems + task-run status counts + spend
-detail = await e.get(evaluation.id)
+detail = await evals.get(evaluation.id)
 print(detail.task_run_counts)   # {'SCORED': 12, 'RUNNING': 3, 'QUEUED': 5}
 print(detail.spent_usd, '/', detail.max_model_spend_usd)
 
 # Your evaluations, newest first (cursor-paged)
-page = await e.list(limit=50)
-next_page = await e.list(cursor=page.next_cursor)
+page = await evals.list(limit=50)
+next_page = await evals.list(cursor=page.next_cursor)
 ```
 
 ### task_runs / task_run
 
 ```python
 # Cursor-paged task-run listing
-runs = await e.task_runs(evaluation.id, limit=100)
+runs = await evals.task_runs(evaluation.id, limit=100)
 print(runs.total_count)
 
 for run in runs.task_runs:
@@ -204,7 +204,7 @@ for run in runs.task_runs:
     print(run.failure_phase, run.failure_detail)  # populated on failures
 
 # Full detail for one task run (untruncated failure_detail)
-detail = await e.task_run(evaluation.id, runs.task_runs[0].id)
+detail = await evals.task_run(evaluation.id, runs.task_runs[0].id)
 print(detail.harness_version_resolved)    # harness version actually used
 print(detail.session_ref)
 ```
@@ -215,11 +215,11 @@ Fetch the recorded event trace of a single task run (seq-paged):
 
 ```python
 # Page manually...
-page = await e.task_run_trace(evaluation.id, run_id, after=0, limit=500)
+page = await evals.task_run_trace(evaluation.id, run_id, after=0, limit=500)
 for event in page.events:
     print(event.seq, event.type, event.data)
 # ...resume with after=page.next_after, or drain with the async iterator:
-async for event in e.task_run_trace_events(evaluation.id, run_id):
+async for event in evals.task_run_trace_events(evaluation.id, run_id):
     print(event.seq, event.type)
 ```
 
@@ -230,7 +230,7 @@ Pass the last seen `next_after` as `after=` to resume — the same pattern works
 Polls `get()` until the evaluation reaches a terminal status:
 
 ```python
-final = await e.watch(
+final = await evals.watch(
     evaluation.id,
     on_change=lambda ev: print(ev.status, ev.task_run_counts),  # (optional) fires on status/count changes
     poll_interval_s=2.0,   # (optional) default 2s
@@ -242,10 +242,10 @@ final = await e.watch(
 
 ```python
 # Request cancellation — idempotent; cancelling a terminal evaluation is a no-op
-await e.cancel(evaluation.id)
+await evals.cancel(evaluation.id)
 
 # New linked evaluation of only the failed (and never-dispatched) task runs
-rerun = await e.rerun_failed(evaluation.id, idempotency_key='rerun-1')
+rerun = await evals.rerun_failed(evaluation.id, idempotency_key='rerun-1')
 print(rerun.source_evaluation_id)  # → evaluation.id
 ```
 
@@ -256,7 +256,7 @@ print(rerun.source_evaluation_id)  # → evaluation.id
 Compare terminal evaluations side by side — per-evaluation aggregates plus a task-level matrix:
 
 ```python
-comparison = await e.compare([eval_a.id, eval_b.id])
+comparison = await evals.compare([eval_a.id, eval_b.id])
 
 # Aggregates: one row per evaluation, in your id order
 for row in comparison.evaluations:
@@ -264,7 +264,7 @@ for row in comparison.evaluations:
 
 # Matrix: one row per task, one cell per evaluation (disagreement rows first)
 for row in comparison.task_matrix:
-    print(row.task_key, row.disagreement, [(c.status, c.score) for c in row.cells])
+    print(row.task_key, row.disagreement, [(cell.status, cell.score) for cell in row.cells])
 ```
 
 Means cover `SCORED` runs only; coverage (`scored`/`total`) is always reported so a high mean over few scored runs is visible. A cell's `status` is `'MIXED'` when its runs disagree and `'MISSING'` when the evaluation has no runs for the task.
@@ -275,13 +275,13 @@ Download the full research archive (gzipped JSON) of a terminal evaluation:
 
 ```python
 # Default: bytes in memory
-payload = await e.export(evaluation.id)
+payload = await evals.export(evaluation.id)
 
 # Save to a directory — returns the file path
-path = await e.export(evaluation.id, to='./results')
+path = await evals.export(evaluation.id, to='./results')
 
 # Harbor job-layout bundle instead of the canonical archive
-harbor_path = await e.export(evaluation.id, to='./results', format='harbor')
+harbor_path = await evals.export(evaluation.id, to='./results', format='harbor')
 ```
 
 ---

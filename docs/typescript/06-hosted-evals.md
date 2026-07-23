@@ -10,8 +10,8 @@ Hosted evals run agent systems (harness + model) against versioned benchmarks on
 ```ts
 import { benchmarks, evaluations } from "@evolvingmachines/sdk";
 
-const b = benchmarks();   // Uses EVOLVE_API_KEY (or pass { apiKey, dashboardUrl })
-const e = evaluations();
+const catalog = benchmarks();   // Uses EVOLVE_API_KEY (or pass { apiKey, dashboardUrl })
+const evals = evaluations();
 ```
 
 ## Quickstart
@@ -26,8 +26,8 @@ const deepSwe = await benchmarks().get("deep-swe"); // active version + task lis
 console.log(deepSwe.activeVersion?.version, deepSwe.tasks?.length);
 
 // 2. Create the evaluation
-const e = evaluations();
-const evaluation = await e.run({
+const evals = evaluations();
+const evaluation = await evals.run({
     benchmark: "deep-swe@1.1",
     agentSystems: [
         { harness: "codex", model: "gpt-5.5" },
@@ -40,18 +40,18 @@ const evaluation = await e.run({
 console.log(evaluation.id, evaluation.status); // "QUEUED"
 
 // 3. Watch until terminal (SSE stream with automatic resume)
-const final = await e.watch(evaluation.id, {
+const final = await evals.watch(evaluation.id, {
     onEvent: (event) => console.log(event.seq, event.type, event.data),
 });
 console.log(final.status, final.taskRunCounts, final.spentUsd);
 
 // 4. Inspect task runs and export the full research archive
-const page = await e.taskRuns(evaluation.id);
+const page = await evals.taskRuns(evaluation.id);
 for (const run of page.taskRuns) {
     console.log(run.taskKey, run.agentSystem.harness, run.status, run.score);
 }
 
-const path = await e.export(evaluation.id, { to: "./results" });
+const path = await evals.export(evaluation.id, { to: "./results" });
 console.log("Saved:", path); // ./results/evaluation-<id>-export.json.gz
 ```
 
@@ -88,7 +88,7 @@ The harness version actually used for a run is reported back on the task run det
 `run()` and `rerunFailed()` accept an `Idempotency-Key`. Retrying with the same key returns the original evaluation (marked `idempotentReplay: true`) instead of creating a duplicate:
 
 ```ts
-const evaluation = await e.run(input, { idempotencyKey: "nightly-2026-07-22" });
+const evaluation = await evals.run(input, { idempotencyKey: "nightly-2026-07-22" });
 ```
 
 ---
@@ -127,20 +127,20 @@ const evaluation = await e.run(input, { idempotencyKey: "nightly-2026-07-22" });
 
 ```ts
 import { benchmarks } from "@evolvingmachines/sdk";
-const b = benchmarks();
+const catalog = benchmarks();
 ```
 
 ### list / get
 
 ```ts
 // Every benchmark with its active version
-const catalog = await b.list();
+const allBenchmarks = await catalog.list();
 // [{ name, displayTitle, description, activeVersion: { version, state, taskCount } }]
 
 // One benchmark: all versions + the selected version's task list
-const bench = await b.get("deep-swe");           // active version's tasks
-const pinned = await b.get("deep-swe@1.0");      // specific version
-const same = await b.get("deep-swe", { version: "1.0" }); // equivalent
+const bench = await catalog.get("deep-swe");           // active version's tasks
+const pinned = await catalog.get("deep-swe@1.0");      // specific version
+const same = await catalog.get("deep-swe", { version: "1.0" }); // equivalent
 ```
 
 `get()` returns `versions` (newest first), `tasksVersion`, and `tasks`. Tasks expose public fields only — `taskKey`, `agentTimeoutSec`, `verifierTimeoutSec`. Instructions, environments, and tests never leave the server.
@@ -150,7 +150,7 @@ const same = await b.get("deep-swe", { version: "1.0" }); // equivalent
 Import a benchmark from a git repository into the shared catalog. The import runs server-side as a parse → validate → activate pipeline:
 
 ```ts
-const job = await b.import({
+const job = await catalog.import({
     source: { gitUrl: "https://github.com/org/my-benchmark.git", ref: "v1.2.0" },
     benchmarkName: "my-benchmark",
     version: "1.2",              // (optional) omit to let the server assign one
@@ -158,12 +158,12 @@ const job = await b.import({
 console.log(job.id, job.state);  // accepted for processing
 
 // Poll one import job
-const status = await b.getImport(job.id);
+const status = await catalog.getImport(job.id);
 console.log(status.state, status.taskCount, status.error);
 
 // Or block until the import reaches a terminal state ("READY" or "FAILED")
-const done = await b.watchImport(job.id, {
-    onState: (imp) => console.log(imp.state),  // (optional) fires on every state change
+const done = await catalog.watchImport(job.id, {
+    onState: (importJob) => console.log(importJob.state),  // (optional) fires on every state change
     pollIntervalMs: 2_000,                     // (optional) default 2s
 });
 ```
@@ -176,37 +176,37 @@ The import job's `state` follows the benchmark-version lifecycle above (`IMPORTI
 
 ```ts
 import { evaluations } from "@evolvingmachines/sdk";
-const e = evaluations();
+const evals = evaluations();
 ```
 
 ### run / get / list
 
 ```ts
-const evaluation = await e.run({
+const evaluation = await evals.run({
     benchmark: "deep-swe@1.1",
     agentSystems: [{ harness: "codex", model: "gpt-5.5" }],
     maxModelSpendUsd: 25,
 });
 
 // Detail: agent systems + task-run status counts + spend
-const detail = await e.get(evaluation.id);
+const detail = await evals.get(evaluation.id);
 console.log(detail.taskRunCounts);  // { SCORED: 12, RUNNING: 3, QUEUED: 5 }
 console.log(detail.spentUsd, "/", detail.maxModelSpendUsd);
 
 // Your evaluations, newest first (cursor-paged)
-const page = await e.list({ limit: 50 });
-const next = await e.list({ cursor: page.nextCursor! });
+const page = await evals.list({ limit: 50 });
+const next = await evals.list({ cursor: page.nextCursor! });
 ```
 
 ### taskRuns / taskRun
 
 ```ts
 // Cursor-paged task-run listing
-const runs = await e.taskRuns(evaluation.id, { limit: 100 });
+const runs = await evals.taskRuns(evaluation.id, { limit: 100 });
 console.log(runs.totalCount);
 
 // Full detail for one task run (failureDetail untruncated here)
-const run = await e.taskRun(evaluation.id, runs.taskRuns[0].id);
+const run = await evals.taskRun(evaluation.id, runs.taskRuns[0].id);
 console.log(run.status, run.score, run.metrics);         // reward + named sub-scores
 console.log(run.phaseTimingsMs);                          // { agentMs, verifyMs }
 console.log(run.modelUsage?.spendUsd, run.modelUsage?.spendSource); // "key_info" | "assumed_cap"
@@ -221,14 +221,14 @@ Fetch the recorded event trace of a single task run — a seq-ordered timeline, 
 
 ```ts
 // Page manually: pass nextAfter back as { after } to continue
-const page = await e.taskRunTrace(evaluation.id, runId, { limit: 500 });
+const page = await evals.taskRunTrace(evaluation.id, runId, { limit: 500 });
 for (const event of page.events) {
     console.log(event.seq, event.type, event.data);
 }
-const next = await e.taskRunTrace(evaluation.id, runId, { after: page.nextAfter! });
+const next = await evals.taskRunTrace(evaluation.id, runId, { after: page.nextAfter! });
 
 // Or iterate — pages are fetched under the hood
-for await (const event of e.taskRunTraceEvents(evaluation.id, runId)) {
+for await (const event of evals.taskRunTraceEvents(evaluation.id, runId)) {
     console.log(event.seq, event.type, event.data);
 }
 ```
@@ -242,7 +242,7 @@ Stream the evaluation's server-sent event feed and resolve with the final evalua
 ```ts
 const controller = new AbortController();
 
-const final = await e.watch(evaluation.id, {
+const final = await evals.watch(evaluation.id, {
     onEvent: (event) => {
         // event.seq  — monotonic sequence number (resume position)
         // event.type — "evaluation.created" | "task_run.settled" | "evaluation.completed" | ...
@@ -263,10 +263,10 @@ const final = await e.watch(evaluation.id, {
 
 ```ts
 // Request cancellation — idempotent; cancelling a terminal evaluation is a no-op
-await e.cancel(evaluation.id);
+await evals.cancel(evaluation.id);
 
 // New linked evaluation of only the failed (and never-dispatched) task runs
-const rerun = await e.rerunFailed(evaluation.id, { idempotencyKey: "rerun-1" });
+const rerun = await evals.rerunFailed(evaluation.id, { idempotencyKey: "rerun-1" });
 console.log(rerun.sourceEvaluationId); // → evaluation.id
 ```
 
@@ -277,7 +277,7 @@ console.log(rerun.sourceEvaluationId); // → evaluation.id
 Compare 2–5 of your evaluations side by side — per-evaluation aggregates plus a per-task matrix (disagreement rows first):
 
 ```ts
-const comparison = await e.compare([evalA.id, evalB.id]);
+const comparison = await evals.compare([evalA.id, evalB.id]);
 
 // Aggregates: one per evaluation, in your id order
 for (const agg of comparison.evaluations) {
@@ -303,16 +303,16 @@ Download the full research archive (gzipped JSON) of a terminal evaluation:
 
 ```ts
 // Default: Buffer in memory
-const buffer = await e.export(evaluation.id);
+const buffer = await evals.export(evaluation.id);
 
 // Save to a directory — returns the file path
-const path = await e.export(evaluation.id, { to: "./results" });
+const path = await evals.export(evaluation.id, { to: "./results" });
 
 // Raw response stream (for piping)
-const stream = await e.export(evaluation.id, { stream: true });
+const stream = await evals.export(evaluation.id, { stream: true });
 
 // Harbor job-layout bundle instead of the canonical archive
-const harborPath = await e.export(evaluation.id, { to: "./results", format: "harbor" });
+const harborPath = await evals.export(evaluation.id, { to: "./results", format: "harbor" });
 ```
 
 `format: "harbor"` selects the Harbor results-bundle layout and composes with any delivery shape (`Buffer`, `to`, or `stream`).
