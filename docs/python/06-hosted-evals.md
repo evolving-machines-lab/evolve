@@ -2,466 +2,353 @@
 
 > **Gateway feature** — requires `EVOLVE_API_KEY` (see [Getting Started → Gateway Mode](./01-getting-started.md#gateway-mode-evolve_api_key)). Evolve runs the benchmark tasks, agents, and verifiers on managed infrastructure; you submit an evaluation and read results.
 
-Hosted evals run agent systems (harness + model) against versioned benchmarks on Evolve's infrastructure. Two standalone clients cover the whole surface — no `Evolve` instance needed:
-
-- `benchmarks()` — the shared benchmark catalog: list, inspect, and import benchmarks.
-- `evaluations()` — create evaluations, watch progress, inspect task runs and traces, compare, and export results.
+Two standalone clients cover the whole surface — no `Evolve` instance needed:
 
 ```python
 from evolve import benchmarks, evaluations
 
-catalog = benchmarks()   # Uses EVOLVE_API_KEY (or HostedClientConfig(api_key=..., base_url=...))
-evals = evaluations()
+catalog = benchmarks()    # shared benchmark catalog
+evals = evaluations()     # create, watch, and read evaluations
 ```
 
-Both clients are usable directly or as async context managers (`async with evaluations() as evals:`).
+Both read `EVOLVE_API_KEY` (or take `HostedClientConfig(api_key=..., base_url=...)`) and work standalone or as `async with` context managers.
 
-Python's `watch()` differs from TypeScript's in one way: it **polls** `get()` until the evaluation is terminal, where the TypeScript SDK streams the SSE event feed with per-event callbacks. `watch()` returns the final evaluation; `watch_iter()` async-iterates the evaluation's state as it changes. For a live *event* stream from a Python script, use the [`evolve-evals` CLI](#cli) with `--watch --json`.
+---
 
-## Quickstart
+## Run an evaluation
 
-Run `deep-swe` with two agent systems, watch it to completion, then export the results archive:
+Browse the catalog, then run. A bare benchmark name resolves server-side to the active `READY` version:
 
 ```python
-import asyncio
-from evolve import evaluations, AgentSystem
+from evolve import benchmarks, evaluations, AgentSystem
 
-async def main():
-    async with evaluations() as evals:
-        # 1. Create the evaluation — a bare benchmark name resolves server-side
-        #    to the benchmark's active READY version
-        evaluation = await evals.run(
-            benchmark='deep-swe',              # or pin a version: 'deep-swe@1.1'
-            agent_systems=[
-                AgentSystem(harness='codex', model='gpt-5.5'),
-                AgentSystem(harness='claude', model='fable'),
-            ],
-            runs_per_task=1,
-            concurrency=4,
-            max_model_spend_usd=25,
-        )
-        print(evaluation.id, evaluation.status)  # 'QUEUED'
-        print(evaluation.benchmark)              # 'deep-swe@1.1' — the resolved version, echoed back
+async with benchmarks() as catalog:
+    print([bench.name for bench in await catalog.list()])
 
-        # 2. Watch until terminal (polls get()) — returns the final evaluation
-        final = await evals.watch(evaluation.id)
-        print(final.status, final.task_run_counts, final.spent_usd)
+    active = await catalog.get_active('deep-swe')   # raises NoActiveVersionError when none
+    print(active.version, [task.task_key for task in active.tasks])
 
-        # 3. Inspect task runs (auto-paginates) and export the full research archive
-        async for run in evals.task_runs(evaluation.id):
-            print(run.task_key, run.agent_system.harness, run.status, run.score)
+async with evaluations() as evals:
+    evaluation = await evals.run(
+        benchmark='deep-swe',                       # or pin a version: 'deep-swe@1.1'
+        agent_systems=[
+            AgentSystem(harness='codex', model='gpt-5.5'),
+            AgentSystem(harness='claude', model='fable'),
+        ],
+        concurrency=4,
+        max_model_spend_usd=25,
+    )
+    print(evaluation.id, evaluation.status)   # QUEUED
+    print(evaluation.benchmark)               # 'deep-swe@1.1' — the resolved version, echoed back
+```
 
-        path = await evals.export(evaluation.id, to='./results')
-        print('Saved:', path)  # ./results/evaluation-<id>.json.gz (server-named via Content-Disposition)
+`run()` keyword arguments:
 
-asyncio.run(main())
+| Keyword | Default | What it does |
+|---------|---------|--------------|
+| `benchmark` | required | `'name'` (active `READY` version) or `'name@version'` |
+| `agent_systems` | required | list of `AgentSystem(harness=..., model=..., harness_version=None)` |
+| `max_model_spend_usd` | required | hard model-spend cap (USD) for the whole evaluation |
+| `tasks` | all tasks | task keys to run |
+| `runs_per_task` | `1` | runs per task × agent system |
+| `concurrency` | `1` | parallel task runs |
+| `max_model_spend_usd_per_task_run` | none | model-spend cap (USD) per task run |
+| `sandbox_provider` | `'e2b'` | see [Choose a sandbox provider](#choose-a-sandbox-provider) |
+| `idempotency_key` | none | safe-retry key (below) |
+
+An evaluation expands to `tasks × agent_systems × runs_per_task` task runs, each in its own sandbox. Valid harness + model pairs are listed once in [Getting Started → Harness and Model Pairing](./01-getting-started.md#harness-and-model-pairing).
+
+Retrying with the same `idempotency_key` returns the original evaluation instead of creating a duplicate:
+
+```python
+evaluation = await evals.run(..., idempotency_key='nightly-2026-07-23')
+print(evaluation.idempotent_replay)   # True on a replay
 ```
 
 ---
 
-## Evaluation Inputs
+## Watch it live
 
-`evaluations().run()` takes a benchmark reference, the agent systems to evaluate, and a hard spend cap; everything else is optional — all keyword arguments:
-
-| Input | Required | Description |
-|-------|----------|-------------|
-| `benchmark` | yes | `'name@version'` for a pinned run, or a bare `'name'` — resolved server-side to the active `READY` version. Responses always echo the resolved `'name@version'`; a bare name with no active version is rejected with a `400` naming the activation requirement |
-| `tasks` | no | Task keys to run — omit to run every task of the version |
-| `agent_systems` | yes | List of `AgentSystem(harness=..., model=..., harness_version=None)` |
-| `runs_per_task` | no | Runs per task × agent system (default: 1) |
-| `concurrency` | no | Parallel task runs (default: 1) |
-| `max_model_spend_usd` | yes | Hard model-spend cap in USD for the whole evaluation |
-| `max_model_spend_usd_per_task_run` | no | Model-spend cap in USD for each individual task run |
-| `sandbox_provider` | no | `'e2b'` (default) \| `'daytona'` \| `'modal'` — see [Sandbox Providers](#sandbox-providers) |
-
-An evaluation expands to `tasks × agent_systems × runs_per_task` task runs. Each task run executes in its own sandbox with a capped, revocable model credential; spend is tracked against both caps.
-
-Valid harness + model pairs are defined in one place — [Getting Started → Supported Agents & Models](./01-getting-started.md#harness-and-model-pairing), including the current model tables and the pairing rules (some harnesses only accept models from their own family). An invalid pair fails the evaluation's task runs rather than silently substituting a model.
-
-The harness version actually used for a run is reported back on the task run detail (`resolved_harness_version`), so unpinned runs remain reproducible after the fact.
-
-`run()` and `rerun_failed()` accept `idempotency_key=` — retrying with the same key returns the original evaluation (`idempotent_replay=True`) instead of creating a duplicate.
-
----
-
-## Statuses
-
-**Evaluation** (`Evaluation.status`) — `QUEUED` → `RUNNING` (→ `CANCELLING`) → terminal `COMPLETED` / `CANCELLED` / `FAILED`:
-
-| Status | Meaning |
-|--------|---------|
-| `QUEUED` | Accepted, waiting for dispatch |
-| `RUNNING` | Task runs are executing |
-| `CANCELLING` | `cancel()` requested; in-flight runs are winding down |
-| `COMPLETED` | Terminal — all task runs settled |
-| `CANCELLED` | Terminal — cancelled before completion |
-| `FAILED` | Terminal — the evaluation itself failed (see `error`) |
-
-**Task run** (`TaskRun.status`) — the scoring law: a valid reward (including 0) is `SCORED`; a verifier crash or out-of-domain reward is `SCORING_ERROR`, never a fabricated zero:
-
-| Status | Meaning |
-|--------|---------|
-| `QUEUED` | Waiting for a sandbox slot |
-| `RUNNING` | Agent phase in progress |
-| `SCORING` | Agent finished; verifier running |
-| `SCORED` | Verifier produced a valid reward (0 is a valid score) |
-| `SCORING_ERROR` | Verifier crashed or returned an out-of-domain reward |
-| `INFRASTRUCTURE_ERROR` | Sandbox lost before a durable artifact existed (see `failure_phase`) |
-| `INDETERMINATE` | Dispatch/completion uncertainty — the platform cannot prove what happened |
-| `CANCELLED` | Cancelled before settling |
-
-**Benchmark version** (`BenchmarkVersion.state`): `DRAFT` → `IMPORTING` → `BUILDING` → `VALIDATING` → `READY` (runnable), with `FAILED` and `ARCHIVED` as the off-ramps. An import lands a new version at `VALIDATING`; the `VALIDATING` → `READY` promotion is the conformance activation gate's alone (see [import_benchmark](#import_benchmark--get_import--watch_import)), and only `READY` versions accept evaluations.
-
----
-
-## Benchmarks Client
+Iterate the evaluation's state as it changes, or block for the final result. Both poll every 2 seconds (`poll_interval_s=`):
 
 ```python
-from evolve import benchmarks
-catalog = benchmarks()
-
-# Every benchmark with its active version
-all_benchmarks = await catalog.list()
-# [Benchmark(name=..., title=..., description=..., active_version=BenchmarkVersion(...))]
-
-# One benchmark: all versions + the selected version's task list
-bench = await catalog.get('deep-swe')                 # active version's tasks
-pinned = await catalog.get('deep-swe@1.0')            # specific version
-
-# The active version resolved to a runnable shape — version + tasks guaranteed
-active = await catalog.get_active('deep-swe')
-print(active.version, len(active.tasks))
-```
-
-`get()` returns `versions` (newest first), `tasks_version`, and `tasks`. Tasks expose public fields only — `task_key`, `agent_timeout_sec`, `verifier_timeout_sec`. Instructions, environments, and tests never leave the server.
-
-`get_active(name)` resolves the active version to a runnable shape where `version` and `tasks` are non-optional; it raises `NoActiveVersionError` when the benchmark has no active version, so the happy path never branches on a missing version. Use `get()` for the full multi-version detail, and `get_active()` to inspect the runnable version and its task list before an evaluation. To simply run the active version, `evals.run(benchmark='deep-swe', ...)` resolves it server-side — no catalog call needed.
-
-### import_benchmark / get_import / watch_import
-
-Import a benchmark from a git repository into the shared catalog. The import runs server-side as a parse → validate pipeline that lands the new version at `VALIDATING`; a separate conformance activation gate owns the promotion to `READY`:
-
-```python
-job = await catalog.import_benchmark(
-    git_url='https://github.com/org/my-benchmark.git',
-    ref='v1.2.0',
-    benchmark_name='my-benchmark',
-    version='1.2',              # (optional) omit to let the server assign one
-)
-print(job.id, job.status)       # accepted for processing
-
-# Poll one import job
-import_job = await catalog.get_import(job.id)
-print(import_job.status, import_job.task_count, import_job.error)
-
-# Or block until the import reaches a terminal status ('READY' or 'FAILED')
-done = await catalog.watch_import(
-    job.id,
-    on_status=lambda import_job: print(import_job.status),  # (optional) fires on every status change
-    poll_interval_s=2.0,                # (optional) default 2s
-    timeout_s=1800,                     # (optional) raise TimeoutError after this long
-)
-```
-
-An import runs in two stages. The **importer** clones the pinned git source, parses the corpus, and lands the new version at `VALIDATING` (or `FAILED`, with `error` populated) — it never promotes to `READY`. Promotion is a separate **conformance activation** gate: for every task it runs the corpus' held-out gold solution through the real agent-and-verifier path and pushes an empty no-op patch straight to the verifier, then records a per-task activation verdict. A version is activated to `READY` only when every task's gold solution scores exactly `1.0` and its no-op does **not** — a task a do-nothing agent can pass measures nothing. A gold solution that passes only on a retry is flagged flaky (still eligible unless the gate runs in strict mode); a task where gold or the no-op check yields no usable score blocks activation.
-
-Because promotion is a distinct step, `watch_import()` resolves when the version reaches `READY` (activation succeeded) or `FAILED` (raising `TimeoutError` if `timeout_s` elapses first); a freshly imported version rests at `VALIDATING` until the activation gate runs. Only `READY` versions accept evaluations — `evaluations().run()` rejects a non-`READY` benchmark and `get_active()` raises `NoActiveVersionError` until a version is activated.
-
-Imports require an admin account: only users with the `ADMIN` role may import, and any other caller receives `403`. Git is the supported source; the reserved `archive_path=` and `harbor_hub_ref=` keyword arguments raise `NotImplementedError` until their server endpoints exist.
-
----
-
-## Evaluations Client
-
-```python
-from evolve import evaluations, AgentSystem
-evals = evaluations()
-```
-
-### run / get / list
-
-```python
-evaluation = await evals.run(
-    benchmark='deep-swe@1.1',
-    agent_systems=[AgentSystem(harness='codex', model='gpt-5.5')],
-    max_model_spend_usd=25,
-)
-
-# Detail: agent systems + evaluation size + task-run status counts + spend
-detail = await evals.get(evaluation.id)
-print(detail.counts)            # {'agent_systems': 1, 'tasks': 20, 'task_runs': 20}
-print(detail.task_run_counts)   # {'SCORED': 12, 'RUNNING': 3, 'QUEUED': 5}
-print(detail.spent_usd, '/', detail.max_model_spend_usd)
-
-# Your evaluations, newest first — await one page (cursor-paged)
-page = await evals.list(limit=50)
-next_page = await evals.list(cursor=page.next_cursor)
-
-# ...or iterate every evaluation across all pages (cursors walked for you)
-async for item in evals.list():
-    print(item.id, item.status)
-```
-
-`list()` returns a dual-use handle: `await` it for a single `EvaluationPage`, or `async for` it to walk every evaluation across cursor pages.
-
-### task_runs / task_run
-
-```python
-# Await one page (cursor-paged) — total_count included
-page = await evals.task_runs(evaluation.id, limit=100)
-print(page.total_count)
-
-# ...or iterate every task run across all pages (cursors walked for you)
-async for run in evals.task_runs(evaluation.id):
-    print(run.task_key, run.run_number, run.status, run.score)
-    print(run.metrics)                    # named sub-scores from reward.json
-    print(run.phase_timings_ms)           # {'agent_ms': ..., 'verify_ms': ...}
-    print(run.session_ref)                # agent session/trace reference
-    print(run.failure_phase, run.failure_detail)  # populated on failures
-
-# Full detail for one task run (untruncated failure_detail)
-detail = await evals.task_run(evaluation.id, page.task_runs[0].id)
-print(detail.resolved_harness_version)    # harness version actually used
-if detail.model_usage:
-    print(detail.model_usage.spend_usd, detail.model_usage.spend_source)  # 'key_info' | 'assumed_cap'
-```
-
-**Reading spend.** `model_usage.spend_usd` is the run's measured model spend, and `spend_source` says how it was measured: `'key_info'` means the number was read back from metering, `'assumed_cap'` means metering had not reported yet and the value conservatively assumes the run's cap. Metering can lag on some model routes, so a fresh run may briefly show the assumed cap (or zero) — the run's trace and token counts are the reliable engagement signal in the meantime.
-
-### task_run_trace
-
-Fetch the recorded event trace of a single task run (seq-paged):
-
-```python
-# Page manually...
-page = await evals.task_run_trace(evaluation.id, run_id, after=0, limit=500)
-for event in page.events:
-    print(event.seq, event.type, event.data)
-# ...resume with after=page.next_after, or drain with the async iterator:
-async for event in evals.task_run_trace_events(evaluation.id, run_id):
-    print(event.seq, event.type)
-```
-
-Pass the last seen `next_after` as `after=` to resume — the same pattern works for incremental polling while a run is still executing.
-
-### watch / watch_iter
-
-`watch()` polls `get()` until the evaluation reaches a terminal status and returns the final evaluation. `watch_iter()` is the async-iterator sibling — it yields the evaluation on every status/count change, then stops at the terminal state:
-
-```python
-# Iterate the evaluation's state as it changes
 async for state in evals.watch_iter(evaluation.id):
-    print(state.status, state.task_run_counts)
+    print(state.status, state.task_run_counts)   # RUNNING {'SCORED': 12, 'RUNNING': 3, 'QUEUED': 5}
 
-# Or block for the final evaluation, with an optional on_change callback
-final = await evals.watch(
-    evaluation.id,
-    on_change=lambda ev: print(ev.status, ev.task_run_counts),  # (optional) fires on status/count changes
-    poll_interval_s=2.0,   # (optional) default 2s
-    timeout_s=3600,        # (optional) raise TimeoutError after this long
-)
+final = await evals.watch(evaluation.id, timeout_s=3600)   # raises TimeoutError past the deadline
+print(final.status, final.spent_usd)
 ```
 
-Both poll `get()`; for a live *event* stream (SSE), use the [`evolve-evals` CLI](#cli) with `--watch`.
+For a live per-event stream (SSE), use the [CLI](#cli) with `--watch`.
 
-### cancel / rerun_failed
+Stop early with `cancel()` — idempotent, and a no-op on a terminal evaluation:
 
 ```python
-# Request cancellation — idempotent; cancelling a terminal evaluation is a no-op
 await evals.cancel(evaluation.id)
+```
 
-# New linked evaluation of only the failed (and never-dispatched) task runs
+---
+
+## Read the results
+
+Iterate task runs (pages fetched for you), or `await` one page:
+
+```python
+async for run in evals.task_runs(evaluation.id):
+    print(run.task_key, run.agent_system.model, run.run_number, run.status, run.score)
+
+page = await evals.task_runs(evaluation.id, limit=100)   # .task_runs, .total_count, .next_cursor
+```
+
+Fetch one run's full detail — untruncated `failure_detail`, plus the harness version actually used:
+
+```python
+detail = await evals.task_run(evaluation.id, run.id)
+print(detail.failure_phase, detail.failure_detail)
+print(detail.resolved_harness_version)
+print(detail.metrics)             # named sub-scores
+print(detail.phase_timings_ms)    # {'agent_ms': ..., 'verify_ms': ...}
+```
+
+Read per-run spend from `model_usage`. `spend_source='measured'` is platform-measured spend; `'assumed_cap'` means spend could not be measured yet, so the value conservatively assumes the run's cap:
+
+```python
+if detail.model_usage:
+    print(detail.model_usage.spend_usd, detail.model_usage.spend_source)
+```
+
+Stream a run's recorded event trace; resume later from the last seen `seq`:
+
+```python
+async for event in evals.task_run_trace_events(evaluation.id, run.id):
+    print(event.seq, event.type, event.data)
+
+page = await evals.task_run_trace(evaluation.id, run.id, after=last_seq, limit=500)
+```
+
+Rerun only the failed (and never-dispatched) runs of a terminal evaluation — scored runs are never re-executed:
+
+```python
 rerun = await evals.rerun_failed(evaluation.id, idempotency_key='rerun-1')
-print(rerun.source_evaluation_id)  # → evaluation.id
+print(rerun.source_evaluation_id)   # → evaluation.id
 ```
 
-`rerun_failed()` requires a terminal source evaluation. Scored runs are never re-executed; the rerun contains only runs that failed or never dispatched.
-
-### compare
-
-Compare terminal evaluations side by side — per-evaluation aggregates plus a task-level matrix:
+List your evaluations, newest first:
 
 ```python
-comparison = await evals.compare([eval_a.id, eval_b.id])
+async for item in evals.list():
+    print(item.id, item.benchmark, item.status, item.spent_usd)
+```
 
-# Aggregates: one row per evaluation, in your id order
-for row in comparison.evaluations:
-    print(row.id, row.mean_score, f'{row.coverage.scored}/{row.coverage.total} scored')
+---
 
-# Matrix: one row per task, one cell per evaluation (disagreement rows first)
+## Compare
+
+Compare 2–5 of your evaluations side by side — per-evaluation aggregates plus a per-task matrix, disagreement rows first:
+
+```python
+comparison = await evals.compare([baseline.id, candidate.id])
+
+for aggregate in comparison.evaluations:
+    print(aggregate.id, aggregate.mean_score,
+          f'{aggregate.coverage.scored}/{aggregate.coverage.total} scored')
+
 for row in comparison.task_matrix:
-    print(row.task_key, row.disagreement, [(cell.status, cell.score) for cell in row.cells])
+    print(row.task_key, row.disagreement,
+          [(cell.status, cell.score) for cell in row.cells])
 ```
 
-Means cover `SCORED` runs only; coverage (`scored`/`total`) is always reported so a high mean over few scored runs is visible. A cell's `status` is `'MIXED'` when its runs disagree and `'MISSING'` when the evaluation has no runs for the task.
+Means cover `SCORED` runs only; coverage is always reported so a high mean over few scored runs stays visible. A cell's status is `'MIXED'` when its runs disagree and `'MISSING'` when the evaluation has no runs for that task.
 
-### export
+---
 
-Download the full research archive (gzipped JSON) of a terminal evaluation:
+## Export
+
+Download the research archive (gzipped JSON) of a terminal evaluation:
 
 ```python
-# Default: bytes in memory
-payload = await evals.export(evaluation.id)
-
-# Save to a directory — returns the file path
-path = await evals.export(evaluation.id, to='./results')
-
-# Harbor job-layout bundle instead of the canonical archive
-harbor_path = await evals.export(evaluation.id, to='./results', format='harbor')
+archive_path = await evals.export(evaluation.id, to='./results')                  # saved file path
+harbor_path = await evals.export(evaluation.id, to='./results', format='harbor')  # Harbor job layout
+archive_bytes = await evals.export(evaluation.id)                                 # bytes in memory
 ```
 
 ---
 
 ## CLI
 
-The TypeScript package ships an `evolve-evals` binary usable from any environment with Node.js — including alongside Python projects. It covers the full command set — run, list, get, task-runs, cancel, rerun-failed, and export — plus the benchmark catalog and git imports (`import` / `import status`), and `--watch` streams live events (the SSE path Python's `watch()` does not use):
-
-```bash
-npx evolve-evals run --benchmark deep-swe@1.1 --system codex:gpt-5.5 --max-spend 25 --watch
-npx evolve-evals import --git https://github.com/acme/my-bench.git --ref main --name my-bench --watch
-npx evolve-evals task-runs <id> --json
-npx evolve-evals export <id> --to ./results --format harbor
-```
-
-See [TypeScript → Hosted Evals → CLI](../typescript/06-hosted-evals.md#cli) for the full command reference.
+Python ships no separate CLI. The TypeScript package's `evolve-evals` binary (`npx evolve-evals ...`) covers the full surface from any shell — including live SSE event streaming with `--watch` — see [TypeScript → Hosted Evals → CLI](../typescript/06-hosted-evals.md#cli).
 
 ---
 
-## Sandbox Providers
+## Choose a sandbox provider
 
-Every task run executes in its own isolated sandbox. Three providers are available — E2B (the default), Daytona, and Modal — and the optional `sandbox_provider` keyword picks one per evaluation. The same benchmark image, network policy, and agent command run unchanged on all three, and your Evolve API key is the only credential involved on any of them.
+Every task run executes in its own isolated sandbox. Pick the provider per evaluation — an unknown value is rejected with a `400` at creation, and the choice is fixed for the evaluation's life (including `rerun_failed()`):
 
 ```python
 evaluation = await evals.run(
-    benchmark="swe-bench-verified@1.0",
-    agent_systems=[{"harness": "codex", "model": "gpt-5.5"}],
+    benchmark='swe-bench-verified@1.0',
+    agent_systems=[AgentSystem(harness='codex', model='gpt-5.5')],
     max_model_spend_usd=25,
-    sandbox_provider="daytona",   # "e2b" (default) | "daytona" | "modal"
+    sandbox_provider='daytona',   # 'e2b' (default) | 'daytona' | 'modal'
 )
 ```
 
-From the CLI, pass `--provider`:
+Two differences worth knowing when picking:
 
-```bash
-evolve-evals run --benchmark swe-bench-verified@1.0 --system codex:gpt-5.5 --max-spend 25 --provider daytona
-```
-
-Omit the argument to accept the default (`e2b`); an unknown value is rejected at creation with a `400`, never a silent fallback, so a typo cannot bill the wrong account. Once chosen, the provider is fixed for the evaluation's life — every task run, and any `rerun_failed()` of it, runs on it.
-
-Two provider differences can affect which one fits a benchmark:
-
-- **Daytona** enforces task network allowlists as kernel-level IPv4 CIDR rules: hostnames are resolved to IPs when the sandbox is created and pinned for its life, so a destination that rotates DNS (many CDNs and cloud APIs do) can become unreachable mid-run; IPv6, ports, and wildcards are rejected, and a policy caps at 10 entries. A benchmark whose tasks need broad or hostname-based egress belongs on E2B or Modal.
-- **Modal** caps every sandbox at 24 hours. A task whose timeout would exceed the cap is rejected with `ModalSandboxLifetimeError` at creation — never silently truncated mid-run.
-
-Everything else — pulling task images, executing as root, provider accounts, credentials, and health monitoring — works identically across the three and is Evolve's responsibility, not yours.
+- **Daytona** pins task network allowlists to IPv4 addresses resolved when the sandbox is created, so a destination that rotates DNS can become unreachable mid-run. Benchmarks needing broad or hostname-based egress belong on E2B or Modal.
+- **Modal** caps every sandbox at 24 hours. A task whose timeout exceeds the cap fails fast when its sandbox is created — never truncated mid-run.
 
 ---
 
-## Type Reference
+## Import a benchmark (admin)
+
+Imports require the `ADMIN` role (anyone else receives a `403`); git is the supported source. Evolve validates every task before the version becomes runnable:
+
+```python
+async with benchmarks() as catalog:
+    job = await catalog.import_benchmark(
+        git_url='https://github.com/acme/my-benchmark.git',
+        ref='v1.2.0',
+        benchmark_name='my-benchmark',
+        version='1.2',                # optional — omit to let the server assign one
+    )
+
+    done = await catalog.watch_import(job.id, on_status=lambda j: print(j.status))
+    if done.status == 'FAILED':
+        print(done.error.message)     # e.g. "2/113 task(s) failed to parse"
+        for failure in done.error.failures:
+            print(failure.task_key, failure.error)
+```
+
+`watch_import()` returns at `READY` or `FAILED`; only `READY` versions accept evaluations. Inspect what landed with `catalog.get('my-benchmark@1.2')` — all versions plus the task list (`task_key`, `agent_timeout_sec`, `verifier_timeout_sec`; instructions, environments, and tests never leave the server).
+
+---
+
+## Statuses
+
+**Evaluation** — `QUEUED → RUNNING (→ CANCELLING)`, then terminal:
+
+| Status | Meaning |
+|--------|---------|
+| `QUEUED` | accepted, waiting for dispatch |
+| `RUNNING` | task runs executing |
+| `CANCELLING` | `cancel()` requested; in-flight runs winding down |
+| `COMPLETED` | terminal — all task runs settled |
+| `CANCELLED` | terminal — cancelled before completion |
+| `FAILED` | terminal — the evaluation itself failed (see `error`) |
+
+**Task run** — a valid reward (including 0) is `SCORED`; a verifier crash or out-of-domain reward is `SCORING_ERROR`, never a fabricated zero:
+
+| Status | Meaning |
+|--------|---------|
+| `QUEUED` | waiting for a sandbox slot |
+| `RUNNING` | agent phase in progress |
+| `SCORING` | agent finished; verifier running |
+| `SCORED` | valid reward recorded (`score` set; 0 counts) |
+| `SCORING_ERROR` | verifier crashed or returned an out-of-domain reward |
+| `INFRASTRUCTURE_ERROR` | sandbox failed before a result was recorded (see `failure_phase`) |
+| `INDETERMINATE` | the outcome could not be determined |
+| `CANCELLED` | cancelled before settling |
+
+**Benchmark version** — `DRAFT → IMPORTING → BUILDING → VALIDATING → READY`, with `FAILED` and `ARCHIVED` as off-ramps. Only `READY` versions accept evaluations.
+
+---
+
+## Types
 
 ```python
 @dataclass
 class AgentSystem:
-    harness: str                      # 'claude' | 'codex' | 'gemini' | 'qwen' | 'kimi' | 'opencode' | 'droid'
-    model: str                        # a model of that harness's family, e.g. 'gpt-5.5' for codex
-    harness_version: str | None = None  # pin a harness version; None = platform default
-
-@dataclass
-class ActiveBenchmark:                 # benchmarks().get_active(name)
-    name: str
-    title: str | None
-    description: str | None
-    active_version: BenchmarkVersion  # always present (get_active raises otherwise)
-    version: str                      # active version string (non-optional)
-    tasks: list[Task]                 # active version's tasks (non-optional)
-    versions: list[BenchmarkVersion]  # all versions, newest first
-    created_at: str | None
-    updated_at: str | None
-    # get_active() raises NoActiveVersionError when the benchmark has no active version
+    harness: str                          # 'claude' | 'codex' | 'gemini' | 'qwen' | 'kimi' | 'opencode' | 'droid'
+    model: str                            # from that harness's family — see Getting Started
+    harness_version: str | None = None    # pin a harness version; None = platform default
 
 @dataclass
 class Evaluation:
     id: str
-    status: str                       # EvaluationStatus wire values
-    benchmark: str                    # 'name@version'
+    status: str                           # evaluation status above
+    benchmark: str                        # 'name@version'
     runs_per_task: int
     concurrency: int
     max_model_spend_usd: float
     spent_usd: float
     created_at: str
-    max_model_spend_usd_per_task_run: float | None  # per-task-run cap, when one was set
-    sandbox_provider: str | None      # 'e2b' | 'daytona' | 'modal'
-    counts: dict | None               # {'agent_systems': n, 'tasks': n, 'task_runs': n} — every response carries it
-    task_run_counts: dict | None      # histogram by TaskRunStatus (UPPER wire keys)
-    agent_systems: list[AgentSystem] | None  # get() only
-    benchmark_version_state: str | None      # get() only
-    error: str | None                 # get() only
-    updated_at: str | None            # get() only
-    source_evaluation_id: str | None  # present on rerun-failed evaluations
-    idempotent_replay: bool           # True when Idempotency-Key replayed an existing evaluation
-
-@dataclass
-class ModelUsage:
-    spend_usd: float | None           # measured model spend for the run, in USD
-    spend_source: str | None          # 'key_info' (read from gateway) or 'assumed_cap' (conservative fallback)
-    max_budget_usd: float | None
-    resolved_harness_version: str | None  # resolved harness version actually used for the run
-    extra: dict                       # harness-specific keys, snake_case
+    max_model_spend_usd_per_task_run: float | None
+    sandbox_provider: str | None          # 'e2b' | 'daytona' | 'modal'
+    counts: dict | None                   # {'agent_systems': n, 'tasks': n, 'task_runs': n}
+    task_run_counts: dict | None          # histogram by task-run status
+    agent_systems: list[AgentSystem] | None   # get() only
+    benchmark_version_state: str | None       # get() only
+    error: str | None                     # get() only
+    updated_at: str | None                # get() only
+    source_evaluation_id: str | None      # set on rerun_failed() evaluations
+    idempotent_replay: bool               # True when an Idempotency-Key replayed
 
 @dataclass
 class TaskRun:
     id: str
     task_key: str
     agent_system: AgentSystem
-    run_number: int                   # 1-based
-    status: str                       # TaskRunStatus wire values
-    score: float | None               # reward-file score; None until scored
-    metrics: dict[str, float] | None  # named sub-scores from reward.json
+    run_number: int                       # 1-based
+    status: str                           # task-run status above
+    score: float | None                   # None until scored; 0 is a score
+    metrics: dict[str, float] | None      # named sub-scores
     failure_phase: str | None
-    failure_detail: str | None        # truncated to 2000 chars in list responses
-    phase_timings_ms: dict | None     # {'agent_ms': ..., 'verify_ms': ...}
+    failure_detail: str | None            # truncated in list rows; full via task_run()
+    phase_timings_ms: dict | None         # {'agent_ms': ..., 'verify_ms': ...}
     model_usage: ModelUsage | None
-    session_ref: str | None           # agent session/trace reference
+    session_ref: str | None               # agent session/trace reference
     created_at: str
     updated_at: str
 
 @dataclass
-class TaskRunDetail(TaskRun):         # task_run(id, run_id) — untruncated failure_detail
+class TaskRunDetail(TaskRun):             # task_run(id, run_id)
     evaluation_id: str
-    resolved_harness_version: str | None  # harness version actually used; None until resolved
+    resolved_harness_version: str | None  # harness version actually used
+
+@dataclass
+class ModelUsage:
+    spend_usd: float | None
+    spend_source: str | None              # 'measured' | 'assumed_cap'
+    max_budget_usd: float | None
+    resolved_harness_version: str | None
+    extra: dict                           # harness-specific keys, snake_case
 
 @dataclass
 class TaskRunTraceEvent:
-    seq: int                          # monotonic sequence number (the after= resume position)
+    seq: int                              # resume position for after=
     type: str
     data: dict
 
 @dataclass
-class TaskRunTracePage:
-    events: list[TaskRunTraceEvent]
-    next_after: int | None            # resume position; None at the start of an empty trace
+class Benchmark:                          # catalog.list() / catalog.get(ref)
+    name: str
+    title: str | None
+    description: str | None
+    active_version: BenchmarkVersion | None
+    versions: list[BenchmarkVersion] | None   # get() only, newest first
+    tasks: list[Task] | None                  # get() only
+    # ActiveBenchmark (get_active) is the same shape with version + tasks non-optional
+
+@dataclass
+class BenchmarkVersion:
+    version: str
+    state: str                            # benchmark version state above
+    task_count: int
+    created_at: str | None
+
+@dataclass
+class Task:
+    task_key: str
+    agent_timeout_sec: int
+    verifier_timeout_sec: int
 
 @dataclass
 class BenchmarkImport:
     id: str
-    status: str                       # 'IMPORTING' | 'BUILDING' | 'VALIDATING' | 'READY' | 'FAILED'
-    benchmark_name: str | None        # create responses
-    version: str | None               # create responses
-    error: BenchmarkImportError | None  # structured failure detail when status == 'FAILED'
-    task_count: int | None            # tasks parsed, once counted
-
-@dataclass
-class BenchmarkImportError:
-    message: str                      # what went wrong, e.g. "2/113 task(s) failed to parse"
-    failures: list[BenchmarkImportFailure]  # per-task parse/validation failures (empty when corpus unreachable)
-
-@dataclass
-class BenchmarkImportFailure:
-    task_key: str                     # task that failed to parse or validate
-    error: str                        # why it failed
-
-@dataclass
-class EvaluationComparison:           # compare([ids])
-    evaluations: list[ComparisonAggregate]  # id, benchmark, status, mean_score, coverage, spent_usd, agent_systems
-    task_matrix: list[ComparisonTaskRow]    # task_key, disagreement, cells (evaluation_id, status, score, coverage)
+    status: str                           # 'IMPORTING' | 'BUILDING' | 'VALIDATING' | 'READY' | 'FAILED'
+    benchmark_name: str | None
+    version: str | None
+    error: BenchmarkImportError | None    # .message + .failures[(task_key, error)]
+    task_count: int | None
 ```
