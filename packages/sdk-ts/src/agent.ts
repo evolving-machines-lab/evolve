@@ -652,6 +652,38 @@ export class Agent {
   }
 
   /**
+   * Kimi Code model envs for direct-style credential injection (direct mode
+   * and externalGateway mode). Kimi Code reads KIMI_MODEL_* — the registry's
+   * KIMI_API_KEY/KIMI_BASE_URL are SDK-facing inputs the CLI never reads.
+   */
+  private buildKimiDirectModelEnvs(): Record<string, string> {
+    const thinkingEnabled = isThinkingEnabled(this.agentConfig.reasoningEffort);
+    const thinkingEffort = getKimiCodeThinkingEffort(
+      this.agentConfig.reasoningEffort,
+    );
+    const envVars: Record<string, string> = {
+      KIMI_MODEL_NAME: this.resolveCommandModel(
+        this.agentConfig.model || this.registry.defaultModel,
+      ),
+      KIMI_MODEL_API_KEY: this.agentConfig.apiKey,
+      KIMI_MODEL_PROVIDER_TYPE: "kimi",
+      KIMI_MODEL_MAX_CONTEXT_SIZE: String(
+        this.registry.spendTrackingTomlProvider?.maxContextSize ??
+          KIMI_CODE_DEFAULT_CONTEXT_SIZE,
+      ),
+      KIMI_MODEL_DEFAULT_THINKING: thinkingEnabled ? "true" : "false",
+      KIMI_MODEL_THINKING_MODE: thinkingEnabled ? "on" : "off",
+    };
+    if (thinkingEffort) {
+      envVars.KIMI_MODEL_THINKING_EFFORT = thinkingEffort;
+    }
+    if (this.agentConfig.baseUrl) {
+      envVars.KIMI_MODEL_BASE_URL = this.agentConfig.baseUrl;
+    }
+    return envVars;
+  }
+
+  /**
    * Build environment variables for sandbox
    */
   private buildEnvironmentVariables(): Record<string, string> {
@@ -659,29 +691,7 @@ export class Agent {
     const userSecrets = this.validatedUserSecretsForEnvironment();
 
     if (this.agentConfig.type === "kimi" && this.agentConfig.isDirectMode) {
-      const thinkingEnabled = isThinkingEnabled(
-        this.agentConfig.reasoningEffort,
-      );
-      const thinkingEffort = getKimiCodeThinkingEffort(
-        this.agentConfig.reasoningEffort,
-      );
-      envVars.KIMI_MODEL_NAME = this.resolveCommandModel(
-        this.agentConfig.model || this.registry.defaultModel,
-      );
-      envVars.KIMI_MODEL_API_KEY = this.agentConfig.apiKey;
-      envVars.KIMI_MODEL_PROVIDER_TYPE = "kimi";
-      envVars.KIMI_MODEL_MAX_CONTEXT_SIZE = String(
-        this.registry.spendTrackingTomlProvider?.maxContextSize ??
-          KIMI_CODE_DEFAULT_CONTEXT_SIZE,
-      );
-      envVars.KIMI_MODEL_DEFAULT_THINKING = thinkingEnabled ? "true" : "false";
-      envVars.KIMI_MODEL_THINKING_MODE = thinkingEnabled ? "on" : "off";
-      if (thinkingEffort) {
-        envVars.KIMI_MODEL_THINKING_EFFORT = thinkingEffort;
-      }
-      if (this.agentConfig.baseUrl) {
-        envVars.KIMI_MODEL_BASE_URL = this.agentConfig.baseUrl;
-      }
+      Object.assign(envVars, this.buildKimiDirectModelEnvs());
     } else if (this.agentConfig.oauthFileContent) {
       // File-based OAuth (Codex, Gemini): auth file handles auth, no API key env var needed
       // Some agents need an activation env var (e.g., Gemini needs GOOGLE_GENAI_USE_GCA=true)
@@ -784,6 +794,13 @@ export class Agent {
       }
     }
     // OAuth direct mode: no baseUrl needed (Claude Code CLI handles it)
+
+    // External gateway mode for inline-config CLIs (OpenCode): env vars alone
+    // cannot route these CLIs — the provider config (caller-minted credential +
+    // base URL, no LiteLLM spend headers) must ride the config env at boot too.
+    if (this.agentConfig.externalGateway && this.registry.gatewayConfigEnv) {
+      envVars[this.registry.gatewayConfigEnv] = this.buildGatewayConfigJson({});
+    }
 
     if (this.managedBrowserSession && this.options.managedBrowser) {
       Object.assign(
@@ -1114,9 +1131,12 @@ export class Agent {
    */
   private buildGatewayConfigJson(headers: Record<string, string>): string {
     const providerRuntime = this.requireActiveProviderRuntimeToken();
-    const baseUrl =
-      providerRuntime?.baseUrl ??
-      withOpenAiV1Path(getGatewayUrl(this.registry.gatewayPath));
+    // External gateway mode: the caller owns the base URL (and its path
+    // shape) exactly as supplied — never the Evolve gateway default.
+    const baseUrl = this.agentConfig.externalGateway
+      ? this.agentConfig.baseUrl ?? withOpenAiV1Path(getGatewayUrl(this.registry.gatewayPath))
+      : providerRuntime?.baseUrl ??
+        withOpenAiV1Path(getGatewayUrl(this.registry.gatewayPath));
     const selectedModel = this.resolveCommandModel(
       this.agentConfig.model || this.registry.defaultModel,
     );
@@ -1259,13 +1279,22 @@ export class Agent {
 
   private buildProviderRuntimeProcessEnvs(): Record<string, string> {
     // External gateway mode: re-inject the caller-minted credential per spawn,
-    // mirroring direct-mode env injection. No runtime token or binding exists.
+    // mirroring each CLI's direct-mode env wiring. No runtime token or binding
+    // exists. Kimi Code reads KIMI_MODEL_*, not the SDK-facing KIMI_API_KEY/
+    // KIMI_BASE_URL; inline-config CLIs (OpenCode) additionally need the
+    // provider config env re-injected so a spawn can never race a stale boot env.
     if (this.agentConfig.externalGateway) {
+      if (this.agentConfig.type === "kimi") {
+        return this.buildKimiDirectModelEnvs();
+      }
       const envs: Record<string, string> = {
         [this.registry.apiKeyEnv]: this.agentConfig.apiKey,
       };
       if (this.registry.baseUrlEnv && this.agentConfig.baseUrl) {
         envs[this.registry.baseUrlEnv] = this.agentConfig.baseUrl;
+      }
+      if (this.registry.gatewayConfigEnv) {
+        envs[this.registry.gatewayConfigEnv] = this.buildGatewayConfigJson({});
       }
       return envs;
     }
@@ -1813,6 +1842,7 @@ export class Agent {
         this.agentConfig.type === "droid" ? this.droidSessionId : undefined,
       reasoningEffort: this.agentConfig.reasoningEffort,
       isDirectMode: this.agentConfig.isDirectMode,
+      isExternalGateway: Boolean(this.agentConfig.externalGateway),
       skills: this.skills,
       homeDir: this.homeDir,
     });
@@ -2062,8 +2092,16 @@ export class Agent {
 
     // Per-run Droid gateway settings: Droid custom models read extraHeaders from
     // settings at startup, so rewrite the Evolve-owned settings file each run.
-    if (!this.agentConfig.isDirectMode && this.registry.droidGatewaySettings) {
-      const providerRuntime = this.requireActiveProviderRuntimeToken();
+    // External gateway mode uses the same settings file (Droid cannot be routed
+    // by env alone) with the caller's base URL VERBATIM and no LiteLLM headers.
+    if (
+      (!this.agentConfig.isDirectMode || this.agentConfig.externalGateway) &&
+      this.registry.droidGatewaySettings
+    ) {
+      const isExternalGateway = Boolean(this.agentConfig.externalGateway);
+      const providerRuntime = isExternalGateway
+        ? undefined
+        : this.requireActiveProviderRuntimeToken();
       await writeDroidGatewaySettings(
         sandbox,
         {
@@ -2071,14 +2109,18 @@ export class Agent {
           model: this.resolveCommandModel(
             this.agentConfig.model || this.registry.defaultModel,
           ),
-          baseUrl: withOpenAiV1Path(providerRuntime?.baseUrl ?? getGatewayUrl()),
+          baseUrl: isExternalGateway
+            ? this.agentConfig.baseUrl ?? getGatewayUrl()
+            : withOpenAiV1Path(providerRuntime?.baseUrl ?? getGatewayUrl()),
           apiKeyEnv: this.registry.apiKeyEnv,
         },
-        {
-          [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
-          [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
-          ...this.providerRuntimeHeaderUpdates(),
-        },
+        isExternalGateway
+          ? {}
+          : {
+              [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
+              [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
+              ...this.providerRuntimeHeaderUpdates(),
+            },
         this.homeDir,
       );
     }

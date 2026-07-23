@@ -16,7 +16,7 @@ e = evaluations()
 
 Both clients are usable directly or as async context managers (`async with evaluations() as e:`).
 
-One documented difference from TypeScript: Python's `watch()` **polls** `get()` until the evaluation is terminal; the TypeScript SDK's `watch()` streams the SSE event feed with per-event callbacks. For live event streams from Python scripts, use the [`evolve-evals` CLI](#cli) with `--watch --json`.
+Python's `watch()` differs from TypeScript's in one way: it **polls** `get()` until the evaluation is terminal, where the TypeScript SDK streams the SSE event feed with per-event callbacks. For a live event stream from a Python script, use the [`evolve-evals` CLI](#cli) with `--watch --json`.
 
 ## Quickstart
 
@@ -67,7 +67,7 @@ asyncio.run(main())
 
 ## Evaluation Inputs
 
-`evaluations().run()` takes the six-input contract plus one optional per-run cap (all keyword arguments):
+`evaluations().run()` takes six inputs, plus an optional per-run spend cap — all keyword arguments:
 
 | Input | Required | Description |
 |-------|----------|-------------|
@@ -279,7 +279,7 @@ harbor_path = await e.export(evaluation.id, to='./results', format='harbor')
 
 ## CLI
 
-The TypeScript package ships an `evolve-evals` binary usable from any environment with Node.js — including alongside Python projects. It covers run/list/get/task-runs/cancel/rerun-failed/export plus the benchmark catalog, and `--watch` streams live events (the SSE path Python's `watch()` does not use):
+The TypeScript package ships an `evolve-evals` binary usable from any environment with Node.js — including alongside Python projects. It covers the full command set — run, list, get, task-runs, cancel, rerun-failed, and export — plus the benchmark catalog, and `--watch` streams live events (the SSE path Python's `watch()` does not use):
 
 ```bash
 npx evolve-evals run --benchmark deep-swe@1.1 --system codex:gpt-5.5 --max-spend 25 --watch

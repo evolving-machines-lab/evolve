@@ -44,6 +44,14 @@ export interface BuildCommandOptions {
   sessionId?: string;
   reasoningEffort?: string;
   isDirectMode?: boolean;
+  /**
+   * External gateway mode (caller-minted credential + base URL). Direct-mode
+   * env injection applies, but CLIs that route via generated config (OpenCode
+   * inline config, Droid settings file) must use their GATEWAY command shape
+   * pointed at the caller's gateway — with the model passed VERBATIM (route
+   * names belong to the caller's gateway, never to Evolve's alias maps).
+   */
+  isExternalGateway?: boolean;
   /** Skills enabled for this run */
   skills?: string[];
   /** Sandbox home directory (default: "/home/user") */
@@ -444,10 +452,16 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       "~/.config/opencode",       // config.json, AGENTS.md, theme
       "~/.local/state/opencode",  // prompt history, model prefs, TUI state
     ],
-    buildCommand: ({ prompt, model, isResume, isDirectMode, reasoningEffort }) => {
+    buildCommand: ({ prompt, model, isResume, isDirectMode, isExternalGateway, reasoningEffort }) => {
       const continueFlag = isResume ? "--continue " : "";
-      const routedModel = model.startsWith("openrouter/") ? model : `openrouter/${model}`;
       const reasoningFlags = getOpenCodeReasoningFlags(reasoningEffort);
+      if (isExternalGateway) {
+        // External gateway: OPENCODE_CONFIG_CONTENT defines the litellm
+        // provider at the caller's gateway; route the VERBATIM model under it
+        // (no openrouter/ rewrite — route names are the caller's).
+        return `OPENCODE_PERMISSION='{"*":"allow"}' opencode run ${continueFlag}--model litellm/${model} --format json${reasoningFlags} "${prompt}" < /dev/null`;
+      }
+      const routedModel = model.startsWith("openrouter/") ? model : `openrouter/${model}`;
       if (!isDirectMode) {
         return `OPENCODE_PERMISSION='{"*":"allow"}' opencode run ${continueFlag}--model litellm/${routedModel} --format json${reasoningFlags} "${prompt}" < /dev/null`;
       }
@@ -518,9 +532,13 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     checkpointDirs: [
       "~/.factory",
     ],
-    buildCommand: ({ prompt, model, isResume, sessionId, reasoningEffort, isDirectMode, homeDir = DEFAULT_HOME_DIR }) => {
-      const settingsFlag = isDirectMode ? "" : `--settings ${homeDir}/.factory/evolve-settings.json `;
-      const commandModel = isDirectMode ? model : "custom:Evolve-Gateway-0";
+    buildCommand: ({ prompt, model, isResume, sessionId, reasoningEffort, isDirectMode, isExternalGateway, homeDir = DEFAULT_HOME_DIR }) => {
+      // Gateway AND external-gateway modes route through the Evolve-owned
+      // settings file (custom model at the gateway); only plain direct mode
+      // talks to Factory with a native model id.
+      const useGatewaySettings = !isDirectMode || isExternalGateway;
+      const settingsFlag = useGatewaySettings ? `--settings ${homeDir}/.factory/evolve-settings.json ` : "";
+      const commandModel = useGatewaySettings ? "custom:Evolve-Gateway-0" : model;
       const reasoningFlag = reasoningEffort ? ` --reasoning-effort ${reasoningEffort}` : "";
       const resumeFlag = isResume && sessionId ? `--session-id ${shellSingleQuote(sessionId)} ` : "";
       return `printf '%s' ${shellSingleQuote(prompt)} | droid ${settingsFlag}exec ${resumeFlag}--skip-permissions-unsafe --cwd ${homeDir}/workspace --output-format stream-json --model ${shellSingleQuote(commandModel)}${reasoningFlag}`;

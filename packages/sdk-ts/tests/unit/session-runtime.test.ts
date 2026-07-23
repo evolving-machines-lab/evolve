@@ -2558,6 +2558,127 @@ async function testExternalGatewayMutualExclusivity(): Promise<void> {
   }
 }
 
+async function testExternalGatewayPerHarnessWiring(): Promise<void> {
+  console.log("\n[22] externalGateway wiring per harness (gemini/qwen/kimi/opencode/droid)");
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    throw new Error(`unexpected fetch in externalGateway mode: ${String(input)}`);
+  }) as typeof fetch;
+
+  const EXTERNAL_KEY = "sk-litellm-task";
+  const EXTERNAL_URL = "https://litellm.test/route";
+
+  async function runHarness(type: string, model: string) {
+    const commands = new MockCommands();
+    const sandbox = new MockSandbox(`external-${type}`, commands);
+    const provider = new MockProvider(sandbox);
+    const kit = new Evolve()
+      .withAgent({
+        type: type as never,
+        model,
+        externalGateway: {
+          apiKey: EXTERNAL_KEY,
+          baseUrl: EXTERNAL_URL,
+          revoke: async () => {},
+        },
+      })
+      .withSandbox(provider)
+      .withWorkspaceMode("task")
+      .withWorkingDirectory("/task");
+    try {
+      await kit.run({ prompt: "solve", timeoutMs: 10_000 });
+    } finally {
+      await kit.kill().catch(() => {});
+    }
+    return {
+      bootEnvs: (provider.createOptions?.envs ?? {}) as Record<string, string>,
+      spawnEnvs: (commands.spawnOptions[0]?.envs ?? {}) as Record<string, string>,
+      command: commands.spawned[0] ?? "",
+      files: sandbox.files.writes,
+    };
+  }
+
+  try {
+    // gemini: direct-style env wiring on the Gemini-native base URL env.
+    const gemini = await runHarness("gemini", "gw-gemini-model");
+    assertEqual(gemini.bootEnvs.GEMINI_API_KEY, EXTERNAL_KEY, "gemini boot env injects GEMINI_API_KEY");
+    assertEqual(gemini.bootEnvs.GOOGLE_GEMINI_BASE_URL, EXTERNAL_URL, "gemini boot env injects GOOGLE_GEMINI_BASE_URL");
+    assertEqual(gemini.spawnEnvs.GEMINI_API_KEY, EXTERNAL_KEY, "gemini spawn env re-injects GEMINI_API_KEY");
+    assertEqual(gemini.spawnEnvs.GOOGLE_GEMINI_BASE_URL, EXTERNAL_URL, "gemini spawn env re-injects GOOGLE_GEMINI_BASE_URL");
+    assert(gemini.command.includes("--model gw-gemini-model"), "gemini command carries the VERBATIM caller model");
+    assert(!("EVOLVE_API_KEY" in gemini.bootEnvs), "gemini externalGateway never exposes EVOLVE_API_KEY");
+
+    // qwen: OpenAI-convention env wiring, model verbatim (no dashscope/ rewrite).
+    const qwen = await runHarness("qwen", "gw-qwen-model");
+    assertEqual(qwen.bootEnvs.OPENAI_API_KEY, EXTERNAL_KEY, "qwen boot env injects OPENAI_API_KEY");
+    assertEqual(qwen.bootEnvs.OPENAI_BASE_URL, EXTERNAL_URL, "qwen boot env injects OPENAI_BASE_URL");
+    assertEqual(qwen.spawnEnvs.OPENAI_API_KEY, EXTERNAL_KEY, "qwen spawn env re-injects OPENAI_API_KEY");
+    assert(qwen.command.includes("--model gw-qwen-model"), "qwen command carries the VERBATIM caller model (no dashscope/ prefix)");
+    assert(qwen.command.includes("--auth-type openai"), "qwen command keeps --auth-type openai");
+
+    // kimi: Kimi Code reads KIMI_MODEL_* — never KIMI_API_KEY/KIMI_BASE_URL.
+    const kimi = await runHarness("kimi", "gw-kimi-model");
+    assertEqual(kimi.bootEnvs.KIMI_MODEL_API_KEY, EXTERNAL_KEY, "kimi boot env injects KIMI_MODEL_API_KEY");
+    assertEqual(kimi.bootEnvs.KIMI_MODEL_BASE_URL, EXTERNAL_URL, "kimi boot env injects KIMI_MODEL_BASE_URL");
+    assertEqual(kimi.bootEnvs.KIMI_MODEL_NAME, "gw-kimi-model", "kimi boot env carries the VERBATIM caller model");
+    assertEqual(kimi.bootEnvs.KIMI_MODEL_PROVIDER_TYPE, "kimi", "kimi boot env pins the kimi provider type");
+    assertEqual(kimi.spawnEnvs.KIMI_MODEL_API_KEY, EXTERNAL_KEY, "kimi spawn env re-injects KIMI_MODEL_API_KEY");
+    assertEqual(kimi.spawnEnvs.KIMI_MODEL_BASE_URL, EXTERNAL_URL, "kimi spawn env re-injects KIMI_MODEL_BASE_URL");
+    assert(!("KIMI_API_KEY" in kimi.spawnEnvs), "kimi spawn env does NOT inject the unread KIMI_API_KEY");
+    assert(!("KIMI_BASE_URL" in kimi.spawnEnvs), "kimi spawn env does NOT inject the unread KIMI_BASE_URL");
+
+    // opencode: inline provider config carries credential + base URL; the
+    // command routes the VERBATIM model under the litellm provider.
+    const opencode = await runHarness("opencode", "gw-opencode-model");
+    const configJson = opencode.spawnEnvs.OPENCODE_CONFIG_CONTENT ?? "";
+    assert(configJson.length > 0, "opencode spawn env carries OPENCODE_CONFIG_CONTENT");
+    const parsed = JSON.parse(configJson) as {
+      provider?: { litellm?: { options?: { baseURL?: string; apiKey?: string }; models?: Record<string, { headers?: Record<string, string> }> } };
+    };
+    assertEqual(parsed.provider?.litellm?.options?.baseURL, EXTERNAL_URL, "opencode litellm provider points at the external base URL VERBATIM");
+    assertEqual(parsed.provider?.litellm?.options?.apiKey, EXTERNAL_KEY, "opencode litellm provider carries the caller-minted key");
+    const modelEntry = parsed.provider?.litellm?.models?.["gw-opencode-model"];
+    assert(modelEntry !== undefined, "opencode litellm provider registers the VERBATIM caller model");
+    assertEqual(
+      Object.keys(modelEntry?.headers ?? {}).length,
+      0,
+      "opencode external config carries NO LiteLLM spend headers",
+    );
+    const bootConfig = opencode.bootEnvs.OPENCODE_CONFIG_CONTENT ?? "";
+    assert(bootConfig.includes(EXTERNAL_URL), "opencode boot env also carries the external provider config");
+    assert(opencode.command.includes("--model litellm/gw-opencode-model"), "opencode command routes litellm/<verbatim model>");
+    assert(!opencode.command.includes("openrouter/"), "opencode command never rewrites the model to openrouter/");
+
+    // droid: routed via the Evolve-owned settings file at the external base
+    // URL verbatim, env-referenced key, no LiteLLM headers, custom model id.
+    const droid = await runHarness("droid", "gw-droid-model");
+    const settingsRaw = droid.files.get("/home/user/.factory/evolve-settings.json") ?? "";
+    assert(settingsRaw.length > 0, "droid externalGateway writes the Evolve-owned settings file");
+    const settings = JSON.parse(settingsRaw) as {
+      customModels?: Array<{ model?: string; baseUrl?: string; apiKey?: string; provider?: string; extraHeaders?: Record<string, string> }>;
+    };
+    const custom = settings.customModels?.[0];
+    assertEqual(custom?.baseUrl, EXTERNAL_URL, "droid custom model points at the external base URL VERBATIM");
+    assertEqual(custom?.model, "gw-droid-model", "droid custom model carries the VERBATIM caller model");
+    assertEqual(custom?.apiKey, "${FACTORY_API_KEY}", "droid custom model references the key via FACTORY_API_KEY env");
+    assertEqual(custom?.provider, "generic-chat-completion-api", "droid custom model keeps the OpenAI-compatible protocol");
+    assertEqual(
+      Object.keys(custom?.extraHeaders ?? {}).length,
+      0,
+      "droid external settings carry NO LiteLLM spend headers",
+    );
+    assertEqual(droid.spawnEnvs.FACTORY_API_KEY, EXTERNAL_KEY, "droid spawn env injects FACTORY_API_KEY for the settings reference");
+    assertEqual(droid.bootEnvs.FACTORY_API_KEY, EXTERNAL_KEY, "droid boot env injects FACTORY_API_KEY for the settings reference");
+    assert(
+      droid.command.includes("--settings /home/user/.factory/evolve-settings.json"),
+      "droid command routes through the Evolve-owned settings file",
+    );
+    assert(droid.command.includes("custom:Evolve-Gateway-0"), "droid command selects the gateway custom model");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+}
+
 async function main(): Promise<void> {
   console.log("\n============================================================");
   console.log("Session Runtime Unit Tests");
@@ -2589,6 +2710,7 @@ async function main(): Promise<void> {
     await testRootUserThreadedThroughE2bOperations();
     await testExternalGatewaySealFlow();
     await testExternalGatewayMutualExclusivity();
+    await testExternalGatewayPerHarnessWiring();
   } catch (error) {
     failed++;
     console.log(

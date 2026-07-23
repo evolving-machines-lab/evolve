@@ -59,7 +59,7 @@ console.log("Saved:", path); // ./results/evaluation-<id>-export.json.gz
 
 ## Evaluation Inputs
 
-`evaluations().run()` takes the six-input contract plus one optional per-run cap:
+`evaluations().run()` takes six inputs, plus an optional per-run spend cap:
 
 | Input | Required | Description |
 |-------|----------|-------------|
