@@ -31,7 +31,7 @@
 
 - Added Hosted Evals chapters (TypeScript and Python) covering both clients, the evaluation inputs, status tables, the quickstart, and the CLI.
 - Documented sandbox create options, workspace modes, external gateway mode, and the task-sandbox credential lifecycle (capped key → run → seal-revokes → collect-after-seal); synced the Evolve skill references.
-- Documented the import → conformance-activation lifecycle (imports land at `VALIDATING`; a gold/no-op activation gate promotes to `READY`; only `READY` versions accept evaluations), the multi-provider sandbox story (E2B/Daytona/Modal capability parity and `EVAL_SANDBOX_PROVIDER` selection), per-harness model constraints, and the eval spend read-back caveat.
+- Documented the import → conformance-activation lifecycle (imports land at `VALIDATING`; a gold/no-op activation gate promotes to `READY`; only `READY` versions accept evaluations), the multi-provider sandbox story (E2B/Daytona/Modal capability parity, selected per evaluation via the optional `sandboxProvider` input / `--provider` CLI flag, default `e2b`), per-harness model constraints, and the eval spend read-back caveat.
 
 ## v0.0.51 - 2026-06-30
 

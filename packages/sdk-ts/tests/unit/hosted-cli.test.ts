@@ -158,6 +158,7 @@ function testParseRunFull() {
     "--concurrency", "4",
     "--max-spend", "25",
     "--max-spend-per-run", "5",
+    "--provider", "daytona",
     "--watch",
     "--json",
   ]);
@@ -180,8 +181,9 @@ function testParseRunFull() {
       runsPerTask: 2,
       concurrency: 4,
       maxModelSpendUsdPerTaskRun: 5,
+      sandboxProvider: "daytona",
     },
-    "builds the evaluation input (csv tasks trimmed, per-run cap mapped)"
+    "builds the evaluation input (csv tasks trimmed, per-run cap + provider mapped)"
   );
 }
 
@@ -205,6 +207,7 @@ function testParseRunMinimal() {
   );
   assert(!("tasks" in input), "no tasks key when --tasks omitted");
   assert(!("maxModelSpendUsdPerTaskRun" in input), "no per-run cap key when omitted");
+  assert(!("sandboxProvider" in input), "no provider key when --provider omitted");
 }
 
 function testParseAgentSystem() {

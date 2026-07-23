@@ -17,6 +17,7 @@ import type {
   ComparisonCell,
   ComparisonCoverage,
   ComparisonTaskRow,
+  EvalSandboxProvider,
   Evaluation,
   EvaluationComparison,
   EvaluationEvent,
@@ -61,6 +62,7 @@ export type {
   ComparisonCell,
   ComparisonCoverage,
   ComparisonTaskRow,
+  EvalSandboxProvider,
   Evaluation,
   EvaluationComparison,
   EvaluationEvent,
@@ -234,6 +236,9 @@ function mapEvaluation(raw: Record<string, unknown>): Evaluation {
   };
   if (typeof raw.maxModelSpendUsdPerTaskRun === "number") {
     evaluation.maxModelSpendUsdPerTaskRun = raw.maxModelSpendUsdPerTaskRun;
+  }
+  if (typeof raw.sandboxProvider === "string") {
+    evaluation.sandboxProvider = raw.sandboxProvider as EvalSandboxProvider;
   }
   if (raw.counts && typeof raw.counts === "object") {
     evaluation.counts = raw.counts as Evaluation["counts"];

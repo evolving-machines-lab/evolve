@@ -130,7 +130,7 @@ Read on demand when the user's task requires them:
 | Benchmark import & conformance activation (VALIDATING → READY) | [TS](references/typescript/06-hosted-evals.md#import--getimport--watchimport) | [PY](references/python/06-hosted-evals.md#import_benchmark--get_import--watch_import) |
 | evaluations() client (run, watch, cancel, rerun, export) | [TS](references/typescript/06-hosted-evals.md#evaluations-client) | [PY](references/python/06-hosted-evals.md#evaluations-client) |
 | evolve-evals CLI | [TS](references/typescript/06-hosted-evals.md#cli) | [PY](references/python/06-hosted-evals.md#cli) |
-| Sandbox providers for evals (E2B/Daytona/Modal parity, EVAL_SANDBOX_PROVIDER) | [TS](references/typescript/06-hosted-evals.md#sandbox-providers) | [PY](references/python/06-hosted-evals.md#sandbox-providers) |
+| Sandbox providers for evals (E2B/Daytona/Modal parity, `sandboxProvider` input) | [TS](references/typescript/06-hosted-evals.md#sandbox-providers) | [PY](references/python/06-hosted-evals.md#sandbox-providers) |
 
 ### Swarm & Pipeline
 

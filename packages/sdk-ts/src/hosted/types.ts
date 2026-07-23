@@ -126,6 +126,13 @@ export interface AgentSystem {
   harnessVersion?: string | null;
 }
 
+/**
+ * Sandbox provider a hosted evaluation runs on. Named `EvalSandboxProvider` to
+ * avoid colliding with the core SDK's `SandboxProvider` (the sandbox-abstraction
+ * interface).
+ */
+export type EvalSandboxProvider = "e2b" | "daytona" | "modal";
+
 /** The six-input contract for creating an evaluation */
 export interface EvaluationInput {
   /** Benchmark reference in the form "name@version" */
@@ -141,6 +148,8 @@ export interface EvaluationInput {
   maxModelSpendUsd: number;
   /** Optional per-task-run model-spend cap in USD */
   maxModelSpendUsdPerTaskRun?: number;
+  /** Sandbox provider to run on (optional; server default: `e2b`) */
+  sandboxProvider?: EvalSandboxProvider;
 }
 
 /** TaskRun count histogram by status */
@@ -163,6 +172,8 @@ export interface Evaluation {
   maxModelSpendUsd: number;
   /** Per-task-run model-spend cap, when one was set */
   maxModelSpendUsdPerTaskRun?: number;
+  /** Sandbox provider this evaluation runs on */
+  sandboxProvider?: EvalSandboxProvider;
   spentUsd: number;
   createdAt: string;
   /** Summary-shape counts (run/cancel/rerunFailed/list) */

@@ -54,6 +54,7 @@ Run options:
   --concurrency <n>                   Parallel task runs (default 1)
   --max-spend <usd>                   Evaluation-wide model-spend cap (required)
   --max-spend-per-run <usd>           Per-task-run model-spend cap
+  --provider <e2b|daytona|modal>      e2b | daytona | modal, default e2b
   --watch                             Stream events until the evaluation finishes
 
 Import options:
@@ -116,6 +117,7 @@ const COMMAND_SPECS: Record<string, CommandSpec> = {
       concurrency: "number",
       "max-spend": "number",
       "max-spend-per-run": "number",
+      provider: "string",
       watch: "boolean",
     },
     required: ["benchmark", "system", "max-spend"],
@@ -293,6 +295,9 @@ export function buildEvaluationInput(inv: Invocation): EvaluationInput {
   if (f.concurrency !== undefined) input.concurrency = f.concurrency as number;
   if (f["max-spend-per-run"] !== undefined) {
     input.maxModelSpendUsdPerTaskRun = f["max-spend-per-run"] as number;
+  }
+  if (f.provider !== undefined) {
+    input.sandboxProvider = f.provider as EvaluationInput["sandboxProvider"];
   }
   return input;
 }

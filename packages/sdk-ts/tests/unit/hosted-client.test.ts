@@ -428,6 +428,7 @@ const RUN_SUMMARY = {
   runsPerTask: 1,
   concurrency: 4,
   maxModelSpendUsd: 25,
+  sandboxProvider: "daytona",
   spentUsd: 0,
   counts: { agentSystems: 2, tasks: 5, taskRuns: 10 },
   createdAt: "2026-07-22T00:00:00.000Z",
@@ -451,6 +452,7 @@ async function testRunPostsSixInputs() {
       concurrency: 4,
       maxModelSpendUsd: 25,
       maxModelSpendUsdPerTaskRun: 2.5,
+      sandboxProvider: "daytona" as const,
     };
     const evaluation = await e.run(input, { idempotencyKey: "idem-abc" });
 
@@ -462,6 +464,12 @@ async function testRunPostsSixInputs() {
       2.5,
       "maxModelSpendUsdPerTaskRun forwarded"
     );
+    assertEqual(
+      JSON.parse(call.init?.body as string).sandboxProvider,
+      "daytona",
+      "sandboxProvider forwarded"
+    );
+    assertEqual(evaluation.sandboxProvider, "daytona", "maps sandboxProvider from summary");
     const headers = call.init?.headers as Record<string, string>;
     assertEqual(headers?.["Idempotency-Key"], "idem-abc", "Idempotency-Key header sent");
     assertEqual(headers?.["Content-Type"], "application/json", "JSON content type");
@@ -516,6 +524,7 @@ async function testGetEvaluationDetail() {
         concurrency: 4,
         maxModelSpendUsd: 25,
         maxModelSpendUsdPerTaskRun: 2.5,
+        sandboxProvider: "modal",
         spentUsd: 3.5,
         agentSystems: [
           {
@@ -540,6 +549,7 @@ async function testGetEvaluationDetail() {
     assertEqual(evaluation.status, "RUNNING", "maps status");
     assertEqual(evaluation.benchmarkVersionState, "READY", "maps benchmarkVersionState");
     assertEqual(evaluation.maxModelSpendUsdPerTaskRun, 2.5, "maps maxModelSpendUsdPerTaskRun");
+    assertEqual(evaluation.sandboxProvider, "modal", "maps sandboxProvider");
     assertEqual(evaluation.spentUsd, 3.5, "maps spentUsd");
     assertEqual(
       evaluation.taskRunCounts,

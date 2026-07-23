@@ -590,6 +590,23 @@ class TestEvaluations:
         assert evaluation.max_model_spend_usd_per_task_run == 2
 
     @pytest.mark.asyncio
+    async def test_run_posts_sandbox_provider(self):
+        fake = FakeUrlopen([
+            ('/api/evaluations', {**RUN_SUMMARY, 'sandboxProvider': 'daytona'}),
+        ])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            evaluation = await evaluations_factory(CONFIG).run(
+                benchmark='deep-swe@1.1',
+                agent_systems=[AgentSystem(harness='codex', model='gpt-5.5')],
+                max_model_spend_usd=25,
+                sandbox_provider='daytona',
+            )
+
+        body = json.loads(fake.requests[0].data.decode('utf-8'))
+        assert body['sandboxProvider'] == 'daytona'
+        assert evaluation.sandbox_provider == 'daytona'
+
+    @pytest.mark.asyncio
     async def test_task_run_detail_mapping(self):
         fake = FakeUrlopen([
             ('/api/evaluations/eval-1/task-runs/run-1', {

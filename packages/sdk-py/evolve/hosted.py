@@ -143,6 +143,8 @@ class Evaluation:
     source_evaluation_id: Optional[str] = None
     idempotent_replay: bool = False
     max_model_spend_usd_per_task_run: Optional[float] = None
+    #: Sandbox provider this evaluation runs on ("e2b" | "daytona" | "modal").
+    sandbox_provider: Optional[str] = None
 
 
 @dataclass
@@ -329,6 +331,7 @@ def _map_evaluation(data: Dict[str, Any]) -> Evaluation:
         source_evaluation_id=data.get('sourceEvaluationId'),
         idempotent_replay=bool(data.get('idempotentReplay', False)),
         max_model_spend_usd_per_task_run=data.get('maxModelSpendUsdPerTaskRun'),
+        sandbox_provider=data.get('sandboxProvider'),
     )
 
 
@@ -751,6 +754,7 @@ class EvaluationsClient:
         runs_per_task: Optional[int] = None,
         concurrency: Optional[int] = None,
         max_model_spend_usd_per_task_run: Optional[float] = None,
+        sandbox_provider: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> Evaluation:
         """Create an evaluation (the six(+1)-input contract). Supports Idempotency-Key."""
@@ -770,6 +774,8 @@ class EvaluationsClient:
             body['concurrency'] = concurrency
         if max_model_spend_usd_per_task_run is not None:
             body['maxModelSpendUsdPerTaskRun'] = max_model_spend_usd_per_task_run
+        if sandbox_provider is not None:
+            body['sandboxProvider'] = sandbox_provider
         headers = {'Idempotency-Key': idempotency_key} if idempotency_key else None
         raw = await self._http.request_json('/api/evaluations', method='POST', body=body, headers=headers)
         return _map_evaluation(raw)

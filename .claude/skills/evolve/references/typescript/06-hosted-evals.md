@@ -191,7 +191,7 @@ An import runs in two stages. The **importer** clones the pinned git source, par
 
 Because promotion is a distinct step, `watchImport()` resolves when the version reaches `READY` (activation succeeded) or `FAILED`; a freshly imported version rests at `VALIDATING` until the activation gate runs. Only `READY` versions accept evaluations — `evaluations().run()` rejects a non-`READY` benchmark and `getActive()` throws `NoActiveVersionError` until a version is activated.
 
-Imports are gated per deployment: only user ids listed in `EVAL_IMPORT_ALLOWED_USER_IDS` may import, and when that variable is unset or empty imports are disabled for everyone (the call returns `403`). Archive-upload and Harbor Hub sources are part of the typed surface but not accepted by the server yet — git is the supported source.
+Imports require an admin account: only users with the `ADMIN` role may import, and any other caller receives `403`. Archive-upload and Harbor Hub sources are part of the typed surface but not accepted by the server yet — git is the supported source.
 
 ---
 
@@ -417,11 +417,11 @@ npx evolve-evals export <id> --to ./results --format harbor
 
 ## Sandbox Providers
 
-Hosted eval task runs and managed agent sessions run on the same three sandbox providers — E2B, Daytona, and Modal. Managed sessions resolve a provider from env (Configuration → [Sandbox Providers](./02-configuration.md#sandbox-providers)); eval task runs resolve one from `EVAL_SANDBOX_PROVIDER` on the eval worker. All three honor the same provider-neutral create options (image, `user`/`homeDir`, outbound network policy, timeout), so one benchmark image and one network policy run unchanged across every provider. The honest differences:
+Hosted eval task runs and managed agent sessions run on the same three sandbox providers — E2B, Daytona, and Modal. Managed sessions resolve a provider from env (Configuration → [Sandbox Providers](./02-configuration.md#sandbox-providers)); an eval picks its provider as an input — the optional `sandboxProvider` field on the evaluation, defaulting to `e2b`. All three honor the same provider-neutral create options (image, `user`/`homeDir`, outbound network policy, timeout), so one benchmark image and one network policy run unchanged across every provider. The honest differences:
 
 | Capability | E2B | Daytona | Modal |
 |------------|-----|---------|-------|
-| `EVAL_SANDBOX_PROVIDER` value | `e2b` (default) | `daytona` | `modal` |
+| Provider value | `e2b` (default) | `daytona` | `modal` |
 | Run agent as root | Native `user: "root"` | Image `USER` (root by default); no per-exec user switch | Native execution user is root |
 | Outbound allowlist | Hostnames, IPs, CIDRs | Kernel IPv4 CIDRs only, ≤ 10 entries | Hostnames, IPs, CIDRs |
 | Sandbox-death signal | Webhook | Webhook (Svix-style) | Polling sweep (no webhooks) |
@@ -434,7 +434,24 @@ Hosted eval task runs and managed agent sessions run on the same three sandbox p
 
 ### Selecting the eval provider
 
-The eval worker reads `EVAL_SANDBOX_PROVIDER` once per phase: unset or empty means `e2b`; `daytona` and `modal` select those providers; any other value is a loud error, never a silent fallback, so a typo cannot bill the wrong account. Flip it only when nothing is in flight — sandbox ids recorded on in-flight runs belong to the provider that created them, and the orphan reaper kills with the currently selected provider. Provider credentials come from the worker environment, the same law as `E2B_API_KEY`: `DAYTONA_API_KEY` for Daytona; `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` (plus `MODAL_IMAGE_SECRET_NAME` for private task images) for Modal.
+The provider is a public, optional input on the evaluation — choose it per run, no environment variable involved:
+
+```typescript
+const evaluation = await evals.run({
+    benchmark: "swe-bench-verified@1.0",
+    agentSystems: [{ harness: "codex", model: "gpt-5.5" }],
+    maxModelSpendUsd: 25,
+    sandboxProvider: "daytona", // "e2b" (default) | "daytona" | "modal"
+});
+```
+
+From the CLI, pass `--provider`:
+
+```bash
+evolve-evals run --benchmark swe-bench-verified@1.0 --system codex:gpt-5.5 --max-spend 25 --provider daytona
+```
+
+Omit the field to accept the default (`e2b`); an unknown value is rejected at creation with a `400`, never a silent fallback, so a typo cannot bill the wrong account. Once chosen the provider is fixed for the evaluation's life — every task run, and any `rerunFailed()` of it, runs on it. Provider credentials are operator config on the eval worker (not part of the request): `E2B_API_KEY` for E2B, `DAYTONA_API_KEY` for Daytona, `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` (plus `MODAL_IMAGE_SECRET_NAME` for private task images) for Modal.
 
 ### Operator setup
 
