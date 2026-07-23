@@ -76,7 +76,7 @@ asyncio.run(main())
 
 An evaluation expands to `tasks × agent_systems × runs_per_task` task runs. Each task run executes in its own sandbox with a capped, revocable model credential; spend is tracked against both caps.
 
-`harness` is one of `'claude'`, `'codex'`, `'gemini'`, `'qwen'`, `'kimi'`, `'opencode'`, or `'droid'`, and `model` comes from that harness's own family — for example `claude` + `'fable'`, `codex` + `'gpt-5.5'`, `gemini` + `'gemini-3.1-pro-preview'`, `qwen` + `'qwen3.7-max'`, `kimi` + `'kimi-k2.6'`, `opencode` + `'openrouter/anthropic/claude-sonnet-4.6'`, `droid` + `'gpt-5.5'`. Some harnesses only accept native models: `harness='qwen'` must run a Qwen-native model (Qwen Code injects the DashScope-only `enable_thinking` parameter, which OpenAI-family models reject with a `400`), and `harness='opencode'` takes `openrouter/…` model ids. See [Getting Started → Harness and Model Pairing](./01-getting-started.md#harness-and-model-pairing) for the full rules.
+Valid harness + model pairs are defined in one place — [Getting Started → Supported Agents & Models](./01-getting-started.md#harness-and-model-pairing), including the current model tables and the pairing rules (some harnesses only accept models from their own family). An invalid pair fails the evaluation's task runs rather than silently substituting a model.
 
 The harness version actually used for a run is reported back on the task run detail (`resolved_harness_version`), so unpinned runs remain reproducible after the fact.
 
