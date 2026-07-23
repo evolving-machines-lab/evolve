@@ -1,12 +1,5 @@
 /**
- * Hosted evals public types.
- *
- * Mirrors the hosted benchmarks/evaluations API 1-1. Exposed types follow the
- * evals-rebuild plan's public surface exactly: Benchmark, BenchmarkVersion,
- * Task, AgentSystem, EvaluationInput, Evaluation, TaskRun, TaskRunDetail,
- * TaskRunTraceEvent/Page, EvaluationEvent, ModelUsage, OutputFile,
- * EvaluationComparison, BenchmarkImport + cursor pages.
- * Nothing Evolve-internal (worker, templates, credentials) leaks here.
+ * Public types for the hosted benchmarks/evaluations API.
  */
 
 /** Configuration for the benchmarks() / evaluations() factories */
@@ -30,9 +23,9 @@ export type EvaluationStatus =
 
 /**
  * TaskRun status law: a valid reward (including 0) = SCORED; verifier crash or
- * out-of-domain reward = SCORING_ERROR (never a fabricated zero); sandbox loss
- * before a durable artifact = INFRASTRUCTURE_ERROR; dispatch/completion
- * uncertainty = INDETERMINATE.
+ * out-of-domain reward = SCORING_ERROR (never a fabricated zero);
+ * INFRASTRUCTURE_ERROR: the run was lost before a result was recorded;
+ * INDETERMINATE: the platform cannot tell whether the run completed.
  */
 export type TaskRunStatus =
   | "QUEUED"
@@ -197,14 +190,15 @@ export interface Evaluation {
 }
 
 /**
- * Where a task run's spend figure came from: "key_info" is read back from the
- * gateway (authoritative); "assumed_cap" is the conservative fallback.
+ * Where a task run's spend figure came from: "key_info" is the measured model
+ * spend reported by the platform; "assumed_cap" means spend could not be
+ * measured for this run, so the per-run cap is reported.
  */
 export type SpendSource = "key_info" | "assumed_cap";
 
 /** Model usage/spend recorded for a task run. Open map: harness-specific keys may appear. */
 export interface ModelUsage {
-  /** Model spend in USD (LiteLLM is the only spend truth) */
+  /** Model spend in USD */
   spendUsd?: number;
   /** Where the spend figure came from */
   spendSource?: SpendSource;
@@ -430,8 +424,7 @@ export type BenchmarkImportStatus =
   | "FAILED";
 
 /**
- * A benchmark import job (parse -> validate -> activate pipeline).
- * Terminal statuses: "READY" and "FAILED".
+ * A benchmark import job. Terminal statuses: "READY" and "FAILED".
  */
 export interface BenchmarkImport {
   /** Import job id */

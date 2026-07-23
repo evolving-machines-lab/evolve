@@ -3,8 +3,6 @@
  *
  * Builder pattern for configuring and running agents.
  * Provides event-based streaming and simplified API.
- *
- * Evidence: sdk-rewrite-v3.md Public API Contract section
  */
 
 import { EventEmitter } from "events";

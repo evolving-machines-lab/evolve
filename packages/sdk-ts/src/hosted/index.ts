@@ -136,8 +136,7 @@ const TERMINAL_EVALUATION_STATUSES: ReadonlySet<EvaluationStatus> = new Set([
   "FAILED",
 ]);
 
-// The final event row a terminal evaluation writes; seeing one on the wire is
-// the authoritative end-of-stream signal.
+// Seeing one of these on the wire is the authoritative end-of-stream signal.
 const TERMINAL_EVENT_TYPES: ReadonlySet<string> = new Set([
   "evaluation.completed",
   "evaluation.cancelled",
@@ -146,7 +145,7 @@ const TERMINAL_EVENT_TYPES: ReadonlySet<string> = new Set([
 
 const DEFAULT_IMPORT_POLL_INTERVAL_MS = 2_000;
 
-// Terminal statuses of the import pipeline (parse -> validate -> activate).
+// Terminal import statuses.
 const TERMINAL_IMPORT_STATUSES: ReadonlySet<string> = new Set(["READY", "FAILED"]);
 
 // =============================================================================
@@ -201,7 +200,7 @@ function parseBenchmarkRef(ref: string): { name: string; version?: string } {
 }
 
 function mapAgentSystem(raw: Record<string, unknown>): AgentSystem {
-  // Only the three public AgentSystem fields — internal ids/digests never leak.
+  // Map only the public AgentSystem fields.
   return {
     harness: raw.harness as string,
     model: raw.model as string,
@@ -323,7 +322,7 @@ function mapComparisonAggregate(raw: Record<string, unknown>): ComparisonAggrega
     meanScore: (raw.meanScore as number | null) ?? null,
     coverage: mapCoverage(raw.coverage),
     spentUsd: (raw.spentUsd as number) ?? 0,
-    // Public triple only — internal agent-system ids never leak.
+    // Public AgentSystem fields only.
     agentSystems: ((raw.agentSystems as Record<string, unknown>[]) || []).map(mapAgentSystem),
     createdAt: raw.createdAt as string,
   };
@@ -841,12 +840,9 @@ export function evaluations(config?: HostedClientConfig): EvaluationsClient {
       throwIfAborted(signal);
 
       // The stream closed without a terminal event (server drain fallback or
-      // connection loss). If the evaluation is already terminal, drain ONCE
-      // more from lastSeq first: the server writes the status flip and the
-      // terminal/tail events in adjacent transactions, so events past lastSeq
-      // may still be undelivered — returning immediately would silently drop
-      // them. One drain reconnect delivers them; if it also closes without a
-      // terminal event, finish on the status.
+      // connection loss). Events may still be in flight just after the status
+      // turns terminal, so drain once more from lastSeq before finishing on
+      // status alone.
       const current = await getEvaluation(id);
       if (TERMINAL_EVALUATION_STATUSES.has(current.status)) {
         if (finalDrainDone) return current;

@@ -29,7 +29,7 @@ DEFAULT_BASE_URL = 'https://dashboard.evolvingmachines.ai'
 
 _TERMINAL_EVALUATION_STATUSES = {'COMPLETED', 'CANCELLED', 'FAILED'}
 
-# Terminal statuses of the import pipeline (parse -> validate -> activate).
+# Terminal import statuses.
 _TERMINAL_IMPORT_STATUSES = {'READY', 'FAILED'}
 
 # camelCase -> snake_case boundary (only between a lower/digit and an upper,
@@ -68,7 +68,7 @@ class NoActiveVersionError(Exception):
 
 
 # =============================================================================
-# PUBLIC TYPES (mirror the plan's list; nothing internal leaks)
+# PUBLIC TYPES
 # =============================================================================
 
 @dataclass
@@ -167,9 +167,10 @@ class Evaluation:
 class ModelUsage:
     """Model usage/spend recorded for a task run.
 
-    ``spend_source`` is "key_info" (read back from the gateway) or
-    "assumed_cap" (conservative fallback). Harness-specific keys land in
-    ``extra`` with snake_case keys.
+    ``spend_source`` is "key_info" (measured model spend reported by the
+    platform) or "assumed_cap" (spend could not be measured for this run, so
+    the per-run cap is reported). Harness-specific keys land in ``extra`` with
+    snake_case keys.
     """
     spend_usd: Optional[float] = None
     spend_source: Optional[str] = None
@@ -299,7 +300,7 @@ class BenchmarkImportError:
 
 @dataclass
 class BenchmarkImport:
-    """A benchmark import job (parse -> validate -> activate pipeline).
+    """A benchmark import job.
 
     Terminal statuses: "READY" and "FAILED".
     """
@@ -334,7 +335,7 @@ class TaskRunPage:
 # =============================================================================
 
 def _map_agent_system(data: Dict[str, Any]) -> AgentSystem:
-    # Only the public triple — internal ids/digests never leak.
+    # Map only the public AgentSystem fields.
     return AgentSystem(
         harness=data.get('harness', ''),
         model=data.get('model', ''),
@@ -726,7 +727,7 @@ class BenchmarksClient:
         archive_path: Optional[str] = None,
         harbor_hub_ref: Optional[str] = None,
     ) -> BenchmarkImport:
-        """Start a benchmark import job (parse -> validate -> activate).
+        """Start a benchmark import job.
 
         Git sources (``git_url=..., ref=...``) are live; the reserved
         ``archive_path``/``harbor_hub_ref`` sources raise NotImplementedError

@@ -108,7 +108,7 @@ When using `EVOLVE_API_KEY`:
 |---|---------|---------------------------|--------------------------|
 | Setup | `EVOLVE_API_KEY` | `EVOLVE_API_KEY` + provider key saved in Dashboard → Secrets → BYO Provider Keys | Model provider keys + [`E2B_API_KEY`](https://e2b.dev) |
 | Provider key location | Evolve-managed | Encrypted Dashboard secret | Your local environment or app config |
-| Sandbox receives | Evolve gateway runtime config | Temporary `evrt_...` token and Dashboard proxy URL, not the raw provider key or `EVOLVE_API_KEY` for that provider route | Raw provider key environment variable |
+| Sandbox receives | Evolve gateway runtime config | A short-lived, sandbox-scoped credential — never your raw provider key or `EVOLVE_API_KEY` for that route | Raw provider key environment variable |
 | Observability | [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) | [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) | `~/.evolve-sdk/observability/` |
 | Browser | `browser={'provider': 'agent-browser', 'remote': True}` is the default and recommended managed browser path with live view and replay. | Same as Gateway Mode | Self-managed browser runtime; no managed live/replay |
 | Model billing | Evolving Machines | Your provider account for enabled providers | Your provider accounts |
@@ -146,7 +146,7 @@ Use this when you want supported provider usage billed to your provider account 
 
 Supported managed provider routes include Anthropic, OpenAI, Gemini, DashScope, Kimi, OpenRouter, and Droid/Factory.
 
-When enabled, Evolve routes supported provider calls through a sandbox-bound `evrt_...` runtime token. The SDK does not receive the raw provider key, and the sandbox does not receive `EVOLVE_API_KEY` for that provider route. If no managed key is enabled for that provider, gateway mode falls back to Evolve-managed model routing.
+When enabled, Evolve routes supported provider calls through a short-lived, sandbox-scoped credential. The SDK does not receive the raw provider key, and the sandbox does not receive `EVOLVE_API_KEY` for that provider route. If no managed key is enabled for that provider, gateway mode falls back to Evolve-managed model routing.
 
 ---
 

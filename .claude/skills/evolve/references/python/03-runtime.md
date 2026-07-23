@@ -451,7 +451,7 @@ Sealing is intentionally **fail-closed** — configurations that may have placed
 
 - Requires gateway mode (`EVOLVE_API_KEY`). Direct provider keys cannot be revoked by Evolve, so sealing raises in Direct Provider Key Mode.
 - Requires a credential-minimal sandbox: combining sealing with `secrets=`, `sandbox_create_options['envs']`, `managed_secrets=`, `integrations=`, `mcp_servers=`, or browser credentials raises.
-- Sealing revokes the sandbox-bound provider runtime token; if no revocable token exists or revocation fails after retries, sealing **raises** rather than reporting a false guarantee.
+- Sealing revokes the Evolve-managed sandbox credential; if no revocable credential exists or revocation fails after retries, sealing **raises** rather than reporting a false guarantee.
 - Cannot seal while a process is running.
 
 > The TypeScript SDK additionally supports `externalGateway` — a caller-minted, spend-capped gateway credential whose `revoke()` callback is called by sealing. That mode is TypeScript-only for now.
@@ -477,7 +477,7 @@ print(artifacts['patch.diff'])
 
 ### End-to-End Eval Run
 
-Mint-free gateway-mode variant: run → seal (revokes the runtime token) → verify → collect → kill.
+Mint-free gateway-mode variant: run → seal (revokes the sandbox credential) → verify → collect → kill.
 
 ```python
 from evolve import Evolve, AgentConfig
@@ -898,7 +898,7 @@ available via local JSONL files in `~/.evolve-sdk/observability/sessions/`.
 
 Query per-run and per-session LLM spend. Requires gateway mode (`EVOLVE_API_KEY`). Supported for Claude and Codex agents.
 
-Cost data may take 5–60s to appear depending on LiteLLM batch flush timing (typically under 30s).
+Cost data may take 5–60s to appear while the gateway finishes metering (typically under 30s).
 
 ```python
 from evolve import Evolve
@@ -935,7 +935,7 @@ After `kill()`, the bridge process is stopped. To query costs for a completed se
 class RunCost:
     run_id: str          # Matches AgentResponse.run_id
     index: int           # 1-based chronological position
-    cost: float          # USD (includes platform margin)
+    cost: float          # USD as billed to your Evolve account
     tokens: Dict[str, int]  # {'prompt': N, 'completion': N}
     model: str           # Last observed model for this run
     requests: int        # Number of LLM API requests

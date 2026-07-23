@@ -3,8 +3,6 @@
  *
  * Provides durable persistence for agent workspaces beyond sandbox lifetime.
  * Supports BYOK (user's S3 bucket) and Gateway (Evolve-managed) modes.
- *
- * Evidence: storage-checkpointing plan v2.2
  */
 
 import { createHash } from "node:crypto";
@@ -625,7 +623,7 @@ export async function createCheckpoint(
       await s3PutJson(storage, metadataKey(storage, checkpointId), metaObj);
     } else {
       // Gateway mode
-      // Step 1: Presign (server does HeadObject for dedup)
+      // Step 1: Presign (server reports alreadyExists for dedup)
       const presignResult = await gatewayPresign(storage, meta.tag, hash, "put");
 
       if (!presignResult.alreadyExists) {

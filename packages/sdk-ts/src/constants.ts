@@ -34,8 +34,7 @@ export function getGatewayUrl(path = ""): string {
 /**
  * Get the dashboard URL at runtime.
  *
- * Dashboard-owned resource routes enforce per-user ownership for stateful
- * managed services before calling the provider gateway.
+ * Managed control-plane requests go to the Dashboard endpoint.
  *
  * @param path Optional dashboard path
  * @internal
@@ -50,11 +49,7 @@ export function getDashboardUrl(path = ""): string {
 /**
  * Get the managed E2B control-plane URL.
  *
- * Routes E2B control plane requests through Dashboard so ownership checks
- * happen before Dashboard calls the internal provider gateway.
- *
- * Note: Data plane operations (files, commands) go directly to the sandbox
- * using envdAccessToken - no gateway needed for those.
+ * Managed sandbox control-plane requests go to the Dashboard endpoint.
  *
  * @internal
  */
@@ -186,13 +181,13 @@ export const DEFAULT_DASHBOARD_URL = process.env.EVOLVE_DASHBOARD_URL || "https:
 // SPEND TRACKING
 // =============================================================================
 
-/** LiteLLM header for session-level grouping (maps to `end_user` in spend logs) */
+/** Header the sandbox sends so gateway usage is attributed to this session. */
 export const LITELLM_CUSTOMER_ID_HEADER = "x-litellm-customer-id";
 
-/** LiteLLM header for per-request tagging (maps to `request_tags` in spend logs) */
+/** Header the sandbox sends so gateway usage is attributed to this run. */
 export const LITELLM_TAGS_HEADER = "x-litellm-tags";
 
-/** Prefix for run tags in `request_tags` — must match dashboard parser */
+/** Prefix for per-run tags. */
 export const RUN_TAG_PREFIX = "run:";
 
 /**

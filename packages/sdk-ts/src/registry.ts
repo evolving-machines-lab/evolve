@@ -3,8 +3,6 @@
  *
  * Single source of truth for agent-specific behavior.
  * All differences between agents are data, not code.
- *
- * Evidence: sdk-rewrite-v3.md Agent Registry section
  */
 
 import type { AgentType, SkillsConfig } from "./types";
@@ -107,7 +105,7 @@ export interface AgentRegistryEntry {
   providerEnvMap?: Record<string, { keyEnv: string }>;
   /** Env var for inline config (e.g., OPENCODE_CONFIG_CONTENT) — used in gateway mode to set provider base URLs */
   gatewayConfigEnv?: string;
-  /** Gateway-only model aliases for CLIs whose native model IDs differ from LiteLLM route names */
+  /** Gateway-only model aliases for CLIs whose native model IDs differ from the Evolve gateway's route names */
   gatewayModelAliases?: Record<string, string>;
   /** Direct-mode model aliases for CLIs whose public model names differ from CLI-native model IDs */
   directModelAliases?: Record<string, string>;
@@ -126,7 +124,7 @@ export interface AgentRegistryEntry {
   customHeadersFormat?: "newline" | "comma";
   /**
    * Per-env-var spend tracking for CLIs that support env_http_headers in config
-   * (e.g., Codex TOML). Maps LiteLLM header names to env var names that the CLI
+   * (e.g., Codex TOML). Maps Evolve gateway header names to env var names that the CLI
    * reads at request time. Alternative to customHeadersEnv for agents without a
    * single custom-headers env var.
    */
@@ -412,7 +410,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     apiKeyEnv: "OPENROUTER_API_KEY",
     baseUrlEnv: "OPENAI_BASE_URL",
     defaultModel: "openrouter/anthropic/claude-sonnet-4.6",
-    // OpenRouter-only: all models route through OpenRouter (direct or via LiteLLM gateway)
+    // OpenRouter-only: all models route through OpenRouter (direct or via the Evolve gateway)
     providerEnvMap: {
       openrouter: { keyEnv: "OPENROUTER_API_KEY" },
     },
@@ -524,8 +522,8 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     droidGatewaySettings: {
       settingsPath: "~/.factory/evolve-settings.json",
       displayName: "Evolve Gateway",
-      // Droid's provider field selects the API protocol. Evolve's LiteLLM
-      // gateway exposes a multi-provider OpenAI Chat Completions-compatible API.
+      // Droid's provider field selects the API protocol. The Evolve gateway
+      // exposes a multi-provider OpenAI Chat Completions-compatible API.
       provider: "generic-chat-completion-api",
       maxOutputTokens: 32768,
     },

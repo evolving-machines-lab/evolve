@@ -746,8 +746,7 @@ class Evolve:
     async def get_session_cost(self) -> SessionCost:
         """Get cost breakdown for the current session (all runs).
 
-        Queries the dashboard API which proxies to LiteLLM spend logs.
-        Cost data has ~60s latency due to gateway batch writes.
+        Cost data can lag live usage by about a minute.
         Note: after kill(), the bridge process is stopped. To query costs for a
         completed session, create a new Evolve instance — the TS bridge handles
         previousSessionTag fallback internally.

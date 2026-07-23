@@ -401,12 +401,12 @@ export const VALIDATION_PRESETS: Record<ValidationMode, Required<Omit<SchemaVali
 /**
  * Caller-minted gateway credential for external gateway mode.
  *
- * For callers that mint their own spend-capped gateway key (e.g., a LiteLLM
- * virtual key per task run). The credential is injected like direct mode and
- * sealCredentials() calls revoke() — sealing fails if revocation fails.
+ * For callers that mint their own spend-capped key on an OpenAI-compatible
+ * gateway. The credential is injected like direct mode and sealCredentials()
+ * calls revoke() — sealing fails if revocation fails.
  */
 export interface ExternalGatewayConfig {
-  /** Gateway API key minted by the caller (e.g., a spend-capped LiteLLM key) */
+  /** Spend-capped gateway API key minted by the caller */
   apiKey: string;
   /** OpenAI-compatible gateway base URL */
   baseUrl: string;
@@ -687,7 +687,7 @@ export interface RunCost {
   runId: string;
   /** 1-based chronological position in session */
   index: number;
-  /** Total cost in USD (includes platform margin) */
+  /** Total cost in USD as billed to your Evolve account */
   cost: number;
   /** Token counts */
   tokens: { prompt: number; completion: number };

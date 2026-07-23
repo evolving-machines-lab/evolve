@@ -21,7 +21,7 @@ import {
  * The upstream e2b client validates `apiKey` against /^e2b_[0-9a-f]+$/ before
  * sending any request, so the raw `sk-…` Evolve key can no longer ride in
  * directly. Hex wrapping satisfies the client; the Dashboard managed route
- * decodes it back before verifying the key against the gateway.
+ * decodes it back.
  */
 export function toManagedE2BKey(evolveKey: string): string {
   return `e2b_${Buffer.from(evolveKey, "utf8").toString("hex")}`;

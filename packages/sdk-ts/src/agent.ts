@@ -3,8 +3,6 @@
  *
  * Single Agent class that uses registry lookup for agent-specific behavior.
  * All agent differences are data (in registry), not code.
- *
- * Evidence: sdk-rewrite-v3.md Design Decisions section
  */
 
 import type { z } from "zod";
@@ -163,7 +161,6 @@ function providerRuntimeProviderForAgent(
  * Escape prompt for bash double-quoted strings
  *
  * Only escape characters that are special inside double quotes.
- * Evidence: sdk-rewrite-v3.md Prompt Escaping section
  */
 function escapePrompt(prompt: string): string {
   return prompt
@@ -286,7 +283,7 @@ export class Agent {
   private readonly homeDir: string;
   private lastRunTimestamp?: number;
   private readonly registry: AgentRegistryEntry;
-  /** Unified session ID — used for both observability (SessionLogger) and spend tracking (LiteLLM customer-id) */
+  /** Unified session ID — used for both observability (SessionLogger) and spend tracking (gateway customer-id) */
   private sessionTag: string;
   /** Previous session tag — preserved across kill()/setSession() so cost queries still work */
   private previousSessionTag?: string;
@@ -813,7 +810,7 @@ export class Agent {
     // Claude Code always runs with --dangerously-skip-permissions, which the CLI
     // refuses under root ("cannot be used with root/sudo privileges") unless the
     // sandbox-mode bypass is set. Evolve always runs the agent inside a sandbox
-    // (the eval boots it as root), so declare sandbox mode for the claude harness.
+    // (which may run as root), so declare sandbox mode.
     if (this.agentConfig.type === "claude") {
       envVars.IS_SANDBOX = "1";
     }
@@ -2892,7 +2889,7 @@ export class Agent {
   /**
    * Get current session tag.
    * Returns null if no active session (before sandbox creation or after kill()).
-   * Used for both observability (dashboard traces) and spend tracking (LiteLLM customer-id).
+   * Used for both observability (dashboard traces) and spend tracking (gateway customer-id).
    */
   getSessionTag(): string | null {
     // Only expose the tag when there's an active session (sandbox exists or logger initialized)
@@ -3017,8 +3014,7 @@ export class Agent {
   /**
    * Get cost breakdown for the current session (all runs).
    *
-   * Queries the dashboard API which proxies to LiteLLM spend logs.
-   * Cost data has ~60s latency due to gateway batch writes.
+   * Cost data can lag live usage by about a minute.
    * Also works after kill() for the most recent session only.
    *
    * Requires gateway mode (EVOLVE_API_KEY).

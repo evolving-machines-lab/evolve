@@ -105,7 +105,7 @@ class RunCost:
     Attributes:
         run_id: Run ID matching AgentResponse.run_id
         index: 1-based chronological position in session
-        cost: Total cost in USD (includes platform margin)
+        cost: Total cost in USD as billed to your Evolve account
         tokens: Token counts {'prompt': N, 'completion': N}
         model: Model used (e.g., 'claude-opus-4-8')
         requests: Number of LLM API requests in this run

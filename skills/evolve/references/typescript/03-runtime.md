@@ -432,7 +432,7 @@ Sealing is intentionally **fail-closed** — configurations that may have placed
 
 - Requires gateway mode or `externalGateway`. Direct provider keys cannot be revoked by Evolve, so sealing throws in Direct Provider Key Mode.
 - Requires a credential-minimal sandbox: combining sealing with `.withSecrets()`, `sandboxCreateOptions.envs`, `.withManagedSecrets()`, `.withIntegrations()`, `.withMcpServers()`, or browser credentials throws.
-- In gateway mode, sealing revokes the sandbox-bound provider runtime token; if no revocable token exists or revocation fails after retries, sealing **throws** rather than reporting a false guarantee.
+- In gateway mode, sealing revokes the Evolve-managed sandbox credential; if no revocable credential exists or revocation fails after retries, sealing **throws** rather than reporting a false guarantee.
 - With `externalGateway`, sealing calls your `revoke()`; if it throws, the sandbox is not marked sealed.
 - Cannot seal while a process is running.
 
@@ -872,7 +872,7 @@ available as local JSONL files in `~/.evolve-sdk/observability/sessions/`.
 
 Query per-run and per-session LLM spend. Requires gateway mode (`EVOLVE_API_KEY`). Supported for Claude and Codex agents.
 
-Cost data may take 5–60s to appear depending on LiteLLM batch flush timing (typically under 30s).
+Cost data may take 5–60s to appear while the gateway finishes metering (typically under 30s).
 
 ```ts
 import { Evolve } from "@evolvingmachines/sdk";
@@ -913,7 +913,7 @@ After `kill()` followed by another `run()` cycle, the previous session's cost is
 interface RunCost {
   runId: string;        // Matches AgentResponse.runId
   index: number;        // 1-based chronological position
-  cost: number;         // USD (includes platform margin)
+  cost: number;         // USD as billed to your Evolve account
   tokens: { prompt: number; completion: number };
   model: string;        // Last observed model for this run
   requests: number;     // Number of LLM API requests

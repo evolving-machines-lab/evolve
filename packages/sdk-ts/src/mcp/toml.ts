@@ -171,10 +171,10 @@ export async function writeCodexMcpConfig(
  * Write an "evolve-gateway" model provider into Codex config.toml
  *
  * Codex supports env_http_headers per model provider — header values are read
- * from env vars at request time. We define a provider that injects LiteLLM
+ * from env vars at request time. We define a provider that injects gateway
  * tracking headers via env vars set per-run by buildRunEnvs().
  *
- * When spendTrackingEnvs is undefined (external gateway mode: no LiteLLM
+ * When spendTrackingEnvs is undefined (external gateway mode: no gateway
  * tracking headers, no runtime binding exists), the provider is written
  * without env_http_headers.
  */
@@ -286,7 +286,7 @@ export async function writeCodexSpendProvider(
  *
  * The sandbox is ours, so we write ~/.kimi-code/config.toml from scratch. This
  * keeps Kimi coherent with Codex/Qwen/Droid: the SDK owns gateway provider
- * settings, and run-specific LiteLLM headers are rewritten before each spawn.
+ * settings, and run-specific gateway headers are rewritten before each spawn.
  *
  * Source-verified: Kimi Code reads default_model, providers.<name>,
  * providers.<name>.custom_headers, and models.<name> from config.toml.

@@ -31,7 +31,7 @@
 
 - Added Hosted Evals chapters (TypeScript and Python) covering both clients, the evaluation inputs, status tables, the quickstart, and the CLI.
 - Documented sandbox create options, workspace modes, external gateway mode, and the task-sandbox credential lifecycle (capped key → run → seal-revokes → collect-after-seal); synced the Evolve skill references.
-- Documented the import → conformance-activation lifecycle (imports land at `VALIDATING`; a gold/no-op activation gate promotes to `READY`; only `READY` versions accept evaluations), the multi-provider sandbox story (E2B/Daytona/Modal capability parity, selected per evaluation via the optional `sandboxProvider` input / `--provider` CLI flag, default `e2b`), per-harness model constraints, and the eval spend read-back caveat.
+- Documented the import → validation lifecycle (imports land at `VALIDATING` and are promoted to `READY` only after validation passes; only `READY` versions accept evaluations), the multi-provider sandbox story (E2B/Daytona/Modal capability parity, selected per evaluation via the optional `sandboxProvider` input / `--provider` CLI flag, default `e2b`), per-harness model constraints, and the eval spend read-back caveat.
 
 ## v0.0.51 - 2026-06-30
 
@@ -43,9 +43,7 @@
 
 ### SDK
 
-- Requests sandbox-bound provider runtime tokens from Dashboard for managed Claude/Anthropic and Codex/OpenAI routes.
-- Routes managed BYO provider-key calls through Dashboard model proxy without exposing the raw provider key or Evolve API key in the sandbox for that provider route.
-- Binds provider runtime tokens to sandbox lifecycle and revokes them on cleanup, session switch, and failure paths.
+- Managed BYO provider keys: your raw provider key and `EVOLVE_API_KEY` never enter the sandbox for that provider route; credentials are short-lived and revoked when the sandbox ends.
 - Keeps the existing gateway fallback path when managed provider keys are disabled or unavailable.
 
 ### Documentation And Skills
@@ -81,7 +79,7 @@
 
 ### SDK
 
-- Wrapped the Evolve gateway key as an `e2b`-shaped key for the managed E2B route, satisfying the upstream `e2b` client's new API-key format validation. The Dashboard managed route unwraps it before the existing key verification; BYOK E2B usage is unchanged.
+- Wrapped the Evolve gateway key as an `e2b`-shaped key for the managed E2B route, satisfying the upstream `e2b` client's new API-key format validation. BYOK E2B usage is unchanged.
 
 ## v0.0.48 - 2026-06-09
 
@@ -146,7 +144,7 @@
 ### Highlights
 
 - Added the `kimi-k2.6-turbo` gateway-mode Kimi model.
-- Kept the managed LiteLLM route and public SDK model name aligned as `kimi-k2.6-turbo`.
+- Kept the managed gateway route and public SDK model name aligned as `kimi-k2.6-turbo`.
 - Published TypeScript and Python packages at `0.0.45`.
 
 ### Fixes
@@ -169,8 +167,7 @@
 
 ### Fixes
 
-- Removed the sandbox-scoped runtime gateway key flow from the SDK and Dashboard.
-- Restored the pre-release `EVOLVE_API_KEY` gateway behavior for sandbox/runtime setup.
+- Gateway setup again uses `EVOLVE_API_KEY` directly, matching pre-release behavior.
 
 ### Available Apps
 
@@ -206,7 +203,7 @@
 ### Dashboard
 
 - Added a Secrets page for browser credentials.
-- Added encrypted password storage, browser-auth runtime, and run-scoped MCP grant tokens.
+- Encrypted stored passwords; they are never returned to the agent.
 - Fixed trace analytics rendering when spend data is not available yet.
 
 ### Documentation And Skills
