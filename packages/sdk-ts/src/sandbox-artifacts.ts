@@ -10,6 +10,41 @@ function shellQuote(value: string): string {
 }
 
 /**
+ * Decode the base64-wrapped, NUL-delimited `find` listing produced in the box.
+ *
+ * The in-box command emits `%p\0%s\0` records and pipes them through `base64 -w0`.
+ * We deliberately keep NUL as the in-band field delimiter because it is the only
+ * byte that cannot occur inside a POSIX path, so filenames containing spaces,
+ * newlines, or UTF-8 survive intact. But raw NUL bytes do not survive every
+ * command transport: Daytona's session-log transport strips them, which silently
+ * collapses the records and corrupts the listing. base64 is pure printable ASCII,
+ * so it passes through NUL-stripping (and any other printable-safe) transport
+ * unchanged; we reverse it here to raw bytes and split on NUL at the byte level.
+ *
+ * Exported for unit testing of the transport-resilient decode path.
+ */
+export function decodeFindListing(stdout: string): string[] {
+  const trimmed = stdout.trim();
+  if (trimmed === "") return [];
+  const bytes = Buffer.from(trimmed, "base64");
+  const fields: string[] = [];
+  let start = 0;
+  for (let index = 0; index < bytes.length; index++) {
+    if (bytes[index] === 0) {
+      fields.push(bytes.toString("utf8", start, index));
+      start = index + 1;
+    }
+  }
+  // Every record ends with a NUL, so a well-formed listing leaves nothing after
+  // the final delimiter. Keep any trailing bytes rather than silently dropping
+  // them — an odd field count then trips the "malformed metadata" guard.
+  if (start < bytes.length) {
+    fields.push(bytes.toString("utf8", start, bytes.length));
+  }
+  return fields;
+}
+
+/**
  * Collect declared files/directories from the sandbox as text content.
  *
  * TEXT-ONLY contract: contents are returned as strings. ASCII-armored formats
@@ -61,7 +96,11 @@ export async function collectSandboxArtifacts(
   let listing;
   try {
     listing = await sandbox.commands.run(
-      `find -- ${roots.map(shellQuote).join(" ")} -type f -printf '%p\\0%s\\0'`,
+      // base64-wrap the NUL-delimited records so the listing survives transports
+      // that strip NUL bytes (see decodeFindListing). `pipefail` keeps a `find`
+      // failure visible as a nonzero exit instead of being masked by base64's
+      // success; it is silently ignored on shells that lack it (POSIX sh).
+      `set -o pipefail 2>/dev/null; find -- ${roots.map(shellQuote).join(" ")} -type f -printf '%p\\0%s\\0' | base64 -w0`,
       { cwd: workingDirectory, timeoutMs: 30_000 },
     );
   } catch (error) {
@@ -72,8 +111,7 @@ export async function collectSandboxArtifacts(
       `Artifact listing failed (exit ${listing.exitCode}): ${(listing.stderr || "").slice(0, 500)}`,
     );
   }
-  const fields = listing.stdout.split("\0");
-  if (fields.at(-1) === "") fields.pop();
+  const fields = decodeFindListing(listing.stdout);
   if (fields.length % 2 !== 0) {
     throw new Error("Sandbox returned malformed artifact metadata.");
   }

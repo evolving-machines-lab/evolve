@@ -630,7 +630,7 @@ async function testTaskRuns() {
             failurePhase: null,
             failureDetail: null,
             phaseTimingsMs: { agentMs: 203000, verifyMs: 31000 },
-            modelUsage: { spendUsd: 0.93, spendSource: "key_info", resolvedHarnessVersion: "codex-cli 0.145.0" },
+            modelUsage: { spendUsd: 0.93, spendSource: "measured", resolvedHarnessVersion: "codex-cli 0.145.0" },
             sessionRef: "sess-9",
             createdAt: "2026-07-22T00:00:00.000Z",
             updatedAt: "2026-07-22T00:04:00.000Z",
@@ -1133,7 +1133,7 @@ async function testTaskRunDetail() {
         failurePhase: null,
         failureDetail: "x".repeat(5000), // detail route: untruncated
         phaseTimingsMs: { agentMs: 203000, verifyMs: 31000 },
-        modelUsage: { spendUsd: 0.93, spendSource: "key_info" },
+        modelUsage: { spendUsd: 0.93, spendSource: "measured" },
         resolvedHarnessVersion: "codex-cli 0.145.0",
         sessionRef: "sess-9",
         createdAt: "2026-07-22T00:00:00.000Z",

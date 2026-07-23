@@ -767,7 +767,7 @@ export class ModalFiles implements SandboxFiles {
    * Write a payload to a process's stdin in MODAL_STDIN_CHUNK_BYTES slices.
    * Each writeBytes() call becomes one gRPC TaskExecStdinWrite message and
    * Modal rejects messages over 100MiB, so large files must be chunked
-   * (harness bundles routinely exceed the cap).
+   * (multi-hundred-MB payloads are common).
    */
   private async writeStdinChunked(
     stdin: { writeBytes(data: Uint8Array): Promise<void> },

@@ -167,7 +167,7 @@ class Evaluation:
 class ModelUsage:
     """Model usage/spend recorded for a task run.
 
-    ``spend_source`` is "key_info" (measured model spend reported by the
+    ``spend_source`` is "measured" (measured model spend reported by the
     platform) or "assumed_cap" (spend could not be measured for this run, so
     the per-run cap is reported). Harness-specific keys land in ``extra`` with
     snake_case keys.

@@ -499,7 +499,7 @@ class TestEvaluations:
                         'failurePhase': None,
                         'failureDetail': None,
                         'phaseTimingsMs': {'agentMs': 203000},
-                        'modelUsage': {'spendUsd': 0.93, 'spendSource': 'key_info'},
+                        'modelUsage': {'spendUsd': 0.93, 'spendSource': 'measured'},
                         'sessionRef': 'sess-9',
                         'createdAt': '2026-07-22T00:00:00.000Z',
                         'updatedAt': '2026-07-22T00:04:00.000Z',
@@ -519,7 +519,7 @@ class TestEvaluations:
         assert run.metrics == {'f2p': 1.0}
         # Wire camelCase never reaches the user: typed ModelUsage + snake_case timings
         assert run.model_usage.spend_usd == 0.93
-        assert run.model_usage.spend_source == 'key_info'
+        assert run.model_usage.spend_source == 'measured'
         assert run.phase_timings_ms == {'agent_ms': 203000}
         assert run.session_ref == 'sess-9'
 
@@ -673,7 +673,7 @@ class TestEvaluations:
                 'phaseTimingsMs': {'agentMs': 203000, 'verifyMs': 41000},
                 'modelUsage': {
                     'spendUsd': 0.93,
-                    'spendSource': 'key_info',
+                    'spendSource': 'measured',
                     'maxBudgetUsd': 2,
                     'resolvedHarnessVersion': '0.29.0',
                     'inputTokens': 1234,
@@ -693,7 +693,7 @@ class TestEvaluations:
         assert run.phase_timings_ms == {'agent_ms': 203000, 'verify_ms': 41000}
         usage = run.model_usage
         assert usage.spend_usd == 0.93
-        assert usage.spend_source == 'key_info'
+        assert usage.spend_source == 'measured'
         assert usage.max_budget_usd == 2
         assert usage.resolved_harness_version == '0.29.0'
         # Unknown harness-specific keys land in extra, snake_cased

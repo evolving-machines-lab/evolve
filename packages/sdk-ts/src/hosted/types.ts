@@ -190,11 +190,11 @@ export interface Evaluation {
 }
 
 /**
- * Where a task run's spend figure came from: "key_info" is the measured model
+ * Where a task run's spend figure came from: "measured" is the measured model
  * spend reported by the platform; "assumed_cap" means spend could not be
  * measured for this run, so the per-run cap is reported.
  */
-export type SpendSource = "key_info" | "assumed_cap";
+export type SpendSource = "measured" | "assumed_cap";
 
 /** Model usage/spend recorded for a task run. Open map: harness-specific keys may appear. */
 export interface ModelUsage {

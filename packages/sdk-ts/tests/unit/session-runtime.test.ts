@@ -50,6 +50,20 @@ function assertEqual<T>(actual: T, expected: T, message: string): void {
   console.log(`      Actual:   ${String(actual)}`);
 }
 
+/**
+ * The artifact listing command emits `find ... -printf '%p\0%s\0' | base64 -w0`.
+ * Mocks must (a) match it via the substring "find --" (the full command is now
+ * prefixed with `set -o pipefail`) and (b) return the NUL-delimited records
+ * base64-encoded, exactly as the in-box `base64 -w0` produces them, so the SDK's
+ * transport-resilient decode path is exercised.
+ */
+function isArtifactListing(command: string): boolean {
+  return command.includes("find --");
+}
+function artifactListingStdout(rawNulDelimited: string): string {
+  return Buffer.from(rawNulDelimited, "utf8").toString("base64");
+}
+
 function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
   const started = Date.now();
   return new Promise((resolve, reject) => {
@@ -1991,8 +2005,8 @@ async function testCredentialSealAndArtifactCollection(): Promise<void> {
     await sandbox.files.write("/logs/artifacts/model.patch", "absolute patch");
     commands.runHandler = (command) => ({
       exitCode: 0,
-      stdout: command.startsWith("find --")
-        ? "/logs/artifacts/model.patch\0" + "14\0/task/patch.diff\0" + "21\0"
+      stdout: isArtifactListing(command)
+        ? artifactListingStdout("/logs/artifacts/model.patch\0" + "14\0/task/patch.diff\0" + "21\0")
         : "",
       stderr: "",
     });
@@ -2037,8 +2051,8 @@ async function testCredentialSealAndArtifactCollection(): Promise<void> {
 
     commands.runHandler = (command) => ({
       exitCode: 0,
-      stdout: command.startsWith("find --")
-        ? `/task/patch.diff\0${100 * 1024 * 1024 + 1}\0`
+      stdout: isArtifactListing(command)
+        ? artifactListingStdout(`/task/patch.diff\0${100 * 1024 * 1024 + 1}\0`)
         : "",
       stderr: "",
     });
@@ -2068,10 +2082,11 @@ async function testCredentialSealAndArtifactCollection(): Promise<void> {
     assert(missingRootThrew, "artifact collection fails loudly on a missing declared root");
 
     // A failing find (permissions, non-GNU find) surfaces instead of returning empty.
+    // `pipefail` keeps the nonzero exit visible even though base64 is the pipe tail.
     commands.runHandler = (command) => ({
-      exitCode: command.startsWith("find --") ? 1 : 0,
+      exitCode: isArtifactListing(command) ? 1 : 0,
       stdout: "",
-      stderr: command.startsWith("find --") ? "find: permission denied" : "",
+      stderr: isArtifactListing(command) ? "find: permission denied" : "",
     });
     let listingThrew = false;
     try {
@@ -2343,10 +2358,10 @@ async function testRootUserThreadedThroughE2bOperations(): Promise<void> {
 
     files.set("/task/patch.diff", "diff-data");
     setRunHandler((command) => {
-      if (command.startsWith("find --")) {
+      if (isArtifactListing(command)) {
         return {
           exitCode: 0,
-          stdout: "/task/patch.diff\0" + "9\0",
+          stdout: artifactListingStdout("/task/patch.diff\0" + "9\0"),
           stderr: "",
         };
       }
@@ -2360,7 +2375,7 @@ async function testRootUserThreadedThroughE2bOperations(): Promise<void> {
     );
 
     const artifactFind = calls.find(
-      (call) => call.method === "run" && call.command?.startsWith("find --"),
+      (call) => call.method === "run" && !!call.command && isArtifactListing(call.command),
     );
     assertEqual(
       artifactFind?.opts?.user,
@@ -2466,8 +2481,8 @@ async function testExternalGatewaySealFlow(): Promise<void> {
     await sandbox.files.write("/task/patch.diff", "diff --git a/a b/a");
     commands.runHandler = (command) => ({
       exitCode: 0,
-      stdout: command.startsWith("find --")
-        ? "/task/patch.diff\0" + "18\0"
+      stdout: isArtifactListing(command)
+        ? artifactListingStdout("/task/patch.diff\0" + "18\0")
         : "",
       stderr: "",
     });
