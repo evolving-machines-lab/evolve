@@ -87,7 +87,16 @@ An evaluation expands to `tasks × agent_systems × runs_per_task` task runs. Ea
 
 ## Statuses
 
-**Evaluation** (`Evaluation.status`): `QUEUED` → `RUNNING` (→ `CANCELLING`) → terminal `COMPLETED` / `CANCELLED` / `FAILED`.
+**Evaluation** (`Evaluation.status`) — `QUEUED` → `RUNNING` (→ `CANCELLING`) → terminal `COMPLETED` / `CANCELLED` / `FAILED`:
+
+| Status | Meaning |
+|--------|---------|
+| `QUEUED` | Accepted, waiting for dispatch |
+| `RUNNING` | Task runs are executing |
+| `CANCELLING` | `cancel()` requested; in-flight runs are winding down |
+| `COMPLETED` | Terminal — all task runs settled |
+| `CANCELLED` | Terminal — cancelled before completion |
+| `FAILED` | Terminal — the evaluation itself failed (see `error`) |
 
 **Task run** (`TaskRun.status`) — the scoring law: a valid reward (including 0) is `SCORED`; a verifier crash or out-of-domain reward is `SCORING_ERROR`, never a fabricated zero:
 
