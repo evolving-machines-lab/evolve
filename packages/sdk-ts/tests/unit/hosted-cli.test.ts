@@ -127,7 +127,7 @@ import {
   buildImportInput,
   CliUsageError,
   eventLine,
-  importStateLine,
+  importStatusLine,
   parseAgentSystem,
   parseArgs,
   runCli,
@@ -172,18 +172,32 @@ function testParseRunFull() {
     input,
     {
       benchmark: "deep-swe@1.1",
+      tasks: ["task-a", "task-b"],
       agentSystems: [
         { harness: "codex", model: "gpt-5.5" },
         { harness: "claude", model: "sonnet", harnessVersion: "2.1.0" },
       ],
-      maxModelSpendUsd: 25,
-      tasks: ["task-a", "task-b"],
       runsPerTask: 2,
       concurrency: 4,
+      maxModelSpendUsd: 25,
       maxModelSpendUsdPerTaskRun: 5,
       sandboxProvider: "daytona",
     },
     "builds the evaluation input (csv tasks trimmed, per-run cap + provider mapped)"
+  );
+  assertEqual(
+    Object.keys(input),
+    [
+      "benchmark",
+      "tasks",
+      "agentSystems",
+      "runsPerTask",
+      "concurrency",
+      "maxModelSpendUsd",
+      "maxModelSpendUsdPerTaskRun",
+      "sandboxProvider",
+    ],
+    "body keys follow the contract field order"
   );
 }
 
@@ -335,13 +349,13 @@ function testParseImport() {
   );
 }
 
-function testImportStateLine() {
-  console.log("\n--- importStateLine: compact state lines ---");
-  const ready = importStateLine({ id: "imp-1", state: "READY", taskCount: 12 });
-  assert(ready.includes("READY"), "includes the state");
+function testImportStatusLine() {
+  console.log("\n--- importStatusLine: compact status lines ---");
+  const ready = importStatusLine({ id: "imp-1", status: "READY", taskCount: 12 });
+  assert(ready.includes("READY"), "includes the status");
   assert(ready.includes("tasks=12"), "includes the task count");
-  const failed = importStateLine({ id: "imp-1", state: "FAILED", error: "bad tasks.json" });
-  assert(failed.includes("FAILED") && failed.includes("bad tasks.json"), "FAILED line carries the error");
+  const failed = importStatusLine({ id: "imp-1", status: "FAILED", error: { message: "bad tasks.json", failures: [{ taskKey: "t1", error: "boom" }] } });
+  assert(failed.includes("FAILED") && failed.includes("bad tasks.json") && failed.includes("1 task failure"), "FAILED line carries message + failure count");
 }
 
 function testEventLine() {
@@ -395,8 +409,8 @@ async function testRunWatchEndToEnd() {
         maxModelSpendUsd: 25,
         maxModelSpendUsdPerTaskRun: 5,
         spentUsd: 1.5,
+        counts: { agentSystems: 1, tasks: 2, taskRuns: 2 },
         taskRunCounts: { SCORED: 2 },
-        taskRunTotal: 2,
         createdAt: "2026-07-22T00:00:00.000Z",
       },
     });
@@ -427,7 +441,7 @@ async function testRunWatchEndToEnd() {
         "--max-spend-per-run", "5",
         "--watch",
         "--api-key", "test-key",
-        "--url", BASE,
+        "--base-url", BASE,
       ],
       io
     );
@@ -444,12 +458,12 @@ async function testRunWatchEndToEnd() {
       {
         benchmark: "deep-swe@1.1",
         agentSystems: [{ harness: "codex", model: "gpt-5.5" }],
-        maxModelSpendUsd: 25,
         runsPerTask: 1,
         concurrency: 4,
+        maxModelSpendUsd: 25,
         maxModelSpendUsdPerTaskRun: 5,
       },
-      "create body matches the CLI flags (incl. per-run cap)"
+      "create body matches the CLI flags (contract field order, incl. per-run cap)"
     );
     const headers = createCall?.init?.headers as Record<string, string>;
     assertEqual(headers?.Authorization, "Bearer test-key", "--api-key becomes the Bearer token");
@@ -512,7 +526,7 @@ async function testRunWatchJsonNdjson() {
     const { io, out } = captureIO();
     const code = await runCli(
       ["run", "--benchmark", "deep-swe@1.1", "--system", "codex:gpt-5.5", "--max-spend", "25",
-       "--watch", "--json", "--api-key", "test-key", "--url", BASE],
+       "--watch", "--json", "--api-key", "test-key", "--base-url", BASE],
       io
     );
 
@@ -535,11 +549,11 @@ async function testImportWatchEndToEnd() {
     // Insertion order matters: most-specific patterns first.
     setMockResponse("/api/benchmarks/import/imp-1", {
       status: 200,
-      body: { importId: "imp-1", state: "READY", taskCount: 12 },
+      body: { id: "imp-1", status: "READY", taskCount: 12 },
     });
     setMockResponse("/api/benchmarks/import", {
       status: 202,
-      body: { importId: "imp-1", state: "IMPORTING" },
+      body: { id: "imp-1", benchmarkName: "my-bench", status: "IMPORTING" },
     });
 
     const { io, out, err } = captureIO();
@@ -552,7 +566,7 @@ async function testImportWatchEndToEnd() {
         "--version", "1.0",
         "--watch",
         "--api-key", "test-key",
-        "--url", BASE,
+        "--base-url", BASE,
       ],
       io
     );
@@ -580,7 +594,7 @@ async function testImportWatchEndToEnd() {
 
     // Rendered output
     assert(out[0].includes("imp-1") && out[0].includes("my-bench") && out[0].includes("watching"), "prints the created header");
-    assert(out.some((l) => l.includes("READY") && l.includes("tasks=12")), "renders the READY state line");
+    assert(out.some((l) => l.includes("READY") && l.includes("tasks=12")), "renders the READY status line");
   } finally {
     restoreFetch();
   }
@@ -592,17 +606,17 @@ async function testImportWatchFailedAndStatus() {
   try {
     setMockResponse("/api/benchmarks/import/imp-2", {
       status: 200,
-      body: { importId: "imp-2", state: "FAILED", error: "bad tasks.json" },
+      body: { id: "imp-2", status: "FAILED", error: { message: "bad tasks.json" } },
     });
     setMockResponse("/api/benchmarks/import", {
       status: 202,
-      body: { importId: "imp-2", state: "IMPORTING" },
+      body: { id: "imp-2", benchmarkName: "b", status: "IMPORTING" },
     });
 
     const failed = captureIO();
     const codeFailed = await runCli(
       ["import", "--git", "g", "--ref", "main", "--name", "b", "--watch",
-       "--api-key", "test-key", "--url", BASE],
+       "--api-key", "test-key", "--base-url", BASE],
       failed.io
     );
     assertEqual(codeFailed, 1, "exit code 1 on FAILED");
@@ -610,25 +624,25 @@ async function testImportWatchFailedAndStatus() {
 
     const status = captureIO();
     const codeStatus = await runCli(
-      ["import", "status", "imp-2", "--json", "--api-key", "test-key", "--url", BASE],
+      ["import", "status", "imp-2", "--json", "--api-key", "test-key", "--base-url", BASE],
       status.io
     );
     assertEqual(codeStatus, 0, "import status exits 0");
     assertEqual(
       JSON.parse(status.out[0]),
-      { id: "imp-2", state: "FAILED", error: "bad tasks.json" },
+      { id: "imp-2", status: "FAILED", error: { message: "bad tasks.json" } },
       "import status --json emits the job"
     );
 
     const noNetwork = fetchCalls.length;
     const badSub = captureIO();
-    const codeBadSub = await runCli(["import", "frobnicate", "--api-key", "k", "--url", BASE], badSub.io);
+    const codeBadSub = await runCli(["import", "frobnicate", "--api-key", "k", "--base-url", BASE], badSub.io);
     assertEqual(codeBadSub, 2, "unknown import subcommand exits 2");
     const noId = captureIO();
-    const codeNoId = await runCli(["import", "status", "--api-key", "k", "--url", BASE], noId.io);
+    const codeNoId = await runCli(["import", "status", "--api-key", "k", "--base-url", BASE], noId.io);
     assertEqual(codeNoId, 2, "import status without <id> exits 2");
     const noGit = captureIO();
-    const codeNoGit = await runCli(["import", "--ref", "main", "--name", "b", "--api-key", "k", "--url", BASE], noGit.io);
+    const codeNoGit = await runCli(["import", "--ref", "main", "--name", "b", "--api-key", "k", "--base-url", BASE], noGit.io);
     assertEqual(codeNoGit, 2, "import without --git exits 2");
     assert(noGit.err[0].includes("--git"), "stderr names the missing flag");
     assertEqual(fetchCalls.length, noNetwork, "no network call on import usage errors");
@@ -653,7 +667,7 @@ async function testUsageErrorExitCode() {
     });
     const notFound = captureIO();
     const codeApi = await runCli(
-      ["get", "eval-x", "--api-key", "test-key", "--url", BASE],
+      ["get", "eval-x", "--api-key", "test-key", "--base-url", BASE],
       notFound.io
     );
     assertEqual(codeApi, 1, "API error exits 1");
@@ -676,7 +690,7 @@ async function main() {
   testParseErrors();
   testParseOtherCommands();
   testParseImport();
-  testImportStateLine();
+  testImportStatusLine();
   testEventLine();
   await testRunWatchEndToEnd();
   await testRunWatchJsonNdjson();

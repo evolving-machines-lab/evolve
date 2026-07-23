@@ -13,8 +13,8 @@
 export interface HostedClientConfig {
   /** API key (default: process.env.EVOLVE_API_KEY) */
   apiKey?: string;
-  /** Dashboard URL override (default: DEFAULT_DASHBOARD_URL) */
-  dashboardUrl?: string;
+  /** API base URL override (default: DEFAULT_DASHBOARD_URL) */
+  baseUrl?: string;
 }
 
 /**
@@ -78,7 +78,7 @@ export interface Task {
  */
 export interface Benchmark {
   name: string;
-  displayTitle: string | null;
+  title: string | null;
   description: string | null;
   /** The active version, or null when none is active */
   activeVersion: BenchmarkVersion | null;
@@ -103,7 +103,7 @@ export interface Benchmark {
  */
 export interface ActiveBenchmark {
   name: string;
-  displayTitle: string | null;
+  title: string | null;
   description: string | null;
   /** The active version (always present) */
   activeVersion: BenchmarkVersion;
@@ -113,8 +113,6 @@ export interface ActiveBenchmark {
   tasks: Task[];
   /** All versions, newest first */
   versions: BenchmarkVersion[];
-  /** The version whose tasks are listed (== version) */
-  tasksVersion: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -133,13 +131,17 @@ export interface AgentSystem {
  */
 export type EvalSandboxProvider = "e2b" | "daytona" | "modal";
 
-/** The six-input contract for creating an evaluation */
+/** The input contract for creating an evaluation */
 export interface EvaluationInput {
-  /** Benchmark reference in the form "name@version" */
+  /**
+   * Benchmark reference: "name@version" for a pinned run, or a bare "name" —
+   * a bare name resolves server-side to the benchmark's active READY version.
+   * Responses always echo the resolved "name@version".
+   */
   benchmark: string;
-  agentSystems: AgentSystem[];
   /** Task keys to run (omitted = every task of the version) */
   tasks?: string[];
+  agentSystems: AgentSystem[];
   /** Runs per task x agent system (default: 1) */
   runsPerTask?: number;
   /** Parallel task runs (default: 1) */
@@ -158,8 +160,8 @@ export type TaskRunCounts = Partial<Record<TaskRunStatus, number>>;
 /**
  * An evaluation = tasks x agentSystems x runsPerTask.
  *
- * run()/cancel()/rerunFailed()/list() return the summary fields (counts);
- * get() returns the detail fields (agentSystems, taskRunCounts, taskRunTotal,
+ * Every shape (run/get/cancel/rerunFailed/list) carries counts; get()
+ * additionally returns the detail fields (agentSystems, taskRunCounts,
  * error, updatedAt).
  */
 export interface Evaluation {
@@ -167,6 +169,8 @@ export interface Evaluation {
   status: EvaluationStatus;
   /** "name@version" */
   benchmark: string;
+  /** get() only */
+  agentSystems?: AgentSystem[];
   runsPerTask: number;
   concurrency: number;
   maxModelSpendUsd: number;
@@ -176,14 +180,10 @@ export interface Evaluation {
   sandboxProvider?: EvalSandboxProvider;
   spentUsd: number;
   createdAt: string;
-  /** Summary-shape counts (run/cancel/rerunFailed/list) */
-  counts?: { agentSystems: number; tasks: number; taskRuns: number };
+  /** Evaluation size: agentSystems x tasks -> taskRuns (present on every shape) */
+  counts: { agentSystems: number; tasks: number; taskRuns: number };
   /** TaskRun histogram by status (get/list) */
   taskRunCounts?: TaskRunCounts;
-  /** get() only */
-  taskRunTotal?: number;
-  /** get() only */
-  agentSystems?: AgentSystem[];
   /** get() only */
   benchmarkVersionState?: BenchmarkVersionState;
   /** get() only */
@@ -196,15 +196,21 @@ export interface Evaluation {
   idempotentReplay?: boolean;
 }
 
+/**
+ * Where a task run's spend figure came from: "key_info" is read back from the
+ * gateway (authoritative); "assumed_cap" is the conservative fallback.
+ */
+export type SpendSource = "key_info" | "assumed_cap";
+
 /** Model usage/spend recorded for a task run. Open map: harness-specific keys may appear. */
 export interface ModelUsage {
   /** Model spend in USD (LiteLLM is the only spend truth) */
   spendUsd?: number;
-  /** "key_info" (read back from the gateway) or "assumed_cap" (conservative fallback) */
-  spendSource?: string;
+  /** Where the spend figure came from */
+  spendSource?: SpendSource;
   maxBudgetUsd?: number;
   /** Resolved harness version actually used for the run */
-  harnessVersion?: string;
+  resolvedHarnessVersion?: string;
   [key: string]: unknown;
 }
 
@@ -314,7 +320,7 @@ export interface TaskRunDetail extends TaskRun {
   /** The evaluation this run belongs to */
   evaluationId: string;
   /** Harness version actually resolved and used for the run; null until resolved */
-  harnessVersionResolved: string | null;
+  resolvedHarnessVersion: string | null;
 }
 
 /** One trace event of a task run (seq-ordered timeline) */
@@ -415,33 +421,44 @@ export interface BenchmarkImportInput {
   version?: string;
 }
 
+/** Benchmark import job lifecycle status (wire values). Terminal: "READY", "FAILED". */
+export type BenchmarkImportStatus =
+  | "IMPORTING"
+  | "BUILDING"
+  | "VALIDATING"
+  | "READY"
+  | "FAILED";
+
 /**
  * A benchmark import job (parse -> validate -> activate pipeline).
- * Terminal states: "READY" and "FAILED".
+ * Terminal statuses: "READY" and "FAILED".
  */
 export interface BenchmarkImport {
-  /** Import job id (importId on the wire) */
+  /** Import job id */
   id: string;
-  /** Pipeline state, e.g. "IMPORTING", "BUILDING", "VALIDATING", "READY", "FAILED" */
-  state: string;
-  /** Failure detail when state is "FAILED" */
-  error?: string | null;
+  /** Pipeline status */
+  status: BenchmarkImportStatus;
+  /** Catalog benchmark name the import creates or extends (create responses) */
+  benchmarkName?: string;
+  /** Version label of the imported version (create responses) */
+  version?: string;
+  /** Failure detail when status is "FAILED" */
+  error?: BenchmarkImportError | null;
   /** Number of tasks parsed, once counted (getImport() responses) */
   taskCount?: number;
+}
+
+/** Structured failure detail for a FAILED import. */
+export interface BenchmarkImportError {
+  /** What went wrong, e.g. "2/113 task(s) failed to parse" */
+  message: string;
+  /** Per-task parse/validation failures, when the corpus was reachable */
+  failures?: { taskKey: string; error: string }[];
 }
 
 // =============================================================================
 // OPTIONS
 // =============================================================================
-
-/** Options for benchmarks().get() */
-export interface GetBenchmarkOptions {
-  /**
-   * Version override. May also be given inline as "name@version" in the ref;
-   * providing both with different values is an error.
-   */
-  version?: string;
-}
 
 /** Options for evaluations().run() and rerunFailed() */
 export interface RunEvaluationOptions {
@@ -478,8 +495,8 @@ export interface TaskRunTraceOptions {
 
 /** Options for benchmarks().watchImport() */
 export interface WatchImportOptions {
-  /** Called on every observed state change (including the first state seen) */
-  onState?: (benchmarkImport: BenchmarkImport) => void;
+  /** Called on every observed status change (including the first status seen) */
+  onStatus?: (benchmarkImport: BenchmarkImport) => void;
   /** Abort the watch (rejects with the abort reason) */
   signal?: AbortSignal;
   /** Poll interval between getImport() calls (default: 2000ms) */
@@ -523,7 +540,7 @@ export interface BenchmarksClient {
    * Get one benchmark: all versions + the selected version's task list.
    * ref is "name" (active version's tasks) or "name@version".
    */
-  get(ref: string, options?: GetBenchmarkOptions): Promise<Benchmark>;
+  get(ref: string): Promise<Benchmark>;
   /**
    * Get a benchmark's active version resolved to a runnable shape: unlike
    * get(), `version` and `tasks` are guaranteed present. Throws
@@ -537,10 +554,10 @@ export interface BenchmarksClient {
    * endpoint yet).
    */
   import(input: BenchmarkImportInput): Promise<BenchmarkImport>;
-  /** Get an import job's state (error and taskCount when available) */
+  /** Get an import job's status (error and taskCount when available) */
   getImport(id: string): Promise<BenchmarkImport>;
   /**
-   * Poll getImport() until the job reaches a terminal state ("READY" or
+   * Poll getImport() until the job reaches a terminal status ("READY" or
    * "FAILED") and resolve with the final import.
    */
   watchImport(id: string, options?: WatchImportOptions): Promise<BenchmarkImport>;
@@ -548,7 +565,10 @@ export interface BenchmarksClient {
 
 /** Client for hosted evaluations */
 export interface EvaluationsClient {
-  /** Create an evaluation (the six-input contract). Supports Idempotency-Key. */
+  /**
+   * Create an evaluation. benchmark may be a bare "name" (resolved to the
+   * active READY version) or a pinned "name@version". Supports Idempotency-Key.
+   */
   run(input: EvaluationInput, options?: RunEvaluationOptions): Promise<Evaluation>;
   /** Get one evaluation with agent systems + task-run status counts */
   get(id: string): Promise<Evaluation>;

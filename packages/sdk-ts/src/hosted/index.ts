@@ -9,7 +9,9 @@ import type {
   AgentSystem,
   Benchmark,
   BenchmarkImport,
+  BenchmarkImportError,
   BenchmarkImportInput,
+  BenchmarkImportStatus,
   BenchmarkVersion,
   BenchmarkVersionState,
   BenchmarksClient,
@@ -28,7 +30,6 @@ import type {
   EvaluationsClient,
   EvaluationWatch,
   ExportEvaluationOptions,
-  GetBenchmarkOptions,
   HostedClientConfig,
   ListEvaluationsOptions,
   ListTaskRunsOptions,
@@ -53,8 +54,10 @@ export type {
   AgentSystem,
   Benchmark,
   BenchmarkImport,
+  BenchmarkImportError,
   BenchmarkImportInput,
   BenchmarkImportSource,
+  BenchmarkImportStatus,
   BenchmarkVersion,
   BenchmarkVersionState,
   BenchmarksClient,
@@ -73,13 +76,13 @@ export type {
   EvaluationsClient,
   EvaluationWatch,
   ExportEvaluationOptions,
-  GetBenchmarkOptions,
   HostedClientConfig,
   ListEvaluationsOptions,
   ListTaskRunsOptions,
   ModelUsage,
   OutputFile,
   RunEvaluationOptions,
+  SpendSource,
   Task,
   TaskRun,
   TaskRunCounts,
@@ -143,8 +146,8 @@ const TERMINAL_EVENT_TYPES: ReadonlySet<string> = new Set([
 
 const DEFAULT_IMPORT_POLL_INTERVAL_MS = 2_000;
 
-// Terminal states of the import pipeline (parse -> validate -> activate).
-const TERMINAL_IMPORT_STATES: ReadonlySet<string> = new Set(["READY", "FAILED"]);
+// Terminal statuses of the import pipeline (parse -> validate -> activate).
+const TERMINAL_IMPORT_STATUSES: ReadonlySet<string> = new Set(["READY", "FAILED"]);
 
 // =============================================================================
 // SHARED HELPERS
@@ -152,7 +155,7 @@ const TERMINAL_IMPORT_STATES: ReadonlySet<string> = new Set(["READY", "FAILED"])
 
 interface ResolvedConfig {
   apiKey: string;
-  dashboardUrl: string;
+  baseUrl: string;
 }
 
 function resolveConfig(factory: string, config?: HostedClientConfig): ResolvedConfig {
@@ -162,8 +165,8 @@ function resolveConfig(factory: string, config?: HostedClientConfig): ResolvedCo
       `${factory}() requires an API key. Set ${ENV_EVOLVE_API_KEY} or pass { apiKey } in config.`
     );
   }
-  const dashboardUrl = (config?.dashboardUrl || process.env.EVOLVE_DASHBOARD_URL || DEFAULT_DASHBOARD_URL).replace(/\/$/, "");
-  return { apiKey, dashboardUrl };
+  const baseUrl = (config?.baseUrl || process.env.EVOLVE_DASHBOARD_URL || DEFAULT_DASHBOARD_URL).replace(/\/$/, "");
+  return { apiKey, baseUrl };
 }
 
 async function request(
@@ -171,7 +174,7 @@ async function request(
   path: string,
   init?: RequestInit
 ): Promise<Response> {
-  const res = await fetch(`${cfg.dashboardUrl}${path}`, {
+  const res = await fetch(`${cfg.baseUrl}${path}`, {
     ...init,
     headers: {
       Authorization: `Bearer ${cfg.apiKey}`,
@@ -180,7 +183,7 @@ async function request(
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`Dashboard API error (${res.status}): ${text || res.statusText}`);
+    throw new Error(`Evolve API error (${res.status}): ${text || res.statusText}`);
   }
   return res;
 }
@@ -233,6 +236,7 @@ function mapEvaluation(raw: Record<string, unknown>): Evaluation {
     maxModelSpendUsd: raw.maxModelSpendUsd as number,
     spentUsd: (raw.spentUsd as number) ?? 0,
     createdAt: raw.createdAt as string,
+    counts: raw.counts as Evaluation["counts"],
   };
   if (typeof raw.maxModelSpendUsdPerTaskRun === "number") {
     evaluation.maxModelSpendUsdPerTaskRun = raw.maxModelSpendUsdPerTaskRun;
@@ -240,14 +244,8 @@ function mapEvaluation(raw: Record<string, unknown>): Evaluation {
   if (typeof raw.sandboxProvider === "string") {
     evaluation.sandboxProvider = raw.sandboxProvider as EvalSandboxProvider;
   }
-  if (raw.counts && typeof raw.counts === "object") {
-    evaluation.counts = raw.counts as Evaluation["counts"];
-  }
   if (raw.taskRunCounts && typeof raw.taskRunCounts === "object") {
     evaluation.taskRunCounts = raw.taskRunCounts as TaskRunCounts;
-  }
-  if (typeof raw.taskRunTotal === "number") {
-    evaluation.taskRunTotal = raw.taskRunTotal;
   }
   if (Array.isArray(raw.agentSystems)) {
     evaluation.agentSystems = (raw.agentSystems as Record<string, unknown>[]).map(mapAgentSystem);
@@ -289,16 +287,19 @@ function mapTaskRun(raw: Record<string, unknown>): TaskRun {
   };
 }
 
-function mapBenchmarkImport(
-  raw: Record<string, unknown>,
-  fallbackId?: string
-): BenchmarkImport {
+function mapBenchmarkImport(raw: Record<string, unknown>): BenchmarkImport {
   const benchmarkImport: BenchmarkImport = {
-    id: (raw.importId as string) ?? (raw.id as string) ?? (fallbackId as string),
-    state: raw.state as string,
+    id: raw.id as string,
+    status: raw.status as BenchmarkImportStatus,
   };
+  if (typeof raw.benchmarkName === "string") {
+    benchmarkImport.benchmarkName = raw.benchmarkName;
+  }
+  if (typeof raw.version === "string") {
+    benchmarkImport.version = raw.version;
+  }
   if ("error" in raw) {
-    benchmarkImport.error = (raw.error as string | null) ?? null;
+    benchmarkImport.error = (raw.error as BenchmarkImportError | null) ?? null;
   }
   if (typeof raw.taskCount === "number") {
     benchmarkImport.taskCount = raw.taskCount;
@@ -518,43 +519,27 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
 
   async function getImport(id: string): Promise<BenchmarkImport> {
     const res = await request(cfg, `/api/benchmarks/import/${encodeURIComponent(id)}`);
-    return mapBenchmarkImport((await res.json()) as Record<string, unknown>, id);
+    return mapBenchmarkImport((await res.json()) as Record<string, unknown>);
   }
 
-  async function getBenchmark(ref: string, options?: GetBenchmarkOptions): Promise<Benchmark> {
+  async function getBenchmark(ref: string): Promise<Benchmark> {
     const parsed = parseBenchmarkRef(ref);
-    if (
-      options?.version !== undefined &&
-      parsed.version !== undefined &&
-      options.version !== parsed.version
-    ) {
-      throw new Error(
-        `Conflicting versions: ref "${ref}" says "${parsed.version}" but options.version is "${options.version}"`
-      );
-    }
-    const version = options?.version ?? parsed.version;
-    const query = version !== undefined ? `?version=${encodeURIComponent(version)}` : "";
+    const query =
+      parsed.version !== undefined ? `?version=${encodeURIComponent(parsed.version)}` : "";
     const res = await request(
       cfg,
       `/api/benchmarks/${encodeURIComponent(parsed.name)}${query}`
     );
     const raw = (await res.json()) as Record<string, unknown>;
-    const versions = ((raw.versions as Record<string, unknown>[]) || []).map(
-      mapBenchmarkVersion
-    );
-    // The detail route names the active version; resolve it to its full
-    // version object so activeVersion has one shape across list() and get().
-    const activeVersionName = (raw.activeVersion as string | null) ?? null;
-    const activeVersion =
-      activeVersionName !== null
-        ? versions.find((v) => v.version === activeVersionName) ?? null
-        : null;
     return {
       name: raw.name as string,
-      displayTitle: (raw.displayTitle as string | null) ?? null,
+      title: (raw.title as string | null) ?? null,
       description: (raw.description as string | null) ?? null,
-      activeVersion,
-      versions,
+      // activeVersion is the full version object on every route (list + detail).
+      activeVersion: raw.activeVersion
+        ? mapBenchmarkVersion(raw.activeVersion as Record<string, unknown>)
+        : null,
+      versions: ((raw.versions as Record<string, unknown>[]) || []).map(mapBenchmarkVersion),
       tasksVersion: (raw.tasksVersion as string | null) ?? null,
       tasks: ((raw.tasks as Record<string, unknown>[]) || []).map(mapTask),
       createdAt: raw.createdAt as string,
@@ -568,7 +553,7 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
       const data = (await res.json()) as { benchmarks?: Record<string, unknown>[] };
       return (data.benchmarks || []).map((raw) => ({
         name: raw.name as string,
-        displayTitle: (raw.displayTitle as string | null) ?? null,
+        title: (raw.title as string | null) ?? null,
         description: (raw.description as string | null) ?? null,
         activeVersion: raw.activeVersion
           ? mapBenchmarkVersion(raw.activeVersion as Record<string, unknown>)
@@ -587,13 +572,12 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
       }
       return {
         name: bench.name,
-        displayTitle: bench.displayTitle,
+        title: bench.title,
         description: bench.description,
         activeVersion: bench.activeVersion,
         version: bench.activeVersion.version,
         tasks: bench.tasks ?? [],
         versions: bench.versions ?? [],
-        tasksVersion: bench.tasksVersion ?? bench.activeVersion.version,
         createdAt: bench.createdAt as string,
         updatedAt: bench.updatedAt as string,
       };
@@ -633,15 +617,15 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
 
     async watchImport(id: string, options?: WatchImportOptions): Promise<BenchmarkImport> {
       const pollIntervalMs = options?.pollIntervalMs ?? DEFAULT_IMPORT_POLL_INTERVAL_MS;
-      let lastState: string | null = null;
+      let lastStatus: string | null = null;
       for (;;) {
         throwIfAborted(options?.signal);
         const current = await getImport(id);
-        if (current.state !== lastState) {
-          lastState = current.state;
-          options?.onState?.(current);
+        if (current.status !== lastStatus) {
+          lastStatus = current.status;
+          options?.onStatus?.(current);
         }
-        if (TERMINAL_IMPORT_STATES.has(current.state)) return current;
+        if (TERMINAL_IMPORT_STATUSES.has(current.status)) return current;
         await sleep(pollIntervalMs, options?.signal);
       }
     },
@@ -662,8 +646,9 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
  * import { evaluations } from "@evolvingmachines/sdk";
  *
  * const e = evaluations();
+ * // benchmark: bare name = active version; "name@version" pins a version
  * const evaluation = await e.run({
- *   benchmark: "deep-swe@1.1",
+ *   benchmark: "deep-swe",
  *   agentSystems: [{ harness: "codex", model: "gpt-5.5" }],
  *   runsPerTask: 1,
  *   concurrency: 4,
@@ -781,7 +766,7 @@ export function evaluations(config?: HostedClientConfig): EvaluationsClient {
       let res: Response;
       try {
         res = await fetch(
-          `${cfg.dashboardUrl}/api/evaluations/${encodeURIComponent(id)}/events`,
+          `${cfg.baseUrl}/api/evaluations/${encodeURIComponent(id)}/events`,
           {
             headers: {
               Authorization: `Bearer ${cfg.apiKey}`,
@@ -807,7 +792,7 @@ export function evaluations(config?: HostedClientConfig): EvaluationsClient {
           continue;
         }
         const text = await res.text().catch(() => "");
-        throw new Error(`Dashboard API error (${res.status}): ${text || res.statusText}`);
+        throw new Error(`Evolve API error (${res.status}): ${text || res.statusText}`);
       }
       if (!res.body) {
         throw new Error("Event stream response has no body");
@@ -917,7 +902,7 @@ export function evaluations(config?: HostedClientConfig): EvaluationsClient {
       return {
         ...mapTaskRun(raw),
         evaluationId: raw.evaluationId as string,
-        harnessVersionResolved: (raw.harnessVersionResolved as string | null) ?? null,
+        resolvedHarnessVersion: (raw.resolvedHarnessVersion as string | null) ?? null,
       };
     },
 

@@ -176,13 +176,13 @@ async function testBenchmarksList() {
         benchmarks: [
           {
             name: "deep-swe",
-            displayTitle: "DeepSWE",
+            title: "DeepSWE",
             description: "SWE-bench style tasks",
             activeVersion: { version: "1.1", state: "READY", taskCount: 113 },
           },
           {
             name: "empty-bench",
-            displayTitle: null,
+            title: null,
             description: null,
             activeVersion: null,
           },
@@ -190,12 +190,12 @@ async function testBenchmarksList() {
       },
     });
 
-    const b = benchmarks({ apiKey: "test-key", dashboardUrl: BASE });
+    const b = benchmarks({ apiKey: "test-key", baseUrl: BASE });
     const catalog = await b.list();
 
     assertEqual(catalog.length, 2, "returns 2 benchmarks");
     assertEqual(catalog[0].name, "deep-swe", "maps name");
-    assertEqual(catalog[0].displayTitle, "DeepSWE", "maps displayTitle");
+    assertEqual(catalog[0].title, "DeepSWE", "maps title");
     assertEqual(
       catalog[0].activeVersion,
       { version: "1.1", state: "READY", taskCount: 113 },
@@ -211,16 +211,16 @@ async function testBenchmarksList() {
 }
 
 async function testBenchmarksGet() {
-  console.log("\n--- benchmarks().get() resolves name@version and maps detail ---");
+  console.log("\n--- benchmarks().get() resolves name[@version] and maps detail ---");
   installMockFetch();
   try {
     setMockResponse("/api/benchmarks/deep-swe", {
       status: 200,
       body: {
         name: "deep-swe",
-        displayTitle: "DeepSWE",
+        title: "DeepSWE",
         description: "SWE-bench style tasks",
-        activeVersion: "1.1",
+        activeVersion: { version: "1.1", state: "READY", createdAt: "2026-07-21T00:00:00.000Z", taskCount: 113 },
         versions: [
           { version: "1.1", state: "READY", createdAt: "2026-07-21T00:00:00.000Z", taskCount: 113 },
           { version: "1.0", state: "ARCHIVED", createdAt: "2026-07-01T00:00:00.000Z", taskCount: 100 },
@@ -234,7 +234,7 @@ async function testBenchmarksGet() {
       },
     });
 
-    const b = benchmarks({ apiKey: "test-key", dashboardUrl: BASE });
+    const b = benchmarks({ apiKey: "test-key", baseUrl: BASE });
     const detail = await b.get("deep-swe@1.1");
 
     let url = fetchCalls[fetchCalls.length - 1].url;
@@ -242,7 +242,8 @@ async function testBenchmarksGet() {
     assert(url.includes("version=1.1"), "ref version becomes ?version=");
 
     assertEqual(detail.name, "deep-swe", "maps name");
-    assertEqual(detail.activeVersion?.version, "1.1", "activeVersion resolved to full object");
+    assertEqual(detail.title, "DeepSWE", "maps title");
+    assertEqual(detail.activeVersion?.version, "1.1", "activeVersion is the full version object");
     assertEqual(detail.activeVersion?.state, "READY", "activeVersion carries state");
     assertEqual(detail.versions?.length, 2, "maps versions");
     assertEqual(detail.tasksVersion, "1.1", "maps tasksVersion");
@@ -256,21 +257,6 @@ async function testBenchmarksGet() {
     await b.get("deep-swe");
     url = fetchCalls[fetchCalls.length - 1].url;
     assert(!url.includes("version="), "bare name omits version param");
-
-    // Options version
-    await b.get("deep-swe", { version: "1.0" });
-    url = fetchCalls[fetchCalls.length - 1].url;
-    assert(url.includes("version=1.0"), "options.version becomes ?version=");
-
-    // Conflict throws
-    let threw = false;
-    try {
-      await b.get("deep-swe@1.1", { version: "1.0" });
-    } catch (e: any) {
-      threw = true;
-      assert(e.message.includes("Conflicting versions"), "conflict error is clear");
-    }
-    assert(threw, "throws on ref/options version conflict");
   } finally {
     restoreFetch();
   }
@@ -282,10 +268,10 @@ async function testImportGitSource() {
   try {
     setMockResponse("/api/benchmarks/import", {
       status: 202,
-      body: { importId: "imp-1", state: "IMPORTING" },
+      body: { id: "imp-1", benchmarkName: "deep-swe", version: "1.2", status: "IMPORTING" },
     });
 
-    const b = benchmarks({ apiKey: "test-key", dashboardUrl: BASE });
+    const b = benchmarks({ apiKey: "test-key", baseUrl: BASE });
     const imported = await b.import({
       source: { gitUrl: "https://github.com/x/bench.git", ref: "main" },
       benchmarkName: "deep-swe",
@@ -308,7 +294,11 @@ async function testImportGitSource() {
     assertEqual(headers?.["Content-Type"], "application/json", "JSON content type");
     assertEqual(headers?.Authorization, "Bearer test-key", "Bearer token sent");
 
-    assertEqual(imported, { id: "imp-1", state: "IMPORTING" }, "202 response mapped (importId -> id)");
+    assertEqual(
+      imported,
+      { id: "imp-1", status: "IMPORTING", benchmarkName: "deep-swe", version: "1.2" },
+      "202 response mapped (id, status, benchmarkName, version)"
+    );
 
     // version omitted: no version key in the body
     await b.import({
@@ -326,7 +316,7 @@ async function testImportReservedSources() {
   console.log("\n--- benchmarks().import() archive/hub sources stay reserved ---");
   installMockFetch();
   try {
-    const b = benchmarks({ apiKey: "test-key", dashboardUrl: BASE });
+    const b = benchmarks({ apiKey: "test-key", baseUrl: BASE });
     for (const [name, source] of [
       ["archivePath", { archivePath: "/tmp/bench.tar.gz" }],
       ["harborHubRef", { harborHubRef: "hub://deep-swe@1.1" }],
@@ -348,15 +338,15 @@ async function testImportReservedSources() {
 }
 
 async function testGetImport() {
-  console.log("\n--- benchmarks().getImport() maps state/error/taskCount ---");
+  console.log("\n--- benchmarks().getImport() maps status/error/taskCount ---");
   installMockFetch();
   try {
     setMockResponse("/api/benchmarks/import/imp-1", {
       status: 200,
-      body: { state: "VALIDATING", error: null, taskCount: 113 },
+      body: { id: "imp-1", status: "VALIDATING", error: null, taskCount: 113 },
     });
 
-    const b = benchmarks({ apiKey: "test-key", dashboardUrl: BASE });
+    const b = benchmarks({ apiKey: "test-key", baseUrl: BASE });
     const imported = await b.getImport("imp-1");
 
     assert(
@@ -365,8 +355,8 @@ async function testGetImport() {
     );
     assertEqual(
       imported,
-      { id: "imp-1", state: "VALIDATING", error: null, taskCount: 113 },
-      "maps state/error/taskCount and backfills id from the argument"
+      { id: "imp-1", status: "VALIDATING", error: null, taskCount: 113 },
+      "maps id/status/error/taskCount from the wire"
     );
   } finally {
     restoreFetch();
@@ -374,43 +364,43 @@ async function testGetImport() {
 }
 
 async function testWatchImportPollsToTerminal() {
-  console.log("\n--- benchmarks().watchImport() polls getImport() to a terminal state ---");
+  console.log("\n--- benchmarks().watchImport() polls getImport() to a terminal status ---");
   installMockFetch();
   try {
-    const states = [
-      { state: "IMPORTING", error: null, taskCount: 0 },
-      { state: "VALIDATING", error: null, taskCount: 113 },
-      { state: "VALIDATING", error: null, taskCount: 113 },
-      { state: "READY", error: null, taskCount: 113 },
+    const statuses = [
+      { id: "imp-1", status: "IMPORTING", error: null, taskCount: 0 },
+      { id: "imp-1", status: "VALIDATING", error: null, taskCount: 113 },
+      { id: "imp-1", status: "VALIDATING", error: null, taskCount: 113 },
+      { id: "imp-1", status: "READY", error: null, taskCount: 113 },
     ];
     let calls = 0;
     (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
       fetchCalls.push({ url: url.toString(), init });
-      const body = states[Math.min(calls, states.length - 1)];
+      const body = statuses[Math.min(calls, statuses.length - 1)];
       calls++;
       return buildMockResponse({ status: 200, body });
     };
 
-    const b = benchmarks({ apiKey: "test-key", dashboardUrl: BASE });
+    const b = benchmarks({ apiKey: "test-key", baseUrl: BASE });
     const seen: string[] = [];
     const final = await b.watchImport("imp-1", {
-      onState: (i) => seen.push(i.state),
+      onStatus: (i) => seen.push(i.status),
       pollIntervalMs: 1,
     });
 
-    assertEqual(calls, 4, "polled until the terminal state");
-    assertEqual(seen, ["IMPORTING", "VALIDATING", "READY"], "onState fires only on state changes");
-    assertEqual(final.state, "READY", "resolves with the terminal import");
+    assertEqual(calls, 4, "polled until the terminal status");
+    assertEqual(seen, ["IMPORTING", "VALIDATING", "READY"], "onStatus fires only on status changes");
+    assertEqual(final.status, "READY", "resolves with the terminal import");
     assertEqual(final.taskCount, 113, "terminal import carries taskCount");
 
     // FAILED is terminal too, with the error surfaced
     installMockFetch();
     setMockResponse("/api/benchmarks/import/imp-2", {
       status: 200,
-      body: { state: "FAILED", error: "task.yaml missing for task abc", taskCount: 0 },
+      body: { id: "imp-2", status: "FAILED", error: "task.yaml missing for task abc", taskCount: 0 },
     });
     const failed = await b.watchImport("imp-2", { pollIntervalMs: 1 });
-    assertEqual(failed.state, "FAILED", "FAILED ends the watch");
+    assertEqual(failed.status, "FAILED", "FAILED ends the watch");
     assertEqual(failed.error, "task.yaml missing for task abc", "failure detail surfaced");
   } finally {
     restoreFetch();
@@ -434,20 +424,20 @@ const RUN_SUMMARY = {
   createdAt: "2026-07-22T00:00:00.000Z",
 };
 
-async function testRunPostsSixInputs() {
-  console.log("\n--- evaluations().run() POSTs the six-input contract ---");
+async function testRunPostsInputContract() {
+  console.log("\n--- evaluations().run() POSTs the evaluation input contract ---");
   installMockFetch();
   try {
     setMockResponse("/api/evaluations", { status: 202, body: RUN_SUMMARY });
 
-    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
     const input = {
       benchmark: "deep-swe@1.1",
+      tasks: ["abs-module-cache-flags"],
       agentSystems: [
         { harness: "codex", model: "gpt-5.5" },
         { harness: "claude", model: "sonnet", harnessVersion: "2.1.0" },
       ],
-      tasks: ["abs-module-cache-flags"],
       runsPerTask: 1,
       concurrency: 4,
       maxModelSpendUsd: 25,
@@ -458,7 +448,7 @@ async function testRunPostsSixInputs() {
 
     const call = fetchCalls[fetchCalls.length - 1];
     assertEqual(call.init?.method, "POST", "uses POST");
-    assertEqual(JSON.parse(call.init?.body as string), input, "body is the six-input contract");
+    assertEqual(JSON.parse(call.init?.body as string), input, "body is the evaluation input contract");
     assertEqual(
       JSON.parse(call.init?.body as string).maxModelSpendUsdPerTaskRun,
       2.5,
@@ -485,6 +475,20 @@ async function testRunPostsSixInputs() {
     await e.run(input);
     const headers2 = fetchCalls[fetchCalls.length - 1].init?.headers as Record<string, string>;
     assert(!("Idempotency-Key" in (headers2 || {})), "no Idempotency-Key header by default");
+
+    // Bare benchmark name: forwarded as-is; the server resolves the active
+    // READY version and the response echoes "name@version".
+    const bare = await e.run({
+      benchmark: "deep-swe",
+      agentSystems: [{ harness: "codex", model: "gpt-5.5" }],
+      maxModelSpendUsd: 25,
+    });
+    assertEqual(
+      JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string).benchmark,
+      "deep-swe",
+      "bare benchmark name forwarded unchanged"
+    );
+    assertEqual(bare.benchmark, "deep-swe@1.1", "response echoes the resolved name@version");
   } finally {
     restoreFetch();
   }
@@ -498,7 +502,7 @@ async function testRunIdempotentReplay() {
       status: 200,
       body: { ...RUN_SUMMARY, idempotentReplay: true },
     });
-    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
     const evaluation = await e.run(
       { benchmark: "deep-swe@1.1", agentSystems: [{ harness: "codex", model: "gpt-5.5" }], maxModelSpendUsd: 25 },
       { idempotencyKey: "idem-abc" }
@@ -510,7 +514,7 @@ async function testRunIdempotentReplay() {
 }
 
 async function testGetEvaluationDetail() {
-  console.log("\n--- evaluations().get() maps detail and drops internal fields ---");
+  console.log("\n--- evaluations().get() maps the detail shape (public fields only) ---");
   installMockFetch();
   try {
     setMockResponse("/api/evaluations/eval-1", {
@@ -527,23 +531,17 @@ async function testGetEvaluationDetail() {
         sandboxProvider: "modal",
         spentUsd: 3.5,
         agentSystems: [
-          {
-            id: "as-internal-1",
-            harness: "codex",
-            model: "gpt-5.5",
-            harnessVersion: null,
-            systemDigest: "abcd1234",
-          },
+          { harness: "codex", model: "gpt-5.5", harnessVersion: null },
         ],
+        counts: { agentSystems: 1, tasks: 10, taskRuns: 10 },
         taskRunCounts: { SCORED: 4, RUNNING: 2, QUEUED: 4 },
-        taskRunTotal: 10,
         error: null,
         createdAt: "2026-07-22T00:00:00.000Z",
         updatedAt: "2026-07-22T00:05:00.000Z",
       },
     });
 
-    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
     const evaluation = await e.get("eval-1");
 
     assertEqual(evaluation.status, "RUNNING", "maps status");
@@ -556,15 +554,20 @@ async function testGetEvaluationDetail() {
       { SCORED: 4, RUNNING: 2, QUEUED: 4 },
       "maps taskRunCounts histogram"
     );
-    assertEqual(evaluation.taskRunTotal, 10, "maps taskRunTotal");
+    assertEqual(
+      evaluation.counts,
+      { agentSystems: 1, tasks: 10, taskRuns: 10 },
+      "detail carries counts (no taskRunTotal)"
+    );
     assertEqual(
       evaluation.agentSystems,
       [{ harness: "codex", model: "gpt-5.5", harnessVersion: null }],
-      "agentSystems reduced to the public triple"
+      "agentSystems is the public triple (wire sends nothing internal)"
     );
     const system = evaluation.agentSystems?.[0] as Record<string, unknown>;
     assert(!("id" in system), "internal agent system id not exposed");
     assert(!("systemDigest" in system), "systemDigest not exposed");
+    assert(!("taskRunTotal" in (evaluation as unknown as Record<string, unknown>)), "taskRunTotal is gone");
     assertEqual(evaluation.error, null, "maps error");
   } finally {
     restoreFetch();
@@ -586,7 +589,7 @@ async function testListEvaluations() {
       },
     });
 
-    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
 
     const page = await e.list();
     let url = fetchCalls[fetchCalls.length - 1].url;
@@ -624,7 +627,7 @@ async function testTaskRuns() {
             failurePhase: null,
             failureDetail: null,
             phaseTimingsMs: { agentMs: 203000, verifyMs: 31000 },
-            modelUsage: { spendUsd: 0.93, spendSource: "key_info", harnessVersion: "codex-cli 0.145.0" },
+            modelUsage: { spendUsd: 0.93, spendSource: "key_info", resolvedHarnessVersion: "codex-cli 0.145.0" },
             sessionRef: "sess-9",
             createdAt: "2026-07-22T00:00:00.000Z",
             updatedAt: "2026-07-22T00:04:00.000Z",
@@ -651,7 +654,7 @@ async function testTaskRuns() {
       },
     });
 
-    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
     const page = await e.taskRuns("eval-1", { limit: 2, cursor: "run-0" });
 
     const url = fetchCalls[fetchCalls.length - 1].url;
@@ -681,7 +684,7 @@ async function testCancel() {
       status: 200,
       body: { ...RUN_SUMMARY, status: "CANCELLING" },
     });
-    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
     const evaluation = await e.cancel("eval-1");
     assertEqual(fetchCalls[0].init?.method, "POST", "uses POST");
     assertEqual(evaluation.status, "CANCELLING", "maps cancelling status");
@@ -698,7 +701,7 @@ async function testRerunFailed() {
       status: 202,
       body: { ...RUN_SUMMARY, id: "eval-2", sourceEvaluationId: "eval-1" },
     });
-    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
     const evaluation = await e.rerunFailed("eval-1", { idempotencyKey: "idem-rr" });
 
     const call = fetchCalls[fetchCalls.length - 1];
@@ -720,7 +723,7 @@ async function testRerunFailedConflictError() {
       status: 409,
       body: { error: "Evaluation is RUNNING; rerun-failed requires a terminal evaluation" },
     });
-    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
     let threw = false;
     try {
       await e.rerunFailed("eval-1");
@@ -750,7 +753,7 @@ async function testExportBuffer() {
       },
     });
 
-    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
     const buf = await e.export("eval-1");
 
     assert(Buffer.isBuffer(buf), "returns a Buffer");
@@ -775,7 +778,7 @@ async function testExportToFile() {
       },
     });
 
-    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
     const filePath = await e.export("eval-1", { to: tmpDir });
 
     assert(filePath.endsWith("evaluation-eval-1-export.json.gz"), "filename from Content-Disposition");
@@ -798,7 +801,7 @@ async function testExportStream() {
       bodyBytes: archive,
     });
 
-    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
     const stream = await e.export("eval-1", { stream: true });
 
     assert(typeof (stream as ReadableStream).getReader === "function", "returns a ReadableStream");
@@ -832,7 +835,7 @@ async function testExportHarborFormat() {
       },
     });
 
-    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
     const buf = await e.export("eval-1", { format: "harbor" });
 
     const harborCall = fetchCalls[fetchCalls.length - 1];
@@ -860,7 +863,7 @@ async function testExportTerminalRequired() {
       status: 409,
       body: { error: "Evaluation is RUNNING; export requires a terminal evaluation" },
     });
-    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
     let threw = false;
     try {
       await e.export("eval-1");
@@ -904,7 +907,7 @@ async function testWatchStreamsToTerminal() {
       body: { ...RUN_SUMMARY, status: "COMPLETED" },
     });
 
-    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
     const events: EvaluationEvent[] = [];
     const finalEvaluation = await e.watch("eval-1", { onEvent: (ev) => events.push(ev) });
 
@@ -954,7 +957,7 @@ async function testWatchResumesWithLastEventId() {
       });
     };
 
-    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
     const events: EvaluationEvent[] = [];
     const finalEvaluation = await e.watch("eval-1", {
       onEvent: (ev) => events.push(ev),
@@ -990,7 +993,7 @@ async function testWatchFallsBackToStatusOnQuietClose() {
       body: { ...RUN_SUMMARY, status: "CANCELLED" },
     });
 
-    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
     const finalEvaluation = await e.watch("eval-1", { reconnectDelayMs: 1 });
 
     assertEqual(finalEvaluation.status, "CANCELLED", "terminal status ends the watch");
@@ -1027,7 +1030,7 @@ async function testWatchRetriesOn5xx() {
       return buildMockResponse({ status: 200, body: { ...RUN_SUMMARY, status: "COMPLETED" } });
     };
 
-    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
     const finalEvaluation = await e.watch("eval-1", { reconnectDelayMs: 1 });
 
     assertEqual(eventsCalls, 2, "retried after the 503");
@@ -1045,7 +1048,7 @@ async function testWatchThrowsOnNonRetryableError() {
       status: 404,
       body: { error: "Evaluation not found" },
     });
-    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
     let threw = false;
     try {
       await e.watch("eval-missing");
@@ -1080,7 +1083,7 @@ async function testWatchAbort() {
       body: { ...RUN_SUMMARY, status: "RUNNING" },
     });
 
-    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 20);
 
@@ -1128,14 +1131,14 @@ async function testTaskRunDetail() {
         failureDetail: "x".repeat(5000), // detail route: untruncated
         phaseTimingsMs: { agentMs: 203000, verifyMs: 31000 },
         modelUsage: { spendUsd: 0.93, spendSource: "key_info" },
-        harnessVersionResolved: "codex-cli 0.145.0",
+        resolvedHarnessVersion: "codex-cli 0.145.0",
         sessionRef: "sess-9",
         createdAt: "2026-07-22T00:00:00.000Z",
         updatedAt: "2026-07-22T00:04:00.000Z",
       },
     });
 
-    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
     const run = await e.taskRun("eval-1", "run-1");
 
     assert(
@@ -1144,7 +1147,7 @@ async function testTaskRunDetail() {
     );
     assertEqual(run.id, "run-1", "maps id");
     assertEqual(run.evaluationId, "eval-1", "maps evaluationId");
-    assertEqual(run.harnessVersionResolved, "codex-cli 0.145.0", "maps harnessVersionResolved");
+    assertEqual(run.resolvedHarnessVersion, "codex-cli 0.145.0", "maps resolvedHarnessVersion");
     assertEqual(run.sessionRef, "sess-9", "maps sessionRef");
     assertEqual(run.failureDetail?.length, 5000, "failureDetail untruncated on the detail route");
     assertEqual(run.score, 1, "maps score");
@@ -1173,7 +1176,7 @@ async function testTaskRunTracePage() {
       },
     });
 
-    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
     const page = await e.taskRunTrace("eval-1", "run-1", { after: 2, limit: 2 });
 
     const url = fetchCalls[fetchCalls.length - 1].url;
@@ -1217,7 +1220,7 @@ async function testTaskRunTraceEventsIterator() {
       return buildMockResponse({ status: 200, body: pages[after ?? ""] });
     };
 
-    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
     const seqs: number[] = [];
     for await (const event of e.taskRunTraceEvents("eval-1", "run-1")) {
       seqs.push(event.seq);
@@ -1257,7 +1260,7 @@ async function testCompare() {
             coverage: { scored: 4, total: 5 },
             spentUsd: 12.5,
             agentSystems: [
-              { id: "as-internal-1", harness: "codex", model: "gpt-5.5", harnessVersion: null },
+              { harness: "codex", model: "gpt-5.5", harnessVersion: null },
             ],
             createdAt: "2026-07-22T00:00:00.000Z",
           },
@@ -1269,7 +1272,7 @@ async function testCompare() {
             coverage: { scored: 5, total: 5 },
             spentUsd: 9.1,
             agentSystems: [
-              { id: "as-internal-2", harness: "claude", model: "sonnet", harnessVersion: "2.1.0" },
+              { harness: "claude", model: "sonnet", harnessVersion: "2.1.0" },
             ],
             createdAt: "2026-07-22T01:00:00.000Z",
           },
@@ -1295,7 +1298,7 @@ async function testCompare() {
       },
     });
 
-    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
     const comparison = await e.compare(["eval-1", "eval-2"]);
 
     const url = fetchCalls[fetchCalls.length - 1].url;
@@ -1309,7 +1312,7 @@ async function testCompare() {
     assertEqual(
       comparison.evaluations[0].agentSystems,
       [{ harness: "codex", model: "gpt-5.5", harnessVersion: null }],
-      "agentSystems reduced to the public triple"
+      "agentSystems is the public triple (wire sends nothing internal)"
     );
     const system = comparison.evaluations[0].agentSystems[0] as Record<string, unknown>;
     assert(!("id" in system), "internal agent system id not exposed");
@@ -1335,7 +1338,7 @@ async function testCompareBadIdsError() {
       status: 400,
       body: { error: "ids must list between 2 and 5 distinct evaluation ids (comma-separated)" },
     });
-    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
     let threw = false;
     try {
       await e.compare(["eval-1"]);
@@ -1355,12 +1358,13 @@ async function testApiErrorHandling() {
   installMockFetch();
   try {
     setMockResponse("/api/benchmarks", { status: 401, body: { error: "Invalid API key" } });
-    const b = benchmarks({ apiKey: "bad-key", dashboardUrl: BASE });
+    const b = benchmarks({ apiKey: "bad-key", baseUrl: BASE });
     let threw = false;
     try {
       await b.list();
     } catch (e: any) {
       threw = true;
+      assert(e.message.startsWith("Evolve API error"), 'error prefix is "Evolve API error"');
       assert(e.message.includes("401"), "error includes status code");
       assert(e.message.includes("Invalid API key"), "error includes server detail");
     }
@@ -1382,9 +1386,9 @@ async function testGetActive() {
       status: 200,
       body: {
         name: "deep-swe",
-        displayTitle: "DeepSWE",
+        title: "DeepSWE",
         description: "SWE tasks",
-        activeVersion: "1.1",
+        activeVersion: { version: "1.1", state: "READY", createdAt: "2026-07-21T00:00:00.000Z", taskCount: 113 },
         versions: [
           { version: "1.1", state: "READY", createdAt: "2026-07-21T00:00:00.000Z", taskCount: 113 },
           { version: "1.0", state: "ARCHIVED", createdAt: "2026-07-01T00:00:00.000Z", taskCount: 100 },
@@ -1398,7 +1402,7 @@ async function testGetActive() {
       },
     });
 
-    const catalog = benchmarks({ apiKey: "test-key", dashboardUrl: BASE });
+    const catalog = benchmarks({ apiKey: "test-key", baseUrl: BASE });
     const active = await catalog.getActive("deep-swe");
 
     const url = fetchCalls[fetchCalls.length - 1].url;
@@ -1409,7 +1413,7 @@ async function testGetActive() {
     assertEqual(active.tasks.length, 1, "tasks is populated (non-optional)");
     assertEqual(active.tasks[0].taskKey, "abs-module-cache-flags", "maps public task fields");
     assertEqual(active.versions.length, 2, "carries all versions");
-    assertEqual(active.tasksVersion, "1.1", "tasksVersion matches the active version");
+    assert(!("tasksVersion" in active), "ActiveBenchmark has no tasksVersion");
   } finally {
     restoreFetch();
   }
@@ -1423,7 +1427,7 @@ async function testGetActiveNoActiveVersion() {
       status: 200,
       body: {
         name: "draft-bench",
-        displayTitle: null,
+        title: null,
         description: null,
         activeVersion: null,
         versions: [
@@ -1436,7 +1440,7 @@ async function testGetActiveNoActiveVersion() {
       },
     });
 
-    const catalog = benchmarks({ apiKey: "test-key", dashboardUrl: BASE });
+    const catalog = benchmarks({ apiKey: "test-key", baseUrl: BASE });
     let threw = false;
     try {
       await catalog.getActive("draft-bench");
@@ -1471,7 +1475,7 @@ async function testWatchAsIterator() {
       body: { ...RUN_SUMMARY, status: "COMPLETED" },
     });
 
-    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
     const events: EvaluationEvent[] = [];
     for await (const event of e.watch("eval-1")) {
       events.push(event);
@@ -1501,7 +1505,7 @@ async function testWatchIteratorEarlyBreak() {
       body: { ...RUN_SUMMARY, status: "COMPLETED" },
     });
 
-    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
     const seen: number[] = [];
     for await (const event of e.watch("eval-1")) {
       seen.push(event.seq);
@@ -1529,7 +1533,7 @@ async function testWatchIteratorAbort() {
       body: { ...RUN_SUMMARY, status: "RUNNING" },
     });
 
-    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 20);
 
@@ -1576,7 +1580,7 @@ async function testListAutoPagination() {
       return buildMockResponse({ status: 200, body: pages[cursor ?? ""] });
     };
 
-    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
 
     // Iterator form: walks every evaluation across both pages
     const ids: string[] = [];
@@ -1628,7 +1632,7 @@ async function testTaskRunsAutoPagination() {
       return buildMockResponse({ status: 200, body: pages[cursor ?? ""] });
     };
 
-    const e = evaluations({ apiKey: "test-key", dashboardUrl: BASE });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
 
     const runIds: string[] = [];
     for await (const run of e.taskRuns("eval-1")) runIds.push(run.id);
@@ -1661,7 +1665,7 @@ async function main() {
   await testImportReservedSources();
   await testGetImport();
   await testWatchImportPollsToTerminal();
-  await testRunPostsSixInputs();
+  await testRunPostsInputContract();
   await testRunIdempotentReplay();
   await testGetEvaluationDetail();
   await testListEvaluations();

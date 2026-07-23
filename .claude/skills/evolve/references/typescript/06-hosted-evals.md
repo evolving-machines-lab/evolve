@@ -1,6 +1,6 @@
 # Hosted Evals
 
-> **Gateway feature** — requires `EVOLVE_API_KEY`. Evolve runs the benchmark tasks, agents, and verifiers on managed infrastructure; you submit an evaluation and read results.
+> **Gateway feature** — requires `EVOLVE_API_KEY` (see [Getting Started → Gateway Mode](./01-getting-started.md#gateway-mode-evolve_api_key)). Evolve runs the benchmark tasks, agents, and verifiers on managed infrastructure; you submit an evaluation and read results.
 
 Hosted evals run agent systems (harness + model) against versioned benchmarks on Evolve's infrastructure. Two standalone clients cover the whole surface — no `Evolve` instance needed:
 
@@ -10,28 +10,23 @@ Hosted evals run agent systems (harness + model) against versioned benchmarks on
 ```ts
 import { benchmarks, evaluations } from "@evolvingmachines/sdk";
 
-const catalog = benchmarks();   // Uses EVOLVE_API_KEY (or pass { apiKey, dashboardUrl })
+const catalog = benchmarks();   // Uses EVOLVE_API_KEY (or pass { apiKey, baseUrl })
 const evals = evaluations();
 ```
 
 ## Quickstart
 
-Run `deep-swe` with two agent systems, watch it live, then export the results archive:
+Run `deep-swe` with two agent systems, watch it to completion, then export the results archive:
 
 ```ts
-import { benchmarks, evaluations } from "@evolvingmachines/sdk";
+import { evaluations } from "@evolvingmachines/sdk";
 
-// Bind the clients once, then reuse them
-const catalog = benchmarks();
 const evals = evaluations();
 
-// 1. Resolve the benchmark's active version (throws if none is active)
-const deepSwe = await catalog.getActive("deep-swe");
-console.log(deepSwe.version, deepSwe.tasks.length); // version + tasks always present
-
-// 2. Create the evaluation
+// 1. Create the evaluation — a bare benchmark name resolves server-side
+//    to the benchmark's active READY version
 const evaluation = await evals.run({
-    benchmark: `deep-swe@${deepSwe.version}`,
+    benchmark: "deep-swe",             // or pin a version: "deep-swe@1.1"
     agentSystems: [
         { harness: "codex", model: "gpt-5.5" },
         { harness: "claude", model: "fable" },
@@ -41,15 +36,13 @@ const evaluation = await evals.run({
     maxModelSpendUsd: 25,
 });
 console.log(evaluation.id, evaluation.status); // "QUEUED"
+console.log(evaluation.benchmark);             // "deep-swe@1.1" — the resolved version, echoed back
 
-// 3. Watch until terminal — iterate the live event stream (auto-resumes)
-for await (const event of evals.watch(evaluation.id)) {
-    console.log(event.seq, event.type, event.data);
-}
-const final = await evals.get(evaluation.id);
+// 2. Watch until terminal — await the final evaluation
+const final = await evals.watch(evaluation.id);
 console.log(final.status, final.taskRunCounts, final.spentUsd);
 
-// 4. Inspect task runs (auto-paginates) and export the full research archive
+// 3. Inspect task runs (auto-paginates) and export the full research archive
 for await (const run of evals.taskRuns(evaluation.id)) {
     console.log(run.taskKey, run.agentSystem.harness, run.status, run.score);
 }
@@ -62,31 +55,32 @@ console.log("Saved:", path); // ./results/evaluation-<id>-export.json.gz
 
 ## Evaluation Inputs
 
-`evaluations().run()` takes six inputs, plus an optional per-run spend cap:
+`evaluations().run()` takes a benchmark reference, the agent systems to evaluate, and a hard spend cap; everything else is optional:
 
 | Input | Required | Description |
 |-------|----------|-------------|
-| `benchmark` | yes | Benchmark reference `"name@version"` (e.g. `"deep-swe@1.1"`) |
-| `agentSystems` | yes | Array of `{ harness, model, harnessVersion? }` to evaluate |
+| `benchmark` | yes | `"name@version"` for a pinned run, or a bare `"name"` — resolved server-side to the active `READY` version. Responses always echo the resolved `"name@version"`; a bare name with no active version is rejected with a `400` naming the activation requirement |
 | `tasks` | no | Task keys to run — omit to run every task of the version |
+| `agentSystems` | yes | Array of `{ harness, model, harnessVersion? }` to evaluate |
 | `runsPerTask` | no | Runs per task × agent system (default: 1) |
 | `concurrency` | no | Parallel task runs (default: 1) |
 | `maxModelSpendUsd` | yes | Hard model-spend cap in USD for the whole evaluation |
 | `maxModelSpendUsdPerTaskRun` | no | Model-spend cap in USD for each individual task run |
+| `sandboxProvider` | no | `"e2b"` (default) \| `"daytona"` \| `"modal"` — see [Sandbox Providers](#sandbox-providers) |
 
 An evaluation expands to `tasks × agentSystems × runsPerTask` task runs. Each task run executes in its own sandbox with a capped, revocable model credential; spend is tracked against both caps.
 
 ```ts
 interface AgentSystem {
-    harness: string;          // e.g. "codex", "claude"
-    model: string;            // e.g. "gpt-5.5", "fable"
+    harness: string;          // "claude" | "codex" | "gemini" | "qwen" | "kimi" | "opencode" | "droid"
+    model: string;            // a model of that harness's family, e.g. "gpt-5.5" for codex
     harnessVersion?: string;  // (optional) pin a harness version; omit for the platform default
 }
 ```
 
-The harness version actually used for a run is reported back on the task run detail (`harnessVersionResolved`), so unpinned runs remain reproducible after the fact.
+`harness` is one of `"claude"`, `"codex"`, `"gemini"`, `"qwen"`, `"kimi"`, `"opencode"`, or `"droid"`, and `model` comes from that harness's own family — for example `claude` + `"fable"`, `codex` + `"gpt-5.5"`, `gemini` + `"gemini-3.1-pro-preview"`, `qwen` + `"qwen3.7-max"`, `kimi` + `"kimi-k2.6"`, `opencode` + `"openrouter/anthropic/claude-sonnet-4.6"`, `droid` + `"gpt-5.5"`. Some harnesses only accept native models: the `qwen` harness must run a Qwen-native model (Qwen Code injects the DashScope-only `enable_thinking` parameter, which OpenAI-family models reject with a `400`), and the `opencode` harness takes `openrouter/…` model ids. See [Getting Started → Harness and Model Pairing](./01-getting-started.md#harness-and-model-pairing) for the full rules.
 
-Pair each `harness` with a model from its own family — the harness and model together form one agent system, and some harnesses only accept native models. Notably the `qwen` harness must run a Qwen-native model (Qwen Code injects the DashScope-only `enable_thinking` parameter, which OpenAI-family models reject with a `400`), and the `opencode` harness takes `openrouter/…` model ids. See [Getting Started → Harness and Model Pairing](./01-getting-started.md#harness-and-model-pairing) for the full rules.
+The harness version actually used for a run is reported back on the task run detail (`resolvedHarnessVersion`), so unpinned runs remain reproducible after the fact.
 
 ### Idempotency
 
@@ -140,12 +134,11 @@ const catalog = benchmarks();
 ```ts
 // Every benchmark with its active version
 const allBenchmarks = await catalog.list();
-// [{ name, displayTitle, description, activeVersion: { version, state, taskCount } }]
+// [{ name, title, description, activeVersion: { version, state, taskCount } }]
 
 // One benchmark: all versions + the selected version's task list
 const bench = await catalog.get("deep-swe");           // active version's tasks
 const pinned = await catalog.get("deep-swe@1.0");      // specific version
-const same = await catalog.get("deep-swe", { version: "1.0" }); // equivalent
 ```
 
 `get()` returns `versions` (newest first), `tasksVersion`, and `tasks`. Tasks expose public fields only — `taskKey`, `agentTimeoutSec`, `verifierTimeoutSec`. Instructions, environments, and tests never leave the server.
@@ -159,10 +152,9 @@ import { NoActiveVersionError } from "@evolvingmachines/sdk";
 
 const active = await catalog.getActive("deep-swe");
 console.log(active.version, active.tasks.length); // both always present
-const evaluation = await evals.run({ benchmark: `deep-swe@${active.version}`, /* … */ });
 ```
 
-Use `get()` for the full multi-version detail with optional fields; `getActive()` for the happy path of running the current version.
+Use `get()` for the full multi-version detail with optional fields, and `getActive()` to inspect the runnable version and its task list before an evaluation. To simply run the active version, `evals.run({ benchmark: "deep-swe", … })` resolves it server-side — no catalog call needed.
 
 ### import / getImport / watchImport
 
@@ -174,15 +166,15 @@ const job = await catalog.import({
     benchmarkName: "my-benchmark",
     version: "1.2",              // (optional) omit to let the server assign one
 });
-console.log(job.id, job.state);  // accepted for processing
+console.log(job.id, job.status); // accepted for processing
 
 // Poll one import job
-const status = await catalog.getImport(job.id);
-console.log(status.state, status.taskCount, status.error);
+const importJob = await catalog.getImport(job.id);
+console.log(importJob.status, importJob.taskCount, importJob.error);
 
-// Or block until the import reaches a terminal state ("READY" or "FAILED")
+// Or block until the import reaches a terminal status ("READY" or "FAILED")
 const done = await catalog.watchImport(job.id, {
-    onState: (importJob) => console.log(importJob.state),  // (optional) fires on every state change
+    onStatus: (importJob) => console.log(importJob.status),  // (optional) fires on every status change
     pollIntervalMs: 2_000,                     // (optional) default 2s
 });
 ```
@@ -211,8 +203,9 @@ const evaluation = await evals.run({
     maxModelSpendUsd: 25,
 });
 
-// Detail: agent systems + task-run status counts + spend
+// Detail: agent systems + evaluation size + task-run status counts + spend
 const detail = await evals.get(evaluation.id);
+console.log(detail.counts);         // { agentSystems: 1, tasks: 20, taskRuns: 20 }
 console.log(detail.taskRunCounts);  // { SCORED: 12, RUNNING: 3, QUEUED: 5 }
 console.log(detail.spentUsd, "/", detail.maxModelSpendUsd);
 
@@ -245,7 +238,7 @@ const run = await evals.taskRun(evaluation.id, runs.taskRuns[0].id);
 console.log(run.status, run.score, run.metrics);         // reward + named sub-scores
 console.log(run.phaseTimingsMs);                          // { agentMs, verifyMs }
 console.log(run.modelUsage?.spendUsd, run.modelUsage?.spendSource); // "key_info" | "assumed_cap"
-console.log(run.harnessVersionResolved);                  // harness version actually used for the run
+console.log(run.resolvedHarnessVersion);                  // harness version actually used for the run
 console.log(run.sessionRef);                              // reference to the agent session/trace
 console.log(run.failurePhase, run.failureDetail);         // populated on failures
 ```
@@ -277,7 +270,7 @@ for await (const event of evals.taskRunTraceEvents(evaluation.id, runId)) {
 `watch()` returns a dual-use handle over the evaluation's server-sent event feed. Iterate it for the live events, or await it for the final evaluation — both drive the same stream, so pick one form per call.
 
 ```ts
-// Primary form: iterate the events as they arrive
+// Iterate the events as they arrive
 for await (const event of evals.watch(evaluation.id)) {
     // event.seq  — monotonic sequence number (resume position)
     // event.type — "evaluation.created" | "task_run.settled" | "evaluation.completed" | ...
@@ -407,41 +400,24 @@ npx evolve-evals rerun-failed <id>
 npx evolve-evals export <id> --to ./results --format harbor
 ```
 
-- `--system` is `harness:model[:version]`, repeatable — one per agent system.
-- `import` wraps [`benchmarks().import()`](#import--getimport--watchimport): `--git` + `--ref` + `--name` are required, `--version` optional (server-assigned when omitted). With `--watch` it polls the job and prints a status line on each state change until `READY` or `FAILED`; `import status <id>` shows one job.
+- Run flags mirror the input contract in order: `--benchmark <name[@version]>` (bare name = active version), `--tasks <k1,k2,…>`, `--system <harness:model[:version]>` (repeatable — one per agent system), `--runs <n>`, `--concurrency <n>`, `--max-spend <usd>`, `--max-spend-per-run <usd>`, `--provider <e2b|daytona|modal>`, `--watch`.
+- `import` wraps [`benchmarks().import()`](#import--getimport--watchimport): `--git` + `--ref` + `--name` are required, `--version` optional (server-assigned when omitted). With `--watch` it polls the job and prints a line on each status change until `READY` or `FAILED`; `import status <id>` shows one job.
 - Human-readable tables by default; `--json` emits machine-readable JSON (NDJSON for `--watch` event streams).
-- Credentials: `$EVOLVE_API_KEY` (or `--api-key`), dashboard URL via `$EVOLVE_DASHBOARD_URL` (or `--url`).
+- Credentials: `$EVOLVE_API_KEY` (or `--api-key`). `--base-url` overrides the API endpoint when you are pointed at a non-default deployment.
 - Exit codes: `0` success (with `--watch`: evaluation `COMPLETED` / import `READY`), `1` runtime/API failure (with `--watch`: `FAILED` or `CANCELLED`), `2` usage error.
 
 ---
 
 ## Sandbox Providers
 
-Hosted eval task runs and managed agent sessions run on the same three sandbox providers — E2B, Daytona, and Modal. Managed sessions resolve a provider from env (Configuration → [Sandbox Providers](./02-configuration.md#sandbox-providers)); an eval picks its provider as an input — the optional `sandboxProvider` field on the evaluation, defaulting to `e2b`. All three honor the same provider-neutral create options (image, `user`/`homeDir`, outbound network policy, timeout), so one benchmark image and one network policy run unchanged across every provider. The honest differences:
-
-| Capability | E2B | Daytona | Modal |
-|------------|-----|---------|-------|
-| Provider value | `e2b` (default) | `daytona` | `modal` |
-| Run agent as root | Native `user: "root"` | Image `USER` (root by default); no per-exec user switch | Native execution user is root |
-| Outbound allowlist | Hostnames, IPs, CIDRs | Kernel IPv4 CIDRs only, ≤ 10 entries | Hostnames, IPs, CIDRs |
-| Sandbox-death signal | Webhook | Webhook (Svix-style) | Polling sweep (no webhooks) |
-| Private image registry | Template build | Pre-registered dashboard Registries | Modal Secret via `imageSecretName` |
-| Max lifetime | Provider timeout | Provider timeout | Hard 24h cap |
-
-- **E2B** is the baseline: native run-as-root, hostname/IP/CIDR allowlists, and webhook death signals, with nothing to set up beyond `E2B_API_KEY`.
-- **Daytona** enforces its network allowlist as kernel-level IPv4 CIDRs only. Hostnames are resolved to IPs at create time and pinned for the sandbox's life, so a destination that rotates DNS (many CDNs and cloud APIs do) is silently blocked afterward; IPv6, ports, and wildcards are rejected, and the list caps at 10 entries. Private-registry images (e.g. AWS ECR) need their registry pre-registered on the Daytona dashboard **Registries** page before creation — there is no per-call pull secret — and images must be `linux/amd64` pinned to a tag or digest (a floating `latest` is rejected). With no per-exec user switch, eval task runs omit `user` (relying on the image's root `USER`) and pin `homeDir` to `/root`.
-- **Modal** hard-caps sandbox lifetime at 24 hours (a longer timeout throws `ModalSandboxLifetimeError` — checkpoint and resume for longer work), emits no death webhooks so the platform reconciles Modal sandboxes with a polling sweep, and pulls private-registry images on Modal's own infrastructure: AWS ECR and GCP Artifact Registry images need a Modal Secret, named via `imageSecretName`, holding read-only registry credentials, because the worker's own AWS/GCP env never reaches the pull.
-
-### Selecting the eval provider
-
-The provider is a public, optional input on the evaluation — choose it per run, no environment variable involved:
+Every task run executes in its own isolated sandbox. Three providers are available — E2B (the default), Daytona, and Modal — and the optional `sandboxProvider` input picks one per evaluation. The same benchmark image, network policy, and agent command run unchanged on all three, and your Evolve API key is the only credential involved on any of them. (Managed agent *sessions* choose their provider through SDK configuration — see [Configuration → Sandbox Providers](./02-configuration.md#sandbox-providers); evaluations choose theirs here, per run.)
 
 ```typescript
 const evaluation = await evals.run({
     benchmark: "swe-bench-verified@1.0",
     agentSystems: [{ harness: "codex", model: "gpt-5.5" }],
     maxModelSpendUsd: 25,
-    sandboxProvider: "daytona", // "e2b" (default) | "daytona" | "modal"
+    sandboxProvider: "daytona",   // "e2b" (default) | "daytona" | "modal"
 });
 ```
 
@@ -451,26 +427,30 @@ From the CLI, pass `--provider`:
 evolve-evals run --benchmark swe-bench-verified@1.0 --system codex:gpt-5.5 --max-spend 25 --provider daytona
 ```
 
-Omit the field to accept the default (`e2b`); an unknown value is rejected at creation with a `400`, never a silent fallback, so a typo cannot bill the wrong account. Once chosen the provider is fixed for the evaluation's life — every task run, and any `rerunFailed()` of it, runs on it. Provider credentials are operator config on the eval worker (not part of the request): `E2B_API_KEY` for E2B, `DAYTONA_API_KEY` for Daytona, `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` (plus `MODAL_IMAGE_SECRET_NAME` for private task images) for Modal.
+Omit the field to accept the default (`e2b`); an unknown value is rejected at creation with a `400`, never a silent fallback, so a typo cannot bill the wrong account. Once chosen, the provider is fixed for the evaluation's life — every task run, and any `rerunFailed()` of it, runs on it.
 
-### Operator setup
+Two provider differences can affect which one fits a benchmark:
 
-Running the managed providers yourself means wiring each provider's sandbox-death signal so a dead sandbox settles its session, browser sessions, and runtime tokens. E2B posts a signed webhook out of the box. Daytona posts a Svix-style signed webhook — register the Dashboard endpoint with Daytona and set `DAYTONA_WEBHOOK_SECRET`; the Dashboard reaches Daytona's API through the gateway's signed `/internal/daytona` pass-through (Evolve API keys never call `/internal/*` directly). Modal has no webhooks — set `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET` so the reconcile sweep can poll sandbox liveness, and drive Modal through the Dashboard's Evolve-key-only broker routes at `/api/providers/modal/sandboxes`.
+- **Daytona** enforces task network allowlists as kernel-level IPv4 CIDR rules: hostnames are resolved to IPs when the sandbox is created and pinned for its life, so a destination that rotates DNS (many CDNs and cloud APIs do) can become unreachable mid-run; IPv6, ports, and wildcards are rejected, and a policy caps at 10 entries. A benchmark whose tasks need broad or hostname-based egress belongs on E2B or Modal.
+- **Modal** caps every sandbox at 24 hours. A task whose timeout would exceed the cap is rejected with `ModalSandboxLifetimeError` at creation — never silently truncated mid-run.
+
+Everything else — pulling task images, executing as root, provider accounts, credentials, and health monitoring — works identically across the three and is Evolve's responsibility, not yours.
 
 ---
 
 ## Type Reference
 
 ```ts
+type EvalSandboxProvider = "e2b" | "daytona" | "modal";
+
 interface ActiveBenchmark {                  // benchmarks().getActive(name)
     name: string;
-    displayTitle: string | null;
+    title: string | null;
     description: string | null;
     activeVersion: BenchmarkVersion;         // always present (getActive throws otherwise)
     version: string;                         // active version string (non-optional)
     tasks: Task[];                           // active version's tasks (non-optional)
     versions: BenchmarkVersion[];            // all versions, newest first
-    tasksVersion: string | null;
     createdAt: string;
     updatedAt: string;
 }
@@ -479,18 +459,19 @@ interface Evaluation {
     id: string;
     status: EvaluationStatus;
     benchmark: string;                       // "name@version"
+    agentSystems?: AgentSystem[];            // get() only
     runsPerTask: number;
     concurrency: number;
     maxModelSpendUsd: number;
     maxModelSpendUsdPerTaskRun?: number;     // per-task-run cap, when one was set
+    sandboxProvider?: EvalSandboxProvider;   // sandbox provider this evaluation runs on
     spentUsd: number;
     createdAt: string;
-    counts?: { agentSystems: number; tasks: number; taskRuns: number };
-    taskRunCounts?: Partial<Record<TaskRunStatus, number>>;
-    taskRunTotal?: number;                   // get() only
-    agentSystems?: AgentSystem[];            // get() only
+    counts: { agentSystems: number; tasks: number; taskRuns: number }; // every shape
+    taskRunCounts?: Partial<Record<TaskRunStatus, number>>; // get/list
     benchmarkVersionState?: BenchmarkVersionState; // get() only
     error?: string | null;                   // get() only
+    updatedAt?: string;                      // get() only
     sourceEvaluationId?: string;             // present on rerun-failed evaluations
     idempotentReplay?: boolean;              // true when Idempotency-Key replayed an existing evaluation
 }
@@ -514,15 +495,34 @@ interface TaskRun {
 
 interface TaskRunDetail extends TaskRun {   // evaluations().taskRun(id, runId)
     evaluationId: string;
-    harnessVersionResolved: string | null;   // harness version actually used; null until resolved
+    resolvedHarnessVersion: string | null;   // harness version actually used; null until resolved
     // failureDetail is untruncated in the detail response
 }
 
+type SpendSource = "key_info" | "assumed_cap";
+
 interface ModelUsage {
-    spendUsd?: number;        // LiteLLM is the only spend truth
-    spendSource?: string;     // "key_info" (read from gateway) or "assumed_cap" (conservative fallback)
+    spendUsd?: number;              // LiteLLM is the only spend truth
+    spendSource?: SpendSource;      // "key_info" (read from gateway) or "assumed_cap" (conservative fallback)
     maxBudgetUsd?: number;
-    harnessVersion?: string;  // resolved harness version actually used
+    resolvedHarnessVersion?: string; // resolved harness version actually used for the run
+    [key: string]: unknown;         // open map: harness-specific keys may appear
+}
+
+type BenchmarkImportStatus = "IMPORTING" | "BUILDING" | "VALIDATING" | "READY" | "FAILED";
+
+interface BenchmarkImport {                  // benchmarks().import() / getImport() / watchImport()
+    id: string;
+    status: BenchmarkImportStatus;           // terminal: "READY", "FAILED"
+    benchmarkName?: string;                  // create responses
+    version?: string;                        // create responses
+    error?: BenchmarkImportError | null;     // structured failure detail when status is "FAILED"
+    taskCount?: number;                      // tasks parsed, once counted (getImport())
+}
+
+interface BenchmarkImportError {
+    message: string;                         // what went wrong, e.g. "2/113 task(s) failed to parse"
+    failures?: { taskKey: string; error: string }[]; // per-task parse/validation failures
 }
 
 interface EvaluationEvent {

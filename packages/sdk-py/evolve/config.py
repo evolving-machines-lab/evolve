@@ -86,17 +86,17 @@ class HostedClientConfig:
 
     Args:
         api_key: Evolve API key override (default: EVOLVE_API_KEY)
-        dashboard_url: Dashboard URL override (default: EVOLVE_DASHBOARD_URL)
+        base_url: API base URL override (default: EVOLVE_DASHBOARD_URL)
     """
     api_key: Optional[str] = None
-    dashboard_url: Optional[str] = None
+    base_url: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {}
         if self.api_key:
             result['api_key'] = self.api_key
-        if self.dashboard_url:
-            result['dashboard_url'] = self.dashboard_url
+        if self.base_url:
+            result['base_url'] = self.base_url
         return result
 
 

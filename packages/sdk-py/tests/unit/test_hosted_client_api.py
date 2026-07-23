@@ -5,7 +5,7 @@ Coverage:
 - benchmarks().list()/get() — catalog + detail mapping, name@version refs
 - benchmarks().get_active() — runnable shape (non-optional version/tasks) + NoActiveVersionError
 - benchmarks().import_benchmark()/get_import()/watch_import() — git import flow
-- evaluations().run() — six(+1)-input body, Idempotency-Key header
+- evaluations().run() — contract body (field order), Idempotency-Key header
 - evaluations().get()/list()/task_runs() — mapping + cursor params
 - evaluations().list()/task_runs() — await one page + async-for auto-pagination across cursors
 - evaluations().task_run()/task_run_trace()/compare() — detail, trace paging, comparison
@@ -68,7 +68,7 @@ class FakeUrlopen:
         raise AssertionError(f'Unexpected request URL: {url}')
 
 
-CONFIG = HostedClientConfig(api_key='test-key', dashboard_url='http://localhost:3000')
+CONFIG = HostedClientConfig(api_key='test-key', base_url='http://localhost:3000')
 
 RUN_SUMMARY = {
     'id': 'eval-1',
@@ -104,11 +104,11 @@ class TestBenchmarks:
                 'benchmarks': [
                     {
                         'name': 'deep-swe',
-                        'displayTitle': 'DeepSWE',
+                        'title': 'DeepSWE',
                         'description': 'SWE tasks',
                         'activeVersion': {'version': '1.1', 'state': 'READY', 'taskCount': 113},
                     },
-                    {'name': 'empty', 'displayTitle': None, 'description': None, 'activeVersion': None},
+                    {'name': 'empty', 'title': None, 'description': None, 'activeVersion': None},
                 ],
             }),
         ])
@@ -117,6 +117,7 @@ class TestBenchmarks:
 
         assert len(catalog) == 2
         assert catalog[0].name == 'deep-swe'
+        assert catalog[0].title == 'DeepSWE'
         assert catalog[0].active_version.version == '1.1'
         assert catalog[0].active_version.task_count == 113
         assert catalog[1].active_version is None
@@ -127,9 +128,9 @@ class TestBenchmarks:
         fake = FakeUrlopen([
             ('/api/benchmarks/deep-swe', {
                 'name': 'deep-swe',
-                'displayTitle': 'DeepSWE',
+                'title': 'DeepSWE',
                 'description': 'SWE tasks',
-                'activeVersion': '1.1',
+                'activeVersion': {'version': '1.1', 'state': 'READY', 'createdAt': '2026-07-21', 'taskCount': 113},
                 'versions': [
                     {'version': '1.1', 'state': 'READY', 'createdAt': '2026-07-21', 'taskCount': 113},
                 ],
@@ -145,24 +146,22 @@ class TestBenchmarks:
             detail = await benchmarks_factory(CONFIG).get('deep-swe@1.1')
 
         assert 'version=1.1' in fake.requests[0].full_url
+        # activeVersion arrives as the full version object — no client re-resolve
+        assert detail.title == 'DeepSWE'
         assert detail.active_version.version == '1.1'
         assert detail.active_version.state == 'READY'
+        assert detail.active_version.task_count == 113
         assert detail.tasks[0].task_key == 'abs-module-cache-flags'
         assert detail.tasks[0].agent_timeout_sec == 5400
-
-    @pytest.mark.asyncio
-    async def test_get_version_conflict_raises(self):
-        with pytest.raises(ValueError, match='Conflicting versions'):
-            await benchmarks_factory(CONFIG).get('deep-swe@1.1', version='1.0')
 
     @pytest.mark.asyncio
     async def test_get_active_resolves_runnable_shape(self):
         fake = FakeUrlopen([
             ('/api/benchmarks/deep-swe', {
                 'name': 'deep-swe',
-                'displayTitle': 'DeepSWE',
+                'title': 'DeepSWE',
                 'description': 'SWE tasks',
-                'activeVersion': '1.1',
+                'activeVersion': {'version': '1.1', 'state': 'READY', 'createdAt': '2026-07-21', 'taskCount': 113},
                 'versions': [
                     {'version': '1.1', 'state': 'READY', 'createdAt': '2026-07-21', 'taskCount': 113},
                     {'version': '1.0', 'state': 'ARCHIVED', 'createdAt': '2026-07-01', 'taskCount': 100},
@@ -185,14 +184,13 @@ class TestBenchmarks:
         assert len(active.tasks) == 1                  # non-optional
         assert active.tasks[0].task_key == 'abs-module-cache-flags'
         assert len(active.versions) == 2
-        assert active.tasks_version == '1.1'
 
     @pytest.mark.asyncio
     async def test_get_active_raises_when_no_active_version(self):
         fake = FakeUrlopen([
             ('/api/benchmarks/draft-bench', {
                 'name': 'draft-bench',
-                'displayTitle': None,
+                'title': None,
                 'description': None,
                 'activeVersion': None,
                 'versions': [{'version': '0.1', 'state': 'DRAFT', 'createdAt': '2026-07-21', 'taskCount': 0}],
@@ -210,11 +208,12 @@ class TestBenchmarks:
     @pytest.mark.asyncio
     async def test_import_benchmark_posts_git_source(self):
         fake = FakeUrlopen([
-            ('/api/benchmarks/import', {'importId': 'imp-1', 'state': 'IMPORTING'}),
+            ('/api/benchmarks/import', {'id': 'imp-1', 'benchmarkName': 'my-benchmark', 'status': 'IMPORTING'}),
         ])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
             job = await benchmarks_factory(CONFIG).import_benchmark(
-                {'git_url': 'https://github.com/org/bench.git', 'ref': 'v1.2.0'},
+                git_url='https://github.com/org/bench.git',
+                ref='v1.2.0',
                 benchmark_name='my-benchmark',
                 version='1.2',
             )
@@ -228,27 +227,50 @@ class TestBenchmarks:
             'version': '1.2',
         }
         assert job.id == 'imp-1'
-        assert job.state == 'IMPORTING'
+        assert job.status == 'IMPORTING'
 
     @pytest.mark.asyncio
-    async def test_get_import_maps_state(self):
+    async def test_get_import_maps_status(self):
         fake = FakeUrlopen([
-            ('/api/benchmarks/import/imp-1', {'state': 'READY', 'error': None, 'taskCount': 113}),
+            ('/api/benchmarks/import/imp-1', {'id': 'imp-1', 'status': 'READY', 'error': None, 'taskCount': 113}),
         ])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
             job = await benchmarks_factory(CONFIG).get_import('imp-1')
 
-        assert job.id == 'imp-1'  # falls back to the requested id
-        assert job.state == 'READY'
+        assert job.id == 'imp-1'
+        assert job.status == 'READY'
         assert job.task_count == 113
         assert job.error is None
 
     @pytest.mark.asyncio
+    async def test_get_import_maps_structured_error_to_snake_case(self):
+        fake = FakeUrlopen([
+            ('/api/benchmarks/import/imp-2', {
+                'id': 'imp-2',
+                'status': 'FAILED',
+                'error': {
+                    'message': '1/2 task(s) failed to parse',
+                    'failures': [{'taskKey': 'bad-task', 'error': 'boom'}],
+                },
+                'taskCount': 0,
+            }),
+        ])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            job = await benchmarks_factory(CONFIG).get_import('imp-2')
+
+        assert job.status == 'FAILED'
+        assert job.error is not None
+        assert job.error.message == '1/2 task(s) failed to parse'
+        # Wire camelCase (taskKey) never reaches Python users
+        assert job.error.failures[0].task_key == 'bad-task'
+        assert job.error.failures[0].error == 'boom'
+
+    @pytest.mark.asyncio
     async def test_watch_import_polls_until_terminal(self):
         responses = iter([
-            {'state': 'IMPORTING'},
-            {'state': 'VALIDATING', 'taskCount': 113},
-            {'state': 'READY', 'taskCount': 113},
+            {'id': 'imp-1', 'status': 'IMPORTING'},
+            {'id': 'imp-1', 'status': 'VALIDATING', 'taskCount': 113},
+            {'id': 'imp-1', 'status': 'READY', 'taskCount': 113},
         ])
 
         class SequenceUrlopen(FakeUrlopen):
@@ -257,39 +279,39 @@ class TestBenchmarks:
                 return FakeResponse(next(responses))
 
         fake = SequenceUrlopen([])
-        states = []
+        statuses = []
         with patch('evolve.hosted.urllib.request.urlopen', fake):
             done = await benchmarks_factory(CONFIG).watch_import(
                 'imp-1',
-                on_state=lambda job: states.append(job.state),
+                on_status=lambda job: statuses.append(job.status),
                 poll_interval_s=0.001,
             )
 
-        assert done.state == 'READY'
+        assert done.status == 'READY'
         assert done.task_count == 113
         assert len(fake.requests) == 3
-        assert states == ['IMPORTING', 'VALIDATING', 'READY']
+        assert statuses == ['IMPORTING', 'VALIDATING', 'READY']
 
     @pytest.mark.asyncio
     async def test_reserved_import_sources(self):
         client = benchmarks_factory(CONFIG)
         with pytest.raises(NotImplementedError, match='reserved'):
-            await client.import_benchmark({'archive_path': '/tmp/b.tar.gz'}, benchmark_name='b')
+            await client.import_benchmark(archive_path='/tmp/b.tar.gz', benchmark_name='b')
         with pytest.raises(NotImplementedError, match='reserved'):
-            await client.import_benchmark({'harbor_hub_ref': 'hub://b'}, benchmark_name='b')
+            await client.import_benchmark(harbor_hub_ref='hub://b', benchmark_name='b')
         with pytest.raises(ValueError, match='git source'):
-            await client.import_benchmark({'ref': 'main'}, benchmark_name='b')
+            await client.import_benchmark(ref='main', benchmark_name='b')
 
 
 class TestEvaluations:
     @pytest.mark.asyncio
-    async def test_run_posts_six_inputs(self):
+    async def test_run_posts_contract_body_in_field_order(self):
         fake = FakeUrlopen([('/api/evaluations', RUN_SUMMARY)])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
             evaluation = await evaluations_factory(CONFIG).run(
                 benchmark='deep-swe@1.1',
-                agent_systems=[AgentSystem(harness='codex', model='gpt-5.5')],
                 tasks=['abs-module-cache-flags'],
+                agent_systems=[AgentSystem(harness='codex', model='gpt-5.5')],
                 runs_per_task=1,
                 concurrency=4,
                 max_model_spend_usd=25,
@@ -301,16 +323,42 @@ class TestEvaluations:
         body = json.loads(request.data.decode('utf-8'))
         assert body == {
             'benchmark': 'deep-swe@1.1',
-            'agentSystems': [{'harness': 'codex', 'model': 'gpt-5.5'}],
-            'maxModelSpendUsd': 25,
             'tasks': ['abs-module-cache-flags'],
+            'agentSystems': [{'harness': 'codex', 'model': 'gpt-5.5'}],
             'runsPerTask': 1,
             'concurrency': 4,
+            'maxModelSpendUsd': 25,
         }
+        # Wire body is emitted in the contract's field order
+        assert list(body) == [
+            'benchmark', 'tasks', 'agentSystems', 'runsPerTask', 'concurrency', 'maxModelSpendUsd',
+        ]
         assert request.get_header('Idempotency-key') == 'idem-abc'
         assert evaluation.id == 'eval-1'
-        assert evaluation.counts == {'agentSystems': 1, 'tasks': 5, 'taskRuns': 5}
+        assert evaluation.counts == {'agent_systems': 1, 'tasks': 5, 'task_runs': 5}
         assert evaluation.idempotent_replay is False
+
+    @pytest.mark.asyncio
+    async def test_run_accepts_snake_case_agent_system_dicts(self):
+        fake = FakeUrlopen([('/api/evaluations', RUN_SUMMARY)])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            await evaluations_factory(CONFIG).run(
+                benchmark='deep-swe@1.1',
+                agent_systems=[{'harness': 'codex', 'model': 'gpt-5.5', 'harness_version': '0.29.0'}],
+                max_model_spend_usd=25,
+            )
+
+        body = json.loads(fake.requests[0].data.decode('utf-8'))
+        assert body['agentSystems'] == [
+            {'harness': 'codex', 'model': 'gpt-5.5', 'harnessVersion': '0.29.0'},
+        ]
+        # camelCase keys are not part of the Python surface
+        with pytest.raises(TypeError):
+            await evaluations_factory(CONFIG).run(
+                benchmark='deep-swe@1.1',
+                agent_systems=[{'harness': 'codex', 'model': 'gpt-5.5', 'harnessVersion': '0.29.0'}],
+                max_model_spend_usd=25,
+            )
 
     @pytest.mark.asyncio
     async def test_get_maps_detail_and_drops_internal_fields(self):
@@ -321,15 +369,12 @@ class TestEvaluations:
                 'benchmarkVersionState': 'READY',
                 'agentSystems': [
                     {
-                        'id': 'as-internal',
                         'harness': 'codex',
                         'model': 'gpt-5.5',
                         'harnessVersion': None,
-                        'systemDigest': 'abcd',
                     },
                 ],
                 'taskRunCounts': {'SCORED': 3, 'RUNNING': 2},
-                'taskRunTotal': 5,
                 'error': None,
                 'updatedAt': '2026-07-22T00:05:00.000Z',
             }),
@@ -338,8 +383,9 @@ class TestEvaluations:
             evaluation = await evaluations_factory(CONFIG).get('eval-1')
 
         assert evaluation.status == 'RUNNING'
+        # Status-histogram keys are statuses, not camelCase — they pass through
         assert evaluation.task_run_counts == {'SCORED': 3, 'RUNNING': 2}
-        assert evaluation.task_run_total == 5
+        assert not hasattr(evaluation, 'task_run_total')
         system = evaluation.agent_systems[0]
         assert (system.harness, system.model, system.harness_version) == ('codex', 'gpt-5.5', None)
         assert not hasattr(system, 'id')
@@ -471,7 +517,10 @@ class TestEvaluations:
         run = page.task_runs[0]
         assert run.score == 1
         assert run.metrics == {'f2p': 1.0}
-        assert run.model_usage['spendUsd'] == 0.93
+        # Wire camelCase never reaches the user: typed ModelUsage + snake_case timings
+        assert run.model_usage.spend_usd == 0.93
+        assert run.model_usage.spend_source == 'key_info'
+        assert run.phase_timings_ms == {'agent_ms': 203000}
         assert run.session_ref == 'sess-9'
 
     @pytest.mark.asyncio
@@ -587,6 +636,7 @@ class TestEvaluations:
 
         body = json.loads(fake.requests[0].data.decode('utf-8'))
         assert body['maxModelSpendUsdPerTaskRun'] == 2
+        assert list(body) == ['benchmark', 'agentSystems', 'maxModelSpendUsd', 'maxModelSpendUsdPerTaskRun']
         assert evaluation.max_model_spend_usd_per_task_run == 2
 
     @pytest.mark.asyncio
@@ -621,8 +671,14 @@ class TestEvaluations:
                 'failurePhase': None,
                 'failureDetail': None,
                 'phaseTimingsMs': {'agentMs': 203000, 'verifyMs': 41000},
-                'modelUsage': {'spendUsd': 0.93, 'spendSource': 'key_info'},
-                'harnessVersionResolved': '0.29.0',
+                'modelUsage': {
+                    'spendUsd': 0.93,
+                    'spendSource': 'key_info',
+                    'maxBudgetUsd': 2,
+                    'resolvedHarnessVersion': '0.29.0',
+                    'inputTokens': 1234,
+                },
+                'resolvedHarnessVersion': '0.29.0',
                 'sessionRef': 'sess-9',
                 'createdAt': '2026-07-22T00:00:00.000Z',
                 'updatedAt': '2026-07-22T00:04:00.000Z',
@@ -633,7 +689,15 @@ class TestEvaluations:
 
         assert '/api/evaluations/eval-1/task-runs/run-1' in fake.requests[0].full_url
         assert run.evaluation_id == 'eval-1'
-        assert run.harness_version_resolved == '0.29.0'
+        assert run.resolved_harness_version == '0.29.0'
+        assert run.phase_timings_ms == {'agent_ms': 203000, 'verify_ms': 41000}
+        usage = run.model_usage
+        assert usage.spend_usd == 0.93
+        assert usage.spend_source == 'key_info'
+        assert usage.max_budget_usd == 2
+        assert usage.resolved_harness_version == '0.29.0'
+        # Unknown harness-specific keys land in extra, snake_cased
+        assert usage.extra == {'input_tokens': 1234}
         assert run.session_ref == 'sess-9'
         assert run.score == 1
 
@@ -815,5 +879,5 @@ class TestEvaluations:
             )
 
         with patch('evolve.hosted.urllib.request.urlopen', raise_http_error):
-            with pytest.raises(RuntimeError, match=r'409.*terminal'):
+            with pytest.raises(RuntimeError, match=r'Evolve API error \(409\).*terminal'):
                 await evaluations_factory(CONFIG).export('eval-1')

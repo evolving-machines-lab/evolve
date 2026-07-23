@@ -7,8 +7,9 @@ instead of consuming the SSE event stream (the JSON-RPC bridge and a
 urllib-based client have no streaming SSE story; the TS SDK is the streaming
 surface).
 
-Reserved surface: ``import_benchmark()`` with an archive or Harbor Hub source
-raises NotImplementedError — git is the supported import source.
+Reserved surface: ``import_benchmark()`` with an ``archive_path`` or
+``harbor_hub_ref`` source raises NotImplementedError — git is the supported
+import source.
 """
 
 import asyncio
@@ -19,17 +20,32 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 from .config import HostedClientConfig
 
-DEFAULT_DASHBOARD_URL = 'https://dashboard.evolvingmachines.ai'
+DEFAULT_BASE_URL = 'https://dashboard.evolvingmachines.ai'
 
 _TERMINAL_EVALUATION_STATUSES = {'COMPLETED', 'CANCELLED', 'FAILED'}
 
-# Terminal states of the import pipeline (parse -> validate -> activate).
-_TERMINAL_IMPORT_STATES = {'READY', 'FAILED'}
+# Terminal statuses of the import pipeline (parse -> validate -> activate).
+_TERMINAL_IMPORT_STATUSES = {'READY', 'FAILED'}
+
+# camelCase -> snake_case boundary (only between a lower/digit and an upper,
+# so all-caps status keys are never mangled).
+_CAMEL_BOUNDARY = re.compile(r'(?<=[a-z0-9])(?=[A-Z])')
+
+
+def _snake_key(key: str) -> str:
+    return _CAMEL_BOUNDARY.sub('_', key).lower()
+
+
+def _snake_keys(data: Any) -> Optional[Dict[str, Any]]:
+    """Map a wire dict's camelCase keys to snake_case (None passes through)."""
+    if not isinstance(data, dict):
+        return None
+    return {_snake_key(key): value for key, value in data.items()}
 
 _RESERVED_MESSAGE = (
     '{feature} is not implemented yet: this method is reserved in the hosted '
@@ -79,7 +95,7 @@ class Benchmark:
     tasks_version, tasks, created_at, and updated_at.
     """
     name: str
-    display_title: Optional[str]
+    title: Optional[str]
     description: Optional[str]
     active_version: Optional[BenchmarkVersion]
     versions: Optional[List[BenchmarkVersion]] = None
@@ -98,13 +114,12 @@ class ActiveBenchmark:
     active version, so callers never branch on a missing active version.
     """
     name: str
-    display_title: Optional[str]
+    title: Optional[str]
     description: Optional[str]
     active_version: BenchmarkVersion
     version: str
     tasks: List[Task]
     versions: List[BenchmarkVersion]
-    tasks_version: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
@@ -115,7 +130,7 @@ class AgentSystem:
     model: str
     harness_version: Optional[str] = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def _to_wire(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {'harness': self.harness, 'model': self.model}
         if self.harness_version is not None:
             result['harnessVersion'] = self.harness_version
@@ -127,24 +142,41 @@ class Evaluation:
     """An evaluation = tasks x agent systems x runs_per_task."""
     id: str
     status: str
+    # "name@version"
     benchmark: str
     runs_per_task: int
     concurrency: int
     max_model_spend_usd: float
     spent_usd: float
     created_at: str
+    # Per-task-run model-spend cap, when one was set
+    max_model_spend_usd_per_task_run: Optional[float] = None
+    #: Sandbox provider this evaluation runs on ("e2b" | "daytona" | "modal").
+    sandbox_provider: Optional[str] = None
     counts: Optional[Dict[str, int]] = None
     task_run_counts: Optional[Dict[str, int]] = None
-    task_run_total: Optional[int] = None
     agent_systems: Optional[List[AgentSystem]] = None
     benchmark_version_state: Optional[str] = None
     error: Optional[str] = None
     updated_at: Optional[str] = None
     source_evaluation_id: Optional[str] = None
     idempotent_replay: bool = False
-    max_model_spend_usd_per_task_run: Optional[float] = None
-    #: Sandbox provider this evaluation runs on ("e2b" | "daytona" | "modal").
-    sandbox_provider: Optional[str] = None
+
+
+@dataclass
+class ModelUsage:
+    """Model usage/spend recorded for a task run.
+
+    ``spend_source`` is "key_info" (read back from the gateway) or
+    "assumed_cap" (conservative fallback). Harness-specific keys land in
+    ``extra`` with snake_case keys.
+    """
+    spend_usd: Optional[float] = None
+    spend_source: Optional[str] = None
+    max_budget_usd: Optional[float] = None
+    # Resolved harness version actually used for the run
+    resolved_harness_version: Optional[str] = None
+    extra: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -159,8 +191,9 @@ class TaskRun:
     metrics: Optional[Dict[str, float]]
     failure_phase: Optional[str]
     failure_detail: Optional[str]
+    # Wall-clock per phase with snake_case keys, e.g. {"agent_ms", "verify_ms"}
     phase_timings_ms: Optional[Dict[str, float]]
-    model_usage: Optional[Dict[str, Any]]
+    model_usage: Optional[ModelUsage]
     session_ref: Optional[str]
     created_at: str
     updated_at: str
@@ -174,7 +207,7 @@ class TaskRunDetail(TaskRun):
     """
     evaluation_id: str = ''
     # Harness version actually resolved and used for the run; None until resolved
-    harness_version_resolved: Optional[str] = None
+    resolved_harness_version: Optional[str] = None
 
 
 @dataclass
@@ -249,16 +282,36 @@ class EvaluationComparison:
 
 
 @dataclass
+class BenchmarkImportFailure:
+    """One task that failed to parse or validate during an import."""
+    task_key: str
+    error: str
+
+
+@dataclass
+class BenchmarkImportError:
+    """Structured failure detail for a FAILED import."""
+    # What went wrong, e.g. "2/113 task(s) failed to parse"
+    message: str
+    # Per-task parse/validation failures, when the corpus was reachable
+    failures: List[BenchmarkImportFailure] = field(default_factory=list)
+
+
+@dataclass
 class BenchmarkImport:
     """A benchmark import job (parse -> validate -> activate pipeline).
 
-    Terminal states: "READY" and "FAILED".
+    Terminal statuses: "READY" and "FAILED".
     """
     id: str
-    # Pipeline state, e.g. "IMPORTING", "BUILDING", "VALIDATING", "READY", "FAILED"
-    state: str
-    # Failure detail when state is "FAILED"
-    error: Optional[str] = None
+    # Pipeline status, e.g. "IMPORTING", "BUILDING", "VALIDATING", "READY", "FAILED"
+    status: str
+    # Catalog benchmark name the import creates or extends (create responses)
+    benchmark_name: Optional[str] = None
+    # Version label of the imported version (create responses)
+    version: Optional[str] = None
+    # Failure detail when status is "FAILED"
+    error: Optional[BenchmarkImportError] = None
     # Number of tasks parsed, once counted (get_import() responses)
     task_count: Optional[int] = None
 
@@ -317,9 +370,10 @@ def _map_evaluation(data: Dict[str, Any]) -> Evaluation:
         max_model_spend_usd=float(data.get('maxModelSpendUsd', 0)),
         spent_usd=float(data.get('spentUsd', 0)),
         created_at=data.get('createdAt', ''),
-        counts=data.get('counts'),
+        max_model_spend_usd_per_task_run=data.get('maxModelSpendUsdPerTaskRun'),
+        sandbox_provider=data.get('sandboxProvider'),
+        counts=_snake_keys(data.get('counts')),
         task_run_counts=data.get('taskRunCounts'),
-        task_run_total=data.get('taskRunTotal'),
         agent_systems=(
             [_map_agent_system(item) for item in agent_systems]
             if isinstance(agent_systems, list)
@@ -330,8 +384,25 @@ def _map_evaluation(data: Dict[str, Any]) -> Evaluation:
         updated_at=data.get('updatedAt'),
         source_evaluation_id=data.get('sourceEvaluationId'),
         idempotent_replay=bool(data.get('idempotentReplay', False)),
-        max_model_spend_usd_per_task_run=data.get('maxModelSpendUsdPerTaskRun'),
-        sandbox_provider=data.get('sandboxProvider'),
+    )
+
+
+_MODEL_USAGE_WIRE_KEYS = {'spendUsd', 'spendSource', 'maxBudgetUsd', 'resolvedHarnessVersion'}
+
+
+def _map_model_usage(data: Any) -> Optional[ModelUsage]:
+    if not isinstance(data, dict):
+        return None
+    return ModelUsage(
+        spend_usd=data.get('spendUsd'),
+        spend_source=data.get('spendSource'),
+        max_budget_usd=data.get('maxBudgetUsd'),
+        resolved_harness_version=data.get('resolvedHarnessVersion'),
+        extra={
+            _snake_key(key): value
+            for key, value in data.items()
+            if key not in _MODEL_USAGE_WIRE_KEYS
+        },
     )
 
 
@@ -346,8 +417,8 @@ def _map_task_run(data: Dict[str, Any]) -> TaskRun:
         metrics=data.get('metrics'),
         failure_phase=data.get('failurePhase'),
         failure_detail=data.get('failureDetail'),
-        phase_timings_ms=data.get('phaseTimingsMs'),
-        model_usage=data.get('modelUsage'),
+        phase_timings_ms=_snake_keys(data.get('phaseTimingsMs')),
+        model_usage=_map_model_usage(data.get('modelUsage')),
         session_ref=data.get('sessionRef'),
         created_at=data.get('createdAt', ''),
         updated_at=data.get('updatedAt', ''),
@@ -359,7 +430,7 @@ def _map_task_run_detail(data: Dict[str, Any]) -> TaskRunDetail:
     return TaskRunDetail(
         **base.__dict__,
         evaluation_id=data.get('evaluationId', ''),
-        harness_version_resolved=data.get('harnessVersionResolved'),
+        resolved_harness_version=data.get('resolvedHarnessVersion'),
     )
 
 
@@ -414,13 +485,33 @@ def _map_comparison_task_row(data: Dict[str, Any]) -> ComparisonTaskRow:
     )
 
 
-def _map_benchmark_import(data: Dict[str, Any], fallback_id: str = '') -> BenchmarkImport:
-    benchmark_import = BenchmarkImport(
-        id=data.get('importId') or data.get('id') or fallback_id,
-        state=data.get('state', ''),
+def _map_import_error(data: Any) -> Optional[BenchmarkImportError]:
+    if not isinstance(data, dict):
+        return None
+    return BenchmarkImportError(
+        message=data.get('message', ''),
+        failures=[
+            BenchmarkImportFailure(
+                task_key=item.get('taskKey', ''),
+                error=item.get('error', ''),
+            )
+            for item in data.get('failures', [])
+            if isinstance(item, dict)
+        ],
     )
+
+
+def _map_benchmark_import(data: Dict[str, Any]) -> BenchmarkImport:
+    benchmark_import = BenchmarkImport(
+        id=data.get('id', ''),
+        status=data.get('status', ''),
+    )
+    if isinstance(data.get('benchmarkName'), str):
+        benchmark_import.benchmark_name = data.get('benchmarkName')
+    if isinstance(data.get('version'), str):
+        benchmark_import.version = data.get('version')
     if 'error' in data:
-        benchmark_import.error = data.get('error')
+        benchmark_import.error = _map_import_error(data.get('error'))
     if isinstance(data.get('taskCount'), int):
         benchmark_import.task_count = data.get('taskCount')
     return benchmark_import
@@ -437,9 +528,9 @@ class _HostedHttp:
 
     def _base_url(self) -> str:
         return (
-            self._config.dashboard_url
+            self._config.base_url
             or os.environ.get('EVOLVE_DASHBOARD_URL')
-            or DEFAULT_DASHBOARD_URL
+            or DEFAULT_BASE_URL
         ).rstrip('/')
 
     def _api_key(self) -> str:
@@ -493,7 +584,7 @@ class _HostedHttp:
                     return payload, dict(response.headers.items())
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode('utf-8', errors='replace')
-            raise RuntimeError(f'Dashboard API error ({exc.code}): {detail}') from exc
+            raise RuntimeError(f'Evolve API error ({exc.code}): {detail}') from exc
         if not payload:
             return {}
         return json.loads(payload.decode('utf-8'))
@@ -574,37 +665,29 @@ class BenchmarksClient:
             active = raw.get('activeVersion')
             result.append(Benchmark(
                 name=raw['name'],
-                display_title=raw.get('displayTitle'),
+                title=raw.get('title'),
                 description=raw.get('description'),
                 active_version=_map_benchmark_version(active) if active else None,
             ))
         return result
 
-    async def get(self, ref: str, *, version: Optional[str] = None) -> Benchmark:
+    async def get(self, ref: str) -> Benchmark:
         """Get one benchmark: all versions + the selected version's task list.
 
         ``ref`` is ``"name"`` (active version's tasks) or ``"name@version"``.
         """
         name, ref_version = _parse_benchmark_ref(ref)
-        if version is not None and ref_version is not None and version != ref_version:
-            raise ValueError(
-                f'Conflicting versions: ref "{ref}" says "{ref_version}" but '
-                f'version is "{version}"'
-            )
-        selected = version if version is not None else ref_version
-        query = f'?version={urllib.parse.quote(selected)}' if selected is not None else ''
+        query = f'?version={urllib.parse.quote(ref_version)}' if ref_version is not None else ''
         raw = await self._http.request_json(
             f'/api/benchmarks/{urllib.parse.quote(name)}{query}'
         )
-        versions = [_map_benchmark_version(item) for item in raw.get('versions', [])]
-        active_name = raw.get('activeVersion')
-        active = next((v for v in versions if v.version == active_name), None)
+        active = raw.get('activeVersion')
         return Benchmark(
             name=raw['name'],
-            display_title=raw.get('displayTitle'),
+            title=raw.get('title'),
             description=raw.get('description'),
-            active_version=active,
-            versions=versions,
+            active_version=_map_benchmark_version(active) if active else None,
+            versions=[_map_benchmark_version(item) for item in raw.get('versions', [])],
             tasks_version=raw.get('tasksVersion'),
             tasks=[_map_task(item) for item in raw.get('tasks', [])],
             created_at=raw.get('createdAt'),
@@ -623,42 +706,42 @@ class BenchmarksClient:
             raise NoActiveVersionError(name)
         return ActiveBenchmark(
             name=bench.name,
-            display_title=bench.display_title,
+            title=bench.title,
             description=bench.description,
             active_version=bench.active_version,
             version=bench.active_version.version,
             tasks=bench.tasks or [],
             versions=bench.versions or [],
-            tasks_version=bench.tasks_version or bench.active_version.version,
             created_at=bench.created_at,
             updated_at=bench.updated_at,
         )
 
     async def import_benchmark(
         self,
-        source: Dict[str, Any],
         *,
+        git_url: Optional[str] = None,
+        ref: Optional[str] = None,
         benchmark_name: str,
         version: Optional[str] = None,
+        archive_path: Optional[str] = None,
+        harbor_hub_ref: Optional[str] = None,
     ) -> BenchmarkImport:
         """Start a benchmark import job (parse -> validate -> activate).
 
-        Git sources (``{'git_url': ..., 'ref': ...}``, camelCase also accepted)
-        are live; archive and Harbor Hub sources still raise
-        NotImplementedError (no server endpoint yet).
+        Git sources (``git_url=..., ref=...``) are live; the reserved
+        ``archive_path``/``harbor_hub_ref`` sources raise NotImplementedError
+        (no server endpoint yet).
         """
-        if 'archive_path' in source or 'archivePath' in source:
+        if archive_path is not None:
             raise NotImplementedError(_RESERVED_MESSAGE.format(
                 feature='benchmarks().import_benchmark() with an archive_path source'))
-        if 'harbor_hub_ref' in source or 'harborHubRef' in source:
+        if harbor_hub_ref is not None:
             raise NotImplementedError(_RESERVED_MESSAGE.format(
                 feature='benchmarks().import_benchmark() with a harbor_hub_ref source'))
-        git_url = source.get('git_url') or source.get('gitUrl')
-        ref = source.get('ref')
         if not git_url or not ref:
             raise ValueError(
-                "import_benchmark() requires a git source: "
-                "{'git_url': ..., 'ref': ...} plus benchmark_name"
+                'import_benchmark() requires a git source: '
+                'git_url=..., ref=... plus benchmark_name=...'
             )
         body: Dict[str, Any] = {
             'source': {'type': 'git', 'url': git_url, 'ref': ref},
@@ -670,36 +753,37 @@ class BenchmarksClient:
         return _map_benchmark_import(raw)
 
     async def get_import(self, id: str) -> BenchmarkImport:
-        """Get an import job's state (error and task_count when available)."""
+        """Get an import job's status (error and task_count when available)."""
         raw = await self._http.request_json(
             f'/api/benchmarks/import/{urllib.parse.quote(id)}'
         )
-        return _map_benchmark_import(raw, fallback_id=id)
+        return _map_benchmark_import(raw)
 
     async def watch_import(
         self,
         id: str,
         *,
-        on_state: Optional[Callable[[BenchmarkImport], None]] = None,
+        on_status: Optional[Callable[[BenchmarkImport], None]] = None,
         poll_interval_s: float = 2.0,
         timeout_s: Optional[float] = None,
     ) -> BenchmarkImport:
-        """Poll ``get_import()`` until the job reaches a terminal state.
+        """Poll ``get_import()`` until the job reaches a terminal status.
 
-        Terminal states: "READY" or "FAILED" (``error`` populated). ``on_state``
-        fires on every observed state change, including the first state seen.
+        Terminal statuses: "READY" or "FAILED" (``error`` populated).
+        ``on_status`` fires on every observed status change, including the
+        first status seen.
         """
         if poll_interval_s <= 0:
             raise ValueError('poll_interval_s must be positive')
         deadline = time.monotonic() + timeout_s if timeout_s is not None else None
-        last_state: Optional[str] = None
+        last_status: Optional[str] = None
         while True:
             benchmark_import = await self.get_import(id)
-            if benchmark_import.state != last_state:
-                last_state = benchmark_import.state
-                if on_state is not None:
-                    on_state(benchmark_import)
-            if benchmark_import.state in _TERMINAL_IMPORT_STATES:
+            if benchmark_import.status != last_status:
+                last_status = benchmark_import.status
+                if on_status is not None:
+                    on_status(benchmark_import)
+            if benchmark_import.status in _TERMINAL_IMPORT_STATUSES:
                 return benchmark_import
             if deadline is not None and time.monotonic() >= deadline:
                 raise TimeoutError(f'watch_import({id!r}) timed out after {timeout_s}s')
@@ -748,30 +832,33 @@ class EvaluationsClient:
         self,
         *,
         benchmark: str,
-        agent_systems: List[Any],
-        max_model_spend_usd: float,
         tasks: Optional[List[str]] = None,
+        agent_systems: List[Any],
         runs_per_task: Optional[int] = None,
         concurrency: Optional[int] = None,
+        max_model_spend_usd: float,
         max_model_spend_usd_per_task_run: Optional[float] = None,
         sandbox_provider: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> Evaluation:
-        """Create an evaluation (the six(+1)-input contract). Supports Idempotency-Key."""
-        body: Dict[str, Any] = {
-            'benchmark': benchmark,
-            'agentSystems': [
-                system.to_dict() if isinstance(system, AgentSystem) else dict(system)
-                for system in agent_systems
-            ],
-            'maxModelSpendUsd': max_model_spend_usd,
-        }
+        """Create an evaluation.
+
+        ``benchmark`` is ``"name"`` (resolved server-side to the active READY
+        version) or ``"name@version"``; the response always echoes
+        ``"name@version"``. Supports Idempotency-Key.
+        """
+        body: Dict[str, Any] = {'benchmark': benchmark}
         if tasks is not None:
             body['tasks'] = tasks
+        body['agentSystems'] = [
+            (system if isinstance(system, AgentSystem) else AgentSystem(**system))._to_wire()
+            for system in agent_systems
+        ]
         if runs_per_task is not None:
             body['runsPerTask'] = runs_per_task
         if concurrency is not None:
             body['concurrency'] = concurrency
+        body['maxModelSpendUsd'] = max_model_spend_usd
         if max_model_spend_usd_per_task_run is not None:
             body['maxModelSpendUsdPerTaskRun'] = max_model_spend_usd_per_task_run
         if sandbox_provider is not None:
@@ -962,7 +1049,7 @@ class EvaluationsClient:
         """Get one task run's full detail.
 
         Includes untruncated failure_detail, the resolved harness version
-        actually used (``harness_version_resolved``), and ``session_ref``.
+        actually used (``resolved_harness_version``), and ``session_ref``.
         """
         raw = await self._http.request_json(
             f'/api/evaluations/{urllib.parse.quote(id)}'

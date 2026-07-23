@@ -1,6 +1,6 @@
 # Hosted Evals
 
-> **Gateway feature** — requires `EVOLVE_API_KEY`. Evolve runs the benchmark tasks, agents, and verifiers on managed infrastructure; you submit an evaluation and read results.
+> **Gateway feature** — requires `EVOLVE_API_KEY` (see [Getting Started → Gateway Mode](./01-getting-started.md#gateway-mode-evolve_api_key)). Evolve runs the benchmark tasks, agents, and verifiers on managed infrastructure; you submit an evaluation and read results.
 
 Hosted evals run agent systems (harness + model) against versioned benchmarks on Evolve's infrastructure. Two standalone clients cover the whole surface — no `Evolve` instance needed:
 
@@ -10,7 +10,7 @@ Hosted evals run agent systems (harness + model) against versioned benchmarks on
 ```python
 from evolve import benchmarks, evaluations
 
-catalog = benchmarks()   # Uses EVOLVE_API_KEY (or HostedClientConfig(api_key=..., dashboard_url=...))
+catalog = benchmarks()   # Uses EVOLVE_API_KEY (or HostedClientConfig(api_key=..., base_url=...))
 evals = evaluations()
 ```
 
@@ -20,24 +20,18 @@ Python's `watch()` differs from TypeScript's in one way: it **polls** `get()` un
 
 ## Quickstart
 
-Run `deep-swe` with two agent systems, watch it, then export the results archive:
+Run `deep-swe` with two agent systems, watch it to completion, then export the results archive:
 
 ```python
 import asyncio
-from evolve import benchmarks, evaluations, AgentSystem
+from evolve import evaluations, AgentSystem
 
 async def main():
-    # Bind the catalog client once
-    catalog = benchmarks()
-
-    # 1. Resolve the benchmark's active version (raises NoActiveVersionError if none)
-    deep_swe = await catalog.get_active('deep-swe')
-    print(deep_swe.version, len(deep_swe.tasks))  # version + tasks always present
-
     async with evaluations() as evals:
-        # 2. Create the evaluation
+        # 1. Create the evaluation — a bare benchmark name resolves server-side
+        #    to the benchmark's active READY version
         evaluation = await evals.run(
-            benchmark=f'deep-swe@{deep_swe.version}',
+            benchmark='deep-swe',              # or pin a version: 'deep-swe@1.1'
             agent_systems=[
                 AgentSystem(harness='codex', model='gpt-5.5'),
                 AgentSystem(harness='claude', model='fable'),
@@ -47,14 +41,13 @@ async def main():
             max_model_spend_usd=25,
         )
         print(evaluation.id, evaluation.status)  # 'QUEUED'
+        print(evaluation.benchmark)              # 'deep-swe@1.1' — the resolved version, echoed back
 
-        # 3. Watch until terminal — iterate state changes (polls get())
-        async for state in evals.watch_iter(evaluation.id):
-            print(state.status, state.task_run_counts)
-        final = await evals.get(evaluation.id)
-        print(final.status, final.spent_usd)
+        # 2. Watch until terminal (polls get()) — returns the final evaluation
+        final = await evals.watch(evaluation.id)
+        print(final.status, final.task_run_counts, final.spent_usd)
 
-        # 4. Inspect task runs (auto-paginates) and export the full research archive
+        # 3. Inspect task runs (auto-paginates) and export the full research archive
         async for run in evals.task_runs(evaluation.id):
             print(run.task_key, run.agent_system.harness, run.status, run.score)
 
@@ -68,21 +61,24 @@ asyncio.run(main())
 
 ## Evaluation Inputs
 
-`evaluations().run()` takes six inputs, plus an optional per-run spend cap — all keyword arguments:
+`evaluations().run()` takes a benchmark reference, the agent systems to evaluate, and a hard spend cap; everything else is optional — all keyword arguments:
 
 | Input | Required | Description |
 |-------|----------|-------------|
-| `benchmark` | yes | Benchmark reference `'name@version'` (e.g. `'deep-swe@1.1'`) |
-| `agent_systems` | yes | List of `AgentSystem(harness=..., model=..., harness_version=None)` |
+| `benchmark` | yes | `'name@version'` for a pinned run, or a bare `'name'` — resolved server-side to the active `READY` version. Responses always echo the resolved `'name@version'`; a bare name with no active version is rejected with a `400` naming the activation requirement |
 | `tasks` | no | Task keys to run — omit to run every task of the version |
+| `agent_systems` | yes | List of `AgentSystem(harness=..., model=..., harness_version=None)` |
 | `runs_per_task` | no | Runs per task × agent system (default: 1) |
 | `concurrency` | no | Parallel task runs (default: 1) |
 | `max_model_spend_usd` | yes | Hard model-spend cap in USD for the whole evaluation |
 | `max_model_spend_usd_per_task_run` | no | Model-spend cap in USD for each individual task run |
+| `sandbox_provider` | no | `'e2b'` (default) \| `'daytona'` \| `'modal'` — see [Sandbox Providers](#sandbox-providers) |
 
 An evaluation expands to `tasks × agent_systems × runs_per_task` task runs. Each task run executes in its own sandbox with a capped, revocable model credential; spend is tracked against both caps.
 
-Pair each `harness` with a model from its own family — the harness and model together form one agent system, and some harnesses only accept native models. Notably `harness='qwen'` must run a Qwen-native model (Qwen Code injects the DashScope-only `enable_thinking` parameter, which OpenAI-family models reject with a `400`), and `harness='opencode'` takes `openrouter/…` model ids. See [Getting Started → Harness and Model Pairing](./01-getting-started.md#harness-and-model-pairing) for the full rules.
+`harness` is one of `'claude'`, `'codex'`, `'gemini'`, `'qwen'`, `'kimi'`, `'opencode'`, or `'droid'`, and `model` comes from that harness's own family — for example `claude` + `'fable'`, `codex` + `'gpt-5.5'`, `gemini` + `'gemini-3.1-pro-preview'`, `qwen` + `'qwen3.7-max'`, `kimi` + `'kimi-k2.6'`, `opencode` + `'openrouter/anthropic/claude-sonnet-4.6'`, `droid` + `'gpt-5.5'`. Some harnesses only accept native models: `harness='qwen'` must run a Qwen-native model (Qwen Code injects the DashScope-only `enable_thinking` parameter, which OpenAI-family models reject with a `400`), and `harness='opencode'` takes `openrouter/…` model ids. See [Getting Started → Harness and Model Pairing](./01-getting-started.md#harness-and-model-pairing) for the full rules.
+
+The harness version actually used for a run is reported back on the task run detail (`resolved_harness_version`), so unpinned runs remain reproducible after the fact.
 
 `run()` and `rerun_failed()` accept `idempotency_key=` — retrying with the same key returns the original evaluation (`idempotent_replay=True`) instead of creating a duplicate.
 
@@ -126,12 +122,11 @@ catalog = benchmarks()
 
 # Every benchmark with its active version
 all_benchmarks = await catalog.list()
-# [Benchmark(name=..., display_title=..., description=..., active_version=BenchmarkVersion(...))]
+# [Benchmark(name=..., title=..., description=..., active_version=BenchmarkVersion(...))]
 
 # One benchmark: all versions + the selected version's task list
 bench = await catalog.get('deep-swe')                 # active version's tasks
 pinned = await catalog.get('deep-swe@1.0')            # specific version
-same = await catalog.get('deep-swe', version='1.0')   # equivalent
 
 # The active version resolved to a runnable shape — version + tasks guaranteed
 active = await catalog.get_active('deep-swe')
@@ -140,7 +135,7 @@ print(active.version, len(active.tasks))
 
 `get()` returns `versions` (newest first), `tasks_version`, and `tasks`. Tasks expose public fields only — `task_key`, `agent_timeout_sec`, `verifier_timeout_sec`. Instructions, environments, and tests never leave the server.
 
-`get_active(name)` resolves the active version to a runnable shape where `version` and `tasks` are non-optional; it raises `NoActiveVersionError` when the benchmark has no active version, so the happy path never branches on a missing version. Use `get()` for the full multi-version detail.
+`get_active(name)` resolves the active version to a runnable shape where `version` and `tasks` are non-optional; it raises `NoActiveVersionError` when the benchmark has no active version, so the happy path never branches on a missing version. Use `get()` for the full multi-version detail, and `get_active()` to inspect the runnable version and its task list before an evaluation. To simply run the active version, `evals.run(benchmark='deep-swe', ...)` resolves it server-side — no catalog call needed.
 
 ### import_benchmark / get_import / watch_import
 
@@ -148,20 +143,21 @@ Import a benchmark from a git repository into the shared catalog. The import run
 
 ```python
 job = await catalog.import_benchmark(
-    {'git_url': 'https://github.com/org/my-benchmark.git', 'ref': 'v1.2.0'},
+    git_url='https://github.com/org/my-benchmark.git',
+    ref='v1.2.0',
     benchmark_name='my-benchmark',
     version='1.2',              # (optional) omit to let the server assign one
 )
-print(job.id, job.state)        # accepted for processing
+print(job.id, job.status)       # accepted for processing
 
 # Poll one import job
-status = await catalog.get_import(job.id)
-print(status.state, status.task_count, status.error)
+import_job = await catalog.get_import(job.id)
+print(import_job.status, import_job.task_count, import_job.error)
 
-# Or block until the import reaches a terminal state ('READY' or 'FAILED')
+# Or block until the import reaches a terminal status ('READY' or 'FAILED')
 done = await catalog.watch_import(
     job.id,
-    on_state=lambda import_job: print(import_job.state),  # (optional) fires on every state change
+    on_status=lambda import_job: print(import_job.status),  # (optional) fires on every status change
     poll_interval_s=2.0,                # (optional) default 2s
     timeout_s=1800,                     # (optional) raise TimeoutError after this long
 )
@@ -171,7 +167,7 @@ An import runs in two stages. The **importer** clones the pinned git source, par
 
 Because promotion is a distinct step, `watch_import()` resolves when the version reaches `READY` (activation succeeded) or `FAILED` (raising `TimeoutError` if `timeout_s` elapses first); a freshly imported version rests at `VALIDATING` until the activation gate runs. Only `READY` versions accept evaluations — `evaluations().run()` rejects a non-`READY` benchmark and `get_active()` raises `NoActiveVersionError` until a version is activated.
 
-Imports require an admin account: only users with the `ADMIN` role may import, and any other caller receives `403`. Archive-upload and Harbor Hub sources are part of the typed surface but not accepted by the server yet — git is the supported source (other source kinds raise `NotImplementedError`).
+Imports require an admin account: only users with the `ADMIN` role may import, and any other caller receives `403`. Git is the supported source; the reserved `archive_path=` and `harbor_hub_ref=` keyword arguments raise `NotImplementedError` until their server endpoints exist.
 
 ---
 
@@ -191,8 +187,9 @@ evaluation = await evals.run(
     max_model_spend_usd=25,
 )
 
-# Detail: agent systems + task-run status counts + spend
+# Detail: agent systems + evaluation size + task-run status counts + spend
 detail = await evals.get(evaluation.id)
+print(detail.counts)            # {'agent_systems': 1, 'tasks': 20, 'task_runs': 20}
 print(detail.task_run_counts)   # {'SCORED': 12, 'RUNNING': 3, 'QUEUED': 5}
 print(detail.spent_usd, '/', detail.max_model_spend_usd)
 
@@ -218,18 +215,18 @@ print(page.total_count)
 async for run in evals.task_runs(evaluation.id):
     print(run.task_key, run.run_number, run.status, run.score)
     print(run.metrics)                    # named sub-scores from reward.json
-    print(run.phase_timings_ms)           # {'agentMs': ..., 'verifyMs': ...}
-    print(run.model_usage)                # spendUsd, spendSource, harnessVersion (resolved)
+    print(run.phase_timings_ms)           # {'agent_ms': ..., 'verify_ms': ...}
     print(run.session_ref)                # agent session/trace reference
     print(run.failure_phase, run.failure_detail)  # populated on failures
 
 # Full detail for one task run (untruncated failure_detail)
 detail = await evals.task_run(evaluation.id, page.task_runs[0].id)
-print(detail.harness_version_resolved)    # harness version actually used
-print(detail.session_ref)
+print(detail.resolved_harness_version)    # harness version actually used
+if detail.model_usage:
+    print(detail.model_usage.spend_usd, detail.model_usage.spend_source)  # 'key_info' | 'assumed_cap'
 ```
 
-**Reading spend.** `model_usage['spendUsd']` is LiteLLM's number — the only spend truth. Its `spendSource` is `'key_info'` when the value was read back from the gateway and `'assumed_cap'` when it falls back to the run's cap. Read-back can lag or be missing on the gemini-passthrough and OpenRouter routes, so a run's recorded spend may sit at the assumed cap (or zero) until spend-log reconciliation catches up — the task run's trace and token counts are the reliable engagement signal in the meantime.
+**Reading spend.** `model_usage.spend_usd` is LiteLLM's number — the only spend truth. Its `spend_source` is `'key_info'` when the value was read back from the gateway and `'assumed_cap'` when it falls back to the run's cap. Read-back can lag or be missing on the gemini-passthrough and OpenRouter routes, so a run's recorded spend may sit at the assumed cap (or zero) until spend-log reconciliation catches up — the task run's trace and token counts are the reliable engagement signal in the meantime.
 
 ### task_run_trace
 
@@ -332,31 +329,14 @@ See [TypeScript → Hosted Evals → CLI](../typescript/06-hosted-evals.md#cli) 
 
 ## Sandbox Providers
 
-Hosted eval task runs and managed agent sessions run on the same three sandbox providers — E2B, Daytona, and Modal. Managed sessions resolve a provider from env (Configuration → [Sandbox Providers](./02-configuration.md#sandbox-providers)); an eval picks its provider as an input — the optional `sandbox_provider` argument on the evaluation, defaulting to `e2b`. All three honor the same provider-neutral create options (image, `user`/`homeDir`, outbound network policy, timeout), so one benchmark image and one network policy run unchanged across every provider. The honest differences:
-
-| Capability | E2B | Daytona | Modal |
-|------------|-----|---------|-------|
-| Provider value | `e2b` (default) | `daytona` | `modal` |
-| Run agent as root | Native `user='root'` | Image `USER` (root by default); no per-exec user switch | Native execution user is root |
-| Outbound allowlist | Hostnames, IPs, CIDRs | Kernel IPv4 CIDRs only, ≤ 10 entries | Hostnames, IPs, CIDRs |
-| Sandbox-death signal | Webhook | Webhook (Svix-style) | Polling sweep (no webhooks) |
-| Private image registry | Template build | Pre-registered dashboard Registries | Modal Secret via `imageSecretName` |
-| Max lifetime | Provider timeout | Provider timeout | Hard 24h cap |
-
-- **E2B** is the baseline: native run-as-root, hostname/IP/CIDR allowlists, and webhook death signals, with nothing to set up beyond `E2B_API_KEY`.
-- **Daytona** enforces its network allowlist as kernel-level IPv4 CIDRs only. Hostnames are resolved to IPs at create time and pinned for the sandbox's life, so a destination that rotates DNS (many CDNs and cloud APIs do) is silently blocked afterward; IPv6, ports, and wildcards are rejected, and the list caps at 10 entries. Private-registry images (e.g. AWS ECR) need their registry pre-registered on the Daytona dashboard **Registries** page before creation — there is no per-call pull secret — and images must be `linux/amd64` pinned to a tag or digest (a floating `latest` is rejected). With no per-exec user switch, eval task runs omit `user` (relying on the image's root `USER`) and pin `homeDir` to `/root`.
-- **Modal** hard-caps sandbox lifetime at 24 hours (a longer timeout throws `ModalSandboxLifetimeError` — checkpoint and resume for longer work), emits no death webhooks so the platform reconciles Modal sandboxes with a polling sweep, and pulls private-registry images on Modal's own infrastructure: AWS ECR and GCP Artifact Registry images need a Modal Secret, named via `imageSecretName`, holding read-only registry credentials, because the worker's own AWS/GCP env never reaches the pull.
-
-### Selecting the eval provider
-
-The provider is a public, optional input on the evaluation — choose it per run, no environment variable involved:
+Every task run executes in its own isolated sandbox. Three providers are available — E2B (the default), Daytona, and Modal — and the optional `sandbox_provider` keyword picks one per evaluation. The same benchmark image, network policy, and agent command run unchanged on all three, and your Evolve API key is the only credential involved on any of them.
 
 ```python
 evaluation = await evals.run(
-    benchmark='swe-bench-verified@1.0',
-    agent_systems=[AgentSystem(harness='codex', model='gpt-5.5')],
+    benchmark="swe-bench-verified@1.0",
+    agent_systems=[{"harness": "codex", "model": "gpt-5.5"}],
     max_model_spend_usd=25,
-    sandbox_provider='daytona',  # 'e2b' (default) | 'daytona' | 'modal'
+    sandbox_provider="daytona",   # "e2b" (default) | "daytona" | "modal"
 )
 ```
 
@@ -366,11 +346,14 @@ From the CLI, pass `--provider`:
 evolve-evals run --benchmark swe-bench-verified@1.0 --system codex:gpt-5.5 --max-spend 25 --provider daytona
 ```
 
-Omit the argument to accept the default (`e2b`); an unknown value is rejected at creation with a `400`, never a silent fallback, so a typo cannot bill the wrong account. Once chosen the provider is fixed for the evaluation's life — every task run, and any `rerun_failed()` of it, runs on it. Provider credentials are operator config on the eval worker (not part of the request): `E2B_API_KEY` for E2B, `DAYTONA_API_KEY` for Daytona, `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` (plus `MODAL_IMAGE_SECRET_NAME` for private task images) for Modal.
+Omit the argument to accept the default (`e2b`); an unknown value is rejected at creation with a `400`, never a silent fallback, so a typo cannot bill the wrong account. Once chosen, the provider is fixed for the evaluation's life — every task run, and any `rerun_failed()` of it, runs on it.
 
-### Operator setup
+Two provider differences can affect which one fits a benchmark:
 
-Running the managed providers yourself means wiring each provider's sandbox-death signal so a dead sandbox settles its session, browser sessions, and runtime tokens. E2B posts a signed webhook out of the box. Daytona posts a Svix-style signed webhook — register the Dashboard endpoint with Daytona and set `DAYTONA_WEBHOOK_SECRET`; the Dashboard reaches Daytona's API through the gateway's signed `/internal/daytona` pass-through (Evolve API keys never call `/internal/*` directly). Modal has no webhooks — set `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET` so the reconcile sweep can poll sandbox liveness, and drive Modal through the Dashboard's Evolve-key-only broker routes at `/api/providers/modal/sandboxes`.
+- **Daytona** enforces task network allowlists as kernel-level IPv4 CIDR rules: hostnames are resolved to IPs when the sandbox is created and pinned for its life, so a destination that rotates DNS (many CDNs and cloud APIs do) can become unreachable mid-run; IPv6, ports, and wildcards are rejected, and a policy caps at 10 entries. A benchmark whose tasks need broad or hostname-based egress belongs on E2B or Modal.
+- **Modal** caps every sandbox at 24 hours. A task whose timeout would exceed the cap is rejected with `ModalSandboxLifetimeError` at creation — never silently truncated mid-run.
+
+Everything else — pulling task images, executing as root, provider accounts, credentials, and health monitoring — works identically across the three and is Evolve's responsibility, not yours.
 
 ---
 
@@ -379,20 +362,19 @@ Running the managed providers yourself means wiring each provider's sandbox-deat
 ```python
 @dataclass
 class AgentSystem:
-    harness: str                      # e.g. 'codex', 'claude'
-    model: str                        # e.g. 'gpt-5.5', 'fable'
-    harness_version: str | None       # pin a harness version; None = platform default
+    harness: str                      # 'claude' | 'codex' | 'gemini' | 'qwen' | 'kimi' | 'opencode' | 'droid'
+    model: str                        # a model of that harness's family, e.g. 'gpt-5.5' for codex
+    harness_version: str | None = None  # pin a harness version; None = platform default
 
 @dataclass
 class ActiveBenchmark:                 # benchmarks().get_active(name)
     name: str
-    display_title: str | None
+    title: str | None
     description: str | None
     active_version: BenchmarkVersion  # always present (get_active raises otherwise)
     version: str                      # active version string (non-optional)
     tasks: list[Task]                 # active version's tasks (non-optional)
     versions: list[BenchmarkVersion]  # all versions, newest first
-    tasks_version: str | None
     created_at: str | None
     updated_at: str | None
     # get_active() raises NoActiveVersionError when the benchmark has no active version
@@ -405,17 +387,26 @@ class Evaluation:
     runs_per_task: int
     concurrency: int
     max_model_spend_usd: float
-    max_model_spend_usd_per_task_run: float | None  # per-task-run cap, when one was set
     spent_usd: float
     created_at: str
-    counts: dict | None               # {'agentSystems': n, 'tasks': n, 'taskRuns': n}
-    task_run_counts: dict | None      # histogram by TaskRunStatus
-    task_run_total: int | None        # get() only
+    max_model_spend_usd_per_task_run: float | None  # per-task-run cap, when one was set
+    sandbox_provider: str | None      # 'e2b' | 'daytona' | 'modal'
+    counts: dict | None               # {'agent_systems': n, 'tasks': n, 'task_runs': n} — every response carries it
+    task_run_counts: dict | None      # histogram by TaskRunStatus (UPPER wire keys)
     agent_systems: list[AgentSystem] | None  # get() only
     benchmark_version_state: str | None      # get() only
     error: str | None                 # get() only
+    updated_at: str | None            # get() only
     source_evaluation_id: str | None  # present on rerun-failed evaluations
     idempotent_replay: bool           # True when Idempotency-Key replayed an existing evaluation
+
+@dataclass
+class ModelUsage:
+    spend_usd: float | None           # LiteLLM is the only spend truth
+    spend_source: str | None          # 'key_info' (read from gateway) or 'assumed_cap' (conservative fallback)
+    max_budget_usd: float | None
+    resolved_harness_version: str | None  # resolved harness version actually used for the run
+    extra: dict                       # harness-specific keys, snake_case
 
 @dataclass
 class TaskRun:
@@ -428,8 +419,8 @@ class TaskRun:
     metrics: dict[str, float] | None  # named sub-scores from reward.json
     failure_phase: str | None
     failure_detail: str | None        # truncated to 2000 chars in list responses
-    phase_timings_ms: dict | None     # {'agentMs': ..., 'verifyMs': ...}
-    model_usage: dict | None          # spendUsd, spendSource, maxBudgetUsd, harnessVersion
+    phase_timings_ms: dict | None     # {'agent_ms': ..., 'verify_ms': ...}
+    model_usage: ModelUsage | None
     session_ref: str | None           # agent session/trace reference
     created_at: str
     updated_at: str
@@ -437,7 +428,7 @@ class TaskRun:
 @dataclass
 class TaskRunDetail(TaskRun):         # task_run(id, run_id) — untruncated failure_detail
     evaluation_id: str
-    harness_version_resolved: str | None  # harness version actually used; None until resolved
+    resolved_harness_version: str | None  # harness version actually used; None until resolved
 
 @dataclass
 class TaskRunTraceEvent:
@@ -453,8 +444,8 @@ class TaskRunTracePage:
 @dataclass
 class BenchmarkImport:
     id: str
-    state: str                        # 'IMPORTING' | 'BUILDING' | 'VALIDATING' | 'READY' | 'FAILED'
-    error: str | None                 # failure detail when state == 'FAILED'
+    status: str                       # 'IMPORTING' | 'BUILDING' | 'VALIDATING' | 'READY' | 'FAILED'
+    error: str | None                 # failure detail when status == 'FAILED'
     task_count: int | None            # tasks parsed, once counted
 
 @dataclass

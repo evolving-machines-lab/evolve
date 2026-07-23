@@ -47,9 +47,9 @@ Commands:
   help                              Show this help
 
 Run options:
-  --benchmark <name@version>          Benchmark ref (required)
-  --system <harness:model[:version]>  Agent system; repeatable (at least one required)
+  --benchmark <name[@version]>        Benchmark (required; bare name = active version)
   --tasks <k1,k2,...>                 Task keys (default: every task of the version)
+  --system <harness:model[:version]>  Agent system; repeatable (at least one required)
   --runs <n>                          Runs per task x system (default 1)
   --concurrency <n>                   Parallel task runs (default 1)
   --max-spend <usd>                   Evaluation-wide model-spend cap (required)
@@ -70,7 +70,7 @@ Other options:
   --format harbor                     Export the Harbor job-layout bundle
   --json                              Machine-readable JSON output
   --api-key <key>                     API key (default: $EVOLVE_API_KEY)
-  --url <url>                         Dashboard URL (default: $EVOLVE_DASHBOARD_URL)`;
+  --base-url <url>                    API base URL (default: $EVOLVE_DASHBOARD_URL)`;
 
 // =============================================================================
 // ARG PARSING
@@ -95,7 +95,7 @@ export interface Invocation {
 const GLOBAL_FLAGS: Record<string, FlagKind> = {
   json: "boolean",
   "api-key": "string",
-  url: "string",
+  "base-url": "string",
 };
 
 interface CommandSpec {
@@ -111,8 +111,8 @@ const COMMAND_SPECS: Record<string, CommandSpec> = {
   run: {
     flags: {
       benchmark: "string",
-      system: "repeat",
       tasks: "string",
+      system: "repeat",
       runs: "number",
       concurrency: "number",
       "max-spend": "number",
@@ -273,33 +273,38 @@ export function parseAgentSystem(spec: string): AgentSystem {
   return { harness, model, harnessVersion: version };
 }
 
-/** Build the POST /api/evaluations body from a parsed `run` invocation. */
+/**
+ * Build the POST /api/evaluations body from a parsed `run` invocation.
+ * Keys follow the contract field order: benchmark, tasks, agentSystems,
+ * runsPerTask, concurrency, maxModelSpendUsd, maxModelSpendUsdPerTaskRun,
+ * sandboxProvider.
+ */
 export function buildEvaluationInput(inv: Invocation): EvaluationInput {
   const f = inv.flags;
-  const input: EvaluationInput = {
-    benchmark: f.benchmark as string,
-    agentSystems: (f.system as string[]).map(parseAgentSystem),
-    maxModelSpendUsd: f["max-spend"] as number,
-  };
+  let tasks: string[] | undefined;
   if (f.tasks !== undefined) {
-    const tasks = String(f.tasks)
+    tasks = String(f.tasks)
       .split(",")
       .map((t) => t.trim())
       .filter(Boolean);
     if (tasks.length === 0) {
       throw new CliUsageError("--tasks got an empty task list");
     }
-    input.tasks = tasks;
   }
-  if (f.runs !== undefined) input.runsPerTask = f.runs as number;
-  if (f.concurrency !== undefined) input.concurrency = f.concurrency as number;
-  if (f["max-spend-per-run"] !== undefined) {
-    input.maxModelSpendUsdPerTaskRun = f["max-spend-per-run"] as number;
-  }
-  if (f.provider !== undefined) {
-    input.sandboxProvider = f.provider as EvaluationInput["sandboxProvider"];
-  }
-  return input;
+  return {
+    benchmark: f.benchmark as string,
+    ...(tasks !== undefined ? { tasks } : {}),
+    agentSystems: (f.system as string[]).map(parseAgentSystem),
+    ...(f.runs !== undefined ? { runsPerTask: f.runs as number } : {}),
+    ...(f.concurrency !== undefined ? { concurrency: f.concurrency as number } : {}),
+    maxModelSpendUsd: f["max-spend"] as number,
+    ...(f["max-spend-per-run"] !== undefined
+      ? { maxModelSpendUsdPerTaskRun: f["max-spend-per-run"] as number }
+      : {}),
+    ...(f.provider !== undefined
+      ? { sandboxProvider: f.provider as EvaluationInput["sandboxProvider"] }
+      : {}),
+  };
 }
 
 /** Build the benchmarks().import() input from a parsed `import` invocation. */
@@ -357,32 +362,34 @@ function truncate(text: string, max: number): string {
 }
 
 function evaluationLines(e: Evaluation): string[] {
+  // Row order mirrors the input contract: benchmark, systems, size, runs/task,
+  // concurrency, spend caps.
   const rows: string[][] = [
     ["id", e.id],
     ["status", e.status],
     ["benchmark", e.benchmark],
-    ["runs/task", String(e.runsPerTask)],
-    ["concurrency", String(e.concurrency)],
-    ["max spend", fmtUsd(e.maxModelSpendUsd)],
   ];
-  if (e.maxModelSpendUsdPerTaskRun !== undefined) {
-    rows.push(["max spend/run", fmtUsd(e.maxModelSpendUsdPerTaskRun)]);
+  if (e.agentSystems) {
+    rows.push(["systems", e.agentSystems.map(fmtSystem).join(", ")]);
   }
-  rows.push(["spent", fmtUsd(e.spentUsd)]);
   if (e.counts) {
     rows.push([
       "size",
       `${e.counts.agentSystems} system(s) x ${e.counts.tasks} task(s) = ${e.counts.taskRuns} task run(s)`,
     ]);
   }
-  if (e.agentSystems) {
-    rows.push(["systems", e.agentSystems.map(fmtSystem).join(", ")]);
+  rows.push(["runs/task", String(e.runsPerTask)]);
+  rows.push(["concurrency", String(e.concurrency)]);
+  rows.push(["max spend", fmtUsd(e.maxModelSpendUsd)]);
+  if (e.maxModelSpendUsdPerTaskRun !== undefined) {
+    rows.push(["max spend/run", fmtUsd(e.maxModelSpendUsdPerTaskRun)]);
   }
+  rows.push(["spent", fmtUsd(e.spentUsd)]);
   if (e.taskRunCounts && Object.keys(e.taskRunCounts).length > 0) {
     const histogram = Object.entries(e.taskRunCounts)
       .map(([status, count]) => `${status} ${count}`)
       .join(" · ");
-    rows.push(["task runs", e.taskRunTotal !== undefined ? `${histogram} (total ${e.taskRunTotal})` : histogram]);
+    rows.push(["task runs", histogram]);
   }
   if (e.sourceEvaluationId) rows.push(["rerun of", e.sourceEvaluationId]);
   if (e.idempotentReplay) rows.push(["note", "idempotent replay of an existing evaluation"]);
@@ -393,18 +400,11 @@ function evaluationLines(e: Evaluation): string[] {
 }
 
 function evaluationRow(e: Evaluation): string[] {
-  const taskRuns =
-    e.counts?.taskRuns ??
-    (e.taskRunTotal !== undefined
-      ? e.taskRunTotal
-      : e.taskRunCounts
-        ? Object.values(e.taskRunCounts).reduce((a, b) => a + (b ?? 0), 0)
-        : undefined);
   return [
     e.id,
     e.status,
     e.benchmark,
-    taskRuns !== undefined ? String(taskRuns) : "-",
+    e.counts ? String(e.counts.taskRuns) : "-",
     fmtUsd(e.spentUsd),
     e.createdAt,
   ];
@@ -422,22 +422,37 @@ function taskRunRow(run: TaskRun): string[] {
   ];
 }
 
+/** One line for a structured import error: the message plus a failure count. */
+function importErrorText(error: NonNullable<BenchmarkImport["error"]>): string {
+  const failures = error.failures?.length
+    ? ` (${error.failures.length} task failure${error.failures.length === 1 ? "" : "s"})`
+    : "";
+  return `${error.message}${failures}`;
+}
+
 function importLines(job: BenchmarkImport): string[] {
   const rows: string[][] = [
     ["id", job.id],
-    ["state", job.state],
+    ["status", job.status],
   ];
+  if (job.benchmarkName !== undefined) rows.push(["benchmark", job.benchmarkName]);
+  if (job.version !== undefined) rows.push(["version", job.version]);
   if (job.taskCount !== undefined) rows.push(["tasks", String(job.taskCount)]);
-  if (job.error) rows.push(["error", job.error]);
+  if (job.error) {
+    rows.push(["error", importErrorText(job.error)]);
+    for (const failure of job.error.failures ?? []) {
+      rows.push([`  ${failure.taskKey}`, failure.error]);
+    }
+  }
   return table(rows);
 }
 
-/** Compact one-line rendering of one import state change for --watch. */
-export function importStateLine(job: BenchmarkImport): string {
+/** Compact one-line rendering of one import status change for --watch. */
+export function importStatusLine(job: BenchmarkImport): string {
   const parts: string[] = [];
   if (job.taskCount !== undefined) parts.push(`tasks=${job.taskCount}`);
-  if (job.error) parts.push(truncate(job.error, 140));
-  return `state ${job.state.padEnd(12)} ${parts.join(" ")}`.trimEnd();
+  if (job.error) parts.push(truncate(importErrorText(job.error), 140));
+  return `status ${job.status.padEnd(12)} ${parts.join(" ")}`.trimEnd();
 }
 
 /** Compact one-line rendering of one SSE event for --watch. */
@@ -464,7 +479,7 @@ export function eventLine(event: EvaluationEvent): string {
 function clientConfig(inv: Invocation): HostedClientConfig {
   const config: HostedClientConfig = {};
   if (typeof inv.flags["api-key"] === "string") config.apiKey = inv.flags["api-key"];
-  if (typeof inv.flags.url === "string") config.dashboardUrl = inv.flags.url;
+  if (typeof inv.flags["base-url"] === "string") config.baseUrl = inv.flags["base-url"];
   return config;
 }
 
@@ -612,7 +627,7 @@ async function cmdExport(inv: Invocation, io: CliIO): Promise<number> {
 function benchmarkDetailLines(b: Benchmark): string[] {
   const lines = table([
     ["name", b.name],
-    ["title", b.displayTitle ?? "-"],
+    ["title", b.title ?? "-"],
     ["description", b.description ?? "-"],
     ["active version", b.activeVersion?.version ?? "-"],
   ]);
@@ -656,7 +671,7 @@ async function cmdBenchmarks(inv: Invocation, io: CliIO): Promise<number> {
         b.activeVersion?.version ?? "-",
         b.activeVersion?.state ?? "-",
         b.activeVersion ? String(b.activeVersion.taskCount) : "-",
-        b.displayTitle ?? "-",
+        b.title ?? "-",
       ]);
     }
     for (const line of table(rows)) io.out(line);
@@ -715,12 +730,12 @@ async function cmdImport(inv: Invocation, io: CliIO): Promise<number> {
   if (json) {
     io.out(JSON.stringify({ kind: "import.created", benchmarkImport: created }));
   } else {
-    io.out(`Import ${created.id} (${input.benchmarkName}) ${created.state} — watching…`);
+    io.out(`Import ${created.id} (${input.benchmarkName}) ${created.status} — watching…`);
   }
 
   const final = await client.watchImport(created.id, {
-    onState: (job) => {
-      io.out(json ? JSON.stringify({ kind: "import.state", benchmarkImport: job }) : importStateLine(job));
+    onStatus: (job) => {
+      io.out(json ? JSON.stringify({ kind: "import.status", benchmarkImport: job }) : importStatusLine(job));
     },
   });
 
@@ -730,7 +745,7 @@ async function cmdImport(inv: Invocation, io: CliIO): Promise<number> {
     io.out("");
     for (const line of importLines(final)) io.out(line);
   }
-  return final.state === "FAILED" ? 1 : 0;
+  return final.status === "FAILED" ? 1 : 0;
 }
 
 // =============================================================================
