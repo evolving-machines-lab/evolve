@@ -52,7 +52,7 @@ async def main():
             print(run.task_key, run.agent_system.harness, run.status, run.score)
 
         path = await evals.export(evaluation.id, to='./results')
-        print('Saved:', path)  # ./results/evaluation-<id>-export.json.gz
+        print('Saved:', path)  # ./results/evaluation-<id>.json.gz (server-named via Content-Disposition)
 
 asyncio.run(main())
 ```
@@ -445,8 +445,20 @@ class TaskRunTracePage:
 class BenchmarkImport:
     id: str
     status: str                       # 'IMPORTING' | 'BUILDING' | 'VALIDATING' | 'READY' | 'FAILED'
-    error: str | None                 # failure detail when status == 'FAILED'
+    benchmark_name: str | None        # create responses
+    version: str | None               # create responses
+    error: BenchmarkImportError | None  # structured failure detail when status == 'FAILED'
     task_count: int | None            # tasks parsed, once counted
+
+@dataclass
+class BenchmarkImportError:
+    message: str                      # what went wrong, e.g. "2/113 task(s) failed to parse"
+    failures: list[BenchmarkImportFailure]  # per-task parse/validation failures (empty when corpus unreachable)
+
+@dataclass
+class BenchmarkImportFailure:
+    task_key: str                     # task that failed to parse or validate
+    error: str                        # why it failed
 
 @dataclass
 class EvaluationComparison:           # compare([ids])

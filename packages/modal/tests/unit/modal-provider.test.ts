@@ -25,6 +25,7 @@ import {
   _testBuildSandboxInfo,
   _testValidateTimeout,
   MODAL_MAX_LIFETIME_MS,
+  MODAL_STDIN_CHUNK_BYTES,
   ModalSandboxLifetimeError,
   ModalNetworkPolicyError,
   ModalCommands,
@@ -477,6 +478,7 @@ interface ExecCall {
 
 function createMockModalSandbox(opts?: { stdout?: string; stderr?: string; exitCode?: number }) {
   const execCalls: ExecCall[] = [];
+  const stdinWrites: Buffer[] = [];
   const stdoutText = opts?.stdout ?? "";
   const stderrText = opts?.stderr ?? "";
   const exitCode = opts?.exitCode ?? 0;
@@ -498,13 +500,17 @@ function createMockModalSandbox(opts?: { stdout?: string; stderr?: string; exitC
         stderr: makeStream(stderrText),
         wait: async () => exitCode,
         stdin: {
-          writeBytes: async () => {},
+          // Each call = one gRPC TaskExecStdinWrite message on real Modal.
+          // Copy the chunk: the source may be a subarray of a reused buffer.
+          writeBytes: async (data: Uint8Array) => {
+            stdinWrites.push(Buffer.from(data));
+          },
           getWriter: () => ({ close: async () => {} }),
         },
       };
     },
   };
-  return { sandbox, execCalls };
+  return { sandbox, execCalls, stdinWrites };
 }
 
 async function testCommandsRunAsUser(): Promise<void> {
@@ -631,6 +637,120 @@ async function testFilesWriteRootNoChown(): Promise<void> {
 }
 
 // =============================================================================
+// [9] ModalFiles — stdin chunking (Modal's 100MiB gRPC message cap)
+// =============================================================================
+
+/** Modal's hard per-message gRPC cap (TaskExecStdinWrite): 100MiB. */
+const MODAL_GRPC_MESSAGE_CAP = 100 * 1024 * 1024;
+
+/** Deterministic patterned buffer so reassembly errors are detectable. */
+function patternedBuffer(size: number): Buffer {
+  const buf = Buffer.allocUnsafe(size);
+  for (let i = 0; i < size; i++) buf[i] = i % 251; // prime modulus: no 8MiB-period aliasing
+  return buf;
+}
+
+async function testFilesWriteSmallSingleChunk(): Promise<void> {
+  console.log("\n[9a] ModalFiles.write() - small payload stays a single stdin write");
+
+  const { sandbox, stdinWrites } = createMockModalSandbox();
+  const files = new ModalFiles(sandbox as any, "root");
+
+  await files.write("/workspace/small.bin", Buffer.from("hello world"));
+
+  assertEqual(stdinWrites.length, 1, "One writeBytes call for a small file");
+  assertEqual(stdinWrites[0].toString("utf-8"), "hello world", "Payload delivered intact");
+}
+
+async function testFilesWriteChunksOverCap(): Promise<void> {
+  console.log("\n[9b] ModalFiles.write() - payload over Modal's 100MiB cap is chunked at 8MiB");
+
+  const size = MODAL_GRPC_MESSAGE_CAP + 1; // 104,857,601 bytes: one byte over the gRPC cap
+  const data = Buffer.allocUnsafe(size);
+  data[0] = 0xaa;
+  data[size - 1] = 0xbb;
+
+  const { sandbox, stdinWrites } = createMockModalSandbox();
+  const files = new ModalFiles(sandbox as any, "root");
+  await files.write("/workspace/huge.tar.gz", data);
+
+  const expectedChunks = Math.ceil(size / MODAL_STDIN_CHUNK_BYTES);
+  assertEqual(stdinWrites.length, expectedChunks, `Split into ceil(size/8MiB) = ${expectedChunks} writes`);
+  assert(
+    stdinWrites.every((c) => c.length <= MODAL_STDIN_CHUNK_BYTES),
+    "Every chunk is at most 8MiB"
+  );
+  assert(
+    stdinWrites.every((c) => c.length < MODAL_GRPC_MESSAGE_CAP),
+    "No single gRPC message reaches Modal's 100MiB cap"
+  );
+  const total = stdinWrites.reduce((n, c) => n + c.length, 0);
+  assertEqual(total, size, "Total bytes across chunks equal the payload size");
+  assertEqual(stdinWrites[0][0], 0xaa, "First byte lands in the first chunk");
+  const last = stdinWrites[stdinWrites.length - 1];
+  assertEqual(last[last.length - 1], 0xbb, "Last byte lands in the last chunk");
+}
+
+async function testFilesWriteChunksReassembleExactly(): Promise<void> {
+  console.log("\n[9c] ModalFiles.write() - chunks reassemble byte-identical, in order");
+
+  const size = 2 * MODAL_STDIN_CHUNK_BYTES + 12345; // 3 chunks, ragged tail
+  const data = patternedBuffer(size);
+
+  const { sandbox, stdinWrites } = createMockModalSandbox();
+  const files = new ModalFiles(sandbox as any, "root");
+  await files.write("/workspace/patterned.bin", data);
+
+  assertEqual(stdinWrites.length, 3, "2 full chunks + 1 ragged tail");
+  assertEqual(stdinWrites[0].length, MODAL_STDIN_CHUNK_BYTES, "Chunk 1 is exactly 8MiB");
+  assertEqual(stdinWrites[1].length, MODAL_STDIN_CHUNK_BYTES, "Chunk 2 is exactly 8MiB");
+  assertEqual(stdinWrites[2].length, 12345, "Tail chunk carries the remainder");
+  assert(Buffer.concat(stdinWrites).equals(data), "Reassembled bytes are identical to the input");
+}
+
+async function testFilesWriteBatchChunksOverCap(): Promise<void> {
+  console.log("\n[9d] ModalFiles.writeBatch() - tar stream over the cap is chunked at 8MiB");
+
+  // One >100MiB file: the tar buffer (payload + 512B header + padding) exceeds the cap
+  const size = MODAL_GRPC_MESSAGE_CAP + 1;
+  const data = Buffer.allocUnsafe(size);
+
+  const { sandbox, execCalls, stdinWrites } = createMockModalSandbox();
+  const files = new ModalFiles(sandbox as any, "root");
+  await files.writeBatch([{ path: "/workspace/bundle.tar.gz", data }]);
+
+  const tarExec = execCalls.find((c) => c.args[0] === "tar");
+  assert(tarExec !== undefined, "Batch upload still goes through a single tar exec");
+  assert(stdinWrites.length >= Math.ceil(size / MODAL_STDIN_CHUNK_BYTES), "Tar stream split into multiple writes");
+  assert(
+    stdinWrites.every((c) => c.length <= MODAL_STDIN_CHUNK_BYTES),
+    "Every tar chunk is at most 8MiB"
+  );
+  assert(
+    stdinWrites.every((c) => c.length < MODAL_GRPC_MESSAGE_CAP),
+    "No single gRPC message reaches Modal's 100MiB cap"
+  );
+  const total = stdinWrites.reduce((n, c) => n + c.length, 0);
+  assert(total > size, "Total stdin bytes cover payload + tar header/padding");
+  assertEqual(total % 512, 0, "Reassembled stream is 512-byte aligned (valid tar framing preserved)");
+}
+
+async function testFilesWriteBatchSmallSingleChunk(): Promise<void> {
+  console.log("\n[9e] ModalFiles.writeBatch() - small batch stays a single stdin write");
+
+  const { sandbox, stdinWrites } = createMockModalSandbox();
+  const files = new ModalFiles(sandbox as any, "root");
+  await files.writeBatch([
+    { path: "/workspace/a.txt", data: "aaa" },
+    { path: "/workspace/b.txt", data: "bbb" },
+  ]);
+
+  assertEqual(stdinWrites.length, 1, "One writeBytes call for a small tar");
+  const tar = stdinWrites[0];
+  assert(tar.includes("workspace/a.txt") && tar.includes("workspace/b.txt"), "Tar contains both entries");
+}
+
+// =============================================================================
 // RUNNER
 // =============================================================================
 
@@ -675,6 +795,12 @@ const tests = [
   testFilesMakeDirRootSkipsChown,
   testFilesWriteChownsToUser,
   testFilesWriteRootNoChown,
+  // [9] ModalFiles stdin chunking (100MiB gRPC cap)
+  testFilesWriteSmallSingleChunk,
+  testFilesWriteChunksOverCap,
+  testFilesWriteChunksReassembleExactly,
+  testFilesWriteBatchChunksOverCap,
+  testFilesWriteBatchSmallSingleChunk,
 ];
 
 (async () => {

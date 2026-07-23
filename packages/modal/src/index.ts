@@ -50,6 +50,14 @@ const IMAGE_MAP: Record<string, string> = {
 export const MODAL_MAX_LIFETIME_MS = 24 * 60 * 60 * 1000;
 
 /**
+ * Chunk size for stdin uploads. Modal's gRPC transport rejects any single
+ * TaskExecStdinWrite message larger than 100MiB (RESOURCE_EXHAUSTED at
+ * 104,857,600 bytes), so file payloads are split into 8MiB writeBytes()
+ * calls — the same per-chunk pattern writeStream() uses.
+ */
+export const MODAL_STDIN_CHUNK_BYTES = 8 * 1024 * 1024;
+
+/**
  * Default sandbox user. Modal runs everything as root (ignoring the image's
  * USER directive), but agent CLIs refuse certain operations as root, so
  * commands and file ownership default to the image's "user" account.
@@ -755,6 +763,21 @@ export class ModalFiles implements SandboxFiles {
     await p.wait();
   }
 
+  /**
+   * Write a payload to a process's stdin in MODAL_STDIN_CHUNK_BYTES slices.
+   * Each writeBytes() call becomes one gRPC TaskExecStdinWrite message and
+   * Modal rejects messages over 100MiB, so large files must be chunked
+   * (harness bundles routinely exceed the cap).
+   */
+  private async writeStdinChunked(
+    stdin: { writeBytes(data: Uint8Array): Promise<void> },
+    data: Uint8Array
+  ): Promise<void> {
+    for (let offset = 0; offset < data.length; offset += MODAL_STDIN_CHUNK_BYTES) {
+      await stdin.writeBytes(data.subarray(offset, offset + MODAL_STDIN_CHUNK_BYTES));
+    }
+  }
+
   async read(path: string): Promise<string | Uint8Array> {
     if (isBinaryFile(path)) {
       // Binary: use cat with binary mode - no base64 overhead
@@ -784,8 +807,8 @@ export class ModalFiles implements SandboxFiles {
     const escapedPath = path.replace(/'/g, "'\\''");
     const p = await this.sandbox.exec(["bash", "-c", `cat > '${escapedPath}'`], { mode: "binary" });
 
-    // Use Modal SDK's writeBytes() method
-    await p.stdin.writeBytes(new Uint8Array(data));
+    // Chunked writeBytes(): one gRPC message per chunk, under Modal's 100MiB cap
+    await this.writeStdinChunked(p.stdin, new Uint8Array(data));
     const writer = p.stdin.getWriter();
     await writer.close();
     await p.wait();
@@ -820,7 +843,8 @@ export class ModalFiles implements SandboxFiles {
     const tarBuffer = Buffer.concat(chunks);
 
     const p = await this.sandbox.exec(["tar", "-xf", "-", "-C", "/"], { mode: "binary" });
-    await p.stdin.writeBytes(new Uint8Array(tarBuffer));
+    // Chunked writeBytes(): one gRPC message per chunk, under Modal's 100MiB cap
+    await this.writeStdinChunked(p.stdin, new Uint8Array(tarBuffer));
     const writer = p.stdin.getWriter();
     await writer.close();
     await p.wait();

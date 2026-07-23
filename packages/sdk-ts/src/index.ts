@@ -338,6 +338,7 @@ export {
   type EvaluationInput,
   type Evaluation,
   type EvaluationStatus,
+  type EvalSandboxProvider,
   type TaskRun,
   type TaskRunDetail,
   type TaskRunStatus,

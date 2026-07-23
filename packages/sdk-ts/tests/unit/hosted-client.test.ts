@@ -132,6 +132,9 @@ import {
   NotImplementedError,
 } from "../../src/hosted/index.ts";
 import type { EvaluationEvent } from "../../src/hosted/index.ts";
+// Root-surface check: these documented types must be importable from the
+// package root, not just from hosted/ (compile-time guard for the export block)
+import type { EvalSandboxProvider as RootEvalSandboxProvider } from "../../src/index.ts";
 
 const BASE = "http://localhost:3000";
 
@@ -1653,9 +1656,29 @@ async function testTaskRunsAutoPagination() {
 // RUN
 // =============================================================================
 
+async function testRootExportsHostedTypes() {
+  console.log("\n--- package root re-exports the documented hosted types ---");
+
+  // Compile-time: the type import at the top of this file fails if the root
+  // export block drops EvalSandboxProvider. Runtime sanity on its shape:
+  const provider: RootEvalSandboxProvider = "modal";
+  assertEqual(provider, "modal", "EvalSandboxProvider importable from package root");
+
+  // Source: the hosted export block in src/index.ts names the documented types
+  const rootSrc = await readFile(new URL("../../src/index.ts", import.meta.url), "utf-8");
+  for (const t of ["EvalSandboxProvider", "BenchmarkImportError", "EvaluationInput", "EvaluationStatus"]) {
+    assert(new RegExp(`type ${t},`).test(rootSrc), `src/index.ts exports type ${t}`);
+  }
+
+  // Built dist: the declaration file users consume must carry the type
+  const distDts = await readFile(new URL("../../dist/index.d.ts", import.meta.url), "utf-8");
+  assert(distDts.includes("EvalSandboxProvider"), "dist/index.d.ts declares EvalSandboxProvider");
+}
+
 async function main() {
   console.log("Hosted Evals Client Unit Tests\n");
 
+  await testRootExportsHostedTypes();
   await testFactoriesRequireApiKey();
   await testBenchmarksList();
   await testBenchmarksGet();

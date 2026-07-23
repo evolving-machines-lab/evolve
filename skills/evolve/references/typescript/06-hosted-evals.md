@@ -48,7 +48,7 @@ for await (const run of evals.taskRuns(evaluation.id)) {
 }
 
 const path = await evals.export(evaluation.id, { to: "./results" });
-console.log("Saved:", path); // ./results/evaluation-<id>-export.json.gz
+console.log("Saved:", path); // ./results/evaluation-<id>.json.gz (server-named via Content-Disposition)
 ```
 
 ---
