@@ -55,7 +55,7 @@ Commands:
   export <id>                       Download the research archive (gzipped JSON)
   benchmarks                        List the benchmark catalog
   benchmarks get <name[@version]>   Show one benchmark (versions + tasks + providers)
-  import                            Import a benchmark from git (add --watch to follow it)
+  import                            Import a benchmark from a git source or a local directory (--watch to follow)
   import status <id>                Show one import job
   help                              Show this help
 
@@ -81,9 +81,10 @@ Trace options:
   --after <seq>                       Resume after this trace seq
   --limit <n>                         Max events per page
 
-Import options:
-  --git <url>                         Git repository URL (required)
-  --ref <ref>                         Git ref: branch, tag, or commit (required)
+Import options (a git source OR a local directory; --name and --version required):
+  --git <url>                         Git repository URL (with --ref)
+  --ref <ref>                         Git ref: branch, tag, or commit (with --git)
+  --dir <path>                        Local corpus directory (tarred + uploaded)
   --name <benchmark>                  Catalog benchmark name to create or extend (required)
   --version <v>                       Version label for the imported version (required)
   --watch                             Poll until the import is IMPORTED or FAILED
@@ -211,6 +212,7 @@ const COMMAND_SPECS: Record<string, CommandSpec> = {
     flags: {
       git: "string",
       ref: "string",
+      dir: "string",
       name: "string",
       version: "string",
       watch: "boolean",
@@ -364,9 +366,29 @@ export function buildEvaluationInput(inv: Invocation): EvaluationInput {
 /** Build the benchmarks().import() input from a parsed `import` invocation. */
 export function buildImportInput(inv: Invocation): BenchmarkImportInput {
   const f = inv.flags;
+  const hasDir = typeof f.dir === "string";
+  const hasGit = typeof f.git === "string" || typeof f.ref === "string";
+  if (hasDir && hasGit) {
+    throw new CliUsageError('"import" takes EITHER --dir OR --git/--ref, not both');
+  }
+  if (hasDir) {
+    for (const req of ["name", "version"] as const) {
+      if (typeof f[req] !== "string") {
+        throw new CliUsageError(`"import" requires --${req}`);
+      }
+    }
+    return {
+      source: { directory: f.dir as string },
+      benchmarkName: f.name as string,
+      version: f.version as string,
+    };
+  }
+  // Git source (the default when no --dir). Original required-flag order —
+  // git, ref, name, version — with --dir offered as the source alternative.
   for (const req of ["git", "ref", "name", "version"] as const) {
     if (typeof f[req] !== "string") {
-      throw new CliUsageError(`"import" requires --${req}`);
+      const suffix = req === "git" || req === "ref" ? " (or --dir for a local corpus directory)" : "";
+      throw new CliUsageError(`"import" requires --${req}${suffix}`);
     }
   }
   return {

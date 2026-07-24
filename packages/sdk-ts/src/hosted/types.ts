@@ -504,11 +504,18 @@ export interface RegradeJob {
 // BENCHMARK IMPORT
 // =============================================================================
 
-/** Source for benchmarks().import(): a git repository pinned to a ref */
+/**
+ * Source for benchmarks().import(): EITHER a git repository pinned to a ref, OR
+ * a local corpus directory (tarred deterministically on the client and
+ * uploaded). Provide `{ gitUrl, ref }` or `{ directory }`, not both.
+ */
 export interface BenchmarkImportSource {
-  gitUrl: string;
-  /** A pinned branch, tag, or commit */
-  ref: string;
+  /** A git repository URL — pair with `ref`. */
+  gitUrl?: string;
+  /** A pinned branch, tag, or commit — pair with `gitUrl`. */
+  ref?: string;
+  /** A local Harbor-layout corpus directory — tarred + gzipped and uploaded. */
+  directory?: string;
 }
 
 /** Input for benchmarks().import() */

@@ -12,10 +12,13 @@ the message plus the stable machine-readable ``code``.
 """
 
 import asyncio
+import gzip
+import io
 import json
 import os
 import re
 import shutil
+import tarfile
 import time
 import urllib.error
 import urllib.parse
@@ -760,6 +763,33 @@ class _HostedHttp:
     async def request_bytes(self, path: str) -> 'tuple[bytes, Dict[str, str]]':
         return await asyncio.to_thread(self._request_sync, path, 'GET', None, None, True)
 
+    async def request_upload(
+        self, path: str, data: bytes, headers: Dict[str, str]
+    ) -> Dict[str, Any]:
+        """POST raw bytes (e.g. a gzipped corpus tarball) and parse the JSON reply."""
+        return await asyncio.to_thread(self._upload_sync, path, data, headers)
+
+    def _upload_sync(self, path: str, data: bytes, headers: Dict[str, str]) -> Dict[str, Any]:
+        request_headers = {
+            'Authorization': f'Bearer {self.api_key()}',
+            'Accept': 'application/json',
+        }
+        request_headers.update(headers)
+        request = urllib.request.Request(
+            f'{self.base_url()}{path}',
+            data=data,
+            headers=request_headers,
+            method='POST',
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=600) as response:
+                payload = response.read()
+        except urllib.error.HTTPError as exc:
+            _raise_api_error(exc)
+        if not payload:
+            return {}
+        return json.loads(payload.decode('utf-8'))
+
     async def download(self, path: str, to_dir: str, default_filename: str) -> str:
         return await asyncio.to_thread(self._download_sync, path, to_dir, default_filename)
 
@@ -816,6 +846,49 @@ class _HostedHttp:
         except urllib.error.HTTPError as exc:
             _raise_api_error(exc)
             raise  # unreachable; _raise_api_error always raises
+
+
+def _tar_gzip_directory(directory: str) -> bytes:
+    """Deterministically tar + gzip a corpus directory for the directory import.
+
+    Same content -> same bytes (so the tarball sha256 the server records as the
+    import's source identity is reproducible): entries sorted by path, headers
+    normalized (mtime 0, uid/gid 0, empty uname/gname, mode 0644), gzip carries
+    no timestamp. Hidden entries (".git"/".DS_Store"/".venv") and symlinks are
+    skipped — a corpus is plain files and the server rejects symlinks anyway.
+    """
+    root = os.path.abspath(directory)
+    if not os.path.isdir(root):
+        raise ValueError(f'directory not found: {directory}')
+    files = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith('.'))
+        for name in sorted(filenames):
+            if name.startswith('.'):
+                continue
+            abs_path = os.path.join(dirpath, name)
+            if os.path.islink(abs_path):
+                continue
+            rel = os.path.relpath(abs_path, root).replace(os.sep, '/')
+            files.append((rel, abs_path))
+    files.sort(key=lambda t: t[0])
+
+    buf = io.BytesIO()
+    with gzip.GzipFile(fileobj=buf, mode='wb', mtime=0, compresslevel=9) as gz:
+        with tarfile.open(fileobj=gz, mode='w', format=tarfile.USTAR_FORMAT) as tar:
+            for rel, abs_path in files:
+                info = tarfile.TarInfo(name=rel)
+                info.size = os.path.getsize(abs_path)
+                info.mtime = 0
+                info.mode = 0o644
+                info.uid = 0
+                info.gid = 0
+                info.uname = ''
+                info.gname = ''
+                info.type = tarfile.REGTYPE
+                with open(abs_path, 'rb') as handle:
+                    tar.addfile(info, handle)
+    return buf.getvalue()
 
 
 # =============================================================================
@@ -948,21 +1021,37 @@ class BenchmarksClient:
     async def import_benchmark(
         self,
         *,
-        git_url: str,
-        ref: str,
+        git_url: Optional[str] = None,
+        ref: Optional[str] = None,
+        directory: Optional[str] = None,
         benchmark_name: str,
         version: str,
     ) -> BenchmarkImport:
-        """Start a benchmark import job from a git source pinned to a ref.
+        """Start a benchmark import job.
 
-        Returns immediately; poll with :meth:`get_import` /
-        :meth:`watch_import`. ``version`` labels the imported benchmark
-        version.
+        Provide EITHER a git source (``git_url`` + ``ref``) OR a local corpus
+        ``directory`` (tarred + gzipped deterministically on the client and
+        uploaded). Returns immediately; poll with :meth:`get_import` /
+        :meth:`watch_import`. ``version`` labels the imported benchmark version.
         """
+        if directory is not None:
+            # Directory import: the body IS the gzipped tarball, so
+            # benchmarkName/version ride the query string.
+            gzipped = await asyncio.to_thread(_tar_gzip_directory, directory)
+            query = urllib.parse.urlencode(
+                {'benchmarkName': benchmark_name, 'version': version}
+            )
+            raw = await self._http.request_upload(
+                f'/api/benchmarks/imports?{query}',
+                gzipped,
+                {'Content-Type': 'application/gzip'},
+            )
+            return _map_benchmark_import(raw)
         if not git_url or not ref:
             raise ValueError(
-                'import_benchmark() requires a git source: '
-                'git_url=..., ref=... plus benchmark_name=... and version=...'
+                'import_benchmark() requires either a git source (git_url=..., ref=...) '
+                'or a local corpus directory (directory=...), plus benchmark_name=... '
+                'and version=...'
             )
         body: Dict[str, Any] = {
             'source': {'type': 'git', 'url': git_url, 'ref': ref},

@@ -295,6 +295,51 @@ class TestBenchmarks:
         assert job.version == '1.2'
 
     @pytest.mark.asyncio
+    async def test_import_benchmark_uploads_a_directory(self, tmp_path):
+        import io
+        import tarfile
+
+        from evolve.hosted import _tar_gzip_directory
+
+        # A tiny Harbor-layout corpus on disk.
+        task_dir = tmp_path / 'tasks' / 'abc'
+        task_dir.mkdir(parents=True)
+        (task_dir / 'task.toml').write_text('schema_version = "1.1"\n')
+
+        fake = FakeUrlopen([
+            ('/api/benchmarks/imports', {
+                'id': 'imp-9', 'status': 'IMPORTING', 'benchmarkName': 'my-bench', 'version': '0.1',
+            }),
+        ])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            job = await benchmarks_factory(CONFIG).import_benchmark(
+                directory=str(tmp_path),
+                benchmark_name='my-bench',
+                version='0.1',
+            )
+
+        request = fake.requests[0]
+        assert request.get_method() == 'POST'
+        # The body IS the tarball, so benchmarkName/version ride the query string.
+        assert '/api/benchmarks/imports?' in request.full_url
+        assert 'benchmarkName=my-bench' in request.full_url
+        assert 'version=0.1' in request.full_url
+        assert request.get_header('Content-type') == 'application/gzip'
+
+        data = request.data
+        assert data[:2] == b'\x1f\x8b'  # gzip magic
+        with tarfile.open(fileobj=io.BytesIO(gzip.decompress(data)), mode='r') as tar:
+            names = tar.getnames()
+        assert 'tasks/abc/task.toml' in names
+
+        # Deterministic: the same directory always tars to the same bytes.
+        assert _tar_gzip_directory(str(tmp_path)) == _tar_gzip_directory(str(tmp_path))
+
+        assert job.id == 'imp-9'
+        assert job.status == 'IMPORTING'
+        assert job.benchmark_name == 'my-bench'
+
+    @pytest.mark.asyncio
     async def test_get_import_maps_status(self):
         fake = FakeUrlopen([
             ('/api/benchmarks/imports/imp-1', {

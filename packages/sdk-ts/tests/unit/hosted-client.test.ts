@@ -119,11 +119,11 @@ function restoreFetch() {
 // IMPORT (after mock setup)
 // =============================================================================
 
-import { readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
-import { gzipSync } from "node:zlib";
+import { gunzipSync, gzipSync } from "node:zlib";
 
 import {
   benchmarks,
@@ -337,6 +337,53 @@ async function testImportRequiresGitSource() {
     assertEqual(fetchCalls.length, 0, "invalid input never hits the network");
   } finally {
     restoreFetch();
+  }
+}
+
+async function testImportDirectorySource() {
+  console.log("\n--- benchmarks().import() tars + gzips a local directory and uploads it ---");
+  installMockFetch();
+  const dir = await mkdtemp(join(tmpdir(), "evolve-import-dir-"));
+  try {
+    await mkdir(join(dir, "tasks", "abc"), { recursive: true });
+    await writeFile(join(dir, "tasks", "abc", "task.toml"), 'schema_version = "1.1"\n');
+    setMockResponse("/api/benchmarks/imports", {
+      status: 202,
+      body: { id: "imp-2", benchmarkName: "my-bench", version: "0.1", status: "IMPORTING" },
+    });
+
+    const b = benchmarks({ apiKey: "test-key", baseUrl: BASE });
+    const imported = await b.import({
+      source: { directory: dir },
+      benchmarkName: "my-bench",
+      version: "0.1",
+    });
+
+    const call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.includes("/api/benchmarks/imports?"), "targets the imports route with a query string");
+    assert(call.url.includes("benchmarkName=my-bench"), "benchmarkName rides the query string");
+    assert(call.url.includes("version=0.1"), "version rides the query string");
+    assertEqual(call.init?.method, "POST", "uses POST");
+    const headers = call.init?.headers as Record<string, string>;
+    assertEqual(headers?.["Content-Type"], "application/gzip", "gzip content type");
+    assertEqual(headers?.Authorization, "Bearer test-key", "Bearer token sent");
+
+    const body = call.init?.body as Uint8Array;
+    assert(body instanceof Uint8Array && body.length > 0, "body is non-empty bytes");
+    assert(body[0] === 0x1f && body[1] === 0x8b, "body is a gzip stream (magic 1f 8b)");
+    // The gzipped tar carries the corpus file path + content (USTAR stores both as plain bytes).
+    const tarText = gunzipSync(Buffer.from(body)).toString("latin1");
+    assert(tarText.includes("tasks/abc/task.toml"), "the tar carries the corpus file path");
+    assert(tarText.includes('schema_version = "1.1"'), "the tar carries the file content");
+
+    assertEqual(
+      imported,
+      { id: "imp-2", status: "IMPORTING", benchmarkName: "my-bench", version: "0.1" },
+      "202 response mapped (id, status, benchmarkName, version)"
+    );
+  } finally {
+    restoreFetch();
+    await rm(dir, { recursive: true, force: true });
   }
 }
 
@@ -1865,6 +1912,7 @@ async function main() {
   await testGetActiveNoActiveVersion();
   await testImportGitSource();
   await testImportRequiresGitSource();
+  await testImportDirectorySource();
   await testGetImport();
   await testWatchImportPollsToTerminal();
   await testRunPostsInputContract();

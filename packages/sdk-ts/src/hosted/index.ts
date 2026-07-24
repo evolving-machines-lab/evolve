@@ -663,21 +663,40 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
     },
 
     async import(input: BenchmarkImportInput): Promise<BenchmarkImport> {
-      if (!input.source?.gitUrl || !input.source?.ref) {
-        throw new Error(
-          'benchmarks().import() requires a git source: { source: { gitUrl, ref }, benchmarkName, version }'
-        );
-      }
-      const res = await request(cfg, "/api/benchmarks/imports", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          source: { type: "git", url: input.source.gitUrl, ref: input.source.ref },
+      const src = input.source;
+      // Directory import: deterministically tar+gzip the corpus and upload it
+      // (the body IS the tarball, so benchmarkName/version ride the query string).
+      if (src?.directory) {
+        const { tarGzipDirectory } = await import("./tar");
+        const gzipped = tarGzipDirectory(src.directory);
+        const query = new URLSearchParams({
           benchmarkName: input.benchmarkName,
           version: input.version,
-        }),
-      });
-      return mapBenchmarkImport((await res.json()) as Record<string, unknown>);
+        }).toString();
+        const res = await request(cfg, `/api/benchmarks/imports?${query}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/gzip" },
+          body: gzipped as unknown as BodyInit,
+        });
+        return mapBenchmarkImport((await res.json()) as Record<string, unknown>);
+      }
+      // Git import: JSON body with the pinned source.
+      if (src?.gitUrl && src?.ref) {
+        const res = await request(cfg, "/api/benchmarks/imports", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            source: { type: "git", url: src.gitUrl, ref: src.ref },
+            benchmarkName: input.benchmarkName,
+            version: input.version,
+          }),
+        });
+        return mapBenchmarkImport((await res.json()) as Record<string, unknown>);
+      }
+      throw new Error(
+        "benchmarks().import() requires either a git source ({ source: { gitUrl, ref } }) " +
+          "or a local corpus directory ({ source: { directory } }), plus benchmarkName and version"
+      );
     },
 
     getImport,

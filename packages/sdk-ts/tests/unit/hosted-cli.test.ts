@@ -369,6 +369,29 @@ function testParseImport() {
   );
 
   assertEqual(
+    buildImportInput(
+      parseArgs(["import", "--dir", "/path/to/corpus", "--name", "my-bench", "--version", "2.0"])
+    ),
+    {
+      source: { directory: "/path/to/corpus" },
+      benchmarkName: "my-bench",
+      version: "2.0",
+    },
+    "builds the directory import input"
+  );
+
+  assertThrowsUsage(
+    () =>
+      buildImportInput(
+        parseArgs([
+          "import", "--dir", "/c", "--git", "g", "--ref", "main", "--name", "b", "--version", "1",
+        ])
+      ),
+    "EITHER --dir OR",
+    "--dir and --git/--ref together are rejected"
+  );
+
+  assertEqual(
     parseArgs(["import", "status", "imp-1"]),
     { command: "import", positionals: ["status", "imp-1"], flags: {} },
     "import status subcommand"
