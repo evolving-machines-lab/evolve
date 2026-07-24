@@ -2,26 +2,26 @@
 
 Direct-HTTP clients against the dashboard API (same pattern as
 browser_credentials.py — no Node bridge). Mirrors the TypeScript SDK's hosted
-module 1-1, with one documented difference: ``watch()`` polls ``get()``
-instead of consuming the SSE event stream (the JSON-RPC bridge and a
-urllib-based client have no streaming SSE story; the TS SDK is the streaming
-surface).
+module 1-1: ``watch()`` consumes the server-sent event stream (replay from the
+beginning, Last-Event-ID resume on reconnect, terminal-event completion), and
+``watch_iter()`` is its async-iterator sibling yielding each
+:class:`EvaluationEvent`.
 
-Reserved surface: ``import_benchmark()`` with an ``archive_path`` or
-``harbor_hub_ref`` source raises NotImplementedError — git is the supported
-import source.
+API failures raise :class:`EvolveAPIError` — the server's product sentence as
+the message plus the stable machine-readable ``code``.
 """
 
 import asyncio
 import json
 import os
 import re
+import shutil
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Union
 
 from .config import HostedClientConfig
 
@@ -29,8 +29,11 @@ DEFAULT_BASE_URL = 'https://dashboard.evolvingmachines.ai'
 
 _TERMINAL_EVALUATION_STATUSES = {'COMPLETED', 'CANCELLED', 'FAILED'}
 
-# Terminal import statuses.
-_TERMINAL_IMPORT_STATUSES = {'READY', 'FAILED'}
+# Terminal import job statuses.
+_TERMINAL_IMPORT_STATUSES = {'IMPORTED', 'FAILED'}
+
+# Seeing one of these on the wire is the authoritative end-of-stream signal.
+_TERMINAL_EVENT_TYPES = {'evaluation.completed', 'evaluation.cancelled', 'evaluation.failed'}
 
 # camelCase -> snake_case boundary (only between a lower/digit and an upper,
 # so all-caps status keys are never mangled).
@@ -47,11 +50,20 @@ def _snake_keys(data: Any) -> Optional[Dict[str, Any]]:
         return None
     return {_snake_key(key): value for key, value in data.items()}
 
-_RESERVED_MESSAGE = (
-    '{feature} is not implemented yet: this method is reserved in the hosted '
-    'evals public surface, but the server endpoint does not exist yet. It will '
-    'activate in a future release without a signature change.'
-)
+
+class EvolveAPIError(Exception):
+    """A typed failure from the hosted evals API.
+
+    ``message`` (``str(error)``) is the server's own product sentence; ``code``
+    is the stable machine-readable identifier (e.g. ``benchmark_not_found``,
+    ``version_not_ready``, ``provider_unsupported``, ``rate_limited``) so
+    callers branch on codes, never on English. ``status`` is the HTTP status.
+    """
+
+    def __init__(self, status: int, code: str, message: str):
+        super().__init__(message)
+        self.status = status
+        self.code = code
 
 
 class NoActiveVersionError(Exception):
@@ -73,27 +85,33 @@ class NoActiveVersionError(Exception):
 
 @dataclass
 class BenchmarkVersion:
+    """One immutable version of a benchmark — one shape on every surface."""
     version: str
     state: str
+    created_at: str
     task_count: int
-    created_at: Optional[str] = None
+
+
+@dataclass
+class TaskProviderVerdict:
+    """One provider's verdict for a task: runnable (ok), or refused with the limitation named."""
+    ok: bool
+    reason: Optional[str] = None
 
 
 @dataclass
 class Task:
     """Public task fields only — instructions/environments/tests never leave the server.
 
-    ``providers`` maps each sandbox provider to a verdict dict — ``{'ok': True}``
-    when the task can run there, ``{'ok': False, 'reason': ...}`` naming the
-    limitation (e.g. a multi-container task on a provider that cannot host its
-    services). Advisory for choosing an evaluation's provider; a run on a
-    refused provider fails fast with the same reason. ``None`` on responses
-    from older servers.
+    ``providers`` maps each sandbox provider to a :class:`TaskProviderVerdict`.
+    Advisory for choosing an evaluation's provider — creating an evaluation
+    whose tasks include one refused on the chosen provider is rejected with
+    the same reason, so nothing is ever spent on a run that cannot execute.
     """
     task_key: str
     agent_timeout_sec: int
     verifier_timeout_sec: int
-    providers: Optional[Dict[str, Dict[str, Any]]] = None
+    providers: Dict[str, TaskProviderVerdict]
 
 
 @dataclass
@@ -101,14 +119,15 @@ class Benchmark:
     """A benchmark in the shared catalog.
 
     list() returns the summary fields; get() additionally populates versions,
-    tasks_version, tasks, created_at, and updated_at.
+    selected_version, tasks, created_at, and updated_at.
     """
     name: str
     title: Optional[str]
     description: Optional[str]
     active_version: Optional[BenchmarkVersion]
     versions: Optional[List[BenchmarkVersion]] = None
-    tasks_version: Optional[str] = None
+    # The version whose tasks are listed (get() only)
+    selected_version: Optional[BenchmarkVersion] = None
     tasks: Optional[List[Task]] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
@@ -147,6 +166,14 @@ class AgentSystem:
 
 
 @dataclass
+class EvaluationCounts:
+    """Evaluation size: agent_systems x tasks -> task_runs (present on every shape)."""
+    agent_systems: int
+    tasks: int
+    task_runs: int
+
+
+@dataclass
 class Evaluation:
     """An evaluation = tasks x agent systems x runs_per_task."""
     id: str
@@ -156,16 +183,17 @@ class Evaluation:
     runs_per_task: int
     concurrency: int
     max_model_spend_usd: float
+    #: Sandbox provider this evaluation runs on ("e2b" | "daytona" | "modal").
+    sandbox_provider: str
     spent_usd: float
+    counts: EvaluationCounts
     created_at: str
     # Per-task-run model-spend cap, when one was set
     max_model_spend_usd_per_task_run: Optional[float] = None
-    #: Sandbox provider this evaluation runs on ("e2b" | "daytona" | "modal").
-    sandbox_provider: Optional[str] = None
-    counts: Optional[Dict[str, int]] = None
     task_run_counts: Optional[Dict[str, int]] = None
+    # Mean score over SCORED runs only; None when none. Zero is a score. (get/list)
+    mean_score: Optional[float] = None
     agent_systems: Optional[List[AgentSystem]] = None
-    benchmark_version_state: Optional[str] = None
     error: Optional[str] = None
     updated_at: Optional[str] = None
     source_evaluation_id: Optional[str] = None
@@ -174,18 +202,18 @@ class Evaluation:
 
 @dataclass
 class ModelUsage:
-    """Model usage/spend recorded for a task run.
+    """Model usage/spend recorded for a task run — purely spend/usage, in the
+    one money vocabulary (caps are max_model_spend*, actuals are spent_usd).
 
     ``spend_source`` is "measured" (measured model spend reported by the
     platform) or "assumed_cap" (spend could not be measured for this run, so
     the per-run cap is reported). Harness-specific keys land in ``extra`` with
     snake_case keys.
     """
-    spend_usd: Optional[float] = None
+    spent_usd: Optional[float] = None
     spend_source: Optional[str] = None
-    max_budget_usd: Optional[float] = None
-    # Resolved harness version actually used for the run
-    resolved_harness_version: Optional[str] = None
+    # The per-run model-spend cap that applied to this run
+    max_model_spend_usd: Optional[float] = None
     extra: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -204,6 +232,13 @@ class TaskRun:
     # Wall-clock per phase with snake_case keys, e.g. {"agent_ms", "verify_ms"}
     phase_timings_ms: Optional[Dict[str, float]]
     model_usage: Optional[ModelUsage]
+    # Sandbox provider the run executed on; None until it has executed
+    sandbox_provider: Optional[str]
+    # Where the verifier ran ("separate" pristine box | "shared" inside the
+    # agent box); None until recorded
+    verifier_mode: Optional[str]
+    # Harness version actually resolved and used for the run; None until resolved
+    resolved_harness_version: Optional[str]
     session_ref: Optional[str]
     created_at: str
     updated_at: str
@@ -213,11 +248,20 @@ class TaskRun:
 class TaskRunDetail(TaskRun):
     """Full detail of one task run — evaluations().task_run(id, run_id).
 
-    Unlike list rows, failure_detail is untruncated here.
+    Same shape as a list row, plus the owning evaluation; unlike list rows,
+    failure_detail is untruncated here.
     """
-    evaluation_id: str = ''
-    # Harness version actually resolved and used for the run; None until resolved
-    resolved_harness_version: Optional[str] = None
+    evaluation_id: str
+
+
+@dataclass
+class EvaluationEvent:
+    """One server-sent event from evaluations().watch()/watch_iter()."""
+    # Monotonic sequence number (SSE id; the Last-Event-ID resume position)
+    seq: int
+    # Event type, e.g. "evaluation.created", "task_run.settled", "evaluation.completed"
+    type: str
+    data: Dict[str, Any]
 
 
 @dataclass
@@ -254,7 +298,7 @@ class ComparisonCell:
     evaluation_id: str
     status: str
     # Mean score over the cell's SCORED runs; None when none. Zero is a score.
-    score: Optional[float]
+    mean_score: Optional[float]
     coverage: ComparisonCoverage
 
 
@@ -311,15 +355,17 @@ class BenchmarkImportError:
 class BenchmarkImport:
     """A benchmark import job.
 
-    Terminal statuses: "READY" and "FAILED".
+    Terminal statuses: "IMPORTED" (the corpus landed as a benchmark version;
+    it becomes runnable once the platform activates it) and "FAILED".
+    Self-describing: every response names the benchmark@version being imported.
     """
     id: str
-    # Pipeline status, e.g. "IMPORTING", "BUILDING", "VALIDATING", "READY", "FAILED"
+    # Job status: "IMPORTING" | "IMPORTED" | "FAILED"
     status: str
-    # Catalog benchmark name the import creates or extends (create responses)
-    benchmark_name: Optional[str] = None
-    # Version label of the imported version (create responses)
-    version: Optional[str] = None
+    # Catalog benchmark name the import creates or extends
+    benchmark_name: str
+    # Version label of the imported version
+    version: str
     # Failure detail when status is "FAILED"
     error: Optional[BenchmarkImportError] = None
     # Number of tasks parsed, once counted (get_import() responses)
@@ -335,7 +381,6 @@ class EvaluationPage:
 @dataclass
 class TaskRunPage:
     task_runs: List[TaskRun]
-    total_count: int
     next_cursor: Optional[str]
 
 
@@ -356,17 +401,34 @@ def _map_benchmark_version(data: Dict[str, Any]) -> BenchmarkVersion:
     return BenchmarkVersion(
         version=data['version'],
         state=data.get('state', ''),
+        created_at=data.get('createdAt', ''),
         task_count=int(data.get('taskCount', 0)),
-        created_at=data.get('createdAt'),
     )
 
 
 def _map_task(data: Dict[str, Any]) -> Task:
+    providers_raw = data.get('providers') or {}
     return Task(
         task_key=data['taskKey'],
         agent_timeout_sec=int(data.get('agentTimeoutSec', 0)),
         verifier_timeout_sec=int(data.get('verifierTimeoutSec', 0)),
-        providers=data.get('providers'),
+        providers={
+            provider: TaskProviderVerdict(
+                ok=bool(verdict.get('ok')),
+                reason=verdict.get('reason'),
+            )
+            for provider, verdict in providers_raw.items()
+            if isinstance(verdict, dict)
+        },
+    )
+
+
+def _map_counts(data: Any) -> EvaluationCounts:
+    counts = data if isinstance(data, dict) else {}
+    return EvaluationCounts(
+        agent_systems=int(counts.get('agentSystems', 0)),
+        tasks=int(counts.get('tasks', 0)),
+        task_runs=int(counts.get('taskRuns', 0)),
     )
 
 
@@ -379,18 +441,18 @@ def _map_evaluation(data: Dict[str, Any]) -> Evaluation:
         runs_per_task=int(data.get('runsPerTask', 0)),
         concurrency=int(data.get('concurrency', 0)),
         max_model_spend_usd=float(data.get('maxModelSpendUsd', 0)),
+        sandbox_provider=data.get('sandboxProvider', ''),
         spent_usd=float(data.get('spentUsd', 0)),
+        counts=_map_counts(data.get('counts')),
         created_at=data.get('createdAt', ''),
         max_model_spend_usd_per_task_run=data.get('maxModelSpendUsdPerTaskRun'),
-        sandbox_provider=data.get('sandboxProvider'),
-        counts=_snake_keys(data.get('counts')),
         task_run_counts=data.get('taskRunCounts'),
+        mean_score=data.get('meanScore'),
         agent_systems=(
             [_map_agent_system(item) for item in agent_systems]
             if isinstance(agent_systems, list)
             else None
         ),
-        benchmark_version_state=data.get('benchmarkVersionState'),
         error=data.get('error'),
         updated_at=data.get('updatedAt'),
         source_evaluation_id=data.get('sourceEvaluationId'),
@@ -398,17 +460,16 @@ def _map_evaluation(data: Dict[str, Any]) -> Evaluation:
     )
 
 
-_MODEL_USAGE_WIRE_KEYS = {'spendUsd', 'spendSource', 'maxBudgetUsd', 'resolvedHarnessVersion'}
+_MODEL_USAGE_WIRE_KEYS = {'spentUsd', 'spendSource', 'maxModelSpendUsd'}
 
 
 def _map_model_usage(data: Any) -> Optional[ModelUsage]:
     if not isinstance(data, dict):
         return None
     return ModelUsage(
-        spend_usd=data.get('spendUsd'),
+        spent_usd=data.get('spentUsd'),
         spend_source=data.get('spendSource'),
-        max_budget_usd=data.get('maxBudgetUsd'),
-        resolved_harness_version=data.get('resolvedHarnessVersion'),
+        max_model_spend_usd=data.get('maxModelSpendUsd'),
         extra={
             _snake_key(key): value
             for key, value in data.items()
@@ -430,6 +491,9 @@ def _map_task_run(data: Dict[str, Any]) -> TaskRun:
         failure_detail=data.get('failureDetail'),
         phase_timings_ms=_snake_keys(data.get('phaseTimingsMs')),
         model_usage=_map_model_usage(data.get('modelUsage')),
+        sandbox_provider=data.get('sandboxProvider'),
+        verifier_mode=data.get('verifierMode'),
+        resolved_harness_version=data.get('resolvedHarnessVersion'),
         session_ref=data.get('sessionRef'),
         created_at=data.get('createdAt', ''),
         updated_at=data.get('updatedAt', ''),
@@ -441,7 +505,6 @@ def _map_task_run_detail(data: Dict[str, Any]) -> TaskRunDetail:
     return TaskRunDetail(
         **base.__dict__,
         evaluation_id=data.get('evaluationId', ''),
-        resolved_harness_version=data.get('resolvedHarnessVersion'),
     )
 
 
@@ -483,7 +546,7 @@ def _map_comparison_cell(data: Dict[str, Any]) -> ComparisonCell:
     return ComparisonCell(
         evaluation_id=data.get('evaluationId', ''),
         status=data.get('status', ''),
-        score=data.get('score'),
+        mean_score=data.get('meanScore'),
         coverage=_map_coverage(data.get('coverage')),
     )
 
@@ -516,11 +579,9 @@ def _map_benchmark_import(data: Dict[str, Any]) -> BenchmarkImport:
     benchmark_import = BenchmarkImport(
         id=data.get('id', ''),
         status=data.get('status', ''),
+        benchmark_name=data.get('benchmarkName', ''),
+        version=data.get('version', ''),
     )
-    if isinstance(data.get('benchmarkName'), str):
-        benchmark_import.benchmark_name = data.get('benchmarkName')
-    if isinstance(data.get('version'), str):
-        benchmark_import.version = data.get('version')
     if 'error' in data:
         benchmark_import.error = _map_import_error(data.get('error'))
     if isinstance(data.get('taskCount'), int):
@@ -532,19 +593,39 @@ def _map_benchmark_import(data: Dict[str, Any]) -> BenchmarkImport:
 # HTTP CORE
 # =============================================================================
 
+def _parse_error_body(text: str, fallback: str) -> 'tuple[str, str]':
+    """Extract (code, message) from a hosted error body {error: {code, message}}."""
+    try:
+        body = json.loads(text)
+    except ValueError:
+        return 'unknown_error', text or fallback
+    error = body.get('error') if isinstance(body, dict) else None
+    if isinstance(error, dict):
+        code = error.get('code') if isinstance(error.get('code'), str) else 'unknown_error'
+        message = error.get('message') if isinstance(error.get('message'), str) else fallback
+        return code, message
+    return 'unknown_error', text or fallback
+
+
+def _raise_api_error(exc: urllib.error.HTTPError) -> None:
+    detail = exc.read().decode('utf-8', errors='replace')
+    code, message = _parse_error_body(detail, str(exc.reason))
+    raise EvolveAPIError(exc.code, code, message) from exc
+
+
 class _HostedHttp:
     def __init__(self, factory: str, config: Optional[HostedClientConfig]):
         self._factory = factory
         self._config = config or HostedClientConfig()
 
-    def _base_url(self) -> str:
+    def base_url(self) -> str:
         return (
             self._config.base_url
             or os.environ.get('EVOLVE_DASHBOARD_URL')
             or DEFAULT_BASE_URL
         ).rstrip('/')
 
-    def _api_key(self) -> str:
+    def api_key(self) -> str:
         api_key = self._config.api_key or os.environ.get('EVOLVE_API_KEY')
         if not api_key:
             raise ValueError(
@@ -565,6 +646,9 @@ class _HostedHttp:
     async def request_bytes(self, path: str) -> 'tuple[bytes, Dict[str, str]]':
         return await asyncio.to_thread(self._request_sync, path, 'GET', None, None, True)
 
+    async def download(self, path: str, to_dir: str, default_filename: str) -> str:
+        return await asyncio.to_thread(self._download_sync, path, to_dir, default_filename)
+
     def _request_sync(
         self,
         path: str,
@@ -575,7 +659,7 @@ class _HostedHttp:
     ):
         data = json.dumps(body).encode('utf-8') if body is not None else None
         request_headers = {
-            'Authorization': f'Bearer {self._api_key()}',
+            'Authorization': f'Bearer {self.api_key()}',
             'Accept': 'application/json',
         }
         if data is not None:
@@ -583,7 +667,7 @@ class _HostedHttp:
         if headers:
             request_headers.update(headers)
         request = urllib.request.Request(
-            f'{self._base_url()}{path}',
+            f'{self.base_url()}{path}',
             data=data,
             headers=request_headers,
             method=method,
@@ -594,11 +678,30 @@ class _HostedHttp:
                 if raw:
                     return payload, dict(response.headers.items())
         except urllib.error.HTTPError as exc:
-            detail = exc.read().decode('utf-8', errors='replace')
-            raise RuntimeError(f'Evolve API error ({exc.code}): {detail}') from exc
+            _raise_api_error(exc)
         if not payload:
             return {}
         return json.loads(payload.decode('utf-8'))
+
+    def _download_sync(self, path: str, to_dir: str, default_filename: str) -> str:
+        """Stream a download straight to disk — never buffers the archive in memory."""
+        request = urllib.request.Request(
+            f'{self.base_url()}{path}',
+            headers={'Authorization': f'Bearer {self.api_key()}'},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=600) as response:
+                os.makedirs(to_dir, exist_ok=True)
+                disposition = response.headers.get('Content-Disposition', '') or ''
+                match = re.search(r'filename="([^"]+)"', disposition)
+                filename = match.group(1) if match else default_filename
+                target = os.path.join(to_dir, filename)
+                with open(target, 'wb') as f:
+                    shutil.copyfileobj(response, f)
+                return target
+        except urllib.error.HTTPError as exc:
+            _raise_api_error(exc)
+            raise  # unreachable; _raise_api_error always raises
 
 
 # =============================================================================
@@ -693,13 +796,14 @@ class BenchmarksClient:
             f'/api/benchmarks/{urllib.parse.quote(name)}{query}'
         )
         active = raw.get('activeVersion')
+        selected = raw.get('selectedVersion')
         return Benchmark(
             name=raw['name'],
             title=raw.get('title'),
             description=raw.get('description'),
             active_version=_map_benchmark_version(active) if active else None,
             versions=[_map_benchmark_version(item) for item in raw.get('versions', [])],
-            tasks_version=raw.get('tasksVersion'),
+            selected_version=_map_benchmark_version(selected) if selected else None,
             tasks=[_map_task(item) for item in raw.get('tasks', [])],
             created_at=raw.get('createdAt'),
             updated_at=raw.get('updatedAt'),
@@ -730,43 +834,34 @@ class BenchmarksClient:
     async def import_benchmark(
         self,
         *,
-        git_url: Optional[str] = None,
-        ref: Optional[str] = None,
+        git_url: str,
+        ref: str,
         benchmark_name: str,
-        version: Optional[str] = None,
-        archive_path: Optional[str] = None,
-        harbor_hub_ref: Optional[str] = None,
+        version: str,
     ) -> BenchmarkImport:
-        """Start a benchmark import job.
+        """Start a benchmark import job from a git source pinned to a ref.
 
-        Git sources (``git_url=..., ref=...``) are live; the reserved
-        ``archive_path``/``harbor_hub_ref`` sources raise NotImplementedError
-        (no server endpoint yet).
+        Returns immediately; poll with :meth:`get_import` /
+        :meth:`watch_import`. ``version`` labels the imported benchmark
+        version.
         """
-        if archive_path is not None:
-            raise NotImplementedError(_RESERVED_MESSAGE.format(
-                feature='benchmarks().import_benchmark() with an archive_path source'))
-        if harbor_hub_ref is not None:
-            raise NotImplementedError(_RESERVED_MESSAGE.format(
-                feature='benchmarks().import_benchmark() with a harbor_hub_ref source'))
         if not git_url or not ref:
             raise ValueError(
                 'import_benchmark() requires a git source: '
-                'git_url=..., ref=... plus benchmark_name=...'
+                'git_url=..., ref=... plus benchmark_name=... and version=...'
             )
         body: Dict[str, Any] = {
             'source': {'type': 'git', 'url': git_url, 'ref': ref},
             'benchmarkName': benchmark_name,
+            'version': version,
         }
-        if version is not None:
-            body['version'] = version
-        raw = await self._http.request_json('/api/benchmarks/import', method='POST', body=body)
+        raw = await self._http.request_json('/api/benchmarks/imports', method='POST', body=body)
         return _map_benchmark_import(raw)
 
     async def get_import(self, id: str) -> BenchmarkImport:
         """Get an import job's status (error and task_count when available)."""
         raw = await self._http.request_json(
-            f'/api/benchmarks/import/{urllib.parse.quote(id)}'
+            f'/api/benchmarks/imports/{urllib.parse.quote(id)}'
         )
         return _map_benchmark_import(raw)
 
@@ -780,7 +875,7 @@ class BenchmarksClient:
     ) -> BenchmarkImport:
         """Poll ``get_import()`` until the job reaches a terminal status.
 
-        Terminal statuses: "READY" or "FAILED" (``error`` populated).
+        Terminal statuses: "IMPORTED" or "FAILED" (``error`` populated).
         ``on_status`` fires on every observed status change, including the
         first status seen.
         """
@@ -802,6 +897,35 @@ class BenchmarksClient:
 
 
 # =============================================================================
+# SSE WATCH SUPPORT
+# =============================================================================
+
+class _SseConnection:
+    """Holder for one open SSE response so the async side can close it."""
+
+    def __init__(self):
+        self.response = None
+
+    def close(self) -> None:
+        response = self.response
+        if response is not None:
+            try:
+                response.close()
+            except Exception:
+                pass
+
+
+def _parse_sse_data(text: str) -> Dict[str, Any]:
+    if not text:
+        return {}
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        return {'raw': text}
+    return parsed if isinstance(parsed, dict) else {'value': parsed}
+
+
+# =============================================================================
 # EVALUATIONS CLIENT
 # =============================================================================
 
@@ -811,8 +935,9 @@ class EvaluationsClient:
     Created via the standalone ``evaluations()`` factory. Requires
     ``EVOLVE_API_KEY`` unless ``HostedClientConfig(api_key=...)`` is given.
 
-    ``watch()`` polls ``get()`` until the evaluation reaches a terminal status
-    (the TypeScript SDK additionally streams the SSE event feed).
+    ``watch()`` consumes the server-sent event stream (replay + live,
+    Last-Event-ID resume on reconnect) and resolves with the final evaluation;
+    ``watch_iter()`` yields each :class:`EvaluationEvent` instead.
 
     Example::
 
@@ -844,7 +969,7 @@ class EvaluationsClient:
         *,
         benchmark: str,
         tasks: Optional[List[str]] = None,
-        agent_systems: List[Any],
+        agent_systems: List[Union[AgentSystem, Dict[str, Any]]],
         runs_per_task: Optional[int] = None,
         concurrency: Optional[int] = None,
         max_model_spend_usd: float,
@@ -856,7 +981,9 @@ class EvaluationsClient:
 
         ``benchmark`` is ``"name"`` (resolved server-side to the active READY
         version) or ``"name@version"``; the response always echoes
-        ``"name@version"``. Supports Idempotency-Key.
+        ``"name@version"``. ``agent_systems`` accepts :class:`AgentSystem`
+        instances or plain dicts with the same fields (``harness``, ``model``,
+        optional ``harness_version``). Supports Idempotency-Key.
         """
         body: Dict[str, Any] = {'benchmark': benchmark}
         if tasks is not None:
@@ -917,16 +1044,21 @@ class EvaluationsClient:
         self,
         id: str,
         *,
+        status: Optional[List[str]] = None,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
     ) -> _PaginatedList:
         """List an evaluation's task runs (cursor-paged).
 
-        ``await`` the result for one page (honoring ``limit``/``cursor``), or
-        ``async for`` it to walk every task run across cursor pages.
+        ``status`` filters to the given statuses (e.g. the failures behind a
+        rerun decision). ``await`` the result for one page (honoring
+        ``limit``/``cursor``), or ``async for`` it to walk every task run
+        across cursor pages.
         """
         async def fetch_page(page_limit, page_cursor) -> TaskRunPage:
             params: Dict[str, str] = {}
+            if status:
+                params['status'] = ','.join(status)
             if page_limit is not None:
                 params['limit'] = str(page_limit)
             if page_cursor is not None:
@@ -937,7 +1069,6 @@ class EvaluationsClient:
             )
             return TaskRunPage(
                 task_runs=[_map_task_run(item) for item in raw.get('taskRuns', [])],
-                total_count=int(raw.get('totalCount', 0)),
                 next_cursor=raw.get('nextCursor'),
             )
 
@@ -945,76 +1076,206 @@ class EvaluationsClient:
             fetch_page, lambda page: page.task_runs, limit=limit, cursor=cursor
         )
 
-    async def watch(
+    # ------------------------------------------------------------------ watch
+
+    def _read_sse_sync(
         self,
         id: str,
-        *,
-        on_change: Optional[Callable[[Evaluation], None]] = None,
-        poll_interval_s: float = 2.0,
-        timeout_s: Optional[float] = None,
-    ) -> Evaluation:
-        """Poll ``get()`` until the evaluation reaches a terminal status.
+        last_seq: Optional[int],
+        loop: asyncio.AbstractEventLoop,
+        queue: 'asyncio.Queue',
+        connection: _SseConnection,
+    ) -> None:
+        """Blocking SSE reader (runs in a worker thread): pushes parsed events
+        onto the asyncio queue. The server heartbeats every 15s, so the 60s
+        socket timeout only trips on a genuinely dead connection."""
 
-        ``on_change`` fires whenever status or task_run_counts change. The
-        TypeScript SDK's watch() streams the SSE event feed instead; this
-        client polls (documented difference).
-        """
-        if poll_interval_s <= 0:
-            raise ValueError('poll_interval_s must be positive')
-        deadline = time.monotonic() + timeout_s if timeout_s is not None else None
-        last_fingerprint: Optional[str] = None
-        while True:
-            evaluation = await self.get(id)
-            fingerprint = json.dumps(
-                [evaluation.status, evaluation.task_run_counts], sort_keys=True
-            )
-            if fingerprint != last_fingerprint:
-                last_fingerprint = fingerprint
-                if on_change is not None:
-                    on_change(evaluation)
-            if evaluation.status in _TERMINAL_EVALUATION_STATUSES:
-                return evaluation
-            if deadline is not None and time.monotonic() >= deadline:
-                raise TimeoutError(f'watch({id!r}) timed out after {timeout_s}s')
-            await asyncio.sleep(poll_interval_s)
+        def put(item: Any) -> None:
+            loop.call_soon_threadsafe(queue.put_nowait, item)
+
+        headers = {
+            'Authorization': f'Bearer {self._http.api_key()}',
+            'Accept': 'text/event-stream',
+        }
+        if last_seq is not None:
+            headers['Last-Event-ID'] = str(last_seq)
+        request = urllib.request.Request(
+            f'{self._http.base_url()}/api/evaluations/{urllib.parse.quote(id)}/events',
+            headers=headers,
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                connection.response = response
+                event_id: Optional[str] = None
+                event_type: Optional[str] = None
+                data_lines: List[str] = []
+                for raw_line in response:
+                    line = raw_line.decode('utf-8', errors='replace').rstrip('\r\n')
+                    if line == '':
+                        if event_id is not None or event_type is not None or data_lines:
+                            try:
+                                seq = int(event_id) if event_id is not None else -1
+                            except ValueError:
+                                seq = -1
+                            put(('event', EvaluationEvent(
+                                seq=seq,
+                                type=event_type or 'message',
+                                data=_parse_sse_data('\n'.join(data_lines)),
+                            )))
+                        event_id = None
+                        event_type = None
+                        data_lines = []
+                        continue
+                    if line.startswith(':'):
+                        continue
+                    fieldname, _, value = line.partition(':')
+                    if value.startswith(' '):
+                        value = value[1:]
+                    if fieldname == 'id':
+                        event_id = value
+                    elif fieldname == 'event':
+                        event_type = value
+                    elif fieldname == 'data':
+                        data_lines.append(value)
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode('utf-8', errors='replace')
+            code, message = _parse_error_body(detail, str(exc.reason))
+            put(('http_error', exc.code, code, message))
+            return
+        except Exception as exc:
+            put(('error', exc))
+            return
+        put(('eof', None))
 
     async def watch_iter(
         self,
         id: str,
         *,
-        poll_interval_s: float = 2.0,
         timeout_s: Optional[float] = None,
-    ):
-        """Async-iterate the evaluation's state as it changes, until terminal.
+        reconnect_delay_s: float = 1.0,
+        max_reconnect_delay_s: float = 30.0,
+    ) -> AsyncIterator[EvaluationEvent]:
+        """Async-iterate the evaluation's server-sent events until terminal.
 
-        Yields the :class:`Evaluation` on every change to status or
-        task-run counts (including the initial and terminal states), then stops
-        once the evaluation is terminal. This is the iterator sibling of
-        :meth:`watch` (which polls and returns the final evaluation). Both poll
-        ``get()``; the TypeScript SDK's ``watch()`` streams SSE events instead.
+        Replays from the beginning, resumes with Last-Event-ID on reconnect
+        (exponential backoff), and completes on the terminal event
+        (``evaluation.completed`` / ``evaluation.cancelled`` /
+        ``evaluation.failed``). The iterator sibling of :meth:`watch`.
 
         Example::
 
-            async for state in evals.watch_iter(evaluation.id):
-                print(state.status, state.task_run_counts)
+            async for event in evals.watch_iter(evaluation.id):
+                print(event.seq, event.type, event.data)
         """
-        if poll_interval_s <= 0:
-            raise ValueError('poll_interval_s must be positive')
         deadline = time.monotonic() + timeout_s if timeout_s is not None else None
-        last_fingerprint: Optional[str] = None
-        while True:
-            evaluation = await self.get(id)
-            fingerprint = json.dumps(
-                [evaluation.status, evaluation.task_run_counts], sort_keys=True
+
+        def remaining() -> Optional[float]:
+            if deadline is None:
+                return None
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise TimeoutError(f'watch({id!r}) timed out after {timeout_s}s')
+            return left
+
+        last_seq: Optional[int] = None
+        delay = reconnect_delay_s
+        terminal = False
+        final_drain_done = False
+
+        while not terminal:
+            remaining()
+            loop = asyncio.get_running_loop()
+            queue: 'asyncio.Queue' = asyncio.Queue()
+            connection = _SseConnection()
+            reader = asyncio.ensure_future(
+                asyncio.to_thread(self._read_sse_sync, id, last_seq, loop, queue, connection)
             )
-            if fingerprint != last_fingerprint:
-                last_fingerprint = fingerprint
-                yield evaluation
-            if evaluation.status in _TERMINAL_EVALUATION_STATUSES:
+            received_event = False
+            reconnect = False
+            try:
+                while True:
+                    left = remaining()
+                    item = (
+                        await asyncio.wait_for(queue.get(), timeout=left)
+                        if left is not None
+                        else await queue.get()
+                    )
+                    kind = item[0]
+                    if kind == 'event':
+                        event: EvaluationEvent = item[1]
+                        if event.seq >= 0:
+                            last_seq = event.seq
+                        received_event = True
+                        if event.type in _TERMINAL_EVENT_TYPES:
+                            terminal = True
+                        yield event
+                        if terminal:
+                            break
+                    elif kind == 'http_error':
+                        status, code, message = item[1], item[2], item[3]
+                        if status == 429 or status >= 500:
+                            reconnect = True
+                            break
+                        raise EvolveAPIError(status, code, message)
+                    elif kind == 'error':
+                        reconnect = True
+                        break
+                    else:  # eof
+                        break
+            finally:
+                connection.close()
+                try:
+                    await reader
+                except Exception:
+                    pass
+
+            if terminal:
                 return
-            if deadline is not None and time.monotonic() >= deadline:
-                raise TimeoutError(f'watch_iter({id!r}) timed out after {timeout_s}s')
-            await asyncio.sleep(poll_interval_s)
+
+            if not reconnect:
+                # The stream closed cleanly without a terminal event (server
+                # drain fallback). Events may still be in flight just after
+                # the status turns terminal, so drain once more from last_seq
+                # before finishing on status alone.
+                current = await self.get(id)
+                if current.status in _TERMINAL_EVALUATION_STATUSES:
+                    if final_drain_done:
+                        return
+                    final_drain_done = True
+                    continue
+
+            if received_event:
+                delay = reconnect_delay_s
+            await asyncio.sleep(min(delay, remaining() or delay))
+            delay = min(delay * 2, max_reconnect_delay_s)
+
+    async def watch(
+        self,
+        id: str,
+        *,
+        on_event: Optional[Callable[[EvaluationEvent], None]] = None,
+        timeout_s: Optional[float] = None,
+        reconnect_delay_s: float = 1.0,
+        max_reconnect_delay_s: float = 30.0,
+    ) -> Evaluation:
+        """Watch the evaluation's event stream and return the final evaluation.
+
+        Consumes the same server-sent events as :meth:`watch_iter` (replay +
+        live, Last-Event-ID resume with exponential backoff), firing
+        ``on_event`` for each one, and resolves with the final
+        :class:`Evaluation` once the terminal event arrives.
+        """
+        async for event in self.watch_iter(
+            id,
+            timeout_s=timeout_s,
+            reconnect_delay_s=reconnect_delay_s,
+            max_reconnect_delay_s=max_reconnect_delay_s,
+        ):
+            if on_event is not None:
+                on_event(event)
+        return await self.get(id)
+
+    # ---------------------------------------------------------------- actions
 
     async def cancel(self, id: str) -> Evaluation:
         """Request cancellation. Idempotent; a terminal evaluation is a no-op."""
@@ -1034,33 +1295,34 @@ class EvaluationsClient:
         )
         return _map_evaluation(raw)
 
-    async def export(self, id: str, *, to: Optional[str] = None, format: Optional[str] = None):
+    async def export(
+        self,
+        id: str,
+        *,
+        to: Optional[str] = None,
+        format: Optional[str] = None,
+    ):
         """Download the research archive (gzipped JSON) of a terminal evaluation.
 
-        Returns the archive bytes, or the saved file path when ``to`` (a
-        directory) is given. ``format='harbor'`` selects the Harbor job-layout
-        bundle instead of the canonical archive.
+        Returns the archive bytes, or — when ``to`` (a directory) is given —
+        streams straight to disk and returns the saved file path.
+        ``format='harbor'`` selects the Harbor job-layout bundle instead of
+        the canonical archive.
         """
+        if format is not None and format != 'harbor':
+            raise ValueError(f"Unknown format {format!r}; supported: 'harbor'")
         query = f'?format={urllib.parse.quote(format)}' if format else ''
-        payload, headers = await self._http.request_bytes(
-            f'/api/evaluations/{urllib.parse.quote(id)}/export{query}'
-        )
-        if to is None:
-            return payload
-        os.makedirs(to, exist_ok=True)
-        disposition = headers.get('Content-Disposition', '') or headers.get('content-disposition', '')
-        match = re.search(r'filename="([^"]+)"', disposition)
-        filename = match.group(1) if match else f'evaluation-{id}-export.json.gz'
-        path = os.path.join(to, filename)
-        with open(path, 'wb') as f:
-            f.write(payload)
-        return path
+        path = f'/api/evaluations/{urllib.parse.quote(id)}/export{query}'
+        if to is not None:
+            return await self._http.download(path, to, f'evaluation-{id}-export.json.gz')
+        payload, _headers = await self._http.request_bytes(path)
+        return payload
 
     async def task_run(self, id: str, run_id: str) -> TaskRunDetail:
         """Get one task run's full detail.
 
-        Includes untruncated failure_detail, the resolved harness version
-        actually used (``resolved_harness_version``), and ``session_ref``.
+        Same shape as a list row plus ``evaluation_id``; unlike list rows,
+        ``failure_detail`` is untruncated.
         """
         raw = await self._http.request_json(
             f'/api/evaluations/{urllib.parse.quote(id)}'
@@ -1106,15 +1368,20 @@ class EvaluationsClient:
     ):
         """Iterate a task run's trace events, fetching pages under the hood.
 
-        Drains the currently available trace, then stops. Resume later by
-        passing the last seen seq as ``after``.
+        Drains the currently available trace, then stops: an empty page, or a
+        short page when the caller pinned an explicit page size. Resume later
+        by passing the last seen seq as ``after``.
         """
         position = after
         while True:
             page = await self.task_run_trace(id, run_id, after=position, limit=limit)
             for event in page.events:
                 yield event
-            if page.next_after is None or not page.events:
+            if not page.events:
+                return
+            if limit is not None and len(page.events) < limit:
+                return
+            if page.next_after is None:
                 return
             position = page.next_after
 

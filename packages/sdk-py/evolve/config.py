@@ -86,7 +86,7 @@ class HostedClientConfig:
 
     Args:
         api_key: Evolve API key override (default: EVOLVE_API_KEY)
-        base_url: API base URL override (default: EVOLVE_DASHBOARD_URL)
+        base_url: API base URL override (default: the Evolve dashboard API)
     """
     api_key: Optional[str] = None
     base_url: Optional[str] = None

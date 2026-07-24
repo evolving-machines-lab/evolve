@@ -8,8 +8,8 @@
  * gzip export (buffer / file / stream), SSE watch with Last-Event-ID resume +
  * reconnect backoff, the git import trio (import/getImport/watchImport),
  * compare aggregates + task matrix, taskRun detail + seq-paged trace with the
- * async iterator, internal-field leak sentinels, and NotImplemented stubs for
- * the still-reserved import sources (archive, Harbor Hub).
+ * async iterator, internal-field leak sentinels, per-task provider verdicts,
+ * and the typed EvolveApiError mapping of { error: { code, message } } bodies.
  *
  * Uses mock fetch to test without real network calls.
  *
@@ -128,8 +128,8 @@ import { gzipSync } from "node:zlib";
 import {
   benchmarks,
   evaluations,
+  EvolveApiError,
   NoActiveVersionError,
-  NotImplementedError,
 } from "../../src/hosted/index.ts";
 import type { EvaluationEvent } from "../../src/hosted/index.ts";
 // Root-surface check: these documented types must be importable from the
@@ -181,7 +181,7 @@ async function testBenchmarksList() {
             name: "deep-swe",
             title: "DeepSWE",
             description: "SWE-bench style tasks",
-            activeVersion: { version: "1.1", state: "READY", taskCount: 113 },
+            activeVersion: { version: "1.1", state: "READY", createdAt: "2026-07-21T00:00:00.000Z", taskCount: 113 },
           },
           {
             name: "empty-bench",
@@ -201,8 +201,8 @@ async function testBenchmarksList() {
     assertEqual(catalog[0].title, "DeepSWE", "maps title");
     assertEqual(
       catalog[0].activeVersion,
-      { version: "1.1", state: "READY", taskCount: 113 },
-      "maps activeVersion object"
+      { version: "1.1", state: "READY", createdAt: "2026-07-21T00:00:00.000Z", taskCount: 113 },
+      "maps activeVersion object (one shape: version/state/createdAt/taskCount)"
     );
     assertEqual(catalog[1].activeVersion, null, "null activeVersion preserved");
 
@@ -228,9 +228,14 @@ async function testBenchmarksGet() {
           { version: "1.1", state: "READY", createdAt: "2026-07-21T00:00:00.000Z", taskCount: 113 },
           { version: "1.0", state: "ARCHIVED", createdAt: "2026-07-01T00:00:00.000Z", taskCount: 100 },
         ],
-        tasksVersion: "1.1",
+        selectedVersion: { version: "1.1", state: "READY", createdAt: "2026-07-21T00:00:00.000Z", taskCount: 113 },
         tasks: [
-          { taskKey: "abs-module-cache-flags", agentTimeoutSec: 5400, verifierTimeoutSec: 1800 },
+          {
+            taskKey: "abs-module-cache-flags",
+            agentTimeoutSec: 5400,
+            verifierTimeoutSec: 1800,
+            providers: { e2b: { ok: true }, daytona: { ok: true }, modal: { ok: false, reason: "multi-container tasks are not supported on modal" } },
+          },
         ],
         createdAt: "2026-07-01T00:00:00.000Z",
         updatedAt: "2026-07-21T00:00:00.000Z",
@@ -249,11 +254,16 @@ async function testBenchmarksGet() {
     assertEqual(detail.activeVersion?.version, "1.1", "activeVersion is the full version object");
     assertEqual(detail.activeVersion?.state, "READY", "activeVersion carries state");
     assertEqual(detail.versions?.length, 2, "maps versions");
-    assertEqual(detail.tasksVersion, "1.1", "maps tasksVersion");
     assertEqual(
-      detail.tasks?.[0],
-      { taskKey: "abs-module-cache-flags", agentTimeoutSec: 5400, verifierTimeoutSec: 1800 },
-      "maps public task fields"
+      detail.selectedVersion,
+      { version: "1.1", state: "READY", createdAt: "2026-07-21T00:00:00.000Z", taskCount: 113 },
+      "selectedVersion is a full version object (never a bare label)"
+    );
+    assertEqual(detail.tasks?.[0].taskKey, "abs-module-cache-flags", "maps public task fields");
+    assertEqual(
+      detail.tasks?.[0].providers,
+      { e2b: { ok: true }, daytona: { ok: true }, modal: { ok: false, reason: "multi-container tasks are not supported on modal" } },
+      "per-task provider verdicts mapped — capability visible before money is spent"
     );
 
     // Bare name: no version param
@@ -269,7 +279,7 @@ async function testImportGitSource() {
   console.log("\n--- benchmarks().import() POSTs the git-source contract ---");
   installMockFetch();
   try {
-    setMockResponse("/api/benchmarks/import", {
+    setMockResponse("/api/benchmarks/imports", {
       status: 202,
       body: { id: "imp-1", benchmarkName: "deep-swe", version: "1.2", status: "IMPORTING" },
     });
@@ -282,7 +292,7 @@ async function testImportGitSource() {
     });
 
     const call = fetchCalls[fetchCalls.length - 1];
-    assert(call.url.includes("/api/benchmarks/import"), "targets the import route");
+    assert(call.url.includes("/api/benchmarks/imports"), "targets the imports collection route");
     assertEqual(call.init?.method, "POST", "uses POST");
     assertEqual(
       JSON.parse(call.init?.body as string),
@@ -302,39 +312,29 @@ async function testImportGitSource() {
       { id: "imp-1", status: "IMPORTING", benchmarkName: "deep-swe", version: "1.2" },
       "202 response mapped (id, status, benchmarkName, version)"
     );
-
-    // version omitted: no version key in the body
-    await b.import({
-      source: { gitUrl: "https://github.com/x/bench.git", ref: "v2" },
-      benchmarkName: "deep-swe",
-    });
-    const body2 = JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string);
-    assert(!("version" in body2), "omitted version stays out of the body");
   } finally {
     restoreFetch();
   }
 }
 
-async function testImportReservedSources() {
-  console.log("\n--- benchmarks().import() archive/hub sources stay reserved ---");
+async function testImportRequiresGitSource() {
+  console.log("\n--- benchmarks().import() requires a complete git source ---");
   installMockFetch();
   try {
     const b = benchmarks({ apiKey: "test-key", baseUrl: BASE });
-    for (const [name, source] of [
-      ["archivePath", { archivePath: "/tmp/bench.tar.gz" }],
-      ["harborHubRef", { harborHubRef: "hub://deep-swe@1.1" }],
-    ] as const) {
-      let threw = false;
-      try {
-        await b.import({ source, benchmarkName: "deep-swe" });
-      } catch (e: any) {
-        threw = true;
-        assert(e instanceof NotImplementedError, `${name} source throws NotImplementedError`);
-        assert(e.message.includes("reserved"), `${name} message explains the reservation`);
-      }
-      assert(threw, `${name} source throws`);
+    let threw = false;
+    try {
+      await b.import({
+        source: { gitUrl: "", ref: "main" },
+        benchmarkName: "deep-swe",
+        version: "1.2",
+      });
+    } catch (e: any) {
+      threw = true;
+      assert(e.message.includes("git source"), "message names the git source requirement");
     }
-    assertEqual(fetchCalls.length, 0, "reserved sources never hit the network");
+    assert(threw, "empty gitUrl throws");
+    assertEqual(fetchCalls.length, 0, "invalid input never hits the network");
   } finally {
     restoreFetch();
   }
@@ -344,22 +344,22 @@ async function testGetImport() {
   console.log("\n--- benchmarks().getImport() maps status/error/taskCount ---");
   installMockFetch();
   try {
-    setMockResponse("/api/benchmarks/import/imp-1", {
+    setMockResponse("/api/benchmarks/imports/imp-1", {
       status: 200,
-      body: { id: "imp-1", status: "VALIDATING", error: null, taskCount: 113 },
+      body: { id: "imp-1", status: "IMPORTED", benchmarkName: "deep-swe", version: "1.2", taskCount: 113, error: null },
     });
 
     const b = benchmarks({ apiKey: "test-key", baseUrl: BASE });
     const imported = await b.getImport("imp-1");
 
     assert(
-      fetchCalls[0].url.includes("/api/benchmarks/import/imp-1"),
+      fetchCalls[0].url.includes("/api/benchmarks/imports/imp-1"),
       "targets the import detail route"
     );
     assertEqual(
       imported,
-      { id: "imp-1", status: "VALIDATING", error: null, taskCount: 113 },
-      "maps id/status/error/taskCount from the wire"
+      { id: "imp-1", status: "IMPORTED", benchmarkName: "deep-swe", version: "1.2", error: null, taskCount: 113 },
+      "self-describing job: id/status/benchmarkName/version/error/taskCount"
     );
   } finally {
     restoreFetch();
@@ -370,11 +370,11 @@ async function testWatchImportPollsToTerminal() {
   console.log("\n--- benchmarks().watchImport() polls getImport() to a terminal status ---");
   installMockFetch();
   try {
+    const job = { id: "imp-1", benchmarkName: "deep-swe", version: "1.2" };
     const statuses = [
-      { id: "imp-1", status: "IMPORTING", error: null, taskCount: 0 },
-      { id: "imp-1", status: "VALIDATING", error: null, taskCount: 113 },
-      { id: "imp-1", status: "VALIDATING", error: null, taskCount: 113 },
-      { id: "imp-1", status: "READY", error: null, taskCount: 113 },
+      { ...job, status: "IMPORTING", error: null, taskCount: 0 },
+      { ...job, status: "IMPORTING", error: null, taskCount: 0 },
+      { ...job, status: "IMPORTED", error: null, taskCount: 113 },
     ];
     let calls = 0;
     (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
@@ -391,20 +391,20 @@ async function testWatchImportPollsToTerminal() {
       pollIntervalMs: 1,
     });
 
-    assertEqual(calls, 4, "polled until the terminal status");
-    assertEqual(seen, ["IMPORTING", "VALIDATING", "READY"], "onStatus fires only on status changes");
-    assertEqual(final.status, "READY", "resolves with the terminal import");
+    assertEqual(calls, 3, "polled until the terminal status");
+    assertEqual(seen, ["IMPORTING", "IMPORTED"], "onStatus fires only on status changes");
+    assertEqual(final.status, "IMPORTED", "resolves with the terminal import");
     assertEqual(final.taskCount, 113, "terminal import carries taskCount");
 
-    // FAILED is terminal too, with the error surfaced
+    // FAILED is terminal too, with the structured error surfaced
     installMockFetch();
-    setMockResponse("/api/benchmarks/import/imp-2", {
+    setMockResponse("/api/benchmarks/imports/imp-2", {
       status: 200,
-      body: { id: "imp-2", status: "FAILED", error: "task.yaml missing for task abc", taskCount: 0 },
+      body: { ...job, id: "imp-2", status: "FAILED", error: { message: "task.yaml missing for task abc" }, taskCount: 0 },
     });
     const failed = await b.watchImport("imp-2", { pollIntervalMs: 1 });
     assertEqual(failed.status, "FAILED", "FAILED ends the watch");
-    assertEqual(failed.error, "task.yaml missing for task abc", "failure detail surfaced");
+    assertEqual(failed.error, { message: "task.yaml missing for task abc" }, "failure detail surfaced");
   } finally {
     restoreFetch();
   }
@@ -526,7 +526,6 @@ async function testGetEvaluationDetail() {
         id: "eval-1",
         status: "RUNNING",
         benchmark: "deep-swe@1.1",
-        benchmarkVersionState: "READY",
         runsPerTask: 1,
         concurrency: 4,
         maxModelSpendUsd: 25,
@@ -538,6 +537,7 @@ async function testGetEvaluationDetail() {
         ],
         counts: { agentSystems: 1, tasks: 10, taskRuns: 10 },
         taskRunCounts: { SCORED: 4, RUNNING: 2, QUEUED: 4 },
+        meanScore: 0.75,
         error: null,
         createdAt: "2026-07-22T00:00:00.000Z",
         updatedAt: "2026-07-22T00:05:00.000Z",
@@ -548,7 +548,11 @@ async function testGetEvaluationDetail() {
     const evaluation = await e.get("eval-1");
 
     assertEqual(evaluation.status, "RUNNING", "maps status");
-    assertEqual(evaluation.benchmarkVersionState, "READY", "maps benchmarkVersionState");
+    assert(
+      !("benchmarkVersionState" in (evaluation as unknown as Record<string, unknown>)),
+      "no benchmark-lifecycle internals on the evaluation"
+    );
+    assertEqual(evaluation.meanScore, 0.75, "maps meanScore (SCORED-only mean)");
     assertEqual(evaluation.maxModelSpendUsdPerTaskRun, 2.5, "maps maxModelSpendUsdPerTaskRun");
     assertEqual(evaluation.sandboxProvider, "modal", "maps sandboxProvider");
     assertEqual(evaluation.spentUsd, 3.5, "maps spentUsd");
@@ -630,7 +634,10 @@ async function testTaskRuns() {
             failurePhase: null,
             failureDetail: null,
             phaseTimingsMs: { agentMs: 203000, verifyMs: 31000 },
-            modelUsage: { spendUsd: 0.93, spendSource: "measured", resolvedHarnessVersion: "codex-cli 0.145.0" },
+            modelUsage: { spentUsd: 0.93, spendSource: "measured" },
+            sandboxProvider: "daytona",
+            verifierMode: "separate",
+            resolvedHarnessVersion: "codex-cli 0.145.0",
             sessionRef: "sess-9",
             createdAt: "2026-07-22T00:00:00.000Z",
             updatedAt: "2026-07-22T00:04:00.000Z",
@@ -646,13 +653,15 @@ async function testTaskRuns() {
             failurePhase: "verifier_boot",
             failureDetail: "sandbox failed to boot",
             phaseTimingsMs: { agentMs: 100 },
-            modelUsage: { spendUsd: 0.5, spendSource: "assumed_cap" },
+            modelUsage: { spentUsd: 0.5, spendSource: "assumed_cap" },
+            sandboxProvider: "daytona",
+            verifierMode: null,
+            resolvedHarnessVersion: null,
             sessionRef: null,
             createdAt: "2026-07-22T00:00:00.000Z",
             updatedAt: "2026-07-22T00:04:00.000Z",
           },
         ],
-        totalCount: 12,
         nextCursor: "run-2",
       },
     });
@@ -660,20 +669,30 @@ async function testTaskRuns() {
     const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
     const page = await e.taskRuns("eval-1", { limit: 2, cursor: "run-0" });
 
-    const url = fetchCalls[fetchCalls.length - 1].url;
+    let url = fetchCalls[fetchCalls.length - 1].url;
     assert(url.includes("/api/evaluations/eval-1/task-runs"), "targets task-runs route");
     assert(url.includes("limit=2"), "limit forwarded");
     assert(url.includes("cursor=run-0"), "cursor forwarded");
 
-    assertEqual(page.totalCount, 12, "maps totalCount");
     assertEqual(page.nextCursor, "run-2", "maps nextCursor");
     assertEqual(page.taskRuns[0].score, 1, "maps score");
     assertEqual(page.taskRuns[0].metrics, { f2p: 1, p2p: 1 }, "maps named metrics map");
-    assertEqual(page.taskRuns[0].modelUsage?.spendUsd, 0.93, "maps modelUsage.spendUsd");
+    assertEqual(page.taskRuns[0].modelUsage?.spentUsd, 0.93, "maps modelUsage.spentUsd");
+    assertEqual(page.taskRuns[0].sandboxProvider, "daytona", "first-class sandboxProvider on list rows");
+    assertEqual(page.taskRuns[0].verifierMode, "separate", "first-class verifierMode on list rows");
+    assertEqual(page.taskRuns[0].resolvedHarnessVersion, "codex-cli 0.145.0", "first-class resolvedHarnessVersion on list rows");
     assertEqual(page.taskRuns[0].sessionRef, "sess-9", "maps sessionRef");
     assertEqual(page.taskRuns[1].status, "INFRASTRUCTURE_ERROR", "maps failure status");
     assertEqual(page.taskRuns[1].failurePhase, "verifier_boot", "maps failurePhase");
     assertEqual(page.taskRuns[1].score, null, "unscored run keeps null score (never a fake zero)");
+
+    // Status filter: comma-joined ?status= for the failures behind a rerun decision
+    await e.taskRuns("eval-1", { status: ["INFRASTRUCTURE_ERROR", "SCORING_ERROR"] });
+    url = fetchCalls[fetchCalls.length - 1].url;
+    assert(
+      decodeURIComponent(url).includes("status=INFRASTRUCTURE_ERROR,SCORING_ERROR"),
+      "status filter forwarded comma-joined"
+    );
   } finally {
     restoreFetch();
   }
@@ -724,7 +743,7 @@ async function testRerunFailedConflictError() {
   try {
     setMockResponse("/api/evaluations/eval-1/rerun-failed", {
       status: 409,
-      body: { error: "Evaluation is RUNNING; rerun-failed requires a terminal evaluation" },
+      body: { error: { code: "evaluation_not_terminal", message: "Evaluation is RUNNING; rerun-failed requires a terminal evaluation" } },
     });
     const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
     let threw = false;
@@ -732,8 +751,10 @@ async function testRerunFailedConflictError() {
       await e.rerunFailed("eval-1");
     } catch (err: any) {
       threw = true;
-      assert(err.message.includes("409"), "error includes status code");
-      assert(err.message.includes("terminal"), "error includes server detail");
+      assert(err instanceof EvolveApiError, "throws the typed EvolveApiError");
+      assertEqual(err.status, 409, "carries the HTTP status");
+      assertEqual(err.code, "evaluation_not_terminal", "carries the stable error code");
+      assert(err.message.includes("terminal"), "message is the server's product sentence");
     }
     assert(threw, "throws on 409");
   } finally {
@@ -864,7 +885,7 @@ async function testExportTerminalRequired() {
   try {
     setMockResponse("/api/evaluations/eval-1/export", {
       status: 409,
-      body: { error: "Evaluation is RUNNING; export requires a terminal evaluation" },
+      body: { error: { code: "evaluation_not_terminal", message: "Evaluation is RUNNING; export requires a terminal evaluation" } },
     });
     const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
     let threw = false;
@@ -872,7 +893,9 @@ async function testExportTerminalRequired() {
       await e.export("eval-1");
     } catch (err: any) {
       threw = true;
-      assert(err.message.includes("409"), "error includes status code");
+      assert(err instanceof EvolveApiError, "throws the typed EvolveApiError");
+      assertEqual(err.status, 409, "carries the HTTP status");
+      assertEqual(err.code, "evaluation_not_terminal", "carries the stable error code");
     }
     assert(threw, "throws on 409");
   } finally {
@@ -1049,7 +1072,7 @@ async function testWatchThrowsOnNonRetryableError() {
   try {
     setMockResponse("/api/evaluations/eval-missing/events", {
       status: 404,
-      body: { error: "Evaluation not found" },
+      body: { error: { code: "evaluation_not_found", message: "Evaluation not found: eval-missing" } },
     });
     const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
     let threw = false;
@@ -1057,7 +1080,9 @@ async function testWatchThrowsOnNonRetryableError() {
       await e.watch("eval-missing");
     } catch (err: any) {
       threw = true;
-      assert(err.message.includes("404"), "error includes status code");
+      assert(err instanceof EvolveApiError, "throws the typed EvolveApiError");
+      assertEqual(err.status, 404, "carries the HTTP status");
+      assertEqual(err.code, "evaluation_not_found", "carries the stable error code");
     }
     assert(threw, "throws instead of retrying a 404");
     assertEqual(
@@ -1133,7 +1158,9 @@ async function testTaskRunDetail() {
         failurePhase: null,
         failureDetail: "x".repeat(5000), // detail route: untruncated
         phaseTimingsMs: { agentMs: 203000, verifyMs: 31000 },
-        modelUsage: { spendUsd: 0.93, spendSource: "measured" },
+        modelUsage: { spentUsd: 0.93, spendSource: "measured", maxModelSpendUsd: 2.5 },
+        sandboxProvider: "e2b",
+        verifierMode: "shared",
         resolvedHarnessVersion: "codex-cli 0.145.0",
         sessionRef: "sess-9",
         createdAt: "2026-07-22T00:00:00.000Z",
@@ -1151,6 +1178,10 @@ async function testTaskRunDetail() {
     assertEqual(run.id, "run-1", "maps id");
     assertEqual(run.evaluationId, "eval-1", "maps evaluationId");
     assertEqual(run.resolvedHarnessVersion, "codex-cli 0.145.0", "maps resolvedHarnessVersion");
+    assertEqual(run.sandboxProvider, "e2b", "maps sandboxProvider");
+    assertEqual(run.verifierMode, "shared", "maps verifierMode");
+    assertEqual(run.modelUsage?.spentUsd, 0.93, "one money vocabulary: actuals are spentUsd");
+    assertEqual(run.modelUsage?.maxModelSpendUsd, 2.5, "one money vocabulary: caps are maxModelSpend*");
     assertEqual(run.sessionRef, "sess-9", "maps sessionRef");
     assertEqual(run.failureDetail?.length, 5000, "failureDetail untruncated on the detail route");
     assertEqual(run.score, 1, "maps score");
@@ -1285,16 +1316,16 @@ async function testCompare() {
             taskKey: "abs-module-cache-flags",
             disagreement: true,
             cells: [
-              { evaluationId: "eval-1", status: "SCORED", score: 1, coverage: { scored: 1, total: 1 } },
-              { evaluationId: "eval-2", status: "MISSING", score: null, coverage: { scored: 0, total: 0 } },
+              { evaluationId: "eval-1", status: "SCORED", meanScore: 1, coverage: { scored: 1, total: 1 } },
+              { evaluationId: "eval-2", status: "MISSING", meanScore: null, coverage: { scored: 0, total: 0 } },
             ],
           },
           {
             taskKey: "zlib-stream-reset",
             disagreement: false,
             cells: [
-              { evaluationId: "eval-1", status: "SCORED", score: 0, coverage: { scored: 1, total: 1 } },
-              { evaluationId: "eval-2", status: "SCORED", score: 0, coverage: { scored: 1, total: 1 } },
+              { evaluationId: "eval-1", status: "SCORED", meanScore: 0, coverage: { scored: 1, total: 1 } },
+              { evaluationId: "eval-2", status: "SCORED", meanScore: 0, coverage: { scored: 1, total: 1 } },
             ],
           },
         ],
@@ -1324,10 +1355,10 @@ async function testCompare() {
     assertEqual(comparison.taskMatrix[0].disagreement, true, "maps disagreement flag");
     assertEqual(
       comparison.taskMatrix[0].cells[1],
-      { evaluationId: "eval-2", status: "MISSING", score: null, coverage: { scored: 0, total: 0 } },
+      { evaluationId: "eval-2", status: "MISSING", meanScore: null, coverage: { scored: 0, total: 0 } },
       "MISSING cell preserved"
     );
-    assertEqual(comparison.taskMatrix[1].cells[0].score, 0, "zero cell score preserved");
+    assertEqual(comparison.taskMatrix[1].cells[0].meanScore, 0, "zero cell meanScore preserved");
   } finally {
     restoreFetch();
   }
@@ -1339,7 +1370,7 @@ async function testCompareBadIdsError() {
   try {
     setMockResponse("/api/evaluations/compare", {
       status: 400,
-      body: { error: "ids must list between 2 and 5 distinct evaluation ids (comma-separated)" },
+      body: { error: { code: "invalid_ids", message: "ids must list between 2 and 5 distinct evaluation ids (comma-separated)" } },
     });
     const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
     let threw = false;
@@ -1347,8 +1378,9 @@ async function testCompareBadIdsError() {
       await e.compare(["eval-1"]);
     } catch (err: any) {
       threw = true;
-      assert(err.message.includes("400"), "error includes status code");
-      assert(err.message.includes("between 2 and 5"), "error includes server detail");
+      assert(err instanceof EvolveApiError, "throws the typed EvolveApiError");
+      assertEqual(err.code, "invalid_ids", "carries the stable error code");
+      assert(err.message.includes("between 2 and 5"), "message is the server's product sentence");
     }
     assert(threw, "throws on 400");
   } finally {
@@ -1357,21 +1389,38 @@ async function testCompareBadIdsError() {
 }
 
 async function testApiErrorHandling() {
-  console.log("\n--- API errors throw with status and body ---");
+  console.log("\n--- API errors are typed: EvolveApiError with status/code/message ---");
   installMockFetch();
   try {
-    setMockResponse("/api/benchmarks", { status: 401, body: { error: "Invalid API key" } });
+    setMockResponse("/api/benchmarks", {
+      status: 401,
+      body: { error: { code: "invalid_api_key", message: "Invalid API key" } },
+    });
     const b = benchmarks({ apiKey: "bad-key", baseUrl: BASE });
     let threw = false;
     try {
       await b.list();
     } catch (e: any) {
       threw = true;
-      assert(e.message.startsWith("Evolve API error"), 'error prefix is "Evolve API error"');
-      assert(e.message.includes("401"), "error includes status code");
-      assert(e.message.includes("Invalid API key"), "error includes server detail");
+      assert(e instanceof EvolveApiError, "throws EvolveApiError");
+      assertEqual(e.status, 401, "carries the HTTP status");
+      assertEqual(e.code, "invalid_api_key", "carries the stable error code");
+      assertEqual(e.message, "Invalid API key", "message is the clean product sentence — no JSON, no status prefix");
     }
     assert(threw, "throws on 401");
+
+    // Unparseable body: still an EvolveApiError, with the raw text as message.
+    installMockFetch();
+    setMockResponse("/api/benchmarks", { status: 502, body: null, streamBody: "Bad Gateway" });
+    let threwRaw = false;
+    try {
+      await b.list();
+    } catch (e: any) {
+      threwRaw = true;
+      assert(e instanceof EvolveApiError, "unparseable body still throws EvolveApiError");
+      assertEqual(e.code, "unknown_error", "unparseable body maps to unknown_error");
+    }
+    assert(threwRaw, "throws on unparseable error body");
   } finally {
     restoreFetch();
   }
@@ -1396,9 +1445,14 @@ async function testGetActive() {
           { version: "1.1", state: "READY", createdAt: "2026-07-21T00:00:00.000Z", taskCount: 113 },
           { version: "1.0", state: "ARCHIVED", createdAt: "2026-07-01T00:00:00.000Z", taskCount: 100 },
         ],
-        tasksVersion: "1.1",
+        selectedVersion: { version: "1.1", state: "READY", createdAt: "2026-07-21T00:00:00.000Z", taskCount: 113 },
         tasks: [
-          { taskKey: "abs-module-cache-flags", agentTimeoutSec: 5400, verifierTimeoutSec: 1800 },
+          {
+            taskKey: "abs-module-cache-flags",
+            agentTimeoutSec: 5400,
+            verifierTimeoutSec: 1800,
+            providers: { e2b: { ok: true }, daytona: { ok: true }, modal: { ok: true } },
+          },
         ],
         createdAt: "2026-07-01T00:00:00.000Z",
         updatedAt: "2026-07-21T00:00:00.000Z",
@@ -1416,7 +1470,8 @@ async function testGetActive() {
     assertEqual(active.tasks.length, 1, "tasks is populated (non-optional)");
     assertEqual(active.tasks[0].taskKey, "abs-module-cache-flags", "maps public task fields");
     assertEqual(active.versions.length, 2, "carries all versions");
-    assert(!("tasksVersion" in active), "ActiveBenchmark has no tasksVersion");
+    assertEqual(active.tasks[0].providers, { e2b: { ok: true }, daytona: { ok: true }, modal: { ok: true } }, "tasks carry provider verdicts");
+    assert(!("selectedVersion" in active), "ActiveBenchmark has no selectedVersion (it IS the active one)");
   } finally {
     restoreFetch();
   }
@@ -1436,7 +1491,7 @@ async function testGetActiveNoActiveVersion() {
         versions: [
           { version: "0.1", state: "DRAFT", createdAt: "2026-07-21T00:00:00.000Z", taskCount: 0 },
         ],
-        tasksVersion: null,
+        selectedVersion: null,
         tasks: [],
         createdAt: "2026-07-21T00:00:00.000Z",
         updatedAt: "2026-07-21T00:00:00.000Z",
@@ -1620,6 +1675,9 @@ async function testTaskRunsAutoPagination() {
       failureDetail: null,
       phaseTimingsMs: null,
       modelUsage: null,
+      sandboxProvider: null,
+      verifierMode: null,
+      resolvedHarnessVersion: null,
       sessionRef: null,
       createdAt: "2026-07-22T00:00:00.000Z",
       updatedAt: "2026-07-22T00:00:00.000Z",
@@ -1629,8 +1687,8 @@ async function testTaskRunsAutoPagination() {
       fetchCalls.push({ url: urlStr, init });
       const cursor = new URL(urlStr).searchParams.get("cursor");
       const pages: Record<string, unknown> = {
-        "": { taskRuns: [makeRun("run-1", 1), makeRun("run-2", 2)], totalCount: 3, nextCursor: "run-2" },
-        "run-2": { taskRuns: [makeRun("run-3", 3)], totalCount: 3, nextCursor: null },
+        "": { taskRuns: [makeRun("run-1", 1), makeRun("run-2", 2)], nextCursor: "run-2" },
+        "run-2": { taskRuns: [makeRun("run-3", 3)], nextCursor: null },
       };
       return buildMockResponse({ status: 200, body: pages[cursor ?? ""] });
     };
@@ -1641,11 +1699,10 @@ async function testTaskRunsAutoPagination() {
     for await (const run of e.taskRuns("eval-1")) runIds.push(run.id);
     assertEqual(runIds, ["run-1", "run-2", "run-3"], "iterates every task run across cursor pages");
 
-    // Page form still returns a single page with totalCount
+    // Page form still returns a single page
     fetchCalls.length = 0;
     const page = await e.taskRuns("eval-1", { limit: 2 });
     assertEqual(page.taskRuns.length, 2, "await returns a single page");
-    assertEqual(page.totalCount, 3, "single page carries totalCount");
     assertEqual(page.nextCursor, "run-2", "single page carries nextCursor");
   } finally {
     restoreFetch();
@@ -1685,7 +1742,7 @@ async function main() {
   await testGetActive();
   await testGetActiveNoActiveVersion();
   await testImportGitSource();
-  await testImportReservedSources();
+  await testImportRequiresGitSource();
   await testGetImport();
   await testWatchImportPollsToTerminal();
   await testRunPostsInputContract();

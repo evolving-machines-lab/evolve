@@ -6,7 +6,7 @@
 export interface HostedClientConfig {
   /** API key (default: process.env.EVOLVE_API_KEY) */
   apiKey?: string;
-  /** API base URL override (default: DEFAULT_DASHBOARD_URL) */
+  /** API base URL override (default: the Evolve dashboard API) */
   baseUrl?: string;
 }
 
@@ -47,13 +47,12 @@ export type BenchmarkVersionState =
   | "FAILED"
   | "ARCHIVED";
 
-/** One immutable version of a benchmark */
+/** One immutable version of a benchmark — one shape on every surface */
 export interface BenchmarkVersion {
   version: string;
   state: BenchmarkVersionState;
+  createdAt: string;
   taskCount: number;
-  /** Present on benchmarks().get() responses only */
-  createdAt?: string;
 }
 
 /**
@@ -70,18 +69,18 @@ export interface Task {
   verifierTimeoutSec: number;
   /**
    * Where the task can run, per sandbox provider. Advisory for planning an
-   * evaluation's provider choice — a run on a provider marked { ok: false }
-   * fails fast with the same reason instead of running with degraded
-   * semantics. Absent on responses from older servers.
+   * evaluation's provider choice — creating an evaluation whose tasks include
+   * one refused on the chosen provider is rejected with the same reason, so
+   * nothing is ever spent on a run that cannot execute.
    */
-  providers?: Record<EvalSandboxProvider, TaskProviderVerdict>;
+  providers: Record<EvalSandboxProvider, TaskProviderVerdict>;
 }
 
 /**
  * A benchmark in the shared catalog.
  *
  * list() returns the summary fields; get() additionally populates versions,
- * tasksVersion, tasks, createdAt, and updatedAt.
+ * selectedVersion, tasks, createdAt, and updatedAt.
  */
 export interface Benchmark {
   name: string;
@@ -92,7 +91,7 @@ export interface Benchmark {
   /** All versions, newest first (get() only) */
   versions?: BenchmarkVersion[];
   /** The version whose tasks are listed below (get() only) */
-  tasksVersion?: string | null;
+  selectedVersion?: BenchmarkVersion | null;
   /** Tasks of the selected version (get() only) */
   tasks?: Task[];
   /** get() only */
@@ -138,6 +137,9 @@ export interface AgentSystem {
  */
 export type EvalSandboxProvider = "e2b" | "daytona" | "modal";
 
+/** Where a task run's verifier executed: a separate pristine box, or inside the agent box */
+export type VerifierMode = "separate" | "shared";
+
 /** The input contract for creating an evaluation */
 export interface EvaluationInput {
   /**
@@ -167,9 +169,9 @@ export type TaskRunCounts = Partial<Record<TaskRunStatus, number>>;
 /**
  * An evaluation = tasks x agentSystems x runsPerTask.
  *
- * Every shape (run/get/cancel/rerunFailed/list) carries counts; get()
- * additionally returns the detail fields (agentSystems, taskRunCounts,
- * error, updatedAt).
+ * Every shape (run/get/cancel/rerunFailed/list) carries counts; get() and
+ * list() additionally return taskRunCounts and meanScore, and get() the
+ * detail fields (agentSystems, error, updatedAt).
  */
 export interface Evaluation {
   id: string;
@@ -184,15 +186,15 @@ export interface Evaluation {
   /** Per-task-run model-spend cap, when one was set */
   maxModelSpendUsdPerTaskRun?: number;
   /** Sandbox provider this evaluation runs on */
-  sandboxProvider?: EvalSandboxProvider;
+  sandboxProvider: EvalSandboxProvider;
   spentUsd: number;
   createdAt: string;
   /** Evaluation size: agentSystems x tasks -> taskRuns (present on every shape) */
   counts: { agentSystems: number; tasks: number; taskRuns: number };
   /** TaskRun histogram by status (get/list) */
   taskRunCounts?: TaskRunCounts;
-  /** get() only */
-  benchmarkVersionState?: BenchmarkVersionState;
+  /** Mean score over SCORED runs only; null when none. Zero is a score. (get/list) */
+  meanScore?: number | null;
   /** get() only */
   error?: string | null;
   /** get() only */
@@ -210,15 +212,18 @@ export interface Evaluation {
  */
 export type SpendSource = "measured" | "assumed_cap";
 
-/** Model usage/spend recorded for a task run. Open map: harness-specific keys may appear. */
+/**
+ * Model usage/spend recorded for a task run — purely spend/usage, in the one
+ * money vocabulary (caps are maxModelSpend*, actuals are spentUsd). Open map:
+ * harness-specific keys may appear.
+ */
 export interface ModelUsage {
-  /** Model spend in USD */
-  spendUsd?: number;
+  /** Model spend in USD for this run */
+  spentUsd?: number;
   /** Where the spend figure came from */
   spendSource?: SpendSource;
-  maxBudgetUsd?: number;
-  /** Resolved harness version actually used for the run */
-  resolvedHarnessVersion?: string;
+  /** The per-run model-spend cap that applied to this run */
+  maxModelSpendUsd?: number;
   [key: string]: unknown;
 }
 
@@ -241,6 +246,12 @@ export interface TaskRun {
   /** Wall-clock per phase, e.g. { agentMs, verifyMs } */
   phaseTimingsMs: Record<string, number> | null;
   modelUsage: ModelUsage | null;
+  /** Sandbox provider the run executed on; null until it has executed */
+  sandboxProvider: EvalSandboxProvider | null;
+  /** Where the verifier ran; null until recorded */
+  verifierMode: VerifierMode | null;
+  /** Harness version actually resolved and used for the run; null until resolved */
+  resolvedHarnessVersion: string | null;
   /** Reference to the agent session/trace, when recorded */
   sessionRef: string | null;
   createdAt: string;
@@ -290,7 +301,6 @@ export interface EvaluationList
 /** Cursor page of task runs */
 export interface TaskRunPage {
   taskRuns: TaskRun[];
-  totalCount: number;
   nextCursor: string | null;
 }
 
@@ -310,25 +320,13 @@ export interface TaskRunList
 // =============================================================================
 
 /**
- * RESERVED: an output file collected from a task run.
- * No server endpoint exposes output files yet. Shape may be refined when one
- * ships.
- */
-export interface OutputFile {
-  path: string;
-  sizeBytes?: number;
-  url?: string;
-}
-
-/**
  * Full detail of one task run — evaluations().taskRun(id, runId).
- * Unlike list rows, failureDetail is untruncated here.
+ * Same shape as a list row, plus the owning evaluation; unlike list rows,
+ * failureDetail is untruncated here.
  */
 export interface TaskRunDetail extends TaskRun {
   /** The evaluation this run belongs to */
   evaluationId: string;
-  /** Harness version actually resolved and used for the run; null until resolved */
-  resolvedHarnessVersion: string | null;
 }
 
 /** One trace event of a task run (seq-ordered timeline) */
@@ -369,7 +367,7 @@ export interface ComparisonCell {
   evaluationId: string;
   status: TaskRunStatus | "MIXED" | "MISSING";
   /** Mean score over the cell's SCORED runs; null when none. Zero is a score. */
-  score: number | null;
+  meanScore: number | null;
   coverage: ComparisonCoverage;
 }
 
@@ -410,45 +408,42 @@ export interface EvaluationComparison {
 // BENCHMARK IMPORT
 // =============================================================================
 
-/**
- * Source for benchmarks().import() — three source kinds. Git (URL + ref) is
- * live; archive upload and Harbor Hub refs remain RESERVED (no server
- * endpoint yet) and throw NotImplementedError.
- */
-export type BenchmarkImportSource =
-  | { archivePath: string }
-  | { gitUrl: string; ref: string }
-  | { harborHubRef: string };
+/** Source for benchmarks().import(): a git repository pinned to a ref */
+export interface BenchmarkImportSource {
+  gitUrl: string;
+  /** A pinned branch, tag, or commit */
+  ref: string;
+}
 
 /** Input for benchmarks().import() */
 export interface BenchmarkImportInput {
   source: BenchmarkImportSource;
   /** Catalog benchmark name the import creates or extends */
   benchmarkName: string;
-  /** Version label for the imported version (server-assigned when omitted) */
-  version?: string;
+  /** Version label for the imported benchmark version */
+  version: string;
 }
 
-/** Benchmark import job lifecycle status (wire values). Terminal: "READY", "FAILED". */
-export type BenchmarkImportStatus =
-  | "IMPORTING"
-  | "BUILDING"
-  | "VALIDATING"
-  | "READY"
-  | "FAILED";
+/**
+ * Benchmark import job status — the import surface's own vocabulary.
+ * Terminal: "IMPORTED" (the corpus landed as a benchmark version; it becomes
+ * runnable once the platform activates it) and "FAILED".
+ */
+export type BenchmarkImportStatus = "IMPORTING" | "IMPORTED" | "FAILED";
 
 /**
- * A benchmark import job. Terminal statuses: "READY" and "FAILED".
+ * A benchmark import job. Terminal statuses: "IMPORTED" and "FAILED".
+ * Self-describing: every response names the benchmark@version being imported.
  */
 export interface BenchmarkImport {
   /** Import job id */
   id: string;
-  /** Pipeline status */
+  /** Job status */
   status: BenchmarkImportStatus;
-  /** Catalog benchmark name the import creates or extends (create responses) */
-  benchmarkName?: string;
-  /** Version label of the imported version (create responses) */
-  version?: string;
+  /** Catalog benchmark name the import creates or extends */
+  benchmarkName: string;
+  /** Version label of the imported version */
+  version: string;
   /** Failure detail when status is "FAILED" */
   error?: BenchmarkImportError | null;
   /** Number of tasks parsed, once counted (getImport() responses) */
@@ -486,6 +481,8 @@ export interface ListEvaluationsOptions {
 
 /** Options for evaluations().taskRuns() */
 export interface ListTaskRunsOptions {
+  /** Only task runs in these statuses (e.g. the failures behind a rerun decision) */
+  status?: TaskRunStatus[];
   /** Max items per page (default: 50, max: 200) */
   limit?: number;
   /** Cursor from TaskRunPage.nextCursor */
@@ -556,15 +553,14 @@ export interface BenchmarksClient {
    */
   getActive(name: string): Promise<ActiveBenchmark>;
   /**
-   * Start a benchmark import job. Git sources ({ gitUrl, ref }) are live;
-   * archive and Harbor Hub sources still throw NotImplementedError (no server
-   * endpoint yet).
+   * Start a benchmark import job from a git source pinned to a ref.
+   * Returns immediately; poll with getImport()/watchImport().
    */
   import(input: BenchmarkImportInput): Promise<BenchmarkImport>;
   /** Get an import job's status (error and taskCount when available) */
   getImport(id: string): Promise<BenchmarkImport>;
   /**
-   * Poll getImport() until the job reaches a terminal status ("READY" or
+   * Poll getImport() until the job reaches a terminal status ("IMPORTED" or
    * "FAILED") and resolve with the final import.
    */
   watchImport(id: string, options?: WatchImportOptions): Promise<BenchmarkImport>;
@@ -586,12 +582,12 @@ export interface EvaluationsClient {
    */
   list(options?: ListEvaluationsOptions): EvaluationList;
   /**
-   * List an evaluation's task runs (cursor-paged). Await the result for one
-   * page, or `for await` it to walk every task run across cursor pages
-   * transparently.
+   * List an evaluation's task runs (cursor-paged; { status } filters, e.g. to
+   * the failed runs). Await the result for one page, or `for await` it to
+   * walk every task run across cursor pages transparently.
    */
   taskRuns(id: string, options?: ListTaskRunsOptions): TaskRunList;
-  /** Get one task run's full detail (untruncated failureDetail, resolved harness version, sessionRef) */
+  /** Get one task run's full detail (untruncated failureDetail) */
   taskRun(id: string, runId: string): Promise<TaskRunDetail>;
   /** Get one seq-paged slice of a task run's trace; resume with { after: page.nextAfter } */
   taskRunTrace(

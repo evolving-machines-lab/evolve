@@ -324,7 +324,7 @@ export {
 export {
   benchmarks,
   evaluations,
-  NotImplementedError,
+  EvolveApiError,
   NoActiveVersionError,
   type HostedClientConfig,
   type BenchmarksClient,
@@ -349,7 +349,7 @@ export {
   type EvaluationEvent,
   type EvaluationWatch,
   type ModelUsage,
-  type OutputFile,
+  type VerifierMode,
   type ComparisonAggregate,
   type ComparisonCell,
   type ComparisonCoverage,

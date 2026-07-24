@@ -28,6 +28,12 @@ async with benchmarks() as catalog:
     active = await catalog.get_active('deep-swe')   # raises NoActiveVersionError when none
     print(active.version, [task.task_key for task in active.tasks])
 
+    # Per-task provider verdicts: where each task can run, BEFORE spending anything
+    for task in active.tasks:
+        verdict = task.providers['daytona']
+        if not verdict.ok:
+            print(task.task_key, 'cannot run on daytona:', verdict.reason)
+
 async with evaluations() as evals:
     evaluation = await evals.run(
         benchmark='deep-swe',                       # or pin a version: 'deep-swe@1.1'
@@ -78,20 +84,23 @@ print(evaluation.idempotent_replay)   # True on a replay
 
 ## Watch it live
 
-Iterate the evaluation's state as it changes, or block for the final result. Both poll every 2 seconds (`poll_interval_s=`):
+Both forms consume the evaluation's server-sent event stream — replayed from the beginning, resumed with `Last-Event-ID` on reconnect (exponential backoff), completing on the terminal event. Iterate the events, or block for the final evaluation:
 
 ```python
-async for state in evals.watch_iter(evaluation.id):
-    print(state.status, state.task_run_counts)   # RUNNING {'SCORED': 12, 'RUNNING': 3, 'QUEUED': 5}
+async for event in evals.watch_iter(evaluation.id):
+    # event.seq  — monotonic sequence number
+    # event.type — 'evaluation.created' | 'task_run.settled' | 'evaluation.completed' | ...
+    print(event.seq, event.type, event.data)
 
 final = await evals.watch(
     evaluation.id,
+    on_event=lambda event: print(event.type, event.data),   # optional per-event callback
     timeout_s=3600,
 ) # raises TimeoutError past the deadline
-print(final.status, final.spent_usd)
+print(final.status, final.mean_score, final.spent_usd)
 ```
 
-For a live per-event stream (SSE), use the [CLI](#cli) with `--watch`.
+Attaching late loses nothing (the stream replays), and a disconnect resumes from the last seen sequence number — no gaps, no duplicates.
 
 Stop early with `cancel()` — idempotent, and a no-op on a terminal evaluation:
 
@@ -112,7 +121,13 @@ async for run in evals.task_runs(evaluation.id):
 page = await evals.task_runs(
     evaluation.id,
     limit=100,
-) # .task_runs, .total_count, .next_cursor
+) # .task_runs, .next_cursor
+
+# Only the failures behind a rerun decision:
+failures = await evals.task_runs(
+    evaluation.id,
+    status=['INFRASTRUCTURE_ERROR', 'SCORING_ERROR'],
+)
 ```
 
 Fetch one run's full detail — untruncated `failure_detail`, plus the harness version actually used:
@@ -123,16 +138,17 @@ detail = await evals.task_run(
     run.id,
 )
 print(detail.failure_phase, detail.failure_detail)
+print(detail.sandbox_provider, detail.verifier_mode)   # where the run and its verifier executed
 print(detail.resolved_harness_version)
 print(detail.metrics)             # named sub-scores
 print(detail.phase_timings_ms)    # {'agent_ms': ..., 'verify_ms': ...}
 ```
 
-Read per-run spend from `model_usage`. `spend_source='measured'` is platform-measured spend; `'assumed_cap'` means spend could not be measured yet, so the value conservatively assumes the run's cap:
+Read per-run spend from `model_usage` — one money vocabulary everywhere: caps are `max_model_spend*`, actuals are `spent_usd`. `spend_source='measured'` is platform-measured spend; `'assumed_cap'` means spend could not be measured yet, so the value conservatively assumes the run's cap:
 
 ```python
 if detail.model_usage:
-    print(detail.model_usage.spend_usd, detail.model_usage.spend_source)
+    print(detail.model_usage.spent_usd, detail.model_usage.spend_source)
 ```
 
 Stream a run's recorded event trace; resume later from the last seen `seq`:
@@ -166,7 +182,7 @@ List your evaluations, newest first:
 
 ```python
 async for item in evals.list():
-    print(item.id, item.benchmark, item.status, item.spent_usd)
+    print(item.id, item.benchmark, item.status, item.mean_score, item.spent_usd)
 ```
 
 ---
@@ -184,7 +200,7 @@ for aggregate in comparison.evaluations:
 
 for row in comparison.task_matrix:
     print(row.task_key, row.disagreement,
-          [(cell.status, cell.score) for cell in row.cells])
+          [(cell.status, cell.mean_score) for cell in row.cells])
 ```
 
 Means cover `SCORED` runs only; coverage is always reported so a high mean over few scored runs stays visible. A cell's status is `'MIXED'` when its runs disagree and `'MISSING'` when the evaluation has no runs for that task.
@@ -212,7 +228,7 @@ archive_bytes = await evals.export(evaluation.id) # bytes in memory
 
 ## CLI
 
-Python ships no separate CLI. The TypeScript package's `evolve-evals` binary (`npx evolve-evals ...`) covers the full surface from any shell — including live SSE event streaming with `--watch` — see [TypeScript → Hosted Evals → CLI](../typescript/06-hosted-evals.md#cli).
+Python ships no separate CLI. The TypeScript package's `evolve-evals` binary (`npx evolve-evals ...`) covers the full surface from any shell — see [TypeScript → Hosted Evals → CLI](../typescript/06-hosted-evals.md#cli).
 
 ---
 
@@ -243,7 +259,7 @@ Two differences worth knowing when picking:
 
 ## Import a benchmark (admin)
 
-Imports require the `ADMIN` role (anyone else receives a `403`); git is the supported source. Evolve validates every task before the version becomes runnable:
+Imports require the `ADMIN` role (anyone else receives a `403`); the source is a git repository pinned to a ref:
 
 ```python
 async with benchmarks() as catalog:
@@ -251,7 +267,7 @@ async with benchmarks() as catalog:
         git_url='https://github.com/acme/my-benchmark.git',
         ref='v1.2.0',
         benchmark_name='my-benchmark',
-        version='1.2',                # optional — omit to let the server assign one
+        version='1.2',                # the version label for the imported corpus
     )
 
     done = await catalog.watch_import(
@@ -264,7 +280,7 @@ async with benchmarks() as catalog:
             print(failure.task_key, failure.error)
 ```
 
-`watch_import()` returns at `READY` or `FAILED`; only `READY` versions accept evaluations. Inspect what landed with `catalog.get('my-benchmark@1.2')` — all versions plus the task list (`task_key`, `agent_timeout_sec`, `verifier_timeout_sec`; instructions, environments, and tests never leave the server).
+An import job runs `IMPORTING → IMPORTED | FAILED`; `watch_import()` returns at either terminal. `IMPORTED` means the corpus landed as a benchmark version — it becomes runnable once Evolve validates and activates it (only `READY` versions accept evaluations). Inspect what landed with `catalog.get('my-benchmark@1.2')` — all versions plus the task list (`task_key`, `agent_timeout_sec`, `verifier_timeout_sec`, `providers`; instructions, environments, and tests never leave the server).
 
 ---
 
@@ -294,7 +310,7 @@ async with benchmarks() as catalog:
 | `INDETERMINATE` | the outcome could not be determined |
 | `CANCELLED` | cancelled before settling |
 
-**Benchmark version** — `DRAFT → IMPORTING → BUILDING → VALIDATING → READY`, with `FAILED` and `ARCHIVED` as off-ramps. Only `READY` versions accept evaluations.
+**Benchmark version** — `DRAFT → IMPORTING → BUILDING → VALIDATING → READY`, with `FAILED` and `ARCHIVED` as off-ramps; an import lands a version at `VALIDATING`, and Evolve's validation gate activates it. Only `READY` versions accept evaluations. (The import job's own statuses are `IMPORTING → IMPORTED | FAILED`.)
 
 ---
 
@@ -315,18 +331,24 @@ class Evaluation:
     runs_per_task: int
     concurrency: int
     max_model_spend_usd: float
+    sandbox_provider: str                 # 'e2b' | 'daytona' | 'modal'
     spent_usd: float
+    counts: EvaluationCounts              # agent_systems, tasks, task_runs
     created_at: str
     max_model_spend_usd_per_task_run: float | None
-    sandbox_provider: str | None          # 'e2b' | 'daytona' | 'modal'
-    counts: dict | None                   # {'agent_systems': n, 'tasks': n, 'task_runs': n}
-    task_run_counts: dict | None          # histogram by task-run status
+    task_run_counts: dict | None          # histogram by task-run status (get/list)
+    mean_score: float | None              # mean over SCORED runs; None when none (get/list)
     agent_systems: list[AgentSystem] | None   # get() only
-    benchmark_version_state: str | None       # get() only
     error: str | None                     # get() only
     updated_at: str | None                # get() only
     source_evaluation_id: str | None      # set on rerun_failed() evaluations
     idempotent_replay: bool               # True when an Idempotency-Key replayed
+
+@dataclass
+class EvaluationEvent:                    # watch() / watch_iter()
+    seq: int                              # monotonic; the watch resume position
+    type: str                             # 'task_run.settled', 'evaluation.completed', ...
+    data: dict
 
 @dataclass
 class TaskRun:
@@ -341,21 +363,22 @@ class TaskRun:
     failure_detail: str | None            # truncated in list rows; full via task_run()
     phase_timings_ms: dict | None         # {'agent_ms': ..., 'verify_ms': ...}
     model_usage: ModelUsage | None
+    sandbox_provider: str | None          # where the run executed; None until it has
+    verifier_mode: str | None             # 'separate' | 'shared'
+    resolved_harness_version: str | None  # harness version actually used
     session_ref: str | None               # agent session/trace reference
     created_at: str
     updated_at: str
 
 @dataclass
 class TaskRunDetail(TaskRun):             # task_run(id, run_id)
-    evaluation_id: str
-    resolved_harness_version: str | None  # harness version actually used
+    evaluation_id: str                    # failure_detail is untruncated here
 
 @dataclass
-class ModelUsage:
-    spend_usd: float | None
+class ModelUsage:                         # one money vocabulary: caps are
+    spent_usd: float | None               # max_model_spend*, actuals are spent_usd
     spend_source: str | None              # 'measured' | 'assumed_cap'
-    max_budget_usd: float | None
-    resolved_harness_version: str | None
+    max_model_spend_usd: float | None     # the per-run cap that applied to this run
     extra: dict                           # harness-specific keys, snake_case
 
 @dataclass
@@ -371,28 +394,52 @@ class Benchmark:                          # catalog.list() / catalog.get(ref)
     description: str | None
     active_version: BenchmarkVersion | None
     versions: list[BenchmarkVersion] | None   # get() only, newest first
+    selected_version: BenchmarkVersion | None # get() only — the tasks' provenance
     tasks: list[Task] | None                  # get() only
     # ActiveBenchmark (get_active) is the same shape with version + tasks non-optional
 
 @dataclass
-class BenchmarkVersion:
+class BenchmarkVersion:                   # one shape on every surface
     version: str
     state: str                            # benchmark version state above
+    created_at: str
     task_count: int
-    created_at: str | None
+
+@dataclass
+class TaskProviderVerdict:
+    ok: bool
+    reason: str | None                    # the limitation, when ok is False
 
 @dataclass
 class Task:
     task_key: str
     agent_timeout_sec: int
     verifier_timeout_sec: int
+    providers: dict[str, TaskProviderVerdict]  # where the task can run
 
 @dataclass
 class BenchmarkImport:
     id: str
-    status: str                           # 'IMPORTING' | 'BUILDING' | 'VALIDATING' | 'READY' | 'FAILED'
-    benchmark_name: str | None
-    version: str | None
+    status: str                           # 'IMPORTING' | 'IMPORTED' | 'FAILED'
+    benchmark_name: str
+    version: str
     error: BenchmarkImportError | None    # .message + .failures[(task_key, error)]
     task_count: int | None
 ```
+
+### Errors
+
+Every API failure raises `EvolveAPIError` — the server's own sentence as the message, plus a stable machine-readable code to branch on:
+
+```python
+from evolve import EvolveAPIError
+
+try:
+    await evals.run(benchmark='deep-swe', agent_systems=[...], max_model_spend_usd=25)
+except EvolveAPIError as error:
+    print(error.status)   # e.g. 409
+    print(error.code)     # e.g. 'version_not_ready', 'provider_unsupported', 'rate_limited'
+    print(error)          # 'Benchmark version deep-swe@1.2 is in state VALIDATING; ...'
+```
+
+Codes you will actually branch on: `benchmark_not_found`, `benchmark_version_not_found`, `no_active_version`, `version_not_ready`, `unknown_task_keys`, `provider_unsupported`, `evaluation_not_found`, `evaluation_not_terminal`, `no_failed_runs`, `task_run_not_found`, `rate_limited`, `invalid_api_key`, and `invalid_input`.

@@ -26,7 +26,17 @@ const active = await catalog.getActive("deep-swe");  // active version, guarante
 // getActive() throws NoActiveVersionError when nothing is runnable yet
 ```
 
-Tasks expose public fields only — `taskKey`, `agentTimeoutSec`, `verifierTimeoutSec`. Instructions, environments, and tests never leave the server.
+Tasks expose public fields only — `taskKey`, `agentTimeoutSec`, `verifierTimeoutSec`, and `providers`, the per-provider capability verdict. Instructions, environments, and tests never leave the server.
+
+```ts
+for (const task of deepSwe.tasks ?? []) {
+    // Where can this task run? Refusals carry the runner's own reason.
+    const verdict = task.providers.daytona;
+    if (!verdict.ok) console.log(task.taskKey, "cannot run on daytona:", verdict.reason);
+}
+```
+
+Capability is visible **before any money is spent**: creating an evaluation whose selected tasks include one refused on the chosen provider is rejected with a `400 provider_unsupported` naming the tasks and the reason — never accepted and left to fail at dispatch.
 
 Then create the evaluation. `benchmark`, `agentSystems`, and `maxModelSpendUsd` are required:
 
@@ -82,7 +92,7 @@ for await (const event of evals.watch(evaluation.id)) {
 
 // Or await the final Evaluation
 const final = await evals.watch(evaluation.id);
-console.log(final.status, final.taskRunCounts, final.spentUsd);
+console.log(final.status, final.taskRunCounts, final.meanScore, final.spentUsd);
 ```
 
 Options apply in every form — abort or tune backoff on an iterated watch the same way; `onEvent` fires regardless:
@@ -110,24 +120,29 @@ const final = await evals.watch(
 ## Read the results
 
 ```ts
-// One evaluation: size, status histogram, spend
+// One evaluation: size, status histogram, mean score, spend
 const detail = await evals.get(evaluation.id);
 console.log(detail.taskRunCounts);                  // { SCORED: 12, RUNNING: 3, QUEUED: 5 }
+console.log(detail.meanScore);                      // mean over SCORED runs; null until something scores
 console.log(detail.spentUsd, "/", detail.maxModelSpendUsd);
 
 // Your evaluations, newest first — await one page, or iterate them all
 const page = await evals.list({ limit: 50 });       // page.nextCursor continues
 for await (const item of evals.list()) {
-    console.log(item.id, item.status, item.benchmark);
+    console.log(item.id, item.status, item.benchmark, item.meanScore);
 }
 ```
 
-Task runs paginate the same way — await a page or iterate across pages:
+Task runs paginate the same way — await a page or iterate across pages. `status` filters, e.g. to the failures behind a rerun decision:
 
 ```ts
 for await (const run of evals.taskRuns(evaluation.id)) {
     console.log(run.taskKey, run.agentSystem.harness, run.status, run.score);
 }
+
+const failures = await evals.taskRuns(evaluation.id, {
+    status: ["INFRASTRUCTURE_ERROR", "SCORING_ERROR"],
+});
 ```
 
 One task run in depth:
@@ -139,12 +154,13 @@ const run = await evals.taskRun(
 );
 console.log(run.score, run.metrics);                 // reward + named sub-scores
 console.log(run.phaseTimingsMs);                     // { agentMs, verifyMs }
-console.log(run.modelUsage?.spendUsd, run.modelUsage?.spendSource);
+console.log(run.modelUsage?.spentUsd, run.modelUsage?.spendSource);
+console.log(run.sandboxProvider, run.verifierMode);  // where the run and its verifier executed
 console.log(run.resolvedHarnessVersion);             // harness version actually used
 console.log(run.failurePhase, run.failureDetail);    // untruncated in this response
 ```
 
-> **Reading spend:** `spendSource: "measured"` is platform-measured model spend; `"assumed_cap"` means the run's spend could not be measured yet, so the per-run cap is reported conservatively. Fresh runs can briefly show the cap while metering catches up.
+> **Reading spend:** `spendSource: "measured"` is platform-measured model spend; `"assumed_cap"` means the run's spend could not be measured yet, so the per-run cap is reported conservatively (`modelUsage.maxModelSpendUsd`). Fresh runs can briefly show the cap while metering catches up.
 
 Fetch a run's recorded event timeline:
 
@@ -203,7 +219,7 @@ for (const aggregate of comparison.evaluations) {
 for (const row of comparison.taskMatrix) {
     if (!row.disagreement) continue;
     for (const cell of row.cells) {
-        console.log(row.taskKey, cell.status, cell.score);
+        console.log(row.taskKey, cell.status, cell.meanScore);
         // cell.status: TaskRunStatus, "MIXED" (runs disagree), or "MISSING" (no runs)
     }
 }
@@ -273,7 +289,10 @@ The rest of the surface:
 ```bash
 npx evolve-evals list --limit 20
 npx evolve-evals get <id>
-npx evolve-evals task-runs <id>
+npx evolve-evals task-runs <id> --status INFRASTRUCTURE_ERROR,SCORING_ERROR
+npx evolve-evals task-run <id> <run-id>
+npx evolve-evals trace <id> <run-id> --after 100
+npx evolve-evals compare <id> <id>
 npx evolve-evals cancel <id>
 npx evolve-evals rerun-failed <id>
 npx evolve-evals export <id> --to ./results --format harbor
@@ -283,7 +302,7 @@ npx evolve-evals benchmarks get deep-swe@1.1
 
 - Human-readable tables by default; `--json` emits machine-readable JSON (NDJSON for `--watch` streams).
 - Credentials: `$EVOLVE_API_KEY`, or `--api-key`; `--base-url` targets a non-default deployment.
-- Exit codes: `0` success (with `--watch`: `COMPLETED` / import `READY`), `1` runtime failure (with `--watch`: `FAILED` or `CANCELLED`), `2` usage error.
+- Exit codes: `0` success (with `--watch`: `COMPLETED` / import `IMPORTED`), `1` runtime failure (with `--watch`: `FAILED` or `CANCELLED`), `2` usage error.
 
 ---
 
@@ -324,7 +343,7 @@ Two provider differences worth knowing before you pick:
 
 ## Import a benchmark (admin)
 
-> Imports require the `ADMIN` role — any other caller receives `403`. Git is the supported source today; archive and Harbor Hub sources are reserved in the typed surface and throw `NotImplementedError`.
+> Imports require the `ADMIN` role — any other caller receives `403`. The source is a git repository pinned to a ref.
 
 ```ts
 const job = await catalog.import({
@@ -333,10 +352,10 @@ const job = await catalog.import({
         ref: "v1.2.0",
     },
     benchmarkName: "my-bench",
-    version: "1.2",               // (optional) server-assigned when omitted
+    version: "1.2",               // the version label for the imported corpus
 });
 
-// Block until READY or FAILED
+// Block until IMPORTED or FAILED
 const done = await catalog.watchImport(
     job.id,
     {
@@ -352,11 +371,12 @@ npx evolve-evals import \
     --git https://github.com/acme/my-bench.git \
     --ref main \
     --name my-bench \
+    --version 1.2 \
     --watch
 npx evolve-evals import status <id>
 ```
 
-Evolve validates every task before a version becomes runnable: only `READY` versions accept evaluations. `evals.run()` rejects any other state with a `409` naming it; a bare name with no active version is a `400`.
+An import job runs `IMPORTING → IMPORTED | FAILED`. `IMPORTED` means the corpus landed as a benchmark version — it appears in the catalog and becomes runnable once Evolve validates and activates it (only `READY` versions accept evaluations). `evals.run()` rejects any other state with a `409` naming it; a bare name with no active version is a `400`. Every import response is self-describing — a watcher holding only the job id still learns which `benchmark@version` it is watching.
 
 ---
 
@@ -386,7 +406,7 @@ Evolve validates every task before a version becomes runnable: only `READY` vers
 | `INDETERMINATE` | The platform cannot tell whether the run completed |
 | `CANCELLED` | Cancelled before settling |
 
-**Benchmark version** (`BenchmarkVersion.state`):
+**Benchmark version** (`BenchmarkVersion.state`) — the catalog's lifecycle, distinct from the import job's `IMPORTING → IMPORTED | FAILED`:
 
 ```
 DRAFT → IMPORTING → BUILDING → VALIDATING → READY
@@ -394,7 +414,7 @@ DRAFT → IMPORTING → BUILDING → VALIDATING → READY
                                  FAILED
 ```
 
-`ARCHIVED` shelves a version that has been moved past; like every non-`READY` state, it accepts no evaluations.
+An import lands a version at `VALIDATING`; Evolve then validates it against the benchmark's reference solutions and activates it — `READY` is the only state that accepts evaluations. `ARCHIVED` shelves a version that has been moved past.
 
 ---
 
@@ -409,6 +429,15 @@ interface AgentSystem {
     harnessVersion?: string | null;  // pin a harness version; null when unpinned
 }
 
+type TaskProviderVerdict = { ok: true } | { ok: false; reason: string };
+
+interface Task {
+    taskKey: string;
+    agentTimeoutSec: number;
+    verifierTimeoutSec: number;
+    providers: Record<EvalSandboxProvider, TaskProviderVerdict>;  // where the task can run
+}
+
 interface Evaluation {
     id: string;
     status: EvaluationStatus;
@@ -418,11 +447,11 @@ interface Evaluation {
     concurrency: number;
     maxModelSpendUsd: number;
     maxModelSpendUsdPerTaskRun?: number;     // when one was set
-    sandboxProvider?: EvalSandboxProvider;
+    sandboxProvider: EvalSandboxProvider;
     spentUsd: number;
     counts: { agentSystems: number; tasks: number; taskRuns: number };
     taskRunCounts?: Partial<Record<TaskRunStatus, number>>;  // get/list
-    benchmarkVersionState?: BenchmarkVersionState;           // get() only
+    meanScore?: number | null;               // get/list; mean over SCORED runs, null when none
     error?: string | null;                   // get() only
     sourceEvaluationId?: string;             // present on rerun-failed evaluations
     idempotentReplay?: boolean;              // true when a key replayed an existing evaluation
@@ -442,20 +471,22 @@ interface TaskRun {
     failureDetail: string | null;            // truncated to 2000 chars in list responses
     phaseTimingsMs: Record<string, number> | null;  // { agentMs, verifyMs }
     modelUsage: ModelUsage | null;
+    sandboxProvider: EvalSandboxProvider | null;  // where the run executed; null until it has
+    verifierMode: "separate" | "shared" | null;   // where the verifier ran
+    resolvedHarnessVersion: string | null;   // harness version actually used
     sessionRef: string | null;               // agent session/trace reference
     createdAt: string;
     updatedAt: string;
 }
 
 interface TaskRunDetail extends TaskRun {    // evals.taskRun(id, runId)
-    evaluationId: string;
-    resolvedHarnessVersion: string | null;   // failureDetail is untruncated here
+    evaluationId: string;                    // failureDetail is untruncated here
 }
 
-interface ModelUsage {
-    spendUsd?: number;                       // model spend in USD
+interface ModelUsage {                       // one money vocabulary: caps are
+    spentUsd?: number;                       // maxModelSpend*, actuals are spentUsd
     spendSource?: "measured" | "assumed_cap";
-    maxBudgetUsd?: number;
+    maxModelSpendUsd?: number;               // the per-run cap that applied to this run
     [key: string]: unknown;                  // open map: harness-specific keys may appear
 }
 
@@ -467,12 +498,32 @@ interface EvaluationEvent {
 
 interface BenchmarkImport {
     id: string;
-    status: "IMPORTING" | "BUILDING" | "VALIDATING" | "READY" | "FAILED";
-    benchmarkName?: string;
-    version?: string;
+    status: "IMPORTING" | "IMPORTED" | "FAILED";
+    benchmarkName: string;
+    version: string;
     taskCount?: number;                      // tasks parsed, once counted
     error?: { message: string; failures?: { taskKey: string; error: string }[] } | null;
 }
 ```
+
+### Errors
+
+Every API failure throws `EvolveApiError` — the server's own sentence as the message, plus a stable machine-readable code to branch on:
+
+```ts
+import { EvolveApiError } from "@evolvingmachines/sdk";
+
+try {
+    await evals.run(input);
+} catch (error) {
+    if (error instanceof EvolveApiError) {
+        console.log(error.status);   // e.g. 409
+        console.log(error.code);     // e.g. "version_not_ready", "provider_unsupported", "rate_limited"
+        console.log(error.message);  // "Benchmark version deep-swe@1.2 is in state VALIDATING; ..."
+    }
+}
+```
+
+Codes you will actually branch on: `benchmark_not_found`, `benchmark_version_not_found`, `no_active_version`, `version_not_ready`, `unknown_task_keys`, `provider_unsupported`, `evaluation_not_found`, `evaluation_not_terminal`, `no_failed_runs`, `task_run_not_found`, `rate_limited` (retry after the `Retry-After` header), `invalid_api_key`, and `invalid_input`.
 
 > To operate this lifecycle yourself on your own infrastructure, see [Runtime → Task Sandboxes & Credential Lifecycle](./03-runtime.md#task-sandboxes--credential-lifecycle).

@@ -45,6 +45,7 @@ import type {
   TaskRunTraceEvent,
   TaskRunTraceOptions,
   TaskRunTracePage,
+  VerifierMode,
   WatchEvaluationOptions,
   WatchImportOptions,
 } from "./types";
@@ -80,7 +81,6 @@ export type {
   ListEvaluationsOptions,
   ListTaskRunsOptions,
   ModelUsage,
-  OutputFile,
   RunEvaluationOptions,
   SpendSource,
   Task,
@@ -94,23 +94,46 @@ export type {
   TaskRunTraceEvent,
   TaskRunTraceOptions,
   TaskRunTracePage,
+  VerifierMode,
   WatchEvaluationOptions,
   WatchImportOptions,
 } from "./types";
 
 /**
- * Thrown by reserved hosted-evals surfaces whose server endpoints do not exist
- * yet (benchmarks().import() with an archive or Harbor Hub source). The
- * surface is reserved in the public plan; the SDK never invents server routes.
+ * A typed failure from the hosted evals API. `message` is the server's own
+ * product sentence; `code` is the stable machine-readable identifier (e.g.
+ * "benchmark_not_found", "version_not_ready", "provider_unsupported",
+ * "rate_limited") so callers branch on codes, never on English.
  */
-export class NotImplementedError extends Error {
-  constructor(feature: string) {
-    super(
-      `${feature} is not implemented yet: this surface is reserved in the hosted evals public plan, ` +
-        `but the server endpoint does not exist yet. It will activate in a future release without a signature change.`
-    );
-    this.name = "NotImplementedError";
+export class EvolveApiError extends Error {
+  /** HTTP status of the failed response */
+  readonly status: number;
+  /** Stable snake_case error code from the API ("unknown_error" when absent) */
+  readonly code: string;
+  constructor(status: number, code: string, message: string) {
+    super(message);
+    this.name = "EvolveApiError";
+    this.status = status;
+    this.code = code;
   }
+}
+
+/** Map a non-ok Response to the typed EvolveApiError and throw it. */
+async function throwApiError(res: Response): Promise<never> {
+  const text = await res.text().catch(() => "");
+  try {
+    const body = JSON.parse(text) as { error?: { code?: unknown; message?: unknown } };
+    if (body?.error && typeof body.error === "object") {
+      const code = typeof body.error.code === "string" ? body.error.code : "unknown_error";
+      const message =
+        typeof body.error.message === "string" ? body.error.message : res.statusText;
+      throw new EvolveApiError(res.status, code, message);
+    }
+  } catch (error) {
+    if (error instanceof EvolveApiError) throw error;
+    // Fall through: unparseable body.
+  }
+  throw new EvolveApiError(res.status, "unknown_error", text || res.statusText);
 }
 
 /**
@@ -147,7 +170,7 @@ const TERMINAL_EVENT_TYPES: ReadonlySet<string> = new Set([
 const DEFAULT_IMPORT_POLL_INTERVAL_MS = 2_000;
 
 // Terminal import statuses.
-const TERMINAL_IMPORT_STATUSES: ReadonlySet<string> = new Set(["READY", "FAILED"]);
+const TERMINAL_IMPORT_STATUSES: ReadonlySet<string> = new Set(["IMPORTED", "FAILED"]);
 
 // =============================================================================
 // SHARED HELPERS
@@ -182,8 +205,7 @@ async function request(
     },
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Evolve API error (${res.status}): ${text || res.statusText}`);
+    await throwApiError(res);
   }
   return res;
 }
@@ -213,8 +235,8 @@ function mapBenchmarkVersion(raw: Record<string, unknown>): BenchmarkVersion {
   return {
     version: raw.version as string,
     state: raw.state as BenchmarkVersionState,
+    createdAt: raw.createdAt as string,
     taskCount: (raw.taskCount as number) ?? 0,
-    ...(typeof raw.createdAt === "string" ? { createdAt: raw.createdAt } : {}),
   };
 }
 
@@ -223,6 +245,9 @@ function mapTask(raw: Record<string, unknown>): Task {
     taskKey: raw.taskKey as string,
     agentTimeoutSec: raw.agentTimeoutSec as number,
     verifierTimeoutSec: raw.verifierTimeoutSec as number,
+    // Per-provider capability verdicts — the law: where a task can run is
+    // visible before any money is spent.
+    providers: raw.providers as Task["providers"],
   };
 }
 
@@ -234,6 +259,7 @@ function mapEvaluation(raw: Record<string, unknown>): Evaluation {
     runsPerTask: raw.runsPerTask as number,
     concurrency: raw.concurrency as number,
     maxModelSpendUsd: raw.maxModelSpendUsd as number,
+    sandboxProvider: raw.sandboxProvider as EvalSandboxProvider,
     spentUsd: (raw.spentUsd as number) ?? 0,
     createdAt: raw.createdAt as string,
     counts: raw.counts as Evaluation["counts"],
@@ -241,17 +267,14 @@ function mapEvaluation(raw: Record<string, unknown>): Evaluation {
   if (typeof raw.maxModelSpendUsdPerTaskRun === "number") {
     evaluation.maxModelSpendUsdPerTaskRun = raw.maxModelSpendUsdPerTaskRun;
   }
-  if (typeof raw.sandboxProvider === "string") {
-    evaluation.sandboxProvider = raw.sandboxProvider as EvalSandboxProvider;
-  }
   if (raw.taskRunCounts && typeof raw.taskRunCounts === "object") {
     evaluation.taskRunCounts = raw.taskRunCounts as TaskRunCounts;
   }
+  if ("meanScore" in raw) {
+    evaluation.meanScore = (raw.meanScore as number | null) ?? null;
+  }
   if (Array.isArray(raw.agentSystems)) {
     evaluation.agentSystems = (raw.agentSystems as Record<string, unknown>[]).map(mapAgentSystem);
-  }
-  if (typeof raw.benchmarkVersionState === "string") {
-    evaluation.benchmarkVersionState = raw.benchmarkVersionState as BenchmarkVersionState;
   }
   if ("error" in raw) {
     evaluation.error = (raw.error as string | null) ?? null;
@@ -281,6 +304,9 @@ function mapTaskRun(raw: Record<string, unknown>): TaskRun {
     failureDetail: (raw.failureDetail as string | null) ?? null,
     phaseTimingsMs: (raw.phaseTimingsMs as Record<string, number> | null) ?? null,
     modelUsage: (raw.modelUsage as ModelUsage | null) ?? null,
+    sandboxProvider: (raw.sandboxProvider as EvalSandboxProvider | null) ?? null,
+    verifierMode: (raw.verifierMode as VerifierMode | null) ?? null,
+    resolvedHarnessVersion: (raw.resolvedHarnessVersion as string | null) ?? null,
     sessionRef: (raw.sessionRef as string | null) ?? null,
     createdAt: raw.createdAt as string,
     updatedAt: raw.updatedAt as string,
@@ -291,13 +317,9 @@ function mapBenchmarkImport(raw: Record<string, unknown>): BenchmarkImport {
   const benchmarkImport: BenchmarkImport = {
     id: raw.id as string,
     status: raw.status as BenchmarkImportStatus,
+    benchmarkName: raw.benchmarkName as string,
+    version: raw.version as string,
   };
-  if (typeof raw.benchmarkName === "string") {
-    benchmarkImport.benchmarkName = raw.benchmarkName;
-  }
-  if (typeof raw.version === "string") {
-    benchmarkImport.version = raw.version;
-  }
   if ("error" in raw) {
     benchmarkImport.error = (raw.error as BenchmarkImportError | null) ?? null;
   }
@@ -333,7 +355,7 @@ function mapComparisonCell(raw: Record<string, unknown>): ComparisonCell {
   return {
     evaluationId: raw.evaluationId as string,
     status: raw.status as ComparisonCell["status"],
-    score: (raw.score as number | null) ?? null,
+    meanScore: (raw.meanScore as number | null) ?? null,
     coverage: mapCoverage(raw.coverage),
   };
 }
@@ -518,7 +540,7 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
   const cfg = resolveConfig("benchmarks", config);
 
   async function getImport(id: string): Promise<BenchmarkImport> {
-    const res = await request(cfg, `/api/benchmarks/import/${encodeURIComponent(id)}`);
+    const res = await request(cfg, `/api/benchmarks/imports/${encodeURIComponent(id)}`);
     return mapBenchmarkImport((await res.json()) as Record<string, unknown>);
   }
 
@@ -540,7 +562,9 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
         ? mapBenchmarkVersion(raw.activeVersion as Record<string, unknown>)
         : null,
       versions: ((raw.versions as Record<string, unknown>[]) || []).map(mapBenchmarkVersion),
-      tasksVersion: (raw.tasksVersion as string | null) ?? null,
+      selectedVersion: raw.selectedVersion
+        ? mapBenchmarkVersion(raw.selectedVersion as Record<string, unknown>)
+        : null,
       tasks: ((raw.tasks as Record<string, unknown>[]) || []).map(mapTask),
       createdAt: raw.createdAt as string,
       updatedAt: raw.updatedAt as string,
@@ -584,30 +608,18 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
     },
 
     async import(input: BenchmarkImportInput): Promise<BenchmarkImport> {
-      const source = input.source as {
-        archivePath?: string;
-        gitUrl?: string;
-        ref?: string;
-        harborHubRef?: string;
-      };
-      if (source.archivePath !== undefined) {
-        throw new NotImplementedError("benchmarks().import() with an archivePath source");
-      }
-      if (source.harborHubRef !== undefined) {
-        throw new NotImplementedError("benchmarks().import() with a harborHubRef source");
-      }
-      if (!source.gitUrl || !source.ref) {
+      if (!input.source?.gitUrl || !input.source?.ref) {
         throw new Error(
-          'benchmarks().import() requires a git source: { source: { gitUrl, ref }, benchmarkName }'
+          'benchmarks().import() requires a git source: { source: { gitUrl, ref }, benchmarkName, version }'
         );
       }
-      const res = await request(cfg, "/api/benchmarks/import", {
+      const res = await request(cfg, "/api/benchmarks/imports", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          source: { type: "git", url: source.gitUrl, ref: source.ref },
+          source: { type: "git", url: input.source.gitUrl, ref: input.source.ref },
           benchmarkName: input.benchmarkName,
-          ...(input.version !== undefined ? { version: input.version } : {}),
+          version: input.version,
         }),
       });
       return mapBenchmarkImport((await res.json()) as Record<string, unknown>);
@@ -688,6 +700,7 @@ export function evaluations(config?: HostedClientConfig): EvaluationsClient {
     options?: ListTaskRunsOptions
   ): Promise<TaskRunPage> {
     const params = new URLSearchParams();
+    if (options?.status?.length) params.set("status", options.status.join(","));
     if (options?.limit !== undefined) params.set("limit", String(options.limit));
     if (options?.cursor) params.set("cursor", options.cursor);
     const qs = params.toString();
@@ -697,12 +710,10 @@ export function evaluations(config?: HostedClientConfig): EvaluationsClient {
     );
     const data = (await res.json()) as {
       taskRuns?: Record<string, unknown>[];
-      totalCount?: number;
       nextCursor?: string | null;
     };
     return {
       taskRuns: (data.taskRuns || []).map(mapTaskRun),
-      totalCount: data.totalCount ?? 0,
       nextCursor: data.nextCursor ?? null,
     };
   }
@@ -791,8 +802,7 @@ export function evaluations(config?: HostedClientConfig): EvaluationsClient {
           delayMs = Math.min(delayMs * 2, maxDelayMs);
           continue;
         }
-        const text = await res.text().catch(() => "");
-        throw new Error(`Evolve API error (${res.status}): ${text || res.statusText}`);
+        await throwApiError(res);
       }
       if (!res.body) {
         throw new Error("Event stream response has no body");
@@ -883,8 +893,9 @@ export function evaluations(config?: HostedClientConfig): EvaluationsClient {
 
     taskRuns(id: string, options?: ListTaskRunsOptions): TaskRunList {
       // Await for one page; for-await to walk every task run across cursors.
+      // The status filter rides along on every page fetch.
       return makePaginated(
-        (opts) => taskRunsPage(id, opts),
+        (opts) => taskRunsPage(id, { ...opts, status: options?.status }),
         (page) => page.taskRuns,
         options
       );
@@ -899,7 +910,6 @@ export function evaluations(config?: HostedClientConfig): EvaluationsClient {
       return {
         ...mapTaskRun(raw),
         evaluationId: raw.evaluationId as string,
-        resolvedHarnessVersion: (raw.resolvedHarnessVersion as string | null) ?? null,
       };
     },
 

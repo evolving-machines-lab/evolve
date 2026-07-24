@@ -17,11 +17,17 @@ import type {
   Benchmark,
   BenchmarkImport,
   BenchmarkImportInput,
+  EvalSandboxProvider,
   Evaluation,
+  EvaluationComparison,
   EvaluationEvent,
   EvaluationInput,
   HostedClientConfig,
+  Task,
   TaskRun,
+  TaskRunDetail,
+  TaskRunStatus,
+  TaskRunTraceEvent,
 } from "./types";
 
 // =============================================================================
@@ -37,11 +43,14 @@ Commands:
   list                              List your evaluations (newest first)
   get <id>                          Show one evaluation
   task-runs <id>                    List an evaluation's task runs
+  task-run <id> <run-id>            Show one task run in full detail
+  trace <id> <run-id>               Print a task run's trace events
+  compare <id> <id> [...]           Compare 2-5 evaluations side by side
   cancel <id>                       Request cancellation of an evaluation
   rerun-failed <id>                 New evaluation from a terminal evaluation's failed runs
   export <id>                       Download the research archive (gzipped JSON)
   benchmarks                        List the benchmark catalog
-  benchmarks get <name[@version]>   Show one benchmark (versions + tasks)
+  benchmarks get <name[@version]>   Show one benchmark (versions + tasks + providers)
   import                            Import a benchmark from git (add --watch to follow it)
   import status <id>                Show one import job
   help                              Show this help
@@ -57,12 +66,19 @@ Run options:
   --provider <e2b|daytona|modal>      e2b | daytona | modal, default e2b
   --watch                             Stream events until the evaluation finishes
 
+Task-run options:
+  --status <s1,s2,...>                Filter task-runs by status (e.g. INFRASTRUCTURE_ERROR)
+
+Trace options:
+  --after <seq>                       Resume after this trace seq
+  --limit <n>                         Max events per page
+
 Import options:
   --git <url>                         Git repository URL (required)
   --ref <ref>                         Git ref: branch, tag, or commit (required)
   --name <benchmark>                  Catalog benchmark name to create or extend (required)
-  --version <v>                       Version label (server-assigned when omitted)
-  --watch                             Poll until the import is READY or FAILED
+  --version <v>                       Version label for the imported version (required)
+  --watch                             Poll until the import is IMPORTED or FAILED
 
 Other options:
   --limit <n>, --cursor <c>           Pagination (list, task-runs)
@@ -70,7 +86,7 @@ Other options:
   --format harbor                     Export the Harbor job-layout bundle
   --json                              Machine-readable JSON output
   --api-key <key>                     API key (default: $EVOLVE_API_KEY)
-  --base-url <url>                    API base URL (default: $EVOLVE_DASHBOARD_URL)`;
+  --base-url <url>                    API base URL (default: the Evolve dashboard API)`;
 
 // =============================================================================
 // ARG PARSING
@@ -131,10 +147,28 @@ const COMMAND_SPECS: Record<string, CommandSpec> = {
   },
   get: { flags: {}, minPositionals: 1, maxPositionals: 1, positionalUsage: "<id>" },
   "task-runs": {
-    flags: { limit: "number", cursor: "string" },
+    flags: { status: "string", limit: "number", cursor: "string" },
     minPositionals: 1,
     maxPositionals: 1,
     positionalUsage: "<id>",
+  },
+  "task-run": {
+    flags: {},
+    minPositionals: 2,
+    maxPositionals: 2,
+    positionalUsage: "<id> <run-id>",
+  },
+  trace: {
+    flags: { after: "number", limit: "number" },
+    minPositionals: 2,
+    maxPositionals: 2,
+    positionalUsage: "<id> <run-id>",
+  },
+  compare: {
+    flags: {},
+    minPositionals: 2,
+    maxPositionals: 5,
+    positionalUsage: "<id> <id> [...]",
   },
   cancel: { flags: {}, minPositionals: 1, maxPositionals: 1, positionalUsage: "<id>" },
   "rerun-failed": {
@@ -310,17 +344,16 @@ export function buildEvaluationInput(inv: Invocation): EvaluationInput {
 /** Build the benchmarks().import() input from a parsed `import` invocation. */
 export function buildImportInput(inv: Invocation): BenchmarkImportInput {
   const f = inv.flags;
-  for (const req of ["git", "ref", "name"] as const) {
+  for (const req of ["git", "ref", "name", "version"] as const) {
     if (typeof f[req] !== "string") {
       throw new CliUsageError(`"import" requires --${req}`);
     }
   }
-  const input: BenchmarkImportInput = {
+  return {
     source: { gitUrl: f.git as string, ref: f.ref as string },
     benchmarkName: f.name as string,
+    version: f.version as string,
   };
-  if (f.version !== undefined) input.version = f.version as string;
-  return input;
 }
 
 // =============================================================================
@@ -384,7 +417,11 @@ function evaluationLines(e: Evaluation): string[] {
   if (e.maxModelSpendUsdPerTaskRun !== undefined) {
     rows.push(["max spend/run", fmtUsd(e.maxModelSpendUsdPerTaskRun)]);
   }
+  rows.push(["provider", e.sandboxProvider]);
   rows.push(["spent", fmtUsd(e.spentUsd)]);
+  if (e.meanScore !== undefined) {
+    rows.push(["mean score", e.meanScore !== null ? String(e.meanScore) : "-"]);
+  }
   if (e.taskRunCounts && Object.keys(e.taskRunCounts).length > 0) {
     const histogram = Object.entries(e.taskRunCounts)
       .map(([status, count]) => `${status} ${count}`)
@@ -405,6 +442,7 @@ function evaluationRow(e: Evaluation): string[] {
     e.status,
     e.benchmark,
     e.counts ? String(e.counts.taskRuns) : "-",
+    fmtScore(e.meanScore ?? null),
     fmtUsd(e.spentUsd),
     e.createdAt,
   ];
@@ -417,9 +455,67 @@ function taskRunRow(run: TaskRun): string[] {
     String(run.runNumber),
     run.status,
     run.score !== null ? String(run.score) : "-",
-    fmtUsd(run.modelUsage?.spendUsd ?? null),
+    fmtUsd(run.modelUsage?.spentUsd ?? null),
     run.id,
   ];
+}
+
+/** Full-detail rendering of one task run — evolve-evals task-run. */
+function taskRunDetailLines(run: TaskRunDetail): string[] {
+  const rows: string[][] = [
+    ["run id", run.id],
+    ["evaluation", run.evaluationId],
+    ["task", run.taskKey],
+    ["system", fmtSystem(run.agentSystem)],
+    ["run", String(run.runNumber)],
+    ["status", run.status],
+    ["score", run.score !== null ? String(run.score) : "-"],
+  ];
+  if (run.metrics && Object.keys(run.metrics).length > 0) {
+    rows.push([
+      "metrics",
+      Object.entries(run.metrics)
+        .map(([key, value]) => `${key}=${value}`)
+        .join(" · "),
+    ]);
+  }
+  rows.push(["spent", fmtUsd(run.modelUsage?.spentUsd ?? null)]);
+  if (run.sandboxProvider) rows.push(["provider", run.sandboxProvider]);
+  if (run.verifierMode) rows.push(["verifier", run.verifierMode]);
+  if (run.resolvedHarnessVersion) rows.push(["harness version", run.resolvedHarnessVersion]);
+  if (run.phaseTimingsMs && Object.keys(run.phaseTimingsMs).length > 0) {
+    rows.push([
+      "timings",
+      Object.entries(run.phaseTimingsMs)
+        .map(([key, value]) => `${key}=${value}ms`)
+        .join(" · "),
+    ]);
+  }
+  if (run.failurePhase) rows.push(["failure phase", run.failurePhase]);
+  if (run.failureDetail) rows.push(["failure detail", run.failureDetail]);
+  if (run.sessionRef) rows.push(["session", run.sessionRef]);
+  rows.push(["created", run.createdAt]);
+  rows.push(["updated", run.updatedAt]);
+  return table(rows);
+}
+
+const PROVIDER_ORDER: EvalSandboxProvider[] = ["e2b", "daytona", "modal"];
+
+/** Compact per-provider verdicts, e.g. "e2b ok · daytona ok · modal NO". */
+function fmtProviders(providers: Task["providers"]): string {
+  return PROVIDER_ORDER.filter((provider) => providers?.[provider] !== undefined)
+    .map((provider) => `${provider} ${providers[provider].ok ? "ok" : "NO"}`)
+    .join(" · ");
+}
+
+function fmtScore(score: number | null): string {
+  return score !== null ? String(Math.round(score * 1000) / 1000) : "-";
+}
+
+/** One trace event line — evolve-evals trace. */
+export function traceEventLine(event: TaskRunTraceEvent): string {
+  const detail = truncate(JSON.stringify(event.data ?? {}), 140);
+  return `#${String(event.seq).padStart(4)} ${event.type.padEnd(26)} ${detail}`.trimEnd();
 }
 
 /** One line for a structured import error: the message plus a failure count. */
@@ -540,7 +636,7 @@ async function cmdList(inv: Invocation, io: CliIO): Promise<number> {
     io.out("No evaluations.");
     return 0;
   }
-  const rows = [["ID", "STATUS", "BENCHMARK", "TASK RUNS", "SPENT", "CREATED"]];
+  const rows = [["ID", "STATUS", "BENCHMARK", "TASK RUNS", "MEAN SCORE", "SPENT", "CREATED"]];
   for (const e of page.evaluations) rows.push(evaluationRow(e));
   for (const line of table(rows)) io.out(line);
   if (page.nextCursor) io.out(`\nMore: evolve-evals list --cursor ${page.nextCursor}`);
@@ -560,7 +656,18 @@ async function cmdGet(inv: Invocation, io: CliIO): Promise<number> {
 
 async function cmdTaskRuns(inv: Invocation, io: CliIO): Promise<number> {
   const client = evaluations(clientConfig(inv));
+  let status: TaskRunStatus[] | undefined;
+  if (inv.flags.status !== undefined) {
+    status = String(inv.flags.status)
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean) as TaskRunStatus[];
+    if (status.length === 0) {
+      throw new CliUsageError("--status got an empty status list");
+    }
+  }
   const page = await client.taskRuns(inv.positionals[0], {
+    ...(status !== undefined ? { status } : {}),
     ...(inv.flags.limit !== undefined ? { limit: inv.flags.limit as number } : {}),
     ...(inv.flags.cursor !== undefined ? { cursor: inv.flags.cursor as string } : {}),
   });
@@ -572,12 +679,89 @@ async function cmdTaskRuns(inv: Invocation, io: CliIO): Promise<number> {
     io.out("No task runs.");
     return 0;
   }
-  const rows = [["TASK", "SYSTEM", "RUN", "STATUS", "SCORE", "SPEND", "RUN ID"]];
+  const rows = [["TASK", "SYSTEM", "RUN", "STATUS", "SCORE", "SPENT", "RUN ID"]];
   for (const run of page.taskRuns) rows.push(taskRunRow(run));
   for (const line of table(rows)) io.out(line);
-  io.out(`\n${page.taskRuns.length} of ${page.totalCount} task run(s)`);
+  io.out(`\n${page.taskRuns.length} task run(s) shown`);
   if (page.nextCursor) {
     io.out(`More: evolve-evals task-runs ${inv.positionals[0]} --cursor ${page.nextCursor}`);
+  }
+  return 0;
+}
+
+async function cmdTaskRun(inv: Invocation, io: CliIO): Promise<number> {
+  const client = evaluations(clientConfig(inv));
+  const run = await client.taskRun(inv.positionals[0], inv.positionals[1]);
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(run));
+  } else {
+    for (const line of taskRunDetailLines(run)) io.out(line);
+  }
+  return 0;
+}
+
+async function cmdTrace(inv: Invocation, io: CliIO): Promise<number> {
+  const client = evaluations(clientConfig(inv));
+  const json = inv.flags.json === true;
+  let count = 0;
+  for await (const event of client.taskRunTraceEvents(inv.positionals[0], inv.positionals[1], {
+    ...(inv.flags.after !== undefined ? { after: inv.flags.after as number } : {}),
+    ...(inv.flags.limit !== undefined ? { limit: inv.flags.limit as number } : {}),
+  })) {
+    io.out(json ? JSON.stringify(event) : traceEventLine(event));
+    count += 1;
+  }
+  if (!json && count === 0) io.out("No trace events.");
+  return 0;
+}
+
+function comparisonLines(comparison: EvaluationComparison): string[] {
+  const lines: string[] = [];
+  const aggregateRows = [["ID", "BENCHMARK", "STATUS", "MEAN SCORE", "COVERAGE", "SPENT"]];
+  for (const agg of comparison.evaluations) {
+    aggregateRows.push([
+      agg.id,
+      agg.benchmark,
+      agg.status,
+      fmtScore(agg.meanScore),
+      `${agg.coverage.scored}/${agg.coverage.total}`,
+      fmtUsd(agg.spentUsd),
+    ]);
+  }
+  lines.push(...table(aggregateRows));
+
+  if (comparison.taskMatrix.length > 0) {
+    lines.push("", "Task matrix (disagreements first; columns in the order above):");
+    const matrixRows = [
+      ["TASK", "DIFF", ...comparison.evaluations.map((_, index) => `EVAL ${index + 1}`)],
+    ];
+    const columnOrder = comparison.evaluations.map((agg) => agg.id);
+    for (const row of comparison.taskMatrix) {
+      const cellById = new Map(row.cells.map((cell) => [cell.evaluationId, cell]));
+      matrixRows.push([
+        row.taskKey,
+        row.disagreement ? "!" : "",
+        ...columnOrder.map((id) => {
+          const cell = cellById.get(id);
+          if (!cell) return "-";
+          return cell.meanScore !== null
+            ? `${cell.status} ${fmtScore(cell.meanScore)}`
+            : cell.status;
+        }),
+      ]);
+    }
+    lines.push(...table(matrixRows));
+  }
+  return lines;
+}
+
+async function cmdCompare(inv: Invocation, io: CliIO): Promise<number> {
+  const client = evaluations(clientConfig(inv));
+  const comparison = await client.compare(inv.positionals);
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(comparison));
+  } else {
+    for (const line of comparisonLines(comparison)) io.out(line);
   }
   return 0;
 }
@@ -640,12 +824,27 @@ function benchmarkDetailLines(b: Benchmark): string[] {
     lines.push(...table(rows));
   }
   if (b.tasks && b.tasks.length > 0) {
-    lines.push("", `Tasks (version ${b.tasksVersion ?? "?"}):`);
-    const rows = [["TASK", "AGENT TIMEOUT", "VERIFIER TIMEOUT"]];
+    lines.push("", `Tasks (version ${b.selectedVersion?.version ?? "?"}):`);
+    const rows = [["TASK", "AGENT TIMEOUT", "VERIFIER TIMEOUT", "PROVIDERS"]];
     for (const t of b.tasks) {
-      rows.push([t.taskKey, `${t.agentTimeoutSec}s`, `${t.verifierTimeoutSec}s`]);
+      rows.push([t.taskKey, `${t.agentTimeoutSec}s`, `${t.verifierTimeoutSec}s`, fmtProviders(t.providers)]);
     }
     lines.push(...table(rows));
+    // Name each refusal once below the table; the runner refuses with the
+    // same reason at run time.
+    const refusals = new Map<string, string>();
+    for (const t of b.tasks) {
+      for (const provider of PROVIDER_ORDER) {
+        const verdict = t.providers?.[provider];
+        if (verdict && !verdict.ok && !refusals.has(`${provider}:${verdict.reason}`)) {
+          refusals.set(`${provider}:${verdict.reason}`, `${provider}: ${verdict.reason}`);
+        }
+      }
+    }
+    if (refusals.size > 0) {
+      lines.push("", "Provider limitations:");
+      for (const reason of refusals.values()) lines.push(`  ${reason}`);
+    }
   }
   return lines;
 }
@@ -778,6 +977,12 @@ export async function runCli(argv: string[], io: CliIO = defaultIO): Promise<num
         return await cmdGet(inv, io);
       case "task-runs":
         return await cmdTaskRuns(inv, io);
+      case "task-run":
+        return await cmdTaskRun(inv, io);
+      case "trace":
+        return await cmdTrace(inv, io);
+      case "compare":
+        return await cmdCompare(inv, io);
       case "cancel":
         return await cmdCancel(inv, io);
       case "rerun-failed":
