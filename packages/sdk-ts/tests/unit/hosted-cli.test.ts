@@ -231,6 +231,25 @@ function testParseRunMinimal() {
   assert(!("sandboxProvider" in input), "no provider key when --provider omitted");
 }
 
+function testParseRunNoSpendCap() {
+  console.log("\n--- parseArgs + buildEvaluationInput: --max-spend is optional ---");
+  // Not in the run command's required list: the server applies its own default
+  // ($500, operator-tunable) and echoes the resolved cap back.
+  const inv = parseArgs(["run", "--benchmark", "deep-swe@1.1", "--system", "codex:gpt-5.5"]);
+  const input = buildEvaluationInput(inv);
+  assertEqual(
+    input,
+    {
+      benchmark: "deep-swe@1.1",
+      agentSystems: [{ harness: "codex", model: "gpt-5.5" }],
+    },
+    "run parses without --max-spend"
+  );
+  // ABSENT, never a null/undefined key: an explicit null would defeat the
+  // server-side default the omission is asking for.
+  assert(!("maxModelSpendUsd" in input), "no cap key on the body when --max-spend is omitted");
+}
+
 function testParseAgentSystem() {
   console.log("\n--- parseAgentSystem: harness:model[:version] ---");
   assertEqual(
@@ -257,11 +276,6 @@ function testParseErrors() {
   console.log("\n--- parseArgs: usage errors ---");
   assertThrowsUsage(() => parseArgs([]), "No command", "empty argv");
   assertThrowsUsage(() => parseArgs(["frobnicate"]), "Unknown command", "unknown command");
-  assertThrowsUsage(
-    () => parseArgs(["run", "--benchmark", "b", "--system", "c:m"]),
-    "--max-spend",
-    "run without --max-spend"
-  );
   assertThrowsUsage(
     () => parseArgs(["run", "--benchmark", "b", "--max-spend", "25"]),
     "--system",
@@ -1068,6 +1082,7 @@ async function main() {
 
   testParseRunFull();
   testParseRunMinimal();
+  testParseRunNoSpendCap();
   testParseAgentSystem();
   testParseErrors();
   testParseOtherCommands();

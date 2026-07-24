@@ -767,6 +767,47 @@ async function testRunPostsInputContract() {
   }
 }
 
+async function testRunOmitsAbsentSpendCap() {
+  console.log("\n--- evaluations().run() omits maxModelSpendUsd when it is not given ---");
+  installMockFetch();
+  try {
+    // The server's own default ($500, operator-tunable) applies, and the
+    // response echoes the RESOLVED cap.
+    setMockResponse("/api/evaluations", { status: 202, body: { ...RUN_SUMMARY, maxModelSpendUsd: 500 } });
+
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
+    const evaluation = await e.run({
+      benchmark: "deep-swe@1.1",
+      agentSystems: [{ harness: "codex", model: "gpt-5.5" }],
+    });
+
+    const body = JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string);
+    // ABSENT, never null: an explicit null would defeat the server-side default
+    // the omission is asking for.
+    assert(!("maxModelSpendUsd" in body), "no cap key on the wire when omitted");
+    assertEqual(
+      body,
+      { benchmark: "deep-swe@1.1", agentSystems: [{ harness: "codex", model: "gpt-5.5" }] },
+      "body carries only what was given"
+    );
+    assertEqual(evaluation.maxModelSpendUsd, 500, "response echoes the RESOLVED cap");
+
+    // A stated cap is still forwarded unchanged.
+    await e.run({
+      benchmark: "deep-swe@1.1",
+      agentSystems: [{ harness: "codex", model: "gpt-5.5" }],
+      maxModelSpendUsd: 25,
+    });
+    assertEqual(
+      JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string).maxModelSpendUsd,
+      25,
+      "a stated maxModelSpendUsd is forwarded"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testRunIdempotentReplay() {
   console.log("\n--- evaluations().run() surfaces idempotentReplay ---");
   installMockFetch();
@@ -814,6 +855,38 @@ async function testRunUnknownHarnessVersionIsTypedError() {
       assertEqual(err.code, "harness_version_not_found", "carries the stable error code");
     }
     assert(threw, "an unknown harness version is rejected at creation");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testRunInsufficientCreditsIsTypedError() {
+  console.log("\n--- evaluations().run() surfaces 402 insufficient_credits ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/evaluations", {
+      status: 402,
+      body: {
+        error: {
+          code: "insufficient_credits",
+          message: "Your account is out of credits; add credits before starting an evaluation",
+        },
+      },
+    });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
+    let threw = false;
+    try {
+      await e.run({
+        benchmark: "deep-swe",
+        agentSystems: [{ harness: "codex", model: "gpt-5.5" }],
+      });
+    } catch (err: any) {
+      threw = true;
+      assert(err instanceof EvolveApiError, "throws the typed EvolveApiError");
+      assertEqual(err.status, 402, "carries the 402 status");
+      assertEqual(err.code, "insufficient_credits", "carries the stable error code");
+    }
+    assert(threw, "an account with no credits is refused at creation");
   } finally {
     restoreFetch();
   }
@@ -2213,8 +2286,10 @@ async function main() {
   await testCustomHarnessNotFoundIsTypedError();
   await testCustomHarnessNameTakenIsTypedError();
   await testRunPostsInputContract();
+  await testRunOmitsAbsentSpendCap();
   await testRunIdempotentReplay();
   await testRunUnknownHarnessVersionIsTypedError();
+  await testRunInsufficientCreditsIsTypedError();
   await testRunNonExactHarnessVersionIsTypedError();
   await testGetEvaluationDetail();
   await testListEvaluations();

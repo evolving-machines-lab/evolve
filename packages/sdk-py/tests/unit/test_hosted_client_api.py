@@ -670,6 +670,29 @@ class TestEvaluations:
         assert exc.value.code == 'harness_version_not_found'
 
     @pytest.mark.asyncio
+    async def test_insufficient_credits_is_typed_error(self):
+        import io
+        import urllib.error
+
+        def raise_http_error(request, timeout=None):
+            raise urllib.error.HTTPError(
+                request.full_url, 402, 'Payment Required', {},
+                io.BytesIO(json.dumps({'error': {
+                    'code': 'insufficient_credits',
+                    'message': 'Your account is out of credits; add credits before starting an evaluation',
+                }}).encode('utf-8')),
+            )
+
+        with patch('evolve.hosted.urllib.request.urlopen', raise_http_error):
+            with pytest.raises(EvolveAPIError) as exc:
+                await evaluations_factory(CONFIG).run(
+                    benchmark='deep-swe',
+                    agent_systems=[AgentSystem(harness='codex', model='gpt-5.5')],
+                )
+        assert exc.value.status == 402
+        assert exc.value.code == 'insufficient_credits'
+
+    @pytest.mark.asyncio
     async def test_non_exact_harness_version_is_typed_error(self):
         import io
         import urllib.error
@@ -1182,6 +1205,43 @@ class TestEvaluations:
         assert body['maxModelSpendUsdPerTaskRun'] == 2
         assert list(body) == ['benchmark', 'agentSystems', 'maxModelSpendUsd', 'maxModelSpendUsdPerTaskRun']
         assert evaluation.max_model_spend_usd_per_task_run == 2
+
+    @pytest.mark.asyncio
+    async def test_run_omits_absent_spend_cap(self):
+        # max_model_spend_usd is optional: the server applies its own default
+        # ($500, operator-tunable) and the response echoes the RESOLVED cap.
+        fake = FakeUrlopen([
+            ('/api/evaluations', {**RUN_SUMMARY, 'maxModelSpendUsd': 500}),
+        ])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            evaluation = await evaluations_factory(CONFIG).run(
+                benchmark='deep-swe@1.1',
+                agent_systems=[AgentSystem(harness='codex', model='gpt-5.5')],
+            )
+
+        body = json.loads(fake.requests[0].data.decode('utf-8'))
+        # ABSENT, never None: an explicit null would defeat the server-side
+        # default the omission is asking for.
+        assert 'maxModelSpendUsd' not in body
+        assert body == {
+            'benchmark': 'deep-swe@1.1',
+            'agentSystems': [{'harness': 'codex', 'model': 'gpt-5.5'}],
+        }
+        assert evaluation.max_model_spend_usd == 500
+
+    @pytest.mark.asyncio
+    async def test_run_forwards_stated_spend_cap(self):
+        fake = FakeUrlopen([('/api/evaluations', RUN_SUMMARY)])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            await evaluations_factory(CONFIG).run(
+                benchmark='deep-swe@1.1',
+                agent_systems=[AgentSystem(harness='codex', model='gpt-5.5')],
+                max_model_spend_usd=25,
+            )
+
+        body = json.loads(fake.requests[0].data.decode('utf-8'))
+        assert body['maxModelSpendUsd'] == 25
+        assert list(body) == ['benchmark', 'agentSystems', 'maxModelSpendUsd']
 
     @pytest.mark.asyncio
     async def test_run_posts_sandbox_provider(self):

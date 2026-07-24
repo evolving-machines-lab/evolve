@@ -164,8 +164,12 @@ export interface EvaluationInput {
   runsPerTask?: number;
   /** Parallel task runs (default: 1) */
   concurrency?: number;
-  /** Hard model-spend cap in USD for the whole evaluation */
-  maxModelSpendUsd: number;
+  /**
+   * Hard model-spend cap in USD for the whole evaluation. Optional: omitted,
+   * the server applies its own default ($500, operator-tunable). The response
+   * echoes the RESOLVED cap either way, so an omitted one is never invisible.
+   */
+  maxModelSpendUsd?: number;
   /** Optional per-task-run model-spend cap in USD */
   maxModelSpendUsdPerTaskRun?: number;
   /** Sandbox provider to run on (optional; server default: `e2b`) */

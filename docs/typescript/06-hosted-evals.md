@@ -29,7 +29,7 @@ const active = await catalog.getActive("deep-swe");  // active READY version, gu
 
 `READY` is the one benchmark-version state that accepts evaluations — see [Statuses](#statuses). Tasks expose public fields only — `taskKey`, `agentTimeoutSec`, `verifierTimeoutSec`, and `providers`, the per-provider capability verdict ([Where it runs](#where-it-runs)). Instructions, environments, and tests never leave the server.
 
-Then create the evaluation. `benchmark`, `agentSystems`, and `maxModelSpendUsd` are required:
+Then create the evaluation. Only `benchmark` and `agentSystems` are required:
 
 ```ts
 const evaluation = await evals.run({
@@ -47,7 +47,7 @@ const evaluation = await evals.run({
     tasks: ["task-001", "task-002"],    // (optional) default: every task of the version
     runsPerTask: 1,                     // (optional) default 1
     concurrency: 4,                     // (optional) parallel task runs, default 1
-    maxModelSpendUsd: 25,               // hard model-spend cap for the whole evaluation
+    maxModelSpendUsd: 25,               // (optional) hard model-spend cap for the whole evaluation
     maxModelSpendUsdPerTaskRun: 2,      // (optional) cap per task run
 });
 
@@ -55,6 +55,8 @@ console.log(evaluation.status);        // "QUEUED"
 console.log(evaluation.benchmark);     // "deep-swe@1.1" — the resolved version, echoed back
 console.log(evaluation.counts);        // { agentSystems: 2, tasks: 2, taskRuns: 4 }
 ```
+
+Leave `maxModelSpendUsd` out and the platform applies its own cap of $500 for the whole evaluation. The response always reports the cap that actually applied — `evaluation.maxModelSpendUsd` — so an omitted one is never a mystery.
 
 An evaluation expands to `tasks × agentSystems × runsPerTask` task runs, each in its own sandbox. `sandboxProvider` (optional, default `"e2b"`) picks where those sandboxes run — see [Where it runs](#where-it-runs). Valid harness + model pairs are the same as everywhere in the SDK — see [Getting Started → Harness and Model Pairing](./01-getting-started.md#harness-and-model-pairing). `harness` also accepts a harness you registered yourself — see [Bring your own harness](#bring-your-own-harness).
 
@@ -297,7 +299,7 @@ Run flags, in the order you decide them:
 - `--system <harness:model[:version]>` — required; repeat once per agent system. The optional third part pins the harness version (`codex:gpt-5.5:0.29.0`); omit it to resolve the latest
 - `--runs <n>` — runs per task × system (default 1)
 - `--concurrency <n>` — parallel task runs (default 1)
-- `--max-spend <usd>` — required; evaluation-wide model-spend cap
+- `--max-spend <usd>` — evaluation-wide model-spend cap (default: the platform's $500)
 - `--max-spend-per-run <usd>` — per-task-run cap
 - `--provider <e2b|daytona|modal>` — default `e2b`
 - `--watch` — stream events until the evaluation finishes
@@ -775,7 +777,7 @@ interface Evaluation {
     agentSystems?: AgentSystem[];            // get() only
     runsPerTask: number;
     concurrency: number;
-    maxModelSpendUsd: number;
+    maxModelSpendUsd: number;                // the cap that applied: yours, or the platform default
     maxModelSpendUsdPerTaskRun?: number;     // when one was set
     sandboxProvider: EvalSandboxProvider;
     spentUsd: number;
@@ -877,7 +879,7 @@ try {
 }
 ```
 
-Codes you will actually branch on: `benchmark_not_found`, `benchmark_version_not_found`, `no_active_version`, `version_not_ready`, `unknown_task_keys`, `provider_unsupported`, `evaluation_not_found`, `evaluation_not_terminal`, `no_failed_runs`, `task_run_not_found`, `harness_version_not_found`, `rate_limited` (retry after the `Retry-After` header), `invalid_api_key`, and `invalid_input`.
+Codes you will actually branch on: `benchmark_not_found`, `benchmark_version_not_found`, `no_active_version`, `version_not_ready`, `unknown_task_keys`, `provider_unsupported`, `evaluation_not_found`, `evaluation_not_terminal`, `no_failed_runs`, `task_run_not_found`, `harness_version_not_found`, `insufficient_credits` (402 — the account is out of credits; add some and retry), `rate_limited` (retry after the `Retry-After` header), `invalid_api_key`, and `invalid_input`.
 
 [Custom harnesses](#bring-your-own-harness) add their own: `custom_harness_not_found` (also what another owner's name reads as), `custom_harness_name_taken`, `custom_harness_name_reserved` (the name collides with a built-in harness), `custom_harness_source_required` (neither an install script nor a tarball), `custom_harness_source_conflict` (both), `custom_harness_invalid_env` (declared env tries to override a run-contract key), `custom_harness_invalid_name`, `custom_harness_too_large`, and `custom_harness_limit_reached` (the per-account registration ceiling).
 

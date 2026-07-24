@@ -1339,7 +1339,7 @@ class EvaluationsClient:
         agent_systems: List[Union[AgentSystem, Dict[str, Any]]],
         runs_per_task: Optional[int] = None,
         concurrency: Optional[int] = None,
-        max_model_spend_usd: float,
+        max_model_spend_usd: Optional[float] = None,
         max_model_spend_usd_per_task_run: Optional[float] = None,
         sandbox_provider: Optional[str] = None,
         idempotency_key: Optional[str] = None,
@@ -1350,7 +1350,10 @@ class EvaluationsClient:
         version) or ``"name@version"``; the response always echoes
         ``"name@version"``. ``agent_systems`` accepts :class:`AgentSystem`
         instances or plain dicts with the same fields (``harness``, ``model``,
-        optional ``harness_version``). Supports Idempotency-Key.
+        optional ``harness_version``). ``max_model_spend_usd`` is optional:
+        omitted, the server applies its own default ($500, operator-tunable),
+        and the response echoes the RESOLVED cap either way, so an omitted one
+        is never invisible. Supports Idempotency-Key.
         """
         body: Dict[str, Any] = {'benchmark': benchmark}
         if tasks is not None:
@@ -1363,7 +1366,8 @@ class EvaluationsClient:
             body['runsPerTask'] = runs_per_task
         if concurrency is not None:
             body['concurrency'] = concurrency
-        body['maxModelSpendUsd'] = max_model_spend_usd
+        if max_model_spend_usd is not None:
+            body['maxModelSpendUsd'] = max_model_spend_usd
         if max_model_spend_usd_per_task_run is not None:
             body['maxModelSpendUsdPerTaskRun'] = max_model_spend_usd_per_task_run
         if sandbox_provider is not None:

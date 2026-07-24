@@ -72,7 +72,7 @@ Run options:
   --system <harness:model[:version]>  Agent system; repeatable (at least one required)
   --runs <n>                          Runs per task x system (default 1)
   --concurrency <n>                   Parallel task runs (default 1)
-  --max-spend <usd>                   Evaluation-wide model-spend cap (required)
+  --max-spend <usd>                   Evaluation-wide model-spend cap (default: the server's, $500)
   --max-spend-per-run <usd>           Per-task-run model-spend cap
   --provider <e2b|daytona|modal>      e2b | daytona | modal, default e2b
   --watch                             Stream events until the evaluation finishes
@@ -159,7 +159,7 @@ const COMMAND_SPECS: Record<string, CommandSpec> = {
       provider: "string",
       watch: "boolean",
     },
-    required: ["benchmark", "system", "max-spend"],
+    required: ["benchmark", "system"],
     minPositionals: 0,
     maxPositionals: 0,
   },
@@ -380,7 +380,7 @@ export function buildEvaluationInput(inv: Invocation): EvaluationInput {
     agentSystems: (f.system as string[]).map(parseAgentSystem),
     ...(f.runs !== undefined ? { runsPerTask: f.runs as number } : {}),
     ...(f.concurrency !== undefined ? { concurrency: f.concurrency as number } : {}),
-    maxModelSpendUsd: f["max-spend"] as number,
+    ...(f["max-spend"] !== undefined ? { maxModelSpendUsd: f["max-spend"] as number } : {}),
     ...(f["max-spend-per-run"] !== undefined
       ? { maxModelSpendUsdPerTaskRun: f["max-spend-per-run"] as number }
       : {}),

@@ -57,13 +57,15 @@ Tasks expose public fields only — `task_key`, `agent_timeout_sec`, `verifier_t
 |---------|---------|--------------|
 | `benchmark` | required | `'name'` (active `READY` version) or `'name@version'` |
 | `agent_systems` | required | list of `AgentSystem(harness=..., model=..., harness_version=None)` |
-| `max_model_spend_usd` | required | hard model-spend cap (USD) for the whole evaluation |
 | `tasks` | all tasks | task keys to run |
 | `runs_per_task` | `1` | runs per task × agent system |
 | `concurrency` | `1` | parallel task runs |
+| `max_model_spend_usd` | `500` | hard model-spend cap (USD) for the whole evaluation |
 | `max_model_spend_usd_per_task_run` | none | model-spend cap (USD) per task run |
 | `sandbox_provider` | `'e2b'` | see [Where it runs](#where-it-runs) |
 | `idempotency_key` | none | safe-retry key (below) |
+
+Leave `max_model_spend_usd` out and the platform applies its own cap of $500 for the whole evaluation. The response always reports the cap that actually applied — `evaluation.max_model_spend_usd` — so an omitted one is never a mystery.
 
 An evaluation expands to `tasks × agent_systems × runs_per_task` task runs, each in its own sandbox. Valid harness + model pairs are listed once in [Getting Started → Harness and Model Pairing](./01-getting-started.md#harness-and-model-pairing). `harness` also accepts a harness you registered yourself — see [Bring your own harness](#bring-your-own-harness).
 
@@ -642,7 +644,7 @@ class Evaluation:
     benchmark: str                        # 'name@version'
     runs_per_task: int
     concurrency: int
-    max_model_spend_usd: float
+    max_model_spend_usd: float            # the cap that applied: yours, or the platform default
     sandbox_provider: str                 # 'e2b' | 'daytona' | 'modal'
     spent_usd: float
     counts: EvaluationCounts              # agent_systems, tasks, task_runs
@@ -765,7 +767,7 @@ except EvolveAPIError as error:
     print(error)          # 'Benchmark version deep-swe@1.2 is in state VALIDATING; ...'
 ```
 
-Codes you will actually branch on: `benchmark_not_found`, `benchmark_version_not_found`, `no_active_version`, `version_not_ready`, `unknown_task_keys`, `provider_unsupported`, `evaluation_not_found`, `evaluation_not_terminal`, `no_failed_runs`, `task_run_not_found`, `harness_version_not_found`, `rate_limited`, `invalid_api_key`, and `invalid_input`.
+Codes you will actually branch on: `benchmark_not_found`, `benchmark_version_not_found`, `no_active_version`, `version_not_ready`, `unknown_task_keys`, `provider_unsupported`, `evaluation_not_found`, `evaluation_not_terminal`, `no_failed_runs`, `task_run_not_found`, `harness_version_not_found`, `insufficient_credits` (402 — the account is out of credits; add some and retry), `rate_limited`, `invalid_api_key`, and `invalid_input`.
 
 [Custom harnesses](#bring-your-own-harness) add their own: `custom_harness_not_found` (also what another owner's name reads as), `custom_harness_name_taken`, `custom_harness_name_reserved` (the name collides with a built-in harness), `custom_harness_source_required` (neither an install script nor a tarball), `custom_harness_source_conflict` (both), `custom_harness_invalid_env` (declared env tries to override a run-contract key), `custom_harness_invalid_name`, `custom_harness_too_large`, and `custom_harness_limit_reached` (the per-account registration ceiling).
 
