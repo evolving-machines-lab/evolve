@@ -139,6 +139,30 @@ export class DaytonaImagePullError extends Error {
   }
 }
 
+/**
+ * Typed error for create-time sizing requests an EXISTING snapshot cannot
+ * honor. Daytona pins cpu/memory/disk on the SNAPSHOT at build time;
+ * create-from-snapshot has no resources parameter, so a `resources` request
+ * against a cached snapshot would be silently ignored. Per the provider law
+ * (reject what you cannot enforce) it is refused loudly instead: pre-build a
+ * snapshot with the desired sizing under its own name, or drop `resources`.
+ */
+export class DaytonaResourcesError extends Error {
+  /** The existing snapshot whose pinned sizing cannot be overridden. */
+  readonly snapshot: string;
+
+  constructor(snapshot: string) {
+    super(
+      `Daytona snapshot "${snapshot}" already exists and pins its cpu/memory/disk sizing — ` +
+        "create-from-snapshot cannot resize it, so the requested `resources` cannot be enforced. " +
+        "Pre-build a snapshot with the desired sizing under its own name (sizing-addressed), " +
+        "or omit `resources` to accept the snapshot's pinned sizing."
+    );
+    this.name = "DaytonaResourcesError";
+    this.snapshot = snapshot;
+  }
+}
+
 // ============================================================
 // COMMAND WRAPPING
 // ============================================================
@@ -496,7 +520,13 @@ export interface SandboxCreateOptions {
   metadata?: Record<string, string>;
   timeoutMs?: number;
   workingDirectory?: string;
-  /** Resource allocation for the sandbox */
+  /**
+   * Resource allocation (cpu cores, memory GiB, disk GiB), applied when a
+   * SNAPSHOT IS BUILT for the image (Daytona pins sizing on the snapshot).
+   * When the named snapshot ALREADY exists it cannot be resized at create —
+   * declaring resources then throws DaytonaResourcesError rather than
+   * silently ignoring them (pre-build a sizing-addressed snapshot instead).
+   */
   resources?: SandboxResources;
   /**
    * Provider-neutral outbound network policy, enforced by kernel iptables on
@@ -973,10 +1003,20 @@ export class DaytonaProvider implements SandboxProvider {
 
     let sandbox: DaytonaSandbox;
 
+    // True when the caller declared any create-time sizing. An EXISTING
+    // snapshot pins its sizing (create-from-snapshot cannot resize), so the
+    // fast path below must refuse rather than silently ignore the request.
+    const wantsResources =
+      options.resources !== undefined &&
+      (options.resources.cpu !== undefined ||
+        options.resources.memory !== undefined ||
+        options.resources.disk !== undefined);
+
     // Try to use existing snapshot first (fast path for returning users or ./build.sh daytona)
     try {
       const snapshot = await this.client.snapshot.get(imageName);
       if (snapshot && snapshot.state === "active") {
+        if (wantsResources) throw new DaytonaResourcesError(imageName);
         console.log(`[daytona] Using cached snapshot: ${imageName}`);
         sandbox = await this.client.create(
           {
@@ -988,7 +1028,9 @@ export class DaytonaProvider implements SandboxProvider {
       } else {
         throw new Error("Snapshot not active");
       }
-    } catch {
+    } catch (fastPathErr) {
+      // The typed sizing refusal is a final verdict, not a build trigger.
+      if (fastPathErr instanceof DaytonaResourcesError) throw fastPathErr;
       // Snapshot doesn't exist — create a named one from the Docker image, then use it.
       // Private registry images (ECR etc.) require credentials pre-registered in the
       // Daytona dashboard (Registries) — there is no per-call image pull secret.

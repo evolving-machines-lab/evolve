@@ -50,6 +50,20 @@ function isBinaryFile(path: string): boolean {
   return BINARY_EXTENSIONS.has(ext);
 }
 
+/**
+ * Typed error for create-time sizing requests E2B cannot enforce.
+ * E2B sandboxes inherit cpu/memory from their TEMPLATE (Template.build
+ * cpuCount/memoryMB; disk is plan-fixed) — Sandbox.create has no sizing
+ * parameters, so a `resources` request would be silently ignored. Per the
+ * provider law (reject what you cannot enforce) it is refused loudly here.
+ */
+export class E2BResourcesError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "E2BResourcesError";
+  }
+}
+
 // ============================================================
 // CORE TYPES
 // ============================================================
@@ -148,6 +162,14 @@ export interface SandboxCreateOptions {
   metadata?: Record<string, string>;
   timeoutMs?: number;
   workingDirectory?: string;
+  /**
+   * Per-sandbox compute sizing (cpu cores, memory GiB, disk GiB). E2B sizes
+   * sandboxes at TEMPLATE BUILD time only (Template.build cpuCount/memoryMB;
+   * disk is plan-fixed) — create-time sizing cannot be enforced, so any value
+   * here is REJECTED with E2BResourcesError rather than silently ignored.
+   * Bake sizing into the template the `image` names instead.
+   */
+  resources?: { cpu?: number; memory?: number; disk?: number };
   network?: {
     outbound: "open" | "blocked";
     allowedDestinations?: string[];
@@ -591,6 +613,21 @@ export class E2BProvider implements SandboxProvider {
   }
 
   async create(options: SandboxCreateOptions): Promise<SandboxInstance> {
+    if (
+      options.resources &&
+      (options.resources.cpu !== undefined ||
+        options.resources.memory !== undefined ||
+        options.resources.disk !== undefined)
+    ) {
+      // Provider law: reject what cannot be enforced, never silently ignore.
+      // E2B sandboxes inherit sizing from their template (Template.build
+      // cpuCount/memoryMB; disk is plan-fixed) — there is no create-time knob.
+      throw new E2BResourcesError(
+        "E2B cannot size a sandbox at create time: sizing is fixed by the template " +
+          "(Template.build cpuCount/memoryMB; disk is plan-fixed). Build a template " +
+          "with the desired resources and pass it as `image` instead of `resources`."
+      );
+    }
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
     const templateId = options.image ?? this.templateId ?? "evolve-all";
     if (options.network?.outbound === "open" && options.network.allowedDestinations?.length) {

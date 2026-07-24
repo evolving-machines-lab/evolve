@@ -26,6 +26,7 @@ import {
   _testDaytonaStateToEvolveState,
   DAYTONA_MAX_NETWORK_ALLOWLIST,
   DaytonaNetworkPolicyError,
+  DaytonaResourcesError,
   DaytonaImagePullError,
   DaytonaCommands,
   createDaytonaProvider,
@@ -587,6 +588,55 @@ async function testCreateNoLongerRejectsUserAndNetwork(): Promise<void> {
   );
 }
 
+async function testCreateRejectsResourcesOnCachedSnapshot(): Promise<void> {
+  console.log("\n[6c] DaytonaProvider.create() - resources vs cached snapshot: typed refusal, never silent ignore");
+
+  const provider = createDaytonaProvider({ apiKey: "test-key" });
+  // Patch the internal client: the snapshot exists and is active (fast path).
+  // create() throws a marker so we can prove which path was taken.
+  const markerError = new Error("MARKER_CLIENT_CREATE_CALLED");
+  (provider as unknown as { client: unknown }).client = {
+    snapshot: { get: async () => ({ state: "active" }) },
+    create: async () => {
+      throw markerError;
+    },
+  };
+
+  // Declared sizing + existing snapshot → typed refusal BEFORE any create call
+  // (create-from-snapshot cannot resize; silence would under/over-provision).
+  let sized: unknown;
+  try {
+    await provider.create({ image: "eval-env-cafe", resources: { cpu: 2, memory: 8, disk: 20 } });
+  } catch (e) {
+    sized = e;
+  }
+  assert(sized instanceof DaytonaResourcesError, "resources + cached snapshot throws DaytonaResourcesError");
+  assert(
+    (sized as DaytonaResourcesError).snapshot === "eval-env-cafe",
+    "the typed error names the pinning snapshot"
+  );
+  assert(String(sized).includes("cannot be enforced"), "message states the enforcement gap");
+
+  // No resources → the fast path proceeds to client.create (marker surfaces),
+  // proving the refusal is scoped to declared sizing only.
+  let unsized: unknown;
+  try {
+    await provider.create({ image: "eval-env-cafe" });
+  } catch (e) {
+    unsized = e;
+  }
+  assert(unsized === markerError, "without resources the cached-snapshot fast path is unchanged");
+
+  // Empty resources object declares nothing → fast path unchanged too.
+  let empty: unknown;
+  try {
+    await provider.create({ image: "eval-env-cafe", resources: {} });
+  } catch (e) {
+    empty = e;
+  }
+  assert(empty === markerError, "an empty resources object is not a sizing declaration");
+}
+
 // =============================================================================
 // [7] DaytonaCommands — mock-based session exec wiring
 // =============================================================================
@@ -713,6 +763,7 @@ const tests = [
   // [6] provider create validation
   testCreateValidatesBeforeNetwork,
   testCreateNoLongerRejectsUserAndNetwork,
+  testCreateRejectsResourcesOnCachedSnapshot,
   // [7] DaytonaCommands
   testCommandsRunAsRootUsesSudoWrapper,
   testCommandsRunDefaultUserNoWrapper,

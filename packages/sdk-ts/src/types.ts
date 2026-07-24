@@ -113,6 +113,14 @@ export interface SandboxCreateOptions {
   metadata?: Record<string, string>;
   timeoutMs?: number;
   workingDirectory?: string;
+  /**
+   * Per-sandbox compute sizing: cpu in cores, memory and disk in GiB.
+   * Providers must reject entries they cannot enforce at create time, never
+   * silently ignore them (modal sizes cpu/memory at create but cannot size
+   * disk; e2b sizes at template build only; daytona sizes at snapshot build,
+   * so an existing snapshot cannot be resized at create).
+   */
+  resources?: { cpu?: number; memory?: number; disk?: number };
   /** Providers must reject policies they cannot enforce; never silently ignore them. */
   network?: SandboxNetworkPolicy;
   /**

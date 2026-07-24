@@ -159,6 +159,49 @@ function wrapCommand(
   return ["su", user, "-c", `echo ${encoded} | base64 -d | bash`];
 }
 
+/**
+ * Typed error for sizing requests Modal's create() cannot enforce.
+ * The installed Modal JS SDK sizes cpu (cores) and memoryMiB at create time
+ * only — there is no disk-size parameter, so a requested disk size would be
+ * silently ignored. Per the provider law (reject what you cannot enforce,
+ * never silently ignore) it is refused loudly here.
+ */
+export class ModalResourcesError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ModalResourcesError";
+  }
+}
+
+/** Modal create-time sizing defaults (the provider's historical constants). */
+const DEFAULT_CPU_CORES = 4;
+const DEFAULT_MEMORY_MIB = 4096;
+
+/**
+ * Map Evolve's provider-neutral resources (cpu cores, memory GiB, disk GiB)
+ * onto Modal's create() params (cpu cores, memoryMiB). Fractional GiB rounds
+ * UP so the sandbox never gets less memory than requested. `disk` throws
+ * ModalResourcesError — the SDK cannot express it.
+ */
+function mapResources(
+  resources?: SandboxCreateOptions["resources"]
+): { cpu: number; memoryMiB: number } {
+  if (resources?.disk !== undefined) {
+    throw new ModalResourcesError(
+      `Modal's JS SDK has no create-time disk-size parameter, so a ${resources.disk} GiB ` +
+        "disk request cannot be enforced. Drop `resources.disk` (containers get Modal's " +
+        "default disk quota) or run on a provider that sizes disk."
+    );
+  }
+  return {
+    cpu: resources?.cpu ?? DEFAULT_CPU_CORES,
+    memoryMiB:
+      resources?.memory !== undefined
+        ? Math.ceil(resources.memory * 1024)
+        : DEFAULT_MEMORY_MIB,
+  };
+}
+
 /** Modal create() params derived from Evolve's provider-neutral network policy. */
 interface ModalNetworkCreateParams {
   blockNetwork?: boolean;
@@ -419,6 +462,14 @@ export interface SandboxCreateOptions {
   /** Sandbox lifetime in ms. Modal hard-caps lifetime at 24h (MODAL_MAX_LIFETIME_MS). */
   timeoutMs?: number;
   workingDirectory?: string;
+  /**
+   * Per-sandbox compute sizing: cpu in cores, memory in GiB — mapped to
+   * Modal's create-time cpu / memoryMiB requests (defaults when omitted:
+   * 4 cores / 4 GiB). `disk` is REJECTED with ModalResourcesError: the Modal
+   * JS SDK exposes no disk-size parameter, so a specific disk size cannot be
+   * enforced (containers get Modal's default disk quota).
+   */
+  resources?: { cpu?: number; memory?: number; disk?: number };
   /**
    * Provider-neutral outbound network policy, enforced by Modal's network
    * stack. "blocked" with no allowedDestinations drops all egress; with
@@ -1095,6 +1146,7 @@ export class ModalProvider implements SandboxProvider {
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
     validateTimeout(timeoutMs);
     const networkParams = mapNetworkPolicy(options.network);
+    const sizing = mapResources(options.resources);
     const user = options.user ?? DEFAULT_SANDBOX_USER;
 
     const app = await this.getApp();
@@ -1126,10 +1178,11 @@ export class ModalProvider implements SandboxProvider {
     };
 
     // Use client.sandboxes.create() - the modern API
-    // Resources match E2B defaults: 4 CPU, 4GB memory
+    // Sizing from options.resources (cpu cores / memory GiB -> memoryMiB);
+    // defaults preserve the provider's historical 4 CPU / 4 GiB constants.
     const sandbox = await this.client.sandboxes.create(app, builtImage, {
-      cpu: 4,
-      memoryMiB: 4096,
+      cpu: sizing.cpu,
+      memoryMiB: sizing.memoryMiB,
       timeoutMs,
       workdir: options.workingDirectory,
       env,
@@ -1220,6 +1273,7 @@ export function createModalProvider(config: ModalConfig = {}): SandboxProvider {
 
 export const _testWrapCommand = wrapCommand;
 export const _testMapNetworkPolicy = mapNetworkPolicy;
+export const _testMapResources = mapResources;
 export const _testResolveImageRegistry = resolveImageRegistry;
 export const _testBuildSandboxInfo = buildSandboxInfo;
 export const _testValidateTimeout = validateTimeout;

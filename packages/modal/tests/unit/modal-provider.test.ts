@@ -24,10 +24,12 @@ import {
   _testResolveImageRegistry,
   _testBuildSandboxInfo,
   _testValidateTimeout,
+  _testMapResources,
   MODAL_MAX_LIFETIME_MS,
   MODAL_STDIN_CHUNK_BYTES,
   ModalSandboxLifetimeError,
   ModalNetworkPolicyError,
+  ModalResourcesError,
   ModalCommands,
   ModalFiles,
   createModalProvider,
@@ -294,6 +296,56 @@ async function testNetworkInvalidIpv4Rejected(): Promise<void> {
       `"${dest}" message states the octet/prefix ranges`
     );
   }
+}
+
+// =============================================================================
+// [2x] mapResources() — Evolve sizing → Modal create params
+// =============================================================================
+
+async function testMapResourcesDefaults(): Promise<void> {
+  console.log("\n[2j] mapResources() - defaults preserved when no sizing declared");
+
+  assertEqual(
+    _testMapResources(undefined),
+    { cpu: 4, memoryMiB: 4096 },
+    "No resources → historical 4 CPU / 4096 MiB defaults"
+  );
+  assertEqual(
+    _testMapResources({}),
+    { cpu: 4, memoryMiB: 4096 },
+    "Empty resources → same defaults"
+  );
+}
+
+async function testMapResourcesHonored(): Promise<void> {
+  console.log("\n[2k] mapResources() - cpu cores + memory GiB → cpu / memoryMiB");
+
+  assertEqual(
+    _testMapResources({ cpu: 2, memory: 8 }),
+    { cpu: 2, memoryMiB: 8192 },
+    "2 cores / 8 GiB → cpu 2, memoryMiB 8192"
+  );
+  assertEqual(
+    _testMapResources({ memory: 2.5 }),
+    { cpu: 4, memoryMiB: 2560 },
+    "Fractional GiB rounds up in MiB (2.5 GiB → 2560 MiB), cpu keeps default"
+  );
+}
+
+async function testMapResourcesDiskRejected(): Promise<void> {
+  console.log("\n[2l] mapResources() - disk sizing is typed-rejected (SDK cannot express it)");
+
+  let error: unknown;
+  try {
+    _testMapResources({ cpu: 2, memory: 8, disk: 20 });
+  } catch (e) {
+    error = e;
+  }
+  assert(error instanceof ModalResourcesError, "disk request throws ModalResourcesError");
+  assert(
+    String(error).includes("disk"),
+    "message names the disk limitation"
+  );
 }
 
 // =============================================================================
@@ -774,6 +826,10 @@ const tests = [
   testNetworkPortRejected,
   testNetworkTrueIpv6StillCidr,
   testNetworkInvalidIpv4Rejected,
+  // [2x] mapResources
+  testMapResourcesDefaults,
+  testMapResourcesHonored,
+  testMapResourcesDiskRejected,
   // [3] resolveImageRegistry
   testImageRegistryDetection,
   // [4] buildSandboxInfo
