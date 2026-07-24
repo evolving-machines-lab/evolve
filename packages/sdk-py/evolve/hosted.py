@@ -81,10 +81,19 @@ class BenchmarkVersion:
 
 @dataclass
 class Task:
-    """Public task fields only — instructions/environments/tests never leave the server."""
+    """Public task fields only — instructions/environments/tests never leave the server.
+
+    ``providers`` maps each sandbox provider to a verdict dict — ``{'ok': True}``
+    when the task can run there, ``{'ok': False, 'reason': ...}`` naming the
+    limitation (e.g. a multi-container task on a provider that cannot host its
+    services). Advisory for choosing an evaluation's provider; a run on a
+    refused provider fails fast with the same reason. ``None`` on responses
+    from older servers.
+    """
     task_key: str
     agent_timeout_sec: int
     verifier_timeout_sec: int
+    providers: Optional[Dict[str, Dict[str, Any]]] = None
 
 
 @dataclass
@@ -357,6 +366,7 @@ def _map_task(data: Dict[str, Any]) -> Task:
         task_key=data['taskKey'],
         agent_timeout_sec=int(data.get('agentTimeoutSec', 0)),
         verifier_timeout_sec=int(data.get('verifierTimeoutSec', 0)),
+        providers=data.get('providers'),
     )
 
 

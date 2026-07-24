@@ -56,11 +56,25 @@ export interface BenchmarkVersion {
   createdAt?: string;
 }
 
+/**
+ * One provider's verdict for a task: runnable there, or refused with the
+ * limitation named (e.g. a multi-container task on a provider that cannot
+ * host its services, or declared resources above the provider's ceiling).
+ */
+export type TaskProviderVerdict = { ok: true } | { ok: false; reason: string };
+
 /** Public task fields only — instructions, environments, and tests never leave the server */
 export interface Task {
   taskKey: string;
   agentTimeoutSec: number;
   verifierTimeoutSec: number;
+  /**
+   * Where the task can run, per sandbox provider. Advisory for planning an
+   * evaluation's provider choice — a run on a provider marked { ok: false }
+   * fails fast with the same reason instead of running with degraded
+   * semantics. Absent on responses from older servers.
+   */
+  providers?: Record<EvalSandboxProvider, TaskProviderVerdict>;
 }
 
 /**

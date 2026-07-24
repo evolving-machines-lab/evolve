@@ -84,6 +84,7 @@ export type {
   RunEvaluationOptions,
   SpendSource,
   Task,
+  TaskProviderVerdict,
   TaskRun,
   TaskRunCounts,
   TaskRunDetail,

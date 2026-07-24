@@ -334,6 +334,7 @@ export {
   type BenchmarkVersion,
   type BenchmarkVersionState,
   type Task,
+  type TaskProviderVerdict,
   type AgentSystem,
   type EvaluationInput,
   type Evaluation,
