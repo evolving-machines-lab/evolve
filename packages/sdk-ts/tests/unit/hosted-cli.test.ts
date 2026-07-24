@@ -321,6 +321,28 @@ function testParseOtherCommands() {
   );
   assertThrowsUsage(() => parseArgs(["compare", "eval-1"]), "<id> <id>", "compare needs at least 2 ids");
   assertThrowsUsage(() => parseArgs(["trace", "eval-1"]), "<id> <run-id>", "trace needs both ids");
+  assertEqual(
+    parseArgs(["regrade", "eval-1"]),
+    { command: "regrade", positionals: ["eval-1"], flags: {} },
+    "regrade whole evaluation"
+  );
+  assertEqual(
+    parseArgs(["regrade", "eval-1", "run-9"]),
+    { command: "regrade", positionals: ["eval-1", "run-9"], flags: {} },
+    "regrade one run (optional run-id positional)"
+  );
+  assertEqual(
+    parseArgs(["regrade", "eval-1", "--status", "SCORED,SCORING_ERROR", "--task", "abc"]),
+    { command: "regrade", positionals: ["eval-1"], flags: { status: "SCORED,SCORING_ERROR", task: "abc" } },
+    "regrade with --status + --task filter"
+  );
+  assertEqual(
+    parseArgs(["regrade-job", "job-1"]),
+    { command: "regrade-job", positionals: ["job-1"], flags: {} },
+    "regrade-job read"
+  );
+  assertThrowsUsage(() => parseArgs(["regrade"]), "<id>", "regrade needs an evaluation id");
+  assertThrowsUsage(() => parseArgs(["regrade-job"]), "<job-id>", "regrade-job needs a job id");
 }
 
 function testParseImport() {
@@ -711,6 +733,90 @@ async function testUsageErrorExitCode() {
   }
 }
 
+const CLI_REGRADE_JOB = {
+  id: "job-1",
+  sourceEvaluationId: "eval-1",
+  status: "COMPLETED",
+  sandboxProvider: "e2b",
+  filter: { taskKey: "demo-task" },
+  counts: { results: 1, byStatus: { SCORED: 1 } },
+  createdAt: "2026-07-24T00:00:00Z",
+  updatedAt: "2026-07-24T00:05:00Z",
+  results: [
+    {
+      id: "rr-1",
+      sourceTaskRunId: "run-1",
+      taskKey: "demo-task",
+      status: "SCORED",
+      score: 1,
+      metrics: null,
+      sourceScore: 1,
+      sourceStatus: "SCORED",
+      scoreDelta: 0,
+      verifierMode: "separate",
+      verifierDigest: "abcd",
+      verifierSandboxId: "sbx-1",
+      failurePhase: null,
+      failureDetail: null,
+      phaseTimingsMs: { verifyMs: 1200 },
+      createdAt: "2026-07-24T00:00:00Z",
+      settledAt: "2026-07-24T00:05:00Z",
+    },
+  ],
+};
+
+async function testRegradeCliCreate() {
+  console.log("\n--- runCli: regrade <id> --task posts the filter and renders the job ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/evaluations/eval-1/regrade", { status: 202, body: CLI_REGRADE_JOB });
+    const { io, out, err } = captureIO();
+    const code = await runCli(
+      ["regrade", "eval-1", "--task", "demo-task", "--api-key", "test-key", "--base-url", BASE],
+      io
+    );
+    assertEqual(code, 0, "exit 0");
+    assertEqual(err, [], "nothing on stderr");
+    const call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.endsWith("/api/evaluations/eval-1/regrade"), "hits the per-evaluation regrade route");
+    assertEqual(call.init?.method, "POST", "uses POST");
+    assertEqual(JSON.parse(call.init?.body as string), { taskKey: "demo-task" }, "sends the task filter");
+    assert(out.some((l) => l.includes("job-1")), "renders the job id");
+    assert(out.some((l) => l.includes("regrade-job job-1")), "prints the follow-up read hint");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testRegradeCliRead() {
+  console.log("\n--- runCli: regrade-job <id> renders the results table (WAS/NOW/Δ) ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/regrades/job-1", { status: 200, body: CLI_REGRADE_JOB });
+    const { io, out } = captureIO();
+    const code = await runCli(["regrade-job", "job-1", "--api-key", "test-key", "--base-url", BASE], io);
+    assertEqual(code, 0, "exit 0");
+    const call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.endsWith("/api/regrades/job-1"), "hits the regrade-job read route");
+    const text = out.join("\n");
+    assert(text.includes("demo-task"), "renders the source task key");
+    assert(text.includes("WAS") && text.includes("NOW"), "renders the was/now delta columns");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testRegradeCliPerRunRejectsFilter() {
+  console.log("\n--- runCli: regrade <id> <run-id> --status is a usage error ---");
+  const { io, err } = captureIO();
+  const code = await runCli(
+    ["regrade", "eval-1", "run-1", "--status", "SCORED", "--api-key", "k", "--base-url", BASE],
+    io
+  );
+  assertEqual(code, 2, "usage error exit 2");
+  assert(err.some((l) => l.includes("whole-evaluation regrade")), "explains filters are for whole-eval regrade");
+}
+
 // =============================================================================
 // RUN
 // =============================================================================
@@ -731,6 +837,9 @@ async function main() {
   await testImportWatchEndToEnd();
   await testImportWatchFailedAndStatus();
   await testUsageErrorExitCode();
+  await testRegradeCliCreate();
+  await testRegradeCliRead();
+  await testRegradeCliPerRunRejectsFilter();
 
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

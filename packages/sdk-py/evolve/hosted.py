@@ -336,6 +336,69 @@ class EvaluationComparison:
 
 
 @dataclass
+class RegradeResult:
+    """One regrade of one source task run: the verifier re-run against that run's
+    RECORDED inputs, in a fresh separate verifier box. The agent phase is never
+    re-run and the source run is never modified — ``source_score``/
+    ``source_status`` are immutable snapshots taken when the regrade was created.
+    """
+    id: str
+    source_task_run_id: str
+    task_key: str
+    status: str
+    score: Optional[float]
+    metrics: Optional[Dict[str, float]]
+    source_score: Optional[float]
+    source_status: str
+    # score − source_score when both are real numbers, else None (Harbor delta)
+    score_delta: Optional[float]
+    # Where the verifier ran — always "separate" (regrade only re-runs separate)
+    verifier_mode: str
+    # Content digest of the resolved target verifier spec = the "verifier
+    # version"; equal to the source run's own verifier means a reproduce.
+    verifier_digest: Optional[str]
+    verifier_sandbox_id: Optional[str]
+    failure_phase: Optional[str]
+    failure_detail: Optional[str]
+    phase_timings_ms: Optional[Dict[str, float]]
+    created_at: str
+    settled_at: Optional[str]
+
+
+@dataclass
+class RegradeFilter:
+    """The filter applied when selecting source runs for a per-evaluation regrade."""
+    status: Optional[List[str]] = None
+    task_key: Optional[str] = None
+
+
+@dataclass
+class RegradeJobCounts:
+    """Regrade job size: total results + a histogram by regrade status."""
+    results: int
+    by_status: Dict[str, int]
+
+
+@dataclass
+class RegradeJob:
+    """A regrade job = a collection of regrade results.
+
+    A per-task-run regrade holds one result; a per-evaluation regrade holds one
+    per eligible source run. ``status`` is derived from the results
+    ("QUEUED"|"RUNNING"|"COMPLETED"). ``results`` is present on read + create.
+    """
+    id: str
+    source_evaluation_id: str
+    status: str
+    sandbox_provider: str
+    counts: RegradeJobCounts
+    created_at: str
+    updated_at: str
+    filter: Optional[RegradeFilter] = None
+    results: Optional[List[RegradeResult]] = None
+
+
+@dataclass
 class BenchmarkImportFailure:
     """One task that failed to parse or validate during an import."""
     task_key: str
@@ -572,6 +635,57 @@ def _map_import_error(data: Any) -> Optional[BenchmarkImportError]:
             for item in data.get('failures', [])
             if isinstance(item, dict)
         ],
+    )
+
+
+def _map_regrade_result(data: Dict[str, Any]) -> RegradeResult:
+    return RegradeResult(
+        id=data['id'],
+        source_task_run_id=data.get('sourceTaskRunId', ''),
+        task_key=data.get('taskKey', ''),
+        status=data.get('status', ''),
+        score=data.get('score'),
+        metrics=data.get('metrics'),
+        source_score=data.get('sourceScore'),
+        source_status=data.get('sourceStatus', ''),
+        score_delta=data.get('scoreDelta'),
+        verifier_mode=data.get('verifierMode', 'separate'),
+        verifier_digest=data.get('verifierDigest'),
+        verifier_sandbox_id=data.get('verifierSandboxId'),
+        failure_phase=data.get('failurePhase'),
+        failure_detail=data.get('failureDetail'),
+        phase_timings_ms=_snake_keys(data.get('phaseTimingsMs')),
+        created_at=data.get('createdAt', ''),
+        settled_at=data.get('settledAt'),
+    )
+
+
+def _map_regrade_filter(data: Any) -> Optional[RegradeFilter]:
+    if not isinstance(data, dict):
+        return None
+    return RegradeFilter(status=data.get('status'), task_key=data.get('taskKey'))
+
+
+def _map_regrade_job(data: Dict[str, Any]) -> RegradeJob:
+    counts = data.get('counts') if isinstance(data.get('counts'), dict) else {}
+    results = data.get('results')
+    return RegradeJob(
+        id=data['id'],
+        source_evaluation_id=data.get('sourceEvaluationId', ''),
+        status=data.get('status', ''),
+        sandbox_provider=data.get('sandboxProvider', ''),
+        counts=RegradeJobCounts(
+            results=int(counts.get('results', 0)),
+            by_status=counts.get('byStatus') or {},
+        ),
+        created_at=data.get('createdAt', ''),
+        updated_at=data.get('updatedAt', ''),
+        filter=_map_regrade_filter(data.get('filter')),
+        results=(
+            [_map_regrade_result(item) for item in results]
+            if isinstance(results, list)
+            else None
+        ),
     )
 
 
@@ -1294,6 +1408,53 @@ class EvaluationsClient:
             headers=headers,
         )
         return _map_evaluation(raw)
+
+    async def regrade(
+        self,
+        id: str,
+        *,
+        status: Optional[List[str]] = None,
+        task_key: Optional[str] = None,
+    ) -> RegradeJob:
+        """Regrade a terminal evaluation: re-run the verifier of every REGRADABLE
+        run (settled separate-mode runs, which recorded their verifier inputs)
+        against those recorded inputs, in fresh separate verifier boxes.
+
+        The agent phase is never re-run and the source runs are never modified.
+        ``status`` / ``task_key`` narrow the set of source runs. Returns a new
+        regrade job with one result per selected run.
+        """
+        body: Dict[str, Any] = {}
+        if status is not None:
+            body['status'] = status
+        if task_key is not None:
+            body['taskKey'] = task_key
+        raw = await self._http.request_json(
+            f'/api/evaluations/{urllib.parse.quote(id)}/regrade', method='POST', body=body
+        )
+        return _map_regrade_job(raw)
+
+    async def regrade_task_run(self, id: str, run_id: str) -> RegradeJob:
+        """Regrade one settled task run: re-run its verifier against its recorded
+        inputs in a fresh separate verifier box.
+
+        Refused (``regrade_source_ineligible``) for shared-mode or
+        pre-persistence runs. Returns a regrade job with one result.
+        """
+        raw = await self._http.request_json(
+            f'/api/evaluations/{urllib.parse.quote(id)}'
+            f'/task-runs/{urllib.parse.quote(run_id)}/regrade',
+            method='POST',
+            body={},
+        )
+        return _map_regrade_job(raw)
+
+    async def regrade_job(self, job_id: str) -> RegradeJob:
+        """Read a regrade job and its per-run results (with lineage + score deltas)."""
+        raw = await self._http.request_json(
+            f'/api/regrades/{urllib.parse.quote(job_id)}'
+        )
+        return _map_regrade_job(raw)
 
     async def export(
         self,

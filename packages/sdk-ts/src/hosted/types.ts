@@ -405,6 +405,102 @@ export interface EvaluationComparison {
 }
 
 // =============================================================================
+// REGRADE
+// =============================================================================
+
+/**
+ * A regrade result's verdict status. Mirrors the reward law: a valid reward
+ * (including 0) = SCORED; verifier crash/out-of-domain = SCORING_ERROR; no
+ * reward file = INDETERMINATE; a verifier box lost before a durable verdict =
+ * INFRASTRUCTURE_ERROR. QUEUED/RUNNING while the regrade is in flight.
+ */
+export type RegradeStatus =
+  | "QUEUED"
+  | "RUNNING"
+  | "SCORED"
+  | "SCORING_ERROR"
+  | "INFRASTRUCTURE_ERROR"
+  | "INDETERMINATE";
+
+/** A regrade job's derived status: QUEUED until any result starts, then RUNNING, then COMPLETED. */
+export type RegradeJobStatus = "QUEUED" | "RUNNING" | "COMPLETED";
+
+/**
+ * One regrade of one source task run: the verifier re-run against that run's
+ * RECORDED inputs, in a fresh separate verifier box. The agent phase is never
+ * re-run, and the source run is never modified — `sourceScore`/`sourceStatus`
+ * are immutable snapshots taken when the regrade was created.
+ */
+export interface RegradeResult {
+  /** Regrade result id */
+  id: string;
+  /** The source task run this regrade re-scored (immutable) */
+  sourceTaskRunId: string;
+  /** The source run's task key */
+  taskKey: string;
+  status: RegradeStatus;
+  /** The regrade's reward-file score; null until scored */
+  score: number | null;
+  /** Named metrics map (reward.json sub-scores) */
+  metrics: Record<string, number> | null;
+  /** The recorded source-run score at regrade time (immutable snapshot) */
+  sourceScore: number | null;
+  /** The recorded source-run status at regrade time (immutable snapshot) */
+  sourceStatus: string;
+  /** score − sourceScore when both are real numbers, else null (Harbor's per-trial delta) */
+  scoreDelta: number | null;
+  /** Where the verifier ran — always "separate" (regrade only re-runs separate verifiers) */
+  verifierMode: VerifierMode;
+  /**
+   * Content digest of the resolved target verifier spec — the "verifier
+   * version". A digest equal to the source run's own verifier reproduces the
+   * recorded score; a different digest is a genuine new-verifier prediction.
+   * Null until the regrade runs.
+   */
+  verifierDigest: string | null;
+  /** Provider box id of the verifier sandbox, recorded for provenance */
+  verifierSandboxId: string | null;
+  failurePhase: string | null;
+  failureDetail: string | null;
+  phaseTimingsMs: Record<string, number> | null;
+  createdAt: string;
+  /** When the regrade settled; null while QUEUED/RUNNING */
+  settledAt: string | null;
+}
+
+/** The filter applied when selecting source runs for a per-evaluation regrade */
+export interface RegradeFilter {
+  status?: string[];
+  taskKey?: string;
+}
+
+/**
+ * A regrade job = a collection of regrade results. A per-task-run regrade holds
+ * one result; a per-evaluation regrade holds one per eligible source run. The
+ * job's `status` is derived from its results. `results` is present on the read
+ * (regradeJob) and create responses.
+ */
+export interface RegradeJob {
+  id: string;
+  /** The evaluation the source runs belong to */
+  sourceEvaluationId: string;
+  status: RegradeJobStatus;
+  /** Sandbox provider the verifier boxes run on (independent of the source) */
+  sandboxProvider: EvalSandboxProvider;
+  /** The filter applied to select source runs (per-evaluation regrade), or null */
+  filter: RegradeFilter | null;
+  counts: {
+    results: number;
+    /** Result histogram by RegradeStatus */
+    byStatus: Partial<Record<RegradeStatus, number>>;
+  };
+  createdAt: string;
+  updatedAt: string;
+  /** The per-run regrade results */
+  results?: RegradeResult[];
+}
+
+// =============================================================================
 // BENCHMARK IMPORT
 // =============================================================================
 
@@ -487,6 +583,18 @@ export interface ListTaskRunsOptions {
   limit?: number;
   /** Cursor from TaskRunPage.nextCursor */
   cursor?: string;
+}
+
+/**
+ * Options for evaluations().regrade() (per-evaluation): narrow the set of
+ * source runs. A run is regradable only if it recorded separate-mode verifier
+ * inputs; these filters further restrict that set.
+ */
+export interface RegradeOptions {
+  /** Only regrade source runs in these statuses */
+  status?: TaskRunStatus[];
+  /** Only regrade source runs of this task */
+  taskKey?: string;
 }
 
 /** Options for evaluations().taskRunTrace() and taskRunTraceEvents() */
@@ -622,6 +730,23 @@ export interface EvaluationsClient {
    * task runs of a terminal evaluation. Supports Idempotency-Key.
    */
   rerunFailed(id: string, options?: RunEvaluationOptions): Promise<Evaluation>;
+  /**
+   * Regrade a terminal evaluation: re-run the verifier of every REGRADABLE run
+   * (settled separate-mode runs, which recorded their verifier inputs) against
+   * those recorded inputs, in fresh separate verifier boxes. The agent phase is
+   * never re-run and the source runs are never modified. `options` narrows the
+   * set by status and/or task. Returns a new regrade job (one result per run).
+   */
+  regrade(id: string, options?: RegradeOptions): Promise<RegradeJob>;
+  /**
+   * Regrade one settled task run: re-run its verifier against its recorded
+   * inputs in a fresh separate verifier box. Refused (regrade_source_ineligible)
+   * for shared-mode or pre-persistence runs. Returns a regrade job with one
+   * result.
+   */
+  regradeTaskRun(id: string, runId: string): Promise<RegradeJob>;
+  /** Read a regrade job and its per-run results (with lineage + score deltas). */
+  regradeJob(jobId: string): Promise<RegradeJob>;
   /**
    * Side-by-side comparison of 2-5 owned evaluations: per-evaluation
    * aggregates plus a per-task matrix with disagreement rows first.

@@ -23,6 +23,8 @@ import type {
   EvaluationEvent,
   EvaluationInput,
   HostedClientConfig,
+  RegradeJob,
+  RegradeResult,
   Task,
   TaskRun,
   TaskRunDetail,
@@ -48,6 +50,8 @@ Commands:
   compare <id> <id> [...]           Compare 2-5 evaluations side by side
   cancel <id>                       Request cancellation of an evaluation
   rerun-failed <id>                 New evaluation from a terminal evaluation's failed runs
+  regrade <id> [run-id]             Re-run the verifier on recorded runs (whole eval, or one run)
+  regrade-job <job-id>              Show a regrade job's results (scores, deltas, lineage)
   export <id>                       Download the research archive (gzipped JSON)
   benchmarks                        List the benchmark catalog
   benchmarks get <name[@version]>   Show one benchmark (versions + tasks + providers)
@@ -68,6 +72,10 @@ Run options:
 
 Task-run options:
   --status <s1,s2,...>                Filter task-runs by status (e.g. INFRASTRUCTURE_ERROR)
+
+Regrade options (whole-evaluation regrade only):
+  --status <s1,s2,...>                Only regrade source runs in these statuses
+  --task <key>                        Only regrade source runs of this task
 
 Trace options:
   --after <seq>                       Resume after this trace seq
@@ -176,6 +184,18 @@ const COMMAND_SPECS: Record<string, CommandSpec> = {
     minPositionals: 1,
     maxPositionals: 1,
     positionalUsage: "<id>",
+  },
+  regrade: {
+    flags: { status: "string", task: "string" },
+    minPositionals: 1,
+    maxPositionals: 2,
+    positionalUsage: "<id> [run-id]",
+  },
+  "regrade-job": {
+    flags: {},
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalUsage: "<job-id>",
   },
   export: {
     flags: { to: "string", format: "string" },
@@ -499,6 +519,57 @@ function taskRunDetailLines(run: TaskRunDetail): string[] {
   return table(rows);
 }
 
+function fmtDelta(delta: number | null): string {
+  if (delta === null) return "-";
+  const rounded = Math.round(delta * 1000) / 1000;
+  return rounded > 0 ? `+${rounded}` : String(rounded);
+}
+
+function regradeResultRow(result: RegradeResult): string[] {
+  return [
+    result.taskKey,
+    result.status,
+    fmtScore(result.sourceScore),
+    fmtScore(result.score),
+    fmtDelta(result.scoreDelta),
+    result.sourceTaskRunId,
+  ];
+}
+
+/** Job envelope + per-run results — evolve-evals regrade / regrade-job. */
+function regradeJobLines(job: RegradeJob): string[] {
+  const rows: string[][] = [
+    ["job id", job.id],
+    ["status", job.status],
+    ["source evaluation", job.sourceEvaluationId],
+    ["provider", job.sandboxProvider],
+    ["results", String(job.counts.results)],
+  ];
+  if (job.counts.byStatus && Object.keys(job.counts.byStatus).length > 0) {
+    rows.push([
+      "by status",
+      Object.entries(job.counts.byStatus)
+        .map(([status, count]) => `${status} ${count}`)
+        .join(" · "),
+    ]);
+  }
+  if (job.filter && (job.filter.status?.length || job.filter.taskKey)) {
+    const parts: string[] = [];
+    if (job.filter.status?.length) parts.push(`status=${job.filter.status.join(",")}`);
+    if (job.filter.taskKey) parts.push(`task=${job.filter.taskKey}`);
+    rows.push(["filter", parts.join(" · ")]);
+  }
+  rows.push(["created", job.createdAt]);
+  const lines = table(rows);
+  if (job.results && job.results.length > 0) {
+    lines.push("");
+    const resultRows = [["TASK", "STATUS", "WAS", "NOW", "Δ", "SOURCE RUN ID"]];
+    for (const result of job.results) resultRows.push(regradeResultRow(result));
+    lines.push(...table(resultRows));
+  }
+  return lines;
+}
+
 const PROVIDER_ORDER: EvalSandboxProvider[] = ["e2b", "daytona", "modal"];
 
 /** Compact per-provider verdicts, e.g. "e2b ok · daytona ok · modal NO". */
@@ -790,6 +861,50 @@ async function cmdRerunFailed(inv: Invocation, io: CliIO): Promise<number> {
   return 0;
 }
 
+async function cmdRegrade(inv: Invocation, io: CliIO): Promise<number> {
+  const client = evaluations(clientConfig(inv));
+  const [id, runId] = inv.positionals;
+  let job: RegradeJob;
+  if (runId !== undefined) {
+    // Per-run regrade takes no --status/--task filter (a single run needs none).
+    if (inv.flags.status !== undefined || inv.flags.task !== undefined) {
+      throw new CliUsageError("--status/--task apply to a whole-evaluation regrade, not a single run");
+    }
+    job = await client.regradeTaskRun(id, runId);
+  } else {
+    const options: { status?: TaskRunStatus[]; taskKey?: string } = {};
+    if (inv.flags.status !== undefined) {
+      const status = String(inv.flags.status)
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean) as TaskRunStatus[];
+      if (status.length === 0) throw new CliUsageError("--status got an empty status list");
+      options.status = status;
+    }
+    if (inv.flags.task !== undefined) options.taskKey = String(inv.flags.task);
+    job = await client.regrade(id, options);
+  }
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(job));
+  } else {
+    for (const line of regradeJobLines(job)) io.out(line);
+    io.out("");
+    io.out(`Follow it with: evolve-evals regrade-job ${job.id}`);
+  }
+  return 0;
+}
+
+async function cmdRegradeJob(inv: Invocation, io: CliIO): Promise<number> {
+  const client = evaluations(clientConfig(inv));
+  const job = await client.regradeJob(inv.positionals[0]);
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(job));
+  } else {
+    for (const line of regradeJobLines(job)) io.out(line);
+  }
+  return 0;
+}
+
 async function cmdExport(inv: Invocation, io: CliIO): Promise<number> {
   const format = inv.flags.format as string | undefined;
   if (format !== undefined && format !== "harbor") {
@@ -987,6 +1102,10 @@ export async function runCli(argv: string[], io: CliIO = defaultIO): Promise<num
         return await cmdCancel(inv, io);
       case "rerun-failed":
         return await cmdRerunFailed(inv, io);
+      case "regrade":
+        return await cmdRegrade(inv, io);
+      case "regrade-job":
+        return await cmdRegradeJob(inv, io);
       case "export":
         return await cmdExport(inv, io);
       case "benchmarks":

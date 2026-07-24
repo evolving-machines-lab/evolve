@@ -630,6 +630,94 @@ class TestEvaluations:
         assert fake.requests[1].get_header('Idempotency-key') == 'idem-rr'
 
     @pytest.mark.asyncio
+    async def test_regrade_task_run_evaluation_and_job(self):
+        result_wire = {
+            'id': 'rr-1',
+            'sourceTaskRunId': 'run-1',
+            'taskKey': 'demo-task',
+            'status': 'SCORED',
+            'score': 0.5,
+            'metrics': {'f2p': 0.5},
+            'sourceScore': 1,
+            'sourceStatus': 'SCORED',
+            'scoreDelta': -0.5,
+            'verifierMode': 'separate',
+            'verifierDigest': 'abcd',
+            'verifierSandboxId': 'sbx-1',
+            'failurePhase': None,
+            'failureDetail': None,
+            'phaseTimingsMs': {'verifyMs': 1200},
+            'createdAt': '2026-07-24T00:00:00Z',
+            'settledAt': '2026-07-24T00:05:00Z',
+        }
+        job_wire = {
+            'id': 'job-1',
+            'sourceEvaluationId': 'eval-1',
+            'status': 'COMPLETED',
+            'sandboxProvider': 'e2b',
+            'filter': {'taskKey': 'demo-task'},
+            'counts': {'results': 1, 'byStatus': {'SCORED': 1}},
+            'createdAt': '2026-07-24T00:00:00Z',
+            'updatedAt': '2026-07-24T00:05:00Z',
+            'results': [result_wire],
+        }
+        fake = FakeUrlopen([
+            ('/task-runs/run-1/regrade', {**job_wire, 'counts': {'results': 1, 'byStatus': {'QUEUED': 1}}}),
+            ('/eval-1/regrade', {**job_wire, 'counts': {'results': 2, 'byStatus': {'QUEUED': 2}}}),
+            ('/api/regrades/job-1', job_wire),
+        ])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            client = evaluations_factory(CONFIG)
+            per_run = await client.regrade_task_run('eval-1', 'run-1')
+            per_eval = await client.regrade('eval-1', status=['SCORED'], task_key='demo-task')
+            read = await client.regrade_job('job-1')
+
+        # Per-run regrade: POST the per-run route, one queued result.
+        assert fake.requests[0].get_method() == 'POST'
+        assert fake.requests[0].full_url.endswith('/task-runs/run-1/regrade')
+        assert per_run.id == 'job-1'
+        assert per_run.source_evaluation_id == 'eval-1'
+        assert per_run.counts.results == 1
+
+        # Per-evaluation regrade: POST the filter body.
+        assert fake.requests[1].get_method() == 'POST'
+        sent = json.loads(fake.requests[1].data.decode('utf-8'))
+        assert sent == {'status': ['SCORED'], 'taskKey': 'demo-task'}
+        assert per_eval.counts.results == 2
+
+        # Read: results mapped with immutable source snapshots + delta + lineage.
+        assert read.status == 'COMPLETED'
+        assert read.filter.task_key == 'demo-task'
+        assert read.results is not None and len(read.results) == 1
+        result = read.results[0]
+        assert result.task_key == 'demo-task'
+        assert result.source_score == 1
+        assert result.score_delta == -0.5
+        assert result.verifier_digest == 'abcd'
+        assert result.verifier_mode == 'separate'
+        assert result.phase_timings_ms == {'verify_ms': 1200}
+
+    @pytest.mark.asyncio
+    async def test_regrade_ineligible_is_typed_error(self):
+        import io
+        import urllib.error
+
+        def raise_http_error(request, timeout=None):
+            raise urllib.error.HTTPError(
+                request.full_url, 409, 'Conflict', {},
+                io.BytesIO(json.dumps({'error': {
+                    'code': 'regrade_source_ineligible',
+                    'message': 'Run used a shared-mode verifier; nothing faithful to re-run.',
+                }}).encode('utf-8')),
+            )
+
+        with patch('evolve.hosted.urllib.request.urlopen', raise_http_error):
+            with pytest.raises(EvolveAPIError) as exc:
+                await evaluations_factory(CONFIG).regrade_task_run('eval-1', 'run-1')
+        assert exc.value.status == 409
+        assert exc.value.code == 'regrade_source_ineligible'
+
+    @pytest.mark.asyncio
     async def test_export_bytes_and_streamed_file(self, tmp_path):
         archive = gzip.compress(json.dumps({'evaluation': {'id': 'eval-1'}}).encode('utf-8'))
         fake = FakeUrlopen([

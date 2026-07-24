@@ -34,6 +34,12 @@ import type {
   ListEvaluationsOptions,
   ListTaskRunsOptions,
   ModelUsage,
+  RegradeFilter,
+  RegradeJob,
+  RegradeJobStatus,
+  RegradeOptions,
+  RegradeResult,
+  RegradeStatus,
   RunEvaluationOptions,
   Task,
   TaskRun,
@@ -81,6 +87,12 @@ export type {
   ListEvaluationsOptions,
   ListTaskRunsOptions,
   ModelUsage,
+  RegradeFilter,
+  RegradeJob,
+  RegradeJobStatus,
+  RegradeOptions,
+  RegradeResult,
+  RegradeStatus,
   RunEvaluationOptions,
   SpendSource,
   Task,
@@ -311,6 +323,49 @@ function mapTaskRun(raw: Record<string, unknown>): TaskRun {
     createdAt: raw.createdAt as string,
     updatedAt: raw.updatedAt as string,
   };
+}
+
+function mapRegradeResult(raw: Record<string, unknown>): RegradeResult {
+  return {
+    id: raw.id as string,
+    sourceTaskRunId: raw.sourceTaskRunId as string,
+    taskKey: raw.taskKey as string,
+    status: raw.status as RegradeStatus,
+    score: (raw.score as number | null) ?? null,
+    metrics: (raw.metrics as Record<string, number> | null) ?? null,
+    sourceScore: (raw.sourceScore as number | null) ?? null,
+    sourceStatus: raw.sourceStatus as string,
+    scoreDelta: (raw.scoreDelta as number | null) ?? null,
+    verifierMode: (raw.verifierMode as VerifierMode) ?? "separate",
+    verifierDigest: (raw.verifierDigest as string | null) ?? null,
+    verifierSandboxId: (raw.verifierSandboxId as string | null) ?? null,
+    failurePhase: (raw.failurePhase as string | null) ?? null,
+    failureDetail: (raw.failureDetail as string | null) ?? null,
+    phaseTimingsMs: (raw.phaseTimingsMs as Record<string, number> | null) ?? null,
+    createdAt: raw.createdAt as string,
+    settledAt: (raw.settledAt as string | null) ?? null,
+  };
+}
+
+function mapRegradeJob(raw: Record<string, unknown>): RegradeJob {
+  const counts = (raw.counts as Record<string, unknown>) ?? {};
+  const job: RegradeJob = {
+    id: raw.id as string,
+    sourceEvaluationId: raw.sourceEvaluationId as string,
+    status: raw.status as RegradeJobStatus,
+    sandboxProvider: raw.sandboxProvider as EvalSandboxProvider,
+    filter: (raw.filter as RegradeJob["filter"]) ?? null,
+    counts: {
+      results: (counts.results as number) ?? 0,
+      byStatus: (counts.byStatus as RegradeJob["counts"]["byStatus"]) ?? {},
+    },
+    createdAt: raw.createdAt as string,
+    updatedAt: raw.updatedAt as string,
+  };
+  if (Array.isArray(raw.results)) {
+    job.results = (raw.results as Record<string, unknown>[]).map(mapRegradeResult);
+  }
+  return job;
 }
 
 function mapBenchmarkImport(raw: Record<string, unknown>): BenchmarkImport {
@@ -971,6 +1026,32 @@ export function evaluations(config?: HostedClientConfig): EvaluationsClient {
         }
       );
       return mapEvaluation((await res.json()) as Record<string, unknown>);
+    },
+
+    async regrade(id: string, options?: RegradeOptions): Promise<RegradeJob> {
+      const body: Record<string, unknown> = {};
+      if (options?.status?.length) body.status = options.status;
+      if (options?.taskKey !== undefined) body.taskKey = options.taskKey;
+      const res = await request(cfg, `/api/evaluations/${encodeURIComponent(id)}/regrade`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      return mapRegradeJob((await res.json()) as Record<string, unknown>);
+    },
+
+    async regradeTaskRun(id: string, runId: string): Promise<RegradeJob> {
+      const res = await request(
+        cfg,
+        `/api/evaluations/${encodeURIComponent(id)}/task-runs/${encodeURIComponent(runId)}/regrade`,
+        { method: "POST" }
+      );
+      return mapRegradeJob((await res.json()) as Record<string, unknown>);
+    },
+
+    async regradeJob(jobId: string): Promise<RegradeJob> {
+      const res = await request(cfg, `/api/regrades/${encodeURIComponent(jobId)}`);
+      return mapRegradeJob((await res.json()) as Record<string, unknown>);
     },
 
     export: (async (

@@ -762,6 +762,128 @@ async function testRerunFailedConflictError() {
   }
 }
 
+const REGRADE_RESULT = {
+  id: "rr-1",
+  sourceTaskRunId: "run-1",
+  taskKey: "demo-task",
+  status: "SCORED",
+  score: 0.5,
+  metrics: { f2p: 0.5 },
+  sourceScore: 1,
+  sourceStatus: "SCORED",
+  scoreDelta: -0.5,
+  verifierMode: "separate",
+  verifierDigest: "abcd",
+  verifierSandboxId: "sbx-1",
+  failurePhase: null,
+  failureDetail: null,
+  phaseTimingsMs: { verifyMs: 1200 },
+  createdAt: "2026-07-24T00:00:00Z",
+  settledAt: "2026-07-24T00:05:00Z",
+};
+
+const REGRADE_JOB = {
+  id: "job-1",
+  sourceEvaluationId: "eval-1",
+  status: "COMPLETED",
+  sandboxProvider: "e2b",
+  filter: null,
+  counts: { results: 1, byStatus: { SCORED: 1 } },
+  createdAt: "2026-07-24T00:00:00Z",
+  updatedAt: "2026-07-24T00:05:00Z",
+  results: [REGRADE_RESULT],
+};
+
+async function testRegradeTaskRun() {
+  console.log("\n--- evaluations().regradeTaskRun() re-runs one run's verifier ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/evaluations/eval-1/task-runs/run-1/regrade", {
+      status: 202,
+      body: { ...REGRADE_JOB, counts: { results: 1, byStatus: { QUEUED: 1 } } },
+    });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
+    const job = await e.regradeTaskRun("eval-1", "run-1");
+    const call = fetchCalls[fetchCalls.length - 1];
+    assertEqual(call.init?.method, "POST", "uses POST");
+    assert(call.url.endsWith("/task-runs/run-1/regrade"), "hits the per-run regrade route");
+    assertEqual(job.id, "job-1", "returns the regrade job");
+    assertEqual(job.sourceEvaluationId, "eval-1", "links the source evaluation");
+    assertEqual(job.counts.results, 1, "one result for a per-run regrade");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testRegradeEvaluation() {
+  console.log("\n--- evaluations().regrade() regrades a whole evaluation with a filter ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/evaluations/eval-1/regrade", {
+      status: 202,
+      body: { ...REGRADE_JOB, counts: { results: 2, byStatus: { QUEUED: 2 } } },
+    });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
+    const job = await e.regrade("eval-1", { status: ["SCORED"], taskKey: "demo-task" });
+    const call = fetchCalls[fetchCalls.length - 1];
+    assertEqual(call.init?.method, "POST", "uses POST");
+    const sentBody = JSON.parse(call.init?.body as string);
+    assertEqual(sentBody, { status: ["SCORED"], taskKey: "demo-task" }, "sends the status+taskKey filter body");
+    assertEqual(job.counts.results, 2, "one result per eligible run");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testRegradeJobRead() {
+  console.log("\n--- evaluations().regradeJob() reads results with deltas + lineage ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/regrades/job-1", { status: 200, body: REGRADE_JOB });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
+    const job = await e.regradeJob("job-1");
+    assertEqual(job.status, "COMPLETED", "maps the derived job status");
+    assert(job.results !== undefined && job.results.length === 1, "carries the per-run results");
+    const result = job.results![0];
+    assertEqual(result.taskKey, "demo-task", "maps the source task key");
+    assertEqual(result.sourceScore, 1, "carries the immutable source score");
+    assertEqual(result.scoreDelta, -0.5, "carries the score delta");
+    assertEqual(result.verifierDigest, "abcd", "carries the verifier version digest");
+    assertEqual(result.verifierMode, "separate", "regrade is always separate-mode");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testRegradeIneligibleError() {
+  console.log("\n--- regradeTaskRun() surfaces 409 regrade_source_ineligible ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/evaluations/eval-1/task-runs/run-1/regrade", {
+      status: 409,
+      body: {
+        error: {
+          code: "regrade_source_ineligible",
+          message: "Run used a shared-mode verifier; there is nothing faithful to re-run.",
+        },
+      },
+    });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
+    let threw = false;
+    try {
+      await e.regradeTaskRun("eval-1", "run-1");
+    } catch (err: any) {
+      threw = true;
+      assert(err instanceof EvolveApiError, "throws the typed EvolveApiError");
+      assertEqual(err.status, 409, "carries the HTTP status");
+      assertEqual(err.code, "regrade_source_ineligible", "carries the stable error code");
+    }
+    assert(threw, "throws on 409");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testExportBuffer() {
   console.log("\n--- export() returns the gzip archive as a Buffer ---");
   installMockFetch();
@@ -1755,6 +1877,10 @@ async function main() {
   await testCancel();
   await testRerunFailed();
   await testRerunFailedConflictError();
+  await testRegradeTaskRun();
+  await testRegradeEvaluation();
+  await testRegradeJobRead();
+  await testRegradeIneligibleError();
   await testExportBuffer();
   await testExportToFile();
   await testExportStream();
