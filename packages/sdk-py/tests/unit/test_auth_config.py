@@ -48,6 +48,7 @@ class TestAgentConfigDataclass:
         assert config.provider_base_url is None
         assert config.model is None
         assert config.reasoning_effort is None
+        assert config.max_context_size is None
 
     def test_gateway_mode_config(self):
         """Test config for gateway mode (Evolve key)."""
@@ -95,6 +96,20 @@ class TestAgentConfigDataclass:
         )
 
         assert config.reasoning_effort == 'high'
+
+    def test_kimi_max_context_size(self):
+        """max_context_size pins the ceiling Kimi Code sends as max_tokens."""
+        config = AgentConfig(
+            type='kimi',
+            provider_api_key='gateway-key',
+            provider_base_url='https://gateway.test/v1',
+            model='gpt-5.5',
+            max_context_size=128000,
+        )
+
+        assert config.max_context_size == 128000
+        # SDK/CLI surface, never an env var
+        assert 'EVOLVE_MAX_CONTEXT_SIZE' not in os.environ
 
     def test_qwen_direct_mode(self):
         """Test Qwen direct mode config - no baseUrl needed (auto from registry)."""
@@ -328,6 +343,32 @@ class TestAgentBridgeConfig:
 
         assert config_dict['providerApiKey'] == 'openai-key'
         assert config_dict['reasoningEffort'] == 'xhigh'
+
+    def test_agent_config_forwards_max_context_size_to_bridge(self):
+        """max_context_size rides the bridge init params (TS: maxContextSize)."""
+        from evolve.agent import _filter_none
+
+        config = AgentConfig(
+            type='kimi',
+            provider_api_key='gateway-key',
+            model='gpt-5.5',
+            max_context_size=128000,
+        )
+
+        params = _filter_none({
+            'agent_type': config.type,
+            'provider_api_key': config.provider_api_key,
+            'model': config.model,
+            'reasoning_effort': config.reasoning_effort,
+            'max_context_size': config.max_context_size,
+        })
+
+        assert params['max_context_size'] == 128000
+        # Omitted stays omitted, so the TS SDK keeps its per-model resolution
+        assert 'max_context_size' not in _filter_none({
+            'agent_type': 'kimi',
+            'max_context_size': AgentConfig(type='kimi').max_context_size,
+        })
 
 
 class TestSwarmConfigInheritance:

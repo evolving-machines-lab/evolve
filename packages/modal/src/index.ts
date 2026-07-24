@@ -544,6 +544,9 @@ export interface SandboxFiles {
   /** Write from stream */
   writeStream(path: string, stream: ReadableStream<Uint8Array>): Promise<void>;
 
+  /** Upload a local file by path, streamed off disk (never buffered whole) */
+  writeFromPath(sandboxPath: string, localPath: string): Promise<void>;
+
   // --- Large File URLs (browser-friendly) ---
 
   /** Get pre-signed upload URL for large files (expiration in seconds) */
@@ -990,6 +993,20 @@ export class ModalFiles implements SandboxFiles {
 
     // Chown the file to the sandbox user so agent CLIs can access it
     await this.chownToUser(path);
+  }
+
+  /**
+   * Upload a local file by PATH, chunk by chunk into the same `cat >` sink
+   * writeStream() uses — so peak memory is one chunk rather than the whole
+   * file, which is what makes a large artifact safe under concurrency.
+   */
+  async writeFromPath(sandboxPath: string, localPath: string): Promise<void> {
+    const { createReadStream } = await import("node:fs");
+    const { Readable } = await import("node:stream");
+    const web = Readable.toWeb(
+      createReadStream(localPath)
+    ) as ReadableStream<Uint8Array>;
+    await this.writeStream(sandboxPath, web);
   }
 
   async uploadUrl(_path: string, _expiresInSeconds?: number): Promise<string> {

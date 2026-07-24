@@ -1017,6 +1017,109 @@ async function testKimiEnvironmentVariables(): Promise<void> {
   assert(!("KIMI_API_KEY" in directEnvs), "direct mode omits undocumented KIMI_API_KEY");
 }
 
+async function testKimiMaxContextSizePerModel(): Promise<void> {
+  console.log("\n[28b] Kimi max_context_size is per-model (Kimi Code sends it as max_tokens)");
+
+  // 1. Explicit AgentConfig.maxContextSize wins verbatim — the caller read the
+  //    model's real ceiling (e.g. the gateway's /model/info max_output_tokens).
+  const pinnedAgent = new Agent({
+    type: "kimi",
+    apiKey: "external-key",
+    baseUrl: "https://gateway.test/v1",
+    isDirectMode: true,
+    model: "gpt-5.5",
+    maxContextSize: 96000,
+  } as any, {});
+  assertEqual(
+    (pinnedAgent as any).resolveKimiMaxContextSize(),
+    96000,
+    "explicit maxContextSize wins verbatim",
+  );
+  assertEqual(
+    ((pinnedAgent as any).buildEnvironmentVariables() as Record<string, string>)
+      .KIMI_MODEL_MAX_CONTEXT_SIZE,
+    "96000",
+    "explicit maxContextSize reaches KIMI_MODEL_MAX_CONTEXT_SIZE",
+  );
+
+  // 2. A model the kimi registry entry owns keeps Kimi's own 262144.
+  const kimiModelAgent = new Agent({
+    type: "kimi",
+    apiKey: "direct-api-key",
+    isDirectMode: true,
+    model: "kimi-k2.5",
+  } as any, {});
+  assertEqual(
+    (kimiModelAgent as any).resolveKimiMaxContextSize(),
+    262144,
+    "a kimi model keeps the registry's 262144",
+  );
+  assertEqual(
+    ((kimiModelAgent as any).buildEnvironmentVariables() as Record<string, string>)
+      .KIMI_MODEL_MAX_CONTEXT_SIZE,
+    "262144",
+    "kimi model env carries 262144",
+  );
+
+  // The default model (no explicit model) is a kimi model too.
+  const defaultModelAgent = new Agent({
+    type: "kimi",
+    apiKey: "direct-api-key",
+    isDirectMode: true,
+  } as any, {});
+  assertEqual(
+    (defaultModelAgent as any).resolveKimiMaxContextSize(),
+    262144,
+    "the default kimi model keeps 262144",
+  );
+
+  // 3. A model from another family — external gateway resolves isDirectMode
+  //    true, so this is exactly the eval-run path — falls back to the
+  //    conservative constant instead of asserting Kimi's 262144.
+  const foreignModelAgent = new Agent({
+    type: "kimi",
+    apiKey: "external-key",
+    baseUrl: "https://gateway.test/v1",
+    isDirectMode: true,
+    model: "gpt-5.5",
+  } as any, {});
+  assertEqual(
+    (foreignModelAgent as any).resolveKimiMaxContextSize(),
+    128000,
+    "a non-kimi model falls back to the conservative 128000",
+  );
+  const foreignEnvs = (foreignModelAgent as any).buildEnvironmentVariables() as Record<string, string>;
+  assertEqual(
+    foreignEnvs.KIMI_MODEL_MAX_CONTEXT_SIZE,
+    "128000",
+    "gpt-5.5 never inherits Kimi's 262144 (LiteLLM rejects max_tokens 262144)",
+  );
+
+  // The same resolved value is what the config.toml writer emits, so both kimi
+  // wiring paths agree.
+  const written: { path: string; content: string }[] = [];
+  const sandbox = {
+    files: {
+      makeDir: async () => {},
+      write: async (path: string, content: string) => { written.push({ path, content }); },
+    },
+  };
+  await writeKimiSpendConfig(
+    sandbox as any,
+    { ...kimiConfig, maxContextSize: (foreignModelAgent as any).resolveKimiMaxContextSize() },
+    { "x-litellm-customer-id": "session-abc", "x-litellm-tags": "run:run-001" },
+    { ...kimiConnection, model: "gpt-5.5" },
+  );
+  assert(
+    written[0].content.includes("max_context_size = 128000"),
+    "config.toml carries the same conservative ceiling",
+  );
+  assert(
+    !written[0].content.includes("max_context_size = 262144"),
+    "config.toml never writes 262144 for a foreign model",
+  );
+}
+
 async function testKimiBuildRunEnvsReturnsUndefined(): Promise<void> {
   console.log("\n[29] Kimi buildRunEnvs() returns undefined (uses config file, not env vars)");
   const config = {
@@ -1606,6 +1709,7 @@ async function main(): Promise<void> {
   await testKimiWriteSpendConfigPerRunOverwrite();
   await testKimiBuildCommandUsesPromptMode();
   await testKimiEnvironmentVariables();
+  await testKimiMaxContextSizePerModel();
   await testKimiBuildRunEnvsReturnsUndefined();
   await testKimiDirectModeSkipsHeaders();
   await testClaudeProviderRuntimeEnvIsolation();

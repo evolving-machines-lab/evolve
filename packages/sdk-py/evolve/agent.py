@@ -150,6 +150,7 @@ class Evolve:
                 'provider_base_url': self.config.provider_base_url if self.config else None,
                 'model': self.config.model if self.config else None,
                 'reasoning_effort': self.config.reasoning_effort if self.config else None,
+                'max_context_size': self.config.max_context_size if self.config else None,
                 # Sandbox (optional - TS SDK auto-resolves from EVOLVE_API_KEY/E2B_API_KEY/DAYTONA_API_KEY)
                 'sandbox_provider': {'type': self.sandbox.type, 'config': self.sandbox.config} if self.sandbox else None,
                 'sandbox_create_options': self.sandbox_create_options,
@@ -448,6 +449,32 @@ class Evolve:
         await self._ensure_initialized()
         await self.bridge.call('upload_files', {
             'files': _encode_files_for_transport(files),
+        }, timeout_s=self._get_rpc_timeout_s(None))
+
+    async def upload_file_from_path(
+        self,
+        sandbox_path: str,
+        local_path: str,
+    ):
+        """Upload one LOCAL file into the sandbox by path, without buffering it.
+
+        The memory-bounded counterpart to ``upload_files()``: that one takes the
+        bytes as a value, so a large artifact costs one full-size copy per
+        concurrent upload. This takes the path, and the provider streams it off
+        disk — peak memory is a chunk rather than the file.
+
+        Args:
+            sandbox_path: Destination in the sandbox. Absolute paths are used
+                as-is; relative paths resolve under the working directory.
+            local_path: Path on THIS machine to upload.
+
+        Example:
+            >>> await evolve.upload_file_from_path('/tmp/dataset.tgz', './dataset.tgz')
+        """
+        await self._ensure_initialized()
+        await self.bridge.call('upload_file_from_path', {
+            'sandbox_path': sandbox_path,
+            'local_path': local_path,
         }, timeout_s=self._get_rpc_timeout_s(None))
 
     async def get_output_files(self, recursive: bool = False) -> OutputResult:

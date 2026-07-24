@@ -10,13 +10,16 @@
  * runtime/API failure (watch: FAILED or CANCELLED), 2 usage error.
  */
 
+import { readFileSync } from "fs";
 import { pathToFileURL } from "url";
-import { benchmarks, evaluations } from "./index";
+import { benchmarks, customHarnesses, evaluations } from "./index";
 import type {
   AgentSystem,
   Benchmark,
   BenchmarkImport,
   BenchmarkImportInput,
+  CustomHarness,
+  CustomHarnessInput,
   EvalSandboxProvider,
   Evaluation,
   EvaluationComparison,
@@ -57,6 +60,10 @@ Commands:
   benchmarks get <name[@version]>   Show one benchmark (versions + tasks + providers)
   import                            Import a benchmark from a git source or a local directory (--watch to follow)
   import status <id>                Show one import job
+  custom-harnesses                  List your registered custom harnesses
+  custom-harnesses get <name>       Show one custom harness
+  custom-harnesses add              Register a custom harness (install script or local directory)
+  custom-harnesses remove <name>    Delete a custom harness
   help                              Show this help
 
 Run options:
@@ -88,6 +95,13 @@ Import options (a git source OR a local directory; --name and --version required
   --name <benchmark>                  Catalog benchmark name to create or extend (required)
   --version <v>                       Version label for the imported version (required)
   --watch                             Poll until the import is IMPORTED or FAILED
+
+Custom-harness options ("custom-harnesses add"; an install script OR a local directory):
+  --name <harness>                    Harness name, later used in --system (required)
+  --install-script <path>             Install script file; its contents are uploaded
+  --dir <path>                        Local harness directory (tarred + uploaded)
+  --run <command>                     Run command, executed with sh -c (required)
+  --env KEY=VALUE                     Env injected at run time; repeatable
 
 Other options:
   --limit <n>, --cursor <c>           Pagination (list, task-runs)
@@ -216,6 +230,19 @@ const COMMAND_SPECS: Record<string, CommandSpec> = {
       name: "string",
       version: "string",
       watch: "boolean",
+    },
+    minPositionals: 0,
+    maxPositionals: 2,
+  },
+  // "custom-harnesses" lists; "get <name>" / "remove <name>" take a name, and
+  // "add" takes the registration flags (all validated in the handler).
+  "custom-harnesses": {
+    flags: {
+      name: "string",
+      "install-script": "string",
+      dir: "string",
+      run: "string",
+      env: "repeat",
     },
     minPositionals: 0,
     maxPositionals: 2,
@@ -395,6 +422,57 @@ export function buildImportInput(inv: Invocation): BenchmarkImportInput {
     source: { gitUrl: f.git as string, ref: f.ref as string },
     benchmarkName: f.name as string,
     version: f.version as string,
+  };
+}
+
+/** Parse repeatable `--env KEY=VALUE` into the declared run-time env map. */
+export function parseHarnessEnv(pairs: string[]): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const pair of pairs) {
+    const eq = pair.indexOf("=");
+    if (eq <= 0) {
+      throw new CliUsageError(`Invalid --env "${pair}": expected KEY=VALUE`);
+    }
+    env[pair.slice(0, eq)] = pair.slice(eq + 1);
+  }
+  return env;
+}
+
+/**
+ * Build the customHarnesses().create() input from a parsed
+ * `custom-harnesses add` invocation. `--install-script` names a FILE; its
+ * contents are what the SDK uploads.
+ */
+export function buildCustomHarnessInput(
+  inv: Invocation,
+  readScript: (path: string) => string = (path) => readFileSync(path, "utf-8")
+): CustomHarnessInput {
+  const f = inv.flags;
+  const hasDir = typeof f.dir === "string";
+  const hasInstallScript = typeof f["install-script"] === "string";
+  if (hasDir && hasInstallScript) {
+    throw new CliUsageError(
+      '"custom-harnesses add" takes EITHER --dir OR --install-script, not both'
+    );
+  }
+  if (!hasDir && !hasInstallScript) {
+    throw new CliUsageError(
+      '"custom-harnesses add" requires --install-script (or --dir for a local harness directory)'
+    );
+  }
+  for (const req of ["name", "run"] as const) {
+    if (typeof f[req] !== "string") {
+      throw new CliUsageError(`"custom-harnesses add" requires --${req}`);
+    }
+  }
+  const env = parseHarnessEnv((f.env as string[] | undefined) ?? []);
+  return {
+    name: f.name as string,
+    ...(hasDir
+      ? { directory: f.dir as string }
+      : { installScript: readScript(f["install-script"] as string) }),
+    runCommand: f.run as string,
+    ...(Object.keys(env).length > 0 ? { env } : {}),
   };
 }
 
@@ -590,6 +668,24 @@ function regradeJobLines(job: RegradeJob): string[] {
     lines.push(...table(resultRows));
   }
   return lines;
+}
+
+/**
+ * One custom harness — evolve-evals custom-harnesses get / add. Declared env is
+ * shown by KEY only; the values were the caller's to set and are not echoed
+ * back into a terminal. `--json` carries the response verbatim.
+ */
+function customHarnessLines(harness: CustomHarness): string[] {
+  const rows: string[][] = [
+    ["name", harness.name],
+    ["source", harness.source],
+    ["run command", harness.runCommand],
+  ];
+  const envKeys = Object.keys(harness.env ?? {});
+  if (envKeys.length > 0) rows.push(["env", envKeys.sort().join(", ")]);
+  rows.push(["created", harness.createdAt]);
+  rows.push(["updated", harness.updatedAt]);
+  return table(rows);
 }
 
 const PROVIDER_ORDER: EvalSandboxProvider[] = ["e2b", "daytona", "modal"];
@@ -1084,6 +1180,80 @@ async function cmdImport(inv: Invocation, io: CliIO): Promise<number> {
   return final.status === "FAILED" ? 1 : 0;
 }
 
+async function cmdCustomHarnesses(inv: Invocation, io: CliIO): Promise<number> {
+  const client = customHarnesses(clientConfig(inv));
+  const [sub, name] = inv.positionals;
+  const json = inv.flags.json === true;
+
+  if (sub === undefined) {
+    const registered = await client.list();
+    if (json) {
+      io.out(JSON.stringify({ customHarnesses: registered }));
+      return 0;
+    }
+    if (registered.length === 0) {
+      io.out("No custom harnesses.");
+      return 0;
+    }
+    const rows = [["NAME", "SOURCE", "RUN COMMAND", "UPDATED"]];
+    for (const harness of registered) {
+      rows.push([
+        harness.name,
+        harness.source,
+        truncate(harness.runCommand, 60),
+        harness.updatedAt,
+      ]);
+    }
+    for (const line of table(rows)) io.out(line);
+    return 0;
+  }
+
+  if (sub === "add") {
+    if (name !== undefined) {
+      throw new CliUsageError(`"custom-harnesses add" got unexpected argument "${name}"`);
+    }
+    const created = await client.create(buildCustomHarnessInput(inv));
+    if (json) {
+      io.out(JSON.stringify(created));
+    } else {
+      for (const line of customHarnessLines(created)) io.out(line);
+      io.out("");
+      io.out(`Use it with: evolve-evals run --system ${created.name}:<model> …`);
+    }
+    return 0;
+  }
+
+  if (sub === "get") {
+    if (!name) {
+      throw new CliUsageError('"custom-harnesses get" requires a <name>');
+    }
+    const harness = await client.get(name);
+    if (json) {
+      io.out(JSON.stringify(harness));
+    } else {
+      for (const line of customHarnessLines(harness)) io.out(line);
+    }
+    return 0;
+  }
+
+  if (sub === "remove") {
+    if (!name) {
+      throw new CliUsageError('"custom-harnesses remove" requires a <name>');
+    }
+    await client.delete(name);
+    if (json) {
+      io.out(JSON.stringify({ name, deleted: true }));
+    } else {
+      io.out(`Deleted custom harness ${name}`);
+    }
+    return 0;
+  }
+
+  throw new CliUsageError(
+    `Unknown custom-harnesses subcommand "${sub}" (supported: add, get, remove)`
+  );
+}
+
 // =============================================================================
 // ENTRY
 // =============================================================================
@@ -1134,6 +1304,8 @@ export async function runCli(argv: string[], io: CliIO = defaultIO): Promise<num
         return await cmdBenchmarks(inv, io);
       case "import":
         return await cmdImport(inv, io);
+      case "custom-harnesses":
+        return await cmdCustomHarnesses(inv, io);
       default:
         // parseArgs guarantees a known command; defensive fallback
         io.err(`Error: unknown command "${inv.command}"`);

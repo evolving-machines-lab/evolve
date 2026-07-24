@@ -189,6 +189,14 @@ class AgentConfig:
         provider_base_url: Provider base URL for direct mode (auto-detected for Qwen)
         model: Model name (optional - uses agent's default if not specified). Use 'fable' for Claude Fable 5 or 'sonnet[1m]' / 'opus[1m]' for 1M context window (Claude only).
         reasoning_effort: Reasoning effort for models that support it (optional)
+        max_context_size: Context/completion ceiling for CLIs that must be told one
+            (Kimi Code reads it as max_context_size and sends it as the request's
+            max_tokens). Set it to the model's real ceiling when driving a harness
+            against a model from another family - e.g. Kimi Code against 'gpt-5.5'
+            through an OpenAI-compatible gateway, where an oversized max_tokens is
+            rejected with a 400. When set it is used verbatim. When omitted, the
+            harness's own models keep their registry value and any other model falls
+            back to a conservative 128000. Harnesses that never send a ceiling ignore it.
     """
     type: Optional[AgentType] = None
     api_key: Optional[str] = None
@@ -197,6 +205,7 @@ class AgentConfig:
     provider_base_url: Optional[str] = None
     model: Optional[str] = None
     reasoning_effort: Optional[ReasoningEffort] = None
+    max_context_size: Optional[int] = None
 
 
 @runtime_checkable

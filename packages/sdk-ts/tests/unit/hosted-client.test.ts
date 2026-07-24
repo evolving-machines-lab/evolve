@@ -1,10 +1,13 @@
 #!/usr/bin/env tsx
 /**
- * Unit Test: Hosted Evals Client (benchmarks + evaluations)
+ * Unit Test: Hosted Evals Client (benchmarks + customHarnesses + evaluations)
  *
- * Tests the benchmarks() and evaluations() factories against the hosted
- * evals API shapes: catalog mapping, the run contract (incl. the per-task-run
- * spend cap) with Idempotency-Key, cursor pagination, cancel/rerun-failed,
+ * Tests the benchmarks(), customHarnesses() and evaluations() factories against
+ * the hosted evals API shapes: catalog mapping, the run contract (incl. the
+ * per-task-run spend cap and the harnessVersion pin) with Idempotency-Key, the
+ * custom-harness registration lanes (install-script JSON body vs uploaded
+ * tarball with metadata on the query string) plus list/get/delete, cursor
+ * pagination, cancel/rerun-failed,
  * gzip export (buffer / file / stream), SSE watch with Last-Event-ID resume +
  * reconnect backoff, the git import trio (import/getImport/watchImport),
  * compare aggregates + task matrix, taskRun detail + seq-paged trace with the
@@ -127,6 +130,7 @@ import { gunzipSync, gzipSync } from "node:zlib";
 
 import {
   benchmarks,
+  customHarnesses,
   evaluations,
   EvolveApiError,
   NoActiveVersionError,
@@ -458,6 +462,216 @@ async function testWatchImportPollsToTerminal() {
 }
 
 // =============================================================================
+// CUSTOM HARNESSES TESTS
+// =============================================================================
+
+const CUSTOM_HARNESS = {
+  name: "acme-cli",
+  source: "install_script",
+  runCommand: "acme-cli --headless",
+  env: { ACME_PROFILE: "bench" },
+  createdAt: "2026-07-24T00:00:00Z",
+  updatedAt: "2026-07-24T00:00:00Z",
+};
+
+async function testCustomHarnessCreateInstallScript() {
+  console.log("\n--- customHarnesses().create() posts the install-script JSON body ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/custom-harnesses", { status: 201, body: CUSTOM_HARNESS });
+    const h = customHarnesses({ apiKey: "test-key", baseUrl: BASE });
+    const created = await h.create({
+      name: "acme-cli",
+      installScript: "curl -fsSL https://acme.dev/install.sh | sh",
+      runCommand: "acme-cli --headless",
+      env: { ACME_PROFILE: "bench" },
+    });
+    const call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.endsWith("/api/custom-harnesses"), "hits the custom-harnesses route");
+    assertEqual(call.init?.method, "POST", "uses POST");
+    const headers = call.init?.headers as Record<string, string>;
+    assertEqual(headers?.["Content-Type"], "application/json", "json content type");
+    assertEqual(
+      JSON.parse(call.init?.body as string),
+      {
+        name: "acme-cli",
+        installScript: "curl -fsSL https://acme.dev/install.sh | sh",
+        runCommand: "acme-cli --headless",
+        env: { ACME_PROFILE: "bench" },
+      },
+      "sends name/installScript/runCommand/env verbatim"
+    );
+    assertEqual(created, CUSTOM_HARNESS, "201 response mapped (name, source, runCommand, env, timestamps)");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testCustomHarnessCreateTarball() {
+  console.log("\n--- customHarnesses().create() tars a directory and rides metadata on the query ---");
+  installMockFetch();
+  const dir = await mkdtemp(join(tmpdir(), "evolve-harness-dir-"));
+  try {
+    await mkdir(join(dir, "bin"), { recursive: true });
+    await writeFile(join(dir, "bin", "acme-cli"), "#!/bin/sh\nexec acme \"$@\"\n");
+    setMockResponse("/api/custom-harnesses", {
+      status: 201,
+      body: { ...CUSTOM_HARNESS, source: "tarball" },
+    });
+
+    const h = customHarnesses({ apiKey: "test-key", baseUrl: BASE });
+    const created = await h.create({
+      name: "acme-cli",
+      directory: dir,
+      runCommand: "acme-cli --headless",
+      env: { ACME_PROFILE: "bench", ACME_REGION: "us" },
+    });
+
+    const call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.includes("/api/custom-harnesses?"), "targets the route with a query string");
+    const query = new URLSearchParams(call.url.slice(call.url.indexOf("?") + 1));
+    assertEqual(query.get("name"), "acme-cli", "name rides the query string");
+    assertEqual(query.get("runCommand"), "acme-cli --headless", "runCommand rides the query string");
+    assertEqual(
+      query.getAll("env"),
+      ["ACME_PROFILE=bench", "ACME_REGION=us"],
+      "env rides as repeated KEY=VALUE pairs"
+    );
+    assertEqual(call.init?.method, "POST", "uses POST");
+    const headers = call.init?.headers as Record<string, string>;
+    assertEqual(headers?.["Content-Type"], "application/gzip", "gzip content type");
+    const body = call.init?.body as Uint8Array;
+    assert(body instanceof Uint8Array && body.length > 0, "body is non-empty bytes");
+    assert(body[0] === 0x1f && body[1] === 0x8b, "body is a gzip stream (magic 1f 8b)");
+    const tarText = gunzipSync(Buffer.from(body)).toString("latin1");
+    assert(tarText.includes("bin/acme-cli"), "the tar carries the harness executable path");
+    assertEqual(created.source, "tarball", "server echoes the tarball source");
+  } finally {
+    restoreFetch();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function testCustomHarnessCreateRequiresOneSource() {
+  console.log("\n--- customHarnesses().create() requires exactly one source ---");
+  const h = customHarnesses({ apiKey: "test-key", baseUrl: BASE });
+  let threwNone = false;
+  try {
+    await h.create({ name: "acme-cli", runCommand: "acme-cli --headless" });
+  } catch (err: any) {
+    threwNone = true;
+    assert(err.message.includes("installScript"), "no-source error names installScript");
+    assert(err.message.includes("directory"), "no-source error names directory");
+  }
+  assert(threwNone, "throws when neither source is given");
+
+  let threwBoth = false;
+  try {
+    await h.create({
+      name: "acme-cli",
+      installScript: "true",
+      directory: "/tmp/acme",
+      runCommand: "acme-cli --headless",
+    });
+  } catch (err: any) {
+    threwBoth = true;
+    assert(err.message.includes("not both"), "both-sources error says not both");
+  }
+  assert(threwBoth, "throws when both sources are given");
+}
+
+async function testCustomHarnessListGetDelete() {
+  console.log("\n--- customHarnesses() list/get/delete ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/custom-harnesses/acme-cli", { status: 200, body: CUSTOM_HARNESS });
+    setMockResponse("/api/custom-harnesses", {
+      status: 200,
+      body: { customHarnesses: [CUSTOM_HARNESS] },
+    });
+    const h = customHarnesses({ apiKey: "test-key", baseUrl: BASE });
+
+    const listed = await h.list();
+    assertEqual(listed.length, 1, "list() unwraps the customHarnesses envelope");
+    assertEqual(listed[0].name, "acme-cli", "maps the harness name");
+    assertEqual(listed[0].source, "install_script", "maps the source");
+
+    const one = await h.get("acme-cli");
+    assert(
+      fetchCalls[fetchCalls.length - 1].url.endsWith("/api/custom-harnesses/acme-cli"),
+      "get() targets the detail route"
+    );
+    assertEqual(one.runCommand, "acme-cli --headless", "maps the run command");
+
+    setMockResponse("/api/custom-harnesses/acme-cli", { status: 204, body: null });
+    const deleted = await h.delete("acme-cli");
+    const call = fetchCalls[fetchCalls.length - 1];
+    assertEqual(call.init?.method, "DELETE", "delete() uses DELETE");
+    assertEqual(deleted, undefined, "delete() resolves with nothing (204)");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testCustomHarnessNotFoundIsTypedError() {
+  console.log("\n--- customHarnesses().get() surfaces 404 custom_harness_not_found ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/custom-harnesses/someone-elses", {
+      status: 404,
+      body: {
+        error: {
+          code: "custom_harness_not_found",
+          message: 'No custom harness named "someone-elses".',
+        },
+      },
+    });
+    const h = customHarnesses({ apiKey: "test-key", baseUrl: BASE });
+    let threw = false;
+    try {
+      await h.get("someone-elses");
+    } catch (err: any) {
+      threw = true;
+      assert(err instanceof EvolveApiError, "throws the typed EvolveApiError");
+      assertEqual(err.status, 404, "carries the HTTP status");
+      assertEqual(err.code, "custom_harness_not_found", "another owner's name is not-found, never a leak");
+    }
+    assert(threw, "throws on 404");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testCustomHarnessNameTakenIsTypedError() {
+  console.log("\n--- customHarnesses().create() surfaces 409 custom_harness_name_taken ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/custom-harnesses", {
+      status: 409,
+      body: {
+        error: {
+          code: "custom_harness_name_taken",
+          message: 'You already registered a custom harness named "acme-cli".',
+        },
+      },
+    });
+    const h = customHarnesses({ apiKey: "test-key", baseUrl: BASE });
+    let threw = false;
+    try {
+      await h.create({ name: "acme-cli", installScript: "true", runCommand: "acme-cli" });
+    } catch (err: any) {
+      threw = true;
+      assert(err instanceof EvolveApiError, "throws the typed EvolveApiError");
+      assertEqual(err.status, 409, "carries the HTTP status");
+      assertEqual(err.code, "custom_harness_name_taken", "carries the stable error code");
+    }
+    assert(threw, "throws on 409");
+  } finally {
+    restoreFetch();
+  }
+}
+
+// =============================================================================
 // EVALUATIONS TESTS
 // =============================================================================
 
@@ -510,6 +724,15 @@ async function testRunPostsInputContract() {
       "sandboxProvider forwarded"
     );
     assertEqual(evaluation.sandboxProvider, "daytona", "maps sandboxProvider from summary");
+    assertEqual(
+      JSON.parse(call.init?.body as string).agentSystems[1].harnessVersion,
+      "2.1.0",
+      "harnessVersion pin forwarded on the agent system"
+    );
+    assert(
+      !("harnessVersion" in JSON.parse(call.init?.body as string).agentSystems[0]),
+      "an unpinned agent system sends no harnessVersion (resolve-latest)"
+    );
     const headers = call.init?.headers as Record<string, string>;
     assertEqual(headers?.["Idempotency-Key"], "idem-abc", "Idempotency-Key header sent");
     assertEqual(headers?.["Content-Type"], "application/json", "JSON content type");
@@ -558,6 +781,74 @@ async function testRunIdempotentReplay() {
       { idempotencyKey: "idem-abc" }
     );
     assertEqual(evaluation.idempotentReplay, true, "idempotentReplay passed through");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testRunUnknownHarnessVersionIsTypedError() {
+  console.log("\n--- evaluations().run() surfaces 404 harness_version_not_found ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/evaluations", {
+      status: 404,
+      body: {
+        error: {
+          code: "harness_version_not_found",
+          message: 'Harness "codex" has no version "9.9.9".',
+        },
+      },
+    });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
+    let threw = false;
+    try {
+      await e.run({
+        benchmark: "deep-swe",
+        agentSystems: [{ harness: "codex", model: "gpt-5.5", harnessVersion: "9.9.9" }],
+        maxModelSpendUsd: 25,
+      });
+    } catch (err: any) {
+      threw = true;
+      assert(err instanceof EvolveApiError, "throws the typed EvolveApiError");
+      assertEqual(err.status, 404, "carries the HTTP status");
+      assertEqual(err.code, "harness_version_not_found", "carries the stable error code");
+    }
+    assert(threw, "an unknown harness version is rejected at creation");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testRunNonExactHarnessVersionIsTypedError() {
+  console.log("\n--- evaluations().run() surfaces 400 invalid_input for a non-exact pin ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/evaluations", {
+      status: 400,
+      body: {
+        error: {
+          code: "invalid_input",
+          message: 'harnessVersion "^0.29.0" must be an exact version.',
+        },
+      },
+    });
+    const e = evaluations({ apiKey: "test-key", baseUrl: BASE });
+    let threw = false;
+    try {
+      await e.run({
+        benchmark: "deep-swe",
+        // A range cannot hold a comparison still, so it is refused, not resolved.
+        agentSystems: [{ harness: "codex", model: "gpt-5.5", harnessVersion: "^0.29.0" }],
+        maxModelSpendUsd: 25,
+      });
+    } catch (err: any) {
+      threw = true;
+      assert(err instanceof EvolveApiError, "throws the typed EvolveApiError");
+      assertEqual(err.status, 400, "carries the HTTP status");
+      assertEqual(err.code, "invalid_input", "a non-exact pin is invalid_input, not not-found");
+      assert(err.message.includes("exact version"), "the message names the exact-version rule");
+    }
+    assert(threw, "a range/tag pin is rejected at creation");
   } finally {
     restoreFetch();
   }
@@ -1892,7 +2183,7 @@ async function testRootExportsHostedTypes() {
 
   // Source: the hosted export block in src/index.ts names the documented types
   const rootSrc = await readFile(new URL("../../src/index.ts", import.meta.url), "utf-8");
-  for (const t of ["EvalSandboxProvider", "BenchmarkImportError", "EvaluationInput", "EvaluationStatus"]) {
+  for (const t of ["EvalSandboxProvider", "BenchmarkImportError", "EvaluationInput", "EvaluationStatus", "CustomHarness", "CustomHarnessInput"]) {
     assert(new RegExp(`type ${t},`).test(rootSrc), `src/index.ts exports type ${t}`);
   }
 
@@ -1915,8 +2206,16 @@ async function main() {
   await testImportDirectorySource();
   await testGetImport();
   await testWatchImportPollsToTerminal();
+  await testCustomHarnessCreateInstallScript();
+  await testCustomHarnessCreateTarball();
+  await testCustomHarnessCreateRequiresOneSource();
+  await testCustomHarnessListGetDelete();
+  await testCustomHarnessNotFoundIsTypedError();
+  await testCustomHarnessNameTakenIsTypedError();
   await testRunPostsInputContract();
   await testRunIdempotentReplay();
+  await testRunUnknownHarnessVersionIsTypedError();
+  await testRunNonExactHarnessVersionIsTypedError();
   await testGetEvaluationDetail();
   await testListEvaluations();
   await testListAutoPagination();

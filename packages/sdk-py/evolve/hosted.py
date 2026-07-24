@@ -157,6 +157,16 @@ class ActiveBenchmark:
 
 @dataclass
 class AgentSystem:
+    """One agent system: harness + model (+ optional pinned harness version).
+
+    ``harness`` is a built-in ("claude", "codex", ...) or a registered custom
+    harness name. ``harness_version`` omitted (or None) resolves the latest at
+    dispatch time; the version that actually ran is recorded on every task run
+    as ``resolved_harness_version``. Rejected at creation when the pin is not an
+    exact version (``invalid_input``), when the version is not published
+    (``harness_version_not_found``), or when the harness is a custom one — those
+    are versioned by the content of their own source (``invalid_input``).
+    """
     harness: str
     model: str
     harness_version: Optional[str] = None
@@ -439,6 +449,29 @@ class BenchmarkImport:
 
 
 @dataclass
+class CustomHarness:
+    """A private harness registered by the caller.
+
+    Once registered, ``name`` is usable in ``agent_systems[].harness`` exactly
+    like a built-in ("claude", "codex", ...). Private to its owner: another
+    user's name reads as ``custom_harness_not_found``, never as a permission
+    error — existence is never leaked.
+    """
+    # The harness name to put in agent_systems[].harness
+    name: str
+    # How the executables were produced: "install_script" | "tarball"
+    source: str
+    # The command run headless with `sh -c` at the task working directory
+    run_command: str
+    # Caller-declared env injected at RUN time only. It may not override the
+    # run contract's own keys — the server rejects that at registration with
+    # ``custom_harness_invalid_env``.
+    env: Dict[str, str] = field(default_factory=dict)
+    created_at: str = ''
+    updated_at: str = ''
+
+
+@dataclass
 class EvaluationPage:
     evaluations: List[Evaluation]
     next_cursor: Optional[str]
@@ -689,6 +722,17 @@ def _map_regrade_job(data: Dict[str, Any]) -> RegradeJob:
             if isinstance(results, list)
             else None
         ),
+    )
+
+
+def _map_custom_harness(data: Dict[str, Any]) -> CustomHarness:
+    return CustomHarness(
+        name=data.get('name', ''),
+        source=data.get('source', ''),
+        run_command=data.get('runCommand', ''),
+        env=data.get('env') or {},
+        created_at=data.get('createdAt', ''),
+        updated_at=data.get('updatedAt', ''),
     )
 
 
@@ -1097,6 +1141,126 @@ class BenchmarksClient:
             if deadline is not None and time.monotonic() >= deadline:
                 raise TimeoutError(f'watch_import({id!r}) timed out after {timeout_s}s')
             await asyncio.sleep(poll_interval_s)
+
+
+# =============================================================================
+# CUSTOM HARNESSES CLIENT
+# =============================================================================
+
+class CustomHarnessesClient:
+    """Client for the caller's own private (bring-your-own) harnesses.
+
+    Created via the standalone ``custom_harnesses()`` factory. Register a
+    harness once, then name it in ``agent_systems[].harness`` exactly like a
+    built-in. Requires ``EVOLVE_API_KEY`` unless
+    ``HostedClientConfig(api_key=...)`` is given.
+
+    Example::
+
+        from evolve import custom_harnesses, evaluations, AgentSystem
+
+        async with custom_harnesses() as harnesses:
+            await harnesses.create(
+                name='acme-cli',
+                install_script='curl -fsSL https://acme.dev/install.sh | sh',
+                run_command='acme-cli --headless',
+            )
+
+        async with evaluations() as evals:
+            await evals.run(
+                benchmark='deep-swe',
+                agent_systems=[AgentSystem(harness='acme-cli', model='gpt-5.5')],
+                max_model_spend_usd=25,
+            )
+    """
+
+    def __init__(self, config: Optional[HostedClientConfig] = None):
+        self._http = _HostedHttp('custom_harnesses', config)
+
+    async def __aenter__(self) -> 'CustomHarnessesClient':
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        await self.close()
+
+    async def close(self) -> None:
+        return None
+
+    async def create(
+        self,
+        *,
+        name: str,
+        install_script: Optional[str] = None,
+        directory: Optional[str] = None,
+        run_command: str,
+        env: Optional[Dict[str, str]] = None,
+    ) -> CustomHarness:
+        """Register a private harness.
+
+        Provide EITHER an ``install_script`` (the script itself, not a path) OR
+        a local ``directory`` (tarred + gzipped deterministically on the client
+        and uploaded), never both. Either one is built in a throwaway builder
+        sandbox that has internet and ZERO secrets, so everything it fetches
+        must be publicly fetchable, and it must leave executables in
+        ``$PREFIX/bin``.
+
+        ``run_command`` is run headless with ``sh -c`` at the task working
+        directory. ``env`` is injected at RUN time only and may not override
+        the run contract's own keys.
+        """
+        if install_script is not None and directory is not None:
+            raise ValueError(
+                'create() takes EITHER an install script (install_script=...) '
+                'or a local directory (directory=...), not both'
+            )
+        if directory is not None:
+            # Tarball source: the body IS the gzipped tarball, so the metadata
+            # rides the query string — repeated `env` pairs, exactly like the
+            # benchmark archive-import lane.
+            gzipped = await asyncio.to_thread(_tar_gzip_directory, directory)
+            params: List['tuple[str, str]'] = [('name', name), ('runCommand', run_command)]
+            for key, value in (env or {}).items():
+                params.append(('env', f'{key}={value}'))
+            query = urllib.parse.urlencode(params)
+            raw = await self._http.request_upload(
+                f'/api/custom-harnesses?{query}',
+                gzipped,
+                {'Content-Type': 'application/gzip'},
+            )
+            return _map_custom_harness(raw)
+        if install_script is None:
+            raise ValueError(
+                'create() requires either an install script (install_script=...) '
+                'or a local directory (directory=...), plus name=... and run_command=...'
+            )
+        body: Dict[str, Any] = {
+            'name': name,
+            'installScript': install_script,
+            'runCommand': run_command,
+        }
+        if env is not None:
+            body['env'] = env
+        raw = await self._http.request_json('/api/custom-harnesses', method='POST', body=body)
+        return _map_custom_harness(raw)
+
+    async def list(self) -> List[CustomHarness]:
+        """List the caller's registered custom harnesses."""
+        data = await self._http.request_json('/api/custom-harnesses')
+        return [_map_custom_harness(item) for item in data.get('customHarnesses', [])]
+
+    async def get(self, name: str) -> CustomHarness:
+        """Get one custom harness by name."""
+        raw = await self._http.request_json(
+            f'/api/custom-harnesses/{urllib.parse.quote(name)}'
+        )
+        return _map_custom_harness(raw)
+
+    async def delete(self, name: str) -> None:
+        """Delete a custom harness. Past evaluations keep their recorded harness."""
+        # 204 No Content — nothing to map.
+        await self._http.request_json(
+            f'/api/custom-harnesses/{urllib.parse.quote(name)}', method='DELETE'
+        )
 
 
 # =============================================================================

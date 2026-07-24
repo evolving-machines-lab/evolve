@@ -69,6 +69,7 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
       externalGateway: { revoke },
       model: config.model,
       reasoningEffort: config.reasoningEffort,
+      maxContextSize: config.maxContextSize,
     };
   }
 
@@ -87,6 +88,7 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
       isOAuth: true,
       model: config.model,
       reasoningEffort: config.reasoningEffort,
+      maxContextSize: config.maxContextSize,
     };
   }
 
@@ -101,6 +103,7 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
       isDirectMode: true,
       model: config.model,
       reasoningEffort: config.reasoningEffort,
+      maxContextSize: config.maxContextSize,
     };
   }
 
@@ -112,6 +115,7 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
       isDirectMode: false,
       model: config.model,
       reasoningEffort: config.reasoningEffort,
+      maxContextSize: config.maxContextSize,
     };
   }
 
@@ -128,6 +132,7 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
       isDirectMode: false,
       model: config?.model,
       reasoningEffort: config?.reasoningEffort,
+      maxContextSize: config?.maxContextSize,
     };
   }
 
@@ -148,6 +153,7 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
         isDirectMode: true,
         model: config?.model,
         reasoningEffort: config?.reasoningEffort,
+        maxContextSize: config?.maxContextSize,
       };
     }
   }
@@ -164,6 +170,7 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
       isDirectMode: true,
       model: config?.model,
       reasoningEffort: config?.reasoningEffort,
+      maxContextSize: config?.maxContextSize,
     };
   }
 
@@ -182,6 +189,7 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
           oauthFileContent,
           model: config?.model,
           reasoningEffort: config?.reasoningEffort,
+          maxContextSize: config?.maxContextSize,
         };
       }
       // Token-based OAuth (Claude): env var is token itself
@@ -192,6 +200,7 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
         isOAuth: true,
         model: config?.model,
         reasoningEffort: config?.reasoningEffort,
+        maxContextSize: config?.maxContextSize,
       };
     }
   }

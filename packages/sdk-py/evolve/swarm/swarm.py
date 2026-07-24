@@ -747,6 +747,7 @@ class Swarm:
             'provider_base_url': agent_config.provider_base_url if agent_config else None,
             'model': agent_config.model if agent_config else None,
             'reasoning_effort': agent_config.reasoning_effort if agent_config else None,
+            'max_context_size': agent_config.max_context_size if agent_config else None,
             # Sandbox (optional - TS SDK auto-resolves from EVOLVE_API_KEY/E2B_API_KEY/DAYTONA_API_KEY)
             'sandbox_provider': {'type': self.config.sandbox.type, 'config': self.config.sandbox.config} if self.config.sandbox else None,
             # Other settings
@@ -2071,6 +2072,9 @@ class Swarm:
                 provider_base_url=base.provider_base_url if base else None,
                 model=override.model,
                 reasoning_effort=override.reasoning_effort,
+                # Inherited like the other base-only fields (TS spreads the base
+                # config under the override, so this must survive too).
+                max_context_size=base.max_context_size if base else None,
             )
         return base
 

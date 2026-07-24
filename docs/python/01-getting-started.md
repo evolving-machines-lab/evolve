@@ -320,6 +320,17 @@ A harness and its model are chosen together, and a few harnesses only accept mod
 
 - **`qwen`** must run a Qwen-native model (the `qwen3.x` aliases, routed via DashScope). Qwen Code injects the DashScope-only `enable_thinking` request parameter on every call, which OpenAI-family models reject with a `400` — so pointing the `qwen` harness at a non-Qwen model fails.
 - **`opencode`** routes every model through OpenRouter, so its models are the `openrouter/…` ids in the table above (a bare id is prefixed with `openrouter/` for you).
+- **`kimi`** must be told a context ceiling, which Kimi Code sends as the request's `max_tokens`. Its own models get Kimi's 262144; any other model (say `gpt-5.5` behind an OpenAI-compatible gateway) gets a conservative 128000 instead, because an oversized `max_tokens` is rejected outright — LiteLLM answers `400 max_tokens is too large`. Pass the model's real ceiling to skip the guess:
+
+```python
+AgentConfig(
+    type='kimi',
+    model='gpt-5.5',
+    max_context_size=128000,   # (optional) the model's real completion ceiling, used verbatim
+)
+```
+
+`max_context_size` is an SDK option, never an environment variable. Harnesses that do not send a ceiling ignore it.
 
 Two harness quirks the SDK handles automatically, with nothing for you to set: the `claude` harness runs with `IS_SANDBOX=1` so Claude Code's `--dangerously-skip-permissions` is allowed under root, and the `gemini` harness boots with workspace trust set so Gemini CLI runs headless instead of refusing an untrusted workspace.
 

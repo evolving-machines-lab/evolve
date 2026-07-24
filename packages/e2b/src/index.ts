@@ -233,6 +233,9 @@ export interface SandboxFiles {
   /** Write from stream */
   writeStream(path: string, stream: ReadableStream<Uint8Array>): Promise<void>;
 
+  /** Upload a local file by path, streamed off disk (never buffered whole) */
+  writeFromPath(sandboxPath: string, localPath: string): Promise<void>;
+
   // --- Large File URLs (browser-friendly) ---
 
   /** Get pre-signed upload URL for large files (expiration in seconds) */
@@ -521,6 +524,79 @@ export class E2BFiles implements SandboxFiles {
 
   async writeStream(path: string, stream: ReadableStream<Uint8Array>): Promise<void> {
     await this.sandbox.files.write(path, stream, { user: this.defaultUser });
+  }
+
+  /**
+   * Upload a local file by PATH, streamed off disk with real backpressure.
+   *
+   * Why this does NOT go through files.write(): that method calls
+   * `new Response(data).blob()` on whatever it is given, which MATERIALIZES the
+   * body — measured at +463 MB RSS for a 200 MB source, whether the input is a
+   * stream, a Buffer, or even a file-backed Blob. So handing it a stream looks
+   * like streaming and is not, which is precisely the trap this method exists to
+   * avoid: a caller uploading a large artifact once per concurrent task would
+   * still pay the full size every time.
+   *
+   * Instead the multipart body is assembled as a ReadableStream and POSTed to
+   * the signed upload URL with `duplex: "half"` — the same shape E2B's own
+   * template-context upload uses. Verified to hold backpressure: against a
+   * deliberately slow sink the producer had read 7 MB of a 200 MB file after
+   * four seconds, rather than racing to the end.
+   *
+   * The wire format mirrors files.write()'s single-file case exactly: the
+   * destination is the `path` query parameter of the signed URL, and the body is
+   * one `file` part. If E2B ever changes that, the POST fails and we fall back to
+   * the SDK's own (buffering) path — a correct upload beats a cheap one.
+   */
+  async writeFromPath(sandboxPath: string, localPath: string): Promise<void> {
+    const { createReadStream, statSync } = await import("node:fs");
+    const { Readable } = await import("node:stream");
+    const { randomBytes } = await import("node:crypto");
+
+    const size = statSync(localPath).size;
+    const boundary = `----evolve${randomBytes(16).toString("hex")}`;
+    const head = Buffer.from(
+      `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="file"; filename="blob"\r\n` +
+        `Content-Type: application/octet-stream\r\n\r\n`
+    );
+    const tail = Buffer.from(`\r\n--${boundary}--\r\n`);
+
+    async function* multipart(): AsyncGenerator<Buffer> {
+      yield head;
+      for await (const chunk of createReadStream(localPath)) {
+        yield chunk as Buffer;
+      }
+      yield tail;
+    }
+
+    try {
+      const url = await this.uploadUrl(sandboxPath);
+      const response = await fetch(url, {
+        method: "POST",
+        body: Readable.toWeb(Readable.from(multipart())) as ReadableStream<Uint8Array>,
+        headers: {
+          "Content-Type": `multipart/form-data; boundary=${boundary}`,
+          "Content-Length": String(head.length + size + tail.length),
+        },
+        // Node/undici requires this to send a request body as a stream.
+        duplex: "half",
+      } as RequestInit);
+      if (!response.ok) {
+        throw new Error(
+          `streamed upload to ${sandboxPath} failed (HTTP ${response.status})`
+        );
+      }
+    } catch (error) {
+      console.warn(
+        `[e2b] streamed upload of ${localPath} failed, falling back to a buffered write:`,
+        error instanceof Error ? error.message : error
+      );
+      const web = Readable.toWeb(
+        createReadStream(localPath)
+      ) as ReadableStream<Uint8Array>;
+      await this.writeStream(sandboxPath, web);
+    }
   }
 
   async watchDir(

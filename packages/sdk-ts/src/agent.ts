@@ -240,6 +240,32 @@ function mergeCustomHeaders(
 }
 
 const KIMI_CODE_DEFAULT_CONTEXT_SIZE = 262144;
+/**
+ * Conservative ceiling used when the resolved model is NOT one the harness's
+ * own registry entry declares.
+ *
+ * Kimi Code turns its `max_context_size` into the request's `max_tokens`, and
+ * an OpenAI-compatible gateway rejects a `max_tokens` above the model's real
+ * completion ceiling (LiteLLM answers 400 "max_tokens is too large"). Kimi's
+ * own 262144 is therefore never asserted for a foreign model. Callers that
+ * know the exact per-model ceiling pass it as `AgentConfig.maxContextSize`.
+ */
+const FOREIGN_MODEL_MAX_CONTEXT_SIZE = 128000;
+
+/** True when `model` is an identifier the registry entry itself declares. */
+function registryOwnsModel(registry: AgentRegistryEntry, model: string): boolean {
+  if (registry.models.some((entry) => entry.alias === model || entry.modelId === model)) {
+    return true;
+  }
+  const aliases = registry.gatewayModelAliases;
+  if (aliases && (model in aliases || Object.values(aliases).includes(model))) {
+    return true;
+  }
+  const directAliases = registry.directModelAliases;
+  return Boolean(
+    directAliases && (model in directAliases || Object.values(directAliases).includes(model)),
+  );
+}
 // Kimi Code accepts these as provider-dependent config/env values; Moonshot's
 // public Kimi API documents thinking on/off/keep, not stable effort levels.
 const KIMI_CODE_THINKING_EFFORTS = new Set([
@@ -649,6 +675,37 @@ export class Agent {
   }
 
   /**
+   * The `max_context_size` Kimi Code is told, which it sends as the request's
+   * `max_tokens`. Three cases, in order:
+   *
+   *   1. `maxContextSize` on the agent config wins verbatim — the caller knows
+   *      the model's real ceiling (an eval worker reads it from the gateway's
+   *      /model/info `max_output_tokens`).
+   *   2. A model the kimi registry entry itself declares keeps that entry's
+   *      value (262144).
+   *   3. Any other model — e.g. driving Kimi Code against `gpt-5.5` through an
+   *      OpenAI-compatible gateway — gets the conservative constant, because
+   *      262144 is above that model's ceiling and the gateway answers 400.
+   *
+   * Both kimi wiring paths (KIMI_MODEL_MAX_CONTEXT_SIZE and the config.toml
+   * `max_context_size`) resolve it here, so they can never disagree.
+   */
+  private resolveKimiMaxContextSize(): number {
+    if (typeof this.agentConfig.maxContextSize === "number") {
+      return this.agentConfig.maxContextSize;
+    }
+    const configuredModel = this.agentConfig.model || this.registry.defaultModel;
+    const ownsModel =
+      registryOwnsModel(this.registry, configuredModel) ||
+      registryOwnsModel(this.registry, this.resolveCommandModel(configuredModel));
+    if (!ownsModel) return FOREIGN_MODEL_MAX_CONTEXT_SIZE;
+    return (
+      this.registry.spendTrackingTomlProvider?.maxContextSize ??
+      KIMI_CODE_DEFAULT_CONTEXT_SIZE
+    );
+  }
+
+  /**
    * Kimi Code model envs for direct-style credential injection (direct mode
    * and externalGateway mode). Kimi Code reads KIMI_MODEL_* — the registry's
    * KIMI_API_KEY/KIMI_BASE_URL are SDK-facing inputs the CLI never reads.
@@ -664,10 +721,7 @@ export class Agent {
       ),
       KIMI_MODEL_API_KEY: this.agentConfig.apiKey,
       KIMI_MODEL_PROVIDER_TYPE: "kimi",
-      KIMI_MODEL_MAX_CONTEXT_SIZE: String(
-        this.registry.spendTrackingTomlProvider?.maxContextSize ??
-          KIMI_CODE_DEFAULT_CONTEXT_SIZE,
-      ),
+      KIMI_MODEL_MAX_CONTEXT_SIZE: String(this.resolveKimiMaxContextSize()),
       KIMI_MODEL_DEFAULT_THINKING: thinkingEnabled ? "true" : "false",
       KIMI_MODEL_THINKING_MODE: thinkingEnabled ? "on" : "off",
     };
@@ -2089,7 +2143,12 @@ export class Agent {
       const providerRuntime = this.requireActiveProviderRuntimeToken();
       await writeKimiSpendConfig(
         sandbox,
-        this.registry.spendTrackingTomlProvider,
+        // Same per-model ceiling the direct-mode envs use — never Kimi's own
+        // 262144 for a model from another family.
+        {
+          ...this.registry.spendTrackingTomlProvider,
+          maxContextSize: this.resolveKimiMaxContextSize(),
+        },
         {
           [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
           [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
@@ -2506,6 +2565,40 @@ export class Agent {
   async uploadFiles(files: FileMap): Promise<void> {
     const sandbox = await this.getSandbox();
     await this.uploadWorkspaceFiles(sandbox, files);
+  }
+
+  /**
+   * Upload one LOCAL file into the sandbox by path, without holding its bytes
+   * in the process heap.
+   *
+   * uploadFiles() takes a FileMap — the bytes as a value — so a caller
+   * uploading a large artifact pays one full-size Buffer per concurrent
+   * upload. This takes the local path instead: the provider streams it off
+   * disk (or hands its own SDK the path), so peak memory is a chunk rather
+   * than the file. Use it for anything big enough that N concurrent uploads
+   * would matter; uploadFiles() stays the right call for small content.
+   *
+   * `sandboxPath` follows the uploadFiles() convention: absolute paths are
+   * used as-is, relative paths resolve under the working directory.
+   *
+   * Providers that expose no cheaper path than a plain write fall back to
+   * reading the file — correct everywhere, cheap where the provider helps.
+   */
+  async uploadFileFromPath(sandboxPath: string, localPath: string): Promise<void> {
+    const sandbox = await this.getSandbox();
+    const target = sandboxPath.startsWith("/")
+      ? sandboxPath
+      : `${this.workingDir}/${sandboxPath}`;
+    const dir = target.substring(0, target.lastIndexOf("/"));
+    if (dir) {
+      await sandbox.commands.run(`mkdir -p ${dir}`, { timeoutMs: 30000 });
+    }
+    if (sandbox.files.writeFromPath) {
+      await sandbox.files.writeFromPath(target, localPath);
+      return;
+    }
+    const { readFile } = await import("node:fs/promises");
+    await sandbox.files.write(target, await readFile(localPath));
   }
 
   /**

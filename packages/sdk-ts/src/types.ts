@@ -150,6 +150,19 @@ export interface SandboxFiles {
   write(path: string, content: string | Buffer | ArrayBuffer | Uint8Array): Promise<void>;
   writeBatch(files: Array<{ path: string; data: string | Buffer | ArrayBuffer | Uint8Array }>): Promise<void>;
   makeDir(path: string): Promise<void>;
+  /**
+   * Upload a LOCAL file by path, without loading it into the process heap.
+   *
+   * write()/writeBatch() take the bytes as a value, so uploading a large
+   * artifact costs one full-size Buffer per concurrent upload — a caller doing
+   * many uploads at once pays that in RSS. This takes the path instead and lets
+   * the provider move the bytes its own cheapest way (a request body streamed
+   * off disk, or the vendor SDK's own path upload).
+   *
+   * OPTIONAL: a provider that has no cheaper path than "read it and send it"
+   * omits this, and uploadFileFromPath() falls back to write().
+   */
+  writeFromPath?(sandboxPath: string, localPath: string): Promise<void>;
 }
 
 /** Sandbox instance */
@@ -443,6 +456,18 @@ export interface AgentConfig {
   model?: string;
   /** Reasoning effort for models that support it */
   reasoningEffort?: ReasoningEffort;
+  /**
+   * Context/completion ceiling for CLIs that must be told one (Kimi Code reads
+   * it as `max_context_size` and sends it as the request's `max_tokens`).
+   *
+   * Set it to the model's real ceiling when driving a harness against a model
+   * from another family — e.g. Kimi Code against `gpt-5.5` through an
+   * OpenAI-compatible gateway, where an oversized `max_tokens` is rejected with
+   * a 400. When set it is used verbatim. When omitted, the harness's own models
+   * keep their registry value and any other model falls back to a conservative
+   * 128000. Harnesses that never send a ceiling ignore it.
+   */
+  maxContextSize?: number;
 }
 
 /** Resolved agent config (output of resolution, not an extension of input) */
@@ -458,6 +483,8 @@ export interface ResolvedAgentConfig {
   externalGateway?: { revoke: () => Promise<void> };
   model?: string;
   reasoningEffort?: ReasoningEffort;
+  /** Caller-pinned context/completion ceiling; used verbatim when present */
+  maxContextSize?: number;
 }
 
 /** Options for Agent constructor */

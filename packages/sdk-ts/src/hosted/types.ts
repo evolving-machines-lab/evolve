@@ -125,8 +125,17 @@ export interface ActiveBenchmark {
 
 /** One agent system: harness + model (+ optional pinned harness version) */
 export interface AgentSystem {
+  /** A built-in harness ("claude", "codex", ...) or a registered custom harness name */
   harness: string;
   model: string;
+  /**
+   * Pin the harness version. Omitted (or null) resolves the latest at dispatch
+   * time; the version that actually ran is recorded on every task run as
+   * `resolvedHarnessVersion`. Rejected at creation when the pin is not an exact
+   * version (`invalid_input`), when the version is not published
+   * (`harness_version_not_found`), or when the harness is a custom one — those
+   * are versioned by the content of their own source (`invalid_input`).
+   */
   harnessVersion?: string | null;
 }
 
@@ -562,6 +571,69 @@ export interface BenchmarkImportError {
 }
 
 // =============================================================================
+// CUSTOM HARNESSES
+// =============================================================================
+
+/**
+ * Where a custom harness's executables came from: a publicly fetchable install
+ * script run in a throwaway builder sandbox, or a tarball uploaded from a local
+ * directory. Echoed on every response; the SDK never guesses it.
+ */
+export type CustomHarnessSource = "install_script" | "tarball";
+
+/**
+ * A private harness registered by the caller. Once registered, its `name` is
+ * usable in `agentSystems[].harness` exactly like a built-in ("claude",
+ * "codex", ...).
+ *
+ * Private to its owner: another user's name reads as
+ * `custom_harness_not_found`, never as a permission error — existence is never
+ * leaked.
+ */
+export interface CustomHarness {
+  /** The harness name to put in agentSystems[].harness */
+  name: string;
+  /** How the executables were produced */
+  source: CustomHarnessSource;
+  /** The command run headless with `sh -c` at the task working directory */
+  runCommand: string;
+  /**
+   * Caller-declared env injected at RUN time only. It may not override the run
+   * contract's own keys (see the docs) — the server rejects that at
+   * registration with `custom_harness_invalid_env`.
+   */
+  env: Record<string, string>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Input for customHarnesses().create(): a name, a run command, and EITHER an
+ * install script (`installScript`, the script itself — sent as JSON) OR a local
+ * directory (`directory`, tarred deterministically on the client and uploaded).
+ * Provide one source, not both.
+ */
+export interface CustomHarnessInput {
+  /** Harness name; also the value used later in agentSystems[].harness */
+  name: string;
+  /**
+   * The install script itself (not a path). It runs in a throwaway builder
+   * sandbox that has internet and ZERO secrets, so everything it fetches must
+   * be publicly fetchable, and it must leave executables in `$PREFIX/bin`.
+   */
+  installScript?: string;
+  /**
+   * A local directory holding the harness — tarred + gzipped and uploaded.
+   * Same build rules as an install script.
+   */
+  directory?: string;
+  /** Command run headless with `sh -c` at the task working directory */
+  runCommand: string;
+  /** Env injected at RUN time only; may not override the run contract's keys */
+  env?: Record<string, string>;
+}
+
+// =============================================================================
 // OPTIONS
 // =============================================================================
 
@@ -679,6 +751,22 @@ export interface BenchmarksClient {
    * "FAILED") and resolve with the final import.
    */
   watchImport(id: string, options?: WatchImportOptions): Promise<BenchmarkImport>;
+}
+
+/** Client for the caller's own private (bring-your-own) harnesses */
+export interface CustomHarnessesClient {
+  /**
+   * Register a private harness. Provide either an install script
+   * (`{ installScript }`) or a local directory (`{ directory }`), never both.
+   * The name is then usable in `agentSystems[].harness` like a built-in.
+   */
+  create(input: CustomHarnessInput): Promise<CustomHarness>;
+  /** List the caller's registered custom harnesses */
+  list(): Promise<CustomHarness[]>;
+  /** Get one custom harness by name */
+  get(name: string): Promise<CustomHarness>;
+  /** Delete a custom harness. Past evaluations keep their recorded harness. */
+  delete(name: string): Promise<void>;
 }
 
 /** Client for hosted evaluations */

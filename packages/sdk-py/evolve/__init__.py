@@ -44,6 +44,8 @@ from .hosted import (
     ComparisonCell,
     ComparisonCoverage,
     ComparisonTaskRow,
+    CustomHarness,
+    CustomHarnessesClient,
     Evaluation,
     EvaluationComparison,
     EvaluationCounts,
@@ -220,6 +222,16 @@ def benchmarks(config: Optional[HostedClientConfig] = None) -> BenchmarksClient:
     return BenchmarksClient(config)
 
 
+def custom_harnesses(config: Optional[HostedClientConfig] = None) -> CustomHarnessesClient:
+    """Create a standalone hosted-evals custom harnesses client.
+
+    Register a private harness once, then name it in agent_systems[].harness
+    exactly like a built-in. Uses EVOLVE_API_KEY unless
+    HostedClientConfig(api_key=...) is provided.
+    """
+    return CustomHarnessesClient(config)
+
+
 def evaluations(config: Optional[HostedClientConfig] = None) -> EvaluationsClient:
     """Create a standalone hosted-evals evaluations client.
 
@@ -339,9 +351,10 @@ __all__ = [
     'browser_profiles',
     'managed_secrets',
 
-    # Hosted evals (benchmarks + evaluations)
+    # Hosted evals (benchmarks + custom harnesses + evaluations)
     'HostedClientConfig',
     'BenchmarksClient',
+    'CustomHarnessesClient',
     'EvaluationsClient',
     'EvolveAPIError',
     'NoActiveVersionError',
@@ -373,7 +386,9 @@ __all__ = [
     'TaskRunTracePage',
     'EvaluationPage',
     'TaskRunPage',
+    'CustomHarness',
     'benchmarks',
+    'custom_harnesses',
     'evaluations',
 
     # Standalone functions

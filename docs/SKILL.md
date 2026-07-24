@@ -1,6 +1,6 @@
 ---
 name: evolve
-description: "Evolve SDK development for TypeScript and Python. Use when building applications with Evolve to run AI agents (Claude, Codex, Gemini, Qwen, Kimi, OpenCode, Droid) in secure sandboxes. Triggers: (1) Creating Evolve applications, (2) Configuring agents with skills, Integrations, MCP servers, (3) Using Swarm abstractions (map, filter, reduce, bestOf/best_of, verify), (4) Building Pipelines, (5) Structured output with schemas, (6) Session management, streaming, observability, (7) Checkpointing, storage & StorageClient, (8) Cost tracking (per-run and per-session spend), (9) Historical sessions & trace download via sessions() client, (10) Hosted evals via benchmarks()/evaluations() clients and the evolve-evals CLI, (11) Eval/task sandboxes (task workspace mode, sandbox create options, credential sealing, artifact collection)."
+description: "Evolve SDK development for TypeScript and Python. Use when building applications with Evolve to run AI agents (Claude, Codex, Gemini, Qwen, Kimi, OpenCode, Droid) in secure sandboxes. Triggers: (1) Creating Evolve applications, (2) Configuring agents with skills, Integrations, MCP servers, (3) Using Swarm abstractions (map, filter, reduce, bestOf/best_of, verify), (4) Building Pipelines, (5) Structured output with schemas, (6) Session management, streaming, observability, (7) Checkpointing, storage & StorageClient, (8) Cost tracking (per-run and per-session spend), (9) Historical sessions & trace download via sessions() client, (10) Hosted evals via benchmarks()/customHarnesses()/evaluations() clients and the evolve-evals CLI, including bring-your-own harnesses, (11) Eval/task sandboxes (task workspace mode, sandbox create options, credential sealing, artifact collection)."
 ---
 
 # Evolve SDK
@@ -49,7 +49,7 @@ Read on demand when the user's task requires them:
 |-------------|-----------|--------|
 | Building a UI, handling real-time events | [04-streaming.md](references/typescript/04-streaming.md) | [04-streaming.md](references/python/04-streaming.md) |
 | Parallel agents (map/filter/reduce/bestOf/verify), Pipeline chaining | [05-swarm-pipeline.md](references/typescript/05-swarm-pipeline.md) | [05-swarm-pipeline.md](references/python/05-swarm-pipeline.md) |
-| Hosted benchmark evaluations (benchmarks()/evaluations(), watch, export, evolve-evals CLI) | [06-hosted-evals.md](references/typescript/06-hosted-evals.md) | [06-hosted-evals.md](references/python/06-hosted-evals.md) |
+| Hosted benchmark evaluations (benchmarks()/customHarnesses()/evaluations(), watch, export, evolve-evals CLI) | [06-hosted-evals.md](references/typescript/06-hosted-evals.md) | [06-hosted-evals.md](references/python/06-hosted-evals.md) |
 
 ## Topic Index
 
@@ -133,6 +133,7 @@ Read on demand when the user's task requires them:
 | Task format & declarations (network, verifier, sizing) | [TS](references/typescript/06-hosted-evals.md#what-runs) | [PY](references/python/06-hosted-evals.md#what-runs) |
 | Sandbox providers (E2B/Daytona/Modal, per-task verdicts) | [TS](references/typescript/06-hosted-evals.md#where-it-runs) | [PY](references/python/06-hosted-evals.md#where-it-runs) |
 | Bring your own benchmark (import → activation → READY) | [TS](references/typescript/06-hosted-evals.md#bring-your-own-benchmark) | [PY](references/python/06-hosted-evals.md#bring-your-own-benchmark) |
+| Bring your own harness (customHarnesses()/custom_harnesses(), run contract) | [TS](references/typescript/06-hosted-evals.md#bring-your-own-harness) | [PY](references/python/06-hosted-evals.md#bring-your-own-harness) |
 | Statuses (evaluation, task run, benchmark version) | [TS](references/typescript/06-hosted-evals.md#statuses) | [PY](references/python/06-hosted-evals.md#statuses) |
 | Types & errors | [TS](references/typescript/06-hosted-evals.md#types) | [PY](references/python/06-hosted-evals.md#types) |
 

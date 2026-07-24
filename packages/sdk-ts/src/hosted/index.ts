@@ -19,6 +19,10 @@ import type {
   ComparisonCell,
   ComparisonCoverage,
   ComparisonTaskRow,
+  CustomHarness,
+  CustomHarnessesClient,
+  CustomHarnessInput,
+  CustomHarnessSource,
   EvalSandboxProvider,
   Evaluation,
   EvaluationComparison,
@@ -72,6 +76,10 @@ export type {
   ComparisonCell,
   ComparisonCoverage,
   ComparisonTaskRow,
+  CustomHarness,
+  CustomHarnessesClient,
+  CustomHarnessInput,
+  CustomHarnessSource,
   EvalSandboxProvider,
   Evaluation,
   EvaluationComparison,
@@ -366,6 +374,17 @@ function mapRegradeJob(raw: Record<string, unknown>): RegradeJob {
     job.results = (raw.results as Record<string, unknown>[]).map(mapRegradeResult);
   }
   return job;
+}
+
+function mapCustomHarness(raw: Record<string, unknown>): CustomHarness {
+  return {
+    name: raw.name as string,
+    source: raw.source as CustomHarnessSource,
+    runCommand: raw.runCommand as string,
+    env: (raw.env as Record<string, string>) ?? {},
+    createdAt: raw.createdAt as string,
+    updatedAt: raw.updatedAt as string,
+  };
 }
 
 function mapBenchmarkImport(raw: Record<string, unknown>): BenchmarkImport {
@@ -714,6 +733,107 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
         if (TERMINAL_IMPORT_STATUSES.has(current.status)) return current;
         await sleep(pollIntervalMs, options?.signal);
       }
+    },
+  };
+}
+
+// =============================================================================
+// CUSTOM HARNESSES CLIENT
+// =============================================================================
+
+/**
+ * Create a CustomHarnessesClient for the caller's own private harnesses.
+ *
+ * Register a harness once, then name it in `agentSystems[].harness` exactly
+ * like a built-in. Requires EVOLVE_API_KEY (or { apiKey } in config).
+ *
+ * @example
+ * ```ts
+ * import { customHarnesses, evaluations } from "@evolvingmachines/sdk";
+ *
+ * const harnesses = customHarnesses();
+ * await harnesses.create({
+ *   name: "acme-cli",
+ *   installScript: "curl -fsSL https://acme.dev/install.sh | sh",
+ *   runCommand: "acme-cli --headless",
+ * });
+ *
+ * await evaluations().run({
+ *   benchmark: "deep-swe",
+ *   agentSystems: [{ harness: "acme-cli", model: "gpt-5.5" }],
+ *   maxModelSpendUsd: 25,
+ * });
+ * ```
+ */
+export function customHarnesses(config?: HostedClientConfig): CustomHarnessesClient {
+  const cfg = resolveConfig("customHarnesses", config);
+
+  return {
+    async create(input: CustomHarnessInput): Promise<CustomHarness> {
+      const hasInstallScript = typeof input.installScript === "string";
+      const hasDirectory = typeof input.directory === "string";
+      if (hasInstallScript && hasDirectory) {
+        throw new Error(
+          "customHarnesses().create() takes EITHER an install script ({ installScript }) " +
+            "or a local directory ({ directory }), not both"
+        );
+      }
+      // Tarball source: deterministically tar+gzip the directory and upload it
+      // (the body IS the tarball, so the metadata rides the query string —
+      // repeated `env` pairs, exactly like the benchmark archive-import lane).
+      if (hasDirectory) {
+        const { tarGzipDirectory } = await import("./tar");
+        const gzipped = tarGzipDirectory(input.directory as string);
+        const params = new URLSearchParams({
+          name: input.name,
+          runCommand: input.runCommand,
+        });
+        for (const [key, value] of Object.entries(input.env ?? {})) {
+          params.append("env", `${key}=${value}`);
+        }
+        const res = await request(cfg, `/api/custom-harnesses?${params.toString()}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/gzip" },
+          body: gzipped as unknown as BodyInit,
+        });
+        return mapCustomHarness((await res.json()) as Record<string, unknown>);
+      }
+      // Install-script source: JSON body.
+      if (hasInstallScript) {
+        const res = await request(cfg, "/api/custom-harnesses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: input.name,
+            installScript: input.installScript,
+            runCommand: input.runCommand,
+            ...(input.env !== undefined ? { env: input.env } : {}),
+          }),
+        });
+        return mapCustomHarness((await res.json()) as Record<string, unknown>);
+      }
+      throw new Error(
+        "customHarnesses().create() requires either an install script ({ installScript }) " +
+          "or a local directory ({ directory }), plus name and runCommand"
+      );
+    },
+
+    async list(): Promise<CustomHarness[]> {
+      const res = await request(cfg, "/api/custom-harnesses");
+      const data = (await res.json()) as { customHarnesses?: Record<string, unknown>[] };
+      return (data.customHarnesses || []).map(mapCustomHarness);
+    },
+
+    async get(name: string): Promise<CustomHarness> {
+      const res = await request(cfg, `/api/custom-harnesses/${encodeURIComponent(name)}`);
+      return mapCustomHarness((await res.json()) as Record<string, unknown>);
+    },
+
+    async delete(name: string): Promise<void> {
+      // 204 No Content — nothing to map.
+      await request(cfg, `/api/custom-harnesses/${encodeURIComponent(name)}`, {
+        method: "DELETE",
+      });
     },
   };
 }

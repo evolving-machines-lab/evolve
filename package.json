@@ -19,7 +19,7 @@
     "build:sdk": "npm run build --workspace=@evolvingmachines/sdk",
     "build:bridge": "npm run build --workspace=evolve-sdk-python-bridge",
     "test:ts": "npm run test --workspace=@evolvingmachines/sdk",
-    "test:ts:unit": "npm run test:unit --workspace=@evolvingmachines/sdk",
+    "test:ts:unit": "npm run test:unit --workspace=@evolvingmachines/sdk && npm run test:unit --workspace=@evolvingmachines/daytona && npm run test:unit --workspace=@evolvingmachines/modal",
     "test:ts:integration": "npm run test:integration --workspace=@evolvingmachines/sdk",
     "test:py:unit": "npm run build:bridge && cd packages/sdk-py && python -m pytest tests/unit -v",
     "test:py:integration": "npm run build:bridge && cd packages/sdk-py && python -m pytest tests/integration -v"

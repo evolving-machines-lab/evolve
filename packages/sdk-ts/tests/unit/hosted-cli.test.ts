@@ -8,7 +8,9 @@
  * request bodies, the rendered status lines, and the exit code. Also covers
  * `import` / `import status`: POST /api/benchmarks/imports, the getImport poll
  * loop of --watch, IMPORTED/FAILED exit codes, and the new task-run / trace /
- * compare commands plus the task-runs --status filter.
+ * compare commands plus the task-runs --status filter. Also covers
+ * `custom-harnesses` (add / list / remove): the --install-script file read, the
+ * repeatable --env pairs, and the rendered harness.
  *
  * Uses mock fetch to test without real network calls.
  *
@@ -121,9 +123,13 @@ function restoreFetch() {
 // IMPORT (after mock setup)
 // =============================================================================
 
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Readable } from "node:stream";
 
 import {
+  buildCustomHarnessInput,
   buildEvaluationInput,
   buildImportInput,
   CliUsageError,
@@ -416,6 +422,117 @@ function testParseImport() {
     () => buildImportInput(parseArgs(["import", "--git", "g", "--ref", "main", "--name", "b"])),
     "--version",
     "import without --version"
+  );
+}
+
+function testParseCustomHarnesses() {
+  console.log("\n--- parseArgs + buildCustomHarnessInput: custom-harnesses command ---");
+  assertEqual(
+    parseArgs(["custom-harnesses"]),
+    { command: "custom-harnesses", positionals: [], flags: {} },
+    "bare custom-harnesses lists"
+  );
+  assertEqual(
+    parseArgs(["custom-harnesses", "get", "acme-cli"]),
+    { command: "custom-harnesses", positionals: ["get", "acme-cli"], flags: {} },
+    "custom-harnesses get subcommand"
+  );
+  assertEqual(
+    parseArgs(["custom-harnesses", "remove", "acme-cli"]),
+    { command: "custom-harnesses", positionals: ["remove", "acme-cli"], flags: {} },
+    "custom-harnesses remove subcommand"
+  );
+
+  // --install-script names a FILE; the stub stands in for reading it.
+  const readScript = (path: string) => `# from ${path}\ncurl -fsSL https://acme.dev/install.sh | sh\n`;
+  assertEqual(
+    buildCustomHarnessInput(
+      parseArgs([
+        "custom-harnesses", "add",
+        "--name", "acme-cli",
+        "--install-script", "./install.sh",
+        "--run", "acme-cli --headless",
+        "--env", "ACME_PROFILE=bench",
+        "--env", "ACME_REGION=us",
+      ]),
+      readScript
+    ),
+    {
+      name: "acme-cli",
+      installScript: "# from ./install.sh\ncurl -fsSL https://acme.dev/install.sh | sh\n",
+      runCommand: "acme-cli --headless",
+      env: { ACME_PROFILE: "bench", ACME_REGION: "us" },
+    },
+    "builds the install-script harness input (script contents, repeatable --env)"
+  );
+
+  assertEqual(
+    buildCustomHarnessInput(
+      parseArgs([
+        "custom-harnesses", "add",
+        "--name", "acme-cli",
+        "--dir", "/path/to/harness",
+        "--run", "acme-cli --headless",
+      ]),
+      readScript
+    ),
+    {
+      name: "acme-cli",
+      directory: "/path/to/harness",
+      runCommand: "acme-cli --headless",
+    },
+    "builds the directory harness input (no env key when --env omitted)"
+  );
+
+  assertThrowsUsage(
+    () =>
+      buildCustomHarnessInput(
+        parseArgs([
+          "custom-harnesses", "add",
+          "--name", "a", "--dir", "/d", "--install-script", "./i.sh", "--run", "r",
+        ]),
+        readScript
+      ),
+    "EITHER --dir OR",
+    "--dir and --install-script together are rejected"
+  );
+  assertThrowsUsage(
+    () =>
+      buildCustomHarnessInput(
+        parseArgs(["custom-harnesses", "add", "--name", "a", "--run", "r"]),
+        readScript
+      ),
+    "--install-script",
+    "custom-harnesses add without a source"
+  );
+  assertThrowsUsage(
+    () =>
+      buildCustomHarnessInput(
+        parseArgs(["custom-harnesses", "add", "--dir", "/d", "--run", "r"]),
+        readScript
+      ),
+    "--name",
+    "custom-harnesses add without --name"
+  );
+  assertThrowsUsage(
+    () =>
+      buildCustomHarnessInput(
+        parseArgs(["custom-harnesses", "add", "--name", "a", "--dir", "/d"]),
+        readScript
+      ),
+    "--run",
+    "custom-harnesses add without --run"
+  );
+  assertThrowsUsage(
+    () =>
+      buildCustomHarnessInput(
+        parseArgs([
+          "custom-harnesses", "add", "--name", "a", "--dir", "/d", "--run", "r", "--env", "NOPE",
+        ]),
+        readScript
+      ),
+    "KEY=VALUE",
+    "--env without an = is rejected"
   );
 }
 
@@ -840,6 +957,108 @@ async function testRegradeCliPerRunRejectsFilter() {
   assert(err.some((l) => l.includes("whole-evaluation regrade")), "explains filters are for whole-eval regrade");
 }
 
+const CLI_CUSTOM_HARNESS = {
+  name: "acme-cli",
+  source: "install_script",
+  runCommand: "acme-cli --headless",
+  env: { ACME_PROFILE: "bench" },
+  createdAt: "2026-07-24T00:00:00Z",
+  updatedAt: "2026-07-24T00:00:00Z",
+};
+
+async function testCustomHarnessesCliAdd() {
+  console.log("\n--- runCli: custom-harnesses add posts the install script and renders the harness ---");
+  installMockFetch();
+  const dir = await mkdtemp(join(tmpdir(), "evolve-harness-cli-"));
+  const scriptPath = join(dir, "install.sh");
+  try {
+    await writeFile(scriptPath, "curl -fsSL https://acme.dev/install.sh | sh\n");
+    setMockResponse("/api/custom-harnesses", { status: 201, body: CLI_CUSTOM_HARNESS });
+    const { io, out, err } = captureIO();
+    const code = await runCli(
+      [
+        "custom-harnesses", "add",
+        "--name", "acme-cli",
+        "--install-script", scriptPath,
+        "--run", "acme-cli --headless",
+        "--env", "ACME_PROFILE=bench",
+        "--api-key", "test-key", "--base-url", BASE,
+      ],
+      io
+    );
+    assertEqual(code, 0, "exit 0");
+    assertEqual(err, [], "nothing on stderr");
+    const call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.endsWith("/api/custom-harnesses"), "hits the custom-harnesses route");
+    assertEqual(call.init?.method, "POST", "uses POST");
+    assertEqual(
+      JSON.parse(call.init?.body as string),
+      {
+        name: "acme-cli",
+        installScript: "curl -fsSL https://acme.dev/install.sh | sh\n",
+        runCommand: "acme-cli --headless",
+        env: { ACME_PROFILE: "bench" },
+      },
+      "--install-script uploads the FILE CONTENTS, not the path"
+    );
+    const text = out.join("\n");
+    assert(text.includes("acme-cli"), "renders the harness name");
+    assert(text.includes("install_script"), "renders the source");
+    assert(text.includes("ACME_PROFILE"), "renders the declared env key");
+    assert(!text.includes("=bench"), "does not echo declared env values into the terminal");
+    assert(text.includes("--system acme-cli:"), "prints the follow-up run hint");
+  } finally {
+    restoreFetch();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function testCustomHarnessesCliListAndRemove() {
+  console.log("\n--- runCli: custom-harnesses list + remove ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/custom-harnesses/acme-cli", { status: 204, body: null });
+    setMockResponse("/api/custom-harnesses", {
+      status: 200,
+      body: { customHarnesses: [CLI_CUSTOM_HARNESS] },
+    });
+
+    const listIO = captureIO();
+    const listCode = await runCli(
+      ["custom-harnesses", "--api-key", "test-key", "--base-url", BASE],
+      listIO.io
+    );
+    assertEqual(listCode, 0, "list exits 0");
+    const listText = listIO.out.join("\n");
+    assert(listText.includes("NAME") && listText.includes("SOURCE"), "renders the list header");
+    assert(listText.includes("acme-cli"), "lists the harness");
+
+    const removeIO = captureIO();
+    const removeCode = await runCli(
+      ["custom-harnesses", "remove", "acme-cli", "--api-key", "test-key", "--base-url", BASE],
+      removeIO.io
+    );
+    assertEqual(removeCode, 0, "remove exits 0");
+    const call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.endsWith("/api/custom-harnesses/acme-cli"), "remove targets the detail route");
+    assertEqual(call.init?.method, "DELETE", "remove uses DELETE");
+    assert(removeIO.out.some((l) => l.includes("Deleted custom harness acme-cli")), "confirms the delete");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testCustomHarnessesCliUnknownSubcommand() {
+  console.log("\n--- runCli: custom-harnesses <unknown> is a usage error ---");
+  const { io, err } = captureIO();
+  const code = await runCli(
+    ["custom-harnesses", "frobnicate", "--api-key", "k", "--base-url", BASE],
+    io
+  );
+  assertEqual(code, 2, "usage error exit 2");
+  assert(err.some((l) => l.includes("add, get, remove")), "names the supported subcommands");
+}
+
 // =============================================================================
 // RUN
 // =============================================================================
@@ -853,6 +1072,7 @@ async function main() {
   testParseErrors();
   testParseOtherCommands();
   testParseImport();
+  testParseCustomHarnesses();
   testImportStatusLine();
   testEventLine();
   await testRunWatchEndToEnd();
@@ -863,6 +1083,9 @@ async function main() {
   await testRegradeCliCreate();
   await testRegradeCliRead();
   await testRegradeCliPerRunRejectsFilter();
+  await testCustomHarnessesCliAdd();
+  await testCustomHarnessesCliListAndRemove();
+  await testCustomHarnessesCliUnknownSubcommand();
 
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

@@ -2,16 +2,17 @@
 
 > **Gateway feature** — requires `EVOLVE_API_KEY` (see [Getting Started → Gateway Mode](./01-getting-started.md#gateway-mode-evolve_api_key)). Evolve runs the benchmark tasks, agents, and verifiers on managed infrastructure; you submit an evaluation and read results.
 
-Two standalone clients cover the whole surface — no `Evolve` instance needed:
+Three standalone clients cover the whole surface — no `Evolve` instance needed:
 
 ```python
-from evolve import benchmarks, evaluations
+from evolve import benchmarks, custom_harnesses, evaluations
 
-catalog = benchmarks()    # shared benchmark catalog
-evals = evaluations()     # create, watch, and read evaluations
+catalog = benchmarks()          # shared benchmark catalog
+harnesses = custom_harnesses()  # your own private harnesses
+evals = evaluations()           # create, watch, and read evaluations
 ```
 
-Both read `EVOLVE_API_KEY` (or take `HostedClientConfig(api_key=..., base_url=...)`) and work standalone or as `async with` context managers.
+All three read `EVOLVE_API_KEY` (or take `HostedClientConfig(api_key=..., base_url=...)`) and work standalone or as `async with` context managers.
 
 ---
 
@@ -64,7 +65,29 @@ Tasks expose public fields only — `task_key`, `agent_timeout_sec`, `verifier_t
 | `sandbox_provider` | `'e2b'` | see [Where it runs](#where-it-runs) |
 | `idempotency_key` | none | safe-retry key (below) |
 
-An evaluation expands to `tasks × agent_systems × runs_per_task` task runs, each in its own sandbox. Valid harness + model pairs are listed once in [Getting Started → Harness and Model Pairing](./01-getting-started.md#harness-and-model-pairing).
+An evaluation expands to `tasks × agent_systems × runs_per_task` task runs, each in its own sandbox. Valid harness + model pairs are listed once in [Getting Started → Harness and Model Pairing](./01-getting-started.md#harness-and-model-pairing). `harness` also accepts a harness you registered yourself — see [Bring your own harness](#bring-your-own-harness).
+
+Pin a harness version when you need the comparison to hold still across weeks:
+
+```python
+agent_systems=[
+    AgentSystem(
+        harness='codex',
+        model='gpt-5.5',
+        harness_version='0.29.0',   # (optional) omit to resolve the latest at dispatch
+    ),
+],
+```
+
+Omitting it keeps the resolve-latest behavior; either way the version that actually ran is recorded on every task run as `resolved_harness_version`, so a run is always attributable after the fact.
+
+A pin is never silently downgraded to the latest — it is checked at creation and rejected three ways:
+
+- **Not an exact version** (a range, a tag, `latest`) — `400 invalid_input`, naming the need for an exact version. Pins exist to hold a comparison still, and a range cannot.
+- **Exact but not published** — `404 harness_version_not_found`.
+- **A pin on a custom harness** — `400 invalid_input`. Custom harnesses are versioned by the content of their own source, so there is no separate version axis to pin; re-register to change what runs.
+
+One harness resolves later than the others: installer-sourced `kimi` accepts any well-formed exact pin at creation, because its vendor publishes no version index to check against. The builder's version probe enforces it instead, so a bad `kimi` pin surfaces as a run failure rather than a `400`.
 
 Retrying with the same `idempotency_key` returns the original evaluation instead of creating a duplicate:
 
@@ -474,6 +497,101 @@ Then import and run it — exactly the [Harbor-format flow above](#already-in-ha
 
 ---
 
+## Bring your own harness
+
+The built-in harnesses (`claude`, `codex`, `gemini`, `qwen`, `kimi`, `opencode`, `droid`) are not the boundary. Register your own CLI once, and its name becomes usable in `agent_systems[].harness` exactly like a built-in:
+
+```python
+from evolve import custom_harnesses, evaluations, AgentSystem
+
+async with custom_harnesses() as harnesses:
+    await harnesses.create(
+        name='acme-cli',                                              # the name you will pass as harness
+        install_script='curl -fsSL https://acme.dev/install.sh | sh', # the script itself, not a path
+        run_command='acme-cli --headless',
+        env={'ACME_PROFILE': 'bench'},                                # (optional) injected at run time
+    )
+
+async with evaluations() as evals:
+    evaluation = await evals.run(
+        benchmark='deep-swe',
+        agent_systems=[
+            AgentSystem(
+                harness='acme-cli',
+                model='gpt-5.5',
+            ),
+        ],
+        max_model_spend_usd=25,
+    )
+```
+
+A harness that is not a one-line install ships as a directory instead — tarred deterministically on the client and uploaded:
+
+```python
+await harnesses.create(
+    name='acme-cli',
+    directory='./harnesses/acme-cli',   # EITHER directory OR install_script, never both
+    run_command='acme-cli --headless',
+)
+```
+
+Read and remove them the same way:
+
+```python
+registered = await harnesses.list()      # your harnesses only
+one = await harnesses.get('acme-cli')    # name, source, run_command, env, timestamps
+await harnesses.delete('acme-cli')       # past evaluations keep the harness they recorded
+```
+
+The same surface is on the `evolve-evals` CLI — see [TypeScript → Bring your own harness](../typescript/06-hosted-evals.md#bring-your-own-harness).
+
+Harnesses are private to their owner. Another account's name reads as `custom_harness_not_found`, never as a permission error — existence is never leaked.
+
+### The run contract
+
+Everything a custom harness can rely on, and nothing else. Your `run_command` runs headless with `sh -c` at the task's working directory, and:
+
+- **The task instruction arrives twice, so read it whichever way your CLI prefers.** It is written to the command's **stdin**, and it is also on disk at the path in `$EVOLVE_INSTRUCTION_FILE`.
+- **The model is reached through a gateway, not a provider.** `$EVOLVE_GATEWAY_BASE_URL` is an OpenAI-compatible base URL that **already ends in `/v1`** — never append it yourself — and `$EVOLVE_GATEWAY_API_KEY` is the credential for it. The same two values are also exported as `$OPENAI_BASE_URL` and `$OPENAI_API_KEY`, so a CLI that **reads its endpoint from the environment** works unchanged. A CLI that routes through a **config file** does not — see below.
+- **`$EVOLVE_MODEL` names the model being evaluated** — the `model` of the agent system this run belongs to.
+- **Your declared `env` is injected at run time only**, and it may **not** override those contract keys. An attempt to is rejected at registration with `custom_harness_invalid_env`, not silently dropped at run time. The six contract keys are `EVOLVE_GATEWAY_BASE_URL`, `EVOLVE_GATEWAY_API_KEY`, `EVOLVE_MODEL`, `EVOLVE_INSTRUCTION_FILE`, `OPENAI_BASE_URL` and `OPENAI_API_KEY`.
+
+#### If your CLI routes through a config file
+
+Env-only routing covers CLIs that read `OPENAI_BASE_URL`. Plenty do not: they want a config file, and they read it from a path in `$HOME`. Three of our own seven built-ins are in that group, so this is the common case and not an edge one.
+
+Write that file **inside your `run_command`**, from the contract values. It cannot be written at install time: the install ran in a different sandbox entirely, and by the time your harness runs the box has no network to fetch anything with. `codex` is the worked example — this is what the platform itself does for the built-in:
+
+```bash
+# run_command for a codex-shaped CLI
+mkdir -p ~/.codex && cat > ~/.codex/config.toml <<EOF
+model_provider = "evolve"
+[model_providers.evolve]
+name = "evolve"
+base_url = "$EVOLVE_GATEWAY_BASE_URL"
+env_key = "EVOLVE_GATEWAY_API_KEY"
+wire_api = "responses"
+EOF
+codex login --with-api-key <<< "$EVOLVE_GATEWAY_API_KEY"
+codex exec --skip-git-repo-check -
+```
+
+If your CLI ignores `OPENAI_BASE_URL` and you do not do this, it will try to reach its vendor's own endpoint, find the box sealed, and burn the whole agent budget failing to connect.
+
+How it is built, and what that costs you:
+
+- The install script (or the uploaded tarball) runs once in a **throwaway builder sandbox that has internet and ZERO secrets**. Everything it fetches must therefore be **publicly fetchable** — a private registry that needs a token cannot be reached from there — and it must leave its executables in **`$PREFIX/bin`**.
+- A custom harness is **versioned by its registered content** — the install source, the `run_command` and the declared `env`, together — so `harness_version` on an agent system using it is rejected. Change any of the three and you get a new recorded version and a new bundle digest; re-register (delete, then create) to change what runs.
+- **You may register up to 25 harnesses.** Past that, registration is refused with `custom_harness_limit_reached`; delete one to make room. Each registration is a full CLI the platform builds and caches for you.
+
+**What keeps a run inside its budget.** The spend cap is enforced on the gateway key, so model traffic that goes through `$EVOLVE_GATEWAY_BASE_URL` is metered and capped. What confines traffic to that route is the **task's network policy**, not the harness: under `no-network` — the default — the box can reach the gateway and nothing else, and the cap is a hard guarantee. On a task declaring `allowlist` or `public`, a harness *can* reach a provider directly, and that traffic is neither metered nor capped. Registration refuses credential-shaped `env` keys, but that is a guardrail against the obvious mistake, not a boundary.
+
+What you give up versus a built-in:
+
+- **No live trace events.** There is no output parser for an unknown CLI, so `task_run_trace()` stays empty for these runs. Everything else is identical: the patch is collected, the verifier scores it, and artifacts, timings, spend and status are recorded exactly as for a built-in harness.
+
+---
+
 ## Statuses
 
 **Evaluation** — `QUEUED → RUNNING (→ CANCELLING)`, then terminal:
@@ -509,9 +627,13 @@ Then import and run it — exactly the [Harbor-format flow above](#already-in-ha
 ```python
 @dataclass
 class AgentSystem:
-    harness: str                          # 'claude' | 'codex' | 'gemini' | 'qwen' | 'kimi' | 'opencode' | 'droid'
+    harness: str                          # a built-in ('claude' | 'codex' | 'gemini' | 'qwen' |
+                                          # 'kimi' | 'opencode' | 'droid') or a registered custom harness
     model: str                            # from that harness's family — see Getting Started
-    harness_version: str | None = None    # pin a harness version; None = platform default
+    harness_version: str | None = None    # pin a harness version; None = resolve latest. Must be
+                                          # EXACT (else invalid_input); unpublished ->
+                                          # harness_version_not_found; a pin on a custom
+                                          # harness -> invalid_input (content-versioned)
 
 @dataclass
 class Evaluation:
@@ -615,7 +737,18 @@ class BenchmarkImport:
     version: str
     error: BenchmarkImportError | None    # .message + .failures[(task_key, error)]
     task_count: int | None
+
+@dataclass
+class CustomHarness:                      # harnesses.list() / get() / create()
+    name: str                             # the value you pass as agent_systems[].harness
+    source: str                           # 'install_script' | 'tarball'
+    run_command: str                      # run headless with `sh -c` at the task directory
+    env: dict[str, str]                   # injected at RUN time; cannot override contract keys
+    created_at: str
+    updated_at: str
 ```
+
+`custom_harnesses().create()` keyword arguments: `name` and `run_command` are required, plus EITHER `install_script` (the script itself) OR `directory` (a local directory, tarred and uploaded); `env` is optional.
 
 ### Errors
 
@@ -632,6 +765,8 @@ except EvolveAPIError as error:
     print(error)          # 'Benchmark version deep-swe@1.2 is in state VALIDATING; ...'
 ```
 
-Codes you will actually branch on: `benchmark_not_found`, `benchmark_version_not_found`, `no_active_version`, `version_not_ready`, `unknown_task_keys`, `provider_unsupported`, `evaluation_not_found`, `evaluation_not_terminal`, `no_failed_runs`, `task_run_not_found`, `rate_limited`, `invalid_api_key`, and `invalid_input`.
+Codes you will actually branch on: `benchmark_not_found`, `benchmark_version_not_found`, `no_active_version`, `version_not_ready`, `unknown_task_keys`, `provider_unsupported`, `evaluation_not_found`, `evaluation_not_terminal`, `no_failed_runs`, `task_run_not_found`, `harness_version_not_found`, `rate_limited`, `invalid_api_key`, and `invalid_input`.
+
+[Custom harnesses](#bring-your-own-harness) add their own: `custom_harness_not_found` (also what another owner's name reads as), `custom_harness_name_taken`, `custom_harness_name_reserved` (the name collides with a built-in harness), `custom_harness_source_required` (neither an install script nor a tarball), `custom_harness_source_conflict` (both), `custom_harness_invalid_env` (declared env tries to override a run-contract key), `custom_harness_invalid_name`, `custom_harness_too_large`, and `custom_harness_limit_reached` (the per-account registration ceiling).
 
 > To operate this lifecycle yourself on your own infrastructure, see [Runtime → Task Sandboxes & Credential Lifecycle](./03-runtime.md#task-sandboxes--credential-lifecycle).

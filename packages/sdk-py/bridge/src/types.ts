@@ -72,6 +72,7 @@ export interface InitializeParams {
   provider_base_url?: string;
   model?: string;
   reasoning_effort?: string;
+  max_context_size?: number;
   // Sandbox provider (optional - TS SDK resolves from EVOLVE_API_KEY env var)
   sandbox_provider?: {
     type: 'e2b' | 'daytona' | 'modal';
@@ -132,6 +133,11 @@ export interface ExecuteCommandParams {
 
 export interface UploadFilesParams {
   files: EncodedFileMap;
+}
+
+export interface UploadFileFromPathParams {
+  sandbox_path: string;
+  local_path: string;
 }
 
 export interface SetSessionParams {

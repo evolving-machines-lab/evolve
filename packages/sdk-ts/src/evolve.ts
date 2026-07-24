@@ -712,6 +712,21 @@ export class Evolve extends EventEmitter {
   }
 
   /**
+   * Upload one LOCAL file into the sandbox by path, streaming rather than
+   * buffering it (runtime - immediate upload).
+   *
+   * The memory-bounded counterpart to uploadFiles(): use it when the file is
+   * large enough that holding it in the heap — once per concurrent upload —
+   * would matter.
+   */
+  async uploadFileFromPath(sandboxPath: string, localPath: string): Promise<void> {
+    if (!this.agent) {
+      await this.initializeAgent();
+    }
+    return this.agent!.uploadFileFromPath(sandboxPath, localPath);
+  }
+
+  /**
    * Get output files from output/ folder with optional schema validation
    *
    * @param recursive - Include files in subdirectories (default: false)

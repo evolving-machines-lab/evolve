@@ -580,6 +580,8 @@ export interface SandboxFiles {
   read(path: string): Promise<string | Uint8Array>;
   write(path: string, content: string | Buffer | ArrayBuffer | Uint8Array): Promise<void>;
   writeBatch(files: Array<{ path: string; data: string | Buffer | ArrayBuffer | Uint8Array }>): Promise<void>;
+  /** Upload a local file by path, without buffering it whole */
+  writeFromPath(sandboxPath: string, localPath: string): Promise<void>;
   makeDir(path: string): Promise<void>;
   exists(path: string): Promise<boolean>;
   list(path: string): Promise<FileInfo[]>;
@@ -858,6 +860,16 @@ export class DaytonaFiles implements SandboxFiles {
       return { source, destination: file.path };
     });
     await this.sandbox.fs.uploadFiles(uploads);
+  }
+
+  /**
+   * Upload a local file by PATH. Daytona's own uploadFile has a local-path
+   * overload (FileSystem.d.ts: `uploadFile(localPath: string, remotePath:
+   * string, timeout?)`), so the bytes never pass through this process's heap —
+   * which is what makes a large artifact safe to upload under concurrency.
+   */
+  async writeFromPath(sandboxPath: string, localPath: string): Promise<void> {
+    await this.sandbox.fs.uploadFile(localPath, sandboxPath);
   }
 
   async makeDir(path: string): Promise<void> {

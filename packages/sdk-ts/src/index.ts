@@ -323,11 +323,13 @@ export {
 
 export {
   benchmarks,
+  customHarnesses,
   evaluations,
   EvolveApiError,
   NoActiveVersionError,
   type HostedClientConfig,
   type BenchmarksClient,
+  type CustomHarnessesClient,
   type EvaluationsClient,
   type Benchmark,
   type ActiveBenchmark,
@@ -366,6 +368,9 @@ export {
   type BenchmarkImportSource,
   type BenchmarkImportStatus,
   type BenchmarkImportError,
+  type CustomHarness,
+  type CustomHarnessInput,
+  type CustomHarnessSource,
   type SpendSource,
   type EvaluationPage,
   type EvaluationList,

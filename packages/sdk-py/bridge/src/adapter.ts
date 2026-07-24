@@ -34,6 +34,7 @@ import type {
   RunParams,
   ExecuteCommandParams,
   UploadFilesParams,
+  UploadFileFromPathParams,
   SetSessionParams,
   GetHostParams,
   StatusResponse,
@@ -151,7 +152,7 @@ export class EvolveAdapter {
 
   private buildAgentConfig(params: InitializeParams): AgentConfig | undefined {
     // Only build config if any agent params provided (TS SDK resolves defaults from env)
-    if (!params.agent_type && !params.api_key && !params.provider_api_key && !params.oauth_token && !params.model && !params.reasoning_effort) {
+    if (!params.agent_type && !params.api_key && !params.provider_api_key && !params.oauth_token && !params.model && !params.reasoning_effort && params.max_context_size === undefined) {
       return undefined;
     }
     return {
@@ -162,6 +163,7 @@ export class EvolveAdapter {
       ...(params.provider_base_url && { providerBaseUrl: params.provider_base_url }),
       ...(params.model && { model: params.model }),
       ...(params.reasoning_effort && { reasoningEffort: params.reasoning_effort as ReasoningEffort }),
+      ...(params.max_context_size !== undefined && { maxContextSize: params.max_context_size }),
     } as AgentConfig;
   }
 
@@ -261,6 +263,8 @@ export class EvolveAdapter {
         return this.uploadContext(params);
       case 'upload_files':
         return this.uploadFiles(params);
+      case 'upload_file_from_path':
+        return this.uploadFileFromPath(params);
       case 'get_output_files':
         return this.getOutputFiles(params?.recursive ?? false);
       case 'get_session':
@@ -462,6 +466,17 @@ export class EvolveAdapter {
   async uploadFiles(params: UploadFilesParams): Promise<StatusResponse> {
     this.ensureInitialized();
     await this.evolve!.uploadFiles(decodeFiles(params.files));
+    return { status: 'ok' };
+  }
+
+  /**
+   * Path-based upload. The path is NOT read here: it crosses the bridge as a
+   * string and the provider streams it off disk, which is the whole point —
+   * encoding a large file for the RPC would put it in memory twice over.
+   */
+  async uploadFileFromPath(params: UploadFileFromPathParams): Promise<StatusResponse> {
+    this.ensureInitialized();
+    await this.evolve!.uploadFileFromPath(params.sandbox_path, params.local_path);
     return { status: 'ok' };
   }
 

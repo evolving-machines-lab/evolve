@@ -1,9 +1,13 @@
 """
-Unit tests for the standalone hosted-evals clients (benchmarks/evaluations).
+Unit tests for the standalone hosted-evals clients
+(benchmarks/custom_harnesses/evaluations).
 
 Coverage:
 - benchmarks().list()/get() — catalog + detail mapping (selected_version,
   per-task provider verdicts), name@version refs
+- custom_harnesses().create()/list()/get()/delete() — the two registration
+  lanes (install-script JSON body vs uploaded tarball with metadata on the
+  query string), owner-private not-found, name-taken
 - benchmarks().get_active() — runnable shape (non-optional version/tasks) + NoActiveVersionError
 - benchmarks().import_benchmark()/get_import()/watch_import() — git import flow
   (self-describing jobs, IMPORTED/FAILED terminal statuses)
@@ -36,6 +40,7 @@ from evolve import (
     NoActiveVersionError,
     TaskProviderVerdict,
     benchmarks as benchmarks_factory,
+    custom_harnesses as custom_harnesses_factory,
     evaluations as evaluations_factory,
 )
 
@@ -421,6 +426,165 @@ class TestBenchmarks:
             await client.import_benchmark(git_url='g', ref='main', benchmark_name='b')
 
 
+CUSTOM_HARNESS = {
+    'name': 'acme-cli',
+    'source': 'install_script',
+    'runCommand': 'acme-cli --headless',
+    'env': {'ACME_PROFILE': 'bench'},
+    'createdAt': '2026-07-24T00:00:00Z',
+    'updatedAt': '2026-07-24T00:00:00Z',
+}
+
+
+class TestCustomHarnesses:
+    @pytest.mark.asyncio
+    async def test_create_posts_the_install_script_body(self):
+        fake = FakeUrlopen([('/api/custom-harnesses', CUSTOM_HARNESS)])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            harness = await custom_harnesses_factory(CONFIG).create(
+                name='acme-cli',
+                install_script='curl -fsSL https://acme.dev/install.sh | sh',
+                run_command='acme-cli --headless',
+                env={'ACME_PROFILE': 'bench'},
+            )
+
+        request = fake.requests[0]
+        assert request.get_method() == 'POST'
+        assert request.full_url.endswith('/api/custom-harnesses')
+        assert request.get_header('Content-type') == 'application/json'
+        assert json.loads(request.data.decode('utf-8')) == {
+            'name': 'acme-cli',
+            'installScript': 'curl -fsSL https://acme.dev/install.sh | sh',
+            'runCommand': 'acme-cli --headless',
+            'env': {'ACME_PROFILE': 'bench'},
+        }
+
+        assert harness.name == 'acme-cli'
+        assert harness.source == 'install_script'
+        assert harness.run_command == 'acme-cli --headless'
+        assert harness.env == {'ACME_PROFILE': 'bench'}
+        assert harness.created_at == '2026-07-24T00:00:00Z'
+
+    @pytest.mark.asyncio
+    async def test_create_uploads_a_directory_with_metadata_on_the_query(self, tmp_path):
+        import io
+        import tarfile
+
+        bin_dir = tmp_path / 'bin'
+        bin_dir.mkdir(parents=True)
+        (bin_dir / 'acme-cli').write_text('#!/bin/sh\nexec acme "$@"\n')
+
+        fake = FakeUrlopen([
+            ('/api/custom-harnesses', {**CUSTOM_HARNESS, 'source': 'tarball'}),
+        ])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            harness = await custom_harnesses_factory(CONFIG).create(
+                name='acme-cli',
+                directory=str(tmp_path),
+                run_command='acme-cli --headless',
+                env={'ACME_PROFILE': 'bench', 'ACME_REGION': 'us'},
+            )
+
+        request = fake.requests[0]
+        assert request.get_method() == 'POST'
+        # The body IS the tarball, so the metadata rides the query string —
+        # repeated env=KEY=VALUE pairs, like the benchmark archive-import lane.
+        assert '/api/custom-harnesses?' in request.full_url
+        query = urllib_parse.parse_qs(urllib_parse.urlparse(request.full_url).query)
+        assert query['name'] == ['acme-cli']
+        assert query['runCommand'] == ['acme-cli --headless']
+        assert query['env'] == ['ACME_PROFILE=bench', 'ACME_REGION=us']
+        assert request.get_header('Content-type') == 'application/gzip'
+
+        data = request.data
+        assert data[:2] == b'\x1f\x8b'  # gzip magic
+        with tarfile.open(fileobj=io.BytesIO(gzip.decompress(data)), mode='r') as tar:
+            names = tar.getnames()
+        assert 'bin/acme-cli' in names
+
+        assert harness.source == 'tarball'
+
+    @pytest.mark.asyncio
+    async def test_create_requires_exactly_one_source(self):
+        client = custom_harnesses_factory(CONFIG)
+        with pytest.raises(ValueError, match='not both'):
+            await client.create(
+                name='acme-cli',
+                install_script='true',
+                directory='/tmp/acme',
+                run_command='acme-cli',
+            )
+        with pytest.raises(ValueError, match='install_script'):
+            await client.create(name='acme-cli', run_command='acme-cli')
+
+    @pytest.mark.asyncio
+    async def test_list_get_and_delete(self):
+        fake = FakeUrlopen([
+            ('/api/custom-harnesses/acme-cli', b''),
+            ('/api/custom-harnesses', {'customHarnesses': [CUSTOM_HARNESS]}),
+        ])
+        # get() must resolve the detail route, so answer it before the list route.
+        get_fake = FakeUrlopen([('/api/custom-harnesses/acme-cli', CUSTOM_HARNESS)])
+
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            listed = await custom_harnesses_factory(CONFIG).list()
+        assert [harness.name for harness in listed] == ['acme-cli']
+        assert listed[0].source == 'install_script'
+
+        with patch('evolve.hosted.urllib.request.urlopen', get_fake):
+            one = await custom_harnesses_factory(CONFIG).get('acme-cli')
+        assert get_fake.requests[0].full_url.endswith('/api/custom-harnesses/acme-cli')
+        assert one.run_command == 'acme-cli --headless'
+
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            deleted = await custom_harnesses_factory(CONFIG).delete('acme-cli')
+        assert fake.requests[-1].get_method() == 'DELETE'
+        assert deleted is None  # 204 No Content
+
+    @pytest.mark.asyncio
+    async def test_not_found_is_typed_error(self):
+        import io
+        import urllib.error
+
+        def raise_http_error(request, timeout=None):
+            raise urllib.error.HTTPError(
+                request.full_url, 404, 'Not Found', {},
+                io.BytesIO(json.dumps({'error': {
+                    'code': 'custom_harness_not_found',
+                    'message': 'No custom harness named "someone-elses".',
+                }}).encode('utf-8')),
+            )
+
+        with patch('evolve.hosted.urllib.request.urlopen', raise_http_error):
+            with pytest.raises(EvolveAPIError) as exc:
+                await custom_harnesses_factory(CONFIG).get('someone-elses')
+        assert exc.value.status == 404
+        # Another owner's name reads as not-found — existence is never leaked.
+        assert exc.value.code == 'custom_harness_not_found'
+
+    @pytest.mark.asyncio
+    async def test_name_taken_is_typed_error(self):
+        import io
+        import urllib.error
+
+        def raise_http_error(request, timeout=None):
+            raise urllib.error.HTTPError(
+                request.full_url, 409, 'Conflict', {},
+                io.BytesIO(json.dumps({'error': {
+                    'code': 'custom_harness_name_taken',
+                    'message': 'You already registered a custom harness named "acme-cli".',
+                }}).encode('utf-8')),
+            )
+
+        with patch('evolve.hosted.urllib.request.urlopen', raise_http_error):
+            with pytest.raises(EvolveAPIError) as exc:
+                await custom_harnesses_factory(CONFIG).create(
+                    name='acme-cli', install_script='true', run_command='acme-cli'
+                )
+        assert exc.value.status == 409
+        assert exc.value.code == 'custom_harness_name_taken'
+
+
 class TestEvaluations:
     @pytest.mark.asyncio
     async def test_run_posts_contract_body_in_field_order(self):
@@ -478,6 +642,75 @@ class TestEvaluations:
                 agent_systems=[{'harness': 'codex', 'model': 'gpt-5.5', 'harnessVersion': '0.29.0'}],
                 max_model_spend_usd=25,
             )
+
+    @pytest.mark.asyncio
+    async def test_unknown_harness_version_is_typed_error(self):
+        import io
+        import urllib.error
+
+        def raise_http_error(request, timeout=None):
+            raise urllib.error.HTTPError(
+                request.full_url, 404, 'Not Found', {},
+                io.BytesIO(json.dumps({'error': {
+                    'code': 'harness_version_not_found',
+                    'message': 'Harness "codex" has no version "9.9.9".',
+                }}).encode('utf-8')),
+            )
+
+        with patch('evolve.hosted.urllib.request.urlopen', raise_http_error):
+            with pytest.raises(EvolveAPIError) as exc:
+                await evaluations_factory(CONFIG).run(
+                    benchmark='deep-swe',
+                    agent_systems=[
+                        AgentSystem(harness='codex', model='gpt-5.5', harness_version='9.9.9'),
+                    ],
+                    max_model_spend_usd=25,
+                )
+        assert exc.value.status == 404
+        assert exc.value.code == 'harness_version_not_found'
+
+    @pytest.mark.asyncio
+    async def test_non_exact_harness_version_is_typed_error(self):
+        import io
+        import urllib.error
+
+        def raise_http_error(request, timeout=None):
+            raise urllib.error.HTTPError(
+                request.full_url, 400, 'Bad Request', {},
+                io.BytesIO(json.dumps({'error': {
+                    'code': 'invalid_input',
+                    'message': 'harnessVersion "^0.29.0" must be an exact version.',
+                }}).encode('utf-8')),
+            )
+
+        with patch('evolve.hosted.urllib.request.urlopen', raise_http_error):
+            with pytest.raises(EvolveAPIError) as exc:
+                await evaluations_factory(CONFIG).run(
+                    benchmark='deep-swe',
+                    # A range cannot hold a comparison still, so it is refused.
+                    agent_systems=[
+                        AgentSystem(harness='codex', model='gpt-5.5', harness_version='^0.29.0'),
+                    ],
+                    max_model_spend_usd=25,
+                )
+        assert exc.value.status == 400
+        # A non-exact pin is invalid_input, not harness_version_not_found
+        assert exc.value.code == 'invalid_input'
+        assert 'exact version' in str(exc.value)
+
+    @pytest.mark.asyncio
+    async def test_unpinned_agent_system_sends_no_harness_version(self):
+        fake = FakeUrlopen([('/api/evaluations', RUN_SUMMARY)])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            await evaluations_factory(CONFIG).run(
+                benchmark='deep-swe',
+                agent_systems=[AgentSystem(harness='codex', model='gpt-5.5')],
+                max_model_spend_usd=25,
+            )
+
+        body = json.loads(fake.requests[0].data.decode('utf-8'))
+        # Omitted = resolve latest at dispatch; the key is absent, never null.
+        assert body['agentSystems'] == [{'harness': 'codex', 'model': 'gpt-5.5'}]
 
     @pytest.mark.asyncio
     async def test_get_maps_detail_and_drops_internal_fields(self):
