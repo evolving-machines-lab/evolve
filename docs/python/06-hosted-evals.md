@@ -1,27 +1,27 @@
 # Hosted Evals
 
-> **Gateway feature** — requires `EVOLVE_API_KEY` (see [Getting Started → Gateway Mode](./01-getting-started.md#gateway-mode-evolve_api_key)). Evolve runs the benchmark tasks, agents, and verifiers on managed infrastructure; you submit an evaluation and read results.
+> **Gateway feature** — requires `EVOLVE_API_KEY` (see [Getting Started → Gateway Mode](./01-getting-started.md#gateway-mode-evolve_api_key)). Evolve runs the benchmark tasks, agents, and verifiers on managed infrastructure; you submit a job and read results.
 
 Three standalone clients cover the whole surface — no `Evolve` instance needed:
 
 ```python
-from evolve import benchmarks, custom_harnesses, evaluations
+from evolve import benchmarks, custom_harnesses, jobs
 
 catalog = benchmarks()          # shared benchmark catalog
 harnesses = custom_harnesses()  # your own private harnesses
-evals = evaluations()           # create, watch, and read evaluations
+evals = jobs()                  # create, watch, and read jobs
 ```
 
 All three read `EVOLVE_API_KEY` (or take `HostedClientConfig(api_key=..., base_url=...)`) and work standalone or as `async with` context managers.
 
 ---
 
-## Run an evaluation
+## Run a job
 
-Browse the catalog, then run. A bare benchmark name resolves server-side to the active `READY` version — the one benchmark-version state that accepts evaluations (see [Statuses](#statuses)):
+Browse the catalog, then run. A bare benchmark name resolves server-side to the active `READY` version — the one benchmark-version state that accepts jobs (see [Statuses](#statuses)):
 
 ```python
-from evolve import benchmarks, evaluations, AgentSystem
+from evolve import benchmarks, jobs, JobAgent
 
 async with benchmarks() as catalog:
     print([bench.name for bench in await catalog.list()])
@@ -29,15 +29,15 @@ async with benchmarks() as catalog:
     active = await catalog.get_active('deep-swe')   # raises NoActiveVersionError when none
     print(active.version, [task.task_key for task in active.tasks])
 
-async with evaluations() as evals:
-    evaluation = await evals.run(
+async with jobs() as evals:
+    job = await evals.run(
         benchmark='deep-swe',                       # or pin a version: 'deep-swe@1.1'
-        agent_systems=[
-            AgentSystem(
+        agents=[
+            JobAgent(
                 harness='codex',
                 model='gpt-5.5',
             ),
-            AgentSystem(
+            JobAgent(
                 harness='claude',
                 model='fable',
             ),
@@ -45,8 +45,8 @@ async with evaluations() as evals:
         concurrency=4,
         max_model_spend_usd=25,
     )
-    print(evaluation.id, evaluation.status)   # QUEUED
-    print(evaluation.benchmark)               # 'deep-swe@1.1' — the resolved version, echoed back
+    print(job.id, job.status)   # QUEUED
+    print(job.benchmark)        # 'deep-swe@1.1' — the resolved version, echoed back
 ```
 
 Tasks expose public fields only — `task_key`, `agent_timeout_sec`, `verifier_timeout_sec`, and `providers`, the per-provider capability verdict ([Where it runs](#where-it-runs)). Instructions, environments, and tests never leave the server.
@@ -56,24 +56,24 @@ Tasks expose public fields only — `task_key`, `agent_timeout_sec`, `verifier_t
 | Keyword | Default | What it does |
 |---------|---------|--------------|
 | `benchmark` | required | `'name'` (active `READY` version) or `'name@version'` |
-| `agent_systems` | required | list of `AgentSystem(harness=..., model=..., harness_version=None)` |
+| `agents` | required | list of `JobAgent(harness=..., model=..., harness_version=None)` |
 | `tasks` | all tasks | task keys to run |
-| `runs_per_task` | `1` | runs per task × agent system |
-| `concurrency` | `1` | parallel task runs |
-| `max_model_spend_usd` | `500` | hard model-spend cap (USD) for the whole evaluation |
-| `max_model_spend_usd_per_task_run` | none | model-spend cap (USD) per task run |
+| `runs_per_task` | `1` | runs per task × agent |
+| `concurrency` | `1` | parallel trials |
+| `max_model_spend_usd` | `500` | hard model-spend cap (USD) for the whole job |
+| `max_model_spend_usd_per_trial` | none | model-spend cap (USD) per trial |
 | `sandbox_provider` | `'e2b'` | see [Where it runs](#where-it-runs) |
 | `idempotency_key` | none | safe-retry key (below) |
 
-Leave `max_model_spend_usd` out and the platform applies its own cap of $500 for the whole evaluation. The response always reports the cap that actually applied — `evaluation.max_model_spend_usd` — so an omitted one is never a mystery.
+Leave `max_model_spend_usd` out and the platform applies its own cap of $500 for the whole job. The response always reports the cap that actually applied — `job.max_model_spend_usd` — so an omitted one is never a mystery.
 
-An evaluation expands to `tasks × agent_systems × runs_per_task` task runs, each in its own sandbox. Valid harness + model pairs are listed once in [Getting Started → Harness and Model Pairing](./01-getting-started.md#harness-and-model-pairing). `harness` also accepts a harness you registered yourself — see [Bring your own harness](#bring-your-own-harness).
+A job expands to `tasks × agents × runs_per_task` trials, each in its own sandbox. Valid harness + model pairs are listed once in [Getting Started → Harness and Model Pairing](./01-getting-started.md#harness-and-model-pairing). `harness` also accepts a harness you registered yourself — see [Bring your own harness](#bring-your-own-harness).
 
 Pin a harness version when you need the comparison to hold still across weeks:
 
 ```python
-agent_systems=[
-    AgentSystem(
+agents=[
+    JobAgent(
         harness='codex',
         model='gpt-5.5',
         harness_version='0.29.0',   # (optional) omit to resolve the latest at dispatch
@@ -81,7 +81,7 @@ agent_systems=[
 ],
 ```
 
-Omitting it keeps the resolve-latest behavior; either way the version that actually ran is recorded on every task run as `resolved_harness_version`, so a run is always attributable after the fact.
+Omitting it keeps the resolve-latest behavior; either way the version that actually ran is recorded on every trial as `resolved_harness_version`, so a trial is always attributable after the fact.
 
 A pin is never silently downgraded to the latest — it is checked at creation and rejected three ways:
 
@@ -89,38 +89,38 @@ A pin is never silently downgraded to the latest — it is checked at creation a
 - **Exact but not published** — `404 harness_version_not_found`.
 - **A pin on a custom harness** — `400 invalid_input`. Custom harnesses are versioned by the content of their own source, so there is no separate version axis to pin; re-register to change what runs.
 
-One harness resolves later than the others: installer-sourced `kimi` accepts any well-formed exact pin at creation, because its vendor publishes no version index to check against. The builder's version probe enforces it instead, so a bad `kimi` pin surfaces as a run failure rather than a `400`.
+One harness resolves later than the others: installer-sourced `kimi` accepts any well-formed exact pin at creation, because its vendor publishes no version index to check against. The builder's version probe enforces it instead, so a bad `kimi` pin surfaces as a failed trial rather than a `400`.
 
-Retrying with the same `idempotency_key` returns the original evaluation instead of creating a duplicate:
+Retrying with the same `idempotency_key` returns the original job instead of creating a duplicate:
 
 ```python
-evaluation = await evals.run(
+job = await evals.run(
     ...,
     idempotency_key='nightly-2026-07-23',
 )
-print(evaluation.idempotent_replay)   # True on a replay
+print(job.idempotent_replay)   # True on a replay
 ```
 
 ---
 
 ## Watch it live
 
-Both forms consume the evaluation's server-sent event stream — replayed from the beginning, resumed with `Last-Event-ID` on reconnect (exponential backoff), completing on the terminal event. Iterate the events, or block for the final evaluation:
+Both forms consume the job's server-sent event stream — replayed from the beginning, resumed with `Last-Event-ID` on reconnect (exponential backoff), completing on the terminal event. Iterate the events, or block for the final job:
 
 ```python
-async for event in evals.watch_iter(evaluation.id):
+async for event in evals.watch_iter(job.id):
     # event.seq  — monotonic sequence number
-    # event.type — 'evaluation.created' | 'task_run.settled' | 'evaluation.completed' | ...
+    # event.type — 'job.created' | 'trial.settled' | 'job.completed' | ...
     print(event.seq, event.type, event.data)
 
 final = await evals.watch(
-    evaluation.id,
+    job.id,
     on_event=lambda event: print(event.type, event.data),   # optional per-event callback
     timeout_s=3600,               # (optional) raises TimeoutError past the deadline
     reconnect_delay_s=1.0,        # (optional) initial backoff, default 1 s
     max_reconnect_delay_s=30.0,   # (optional) backoff ceiling, default 30 s
 )
-print(final.status, final.mean_score, final.spent_usd)
+print(final.status, final.mean_reward, final.spent_usd)
 ```
 
 `watch_iter()` takes the same `timeout_s` and backoff keywords. Attaching late loses nothing (the stream replays), and a disconnect resumes from the last seen sequence number — no gaps, no duplicates.
@@ -130,67 +130,67 @@ print(final.status, final.mean_score, final.spent_usd)
 ## Read the results
 
 ```python
-# One evaluation: size, status histogram, mean score, spend
-detail = await evals.get(evaluation.id)
-print(detail.task_run_counts)             # {'SCORED': 12, 'RUNNING': 3, 'QUEUED': 5}
-print(detail.mean_score)                  # mean over SCORED runs; None until something scores
+# One job: size, status histogram, mean reward, spend
+detail = await evals.get(job.id)
+print(detail.trial_counts)                # {'SCORED': 12, 'RUNNING': 3, 'QUEUED': 5}
+print(detail.mean_reward)                 # mean over SCORED trials; None until something scores
 print(detail.spent_usd, '/', detail.max_model_spend_usd)
 
-# Your evaluations, newest first
+# Your jobs, newest first
 async for item in evals.list():
-    print(item.id, item.benchmark, item.status, item.mean_score, item.spent_usd)
+    print(item.id, item.benchmark, item.status, item.mean_reward, item.spent_usd)
 ```
 
-Iterate task runs (pages fetched for you), or `await` one page. `status` filters, e.g. to the failures behind a rerun decision:
+Iterate trials (pages fetched for you), or `await` one page. `status` filters, e.g. to the failures behind a rerun decision:
 
 ```python
-async for run in evals.task_runs(evaluation.id):
-    print(run.task_key, run.agent_system.model, run.run_number, run.status, run.score)
+async for trial in evals.trials(job.id):
+    print(trial.task_key, trial.agent.model, trial.run_number, trial.status, trial.reward)
 
-page = await evals.task_runs(
-    evaluation.id,
+page = await evals.trials(
+    job.id,
     limit=100,
-) # .task_runs, .next_cursor
+) # .trials, .next_cursor
 
-failures = await evals.task_runs(
-    evaluation.id,
+failures = await evals.trials(
+    job.id,
     status=['INFRASTRUCTURE_ERROR', 'SCORING_ERROR'],
 )
 ```
 
-Fetch one run's full detail — untruncated `failure_detail`, plus the harness version actually used:
+Fetch one trial's full detail — untruncated `failure_detail`, plus the harness version actually used:
 
 ```python
-detail = await evals.task_run(
-    evaluation.id,
-    run.id,
+detail = await evals.trial(
+    job.id,
+    trial.id,
 )
 print(detail.failure_phase, detail.failure_detail)
-print(detail.sandbox_provider, detail.verifier_mode)   # where the run and its verifier executed
+print(detail.sandbox_provider, detail.verifier_mode)   # where the trial and its verifier executed
 print(detail.resolved_harness_version)
 print(detail.metrics)             # named sub-scores
 print(detail.phase_timings_ms)    # {'agent_ms': ..., 'verify_ms': ...}
 ```
 
-Read per-run spend from `model_usage` — one money vocabulary everywhere: caps are `max_model_spend*`, actuals are `spent_usd`. `spend_source='measured'` is platform-measured spend; `'assumed_cap'` means spend could not be measured yet, so the value conservatively assumes the run's cap:
+Read per-trial spend from `model_usage` — one money vocabulary everywhere: caps are `max_model_spend*`, actuals are `spent_usd`. `spend_source='measured'` is platform-measured spend; `'assumed_cap'` means spend could not be measured yet, so the value conservatively assumes the trial's cap:
 
 ```python
 if detail.model_usage:
     print(detail.model_usage.spent_usd, detail.model_usage.spend_source)
 ```
 
-Stream a run's recorded event trace; resume later from the last seen `seq`:
+Stream a trial's recorded event trace; resume later from the last seen `seq`:
 
 ```python
-async for event in evals.task_run_trace_events(
-    evaluation.id,
-    run.id,
+async for event in evals.trial_trace_events(
+    job.id,
+    trial.id,
 ):
     print(event.seq, event.type, event.data)
 
-page = await evals.task_run_trace(
-    evaluation.id,
-    run.id,
+page = await evals.trial_trace(
+    job.id,
+    trial.id,
     after=last_seq,
     limit=500,
 )
@@ -199,55 +199,55 @@ page = await evals.task_run_trace(
 ### Cancel / rerun failures
 
 ```python
-await evals.cancel(evaluation.id)   # idempotent; a terminal evaluation is a no-op
+await evals.cancel(job.id)   # idempotent; a terminal job is a no-op
 
-# New linked evaluation of only the failed (and never-dispatched) runs
+# New linked job of only the failed (and never-dispatched) trials
 rerun = await evals.rerun_failed(
-    evaluation.id,
+    job.id,
     idempotency_key='rerun-1',
 )
-print(rerun.source_evaluation_id)   # → evaluation.id
+print(rerun.source_job_id)   # → job.id
 ```
 
-`rerun_failed()` requires a terminal source evaluation. Scored runs are never re-executed.
+`rerun_failed()` requires a terminal source job. Scored trials are never re-executed.
 
 ---
 
 ## Compare
 
-Compare 2–5 of your evaluations side by side — per-evaluation aggregates plus a per-task matrix, disagreement rows first:
+Compare 2–5 of your jobs side by side — per-job aggregates plus a per-task matrix, disagreement rows first:
 
 ```python
 comparison = await evals.compare([baseline.id, candidate.id])
 
-for aggregate in comparison.evaluations:
-    print(aggregate.id, aggregate.mean_score,
+for aggregate in comparison.jobs:
+    print(aggregate.id, aggregate.mean_reward,
           f'{aggregate.coverage.scored}/{aggregate.coverage.total} scored')
 
 for row in comparison.task_matrix:
     print(row.task_key, row.disagreement,
-          [(cell.status, cell.mean_score) for cell in row.cells])
+          [(cell.status, cell.mean_reward) for cell in row.cells])
 ```
 
-Means cover `SCORED` runs only; coverage is always reported so a high mean over few scored runs stays visible. A cell's status is `'MIXED'` when its runs disagree and `'MISSING'` when the evaluation has no runs for that task.
+Means cover `SCORED` trials only; coverage is always reported so a high mean over few scored trials stays visible. A cell's status is `'MIXED'` when its trials disagree and `'MISSING'` when the job has no trials for that task.
 
 ---
 
 ## Export
 
-Download the research archive (gzipped JSON) of a terminal evaluation:
+Download the research archive (gzipped JSON) of a terminal job:
 
 ```python
 archive_path = await evals.export(
-    evaluation.id,
+    job.id,
     to='./results',
 ) # saved file path
 harbor_path = await evals.export(
-    evaluation.id,
+    job.id,
     to='./results',
     format='harbor',
 ) # Harbor job layout
-archive_bytes = await evals.export(evaluation.id) # bytes in memory
+archive_bytes = await evals.export(job.id) # bytes in memory
 ```
 
 ---
@@ -266,7 +266,7 @@ Any benchmark in Harbor task format. Three environment shapes, all first-class:
 - **Dockerfile-built** — the task ships `environment/Dockerfile`; Evolve builds the image once at import.
 - **Multi-container** — the task ships `environment/docker-compose.yaml`; its service containers (databases, brokers, APIs) run alongside the agent's `main` container.
 
-A task also declares *how* it must run, and every declaration is honored as written. A provider that cannot honor one refuses the run with the reason named — nothing ever silently runs on weaker semantics than the task declares.
+A task also declares *how* it must run, and every declaration is honored as written. A provider that cannot honor one refuses the trial with the reason named — nothing ever silently runs on weaker semantics than the task declares.
 
 ### Network modes
 
@@ -283,11 +283,11 @@ The **verifier never gets network**, in any mode — it always runs sealed, rega
 - `separate` — the verifier boots a pristine copy of the task environment and judges the collected submission. Nothing the agent left behind can touch the verdict.
 - `shared` — the verifier command runs inside the agent's sandbox, after the agent finishes and its credentials are revoked.
 
-Both are supported; the task picks (Harbor's `environment_mode`). The mode that ran is recorded on every task run as `verifier_mode`.
+Both are supported; the task picks (Harbor's `environment_mode`). The mode that ran is recorded on every trial as `verifier_mode`.
 
 ### Compute sizing
 
-Tasks declare `cpus`, `memory_mb`, and `storage_mb`, and get exactly that. A provider whose ceiling is below the declaration **refuses the run** — named in the per-task provider verdicts below and in the run's `failure_detail` — rather than silently provisioning less. Current ceilings:
+Tasks declare `cpus`, `memory_mb`, and `storage_mb`, and get exactly that. A provider whose ceiling is below the declaration **refuses the trial** — named in the per-task provider verdicts below and in the trial's `failure_detail` — rather than silently provisioning less. Current ceilings:
 
 | Provider | Max vCPUs | Max memory | Disk |
 |----------|-----------|------------|------|
@@ -301,13 +301,13 @@ A task sized above *every* ceiling is rejected at import — it could run nowher
 
 ## Where it runs
 
-Every task run executes in its own sandbox. Pick the provider per evaluation — the same task image, network policy, and agent command run unchanged:
+Every trial executes in its own sandbox. Pick the provider per job — the same task image, network policy, and agent command run unchanged:
 
 ```python
-evaluation = await evals.run(
+job = await evals.run(
     benchmark='swe-bench-verified@1.0',
-    agent_systems=[
-        AgentSystem(
+    agents=[
+        JobAgent(
             harness='codex',
             model='gpt-5.5',
         ),
@@ -317,7 +317,7 @@ evaluation = await evals.run(
 )
 ```
 
-An unknown value is rejected with a `400` at creation — never a silent fallback. Once chosen, the provider is fixed for the evaluation's life; `rerun_failed()` inherits it.
+An unknown value is rejected with a `400` at creation — never a silent fallback. Once chosen, the provider is fixed for the job's life; `rerun_failed()` inherits it.
 
 Not every task can run everywhere. The catalog tells you **before any money is spent** — every task carries a per-provider verdict:
 
@@ -329,14 +329,14 @@ for task in bench.tasks or []:
         print(task.task_key, 'cannot run on modal:', verdict.reason)
 ```
 
-Creating an evaluation whose selected tasks include one refused on the chosen provider is rejected with a `400 provider_unsupported` naming the tasks and each task's reason — never accepted and left to fail mid-run.
+Creating a job whose selected tasks include one refused on the chosen provider is rejected with a `400 provider_unsupported` naming the tasks and each task's reason — never accepted and left to fail mid-run.
 
 What the verdicts encode today:
 
 - **Multi-container tasks run on `e2b` and `daytona`.** Modal cannot run them today — the task's `providers['modal']` verdict names the reason, and the task stays runnable on the other two providers.
 - **Multi-container + `no-network` is declined on every provider** for now. Run those tasks with an `allowlist` or `public` network policy.
 - **Daytona serves IP-based allowlists only.** Its network filter takes IPv4 addresses and CIDRs, capped at 10 entries — a cap that also has to fit the address the agent uses to reach its model, so a task's own list gets slightly fewer. A task whose allowlist names a hostname is refused on Daytona with the reason — run it on e2b or Modal, which serve hostname allowlists.
-- **Modal caps every sandbox at 24 hours.** A task whose timeout exceeds the cap fails fast when its sandbox is created (read the run's `failure_detail`) — never truncated mid-run.
+- **Modal caps every sandbox at 24 hours.** A task whose timeout exceeds the cap fails fast when its sandbox is created (read the trial's `failure_detail`) — never truncated mid-run.
 - **Sizing above a provider's ceiling** refuses on that provider only — see [Compute sizing](#compute-sizing).
 
 ---
@@ -351,7 +351,7 @@ Any repo of tasks in Harbor format runs on the hosted stack: point at it, import
 
 ```python
 async with benchmarks() as catalog:
-    job = await catalog.import_benchmark(
+    import_job = await catalog.import_benchmark(
         git_url='https://github.com/acme/my-bench.git',
         ref='v1.0.0',
         benchmark_name='my-bench',
@@ -359,7 +359,7 @@ async with benchmarks() as catalog:
     )
 
     done = await catalog.watch_import(
-        job.id,
+        import_job.id,
         on_status=lambda j: print(j.status, j.task_count),
         poll_interval_s=2.0,          # (optional) default 2 s
         timeout_s=1800,               # (optional) raises TimeoutError past the deadline
@@ -379,13 +379,13 @@ What happens next:
   - **gold** — the task's reference solution (`solution/`) is pushed through the real agent-side + verifier path and must score exactly `1.0`. Proof the task is solvable as written.
   - **no-op** — an empty submission goes straight to the verifier and must *not* score `1.0`. A task a do-nothing agent passes measures nothing.
 
-`IMPORTED` is the import job's terminal success: the corpus landed as a benchmark version, visible in the catalog (`catalog.get('my-bench@1.0')`) in state `VALIDATING`. Activation is a separate, operator-run step — importing never triggers it. The version stays `VALIDATING` until the gate passes in full and promotes it to `READY`, the one state that accepts evaluations; watch the state through `catalog.get()`. `run()` against any other state raises a `409 version_not_ready` naming it. Once `READY`:
+`IMPORTED` is the import job's terminal success: the corpus landed as a benchmark version, visible in the catalog (`catalog.get('my-bench@1.0')`) in state `VALIDATING`. Activation is a separate, operator-run step — importing never triggers it. The version stays `VALIDATING` until the gate passes in full and promotes it to `READY`, the one state that accepts jobs; watch the state through `catalog.get()`. `run()` against any other state raises a `409 version_not_ready` naming it. Once `READY`:
 
 ```python
-evaluation = await evals.run(
+job = await evals.run(
     benchmark='my-bench@1.0',
-    agent_systems=[
-        AgentSystem(
+    agents=[
+        JobAgent(
             harness='codex',
             model='gpt-5.5',
         ),
@@ -501,10 +501,10 @@ Then import and run it — exactly the [Harbor-format flow above](#already-in-ha
 
 ## Bring your own harness
 
-The built-in harnesses (`claude`, `codex`, `gemini`, `qwen`, `kimi`, `opencode`, `droid`) are not the boundary. Register your own CLI once, and its name becomes usable in `agent_systems[].harness` exactly like a built-in:
+The built-in harnesses (`claude`, `codex`, `gemini`, `qwen`, `kimi`, `opencode`, `droid`) are not the boundary. Register your own CLI once, and its name becomes usable in `agents[].harness` exactly like a built-in:
 
 ```python
-from evolve import custom_harnesses, evaluations, AgentSystem
+from evolve import custom_harnesses, jobs, JobAgent
 
 async with custom_harnesses() as harnesses:
     await harnesses.create(
@@ -514,11 +514,11 @@ async with custom_harnesses() as harnesses:
         env={'ACME_PROFILE': 'bench'},                                # (optional) injected at run time
     )
 
-async with evaluations() as evals:
-    evaluation = await evals.run(
+async with jobs() as evals:
+    job = await evals.run(
         benchmark='deep-swe',
-        agent_systems=[
-            AgentSystem(
+        agents=[
+            JobAgent(
                 harness='acme-cli',
                 model='gpt-5.5',
             ),
@@ -542,7 +542,7 @@ Read and remove them the same way:
 ```python
 registered = await harnesses.list()      # your harnesses only
 one = await harnesses.get('acme-cli')    # name, source, run_command, env, timestamps
-await harnesses.delete('acme-cli')       # past evaluations keep the harness they recorded
+await harnesses.delete('acme-cli')       # past jobs keep the harness they recorded
 ```
 
 The same surface is on the `evolve-evals` CLI — see [TypeScript → Bring your own harness](../typescript/06-hosted-evals.md#bring-your-own-harness).
@@ -555,7 +555,7 @@ Everything a custom harness can rely on, and nothing else. Your `run_command` ru
 
 - **The task instruction arrives twice, so read it whichever way your CLI prefers.** It is written to the command's **stdin**, and it is also on disk at the path in `$EVOLVE_INSTRUCTION_FILE`.
 - **The model is reached through a gateway, not a provider.** `$EVOLVE_GATEWAY_BASE_URL` is an OpenAI-compatible base URL that **already ends in `/v1`** — never append it yourself — and `$EVOLVE_GATEWAY_API_KEY` is the credential for it. The same two values are also exported as `$OPENAI_BASE_URL` and `$OPENAI_API_KEY`, so a CLI that **reads its endpoint from the environment** works unchanged. A CLI that routes through a **config file** does not — see below.
-- **`$EVOLVE_MODEL` names the model being evaluated** — the `model` of the agent system this run belongs to.
+- **`$EVOLVE_MODEL` names the model being evaluated** — the `model` of the agent this trial belongs to.
 - **Your declared `env` is injected at run time only**, and it may **not** override those contract keys. An attempt to is rejected at registration with `custom_harness_invalid_env`, not silently dropped at run time. The six contract keys are `EVOLVE_GATEWAY_BASE_URL`, `EVOLVE_GATEWAY_API_KEY`, `EVOLVE_MODEL`, `EVOLVE_INSTRUCTION_FILE`, `OPENAI_BASE_URL` and `OPENAI_API_KEY`.
 
 #### If your CLI routes through a config file
@@ -583,44 +583,44 @@ If your CLI ignores `OPENAI_BASE_URL` and you do not do this, it will try to rea
 How it is built, and what that costs you:
 
 - The install script (or the uploaded tarball) runs once in a **throwaway builder sandbox that has internet and ZERO secrets**. Everything it fetches must therefore be **publicly fetchable** — a private registry that needs a token cannot be reached from there — and it must leave its executables in **`$PREFIX/bin`**.
-- A custom harness is **versioned by its registered content** — the install source, the `run_command` and the declared `env`, together — so `harness_version` on an agent system using it is rejected. Change any of the three and you get a new recorded version and a new bundle digest; re-register (delete, then create) to change what runs.
+- A custom harness is **versioned by its registered content** — the install source, the `run_command` and the declared `env`, together — so `harness_version` on an agent using it is rejected. Change any of the three and you get a new recorded version and a new bundle digest; re-register (delete, then create) to change what runs.
 - **You may register up to 25 harnesses.** Past that, registration is refused with `custom_harness_limit_reached`; delete one to make room. Each registration is a full CLI the platform builds and caches for you.
 
-**What keeps a run inside its budget.** The spend cap is enforced on the gateway key, so model traffic that goes through `$EVOLVE_GATEWAY_BASE_URL` is metered and capped. What confines traffic to that route is the **task's network policy**, not the harness: under `no-network` — the default — the box can reach the gateway and nothing else, and the cap is a hard guarantee. On a task declaring `allowlist` or `public`, a harness *can* reach a provider directly, and that traffic is neither metered nor capped. Registration refuses credential-shaped `env` keys, but that is a guardrail against the obvious mistake, not a boundary.
+**What keeps a trial inside its budget.** The spend cap is enforced on the gateway key, so model traffic that goes through `$EVOLVE_GATEWAY_BASE_URL` is metered and capped. What confines traffic to that route is the **task's network policy**, not the harness: under `no-network` — the default — the box can reach the gateway and nothing else, and the cap is a hard guarantee. On a task declaring `allowlist` or `public`, a harness *can* reach a provider directly, and that traffic is neither metered nor capped. Registration refuses credential-shaped `env` keys, but that is a guardrail against the obvious mistake, not a boundary.
 
 What you give up versus a built-in:
 
-- **No live trace events.** There is no output parser for an unknown CLI, so `task_run_trace()` stays empty for these runs. Everything else is identical: the patch is collected, the verifier scores it, and artifacts, timings, spend and status are recorded exactly as for a built-in harness.
+- **No live trace events.** There is no output parser for an unknown CLI, so `trial_trace()` stays empty for these trials. Everything else is identical: the patch is collected, the verifier scores it, and artifacts, timings, spend and status are recorded exactly as for a built-in harness.
 
 ---
 
 ## Statuses
 
-**Evaluation** — `QUEUED → RUNNING (→ CANCELLING)`, then terminal:
+**Job** — `QUEUED → RUNNING (→ CANCELLING)`, then terminal:
 
 | Status | Meaning |
 |--------|---------|
 | `QUEUED` | accepted, waiting for dispatch |
-| `RUNNING` | task runs executing |
-| `CANCELLING` | `cancel()` requested; in-flight runs winding down |
-| `COMPLETED` | terminal — all task runs settled |
+| `RUNNING` | trials executing |
+| `CANCELLING` | `cancel()` requested; in-flight trials winding down |
+| `COMPLETED` | terminal — all trials settled |
 | `CANCELLED` | terminal — cancelled before completion |
-| `FAILED` | terminal — the evaluation itself failed (see `error`) |
+| `FAILED` | terminal — the job itself failed (see `error`) |
 
-**Task run** — a valid reward (including 0) is `SCORED`; a verifier crash or out-of-domain reward is `SCORING_ERROR`, never a fabricated zero:
+**Trial** — a valid reward (including 0) is `SCORED`; a verifier crash or out-of-domain reward is `SCORING_ERROR`, never a fabricated zero:
 
 | Status | Meaning |
 |--------|---------|
 | `QUEUED` | waiting for a sandbox slot |
 | `RUNNING` | agent phase in progress |
 | `SCORING` | agent finished; verifier running |
-| `SCORED` | valid reward recorded (`score` set; 0 counts) |
+| `SCORED` | valid reward recorded (`reward` set; 0 counts) |
 | `SCORING_ERROR` | verifier crashed or returned an out-of-domain reward |
 | `INFRASTRUCTURE_ERROR` | sandbox failed before a result was recorded (see `failure_phase`) |
 | `INDETERMINATE` | the outcome could not be determined |
 | `CANCELLED` | cancelled before settling |
 
-**Benchmark version** — `DRAFT → IMPORTING → BUILDING → VALIDATING → READY`, with `FAILED` and `ARCHIVED` as off-ramps: a failed parse or environment build lands `FAILED` before `VALIDATING` is ever reached, and `ARCHIVED` shelves a version that has been moved past. An import lands a version at `VALIDATING`; the activation gate (gold + no-op, above) then promotes it. Only `READY` versions accept evaluations. (The import job's own statuses are `IMPORTING → IMPORTED | FAILED`.)
+**Benchmark version** — `DRAFT → IMPORTING → BUILDING → VALIDATING → READY`, with `FAILED` and `ARCHIVED` as off-ramps: a failed parse or environment build lands `FAILED` before `VALIDATING` is ever reached, and `ARCHIVED` shelves a version that has been moved past. An import lands a version at `VALIDATING`; the activation gate (gold + no-op, above) then promotes it. Only `READY` versions accept jobs. (The import job's own statuses are `IMPORTING → IMPORTED | FAILED`.)
 
 ---
 
@@ -628,7 +628,7 @@ What you give up versus a built-in:
 
 ```python
 @dataclass
-class AgentSystem:
+class JobAgent:
     harness: str                          # a built-in ('claude' | 'codex' | 'gemini' | 'qwen' |
                                           # 'kimi' | 'opencode' | 'droid') or a registered custom harness
     model: str                            # from that harness's family — see Getting Started
@@ -638,46 +638,46 @@ class AgentSystem:
                                           # harness -> invalid_input (content-versioned)
 
 @dataclass
-class Evaluation:
+class Job:
     id: str
-    status: str                           # evaluation status above
+    status: str                           # job status above
     benchmark: str                        # 'name@version'
     runs_per_task: int
     concurrency: int
     max_model_spend_usd: float            # the cap that applied: yours, or the platform default
     sandbox_provider: str                 # 'e2b' | 'daytona' | 'modal'
     spent_usd: float
-    counts: EvaluationCounts              # agent_systems, tasks, task_runs
+    counts: JobCounts                     # agents, tasks, trials
     created_at: str
-    max_model_spend_usd_per_task_run: float | None
-    task_run_counts: dict | None          # histogram by task-run status (get/list)
-    mean_score: float | None              # mean over SCORED runs; None when none (get/list)
-    agent_systems: list[AgentSystem] | None   # get() only
+    max_model_spend_usd_per_trial: float | None
+    trial_counts: dict | None             # histogram by trial status (get/list)
+    mean_reward: float | None             # mean over SCORED trials; None when none (get/list)
+    agents: list[JobAgent] | None         # get() only
     error: str | None                     # get() only
     updated_at: str | None                # get() only
-    source_evaluation_id: str | None      # set on rerun_failed() evaluations
+    source_job_id: str | None             # set on rerun_failed() jobs
     idempotent_replay: bool               # True when an Idempotency-Key replayed
 
 @dataclass
-class EvaluationEvent:                    # watch() / watch_iter()
+class JobEvent:                           # watch() / watch_iter()
     seq: int                              # monotonic; the watch resume position
-    type: str                             # 'task_run.settled', 'evaluation.completed', ...
+    type: str                             # 'trial.settled', 'job.completed', ...
     data: dict
 
 @dataclass
-class TaskRun:
+class Trial:
     id: str
     task_key: str
-    agent_system: AgentSystem
+    agent: JobAgent
     run_number: int                       # 1-based
-    status: str                           # task-run status above
-    score: float | None                   # None until scored; 0 is a score
+    status: str                           # trial status above
+    reward: float | None                  # None until scored; 0 is a reward
     metrics: dict[str, float] | None      # named sub-scores
     failure_phase: str | None
-    failure_detail: str | None            # truncated in list rows; full via task_run()
+    failure_detail: str | None            # truncated in list rows; full via trial()
     phase_timings_ms: dict | None         # {'agent_ms': ..., 'verify_ms': ...}
     model_usage: ModelUsage | None
-    sandbox_provider: str | None          # where the run executed; None until it has
+    sandbox_provider: str | None          # where the trial executed; None until it has
     verifier_mode: str | None             # 'separate' | 'shared'
     resolved_harness_version: str | None  # harness version actually used
     session_ref: str | None               # agent session/trace reference
@@ -685,18 +685,18 @@ class TaskRun:
     updated_at: str
 
 @dataclass
-class TaskRunDetail(TaskRun):             # task_run(id, run_id)
-    evaluation_id: str                    # failure_detail is untruncated here
+class TrialDetail(Trial):                 # trial(id, trial_id)
+    job_id: str                           # failure_detail is untruncated here
 
 @dataclass
 class ModelUsage:                         # one money vocabulary: caps are
     spent_usd: float | None               # max_model_spend*, actuals are spent_usd
     spend_source: str | None              # 'measured' | 'assumed_cap'
-    max_model_spend_usd: float | None     # the per-run cap that applied to this run
+    max_model_spend_usd: float | None     # the per-trial cap that applied to this trial
     extra: dict                           # harness-specific keys, snake_case
 
 @dataclass
-class TaskRunTraceEvent:
+class TrialTraceEvent:
     seq: int                              # resume position for after=
     type: str
     data: dict
@@ -742,7 +742,7 @@ class BenchmarkImport:
 
 @dataclass
 class CustomHarness:                      # harnesses.list() / get() / create()
-    name: str                             # the value you pass as agent_systems[].harness
+    name: str                             # the value you pass as agents[].harness
     source: str                           # 'install_script' | 'tarball'
     run_command: str                      # run headless with `sh -c` at the task directory
     env: dict[str, str]                   # injected at RUN time; cannot override contract keys
@@ -760,14 +760,14 @@ Every API failure raises `EvolveAPIError` — the server's own sentence as the m
 from evolve import EvolveAPIError
 
 try:
-    await evals.run(benchmark='deep-swe', agent_systems=[...], max_model_spend_usd=25)
+    await evals.run(benchmark='deep-swe', agents=[...], max_model_spend_usd=25)
 except EvolveAPIError as error:
     print(error.status)   # e.g. 409
     print(error.code)     # e.g. 'version_not_ready', 'provider_unsupported', 'rate_limited'
     print(error)          # 'Benchmark version deep-swe@1.2 is in state VALIDATING; ...'
 ```
 
-Codes you will actually branch on: `benchmark_not_found`, `benchmark_version_not_found`, `no_active_version`, `version_not_ready`, `unknown_task_keys`, `provider_unsupported`, `evaluation_not_found`, `evaluation_not_terminal`, `no_failed_runs`, `task_run_not_found`, `harness_version_not_found`, `insufficient_credits` (402 — the account is out of credits; add some and retry), `rate_limited`, `invalid_api_key`, and `invalid_input`.
+Codes you will actually branch on: `benchmark_not_found`, `benchmark_version_not_found`, `no_active_version`, `version_not_ready`, `unknown_task_keys`, `provider_unsupported`, `job_not_found`, `job_not_terminal`, `no_failed_runs`, `trial_not_found`, `harness_version_not_found`, `insufficient_credits` (402 — the account is out of credits; add some and retry), `rate_limited`, `invalid_api_key`, and `invalid_input`.
 
 [Custom harnesses](#bring-your-own-harness) add their own: `custom_harness_not_found` (also what another owner's name reads as), `custom_harness_name_taken`, `custom_harness_name_reserved` (the name collides with a built-in harness), `custom_harness_source_required` (neither an install script nor a tarball), `custom_harness_source_conflict` (both), `custom_harness_invalid_env` (declared env tries to override a run-contract key), `custom_harness_invalid_name`, `custom_harness_too_large`, and `custom_harness_limit_reached` (the per-account registration ceiling).
 

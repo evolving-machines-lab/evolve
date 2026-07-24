@@ -1,11 +1,11 @@
-"""Hosted evals clients: standalone benchmarks() and evaluations().
+"""Hosted evals clients: standalone benchmarks() and jobs().
 
 Direct-HTTP clients against the dashboard API (same pattern as
 browser_credentials.py — no Node bridge). Mirrors the TypeScript SDK's hosted
 module 1-1: ``watch()`` consumes the server-sent event stream (replay from the
 beginning, Last-Event-ID resume on reconnect, terminal-event completion), and
 ``watch_iter()`` is its async-iterator sibling yielding each
-:class:`EvaluationEvent`.
+:class:`JobEvent`.
 
 API failures raise :class:`EvolveAPIError` — the server's product sentence as
 the message plus the stable machine-readable ``code``.
@@ -30,13 +30,13 @@ from .config import HostedClientConfig
 
 DEFAULT_BASE_URL = 'https://dashboard.evolvingmachines.ai'
 
-_TERMINAL_EVALUATION_STATUSES = {'COMPLETED', 'CANCELLED', 'FAILED'}
+_TERMINAL_JOB_STATUSES = {'COMPLETED', 'CANCELLED', 'FAILED'}
 
 # Terminal import job statuses.
 _TERMINAL_IMPORT_STATUSES = {'IMPORTED', 'FAILED'}
 
 # Seeing one of these on the wire is the authoritative end-of-stream signal.
-_TERMINAL_EVENT_TYPES = {'evaluation.completed', 'evaluation.cancelled', 'evaluation.failed'}
+_TERMINAL_EVENT_TYPES = {'job.completed', 'job.cancelled', 'job.failed'}
 
 # camelCase -> snake_case boundary (only between a lower/digit and an upper,
 # so all-caps status keys are never mangled).
@@ -107,7 +107,7 @@ class Task:
     """Public task fields only — instructions/environments/tests never leave the server.
 
     ``providers`` maps each sandbox provider to a :class:`TaskProviderVerdict`.
-    Advisory for choosing an evaluation's provider — creating an evaluation
+    Advisory for choosing a job's provider — creating a job
     whose tasks include one refused on the chosen provider is rejected with
     the same reason, so nothing is ever spent on a run that cannot execute.
     """
@@ -156,12 +156,12 @@ class ActiveBenchmark:
 
 
 @dataclass
-class AgentSystem:
-    """One agent system: harness + model (+ optional pinned harness version).
+class JobAgent:
+    """One agent: harness + model (+ optional pinned harness version).
 
     ``harness`` is a built-in ("claude", "codex", ...) or a registered custom
     harness name. ``harness_version`` omitted (or None) resolves the latest at
-    dispatch time; the version that actually ran is recorded on every task run
+    dispatch time; the version that actually ran is recorded on every trial
     as ``resolved_harness_version``. Rejected at creation when the pin is not an
     exact version (``invalid_input``), when the version is not published
     (``harness_version_not_found``), or when the harness is a custom one — those
@@ -179,16 +179,16 @@ class AgentSystem:
 
 
 @dataclass
-class EvaluationCounts:
-    """Evaluation size: agent_systems x tasks -> task_runs (present on every shape)."""
-    agent_systems: int
+class JobCounts:
+    """Job size: agents x tasks -> trials (present on every shape)."""
+    agents: int
     tasks: int
-    task_runs: int
+    trials: int
 
 
 @dataclass
-class Evaluation:
-    """An evaluation = tasks x agent systems x runs_per_task."""
+class Job:
+    """A job = tasks x agents x runs_per_task."""
     id: str
     status: str
     # "name@version"
@@ -196,26 +196,26 @@ class Evaluation:
     runs_per_task: int
     concurrency: int
     max_model_spend_usd: float
-    #: Sandbox provider this evaluation runs on ("e2b" | "daytona" | "modal").
+    #: Sandbox provider this job runs on ("e2b" | "daytona" | "modal").
     sandbox_provider: str
     spent_usd: float
-    counts: EvaluationCounts
+    counts: JobCounts
     created_at: str
-    # Per-task-run model-spend cap, when one was set
-    max_model_spend_usd_per_task_run: Optional[float] = None
-    task_run_counts: Optional[Dict[str, int]] = None
-    # Mean score over SCORED runs only; None when none. Zero is a score. (get/list)
-    mean_score: Optional[float] = None
-    agent_systems: Optional[List[AgentSystem]] = None
+    # Per-trial model-spend cap, when one was set
+    max_model_spend_usd_per_trial: Optional[float] = None
+    trial_counts: Optional[Dict[str, int]] = None
+    # Mean reward over SCORED runs only; None when none. Zero is a reward. (get/list)
+    mean_reward: Optional[float] = None
+    agents: Optional[List[JobAgent]] = None
     error: Optional[str] = None
     updated_at: Optional[str] = None
-    source_evaluation_id: Optional[str] = None
+    source_job_id: Optional[str] = None
     idempotent_replay: bool = False
 
 
 @dataclass
 class ModelUsage:
-    """Model usage/spend recorded for a task run — purely spend/usage, in the
+    """Model usage/spend recorded for a trial — purely spend/usage, in the
     one money vocabulary (caps are max_model_spend*, actuals are spent_usd).
 
     ``spend_source`` is "measured" (measured model spend reported by the
@@ -231,14 +231,14 @@ class ModelUsage:
 
 
 @dataclass
-class TaskRun:
-    """One task x one agent system x one run_number (1-based)."""
+class Trial:
+    """One task x one agent x one run_number (1-based)."""
     id: str
     task_key: str
-    agent_system: AgentSystem
+    agent: JobAgent
     run_number: int
     status: str
-    score: Optional[float]
+    reward: Optional[float]
     metrics: Optional[Dict[str, float]]
     failure_phase: Optional[str]
     failure_detail: Optional[str]
@@ -258,37 +258,37 @@ class TaskRun:
 
 
 @dataclass
-class TaskRunDetail(TaskRun):
-    """Full detail of one task run — evaluations().task_run(id, run_id).
+class TrialDetail(Trial):
+    """Full detail of one trial — jobs().trial(id, trial_id).
 
-    Same shape as a list row, plus the owning evaluation; unlike list rows,
+    Same shape as a list row, plus the owning job; unlike list rows,
     failure_detail is untruncated here.
     """
-    evaluation_id: str
+    job_id: str
 
 
 @dataclass
-class EvaluationEvent:
-    """One server-sent event from evaluations().watch()/watch_iter()."""
+class JobEvent:
+    """One server-sent event from jobs().watch()/watch_iter()."""
     # Monotonic sequence number (SSE id; the Last-Event-ID resume position)
     seq: int
-    # Event type, e.g. "evaluation.created", "task_run.settled", "evaluation.completed"
+    # Event type, e.g. "job.created", "trial.settled", "job.completed"
     type: str
     data: Dict[str, Any]
 
 
 @dataclass
-class TaskRunTraceEvent:
-    """One trace event of a task run (seq-ordered timeline)."""
+class TrialTraceEvent:
+    """One trace event of a trial (seq-ordered timeline)."""
     seq: int
     type: str
     data: Dict[str, Any]
 
 
 @dataclass
-class TaskRunTracePage:
-    """One seq-paged slice of a task run's trace — evaluations().task_run_trace()."""
-    events: List[TaskRunTraceEvent]
+class TrialTracePage:
+    """One seq-paged slice of a trial's trace — jobs().trial_trace()."""
+    events: List[TrialTraceEvent]
     # Resume position: pass back as after= to continue. An empty page echoes
     # the requested position (None when reading an empty trace from the start).
     next_after: Optional[int]
@@ -303,68 +303,68 @@ class ComparisonCoverage:
 
 @dataclass
 class ComparisonCell:
-    """One (task_key x evaluation) cell of the compare matrix.
+    """One (task_key x job) cell of the compare matrix.
 
-    status is the shared TaskRun status when the cell's runs agree, "MIXED"
-    when they differ, and "MISSING" when the evaluation has no runs for the task.
+    status is the shared Trial status when the cell's runs agree, "MIXED"
+    when they differ, and "MISSING" when the job has no runs for the task.
     """
-    evaluation_id: str
+    job_id: str
     status: str
-    # Mean score over the cell's SCORED runs; None when none. Zero is a score.
-    mean_score: Optional[float]
+    # Mean reward over the cell's SCORED runs; None when none. Zero is a reward.
+    mean_reward: Optional[float]
     coverage: ComparisonCoverage
 
 
 @dataclass
 class ComparisonTaskRow:
-    """One matrix row of evaluations().compare(): a task across the compared evaluations."""
+    """One matrix row of jobs().compare(): a task across the compared jobs."""
     task_key: str
-    # True when the evaluations' cells differ in status or score for this task
+    # True when the jobs' cells differ in status or reward for this task
     disagreement: bool
-    # Cells in the caller's evaluation-id order
+    # Cells in the caller's job-id order
     cells: List[ComparisonCell]
 
 
 @dataclass
 class ComparisonAggregate:
-    """Per-evaluation aggregate of evaluations().compare()."""
+    """Per-job aggregate of jobs().compare()."""
     id: str
     benchmark: str
     status: str
-    # Mean score over SCORED runs only; None when none. Zero is a score.
-    mean_score: Optional[float]
+    # Mean reward over SCORED runs only; None when none. Zero is a reward.
+    mean_reward: Optional[float]
     coverage: ComparisonCoverage
     spent_usd: float
-    agent_systems: List[AgentSystem]
+    agents: List[JobAgent]
     created_at: str
 
 
 @dataclass
-class EvaluationComparison:
-    """Result of evaluations().compare([ids]): aggregates + per-task matrix."""
+class JobComparison:
+    """Result of jobs().compare([ids]): aggregates + per-task matrix."""
     # Aggregates in the caller's id order
-    evaluations: List[ComparisonAggregate]
+    jobs: List[ComparisonAggregate]
     # Per-task matrix, disagreement rows first
     task_matrix: List[ComparisonTaskRow]
 
 
 @dataclass
 class RegradeResult:
-    """One regrade of one source task run: the verifier re-run against that run's
+    """One regrade of one source trial: the verifier re-run against that trial's
     RECORDED inputs, in a fresh separate verifier box. The agent phase is never
-    re-run and the source run is never modified — ``source_score``/
+    re-run and the source trial is never modified — ``source_reward``/
     ``source_status`` are immutable snapshots taken when the regrade was created.
     """
     id: str
-    source_task_run_id: str
+    source_trial_id: str
     task_key: str
     status: str
-    score: Optional[float]
+    reward: Optional[float]
     metrics: Optional[Dict[str, float]]
-    source_score: Optional[float]
+    source_reward: Optional[float]
     source_status: str
-    # score − source_score when both are real numbers, else None (Harbor delta)
-    score_delta: Optional[float]
+    # reward − source_reward when both are real numbers, else None (Harbor delta)
+    reward_delta: Optional[float]
     # Where the verifier ran — always "separate" (regrade only re-runs separate)
     verifier_mode: str
     # Content digest of the resolved target verifier spec = the "verifier
@@ -380,7 +380,7 @@ class RegradeResult:
 
 @dataclass
 class RegradeFilter:
-    """The filter applied when selecting source runs for a per-evaluation regrade."""
+    """The filter applied when selecting source runs for a per-job regrade."""
     status: Optional[List[str]] = None
     task_key: Optional[str] = None
 
@@ -396,12 +396,12 @@ class RegradeJobCounts:
 class RegradeJob:
     """A regrade job = a collection of regrade results.
 
-    A per-task-run regrade holds one result; a per-evaluation regrade holds one
+    A per-trial regrade holds one result; a per-job regrade holds one
     per eligible source run. ``status`` is derived from the results
     ("QUEUED"|"RUNNING"|"COMPLETED"). ``results`` is present on read + create.
     """
     id: str
-    source_evaluation_id: str
+    source_job_id: str
     status: str
     sandbox_provider: str
     counts: RegradeJobCounts
@@ -452,12 +452,12 @@ class BenchmarkImport:
 class CustomHarness:
     """A private harness registered by the caller.
 
-    Once registered, ``name`` is usable in ``agent_systems[].harness`` exactly
+    Once registered, ``name`` is usable in ``agents[].harness`` exactly
     like a built-in ("claude", "codex", ...). Private to its owner: another
     user's name reads as ``custom_harness_not_found``, never as a permission
     error — existence is never leaked.
     """
-    # The harness name to put in agent_systems[].harness
+    # The harness name to put in agents[].harness
     name: str
     # How the executables were produced: "install_script" | "tarball"
     source: str
@@ -472,14 +472,14 @@ class CustomHarness:
 
 
 @dataclass
-class EvaluationPage:
-    evaluations: List[Evaluation]
+class JobPage:
+    jobs: List[Job]
     next_cursor: Optional[str]
 
 
 @dataclass
-class TaskRunPage:
-    task_runs: List[TaskRun]
+class TrialPage:
+    trials: List[Trial]
     next_cursor: Optional[str]
 
 
@@ -487,9 +487,9 @@ class TaskRunPage:
 # MAPPERS
 # =============================================================================
 
-def _map_agent_system(data: Dict[str, Any]) -> AgentSystem:
-    # Map only the public AgentSystem fields.
-    return AgentSystem(
+def _map_job_agent(data: Dict[str, Any]) -> JobAgent:
+    # Map only the public JobAgent fields.
+    return JobAgent(
         harness=data.get('harness', ''),
         model=data.get('model', ''),
         harness_version=data.get('harnessVersion'),
@@ -522,18 +522,18 @@ def _map_task(data: Dict[str, Any]) -> Task:
     )
 
 
-def _map_counts(data: Any) -> EvaluationCounts:
+def _map_counts(data: Any) -> JobCounts:
     counts = data if isinstance(data, dict) else {}
-    return EvaluationCounts(
-        agent_systems=int(counts.get('agentSystems', 0)),
+    return JobCounts(
+        agents=int(counts.get('agents', 0)),
         tasks=int(counts.get('tasks', 0)),
-        task_runs=int(counts.get('taskRuns', 0)),
+        trials=int(counts.get('trials', 0)),
     )
 
 
-def _map_evaluation(data: Dict[str, Any]) -> Evaluation:
-    agent_systems = data.get('agentSystems')
-    return Evaluation(
+def _map_job(data: Dict[str, Any]) -> Job:
+    agents = data.get('agents')
+    return Job(
         id=data['id'],
         status=data.get('status', ''),
         benchmark=data.get('benchmark', ''),
@@ -544,17 +544,17 @@ def _map_evaluation(data: Dict[str, Any]) -> Evaluation:
         spent_usd=float(data.get('spentUsd', 0)),
         counts=_map_counts(data.get('counts')),
         created_at=data.get('createdAt', ''),
-        max_model_spend_usd_per_task_run=data.get('maxModelSpendUsdPerTaskRun'),
-        task_run_counts=data.get('taskRunCounts'),
-        mean_score=data.get('meanScore'),
-        agent_systems=(
-            [_map_agent_system(item) for item in agent_systems]
-            if isinstance(agent_systems, list)
+        max_model_spend_usd_per_trial=data.get('maxModelSpendUsdPerTrial'),
+        trial_counts=data.get('trialCounts'),
+        mean_reward=data.get('meanReward'),
+        agents=(
+            [_map_job_agent(item) for item in agents]
+            if isinstance(agents, list)
             else None
         ),
         error=data.get('error'),
         updated_at=data.get('updatedAt'),
-        source_evaluation_id=data.get('sourceEvaluationId'),
+        source_job_id=data.get('sourceJobId'),
         idempotent_replay=bool(data.get('idempotentReplay', False)),
     )
 
@@ -577,14 +577,14 @@ def _map_model_usage(data: Any) -> Optional[ModelUsage]:
     )
 
 
-def _map_task_run(data: Dict[str, Any]) -> TaskRun:
-    return TaskRun(
+def _map_trial(data: Dict[str, Any]) -> Trial:
+    return Trial(
         id=data['id'],
         task_key=data.get('taskKey', ''),
-        agent_system=_map_agent_system(data.get('agentSystem') or {}),
+        agent=_map_job_agent(data.get('agent') or {}),
         run_number=int(data.get('runNumber', 0)),
         status=data.get('status', ''),
-        score=data.get('score'),
+        reward=data.get('reward'),
         metrics=data.get('metrics'),
         failure_phase=data.get('failurePhase'),
         failure_detail=data.get('failureDetail'),
@@ -599,16 +599,16 @@ def _map_task_run(data: Dict[str, Any]) -> TaskRun:
     )
 
 
-def _map_task_run_detail(data: Dict[str, Any]) -> TaskRunDetail:
-    base = _map_task_run(data)
-    return TaskRunDetail(
+def _map_trial_detail(data: Dict[str, Any]) -> TrialDetail:
+    base = _map_trial(data)
+    return TrialDetail(
         **base.__dict__,
-        evaluation_id=data.get('evaluationId', ''),
+        job_id=data.get('jobId', ''),
     )
 
 
-def _map_trace_event(data: Dict[str, Any]) -> TaskRunTraceEvent:
-    return TaskRunTraceEvent(
+def _map_trace_event(data: Dict[str, Any]) -> TrialTraceEvent:
+    return TrialTraceEvent(
         seq=int(data.get('seq', -1)),
         type=data.get('type', ''),
         data=data.get('data') or {},
@@ -624,17 +624,17 @@ def _map_coverage(data: Any) -> ComparisonCoverage:
 
 
 def _map_comparison_aggregate(data: Dict[str, Any]) -> ComparisonAggregate:
-    agent_systems = data.get('agentSystems')
+    agents = data.get('agents')
     return ComparisonAggregate(
         id=data.get('id', ''),
         benchmark=data.get('benchmark', ''),
         status=data.get('status', ''),
-        mean_score=data.get('meanScore'),
+        mean_reward=data.get('meanReward'),
         coverage=_map_coverage(data.get('coverage')),
         spent_usd=float(data.get('spentUsd', 0)),
-        agent_systems=(
-            [_map_agent_system(item) for item in agent_systems]
-            if isinstance(agent_systems, list)
+        agents=(
+            [_map_job_agent(item) for item in agents]
+            if isinstance(agents, list)
             else []
         ),
         created_at=data.get('createdAt', ''),
@@ -643,9 +643,9 @@ def _map_comparison_aggregate(data: Dict[str, Any]) -> ComparisonAggregate:
 
 def _map_comparison_cell(data: Dict[str, Any]) -> ComparisonCell:
     return ComparisonCell(
-        evaluation_id=data.get('evaluationId', ''),
+        job_id=data.get('jobId', ''),
         status=data.get('status', ''),
-        mean_score=data.get('meanScore'),
+        mean_reward=data.get('meanReward'),
         coverage=_map_coverage(data.get('coverage')),
     )
 
@@ -677,14 +677,14 @@ def _map_import_error(data: Any) -> Optional[BenchmarkImportError]:
 def _map_regrade_result(data: Dict[str, Any]) -> RegradeResult:
     return RegradeResult(
         id=data['id'],
-        source_task_run_id=data.get('sourceTaskRunId', ''),
+        source_trial_id=data.get('sourceTrialId', ''),
         task_key=data.get('taskKey', ''),
         status=data.get('status', ''),
-        score=data.get('score'),
+        reward=data.get('reward'),
         metrics=data.get('metrics'),
-        source_score=data.get('sourceScore'),
+        source_reward=data.get('sourceReward'),
         source_status=data.get('sourceStatus', ''),
-        score_delta=data.get('scoreDelta'),
+        reward_delta=data.get('rewardDelta'),
         verifier_mode=data.get('verifierMode', 'separate'),
         verifier_digest=data.get('verifierDigest'),
         verifier_sandbox_id=data.get('verifierSandboxId'),
@@ -707,7 +707,7 @@ def _map_regrade_job(data: Dict[str, Any]) -> RegradeJob:
     results = data.get('results')
     return RegradeJob(
         id=data['id'],
-        source_evaluation_id=data.get('sourceEvaluationId', ''),
+        source_job_id=data.get('sourceJobId', ''),
         status=data.get('status', ''),
         sandbox_provider=data.get('sandboxProvider', ''),
         counts=RegradeJobCounts(
@@ -1151,13 +1151,13 @@ class CustomHarnessesClient:
     """Client for the caller's own private (bring-your-own) harnesses.
 
     Created via the standalone ``custom_harnesses()`` factory. Register a
-    harness once, then name it in ``agent_systems[].harness`` exactly like a
+    harness once, then name it in ``agents[].harness`` exactly like a
     built-in. Requires ``EVOLVE_API_KEY`` unless
     ``HostedClientConfig(api_key=...)`` is given.
 
     Example::
 
-        from evolve import custom_harnesses, evaluations, AgentSystem
+        from evolve import custom_harnesses, jobs, JobAgent
 
         async with custom_harnesses() as harnesses:
             await harnesses.create(
@@ -1166,10 +1166,10 @@ class CustomHarnessesClient:
                 run_command='acme-cli --headless',
             )
 
-        async with evaluations() as evals:
-            await evals.run(
+        async with jobs() as jobs_client:
+            await jobs_client.run(
                 benchmark='deep-swe',
-                agent_systems=[AgentSystem(harness='acme-cli', model='gpt-5.5')],
+                agents=[JobAgent(harness='acme-cli', model='gpt-5.5')],
                 max_model_spend_usd=25,
             )
     """
@@ -1256,7 +1256,7 @@ class CustomHarnessesClient:
         return _map_custom_harness(raw)
 
     async def delete(self, name: str) -> None:
-        """Delete a custom harness. Past evaluations keep their recorded harness."""
+        """Delete a custom harness. Past jobs keep their recorded harness."""
         # 204 No Content — nothing to map.
         await self._http.request_json(
             f'/api/custom-harnesses/{urllib.parse.quote(name)}', method='DELETE'
@@ -1293,36 +1293,36 @@ def _parse_sse_data(text: str) -> Dict[str, Any]:
 
 
 # =============================================================================
-# EVALUATIONS CLIENT
+# JOBS CLIENT
 # =============================================================================
 
-class EvaluationsClient:
-    """Client for hosted evaluations.
+class JobsClient:
+    """Client for hosted jobs.
 
-    Created via the standalone ``evaluations()`` factory. Requires
+    Created via the standalone ``jobs()`` factory. Requires
     ``EVOLVE_API_KEY`` unless ``HostedClientConfig(api_key=...)`` is given.
 
     ``watch()`` consumes the server-sent event stream (replay + live,
-    Last-Event-ID resume on reconnect) and resolves with the final evaluation;
-    ``watch_iter()`` yields each :class:`EvaluationEvent` instead.
+    Last-Event-ID resume on reconnect) and resolves with the final job;
+    ``watch_iter()`` yields each :class:`JobEvent` instead.
 
     Example::
 
-        from evolve import evaluations, AgentSystem
+        from evolve import jobs, JobAgent
 
-        async with evaluations() as e:
-            evaluation = await e.run(
+        async with jobs() as j:
+            job = await j.run(
                 benchmark='deep-swe@1.1',
-                agent_systems=[AgentSystem(harness='codex', model='gpt-5.5')],
+                agents=[JobAgent(harness='codex', model='gpt-5.5')],
                 max_model_spend_usd=25,
             )
-            final = await e.watch(evaluation.id)
+            final = await j.watch(job.id)
     """
 
     def __init__(self, config: Optional[HostedClientConfig] = None):
-        self._http = _HostedHttp('evaluations', config)
+        self._http = _HostedHttp('jobs', config)
 
-    async def __aenter__(self) -> 'EvaluationsClient':
+    async def __aenter__(self) -> 'JobsClient':
         return self
 
     async def __aexit__(self, *args: Any) -> None:
@@ -1336,19 +1336,19 @@ class EvaluationsClient:
         *,
         benchmark: str,
         tasks: Optional[List[str]] = None,
-        agent_systems: List[Union[AgentSystem, Dict[str, Any]]],
+        agents: List[Union[JobAgent, Dict[str, Any]]],
         runs_per_task: Optional[int] = None,
         concurrency: Optional[int] = None,
         max_model_spend_usd: Optional[float] = None,
-        max_model_spend_usd_per_task_run: Optional[float] = None,
+        max_model_spend_usd_per_trial: Optional[float] = None,
         sandbox_provider: Optional[str] = None,
         idempotency_key: Optional[str] = None,
-    ) -> Evaluation:
-        """Create an evaluation.
+    ) -> Job:
+        """Create a job.
 
         ``benchmark`` is ``"name"`` (resolved server-side to the active READY
         version) or ``"name@version"``; the response always echoes
-        ``"name@version"``. ``agent_systems`` accepts :class:`AgentSystem`
+        ``"name@version"``. ``agents`` accepts :class:`JobAgent`
         instances or plain dicts with the same fields (``harness``, ``model``,
         optional ``harness_version``). ``max_model_spend_usd`` is optional:
         omitted, the server applies its own default ($500, operator-tunable),
@@ -1358,9 +1358,9 @@ class EvaluationsClient:
         body: Dict[str, Any] = {'benchmark': benchmark}
         if tasks is not None:
             body['tasks'] = tasks
-        body['agentSystems'] = [
-            (system if isinstance(system, AgentSystem) else AgentSystem(**system))._to_wire()
-            for system in agent_systems
+        body['agents'] = [
+            (agent if isinstance(agent, JobAgent) else JobAgent(**agent))._to_wire()
+            for agent in agents
         ]
         if runs_per_task is not None:
             body['runsPerTask'] = runs_per_task
@@ -1368,18 +1368,18 @@ class EvaluationsClient:
             body['concurrency'] = concurrency
         if max_model_spend_usd is not None:
             body['maxModelSpendUsd'] = max_model_spend_usd
-        if max_model_spend_usd_per_task_run is not None:
-            body['maxModelSpendUsdPerTaskRun'] = max_model_spend_usd_per_task_run
+        if max_model_spend_usd_per_trial is not None:
+            body['maxModelSpendUsdPerTrial'] = max_model_spend_usd_per_trial
         if sandbox_provider is not None:
             body['sandboxProvider'] = sandbox_provider
         headers = {'Idempotency-Key': idempotency_key} if idempotency_key else None
-        raw = await self._http.request_json('/api/evaluations', method='POST', body=body, headers=headers)
-        return _map_evaluation(raw)
+        raw = await self._http.request_json('/api/jobs', method='POST', body=body, headers=headers)
+        return _map_job(raw)
 
-    async def get(self, id: str) -> Evaluation:
-        """Get one evaluation with agent systems + task-run status counts."""
-        raw = await self._http.request_json(f'/api/evaluations/{urllib.parse.quote(id)}')
-        return _map_evaluation(raw)
+    async def get(self, id: str) -> Job:
+        """Get one job with agents + trial status counts."""
+        raw = await self._http.request_json(f'/api/jobs/{urllib.parse.quote(id)}')
+        return _map_job(raw)
 
     def list(
         self,
@@ -1387,12 +1387,12 @@ class EvaluationsClient:
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
     ) -> _PaginatedList:
-        """List the caller's evaluations, newest first (cursor-paged).
+        """List the caller's jobs, newest first (cursor-paged).
 
         ``await`` the result for one page (honoring ``limit``/``cursor``), or
-        ``async for`` it to walk every evaluation across cursor pages.
+        ``async for`` it to walk every job across cursor pages.
         """
-        async def fetch_page(page_limit, page_cursor) -> EvaluationPage:
+        async def fetch_page(page_limit, page_cursor) -> JobPage:
             params: Dict[str, str] = {}
             if page_limit is not None:
                 params['limit'] = str(page_limit)
@@ -1400,18 +1400,18 @@ class EvaluationsClient:
                 params['cursor'] = page_cursor
             query = urllib.parse.urlencode(params)
             raw = await self._http.request_json(
-                f'/api/evaluations{("?" + query) if query else ""}'
+                f'/api/jobs{("?" + query) if query else ""}'
             )
-            return EvaluationPage(
-                evaluations=[_map_evaluation(item) for item in raw.get('evaluations', [])],
+            return JobPage(
+                jobs=[_map_job(item) for item in raw.get('jobs', [])],
                 next_cursor=raw.get('nextCursor'),
             )
 
         return _PaginatedList(
-            fetch_page, lambda page: page.evaluations, limit=limit, cursor=cursor
+            fetch_page, lambda page: page.jobs, limit=limit, cursor=cursor
         )
 
-    def task_runs(
+    def trials(
         self,
         id: str,
         *,
@@ -1419,14 +1419,14 @@ class EvaluationsClient:
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
     ) -> _PaginatedList:
-        """List an evaluation's task runs (cursor-paged).
+        """List a job's trials (cursor-paged).
 
         ``status`` filters to the given statuses (e.g. the failures behind a
         rerun decision). ``await`` the result for one page (honoring
-        ``limit``/``cursor``), or ``async for`` it to walk every task run
+        ``limit``/``cursor``), or ``async for`` it to walk every trial
         across cursor pages.
         """
-        async def fetch_page(page_limit, page_cursor) -> TaskRunPage:
+        async def fetch_page(page_limit, page_cursor) -> TrialPage:
             params: Dict[str, str] = {}
             if status:
                 params['status'] = ','.join(status)
@@ -1436,15 +1436,15 @@ class EvaluationsClient:
                 params['cursor'] = page_cursor
             query = urllib.parse.urlencode(params)
             raw = await self._http.request_json(
-                f'/api/evaluations/{urllib.parse.quote(id)}/task-runs{("?" + query) if query else ""}'
+                f'/api/jobs/{urllib.parse.quote(id)}/trials{("?" + query) if query else ""}'
             )
-            return TaskRunPage(
-                task_runs=[_map_task_run(item) for item in raw.get('taskRuns', [])],
+            return TrialPage(
+                trials=[_map_trial(item) for item in raw.get('trials', [])],
                 next_cursor=raw.get('nextCursor'),
             )
 
         return _PaginatedList(
-            fetch_page, lambda page: page.task_runs, limit=limit, cursor=cursor
+            fetch_page, lambda page: page.trials, limit=limit, cursor=cursor
         )
 
     # ------------------------------------------------------------------ watch
@@ -1471,7 +1471,7 @@ class EvaluationsClient:
         if last_seq is not None:
             headers['Last-Event-ID'] = str(last_seq)
         request = urllib.request.Request(
-            f'{self._http.base_url()}/api/evaluations/{urllib.parse.quote(id)}/events',
+            f'{self._http.base_url()}/api/jobs/{urllib.parse.quote(id)}/events',
             headers=headers,
         )
         try:
@@ -1488,7 +1488,7 @@ class EvaluationsClient:
                                 seq = int(event_id) if event_id is not None else -1
                             except ValueError:
                                 seq = -1
-                            put(('event', EvaluationEvent(
+                            put(('event', JobEvent(
                                 seq=seq,
                                 type=event_type or 'message',
                                 data=_parse_sse_data('\n'.join(data_lines)),
@@ -1525,17 +1525,17 @@ class EvaluationsClient:
         timeout_s: Optional[float] = None,
         reconnect_delay_s: float = 1.0,
         max_reconnect_delay_s: float = 30.0,
-    ) -> AsyncIterator[EvaluationEvent]:
-        """Async-iterate the evaluation's server-sent events until terminal.
+    ) -> AsyncIterator[JobEvent]:
+        """Async-iterate the job's server-sent events until terminal.
 
         Replays from the beginning, resumes with Last-Event-ID on reconnect
         (exponential backoff), and completes on the terminal event
-        (``evaluation.completed`` / ``evaluation.cancelled`` /
-        ``evaluation.failed``). The iterator sibling of :meth:`watch`.
+        (``job.completed`` / ``job.cancelled`` /
+        ``job.failed``). The iterator sibling of :meth:`watch`.
 
         Example::
 
-            async for event in evals.watch_iter(evaluation.id):
+            async for event in j.watch_iter(job.id):
                 print(event.seq, event.type, event.data)
         """
         deadline = time.monotonic() + timeout_s if timeout_s is not None else None
@@ -1573,7 +1573,7 @@ class EvaluationsClient:
                     )
                     kind = item[0]
                     if kind == 'event':
-                        event: EvaluationEvent = item[1]
+                        event: JobEvent = item[1]
                         if event.seq >= 0:
                             last_seq = event.seq
                         received_event = True
@@ -1609,7 +1609,7 @@ class EvaluationsClient:
                 # the status turns terminal, so drain once more from last_seq
                 # before finishing on status alone.
                 current = await self.get(id)
-                if current.status in _TERMINAL_EVALUATION_STATUSES:
+                if current.status in _TERMINAL_JOB_STATUSES:
                     if final_drain_done:
                         return
                     final_drain_done = True
@@ -1624,17 +1624,17 @@ class EvaluationsClient:
         self,
         id: str,
         *,
-        on_event: Optional[Callable[[EvaluationEvent], None]] = None,
+        on_event: Optional[Callable[[JobEvent], None]] = None,
         timeout_s: Optional[float] = None,
         reconnect_delay_s: float = 1.0,
         max_reconnect_delay_s: float = 30.0,
-    ) -> Evaluation:
-        """Watch the evaluation's event stream and return the final evaluation.
+    ) -> Job:
+        """Watch the job's event stream and return the final job.
 
         Consumes the same server-sent events as :meth:`watch_iter` (replay +
         live, Last-Event-ID resume with exponential backoff), firing
         ``on_event`` for each one, and resolves with the final
-        :class:`Evaluation` once the terminal event arrives.
+        :class:`Job` once the terminal event arrives.
         """
         async for event in self.watch_iter(
             id,
@@ -1648,23 +1648,23 @@ class EvaluationsClient:
 
     # ---------------------------------------------------------------- actions
 
-    async def cancel(self, id: str) -> Evaluation:
-        """Request cancellation. Idempotent; a terminal evaluation is a no-op."""
+    async def cancel(self, id: str) -> Job:
+        """Request cancellation. Idempotent; a terminal job is a no-op."""
         raw = await self._http.request_json(
-            f'/api/evaluations/{urllib.parse.quote(id)}/cancel', method='POST', body={}
+            f'/api/jobs/{urllib.parse.quote(id)}/cancel', method='POST', body={}
         )
-        return _map_evaluation(raw)
+        return _map_job(raw)
 
-    async def rerun_failed(self, id: str, *, idempotency_key: Optional[str] = None) -> Evaluation:
-        """Create a NEW linked evaluation of only the failed task runs."""
+    async def rerun_failed(self, id: str, *, idempotency_key: Optional[str] = None) -> Job:
+        """Create a NEW linked job of only the failed trials."""
         headers = {'Idempotency-Key': idempotency_key} if idempotency_key else None
         raw = await self._http.request_json(
-            f'/api/evaluations/{urllib.parse.quote(id)}/rerun-failed',
+            f'/api/jobs/{urllib.parse.quote(id)}/rerun-failed',
             method='POST',
             body={},
             headers=headers,
         )
-        return _map_evaluation(raw)
+        return _map_job(raw)
 
     async def regrade(
         self,
@@ -1673,7 +1673,7 @@ class EvaluationsClient:
         status: Optional[List[str]] = None,
         task_key: Optional[str] = None,
     ) -> RegradeJob:
-        """Regrade a terminal evaluation: re-run the verifier of every REGRADABLE
+        """Regrade a terminal job: re-run the verifier of every REGRADABLE
         run (settled separate-mode runs, which recorded their verifier inputs)
         against those recorded inputs, in fresh separate verifier boxes.
 
@@ -1687,27 +1687,27 @@ class EvaluationsClient:
         if task_key is not None:
             body['taskKey'] = task_key
         raw = await self._http.request_json(
-            f'/api/evaluations/{urllib.parse.quote(id)}/regrade', method='POST', body=body
+            f'/api/jobs/{urllib.parse.quote(id)}/regrade', method='POST', body=body
         )
         return _map_regrade_job(raw)
 
-    async def regrade_task_run(self, id: str, run_id: str) -> RegradeJob:
-        """Regrade one settled task run: re-run its verifier against its recorded
+    async def regrade_trial(self, id: str, trial_id: str) -> RegradeJob:
+        """Regrade one settled trial: re-run its verifier against its recorded
         inputs in a fresh separate verifier box.
 
         Refused (``regrade_source_ineligible``) for shared-mode or
         pre-persistence runs. Returns a regrade job with one result.
         """
         raw = await self._http.request_json(
-            f'/api/evaluations/{urllib.parse.quote(id)}'
-            f'/task-runs/{urllib.parse.quote(run_id)}/regrade',
+            f'/api/jobs/{urllib.parse.quote(id)}'
+            f'/trials/{urllib.parse.quote(trial_id)}/regrade',
             method='POST',
             body={},
         )
         return _map_regrade_job(raw)
 
     async def regrade_job(self, job_id: str) -> RegradeJob:
-        """Read a regrade job and its per-run results (with lineage + score deltas)."""
+        """Read a regrade job and its per-run results (with lineage + reward deltas)."""
         raw = await self._http.request_json(
             f'/api/regrades/{urllib.parse.quote(job_id)}'
         )
@@ -1720,7 +1720,7 @@ class EvaluationsClient:
         to: Optional[str] = None,
         format: Optional[str] = None,
     ):
-        """Download the research archive (gzipped JSON) of a terminal evaluation.
+        """Download the research archive (gzipped JSON) of a terminal job.
 
         Returns the archive bytes, or — when ``to`` (a directory) is given —
         streams straight to disk and returns the saved file path.
@@ -1730,33 +1730,33 @@ class EvaluationsClient:
         if format is not None and format != 'harbor':
             raise ValueError(f"Unknown format {format!r}; supported: 'harbor'")
         query = f'?format={urllib.parse.quote(format)}' if format else ''
-        path = f'/api/evaluations/{urllib.parse.quote(id)}/export{query}'
+        path = f'/api/jobs/{urllib.parse.quote(id)}/export{query}'
         if to is not None:
-            return await self._http.download(path, to, f'evaluation-{id}-export.json.gz')
+            return await self._http.download(path, to, f'job-{id}-export.json.gz')
         payload, _headers = await self._http.request_bytes(path)
         return payload
 
-    async def task_run(self, id: str, run_id: str) -> TaskRunDetail:
-        """Get one task run's full detail.
+    async def trial(self, id: str, trial_id: str) -> TrialDetail:
+        """Get one trial's full detail.
 
-        Same shape as a list row plus ``evaluation_id``; unlike list rows,
+        Same shape as a list row plus ``job_id``; unlike list rows,
         ``failure_detail`` is untruncated.
         """
         raw = await self._http.request_json(
-            f'/api/evaluations/{urllib.parse.quote(id)}'
-            f'/task-runs/{urllib.parse.quote(run_id)}'
+            f'/api/jobs/{urllib.parse.quote(id)}'
+            f'/trials/{urllib.parse.quote(trial_id)}'
         )
-        return _map_task_run_detail(raw)
+        return _map_trial_detail(raw)
 
-    async def task_run_trace(
+    async def trial_trace(
         self,
         id: str,
-        run_id: str,
+        trial_id: str,
         *,
         after: Optional[int] = None,
         limit: Optional[int] = None,
-    ) -> TaskRunTracePage:
-        """Get one seq-paged slice of a task run's trace.
+    ) -> TrialTracePage:
+        """Get one seq-paged slice of a trial's trace.
 
         ``after`` returns events with seq strictly greater than it (omit =
         from the beginning); resume with ``after=page.next_after``.
@@ -1768,23 +1768,23 @@ class EvaluationsClient:
             params['limit'] = str(limit)
         query = urllib.parse.urlencode(params)
         raw = await self._http.request_json(
-            f'/api/evaluations/{urllib.parse.quote(id)}'
-            f'/task-runs/{urllib.parse.quote(run_id)}/trace{("?" + query) if query else ""}'
+            f'/api/jobs/{urllib.parse.quote(id)}'
+            f'/trials/{urllib.parse.quote(trial_id)}/trace{("?" + query) if query else ""}'
         )
-        return TaskRunTracePage(
+        return TrialTracePage(
             events=[_map_trace_event(item) for item in raw.get('events', [])],
             next_after=raw.get('nextAfter'),
         )
 
-    async def task_run_trace_events(
+    async def trial_trace_events(
         self,
         id: str,
-        run_id: str,
+        trial_id: str,
         *,
         after: Optional[int] = None,
         limit: Optional[int] = None,
     ):
-        """Iterate a task run's trace events, fetching pages under the hood.
+        """Iterate a trial's trace events, fetching pages under the hood.
 
         Drains the currently available trace, then stops: an empty page, or a
         short page when the caller pinned an explicit page size. Resume later
@@ -1792,7 +1792,7 @@ class EvaluationsClient:
         """
         position = after
         while True:
-            page = await self.task_run_trace(id, run_id, after=position, limit=limit)
+            page = await self.trial_trace(id, trial_id, after=position, limit=limit)
             for event in page.events:
                 yield event
             if not page.events:
@@ -1803,17 +1803,17 @@ class EvaluationsClient:
                 return
             position = page.next_after
 
-    async def compare(self, ids: List[str]) -> EvaluationComparison:
-        """Side-by-side comparison of 2-5 owned evaluations.
+    async def compare(self, ids: List[str]) -> JobComparison:
+        """Side-by-side comparison of 2-5 owned jobs.
 
-        Per-evaluation aggregates plus a per-task matrix with disagreement
+        Per-job aggregates plus a per-task matrix with disagreement
         rows first. Means cover SCORED runs only; coverage is always reported.
         """
         query = ','.join(urllib.parse.quote(item) for item in ids)
-        raw = await self._http.request_json(f'/api/evaluations/compare?ids={query}')
-        return EvaluationComparison(
-            evaluations=[
-                _map_comparison_aggregate(item) for item in raw.get('evaluations', [])
+        raw = await self._http.request_json(f'/api/jobs/compare?ids={query}')
+        return JobComparison(
+            jobs=[
+                _map_comparison_aggregate(item) for item in raw.get('jobs', [])
             ],
             task_matrix=[
                 _map_comparison_task_row(item) for item in raw.get('taskMatrix', [])

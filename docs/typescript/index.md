@@ -99,9 +99,9 @@ await evolve.run({ prompt: "Hello world" });
 
 | Topic | Link |
 |-------|------|
-| Run an evaluation (catalog → `run()`, idempotency) | [Hosted Evals → Run an Evaluation](./06-hosted-evals.md#run-an-evaluation) |
+| Run a job (catalog → `run()`, idempotency) | [Hosted Evals → Run a Job](./06-hosted-evals.md#run-a-job) |
 | `watch()` (SSE stream with resume) | [Hosted Evals → Watch It Live](./06-hosted-evals.md#watch-it-live) |
-| Results (`get`, `list`, `taskRuns`, spend, trace) | [Hosted Evals → Read the Results](./06-hosted-evals.md#read-the-results) |
+| Results (`get`, `list`, `trials`, spend, trace) | [Hosted Evals → Read the Results](./06-hosted-evals.md#read-the-results) |
 | `cancel()` / `rerunFailed()` | [Hosted Evals → Cancel / Rerun Failures](./06-hosted-evals.md#cancel--rerun-failures) |
 | `compare()` (aggregates + task matrix) | [Hosted Evals → Compare](./06-hosted-evals.md#compare) |
 | `export()` (archive, Harbor bundle) | [Hosted Evals → Export](./06-hosted-evals.md#export) |
@@ -110,7 +110,7 @@ await evolve.run({ prompt: "Hello world" });
 | Sandbox providers (`sandboxProvider`, per-task verdicts) | [Hosted Evals → Where It Runs](./06-hosted-evals.md#where-it-runs) |
 | Bring your own benchmark (import → activation → `READY`) | [Hosted Evals → Bring Your Own Benchmark](./06-hosted-evals.md#bring-your-own-benchmark) |
 | Bring your own harness (`customHarnesses()`, run contract) | [Hosted Evals → Bring Your Own Harness](./06-hosted-evals.md#bring-your-own-harness) |
-| Statuses (evaluation, task run, benchmark version) | [Hosted Evals → Statuses](./06-hosted-evals.md#statuses) |
+| Statuses (job, trial, benchmark version) | [Hosted Evals → Statuses](./06-hosted-evals.md#statuses) |
 | Types & errors | [Hosted Evals → Types](./06-hosted-evals.md#types) |
 
 ### Swarm & Pipeline

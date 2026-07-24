@@ -1,60 +1,60 @@
 #!/usr/bin/env node
 /**
- * evolve-evals — CLI for Evolve hosted benchmarks & evaluations.
+ * evolve-evals — CLI for Evolve hosted benchmarks & jobs.
  *
- * Thin shell over the hosted client (benchmarks() / evaluations()): plain node
+ * Thin shell over the hosted client (benchmarks() / jobs()): plain node
  * arg parsing, no dependencies. Human-readable tables by default; --json emits
  * machine-readable JSON (NDJSON for --watch event streams).
  *
- * Exit codes: 0 success (watch: evaluation COMPLETED / import READY), 1
+ * Exit codes: 0 success (watch: job COMPLETED / import READY), 1
  * runtime/API failure (watch: FAILED or CANCELLED), 2 usage error.
  */
 
 import { readFileSync } from "fs";
 import { pathToFileURL } from "url";
-import { benchmarks, customHarnesses, evaluations } from "./index";
+import { benchmarks, customHarnesses, jobs } from "./index";
 import type {
-  AgentSystem,
   Benchmark,
   BenchmarkImport,
   BenchmarkImportInput,
   CustomHarness,
   CustomHarnessInput,
   EvalSandboxProvider,
-  Evaluation,
-  EvaluationComparison,
-  EvaluationEvent,
-  EvaluationInput,
   HostedClientConfig,
+  Job,
+  JobAgent,
+  JobComparison,
+  JobEvent,
+  JobInput,
   RegradeJob,
   RegradeResult,
   Task,
-  TaskRun,
-  TaskRunDetail,
-  TaskRunStatus,
-  TaskRunTraceEvent,
+  Trial,
+  TrialDetail,
+  TrialStatus,
+  TrialTraceEvent,
 } from "./types";
 
 // =============================================================================
 // USAGE
 // =============================================================================
 
-export const USAGE = `evolve-evals — Evolve hosted evaluations CLI
+export const USAGE = `evolve-evals — Evolve hosted jobs CLI
 
 Usage: evolve-evals <command> [options]
 
 Commands:
-  run                               Create an evaluation (add --watch to follow it)
-  list                              List your evaluations (newest first)
-  get <id>                          Show one evaluation
-  task-runs <id>                    List an evaluation's task runs
-  task-run <id> <run-id>            Show one task run in full detail
-  trace <id> <run-id>               Print a task run's trace events
-  compare <id> <id> [...]           Compare 2-5 evaluations side by side
-  cancel <id>                       Request cancellation of an evaluation
-  rerun-failed <id>                 New evaluation from a terminal evaluation's failed runs
-  regrade <id> [run-id]             Re-run the verifier on recorded runs (whole eval, or one run)
-  regrade-job <job-id>              Show a regrade job's results (scores, deltas, lineage)
+  run                               Create a job (add --watch to follow it)
+  list                              List your jobs (newest first)
+  get <id>                          Show one job
+  trials <id>                       List a job's trials
+  trial <id> <trial-id>             Show one trial in full detail
+  trace <id> <trial-id>             Print a trial's trace events
+  compare <id> <id> [...]           Compare 2-5 jobs side by side
+  cancel <id>                       Request cancellation of a job
+  rerun-failed <id>                 New job from a terminal job's failed trials
+  regrade <id> [trial-id]           Re-run the verifier on recorded trials (whole job, or one trial)
+  regrade-job <job-id>              Show a regrade job's results (rewards, deltas, lineage)
   export <id>                       Download the research archive (gzipped JSON)
   benchmarks                        List the benchmark catalog
   benchmarks get <name[@version]>   Show one benchmark (versions + tasks + providers)
@@ -69,20 +69,20 @@ Commands:
 Run options:
   --benchmark <name[@version]>        Benchmark (required; bare name = active version)
   --tasks <k1,k2,...>                 Task keys (default: every task of the version)
-  --system <harness:model[:version]>  Agent system; repeatable (at least one required)
-  --runs <n>                          Runs per task x system (default 1)
-  --concurrency <n>                   Parallel task runs (default 1)
-  --max-spend <usd>                   Evaluation-wide model-spend cap (default: the server's, $500)
-  --max-spend-per-run <usd>           Per-task-run model-spend cap
+  --agent <harness:model[:version]>   Agent; repeatable (at least one required)
+  --runs <n>                          Runs per task x agent (default 1)
+  --concurrency <n>                   Parallel trials (default 1)
+  --max-spend <usd>                   Job-wide model-spend cap (default: the server's, $500)
+  --max-spend-per-run <usd>           Per-trial model-spend cap
   --provider <e2b|daytona|modal>      e2b | daytona | modal, default e2b
-  --watch                             Stream events until the evaluation finishes
+  --watch                             Stream events until the job finishes
 
-Task-run options:
-  --status <s1,s2,...>                Filter task-runs by status (e.g. INFRASTRUCTURE_ERROR)
+Trial options:
+  --status <s1,s2,...>                Filter trials by status (e.g. INFRASTRUCTURE_ERROR)
 
-Regrade options (whole-evaluation regrade only):
-  --status <s1,s2,...>                Only regrade source runs in these statuses
-  --task <key>                        Only regrade source runs of this task
+Regrade options (whole-job regrade only):
+  --status <s1,s2,...>                Only regrade source trials in these statuses
+  --task <key>                        Only regrade source trials of this task
 
 Trace options:
   --after <seq>                       Resume after this trace seq
@@ -97,14 +97,14 @@ Import options (a git source OR a local directory; --name and --version required
   --watch                             Poll until the import is IMPORTED or FAILED
 
 Custom-harness options ("custom-harnesses add"; an install script OR a local directory):
-  --name <harness>                    Harness name, later used in --system (required)
+  --name <harness>                    Harness name, later used in --agent (required)
   --install-script <path>             Install script file; its contents are uploaded
   --dir <path>                        Local harness directory (tarred + uploaded)
   --run <command>                     Run command, executed with sh -c (required)
   --env KEY=VALUE                     Env injected at run time; repeatable
 
 Other options:
-  --limit <n>, --cursor <c>           Pagination (list, task-runs)
+  --limit <n>, --cursor <c>           Pagination (list, trials)
   --to <dir>                          Export target directory (default: current dir)
   --format harbor                     Export the Harbor job-layout bundle
   --json                              Machine-readable JSON output
@@ -151,7 +151,7 @@ const COMMAND_SPECS: Record<string, CommandSpec> = {
     flags: {
       benchmark: "string",
       tasks: "string",
-      system: "repeat",
+      agent: "repeat",
       runs: "number",
       concurrency: "number",
       "max-spend": "number",
@@ -159,7 +159,7 @@ const COMMAND_SPECS: Record<string, CommandSpec> = {
       provider: "string",
       watch: "boolean",
     },
-    required: ["benchmark", "system"],
+    required: ["benchmark", "agent"],
     minPositionals: 0,
     maxPositionals: 0,
   },
@@ -169,23 +169,23 @@ const COMMAND_SPECS: Record<string, CommandSpec> = {
     maxPositionals: 0,
   },
   get: { flags: {}, minPositionals: 1, maxPositionals: 1, positionalUsage: "<id>" },
-  "task-runs": {
+  "trials": {
     flags: { status: "string", limit: "number", cursor: "string" },
     minPositionals: 1,
     maxPositionals: 1,
     positionalUsage: "<id>",
   },
-  "task-run": {
+  "trial": {
     flags: {},
     minPositionals: 2,
     maxPositionals: 2,
-    positionalUsage: "<id> <run-id>",
+    positionalUsage: "<id> <trial-id>",
   },
   trace: {
     flags: { after: "number", limit: "number" },
     minPositionals: 2,
     maxPositionals: 2,
-    positionalUsage: "<id> <run-id>",
+    positionalUsage: "<id> <trial-id>",
   },
   compare: {
     flags: {},
@@ -204,7 +204,7 @@ const COMMAND_SPECS: Record<string, CommandSpec> = {
     flags: { status: "string", task: "string" },
     minPositionals: 1,
     maxPositionals: 2,
-    positionalUsage: "<id> [run-id]",
+    positionalUsage: "<id> [trial-id]",
   },
   "regrade-job": {
     flags: {},
@@ -339,10 +339,10 @@ export function parseArgs(argv: string[]): Invocation {
 }
 
 /** Parse "harness:model[:version]" (version may itself contain colons). */
-export function parseAgentSystem(spec: string): AgentSystem {
+export function parseJobAgent(spec: string): JobAgent {
   const first = spec.indexOf(":");
   if (first <= 0 || first === spec.length - 1) {
-    throw new CliUsageError(`Invalid --system "${spec}": expected harness:model[:version]`);
+    throw new CliUsageError(`Invalid --agent "${spec}": expected harness:model[:version]`);
   }
   const harness = spec.slice(0, first);
   const rest = spec.slice(first + 1);
@@ -351,18 +351,18 @@ export function parseAgentSystem(spec: string): AgentSystem {
   const model = rest.slice(0, second);
   const version = rest.slice(second + 1);
   if (!model || !version) {
-    throw new CliUsageError(`Invalid --system "${spec}": expected harness:model[:version]`);
+    throw new CliUsageError(`Invalid --agent "${spec}": expected harness:model[:version]`);
   }
   return { harness, model, harnessVersion: version };
 }
 
 /**
- * Build the POST /api/evaluations body from a parsed `run` invocation.
- * Keys follow the contract field order: benchmark, tasks, agentSystems,
- * runsPerTask, concurrency, maxModelSpendUsd, maxModelSpendUsdPerTaskRun,
+ * Build the POST /api/jobs body from a parsed `run` invocation.
+ * Keys follow the contract field order: benchmark, tasks, agents,
+ * runsPerTask, concurrency, maxModelSpendUsd, maxModelSpendUsdPerTrial,
  * sandboxProvider.
  */
-export function buildEvaluationInput(inv: Invocation): EvaluationInput {
+export function buildJobInput(inv: Invocation): JobInput {
   const f = inv.flags;
   let tasks: string[] | undefined;
   if (f.tasks !== undefined) {
@@ -377,15 +377,15 @@ export function buildEvaluationInput(inv: Invocation): EvaluationInput {
   return {
     benchmark: f.benchmark as string,
     ...(tasks !== undefined ? { tasks } : {}),
-    agentSystems: (f.system as string[]).map(parseAgentSystem),
+    agents: (f.agent as string[]).map(parseJobAgent),
     ...(f.runs !== undefined ? { runsPerTask: f.runs as number } : {}),
     ...(f.concurrency !== undefined ? { concurrency: f.concurrency as number } : {}),
     ...(f["max-spend"] !== undefined ? { maxModelSpendUsd: f["max-spend"] as number } : {}),
     ...(f["max-spend-per-run"] !== undefined
-      ? { maxModelSpendUsdPerTaskRun: f["max-spend-per-run"] as number }
+      ? { maxModelSpendUsdPerTrial: f["max-spend-per-run"] as number }
       : {}),
     ...(f.provider !== undefined
-      ? { sandboxProvider: f.provider as EvaluationInput["sandboxProvider"] }
+      ? { sandboxProvider: f.provider as JobInput["sandboxProvider"] }
       : {}),
   };
 }
@@ -505,91 +505,91 @@ function fmtUsd(value: number | undefined | null): string {
   return typeof value === "number" ? `$${value.toFixed(2)}` : "-";
 }
 
-function fmtSystem(system: AgentSystem): string {
-  const base = `${system.harness}:${system.model}`;
-  return system.harnessVersion ? `${base}:${system.harnessVersion}` : base;
+function fmtAgent(agent: JobAgent): string {
+  const base = `${agent.harness}:${agent.model}`;
+  return agent.harnessVersion ? `${base}:${agent.harnessVersion}` : base;
 }
 
 function truncate(text: string, max: number): string {
   return text.length > max ? text.slice(0, max - 1) + "…" : text;
 }
 
-function evaluationLines(e: Evaluation): string[] {
-  // Row order mirrors the input contract: benchmark, systems, size, runs/task,
+function jobLines(e: Job): string[] {
+  // Row order mirrors the input contract: benchmark, agents, size, runs/task,
   // concurrency, spend caps.
   const rows: string[][] = [
     ["id", e.id],
     ["status", e.status],
     ["benchmark", e.benchmark],
   ];
-  if (e.agentSystems) {
-    rows.push(["systems", e.agentSystems.map(fmtSystem).join(", ")]);
+  if (e.agents) {
+    rows.push(["agents", e.agents.map(fmtAgent).join(", ")]);
   }
   if (e.counts) {
     rows.push([
       "size",
-      `${e.counts.agentSystems} system(s) x ${e.counts.tasks} task(s) = ${e.counts.taskRuns} task run(s)`,
+      `${e.counts.agents} agent(s) x ${e.counts.tasks} task(s) = ${e.counts.trials} trial(s)`,
     ]);
   }
   rows.push(["runs/task", String(e.runsPerTask)]);
   rows.push(["concurrency", String(e.concurrency)]);
   rows.push(["max spend", fmtUsd(e.maxModelSpendUsd)]);
-  if (e.maxModelSpendUsdPerTaskRun !== undefined) {
-    rows.push(["max spend/run", fmtUsd(e.maxModelSpendUsdPerTaskRun)]);
+  if (e.maxModelSpendUsdPerTrial !== undefined) {
+    rows.push(["max spend/trial", fmtUsd(e.maxModelSpendUsdPerTrial)]);
   }
   rows.push(["provider", e.sandboxProvider]);
   rows.push(["spent", fmtUsd(e.spentUsd)]);
-  if (e.meanScore !== undefined) {
-    rows.push(["mean score", e.meanScore !== null ? String(e.meanScore) : "-"]);
+  if (e.meanReward !== undefined) {
+    rows.push(["mean reward", e.meanReward !== null ? String(e.meanReward) : "-"]);
   }
-  if (e.taskRunCounts && Object.keys(e.taskRunCounts).length > 0) {
-    const histogram = Object.entries(e.taskRunCounts)
+  if (e.trialCounts && Object.keys(e.trialCounts).length > 0) {
+    const histogram = Object.entries(e.trialCounts)
       .map(([status, count]) => `${status} ${count}`)
       .join(" · ");
-    rows.push(["task runs", histogram]);
+    rows.push(["trials", histogram]);
   }
-  if (e.sourceEvaluationId) rows.push(["rerun of", e.sourceEvaluationId]);
-  if (e.idempotentReplay) rows.push(["note", "idempotent replay of an existing evaluation"]);
+  if (e.sourceJobId) rows.push(["rerun of", e.sourceJobId]);
+  if (e.idempotentReplay) rows.push(["note", "idempotent replay of an existing job"]);
   if (e.error) rows.push(["error", e.error]);
   rows.push(["created", e.createdAt]);
   if (e.updatedAt) rows.push(["updated", e.updatedAt]);
   return table(rows);
 }
 
-function evaluationRow(e: Evaluation): string[] {
+function jobRow(e: Job): string[] {
   return [
     e.id,
     e.status,
     e.benchmark,
-    e.counts ? String(e.counts.taskRuns) : "-",
-    fmtScore(e.meanScore ?? null),
+    e.counts ? String(e.counts.trials) : "-",
+    fmtReward(e.meanReward ?? null),
     fmtUsd(e.spentUsd),
     e.createdAt,
   ];
 }
 
-function taskRunRow(run: TaskRun): string[] {
+function trialRow(run: Trial): string[] {
   return [
     run.taskKey,
-    fmtSystem(run.agentSystem),
+    fmtAgent(run.agent),
     String(run.runNumber),
     run.status,
-    run.score !== null ? String(run.score) : "-",
+    run.reward !== null ? String(run.reward) : "-",
     fmtUsd(run.modelUsage?.spentUsd ?? null),
     run.id,
   ];
 }
 
-/** Full-detail rendering of one task run — evolve-evals task-run. */
-function taskRunDetailLines(run: TaskRunDetail): string[] {
+/** Full-detail rendering of one trial — evolve-evals trial. */
+function trialDetailLines(run: TrialDetail): string[] {
   const rows: string[][] = [
-    ["run id", run.id],
-    ["evaluation", run.evaluationId],
+    ["trial id", run.id],
+    ["job", run.jobId],
     ["task", run.taskKey],
-    ["system", fmtSystem(run.agentSystem)],
+    ["agent", fmtAgent(run.agent)],
     ["run", String(run.runNumber)],
     ["status", run.status],
-    ["score", run.score !== null ? String(run.score) : "-"],
+    ["reward", run.reward !== null ? String(run.reward) : "-"],
   ];
   if (run.metrics && Object.keys(run.metrics).length > 0) {
     rows.push([
@@ -629,19 +629,19 @@ function regradeResultRow(result: RegradeResult): string[] {
   return [
     result.taskKey,
     result.status,
-    fmtScore(result.sourceScore),
-    fmtScore(result.score),
-    fmtDelta(result.scoreDelta),
-    result.sourceTaskRunId,
+    fmtReward(result.sourceReward),
+    fmtReward(result.reward),
+    fmtDelta(result.rewardDelta),
+    result.sourceTrialId,
   ];
 }
 
-/** Job envelope + per-run results — evolve-evals regrade / regrade-job. */
+/** Job envelope + per-trial results — evolve-evals regrade / regrade-job. */
 function regradeJobLines(job: RegradeJob): string[] {
   const rows: string[][] = [
     ["job id", job.id],
     ["status", job.status],
-    ["source evaluation", job.sourceEvaluationId],
+    ["source job", job.sourceJobId],
     ["provider", job.sandboxProvider],
     ["results", String(job.counts.results)],
   ];
@@ -663,7 +663,7 @@ function regradeJobLines(job: RegradeJob): string[] {
   const lines = table(rows);
   if (job.results && job.results.length > 0) {
     lines.push("");
-    const resultRows = [["TASK", "STATUS", "WAS", "NOW", "Δ", "SOURCE RUN ID"]];
+    const resultRows = [["TASK", "STATUS", "WAS", "NOW", "Δ", "SOURCE TRIAL ID"]];
     for (const result of job.results) resultRows.push(regradeResultRow(result));
     lines.push(...table(resultRows));
   }
@@ -697,12 +697,12 @@ function fmtProviders(providers: Task["providers"]): string {
     .join(" · ");
 }
 
-function fmtScore(score: number | null): string {
-  return score !== null ? String(Math.round(score * 1000) / 1000) : "-";
+function fmtReward(reward: number | null): string {
+  return reward !== null ? String(Math.round(reward * 1000) / 1000) : "-";
 }
 
 /** One trace event line — evolve-evals trace. */
-export function traceEventLine(event: TaskRunTraceEvent): string {
+export function traceEventLine(event: TrialTraceEvent): string {
   const detail = truncate(JSON.stringify(event.data ?? {}), 140);
   return `#${String(event.seq).padStart(4)} ${event.type.padEnd(26)} ${detail}`.trimEnd();
 }
@@ -741,14 +741,14 @@ export function importStatusLine(job: BenchmarkImport): string {
 }
 
 /** Compact one-line rendering of one SSE event for --watch. */
-export function eventLine(event: EvaluationEvent): string {
+export function eventLine(event: JobEvent): string {
   const data = event.data ?? {};
   const parts: string[] = [];
-  if (typeof data.taskRunId === "string") parts.push(data.taskRunId);
+  if (typeof data.trialId === "string") parts.push(data.trialId);
   if (typeof data.taskKey === "string") parts.push(data.taskKey);
   if (typeof data.status === "string") parts.push(data.status);
-  if (typeof data.score === "number") parts.push(`score=${data.score}`);
-  const used = new Set(["taskRunId", "taskKey", "status", "score"]);
+  if (typeof data.reward === "number") parts.push(`reward=${data.reward}`);
+  const used = new Set(["trialId", "taskKey", "status", "reward"]);
   for (const [key, value] of Object.entries(data)) {
     if (used.has(key)) continue;
     parts.push(`${key}=${typeof value === "object" ? JSON.stringify(value) : String(value)}`);
@@ -768,22 +768,22 @@ function clientConfig(inv: Invocation): HostedClientConfig {
   return config;
 }
 
-function statusExitCode(e: Evaluation): number {
+function statusExitCode(e: Job): number {
   return e.status === "COMPLETED" ? 0 : e.status === "FAILED" || e.status === "CANCELLED" ? 1 : 0;
 }
 
 async function cmdRun(inv: Invocation, io: CliIO): Promise<number> {
-  const input = buildEvaluationInput(inv);
+  const input = buildJobInput(inv);
   const json = inv.flags.json === true;
   const watch = inv.flags.watch === true;
-  const client = evaluations(clientConfig(inv));
+  const client = jobs(clientConfig(inv));
 
   const created = await client.run(input);
   if (!watch) {
     if (json) {
       io.out(JSON.stringify(created));
     } else {
-      for (const line of evaluationLines(created)) io.out(line);
+      for (const line of jobLines(created)) io.out(line);
       io.out("");
       io.out(`Follow it with: evolve-evals get ${created.id}`);
     }
@@ -791,9 +791,9 @@ async function cmdRun(inv: Invocation, io: CliIO): Promise<number> {
   }
 
   if (json) {
-    io.out(JSON.stringify({ kind: "evaluation.created", evaluation: created }));
+    io.out(JSON.stringify({ kind: "job.created", job: created }));
   } else {
-    io.out(`Evaluation ${created.id} (${created.benchmark}) ${created.status} — watching…`);
+    io.out(`Job ${created.id} (${created.benchmark}) ${created.status} — watching…`);
   }
 
   const final = await client.watch(created.id, {
@@ -803,16 +803,16 @@ async function cmdRun(inv: Invocation, io: CliIO): Promise<number> {
   });
 
   if (json) {
-    io.out(JSON.stringify({ kind: "evaluation.final", evaluation: final }));
+    io.out(JSON.stringify({ kind: "job.final", job: final }));
   } else {
     io.out("");
-    for (const line of evaluationLines(final)) io.out(line);
+    for (const line of jobLines(final)) io.out(line);
   }
   return statusExitCode(final);
 }
 
 async function cmdList(inv: Invocation, io: CliIO): Promise<number> {
-  const client = evaluations(clientConfig(inv));
+  const client = jobs(clientConfig(inv));
   const page = await client.list({
     ...(inv.flags.limit !== undefined ? { limit: inv.flags.limit as number } : {}),
     ...(inv.flags.cursor !== undefined ? { cursor: inv.flags.cursor as string } : {}),
@@ -821,41 +821,41 @@ async function cmdList(inv: Invocation, io: CliIO): Promise<number> {
     io.out(JSON.stringify(page));
     return 0;
   }
-  if (page.evaluations.length === 0) {
-    io.out("No evaluations.");
+  if (page.jobs.length === 0) {
+    io.out("No jobs.");
     return 0;
   }
-  const rows = [["ID", "STATUS", "BENCHMARK", "TASK RUNS", "MEAN SCORE", "SPENT", "CREATED"]];
-  for (const e of page.evaluations) rows.push(evaluationRow(e));
+  const rows = [["ID", "STATUS", "BENCHMARK", "TRIALS", "MEAN REWARD", "SPENT", "CREATED"]];
+  for (const e of page.jobs) rows.push(jobRow(e));
   for (const line of table(rows)) io.out(line);
   if (page.nextCursor) io.out(`\nMore: evolve-evals list --cursor ${page.nextCursor}`);
   return 0;
 }
 
 async function cmdGet(inv: Invocation, io: CliIO): Promise<number> {
-  const client = evaluations(clientConfig(inv));
+  const client = jobs(clientConfig(inv));
   const e = await client.get(inv.positionals[0]);
   if (inv.flags.json === true) {
     io.out(JSON.stringify(e));
   } else {
-    for (const line of evaluationLines(e)) io.out(line);
+    for (const line of jobLines(e)) io.out(line);
   }
   return 0;
 }
 
-async function cmdTaskRuns(inv: Invocation, io: CliIO): Promise<number> {
-  const client = evaluations(clientConfig(inv));
-  let status: TaskRunStatus[] | undefined;
+async function cmdTrials(inv: Invocation, io: CliIO): Promise<number> {
+  const client = jobs(clientConfig(inv));
+  let status: TrialStatus[] | undefined;
   if (inv.flags.status !== undefined) {
     status = String(inv.flags.status)
       .split(",")
       .map((s) => s.trim())
-      .filter(Boolean) as TaskRunStatus[];
+      .filter(Boolean) as TrialStatus[];
     if (status.length === 0) {
       throw new CliUsageError("--status got an empty status list");
     }
   }
-  const page = await client.taskRuns(inv.positionals[0], {
+  const page = await client.trials(inv.positionals[0], {
     ...(status !== undefined ? { status } : {}),
     ...(inv.flags.limit !== undefined ? { limit: inv.flags.limit as number } : {}),
     ...(inv.flags.cursor !== undefined ? { cursor: inv.flags.cursor as string } : {}),
@@ -864,36 +864,36 @@ async function cmdTaskRuns(inv: Invocation, io: CliIO): Promise<number> {
     io.out(JSON.stringify(page));
     return 0;
   }
-  if (page.taskRuns.length === 0) {
-    io.out("No task runs.");
+  if (page.trials.length === 0) {
+    io.out("No trials.");
     return 0;
   }
-  const rows = [["TASK", "SYSTEM", "RUN", "STATUS", "SCORE", "SPENT", "RUN ID"]];
-  for (const run of page.taskRuns) rows.push(taskRunRow(run));
+  const rows = [["TASK", "AGENT", "RUN", "STATUS", "REWARD", "SPENT", "TRIAL ID"]];
+  for (const run of page.trials) rows.push(trialRow(run));
   for (const line of table(rows)) io.out(line);
-  io.out(`\n${page.taskRuns.length} task run(s) shown`);
+  io.out(`\n${page.trials.length} trial(s) shown`);
   if (page.nextCursor) {
-    io.out(`More: evolve-evals task-runs ${inv.positionals[0]} --cursor ${page.nextCursor}`);
+    io.out(`More: evolve-evals trials ${inv.positionals[0]} --cursor ${page.nextCursor}`);
   }
   return 0;
 }
 
-async function cmdTaskRun(inv: Invocation, io: CliIO): Promise<number> {
-  const client = evaluations(clientConfig(inv));
-  const run = await client.taskRun(inv.positionals[0], inv.positionals[1]);
+async function cmdTrial(inv: Invocation, io: CliIO): Promise<number> {
+  const client = jobs(clientConfig(inv));
+  const run = await client.trial(inv.positionals[0], inv.positionals[1]);
   if (inv.flags.json === true) {
     io.out(JSON.stringify(run));
   } else {
-    for (const line of taskRunDetailLines(run)) io.out(line);
+    for (const line of trialDetailLines(run)) io.out(line);
   }
   return 0;
 }
 
 async function cmdTrace(inv: Invocation, io: CliIO): Promise<number> {
-  const client = evaluations(clientConfig(inv));
+  const client = jobs(clientConfig(inv));
   const json = inv.flags.json === true;
   let count = 0;
-  for await (const event of client.taskRunTraceEvents(inv.positionals[0], inv.positionals[1], {
+  for await (const event of client.trialTraceEvents(inv.positionals[0], inv.positionals[1], {
     ...(inv.flags.after !== undefined ? { after: inv.flags.after as number } : {}),
     ...(inv.flags.limit !== undefined ? { limit: inv.flags.limit as number } : {}),
   })) {
@@ -904,15 +904,15 @@ async function cmdTrace(inv: Invocation, io: CliIO): Promise<number> {
   return 0;
 }
 
-function comparisonLines(comparison: EvaluationComparison): string[] {
+function comparisonLines(comparison: JobComparison): string[] {
   const lines: string[] = [];
-  const aggregateRows = [["ID", "BENCHMARK", "STATUS", "MEAN SCORE", "COVERAGE", "SPENT"]];
-  for (const agg of comparison.evaluations) {
+  const aggregateRows = [["ID", "BENCHMARK", "STATUS", "MEAN REWARD", "COVERAGE", "SPENT"]];
+  for (const agg of comparison.jobs) {
     aggregateRows.push([
       agg.id,
       agg.benchmark,
       agg.status,
-      fmtScore(agg.meanScore),
+      fmtReward(agg.meanReward),
       `${agg.coverage.scored}/${agg.coverage.total}`,
       fmtUsd(agg.spentUsd),
     ]);
@@ -922,19 +922,19 @@ function comparisonLines(comparison: EvaluationComparison): string[] {
   if (comparison.taskMatrix.length > 0) {
     lines.push("", "Task matrix (disagreements first; columns in the order above):");
     const matrixRows = [
-      ["TASK", "DIFF", ...comparison.evaluations.map((_, index) => `EVAL ${index + 1}`)],
+      ["TASK", "DIFF", ...comparison.jobs.map((_, index) => `JOB ${index + 1}`)],
     ];
-    const columnOrder = comparison.evaluations.map((agg) => agg.id);
+    const columnOrder = comparison.jobs.map((agg) => agg.id);
     for (const row of comparison.taskMatrix) {
-      const cellById = new Map(row.cells.map((cell) => [cell.evaluationId, cell]));
+      const cellById = new Map(row.cells.map((cell) => [cell.jobId, cell]));
       matrixRows.push([
         row.taskKey,
         row.disagreement ? "!" : "",
         ...columnOrder.map((id) => {
           const cell = cellById.get(id);
           if (!cell) return "-";
-          return cell.meanScore !== null
-            ? `${cell.status} ${fmtScore(cell.meanScore)}`
+          return cell.meanReward !== null
+            ? `${cell.status} ${fmtReward(cell.meanReward)}`
             : cell.status;
         }),
       ]);
@@ -945,7 +945,7 @@ function comparisonLines(comparison: EvaluationComparison): string[] {
 }
 
 async function cmdCompare(inv: Invocation, io: CliIO): Promise<number> {
-  const client = evaluations(clientConfig(inv));
+  const client = jobs(clientConfig(inv));
   const comparison = await client.compare(inv.positionals);
   if (inv.flags.json === true) {
     io.out(JSON.stringify(comparison));
@@ -956,23 +956,23 @@ async function cmdCompare(inv: Invocation, io: CliIO): Promise<number> {
 }
 
 async function cmdCancel(inv: Invocation, io: CliIO): Promise<number> {
-  const client = evaluations(clientConfig(inv));
+  const client = jobs(clientConfig(inv));
   const e = await client.cancel(inv.positionals[0]);
   if (inv.flags.json === true) {
     io.out(JSON.stringify(e));
   } else {
-    for (const line of evaluationLines(e)) io.out(line);
+    for (const line of jobLines(e)) io.out(line);
   }
   return 0;
 }
 
 async function cmdRerunFailed(inv: Invocation, io: CliIO): Promise<number> {
-  const client = evaluations(clientConfig(inv));
+  const client = jobs(clientConfig(inv));
   const e = await client.rerunFailed(inv.positionals[0]);
   if (inv.flags.json === true) {
     io.out(JSON.stringify(e));
   } else {
-    for (const line of evaluationLines(e)) io.out(line);
+    for (const line of jobLines(e)) io.out(line);
     io.out("");
     io.out(`Follow it with: evolve-evals get ${e.id}`);
   }
@@ -980,22 +980,22 @@ async function cmdRerunFailed(inv: Invocation, io: CliIO): Promise<number> {
 }
 
 async function cmdRegrade(inv: Invocation, io: CliIO): Promise<number> {
-  const client = evaluations(clientConfig(inv));
-  const [id, runId] = inv.positionals;
+  const client = jobs(clientConfig(inv));
+  const [id, trialId] = inv.positionals;
   let job: RegradeJob;
-  if (runId !== undefined) {
-    // Per-run regrade takes no --status/--task filter (a single run needs none).
+  if (trialId !== undefined) {
+    // Per-trial regrade takes no --status/--task filter (a single trial needs none).
     if (inv.flags.status !== undefined || inv.flags.task !== undefined) {
-      throw new CliUsageError("--status/--task apply to a whole-evaluation regrade, not a single run");
+      throw new CliUsageError("--status/--task apply to a whole-job regrade, not a single trial");
     }
-    job = await client.regradeTaskRun(id, runId);
+    job = await client.regradeTrial(id, trialId);
   } else {
-    const options: { status?: TaskRunStatus[]; taskKey?: string } = {};
+    const options: { status?: TrialStatus[]; taskKey?: string } = {};
     if (inv.flags.status !== undefined) {
       const status = String(inv.flags.status)
         .split(",")
         .map((s) => s.trim())
-        .filter(Boolean) as TaskRunStatus[];
+        .filter(Boolean) as TrialStatus[];
       if (status.length === 0) throw new CliUsageError("--status got an empty status list");
       options.status = status;
     }
@@ -1013,7 +1013,7 @@ async function cmdRegrade(inv: Invocation, io: CliIO): Promise<number> {
 }
 
 async function cmdRegradeJob(inv: Invocation, io: CliIO): Promise<number> {
-  const client = evaluations(clientConfig(inv));
+  const client = jobs(clientConfig(inv));
   const job = await client.regradeJob(inv.positionals[0]);
   if (inv.flags.json === true) {
     io.out(JSON.stringify(job));
@@ -1028,7 +1028,7 @@ async function cmdExport(inv: Invocation, io: CliIO): Promise<number> {
   if (format !== undefined && format !== "harbor") {
     throw new CliUsageError(`Unknown --format "${format}" (supported: harbor)`);
   }
-  const client = evaluations(clientConfig(inv));
+  const client = jobs(clientConfig(inv));
   const filePath = await client.export(inv.positionals[0], {
     to: (inv.flags.to as string | undefined) ?? process.cwd(),
     ...(format === "harbor" ? { format: "harbor" as const } : {}),
@@ -1218,7 +1218,7 @@ async function cmdCustomHarnesses(inv: Invocation, io: CliIO): Promise<number> {
     } else {
       for (const line of customHarnessLines(created)) io.out(line);
       io.out("");
-      io.out(`Use it with: evolve-evals run --system ${created.name}:<model> …`);
+      io.out(`Use it with: evolve-evals run --agent ${created.name}:<model> …`);
     }
     return 0;
   }
@@ -1282,10 +1282,10 @@ export async function runCli(argv: string[], io: CliIO = defaultIO): Promise<num
         return await cmdList(inv, io);
       case "get":
         return await cmdGet(inv, io);
-      case "task-runs":
-        return await cmdTaskRuns(inv, io);
-      case "task-run":
-        return await cmdTaskRun(inv, io);
+      case "trials":
+        return await cmdTrials(inv, io);
+      case "trial":
+        return await cmdTrial(inv, io);
       case "trace":
         return await cmdTrace(inv, io);
       case "compare":

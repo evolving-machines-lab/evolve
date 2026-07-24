@@ -33,7 +33,6 @@ from .config import (
 )
 from .hosted import (
     ActiveBenchmark,
-    AgentSystem,
     Benchmark,
     BenchmarkImport,
     BenchmarkImportError,
@@ -46,13 +45,14 @@ from .hosted import (
     ComparisonTaskRow,
     CustomHarness,
     CustomHarnessesClient,
-    Evaluation,
-    EvaluationComparison,
-    EvaluationCounts,
-    EvaluationEvent,
-    EvaluationPage,
-    EvaluationsClient,
     EvolveAPIError,
+    Job,
+    JobAgent,
+    JobComparison,
+    JobCounts,
+    JobEvent,
+    JobPage,
+    JobsClient,
     ModelUsage,
     NoActiveVersionError,
     RegradeFilter,
@@ -61,11 +61,11 @@ from .hosted import (
     RegradeResult,
     Task,
     TaskProviderVerdict,
-    TaskRun,
-    TaskRunDetail,
-    TaskRunPage,
-    TaskRunTraceEvent,
-    TaskRunTracePage,
+    Trial,
+    TrialDetail,
+    TrialPage,
+    TrialTraceEvent,
+    TrialTracePage,
 )
 from .results import (
     AgentResponse,
@@ -225,21 +225,21 @@ def benchmarks(config: Optional[HostedClientConfig] = None) -> BenchmarksClient:
 def custom_harnesses(config: Optional[HostedClientConfig] = None) -> CustomHarnessesClient:
     """Create a standalone hosted-evals custom harnesses client.
 
-    Register a private harness once, then name it in agent_systems[].harness
+    Register a private harness once, then name it in agents[].harness
     exactly like a built-in. Uses EVOLVE_API_KEY unless
     HostedClientConfig(api_key=...) is provided.
     """
     return CustomHarnessesClient(config)
 
 
-def evaluations(config: Optional[HostedClientConfig] = None) -> EvaluationsClient:
-    """Create a standalone hosted-evals evaluations client.
+def jobs(config: Optional[HostedClientConfig] = None) -> JobsClient:
+    """Create a standalone hosted-evals jobs client.
 
     Uses EVOLVE_API_KEY unless HostedClientConfig(api_key=...) is provided.
-    watch() polls get() until the evaluation is terminal (the TypeScript SDK
-    additionally streams the SSE event feed).
+    watch() consumes the job's server-sent event stream until the job is
+    terminal, mirroring the TypeScript SDK.
     """
-    return EvaluationsClient(config)
+    return JobsClient(config)
 
 
 def managed_secrets(config: Optional[ManagedSecretsClientConfig] = None) -> ManagedSecretsClient:
@@ -351,11 +351,11 @@ __all__ = [
     'browser_profiles',
     'managed_secrets',
 
-    # Hosted evals (benchmarks + custom harnesses + evaluations)
+    # Hosted evals (benchmarks + custom harnesses + jobs)
     'HostedClientConfig',
     'BenchmarksClient',
     'CustomHarnessesClient',
-    'EvaluationsClient',
+    'JobsClient',
     'EvolveAPIError',
     'NoActiveVersionError',
     'Benchmark',
@@ -366,11 +366,11 @@ __all__ = [
     'BenchmarkVersion',
     'Task',
     'TaskProviderVerdict',
-    'AgentSystem',
-    'Evaluation',
-    'EvaluationCounts',
-    'EvaluationEvent',
-    'EvaluationComparison',
+    'JobAgent',
+    'Job',
+    'JobCounts',
+    'JobEvent',
+    'JobComparison',
     'ComparisonAggregate',
     'ComparisonCell',
     'ComparisonCoverage',
@@ -380,16 +380,16 @@ __all__ = [
     'RegradeFilter',
     'RegradeJobCounts',
     'ModelUsage',
-    'TaskRun',
-    'TaskRunDetail',
-    'TaskRunTraceEvent',
-    'TaskRunTracePage',
-    'EvaluationPage',
-    'TaskRunPage',
+    'Trial',
+    'TrialDetail',
+    'TrialTraceEvent',
+    'TrialTracePage',
+    'JobPage',
+    'TrialPage',
     'CustomHarness',
     'benchmarks',
     'custom_harnesses',
-    'evaluations',
+    'jobs',
 
     # Standalone functions
     'storage',

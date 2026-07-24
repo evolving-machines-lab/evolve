@@ -496,7 +496,7 @@ evolve = Evolve(
 try:
     # 1. Create the sandbox first and persist its ID (crash safety)
     sandbox_id = await evolve.prepare_sandbox()
-    await db.save_sandbox_id(task_run_id, sandbox_id)
+    await db.save_sandbox_id(trial_id, sandbox_id)
 
     # 2. Agent phase — the only phase that holds a model credential
     await evolve.run(prompt=task_instructions, timeout_ms=30 * 60 * 1000)
@@ -507,12 +507,12 @@ try:
     # 4. Verify + collect from the credential-free sandbox
     verdict = await evolve.execute_command(command='bash /tests/run-tests.sh')
     artifacts = await evolve.collect_artifacts(['patch.diff', 'reward.json'])
-    await db.save_result(task_run_id, verdict.exit_code, artifacts)
+    await db.save_result(trial_id, verdict.exit_code, artifacts)
 finally:
     await evolve.kill()
 ```
 
-> Running evals yourself is the low-level path. For managed benchmark evaluations on Evolve's infrastructure — this same lifecycle operated for you — see [Hosted Evals](./06-hosted-evals.md).
+> Running evals yourself is the low-level path. For managed benchmark jobs on Evolve's infrastructure — this same lifecycle operated for you — see [Hosted Evals](./06-hosted-evals.md).
 
 ---
 

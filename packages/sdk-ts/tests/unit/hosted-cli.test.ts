@@ -2,13 +2,13 @@
 /**
  * Unit Test: evolve-evals CLI (src/hosted/cli.ts)
  *
- * Tests command parsing (flags, repeatable --system, csv --tasks, numbers,
+ * Tests command parsing (flags, repeatable --agent, csv --tasks, numbers,
  * required flags, usage errors) and one mocked end-to-end `run --watch`:
- * POST /api/evaluations -> SSE event stream -> terminal status, asserting the
+ * POST /api/jobs -> SSE event stream -> terminal status, asserting the
  * request bodies, the rendered status lines, and the exit code. Also covers
  * `import` / `import status`: POST /api/benchmarks/imports, the getImport poll
- * loop of --watch, IMPORTED/FAILED exit codes, and the new task-run / trace /
- * compare commands plus the task-runs --status filter. Also covers
+ * loop of --watch, IMPORTED/FAILED exit codes, and the new trial / trace /
+ * compare commands plus the trials --status filter. Also covers
  * `custom-harnesses` (add / list / remove): the --install-script file read, the
  * repeatable --env pairs, and the rendered harness.
  *
@@ -130,12 +130,12 @@ import { Readable } from "node:stream";
 
 import {
   buildCustomHarnessInput,
-  buildEvaluationInput,
+  buildJobInput,
   buildImportInput,
   CliUsageError,
   eventLine,
   importStatusLine,
-  parseAgentSystem,
+  parseJobAgent,
   parseArgs,
   runCli,
 } from "../../src/hosted/cli.ts";
@@ -154,12 +154,12 @@ function captureIO(): { io: CliIO; out: string[]; err: string[] } {
 // =============================================================================
 
 function testParseRunFull() {
-  console.log("\n--- parseArgs + buildEvaluationInput: full run command ---");
+  console.log("\n--- parseArgs + buildJobInput: full run command ---");
   const inv = parseArgs([
     "run",
     "--benchmark", "deep-swe@1.1",
-    "--system", "codex:gpt-5.5",
-    "--system", "claude:sonnet:2.1.0",
+    "--agent", "codex:gpt-5.5",
+    "--agent", "claude:sonnet:2.1.0",
     "--tasks", "task-a, task-b",
     "--runs", "2",
     "--concurrency", "4",
@@ -172,36 +172,36 @@ function testParseRunFull() {
   assertEqual(inv.command, "run", "command is run");
   assertEqual(inv.flags.watch, true, "--watch parsed as boolean");
   assertEqual(inv.flags.json, true, "--json parsed as boolean");
-  assertEqual(inv.flags.system, ["codex:gpt-5.5", "claude:sonnet:2.1.0"], "--system is repeatable");
+  assertEqual(inv.flags.agent, ["codex:gpt-5.5", "claude:sonnet:2.1.0"], "--agent is repeatable");
 
-  const input = buildEvaluationInput(inv);
+  const input = buildJobInput(inv);
   assertEqual(
     input,
     {
       benchmark: "deep-swe@1.1",
       tasks: ["task-a", "task-b"],
-      agentSystems: [
+      agents: [
         { harness: "codex", model: "gpt-5.5" },
         { harness: "claude", model: "sonnet", harnessVersion: "2.1.0" },
       ],
       runsPerTask: 2,
       concurrency: 4,
       maxModelSpendUsd: 25,
-      maxModelSpendUsdPerTaskRun: 5,
+      maxModelSpendUsdPerTrial: 5,
       sandboxProvider: "daytona",
     },
-    "builds the evaluation input (csv tasks trimmed, per-run cap + provider mapped)"
+    "builds the job input (csv tasks trimmed, per-trial cap + provider mapped)"
   );
   assertEqual(
     Object.keys(input),
     [
       "benchmark",
       "tasks",
-      "agentSystems",
+      "agents",
       "runsPerTask",
       "concurrency",
       "maxModelSpendUsd",
-      "maxModelSpendUsdPerTaskRun",
+      "maxModelSpendUsdPerTrial",
       "sandboxProvider",
     ],
     "body keys follow the contract field order"
@@ -209,39 +209,39 @@ function testParseRunFull() {
 }
 
 function testParseRunMinimal() {
-  console.log("\n--- buildEvaluationInput: minimal run omits optional fields ---");
+  console.log("\n--- buildJobInput: minimal run omits optional fields ---");
   const inv = parseArgs([
     "run",
     "--benchmark=deep-swe@1.1",
-    "--system=codex:gpt-5.5",
+    "--agent=codex:gpt-5.5",
     "--max-spend=25",
   ]);
-  const input = buildEvaluationInput(inv);
+  const input = buildJobInput(inv);
   assertEqual(
     input,
     {
       benchmark: "deep-swe@1.1",
-      agentSystems: [{ harness: "codex", model: "gpt-5.5" }],
+      agents: [{ harness: "codex", model: "gpt-5.5" }],
       maxModelSpendUsd: 25,
     },
     "--flag=value syntax works; optional fields absent"
   );
   assert(!("tasks" in input), "no tasks key when --tasks omitted");
-  assert(!("maxModelSpendUsdPerTaskRun" in input), "no per-run cap key when omitted");
+  assert(!("maxModelSpendUsdPerTrial" in input), "no per-trial cap key when omitted");
   assert(!("sandboxProvider" in input), "no provider key when --provider omitted");
 }
 
 function testParseRunNoSpendCap() {
-  console.log("\n--- parseArgs + buildEvaluationInput: --max-spend is optional ---");
+  console.log("\n--- parseArgs + buildJobInput: --max-spend is optional ---");
   // Not in the run command's required list: the server applies its own default
   // ($500, operator-tunable) and echoes the resolved cap back.
-  const inv = parseArgs(["run", "--benchmark", "deep-swe@1.1", "--system", "codex:gpt-5.5"]);
-  const input = buildEvaluationInput(inv);
+  const inv = parseArgs(["run", "--benchmark", "deep-swe@1.1", "--agent", "codex:gpt-5.5"]);
+  const input = buildJobInput(inv);
   assertEqual(
     input,
     {
       benchmark: "deep-swe@1.1",
-      agentSystems: [{ harness: "codex", model: "gpt-5.5" }],
+      agents: [{ harness: "codex", model: "gpt-5.5" }],
     },
     "run parses without --max-spend"
   );
@@ -250,26 +250,26 @@ function testParseRunNoSpendCap() {
   assert(!("maxModelSpendUsd" in input), "no cap key on the body when --max-spend is omitted");
 }
 
-function testParseAgentSystem() {
-  console.log("\n--- parseAgentSystem: harness:model[:version] ---");
+function testParseJobAgent() {
+  console.log("\n--- parseJobAgent: harness:model[:version] ---");
   assertEqual(
-    parseAgentSystem("codex:gpt-5.5"),
+    parseJobAgent("codex:gpt-5.5"),
     { harness: "codex", model: "gpt-5.5" },
     "two-part spec"
   );
   assertEqual(
-    parseAgentSystem("claude:sonnet:2.1.0"),
+    parseJobAgent("claude:sonnet:2.1.0"),
     { harness: "claude", model: "sonnet", harnessVersion: "2.1.0" },
     "three-part spec carries harnessVersion"
   );
   assertEqual(
-    parseAgentSystem("claude:sonnet:2.1.0:beta"),
+    parseJobAgent("claude:sonnet:2.1.0:beta"),
     { harness: "claude", model: "sonnet", harnessVersion: "2.1.0:beta" },
     "extra colons stay in the version"
   );
-  assertThrowsUsage(() => parseAgentSystem("codex"), "harness:model", "bare harness rejected");
-  assertThrowsUsage(() => parseAgentSystem("codex:"), "harness:model", "empty model rejected");
-  assertThrowsUsage(() => parseAgentSystem(":gpt-5.5"), "harness:model", "empty harness rejected");
+  assertThrowsUsage(() => parseJobAgent("codex"), "harness:model", "bare harness rejected");
+  assertThrowsUsage(() => parseJobAgent("codex:"), "harness:model", "empty model rejected");
+  assertThrowsUsage(() => parseJobAgent(":gpt-5.5"), "harness:model", "empty harness rejected");
 }
 
 function testParseErrors() {
@@ -278,16 +278,16 @@ function testParseErrors() {
   assertThrowsUsage(() => parseArgs(["frobnicate"]), "Unknown command", "unknown command");
   assertThrowsUsage(
     () => parseArgs(["run", "--benchmark", "b", "--max-spend", "25"]),
-    "--system",
-    "run without --system"
+    "--agent",
+    "run without --agent"
   );
   assertThrowsUsage(
-    () => parseArgs(["run", "--system", "c:m", "--max-spend", "25"]),
+    () => parseArgs(["run", "--agent", "c:m", "--max-spend", "25"]),
     "--benchmark",
     "run without --benchmark"
   );
   assertThrowsUsage(
-    () => parseArgs(["run", "--benchmark", "b", "--system", "c:m", "--max-spend", "lots"]),
+    () => parseArgs(["run", "--benchmark", "b", "--agent", "c:m", "--max-spend", "lots"]),
     "expects a number",
     "non-numeric --max-spend"
   );
@@ -304,9 +304,9 @@ function testParseErrors() {
 function testParseOtherCommands() {
   console.log("\n--- parseArgs: other commands ---");
   assertEqual(
-    parseArgs(["task-runs", "eval-1", "--limit", "10", "--cursor", "run-5"]),
-    { command: "task-runs", positionals: ["eval-1"], flags: { limit: 10, cursor: "run-5" } },
-    "task-runs with pagination"
+    parseArgs(["trials", "eval-1", "--limit", "10", "--cursor", "run-5"]),
+    { command: "trials", positionals: ["eval-1"], flags: { limit: 10, cursor: "run-5" } },
+    "trials with pagination"
   );
   assertEqual(
     parseArgs(["export", "eval-1", "--to", "/tmp/x", "--format", "harbor"]),
@@ -320,14 +320,14 @@ function testParseOtherCommands() {
   );
   assertEqual(parseArgs(["--help"]).command, "help", "--help maps to help");
   assertEqual(
-    parseArgs(["task-runs", "eval-1", "--status", "INFRASTRUCTURE_ERROR,SCORING_ERROR"]),
-    { command: "task-runs", positionals: ["eval-1"], flags: { status: "INFRASTRUCTURE_ERROR,SCORING_ERROR" } },
-    "task-runs with a --status filter"
+    parseArgs(["trials", "eval-1", "--status", "INFRASTRUCTURE_ERROR,SCORING_ERROR"]),
+    { command: "trials", positionals: ["eval-1"], flags: { status: "INFRASTRUCTURE_ERROR,SCORING_ERROR" } },
+    "trials with a --status filter"
   );
   assertEqual(
-    parseArgs(["task-run", "eval-1", "run-9"]),
-    { command: "task-run", positionals: ["eval-1", "run-9"], flags: {} },
-    "task-run detail command"
+    parseArgs(["trial", "eval-1", "run-9"]),
+    { command: "trial", positionals: ["eval-1", "run-9"], flags: {} },
+    "trial detail command"
   );
   assertEqual(
     parseArgs(["trace", "eval-1", "run-9", "--after", "5", "--limit", "100"]),
@@ -340,11 +340,11 @@ function testParseOtherCommands() {
     "compare with 3 ids"
   );
   assertThrowsUsage(() => parseArgs(["compare", "eval-1"]), "<id> <id>", "compare needs at least 2 ids");
-  assertThrowsUsage(() => parseArgs(["trace", "eval-1"]), "<id> <run-id>", "trace needs both ids");
+  assertThrowsUsage(() => parseArgs(["trace", "eval-1"]), "<id> <trial-id>", "trace needs both ids");
   assertEqual(
     parseArgs(["regrade", "eval-1"]),
     { command: "regrade", positionals: ["eval-1"], flags: {} },
-    "regrade whole evaluation"
+    "regrade whole job"
   );
   assertEqual(
     parseArgs(["regrade", "eval-1", "run-9"]),
@@ -361,7 +361,7 @@ function testParseOtherCommands() {
     { command: "regrade-job", positionals: ["job-1"], flags: {} },
     "regrade-job read"
   );
-  assertThrowsUsage(() => parseArgs(["regrade"]), "<id>", "regrade needs an evaluation id");
+  assertThrowsUsage(() => parseArgs(["regrade"]), "<id>", "regrade needs a job id");
   assertThrowsUsage(() => parseArgs(["regrade-job"]), "<job-id>", "regrade-job needs a job id");
 }
 
@@ -564,14 +564,14 @@ function testEventLine() {
   console.log("\n--- eventLine: compact status lines ---");
   const line = eventLine({
     seq: 2,
-    type: "task_run.settled",
-    data: { taskRunId: "run-1", taskKey: "abs-module-cache-flags", status: "SCORED", score: 1 },
+    type: "trial.settled",
+    data: { trialId: "run-1", taskKey: "abs-module-cache-flags", status: "SCORED", reward: 1 },
   });
   assert(line.includes("#   2"), "includes padded seq");
-  assert(line.includes("task_run.settled"), "includes event type");
-  assert(line.includes("run-1"), "includes taskRunId");
+  assert(line.includes("trial.settled"), "includes event type");
+  assert(line.includes("run-1"), "includes trialId");
   assert(line.includes("SCORED"), "includes status");
-  assert(line.includes("score=1"), "includes score");
+  assert(line.includes("reward=1"), "includes reward");
 }
 
 // =============================================================================
@@ -589,18 +589,18 @@ async function testRunWatchEndToEnd() {
   installMockFetch();
   try {
     // Insertion order matters: most-specific patterns first.
-    setMockResponse("/api/evaluations/eval-1/events", {
+    setMockResponse("/api/jobs/eval-1/events", {
       status: 200,
       body: null,
       streamBody:
         sseText([
-          { seq: 0, type: "evaluation.created", data: { taskRunCount: 2 } },
-          { seq: 1, type: "task_run.settled", data: { taskRunId: "run-1", status: "SCORED", score: 1 } },
+          { seq: 0, type: "job.created", data: { trialCount: 2 } },
+          { seq: 1, type: "trial.settled", data: { trialId: "run-1", status: "SCORED", reward: 1 } },
         ]) +
         ": heartbeat\n\n" +
-        sseText([{ seq: 2, type: "evaluation.completed", data: { scored: 2 } }]),
+        sseText([{ seq: 2, type: "job.completed", data: { scored: 2 } }]),
     });
-    setMockResponse("/api/evaluations/eval-1", {
+    setMockResponse("/api/jobs/eval-1", {
       status: 200,
       body: {
         id: "eval-1",
@@ -609,15 +609,15 @@ async function testRunWatchEndToEnd() {
         runsPerTask: 1,
         concurrency: 4,
         maxModelSpendUsd: 25,
-        maxModelSpendUsdPerTaskRun: 5,
+        maxModelSpendUsdPerTrial: 5,
         sandboxProvider: "e2b",
         spentUsd: 1.5,
-        counts: { agentSystems: 1, tasks: 2, taskRuns: 2 },
-        taskRunCounts: { SCORED: 2 },
+        counts: { agents: 1, tasks: 2, trials: 2 },
+        trialCounts: { SCORED: 2 },
         createdAt: "2026-07-22T00:00:00.000Z",
       },
     });
-    setMockResponse("/api/evaluations", {
+    setMockResponse("/api/jobs", {
       status: 202,
       body: {
         id: "eval-1",
@@ -628,7 +628,7 @@ async function testRunWatchEndToEnd() {
         maxModelSpendUsd: 25,
         sandboxProvider: "e2b",
         spentUsd: 0,
-        counts: { agentSystems: 1, tasks: 2, taskRuns: 2 },
+        counts: { agents: 1, tasks: 2, trials: 2 },
         createdAt: "2026-07-22T00:00:00.000Z",
       },
     });
@@ -638,7 +638,7 @@ async function testRunWatchEndToEnd() {
       [
         "run",
         "--benchmark", "deep-swe@1.1",
-        "--system", "codex:gpt-5.5",
+        "--agent", "codex:gpt-5.5",
         "--runs", "1",
         "--concurrency", "4",
         "--max-spend", "25",
@@ -654,20 +654,20 @@ async function testRunWatchEndToEnd() {
     assertEqual(err, [], "nothing on stderr");
 
     // The create request
-    const createCall = fetchCalls.find((c) => c.url === `${BASE}/api/evaluations`);
-    assert(createCall !== undefined, "POSTs /api/evaluations");
+    const createCall = fetchCalls.find((c) => c.url === `${BASE}/api/jobs`);
+    assert(createCall !== undefined, "POSTs /api/jobs");
     assertEqual(createCall?.init?.method, "POST", "create uses POST");
     assertEqual(
       JSON.parse(createCall?.init?.body as string),
       {
         benchmark: "deep-swe@1.1",
-        agentSystems: [{ harness: "codex", model: "gpt-5.5" }],
+        agents: [{ harness: "codex", model: "gpt-5.5" }],
         runsPerTask: 1,
         concurrency: 4,
         maxModelSpendUsd: 25,
-        maxModelSpendUsdPerTaskRun: 5,
+        maxModelSpendUsdPerTrial: 5,
       },
-      "create body matches the CLI flags (contract field order, incl. per-run cap)"
+      "create body matches the CLI flags (contract field order, incl. per-trial cap)"
     );
     const headers = createCall?.init?.headers as Record<string, string>;
     assertEqual(headers?.Authorization, "Bearer test-key", "--api-key becomes the Bearer token");
@@ -678,12 +678,12 @@ async function testRunWatchEndToEnd() {
 
     // Rendered output
     assert(out[0].includes("eval-1") && out[0].includes("watching"), "prints the created header");
-    assert(out.some((l) => l.includes("evaluation.created")), "renders evaluation.created event line");
+    assert(out.some((l) => l.includes("job.created")), "renders job.created event line");
     assert(
-      out.some((l) => l.includes("task_run.settled") && l.includes("run-1") && l.includes("score=1")),
-      "renders task_run.settled as a compact status line"
+      out.some((l) => l.includes("trial.settled") && l.includes("run-1") && l.includes("reward=1")),
+      "renders trial.settled as a compact status line"
     );
-    assert(out.some((l) => l.includes("evaluation.completed")), "renders the terminal event line");
+    assert(out.some((l) => l.includes("job.completed")), "renders the terminal event line");
     assert(out.some((l) => l.includes("COMPLETED")), "final summary shows COMPLETED");
     assert(out.some((l) => l.includes("$1.50")), "final summary shows spend");
   } finally {
@@ -695,12 +695,12 @@ async function testRunWatchJsonNdjson() {
   console.log("\n--- runCli: run --watch --json emits NDJSON ---");
   installMockFetch();
   try {
-    setMockResponse("/api/evaluations/eval-1/events", {
+    setMockResponse("/api/jobs/eval-1/events", {
       status: 200,
       body: null,
-      streamBody: sseText([{ seq: 0, type: "evaluation.completed", data: {} }]),
+      streamBody: sseText([{ seq: 0, type: "job.completed", data: {} }]),
     });
-    setMockResponse("/api/evaluations/eval-1", {
+    setMockResponse("/api/jobs/eval-1", {
       status: 200,
       body: {
         id: "eval-1",
@@ -714,7 +714,7 @@ async function testRunWatchJsonNdjson() {
         createdAt: "2026-07-22T00:00:00.000Z",
       },
     });
-    setMockResponse("/api/evaluations", {
+    setMockResponse("/api/jobs", {
       status: 202,
       body: {
         id: "eval-1",
@@ -731,18 +731,18 @@ async function testRunWatchJsonNdjson() {
 
     const { io, out } = captureIO();
     const code = await runCli(
-      ["run", "--benchmark", "deep-swe@1.1", "--system", "codex:gpt-5.5", "--max-spend", "25",
+      ["run", "--benchmark", "deep-swe@1.1", "--agent", "codex:gpt-5.5", "--max-spend", "25",
        "--watch", "--json", "--api-key", "test-key", "--base-url", BASE],
       io
     );
 
     assertEqual(code, 0, "exit code 0");
     const parsed = out.map((l) => JSON.parse(l));
-    assertEqual(parsed[0].kind, "evaluation.created", "first NDJSON line is the created evaluation");
-    assert(parsed.some((p) => p.kind === "event" && p.type === "evaluation.completed"), "events are NDJSON lines");
+    assertEqual(parsed[0].kind, "job.created", "first NDJSON line is the created job");
+    assert(parsed.some((p) => p.kind === "event" && p.type === "job.completed"), "events are NDJSON lines");
     const final = parsed[parsed.length - 1];
-    assertEqual(final.kind, "evaluation.final", "last NDJSON line is the final evaluation");
-    assertEqual(final.evaluation.status, "COMPLETED", "final evaluation status present");
+    assertEqual(final.kind, "job.final", "last NDJSON line is the final job");
+    assertEqual(final.job.status, "COMPLETED", "final job status present");
   } finally {
     restoreFetch();
   }
@@ -864,12 +864,12 @@ async function testUsageErrorExitCode() {
     const bad = captureIO();
     const codeBad = await runCli(["run", "--benchmark", "b"], bad.io);
     assertEqual(codeBad, 2, "missing required flags exit 2");
-    assert(bad.err[0].includes("--system"), "stderr names the missing flag");
+    assert(bad.err[0].includes("--agent"), "stderr names the missing flag");
     assertEqual(fetchCalls.length, 0, "no network call on usage error");
 
-    setMockResponse("/api/evaluations/eval-x", {
+    setMockResponse("/api/jobs/eval-x", {
       status: 404,
-      body: { error: { code: "evaluation_not_found", message: "Evaluation not found: eval-x" } },
+      body: { error: { code: "job_not_found", message: "Job not found: eval-x" } },
     });
     const notFound = captureIO();
     const codeApi = await runCli(
@@ -878,7 +878,7 @@ async function testUsageErrorExitCode() {
     );
     assertEqual(codeApi, 1, "API error exits 1");
     assert(
-      notFound.err[0].includes("Evaluation not found: eval-x"),
+      notFound.err[0].includes("Job not found: eval-x"),
       "stderr carries the server's product sentence — no JSON braces"
     );
     assert(!notFound.err[0].includes("{"), "no raw JSON leaks onto the CLI surface");
@@ -889,7 +889,7 @@ async function testUsageErrorExitCode() {
 
 const CLI_REGRADE_JOB = {
   id: "job-1",
-  sourceEvaluationId: "eval-1",
+  sourceJobId: "eval-1",
   status: "COMPLETED",
   sandboxProvider: "e2b",
   filter: { taskKey: "demo-task" },
@@ -899,14 +899,14 @@ const CLI_REGRADE_JOB = {
   results: [
     {
       id: "rr-1",
-      sourceTaskRunId: "run-1",
+      sourceTrialId: "run-1",
       taskKey: "demo-task",
       status: "SCORED",
-      score: 1,
+      reward: 1,
       metrics: null,
-      sourceScore: 1,
+      sourceReward: 1,
       sourceStatus: "SCORED",
-      scoreDelta: 0,
+      rewardDelta: 0,
       verifierMode: "separate",
       verifierDigest: "abcd",
       verifierSandboxId: "sbx-1",
@@ -923,7 +923,7 @@ async function testRegradeCliCreate() {
   console.log("\n--- runCli: regrade <id> --task posts the filter and renders the job ---");
   installMockFetch();
   try {
-    setMockResponse("/api/evaluations/eval-1/regrade", { status: 202, body: CLI_REGRADE_JOB });
+    setMockResponse("/api/jobs/eval-1/regrade", { status: 202, body: CLI_REGRADE_JOB });
     const { io, out, err } = captureIO();
     const code = await runCli(
       ["regrade", "eval-1", "--task", "demo-task", "--api-key", "test-key", "--base-url", BASE],
@@ -932,7 +932,7 @@ async function testRegradeCliCreate() {
     assertEqual(code, 0, "exit 0");
     assertEqual(err, [], "nothing on stderr");
     const call = fetchCalls[fetchCalls.length - 1];
-    assert(call.url.endsWith("/api/evaluations/eval-1/regrade"), "hits the per-evaluation regrade route");
+    assert(call.url.endsWith("/api/jobs/eval-1/regrade"), "hits the per-job regrade route");
     assertEqual(call.init?.method, "POST", "uses POST");
     assertEqual(JSON.parse(call.init?.body as string), { taskKey: "demo-task" }, "sends the task filter");
     assert(out.some((l) => l.includes("job-1")), "renders the job id");
@@ -961,14 +961,14 @@ async function testRegradeCliRead() {
 }
 
 async function testRegradeCliPerRunRejectsFilter() {
-  console.log("\n--- runCli: regrade <id> <run-id> --status is a usage error ---");
+  console.log("\n--- runCli: regrade <id> <trial-id> --status is a usage error ---");
   const { io, err } = captureIO();
   const code = await runCli(
     ["regrade", "eval-1", "run-1", "--status", "SCORED", "--api-key", "k", "--base-url", BASE],
     io
   );
   assertEqual(code, 2, "usage error exit 2");
-  assert(err.some((l) => l.includes("whole-evaluation regrade")), "explains filters are for whole-eval regrade");
+  assert(err.some((l) => l.includes("whole-job regrade")), "explains filters are for whole-job regrade");
 }
 
 const CLI_CUSTOM_HARNESS = {
@@ -1020,7 +1020,7 @@ async function testCustomHarnessesCliAdd() {
     assert(text.includes("install_script"), "renders the source");
     assert(text.includes("ACME_PROFILE"), "renders the declared env key");
     assert(!text.includes("=bench"), "does not echo declared env values into the terminal");
-    assert(text.includes("--system acme-cli:"), "prints the follow-up run hint");
+    assert(text.includes("--agent acme-cli:"), "prints the follow-up run hint");
   } finally {
     restoreFetch();
     await rm(dir, { recursive: true, force: true });
@@ -1083,7 +1083,7 @@ async function main() {
   testParseRunFull();
   testParseRunMinimal();
   testParseRunNoSpendCap();
-  testParseAgentSystem();
+  testParseJobAgent();
   testParseErrors();
   testParseOtherCommands();
   testParseImport();

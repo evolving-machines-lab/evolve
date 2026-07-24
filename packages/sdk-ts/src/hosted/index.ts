@@ -6,15 +6,14 @@ import { pipeline } from "stream/promises";
 import { DEFAULT_DASHBOARD_URL, ENV_EVOLVE_API_KEY } from "../constants";
 import type {
   ActiveBenchmark,
-  AgentSystem,
   Benchmark,
   BenchmarkImport,
   BenchmarkImportError,
   BenchmarkImportInput,
   BenchmarkImportStatus,
+  BenchmarksClient,
   BenchmarkVersion,
   BenchmarkVersionState,
-  BenchmarksClient,
   ComparisonAggregate,
   ComparisonCell,
   ComparisonCoverage,
@@ -24,19 +23,20 @@ import type {
   CustomHarnessInput,
   CustomHarnessSource,
   EvalSandboxProvider,
-  Evaluation,
-  EvaluationComparison,
-  EvaluationEvent,
-  EvaluationInput,
-  EvaluationList,
-  EvaluationPage,
-  EvaluationStatus,
-  EvaluationsClient,
-  EvaluationWatch,
-  ExportEvaluationOptions,
+  ExportJobOptions,
   HostedClientConfig,
-  ListEvaluationsOptions,
-  ListTaskRunsOptions,
+  Job,
+  JobAgent,
+  JobComparison,
+  JobEvent,
+  JobInput,
+  JobList,
+  JobPage,
+  JobsClient,
+  JobStatus,
+  JobWatch,
+  ListJobsOptions,
+  ListTrialsOptions,
   ModelUsage,
   RegradeFilter,
   RegradeJob,
@@ -44,34 +44,33 @@ import type {
   RegradeOptions,
   RegradeResult,
   RegradeStatus,
-  RunEvaluationOptions,
+  RunJobOptions,
   Task,
-  TaskRun,
-  TaskRunCounts,
-  TaskRunDetail,
-  TaskRunList,
-  TaskRunPage,
-  TaskRunStatus,
-  TaskRunTraceEvent,
-  TaskRunTraceOptions,
-  TaskRunTracePage,
+  Trial,
+  TrialCounts,
+  TrialDetail,
+  TrialList,
+  TrialPage,
+  TrialStatus,
+  TrialTraceEvent,
+  TrialTraceOptions,
+  TrialTracePage,
   VerifierMode,
-  WatchEvaluationOptions,
   WatchImportOptions,
+  WatchJobOptions,
 } from "./types";
 
 export type {
   ActiveBenchmark,
-  AgentSystem,
   Benchmark,
   BenchmarkImport,
   BenchmarkImportError,
   BenchmarkImportInput,
   BenchmarkImportSource,
   BenchmarkImportStatus,
+  BenchmarksClient,
   BenchmarkVersion,
   BenchmarkVersionState,
-  BenchmarksClient,
   ComparisonAggregate,
   ComparisonCell,
   ComparisonCoverage,
@@ -81,19 +80,20 @@ export type {
   CustomHarnessInput,
   CustomHarnessSource,
   EvalSandboxProvider,
-  Evaluation,
-  EvaluationComparison,
-  EvaluationEvent,
-  EvaluationInput,
-  EvaluationList,
-  EvaluationPage,
-  EvaluationStatus,
-  EvaluationsClient,
-  EvaluationWatch,
-  ExportEvaluationOptions,
+  ExportJobOptions,
   HostedClientConfig,
-  ListEvaluationsOptions,
-  ListTaskRunsOptions,
+  Job,
+  JobAgent,
+  JobComparison,
+  JobEvent,
+  JobInput,
+  JobList,
+  JobPage,
+  JobsClient,
+  JobStatus,
+  JobWatch,
+  ListJobsOptions,
+  ListTrialsOptions,
   ModelUsage,
   RegradeFilter,
   RegradeJob,
@@ -101,22 +101,22 @@ export type {
   RegradeOptions,
   RegradeResult,
   RegradeStatus,
-  RunEvaluationOptions,
+  RunJobOptions,
   SpendSource,
   Task,
   TaskProviderVerdict,
-  TaskRun,
-  TaskRunCounts,
-  TaskRunDetail,
-  TaskRunList,
-  TaskRunPage,
-  TaskRunStatus,
-  TaskRunTraceEvent,
-  TaskRunTraceOptions,
-  TaskRunTracePage,
+  Trial,
+  TrialCounts,
+  TrialDetail,
+  TrialList,
+  TrialPage,
+  TrialStatus,
+  TrialTraceEvent,
+  TrialTraceOptions,
+  TrialTracePage,
   VerifierMode,
-  WatchEvaluationOptions,
   WatchImportOptions,
+  WatchJobOptions,
 } from "./types";
 
 /**
@@ -174,7 +174,7 @@ export class NoActiveVersionError extends Error {
 const DEFAULT_RECONNECT_DELAY_MS = 1_000;
 const MAX_RECONNECT_DELAY_MS = 30_000;
 
-const TERMINAL_EVALUATION_STATUSES: ReadonlySet<EvaluationStatus> = new Set([
+const TERMINAL_JOB_STATUSES: ReadonlySet<JobStatus> = new Set([
   "COMPLETED",
   "CANCELLED",
   "FAILED",
@@ -182,9 +182,9 @@ const TERMINAL_EVALUATION_STATUSES: ReadonlySet<EvaluationStatus> = new Set([
 
 // Seeing one of these on the wire is the authoritative end-of-stream signal.
 const TERMINAL_EVENT_TYPES: ReadonlySet<string> = new Set([
-  "evaluation.completed",
-  "evaluation.cancelled",
-  "evaluation.failed",
+  "job.completed",
+  "job.cancelled",
+  "job.failed",
 ]);
 
 const DEFAULT_IMPORT_POLL_INTERVAL_MS = 2_000;
@@ -242,8 +242,8 @@ function parseBenchmarkRef(ref: string): { name: string; version?: string } {
   return { name, version };
 }
 
-function mapAgentSystem(raw: Record<string, unknown>): AgentSystem {
-  // Map only the public AgentSystem fields.
+function mapJobAgent(raw: Record<string, unknown>): JobAgent {
+  // Map only the public JobAgent fields.
   return {
     harness: raw.harness as string,
     model: raw.model as string,
@@ -271,10 +271,10 @@ function mapTask(raw: Record<string, unknown>): Task {
   };
 }
 
-function mapEvaluation(raw: Record<string, unknown>): Evaluation {
-  const evaluation: Evaluation = {
+function mapJob(raw: Record<string, unknown>): Job {
+  const job: Job = {
     id: raw.id as string,
-    status: raw.status as EvaluationStatus,
+    status: raw.status as JobStatus,
     benchmark: raw.benchmark as string,
     runsPerTask: raw.runsPerTask as number,
     concurrency: raw.concurrency as number,
@@ -282,43 +282,43 @@ function mapEvaluation(raw: Record<string, unknown>): Evaluation {
     sandboxProvider: raw.sandboxProvider as EvalSandboxProvider,
     spentUsd: (raw.spentUsd as number) ?? 0,
     createdAt: raw.createdAt as string,
-    counts: raw.counts as Evaluation["counts"],
+    counts: raw.counts as Job["counts"],
   };
-  if (typeof raw.maxModelSpendUsdPerTaskRun === "number") {
-    evaluation.maxModelSpendUsdPerTaskRun = raw.maxModelSpendUsdPerTaskRun;
+  if (typeof raw.maxModelSpendUsdPerTrial === "number") {
+    job.maxModelSpendUsdPerTrial = raw.maxModelSpendUsdPerTrial;
   }
-  if (raw.taskRunCounts && typeof raw.taskRunCounts === "object") {
-    evaluation.taskRunCounts = raw.taskRunCounts as TaskRunCounts;
+  if (raw.trialCounts && typeof raw.trialCounts === "object") {
+    job.trialCounts = raw.trialCounts as TrialCounts;
   }
-  if ("meanScore" in raw) {
-    evaluation.meanScore = (raw.meanScore as number | null) ?? null;
+  if ("meanReward" in raw) {
+    job.meanReward = (raw.meanReward as number | null) ?? null;
   }
-  if (Array.isArray(raw.agentSystems)) {
-    evaluation.agentSystems = (raw.agentSystems as Record<string, unknown>[]).map(mapAgentSystem);
+  if (Array.isArray(raw.agents)) {
+    job.agents = (raw.agents as Record<string, unknown>[]).map(mapJobAgent);
   }
   if ("error" in raw) {
-    evaluation.error = (raw.error as string | null) ?? null;
+    job.error = (raw.error as string | null) ?? null;
   }
   if (typeof raw.updatedAt === "string") {
-    evaluation.updatedAt = raw.updatedAt;
+    job.updatedAt = raw.updatedAt;
   }
-  if (typeof raw.sourceEvaluationId === "string") {
-    evaluation.sourceEvaluationId = raw.sourceEvaluationId;
+  if (typeof raw.sourceJobId === "string") {
+    job.sourceJobId = raw.sourceJobId;
   }
   if (raw.idempotentReplay === true) {
-    evaluation.idempotentReplay = true;
+    job.idempotentReplay = true;
   }
-  return evaluation;
+  return job;
 }
 
-function mapTaskRun(raw: Record<string, unknown>): TaskRun {
+function mapTrial(raw: Record<string, unknown>): Trial {
   return {
     id: raw.id as string,
     taskKey: raw.taskKey as string,
-    agentSystem: mapAgentSystem((raw.agentSystem as Record<string, unknown>) || {}),
+    agent: mapJobAgent((raw.agent as Record<string, unknown>) || {}),
     runNumber: raw.runNumber as number,
-    status: raw.status as TaskRunStatus,
-    score: (raw.score as number | null) ?? null,
+    status: raw.status as TrialStatus,
+    reward: (raw.reward as number | null) ?? null,
     metrics: (raw.metrics as Record<string, number> | null) ?? null,
     failurePhase: (raw.failurePhase as string | null) ?? null,
     failureDetail: (raw.failureDetail as string | null) ?? null,
@@ -336,14 +336,14 @@ function mapTaskRun(raw: Record<string, unknown>): TaskRun {
 function mapRegradeResult(raw: Record<string, unknown>): RegradeResult {
   return {
     id: raw.id as string,
-    sourceTaskRunId: raw.sourceTaskRunId as string,
+    sourceTrialId: raw.sourceTrialId as string,
     taskKey: raw.taskKey as string,
     status: raw.status as RegradeStatus,
-    score: (raw.score as number | null) ?? null,
+    reward: (raw.reward as number | null) ?? null,
     metrics: (raw.metrics as Record<string, number> | null) ?? null,
-    sourceScore: (raw.sourceScore as number | null) ?? null,
+    sourceReward: (raw.sourceReward as number | null) ?? null,
     sourceStatus: raw.sourceStatus as string,
-    scoreDelta: (raw.scoreDelta as number | null) ?? null,
+    rewardDelta: (raw.rewardDelta as number | null) ?? null,
     verifierMode: (raw.verifierMode as VerifierMode) ?? "separate",
     verifierDigest: (raw.verifierDigest as string | null) ?? null,
     verifierSandboxId: (raw.verifierSandboxId as string | null) ?? null,
@@ -359,7 +359,7 @@ function mapRegradeJob(raw: Record<string, unknown>): RegradeJob {
   const counts = (raw.counts as Record<string, unknown>) ?? {};
   const job: RegradeJob = {
     id: raw.id as string,
-    sourceEvaluationId: raw.sourceEvaluationId as string,
+    sourceJobId: raw.sourceJobId as string,
     status: raw.status as RegradeJobStatus,
     sandboxProvider: raw.sandboxProvider as EvalSandboxProvider,
     filter: (raw.filter as RegradeJob["filter"]) ?? null,
@@ -415,21 +415,21 @@ function mapComparisonAggregate(raw: Record<string, unknown>): ComparisonAggrega
   return {
     id: raw.id as string,
     benchmark: raw.benchmark as string,
-    status: raw.status as EvaluationStatus,
-    meanScore: (raw.meanScore as number | null) ?? null,
+    status: raw.status as JobStatus,
+    meanReward: (raw.meanReward as number | null) ?? null,
     coverage: mapCoverage(raw.coverage),
     spentUsd: (raw.spentUsd as number) ?? 0,
-    // Public AgentSystem fields only.
-    agentSystems: ((raw.agentSystems as Record<string, unknown>[]) || []).map(mapAgentSystem),
+    // Public JobAgent fields only.
+    agents: ((raw.agents as Record<string, unknown>[]) || []).map(mapJobAgent),
     createdAt: raw.createdAt as string,
   };
 }
 
 function mapComparisonCell(raw: Record<string, unknown>): ComparisonCell {
   return {
-    evaluationId: raw.evaluationId as string,
+    jobId: raw.jobId as string,
     status: raw.status as ComparisonCell["status"],
-    meanScore: (raw.meanScore as number | null) ?? null,
+    meanReward: (raw.meanReward as number | null) ?? null,
     coverage: mapCoverage(raw.coverage),
   };
 }
@@ -442,7 +442,7 @@ function mapComparisonTaskRow(raw: Record<string, unknown>): ComparisonTaskRow {
   };
 }
 
-function mapTraceEvent(raw: Record<string, unknown>): TaskRunTraceEvent {
+function mapTraceEvent(raw: Record<string, unknown>): TrialTraceEvent {
   return {
     seq: raw.seq as number,
     type: raw.type as string,
@@ -562,14 +562,14 @@ function makePaginated<TRow, TPage extends { nextCursor: string | null }>(
 
 /**
  * Wrap a watch event generator as a value that is both awaitable (resolves the
- * final Evaluation) and async-iterable (yields each event). Both forms drive
+ * final Job) and async-iterable (yields each event). Both forms drive
  * the same generator, so a single handle is meant for one form or the other.
  */
 function makeWatch(
-  gen: AsyncGenerator<EvaluationEvent, Evaluation>
-): EvaluationWatch {
-  let drained: Promise<Evaluation> | undefined;
-  const drain = (): Promise<Evaluation> => {
+  gen: AsyncGenerator<JobEvent, Job>
+): JobWatch {
+  let drained: Promise<Job> | undefined;
+  const drain = (): Promise<Job> => {
     if (!drained) {
       drained = (async () => {
         let result = await gen.next();
@@ -580,13 +580,13 @@ function makeWatch(
     return drained;
   };
   return {
-    then<TResult1 = Evaluation, TResult2 = never>(
-      onfulfilled?: ((value: Evaluation) => TResult1 | PromiseLike<TResult1>) | null,
+    then<TResult1 = Job, TResult2 = never>(
+      onfulfilled?: ((value: Job) => TResult1 | PromiseLike<TResult1>) | null,
       onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
     ): Promise<TResult1 | TResult2> {
       return drain().then(onfulfilled, onrejected);
     },
-    [Symbol.asyncIterator](): AsyncIterator<EvaluationEvent> {
+    [Symbol.asyncIterator](): AsyncIterator<JobEvent> {
       return gen;
     },
   };
@@ -744,12 +744,12 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
 /**
  * Create a CustomHarnessesClient for the caller's own private harnesses.
  *
- * Register a harness once, then name it in `agentSystems[].harness` exactly
+ * Register a harness once, then name it in `agents[].harness` exactly
  * like a built-in. Requires EVOLVE_API_KEY (or { apiKey } in config).
  *
  * @example
  * ```ts
- * import { customHarnesses, evaluations } from "@evolvingmachines/sdk";
+ * import { customHarnesses, jobs } from "@evolvingmachines/sdk";
  *
  * const harnesses = customHarnesses();
  * await harnesses.create({
@@ -758,9 +758,9 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
  *   runCommand: "acme-cli --headless",
  * });
  *
- * await evaluations().run({
+ * await jobs().run({
  *   benchmark: "deep-swe",
- *   agentSystems: [{ harness: "acme-cli", model: "gpt-5.5" }],
+ *   agents: [{ harness: "acme-cli", model: "gpt-5.5" }],
  *   maxModelSpendUsd: 25,
  * });
  * ```
@@ -839,60 +839,60 @@ export function customHarnesses(config?: HostedClientConfig): CustomHarnessesCli
 }
 
 // =============================================================================
-// EVALUATIONS CLIENT
+// JOBS CLIENT
 // =============================================================================
 
 /**
- * Create an EvaluationsClient for hosted evaluations.
+ * Create a JobsClient for hosted jobs.
  *
  * Requires EVOLVE_API_KEY (or { apiKey } in config).
  *
  * @example
  * ```ts
- * import { evaluations } from "@evolvingmachines/sdk";
+ * import { jobs } from "@evolvingmachines/sdk";
  *
- * const e = evaluations();
+ * const client = jobs();
  * // benchmark: bare name = active version; "name@version" pins a version
- * const evaluation = await e.run({
+ * const job = await client.run({
  *   benchmark: "deep-swe",
- *   agentSystems: [{ harness: "codex", model: "gpt-5.5" }],
+ *   agents: [{ harness: "codex", model: "gpt-5.5" }],
  *   runsPerTask: 1,
  *   concurrency: 4,
  *   maxModelSpendUsd: 25,
  * });
- * const final = await e.watch(evaluation.id, {
+ * const final = await client.watch(job.id, {
  *   onEvent: (event) => console.log(event.type, event.data),
  * });
  * ```
  */
-export function evaluations(config?: HostedClientConfig): EvaluationsClient {
-  const cfg = resolveConfig("evaluations", config);
+export function jobs(config?: HostedClientConfig): JobsClient {
+  const cfg = resolveConfig("jobs", config);
 
-  async function getEvaluation(id: string): Promise<Evaluation> {
-    const res = await request(cfg, `/api/evaluations/${encodeURIComponent(id)}`);
-    return mapEvaluation((await res.json()) as Record<string, unknown>);
+  async function getJob(id: string): Promise<Job> {
+    const res = await request(cfg, `/api/jobs/${encodeURIComponent(id)}`);
+    return mapJob((await res.json()) as Record<string, unknown>);
   }
 
-  async function listPage(options?: ListEvaluationsOptions): Promise<EvaluationPage> {
+  async function listPage(options?: ListJobsOptions): Promise<JobPage> {
     const params = new URLSearchParams();
     if (options?.limit !== undefined) params.set("limit", String(options.limit));
     if (options?.cursor) params.set("cursor", options.cursor);
     const qs = params.toString();
-    const res = await request(cfg, `/api/evaluations${qs ? `?${qs}` : ""}`);
+    const res = await request(cfg, `/api/jobs${qs ? `?${qs}` : ""}`);
     const data = (await res.json()) as {
-      evaluations?: Record<string, unknown>[];
+      jobs?: Record<string, unknown>[];
       nextCursor?: string | null;
     };
     return {
-      evaluations: (data.evaluations || []).map(mapEvaluation),
+      jobs: (data.jobs || []).map(mapJob),
       nextCursor: data.nextCursor ?? null,
     };
   }
 
-  async function taskRunsPage(
+  async function trialsPage(
     id: string,
-    options?: ListTaskRunsOptions
-  ): Promise<TaskRunPage> {
+    options?: ListTrialsOptions
+  ): Promise<TrialPage> {
     const params = new URLSearchParams();
     if (options?.status?.length) params.set("status", options.status.join(","));
     if (options?.limit !== undefined) params.set("limit", String(options.limit));
@@ -900,30 +900,30 @@ export function evaluations(config?: HostedClientConfig): EvaluationsClient {
     const qs = params.toString();
     const res = await request(
       cfg,
-      `/api/evaluations/${encodeURIComponent(id)}/task-runs${qs ? `?${qs}` : ""}`
+      `/api/jobs/${encodeURIComponent(id)}/trials${qs ? `?${qs}` : ""}`
     );
     const data = (await res.json()) as {
-      taskRuns?: Record<string, unknown>[];
+      trials?: Record<string, unknown>[];
       nextCursor?: string | null;
     };
     return {
-      taskRuns: (data.taskRuns || []).map(mapTaskRun),
+      trials: (data.trials || []).map(mapTrial),
       nextCursor: data.nextCursor ?? null,
     };
   }
 
-  async function getTaskRunTrace(
+  async function getTrialTrace(
     id: string,
-    runId: string,
-    options?: TaskRunTraceOptions
-  ): Promise<TaskRunTracePage> {
+    trialId: string,
+    options?: TrialTraceOptions
+  ): Promise<TrialTracePage> {
     const params = new URLSearchParams();
     if (options?.after !== undefined) params.set("after", String(options.after));
     if (options?.limit !== undefined) params.set("limit", String(options.limit));
     const qs = params.toString();
     const res = await request(
       cfg,
-      `/api/evaluations/${encodeURIComponent(id)}/task-runs/${encodeURIComponent(runId)}/trace${qs ? `?${qs}` : ""}`
+      `/api/jobs/${encodeURIComponent(id)}/trials/${encodeURIComponent(trialId)}/trace${qs ? `?${qs}` : ""}`
     );
     const data = (await res.json()) as {
       events?: Record<string, unknown>[];
@@ -937,25 +937,25 @@ export function evaluations(config?: HostedClientConfig): EvaluationsClient {
 
   async function exportResponse(id: string, format?: "harbor"): Promise<Response> {
     const qs = format ? `?format=${encodeURIComponent(format)}` : "";
-    return request(cfg, `/api/evaluations/${encodeURIComponent(id)}/export${qs}`);
+    return request(cfg, `/api/jobs/${encodeURIComponent(id)}/export${qs}`);
   }
 
   function exportFilename(res: Response, id: string): string {
     const disposition = res.headers.get("Content-Disposition") || "";
     const match = disposition.match(/filename="([^"]+)"/);
-    return match ? match[1] : `evaluation-${id}-export.json.gz`;
+    return match ? match[1] : `job-${id}-export.json.gz`;
   }
 
   /**
    * Drive the SSE watch stream, yielding each event and returning the final
-   * Evaluation. Same reconnect / Last-Event-ID / terminal-drain semantics as
+   * Job. Same reconnect / Last-Event-ID / terminal-drain semantics as
    * before; onEvent (when supplied) fires alongside every yield so the callback
    * form keeps working. makeWatch() wraps this as the dual-use watch handle.
    */
   async function* watchEvents(
     id: string,
-    options?: WatchEvaluationOptions
-  ): AsyncGenerator<EvaluationEvent, Evaluation> {
+    options?: WatchJobOptions
+  ): AsyncGenerator<JobEvent, Job> {
     const { onEvent, signal } = options ?? {};
     const initialDelayMs = options?.reconnectDelayMs ?? DEFAULT_RECONNECT_DELAY_MS;
     const maxDelayMs = options?.maxReconnectDelayMs ?? MAX_RECONNECT_DELAY_MS;
@@ -971,7 +971,7 @@ export function evaluations(config?: HostedClientConfig): EvaluationsClient {
       let res: Response;
       try {
         res = await fetch(
-          `${cfg.baseUrl}/api/evaluations/${encodeURIComponent(id)}/events`,
+          `${cfg.baseUrl}/api/jobs/${encodeURIComponent(id)}/events`,
           {
             headers: {
               Authorization: `Bearer ${cfg.apiKey}`,
@@ -1005,10 +1005,10 @@ export function evaluations(config?: HostedClientConfig): EvaluationsClient {
       let receivedEvent = false;
       // The parser callback cannot yield, so it stages events here; the read
       // loop drains and yields them after each chunk, in wire order.
-      const pending: EvaluationEvent[] = [];
+      const pending: JobEvent[] = [];
       const parser = createSseParser((frame) => {
         const seq = Number(frame.id);
-        const event: EvaluationEvent = {
+        const event: JobEvent = {
           seq: Number.isInteger(seq) ? seq : -1,
           type: frame.event || "message",
           data: frame.data ? safeJsonParse(frame.data) : {},
@@ -1048,8 +1048,8 @@ export function evaluations(config?: HostedClientConfig): EvaluationsClient {
       // connection loss). Events may still be in flight just after the status
       // turns terminal, so drain once more from lastSeq before finishing on
       // status alone.
-      const current = await getEvaluation(id);
-      if (TERMINAL_EVALUATION_STATUSES.has(current.status)) {
+      const current = await getJob(id);
+      if (TERMINAL_JOB_STATUSES.has(current.status)) {
         if (finalDrainDone) return current;
         finalDrainDone = true;
         continue;
@@ -1059,12 +1059,12 @@ export function evaluations(config?: HostedClientConfig): EvaluationsClient {
       delayMs = Math.min(delayMs * 2, maxDelayMs);
     }
 
-    return getEvaluation(id);
+    return getJob(id);
   }
 
   return {
-    async run(input: EvaluationInput, options?: RunEvaluationOptions): Promise<Evaluation> {
-      const res = await request(cfg, "/api/evaluations", {
+    async run(input: JobInput, options?: RunJobOptions): Promise<Job> {
+      const res = await request(cfg, "/api/jobs", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1074,49 +1074,49 @@ export function evaluations(config?: HostedClientConfig): EvaluationsClient {
         },
         body: JSON.stringify(input),
       });
-      return mapEvaluation((await res.json()) as Record<string, unknown>);
+      return mapJob((await res.json()) as Record<string, unknown>);
     },
 
-    get: getEvaluation,
+    get: getJob,
 
-    list(options?: ListEvaluationsOptions): EvaluationList {
+    list(options?: ListJobsOptions): JobList {
       // Await for one page (honoring options); for-await to walk every
-      // evaluation across cursor pages.
-      return makePaginated(listPage, (page) => page.evaluations, options);
+      // job across cursor pages.
+      return makePaginated(listPage, (page) => page.jobs, options);
     },
 
-    taskRuns(id: string, options?: ListTaskRunsOptions): TaskRunList {
-      // Await for one page; for-await to walk every task run across cursors.
+    trials(id: string, options?: ListTrialsOptions): TrialList {
+      // Await for one page; for-await to walk every trial across cursors.
       // The status filter rides along on every page fetch.
       return makePaginated(
-        (opts) => taskRunsPage(id, { ...opts, status: options?.status }),
-        (page) => page.taskRuns,
+        (opts) => trialsPage(id, { ...opts, status: options?.status }),
+        (page) => page.trials,
         options
       );
     },
 
-    async taskRun(id: string, runId: string): Promise<TaskRunDetail> {
+    async trial(id: string, trialId: string): Promise<TrialDetail> {
       const res = await request(
         cfg,
-        `/api/evaluations/${encodeURIComponent(id)}/task-runs/${encodeURIComponent(runId)}`
+        `/api/jobs/${encodeURIComponent(id)}/trials/${encodeURIComponent(trialId)}`
       );
       const raw = (await res.json()) as Record<string, unknown>;
       return {
-        ...mapTaskRun(raw),
-        evaluationId: raw.evaluationId as string,
+        ...mapTrial(raw),
+        jobId: raw.jobId as string,
       };
     },
 
-    taskRunTrace: getTaskRunTrace,
+    trialTrace: getTrialTrace,
 
-    async *taskRunTraceEvents(
+    async *trialTraceEvents(
       id: string,
-      runId: string,
-      options?: TaskRunTraceOptions
-    ): AsyncIterableIterator<TaskRunTraceEvent> {
+      trialId: string,
+      options?: TrialTraceOptions
+    ): AsyncIterableIterator<TrialTraceEvent> {
       let after = options?.after;
       for (;;) {
-        const page = await getTaskRunTrace(id, runId, { after, limit: options?.limit });
+        const page = await getTrialTrace(id, trialId, { after, limit: options?.limit });
         for (const event of page.events) yield event;
         // Drained the currently available trace: an empty page, or a short
         // page when the caller pinned an explicit page size.
@@ -1127,36 +1127,36 @@ export function evaluations(config?: HostedClientConfig): EvaluationsClient {
       }
     },
 
-    watch(id: string, options?: WatchEvaluationOptions): EvaluationWatch {
-      // Dual-use handle: await it for the final Evaluation, or `for await` its
+    watch(id: string, options?: WatchJobOptions): JobWatch {
+      // Dual-use handle: await it for the final Job, or `for await` its
       // events. onEvent (when given) fires from the generator in both forms.
       return makeWatch(watchEvents(id, options));
     },
 
-    async cancel(id: string): Promise<Evaluation> {
-      const res = await request(cfg, `/api/evaluations/${encodeURIComponent(id)}/cancel`, {
+    async cancel(id: string): Promise<Job> {
+      const res = await request(cfg, `/api/jobs/${encodeURIComponent(id)}/cancel`, {
         method: "POST",
       });
-      return mapEvaluation((await res.json()) as Record<string, unknown>);
+      return mapJob((await res.json()) as Record<string, unknown>);
     },
 
-    async compare(ids: string[]): Promise<EvaluationComparison> {
+    async compare(ids: string[]): Promise<JobComparison> {
       const query = ids.map(encodeURIComponent).join(",");
-      const res = await request(cfg, `/api/evaluations/compare?ids=${query}`);
+      const res = await request(cfg, `/api/jobs/compare?ids=${query}`);
       const data = (await res.json()) as {
-        evaluations?: Record<string, unknown>[];
+        jobs?: Record<string, unknown>[];
         taskMatrix?: Record<string, unknown>[];
       };
       return {
-        evaluations: (data.evaluations || []).map(mapComparisonAggregate),
+        jobs: (data.jobs || []).map(mapComparisonAggregate),
         taskMatrix: (data.taskMatrix || []).map(mapComparisonTaskRow),
       };
     },
 
-    async rerunFailed(id: string, options?: RunEvaluationOptions): Promise<Evaluation> {
+    async rerunFailed(id: string, options?: RunJobOptions): Promise<Job> {
       const res = await request(
         cfg,
-        `/api/evaluations/${encodeURIComponent(id)}/rerun-failed`,
+        `/api/jobs/${encodeURIComponent(id)}/rerun-failed`,
         {
           method: "POST",
           headers: options?.idempotencyKey
@@ -1164,14 +1164,14 @@ export function evaluations(config?: HostedClientConfig): EvaluationsClient {
             : undefined,
         }
       );
-      return mapEvaluation((await res.json()) as Record<string, unknown>);
+      return mapJob((await res.json()) as Record<string, unknown>);
     },
 
     async regrade(id: string, options?: RegradeOptions): Promise<RegradeJob> {
       const body: Record<string, unknown> = {};
       if (options?.status?.length) body.status = options.status;
       if (options?.taskKey !== undefined) body.taskKey = options.taskKey;
-      const res = await request(cfg, `/api/evaluations/${encodeURIComponent(id)}/regrade`, {
+      const res = await request(cfg, `/api/jobs/${encodeURIComponent(id)}/regrade`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -1179,10 +1179,10 @@ export function evaluations(config?: HostedClientConfig): EvaluationsClient {
       return mapRegradeJob((await res.json()) as Record<string, unknown>);
     },
 
-    async regradeTaskRun(id: string, runId: string): Promise<RegradeJob> {
+    async regradeTrial(id: string, trialId: string): Promise<RegradeJob> {
       const res = await request(
         cfg,
-        `/api/evaluations/${encodeURIComponent(id)}/task-runs/${encodeURIComponent(runId)}/regrade`,
+        `/api/jobs/${encodeURIComponent(id)}/trials/${encodeURIComponent(trialId)}/regrade`,
         { method: "POST" }
       );
       return mapRegradeJob((await res.json()) as Record<string, unknown>);
@@ -1195,7 +1195,7 @@ export function evaluations(config?: HostedClientConfig): EvaluationsClient {
 
     export: (async (
       id: string,
-      options?: ExportEvaluationOptions
+      options?: ExportJobOptions
     ): Promise<Buffer | string | ReadableStream<Uint8Array>> => {
       const res = await exportResponse(id, options?.format);
       if (options?.stream) {
@@ -1215,7 +1215,7 @@ export function evaluations(config?: HostedClientConfig): EvaluationsClient {
       }
       const bytes = await res.arrayBuffer();
       return Buffer.from(bytes);
-    }) as EvaluationsClient["export"],
+    }) as JobsClient["export"],
   };
 }
 

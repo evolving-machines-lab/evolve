@@ -1,8 +1,8 @@
 /**
- * Public types for the hosted benchmarks/evaluations API.
+ * Public types for the hosted benchmarks/jobs API.
  */
 
-/** Configuration for the benchmarks() / evaluations() factories */
+/** Configuration for the benchmarks() / jobs() factories */
 export interface HostedClientConfig {
   /** API key (default: process.env.EVOLVE_API_KEY) */
   apiKey?: string;
@@ -11,9 +11,9 @@ export interface HostedClientConfig {
 }
 
 /**
- * Evaluation lifecycle status (wire values, as the API emits them).
+ * Job lifecycle status (wire values, as the API emits them).
  */
-export type EvaluationStatus =
+export type JobStatus =
   | "QUEUED"
   | "RUNNING"
   | "CANCELLING"
@@ -22,12 +22,12 @@ export type EvaluationStatus =
   | "FAILED";
 
 /**
- * TaskRun status law: a valid reward (including 0) = SCORED; verifier crash or
+ * Trial status law: a valid reward (including 0) = SCORED; verifier crash or
  * out-of-domain reward = SCORING_ERROR (never a fabricated zero);
- * INFRASTRUCTURE_ERROR: the run was lost before a result was recorded;
- * INDETERMINATE: the platform cannot tell whether the run completed.
+ * INFRASTRUCTURE_ERROR: the trial was lost before a result was recorded;
+ * INDETERMINATE: the platform cannot tell whether the trial completed.
  */
-export type TaskRunStatus =
+export type TrialStatus =
   | "QUEUED"
   | "RUNNING"
   | "SCORING"
@@ -68,10 +68,10 @@ export interface Task {
   agentTimeoutSec: number;
   verifierTimeoutSec: number;
   /**
-   * Where the task can run, per sandbox provider. Advisory for planning an
-   * evaluation's provider choice — creating an evaluation whose tasks include
+   * Where the task can run, per sandbox provider. Advisory for planning a
+   * job's provider choice — creating a job whose tasks include
    * one refused on the chosen provider is rejected with the same reason, so
-   * nothing is ever spent on a run that cannot execute.
+   * nothing is ever spent on a trial that cannot execute.
    */
   providers: Record<EvalSandboxProvider, TaskProviderVerdict>;
 }
@@ -123,14 +123,14 @@ export interface ActiveBenchmark {
   updatedAt: string;
 }
 
-/** One agent system: harness + model (+ optional pinned harness version) */
-export interface AgentSystem {
+/** One agent: harness + model (+ optional pinned harness version) */
+export interface JobAgent {
   /** A built-in harness ("claude", "codex", ...) or a registered custom harness name */
   harness: string;
   model: string;
   /**
    * Pin the harness version. Omitted (or null) resolves the latest at dispatch
-   * time; the version that actually ran is recorded on every task run as
+   * time; the version that actually ran is recorded on every trial as
    * `resolvedHarnessVersion`. Rejected at creation when the pin is not an exact
    * version (`invalid_input`), when the version is not published
    * (`harness_version_not_found`), or when the harness is a custom one — those
@@ -140,17 +140,17 @@ export interface AgentSystem {
 }
 
 /**
- * Sandbox provider a hosted evaluation runs on. Named `EvalSandboxProvider` to
+ * Sandbox provider a hosted job runs on. Named `EvalSandboxProvider` to
  * avoid colliding with the core SDK's `SandboxProvider` (the sandbox-abstraction
  * interface).
  */
 export type EvalSandboxProvider = "e2b" | "daytona" | "modal";
 
-/** Where a task run's verifier executed: a separate pristine box, or inside the agent box */
+/** Where a trial's verifier executed: a separate pristine box, or inside the agent box */
 export type VerifierMode = "separate" | "shared";
 
-/** The input contract for creating an evaluation */
-export interface EvaluationInput {
+/** The input contract for creating a job */
+export interface JobInput {
   /**
    * Benchmark reference: "name@version" for a pinned run, or a bare "name" —
    * a bare name resolves server-side to the benchmark's active READY version.
@@ -159,97 +159,97 @@ export interface EvaluationInput {
   benchmark: string;
   /** Task keys to run (omitted = every task of the version) */
   tasks?: string[];
-  agentSystems: AgentSystem[];
-  /** Runs per task x agent system (default: 1) */
+  agents: JobAgent[];
+  /** Runs per task x agent (default: 1) */
   runsPerTask?: number;
-  /** Parallel task runs (default: 1) */
+  /** Parallel trials (default: 1) */
   concurrency?: number;
   /**
-   * Hard model-spend cap in USD for the whole evaluation. Optional: omitted,
+   * Hard model-spend cap in USD for the whole job. Optional: omitted,
    * the server applies its own default ($500, operator-tunable). The response
    * echoes the RESOLVED cap either way, so an omitted one is never invisible.
    */
   maxModelSpendUsd?: number;
-  /** Optional per-task-run model-spend cap in USD */
-  maxModelSpendUsdPerTaskRun?: number;
+  /** Optional per-trial model-spend cap in USD */
+  maxModelSpendUsdPerTrial?: number;
   /** Sandbox provider to run on (optional; server default: `e2b`) */
   sandboxProvider?: EvalSandboxProvider;
 }
 
-/** TaskRun count histogram by status */
-export type TaskRunCounts = Partial<Record<TaskRunStatus, number>>;
+/** Trial count histogram by status */
+export type TrialCounts = Partial<Record<TrialStatus, number>>;
 
 /**
- * An evaluation = tasks x agentSystems x runsPerTask.
+ * A job = tasks x agents x runsPerTask.
  *
  * Every shape (run/get/cancel/rerunFailed/list) carries counts; get() and
- * list() additionally return taskRunCounts and meanScore, and get() the
- * detail fields (agentSystems, error, updatedAt).
+ * list() additionally return trialCounts and meanReward, and get() the
+ * detail fields (agents, error, updatedAt).
  */
-export interface Evaluation {
+export interface Job {
   id: string;
-  status: EvaluationStatus;
+  status: JobStatus;
   /** "name@version" */
   benchmark: string;
   /** get() only */
-  agentSystems?: AgentSystem[];
+  agents?: JobAgent[];
   runsPerTask: number;
   concurrency: number;
   maxModelSpendUsd: number;
-  /** Per-task-run model-spend cap, when one was set */
-  maxModelSpendUsdPerTaskRun?: number;
-  /** Sandbox provider this evaluation runs on */
+  /** Per-trial model-spend cap, when one was set */
+  maxModelSpendUsdPerTrial?: number;
+  /** Sandbox provider this job runs on */
   sandboxProvider: EvalSandboxProvider;
   spentUsd: number;
   createdAt: string;
-  /** Evaluation size: agentSystems x tasks -> taskRuns (present on every shape) */
-  counts: { agentSystems: number; tasks: number; taskRuns: number };
-  /** TaskRun histogram by status (get/list) */
-  taskRunCounts?: TaskRunCounts;
-  /** Mean score over SCORED runs only; null when none. Zero is a score. (get/list) */
-  meanScore?: number | null;
+  /** Job size: agents x tasks -> trials (present on every shape) */
+  counts: { agents: number; tasks: number; trials: number };
+  /** Trial histogram by status (get/list) */
+  trialCounts?: TrialCounts;
+  /** Mean reward over SCORED trials only; null when none. Zero is a reward. (get/list) */
+  meanReward?: number | null;
   /** get() only */
   error?: string | null;
   /** get() only */
   updatedAt?: string;
-  /** Present on rerun-failed evaluations: the evaluation the failed runs came from */
-  sourceEvaluationId?: string;
-  /** True when the server replayed an existing evaluation for this Idempotency-Key */
+  /** Present on rerun-failed jobs: the job the failed trials came from */
+  sourceJobId?: string;
+  /** True when the server replayed an existing job for this Idempotency-Key */
   idempotentReplay?: boolean;
 }
 
 /**
- * Where a task run's spend figure came from: "measured" is the measured model
+ * Where a trial's spend figure came from: "measured" is the measured model
  * spend reported by the platform; "assumed_cap" means spend could not be
- * measured for this run, so the per-run cap is reported.
+ * measured for this trial, so the per-trial cap is reported.
  */
 export type SpendSource = "measured" | "assumed_cap";
 
 /**
- * Model usage/spend recorded for a task run — purely spend/usage, in the one
+ * Model usage/spend recorded for a trial — purely spend/usage, in the one
  * money vocabulary (caps are maxModelSpend*, actuals are spentUsd). Open map:
  * harness-specific keys may appear.
  */
 export interface ModelUsage {
-  /** Model spend in USD for this run */
+  /** Model spend in USD for this trial */
   spentUsd?: number;
   /** Where the spend figure came from */
   spendSource?: SpendSource;
-  /** The per-run model-spend cap that applied to this run */
+  /** The per-trial model-spend cap that applied to this trial */
   maxModelSpendUsd?: number;
   [key: string]: unknown;
 }
 
-/** One task x one agent system x one runNumber */
-export interface TaskRun {
+/** One task x one agent x one runNumber */
+export interface Trial {
   id: string;
   taskKey: string;
-  agentSystem: AgentSystem;
+  agent: JobAgent;
   /** 1-based user-requested run number */
   runNumber: number;
-  status: TaskRunStatus;
-  /** The reward-file score; null until scored */
-  score: number | null;
+  status: TrialStatus;
+  /** The reward-file reward; null until scored */
+  reward: number | null;
   /** Named metrics map (reward.json sub-scores) */
   metrics: Record<string, number> | null;
   /** Phase where an infrastructure failure occurred, when status is a failure */
@@ -259,11 +259,11 @@ export interface TaskRun {
   /** Wall-clock per phase, e.g. { agentMs, verifyMs } */
   phaseTimingsMs: Record<string, number> | null;
   modelUsage: ModelUsage | null;
-  /** Sandbox provider the run executed on; null until it has executed */
+  /** Sandbox provider the trial executed on; null until it has executed */
   sandboxProvider: EvalSandboxProvider | null;
   /** Where the verifier ran; null until recorded */
   verifierMode: VerifierMode | null;
-  /** Harness version actually resolved and used for the run; null until resolved */
+  /** Harness version actually resolved and used for the trial; null until resolved */
   resolvedHarnessVersion: string | null;
   /** Reference to the agent session/trace, when recorded */
   sessionRef: string | null;
@@ -271,79 +271,79 @@ export interface TaskRun {
   updatedAt: string;
 }
 
-/** One server-sent event from evaluations().watch() */
-export interface EvaluationEvent {
+/** One server-sent event from jobs().watch() */
+export interface JobEvent {
   /** Monotonic sequence number (SSE id; the Last-Event-ID resume position) */
   seq: number;
-  /** Event type, e.g. "evaluation.created", "task_run.settled", "evaluation.completed" */
+  /** Event type, e.g. "job.created", "trial.settled", "job.completed" */
   type: string;
   data: Record<string, unknown>;
 }
 
 /**
- * The handle returned by evaluations().watch(). It is both:
- * - a promise for the final Evaluation — `await evals.watch(id)` resolves once
- *   the evaluation reaches a terminal status (the original form); and
- * - an async iterable of events — `for await (const event of evals.watch(id))`
- *   yields each EvaluationEvent and completes on the terminal event.
+ * The handle returned by jobs().watch(). It is both:
+ * - a promise for the final Job — `await client.watch(id)` resolves once
+ *   the job reaches a terminal status (the original form); and
+ * - an async iterable of events — `for await (const event of client.watch(id))`
+ *   yields each JobEvent and completes on the terminal event.
  *
  * Pick one form per call: both drive the same underlying SSE stream, so a
  * single handle should not be awaited and iterated at once.
  */
-export interface EvaluationWatch
-  extends PromiseLike<Evaluation>,
-    AsyncIterable<EvaluationEvent> {}
+export interface JobWatch
+  extends PromiseLike<Job>,
+    AsyncIterable<JobEvent> {}
 
-/** Cursor page of evaluations (newest first) */
-export interface EvaluationPage {
-  evaluations: Evaluation[];
+/** Cursor page of jobs (newest first) */
+export interface JobPage {
+  jobs: Job[];
   nextCursor: string | null;
 }
 
 /**
- * The handle returned by evaluations().list(). Both:
- * - a promise for a single EvaluationPage — `await evals.list({ limit })`
+ * The handle returned by jobs().list(). Both:
+ * - a promise for a single JobPage — `await client.list({ limit })`
  *   returns one page (the original form); and
- * - an async iterable — `for await (const item of evals.list())` walks every
- *   evaluation across cursor pages, fetching the next page for you.
+ * - an async iterable — `for await (const item of client.list())` walks every
+ *   job across cursor pages, fetching the next page for you.
  */
-export interface EvaluationList
-  extends PromiseLike<EvaluationPage>,
-    AsyncIterable<Evaluation> {}
+export interface JobList
+  extends PromiseLike<JobPage>,
+    AsyncIterable<Job> {}
 
-/** Cursor page of task runs */
-export interface TaskRunPage {
-  taskRuns: TaskRun[];
+/** Cursor page of trials */
+export interface TrialPage {
+  trials: Trial[];
   nextCursor: string | null;
 }
 
 /**
- * The handle returned by evaluations().taskRuns(). Both:
- * - a promise for a single TaskRunPage — `await evals.taskRuns(id, { limit })`
+ * The handle returned by jobs().trials(). Both:
+ * - a promise for a single TrialPage — `await client.trials(id, { limit })`
  *   returns one page (the original form); and
- * - an async iterable — `for await (const run of evals.taskRuns(id))` walks
- *   every task run across cursor pages, fetching the next page for you.
+ * - an async iterable — `for await (const trial of client.trials(id))` walks
+ *   every trial across cursor pages, fetching the next page for you.
  */
-export interface TaskRunList
-  extends PromiseLike<TaskRunPage>,
-    AsyncIterable<TaskRun> {}
+export interface TrialList
+  extends PromiseLike<TrialPage>,
+    AsyncIterable<Trial> {}
 
 // =============================================================================
-// TASK RUN DETAIL + TRACE
+// TRIAL DETAIL + TRACE
 // =============================================================================
 
 /**
- * Full detail of one task run — evaluations().taskRun(id, runId).
- * Same shape as a list row, plus the owning evaluation; unlike list rows,
+ * Full detail of one trial — jobs().trial(id, trialId).
+ * Same shape as a list row, plus the owning job; unlike list rows,
  * failureDetail is untruncated here.
  */
-export interface TaskRunDetail extends TaskRun {
-  /** The evaluation this run belongs to */
-  evaluationId: string;
+export interface TrialDetail extends Trial {
+  /** The job this trial belongs to */
+  jobId: string;
 }
 
-/** One trace event of a task run (seq-ordered timeline) */
-export interface TaskRunTraceEvent {
+/** One trace event of a trial (seq-ordered timeline) */
+export interface TrialTraceEvent {
   /** Monotonic sequence number (the ?after= resume position) */
   seq: number;
   /** Event type */
@@ -351,9 +351,9 @@ export interface TaskRunTraceEvent {
   data: Record<string, unknown>;
 }
 
-/** One seq-paged slice of a task run's trace — evaluations().taskRunTrace() */
-export interface TaskRunTracePage {
-  events: TaskRunTraceEvent[];
+/** One seq-paged slice of a trial's trace — jobs().trialTrace() */
+export interface TrialTracePage {
+  events: TrialTraceEvent[];
   /**
    * Resume position: pass back as { after } to continue. An empty page echoes
    * the requested position (null when reading an empty trace from the start).
@@ -365,55 +365,55 @@ export interface TaskRunTracePage {
 // COMPARE
 // =============================================================================
 
-/** Scored-run coverage behind an aggregate (means cover SCORED runs only) */
+/** Scored-trial coverage behind an aggregate (means cover SCORED trials only) */
 export interface ComparisonCoverage {
   scored: number;
   total: number;
 }
 
 /**
- * One (taskKey x evaluation) cell of the compare matrix. status is the shared
- * TaskRunStatus when the cell's runs agree, "MIXED" when they differ, and
- * "MISSING" when the evaluation has no runs for the task.
+ * One (taskKey x job) cell of the compare matrix. status is the shared
+ * TrialStatus when the cell's trials agree, "MIXED" when they differ, and
+ * "MISSING" when the job has no trials for the task.
  */
 export interface ComparisonCell {
-  evaluationId: string;
-  status: TaskRunStatus | "MIXED" | "MISSING";
-  /** Mean score over the cell's SCORED runs; null when none. Zero is a score. */
-  meanScore: number | null;
+  jobId: string;
+  status: TrialStatus | "MIXED" | "MISSING";
+  /** Mean reward over the cell's SCORED trials; null when none. Zero is a reward. */
+  meanReward: number | null;
   coverage: ComparisonCoverage;
 }
 
-/** One matrix row of evaluations().compare(): a task across the compared evaluations */
+/** One matrix row of jobs().compare(): a task across the compared jobs */
 export interface ComparisonTaskRow {
   taskKey: string;
-  /** True when the evaluations' cells differ in status or score for this task */
+  /** True when the jobs' cells differ in status or reward for this task */
   disagreement: boolean;
-  /** Cells in the caller's evaluation-id order */
+  /** Cells in the caller's job-id order */
   cells: ComparisonCell[];
 }
 
-/** Per-evaluation aggregate of evaluations().compare() */
+/** Per-job aggregate of jobs().compare() */
 export interface ComparisonAggregate {
   id: string;
   /** "name@version" */
   benchmark: string;
-  status: EvaluationStatus;
-  /** Mean score over SCORED runs only; null when none. Zero is a score. */
-  meanScore: number | null;
+  status: JobStatus;
+  /** Mean reward over SCORED trials only; null when none. Zero is a reward. */
+  meanReward: number | null;
   coverage: ComparisonCoverage;
   spentUsd: number;
-  agentSystems: AgentSystem[];
+  agents: JobAgent[];
   createdAt: string;
 }
 
 /**
- * Result of evaluations().compare([ids]): per-evaluation aggregates plus a
+ * Result of jobs().compare([ids]): per-job aggregates plus a
  * per-task matrix (disagreement rows first).
  */
-export interface EvaluationComparison {
+export interface JobComparison {
   /** Aggregates in the caller's id order */
-  evaluations: ComparisonAggregate[];
+  jobs: ComparisonAggregate[];
   taskMatrix: ComparisonTaskRow[];
 }
 
@@ -439,35 +439,35 @@ export type RegradeStatus =
 export type RegradeJobStatus = "QUEUED" | "RUNNING" | "COMPLETED";
 
 /**
- * One regrade of one source task run: the verifier re-run against that run's
+ * One regrade of one source trial: the verifier re-run against that trial's
  * RECORDED inputs, in a fresh separate verifier box. The agent phase is never
- * re-run, and the source run is never modified — `sourceScore`/`sourceStatus`
+ * re-run, and the source trial is never modified — `sourceReward`/`sourceStatus`
  * are immutable snapshots taken when the regrade was created.
  */
 export interface RegradeResult {
   /** Regrade result id */
   id: string;
-  /** The source task run this regrade re-scored (immutable) */
-  sourceTaskRunId: string;
-  /** The source run's task key */
+  /** The source trial this regrade re-scored (immutable) */
+  sourceTrialId: string;
+  /** The source trial's task key */
   taskKey: string;
   status: RegradeStatus;
-  /** The regrade's reward-file score; null until scored */
-  score: number | null;
+  /** The regrade's reward-file reward; null until scored */
+  reward: number | null;
   /** Named metrics map (reward.json sub-scores) */
   metrics: Record<string, number> | null;
-  /** The recorded source-run score at regrade time (immutable snapshot) */
-  sourceScore: number | null;
-  /** The recorded source-run status at regrade time (immutable snapshot) */
+  /** The recorded source-trial reward at regrade time (immutable snapshot) */
+  sourceReward: number | null;
+  /** The recorded source-trial status at regrade time (immutable snapshot) */
   sourceStatus: string;
-  /** score − sourceScore when both are real numbers, else null (Harbor's per-trial delta) */
-  scoreDelta: number | null;
+  /** reward − sourceReward when both are real numbers, else null (Harbor's per-trial delta) */
+  rewardDelta: number | null;
   /** Where the verifier ran — always "separate" (regrade only re-runs separate verifiers) */
   verifierMode: VerifierMode;
   /**
    * Content digest of the resolved target verifier spec — the "verifier
-   * version". A digest equal to the source run's own verifier reproduces the
-   * recorded score; a different digest is a genuine new-verifier prediction.
+   * version". A digest equal to the source trial's own verifier reproduces the
+   * recorded reward; a different digest is a genuine new-verifier prediction.
    * Null until the regrade runs.
    */
   verifierDigest: string | null;
@@ -481,26 +481,26 @@ export interface RegradeResult {
   settledAt: string | null;
 }
 
-/** The filter applied when selecting source runs for a per-evaluation regrade */
+/** The filter applied when selecting source trials for a per-job regrade */
 export interface RegradeFilter {
   status?: string[];
   taskKey?: string;
 }
 
 /**
- * A regrade job = a collection of regrade results. A per-task-run regrade holds
- * one result; a per-evaluation regrade holds one per eligible source run. The
+ * A regrade job = a collection of regrade results. A per-trial regrade holds
+ * one result; a per-job regrade holds one per eligible source trial. The
  * job's `status` is derived from its results. `results` is present on the read
  * (regradeJob) and create responses.
  */
 export interface RegradeJob {
   id: string;
-  /** The evaluation the source runs belong to */
-  sourceEvaluationId: string;
+  /** The job the source trials belong to */
+  sourceJobId: string;
   status: RegradeJobStatus;
   /** Sandbox provider the verifier boxes run on (independent of the source) */
   sandboxProvider: EvalSandboxProvider;
-  /** The filter applied to select source runs (per-evaluation regrade), or null */
+  /** The filter applied to select source trials (per-job regrade), or null */
   filter: RegradeFilter | null;
   counts: {
     results: number;
@@ -509,7 +509,7 @@ export interface RegradeJob {
   };
   createdAt: string;
   updatedAt: string;
-  /** The per-run regrade results */
+  /** The per-trial regrade results */
   results?: RegradeResult[];
 }
 
@@ -587,7 +587,7 @@ export type CustomHarnessSource = "install_script" | "tarball";
 
 /**
  * A private harness registered by the caller. Once registered, its `name` is
- * usable in `agentSystems[].harness` exactly like a built-in ("claude",
+ * usable in `agents[].harness` exactly like a built-in ("claude",
  * "codex", ...).
  *
  * Private to its owner: another user's name reads as
@@ -595,7 +595,7 @@ export type CustomHarnessSource = "install_script" | "tarball";
  * leaked.
  */
 export interface CustomHarness {
-  /** The harness name to put in agentSystems[].harness */
+  /** The harness name to put in agents[].harness */
   name: string;
   /** How the executables were produced */
   source: CustomHarnessSource;
@@ -618,7 +618,7 @@ export interface CustomHarness {
  * Provide one source, not both.
  */
 export interface CustomHarnessInput {
-  /** Harness name; also the value used later in agentSystems[].harness */
+  /** Harness name; also the value used later in agents[].harness */
   name: string;
   /**
    * The install script itself (not a path). It runs in a throwaway builder
@@ -641,47 +641,47 @@ export interface CustomHarnessInput {
 // OPTIONS
 // =============================================================================
 
-/** Options for evaluations().run() and rerunFailed() */
-export interface RunEvaluationOptions {
+/** Options for jobs().run() and rerunFailed() */
+export interface RunJobOptions {
   /**
    * Idempotency-Key header value: retries with the same key return the
-   * original evaluation (idempotentReplay: true) instead of creating a new one.
+   * original job (idempotentReplay: true) instead of creating a new one.
    */
   idempotencyKey?: string;
 }
 
-/** Options for evaluations().list() */
-export interface ListEvaluationsOptions {
+/** Options for jobs().list() */
+export interface ListJobsOptions {
   /** Max items per page (default: 50, max: 200) */
   limit?: number;
-  /** Cursor from EvaluationPage.nextCursor */
+  /** Cursor from JobPage.nextCursor */
   cursor?: string;
 }
 
-/** Options for evaluations().taskRuns() */
-export interface ListTaskRunsOptions {
-  /** Only task runs in these statuses (e.g. the failures behind a rerun decision) */
-  status?: TaskRunStatus[];
+/** Options for jobs().trials() */
+export interface ListTrialsOptions {
+  /** Only trials in these statuses (e.g. the failures behind a rerun decision) */
+  status?: TrialStatus[];
   /** Max items per page (default: 50, max: 200) */
   limit?: number;
-  /** Cursor from TaskRunPage.nextCursor */
+  /** Cursor from TrialPage.nextCursor */
   cursor?: string;
 }
 
 /**
- * Options for evaluations().regrade() (per-evaluation): narrow the set of
- * source runs. A run is regradable only if it recorded separate-mode verifier
+ * Options for jobs().regrade() (per-job): narrow the set of
+ * source trials. A trial is regradable only if it recorded separate-mode verifier
  * inputs; these filters further restrict that set.
  */
 export interface RegradeOptions {
-  /** Only regrade source runs in these statuses */
-  status?: TaskRunStatus[];
-  /** Only regrade source runs of this task */
+  /** Only regrade source trials in these statuses */
+  status?: TrialStatus[];
+  /** Only regrade source trials of this task */
   taskKey?: string;
 }
 
-/** Options for evaluations().taskRunTrace() and taskRunTraceEvents() */
-export interface TaskRunTraceOptions {
+/** Options for jobs().trialTrace() and trialTraceEvents() */
+export interface TrialTraceOptions {
   /** Return events with seq strictly greater than this (omit = from the beginning) */
   after?: number;
   /** Max events per page (server default: 200, max: 1000) */
@@ -698,10 +698,10 @@ export interface WatchImportOptions {
   pollIntervalMs?: number;
 }
 
-/** Options for evaluations().watch() */
-export interface WatchEvaluationOptions {
+/** Options for jobs().watch() */
+export interface WatchJobOptions {
   /** Called for every event (replayed + live) */
-  onEvent?: (event: EvaluationEvent) => void;
+  onEvent?: (event: JobEvent) => void;
   /** Abort the watch (rejects with the abort reason) */
   signal?: AbortSignal;
   /** Initial reconnect backoff (default: 1000ms; doubles up to maxReconnectDelayMs) */
@@ -710,8 +710,8 @@ export interface WatchEvaluationOptions {
   maxReconnectDelayMs?: number;
 }
 
-/** Options for evaluations().export() */
-export interface ExportEvaluationOptions {
+/** Options for jobs().export() */
+export interface ExportJobOptions {
   /** Directory to save the archive into (returns the file path) */
   to?: string;
   /** Return the raw response stream instead of a Buffer */
@@ -762,98 +762,98 @@ export interface CustomHarnessesClient {
   /**
    * Register a private harness. Provide either an install script
    * (`{ installScript }`) or a local directory (`{ directory }`), never both.
-   * The name is then usable in `agentSystems[].harness` like a built-in.
+   * The name is then usable in `agents[].harness` like a built-in.
    */
   create(input: CustomHarnessInput): Promise<CustomHarness>;
   /** List the caller's registered custom harnesses */
   list(): Promise<CustomHarness[]>;
   /** Get one custom harness by name */
   get(name: string): Promise<CustomHarness>;
-  /** Delete a custom harness. Past evaluations keep their recorded harness. */
+  /** Delete a custom harness. Past jobs keep their recorded harness. */
   delete(name: string): Promise<void>;
 }
 
-/** Client for hosted evaluations */
-export interface EvaluationsClient {
+/** Client for hosted jobs */
+export interface JobsClient {
   /**
-   * Create an evaluation. benchmark may be a bare "name" (resolved to the
+   * Create a job. benchmark may be a bare "name" (resolved to the
    * active READY version) or a pinned "name@version". Supports Idempotency-Key.
    */
-  run(input: EvaluationInput, options?: RunEvaluationOptions): Promise<Evaluation>;
-  /** Get one evaluation with agent systems + task-run status counts */
-  get(id: string): Promise<Evaluation>;
+  run(input: JobInput, options?: RunJobOptions): Promise<Job>;
+  /** Get one job with agents + trial status counts */
+  get(id: string): Promise<Job>;
   /**
-   * List the caller's evaluations, newest first (cursor-paged). Await the
-   * result for one page, or `for await` it to walk every evaluation across
+   * List the caller's jobs, newest first (cursor-paged). Await the
+   * result for one page, or `for await` it to walk every job across
    * cursor pages transparently.
    */
-  list(options?: ListEvaluationsOptions): EvaluationList;
+  list(options?: ListJobsOptions): JobList;
   /**
-   * List an evaluation's task runs (cursor-paged; { status } filters, e.g. to
-   * the failed runs). Await the result for one page, or `for await` it to
-   * walk every task run across cursor pages transparently.
+   * List a job's trials (cursor-paged; { status } filters, e.g. to
+   * the failed trials). Await the result for one page, or `for await` it to
+   * walk every trial across cursor pages transparently.
    */
-  taskRuns(id: string, options?: ListTaskRunsOptions): TaskRunList;
-  /** Get one task run's full detail (untruncated failureDetail) */
-  taskRun(id: string, runId: string): Promise<TaskRunDetail>;
-  /** Get one seq-paged slice of a task run's trace; resume with { after: page.nextAfter } */
-  taskRunTrace(
+  trials(id: string, options?: ListTrialsOptions): TrialList;
+  /** Get one trial's full detail (untruncated failureDetail) */
+  trial(id: string, trialId: string): Promise<TrialDetail>;
+  /** Get one seq-paged slice of a trial's trace; resume with { after: page.nextAfter } */
+  trialTrace(
     id: string,
-    runId: string,
-    options?: TaskRunTraceOptions
-  ): Promise<TaskRunTracePage>;
+    trialId: string,
+    options?: TrialTraceOptions
+  ): Promise<TrialTracePage>;
   /**
-   * Iterate a task run's trace events, fetching pages under the hood until
+   * Iterate a trial's trace events, fetching pages under the hood until
    * the currently available trace is drained. Resume later by passing the
    * last seen seq as { after }.
    */
-  taskRunTraceEvents(
+  trialTraceEvents(
     id: string,
-    runId: string,
-    options?: TaskRunTraceOptions
-  ): AsyncIterableIterator<TaskRunTraceEvent>;
+    trialId: string,
+    options?: TrialTraceOptions
+  ): AsyncIterableIterator<TrialTraceEvent>;
   /**
-   * Watch an evaluation's event stream (SSE). Replays from the beginning,
+   * Watch a job's event stream (SSE). Replays from the beginning,
    * resumes with Last-Event-ID on reconnect (exponential backoff), and
    * finishes on the terminal event.
    *
-   * The returned handle is dual-use: `await evals.watch(id)` resolves with the
-   * final Evaluation, or `for await (const event of evals.watch(id))` iterates
+   * The returned handle is dual-use: `await client.watch(id)` resolves with the
+   * final Job, or `for await (const event of client.watch(id))` iterates
    * the events. The `onEvent` callback still fires in both forms.
    */
-  watch(id: string, options?: WatchEvaluationOptions): EvaluationWatch;
-  /** Request cancellation. Idempotent; a terminal evaluation is a no-op. */
-  cancel(id: string): Promise<Evaluation>;
+  watch(id: string, options?: WatchJobOptions): JobWatch;
+  /** Request cancellation. Idempotent; a terminal job is a no-op. */
+  cancel(id: string): Promise<Job>;
   /**
-   * Create a NEW linked evaluation of only the failed (and never-dispatched)
-   * task runs of a terminal evaluation. Supports Idempotency-Key.
+   * Create a NEW linked job of only the failed (and never-dispatched)
+   * trials of a terminal job. Supports Idempotency-Key.
    */
-  rerunFailed(id: string, options?: RunEvaluationOptions): Promise<Evaluation>;
+  rerunFailed(id: string, options?: RunJobOptions): Promise<Job>;
   /**
-   * Regrade a terminal evaluation: re-run the verifier of every REGRADABLE run
-   * (settled separate-mode runs, which recorded their verifier inputs) against
+   * Regrade a terminal job: re-run the verifier of every REGRADABLE trial
+   * (settled separate-mode trials, which recorded their verifier inputs) against
    * those recorded inputs, in fresh separate verifier boxes. The agent phase is
-   * never re-run and the source runs are never modified. `options` narrows the
-   * set by status and/or task. Returns a new regrade job (one result per run).
+   * never re-run and the source trials are never modified. `options` narrows the
+   * set by status and/or task. Returns a new regrade job (one result per trial).
    */
   regrade(id: string, options?: RegradeOptions): Promise<RegradeJob>;
   /**
-   * Regrade one settled task run: re-run its verifier against its recorded
+   * Regrade one settled trial: re-run its verifier against its recorded
    * inputs in a fresh separate verifier box. Refused (regrade_source_ineligible)
-   * for shared-mode or pre-persistence runs. Returns a regrade job with one
+   * for shared-mode or pre-persistence trials. Returns a regrade job with one
    * result.
    */
-  regradeTaskRun(id: string, runId: string): Promise<RegradeJob>;
-  /** Read a regrade job and its per-run results (with lineage + score deltas). */
+  regradeTrial(id: string, trialId: string): Promise<RegradeJob>;
+  /** Read a regrade job and its per-trial results (with lineage + reward deltas). */
   regradeJob(jobId: string): Promise<RegradeJob>;
   /**
-   * Side-by-side comparison of 2-5 owned evaluations: per-evaluation
+   * Side-by-side comparison of 2-5 owned jobs: per-job
    * aggregates plus a per-task matrix with disagreement rows first.
    */
-  compare(ids: string[]): Promise<EvaluationComparison>;
+  compare(ids: string[]): Promise<JobComparison>;
   /**
    * Download the full research archive (gzipped JSON) of a terminal
-   * evaluation. Default: Buffer. { to } saves to a directory and returns the
+   * job. Default: Buffer. { to } saves to a directory and returns the
    * file path. { stream: true } returns the raw response stream.
    * { format: "harbor" } selects the Harbor job-layout bundle instead of the
    * canonical archive (composable with any of the delivery shapes).
@@ -866,6 +866,6 @@ export interface EvaluationsClient {
   ): Promise<ReadableStream<Uint8Array>>;
   export(
     id: string,
-    options?: ExportEvaluationOptions
+    options?: ExportJobOptions
   ): Promise<Buffer | string | ReadableStream<Uint8Array>>;
 }

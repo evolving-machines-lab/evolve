@@ -1,6 +1,6 @@
 """
 Unit tests for the standalone hosted-evals clients
-(benchmarks/custom_harnesses/evaluations).
+(benchmarks/custom_harnesses/jobs).
 
 Coverage:
 - benchmarks().list()/get() — catalog + detail mapping (selected_version,
@@ -11,16 +11,16 @@ Coverage:
 - benchmarks().get_active() — runnable shape (non-optional version/tasks) + NoActiveVersionError
 - benchmarks().import_benchmark()/get_import()/watch_import() — git import flow
   (self-describing jobs, IMPORTED/FAILED terminal statuses)
-- evaluations().run() — contract body (field order), Idempotency-Key header
-- evaluations().get()/list()/task_runs() — mapping + cursor params + status filter
-- evaluations().list()/task_runs() — await one page + async-for auto-pagination across cursors
-- evaluations().task_run()/task_run_trace()/compare() — detail, trace paging, comparison
-- evaluations().cancel()/rerun_failed() — POST semantics
-- evaluations().export() — bytes, streamed-to-file, and format='harbor' modes
-- evaluations().watch()/watch_iter() — SSE event stream: replay, Last-Event-ID
+- jobs().run() — contract body (field order), Idempotency-Key header
+- jobs().get()/list()/trials() — mapping + cursor params + status filter
+- jobs().list()/trials() — await one page + async-for auto-pagination across cursors
+- jobs().trial()/trial_trace()/compare() — detail, trace paging, comparison
+- jobs().cancel()/rerun_failed() — POST semantics
+- jobs().export() — bytes, streamed-to-file, and format='harbor' modes
+- jobs().watch()/watch_iter() — SSE event stream: replay, Last-Event-ID
   resume on reconnect, terminal-event completion, timeout
 - EvolveAPIError — typed {error: {code, message}} mapping
-- Internal fields (agent system ids/digests) never leak
+- Internal fields (agent ids/digests) never leak
 
 Mocks urllib at the module boundary; no real network calls.
 """
@@ -33,15 +33,15 @@ from unittest.mock import patch
 import pytest
 
 from evolve import (
-    AgentSystem,
-    EvaluationCounts,
+    JobAgent,
+    JobCounts,
     EvolveAPIError,
     HostedClientConfig,
     NoActiveVersionError,
     TaskProviderVerdict,
     benchmarks as benchmarks_factory,
     custom_harnesses as custom_harnesses_factory,
-    evaluations as evaluations_factory,
+    jobs as jobs_factory,
 )
 
 
@@ -101,7 +101,7 @@ class FakeUrlopen:
 CONFIG = HostedClientConfig(api_key='test-key', base_url='http://localhost:3000')
 
 RUN_SUMMARY = {
-    'id': 'eval-1',
+    'id': 'job-1',
     'status': 'QUEUED',
     'benchmark': 'deep-swe@1.1',
     'runsPerTask': 1,
@@ -109,7 +109,7 @@ RUN_SUMMARY = {
     'maxModelSpendUsd': 25,
     'sandboxProvider': 'e2b',
     'spentUsd': 0,
-    'counts': {'agentSystems': 1, 'tasks': 5, 'taskRuns': 5},
+    'counts': {'agents': 1, 'tasks': 5, 'trials': 5},
     'createdAt': '2026-07-22T00:00:00.000Z',
 }
 
@@ -131,7 +131,7 @@ class TestFactories:
             client._http.api_key()
 
     def test_config_api_key_wins(self):
-        client = evaluations_factory(CONFIG)
+        client = jobs_factory(CONFIG)
         assert client._http.api_key() == 'test-key'
         assert client._http.base_url() == 'http://localhost:3000'
 
@@ -585,15 +585,15 @@ class TestCustomHarnesses:
         assert exc.value.code == 'custom_harness_name_taken'
 
 
-class TestEvaluations:
+class TestJobs:
     @pytest.mark.asyncio
     async def test_run_posts_contract_body_in_field_order(self):
-        fake = FakeUrlopen([('/api/evaluations', RUN_SUMMARY)])
+        fake = FakeUrlopen([('/api/jobs', RUN_SUMMARY)])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
-            evaluation = await evaluations_factory(CONFIG).run(
+            job = await jobs_factory(CONFIG).run(
                 benchmark='deep-swe@1.1',
                 tasks=['abs-module-cache-flags'],
-                agent_systems=[AgentSystem(harness='codex', model='gpt-5.5')],
+                agents=[JobAgent(harness='codex', model='gpt-5.5')],
                 runs_per_task=1,
                 concurrency=4,
                 max_model_spend_usd=25,
@@ -606,40 +606,40 @@ class TestEvaluations:
         assert body == {
             'benchmark': 'deep-swe@1.1',
             'tasks': ['abs-module-cache-flags'],
-            'agentSystems': [{'harness': 'codex', 'model': 'gpt-5.5'}],
+            'agents': [{'harness': 'codex', 'model': 'gpt-5.5'}],
             'runsPerTask': 1,
             'concurrency': 4,
             'maxModelSpendUsd': 25,
         }
         # Wire body is emitted in the contract's field order
         assert list(body) == [
-            'benchmark', 'tasks', 'agentSystems', 'runsPerTask', 'concurrency', 'maxModelSpendUsd',
+            'benchmark', 'tasks', 'agents', 'runsPerTask', 'concurrency', 'maxModelSpendUsd',
         ]
         assert request.get_header('Idempotency-key') == 'idem-abc'
-        assert evaluation.id == 'eval-1'
-        assert evaluation.sandbox_provider == 'e2b'
-        assert evaluation.counts == EvaluationCounts(agent_systems=1, tasks=5, task_runs=5)
-        assert evaluation.idempotent_replay is False
+        assert job.id == 'job-1'
+        assert job.sandbox_provider == 'e2b'
+        assert job.counts == JobCounts(agents=1, tasks=5, trials=5)
+        assert job.idempotent_replay is False
 
     @pytest.mark.asyncio
-    async def test_run_accepts_snake_case_agent_system_dicts(self):
-        fake = FakeUrlopen([('/api/evaluations', RUN_SUMMARY)])
+    async def test_run_accepts_snake_case_agent_dicts(self):
+        fake = FakeUrlopen([('/api/jobs', RUN_SUMMARY)])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
-            await evaluations_factory(CONFIG).run(
+            await jobs_factory(CONFIG).run(
                 benchmark='deep-swe@1.1',
-                agent_systems=[{'harness': 'codex', 'model': 'gpt-5.5', 'harness_version': '0.29.0'}],
+                agents=[{'harness': 'codex', 'model': 'gpt-5.5', 'harness_version': '0.29.0'}],
                 max_model_spend_usd=25,
             )
 
         body = json.loads(fake.requests[0].data.decode('utf-8'))
-        assert body['agentSystems'] == [
+        assert body['agents'] == [
             {'harness': 'codex', 'model': 'gpt-5.5', 'harnessVersion': '0.29.0'},
         ]
         # camelCase keys are not part of the Python surface
         with pytest.raises(TypeError):
-            await evaluations_factory(CONFIG).run(
+            await jobs_factory(CONFIG).run(
                 benchmark='deep-swe@1.1',
-                agent_systems=[{'harness': 'codex', 'model': 'gpt-5.5', 'harnessVersion': '0.29.0'}],
+                agents=[{'harness': 'codex', 'model': 'gpt-5.5', 'harnessVersion': '0.29.0'}],
                 max_model_spend_usd=25,
             )
 
@@ -659,10 +659,10 @@ class TestEvaluations:
 
         with patch('evolve.hosted.urllib.request.urlopen', raise_http_error):
             with pytest.raises(EvolveAPIError) as exc:
-                await evaluations_factory(CONFIG).run(
+                await jobs_factory(CONFIG).run(
                     benchmark='deep-swe',
-                    agent_systems=[
-                        AgentSystem(harness='codex', model='gpt-5.5', harness_version='9.9.9'),
+                    agents=[
+                        JobAgent(harness='codex', model='gpt-5.5', harness_version='9.9.9'),
                     ],
                     max_model_spend_usd=25,
                 )
@@ -679,15 +679,15 @@ class TestEvaluations:
                 request.full_url, 402, 'Payment Required', {},
                 io.BytesIO(json.dumps({'error': {
                     'code': 'insufficient_credits',
-                    'message': 'Your account is out of credits; add credits before starting an evaluation',
+                    'message': 'Your account is out of credits; add credits before starting a job',
                 }}).encode('utf-8')),
             )
 
         with patch('evolve.hosted.urllib.request.urlopen', raise_http_error):
             with pytest.raises(EvolveAPIError) as exc:
-                await evaluations_factory(CONFIG).run(
+                await jobs_factory(CONFIG).run(
                     benchmark='deep-swe',
-                    agent_systems=[AgentSystem(harness='codex', model='gpt-5.5')],
+                    agents=[JobAgent(harness='codex', model='gpt-5.5')],
                 )
         assert exc.value.status == 402
         assert exc.value.code == 'insufficient_credits'
@@ -708,11 +708,11 @@ class TestEvaluations:
 
         with patch('evolve.hosted.urllib.request.urlopen', raise_http_error):
             with pytest.raises(EvolveAPIError) as exc:
-                await evaluations_factory(CONFIG).run(
+                await jobs_factory(CONFIG).run(
                     benchmark='deep-swe',
                     # A range cannot hold a comparison still, so it is refused.
-                    agent_systems=[
-                        AgentSystem(harness='codex', model='gpt-5.5', harness_version='^0.29.0'),
+                    agents=[
+                        JobAgent(harness='codex', model='gpt-5.5', harness_version='^0.29.0'),
                     ],
                     max_model_spend_usd=25,
                 )
@@ -722,78 +722,78 @@ class TestEvaluations:
         assert 'exact version' in str(exc.value)
 
     @pytest.mark.asyncio
-    async def test_unpinned_agent_system_sends_no_harness_version(self):
-        fake = FakeUrlopen([('/api/evaluations', RUN_SUMMARY)])
+    async def test_unpinned_agent_sends_no_harness_version(self):
+        fake = FakeUrlopen([('/api/jobs', RUN_SUMMARY)])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
-            await evaluations_factory(CONFIG).run(
+            await jobs_factory(CONFIG).run(
                 benchmark='deep-swe',
-                agent_systems=[AgentSystem(harness='codex', model='gpt-5.5')],
+                agents=[JobAgent(harness='codex', model='gpt-5.5')],
                 max_model_spend_usd=25,
             )
 
         body = json.loads(fake.requests[0].data.decode('utf-8'))
         # Omitted = resolve latest at dispatch; the key is absent, never null.
-        assert body['agentSystems'] == [{'harness': 'codex', 'model': 'gpt-5.5'}]
+        assert body['agents'] == [{'harness': 'codex', 'model': 'gpt-5.5'}]
 
     @pytest.mark.asyncio
     async def test_get_maps_detail_and_drops_internal_fields(self):
         fake = FakeUrlopen([
-            ('/api/evaluations/eval-1', {
+            ('/api/jobs/job-1', {
                 **RUN_SUMMARY,
                 'status': 'RUNNING',
-                'agentSystems': [
+                'agents': [
                     {
                         'harness': 'codex',
                         'model': 'gpt-5.5',
                         'harnessVersion': None,
                     },
                 ],
-                'taskRunCounts': {'SCORED': 3, 'RUNNING': 2},
-                'meanScore': 0.75,
+                'trialCounts': {'SCORED': 3, 'RUNNING': 2},
+                'meanReward': 0.75,
                 'error': None,
                 'updatedAt': '2026-07-22T00:05:00.000Z',
             }),
         ])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
-            evaluation = await evaluations_factory(CONFIG).get('eval-1')
+            job = await jobs_factory(CONFIG).get('job-1')
 
-        assert evaluation.status == 'RUNNING'
+        assert job.status == 'RUNNING'
         # Status-histogram keys are statuses, not camelCase — they pass through
-        assert evaluation.task_run_counts == {'SCORED': 3, 'RUNNING': 2}
-        assert evaluation.mean_score == 0.75
-        assert not hasattr(evaluation, 'task_run_total')
-        # No benchmark-lifecycle internals on the evaluation resource
-        assert not hasattr(evaluation, 'benchmark_version_state')
-        system = evaluation.agent_systems[0]
-        assert (system.harness, system.model, system.harness_version) == ('codex', 'gpt-5.5', None)
-        assert not hasattr(system, 'id')
-        assert not hasattr(system, 'system_digest')
+        assert job.trial_counts == {'SCORED': 3, 'RUNNING': 2}
+        assert job.mean_reward == 0.75
+        assert not hasattr(job, 'trial_total')
+        # No benchmark-lifecycle internals on the job resource
+        assert not hasattr(job, 'benchmark_version_state')
+        agent = job.agents[0]
+        assert (agent.harness, agent.model, agent.harness_version) == ('codex', 'gpt-5.5', None)
+        assert not hasattr(agent, 'id')
+        assert not hasattr(agent, 'system_digest')
 
     @pytest.mark.asyncio
     async def test_list_builds_cursor_params(self):
         fake = FakeUrlopen([
-            ('/api/evaluations', {
-                'evaluations': [{**RUN_SUMMARY, 'taskRunCounts': {'SCORED': 5}, 'meanScore': 0.4}],
-                'nextCursor': 'eval-0',
+            ('/api/jobs', {
+                'jobs': [{**RUN_SUMMARY, 'trialCounts': {'SCORED': 5}, 'meanReward': 0.4}],
+                'nextCursor': 'job-0',
             }),
         ])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
-            page = await evaluations_factory(CONFIG).list(limit=100, cursor='eval-5')
+            page = await jobs_factory(CONFIG).list(limit=100, cursor='job-5')
 
         url = fake.requests[0].full_url
-        assert 'limit=100' in url and 'cursor=eval-5' in url
-        assert page.next_cursor == 'eval-0'
-        assert page.evaluations[0].task_run_counts == {'SCORED': 5}
-        assert page.evaluations[0].mean_score == 0.4
+        assert 'limit=100' in url and 'cursor=job-5' in url
+        assert page.next_cursor == 'job-0'
+        assert page.jobs[0].trial_counts == {'SCORED': 5}
+        assert page.jobs[0].mean_reward == 0.4
         # Awaiting the handle fetches exactly one page (no cursor walk).
         assert len(fake.requests) == 1
 
     @pytest.mark.asyncio
     async def test_list_auto_paginates_when_iterated(self):
         pages = {
-            None: {'evaluations': [{**RUN_SUMMARY, 'id': 'eval-2'},
-                                   {**RUN_SUMMARY, 'id': 'eval-1'}], 'nextCursor': 'eval-1'},
-            'eval-1': {'evaluations': [{**RUN_SUMMARY, 'id': 'eval-0'}], 'nextCursor': None},
+            None: {'jobs': [{**RUN_SUMMARY, 'id': 'job-2'},
+                                   {**RUN_SUMMARY, 'id': 'job-1'}], 'nextCursor': 'job-1'},
+            'job-1': {'jobs': [{**RUN_SUMMARY, 'id': 'job-0'}], 'nextCursor': None},
         }
 
         class PagedUrlopen(FakeUrlopen):
@@ -806,26 +806,26 @@ class TestEvaluations:
         fake = PagedUrlopen([])
         ids = []
         with patch('evolve.hosted.urllib.request.urlopen', fake):
-            async for evaluation in evaluations_factory(CONFIG).list():
-                ids.append(evaluation.id)
+            async for job in jobs_factory(CONFIG).list():
+                ids.append(job.id)
 
-        assert ids == ['eval-2', 'eval-1', 'eval-0']
+        assert ids == ['job-2', 'job-1', 'job-0']
         cursors = [
             urllib_parse.parse_qs(urllib_parse.urlsplit(r.full_url).query).get('cursor', [None])[0]
             for r in fake.requests
         ]
-        assert cursors == [None, 'eval-1']
+        assert cursors == [None, 'job-1']
 
     @pytest.mark.asyncio
-    async def test_task_runs_auto_paginates_when_iterated(self):
-        def _run(run_id, run_number):
+    async def test_trials_auto_paginates_when_iterated(self):
+        def _run(trial_id, run_number):
             return {
-                'id': run_id,
+                'id': trial_id,
                 'taskKey': 'abs-module-cache-flags',
-                'agentSystem': {'harness': 'codex', 'model': 'gpt-5.5', 'harnessVersion': None},
+                'agent': {'harness': 'codex', 'model': 'gpt-5.5', 'harnessVersion': None},
                 'runNumber': run_number,
                 'status': 'SCORED',
-                'score': 1,
+                'reward': 1,
                 'metrics': None,
                 'failurePhase': None,
                 'failureDetail': None,
@@ -840,8 +840,8 @@ class TestEvaluations:
             }
 
         pages = {
-            None: {'taskRuns': [_run('run-1', 1), _run('run-2', 2)], 'nextCursor': 'run-2'},
-            'run-2': {'taskRuns': [_run('run-3', 3)], 'nextCursor': None},
+            None: {'trials': [_run('run-1', 1), _run('run-2', 2)], 'nextCursor': 'run-2'},
+            'run-2': {'trials': [_run('run-3', 3)], 'nextCursor': None},
         }
 
         class PagedUrlopen(FakeUrlopen):
@@ -852,30 +852,30 @@ class TestEvaluations:
                 return FakeResponse(pages[cursor])
 
         fake = PagedUrlopen([])
-        run_ids = []
+        trial_ids = []
         with patch('evolve.hosted.urllib.request.urlopen', fake):
-            async for run in evaluations_factory(CONFIG).task_runs('eval-1'):
-                run_ids.append(run.id)
+            async for run in jobs_factory(CONFIG).trials('job-1'):
+                trial_ids.append(run.id)
 
-        assert run_ids == ['run-1', 'run-2', 'run-3']
+        assert trial_ids == ['run-1', 'run-2', 'run-3']
         # Await form still returns a single page.
         with patch('evolve.hosted.urllib.request.urlopen', PagedUrlopen([])) as _:
-            single = await evaluations_factory(CONFIG).task_runs('eval-1', limit=2)
-        assert len(single.task_runs) == 2
+            single = await jobs_factory(CONFIG).trials('job-1', limit=2)
+        assert len(single.trials) == 2
         assert single.next_cursor == 'run-2'
 
     @pytest.mark.asyncio
-    async def test_task_runs_mapping_and_status_filter(self):
+    async def test_trials_mapping_and_status_filter(self):
         fake = FakeUrlopen([
-            ('/api/evaluations/eval-1/task-runs', {
-                'taskRuns': [
+            ('/api/jobs/job-1/trials', {
+                'trials': [
                     {
                         'id': 'run-1',
                         'taskKey': 'abs-module-cache-flags',
-                        'agentSystem': {'harness': 'codex', 'model': 'gpt-5.5', 'harnessVersion': None},
+                        'agent': {'harness': 'codex', 'model': 'gpt-5.5', 'harnessVersion': None},
                         'runNumber': 1,
                         'status': 'SCORED',
-                        'score': 1,
+                        'reward': 1,
                         'metrics': {'f2p': 1.0},
                         'failurePhase': None,
                         'failureDetail': None,
@@ -893,15 +893,15 @@ class TestEvaluations:
             }),
         ])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
-            page = await evaluations_factory(CONFIG).task_runs(
-                'eval-1', status=['SCORED', 'SCORING_ERROR'], limit=1
+            page = await jobs_factory(CONFIG).trials(
+                'job-1', status=['SCORED', 'SCORING_ERROR'], limit=1
             )
 
         url = fake.requests[0].full_url
         assert 'limit=1' in url
         assert 'status=SCORED%2CSCORING_ERROR' in url
-        run = page.task_runs[0]
-        assert run.score == 1
+        run = page.trials[0]
+        assert run.reward == 1
         assert run.metrics == {'f2p': 1.0}
         # Wire camelCase never reaches the user: typed ModelUsage + snake_case timings
         assert run.model_usage.spent_usd == 0.93
@@ -917,31 +917,31 @@ class TestEvaluations:
     async def test_cancel_and_rerun_failed(self):
         fake = FakeUrlopen([
             ('/cancel', {**RUN_SUMMARY, 'status': 'CANCELLING'}),
-            ('/rerun-failed', {**RUN_SUMMARY, 'id': 'eval-2', 'sourceEvaluationId': 'eval-1'}),
+            ('/rerun-failed', {**RUN_SUMMARY, 'id': 'job-2', 'sourceJobId': 'job-1'}),
         ])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
-            client = evaluations_factory(CONFIG)
-            cancelled = await client.cancel('eval-1')
-            rerun = await client.rerun_failed('eval-1', idempotency_key='idem-rr')
+            client = jobs_factory(CONFIG)
+            cancelled = await client.cancel('job-1')
+            rerun = await client.rerun_failed('job-1', idempotency_key='idem-rr')
 
         assert cancelled.status == 'CANCELLING'
         assert fake.requests[0].get_method() == 'POST'
-        assert rerun.id == 'eval-2'
-        assert rerun.source_evaluation_id == 'eval-1'
+        assert rerun.id == 'job-2'
+        assert rerun.source_job_id == 'job-1'
         assert fake.requests[1].get_header('Idempotency-key') == 'idem-rr'
 
     @pytest.mark.asyncio
-    async def test_regrade_task_run_evaluation_and_job(self):
+    async def test_regrade_trial_job_and_read(self):
         result_wire = {
             'id': 'rr-1',
-            'sourceTaskRunId': 'run-1',
+            'sourceTrialId': 'run-1',
             'taskKey': 'demo-task',
             'status': 'SCORED',
-            'score': 0.5,
+            'reward': 0.5,
             'metrics': {'f2p': 0.5},
-            'sourceScore': 1,
+            'sourceReward': 1,
             'sourceStatus': 'SCORED',
-            'scoreDelta': -0.5,
+            'rewardDelta': -0.5,
             'verifierMode': 'separate',
             'verifierDigest': 'abcd',
             'verifierSandboxId': 'sbx-1',
@@ -952,8 +952,8 @@ class TestEvaluations:
             'settledAt': '2026-07-24T00:05:00Z',
         }
         job_wire = {
-            'id': 'job-1',
-            'sourceEvaluationId': 'eval-1',
+            'id': 'rj-1',
+            'sourceJobId': 'job-1',
             'status': 'COMPLETED',
             'sandboxProvider': 'e2b',
             'filter': {'taskKey': 'demo-task'},
@@ -963,28 +963,28 @@ class TestEvaluations:
             'results': [result_wire],
         }
         fake = FakeUrlopen([
-            ('/task-runs/run-1/regrade', {**job_wire, 'counts': {'results': 1, 'byStatus': {'QUEUED': 1}}}),
-            ('/eval-1/regrade', {**job_wire, 'counts': {'results': 2, 'byStatus': {'QUEUED': 2}}}),
-            ('/api/regrades/job-1', job_wire),
+            ('/trials/run-1/regrade', {**job_wire, 'counts': {'results': 1, 'byStatus': {'QUEUED': 1}}}),
+            ('/job-1/regrade', {**job_wire, 'counts': {'results': 2, 'byStatus': {'QUEUED': 2}}}),
+            ('/api/regrades/rj-1', job_wire),
         ])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
-            client = evaluations_factory(CONFIG)
-            per_run = await client.regrade_task_run('eval-1', 'run-1')
-            per_eval = await client.regrade('eval-1', status=['SCORED'], task_key='demo-task')
-            read = await client.regrade_job('job-1')
+            client = jobs_factory(CONFIG)
+            per_run = await client.regrade_trial('job-1', 'run-1')
+            per_job = await client.regrade('job-1', status=['SCORED'], task_key='demo-task')
+            read = await client.regrade_job('rj-1')
 
         # Per-run regrade: POST the per-run route, one queued result.
         assert fake.requests[0].get_method() == 'POST'
-        assert fake.requests[0].full_url.endswith('/task-runs/run-1/regrade')
-        assert per_run.id == 'job-1'
-        assert per_run.source_evaluation_id == 'eval-1'
+        assert fake.requests[0].full_url.endswith('/trials/run-1/regrade')
+        assert per_run.id == 'rj-1'
+        assert per_run.source_job_id == 'job-1'
         assert per_run.counts.results == 1
 
-        # Per-evaluation regrade: POST the filter body.
+        # Per-job regrade: POST the filter body.
         assert fake.requests[1].get_method() == 'POST'
         sent = json.loads(fake.requests[1].data.decode('utf-8'))
         assert sent == {'status': ['SCORED'], 'taskKey': 'demo-task'}
-        assert per_eval.counts.results == 2
+        assert per_job.counts.results == 2
 
         # Read: results mapped with immutable source snapshots + delta + lineage.
         assert read.status == 'COMPLETED'
@@ -992,8 +992,8 @@ class TestEvaluations:
         assert read.results is not None and len(read.results) == 1
         result = read.results[0]
         assert result.task_key == 'demo-task'
-        assert result.source_score == 1
-        assert result.score_delta == -0.5
+        assert result.source_reward == 1
+        assert result.reward_delta == -0.5
         assert result.verifier_digest == 'abcd'
         assert result.verifier_mode == 'separate'
         assert result.phase_timings_ms == {'verify_ms': 1200}
@@ -1014,40 +1014,40 @@ class TestEvaluations:
 
         with patch('evolve.hosted.urllib.request.urlopen', raise_http_error):
             with pytest.raises(EvolveAPIError) as exc:
-                await evaluations_factory(CONFIG).regrade_task_run('eval-1', 'run-1')
+                await jobs_factory(CONFIG).regrade_trial('job-1', 'run-1')
         assert exc.value.status == 409
         assert exc.value.code == 'regrade_source_ineligible'
 
     @pytest.mark.asyncio
     async def test_export_bytes_and_streamed_file(self, tmp_path):
-        archive = gzip.compress(json.dumps({'evaluation': {'id': 'eval-1'}}).encode('utf-8'))
+        archive = gzip.compress(json.dumps({'job': {'id': 'job-1'}}).encode('utf-8'))
         fake = FakeUrlopen([
-            ('/export', archive, {'Content-Disposition': 'attachment; filename="evaluation-eval-1-export.json.gz"'}),
+            ('/export', archive, {'Content-Disposition': 'attachment; filename="job-job-1-export.json.gz"'}),
         ])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
-            client = evaluations_factory(CONFIG)
-            payload = await client.export('eval-1')
-            path = await client.export('eval-1', to=str(tmp_path))
+            client = jobs_factory(CONFIG)
+            payload = await client.export('job-1')
+            path = await client.export('job-1', to=str(tmp_path))
 
         assert payload == archive
-        assert path.endswith('evaluation-eval-1-export.json.gz')
+        assert path.endswith('job-job-1-export.json.gz')
         with open(path, 'rb') as f:
             assert f.read() == archive
 
     @pytest.mark.asyncio
     async def test_export_rejects_unknown_format(self):
         with pytest.raises(ValueError, match='harbor'):
-            await evaluations_factory(CONFIG).export('eval-1', format='zip')
+            await jobs_factory(CONFIG).export('job-1', format='zip')
 
     # ------------------------------------------------------------------ watch
 
     @pytest.mark.asyncio
     async def test_watch_streams_events_to_terminal(self):
         stream = sse_text([
-            {'seq': 0, 'type': 'evaluation.created', 'data': {'taskRunCount': 2}},
-            {'seq': 1, 'type': 'task_run.settled', 'data': {'taskRunId': 'run-1', 'status': 'SCORED', 'score': 1}},
+            {'seq': 0, 'type': 'job.created', 'data': {'trialCount': 2}},
+            {'seq': 1, 'type': 'trial.settled', 'data': {'trialId': 'run-1', 'status': 'SCORED', 'reward': 1}},
         ]) + ': heartbeat\n\n' + sse_text([
-            {'seq': 2, 'type': 'evaluation.completed', 'data': {'scored': 2}},
+            {'seq': 2, 'type': 'job.completed', 'data': {'scored': 2}},
         ])
 
         class WatchUrlopen(FakeUrlopen):
@@ -1060,14 +1060,14 @@ class TestEvaluations:
         fake = WatchUrlopen([])
         events = []
         with patch('evolve.hosted.urllib.request.urlopen', fake):
-            final = await evaluations_factory(CONFIG).watch(
-                'eval-1', on_event=lambda e: events.append(e)
+            final = await jobs_factory(CONFIG).watch(
+                'job-1', on_event=lambda e: events.append(e)
             )
 
         assert [e.seq for e in events] == [0, 1, 2]
-        assert events[0].type == 'evaluation.created'
-        assert events[0].data == {'taskRunCount': 2}
-        assert events[2].type == 'evaluation.completed'
+        assert events[0].type == 'job.created'
+        assert events[0].data == {'trialCount': 2}
+        assert events[2].type == 'job.completed'
         assert final.status == 'COMPLETED'
         stream_request = next(r for r in fake.requests if '/events' in r.full_url)
         assert stream_request.get_header('Accept') == 'text/event-stream'
@@ -1076,8 +1076,8 @@ class TestEvaluations:
     @pytest.mark.asyncio
     async def test_watch_iter_yields_events_until_terminal(self):
         stream = sse_text([
-            {'seq': 0, 'type': 'evaluation.created', 'data': {}},
-            {'seq': 1, 'type': 'evaluation.completed', 'data': {}},
+            {'seq': 0, 'type': 'job.created', 'data': {}},
+            {'seq': 1, 'type': 'job.completed', 'data': {}},
         ])
 
         class WatchUrlopen(FakeUrlopen):
@@ -1090,7 +1090,7 @@ class TestEvaluations:
         fake = WatchUrlopen([])
         seqs = []
         with patch('evolve.hosted.urllib.request.urlopen', fake):
-            async for event in evaluations_factory(CONFIG).watch_iter('eval-1'):
+            async for event in jobs_factory(CONFIG).watch_iter('job-1'):
                 seqs.append(event.seq)
 
         assert seqs == [0, 1]
@@ -1106,11 +1106,11 @@ class TestEvaluations:
                     connects['count'] += 1
                     if connects['count'] == 1:
                         return FakeSseResponse(sse_text([
-                            {'seq': 0, 'type': 'evaluation.created', 'data': {}},
-                            {'seq': 1, 'type': 'task_run.running', 'data': {'taskRunId': 'run-1'}},
+                            {'seq': 0, 'type': 'job.created', 'data': {}},
+                            {'seq': 1, 'type': 'trial.running', 'data': {'trialId': 'run-1'}},
                         ]).encode('utf-8'))
                     return FakeSseResponse(sse_text([
-                        {'seq': 2, 'type': 'evaluation.completed', 'data': {}},
+                        {'seq': 2, 'type': 'job.completed', 'data': {}},
                     ]).encode('utf-8'))
                 status = 'COMPLETED' if connects['count'] >= 2 else 'RUNNING'
                 return FakeResponse({**RUN_SUMMARY, 'status': status})
@@ -1118,8 +1118,8 @@ class TestEvaluations:
         fake = ReconnectUrlopen([])
         events = []
         with patch('evolve.hosted.urllib.request.urlopen', fake):
-            final = await evaluations_factory(CONFIG).watch(
-                'eval-1', on_event=lambda e: events.append(e), reconnect_delay_s=0.001
+            final = await jobs_factory(CONFIG).watch(
+                'job-1', on_event=lambda e: events.append(e), reconnect_delay_s=0.001
             )
 
         assert connects['count'] == 2
@@ -1138,13 +1138,13 @@ class TestEvaluations:
                 if '/events' in request.full_url:
                     connects['count'] += 1
                     return FakeSseResponse(sse_text([
-                        {'seq': 0, 'type': 'evaluation.created', 'data': {}},
+                        {'seq': 0, 'type': 'job.created', 'data': {}},
                     ]).encode('utf-8') if connects['count'] == 1 else b'')
                 return FakeResponse({**RUN_SUMMARY, 'status': 'CANCELLED'})
 
         fake = QuietCloseUrlopen([])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
-            final = await evaluations_factory(CONFIG).watch('eval-1', reconnect_delay_s=0.001)
+            final = await jobs_factory(CONFIG).watch('job-1', reconnect_delay_s=0.001)
 
         assert final.status == 'CANCELLED'
         # Terminal-status fallback drains ONCE more from last_seq, then finishes.
@@ -1162,8 +1162,8 @@ class TestEvaluations:
         fake = NeverTerminalUrlopen([])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
             with pytest.raises(TimeoutError):
-                await evaluations_factory(CONFIG).watch(
-                    'eval-1', reconnect_delay_s=0.001, timeout_s=0.05
+                await jobs_factory(CONFIG).watch(
+                    'job-1', reconnect_delay_s=0.001, timeout_s=0.05
                 )
 
     @pytest.mark.asyncio
@@ -1175,48 +1175,48 @@ class TestEvaluations:
             raise urllib.error.HTTPError(
                 request.full_url, 404, 'Not Found', {},
                 io.BytesIO(json.dumps({
-                    'error': {'code': 'evaluation_not_found', 'message': 'Evaluation not found: eval-x'},
+                    'error': {'code': 'job_not_found', 'message': 'Job not found: job-x'},
                 }).encode('utf-8')),
             )
 
         with patch('evolve.hosted.urllib.request.urlopen', raise_http_error):
             with pytest.raises(EvolveAPIError) as exc_info:
-                await evaluations_factory(CONFIG).watch('eval-x')
+                await jobs_factory(CONFIG).watch('job-x')
         assert exc_info.value.status == 404
-        assert exc_info.value.code == 'evaluation_not_found'
-        assert 'Evaluation not found: eval-x' in str(exc_info.value)
+        assert exc_info.value.code == 'job_not_found'
+        assert 'Job not found: job-x' in str(exc_info.value)
 
     # ---------------------------------------------------------------- shapes
 
     @pytest.mark.asyncio
-    async def test_run_posts_per_task_run_cap(self):
+    async def test_run_posts_per_trial_cap(self):
         fake = FakeUrlopen([
-            ('/api/evaluations', {**RUN_SUMMARY, 'maxModelSpendUsdPerTaskRun': 2}),
+            ('/api/jobs', {**RUN_SUMMARY, 'maxModelSpendUsdPerTrial': 2}),
         ])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
-            evaluation = await evaluations_factory(CONFIG).run(
+            job = await jobs_factory(CONFIG).run(
                 benchmark='deep-swe@1.1',
-                agent_systems=[AgentSystem(harness='codex', model='gpt-5.5')],
+                agents=[JobAgent(harness='codex', model='gpt-5.5')],
                 max_model_spend_usd=25,
-                max_model_spend_usd_per_task_run=2,
+                max_model_spend_usd_per_trial=2,
             )
 
         body = json.loads(fake.requests[0].data.decode('utf-8'))
-        assert body['maxModelSpendUsdPerTaskRun'] == 2
-        assert list(body) == ['benchmark', 'agentSystems', 'maxModelSpendUsd', 'maxModelSpendUsdPerTaskRun']
-        assert evaluation.max_model_spend_usd_per_task_run == 2
+        assert body['maxModelSpendUsdPerTrial'] == 2
+        assert list(body) == ['benchmark', 'agents', 'maxModelSpendUsd', 'maxModelSpendUsdPerTrial']
+        assert job.max_model_spend_usd_per_trial == 2
 
     @pytest.mark.asyncio
     async def test_run_omits_absent_spend_cap(self):
         # max_model_spend_usd is optional: the server applies its own default
         # ($500, operator-tunable) and the response echoes the RESOLVED cap.
         fake = FakeUrlopen([
-            ('/api/evaluations', {**RUN_SUMMARY, 'maxModelSpendUsd': 500}),
+            ('/api/jobs', {**RUN_SUMMARY, 'maxModelSpendUsd': 500}),
         ])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
-            evaluation = await evaluations_factory(CONFIG).run(
+            job = await jobs_factory(CONFIG).run(
                 benchmark='deep-swe@1.1',
-                agent_systems=[AgentSystem(harness='codex', model='gpt-5.5')],
+                agents=[JobAgent(harness='codex', model='gpt-5.5')],
             )
 
         body = json.loads(fake.requests[0].data.decode('utf-8'))
@@ -1225,52 +1225,52 @@ class TestEvaluations:
         assert 'maxModelSpendUsd' not in body
         assert body == {
             'benchmark': 'deep-swe@1.1',
-            'agentSystems': [{'harness': 'codex', 'model': 'gpt-5.5'}],
+            'agents': [{'harness': 'codex', 'model': 'gpt-5.5'}],
         }
-        assert evaluation.max_model_spend_usd == 500
+        assert job.max_model_spend_usd == 500
 
     @pytest.mark.asyncio
     async def test_run_forwards_stated_spend_cap(self):
-        fake = FakeUrlopen([('/api/evaluations', RUN_SUMMARY)])
+        fake = FakeUrlopen([('/api/jobs', RUN_SUMMARY)])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
-            await evaluations_factory(CONFIG).run(
+            await jobs_factory(CONFIG).run(
                 benchmark='deep-swe@1.1',
-                agent_systems=[AgentSystem(harness='codex', model='gpt-5.5')],
+                agents=[JobAgent(harness='codex', model='gpt-5.5')],
                 max_model_spend_usd=25,
             )
 
         body = json.loads(fake.requests[0].data.decode('utf-8'))
         assert body['maxModelSpendUsd'] == 25
-        assert list(body) == ['benchmark', 'agentSystems', 'maxModelSpendUsd']
+        assert list(body) == ['benchmark', 'agents', 'maxModelSpendUsd']
 
     @pytest.mark.asyncio
     async def test_run_posts_sandbox_provider(self):
         fake = FakeUrlopen([
-            ('/api/evaluations', {**RUN_SUMMARY, 'sandboxProvider': 'daytona'}),
+            ('/api/jobs', {**RUN_SUMMARY, 'sandboxProvider': 'daytona'}),
         ])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
-            evaluation = await evaluations_factory(CONFIG).run(
+            job = await jobs_factory(CONFIG).run(
                 benchmark='deep-swe@1.1',
-                agent_systems=[AgentSystem(harness='codex', model='gpt-5.5')],
+                agents=[JobAgent(harness='codex', model='gpt-5.5')],
                 max_model_spend_usd=25,
                 sandbox_provider='daytona',
             )
 
         body = json.loads(fake.requests[0].data.decode('utf-8'))
         assert body['sandboxProvider'] == 'daytona'
-        assert evaluation.sandbox_provider == 'daytona'
+        assert job.sandbox_provider == 'daytona'
 
     @pytest.mark.asyncio
-    async def test_task_run_detail_mapping(self):
+    async def test_trial_detail_mapping(self):
         fake = FakeUrlopen([
-            ('/api/evaluations/eval-1/task-runs/run-1', {
+            ('/api/jobs/job-1/trials/run-1', {
                 'id': 'run-1',
-                'evaluationId': 'eval-1',
+                'jobId': 'job-1',
                 'taskKey': 'abs-module-cache-flags',
-                'agentSystem': {'harness': 'codex', 'model': 'gpt-5.5', 'harnessVersion': None},
+                'agent': {'harness': 'codex', 'model': 'gpt-5.5', 'harnessVersion': None},
                 'runNumber': 1,
                 'status': 'SCORED',
-                'score': 1,
+                'reward': 1,
                 'metrics': {'f2p': 1.0},
                 'failurePhase': None,
                 'failureDetail': None,
@@ -1290,10 +1290,10 @@ class TestEvaluations:
             }),
         ])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
-            run = await evaluations_factory(CONFIG).task_run('eval-1', 'run-1')
+            run = await jobs_factory(CONFIG).trial('job-1', 'run-1')
 
-        assert '/api/evaluations/eval-1/task-runs/run-1' in fake.requests[0].full_url
-        assert run.evaluation_id == 'eval-1'
+        assert '/api/jobs/job-1/trials/run-1' in fake.requests[0].full_url
+        assert run.job_id == 'job-1'
         assert run.resolved_harness_version == '0.29.0'
         assert run.sandbox_provider == 'e2b'
         assert run.verifier_mode == 'shared'
@@ -1306,10 +1306,10 @@ class TestEvaluations:
         # Unknown harness-specific keys land in extra, snake_cased
         assert usage.extra == {'input_tokens': 1234}
         assert run.session_ref == 'sess-9'
-        assert run.score == 1
+        assert run.reward == 1
 
     @pytest.mark.asyncio
-    async def test_task_run_trace_paging(self):
+    async def test_trial_trace_paging(self):
         fake = FakeUrlopen([
             ('/trace', {
                 'events': [
@@ -1320,19 +1320,19 @@ class TestEvaluations:
             }),
         ])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
-            page = await evaluations_factory(CONFIG).task_run_trace(
-                'eval-1', 'run-1', after=2, limit=500,
+            page = await jobs_factory(CONFIG).trial_trace(
+                'job-1', 'run-1', after=2, limit=500,
             )
 
         url = fake.requests[0].full_url
-        assert '/api/evaluations/eval-1/task-runs/run-1/trace' in url
+        assert '/api/jobs/job-1/trials/run-1/trace' in url
         assert 'after=2' in url and 'limit=500' in url
         assert [e.seq for e in page.events] == [3, 4]
         assert page.events[0].type == 'agent.message'
         assert page.next_after == 4
 
     @pytest.mark.asyncio
-    async def test_task_run_trace_events_drains_pages(self):
+    async def test_trial_trace_events_drains_pages(self):
         pages = {
             None: {'events': [{'seq': 1, 'type': 'a', 'data': {}},
                               {'seq': 2, 'type': 'b', 'data': {}}], 'nextAfter': 2},
@@ -1351,8 +1351,8 @@ class TestEvaluations:
         fake = PagedUrlopen([])
         seqs = []
         with patch('evolve.hosted.urllib.request.urlopen', fake):
-            async for event in evaluations_factory(CONFIG).task_run_trace_events(
-                'eval-1', 'run-1'
+            async for event in jobs_factory(CONFIG).trial_trace_events(
+                'job-1', 'run-1'
             ):
                 seqs.append(event.seq)
 
@@ -1370,8 +1370,8 @@ class TestEvaluations:
         fake_limited = PagedUrlopen([])
         seqs_limited = []
         with patch('evolve.hosted.urllib.request.urlopen', fake_limited):
-            async for event in evaluations_factory(CONFIG).task_run_trace_events(
-                'eval-1', 'run-1', limit=2
+            async for event in jobs_factory(CONFIG).trial_trace_events(
+                'job-1', 'run-1', limit=2
             ):
                 seqs_limited.append(event.seq)
         assert seqs_limited == [1, 2, 3]
@@ -1382,18 +1382,18 @@ class TestEvaluations:
         assert afters_limited == [None, '2']
 
     @pytest.mark.asyncio
-    async def test_compare_drops_internal_agent_system_fields(self):
+    async def test_compare_drops_internal_agent_fields(self):
         fake = FakeUrlopen([
-            ('/api/evaluations/compare', {
-                'evaluations': [
+            ('/api/jobs/compare', {
+                'jobs': [
                     {
-                        'id': 'eval-1',
+                        'id': 'job-1',
                         'benchmark': 'deep-swe@1.1',
                         'status': 'COMPLETED',
-                        'meanScore': 0.0,  # zero is a score, never nulled
+                        'meanReward': 0.0,  # zero is a reward, never nulled
                         'coverage': {'scored': 5, 'total': 5},
                         'spentUsd': 3.2,
-                        'agentSystems': [
+                        'agents': [
                             {
                                 'id': 'as-internal-1',
                                 'harness': 'codex',
@@ -1405,13 +1405,13 @@ class TestEvaluations:
                         'createdAt': '2026-07-22T00:00:00.000Z',
                     },
                     {
-                        'id': 'eval-2',
+                        'id': 'job-2',
                         'benchmark': 'deep-swe@1.1',
                         'status': 'COMPLETED',
-                        'meanScore': None,
+                        'meanReward': None,
                         'coverage': {'scored': 0, 'total': 5},
                         'spentUsd': 1.0,
-                        'agentSystems': [],
+                        'agents': [],
                         'createdAt': '2026-07-22T01:00:00.000Z',
                     },
                 ],
@@ -1419,28 +1419,28 @@ class TestEvaluations:
             }),
         ])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
-            comparison = await evaluations_factory(CONFIG).compare(['eval-1', 'eval-2'])
+            comparison = await jobs_factory(CONFIG).compare(['job-1', 'job-2'])
 
-        system = comparison.evaluations[0].agent_systems[0]
-        assert (system.harness, system.model, system.harness_version) == ('codex', 'gpt-5.5', None)
-        assert not hasattr(system, 'id')
-        assert not hasattr(system, 'system_digest')
-        assert comparison.evaluations[0].mean_score == 0.0
-        assert comparison.evaluations[1].mean_score is None
+        agent = comparison.jobs[0].agents[0]
+        assert (agent.harness, agent.model, agent.harness_version) == ('codex', 'gpt-5.5', None)
+        assert not hasattr(agent, 'id')
+        assert not hasattr(agent, 'system_digest')
+        assert comparison.jobs[0].mean_reward == 0.0
+        assert comparison.jobs[1].mean_reward is None
 
     @pytest.mark.asyncio
     async def test_compare_maps_aggregates_and_matrix(self):
         fake = FakeUrlopen([
-            ('/api/evaluations/compare', {
-                'evaluations': [
+            ('/api/jobs/compare', {
+                'jobs': [
                     {
-                        'id': 'eval-1',
+                        'id': 'job-1',
                         'benchmark': 'deep-swe@1.1',
                         'status': 'COMPLETED',
-                        'meanScore': 0.62,
+                        'meanReward': 0.62,
                         'coverage': {'scored': 100, 'total': 113},
                         'spentUsd': 21.4,
-                        'agentSystems': [{'harness': 'codex', 'model': 'gpt-5.5'}],
+                        'agents': [{'harness': 'codex', 'model': 'gpt-5.5'}],
                         'createdAt': '2026-07-22T00:00:00.000Z',
                     },
                 ],
@@ -1450,15 +1450,15 @@ class TestEvaluations:
                         'disagreement': True,
                         'cells': [
                             {
-                                'evaluationId': 'eval-1',
+                                'jobId': 'job-1',
                                 'status': 'SCORED',
-                                'meanScore': 1,
+                                'meanReward': 1,
                                 'coverage': {'scored': 1, 'total': 1},
                             },
                             {
-                                'evaluationId': 'eval-2',
+                                'jobId': 'job-2',
                                 'status': 'MISSING',
-                                'meanScore': None,
+                                'meanReward': None,
                                 'coverage': {'scored': 0, 'total': 0},
                             },
                         ],
@@ -1467,26 +1467,26 @@ class TestEvaluations:
             }),
         ])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
-            comparison = await evaluations_factory(CONFIG).compare(['eval-1', 'eval-2'])
+            comparison = await jobs_factory(CONFIG).compare(['job-1', 'job-2'])
 
-        assert 'ids=eval-1,eval-2' in fake.requests[0].full_url
-        aggregate = comparison.evaluations[0]
-        assert aggregate.mean_score == 0.62
+        assert 'ids=job-1,job-2' in fake.requests[0].full_url
+        aggregate = comparison.jobs[0]
+        assert aggregate.mean_reward == 0.62
         assert (aggregate.coverage.scored, aggregate.coverage.total) == (100, 113)
-        assert aggregate.agent_systems[0].harness == 'codex'
+        assert aggregate.agents[0].harness == 'codex'
         row = comparison.task_matrix[0]
         assert row.disagreement is True
         # Same statistic, same name, at every level of the compare payload
-        assert row.cells[0].mean_score == 1
+        assert row.cells[0].mean_reward == 1
         assert row.cells[1].status == 'MISSING'
-        assert row.cells[1].mean_score is None
+        assert row.cells[1].mean_reward is None
 
     @pytest.mark.asyncio
     async def test_export_harbor_format(self):
         archive = gzip.compress(b'{}')
         fake = FakeUrlopen([('/export', archive)])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
-            payload = await evaluations_factory(CONFIG).export('eval-1', format='harbor')
+            payload = await jobs_factory(CONFIG).export('job-1', format='harbor')
 
         assert 'format=harbor' in fake.requests[0].full_url
         assert payload == archive
@@ -1501,20 +1501,20 @@ class TestEvaluations:
                 request.full_url, 409, 'Conflict', {},
                 io.BytesIO(json.dumps({
                     'error': {
-                        'code': 'evaluation_not_terminal',
-                        'message': 'Evaluation is RUNNING; export requires a terminal evaluation',
+                        'code': 'job_not_terminal',
+                        'message': 'Job is RUNNING; export requires a terminal job',
                     },
                 }).encode('utf-8')),
             )
 
         with patch('evolve.hosted.urllib.request.urlopen', raise_http_error):
             with pytest.raises(EvolveAPIError) as exc_info:
-                await evaluations_factory(CONFIG).export('eval-1')
+                await jobs_factory(CONFIG).export('job-1')
         error = exc_info.value
         assert error.status == 409
-        assert error.code == 'evaluation_not_terminal'
+        assert error.code == 'job_not_terminal'
         # The message is the clean product sentence — no JSON, no status prefix
-        assert str(error) == 'Evaluation is RUNNING; export requires a terminal evaluation'
+        assert str(error) == 'Job is RUNNING; export requires a terminal job'
 
     @pytest.mark.asyncio
     async def test_http_error_unparseable_body(self):
@@ -1529,6 +1529,6 @@ class TestEvaluations:
 
         with patch('evolve.hosted.urllib.request.urlopen', raise_http_error):
             with pytest.raises(EvolveAPIError) as exc_info:
-                await evaluations_factory(CONFIG).get('eval-1')
+                await jobs_factory(CONFIG).get('job-1')
         assert exc_info.value.status == 502
         assert exc_info.value.code == 'unknown_error'

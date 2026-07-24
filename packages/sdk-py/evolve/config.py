@@ -82,7 +82,7 @@ class BrowserCredentialsConfig:
 
 @dataclass
 class HostedClientConfig:
-    """Standalone hosted evals client configuration (benchmarks/evaluations).
+    """Standalone hosted evals client configuration (benchmarks/jobs).
 
     Args:
         api_key: Evolve API key override (default: EVOLVE_API_KEY)

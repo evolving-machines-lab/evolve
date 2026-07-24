@@ -462,7 +462,7 @@ The full credential lifecycle with a caller-minted spend-capped key: mint → ru
 ```ts
 import { Evolve } from "@evolvingmachines/sdk";
 
-// 1. Mint a spend-capped gateway credential for this task run
+// 1. Mint a spend-capped gateway credential for this trial
 const key = await litellm.mintKey({ maxBudgetUsd: 2 });
 
 const evolve = new Evolve()
@@ -486,7 +486,7 @@ const evolve = new Evolve()
 try {
     // 2. Create the sandbox first and persist its ID (crash safety)
     const sandboxId = await evolve.prepareSandbox();
-    await db.saveSandboxId(taskRunId, sandboxId);
+    await db.saveSandboxId(trialId, sandboxId);
 
     // 3. Agent phase — the only phase that holds a model credential
     await evolve.run({ prompt: taskInstructions, timeoutMs: 30 * 60 * 1000 });
@@ -497,13 +497,13 @@ try {
     // 5. Verify + collect from the credential-free sandbox
     const verdict = await evolve.executeCommand("bash /tests/run-tests.sh");
     const artifacts = await evolve.collectArtifacts(["patch.diff", "reward.json"]);
-    await db.saveResult(taskRunId, verdict.exitCode, artifacts);
+    await db.saveResult(trialId, verdict.exitCode, artifacts);
 } finally {
     await evolve.kill();
 }
 ```
 
-> Running evals yourself is the low-level path. For managed benchmark evaluations on Evolve's infrastructure — this same lifecycle operated for you — see [Hosted Evals](./06-hosted-evals.md).
+> Running evals yourself is the low-level path. For managed benchmark jobs on Evolve's infrastructure — this same lifecycle operated for you — see [Hosted Evals](./06-hosted-evals.md).
 
 ---
 
