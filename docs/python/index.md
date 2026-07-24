@@ -99,16 +99,18 @@ await evolve.run(prompt='Hello world')
 
 | Topic | Link |
 |-------|------|
-| Quickstart (run deep-swe, watch, export) | [Hosted Evals → Quickstart](./06-hosted-evals.md#quickstart) |
-| Evaluation inputs (six + per-run cap) | [Hosted Evals → Evaluation Inputs](./06-hosted-evals.md#evaluation-inputs) |
+| Run an evaluation (catalog → `run()`, idempotency) | [Hosted Evals → Run an Evaluation](./06-hosted-evals.md#run-an-evaluation) |
+| `watch()` / `watch_iter()` (SSE stream with resume) | [Hosted Evals → Watch It Live](./06-hosted-evals.md#watch-it-live) |
+| Results (`get`, `list`, `task_runs`, spend, trace) | [Hosted Evals → Read the Results](./06-hosted-evals.md#read-the-results) |
+| `cancel()` / `rerun_failed()` | [Hosted Evals → Cancel / Rerun Failures](./06-hosted-evals.md#cancel--rerun-failures) |
+| `compare()` (aggregates + task matrix) | [Hosted Evals → Compare](./06-hosted-evals.md#compare) |
+| `export()` (research archive, Harbor bundle) | [Hosted Evals → Export](./06-hosted-evals.md#export) |
+| CLI (via the TypeScript `evolve-evals` binary) | [Hosted Evals → CLI](./06-hosted-evals.md#cli) |
+| Task format & declarations (network, verifier, sizing) | [Hosted Evals → What Runs](./06-hosted-evals.md#what-runs) |
+| Sandbox providers (`sandbox_provider`, per-task verdicts) | [Hosted Evals → Where It Runs](./06-hosted-evals.md#where-it-runs) |
+| Bring your own benchmark (import → activation → `READY`) | [Hosted Evals → Bring Your Own Benchmark](./06-hosted-evals.md#bring-your-own-benchmark) |
 | Statuses (evaluation, task run, benchmark version) | [Hosted Evals → Statuses](./06-hosted-evals.md#statuses) |
-| `benchmarks()` (list, get, import) | [Hosted Evals → Benchmarks Client](./06-hosted-evals.md#benchmarks-client) |
-| `evaluations()` (run, get, list, task_runs) | [Hosted Evals → Evaluations Client](./06-hosted-evals.md#evaluations-client) |
-| Task run detail & trace | [Hosted Evals → task_runs / task_run](./06-hosted-evals.md#task_runs--task_run) |
-| `watch()` (poll until terminal) | [Hosted Evals → watch](./06-hosted-evals.md#watch) |
-| `compare()` (aggregates + task matrix) | [Hosted Evals → compare](./06-hosted-evals.md#compare) |
-| `export()` (research archive, Harbor bundle) | [Hosted Evals → export](./06-hosted-evals.md#export) |
-| `evolve-evals` CLI | [Hosted Evals → CLI](./06-hosted-evals.md#cli) |
+| Types & errors | [Hosted Evals → Types](./06-hosted-evals.md#types) |
 
 ### Swarm & Pipeline
 

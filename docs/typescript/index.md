@@ -99,16 +99,18 @@ await evolve.run({ prompt: "Hello world" });
 
 | Topic | Link |
 |-------|------|
-| Quickstart (run deep-swe, watch, export) | [Hosted Evals → Quickstart](./06-hosted-evals.md#quickstart) |
-| Evaluation inputs (six + per-run cap) | [Hosted Evals → Evaluation Inputs](./06-hosted-evals.md#evaluation-inputs) |
-| Statuses (evaluation, task run, benchmark version) | [Hosted Evals → Statuses](./06-hosted-evals.md#statuses) |
-| `benchmarks()` (list, get, import) | [Hosted Evals → Benchmarks Client](./06-hosted-evals.md#benchmarks-client) |
-| `evaluations()` (run, get, list, taskRuns) | [Hosted Evals → Evaluations Client](./06-hosted-evals.md#evaluations-client) |
-| `watch()` (SSE stream with resume) | [Hosted Evals → watch](./06-hosted-evals.md#watch) |
-| Task run detail & trace | [Hosted Evals → taskRuns / taskRun](./06-hosted-evals.md#taskruns--taskrun) |
-| `compare()` (aggregates + task matrix) | [Hosted Evals → compare](./06-hosted-evals.md#compare) |
-| `export()` (archive, Harbor bundle) | [Hosted Evals → export](./06-hosted-evals.md#export) |
+| Run an evaluation (catalog → `run()`, idempotency) | [Hosted Evals → Run an Evaluation](./06-hosted-evals.md#run-an-evaluation) |
+| `watch()` (SSE stream with resume) | [Hosted Evals → Watch It Live](./06-hosted-evals.md#watch-it-live) |
+| Results (`get`, `list`, `taskRuns`, spend, trace) | [Hosted Evals → Read the Results](./06-hosted-evals.md#read-the-results) |
+| `cancel()` / `rerunFailed()` | [Hosted Evals → Cancel / Rerun Failures](./06-hosted-evals.md#cancel--rerun-failures) |
+| `compare()` (aggregates + task matrix) | [Hosted Evals → Compare](./06-hosted-evals.md#compare) |
+| `export()` (archive, Harbor bundle) | [Hosted Evals → Export](./06-hosted-evals.md#export) |
 | `evolve-evals` CLI | [Hosted Evals → CLI](./06-hosted-evals.md#cli) |
+| Task format & declarations (network, verifier, sizing) | [Hosted Evals → What Runs](./06-hosted-evals.md#what-runs) |
+| Sandbox providers (`sandboxProvider`, per-task verdicts) | [Hosted Evals → Where It Runs](./06-hosted-evals.md#where-it-runs) |
+| Bring your own benchmark (import → activation → `READY`) | [Hosted Evals → Bring Your Own Benchmark](./06-hosted-evals.md#bring-your-own-benchmark) |
+| Statuses (evaluation, task run, benchmark version) | [Hosted Evals → Statuses](./06-hosted-evals.md#statuses) |
+| Types & errors | [Hosted Evals → Types](./06-hosted-evals.md#types) |
 
 ### Swarm & Pipeline
 

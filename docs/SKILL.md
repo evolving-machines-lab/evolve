@@ -123,14 +123,18 @@ Read on demand when the user's task requires them:
 
 | Topic | TypeScript | Python |
 |-------|-----------|--------|
-| Quickstart (run deep-swe, watch, export) | [TS](references/typescript/06-hosted-evals.md#quickstart) | [PY](references/python/06-hosted-evals.md#quickstart) |
-| Evaluation inputs & idempotency | [TS](references/typescript/06-hosted-evals.md#evaluation-inputs) | [PY](references/python/06-hosted-evals.md#evaluation-inputs) |
-| Statuses (evaluation, task run, benchmark version) | [TS](references/typescript/06-hosted-evals.md#statuses) | [PY](references/python/06-hosted-evals.md#statuses) |
-| benchmarks() catalog client | [TS](references/typescript/06-hosted-evals.md#benchmarks-client) | [PY](references/python/06-hosted-evals.md#benchmarks-client) |
-| Benchmark import & conformance activation (VALIDATING → READY) | [TS](references/typescript/06-hosted-evals.md#import--getimport--watchimport) | [PY](references/python/06-hosted-evals.md#import_benchmark--get_import--watch_import) |
-| evaluations() client (run, watch, cancel, rerun, export) | [TS](references/typescript/06-hosted-evals.md#evaluations-client) | [PY](references/python/06-hosted-evals.md#evaluations-client) |
+| Run an evaluation (catalog → run, idempotency) | [TS](references/typescript/06-hosted-evals.md#run-an-evaluation) | [PY](references/python/06-hosted-evals.md#run-an-evaluation) |
+| Watch it live (SSE stream with resume) | [TS](references/typescript/06-hosted-evals.md#watch-it-live) | [PY](references/python/06-hosted-evals.md#watch-it-live) |
+| Read the results (task runs, spend, trace) | [TS](references/typescript/06-hosted-evals.md#read-the-results) | [PY](references/python/06-hosted-evals.md#read-the-results) |
+| Cancel / rerun failures | [TS](references/typescript/06-hosted-evals.md#cancel--rerun-failures) | [PY](references/python/06-hosted-evals.md#cancel--rerun-failures) |
+| compare() (aggregates + task matrix) | [TS](references/typescript/06-hosted-evals.md#compare) | [PY](references/python/06-hosted-evals.md#compare) |
+| export() (archive, Harbor bundle) | [TS](references/typescript/06-hosted-evals.md#export) | [PY](references/python/06-hosted-evals.md#export) |
 | evolve-evals CLI | [TS](references/typescript/06-hosted-evals.md#cli) | [PY](references/python/06-hosted-evals.md#cli) |
-| Sandbox providers for evals (E2B/Daytona/Modal parity, `sandboxProvider` input) | [TS](references/typescript/06-hosted-evals.md#sandbox-providers) | [PY](references/python/06-hosted-evals.md#sandbox-providers) |
+| Task format & declarations (network, verifier, sizing) | [TS](references/typescript/06-hosted-evals.md#what-runs) | [PY](references/python/06-hosted-evals.md#what-runs) |
+| Sandbox providers (E2B/Daytona/Modal, per-task verdicts) | [TS](references/typescript/06-hosted-evals.md#where-it-runs) | [PY](references/python/06-hosted-evals.md#where-it-runs) |
+| Bring your own benchmark (import → activation → READY) | [TS](references/typescript/06-hosted-evals.md#bring-your-own-benchmark) | [PY](references/python/06-hosted-evals.md#bring-your-own-benchmark) |
+| Statuses (evaluation, task run, benchmark version) | [TS](references/typescript/06-hosted-evals.md#statuses) | [PY](references/python/06-hosted-evals.md#statuses) |
+| Types & errors | [TS](references/typescript/06-hosted-evals.md#types) | [PY](references/python/06-hosted-evals.md#types) |
 
 ### Swarm & Pipeline
 
