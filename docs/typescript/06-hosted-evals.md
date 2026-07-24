@@ -47,8 +47,7 @@ const job = await evals.run({
     tasks: ["task-001", "task-002"],    // (optional) default: every task of the version
     runsPerTask: 1,                     // (optional) default 1
     concurrency: 4,                     // (optional) parallel trials, default 1
-    maxModelSpendUsd: 25,               // (optional) hard model-spend cap for the whole job
-    maxModelSpendUsdPerTrial: 2,        // (optional) cap per trial
+    maxTrialSpendUsd: 25,               // (optional) hard model-spend cap for EACH trial
 });
 
 console.log(job.status);        // "QUEUED"
@@ -56,7 +55,9 @@ console.log(job.benchmark);     // "deep-swe@1.1" — the resolved version, echo
 console.log(job.counts);        // { agents: 2, tasks: 2, trials: 4 }
 ```
 
-Leave `maxModelSpendUsd` out and the platform applies its own cap of $500 for the whole job. The response always reports the cap that actually applied — `job.maxModelSpendUsd` — so an omitted one is never a mystery.
+`maxTrialSpendUsd` caps what a single trial may spend on model calls, and it is the only spend limit the platform enforces: it becomes the budget of the gateway key that trial runs on. Leave it out and the platform applies $200 per trial. The response always reports the cap that actually applied — `job.maxTrialSpendUsd` — so an omitted one is never a mystery.
+
+There is no job-wide budget, which means a job's real ceiling is simply its trial count times that cap. The response states it for you as `job.worstCaseSpendUsd`, so you can see what a large matrix commits you to before it starts running. Your account credit balance is the hard backstop underneath all of it: when the balance runs out, spending stops mid-job whatever the caps say. A trial that exhausts its own cap is not a failure — the harness just runs out of budget, and the trial is still scored on whatever it produced.
 
 A job expands to `tasks × agents × runsPerTask` trials, each in its own sandbox. `sandboxProvider` (optional, default `"e2b"`) picks where those sandboxes run — see [Where it runs](#where-it-runs). Valid harness + model pairs are the same as everywhere in the SDK — see [Getting Started → Harness and Model Pairing](./01-getting-started.md#harness-and-model-pairing). `harness` also accepts a harness you registered yourself — see [Bring your own harness](#bring-your-own-harness).
 
@@ -89,7 +90,7 @@ const retry = await evals.run(
     {
         benchmark: "deep-swe",
         agents: [{ harness: "codex", model: "gpt-5.5" }],
-        maxModelSpendUsd: 25,
+        maxTrialSpendUsd: 25,
     },
     { idempotencyKey: "nightly-2026-07-23" },
 );
@@ -144,7 +145,7 @@ const final = await evals.watch(
 const detail = await evals.get(job.id);
 console.log(detail.trialCounts);                    // { SCORED: 12, RUNNING: 3, QUEUED: 5 }
 console.log(detail.meanReward);                     // mean over SCORED trials; null until something scores
-console.log(detail.spentUsd, "/", detail.maxModelSpendUsd);
+console.log(detail.spentUsd, "/", detail.worstCaseSpendUsd);
 
 // Your jobs, newest first — await one page, or iterate them all
 const page = await evals.list({ limit: 50 });       // page.nextCursor continues
@@ -180,7 +181,7 @@ console.log(trial.resolvedHarnessVersion);             // harness version actual
 console.log(trial.failurePhase, trial.failureDetail);  // untruncated in this response
 ```
 
-> **Reading spend:** `spendSource: "measured"` is platform-measured model spend; `"assumed_cap"` means the trial's spend could not be measured yet, so the per-trial cap is reported conservatively (`modelUsage.maxModelSpendUsd`). Fresh trials can briefly show the cap while metering catches up.
+> **Reading spend:** `spendSource: "measured"` is platform-measured model spend; `"assumed_cap"` means the trial's spend could not be measured yet, so the per-trial cap is reported conservatively (`modelUsage.maxTrialSpendUsd`). Fresh trials can briefly show the cap while metering catches up.
 
 Fetch a trial's recorded event timeline:
 
@@ -288,7 +289,7 @@ npx evolve-evals run \
     --agent codex:gpt-5.5 \
     --agent claude:fable \
     --concurrency 4 \
-    --max-spend 25 \
+    --max-trial-spend 25 \
     --watch
 ```
 
@@ -299,8 +300,7 @@ Run flags, in the order you decide them:
 - `--agent <harness:model[:version]>` — required; repeat once per agent. The optional third part pins the harness version (`codex:gpt-5.5:0.29.0`); omit it to resolve the latest
 - `--runs <n>` — runs per task × agent (default 1)
 - `--concurrency <n>` — parallel trials (default 1)
-- `--max-spend <usd>` — job-wide model-spend cap (default: the platform's $500)
-- `--max-spend-per-run <usd>` — per-trial cap
+- `--max-trial-spend <usd>` — model-spend cap for each trial (default: the platform's $200)
 - `--provider <e2b|daytona|modal>` — default `e2b`
 - `--watch` — stream events until the job finishes
 
@@ -385,7 +385,7 @@ const job = await evals.run({
             model: "gpt-5.5",
         },
     ],
-    maxModelSpendUsd: 25,
+    maxTrialSpendUsd: 25,
     sandboxProvider: "daytona",   // "e2b" (default) | "daytona" | "modal"
 });
 ```
@@ -479,7 +479,7 @@ const job = await evals.run({
             model: "gpt-5.5",
         },
     ],
-    maxModelSpendUsd: 25,
+    maxTrialSpendUsd: 25,
 });
 ```
 
@@ -610,7 +610,7 @@ const job = await evals.run({
             model: "gpt-5.5",
         },
     ],
-    maxModelSpendUsd: 25,
+    maxTrialSpendUsd: 25,
 });
 ```
 
@@ -777,10 +777,10 @@ interface Job {
     agents?: JobAgent[];                     // get() only
     runsPerTask: number;
     concurrency: number;
-    maxModelSpendUsd: number;                // the cap that applied: yours, or the platform default
-    maxModelSpendUsdPerTrial?: number;       // when one was set
+    maxTrialSpendUsd: number;                // the per-trial cap that applied: yours, or the default
+    worstCaseSpendUsd: number;               // trials x the cap — the most this job can cost
     sandboxProvider: EvalSandboxProvider;
-    spentUsd: number;
+    spentUsd: number;                        // what the trials have spent so far
     counts: { agents: number; tasks: number; trials: number };
     trialCounts?: Partial<Record<TrialStatus, number>>;  // get/list
     meanReward?: number | null;              // get/list; mean over SCORED trials, null when none
@@ -816,9 +816,9 @@ interface TrialDetail extends Trial {        // evals.trial(id, trialId)
 }
 
 interface ModelUsage {                       // one money vocabulary: caps are
-    spentUsd?: number;                       // maxModelSpend*, actuals are spentUsd
+    spentUsd?: number;                       // the cap is maxTrialSpendUsd, actuals are spentUsd
     spendSource?: "measured" | "assumed_cap";
-    maxModelSpendUsd?: number;               // the per-trial cap that applied to this trial
+    maxTrialSpendUsd?: number;               // the per-trial cap that applied to this trial
     [key: string]: unknown;                  // open map: harness-specific keys may appear
 }
 

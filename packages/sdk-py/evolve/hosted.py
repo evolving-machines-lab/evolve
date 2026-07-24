@@ -195,14 +195,17 @@ class Job:
     benchmark: str
     runs_per_task: int
     concurrency: int
-    max_model_spend_usd: float
+    #: The resolved per-trial cap every trial of this job runs under.
+    max_trial_spend_usd: float
+    #: The most this job can cost: trials x the per-trial cap. There is no
+    #: job-wide budget, so this product is the real ceiling.
+    worst_case_spend_usd: float
     #: Sandbox provider this job runs on ("e2b" | "daytona" | "modal").
     sandbox_provider: str
+    #: What the trials have actually spent so far (reporting, not a limit).
     spent_usd: float
     counts: JobCounts
     created_at: str
-    # Per-trial model-spend cap, when one was set
-    max_model_spend_usd_per_trial: Optional[float] = None
     trial_counts: Optional[Dict[str, int]] = None
     # Mean reward over SCORED runs only; None when none. Zero is a reward. (get/list)
     mean_reward: Optional[float] = None
@@ -216,17 +219,18 @@ class Job:
 @dataclass
 class ModelUsage:
     """Model usage/spend recorded for a trial — purely spend/usage, in the
-    one money vocabulary (caps are max_model_spend*, actuals are spent_usd).
+    one money vocabulary (the cap is max_trial_spend_usd, actuals are
+    spent_usd).
 
     ``spend_source`` is "measured" (measured model spend reported by the
-    platform) or "assumed_cap" (spend could not be measured for this run, so
-    the per-run cap is reported). Harness-specific keys land in ``extra`` with
-    snake_case keys.
+    platform) or "assumed_cap" (spend could not be measured for this trial, so
+    the per-trial cap is reported). Harness-specific keys land in ``extra``
+    with snake_case keys.
     """
     spent_usd: Optional[float] = None
     spend_source: Optional[str] = None
-    # The per-run model-spend cap that applied to this run
-    max_model_spend_usd: Optional[float] = None
+    # The per-trial model-spend cap that applied to this trial
+    max_trial_spend_usd: Optional[float] = None
     extra: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -539,12 +543,12 @@ def _map_job(data: Dict[str, Any]) -> Job:
         benchmark=data.get('benchmark', ''),
         runs_per_task=int(data.get('runsPerTask', 0)),
         concurrency=int(data.get('concurrency', 0)),
-        max_model_spend_usd=float(data.get('maxModelSpendUsd', 0)),
+        max_trial_spend_usd=float(data.get('maxTrialSpendUsd', 0)),
+        worst_case_spend_usd=float(data.get('worstCaseSpendUsd', 0)),
         sandbox_provider=data.get('sandboxProvider', ''),
         spent_usd=float(data.get('spentUsd', 0)),
         counts=_map_counts(data.get('counts')),
         created_at=data.get('createdAt', ''),
-        max_model_spend_usd_per_trial=data.get('maxModelSpendUsdPerTrial'),
         trial_counts=data.get('trialCounts'),
         mean_reward=data.get('meanReward'),
         agents=(
@@ -559,7 +563,7 @@ def _map_job(data: Dict[str, Any]) -> Job:
     )
 
 
-_MODEL_USAGE_WIRE_KEYS = {'spentUsd', 'spendSource', 'maxModelSpendUsd'}
+_MODEL_USAGE_WIRE_KEYS = {'spentUsd', 'spendSource', 'maxTrialSpendUsd'}
 
 
 def _map_model_usage(data: Any) -> Optional[ModelUsage]:
@@ -568,7 +572,7 @@ def _map_model_usage(data: Any) -> Optional[ModelUsage]:
     return ModelUsage(
         spent_usd=data.get('spentUsd'),
         spend_source=data.get('spendSource'),
-        max_model_spend_usd=data.get('maxModelSpendUsd'),
+        max_trial_spend_usd=data.get('maxTrialSpendUsd'),
         extra={
             _snake_key(key): value
             for key, value in data.items()
@@ -1170,7 +1174,7 @@ class CustomHarnessesClient:
             await jobs_client.run(
                 benchmark='deep-swe',
                 agents=[JobAgent(harness='acme-cli', model='gpt-5.5')],
-                max_model_spend_usd=25,
+                max_trial_spend_usd=25,
             )
     """
 
@@ -1314,7 +1318,7 @@ class JobsClient:
             job = await j.run(
                 benchmark='deep-swe@1.1',
                 agents=[JobAgent(harness='codex', model='gpt-5.5')],
-                max_model_spend_usd=25,
+                max_trial_spend_usd=25,
             )
             final = await j.watch(job.id)
     """
@@ -1339,8 +1343,7 @@ class JobsClient:
         agents: List[Union[JobAgent, Dict[str, Any]]],
         runs_per_task: Optional[int] = None,
         concurrency: Optional[int] = None,
-        max_model_spend_usd: Optional[float] = None,
-        max_model_spend_usd_per_trial: Optional[float] = None,
+        max_trial_spend_usd: Optional[float] = None,
         sandbox_provider: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> Job:
@@ -1350,10 +1353,12 @@ class JobsClient:
         version) or ``"name@version"``; the response always echoes
         ``"name@version"``. ``agents`` accepts :class:`JobAgent`
         instances or plain dicts with the same fields (``harness``, ``model``,
-        optional ``harness_version``). ``max_model_spend_usd`` is optional:
-        omitted, the server applies its own default ($500, operator-tunable),
-        and the response echoes the RESOLVED cap either way, so an omitted one
-        is never invisible. Supports Idempotency-Key.
+        optional ``harness_version``). ``max_trial_spend_usd`` caps EACH
+        trial and is the platform's only spend enforcement; omitted, the server
+        applies its own default ($200, operator-tunable). The response echoes
+        the RESOLVED cap either way, so an omitted one is never invisible, and
+        reports the resulting worst case for the whole job. Supports
+        Idempotency-Key.
         """
         body: Dict[str, Any] = {'benchmark': benchmark}
         if tasks is not None:
@@ -1366,10 +1371,8 @@ class JobsClient:
             body['runsPerTask'] = runs_per_task
         if concurrency is not None:
             body['concurrency'] = concurrency
-        if max_model_spend_usd is not None:
-            body['maxModelSpendUsd'] = max_model_spend_usd
-        if max_model_spend_usd_per_trial is not None:
-            body['maxModelSpendUsdPerTrial'] = max_model_spend_usd_per_trial
+        if max_trial_spend_usd is not None:
+            body['maxTrialSpendUsd'] = max_trial_spend_usd
         if sandbox_provider is not None:
             body['sandboxProvider'] = sandbox_provider
         headers = {'Idempotency-Key': idempotency_key} if idempotency_key else None

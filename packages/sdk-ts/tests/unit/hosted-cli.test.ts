@@ -163,8 +163,7 @@ function testParseRunFull() {
     "--tasks", "task-a, task-b",
     "--runs", "2",
     "--concurrency", "4",
-    "--max-spend", "25",
-    "--max-spend-per-run", "5",
+    "--max-trial-spend", "25",
     "--provider", "daytona",
     "--watch",
     "--json",
@@ -186,8 +185,7 @@ function testParseRunFull() {
       ],
       runsPerTask: 2,
       concurrency: 4,
-      maxModelSpendUsd: 25,
-      maxModelSpendUsdPerTrial: 5,
+      maxTrialSpendUsd: 25,
       sandboxProvider: "daytona",
     },
     "builds the job input (csv tasks trimmed, per-trial cap + provider mapped)"
@@ -200,8 +198,7 @@ function testParseRunFull() {
       "agents",
       "runsPerTask",
       "concurrency",
-      "maxModelSpendUsd",
-      "maxModelSpendUsdPerTrial",
+      "maxTrialSpendUsd",
       "sandboxProvider",
     ],
     "body keys follow the contract field order"
@@ -214,7 +211,7 @@ function testParseRunMinimal() {
     "run",
     "--benchmark=deep-swe@1.1",
     "--agent=codex:gpt-5.5",
-    "--max-spend=25",
+    "--max-trial-spend=25",
   ]);
   const input = buildJobInput(inv);
   assertEqual(
@@ -222,19 +219,18 @@ function testParseRunMinimal() {
     {
       benchmark: "deep-swe@1.1",
       agents: [{ harness: "codex", model: "gpt-5.5" }],
-      maxModelSpendUsd: 25,
+      maxTrialSpendUsd: 25,
     },
     "--flag=value syntax works; optional fields absent"
   );
   assert(!("tasks" in input), "no tasks key when --tasks omitted");
-  assert(!("maxModelSpendUsdPerTrial" in input), "no per-trial cap key when omitted");
   assert(!("sandboxProvider" in input), "no provider key when --provider omitted");
 }
 
 function testParseRunNoSpendCap() {
-  console.log("\n--- parseArgs + buildJobInput: --max-spend is optional ---");
+  console.log("\n--- parseArgs + buildJobInput: --max-trial-spend is optional ---");
   // Not in the run command's required list: the server applies its own default
-  // ($500, operator-tunable) and echoes the resolved cap back.
+  // ($200 per trial, operator-tunable) and echoes the resolved cap back.
   const inv = parseArgs(["run", "--benchmark", "deep-swe@1.1", "--agent", "codex:gpt-5.5"]);
   const input = buildJobInput(inv);
   assertEqual(
@@ -243,11 +239,14 @@ function testParseRunNoSpendCap() {
       benchmark: "deep-swe@1.1",
       agents: [{ harness: "codex", model: "gpt-5.5" }],
     },
-    "run parses without --max-spend"
+    "run parses without --max-trial-spend"
   );
   // ABSENT, never a null/undefined key: an explicit null would defeat the
   // server-side default the omission is asking for.
-  assert(!("maxModelSpendUsd" in input), "no cap key on the body when --max-spend is omitted");
+  assert(
+    !("maxTrialSpendUsd" in input),
+    "no cap key on the body when --max-trial-spend is omitted"
+  );
 }
 
 function testParseJobAgent() {
@@ -277,19 +276,19 @@ function testParseErrors() {
   assertThrowsUsage(() => parseArgs([]), "No command", "empty argv");
   assertThrowsUsage(() => parseArgs(["frobnicate"]), "Unknown command", "unknown command");
   assertThrowsUsage(
-    () => parseArgs(["run", "--benchmark", "b", "--max-spend", "25"]),
+    () => parseArgs(["run", "--benchmark", "b", "--max-trial-spend", "25"]),
     "--agent",
     "run without --agent"
   );
   assertThrowsUsage(
-    () => parseArgs(["run", "--agent", "c:m", "--max-spend", "25"]),
+    () => parseArgs(["run", "--agent", "c:m", "--max-trial-spend", "25"]),
     "--benchmark",
     "run without --benchmark"
   );
   assertThrowsUsage(
-    () => parseArgs(["run", "--benchmark", "b", "--agent", "c:m", "--max-spend", "lots"]),
+    () => parseArgs(["run", "--benchmark", "b", "--agent", "c:m", "--max-trial-spend", "lots"]),
     "expects a number",
-    "non-numeric --max-spend"
+    "non-numeric --max-trial-spend"
   );
   assertThrowsUsage(
     () => parseArgs(["list", "--frob", "x"]),
@@ -608,8 +607,7 @@ async function testRunWatchEndToEnd() {
         benchmark: "deep-swe@1.1",
         runsPerTask: 1,
         concurrency: 4,
-        maxModelSpendUsd: 25,
-        maxModelSpendUsdPerTrial: 5,
+        maxTrialSpendUsd: 25,
         sandboxProvider: "e2b",
         spentUsd: 1.5,
         counts: { agents: 1, tasks: 2, trials: 2 },
@@ -625,7 +623,7 @@ async function testRunWatchEndToEnd() {
         benchmark: "deep-swe@1.1",
         runsPerTask: 1,
         concurrency: 4,
-        maxModelSpendUsd: 25,
+        maxTrialSpendUsd: 25,
         sandboxProvider: "e2b",
         spentUsd: 0,
         counts: { agents: 1, tasks: 2, trials: 2 },
@@ -641,8 +639,7 @@ async function testRunWatchEndToEnd() {
         "--agent", "codex:gpt-5.5",
         "--runs", "1",
         "--concurrency", "4",
-        "--max-spend", "25",
-        "--max-spend-per-run", "5",
+        "--max-trial-spend", "25",
         "--watch",
         "--api-key", "test-key",
         "--base-url", BASE,
@@ -664,8 +661,7 @@ async function testRunWatchEndToEnd() {
         agents: [{ harness: "codex", model: "gpt-5.5" }],
         runsPerTask: 1,
         concurrency: 4,
-        maxModelSpendUsd: 25,
-        maxModelSpendUsdPerTrial: 5,
+        maxTrialSpendUsd: 25,
       },
       "create body matches the CLI flags (contract field order, incl. per-trial cap)"
     );
@@ -708,7 +704,7 @@ async function testRunWatchJsonNdjson() {
         benchmark: "deep-swe@1.1",
         runsPerTask: 1,
         concurrency: 1,
-        maxModelSpendUsd: 25,
+        maxTrialSpendUsd: 25,
         sandboxProvider: "e2b",
         spentUsd: 0,
         createdAt: "2026-07-22T00:00:00.000Z",
@@ -722,7 +718,7 @@ async function testRunWatchJsonNdjson() {
         benchmark: "deep-swe@1.1",
         runsPerTask: 1,
         concurrency: 1,
-        maxModelSpendUsd: 25,
+        maxTrialSpendUsd: 25,
         sandboxProvider: "e2b",
         spentUsd: 0,
         createdAt: "2026-07-22T00:00:00.000Z",
@@ -731,7 +727,7 @@ async function testRunWatchJsonNdjson() {
 
     const { io, out } = captureIO();
     const code = await runCli(
-      ["run", "--benchmark", "deep-swe@1.1", "--agent", "codex:gpt-5.5", "--max-spend", "25",
+      ["run", "--benchmark", "deep-swe@1.1", "--agent", "codex:gpt-5.5", "--max-trial-spend", "25",
        "--watch", "--json", "--api-key", "test-key", "--base-url", BASE],
       io
     );

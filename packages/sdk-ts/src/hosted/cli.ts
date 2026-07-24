@@ -72,8 +72,7 @@ Run options:
   --agent <harness:model[:version]>   Agent; repeatable (at least one required)
   --runs <n>                          Runs per task x agent (default 1)
   --concurrency <n>                   Parallel trials (default 1)
-  --max-spend <usd>                   Job-wide model-spend cap (default: the server's, $500)
-  --max-spend-per-run <usd>           Per-trial model-spend cap
+  --max-trial-spend <usd>             Model-spend cap for EACH trial (default: the server's, $200)
   --provider <e2b|daytona|modal>      e2b | daytona | modal, default e2b
   --watch                             Stream events until the job finishes
 
@@ -154,8 +153,7 @@ const COMMAND_SPECS: Record<string, CommandSpec> = {
       agent: "repeat",
       runs: "number",
       concurrency: "number",
-      "max-spend": "number",
-      "max-spend-per-run": "number",
+      "max-trial-spend": "number",
       provider: "string",
       watch: "boolean",
     },
@@ -359,8 +357,7 @@ export function parseJobAgent(spec: string): JobAgent {
 /**
  * Build the POST /api/jobs body from a parsed `run` invocation.
  * Keys follow the contract field order: benchmark, tasks, agents,
- * runsPerTask, concurrency, maxModelSpendUsd, maxModelSpendUsdPerTrial,
- * sandboxProvider.
+ * runsPerTask, concurrency, maxTrialSpendUsd, sandboxProvider.
  */
 export function buildJobInput(inv: Invocation): JobInput {
   const f = inv.flags;
@@ -380,9 +377,8 @@ export function buildJobInput(inv: Invocation): JobInput {
     agents: (f.agent as string[]).map(parseJobAgent),
     ...(f.runs !== undefined ? { runsPerTask: f.runs as number } : {}),
     ...(f.concurrency !== undefined ? { concurrency: f.concurrency as number } : {}),
-    ...(f["max-spend"] !== undefined ? { maxModelSpendUsd: f["max-spend"] as number } : {}),
-    ...(f["max-spend-per-run"] !== undefined
-      ? { maxModelSpendUsdPerTrial: f["max-spend-per-run"] as number }
+    ...(f["max-trial-spend"] !== undefined
+      ? { maxTrialSpendUsd: f["max-trial-spend"] as number }
       : {}),
     ...(f.provider !== undefined
       ? { sandboxProvider: f.provider as JobInput["sandboxProvider"] }
@@ -533,10 +529,8 @@ function jobLines(e: Job): string[] {
   }
   rows.push(["runs/task", String(e.runsPerTask)]);
   rows.push(["concurrency", String(e.concurrency)]);
-  rows.push(["max spend", fmtUsd(e.maxModelSpendUsd)]);
-  if (e.maxModelSpendUsdPerTrial !== undefined) {
-    rows.push(["max spend/trial", fmtUsd(e.maxModelSpendUsdPerTrial)]);
-  }
+  rows.push(["max spend/trial", fmtUsd(e.maxTrialSpendUsd)]);
+  rows.push(["worst case", fmtUsd(e.worstCaseSpendUsd)]);
   rows.push(["provider", e.sandboxProvider]);
   rows.push(["spent", fmtUsd(e.spentUsd)]);
   if (e.meanReward !== undefined) {

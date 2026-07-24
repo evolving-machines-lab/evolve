@@ -106,7 +106,8 @@ RUN_SUMMARY = {
     'benchmark': 'deep-swe@1.1',
     'runsPerTask': 1,
     'concurrency': 4,
-    'maxModelSpendUsd': 25,
+    'maxTrialSpendUsd': 25,
+    'worstCaseSpendUsd': 125,
     'sandboxProvider': 'e2b',
     'spentUsd': 0,
     'counts': {'agents': 1, 'tasks': 5, 'trials': 5},
@@ -596,7 +597,7 @@ class TestJobs:
                 agents=[JobAgent(harness='codex', model='gpt-5.5')],
                 runs_per_task=1,
                 concurrency=4,
-                max_model_spend_usd=25,
+                max_trial_spend_usd=25,
                 idempotency_key='idem-abc',
             )
 
@@ -609,11 +610,11 @@ class TestJobs:
             'agents': [{'harness': 'codex', 'model': 'gpt-5.5'}],
             'runsPerTask': 1,
             'concurrency': 4,
-            'maxModelSpendUsd': 25,
+            'maxTrialSpendUsd': 25,
         }
         # Wire body is emitted in the contract's field order
         assert list(body) == [
-            'benchmark', 'tasks', 'agents', 'runsPerTask', 'concurrency', 'maxModelSpendUsd',
+            'benchmark', 'tasks', 'agents', 'runsPerTask', 'concurrency', 'maxTrialSpendUsd',
         ]
         assert request.get_header('Idempotency-key') == 'idem-abc'
         assert job.id == 'job-1'
@@ -628,7 +629,7 @@ class TestJobs:
             await jobs_factory(CONFIG).run(
                 benchmark='deep-swe@1.1',
                 agents=[{'harness': 'codex', 'model': 'gpt-5.5', 'harness_version': '0.29.0'}],
-                max_model_spend_usd=25,
+                max_trial_spend_usd=25,
             )
 
         body = json.loads(fake.requests[0].data.decode('utf-8'))
@@ -640,7 +641,7 @@ class TestJobs:
             await jobs_factory(CONFIG).run(
                 benchmark='deep-swe@1.1',
                 agents=[{'harness': 'codex', 'model': 'gpt-5.5', 'harnessVersion': '0.29.0'}],
-                max_model_spend_usd=25,
+                max_trial_spend_usd=25,
             )
 
     @pytest.mark.asyncio
@@ -664,7 +665,7 @@ class TestJobs:
                     agents=[
                         JobAgent(harness='codex', model='gpt-5.5', harness_version='9.9.9'),
                     ],
-                    max_model_spend_usd=25,
+                    max_trial_spend_usd=25,
                 )
         assert exc.value.status == 404
         assert exc.value.code == 'harness_version_not_found'
@@ -714,7 +715,7 @@ class TestJobs:
                     agents=[
                         JobAgent(harness='codex', model='gpt-5.5', harness_version='^0.29.0'),
                     ],
-                    max_model_spend_usd=25,
+                    max_trial_spend_usd=25,
                 )
         assert exc.value.status == 400
         # A non-exact pin is invalid_input, not harness_version_not_found
@@ -728,7 +729,7 @@ class TestJobs:
             await jobs_factory(CONFIG).run(
                 benchmark='deep-swe',
                 agents=[JobAgent(harness='codex', model='gpt-5.5')],
-                max_model_spend_usd=25,
+                max_trial_spend_usd=25,
             )
 
         body = json.loads(fake.requests[0].data.decode('utf-8'))
@@ -1191,27 +1192,29 @@ class TestJobs:
     @pytest.mark.asyncio
     async def test_run_posts_per_trial_cap(self):
         fake = FakeUrlopen([
-            ('/api/jobs', {**RUN_SUMMARY, 'maxModelSpendUsdPerTrial': 2}),
+            ('/api/jobs', {**RUN_SUMMARY, 'maxTrialSpendUsd': 2, 'worstCaseSpendUsd': 10}),
         ])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
             job = await jobs_factory(CONFIG).run(
                 benchmark='deep-swe@1.1',
                 agents=[JobAgent(harness='codex', model='gpt-5.5')],
-                max_model_spend_usd=25,
-                max_model_spend_usd_per_trial=2,
+                max_trial_spend_usd=2,
             )
 
         body = json.loads(fake.requests[0].data.decode('utf-8'))
-        assert body['maxModelSpendUsdPerTrial'] == 2
-        assert list(body) == ['benchmark', 'agents', 'maxModelSpendUsd', 'maxModelSpendUsdPerTrial']
-        assert job.max_model_spend_usd_per_trial == 2
+        assert body['maxTrialSpendUsd'] == 2
+        assert list(body) == ['benchmark', 'agents', 'maxTrialSpendUsd']
+        assert job.max_trial_spend_usd == 2
+        # The cap alone does not say what the JOB can cost; the server does.
+        assert job.worst_case_spend_usd == 10
 
     @pytest.mark.asyncio
     async def test_run_omits_absent_spend_cap(self):
-        # max_model_spend_usd is optional: the server applies its own default
-        # ($500, operator-tunable) and the response echoes the RESOLVED cap.
+        # max_trial_spend_usd is optional: the server applies its own default
+        # ($200 per trial, operator-tunable) and the response echoes the
+        # RESOLVED cap plus the worst case it implies for this job.
         fake = FakeUrlopen([
-            ('/api/jobs', {**RUN_SUMMARY, 'maxModelSpendUsd': 500}),
+            ('/api/jobs', {**RUN_SUMMARY, 'maxTrialSpendUsd': 200, 'worstCaseSpendUsd': 1000}),
         ])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
             job = await jobs_factory(CONFIG).run(
@@ -1222,12 +1225,13 @@ class TestJobs:
         body = json.loads(fake.requests[0].data.decode('utf-8'))
         # ABSENT, never None: an explicit null would defeat the server-side
         # default the omission is asking for.
-        assert 'maxModelSpendUsd' not in body
+        assert 'maxTrialSpendUsd' not in body
         assert body == {
             'benchmark': 'deep-swe@1.1',
             'agents': [{'harness': 'codex', 'model': 'gpt-5.5'}],
         }
-        assert job.max_model_spend_usd == 500
+        assert job.max_trial_spend_usd == 200
+        assert job.worst_case_spend_usd == 1000
 
     @pytest.mark.asyncio
     async def test_run_forwards_stated_spend_cap(self):
@@ -1236,12 +1240,12 @@ class TestJobs:
             await jobs_factory(CONFIG).run(
                 benchmark='deep-swe@1.1',
                 agents=[JobAgent(harness='codex', model='gpt-5.5')],
-                max_model_spend_usd=25,
+                max_trial_spend_usd=25,
             )
 
         body = json.loads(fake.requests[0].data.decode('utf-8'))
-        assert body['maxModelSpendUsd'] == 25
-        assert list(body) == ['benchmark', 'agents', 'maxModelSpendUsd']
+        assert body['maxTrialSpendUsd'] == 25
+        assert list(body) == ['benchmark', 'agents', 'maxTrialSpendUsd']
 
     @pytest.mark.asyncio
     async def test_run_posts_sandbox_provider(self):
@@ -1252,7 +1256,7 @@ class TestJobs:
             job = await jobs_factory(CONFIG).run(
                 benchmark='deep-swe@1.1',
                 agents=[JobAgent(harness='codex', model='gpt-5.5')],
-                max_model_spend_usd=25,
+                max_trial_spend_usd=25,
                 sandbox_provider='daytona',
             )
 
@@ -1278,7 +1282,7 @@ class TestJobs:
                 'modelUsage': {
                     'spentUsd': 0.93,
                     'spendSource': 'measured',
-                    'maxModelSpendUsd': 2,
+                    'maxTrialSpendUsd': 2,
                     'inputTokens': 1234,
                 },
                 'sandboxProvider': 'e2b',
@@ -1299,10 +1303,11 @@ class TestJobs:
         assert run.verifier_mode == 'shared'
         assert run.phase_timings_ms == {'agent_ms': 203000, 'verify_ms': 41000}
         usage = run.model_usage
-        # One money vocabulary: actuals are spent_usd, caps are max_model_spend*
+        # One money vocabulary: actuals are spent_usd, the cap is
+        # max_trial_spend_usd
         assert usage.spent_usd == 0.93
         assert usage.spend_source == 'measured'
-        assert usage.max_model_spend_usd == 2
+        assert usage.max_trial_spend_usd == 2
         # Unknown harness-specific keys land in extra, snake_cased
         assert usage.extra == {'input_tokens': 1234}
         assert run.session_ref == 'sess-9'

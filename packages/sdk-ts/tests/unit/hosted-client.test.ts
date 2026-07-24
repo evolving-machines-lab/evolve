@@ -681,7 +681,8 @@ const RUN_SUMMARY = {
   benchmark: "deep-swe@1.1",
   runsPerTask: 1,
   concurrency: 4,
-  maxModelSpendUsd: 25,
+  maxTrialSpendUsd: 25,
+  worstCaseSpendUsd: 250,
   sandboxProvider: "daytona",
   spentUsd: 0,
   counts: { agents: 2, tasks: 5, trials: 10 },
@@ -704,8 +705,7 @@ async function testRunPostsInputContract() {
       ],
       runsPerTask: 1,
       concurrency: 4,
-      maxModelSpendUsd: 25,
-      maxModelSpendUsdPerTrial: 2.5,
+      maxTrialSpendUsd: 25,
       sandboxProvider: "daytona" as const,
     };
     const job = await e.run(input, { idempotencyKey: "idem-abc" });
@@ -714,9 +714,9 @@ async function testRunPostsInputContract() {
     assertEqual(call.init?.method, "POST", "uses POST");
     assertEqual(JSON.parse(call.init?.body as string), input, "body is the job input contract");
     assertEqual(
-      JSON.parse(call.init?.body as string).maxModelSpendUsdPerTrial,
-      2.5,
-      "maxModelSpendUsdPerTrial forwarded"
+      JSON.parse(call.init?.body as string).maxTrialSpendUsd,
+      25,
+      "maxTrialSpendUsd forwarded"
     );
     assertEqual(
       JSON.parse(call.init?.body as string).sandboxProvider,
@@ -754,7 +754,7 @@ async function testRunPostsInputContract() {
     const bare = await e.run({
       benchmark: "deep-swe",
       agents: [{ harness: "codex", model: "gpt-5.5" }],
-      maxModelSpendUsd: 25,
+      maxTrialSpendUsd: 25,
     });
     assertEqual(
       JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string).benchmark,
@@ -768,12 +768,15 @@ async function testRunPostsInputContract() {
 }
 
 async function testRunOmitsAbsentSpendCap() {
-  console.log("\n--- jobs().run() omits maxModelSpendUsd when it is not given ---");
+  console.log("\n--- jobs().run() omits maxTrialSpendUsd when it is not given ---");
   installMockFetch();
   try {
-    // The server's own default ($500, operator-tunable) applies, and the
-    // response echoes the RESOLVED cap.
-    setMockResponse("/api/jobs", { status: 202, body: { ...RUN_SUMMARY, maxModelSpendUsd: 500 } });
+    // The server's own default ($200 per trial, operator-tunable) applies, and
+    // the response echoes the RESOLVED cap plus the worst case it implies.
+    setMockResponse("/api/jobs", {
+      status: 202,
+      body: { ...RUN_SUMMARY, maxTrialSpendUsd: 200, worstCaseSpendUsd: 400 },
+    });
 
     const e = jobs({ apiKey: "test-key", baseUrl: BASE });
     const job = await e.run({
@@ -784,24 +787,29 @@ async function testRunOmitsAbsentSpendCap() {
     const body = JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string);
     // ABSENT, never null: an explicit null would defeat the server-side default
     // the omission is asking for.
-    assert(!("maxModelSpendUsd" in body), "no cap key on the wire when omitted");
+    assert(!("maxTrialSpendUsd" in body), "no cap key on the wire when omitted");
     assertEqual(
       body,
       { benchmark: "deep-swe@1.1", agents: [{ harness: "codex", model: "gpt-5.5" }] },
       "body carries only what was given"
     );
-    assertEqual(job.maxModelSpendUsd, 500, "response echoes the RESOLVED cap");
+    assertEqual(job.maxTrialSpendUsd, 200, "response echoes the RESOLVED per-trial cap");
+    assertEqual(
+      job.worstCaseSpendUsd,
+      400,
+      "response states the worst case the cap implies for this job"
+    );
 
     // A stated cap is still forwarded unchanged.
     await e.run({
       benchmark: "deep-swe@1.1",
       agents: [{ harness: "codex", model: "gpt-5.5" }],
-      maxModelSpendUsd: 25,
+      maxTrialSpendUsd: 25,
     });
     assertEqual(
-      JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string).maxModelSpendUsd,
+      JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string).maxTrialSpendUsd,
       25,
-      "a stated maxModelSpendUsd is forwarded"
+      "a stated maxTrialSpendUsd is forwarded"
     );
   } finally {
     restoreFetch();
@@ -818,7 +826,7 @@ async function testRunIdempotentReplay() {
     });
     const e = jobs({ apiKey: "test-key", baseUrl: BASE });
     const job = await e.run(
-      { benchmark: "deep-swe@1.1", agents: [{ harness: "codex", model: "gpt-5.5" }], maxModelSpendUsd: 25 },
+      { benchmark: "deep-swe@1.1", agents: [{ harness: "codex", model: "gpt-5.5" }], maxTrialSpendUsd: 25 },
       { idempotencyKey: "idem-abc" }
     );
     assertEqual(job.idempotentReplay, true, "idempotentReplay passed through");
@@ -846,7 +854,7 @@ async function testRunUnknownHarnessVersionIsTypedError() {
       await e.run({
         benchmark: "deep-swe",
         agents: [{ harness: "codex", model: "gpt-5.5", harnessVersion: "9.9.9" }],
-        maxModelSpendUsd: 25,
+        maxTrialSpendUsd: 25,
       });
     } catch (err: any) {
       threw = true;
@@ -912,7 +920,7 @@ async function testRunNonExactHarnessVersionIsTypedError() {
         benchmark: "deep-swe",
         // A range cannot hold a comparison still, so it is refused, not resolved.
         agents: [{ harness: "codex", model: "gpt-5.5", harnessVersion: "^0.29.0" }],
-        maxModelSpendUsd: 25,
+        maxTrialSpendUsd: 25,
       });
     } catch (err: any) {
       threw = true;
@@ -939,8 +947,8 @@ async function testGetJobDetail() {
         benchmark: "deep-swe@1.1",
         runsPerTask: 1,
         concurrency: 4,
-        maxModelSpendUsd: 25,
-        maxModelSpendUsdPerTrial: 2.5,
+        maxTrialSpendUsd: 2.5,
+        worstCaseSpendUsd: 25,
         sandboxProvider: "modal",
         spentUsd: 3.5,
         agents: [
@@ -964,7 +972,8 @@ async function testGetJobDetail() {
       "no benchmark-lifecycle internals on the job"
     );
     assertEqual(job.meanReward, 0.75, "maps meanReward (SCORED-only mean)");
-    assertEqual(job.maxModelSpendUsdPerTrial, 2.5, "maps maxModelSpendUsdPerTrial");
+    assertEqual(job.maxTrialSpendUsd, 2.5, "maps maxTrialSpendUsd");
+    assertEqual(job.worstCaseSpendUsd, 25, "maps worstCaseSpendUsd (trials x the cap)");
     assertEqual(job.sandboxProvider, "modal", "maps sandboxProvider");
     assertEqual(job.spentUsd, 3.5, "maps spentUsd");
     assertEqual(
@@ -1691,7 +1700,7 @@ async function testTrialDetail() {
         failurePhase: null,
         failureDetail: "x".repeat(5000), // detail route: untruncated
         phaseTimingsMs: { agentMs: 203000, verifyMs: 31000 },
-        modelUsage: { spentUsd: 0.93, spendSource: "measured", maxModelSpendUsd: 2.5 },
+        modelUsage: { spentUsd: 0.93, spendSource: "measured", maxTrialSpendUsd: 2.5 },
         sandboxProvider: "e2b",
         verifierMode: "shared",
         resolvedHarnessVersion: "codex-cli 0.145.0",
@@ -1714,7 +1723,11 @@ async function testTrialDetail() {
     assertEqual(run.sandboxProvider, "e2b", "maps sandboxProvider");
     assertEqual(run.verifierMode, "shared", "maps verifierMode");
     assertEqual(run.modelUsage?.spentUsd, 0.93, "one money vocabulary: actuals are spentUsd");
-    assertEqual(run.modelUsage?.maxModelSpendUsd, 2.5, "one money vocabulary: caps are maxModelSpend*");
+    assertEqual(
+      run.modelUsage?.maxTrialSpendUsd,
+      2.5,
+      "one money vocabulary: the cap is maxTrialSpendUsd"
+    );
     assertEqual(run.sessionRef, "sess-9", "maps sessionRef");
     assertEqual(run.failureDetail?.length, 5000, "failureDetail untruncated on the detail route");
     assertEqual(run.reward, 1, "maps reward");

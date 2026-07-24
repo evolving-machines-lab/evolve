@@ -43,7 +43,7 @@ async with jobs() as evals:
             ),
         ],
         concurrency=4,
-        max_model_spend_usd=25,
+        max_trial_spend_usd=25,
     )
     print(job.id, job.status)   # QUEUED
     print(job.benchmark)        # 'deep-swe@1.1' — the resolved version, echoed back
@@ -60,12 +60,13 @@ Tasks expose public fields only — `task_key`, `agent_timeout_sec`, `verifier_t
 | `tasks` | all tasks | task keys to run |
 | `runs_per_task` | `1` | runs per task × agent |
 | `concurrency` | `1` | parallel trials |
-| `max_model_spend_usd` | `500` | hard model-spend cap (USD) for the whole job |
-| `max_model_spend_usd_per_trial` | none | model-spend cap (USD) per trial |
+| `max_trial_spend_usd` | `200` | hard model-spend cap (USD) for EACH trial |
 | `sandbox_provider` | `'e2b'` | see [Where it runs](#where-it-runs) |
 | `idempotency_key` | none | safe-retry key (below) |
 
-Leave `max_model_spend_usd` out and the platform applies its own cap of $500 for the whole job. The response always reports the cap that actually applied — `job.max_model_spend_usd` — so an omitted one is never a mystery.
+`max_trial_spend_usd` caps what a single trial may spend on model calls, and it is the only spend limit the platform enforces: it becomes the budget of the gateway key that trial runs on. Leave it out and the platform applies $200 per trial. The response always reports the cap that actually applied — `job.max_trial_spend_usd` — so an omitted one is never a mystery.
+
+There is no job-wide budget, which means a job's real ceiling is simply its trial count times that cap. The response states it for you as `job.worst_case_spend_usd`, so you can see what a large matrix commits you to before it starts running. Your account credit balance is the hard backstop underneath all of it: when the balance runs out, spending stops mid-job whatever the caps say. A trial that exhausts its own cap is not a failure — the harness just runs out of budget, and the trial is still scored on whatever it produced.
 
 A job expands to `tasks × agents × runs_per_task` trials, each in its own sandbox. Valid harness + model pairs are listed once in [Getting Started → Harness and Model Pairing](./01-getting-started.md#harness-and-model-pairing). `harness` also accepts a harness you registered yourself — see [Bring your own harness](#bring-your-own-harness).
 
@@ -134,7 +135,7 @@ print(final.status, final.mean_reward, final.spent_usd)
 detail = await evals.get(job.id)
 print(detail.trial_counts)                # {'SCORED': 12, 'RUNNING': 3, 'QUEUED': 5}
 print(detail.mean_reward)                 # mean over SCORED trials; None until something scores
-print(detail.spent_usd, '/', detail.max_model_spend_usd)
+print(detail.spent_usd, '/', detail.worst_case_spend_usd)
 
 # Your jobs, newest first
 async for item in evals.list():
@@ -172,7 +173,7 @@ print(detail.metrics)             # named sub-scores
 print(detail.phase_timings_ms)    # {'agent_ms': ..., 'verify_ms': ...}
 ```
 
-Read per-trial spend from `model_usage` — one money vocabulary everywhere: caps are `max_model_spend*`, actuals are `spent_usd`. `spend_source='measured'` is platform-measured spend; `'assumed_cap'` means spend could not be measured yet, so the value conservatively assumes the trial's cap:
+Read per-trial spend from `model_usage` — one money vocabulary everywhere: the cap is `max_trial_spend_usd`, actuals are `spent_usd`. `spend_source='measured'` is platform-measured spend; `'assumed_cap'` means spend could not be measured yet, so the value conservatively assumes the trial's cap:
 
 ```python
 if detail.model_usage:
@@ -312,7 +313,7 @@ job = await evals.run(
             model='gpt-5.5',
         ),
     ],
-    max_model_spend_usd=25,
+    max_trial_spend_usd=25,
     sandbox_provider='daytona',   # 'e2b' (default) | 'daytona' | 'modal'
 )
 ```
@@ -390,7 +391,7 @@ job = await evals.run(
             model='gpt-5.5',
         ),
     ],
-    max_model_spend_usd=25,
+    max_trial_spend_usd=25,
 )
 ```
 
@@ -523,7 +524,7 @@ async with jobs() as evals:
                 model='gpt-5.5',
             ),
         ],
-        max_model_spend_usd=25,
+        max_trial_spend_usd=25,
     )
 ```
 
@@ -644,12 +645,12 @@ class Job:
     benchmark: str                        # 'name@version'
     runs_per_task: int
     concurrency: int
-    max_model_spend_usd: float            # the cap that applied: yours, or the platform default
+    max_trial_spend_usd: float            # the per-trial cap that applied: yours, or the default
+    worst_case_spend_usd: float           # trials x the cap — the most this job can cost
     sandbox_provider: str                 # 'e2b' | 'daytona' | 'modal'
-    spent_usd: float
+    spent_usd: float                      # what the trials have spent so far
     counts: JobCounts                     # agents, tasks, trials
     created_at: str
-    max_model_spend_usd_per_trial: float | None
     trial_counts: dict | None             # histogram by trial status (get/list)
     mean_reward: float | None             # mean over SCORED trials; None when none (get/list)
     agents: list[JobAgent] | None         # get() only
@@ -689,10 +690,10 @@ class TrialDetail(Trial):                 # trial(id, trial_id)
     job_id: str                           # failure_detail is untruncated here
 
 @dataclass
-class ModelUsage:                         # one money vocabulary: caps are
-    spent_usd: float | None               # max_model_spend*, actuals are spent_usd
+class ModelUsage:                         # one money vocabulary: the cap is
+    spent_usd: float | None               # max_trial_spend_usd, actuals are spent_usd
     spend_source: str | None              # 'measured' | 'assumed_cap'
-    max_model_spend_usd: float | None     # the per-trial cap that applied to this trial
+    max_trial_spend_usd: float | None     # the per-trial cap that applied to this trial
     extra: dict                           # harness-specific keys, snake_case
 
 @dataclass
@@ -760,7 +761,7 @@ Every API failure raises `EvolveAPIError` — the server's own sentence as the m
 from evolve import EvolveAPIError
 
 try:
-    await evals.run(benchmark='deep-swe', agents=[...], max_model_spend_usd=25)
+    await evals.run(benchmark='deep-swe', agents=[...], max_trial_spend_usd=25)
 except EvolveAPIError as error:
     print(error.status)   # e.g. 409
     print(error.code)     # e.g. 'version_not_ready', 'provider_unsupported', 'rate_limited'

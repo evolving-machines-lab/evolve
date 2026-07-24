@@ -278,15 +278,13 @@ function mapJob(raw: Record<string, unknown>): Job {
     benchmark: raw.benchmark as string,
     runsPerTask: raw.runsPerTask as number,
     concurrency: raw.concurrency as number,
-    maxModelSpendUsd: raw.maxModelSpendUsd as number,
+    maxTrialSpendUsd: raw.maxTrialSpendUsd as number,
+    worstCaseSpendUsd: raw.worstCaseSpendUsd as number,
     sandboxProvider: raw.sandboxProvider as EvalSandboxProvider,
     spentUsd: (raw.spentUsd as number) ?? 0,
     createdAt: raw.createdAt as string,
     counts: raw.counts as Job["counts"],
   };
-  if (typeof raw.maxModelSpendUsdPerTrial === "number") {
-    job.maxModelSpendUsdPerTrial = raw.maxModelSpendUsdPerTrial;
-  }
   if (raw.trialCounts && typeof raw.trialCounts === "object") {
     job.trialCounts = raw.trialCounts as TrialCounts;
   }
@@ -761,7 +759,7 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
  * await jobs().run({
  *   benchmark: "deep-swe",
  *   agents: [{ harness: "acme-cli", model: "gpt-5.5" }],
- *   maxModelSpendUsd: 25,
+ *   maxTrialSpendUsd: 25,
  * });
  * ```
  */
@@ -858,7 +856,7 @@ export function customHarnesses(config?: HostedClientConfig): CustomHarnessesCli
  *   agents: [{ harness: "codex", model: "gpt-5.5" }],
  *   runsPerTask: 1,
  *   concurrency: 4,
- *   maxModelSpendUsd: 25,
+ *   maxTrialSpendUsd: 25,
  * });
  * const final = await client.watch(job.id, {
  *   onEvent: (event) => console.log(event.type, event.data),

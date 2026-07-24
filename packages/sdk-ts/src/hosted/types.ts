@@ -165,13 +165,14 @@ export interface JobInput {
   /** Parallel trials (default: 1) */
   concurrency?: number;
   /**
-   * Hard model-spend cap in USD for the whole job. Optional: omitted,
-   * the server applies its own default ($500, operator-tunable). The response
-   * echoes the RESOLVED cap either way, so an omitted one is never invisible.
+   * Hard model-spend cap in USD for EACH TRIAL — the platform's only spend
+   * enforcement, applied as the budget of the gateway key that trial runs on.
+   * Optional: omitted, the server applies its own default ($200,
+   * operator-tunable). The response echoes the RESOLVED cap either way, so an
+   * omitted one is never invisible, and states the resulting worst case for
+   * the job as a whole.
    */
-  maxModelSpendUsd?: number;
-  /** Optional per-trial model-spend cap in USD */
-  maxModelSpendUsdPerTrial?: number;
+  maxTrialSpendUsd?: number;
   /** Sandbox provider to run on (optional; server default: `e2b`) */
   sandboxProvider?: EvalSandboxProvider;
 }
@@ -195,11 +196,17 @@ export interface Job {
   agents?: JobAgent[];
   runsPerTask: number;
   concurrency: number;
-  maxModelSpendUsd: number;
-  /** Per-trial model-spend cap, when one was set */
-  maxModelSpendUsdPerTrial?: number;
+  /** The resolved per-trial cap every trial of this job runs under */
+  maxTrialSpendUsd: number;
+  /**
+   * The most this job can cost: its trial count times the per-trial cap. There
+   * is no job-wide budget, so this product is the real ceiling — stated here
+   * rather than left to you to multiply.
+   */
+  worstCaseSpendUsd: number;
   /** Sandbox provider this job runs on */
   sandboxProvider: EvalSandboxProvider;
+  /** What the trials have actually spent so far (reporting, not a limit) */
   spentUsd: number;
   createdAt: string;
   /** Job size: agents x tasks -> trials (present on every shape) */
@@ -227,8 +234,8 @@ export type SpendSource = "measured" | "assumed_cap";
 
 /**
  * Model usage/spend recorded for a trial — purely spend/usage, in the one
- * money vocabulary (caps are maxModelSpend*, actuals are spentUsd). Open map:
- * harness-specific keys may appear.
+ * money vocabulary (the cap is maxTrialSpendUsd, actuals are spentUsd). Open
+ * map: harness-specific keys may appear.
  */
 export interface ModelUsage {
   /** Model spend in USD for this trial */
@@ -236,7 +243,7 @@ export interface ModelUsage {
   /** Where the spend figure came from */
   spendSource?: SpendSource;
   /** The per-trial model-spend cap that applied to this trial */
-  maxModelSpendUsd?: number;
+  maxTrialSpendUsd?: number;
   [key: string]: unknown;
 }
 
