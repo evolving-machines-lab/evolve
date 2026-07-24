@@ -66,18 +66,6 @@ result = await evolve.execute_command(
 
 - If `background` is `True`, returns a start handshake (`exit_code=0`). Completion arrives via `lifecycle` events (`command_background_complete` or `command_background_failed`).
 
-### prepare_sandbox
-
-Creates and fully initializes the configured sandbox without starting an agent command, and returns the sandbox ID:
-
-```python
-sandbox_id = await evolve.prepare_sandbox()
-# Persist sandbox_id, then run as usual — the sandbox is already up
-await evolve.run(prompt='...')
-```
-
-Durable orchestrators use this to persist the sandbox ID *before* handing execution to the agent — if the orchestrator crashes mid-run, the sandbox can be found and cleaned up instead of leaking. Calling `run()`/`execute_command()` afterwards reuses the prepared sandbox.
-
 ### Streaming Events
 
 Subscribe to real-time output from `run()` and `execute_command()`:
@@ -422,100 +410,6 @@ await evolve.run(prompt='Compare results')  # Back to sandbox A
 
 ---
 
-## Task Sandboxes & Credential Lifecycle
-
-The pieces for running benchmark/eval-style task sandboxes, where the trust boundary matters: run the agent with a capped credential, **seal** (revoke) that credential, and only then collect the agent's work product — so nothing the agent wrote can spend money after the run, and artifact collection happens from a credential-free sandbox.
-
-The building blocks:
-
-- `workspace_mode='task'` — the image owns the working directory; Evolve writes nothing into it ([Configuration → Workspace Modes](./02-configuration.md#workspace-modes)).
-- `sandbox_create_options={'image': ..., 'user': ..., 'homeDir': ..., 'network': ...}` — task image, run-as user, and outbound network policy ([Configuration → Sandbox Create Options](./02-configuration.md#sandbox-create-options)).
-- `prepare_sandbox()` — create the sandbox and persist its ID before the agent starts ([above](#prepare_sandbox)).
-- `execute_command()` — credential-free phases (environment setup before the run, verifiers after sealing).
-- `seal_credentials()` — irreversibly revoke the sandbox's model credential.
-- `collect_artifacts()` — read declared files/directories out of the sealed sandbox.
-
-### seal_credentials
-
-Irreversibly revokes the Evolve-managed model credential attached to the sandbox. After sealing, agent runs are disabled for this instance (`run()` and session switches raise); credential-free `execute_command()` remains available for verifiers.
-
-```python
-await evolve.run(prompt='Solve the task')
-
-await evolve.seal_credentials()          # revoke the model credential — fails loudly if revocation fails
-
-verdict = await evolve.execute_command(command='python /tests/verify.py')  # credential-free
-```
-
-Sealing is intentionally **fail-closed** — configurations that may have placed other credentials in the sandbox cannot claim to be sealed:
-
-- Requires gateway mode (`EVOLVE_API_KEY`). Direct provider keys cannot be revoked by Evolve, so sealing raises in Direct Provider Key Mode.
-- Requires a credential-minimal sandbox: combining sealing with `secrets=`, `sandbox_create_options['envs']`, `managed_secrets=`, `integrations=`, `mcp_servers=`, or browser credentials raises.
-- Sealing revokes the Evolve-managed sandbox credential; if no revocable credential exists or revocation fails after retries, sealing **raises** rather than reporting a false guarantee.
-- Cannot seal while a process is running.
-
-> The TypeScript SDK additionally supports `externalGateway` — a caller-minted, spend-capped gateway credential whose `revoke()` callback is called by sealing. That mode is TypeScript-only for now.
-
-### collect_artifacts
-
-Collects declared files or directories from the working directory — only after sealing:
-
-```python
-await evolve.seal_credentials()
-
-artifacts = await evolve.collect_artifacts(['patch.diff', 'logs/'])
-# dict: relative path → content
-
-print(artifacts['patch.diff'])
-```
-
-- Raises unless `seal_credentials()` has completed — collection always happens across the credential boundary.
-- Relative paths resolve against the working directory; paths escaping it are rejected.
-- A missing or unreadable declared root **raises** — it must never read as "the agent produced nothing". An empty result is legitimate only when every declared root exists and is readable.
-- Text-only contract: contents come back as strings. ASCII-armored formats (git patches including `--binary` hunks, JSON, logs) are safe; raw binary files are not.
-- Limits: at most 256 files, 100 MB per file, 500 MB total.
-
-### End-to-End Eval Run
-
-Mint-free gateway-mode variant: run → seal (revokes the sandbox credential) → verify → collect → kill.
-
-```python
-from evolve import Evolve, AgentConfig
-
-evolve = Evolve(
-    config=AgentConfig(type='codex', model='gpt-5.5'),
-    workspace_mode='task',
-    sandbox_create_options={
-        'image': 'swe-task-042',
-        'user': 'root',
-        'workingDirectory': '/repo',
-        'network': {'outbound': 'blocked', 'allowedDestinations': ['pypi.org']},
-    },
-)
-
-try:
-    # 1. Create the sandbox first and persist its ID (crash safety)
-    sandbox_id = await evolve.prepare_sandbox()
-    await db.save_sandbox_id(trial_id, sandbox_id)
-
-    # 2. Agent phase — the only phase that holds a model credential
-    await evolve.run(prompt=task_instructions, timeout_ms=30 * 60 * 1000)
-
-    # 3. Seal: revoke the credential. From here the sandbox can't spend.
-    await evolve.seal_credentials()
-
-    # 4. Verify + collect from the credential-free sandbox
-    verdict = await evolve.execute_command(command='bash /tests/run-tests.sh')
-    artifacts = await evolve.collect_artifacts(['patch.diff', 'reward.json'])
-    await db.save_result(trial_id, verdict.exit_code, artifacts)
-finally:
-    await evolve.kill()
-```
-
-> Running evals yourself is the low-level path. For managed benchmark jobs on Evolve's infrastructure — this same lifecycle operated for you — see [Hosted Evals](./06-hosted-evals.md).
-
----
-
 ## Storage & Checkpointing
 
 > **Gateway feature** — requires `EVOLVE_API_KEY`. Storage is fully managed by Evolve; no S3 buckets or AWS credentials needed.
@@ -704,7 +598,7 @@ class CheckpointInfo:
     size_bytes: int | None        # Archive size in bytes
     agent_type: str | None        # 'claude' | 'codex' | 'gemini' | 'qwen' | 'kimi' | 'opencode' | 'droid'
     model: str | None             # Model used
-    workspace_mode: str | None    # 'knowledge' | 'swe' | 'task'
+    workspace_mode: str | None    # 'knowledge' | 'swe'
     parent_id: str | None         # Parent checkpoint ID (lineage)
     comment: str | None           # User-provided label
 

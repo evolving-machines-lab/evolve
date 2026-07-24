@@ -55,9 +55,11 @@ console.log(job.benchmark);     // "deep-swe@1.1" — the resolved version, echo
 console.log(job.counts);        // { agents: 2, tasks: 2, trials: 4 }
 ```
 
-`maxTrialSpendUsd` caps what a single trial may spend on model calls, and it is the only spend limit the platform enforces: it becomes the budget of the gateway key that trial runs on. Leave it out and the platform applies $200 per trial. The response always reports the cap that actually applied — `job.maxTrialSpendUsd` — so an omitted one is never a mystery.
+`maxTrialSpendUsd` caps what a single trial may spend on model calls, and it is the only spend limit the platform enforces: every trial runs on its own freshly minted gateway key, and the cap is that key's budget. Leave it out and the platform applies $200 per trial. The response always reports the cap that actually applied — `job.maxTrialSpendUsd` — so an omitted one is never a mystery.
 
-There is no job-wide budget, which means a job's real ceiling is simply its trial count times that cap. The response states it for you as `job.worstCaseSpendUsd`, so you can see what a large matrix commits you to before it starts running. Your account credit balance is the hard backstop underneath all of it: when the balance runs out, spending stops mid-job whatever the caps say. A trial that exhausts its own cap is not a failure — the harness just runs out of budget, and the trial is still scored on whatever it produced.
+There is no job-wide budget, which means a job's real ceiling is simply its trial count times that cap. The response states it for you as `job.worstCaseSpendUsd`, so you can see what a large matrix commits you to before it starts running. Your account credit balance is the hard backstop underneath all of it: when the balance runs out, spending stops mid-job whatever the caps say, and creating a job while the balance is already at zero is refused up front with a `402 insufficient_credits`. A trial that exhausts its own cap is not a failure — the harness just runs out of budget, and the trial is still scored on whatever it produced.
+
+Runs on your own provider key are the one exception to the credit ledger. When a [managed BYO provider key](./01-getting-started.md#managed-byo-provider-keys) is enabled for the model's provider (Anthropic and OpenAI today), the trial's model calls bill your provider account directly and draw no Evolve credits — the per-trial cap still meters and bounds the trial exactly as before.
 
 A job expands to `tasks × agents × runsPerTask` trials, each in its own sandbox. `sandboxProvider` (optional, default `"e2b"`) picks where those sandboxes run — see [Where it runs](#where-it-runs). Valid harness + model pairs are the same as everywhere in the SDK — see [Getting Started → Harness and Model Pairing](./01-getting-started.md#harness-and-model-pairing). `harness` also accepts a harness you registered yourself — see [Bring your own harness](#bring-your-own-harness).
 
@@ -225,6 +227,64 @@ console.log(rerun.sourceJobId); // → job.id
 
 ---
 
+## Regrade
+
+A regrade re-runs **only the verifier**. The trial's recorded submission — the patch and artifacts captured when it ran — is restored into a fresh, sealed verifier sandbox and scored again; the agent phase is never re-run, and the source trial is never modified. Use it when a verifier was fixed or tightened and you want the same agent work re-scored under it, without paying for a single new agent run.
+
+```ts
+// One trial
+const single = await evals.regradeTrial(job.id, trialId);
+
+// Every regradable trial of a terminal job — optionally narrowed
+const bulk = await evals.regrade(job.id, {
+    status: ["SCORED"],       // (optional) only source trials in these statuses
+    taskKey: "task-001",      // (optional) only source trials of this task
+});
+
+// Read it back: QUEUED → RUNNING → COMPLETED, one result per source trial
+const done = await evals.regradeJob(bulk.id);
+for (const result of done.results ?? []) {
+    console.log(result.taskKey, result.sourceReward, "→", result.reward,
+        result.rewardDelta);  // reward − sourceReward, the per-trial delta
+}
+```
+
+All three return a `RegradeJob`. A per-trial regrade holds one result; a per-job regrade holds one per selected source trial. Poll `regradeJob()` until `status` is `COMPLETED` — `counts.byStatus` is the running histogram.
+
+### Eligibility
+
+Regradability is defined by the record, not by intent: a trial is regradable only if it **recorded its verifier inputs** when it settled. Settled `separate`-mode trials record them; nothing else does. That one gate has three consequences:
+
+- **Shared-mode trials can never be regraded.** Their verifier inspected the live agent sandbox, which no longer exists — there is nothing faithful to re-run.
+- **In-flight trials (`QUEUED`, `RUNNING`, `SCORING`) are not yet regradable** — they have not settled, so nothing is recorded.
+- **Trials that settled before the platform began recording verifier inputs are permanently ineligible.** The inputs were never captured, and cannot be reconstructed after the fact.
+
+A single-trial regrade of an ineligible source is refused with a `409 regrade_source_ineligible` naming the specific reason. A whole-job regrade requires a terminal source job (`409 job_not_terminal` otherwise), selects only the eligible trials, and is refused with a `409 no_regradable_runs` when there are none.
+
+### Reading a regrade
+
+Every `RegradeResult` carries the comparison you actually want:
+
+- `sourceReward` and `sourceStatus` — immutable snapshots of the source trial, taken when the regrade was created. The source trial's own row is untouched.
+- `reward` and `metrics` — what the fresh verifier run produced.
+- `rewardDelta` — `reward − sourceReward` when both are real numbers, else `null`.
+- `verifierDigest` — a content digest of the verifier that ran, the "verifier version". A digest equal to the source trial's own verifier means the regrade reproduces the recorded verdict; a different digest means a genuine prediction of what the new verifier scores.
+
+Result statuses mirror the trial reward law: a valid reward (including 0) is `SCORED`; a verifier crash or out-of-domain reward is `SCORING_ERROR`; a missing reward file is `INDETERMINATE`; a verifier box lost before a durable verdict is `INFRASTRUCTURE_ERROR`. The verifier always runs `separate` and sealed; `sandboxProvider` on the regrade job names where its verifier boxes run — the source job's provider.
+
+The same surface is on the CLI:
+
+```bash
+npx evolve-evals regrade <id>                       # whole job
+npx evolve-evals regrade <id> <trial-id>            # one trial
+npx evolve-evals regrade <id> --status SCORED --task task-001
+npx evolve-evals regrade-job <regrade-job-id>       # rewards, deltas, lineage
+```
+
+`--status` and `--task` apply to a whole-job regrade only; passing them with a trial id is a usage error.
+
+---
+
 ## Compare
 
 Compare 2–5 of your jobs side by side — per-job aggregates plus a per-task matrix, disagreement rows first:
@@ -315,6 +375,8 @@ npx evolve-evals trace <id> <trial-id> --after 100
 npx evolve-evals compare <id> <id>
 npx evolve-evals cancel <id>
 npx evolve-evals rerun-failed <id>
+npx evolve-evals regrade <id> [trial-id]
+npx evolve-evals regrade-job <regrade-job-id>
 npx evolve-evals export <id> --to ./results --format harbor
 npx evolve-evals benchmarks
 npx evolve-evals benchmarks get deep-swe@1.1
@@ -416,20 +478,30 @@ What the verdicts encode today:
 
 ## Bring your own benchmark
 
-Any repo of tasks in Harbor format runs on the hosted stack: point at it, import it, let the activation gate certify it, run it. A benchmark in another format gets converted *into* Harbor format first — the layout is small, and a complete task fits on one screen (below).
+Any corpus of tasks in Harbor format runs on the hosted stack: point at it, import it, let the activation gate certify it, run it. A benchmark in another format gets converted *into* Harbor format first — the layout is small, and a complete task fits on one screen (below).
 
-> Imports require the `ADMIN` role — any other caller receives a `403`. The source is a git repository pinned to a ref.
+What you import is **private to your account**. It never appears in anyone else's catalog, and another account asking for its name reads a plain `404 benchmark_not_found` — existence is never leaked. Your own `catalog.list()` shows the shared platform benchmarks plus your imports. A name belongs to its first importer: re-importing a name you own extends that benchmark with a new version (or refreshes one), while importing a name owned by anyone else — a platform benchmark or another account's private one — is refused with a `409 benchmark_name_taken`.
 
 ### Already in Harbor format
 
+Import from a git repository pinned to a ref, or upload a local corpus directory — the same corpus, the same pipeline, the same rules either way:
+
 ```ts
+// From a git repository, pinned to a ref
 const importJob = await catalog.import({
     source: {
         gitUrl: "https://github.com/acme/my-bench.git",
-        ref: "v1.0.0",
+        ref: "v1.0.0",            // a branch, tag, or commit — always pinned
     },
     benchmarkName: "my-bench",
     version: "1.0",               // the version label for the imported corpus
+});
+
+// From a local directory — tarred + gzipped deterministically on the client and uploaded
+const localImport = await catalog.import({
+    source: { directory: "./my-bench" },
+    benchmarkName: "my-bench",
+    version: "1.0",
 });
 
 // Block until IMPORTED or FAILED
@@ -456,8 +528,11 @@ npx evolve-evals import \
     --name my-bench \
     --version 1.0 \
     --watch
+npx evolve-evals import --dir ./my-bench --name my-bench --version 1.0 --watch
 npx evolve-evals import status <id>
 ```
+
+Every lane resolves to the same thing — a Harbor-layout directory — and is held to the same rules. The corpus root is a directory whose `tasks/` subdirectory holds one directory per task, or the tasks directory itself. Provenance is recorded per lane: the resolved commit for a git import, the sha256 of the exact uploaded bytes for a directory. On the wire a directory import is simply a gzipped tarball POSTed to the import endpoint — the SDK produces it for you — and uploads past the compressed-size cap (512 MB by default) are refused with a `413 import_too_large`.
 
 What happens next:
 
@@ -485,7 +560,7 @@ const job = await evals.run({
 
 ### Not in Harbor format yet
 
-Convert it. A benchmark is a repo with one directory per task under `tasks/`; the directory name is the task key. A minimal complete task:
+Convert it. A benchmark is a directory tree with one directory per task under `tasks/`; the directory name is the task key. A minimal complete task:
 
 ```
 my-bench/
@@ -834,6 +909,56 @@ interface TrialTraceEvent {
     data: Record<string, unknown>;
 }
 
+type RegradeStatus =                         // mirrors the trial reward law
+    | "QUEUED" | "RUNNING"                   // in flight
+    | "SCORED"                               // valid reward recorded (0 counts)
+    | "SCORING_ERROR"                        // verifier crashed / out-of-domain reward
+    | "INFRASTRUCTURE_ERROR"                 // verifier box lost before a durable verdict
+    | "INDETERMINATE";                       // no reward file
+
+interface RegradeOptions {                   // jobs().regrade(id, options)
+    status?: TrialStatus[];                  // only source trials in these statuses
+    taskKey?: string;                        // only source trials of this task
+}
+
+interface RegradeResult {
+    id: string;
+    sourceTrialId: string;                   // the source trial this regrade re-scored
+    taskKey: string;
+    status: RegradeStatus;
+    reward: number | null;                   // the regrade's reward; null until scored
+    metrics: Record<string, number> | null;
+    sourceReward: number | null;             // source-trial reward at regrade time (immutable snapshot)
+    sourceStatus: string;                    // source-trial status at regrade time (immutable snapshot)
+    rewardDelta: number | null;              // reward − sourceReward when both are numbers, else null
+    verifierMode: "separate" | "shared";     // always "separate" — regrade only re-runs separate verifiers
+    verifierDigest: string | null;           // the verifier version that ran; null until it runs
+    verifierSandboxId: string | null;        // provider box id of the verifier sandbox (provenance)
+    failurePhase: string | null;
+    failureDetail: string | null;
+    phaseTimingsMs: Record<string, number> | null;
+    createdAt: string;
+    settledAt: string | null;                // null while QUEUED/RUNNING
+}
+
+interface RegradeJob {                       // regrade() / regradeTrial() / regradeJob()
+    id: string;
+    sourceJobId: string;                     // the job the source trials belong to
+    status: "QUEUED" | "RUNNING" | "COMPLETED";  // derived from its results
+    sandboxProvider: EvalSandboxProvider;    // where the verifier boxes run
+    filter: { status?: string[]; taskKey?: string } | null;  // per-job selection, or null
+    counts: { results: number; byStatus: Partial<Record<RegradeStatus, number>> };
+    results?: RegradeResult[];               // present on create and regradeJob() reads
+    createdAt: string;
+    updatedAt: string;
+}
+
+interface BenchmarkImportSource {            // benchmarks().import() — EITHER git OR directory
+    gitUrl?: string;                         // a git repository URL — pair with ref
+    ref?: string;                            // a pinned branch, tag, or commit — pair with gitUrl
+    directory?: string;                      // a local Harbor-layout corpus, tarred + uploaded
+}
+
 interface BenchmarkImport {
     id: string;
     status: "IMPORTING" | "IMPORTED" | "FAILED";
@@ -879,8 +1004,8 @@ try {
 }
 ```
 
-Codes you will actually branch on: `benchmark_not_found`, `benchmark_version_not_found`, `no_active_version`, `version_not_ready`, `unknown_task_keys`, `provider_unsupported`, `job_not_found`, `job_not_terminal`, `no_failed_runs`, `trial_not_found`, `harness_version_not_found`, `insufficient_credits` (402 — the account is out of credits; add some and retry), `rate_limited` (retry after the `Retry-After` header), `invalid_api_key`, and `invalid_input`.
+Codes you will actually branch on: `benchmark_not_found` (also what another account's private benchmark reads as), `benchmark_version_not_found`, `benchmark_name_taken` (409 — the import name belongs to someone else), `import_too_large` (413), `no_active_version`, `version_not_ready`, `unknown_task_keys`, `provider_unsupported`, `job_not_found`, `job_not_terminal`, `no_failed_runs`, `trial_not_found`, `harness_version_not_found`, `insufficient_credits` (402 — the account is out of credits; add some and retry), `rate_limited` (retry after the `Retry-After` header), `invalid_api_key`, and `invalid_input`.
+
+[Regrades](#regrade) add three: `regrade_source_ineligible` (409 — the source trial recorded no verifier inputs; the message names why), `no_regradable_runs` (409 — a whole-job regrade found nothing eligible), and `regrade_not_found`.
 
 [Custom harnesses](#bring-your-own-harness) add their own: `custom_harness_not_found` (also what another owner's name reads as), `custom_harness_name_taken`, `custom_harness_name_reserved` (the name collides with a built-in harness), `custom_harness_source_required` (neither an install script nor a tarball), `custom_harness_source_conflict` (both), `custom_harness_invalid_env` (declared env tries to override a run-contract key), `custom_harness_invalid_name`, `custom_harness_too_large`, and `custom_harness_limit_reached` (the per-account registration ceiling).
-
-> To operate this lifecycle yourself on your own infrastructure, see [Runtime → Task Sandboxes & Credential Lifecycle](./03-runtime.md#task-sandboxes--credential-lifecycle).

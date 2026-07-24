@@ -162,17 +162,12 @@ Constraints:
 |------|-----------------|------------|
 | `"knowledge"` (default) | Creates `context/`, `scripts/`, `temp/`, `output/` + writes the system prompt file | General agent work with structured deliverables |
 | `"swe"` | Same as knowledge + `repo/` for code repositories | Software-engineering tasks on cloned repos |
-| `"task"` | Nothing — the working directory is left exactly as the sandbox image provides it | Benchmark/eval task images that own the working directory |
 
 ```ts
 const evolve = new Evolve()
-    .withWorkspaceMode("task")
-    .withSandboxCreateOptions({ image: "my-eval-template", workingDirectory: "/repo" });
+    .withWorkspaceMode("swe")
+    .withSandboxCreateOptions({ image: "my-ci-template" });
 ```
-
-In `"task"` mode the task image is the source of truth, so combining it with `.withContext()`, `.withFiles()`, `.withSystemPrompt()`, `.withSchema()`, or a browser prompt throws — those all write into the working directory.
-
-See [Runtime → Task Sandboxes & Credential Lifecycle](./03-runtime.md#task-sandboxes--credential-lifecycle) for the full eval-run pattern.
 
 ---
 
@@ -190,13 +185,12 @@ const evolve = new Evolve()
         apiKey: process.env.EVOLVE_API_KEY!, // (optional) Gateway mode - auto-resolves from env
         // providerApiKey: process.env.ANTHROPIC_API_KEY!, // (optional) Direct Provider Key Mode
         // oauthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN!, // (optional) Claude Max subscription
-        // externalGateway: { apiKey, baseUrl, revoke },    // (optional) Caller-minted revocable gateway credential (see Getting Started → External Gateway Mode)
     })
 
     // Sandbox provider (see 2.1 above, or auto-resolves from env)
     .withSandbox(sandbox)
 
-    // (optional) Workspace mode: "knowledge" (default) | "swe" | "task" (see Workspace Modes above)
+    // (optional) Workspace mode: "knowledge" (default) | "swe" (see Workspace Modes above)
     .withWorkspaceMode("knowledge")
 
     // (optional) Uploads to /home/user/workspace/context/ on first run

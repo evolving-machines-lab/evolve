@@ -166,18 +166,13 @@ Constraints:
 |------|-----------------|------------|
 | `'knowledge'` (default) | Creates `context/`, `scripts/`, `temp/`, `output/` + writes the system prompt file | General agent work with structured deliverables |
 | `'swe'` | Same as knowledge + `repo/` for code repositories | Software-engineering tasks on cloned repos |
-| `'task'` | Nothing — the working directory is left exactly as the sandbox image provides it | Benchmark/eval task images that own the working directory |
 
 ```python
 evolve = Evolve(
-    workspace_mode='task',
-    sandbox_create_options={'image': 'my-eval-template', 'workingDirectory': '/repo'},
+    workspace_mode='swe',
+    sandbox_create_options={'image': 'my-ci-template'},
 )
 ```
-
-In `'task'` mode the task image is the source of truth, so combining it with `context=`, `files=`, `system_prompt=`, `schema=`, or a browser prompt raises — those all write into the working directory.
-
-See [Runtime → Task Sandboxes & Credential Lifecycle](./03-runtime.md#task-sandboxes--credential-lifecycle) for the full eval-run pattern.
 
 ---
 
@@ -213,7 +208,7 @@ evolve = Evolve(
     # Sandbox provider (auto-resolved from E2B_API_KEY, or use sandbox from above)
     sandbox=sandbox,
 
-    # (optional) Workspace mode: 'knowledge' (default) | 'swe' | 'task' (see Workspace Modes above)
+    # (optional) Workspace mode: 'knowledge' (default) | 'swe' (see Workspace Modes above)
     workspace_mode='knowledge',
 
     # (optional) Provider-neutral options for fresh sandbox creation (see Sandbox Create Options above)

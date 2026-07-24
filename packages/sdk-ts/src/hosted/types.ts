@@ -505,7 +505,7 @@ export interface RegradeJob {
   /** The job the source trials belong to */
   sourceJobId: string;
   status: RegradeJobStatus;
-  /** Sandbox provider the verifier boxes run on (independent of the source) */
+  /** Sandbox provider the verifier boxes run on (copied from the source job) */
   sandboxProvider: EvalSandboxProvider;
   /** The filter applied to select source trials (per-job regrade), or null */
   filter: RegradeFilter | null;

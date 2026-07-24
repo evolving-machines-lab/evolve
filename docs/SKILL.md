@@ -1,6 +1,6 @@
 ---
 name: evolve
-description: "Evolve SDK development for TypeScript and Python. Use when building applications with Evolve to run AI agents (Claude, Codex, Gemini, Qwen, Kimi, OpenCode, Droid) in secure sandboxes. Triggers: (1) Creating Evolve applications, (2) Configuring agents with skills, Integrations, MCP servers, (3) Using Swarm abstractions (map, filter, reduce, bestOf/best_of, verify), (4) Building Pipelines, (5) Structured output with schemas, (6) Session management, streaming, observability, (7) Checkpointing, storage & StorageClient, (8) Cost tracking (per-run and per-session spend), (9) Historical sessions & trace download via sessions() client, (10) Hosted evals via benchmarks()/customHarnesses()/jobs() clients and the evolve-evals CLI, including bring-your-own harnesses, (11) Eval/task sandboxes (task workspace mode, sandbox create options, credential sealing, artifact collection)."
+description: "Evolve SDK development for TypeScript and Python. Use when building applications with Evolve to run AI agents (Claude, Codex, Gemini, Qwen, Kimi, OpenCode, Droid) in secure sandboxes. Triggers: (1) Creating Evolve applications, (2) Configuring agents with skills, Integrations, MCP servers, (3) Using Swarm abstractions (map, filter, reduce, bestOf/best_of, verify), (4) Building Pipelines, (5) Structured output with schemas, (6) Session management, streaming, observability, (7) Checkpointing, storage & StorageClient, (8) Cost tracking (per-run and per-session spend), (9) Historical sessions & trace download via sessions() client, (10) Hosted evals via benchmarks()/customHarnesses()/jobs() clients and the evolve-evals CLI, including bring-your-own harnesses, (11) Benchmark imports (git or local directory), regrades, and sandbox create options (image, resources, network policy)."
 ---
 
 # Evolve SDK
@@ -73,7 +73,7 @@ Read on demand when the user's task requires them:
 | Sandbox providers (E2B, Modal, Daytona) | [TS](references/typescript/02-configuration.md#sandbox-providers) | [PY](references/python/02-configuration.md#sandbox-providers) |
 | Provider auto-resolution from env | [TS](references/typescript/02-configuration.md#auto-resolution) | [PY](references/python/02-configuration.md#auto-resolution) |
 | Sandbox create options (image, network, user, homeDir) | [TS](references/typescript/02-configuration.md#sandbox-create-options) | [PY](references/python/02-configuration.md#sandbox-create-options) |
-| Workspace modes (knowledge / swe / task) | [TS](references/typescript/02-configuration.md#workspace-modes) | [PY](references/python/02-configuration.md#workspace-modes) |
+| Workspace modes (knowledge / swe) | [TS](references/typescript/02-configuration.md#workspace-modes) | [PY](references/python/02-configuration.md#workspace-modes) |
 | Full builder/constructor API | [TS](references/typescript/02-configuration.md#evolve-instance) | [PY](references/python/02-configuration.md#evolve-instance) |
 | Browser automation guide (setup, live view, replay) | [TS](references/typescript/02-configuration.md#browser-automation) | [PY](references/python/02-configuration.md#browser-automation) |
 | Browser credentials (saved website logins) | [TS](references/typescript/02-configuration.md#browser-credentials) | [PY](references/python/02-configuration.md#browser-credentials) |
@@ -100,9 +100,6 @@ Read on demand when the user's task requires them:
 | Storage & checkpointing (gateway mode) | [TS](references/typescript/03-runtime.md#storage--checkpointing) | [PY](references/python/03-runtime.md#storage--checkpointing) |
 | StorageClient (list, get, download checkpoints) | [TS](references/typescript/03-runtime.md#listing--browsing-checkpoints) | [PY](references/python/03-runtime.md#listing--browsing-checkpoints) |
 | Checkpoint lineage & restore | [TS](references/typescript/03-runtime.md#checkpoint-lineage) | [PY](references/python/03-runtime.md#checkpoint-lineage) |
-| Prepare sandbox before running (`prepareSandbox` / `prepare_sandbox`) | [TS](references/typescript/03-runtime.md#preparesandbox) | [PY](references/python/03-runtime.md#prepare_sandbox) |
-| Task sandboxes, credential sealing & artifact collection | [TS](references/typescript/03-runtime.md#task-sandboxes--credential-lifecycle) | [PY](references/python/03-runtime.md#task-sandboxes--credential-lifecycle) |
-| External gateway mode (caller-minted revocable keys) | [TS](references/typescript/01-getting-started.md#external-gateway-mode) | TypeScript-only |
 | Historical sessions & trace download | [TS](references/typescript/03-runtime.md#historical-sessions--trace-download) | [PY](references/python/03-runtime.md#historical-sessions--trace-download) |
 | Cost tracking (per-run & per-session spend) | [TS](references/typescript/03-runtime.md#cost-tracking) | [PY](references/python/03-runtime.md#cost-tracking) |
 | Observability (dashboard + local logs) | [TS](references/typescript/03-runtime.md#observability) | [PY](references/python/03-runtime.md#observability) |
@@ -127,6 +124,7 @@ Read on demand when the user's task requires them:
 | Watch it live (SSE stream with resume) | [TS](references/typescript/06-hosted-evals.md#watch-it-live) | [PY](references/python/06-hosted-evals.md#watch-it-live) |
 | Read the results (trials, spend, trace) | [TS](references/typescript/06-hosted-evals.md#read-the-results) | [PY](references/python/06-hosted-evals.md#read-the-results) |
 | Cancel / rerun failures | [TS](references/typescript/06-hosted-evals.md#cancel--rerun-failures) | [PY](references/python/06-hosted-evals.md#cancel--rerun-failures) |
+| Regrade (verifier-only re-run, reward deltas) | [TS](references/typescript/06-hosted-evals.md#regrade) | [PY](references/python/06-hosted-evals.md#regrade) |
 | compare() (aggregates + task matrix) | [TS](references/typescript/06-hosted-evals.md#compare) | [PY](references/python/06-hosted-evals.md#compare) |
 | export() (archive, Harbor bundle) | [TS](references/typescript/06-hosted-evals.md#export) | [PY](references/python/06-hosted-evals.md#export) |
 | evolve-evals CLI | [TS](references/typescript/06-hosted-evals.md#cli) | [PY](references/python/06-hosted-evals.md#cli) |

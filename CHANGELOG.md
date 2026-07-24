@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### Highlights
+
+- Added regrades to the hosted evals client: re-run only the verifier of recorded trials, with the source trial immutable and old/new rewards side by side.
+- Settled the hosted budget model on one per-trial cap: `maxTrialSpendUsd` optional ($200 server default, echoed resolved), `worstCaseSpendUsd` stated on job views, `402 insufficient_credits` at zero balance, and no credit draw for managed BYO provider key runs.
+- Opened benchmark imports to every account — private to the importer by default — and added a local-directory upload lane next to git.
+- De-scoped the agent-side eval-composition primitives from the docs chapters; the APIs keep their JSDoc but are no longer advertised.
+
+### SDK
+
+- Added regrade to the hosted client, TypeScript and Python in exact parity: `regrade()` (whole job, `status`/`taskKey` filters), `regradeTrial()` / `regrade_trial()` (one trial), and `regradeJob()` / `regrade_job()` (read results). A regrade restores the trial's recorded verifier inputs into a fresh separate verifier sandbox — the agent phase is never re-run, the source trial is never modified — and each `RegradeResult` reports `sourceReward`, `rewardDelta`, and the `verifierDigest` lineage. Ineligible sources refuse with `regrade_source_ineligible`; a whole-job regrade with nothing eligible refuses with `no_regradable_runs`.
+- Added the local-directory benchmark import lane: `source: { directory }` (TypeScript) / `directory=` (Python) tars the corpus deterministically on the client and uploads it as a gzipped tarball; git remains the pinned-ref lane, and both feed the same parse → build → activate pipeline.
+- Benchmark imports no longer require an admin role: any authenticated key imports into its own private catalog. Foreign private benchmarks read as `404 benchmark_not_found`; importing a name owned by anyone else refuses with `409 benchmark_name_taken`.
+
+### CLI
+
+- Added `evolve-evals regrade <id> [trial-id]` (whole-job filters `--status` / `--task`) and `evolve-evals regrade-job <id>` for reading rewards, deltas, and lineage.
+- Added `--dir` to `evolve-evals import` for local-directory corpora.
+
+### Documentation And Skills
+
+- Documented regrades, the per-trial budget model (server default, worst-case preview, credit backstop, BYO-provider-key exception), benchmark ownership and privacy, all import lanes and the universal Harbor-layout rules, and harness version pins (the `--agent harness:model[:version]` third segment, the three-way pin rejection, and kimi's create-time acceptance).
+- Removed the eval-composition primitives from the docs chapters — `task` workspace mode, `prepareSandbox()`, `sealCredentials()`, `collectArtifacts()`, and `externalGateway` — while keeping the table-stakes sandbox options (image, resources, network policy) documented.
+
 ## v0.0.53 - 2026-07-22
 
 ### Highlights

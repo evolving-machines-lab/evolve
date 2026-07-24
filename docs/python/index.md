@@ -41,7 +41,7 @@ await evolve.run(prompt='Hello world')
 | Sandbox providers (E2B, Modal, Daytona) | [Configuration → Sandbox Providers](./02-configuration.md#sandbox-providers) |
 | Provider auto-resolution from env | [Configuration → Sandbox Providers](./02-configuration.md#auto-resolution) |
 | `sandbox_create_options=` (image, network, user, homeDir) | [Configuration → Sandbox Create Options](./02-configuration.md#sandbox-create-options) |
-| `workspace_mode=` (knowledge / swe / task) | [Configuration → Workspace Modes](./02-configuration.md#workspace-modes) |
+| `workspace_mode=` (knowledge / swe) | [Configuration → Workspace Modes](./02-configuration.md#workspace-modes) |
 | Evolve instance (full constructor API) | [Configuration → Evolve Instance](./02-configuration.md#evolve-instance) |
 | `AgentConfig` | [Configuration → Evolve Instance](./02-configuration.md#evolve-instance) |
 | `sandbox=` provider | [Configuration → Sandbox Providers](./02-configuration.md#sandbox-providers) |
@@ -69,8 +69,6 @@ await evolve.run(prompt='Hello world')
 |-------|------|
 | `run()` | [Runtime → run](./03-runtime.md#run) |
 | `execute_command()` | [Runtime → execute_command](./03-runtime.md#execute_command) |
-| `prepare_sandbox()` | [Runtime → prepare_sandbox](./03-runtime.md#prepare_sandbox) |
-| Task sandboxes, `seal_credentials()`, `collect_artifacts()` | [Runtime → Task Sandboxes & Credential Lifecycle](./03-runtime.md#task-sandboxes--credential-lifecycle) |
 | Streaming events (content, lifecycle, stdout, stderr) | [Streaming Events](./04-streaming.md) |
 | OutputEvent / SessionUpdate types | [Streaming → Type Definitions](./04-streaming.md#type-definitions) |
 | LifecycleEvent / LifecycleReason | [Streaming → LifecycleEvent](./04-streaming.md#lifecycleevent-typeddict-shape) |
@@ -103,6 +101,7 @@ await evolve.run(prompt='Hello world')
 | `watch()` / `watch_iter()` (SSE stream with resume) | [Hosted Evals → Watch It Live](./06-hosted-evals.md#watch-it-live) |
 | Results (`get`, `list`, `trials`, spend, trace) | [Hosted Evals → Read the Results](./06-hosted-evals.md#read-the-results) |
 | `cancel()` / `rerun_failed()` | [Hosted Evals → Cancel / Rerun Failures](./06-hosted-evals.md#cancel--rerun-failures) |
+| Regrade (`regrade()`, `regrade_trial()`, `regrade_job()`) | [Hosted Evals → Regrade](./06-hosted-evals.md#regrade) |
 | `compare()` (aggregates + task matrix) | [Hosted Evals → Compare](./06-hosted-evals.md#compare) |
 | `export()` (research archive, Harbor bundle) | [Hosted Evals → Export](./06-hosted-evals.md#export) |
 | CLI (via the TypeScript `evolve-evals` binary) | [Hosted Evals → CLI](./06-hosted-evals.md#cli) |
