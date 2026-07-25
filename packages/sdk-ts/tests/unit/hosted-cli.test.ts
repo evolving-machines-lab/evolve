@@ -329,9 +329,9 @@ function testParseOtherCommands() {
     "trial detail command"
   );
   assertEqual(
-    parseArgs(["trace", "eval-1", "run-9", "--after", "5", "--limit", "100"]),
-    { command: "trace", positionals: ["eval-1", "run-9"], flags: { after: 5, limit: 100 } },
-    "trace command with after/limit"
+    parseArgs(["trace", "eval-1", "run-9", "--cursor", "5", "--limit", "100"]),
+    { command: "trace", positionals: ["eval-1", "run-9"], flags: { cursor: "5", limit: 100 } },
+    "trace command with cursor/limit — one pagination vocabulary everywhere"
   );
   assertEqual(
     parseArgs(["compare", "eval-1", "eval-2", "eval-3"]),
@@ -610,9 +610,15 @@ async function testRunWatchEndToEnd() {
         maxTrialSpendUsd: 25,
         sandboxProvider: "e2b",
         spentUsd: 1.5,
-        counts: { agents: 1, tasks: 2, trials: 2 },
-        trialCounts: { SCORED: 2 },
+        counts: { agents: 1, tasks: 2 },
+        trials: { total: 2, byStatus: { ...ZERO_TRIAL_STATUSES, SCORED: 2 } },
+        agents: [{ harness: "codex", model: "gpt-5.5", harnessVersion: null }],
+        meanReward: 1,
+        failure: null,
+        sourceJobId: null,
+        idempotentReplay: false,
         createdAt: "2026-07-22T00:00:00.000Z",
+        updatedAt: "2026-07-22T00:01:00.000Z",
       },
     });
     setMockResponse("/api/jobs", {
@@ -626,8 +632,15 @@ async function testRunWatchEndToEnd() {
         maxTrialSpendUsd: 25,
         sandboxProvider: "e2b",
         spentUsd: 0,
-        counts: { agents: 1, tasks: 2, trials: 2 },
+        counts: { agents: 1, tasks: 2 },
+        trials: { total: 2, byStatus: { ...ZERO_TRIAL_STATUSES, QUEUED: 2 } },
+        agents: [{ harness: "codex", model: "gpt-5.5", harnessVersion: null }],
+        meanReward: null,
+        failure: null,
+        sourceJobId: null,
+        idempotentReplay: false,
         createdAt: "2026-07-22T00:00:00.000Z",
+        updatedAt: "2026-07-22T00:00:00.000Z",
       },
     });
 
@@ -780,15 +793,14 @@ async function testImportWatchEndToEnd() {
     const createCall = fetchCalls.find((c) => c.url === `${BASE}/api/benchmarks/imports`);
     assert(createCall !== undefined, "POSTs /api/benchmarks/imports");
     assertEqual(createCall?.init?.method, "POST", "create uses POST");
-    assertEqual(
-      JSON.parse(createCall?.init?.body as string),
-      {
-        source: { type: "git", url: "https://github.com/acme/my-bench.git", ref: "main" },
-        benchmarkName: "my-bench",
-        version: "1.0",
-      },
-      "create body matches the CLI flags (git source + version)"
-    );
+    // ONE body grammar: multipart/form-data with named parts, so nothing rides
+    // the query string on either upload route.
+    const form = createCall?.init?.body as FormData;
+    assert(form instanceof FormData, "create body is multipart/form-data");
+    assertEqual(form.get("gitUrl"), "https://github.com/acme/my-bench.git", "gitUrl part");
+    assertEqual(form.get("ref"), "main", "ref part");
+    assertEqual(form.get("benchmarkName"), "my-bench", "benchmarkName part");
+    assertEqual(form.get("version"), "1.0", "version part");
 
     // The watch poll
     const pollCall = fetchCalls.find((c) => c.url === `${BASE}/api/benchmarks/imports/imp-1`);
@@ -883,36 +895,60 @@ async function testUsageErrorExitCode() {
   }
 }
 
+/** Every trial status named, zeros included — the shape the API emits. */
+const ZERO_TRIAL_STATUSES = {
+  QUEUED: 0,
+  RUNNING: 0,
+  SCORING: 0,
+  SCORED: 0,
+  SCORING_ERROR: 0,
+  INFRASTRUCTURE_ERROR: 0,
+  INDETERMINATE: 0,
+  CANCELLED: 0,
+};
+
 const CLI_REGRADE_JOB = {
   id: "job-1",
   sourceJobId: "eval-1",
   status: "COMPLETED",
   sandboxProvider: "e2b",
   filter: { taskKey: "demo-task" },
-  counts: { results: 1, byStatus: { SCORED: 1 } },
+  results: {
+    total: 1,
+    byStatus: {
+      QUEUED: 0,
+      RUNNING: 0,
+      SCORED: 1,
+      SCORING_ERROR: 0,
+      INFRASTRUCTURE_ERROR: 0,
+      INDETERMINATE: 0,
+    },
+    nextCursor: null,
+    hasMore: false,
+    items: [
+      {
+        id: "rr-1",
+        sourceTrialId: "run-1",
+        taskKey: "demo-task",
+        status: "SCORED",
+        reward: 1,
+        metrics: null,
+        sourceReward: 1,
+        sourceStatus: "SCORED",
+        rewardDelta: 0,
+        verifierMode: "separate",
+        verifierDigest: "abcd",
+        verifierSandboxId: "sbx-1",
+        failurePhase: null,
+        failureDetail: null,
+        phaseTimingsMs: { verifyMs: 1200 },
+        createdAt: "2026-07-24T00:00:00Z",
+        settledAt: "2026-07-24T00:05:00Z",
+      },
+    ],
+  },
   createdAt: "2026-07-24T00:00:00Z",
   updatedAt: "2026-07-24T00:05:00Z",
-  results: [
-    {
-      id: "rr-1",
-      sourceTrialId: "run-1",
-      taskKey: "demo-task",
-      status: "SCORED",
-      reward: 1,
-      metrics: null,
-      sourceReward: 1,
-      sourceStatus: "SCORED",
-      rewardDelta: 0,
-      verifierMode: "separate",
-      verifierDigest: "abcd",
-      verifierSandboxId: "sbx-1",
-      failurePhase: null,
-      failureDetail: null,
-      phaseTimingsMs: { verifyMs: 1200 },
-      createdAt: "2026-07-24T00:00:00Z",
-      settledAt: "2026-07-24T00:05:00Z",
-    },
-  ],
 };
 
 async function testRegradeCliCreate() {
@@ -1001,16 +1037,16 @@ async function testCustomHarnessesCliAdd() {
     const call = fetchCalls[fetchCalls.length - 1];
     assert(call.url.endsWith("/api/custom-harnesses"), "hits the custom-harnesses route");
     assertEqual(call.init?.method, "POST", "uses POST");
+    const form = call.init?.body as FormData;
+    assert(form instanceof FormData, "body is multipart/form-data");
+    assertEqual(form.get("name"), "acme-cli", "name part");
     assertEqual(
-      JSON.parse(call.init?.body as string),
-      {
-        name: "acme-cli",
-        installScript: "curl -fsSL https://acme.dev/install.sh | sh\n",
-        runCommand: "acme-cli --headless",
-        env: { ACME_PROFILE: "bench" },
-      },
+      form.get("installScript"),
+      "curl -fsSL https://acme.dev/install.sh | sh\n",
       "--install-script uploads the FILE CONTENTS, not the path"
     );
+    assertEqual(form.get("runCommand"), "acme-cli --headless", "runCommand part");
+    assertEqual(form.get("env"), JSON.stringify({ ACME_PROFILE: "bench" }), "env is a JSON part");
     const text = out.join("\n");
     assert(text.includes("acme-cli"), "renders the harness name");
     assert(text.includes("install_script"), "renders the source");
@@ -1030,7 +1066,7 @@ async function testCustomHarnessesCliListAndRemove() {
     setMockResponse("/api/custom-harnesses/acme-cli", { status: 204, body: null });
     setMockResponse("/api/custom-harnesses", {
       status: 200,
-      body: { customHarnesses: [CLI_CUSTOM_HARNESS] },
+      body: { items: [CLI_CUSTOM_HARNESS], nextCursor: null, hasMore: false },
     });
 
     const listIO = captureIO();

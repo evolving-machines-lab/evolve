@@ -21,11 +21,15 @@ All three read `EVOLVE_API_KEY` from the environment, or accept `{ apiKey, baseU
 Pick a benchmark from the catalog:
 
 ```ts
-const allBenchmarks = await catalog.list();          // every benchmark + its active version
+const page = await catalog.list();                   // one page of benchmarks + active versions
+for await (const bench of catalog.list()) { /* … */ }  // or walk the whole catalog
+
 const deepSwe = await catalog.get("deep-swe@1.1");   // one version: task list + timeouts
 const active = await catalog.getActive("deep-swe");  // active READY version, guaranteed runnable
 // getActive() throws NoActiveVersionError when nothing is runnable yet
 ```
+
+Every collection on this surface is the same page: `{ items, nextCursor, hasMore }`, paged with `{ limit, cursor }`. `nextCursor` means one thing everywhere — pass it back for the next page, and `null` means there is no next page. Both list calls hand you a value you can either await for a single page or iterate to walk every row, fetching pages as it goes.
 
 `READY` is the one benchmark-version state that accepts jobs — see [Statuses](#statuses). Tasks expose public fields only — `taskKey`, `agentTimeoutSec`, `verifierTimeoutSec`, and `providers`, the per-provider capability verdict ([Where it runs](#where-it-runs)). Instructions, environments, and tests never leave the server.
 
@@ -52,8 +56,12 @@ const job = await evals.run({
 
 console.log(job.status);        // "QUEUED"
 console.log(job.benchmark);     // "deep-swe@1.1" — the resolved version, echoed back
-console.log(job.counts);        // { agents: 2, tasks: 2, trials: 4 }
+console.log(job.counts);        // { agents: 2, tasks: 2 } — entity cardinality
+console.log(job.trials.total);  // 4
+console.log(job.trials.byStatus); // { QUEUED: 4, RUNNING: 0, SCORED: 0, … } — every status
 ```
+
+Every job response is the same shape, whatever produced it. `run()`, `get()`, `cancel()`, `rerunFailed()` and each row of `list()` carry the same fields, so a job card renders from any of them without your knowing which call it came from. `counts` is entity cardinality — the parts a job is made of — and `trials` is the one "how many" structure: a total plus a status histogram that names every status, zeros included, so a status bar never needs the enum hardcoded.
 
 `maxTrialSpendUsd` caps what a single trial may spend on model calls, and it is the only spend limit the platform enforces: every trial runs on its own freshly minted gateway key, and the cap is that key's budget. Leave it out and the platform applies $200 per trial. The response always reports the cap that actually applied — `job.maxTrialSpendUsd` — so an omitted one is never a mystery.
 
@@ -99,6 +107,8 @@ const retry = await evals.run(
 console.log(retry.idempotentReplay);   // true when the key replayed an existing job
 ```
 
+A key on its own is not enough to make a request idempotent, so the server also fingerprints the request behind it. Repeat the same request with the same key and you get the original job back; send a *different* request under a key you have already used and it is refused with a `409 idempotency_key_reused` rather than handed yesterday's job while you believe a new run started. Use a fresh key for a genuinely new run.
+
 ---
 
 ## Watch it live
@@ -115,7 +125,7 @@ for await (const event of evals.watch(job.id)) {
 
 // Or await the final Job
 const final = await evals.watch(job.id);
-console.log(final.status, final.trialCounts, final.meanReward, final.spentUsd);
+console.log(final.status, final.trials.byStatus, final.meanReward, final.spentUsd);
 ```
 
 Options apply in every form — abort or tune backoff on an iterated watch the same way; `onEvent` fires regardless:
@@ -145,16 +155,19 @@ const final = await evals.watch(
 ```ts
 // One job: size, status histogram, mean reward, spend
 const detail = await evals.get(job.id);
-console.log(detail.trialCounts);                    // { SCORED: 12, RUNNING: 3, QUEUED: 5 }
+console.log(detail.trials.total, detail.trials.byStatus);  // 20, { SCORED: 12, RUNNING: 3, … }
 console.log(detail.meanReward);                     // mean over SCORED trials; null until something scores
 console.log(detail.spentUsd, "/", detail.worstCaseSpendUsd);
+console.log(detail.failure);                        // why it FAILED, or null
 
 // Your jobs, newest first — await one page, or iterate them all
-const page = await evals.list({ limit: 50 });       // page.nextCursor continues
+const jobPage = await evals.list({ limit: 50 });    // jobPage.nextCursor continues
 for await (const item of evals.list()) {
     console.log(item.id, item.status, item.benchmark, item.meanReward);
 }
 ```
+
+A failed job says why on `failure`, as `{ code, message }` — the same grammar an API error uses, under a different key so that `if (body.error) throw` stays correct on a healthy read. It rides on list rows too, so a dashboard shows the reason without a detail call per row.
 
 Trials paginate the same way — await a page or iterate across pages. `status` filters, e.g. to the failures behind a rerun decision:
 
@@ -195,7 +208,7 @@ for await (const event of evals.trialTraceEvents(
     console.log(event.seq, event.type, event.data);
 }
 
-// Or page manually — resume later from the last seen seq
+// Or page manually — the same envelope as every collection
 const trace = await evals.trialTrace(
     job.id,
     trialId,
@@ -204,11 +217,11 @@ const trace = await evals.trialTrace(
 const more = await evals.trialTrace(
     job.id,
     trialId,
-    { after: trace.nextAfter! },
+    { cursor: trace.nextCursor! },
 );
 ```
 
-`trialTraceEvents()` drains the currently available trace, then stops. To follow an in-flight trial, resume with `{ after: lastSeenSeq }`.
+`trialTraceEvents()` drains the currently available trace, then stops — `nextCursor` is `null` once you are caught up, which is how the drain knows. A trace cursor is a position in the seq timeline, so to follow an in-flight trial later, keep the last event's `seq` and resume with `{ cursor: String(lastSeenSeq) }`.
 
 ### Cancel / rerun failures
 
@@ -242,14 +255,14 @@ const bulk = await evals.regrade(job.id, {
 });
 
 // Read it back: QUEUED → RUNNING → COMPLETED, one result per source trial
-const done = await evals.regradeJob(bulk.id);
-for (const result of done.results ?? []) {
+const done = await evals.regradeJob(bulk.id, { limit: 100 });
+for (const result of done.results.items) {
     console.log(result.taskKey, result.sourceReward, "→", result.reward,
         result.rewardDelta);  // reward − sourceReward, the per-trial delta
 }
 ```
 
-All three return a `RegradeJob`. A per-trial regrade holds one result; a per-job regrade holds one per selected source trial. Poll `regradeJob()` until `status` is `COMPLETED` — `counts.byStatus` is the running histogram.
+All three return a `RegradeJob`. A per-trial regrade holds one result; a per-job regrade holds one per selected source trial. `results` is one object named for the collection: `total` and `byStatus` cover the whole job, `items`/`nextCursor`/`hasMore` are the page you asked for — a regrade of a 10,000-trial job is not one response. Poll `regradeJob()` until `status` is `COMPLETED`; `results.byStatus` is the running histogram, and it is derived from the whole result set rather than the page in hand.
 
 ### Eligibility
 
@@ -371,7 +384,7 @@ npx evolve-evals list --limit 20
 npx evolve-evals get <id>
 npx evolve-evals trials <id> --status INFRASTRUCTURE_ERROR,SCORING_ERROR
 npx evolve-evals trial <id> <trial-id>
-npx evolve-evals trace <id> <trial-id> --after 100
+npx evolve-evals trace <id> <trial-id> --cursor 100
 npx evolve-evals compare <id> <id>
 npx evolve-evals cancel <id>
 npx evolve-evals rerun-failed <id>
@@ -385,6 +398,7 @@ npx evolve-evals custom-harnesses get acme-cli
 npx evolve-evals custom-harnesses remove acme-cli
 ```
 
+- `--limit` and `--cursor` page every listing the same way — `list`, `trials`, `trace`, `benchmarks`, `benchmarks get` (its task list), `custom-harnesses`, and `regrade-job`.
 - Human-readable tables by default; `--json` emits machine-readable JSON (NDJSON for `--watch` streams).
 - Credentials: `$EVOLVE_API_KEY`, or `--api-key`; `--base-url` targets a non-default deployment.
 - Exit codes: `0` success (with `--watch`: `COMPLETED` / import `IMPORTED`), `1` runtime failure (with `--watch`: `FAILED` or `CANCELLED`), `2` usage error.
@@ -458,7 +472,7 @@ Not every task can run everywhere. The catalog tells you **before any money is s
 
 ```ts
 const bench = await catalog.get("my-bench@1.0");
-for (const task of bench.tasks ?? []) {
+for (const task of bench.tasks?.items ?? []) {
     const verdict = task.providers.modal;   // { ok: true } | { ok: false, reason }
     if (!verdict.ok) console.log(task.taskKey, "cannot run on modal:", verdict.reason);
 }
@@ -532,7 +546,7 @@ npx evolve-evals import --dir ./my-bench --name my-bench --version 1.0 --watch
 npx evolve-evals import status <id>
 ```
 
-Every lane resolves to the same thing — a Harbor-layout directory — and is held to the same rules. The corpus root is a directory whose `tasks/` subdirectory holds one directory per task, or the tasks directory itself. Provenance is recorded per lane: the resolved commit for a git import, the sha256 of the exact uploaded bytes for a directory. On the wire a directory import is simply a gzipped tarball POSTed to the import endpoint — the SDK produces it for you — and uploads past the compressed-size cap (512 MB by default) are refused with a `413 import_too_large`.
+Every lane resolves to the same thing — a Harbor-layout directory — and is held to the same rules. The corpus root is a directory whose `tasks/` subdirectory holds one directory per task, or the tasks directory itself. Provenance is recorded per lane: the resolved commit for a git import, the sha256 of the exact uploaded bytes for a directory. On the wire an import is `multipart/form-data`: `benchmarkName` and `version` as named parts, and either `gitUrl` + `ref` or the gzipped corpus as a `file` part — the SDK produces it for you — and uploads past the compressed-size cap (512 MB by default) are refused with a `413 import_too_large`. The metadata parts come first, so a name owned by someone else is refused with a `409 benchmark_name_taken` before the upload is received rather than after.
 
 What happens next:
 
@@ -702,10 +716,13 @@ await harnesses.create({
 Read and remove them the same way:
 
 ```ts
-const registered = await harnesses.list();     // your harnesses only
+const registered = await harnesses.list();     // one page of your harnesses
+for await (const h of harnesses.list()) { /* … */ }  // or walk them all
 const one = await harnesses.get("acme-cli");   // name, source, runCommand, env, timestamps
 await harnesses.delete("acme-cli");            // past jobs keep the harness they recorded
 ```
+
+Both upload lanes — a harness and a benchmark corpus — send `multipart/form-data`: the metadata travels as named parts and the bytes as a `file` part. The SDK builds that for you, and it is why nothing sensitive rides a URL: a run command and a set of environment values in a query string end up in every access log and proxy buffer between you and the server.
 
 ```bash
 npx evolve-evals custom-harnesses add \
@@ -834,6 +851,12 @@ interface BenchmarkVersion {             // one shape on every surface
     taskCount: number;
 }
 
+interface Page<T> {                      // every collection, top level or nested
+    items: T[];
+    nextCursor: string | null;           // pass back as { cursor }; null = no next page
+    hasMore: boolean;
+}
+
 interface Benchmark {                    // catalog.list() / catalog.get(ref)
     name: string;
     title: string | null;
@@ -841,29 +864,29 @@ interface Benchmark {                    // catalog.list() / catalog.get(ref)
     activeVersion: BenchmarkVersion | null;
     versions?: BenchmarkVersion[];       // get() only, newest first
     selectedVersion?: BenchmarkVersion | null;  // get() only — the tasks' provenance
-    tasks?: Task[];                      // get() only
+    tasks?: Page<Task>;                  // get() only; page with { limit, cursor }
     // ActiveBenchmark (getActive) is the same shape with version + tasks non-optional
 }
 
-interface Job {
+interface Job {                              // ONE shape from every call, nothing optional
     id: string;
     status: JobStatus;
     benchmark: string;                       // "name@version"
-    agents?: JobAgent[];                     // get() only
+    agents: JobAgent[];
     runsPerTask: number;
     concurrency: number;
     maxTrialSpendUsd: number;                // the per-trial cap that applied: yours, or the default
     worstCaseSpendUsd: number;               // trials x the cap — the most this job can cost
     sandboxProvider: EvalSandboxProvider;
     spentUsd: number;                        // what the trials have spent so far
-    counts: { agents: number; tasks: number; trials: number };
-    trialCounts?: Partial<Record<TrialStatus, number>>;  // get/list
-    meanReward?: number | null;              // get/list; mean over SCORED trials, null when none
-    error?: string | null;                   // get() only
-    sourceJobId?: string;                    // present on rerun-failed jobs
-    idempotentReplay?: boolean;              // true when a key replayed an existing job
+    counts: { agents: number; tasks: number };   // entity cardinality only
+    trials: { total: number; byStatus: Record<TrialStatus, number> };  // every status, zeros included
+    meanReward: number | null;               // mean over SCORED trials, null when none
+    failure: { code: string; message: string } | null;  // why it FAILED — never the key `error`
+    sourceJobId: string | null;              // the job a rerun came from
+    idempotentReplay: boolean;               // true when a key replayed an existing job
     createdAt: string;
-    updatedAt?: string;                      // get() only
+    updatedAt: string;
 }
 
 interface Trial {
@@ -904,7 +927,7 @@ interface JobEvent {
 }
 
 interface TrialTraceEvent {
-    seq: number;                             // resume position for { after }
+    seq: number;                             // resume position — pass as { cursor }
     type: string;
     data: Record<string, unknown>;
 }
@@ -944,11 +967,14 @@ interface RegradeResult {
 interface RegradeJob {                       // regrade() / regradeTrial() / regradeJob()
     id: string;
     sourceJobId: string;                     // the job the source trials belong to
-    status: "QUEUED" | "RUNNING" | "COMPLETED";  // derived from its results
+    status: "QUEUED" | "RUNNING" | "COMPLETED";  // derived from the WHOLE result set
     sandboxProvider: EvalSandboxProvider;    // where the verifier boxes run
     filter: { status?: string[]; taskKey?: string } | null;  // per-job selection, or null
-    counts: { results: number; byStatus: Partial<Record<RegradeStatus, number>> };
-    results?: RegradeResult[];               // present on create and regradeJob() reads
+    // total/byStatus cover the whole job; items/nextCursor/hasMore are one page
+    results: Page<RegradeResult> & {
+        total: number;
+        byStatus: Record<RegradeStatus, number>;
+    };
     createdAt: string;
     updatedAt: string;
 }
@@ -1009,3 +1035,5 @@ Codes you will actually branch on: `benchmark_not_found` (also what another acco
 [Regrades](#regrade) add three: `regrade_source_ineligible` (409 — the source trial recorded no verifier inputs; the message names why), `no_regradable_runs` (409 — a whole-job regrade found nothing eligible), and `regrade_not_found`.
 
 [Custom harnesses](#bring-your-own-harness) add their own: `custom_harness_not_found` (also what another owner's name reads as), `custom_harness_name_taken`, `custom_harness_name_reserved` (the name collides with a built-in harness), `custom_harness_source_required` (neither an install script nor a tarball), `custom_harness_source_conflict` (both), `custom_harness_invalid_env` (declared env tries to override a run-contract key), `custom_harness_invalid_name`, `custom_harness_too_large`, and `custom_harness_limit_reached` (the per-account registration ceiling).
+
+Three more come from the shapes above: `idempotency_key_reused` (409 — the key already stands for a different request), `invalid_multipart` (400 — an upload that is not `multipart/form-data`, or is malformed), and `invalid_cursor` (400 — a malformed `cursor` on a paged read).

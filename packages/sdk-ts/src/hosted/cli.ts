@@ -84,7 +84,7 @@ Regrade options (whole-job regrade only):
   --task <key>                        Only regrade source trials of this task
 
 Trace options:
-  --after <seq>                       Resume after this trace seq
+  --cursor <seq>                      Resume after this trace seq (a trace cursor IS a seq)
   --limit <n>                         Max events per page
 
 Import options (a git source OR a local directory; --name and --version required):
@@ -103,7 +103,9 @@ Custom-harness options ("custom-harnesses add"; an install script OR a local dir
   --env KEY=VALUE                     Env injected at run time; repeatable
 
 Other options:
-  --limit <n>, --cursor <c>           Pagination (list, trials)
+  --limit <n>, --cursor <c>           Pagination — one envelope on every collection
+                                      (list, trials, trace, benchmarks, benchmarks get,
+                                      custom-harnesses, regrade-job)
   --to <dir>                          Export target directory (default: current dir)
   --format harbor                     Export the Harbor job-layout bundle
   --json                              Machine-readable JSON output
@@ -180,7 +182,7 @@ const COMMAND_SPECS: Record<string, CommandSpec> = {
     positionalUsage: "<id> <trial-id>",
   },
   trace: {
-    flags: { after: "number", limit: "number" },
+    flags: { cursor: "string", limit: "number" },
     minPositionals: 2,
     maxPositionals: 2,
     positionalUsage: "<id> <trial-id>",
@@ -205,7 +207,7 @@ const COMMAND_SPECS: Record<string, CommandSpec> = {
     positionalUsage: "<id> [trial-id]",
   },
   "regrade-job": {
-    flags: {},
+    flags: { limit: "number", cursor: "string" },
     minPositionals: 1,
     maxPositionals: 1,
     positionalUsage: "<job-id>",
@@ -217,7 +219,7 @@ const COMMAND_SPECS: Record<string, CommandSpec> = {
     positionalUsage: "<id>",
   },
   // "benchmarks" lists; "benchmarks get <ref>" shows detail (validated in the handler)
-  benchmarks: { flags: {}, minPositionals: 0, maxPositionals: 2 },
+  benchmarks: { flags: { limit: "number", cursor: "string" }, minPositionals: 0, maxPositionals: 2 },
   // "import" creates a job (required flags validated in the handler, since
   // "import status <id>" takes none); "import status <id>" shows one job.
   import: {
@@ -241,6 +243,8 @@ const COMMAND_SPECS: Record<string, CommandSpec> = {
       dir: "string",
       run: "string",
       env: "repeat",
+      limit: "number",
+      cursor: "string",
     },
     minPositionals: 0,
     maxPositionals: 2,
@@ -518,35 +522,30 @@ function jobLines(e: Job): string[] {
     ["status", e.status],
     ["benchmark", e.benchmark],
   ];
-  if (e.agents) {
-    rows.push(["agents", e.agents.map(fmtAgent).join(", ")]);
-  }
-  if (e.counts) {
-    rows.push([
-      "size",
-      `${e.counts.agents} agent(s) x ${e.counts.tasks} task(s) = ${e.counts.trials} trial(s)`,
-    ]);
-  }
+  rows.push(["agents", e.agents.map(fmtAgent).join(", ")]);
+  rows.push([
+    "size",
+    `${e.counts.agents} agent(s) x ${e.counts.tasks} task(s) = ${e.trials.total} trial(s)`,
+  ]);
   rows.push(["runs/task", String(e.runsPerTask)]);
   rows.push(["concurrency", String(e.concurrency)]);
   rows.push(["max spend/trial", fmtUsd(e.maxTrialSpendUsd)]);
   rows.push(["worst case", fmtUsd(e.worstCaseSpendUsd)]);
   rows.push(["provider", e.sandboxProvider]);
   rows.push(["spent", fmtUsd(e.spentUsd)]);
-  if (e.meanReward !== undefined) {
-    rows.push(["mean reward", e.meanReward !== null ? String(e.meanReward) : "-"]);
-  }
-  if (e.trialCounts && Object.keys(e.trialCounts).length > 0) {
-    const histogram = Object.entries(e.trialCounts)
-      .map(([status, count]) => `${status} ${count}`)
-      .join(" · ");
-    rows.push(["trials", histogram]);
-  }
+  rows.push(["mean reward", e.meanReward !== null ? String(e.meanReward) : "-"]);
+  // Only the statuses actually present: the response names all of them (so a
+  // client never hardcodes the enum), but a row of eight zeros helps nobody.
+  const histogram = Object.entries(e.trials.byStatus)
+    .filter(([, count]) => count > 0)
+    .map(([status, count]) => `${status} ${count}`)
+    .join(" · ");
+  if (histogram) rows.push(["trials", histogram]);
   if (e.sourceJobId) rows.push(["rerun of", e.sourceJobId]);
   if (e.idempotentReplay) rows.push(["note", "idempotent replay of an existing job"]);
-  if (e.error) rows.push(["error", e.error]);
+  if (e.failure) rows.push(["failure", `${e.failure.code}: ${e.failure.message}`]);
   rows.push(["created", e.createdAt]);
-  if (e.updatedAt) rows.push(["updated", e.updatedAt]);
+  rows.push(["updated", e.updatedAt]);
   return table(rows);
 }
 
@@ -555,8 +554,8 @@ function jobRow(e: Job): string[] {
     e.id,
     e.status,
     e.benchmark,
-    e.counts ? String(e.counts.trials) : "-",
-    fmtReward(e.meanReward ?? null),
+    String(e.trials.total),
+    fmtReward(e.meanReward),
     fmtUsd(e.spentUsd),
     e.createdAt,
   ];
@@ -637,16 +636,13 @@ function regradeJobLines(job: RegradeJob): string[] {
     ["status", job.status],
     ["source job", job.sourceJobId],
     ["provider", job.sandboxProvider],
-    ["results", String(job.counts.results)],
+    ["results", String(job.results.total)],
   ];
-  if (job.counts.byStatus && Object.keys(job.counts.byStatus).length > 0) {
-    rows.push([
-      "by status",
-      Object.entries(job.counts.byStatus)
-        .map(([status, count]) => `${status} ${count}`)
-        .join(" · "),
-    ]);
-  }
+  const byStatus = Object.entries(job.results.byStatus)
+    .filter(([, count]) => count > 0)
+    .map(([status, count]) => `${status} ${count}`)
+    .join(" · ");
+  if (byStatus) rows.push(["by status", byStatus]);
   if (job.filter && (job.filter.status?.length || job.filter.taskKey)) {
     const parts: string[] = [];
     if (job.filter.status?.length) parts.push(`status=${job.filter.status.join(",")}`);
@@ -655,11 +651,17 @@ function regradeJobLines(job: RegradeJob): string[] {
   }
   rows.push(["created", job.createdAt]);
   const lines = table(rows);
-  if (job.results && job.results.length > 0) {
+  if (job.results.items.length > 0) {
     lines.push("");
     const resultRows = [["TASK", "STATUS", "WAS", "NOW", "Δ", "SOURCE TRIAL ID"]];
-    for (const result of job.results) resultRows.push(regradeResultRow(result));
+    for (const result of job.results.items) resultRows.push(regradeResultRow(result));
     lines.push(...table(resultRows));
+    if (job.results.nextCursor) {
+      lines.push(
+        "",
+        `More: evolve-evals regrade-job ${job.id} --cursor ${job.results.nextCursor}`
+      );
+    }
   }
   return lines;
 }
@@ -762,6 +764,14 @@ function clientConfig(inv: Invocation): HostedClientConfig {
   return config;
 }
 
+/** The one { limit, cursor } pair every paged command accepts. */
+function pageOptions(inv: Invocation): { limit?: number; cursor?: string } {
+  return {
+    ...(inv.flags.limit !== undefined ? { limit: inv.flags.limit as number } : {}),
+    ...(inv.flags.cursor !== undefined ? { cursor: String(inv.flags.cursor) } : {}),
+  };
+}
+
 function statusExitCode(e: Job): number {
   return e.status === "COMPLETED" ? 0 : e.status === "FAILED" || e.status === "CANCELLED" ? 1 : 0;
 }
@@ -815,12 +825,12 @@ async function cmdList(inv: Invocation, io: CliIO): Promise<number> {
     io.out(JSON.stringify(page));
     return 0;
   }
-  if (page.jobs.length === 0) {
+  if (page.items.length === 0) {
     io.out("No jobs.");
     return 0;
   }
   const rows = [["ID", "STATUS", "BENCHMARK", "TRIALS", "MEAN REWARD", "SPENT", "CREATED"]];
-  for (const e of page.jobs) rows.push(jobRow(e));
+  for (const e of page.items) rows.push(jobRow(e));
   for (const line of table(rows)) io.out(line);
   if (page.nextCursor) io.out(`\nMore: evolve-evals list --cursor ${page.nextCursor}`);
   return 0;
@@ -858,14 +868,14 @@ async function cmdTrials(inv: Invocation, io: CliIO): Promise<number> {
     io.out(JSON.stringify(page));
     return 0;
   }
-  if (page.trials.length === 0) {
+  if (page.items.length === 0) {
     io.out("No trials.");
     return 0;
   }
   const rows = [["TASK", "AGENT", "RUN", "STATUS", "REWARD", "SPENT", "TRIAL ID"]];
-  for (const run of page.trials) rows.push(trialRow(run));
+  for (const run of page.items) rows.push(trialRow(run));
   for (const line of table(rows)) io.out(line);
-  io.out(`\n${page.trials.length} trial(s) shown`);
+  io.out(`\n${page.items.length} trial(s) shown`);
   if (page.nextCursor) {
     io.out(`More: evolve-evals trials ${inv.positionals[0]} --cursor ${page.nextCursor}`);
   }
@@ -888,7 +898,7 @@ async function cmdTrace(inv: Invocation, io: CliIO): Promise<number> {
   const json = inv.flags.json === true;
   let count = 0;
   for await (const event of client.trialTraceEvents(inv.positionals[0], inv.positionals[1], {
-    ...(inv.flags.after !== undefined ? { after: inv.flags.after as number } : {}),
+    ...(inv.flags.cursor !== undefined ? { cursor: String(inv.flags.cursor) } : {}),
     ...(inv.flags.limit !== undefined ? { limit: inv.flags.limit as number } : {}),
   })) {
     io.out(json ? JSON.stringify(event) : traceEventLine(event));
@@ -1008,7 +1018,7 @@ async function cmdRegrade(inv: Invocation, io: CliIO): Promise<number> {
 
 async function cmdRegradeJob(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
-  const job = await client.regradeJob(inv.positionals[0]);
+  const job = await client.regradeJob(inv.positionals[0], pageOptions(inv));
   if (inv.flags.json === true) {
     io.out(JSON.stringify(job));
   } else {
@@ -1050,17 +1060,20 @@ function benchmarkDetailLines(b: Benchmark): string[] {
     }
     lines.push(...table(rows));
   }
-  if (b.tasks && b.tasks.length > 0) {
+  if (b.tasks && b.tasks.items.length > 0) {
     lines.push("", `Tasks (version ${b.selectedVersion?.version ?? "?"}):`);
     const rows = [["TASK", "AGENT TIMEOUT", "VERIFIER TIMEOUT", "PROVIDERS"]];
-    for (const t of b.tasks) {
+    for (const t of b.tasks.items) {
       rows.push([t.taskKey, `${t.agentTimeoutSec}s`, `${t.verifierTimeoutSec}s`, fmtProviders(t.providers)]);
     }
     lines.push(...table(rows));
+    if (b.tasks.nextCursor) {
+      lines.push(`More tasks: evolve-evals benchmarks get ${b.name} --cursor ${b.tasks.nextCursor}`);
+    }
     // Name each refusal once below the table; the runner refuses with the
     // same reason at run time.
     const refusals = new Map<string, string>();
-    for (const t of b.tasks) {
+    for (const t of b.tasks.items) {
       for (const provider of PROVIDER_ORDER) {
         const verdict = t.providers?.[provider];
         if (verdict && !verdict.ok && !refusals.has(`${provider}:${verdict.reason}`)) {
@@ -1081,17 +1094,17 @@ async function cmdBenchmarks(inv: Invocation, io: CliIO): Promise<number> {
   const [sub, ref] = inv.positionals;
 
   if (sub === undefined) {
-    const catalog = await client.list();
+    const catalog = await client.list(pageOptions(inv));
     if (inv.flags.json === true) {
-      io.out(JSON.stringify({ benchmarks: catalog }));
+      io.out(JSON.stringify(catalog));
       return 0;
     }
-    if (catalog.length === 0) {
+    if (catalog.items.length === 0) {
       io.out("No benchmarks.");
       return 0;
     }
     const rows = [["NAME", "ACTIVE", "STATE", "TASKS", "TITLE"]];
-    for (const b of catalog) {
+    for (const b of catalog.items) {
       rows.push([
         b.name,
         b.activeVersion?.version ?? "-",
@@ -1110,7 +1123,7 @@ async function cmdBenchmarks(inv: Invocation, io: CliIO): Promise<number> {
   if (!ref) {
     throw new CliUsageError('"benchmarks get" requires a <name[@version]> ref');
   }
-  const detail = await client.get(ref);
+  const detail = await client.get(ref, pageOptions(inv));
   if (inv.flags.json === true) {
     io.out(JSON.stringify(detail));
   } else {
@@ -1180,17 +1193,17 @@ async function cmdCustomHarnesses(inv: Invocation, io: CliIO): Promise<number> {
   const json = inv.flags.json === true;
 
   if (sub === undefined) {
-    const registered = await client.list();
+    const registered = await client.list(pageOptions(inv));
     if (json) {
-      io.out(JSON.stringify({ customHarnesses: registered }));
+      io.out(JSON.stringify(registered));
       return 0;
     }
-    if (registered.length === 0) {
+    if (registered.items.length === 0) {
       io.out("No custom harnesses.");
       return 0;
     }
     const rows = [["NAME", "SOURCE", "RUN COMMAND", "UPDATED"]];
-    for (const harness of registered) {
+    for (const harness of registered.items) {
       rows.push([
         harness.name,
         harness.source,

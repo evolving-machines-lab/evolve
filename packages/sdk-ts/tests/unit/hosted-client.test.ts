@@ -180,7 +180,7 @@ async function testBenchmarksList() {
     setMockResponse("/api/benchmarks", {
       status: 200,
       body: {
-        benchmarks: [
+        items: [
           {
             name: "deep-swe",
             title: "DeepSWE",
@@ -194,21 +194,26 @@ async function testBenchmarksList() {
             activeVersion: null,
           },
         ],
+        nextCursor: null,
+        hasMore: false,
       },
     });
 
     const b = benchmarks({ apiKey: "test-key", baseUrl: BASE });
     const catalog = await b.list();
 
-    assertEqual(catalog.length, 2, "returns 2 benchmarks");
-    assertEqual(catalog[0].name, "deep-swe", "maps name");
-    assertEqual(catalog[0].title, "DeepSWE", "maps title");
+    // The one page envelope, the same on every collection this surface returns.
+    assertEqual(catalog.items.length, 2, "returns 2 benchmarks");
+    assertEqual(catalog.nextCursor, null, "nextCursor null = no next page");
+    assertEqual(catalog.hasMore, false, "hasMore says the same as a boolean");
+    assertEqual(catalog.items[0].name, "deep-swe", "maps name");
+    assertEqual(catalog.items[0].title, "DeepSWE", "maps title");
     assertEqual(
-      catalog[0].activeVersion,
+      catalog.items[0].activeVersion,
       { version: "1.1", state: "READY", createdAt: "2026-07-21T00:00:00.000Z", taskCount: 113 },
       "maps activeVersion object (one shape: version/state/createdAt/taskCount)"
     );
-    assertEqual(catalog[1].activeVersion, null, "null activeVersion preserved");
+    assertEqual(catalog.items[1].activeVersion, null, "null activeVersion preserved");
 
     const headers = fetchCalls[0].init?.headers as Record<string, string>;
     assertEqual(headers?.Authorization, "Bearer test-key", "Bearer token sent");
@@ -233,14 +238,18 @@ async function testBenchmarksGet() {
           { version: "1.0", state: "ARCHIVED", createdAt: "2026-07-01T00:00:00.000Z", taskCount: 100 },
         ],
         selectedVersion: { version: "1.1", state: "READY", createdAt: "2026-07-21T00:00:00.000Z", taskCount: 113 },
-        tasks: [
-          {
-            taskKey: "abs-module-cache-flags",
-            agentTimeoutSec: 5400,
-            verifierTimeoutSec: 1800,
-            providers: { e2b: { ok: true }, daytona: { ok: true }, modal: { ok: false, reason: "multi-container tasks are not supported on modal" } },
-          },
-        ],
+        tasks: {
+          items: [
+            {
+              taskKey: "abs-module-cache-flags",
+              agentTimeoutSec: 5400,
+              verifierTimeoutSec: 1800,
+              providers: { e2b: { ok: true }, daytona: { ok: true }, modal: { ok: false, reason: "multi-container tasks are not supported on modal" } },
+            },
+          ],
+          nextCursor: "task-1",
+          hasMore: true,
+        },
         createdAt: "2026-07-01T00:00:00.000Z",
         updatedAt: "2026-07-21T00:00:00.000Z",
       },
@@ -263,9 +272,12 @@ async function testBenchmarksGet() {
       { version: "1.1", state: "READY", createdAt: "2026-07-21T00:00:00.000Z", taskCount: 113 },
       "selectedVersion is a full version object (never a bare label)"
     );
-    assertEqual(detail.tasks?.[0].taskKey, "abs-module-cache-flags", "maps public task fields");
+    // A nested collection is the same envelope as a top-level one.
+    assertEqual(detail.tasks?.hasMore, true, "tasks are paged like every collection");
+    assertEqual(detail.tasks?.nextCursor, "task-1", "tasks carry a cursor");
+    assertEqual(detail.tasks?.items[0].taskKey, "abs-module-cache-flags", "maps public task fields");
     assertEqual(
-      detail.tasks?.[0].providers,
+      detail.tasks?.items[0].providers,
       { e2b: { ok: true }, daytona: { ok: true }, modal: { ok: false, reason: "multi-container tasks are not supported on modal" } },
       "per-task provider verdicts mapped — capability visible before money is spent"
     );
@@ -296,19 +308,17 @@ async function testImportGitSource() {
     });
 
     const call = fetchCalls[fetchCalls.length - 1];
-    assert(call.url.includes("/api/benchmarks/imports"), "targets the imports collection route");
+    assert(call.url.endsWith("/api/benchmarks/imports"), "targets the imports collection route");
     assertEqual(call.init?.method, "POST", "uses POST");
-    assertEqual(
-      JSON.parse(call.init?.body as string),
-      {
-        source: { type: "git", url: "https://github.com/x/bench.git", ref: "main" },
-        benchmarkName: "deep-swe",
-        version: "1.2",
-      },
-      "body is the wire contract (type: 'git', url, ref + benchmarkName, version)"
-    );
+    // ONE body grammar for both sources: multipart/form-data with named parts.
+    const form = call.init?.body as FormData;
+    assert(form instanceof FormData, "body is multipart/form-data");
+    assertEqual(form.get("benchmarkName"), "deep-swe", "benchmarkName is a named part");
+    assertEqual(form.get("version"), "1.2", "version is a named part");
+    assertEqual(form.get("gitUrl"), "https://github.com/x/bench.git", "gitUrl is a named part");
+    assertEqual(form.get("ref"), "main", "ref is a named part");
+    assertEqual(form.get("file"), null, "no file part for a git source");
     const headers = call.init?.headers as Record<string, string>;
-    assertEqual(headers?.["Content-Type"], "application/json", "JSON content type");
     assertEqual(headers?.Authorization, "Bearer test-key", "Bearer token sent");
 
     assertEqual(
@@ -364,17 +374,24 @@ async function testImportDirectorySource() {
     });
 
     const call = fetchCalls[fetchCalls.length - 1];
-    assert(call.url.includes("/api/benchmarks/imports?"), "targets the imports route with a query string");
-    assert(call.url.includes("benchmarkName=my-bench"), "benchmarkName rides the query string");
-    assert(call.url.includes("version=0.1"), "version rides the query string");
+    // Metadata is named PARTS; the corpus is the `file` part. The URL is bare.
+    assert(call.url.endsWith("/api/benchmarks/imports"), "the URL carries nothing");
     assertEqual(call.init?.method, "POST", "uses POST");
     const headers = call.init?.headers as Record<string, string>;
-    assertEqual(headers?.["Content-Type"], "application/gzip", "gzip content type");
     assertEqual(headers?.Authorization, "Bearer test-key", "Bearer token sent");
+    const form = call.init?.body as FormData;
+    assert(form instanceof FormData, "body is multipart/form-data");
+    assertEqual(form.get("benchmarkName"), "my-bench", "benchmarkName is a named part");
+    assertEqual(form.get("version"), "0.1", "version is a named part");
+    // The metadata parts come FIRST so the server can refuse a name it will
+    // never accept before receiving a half-gigabyte upload.
+    assertEqual([...form.keys()], ["benchmarkName", "version", "file"], "metadata precedes the file part");
 
-    const body = call.init?.body as Uint8Array;
-    assert(body instanceof Uint8Array && body.length > 0, "body is non-empty bytes");
-    assert(body[0] === 0x1f && body[1] === 0x8b, "body is a gzip stream (magic 1f 8b)");
+    const file = form.get("file") as File;
+    assert(file instanceof Blob, "the corpus is the file part");
+    const body = new Uint8Array(await file.arrayBuffer());
+    assert(body.length > 0, "file part is non-empty bytes");
+    assert(body[0] === 0x1f && body[1] === 0x8b, "file part is a gzip stream (magic 1f 8b)");
     // The gzipped tar carries the corpus file path + content (USTAR stores both as plain bytes).
     const tarText = gunzipSync(Buffer.from(body)).toString("latin1");
     assert(tarText.includes("tasks/abc/task.toml"), "the tar carries the corpus file path");
@@ -489,18 +506,19 @@ async function testCustomHarnessCreateInstallScript() {
     const call = fetchCalls[fetchCalls.length - 1];
     assert(call.url.endsWith("/api/custom-harnesses"), "hits the custom-harnesses route");
     assertEqual(call.init?.method, "POST", "uses POST");
-    const headers = call.init?.headers as Record<string, string>;
-    assertEqual(headers?.["Content-Type"], "application/json", "json content type");
+    // ONE body grammar for both sources: multipart/form-data, so the endpoint
+    // no longer switches grammars on Content-Type.
+    const form = call.init?.body as FormData;
+    assert(form instanceof FormData, "body is multipart/form-data");
+    assertEqual(form.get("name"), "acme-cli", "name is a named part");
     assertEqual(
-      JSON.parse(call.init?.body as string),
-      {
-        name: "acme-cli",
-        installScript: "curl -fsSL https://acme.dev/install.sh | sh",
-        runCommand: "acme-cli --headless",
-        env: { ACME_PROFILE: "bench" },
-      },
-      "sends name/installScript/runCommand/env verbatim"
+      form.get("installScript"),
+      "curl -fsSL https://acme.dev/install.sh | sh",
+      "installScript is a named part"
     );
+    assertEqual(form.get("runCommand"), "acme-cli --headless", "runCommand is a named part");
+    assertEqual(form.get("env"), JSON.stringify({ ACME_PROFILE: "bench" }), "env is a JSON part");
+    assertEqual(form.get("file"), null, "no file part for the install-script source");
     assertEqual(created, CUSTOM_HARNESS, "201 response mapped (name, source, runCommand, env, timestamps)");
   } finally {
     restoreFetch();
@@ -508,7 +526,7 @@ async function testCustomHarnessCreateInstallScript() {
 }
 
 async function testCustomHarnessCreateTarball() {
-  console.log("\n--- customHarnesses().create() tars a directory and rides metadata on the query ---");
+  console.log("\n--- customHarnesses().create() tars a directory into a multipart file part ---");
   installMockFetch();
   const dir = await mkdtemp(join(tmpdir(), "evolve-harness-dir-"));
   try {
@@ -528,21 +546,25 @@ async function testCustomHarnessCreateTarball() {
     });
 
     const call = fetchCalls[fetchCalls.length - 1];
-    assert(call.url.includes("/api/custom-harnesses?"), "targets the route with a query string");
-    const query = new URLSearchParams(call.url.slice(call.url.indexOf("?") + 1));
-    assertEqual(query.get("name"), "acme-cli", "name rides the query string");
-    assertEqual(query.get("runCommand"), "acme-cli --headless", "runCommand rides the query string");
-    assertEqual(
-      query.getAll("env"),
-      ["ACME_PROFILE=bench", "ACME_REGION=us"],
-      "env rides as repeated KEY=VALUE pairs"
-    );
+    // THE LEAK A6 CLOSES: the run command and the declared env used to ride the
+    // query string, which put a shell command and a set of environment values
+    // into every access log and proxy buffer on the way to the server.
+    assert(call.url.endsWith("/api/custom-harnesses"), "the URL carries nothing");
     assertEqual(call.init?.method, "POST", "uses POST");
-    const headers = call.init?.headers as Record<string, string>;
-    assertEqual(headers?.["Content-Type"], "application/gzip", "gzip content type");
-    const body = call.init?.body as Uint8Array;
-    assert(body instanceof Uint8Array && body.length > 0, "body is non-empty bytes");
-    assert(body[0] === 0x1f && body[1] === 0x8b, "body is a gzip stream (magic 1f 8b)");
+    const form = call.init?.body as FormData;
+    assert(form instanceof FormData, "body is multipart/form-data");
+    assertEqual(form.get("name"), "acme-cli", "name is a named part");
+    assertEqual(form.get("runCommand"), "acme-cli --headless", "runCommand is a named part");
+    assertEqual(
+      form.get("env"),
+      JSON.stringify({ ACME_PROFILE: "bench", ACME_REGION: "us" }),
+      "env is one JSON part, not repeated query pairs"
+    );
+    const file = form.get("file") as File;
+    assert(file instanceof Blob, "the archive is the file part");
+    const body = new Uint8Array(await file.arrayBuffer());
+    assert(body.length > 0, "file part is non-empty bytes");
+    assert(body[0] === 0x1f && body[1] === 0x8b, "file part is a gzip stream (magic 1f 8b)");
     const tarText = gunzipSync(Buffer.from(body)).toString("latin1");
     assert(tarText.includes("bin/acme-cli"), "the tar carries the harness executable path");
     assertEqual(created.source, "tarball", "server echoes the tarball source");
@@ -587,14 +609,15 @@ async function testCustomHarnessListGetDelete() {
     setMockResponse("/api/custom-harnesses/acme-cli", { status: 200, body: CUSTOM_HARNESS });
     setMockResponse("/api/custom-harnesses", {
       status: 200,
-      body: { customHarnesses: [CUSTOM_HARNESS] },
+      body: { items: [CUSTOM_HARNESS], nextCursor: null, hasMore: false },
     });
     const h = customHarnesses({ apiKey: "test-key", baseUrl: BASE });
 
     const listed = await h.list();
-    assertEqual(listed.length, 1, "list() unwraps the customHarnesses envelope");
-    assertEqual(listed[0].name, "acme-cli", "maps the harness name");
-    assertEqual(listed[0].source, "install_script", "maps the source");
+    assertEqual(listed.items.length, 1, "list() returns the one page envelope");
+    assertEqual(listed.nextCursor, null, "nextCursor null = no next page");
+    assertEqual(listed.items[0].name, "acme-cli", "maps the harness name");
+    assertEqual(listed.items[0].source, "install_script", "maps the source");
 
     const one = await h.get("acme-cli");
     assert(
@@ -675,6 +698,21 @@ async function testCustomHarnessNameTakenIsTypedError() {
 // JOBS TESTS
 // =============================================================================
 
+/** A trial histogram with EVERY status named — zeros included, as the API emits. */
+function zeroTrialStatuses(counts: Record<string, number> = {}): Record<string, number> {
+  return {
+    QUEUED: 0,
+    RUNNING: 0,
+    SCORING: 0,
+    SCORED: 0,
+    SCORING_ERROR: 0,
+    INFRASTRUCTURE_ERROR: 0,
+    INDETERMINATE: 0,
+    CANCELLED: 0,
+    ...counts,
+  };
+}
+
 const RUN_SUMMARY = {
   id: "eval-1",
   status: "QUEUED",
@@ -685,8 +723,15 @@ const RUN_SUMMARY = {
   worstCaseSpendUsd: 250,
   sandboxProvider: "daytona",
   spentUsd: 0,
-  counts: { agents: 2, tasks: 5, trials: 10 },
+  counts: { agents: 2, tasks: 5 },
+  trials: { total: 10, byStatus: zeroTrialStatuses({ QUEUED: 10 }) },
+  meanReward: null,
+  failure: null,
+  sourceJobId: null,
+  idempotentReplay: false,
+  agents: [{ harness: "codex", model: "gpt-5.5", harnessVersion: null }],
   createdAt: "2026-07-22T00:00:00.000Z",
+  updatedAt: "2026-07-22T00:00:00.000Z",
 };
 
 async function testRunPostsInputContract() {
@@ -741,8 +786,12 @@ async function testRunPostsInputContract() {
     assertEqual(job.id, "eval-1", "maps id");
     assertEqual(job.status, "QUEUED", "maps status");
     assertEqual(job.benchmark, "deep-swe@1.1", "maps benchmark ref");
-    assertEqual(job.counts, { agents: 2, tasks: 5, trials: 10 }, "maps counts");
-    assert(job.idempotentReplay === undefined, "no idempotentReplay on fresh create");
+    // ONE "how many" structure: counts is entity cardinality, trials is the
+    // total plus the status histogram.
+    assertEqual(job.counts, { agents: 2, tasks: 5 }, "maps counts (entity cardinality only)");
+    assertEqual(job.trials.total, 10, "maps the trial total");
+    assertEqual(job.trials.byStatus.QUEUED, 10, "maps the status histogram");
+    assertEqual(job.idempotentReplay, false, "idempotentReplay is always present, false on a fresh create");
 
     // Without idempotency key, header is absent
     await e.run(input);
@@ -954,10 +1003,12 @@ async function testGetJobDetail() {
         agents: [
           { harness: "codex", model: "gpt-5.5", harnessVersion: null },
         ],
-        counts: { agents: 1, tasks: 10, trials: 10 },
-        trialCounts: { SCORED: 4, RUNNING: 2, QUEUED: 4 },
+        counts: { agents: 1, tasks: 10 },
+        trials: { total: 10, byStatus: zeroTrialStatuses({ SCORED: 4, RUNNING: 2, QUEUED: 4 }) },
         meanReward: 0.75,
-        error: null,
+        failure: null,
+        sourceJobId: null,
+        idempotentReplay: false,
         createdAt: "2026-07-22T00:00:00.000Z",
         updatedAt: "2026-07-22T00:05:00.000Z",
       },
@@ -976,15 +1027,15 @@ async function testGetJobDetail() {
     assertEqual(job.worstCaseSpendUsd, 25, "maps worstCaseSpendUsd (trials x the cap)");
     assertEqual(job.sandboxProvider, "modal", "maps sandboxProvider");
     assertEqual(job.spentUsd, 3.5, "maps spentUsd");
-    assertEqual(
-      job.trialCounts,
-      { SCORED: 4, RUNNING: 2, QUEUED: 4 },
-      "maps trialCounts histogram"
-    );
+    assertEqual(job.trials.total, 10, "maps the trial total");
+    assertEqual(job.trials.byStatus.SCORED, 4, "maps the status histogram");
+    // Every status is named, zeros included, so a UI never hardcodes the enum.
+    assertEqual(job.trials.byStatus.CANCELLED, 0, "a status with no trials is 0, not absent");
+    assertEqual(Object.keys(job.trials.byStatus).length, 8, "all 8 statuses present");
     assertEqual(
       job.counts,
-      { agents: 1, tasks: 10, trials: 10 },
-      "detail carries counts (no trialTotal)"
+      { agents: 1, tasks: 10 },
+      "detail carries entity cardinality only"
     );
     assertEqual(
       job.agents,
@@ -995,7 +1046,10 @@ async function testGetJobDetail() {
     assert(!("id" in system), "internal agent id not exposed");
     assert(!("systemDigest" in system), "systemDigest not exposed");
     assert(!("trialTotal" in (job as unknown as Record<string, unknown>)), "trialTotal is gone");
-    assertEqual(job.error, null, "maps error");
+    // `error` is the FAILURE envelope's key and never appears on a 200 body:
+    // `if (body.error) throw` has to stay correct on a healthy read.
+    assert(!("error" in (job as unknown as Record<string, unknown>)), "no `error` key on a 200 job");
+    assertEqual(job.failure, null, "maps failure (null when the job did not fail)");
   } finally {
     restoreFetch();
   }
@@ -1008,11 +1062,17 @@ async function testListJobs() {
     setMockResponse("/api/jobs", {
       status: 200,
       body: {
-        jobs: [
-          { ...RUN_SUMMARY, trialCounts: { SCORED: 10 } },
-          { ...RUN_SUMMARY, id: "eval-0", status: "COMPLETED", trialCounts: {} },
+        items: [
+          { ...RUN_SUMMARY, trials: { total: 10, byStatus: zeroTrialStatuses({ SCORED: 10 }) } },
+          {
+            ...RUN_SUMMARY,
+            id: "eval-0",
+            status: "FAILED",
+            failure: { code: "job_execution_failed", message: "dispatch exploded" },
+          },
         ],
         nextCursor: "eval-0",
+        hasMore: true,
       },
     });
 
@@ -1022,9 +1082,18 @@ async function testListJobs() {
     let url = fetchCalls[fetchCalls.length - 1].url;
     assert(!url.includes("limit="), "no limit param by default");
     assert(!url.includes("cursor="), "no cursor param by default");
-    assertEqual(page.jobs.length, 2, "returns 2 jobs");
-    assertEqual(page.jobs[0].trialCounts, { SCORED: 10 }, "maps trialCounts");
+    assertEqual(page.items.length, 2, "returns 2 jobs");
+    assertEqual(page.items[0].trials.byStatus.SCORED, 10, "maps the status histogram");
     assertEqual(page.nextCursor, "eval-0", "maps nextCursor");
+    assertEqual(page.hasMore, true, "maps hasMore");
+    // A list row is the SAME shape as a get(): a dashboard shows WHY a job
+    // failed without an N+1 detail call per row.
+    assertEqual(
+      page.items[1].failure,
+      { code: "job_execution_failed", message: "dispatch exploded" },
+      "the failure reason rides on the list row"
+    );
+    assertEqual(page.items[0].agents.length, 1, "agents ride on the list row");
 
     await e.list({ limit: 100, cursor: "eval-5" });
     url = fetchCalls[fetchCalls.length - 1].url;
@@ -1042,7 +1111,7 @@ async function testTrials() {
     setMockResponse("/api/jobs/eval-1/trials", {
       status: 200,
       body: {
-        trials: [
+        items: [
           {
             id: "run-1",
             taskKey: "abs-module-cache-flags",
@@ -1083,6 +1152,7 @@ async function testTrials() {
           },
         ],
         nextCursor: "run-2",
+        hasMore: true,
       },
     });
 
@@ -1095,16 +1165,16 @@ async function testTrials() {
     assert(url.includes("cursor=run-0"), "cursor forwarded");
 
     assertEqual(page.nextCursor, "run-2", "maps nextCursor");
-    assertEqual(page.trials[0].reward, 1, "maps reward");
-    assertEqual(page.trials[0].metrics, { f2p: 1, p2p: 1 }, "maps named metrics map");
-    assertEqual(page.trials[0].modelUsage?.spentUsd, 0.93, "maps modelUsage.spentUsd");
-    assertEqual(page.trials[0].sandboxProvider, "daytona", "first-class sandboxProvider on list rows");
-    assertEqual(page.trials[0].verifierMode, "separate", "first-class verifierMode on list rows");
-    assertEqual(page.trials[0].resolvedHarnessVersion, "codex-cli 0.145.0", "first-class resolvedHarnessVersion on list rows");
-    assertEqual(page.trials[0].sessionRef, "sess-9", "maps sessionRef");
-    assertEqual(page.trials[1].status, "INFRASTRUCTURE_ERROR", "maps failure status");
-    assertEqual(page.trials[1].failurePhase, "verifier_boot", "maps failurePhase");
-    assertEqual(page.trials[1].reward, null, "unscored trial keeps null reward (never a fake zero)");
+    assertEqual(page.items[0].reward, 1, "maps reward");
+    assertEqual(page.items[0].metrics, { f2p: 1, p2p: 1 }, "maps named metrics map");
+    assertEqual(page.items[0].modelUsage?.spentUsd, 0.93, "maps modelUsage.spentUsd");
+    assertEqual(page.items[0].sandboxProvider, "daytona", "first-class sandboxProvider on list rows");
+    assertEqual(page.items[0].verifierMode, "separate", "first-class verifierMode on list rows");
+    assertEqual(page.items[0].resolvedHarnessVersion, "codex-cli 0.145.0", "first-class resolvedHarnessVersion on list rows");
+    assertEqual(page.items[0].sessionRef, "sess-9", "maps sessionRef");
+    assertEqual(page.items[1].status, "INFRASTRUCTURE_ERROR", "maps failure status");
+    assertEqual(page.items[1].failurePhase, "verifier_boot", "maps failurePhase");
+    assertEqual(page.items[1].reward, null, "unscored trial keeps null reward (never a fake zero)");
 
     // Status filter: comma-joined ?status= for the failures behind a rerun decision
     await e.trials("eval-1", { status: ["INFRASTRUCTURE_ERROR", "SCORING_ERROR"] });
@@ -1208,11 +1278,30 @@ const REGRADE_JOB = {
   status: "COMPLETED",
   sandboxProvider: "e2b",
   filter: null,
-  counts: { results: 1, byStatus: { SCORED: 1 } },
   createdAt: "2026-07-24T00:00:00Z",
   updatedAt: "2026-07-24T00:05:00Z",
-  results: [REGRADE_RESULT],
+  // ONE key named for the collection: the whole-job tally plus this page of
+  // results, with every regrade status named.
+  results: {
+    total: 1,
+    byStatus: {
+      QUEUED: 0,
+      RUNNING: 0,
+      SCORED: 1,
+      SCORING_ERROR: 0,
+      INFRASTRUCTURE_ERROR: 0,
+      INDETERMINATE: 0,
+    },
+    items: [REGRADE_RESULT],
+    nextCursor: null,
+    hasMore: false,
+  },
 };
+
+/** The same regrade job with a different whole-job result total. */
+function regradeJobWithTotal(total: number) {
+  return { ...REGRADE_JOB, results: { ...REGRADE_JOB.results, total } };
+}
 
 async function testRegradeTrial() {
   console.log("\n--- jobs().regradeTrial() re-runs one run's verifier ---");
@@ -1220,7 +1309,7 @@ async function testRegradeTrial() {
   try {
     setMockResponse("/api/jobs/eval-1/trials/run-1/regrade", {
       status: 202,
-      body: { ...REGRADE_JOB, counts: { results: 1, byStatus: { QUEUED: 1 } } },
+      body: regradeJobWithTotal(1),
     });
     const e = jobs({ apiKey: "test-key", baseUrl: BASE });
     const job = await e.regradeTrial("eval-1", "run-1");
@@ -1229,7 +1318,9 @@ async function testRegradeTrial() {
     assert(call.url.endsWith("/trials/run-1/regrade"), "hits the per-trial regrade route");
     assertEqual(job.id, "job-1", "returns the regrade job");
     assertEqual(job.sourceJobId, "eval-1", "links the source job");
-    assertEqual(job.counts.results, 1, "one result for a per-trial regrade");
+    assertEqual(job.results.total, 1, "one result for a per-trial regrade");
+    assertEqual(job.results.items.length, 1, "the page carries the result");
+    assert(!("counts" in (job as unknown as Record<string, unknown>)), "no separate counts object");
   } finally {
     restoreFetch();
   }
@@ -1241,7 +1332,7 @@ async function testRegradeJob() {
   try {
     setMockResponse("/api/jobs/eval-1/regrade", {
       status: 202,
-      body: { ...REGRADE_JOB, counts: { results: 2, byStatus: { QUEUED: 2 } } },
+      body: regradeJobWithTotal(2),
     });
     const e = jobs({ apiKey: "test-key", baseUrl: BASE });
     const job = await e.regrade("eval-1", { status: ["SCORED"], taskKey: "demo-task" });
@@ -1249,7 +1340,7 @@ async function testRegradeJob() {
     assertEqual(call.init?.method, "POST", "uses POST");
     const sentBody = JSON.parse(call.init?.body as string);
     assertEqual(sentBody, { status: ["SCORED"], taskKey: "demo-task" }, "sends the status+taskKey filter body");
-    assertEqual(job.counts.results, 2, "one result per eligible trial");
+    assertEqual(job.results.total, 2, "one result per eligible trial");
   } finally {
     restoreFetch();
   }
@@ -1263,8 +1354,10 @@ async function testRegradeJobRead() {
     const e = jobs({ apiKey: "test-key", baseUrl: BASE });
     const job = await e.regradeJob("job-1");
     assertEqual(job.status, "COMPLETED", "maps the derived job status");
-    assert(job.results !== undefined && job.results.length === 1, "carries the per-trial results");
-    const result = job.results![0];
+    assertEqual(job.results.items.length, 1, "carries the per-trial results");
+    assertEqual(job.results.nextCursor, null, "a complete page says so rather than echoing a position");
+    assertEqual(job.results.byStatus.INDETERMINATE, 0, "every regrade status named, zeros included");
+    const result = job.results.items[0];
     assertEqual(result.taskKey, "demo-task", "maps the source task key");
     assertEqual(result.sourceReward, 1, "carries the immutable source reward");
     assertEqual(result.rewardDelta, -0.5, "carries the reward delta");
@@ -1748,34 +1841,38 @@ async function testTrialTracePage() {
     setMockResponse("/api/jobs/eval-1/trials/run-1/trace", {
       status: 200,
       body: {
-        events: [
+        items: [
           { seq: 3, type: "agent.message", data: { text: "patching" } },
           { seq: 4, type: "phase.completed", data: { phase: "agent" } },
         ],
-        nextAfter: 4,
+        nextCursor: "4",
+        hasMore: true,
       },
     });
 
     const e = jobs({ apiKey: "test-key", baseUrl: BASE });
-    const page = await e.trialTrace("eval-1", "run-1", { after: 2, limit: 2 });
+    const page = await e.trialTrace("eval-1", "run-1", { cursor: "2", limit: 2 });
 
     const url = fetchCalls[fetchCalls.length - 1].url;
     assert(url.includes("/trials/run-1/trace"), "targets the trace route");
-    assert(url.includes("after=2"), "after forwarded");
+    assert(url.includes("cursor=2"), "cursor forwarded");
     assert(url.includes("limit=2"), "limit forwarded");
 
-    assertEqual(page.events.length, 2, "maps 2 events");
+    assertEqual(page.items.length, 2, "maps 2 events");
     assertEqual(
-      page.events[0],
+      page.items[0],
       { seq: 3, type: "agent.message", data: { text: "patching" } },
       "maps seq/type/data"
     );
-    assertEqual(page.nextAfter, 4, "maps nextAfter");
+    // nextCursor means the same here as everywhere: pass it back for the next
+    // page, and null means CAUGHT UP — never an echo of where you already are.
+    assertEqual(page.nextCursor, "4", "maps nextCursor");
+    assertEqual(page.hasMore, true, "maps hasMore");
 
     // No options: no params at all
     await e.trialTrace("eval-1", "run-1");
     const bare = fetchCalls[fetchCalls.length - 1].url;
-    assert(!bare.includes("after=") && !bare.includes("limit="), "no params by default");
+    assert(!bare.includes("cursor=") && !bare.includes("limit="), "no params by default");
   } finally {
     restoreFetch();
   }
@@ -1789,15 +1886,20 @@ async function testTrialTraceEventsIterator() {
     (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
       const urlStr = url.toString();
       fetchCalls.push({ url: urlStr, init });
-      const after = new URL(urlStr).searchParams.get("after");
-      traceCalls.push(after);
+      const cursor = new URL(urlStr).searchParams.get("cursor");
+      traceCalls.push(cursor);
       const pages: Record<string, unknown> = {
-        // no after: first page; then resume from nextAfter
-        "": { events: [{ seq: 1, type: "a", data: {} }, { seq: 2, type: "b", data: {} }], nextAfter: 2 },
-        "2": { events: [{ seq: 3, type: "c", data: {} }], nextAfter: 3 },
-        "3": { events: [], nextAfter: 3 },
+        // no cursor: first page; then resume from nextCursor.
+        // nextCursor null MEANS CAUGHT UP — never an echo of the position, so
+        // the drain needs no extra empty-page request to learn it is done.
+        "": {
+          items: [{ seq: 1, type: "a", data: {} }, { seq: 2, type: "b", data: {} }],
+          nextCursor: "2",
+          hasMore: true,
+        },
+        "2": { items: [{ seq: 3, type: "c", data: {} }], nextCursor: null, hasMore: false },
       };
-      return buildMockResponse({ status: 200, body: pages[after ?? ""] });
+      return buildMockResponse({ status: 200, body: pages[cursor ?? ""] });
     };
 
     const e = jobs({ apiKey: "test-key", baseUrl: BASE });
@@ -1807,10 +1909,10 @@ async function testTrialTraceEventsIterator() {
     }
 
     assertEqual(seqs, [1, 2, 3], "yields every event exactly once, in seq order");
-    assertEqual(traceCalls, [null, "2", "3"], "pages resume from nextAfter");
+    assertEqual(traceCalls, [null, "2"], "pages resume from nextCursor");
 
-    // With an explicit page limit, a short page ends the drain without an
-    // extra empty-page request.
+    // An explicit page limit changes nothing about when the drain ends: the
+    // null cursor is the signal, not a short page.
     fetchCalls.length = 0;
     traceCalls.length = 0;
     const seqsLimited: number[] = [];
@@ -1818,7 +1920,7 @@ async function testTrialTraceEventsIterator() {
       seqsLimited.push(event.seq);
     }
     assertEqual(seqsLimited, [1, 2, 3], "limited drain still yields every event");
-    assertEqual(traceCalls, [null, "2"], "short page (< limit) ends the drain early");
+    assertEqual(traceCalls, [null, "2"], "the null cursor ends the drain");
   } finally {
     restoreFetch();
   }
@@ -1992,14 +2094,18 @@ async function testGetActive() {
           { version: "1.0", state: "ARCHIVED", createdAt: "2026-07-01T00:00:00.000Z", taskCount: 100 },
         ],
         selectedVersion: { version: "1.1", state: "READY", createdAt: "2026-07-21T00:00:00.000Z", taskCount: 113 },
-        tasks: [
-          {
-            taskKey: "abs-module-cache-flags",
-            agentTimeoutSec: 5400,
-            verifierTimeoutSec: 1800,
-            providers: { e2b: { ok: true }, daytona: { ok: true }, modal: { ok: true } },
-          },
-        ],
+        tasks: {
+          items: [
+            {
+              taskKey: "abs-module-cache-flags",
+              agentTimeoutSec: 5400,
+              verifierTimeoutSec: 1800,
+              providers: { e2b: { ok: true }, daytona: { ok: true }, modal: { ok: true } },
+            },
+          ],
+          nextCursor: null,
+          hasMore: false,
+        },
         createdAt: "2026-07-01T00:00:00.000Z",
         updatedAt: "2026-07-21T00:00:00.000Z",
       },
@@ -2013,10 +2119,10 @@ async function testGetActive() {
 
     assertEqual(active.version, "1.1", "version is the active version string (non-optional)");
     assertEqual(active.activeVersion.state, "READY", "activeVersion carries the full version object");
-    assertEqual(active.tasks.length, 1, "tasks is populated (non-optional)");
-    assertEqual(active.tasks[0].taskKey, "abs-module-cache-flags", "maps public task fields");
+    assertEqual(active.tasks.items.length, 1, "tasks is populated (non-optional)");
+    assertEqual(active.tasks.items[0].taskKey, "abs-module-cache-flags", "maps public task fields");
     assertEqual(active.versions.length, 2, "carries all versions");
-    assertEqual(active.tasks[0].providers, { e2b: { ok: true }, daytona: { ok: true }, modal: { ok: true } }, "tasks carry provider verdicts");
+    assertEqual(active.tasks.items[0].providers, { e2b: { ok: true }, daytona: { ok: true }, modal: { ok: true } }, "tasks carry provider verdicts");
     assert(!("selectedVersion" in active), "ActiveBenchmark has no selectedVersion (it IS the active one)");
   } finally {
     restoreFetch();
@@ -2170,14 +2276,14 @@ async function testListAutoPagination() {
       const cursor = new URL(urlStr).searchParams.get("cursor");
       const pages: Record<string, unknown> = {
         "": {
-          jobs: [
+          items: [
             { ...RUN_SUMMARY, id: "eval-2" },
             { ...RUN_SUMMARY, id: "eval-1" },
           ],
           nextCursor: "eval-1",
         },
         "eval-1": {
-          jobs: [{ ...RUN_SUMMARY, id: "eval-0" }],
+          items: [{ ...RUN_SUMMARY, id: "eval-0" }],
           nextCursor: null,
         },
       };
@@ -2196,7 +2302,7 @@ async function testListAutoPagination() {
     // Page form still returns a single page for the given options
     fetchCalls.length = 0;
     const page = await e.list({ limit: 2 });
-    assertEqual(page.jobs.length, 2, "await returns a single page");
+    assertEqual(page.items.length, 2, "await returns a single page");
     assertEqual(page.nextCursor, "eval-1", "single page carries nextCursor");
     assertEqual(fetchCalls.length, 1, "page form makes exactly one request");
     assert(fetchCalls[0].url.includes("limit=2"), "page form forwards the limit");
@@ -2233,8 +2339,12 @@ async function testTrialsAutoPagination() {
       fetchCalls.push({ url: urlStr, init });
       const cursor = new URL(urlStr).searchParams.get("cursor");
       const pages: Record<string, unknown> = {
-        "": { trials: [makeRun("run-1", 1), makeRun("run-2", 2)], nextCursor: "run-2" },
-        "run-2": { trials: [makeRun("run-3", 3)], nextCursor: null },
+        "": {
+          items: [makeRun("run-1", 1), makeRun("run-2", 2)],
+          nextCursor: "run-2",
+          hasMore: true,
+        },
+        "run-2": { items: [makeRun("run-3", 3)], nextCursor: null, hasMore: false },
       };
       return buildMockResponse({ status: 200, body: pages[cursor ?? ""] });
     };
@@ -2248,7 +2358,7 @@ async function testTrialsAutoPagination() {
     // Page form still returns a single page
     fetchCalls.length = 0;
     const page = await e.trials("eval-1", { limit: 2 });
-    assertEqual(page.trials.length, 2, "await returns a single page");
+    assertEqual(page.items.length, 2, "await returns a single page");
     assertEqual(page.nextCursor, "run-2", "single page carries nextCursor");
   } finally {
     restoreFetch();

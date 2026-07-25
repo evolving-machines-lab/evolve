@@ -11,6 +11,27 @@ export interface HostedClientConfig {
 }
 
 /**
+ * ONE page shape for every collection on this surface — top level or nested.
+ *
+ * `nextCursor` means one thing everywhere: pass it back as the next call's
+ * `cursor` for the next page, and `null` means there is no next page. It never
+ * echoes where you already are, so a poller can always tell it has caught up.
+ */
+export interface Page<T> {
+  items: T[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
+/** Cursor + page-size options, accepted by every paged call */
+export interface PageOptions {
+  /** Max items per page */
+  limit?: number;
+  /** Cursor from a previous page's nextCursor */
+  cursor?: string;
+}
+
+/**
  * Job lifecycle status (wire values, as the API emits them).
  */
 export type JobStatus =
@@ -92,8 +113,12 @@ export interface Benchmark {
   versions?: BenchmarkVersion[];
   /** The version whose tasks are listed below (get() only) */
   selectedVersion?: BenchmarkVersion | null;
-  /** Tasks of the selected version (get() only) */
-  tasks?: Task[];
+  /**
+   * One page of the selected version's tasks (get() only). Paged like every
+   * other collection: a SWE-bench-scale benchmark has thousands of tasks, so
+   * pass { limit, cursor } to get() and follow nextCursor.
+   */
+  tasks?: Page<Task>;
   /** get() only */
   createdAt?: string;
   /** get() only */
@@ -115,8 +140,8 @@ export interface ActiveBenchmark {
   activeVersion: BenchmarkVersion;
   /** The active version string (identical to activeVersion.version) */
   version: string;
-  /** Tasks of the active version */
-  tasks: Task[];
+  /** One page of the active version's tasks */
+  tasks: Page<Task>;
   /** All versions, newest first */
   versions: BenchmarkVersion[];
   createdAt: string;
@@ -177,23 +202,44 @@ export interface JobInput {
   sandboxProvider?: EvalSandboxProvider;
 }
 
-/** Trial count histogram by status */
-export type TrialCounts = Partial<Record<TrialStatus, number>>;
+/**
+ * Trial count histogram by status. EVERY status is present, zeros included, so
+ * a status bar can be drawn straight off the response without hardcoding the
+ * enum and discovering a new status only when a bar goes missing.
+ */
+export type TrialCounts = Record<TrialStatus, number>;
+
+/** How many trials there are, and how they break down by status */
+export interface TrialTally {
+  total: number;
+  byStatus: TrialCounts;
+}
+
+/**
+ * Why a job FAILED — the same {code, message} grammar as an API failure, and
+ * deliberately NOT under the key `error`, which on this surface means "this
+ * request failed". `if (body.error) throw` stays correct on a healthy read of a
+ * failed job.
+ */
+export interface JobFailure {
+  /** Stable machine-readable cause, e.g. "job_execution_failed" */
+  code: string;
+  message: string;
+}
 
 /**
  * A job = tasks x agents x runsPerTask.
  *
- * Every shape (run/get/cancel/rerunFailed/list) carries counts; get() and
- * list() additionally return trialCounts and meanReward, and get() the
- * detail fields (agents, error, updatedAt).
+ * ONE shape from every call — run, get, cancel, rerunFailed and each list row
+ * are the same fields, so a job card renders from any of them without knowing
+ * where it came from. Nothing here is optional and nothing is "get() only".
  */
 export interface Job {
   id: string;
   status: JobStatus;
   /** "name@version" */
   benchmark: string;
-  /** get() only */
-  agents?: JobAgent[];
+  agents: JobAgent[];
   runsPerTask: number;
   concurrency: number;
   /** The resolved per-trial cap every trial of this job runs under */
@@ -209,20 +255,19 @@ export interface Job {
   /** What the trials have actually spent so far (reporting, not a limit) */
   spentUsd: number;
   createdAt: string;
-  /** Job size: agents x tasks -> trials (present on every shape) */
-  counts: { agents: number; tasks: number; trials: number };
-  /** Trial histogram by status (get/list) */
-  trialCounts?: TrialCounts;
-  /** Mean reward over SCORED trials only; null when none. Zero is a reward. (get/list) */
-  meanReward?: number | null;
-  /** get() only */
-  error?: string | null;
-  /** get() only */
-  updatedAt?: string;
-  /** Present on rerun-failed jobs: the job the failed trials came from */
-  sourceJobId?: string;
+  updatedAt: string;
+  /** Entity cardinality only — the parts of a job that have no status of their own */
+  counts: { agents: number; tasks: number };
+  /** How many trials, and the status histogram (all statuses, zeros included) */
+  trials: TrialTally;
+  /** Mean reward over SCORED trials only; null when none. Zero is a reward. */
+  meanReward: number | null;
+  /** Why the job FAILED, or null. Never the key `error` — see JobFailure. */
+  failure: JobFailure | null;
+  /** The job whose failed trials this one reruns; null for an original job */
+  sourceJobId: string | null;
   /** True when the server replayed an existing job for this Idempotency-Key */
-  idempotentReplay?: boolean;
+  idempotentReplay: boolean;
 }
 
 /**
@@ -302,10 +347,7 @@ export interface JobWatch
     AsyncIterable<JobEvent> {}
 
 /** Cursor page of jobs (newest first) */
-export interface JobPage {
-  jobs: Job[];
-  nextCursor: string | null;
-}
+export type JobPage = Page<Job>;
 
 /**
  * The handle returned by jobs().list(). Both:
@@ -319,10 +361,7 @@ export interface JobList
     AsyncIterable<Job> {}
 
 /** Cursor page of trials */
-export interface TrialPage {
-  trials: Trial[];
-  nextCursor: string | null;
-}
+export type TrialPage = Page<Trial>;
 
 /**
  * The handle returned by jobs().trials(). Both:
@@ -334,6 +373,22 @@ export interface TrialPage {
 export interface TrialList
   extends PromiseLike<TrialPage>,
     AsyncIterable<Trial> {}
+
+/** Cursor page of benchmarks */
+export type BenchmarkPage = Page<Benchmark>;
+
+/** Dual-use handle from benchmarks().list(): await one page, or iterate them all */
+export interface BenchmarkList
+  extends PromiseLike<BenchmarkPage>,
+    AsyncIterable<Benchmark> {}
+
+/** Cursor page of custom harnesses */
+export type CustomHarnessPage = Page<CustomHarness>;
+
+/** Dual-use handle from customHarnesses().list(): await one page, or iterate them all */
+export interface CustomHarnessList
+  extends PromiseLike<CustomHarnessPage>,
+    AsyncIterable<CustomHarness> {}
 
 // =============================================================================
 // TRIAL DETAIL + TRACE
@@ -358,15 +413,15 @@ export interface TrialTraceEvent {
   data: Record<string, unknown>;
 }
 
-/** One seq-paged slice of a trial's trace — jobs().trialTrace() */
-export interface TrialTracePage {
-  events: TrialTraceEvent[];
-  /**
-   * Resume position: pass back as { after } to continue. An empty page echoes
-   * the requested position (null when reading an empty trace from the start).
-   */
-  nextAfter: number | null;
-}
+/**
+ * One page of a trial's trace — jobs().trialTrace().
+ *
+ * Same envelope as every other collection, and nextCursor means the same
+ * thing: pass it back as { cursor } for the next page, and NULL MEANS CAUGHT
+ * UP. To resume a poll later, keep the last event's `seq` and pass it as
+ * { cursor } — the trace's cursor IS its position in the seq timeline.
+ */
+export type TrialTracePage = Page<TrialTraceEvent>;
 
 // =============================================================================
 // COMPARE
@@ -495,10 +550,23 @@ export interface RegradeFilter {
 }
 
 /**
+ * A regrade job's results: how many there are in the WHOLE job, how they break
+ * down by status (every status, zeros included), and one page of them.
+ *
+ * One key named for the collection rather than a `counts` object sitting beside
+ * a separately-named array — and paged, because a regrade of a 10,000-trial job
+ * holds 10,000 results.
+ */
+export interface RegradeResultsPage extends Page<RegradeResult> {
+  /** Results in the whole job, not in this page */
+  total: number;
+  byStatus: Record<RegradeStatus, number>;
+}
+
+/**
  * A regrade job = a collection of regrade results. A per-trial regrade holds
  * one result; a per-job regrade holds one per eligible source trial. The
- * job's `status` is derived from its results. `results` is present on the read
- * (regradeJob) and create responses.
+ * job's `status` is derived from the whole result set, never from one page.
  */
 export interface RegradeJob {
   id: string;
@@ -509,15 +577,10 @@ export interface RegradeJob {
   sandboxProvider: EvalSandboxProvider;
   /** The filter applied to select source trials (per-job regrade), or null */
   filter: RegradeFilter | null;
-  counts: {
-    results: number;
-    /** Result histogram by RegradeStatus */
-    byStatus: Partial<Record<RegradeStatus, number>>;
-  };
+  /** How many results, their status histogram, and one page of them */
+  results: RegradeResultsPage;
   createdAt: string;
   updatedAt: string;
-  /** The per-trial regrade results */
-  results?: RegradeResult[];
 }
 
 // =============================================================================
@@ -657,23 +720,26 @@ export interface RunJobOptions {
   idempotencyKey?: string;
 }
 
-/** Options for jobs().list() */
-export interface ListJobsOptions {
-  /** Max items per page (default: 50, max: 200) */
-  limit?: number;
-  /** Cursor from JobPage.nextCursor */
-  cursor?: string;
-}
+/** Options for jobs().list() (default page 50, max 200) */
+export interface ListJobsOptions extends PageOptions {}
 
-/** Options for jobs().trials() */
-export interface ListTrialsOptions {
+/** Options for jobs().trials() (default page 50, max 200) */
+export interface ListTrialsOptions extends PageOptions {
   /** Only trials in these statuses (e.g. the failures behind a rerun decision) */
   status?: TrialStatus[];
-  /** Max items per page (default: 50, max: 200) */
-  limit?: number;
-  /** Cursor from TrialPage.nextCursor */
-  cursor?: string;
 }
+
+/** Options for benchmarks().list() (default page 50, max 200) */
+export interface ListBenchmarksOptions extends PageOptions {}
+
+/** Options for customHarnesses().list() (default page 50, max 200) */
+export interface ListCustomHarnessesOptions extends PageOptions {}
+
+/** Options for benchmarks().get() / getActive(): pages the TASK list (default 200, max 500) */
+export interface GetBenchmarkOptions extends PageOptions {}
+
+/** Options for jobs().regradeJob(): pages the RESULT list (default 50, max 200) */
+export interface RegradeJobOptions extends PageOptions {}
 
 /**
  * Options for jobs().regrade() (per-job): narrow the set of
@@ -688,9 +754,13 @@ export interface RegradeOptions {
 }
 
 /** Options for jobs().trialTrace() and trialTraceEvents() */
-export interface TrialTraceOptions {
-  /** Return events with seq strictly greater than this (omit = from the beginning) */
-  after?: number;
+export interface TrialTraceOptions extends PageOptions {
+  /**
+   * Resume position: events with seq strictly greater than this cursor (omit =
+   * from the beginning). A trace cursor IS a seq, so to resume a poll later
+   * pass the last event's `seq` here as a string.
+   */
+  cursor?: string;
   /** Max events per page (server default: 200, max: 1000) */
   limit?: number;
 }
@@ -736,20 +806,24 @@ export interface ExportJobOptions {
 
 /** Client for the shared benchmark catalog */
 export interface BenchmarksClient {
-  /** List every benchmark with its active version */
-  list(): Promise<Benchmark[]>;
   /**
-   * Get one benchmark: all versions + the selected version's task list.
-   * ref is "name" (active version's tasks) or "name@version".
+   * List benchmarks with their active versions (cursor-paged). Await the
+   * result for one page, or `for await` it to walk the whole catalog.
    */
-  get(ref: string): Promise<Benchmark>;
+  list(options?: ListBenchmarksOptions): BenchmarkList;
+  /**
+   * Get one benchmark: all versions + one page of the selected version's tasks.
+   * ref is "name" (active version's tasks) or "name@version"; { limit, cursor }
+   * page the tasks.
+   */
+  get(ref: string, options?: GetBenchmarkOptions): Promise<Benchmark>;
   /**
    * Get a benchmark's active version resolved to a runnable shape: unlike
    * get(), `version` and `tasks` are guaranteed present. Throws
    * NoActiveVersionError when the benchmark has no active version. Use get()
    * for the full multi-version detail with optional fields.
    */
-  getActive(name: string): Promise<ActiveBenchmark>;
+  getActive(name: string, options?: GetBenchmarkOptions): Promise<ActiveBenchmark>;
   /**
    * Start a benchmark import job from a git source pinned to a ref.
    * Returns immediately; poll with getImport()/watchImport().
@@ -772,8 +846,11 @@ export interface CustomHarnessesClient {
    * The name is then usable in `agents[].harness` like a built-in.
    */
   create(input: CustomHarnessInput): Promise<CustomHarness>;
-  /** List the caller's registered custom harnesses */
-  list(): Promise<CustomHarness[]>;
+  /**
+   * List the caller's registered custom harnesses (cursor-paged). Await the
+   * result for one page, or `for await` it to walk them all.
+   */
+  list(options?: ListCustomHarnessesOptions): CustomHarnessList;
   /** Get one custom harness by name */
   get(name: string): Promise<CustomHarness>;
   /** Delete a custom harness. Past jobs keep their recorded harness. */
@@ -787,7 +864,7 @@ export interface JobsClient {
    * active READY version) or a pinned "name@version". Supports Idempotency-Key.
    */
   run(input: JobInput, options?: RunJobOptions): Promise<Job>;
-  /** Get one job with agents + trial status counts */
+  /** Get one job */
   get(id: string): Promise<Job>;
   /**
    * List the caller's jobs, newest first (cursor-paged). Await the
@@ -803,7 +880,7 @@ export interface JobsClient {
   trials(id: string, options?: ListTrialsOptions): TrialList;
   /** Get one trial's full detail (untruncated failureDetail) */
   trial(id: string, trialId: string): Promise<TrialDetail>;
-  /** Get one seq-paged slice of a trial's trace; resume with { after: page.nextAfter } */
+  /** Get one page of a trial's trace; resume with { cursor: page.nextCursor } */
   trialTrace(
     id: string,
     trialId: string,
@@ -812,7 +889,7 @@ export interface JobsClient {
   /**
    * Iterate a trial's trace events, fetching pages under the hood until
    * the currently available trace is drained. Resume later by passing the
-   * last seen seq as { after }.
+   * last seen seq as { cursor }.
    */
   trialTraceEvents(
     id: string,
@@ -851,8 +928,11 @@ export interface JobsClient {
    * result.
    */
   regradeTrial(id: string, trialId: string): Promise<RegradeJob>;
-  /** Read a regrade job and its per-trial results (with lineage + reward deltas). */
-  regradeJob(jobId: string): Promise<RegradeJob>;
+  /**
+   * Read a regrade job and one page of its per-trial results (with lineage +
+   * reward deltas). { limit, cursor } page the results.
+   */
+  regradeJob(jobId: string, options?: RegradeJobOptions): Promise<RegradeJob>;
   /**
    * Side-by-side comparison of 2-5 owned jobs: per-job
    * aggregates plus a per-task matrix with disagreement rows first.

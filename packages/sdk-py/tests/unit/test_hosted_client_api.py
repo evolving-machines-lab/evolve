@@ -5,9 +5,10 @@ Unit tests for the standalone hosted-evals clients
 Coverage:
 - benchmarks().list()/get() — catalog + detail mapping (selected_version,
   per-task provider verdicts), name@version refs
-- custom_harnesses().create()/list()/get()/delete() — the two registration
-  lanes (install-script JSON body vs uploaded tarball with metadata on the
-  query string), owner-private not-found, name-taken
+- custom_harnesses().create()/list()/get()/delete() — ONE registration body
+  grammar (multipart/form-data: an installScript part or a file part; the run
+  command and env are named parts, never query string), owner-private
+  not-found, name-taken
 - benchmarks().get_active() — runnable shape (non-optional version/tasks) + NoActiveVersionError
 - benchmarks().import_benchmark()/get_import()/watch_import() — git import flow
   (self-describing jobs, IMPORTED/FAILED terminal statuses)
@@ -35,6 +36,7 @@ import pytest
 from evolve import (
     JobAgent,
     JobCounts,
+    JobFailure,
     EvolveAPIError,
     HostedClientConfig,
     NoActiveVersionError,
@@ -43,6 +45,25 @@ from evolve import (
     custom_harnesses as custom_harnesses_factory,
     jobs as jobs_factory,
 )
+
+
+def _multipart_parts(request):
+    """Split a multipart/form-data request body into {part name: raw bytes}.
+
+    Named parts are how metadata travels now: a run command and a set of
+    environment values in a URL land in every access log and proxy buffer.
+    """
+    content_type = request.get_header('Content-type')
+    boundary = content_type.split('boundary=', 1)[1]
+    parts = {}
+    for chunk in request.data.split(f'--{boundary}'.encode('utf-8')):
+        if not chunk.strip() or chunk.startswith(b'--'):
+            continue
+        head, _, body = chunk.partition(b'\r\n\r\n')
+        header_text = head.decode('utf-8', errors='replace')
+        name = header_text.split('name="', 1)[1].split('"', 1)[0]
+        parts[name] = body[:-2] if body.endswith(b'\r\n') else body
+    return parts
 
 
 class FakeResponse:
@@ -100,18 +121,45 @@ class FakeUrlopen:
 
 CONFIG = HostedClientConfig(api_key='test-key', base_url='http://localhost:3000')
 
+ZERO_TRIAL_STATUSES = {
+    'QUEUED': 0,
+    'RUNNING': 0,
+    'SCORING': 0,
+    'SCORED': 0,
+    'SCORING_ERROR': 0,
+    'INFRASTRUCTURE_ERROR': 0,
+    'INDETERMINATE': 0,
+    'CANCELLED': 0,
+}
+
+
+def trial_tally(**counts):
+    """A trial tally with EVERY status named — zeros included, as the API emits."""
+    by_status = {**ZERO_TRIAL_STATUSES, **counts}
+    return {'total': sum(by_status.values()), 'byStatus': by_status}
+
+
+# THE job wire shape — the same fields from every call (create, get, list,
+# cancel, rerun), so a client never asks which one it is holding.
 RUN_SUMMARY = {
     'id': 'job-1',
     'status': 'QUEUED',
     'benchmark': 'deep-swe@1.1',
+    'agents': [{'harness': 'codex', 'model': 'gpt-5.5', 'harnessVersion': None}],
     'runsPerTask': 1,
     'concurrency': 4,
     'maxTrialSpendUsd': 25,
     'worstCaseSpendUsd': 125,
     'sandboxProvider': 'e2b',
     'spentUsd': 0,
-    'counts': {'agents': 1, 'tasks': 5, 'trials': 5},
+    'counts': {'agents': 1, 'tasks': 5},
+    'trials': trial_tally(QUEUED=5),
+    'meanReward': None,
+    'failure': None,
+    'sourceJobId': None,
+    'idempotentReplay': False,
     'createdAt': '2026-07-22T00:00:00.000Z',
+    'updatedAt': '2026-07-22T00:00:00.000Z',
 }
 
 ALL_OK_PROVIDERS = {'e2b': {'ok': True}, 'daytona': {'ok': True}, 'modal': {'ok': True}}
@@ -142,7 +190,7 @@ class TestBenchmarks:
     async def test_list_maps_catalog(self):
         fake = FakeUrlopen([
             ('/api/benchmarks', {
-                'benchmarks': [
+                'items': [
                     {
                         'name': 'deep-swe',
                         'title': 'DeepSWE',
@@ -151,18 +199,23 @@ class TestBenchmarks:
                     },
                     {'name': 'empty', 'title': None, 'description': None, 'activeVersion': None},
                 ],
+                'nextCursor': None,
+                'hasMore': False,
             }),
         ])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
             catalog = await benchmarks_factory(CONFIG).list()
 
-        assert len(catalog) == 2
-        assert catalog[0].name == 'deep-swe'
-        assert catalog[0].title == 'DeepSWE'
-        assert catalog[0].active_version.version == '1.1'
-        assert catalog[0].active_version.created_at == '2026-07-21'
-        assert catalog[0].active_version.task_count == 113
-        assert catalog[1].active_version is None
+        # The one page envelope, the same on every collection.
+        assert len(catalog.items) == 2
+        assert catalog.next_cursor is None
+        assert catalog.has_more is False
+        assert catalog.items[0].name == 'deep-swe'
+        assert catalog.items[0].title == 'DeepSWE'
+        assert catalog.items[0].active_version.version == '1.1'
+        assert catalog.items[0].active_version.created_at == '2026-07-21'
+        assert catalog.items[0].active_version.task_count == 113
+        assert catalog.items[1].active_version is None
         assert fake.requests[0].get_header('Authorization') == 'Bearer test-key'
 
     @pytest.mark.asyncio
@@ -177,18 +230,22 @@ class TestBenchmarks:
                     {'version': '1.1', 'state': 'READY', 'createdAt': '2026-07-21', 'taskCount': 113},
                 ],
                 'selectedVersion': {'version': '1.1', 'state': 'READY', 'createdAt': '2026-07-21', 'taskCount': 113},
-                'tasks': [
-                    {
-                        'taskKey': 'abs-module-cache-flags',
-                        'agentTimeoutSec': 5400,
-                        'verifierTimeoutSec': 1800,
-                        'providers': {
-                            'e2b': {'ok': True},
-                            'daytona': {'ok': True},
-                            'modal': {'ok': False, 'reason': 'multi-container tasks are not supported on modal'},
+                'tasks': {
+                    'items': [
+                        {
+                            'taskKey': 'abs-module-cache-flags',
+                            'agentTimeoutSec': 5400,
+                            'verifierTimeoutSec': 1800,
+                            'providers': {
+                                'e2b': {'ok': True},
+                                'daytona': {'ok': True},
+                                'modal': {'ok': False, 'reason': 'multi-container tasks are not supported on modal'},
+                            },
                         },
-                    },
-                ],
+                    ],
+                    'nextCursor': 'task-1',
+                    'hasMore': True,
+                },
                 'createdAt': '2026-07-01',
                 'updatedAt': '2026-07-21',
             }),
@@ -205,7 +262,10 @@ class TestBenchmarks:
         # selected_version is a full version object — the tasks' provenance
         assert detail.selected_version.version == '1.1'
         assert detail.selected_version.created_at == '2026-07-21'
-        task = detail.tasks[0]
+        # A nested collection is the same envelope as a top-level one.
+        assert detail.tasks.has_more is True
+        assert detail.tasks.next_cursor == 'task-1'
+        task = detail.tasks.items[0]
         assert task.task_key == 'abs-module-cache-flags'
         assert task.agent_timeout_sec == 5400
         # Per-provider capability verdicts — visible before any money is spent
@@ -227,14 +287,18 @@ class TestBenchmarks:
                     {'version': '1.0', 'state': 'ARCHIVED', 'createdAt': '2026-07-01', 'taskCount': 100},
                 ],
                 'selectedVersion': {'version': '1.1', 'state': 'READY', 'createdAt': '2026-07-21', 'taskCount': 113},
-                'tasks': [
-                    {
-                        'taskKey': 'abs-module-cache-flags',
-                        'agentTimeoutSec': 5400,
-                        'verifierTimeoutSec': 1800,
-                        'providers': ALL_OK_PROVIDERS,
-                    },
-                ],
+                'tasks': {
+                    'items': [
+                        {
+                            'taskKey': 'abs-module-cache-flags',
+                            'agentTimeoutSec': 5400,
+                            'verifierTimeoutSec': 1800,
+                            'providers': ALL_OK_PROVIDERS,
+                        },
+                    ],
+                    'nextCursor': None,
+                    'hasMore': False,
+                },
                 'createdAt': '2026-07-01',
                 'updatedAt': '2026-07-21',
             }),
@@ -246,9 +310,9 @@ class TestBenchmarks:
         assert 'version=' not in fake.requests[0].full_url
         assert active.version == '1.1'                 # non-optional
         assert active.active_version.state == 'READY'
-        assert len(active.tasks) == 1                  # non-optional
-        assert active.tasks[0].task_key == 'abs-module-cache-flags'
-        assert active.tasks[0].providers['daytona'].ok is True
+        assert len(active.tasks.items) == 1            # non-optional
+        assert active.tasks.items[0].task_key == 'abs-module-cache-flags'
+        assert active.tasks.items[0].providers['daytona'].ok is True
         assert len(active.versions) == 2
 
     @pytest.mark.asyncio
@@ -261,7 +325,7 @@ class TestBenchmarks:
                 'activeVersion': None,
                 'versions': [{'version': '0.1', 'state': 'DRAFT', 'createdAt': '2026-07-21', 'taskCount': 0}],
                 'selectedVersion': None,
-                'tasks': [],
+                'tasks': {'items': [], 'nextCursor': None, 'hasMore': False},
                 'createdAt': '2026-07-21',
                 'updatedAt': '2026-07-21',
             }),
@@ -288,12 +352,16 @@ class TestBenchmarks:
 
         request = fake.requests[0]
         assert request.get_method() == 'POST'
-        assert '/api/benchmarks/imports' in request.full_url
-        body = json.loads(request.data.decode('utf-8'))
-        assert body == {
-            'source': {'type': 'git', 'url': 'https://github.com/org/bench.git', 'ref': 'v1.2.0'},
-            'benchmarkName': 'my-benchmark',
-            'version': '1.2',
+        # ONE body grammar: multipart/form-data with named parts. Nothing rides
+        # the query string, where it would land in access logs.
+        assert request.full_url.endswith('/api/benchmarks/imports')
+        assert request.get_header('Content-type').startswith('multipart/form-data; boundary=')
+        parts = _multipart_parts(request)
+        assert parts == {
+            'benchmarkName': b'my-benchmark',
+            'version': b'1.2',
+            'gitUrl': b'https://github.com/org/bench.git',
+            'ref': b'v1.2.0',
         }
         assert job.id == 'imp-1'
         assert job.status == 'IMPORTING'
@@ -326,13 +394,14 @@ class TestBenchmarks:
 
         request = fake.requests[0]
         assert request.get_method() == 'POST'
-        # The body IS the tarball, so benchmarkName/version ride the query string.
-        assert '/api/benchmarks/imports?' in request.full_url
-        assert 'benchmarkName=my-bench' in request.full_url
-        assert 'version=0.1' in request.full_url
-        assert request.get_header('Content-type') == 'application/gzip'
+        # Metadata is named PARTS; the corpus is the `file` part. The URL is bare.
+        assert request.full_url.endswith('/api/benchmarks/imports')
+        assert request.get_header('Content-type').startswith('multipart/form-data; boundary=')
+        parts = _multipart_parts(request)
+        assert parts['benchmarkName'] == b'my-bench'
+        assert parts['version'] == b'0.1'
 
-        data = request.data
+        data = parts['file']
         assert data[:2] == b'\x1f\x8b'  # gzip magic
         with tarfile.open(fileobj=io.BytesIO(gzip.decompress(data)), mode='r') as tar:
             names = tar.getnames()
@@ -439,7 +508,7 @@ CUSTOM_HARNESS = {
 
 class TestCustomHarnesses:
     @pytest.mark.asyncio
-    async def test_create_posts_the_install_script_body(self):
+    async def test_create_posts_the_install_script_as_named_parts(self):
         fake = FakeUrlopen([('/api/custom-harnesses', CUSTOM_HARNESS)])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
             harness = await custom_harnesses_factory(CONFIG).create(
@@ -452,12 +521,15 @@ class TestCustomHarnesses:
         request = fake.requests[0]
         assert request.get_method() == 'POST'
         assert request.full_url.endswith('/api/custom-harnesses')
-        assert request.get_header('Content-type') == 'application/json'
-        assert json.loads(request.data.decode('utf-8')) == {
-            'name': 'acme-cli',
-            'installScript': 'curl -fsSL https://acme.dev/install.sh | sh',
-            'runCommand': 'acme-cli --headless',
-            'env': {'ACME_PROFILE': 'bench'},
+        # ONE body grammar for both sources: multipart/form-data. The endpoint
+        # no longer switches grammars on Content-Type.
+        assert request.get_header('Content-type').startswith('multipart/form-data; boundary=')
+        parts = _multipart_parts(request)
+        assert parts == {
+            'name': b'acme-cli',
+            'runCommand': b'acme-cli --headless',
+            'env': b'{"ACME_PROFILE": "bench"}',
+            'installScript': b'curl -fsSL https://acme.dev/install.sh | sh',
         }
 
         assert harness.name == 'acme-cli'
@@ -467,7 +539,7 @@ class TestCustomHarnesses:
         assert harness.created_at == '2026-07-24T00:00:00Z'
 
     @pytest.mark.asyncio
-    async def test_create_uploads_a_directory_with_metadata_on_the_query(self, tmp_path):
+    async def test_create_uploads_a_directory_with_metadata_in_named_parts(self, tmp_path):
         import io
         import tarfile
 
@@ -488,16 +560,18 @@ class TestCustomHarnesses:
 
         request = fake.requests[0]
         assert request.get_method() == 'POST'
-        # The body IS the tarball, so the metadata rides the query string —
-        # repeated env=KEY=VALUE pairs, like the benchmark archive-import lane.
-        assert '/api/custom-harnesses?' in request.full_url
-        query = urllib_parse.parse_qs(urllib_parse.urlparse(request.full_url).query)
-        assert query['name'] == ['acme-cli']
-        assert query['runCommand'] == ['acme-cli --headless']
-        assert query['env'] == ['ACME_PROFILE=bench', 'ACME_REGION=us']
-        assert request.get_header('Content-type') == 'application/gzip'
+        # THE LEAK A6 CLOSES: the run command and the declared env used to ride
+        # the query string, which put a shell command and a set of environment
+        # values into every access log and proxy buffer on the way here.
+        assert request.full_url.endswith('/api/custom-harnesses')
+        assert urllib_parse.urlparse(request.full_url).query == ''
+        assert request.get_header('Content-type').startswith('multipart/form-data; boundary=')
+        parts = _multipart_parts(request)
+        assert parts['name'] == b'acme-cli'
+        assert parts['runCommand'] == b'acme-cli --headless'
+        assert json.loads(parts['env']) == {'ACME_PROFILE': 'bench', 'ACME_REGION': 'us'}
 
-        data = request.data
+        data = parts['file']
         assert data[:2] == b'\x1f\x8b'  # gzip magic
         with tarfile.open(fileobj=io.BytesIO(gzip.decompress(data)), mode='r') as tar:
             names = tar.getnames()
@@ -522,15 +596,19 @@ class TestCustomHarnesses:
     async def test_list_get_and_delete(self):
         fake = FakeUrlopen([
             ('/api/custom-harnesses/acme-cli', b''),
-            ('/api/custom-harnesses', {'customHarnesses': [CUSTOM_HARNESS]}),
+            ('/api/custom-harnesses', {
+                'items': [CUSTOM_HARNESS], 'nextCursor': None, 'hasMore': False,
+            }),
         ])
         # get() must resolve the detail route, so answer it before the list route.
         get_fake = FakeUrlopen([('/api/custom-harnesses/acme-cli', CUSTOM_HARNESS)])
 
         with patch('evolve.hosted.urllib.request.urlopen', fake):
             listed = await custom_harnesses_factory(CONFIG).list()
-        assert [harness.name for harness in listed] == ['acme-cli']
-        assert listed[0].source == 'install_script'
+        assert [harness.name for harness in listed.items] == ['acme-cli']
+        assert listed.items[0].source == 'install_script'
+        assert listed.next_cursor is None
+        assert listed.has_more is False
 
         with patch('evolve.hosted.urllib.request.urlopen', get_fake):
             one = await custom_harnesses_factory(CONFIG).get('acme-cli')
@@ -619,7 +697,11 @@ class TestJobs:
         assert request.get_header('Idempotency-key') == 'idem-abc'
         assert job.id == 'job-1'
         assert job.sandbox_provider == 'e2b'
-        assert job.counts == JobCounts(agents=1, tasks=5, trials=5)
+        # ONE "how many" structure: counts is entity cardinality, trials is the
+        # total plus the status histogram.
+        assert job.counts == JobCounts(agents=1, tasks=5)
+        assert job.trials.total == 5
+        assert job.trials.by_status['QUEUED'] == 5
         assert job.idempotent_replay is False
 
     @pytest.mark.asyncio
@@ -749,9 +831,9 @@ class TestJobs:
                         'harnessVersion': None,
                     },
                 ],
-                'trialCounts': {'SCORED': 3, 'RUNNING': 2},
+                'trials': trial_tally(SCORED=3, RUNNING=2),
                 'meanReward': 0.75,
-                'error': None,
+                'failure': None,
                 'updatedAt': '2026-07-22T00:05:00.000Z',
             }),
         ])
@@ -759,10 +841,17 @@ class TestJobs:
             job = await jobs_factory(CONFIG).get('job-1')
 
         assert job.status == 'RUNNING'
-        # Status-histogram keys are statuses, not camelCase — they pass through
-        assert job.trial_counts == {'SCORED': 3, 'RUNNING': 2}
+        # Status-histogram keys are statuses, not camelCase — they pass through,
+        # and EVERY status is named so a UI never hardcodes the enum.
+        assert job.trials.total == 5
+        assert job.trials.by_status['SCORED'] == 3
+        assert job.trials.by_status['CANCELLED'] == 0
+        assert len(job.trials.by_status) == 8
         assert job.mean_reward == 0.75
-        assert not hasattr(job, 'trial_total')
+        assert job.failure is None
+        # `error` is the FAILURE envelope's key; it is never on a 200 body.
+        assert not hasattr(job, 'error')
+        assert not hasattr(job, 'trial_counts')
         # No benchmark-lifecycle internals on the job resource
         assert not hasattr(job, 'benchmark_version_state')
         agent = job.agents[0]
@@ -774,8 +863,11 @@ class TestJobs:
     async def test_list_builds_cursor_params(self):
         fake = FakeUrlopen([
             ('/api/jobs', {
-                'jobs': [{**RUN_SUMMARY, 'trialCounts': {'SCORED': 5}, 'meanReward': 0.4}],
+                'items': [{
+                    **RUN_SUMMARY, 'trials': trial_tally(SCORED=5), 'meanReward': 0.4,
+                }],
                 'nextCursor': 'job-0',
+                'hasMore': True,
             }),
         ])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
@@ -784,17 +876,90 @@ class TestJobs:
         url = fake.requests[0].full_url
         assert 'limit=100' in url and 'cursor=job-5' in url
         assert page.next_cursor == 'job-0'
-        assert page.jobs[0].trial_counts == {'SCORED': 5}
-        assert page.jobs[0].mean_reward == 0.4
+        assert page.has_more is True
+        # A list row is the SAME shape as a get(): agents, failure and the
+        # histogram ride along, so a dashboard needs no N+1 detail call.
+        assert page.items[0].trials.by_status['SCORED'] == 5
+        assert page.items[0].mean_reward == 0.4
+        assert page.items[0].agents[0].harness == 'codex'
+        assert page.items[0].failure is None
         # Awaiting the handle fetches exactly one page (no cursor walk).
         assert len(fake.requests) == 1
 
     @pytest.mark.asyncio
+    async def test_every_job_response_is_the_same_shape(self):
+        """A1: create, get and each list row carry the same fields.
+
+        The rule this replaces: five responses, four different Job shapes, and a
+        client that had to remember which call produced the one in its hand.
+        """
+        fake = FakeUrlopen([
+            ('/api/jobs/job-1', RUN_SUMMARY),
+            ('/api/jobs', {'items': [RUN_SUMMARY], 'nextCursor': None, 'hasMore': False}),
+        ])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            client = jobs_factory(CONFIG)
+            got = await client.get('job-1')
+            listed = (await client.list()).items[0]
+
+        assert vars(got).keys() == vars(listed).keys()
+        # ...and it is the FULL shape, not a shared subset.
+        assert sorted(vars(got)) == [
+            'agents',
+            'benchmark',
+            'concurrency',
+            'counts',
+            'created_at',
+            'failure',
+            'id',
+            'idempotent_replay',
+            'max_trial_spend_usd',
+            'mean_reward',
+            'runs_per_task',
+            'sandbox_provider',
+            'source_job_id',
+            'spent_usd',
+            'status',
+            'trials',
+            'updated_at',
+            'worst_case_spend_usd',
+        ]
+
+    @pytest.mark.asyncio
+    async def test_failed_job_says_why_on_every_response(self):
+        """A3: the reason is `failure` ({code, message}), never `error`.
+
+        `error` is the FAILURE envelope's key, so `if body.error: raise` has to
+        stay correct on a healthy 200 read of a failed job — and the reason
+        rides on LIST rows, so a dashboard needs no detail call per row.
+        """
+        failed = {
+            **RUN_SUMMARY,
+            'status': 'FAILED',
+            'failure': {'code': 'job_execution_failed', 'message': 'dispatch exploded'},
+        }
+        fake = FakeUrlopen([
+            ('/api/jobs', {'items': [failed], 'nextCursor': None, 'hasMore': False}),
+        ])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            row = (await jobs_factory(CONFIG).list()).items[0]
+
+        assert row.failure == JobFailure(code='job_execution_failed', message='dispatch exploded')
+        assert not hasattr(row, 'error')
+
+    @pytest.mark.asyncio
     async def test_list_auto_paginates_when_iterated(self):
         pages = {
-            None: {'jobs': [{**RUN_SUMMARY, 'id': 'job-2'},
-                                   {**RUN_SUMMARY, 'id': 'job-1'}], 'nextCursor': 'job-1'},
-            'job-1': {'jobs': [{**RUN_SUMMARY, 'id': 'job-0'}], 'nextCursor': None},
+            None: {
+                'items': [{**RUN_SUMMARY, 'id': 'job-2'}, {**RUN_SUMMARY, 'id': 'job-1'}],
+                'nextCursor': 'job-1',
+                'hasMore': True,
+            },
+            'job-1': {
+                'items': [{**RUN_SUMMARY, 'id': 'job-0'}],
+                'nextCursor': None,
+                'hasMore': False,
+            },
         }
 
         class PagedUrlopen(FakeUrlopen):
@@ -841,8 +1006,12 @@ class TestJobs:
             }
 
         pages = {
-            None: {'trials': [_run('run-1', 1), _run('run-2', 2)], 'nextCursor': 'run-2'},
-            'run-2': {'trials': [_run('run-3', 3)], 'nextCursor': None},
+            None: {
+                'items': [_run('run-1', 1), _run('run-2', 2)],
+                'nextCursor': 'run-2',
+                'hasMore': True,
+            },
+            'run-2': {'items': [_run('run-3', 3)], 'nextCursor': None, 'hasMore': False},
         }
 
         class PagedUrlopen(FakeUrlopen):
@@ -862,14 +1031,15 @@ class TestJobs:
         # Await form still returns a single page.
         with patch('evolve.hosted.urllib.request.urlopen', PagedUrlopen([])) as _:
             single = await jobs_factory(CONFIG).trials('job-1', limit=2)
-        assert len(single.trials) == 2
+        assert len(single.items) == 2
         assert single.next_cursor == 'run-2'
+        assert single.has_more is True
 
     @pytest.mark.asyncio
     async def test_trials_mapping_and_status_filter(self):
         fake = FakeUrlopen([
             ('/api/jobs/job-1/trials', {
-                'trials': [
+                'items': [
                     {
                         'id': 'run-1',
                         'taskKey': 'abs-module-cache-flags',
@@ -891,6 +1061,7 @@ class TestJobs:
                     },
                 ],
                 'nextCursor': None,
+                'hasMore': False,
             }),
         ])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
@@ -901,7 +1072,7 @@ class TestJobs:
         url = fake.requests[0].full_url
         assert 'limit=1' in url
         assert 'status=SCORED%2CSCORING_ERROR' in url
-        run = page.trials[0]
+        run = page.items[0]
         assert run.reward == 1
         assert run.metrics == {'f2p': 1.0}
         # Wire camelCase never reaches the user: typed ModelUsage + snake_case timings
@@ -958,14 +1129,28 @@ class TestJobs:
             'status': 'COMPLETED',
             'sandboxProvider': 'e2b',
             'filter': {'taskKey': 'demo-task'},
-            'counts': {'results': 1, 'byStatus': {'SCORED': 1}},
             'createdAt': '2026-07-24T00:00:00Z',
             'updatedAt': '2026-07-24T00:05:00Z',
-            'results': [result_wire],
+            # ONE key named for the collection: the whole-job tally plus this
+            # page of results, with every regrade status named.
+            'results': {
+                'total': 1,
+                'byStatus': {
+                    'QUEUED': 0, 'RUNNING': 0, 'SCORED': 1,
+                    'SCORING_ERROR': 0, 'INFRASTRUCTURE_ERROR': 0, 'INDETERMINATE': 0,
+                },
+                'items': [result_wire],
+                'nextCursor': None,
+                'hasMore': False,
+            },
         }
+
+        def with_total(total):
+            return {**job_wire, 'results': {**job_wire['results'], 'total': total}}
+
         fake = FakeUrlopen([
-            ('/trials/run-1/regrade', {**job_wire, 'counts': {'results': 1, 'byStatus': {'QUEUED': 1}}}),
-            ('/job-1/regrade', {**job_wire, 'counts': {'results': 2, 'byStatus': {'QUEUED': 2}}}),
+            ('/trials/run-1/regrade', with_total(1)),
+            ('/job-1/regrade', with_total(2)),
             ('/api/regrades/rj-1', job_wire),
         ])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
@@ -979,19 +1164,22 @@ class TestJobs:
         assert fake.requests[0].full_url.endswith('/trials/run-1/regrade')
         assert per_run.id == 'rj-1'
         assert per_run.source_job_id == 'job-1'
-        assert per_run.counts.results == 1
+        assert per_run.results.total == 1
+        assert per_run.results.by_status['INDETERMINATE'] == 0
 
         # Per-job regrade: POST the filter body.
         assert fake.requests[1].get_method() == 'POST'
         sent = json.loads(fake.requests[1].data.decode('utf-8'))
         assert sent == {'status': ['SCORED'], 'taskKey': 'demo-task'}
-        assert per_job.counts.results == 2
+        assert per_job.results.total == 2
 
         # Read: results mapped with immutable source snapshots + delta + lineage.
         assert read.status == 'COMPLETED'
         assert read.filter.task_key == 'demo-task'
-        assert read.results is not None and len(read.results) == 1
-        result = read.results[0]
+        assert len(read.results.items) == 1
+        assert read.results.next_cursor is None
+        assert read.results.has_more is False
+        result = read.results.items[0]
         assert result.task_key == 'demo-task'
         assert result.source_reward == 1
         assert result.reward_delta == -0.5
@@ -1317,32 +1505,38 @@ class TestJobs:
     async def test_trial_trace_paging(self):
         fake = FakeUrlopen([
             ('/trace', {
-                'events': [
+                'items': [
                     {'seq': 3, 'type': 'agent.message', 'data': {'text': 'hi'}},
                     {'seq': 4, 'type': 'tool.call', 'data': {}},
                 ],
-                'nextAfter': 4,
+                'nextCursor': '4',
+                'hasMore': True,
             }),
         ])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
             page = await jobs_factory(CONFIG).trial_trace(
-                'job-1', 'run-1', after=2, limit=500,
+                'job-1', 'run-1', cursor='2', limit=500,
             )
 
         url = fake.requests[0].full_url
         assert '/api/jobs/job-1/trials/run-1/trace' in url
-        assert 'after=2' in url and 'limit=500' in url
-        assert [e.seq for e in page.events] == [3, 4]
-        assert page.events[0].type == 'agent.message'
-        assert page.next_after == 4
+        assert 'cursor=2' in url and 'limit=500' in url
+        assert [e.seq for e in page.items] == [3, 4]
+        assert page.items[0].type == 'agent.message'
+        assert page.next_cursor == '4'
+        assert page.has_more is True
 
     @pytest.mark.asyncio
     async def test_trial_trace_events_drains_pages(self):
         pages = {
-            None: {'events': [{'seq': 1, 'type': 'a', 'data': {}},
-                              {'seq': 2, 'type': 'b', 'data': {}}], 'nextAfter': 2},
-            '2': {'events': [{'seq': 3, 'type': 'c', 'data': {}}], 'nextAfter': 3},
-            '3': {'events': [], 'nextAfter': 3},
+            None: {
+                'items': [{'seq': 1, 'type': 'a', 'data': {}}, {'seq': 2, 'type': 'b', 'data': {}}],
+                'nextCursor': '2',
+                'hasMore': True,
+            },
+            # nextCursor null MEANS CAUGHT UP — it never echoes the position
+            # back, so the drain needs no extra empty-page request to learn it.
+            '2': {'items': [{'seq': 3, 'type': 'c', 'data': {}}], 'nextCursor': None, 'hasMore': False},
         }
 
         class PagedUrlopen(FakeUrlopen):
@@ -1350,8 +1544,8 @@ class TestJobs:
                 self.requests.append(request)
                 url = request.full_url
                 query = urllib_parse.parse_qs(urllib_parse.urlsplit(url).query)
-                after = query.get('after', [None])[0]
-                return FakeResponse(pages[after])
+                cursor = query.get('cursor', [None])[0]
+                return FakeResponse(pages[cursor])
 
         fake = PagedUrlopen([])
         seqs = []
@@ -1361,30 +1555,12 @@ class TestJobs:
             ):
                 seqs.append(event.seq)
 
-        # Every event exactly once, in seq order, resuming from nextAfter,
-        # and the drain stops on the empty page.
         assert seqs == [1, 2, 3]
-        afters = [
-            urllib_parse.parse_qs(urllib_parse.urlsplit(r.full_url).query).get('after', [None])[0]
+        cursors = [
+            urllib_parse.parse_qs(urllib_parse.urlsplit(r.full_url).query).get('cursor', [None])[0]
             for r in fake.requests
         ]
-        assert afters == [None, '2', '3']
-
-        # With an explicit page limit, a short page ends the drain without an
-        # extra empty-page request (same rule as the TypeScript SDK).
-        fake_limited = PagedUrlopen([])
-        seqs_limited = []
-        with patch('evolve.hosted.urllib.request.urlopen', fake_limited):
-            async for event in jobs_factory(CONFIG).trial_trace_events(
-                'job-1', 'run-1', limit=2
-            ):
-                seqs_limited.append(event.seq)
-        assert seqs_limited == [1, 2, 3]
-        afters_limited = [
-            urllib_parse.parse_qs(urllib_parse.urlsplit(r.full_url).query).get('after', [None])[0]
-            for r in fake_limited.requests
-        ]
-        assert afters_limited == [None, '2']
+        assert cursors == [None, '2']
 
     @pytest.mark.asyncio
     async def test_compare_drops_internal_agent_fields(self):

@@ -11,6 +11,8 @@ import type {
   BenchmarkImportError,
   BenchmarkImportInput,
   BenchmarkImportStatus,
+  BenchmarkList,
+  BenchmarkPage,
   BenchmarksClient,
   BenchmarkVersion,
   BenchmarkVersionState,
@@ -21,28 +23,37 @@ import type {
   CustomHarness,
   CustomHarnessesClient,
   CustomHarnessInput,
+  CustomHarnessList,
   CustomHarnessSource,
   EvalSandboxProvider,
   ExportJobOptions,
+  GetBenchmarkOptions,
   HostedClientConfig,
   Job,
   JobAgent,
   JobComparison,
   JobEvent,
+  JobFailure,
   JobInput,
   JobList,
   JobPage,
   JobsClient,
   JobStatus,
   JobWatch,
+  ListBenchmarksOptions,
+  ListCustomHarnessesOptions,
   ListJobsOptions,
   ListTrialsOptions,
   ModelUsage,
+  Page,
+  PageOptions,
   RegradeFilter,
   RegradeJob,
+  RegradeJobOptions,
   RegradeJobStatus,
   RegradeOptions,
   RegradeResult,
+  RegradeResultsPage,
   RegradeStatus,
   RunJobOptions,
   Task,
@@ -68,6 +79,8 @@ export type {
   BenchmarkImportInput,
   BenchmarkImportSource,
   BenchmarkImportStatus,
+  BenchmarkList,
+  BenchmarkPage,
   BenchmarksClient,
   BenchmarkVersion,
   BenchmarkVersionState,
@@ -78,28 +91,38 @@ export type {
   CustomHarness,
   CustomHarnessesClient,
   CustomHarnessInput,
+  CustomHarnessList,
+  CustomHarnessPage,
   CustomHarnessSource,
   EvalSandboxProvider,
   ExportJobOptions,
+  GetBenchmarkOptions,
   HostedClientConfig,
   Job,
   JobAgent,
   JobComparison,
   JobEvent,
+  JobFailure,
   JobInput,
   JobList,
   JobPage,
   JobsClient,
   JobStatus,
   JobWatch,
+  ListBenchmarksOptions,
+  ListCustomHarnessesOptions,
   ListJobsOptions,
   ListTrialsOptions,
   ModelUsage,
+  Page,
+  PageOptions,
   RegradeFilter,
   RegradeJob,
+  RegradeJobOptions,
   RegradeJobStatus,
   RegradeOptions,
   RegradeResult,
+  RegradeResultsPage,
   RegradeStatus,
   RunJobOptions,
   SpendSource,
@@ -111,6 +134,7 @@ export type {
   TrialList,
   TrialPage,
   TrialStatus,
+  TrialTally,
   TrialTraceEvent,
   TrialTraceOptions,
   TrialTracePage,
@@ -271,11 +295,14 @@ function mapTask(raw: Record<string, unknown>): Task {
   };
 }
 
+/** ONE job mapper for every call — nothing conditional, because nothing is optional. */
 function mapJob(raw: Record<string, unknown>): Job {
-  const job: Job = {
+  const trials = (raw.trials ?? {}) as Record<string, unknown>;
+  return {
     id: raw.id as string,
     status: raw.status as JobStatus,
     benchmark: raw.benchmark as string,
+    agents: ((raw.agents as Record<string, unknown>[]) ?? []).map(mapJobAgent),
     runsPerTask: raw.runsPerTask as number,
     concurrency: raw.concurrency as number,
     maxTrialSpendUsd: raw.maxTrialSpendUsd as number,
@@ -283,30 +310,48 @@ function mapJob(raw: Record<string, unknown>): Job {
     sandboxProvider: raw.sandboxProvider as EvalSandboxProvider,
     spentUsd: (raw.spentUsd as number) ?? 0,
     createdAt: raw.createdAt as string,
+    updatedAt: raw.updatedAt as string,
     counts: raw.counts as Job["counts"],
+    trials: {
+      total: (trials.total as number) ?? 0,
+      byStatus: (trials.byStatus as TrialCounts) ?? ({} as TrialCounts),
+    },
+    meanReward: (raw.meanReward as number | null) ?? null,
+    failure: (raw.failure as JobFailure | null) ?? null,
+    sourceJobId: (raw.sourceJobId as string | null) ?? null,
+    idempotentReplay: raw.idempotentReplay === true,
   };
-  if (raw.trialCounts && typeof raw.trialCounts === "object") {
-    job.trialCounts = raw.trialCounts as TrialCounts;
+}
+
+/** The one page envelope, mapped: {items, nextCursor, hasMore}. */
+function mapPage<T>(
+  raw: unknown,
+  mapItem: (item: Record<string, unknown>) => T
+): Page<T> {
+  const page = (raw ?? {}) as Record<string, unknown>;
+  const items = Array.isArray(page.items)
+    ? (page.items as Record<string, unknown>[]).map(mapItem)
+    : [];
+  return {
+    items,
+    nextCursor: (page.nextCursor as string | null) ?? null,
+    hasMore: page.hasMore === true,
+  };
+}
+
+/** Serialize { limit, cursor } (plus anything else) into a query string. */
+function pageQuery(
+  options?: PageOptions,
+  extra?: Record<string, string | undefined>
+): string {
+  const params = new URLSearchParams();
+  if (options?.limit !== undefined) params.set("limit", String(options.limit));
+  if (options?.cursor) params.set("cursor", options.cursor);
+  for (const [key, value] of Object.entries(extra ?? {})) {
+    if (value !== undefined) params.set(key, value);
   }
-  if ("meanReward" in raw) {
-    job.meanReward = (raw.meanReward as number | null) ?? null;
-  }
-  if (Array.isArray(raw.agents)) {
-    job.agents = (raw.agents as Record<string, unknown>[]).map(mapJobAgent);
-  }
-  if ("error" in raw) {
-    job.error = (raw.error as string | null) ?? null;
-  }
-  if (typeof raw.updatedAt === "string") {
-    job.updatedAt = raw.updatedAt;
-  }
-  if (typeof raw.sourceJobId === "string") {
-    job.sourceJobId = raw.sourceJobId;
-  }
-  if (raw.idempotentReplay === true) {
-    job.idempotentReplay = true;
-  }
-  return job;
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
 }
 
 function mapTrial(raw: Record<string, unknown>): Trial {
@@ -354,24 +399,23 @@ function mapRegradeResult(raw: Record<string, unknown>): RegradeResult {
 }
 
 function mapRegradeJob(raw: Record<string, unknown>): RegradeJob {
-  const counts = (raw.counts as Record<string, unknown>) ?? {};
-  const job: RegradeJob = {
+  const results = (raw.results ?? {}) as Record<string, unknown>;
+  return {
     id: raw.id as string,
     sourceJobId: raw.sourceJobId as string,
     status: raw.status as RegradeJobStatus,
     sandboxProvider: raw.sandboxProvider as EvalSandboxProvider,
     filter: (raw.filter as RegradeJob["filter"]) ?? null,
-    counts: {
-      results: (counts.results as number) ?? 0,
-      byStatus: (counts.byStatus as RegradeJob["counts"]["byStatus"]) ?? {},
+    results: {
+      ...mapPage(results, mapRegradeResult),
+      total: (results.total as number) ?? 0,
+      byStatus:
+        (results.byStatus as RegradeResultsPage["byStatus"]) ??
+        ({} as RegradeResultsPage["byStatus"]),
     },
     createdAt: raw.createdAt as string,
     updatedAt: raw.updatedAt as string,
   };
-  if (Array.isArray(raw.results)) {
-    job.results = (raw.results as Record<string, unknown>[]).map(mapRegradeResult);
-  }
-  return job;
 }
 
 function mapCustomHarness(raw: Record<string, unknown>): CustomHarness {
@@ -531,14 +575,13 @@ function createSseParser(onFrame: (frame: SseFrame) => void): { push(chunk: stri
  * first page, honoring the caller's limit/cursor) and async-iterable (walks
  * every row across pages, starting from the caller's cursor).
  */
-function makePaginated<TRow, TPage extends { nextCursor: string | null }>(
-  fetchPage: (opts: { limit?: number; cursor?: string }) => Promise<TPage>,
-  rowsOf: (page: TPage) => TRow[],
-  options?: { limit?: number; cursor?: string }
-): PromiseLike<TPage> & AsyncIterable<TRow> {
+function makePaginated<TRow>(
+  fetchPage: (opts: PageOptions) => Promise<Page<TRow>>,
+  options?: PageOptions
+): PromiseLike<Page<TRow>> & AsyncIterable<TRow> {
   return {
-    then<TResult1 = TPage, TResult2 = never>(
-      onfulfilled?: ((value: TPage) => TResult1 | PromiseLike<TResult1>) | null,
+    then<TResult1 = Page<TRow>, TResult2 = never>(
+      onfulfilled?: ((value: Page<TRow>) => TResult1 | PromiseLike<TResult1>) | null,
       onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
     ): Promise<TResult1 | TResult2> {
       return fetchPage({ limit: options?.limit, cursor: options?.cursor }).then(
@@ -550,12 +593,36 @@ function makePaginated<TRow, TPage extends { nextCursor: string | null }>(
       let cursor = options?.cursor;
       for (;;) {
         const page = await fetchPage({ limit: options?.limit, cursor });
-        for (const row of rowsOf(page)) yield row;
+        for (const row of page.items) yield row;
         if (!page.nextCursor) return;
         cursor = page.nextCursor;
       }
     },
   };
+}
+
+/**
+ * Build the multipart/form-data body both upload routes take: metadata as
+ * named parts FIRST, then the bytes as a `file` part. Order matters — the
+ * server refuses a name it will never accept before receiving the upload, and
+ * it can only do that if the metadata arrives first.
+ */
+function uploadForm(
+  fields: Record<string, string | undefined>,
+  file?: { bytes: Uint8Array; filename: string }
+): FormData {
+  const form = new FormData();
+  for (const [name, value] of Object.entries(fields)) {
+    if (value !== undefined) form.set(name, value);
+  }
+  if (file) {
+    form.set(
+      "file",
+      new Blob([file.bytes as unknown as BlobPart], { type: "application/gzip" }),
+      file.filename
+    );
+  }
+  return form;
 }
 
 /**
@@ -616,10 +683,12 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
     return mapBenchmarkImport((await res.json()) as Record<string, unknown>);
   }
 
-  async function getBenchmark(ref: string): Promise<Benchmark> {
+  async function getBenchmark(
+    ref: string,
+    options?: GetBenchmarkOptions
+  ): Promise<Benchmark> {
     const parsed = parseBenchmarkRef(ref);
-    const query =
-      parsed.version !== undefined ? `?version=${encodeURIComponent(parsed.version)}` : "";
+    const query = pageQuery(options, { version: parsed.version });
     const res = await request(
       cfg,
       `/api/benchmarks/${encodeURIComponent(parsed.name)}${query}`
@@ -637,32 +706,36 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
       selectedVersion: raw.selectedVersion
         ? mapBenchmarkVersion(raw.selectedVersion as Record<string, unknown>)
         : null,
-      tasks: ((raw.tasks as Record<string, unknown>[]) || []).map(mapTask),
+      tasks: mapPage(raw.tasks, mapTask),
       createdAt: raw.createdAt as string,
       updatedAt: raw.updatedAt as string,
     };
   }
 
+  async function listPage(options?: ListBenchmarksOptions): Promise<BenchmarkPage> {
+    const res = await request(cfg, `/api/benchmarks${pageQuery(options)}`);
+    return mapPage((await res.json()) as Record<string, unknown>, (raw) => ({
+      name: raw.name as string,
+      title: (raw.title as string | null) ?? null,
+      description: (raw.description as string | null) ?? null,
+      activeVersion: raw.activeVersion
+        ? mapBenchmarkVersion(raw.activeVersion as Record<string, unknown>)
+        : null,
+    }));
+  }
+
   return {
-    async list(): Promise<Benchmark[]> {
-      const res = await request(cfg, "/api/benchmarks");
-      const data = (await res.json()) as { benchmarks?: Record<string, unknown>[] };
-      return (data.benchmarks || []).map((raw) => ({
-        name: raw.name as string,
-        title: (raw.title as string | null) ?? null,
-        description: (raw.description as string | null) ?? null,
-        activeVersion: raw.activeVersion
-          ? mapBenchmarkVersion(raw.activeVersion as Record<string, unknown>)
-          : null,
-      }));
+    list(options?: ListBenchmarksOptions): BenchmarkList {
+      // Await for one page; for-await to walk the catalog across cursor pages.
+      return makePaginated(listPage, options);
     },
 
     get: getBenchmark,
 
-    async getActive(name: string): Promise<ActiveBenchmark> {
+    async getActive(name: string, options?: GetBenchmarkOptions): Promise<ActiveBenchmark> {
       // get(name) with a bare name resolves the active version's task list; the
       // detail route echoes the active version so we can hard-require it here.
-      const bench = await getBenchmark(name);
+      const bench = await getBenchmark(name, options);
       if (bench.activeVersion === null) {
         throw new NoActiveVersionError(name);
       }
@@ -672,7 +745,7 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
         description: bench.description,
         activeVersion: bench.activeVersion,
         version: bench.activeVersion.version,
-        tasks: bench.tasks ?? [],
+        tasks: bench.tasks ?? { items: [], nextCursor: null, hasMore: false },
         versions: bench.versions ?? [],
         createdAt: bench.createdAt as string,
         updatedAt: bench.updatedAt as string,
@@ -681,31 +754,29 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
 
     async import(input: BenchmarkImportInput): Promise<BenchmarkImport> {
       const src = input.source;
-      // Directory import: deterministically tar+gzip the corpus and upload it
-      // (the body IS the tarball, so benchmarkName/version ride the query string).
+      // ONE body grammar: multipart/form-data, metadata in named parts. The
+      // corpus is the `file` part; a git source is the gitUrl + ref parts.
+      // Nothing rides the query string, where it would land in access logs.
       if (src?.directory) {
         const { tarGzipDirectory } = await import("./tar");
         const gzipped = tarGzipDirectory(src.directory);
-        const query = new URLSearchParams({
-          benchmarkName: input.benchmarkName,
-          version: input.version,
-        }).toString();
-        const res = await request(cfg, `/api/benchmarks/imports?${query}`, {
+        const res = await request(cfg, "/api/benchmarks/imports", {
           method: "POST",
-          headers: { "Content-Type": "application/gzip" },
-          body: gzipped as unknown as BodyInit,
+          body: uploadForm(
+            { benchmarkName: input.benchmarkName, version: input.version },
+            { bytes: gzipped, filename: "corpus.tar.gz" }
+          ),
         });
         return mapBenchmarkImport((await res.json()) as Record<string, unknown>);
       }
-      // Git import: JSON body with the pinned source.
       if (src?.gitUrl && src?.ref) {
         const res = await request(cfg, "/api/benchmarks/imports", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            source: { type: "git", url: src.gitUrl, ref: src.ref },
+          body: uploadForm({
             benchmarkName: input.benchmarkName,
             version: input.version,
+            gitUrl: src.gitUrl,
+            ref: src.ref,
           }),
         });
         return mapBenchmarkImport((await res.json()) as Record<string, unknown>);
@@ -776,50 +847,40 @@ export function customHarnesses(config?: HostedClientConfig): CustomHarnessesCli
             "or a local directory ({ directory }), not both"
         );
       }
-      // Tarball source: deterministically tar+gzip the directory and upload it
-      // (the body IS the tarball, so the metadata rides the query string —
-      // repeated `env` pairs, exactly like the benchmark archive-import lane).
+      if (!hasInstallScript && !hasDirectory) {
+        throw new Error(
+          "customHarnesses().create() requires either an install script ({ installScript }) " +
+            "or a local directory ({ directory }), plus name and runCommand"
+        );
+      }
+      // ONE body grammar: multipart/form-data. The run command and the declared
+      // env are named PARTS — they used to ride the query string of an upload,
+      // which put a shell command and a set of environment values into every
+      // access log and proxy buffer on the way here.
+      const fields: Record<string, string | undefined> = {
+        name: input.name,
+        runCommand: input.runCommand,
+        ...(input.env !== undefined ? { env: JSON.stringify(input.env) } : {}),
+        ...(hasInstallScript ? { installScript: input.installScript } : {}),
+      };
+      let body: FormData;
       if (hasDirectory) {
         const { tarGzipDirectory } = await import("./tar");
         const gzipped = tarGzipDirectory(input.directory as string);
-        const params = new URLSearchParams({
-          name: input.name,
-          runCommand: input.runCommand,
-        });
-        for (const [key, value] of Object.entries(input.env ?? {})) {
-          params.append("env", `${key}=${value}`);
-        }
-        const res = await request(cfg, `/api/custom-harnesses?${params.toString()}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/gzip" },
-          body: gzipped as unknown as BodyInit,
-        });
-        return mapCustomHarness((await res.json()) as Record<string, unknown>);
+        body = uploadForm(fields, { bytes: gzipped, filename: "source.tar.gz" });
+      } else {
+        body = uploadForm(fields);
       }
-      // Install-script source: JSON body.
-      if (hasInstallScript) {
-        const res = await request(cfg, "/api/custom-harnesses", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: input.name,
-            installScript: input.installScript,
-            runCommand: input.runCommand,
-            ...(input.env !== undefined ? { env: input.env } : {}),
-          }),
-        });
-        return mapCustomHarness((await res.json()) as Record<string, unknown>);
-      }
-      throw new Error(
-        "customHarnesses().create() requires either an install script ({ installScript }) " +
-          "or a local directory ({ directory }), plus name and runCommand"
-      );
+      const res = await request(cfg, "/api/custom-harnesses", { method: "POST", body });
+      return mapCustomHarness((await res.json()) as Record<string, unknown>);
     },
 
-    async list(): Promise<CustomHarness[]> {
-      const res = await request(cfg, "/api/custom-harnesses");
-      const data = (await res.json()) as { customHarnesses?: Record<string, unknown>[] };
-      return (data.customHarnesses || []).map(mapCustomHarness);
+    list(options?: ListCustomHarnessesOptions): CustomHarnessList {
+      // Await for one page; for-await to walk them all across cursor pages.
+      return makePaginated(async (opts) => {
+        const res = await request(cfg, `/api/custom-harnesses${pageQuery(opts)}`);
+        return mapPage((await res.json()) as Record<string, unknown>, mapCustomHarness);
+      }, options);
     },
 
     async get(name: string): Promise<CustomHarness> {
@@ -872,42 +933,19 @@ export function jobs(config?: HostedClientConfig): JobsClient {
   }
 
   async function listPage(options?: ListJobsOptions): Promise<JobPage> {
-    const params = new URLSearchParams();
-    if (options?.limit !== undefined) params.set("limit", String(options.limit));
-    if (options?.cursor) params.set("cursor", options.cursor);
-    const qs = params.toString();
-    const res = await request(cfg, `/api/jobs${qs ? `?${qs}` : ""}`);
-    const data = (await res.json()) as {
-      jobs?: Record<string, unknown>[];
-      nextCursor?: string | null;
-    };
-    return {
-      jobs: (data.jobs || []).map(mapJob),
-      nextCursor: data.nextCursor ?? null,
-    };
+    const res = await request(cfg, `/api/jobs${pageQuery(options)}`);
+    return mapPage((await res.json()) as Record<string, unknown>, mapJob);
   }
 
   async function trialsPage(
     id: string,
     options?: ListTrialsOptions
   ): Promise<TrialPage> {
-    const params = new URLSearchParams();
-    if (options?.status?.length) params.set("status", options.status.join(","));
-    if (options?.limit !== undefined) params.set("limit", String(options.limit));
-    if (options?.cursor) params.set("cursor", options.cursor);
-    const qs = params.toString();
-    const res = await request(
-      cfg,
-      `/api/jobs/${encodeURIComponent(id)}/trials${qs ? `?${qs}` : ""}`
-    );
-    const data = (await res.json()) as {
-      trials?: Record<string, unknown>[];
-      nextCursor?: string | null;
-    };
-    return {
-      trials: (data.trials || []).map(mapTrial),
-      nextCursor: data.nextCursor ?? null,
-    };
+    const query = pageQuery(options, {
+      status: options?.status?.length ? options.status.join(",") : undefined,
+    });
+    const res = await request(cfg, `/api/jobs/${encodeURIComponent(id)}/trials${query}`);
+    return mapPage((await res.json()) as Record<string, unknown>, mapTrial);
   }
 
   async function getTrialTrace(
@@ -915,22 +953,11 @@ export function jobs(config?: HostedClientConfig): JobsClient {
     trialId: string,
     options?: TrialTraceOptions
   ): Promise<TrialTracePage> {
-    const params = new URLSearchParams();
-    if (options?.after !== undefined) params.set("after", String(options.after));
-    if (options?.limit !== undefined) params.set("limit", String(options.limit));
-    const qs = params.toString();
     const res = await request(
       cfg,
-      `/api/jobs/${encodeURIComponent(id)}/trials/${encodeURIComponent(trialId)}/trace${qs ? `?${qs}` : ""}`
+      `/api/jobs/${encodeURIComponent(id)}/trials/${encodeURIComponent(trialId)}/trace${pageQuery(options)}`
     );
-    const data = (await res.json()) as {
-      events?: Record<string, unknown>[];
-      nextAfter?: number | null;
-    };
-    return {
-      events: (data.events || []).map(mapTraceEvent),
-      nextAfter: data.nextAfter ?? null,
-    };
+    return mapPage((await res.json()) as Record<string, unknown>, mapTraceEvent);
   }
 
   async function exportResponse(id: string, format?: "harbor"): Promise<Response> {
@@ -1080,7 +1107,7 @@ export function jobs(config?: HostedClientConfig): JobsClient {
     list(options?: ListJobsOptions): JobList {
       // Await for one page (honoring options); for-await to walk every
       // job across cursor pages.
-      return makePaginated(listPage, (page) => page.jobs, options);
+      return makePaginated(listPage, options);
     },
 
     trials(id: string, options?: ListTrialsOptions): TrialList {
@@ -1088,7 +1115,6 @@ export function jobs(config?: HostedClientConfig): JobsClient {
       // The status filter rides along on every page fetch.
       return makePaginated(
         (opts) => trialsPage(id, { ...opts, status: options?.status }),
-        (page) => page.trials,
         options
       );
     },
@@ -1112,16 +1138,14 @@ export function jobs(config?: HostedClientConfig): JobsClient {
       trialId: string,
       options?: TrialTraceOptions
     ): AsyncIterableIterator<TrialTraceEvent> {
-      let after = options?.after;
+      let cursor = options?.cursor;
       for (;;) {
-        const page = await getTrialTrace(id, trialId, { after, limit: options?.limit });
-        for (const event of page.events) yield event;
-        // Drained the currently available trace: an empty page, or a short
-        // page when the caller pinned an explicit page size.
-        if (page.events.length === 0) return;
-        if (options?.limit !== undefined && page.events.length < options.limit) return;
-        if (page.nextAfter === null) return;
-        after = page.nextAfter;
+        const page = await getTrialTrace(id, trialId, { cursor, limit: options?.limit });
+        for (const event of page.items) yield event;
+        // Drained: nextCursor is null when there is no next page, which now
+        // says "caught up" rather than echoing the position back.
+        if (!page.nextCursor) return;
+        cursor = page.nextCursor;
       }
     },
 
@@ -1139,8 +1163,8 @@ export function jobs(config?: HostedClientConfig): JobsClient {
     },
 
     async compare(ids: string[]): Promise<JobComparison> {
-      const query = ids.map(encodeURIComponent).join(",");
-      const res = await request(cfg, `/api/jobs/compare?ids=${query}`);
+      const idsQuery = ids.map(encodeURIComponent).join(",");
+      const res = await request(cfg, `/api/jobs/compare?ids=${idsQuery}`);
       const data = (await res.json()) as {
         jobs?: Record<string, unknown>[];
         taskMatrix?: Record<string, unknown>[];
@@ -1186,8 +1210,11 @@ export function jobs(config?: HostedClientConfig): JobsClient {
       return mapRegradeJob((await res.json()) as Record<string, unknown>);
     },
 
-    async regradeJob(jobId: string): Promise<RegradeJob> {
-      const res = await request(cfg, `/api/regrades/${encodeURIComponent(jobId)}`);
+    async regradeJob(jobId: string, options?: RegradeJobOptions): Promise<RegradeJob> {
+      const res = await request(
+        cfg,
+        `/api/regrades/${encodeURIComponent(jobId)}${pageQuery(options)}`
+      );
       return mapRegradeJob((await res.json()) as Record<string, unknown>);
     },
 

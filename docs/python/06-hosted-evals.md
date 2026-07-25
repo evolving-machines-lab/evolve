@@ -24,10 +24,13 @@ Browse the catalog, then run. A bare benchmark name resolves server-side to the 
 from evolve import benchmarks, jobs, JobAgent
 
 async with benchmarks() as catalog:
-    print([bench.name for bench in await catalog.list()])
+    page = await catalog.list()                     # one page of the catalog
+    print([bench.name for bench in page.items])
+    async for bench in catalog.list():              # or walk it all
+        print(bench.name)
 
     active = await catalog.get_active('deep-swe')   # raises NoActiveVersionError when none
-    print(active.version, [task.task_key for task in active.tasks])
+    print(active.version, [task.task_key for task in active.tasks.items])
 
 async with jobs() as evals:
     job = await evals.run(
@@ -104,6 +107,8 @@ job = await evals.run(
 print(job.idempotent_replay)   # True on a replay
 ```
 
+A key on its own is not enough to make a request idempotent, so the server also fingerprints the request behind it. Repeat the same request with the same key and you get the original job back; send a *different* request under a key you have already used and it is refused with a `409 idempotency_key_reused` rather than handed yesterday's job while you believe a new run started. Use a fresh key for a genuinely new run.
+
 ---
 
 ## Watch it live
@@ -135,14 +140,18 @@ print(final.status, final.mean_reward, final.spent_usd)
 ```python
 # One job: size, status histogram, mean reward, spend
 detail = await evals.get(job.id)
-print(detail.trial_counts)                # {'SCORED': 12, 'RUNNING': 3, 'QUEUED': 5}
+print(detail.counts)                      # JobCounts(agents=2, tasks=2) — entity cardinality
+print(detail.trials.total, detail.trials.by_status)   # 20, {'SCORED': 12, 'RUNNING': 3, ...}
 print(detail.mean_reward)                 # mean over SCORED trials; None until something scores
 print(detail.spent_usd, '/', detail.worst_case_spend_usd)
+print(detail.failure)                     # why it FAILED, or None
 
 # Your jobs, newest first
 async for item in evals.list():
     print(item.id, item.benchmark, item.status, item.mean_reward, item.spent_usd)
 ```
+
+Every job response is the same shape, whatever produced it: `run()`, `get()`, `cancel()`, `rerun_failed()` and each row of `list()` carry the same fields. `counts` is entity cardinality and `trials` is the one "how many" structure — a total plus a status histogram naming every status, zeros included, so a status bar never needs the enum hardcoded. A failed job says why on `failure`, as `code` + `message`, and that rides on list rows too.
 
 Iterate trials (pages fetched for you), or `await` one page. `status` filters, e.g. to the failures behind a rerun decision:
 
@@ -153,7 +162,7 @@ async for trial in evals.trials(job.id):
 page = await evals.trials(
     job.id,
     limit=100,
-) # .trials, .next_cursor
+) # .items, .next_cursor, .has_more
 
 failures = await evals.trials(
     job.id,
@@ -194,10 +203,13 @@ async for event in evals.trial_trace_events(
 page = await evals.trial_trace(
     job.id,
     trial.id,
-    after=last_seq,
+    cursor=str(last_seq),
     limit=500,
 )
+print(page.items, page.next_cursor, page.has_more)
 ```
+
+Every collection here is the same page — `items`, `next_cursor`, `has_more` — paged with `limit=`/`cursor=`. `next_cursor` means one thing everywhere: pass it back for the next page, and `None` means there is no next page, so a trace poller can tell it has caught up. A trace cursor is a position in the seq timeline, so keep the last event's `seq` to resume later.
 
 ### Cancel / rerun failures
 
@@ -232,13 +244,13 @@ bulk = await evals.regrade(
 )
 
 # Read it back: QUEUED → RUNNING → COMPLETED, one result per source trial
-done = await evals.regrade_job(bulk.id)
-for result in done.results or []:
+done = await evals.regrade_job(bulk.id, limit=100)
+for result in done.results.items:
     print(result.task_key, result.source_reward, '→', result.reward,
           result.reward_delta)   # reward − source_reward, the per-trial delta
 ```
 
-All three return a `RegradeJob`. A per-trial regrade holds one result; a per-job regrade holds one per selected source trial. Poll `regrade_job()` until `status` is `'COMPLETED'` — `counts.by_status` is the running histogram.
+All three return a `RegradeJob`. A per-trial regrade holds one result; a per-job regrade holds one per selected source trial. `results` is one object named for the collection: `total` and `by_status` cover the whole job, `items`/`next_cursor`/`has_more` are the page you asked for — a regrade of a 10,000-trial job is not one response. Poll `regrade_job()` until `status` is `'COMPLETED'`; `results.by_status` is the running histogram, derived from the whole result set rather than the page in hand.
 
 ### Eligibility
 
@@ -384,7 +396,7 @@ Not every task can run everywhere. The catalog tells you **before any money is s
 
 ```python
 bench = await catalog.get('my-bench@1.0')
-for task in bench.tasks or []:
+for task in bench.tasks.items:
     verdict = task.providers['modal']   # TaskProviderVerdict(ok=..., reason=...)
     if not verdict.ok:
         print(task.task_key, 'cannot run on modal:', verdict.reason)
@@ -441,7 +453,7 @@ async with benchmarks() as catalog:
             print(failure.task_key, failure.error)
 ```
 
-Every lane resolves to the same thing — a Harbor-layout directory — and is held to the same rules. The corpus root is a directory whose `tasks/` subdirectory holds one directory per task, or the tasks directory itself. Provenance is recorded per lane: the resolved commit for a git import, the sha256 of the exact uploaded bytes for a directory. On the wire a directory import is simply a gzipped tarball POSTed to the import endpoint — the SDK produces it for you — and uploads past the compressed-size cap (512 MB by default) are refused with a `413 import_too_large`.
+Every lane resolves to the same thing — a Harbor-layout directory — and is held to the same rules. The corpus root is a directory whose `tasks/` subdirectory holds one directory per task, or the tasks directory itself. Provenance is recorded per lane: the resolved commit for a git import, the sha256 of the exact uploaded bytes for a directory. On the wire an import is `multipart/form-data`: `benchmarkName` and `version` as named parts, and either `gitUrl` + `ref` or the gzipped corpus as a `file` part — the SDK produces it for you — and uploads past the compressed-size cap (512 MB by default) are refused with a `413 import_too_large`. The metadata parts come first, so a name owned by someone else is refused with a `409 benchmark_name_taken` before the upload is received rather than after.
 
 What happens next:
 
@@ -613,7 +625,7 @@ await harnesses.create(
 Read and remove them the same way:
 
 ```python
-registered = await harnesses.list()      # your harnesses only
+registered = await harnesses.list()      # one page of your harnesses (async for walks them all)
 one = await harnesses.get('acme-cli')    # name, source, run_command, env, timestamps
 await harnesses.delete('acme-cli')       # past jobs keep the harness they recorded
 ```
@@ -711,25 +723,41 @@ class JobAgent:
                                           # harness -> invalid_input (content-versioned)
 
 @dataclass
-class Job:
+class Page:                               # every collection, top level or nested
+    items: list                           # this page's rows
+    next_cursor: str | None               # pass back as cursor=; None = no next page
+    has_more: bool
+
+@dataclass
+class TrialTally:
+    total: int
+    by_status: dict[str, int]             # EVERY trial status, zeros included
+
+@dataclass
+class JobFailure:                         # why a job FAILED — never the key `error`
+    code: str
+    message: str
+
+@dataclass
+class Job:                                # ONE shape from every call, nothing optional
     id: str
     status: str                           # job status above
     benchmark: str                        # 'name@version'
+    agents: list[JobAgent]
     runs_per_task: int
     concurrency: int
     max_trial_spend_usd: float            # the per-trial cap that applied: yours, or the default
     worst_case_spend_usd: float           # trials x the cap — the most this job can cost
     sandbox_provider: str                 # 'e2b' | 'daytona' | 'modal'
     spent_usd: float                      # what the trials have spent so far
-    counts: JobCounts                     # agents, tasks, trials
-    created_at: str
-    trial_counts: dict | None             # histogram by trial status (get/list)
-    mean_reward: float | None             # mean over SCORED trials; None when none (get/list)
-    agents: list[JobAgent] | None         # get() only
-    error: str | None                     # get() only
-    updated_at: str | None                # get() only
+    counts: JobCounts                     # agents, tasks — entity cardinality only
+    trials: TrialTally                    # total + the status histogram
+    mean_reward: float | None             # mean over SCORED trials; None when none
+    failure: JobFailure | None            # why it FAILED, or None
     source_job_id: str | None             # set on rerun_failed() jobs
     idempotent_replay: bool               # True when an Idempotency-Key replayed
+    created_at: str
+    updated_at: str
 
 @dataclass
 class JobEvent:                           # watch() / watch_iter()
@@ -770,7 +798,7 @@ class ModelUsage:                         # one money vocabulary: the cap is
 
 @dataclass
 class TrialTraceEvent:
-    seq: int                              # resume position for after=
+    seq: int                              # resume position — pass as cursor=
     type: str
     data: dict
 
@@ -801,21 +829,24 @@ class RegradeFilter:                      # per-job selection, echoed back
     task_key: str | None
 
 @dataclass
-class RegradeJobCounts:
-    results: int
-    by_status: dict[str, int]             # histogram by regrade status
+class RegradeResultsPage:                 # how many, and one page of them
+    total: int                            # results in the WHOLE job, not this page
+    by_status: dict[str, int]             # EVERY regrade status, zeros included
+    items: list[RegradeResult]
+    next_cursor: str | None
+    has_more: bool
 
 @dataclass
 class RegradeJob:                         # regrade() / regrade_trial() / regrade_job()
     id: str
     source_job_id: str                    # the job the source trials belong to
-    status: str                           # 'QUEUED' | 'RUNNING' | 'COMPLETED' — derived from results
+    status: str                           # 'QUEUED' | 'RUNNING' | 'COMPLETED' — derived from
+                                          # the WHOLE result set, never from one page
     sandbox_provider: str                 # where the verifier boxes run
-    counts: RegradeJobCounts
+    results: RegradeResultsPage
     created_at: str
     updated_at: str
     filter: RegradeFilter | None = None
-    results: list[RegradeResult] | None = None  # present on create and regrade_job() reads
 
 @dataclass
 class Benchmark:                          # catalog.list() / catalog.get(ref)
@@ -825,8 +856,14 @@ class Benchmark:                          # catalog.list() / catalog.get(ref)
     active_version: BenchmarkVersion | None
     versions: list[BenchmarkVersion] | None   # get() only, newest first
     selected_version: BenchmarkVersion | None # get() only — the tasks' provenance
-    tasks: list[Task] | None                  # get() only
+    tasks: TaskPage | None                    # get() only; page with limit=/cursor=
     # ActiveBenchmark (get_active) is the same shape with version + tasks non-optional
+
+@dataclass
+class TaskPage:                           # Benchmark.tasks — a page of Task rows
+    items: list[Task]
+    next_cursor: str | None
+    has_more: bool
 
 @dataclass
 class BenchmarkVersion:                   # one shape on every surface
@@ -868,6 +905,8 @@ class CustomHarness:                      # harnesses.list() / get() / create()
 
 `custom_harnesses().create()` keyword arguments: `name` and `run_command` are required, plus EITHER `install_script` (the script itself) OR `directory` (a local directory, tarred and uploaded); `env` is optional.
 
+Both upload lanes — a harness and a benchmark corpus — send `multipart/form-data`: the metadata travels as named parts and the bytes as a `file` part. The SDK builds that for you, and it is why nothing sensitive rides a URL: a run command and a set of environment values in a query string end up in every access log and proxy buffer between you and the server.
+
 ### Errors
 
 Every API failure raises `EvolveAPIError` — the server's own sentence as the message, plus a stable machine-readable code to branch on:
@@ -888,3 +927,5 @@ Codes you will actually branch on: `benchmark_not_found` (also what another acco
 [Regrades](#regrade) add three: `regrade_source_ineligible` (409 — the source trial recorded no verifier inputs; the message names why), `no_regradable_runs` (409 — a whole-job regrade found nothing eligible), and `regrade_not_found`.
 
 [Custom harnesses](#bring-your-own-harness) add their own: `custom_harness_not_found` (also what another owner's name reads as), `custom_harness_name_taken`, `custom_harness_name_reserved` (the name collides with a built-in harness), `custom_harness_source_required` (neither an install script nor a tarball), `custom_harness_source_conflict` (both), `custom_harness_invalid_env` (declared env tries to override a run-contract key), `custom_harness_invalid_name`, `custom_harness_too_large`, and `custom_harness_limit_reached` (the per-account registration ceiling).
+
+Three more come from the shapes above: `idempotency_key_reused` (409 — the key already stands for a different request), `invalid_multipart` (400 — an upload that is not `multipart/form-data`, or is malformed), and `invalid_cursor` (400 — a malformed `cursor` on a paged read).

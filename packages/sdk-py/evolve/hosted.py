@@ -23,6 +23,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Union
 
@@ -118,6 +119,15 @@ class Task:
 
 
 @dataclass
+class TaskPage:
+    """One page of a benchmark version's tasks — paged like every collection,
+    because a SWE-bench-scale benchmark has thousands of them."""
+    items: List[Task]
+    next_cursor: Optional[str]
+    has_more: bool
+
+
+@dataclass
 class Benchmark:
     """A benchmark in the shared catalog.
 
@@ -131,7 +141,9 @@ class Benchmark:
     versions: Optional[List[BenchmarkVersion]] = None
     # The version whose tasks are listed (get() only)
     selected_version: Optional[BenchmarkVersion] = None
-    tasks: Optional[List[Task]] = None
+    # One page of the selected version's tasks (get() only); pass limit=/cursor=
+    # to get() and follow next_cursor.
+    tasks: Optional[TaskPage] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
@@ -149,7 +161,7 @@ class ActiveBenchmark:
     description: Optional[str]
     active_version: BenchmarkVersion
     version: str
-    tasks: List[Task]
+    tasks: TaskPage
     versions: List[BenchmarkVersion]
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
@@ -180,19 +192,47 @@ class JobAgent:
 
 @dataclass
 class JobCounts:
-    """Job size: agents x tasks -> trials (present on every shape)."""
+    """Entity cardinality only — the parts of a job with no status of their own."""
     agents: int
     tasks: int
-    trials: int
+
+
+@dataclass
+class TrialTally:
+    """How many trials there are, and how they break down by status.
+
+    ``by_status`` names EVERY trial status, zeros included, so a status bar can
+    be drawn straight off the response without hardcoding the enum.
+    """
+    total: int
+    by_status: Dict[str, int] = field(default_factory=dict)
+
+
+@dataclass
+class JobFailure:
+    """Why a job FAILED — the same {code, message} grammar as an API failure.
+
+    Deliberately NOT called ``error``: on this surface ``error`` means "this
+    request failed", so ``if body.error: raise`` has to stay correct on a
+    healthy read of a failed job.
+    """
+    code: str
+    message: str
 
 
 @dataclass
 class Job:
-    """A job = tasks x agents x runs_per_task."""
+    """A job = tasks x agents x runs_per_task.
+
+    ONE shape from every call — run, get, cancel, rerun_failed and each list
+    row are the same fields, so a job card renders from any of them without
+    knowing where it came from. Nothing here is optional.
+    """
     id: str
     status: str
     # "name@version"
     benchmark: str
+    agents: List[JobAgent]
     runs_per_task: int
     concurrency: int
     #: The resolved per-trial cap every trial of this job runs under.
@@ -205,15 +245,18 @@ class Job:
     #: What the trials have actually spent so far (reporting, not a limit).
     spent_usd: float
     counts: JobCounts
+    #: How many trials, and the status histogram (all statuses, zeros included).
+    trials: TrialTally
+    #: Mean reward over SCORED trials only; None when none. Zero is a reward.
+    mean_reward: Optional[float]
+    #: Why the job FAILED, or None.
+    failure: Optional[JobFailure]
+    #: The job whose failed trials this one reruns; None for an original job.
+    source_job_id: Optional[str]
+    #: True when the server replayed an existing job for this Idempotency-Key.
+    idempotent_replay: bool
     created_at: str
-    trial_counts: Optional[Dict[str, int]] = None
-    # Mean reward over SCORED trials only; None when none. Zero is a reward. (get/list)
-    mean_reward: Optional[float] = None
-    agents: Optional[List[JobAgent]] = None
-    error: Optional[str] = None
-    updated_at: Optional[str] = None
-    source_job_id: Optional[str] = None
-    idempotent_replay: bool = False
+    updated_at: str
 
 
 @dataclass
@@ -291,11 +334,16 @@ class TrialTraceEvent:
 
 @dataclass
 class TrialTracePage:
-    """One seq-paged slice of a trial's trace — jobs().trial_trace()."""
-    events: List[TrialTraceEvent]
-    # Resume position: pass back as after= to continue. An empty page echoes
-    # the requested position (None when reading an empty trace from the start).
-    next_after: Optional[int]
+    """One page of a trial's trace — jobs().trial_trace().
+
+    Same envelope as every other collection, and ``next_cursor`` means the same
+    thing: pass it back as ``cursor=`` for the next page, and NONE MEANS CAUGHT
+    UP. To resume a poll later, keep the last event's ``seq`` and pass it as
+    ``cursor`` — a trace cursor IS a position in the seq timeline.
+    """
+    items: List[TrialTraceEvent]
+    next_cursor: Optional[str]
+    has_more: bool
 
 
 @dataclass
@@ -390,10 +438,19 @@ class RegradeFilter:
 
 
 @dataclass
-class RegradeJobCounts:
-    """Regrade job size: total results + a histogram by regrade status."""
-    results: int
+class RegradeResultsPage:
+    """A regrade job's results: how many there are in the WHOLE job, how they
+    break down by status (every status, zeros included), and one page of them.
+
+    One object named for the collection rather than a ``counts`` sitting beside
+    a separately-named list — and paged, because a regrade of a 10,000-trial
+    job holds 10,000 results.
+    """
+    total: int
     by_status: Dict[str, int]
+    items: List[RegradeResult]
+    next_cursor: Optional[str]
+    has_more: bool
 
 
 @dataclass
@@ -401,18 +458,17 @@ class RegradeJob:
     """A regrade job = a collection of regrade results.
 
     A per-trial regrade holds one result; a per-job regrade holds one
-    per eligible source trial. ``status`` is derived from the results
-    ("QUEUED"|"RUNNING"|"COMPLETED"). ``results`` is present on read + create.
+    per eligible source trial. ``status`` is derived from the WHOLE result set
+    ("QUEUED"|"RUNNING"|"COMPLETED"), never from one page.
     """
     id: str
     source_job_id: str
     status: str
     sandbox_provider: str
-    counts: RegradeJobCounts
+    results: RegradeResultsPage
     created_at: str
     updated_at: str
     filter: Optional[RegradeFilter] = None
-    results: Optional[List[RegradeResult]] = None
 
 
 @dataclass
@@ -475,16 +531,40 @@ class CustomHarness:
     updated_at: str = ''
 
 
+# The ONE page envelope, on every collection this surface returns — top level
+# or nested. ``next_cursor`` means one thing everywhere: pass it back as
+# ``cursor=`` for the next page, and None means there is no next page. It never
+# echoes where you already are, so a poller can always tell it has caught up.
+
+
 @dataclass
 class JobPage:
-    jobs: List[Job]
+    items: List[Job]
     next_cursor: Optional[str]
+    has_more: bool
 
 
 @dataclass
 class TrialPage:
-    trials: List[Trial]
+    items: List[Trial]
     next_cursor: Optional[str]
+    has_more: bool
+
+
+@dataclass
+class BenchmarkPage:
+    items: List[Benchmark]
+    next_cursor: Optional[str]
+    has_more: bool
+
+
+@dataclass
+class CustomHarnessPage:
+    items: List[CustomHarness]
+    next_cursor: Optional[str]
+    has_more: bool
+
+
 
 
 # =============================================================================
@@ -531,16 +611,31 @@ def _map_counts(data: Any) -> JobCounts:
     return JobCounts(
         agents=int(counts.get('agents', 0)),
         tasks=int(counts.get('tasks', 0)),
-        trials=int(counts.get('trials', 0)),
     )
 
 
+def _map_trial_tally(data: Any) -> TrialTally:
+    tally = data if isinstance(data, dict) else {}
+    return TrialTally(
+        total=int(tally.get('total', 0)),
+        by_status=tally.get('byStatus') or {},
+    )
+
+
+def _map_job_failure(data: Any) -> Optional[JobFailure]:
+    if not isinstance(data, dict):
+        return None
+    return JobFailure(code=data.get('code', ''), message=data.get('message', ''))
+
+
 def _map_job(data: Dict[str, Any]) -> Job:
+    """The ONE job mapper — nothing conditional, because nothing is optional."""
     agents = data.get('agents')
     return Job(
         id=data['id'],
         status=data.get('status', ''),
         benchmark=data.get('benchmark', ''),
+        agents=[_map_job_agent(item) for item in agents] if isinstance(agents, list) else [],
         runs_per_task=int(data.get('runsPerTask', 0)),
         concurrency=int(data.get('concurrency', 0)),
         max_trial_spend_usd=float(data.get('maxTrialSpendUsd', 0)),
@@ -548,19 +643,43 @@ def _map_job(data: Dict[str, Any]) -> Job:
         sandbox_provider=data.get('sandboxProvider', ''),
         spent_usd=float(data.get('spentUsd', 0)),
         counts=_map_counts(data.get('counts')),
-        created_at=data.get('createdAt', ''),
-        trial_counts=data.get('trialCounts'),
+        trials=_map_trial_tally(data.get('trials')),
         mean_reward=data.get('meanReward'),
-        agents=(
-            [_map_job_agent(item) for item in agents]
-            if isinstance(agents, list)
-            else None
-        ),
-        error=data.get('error'),
-        updated_at=data.get('updatedAt'),
+        failure=_map_job_failure(data.get('failure')),
         source_job_id=data.get('sourceJobId'),
         idempotent_replay=bool(data.get('idempotentReplay', False)),
+        created_at=data.get('createdAt', ''),
+        updated_at=data.get('updatedAt', ''),
     )
+
+
+def _page_parts(data: Any) -> 'tuple[List[Any], Optional[str], bool]':
+    """The one page envelope, unpacked: (items, next_cursor, has_more)."""
+    page = data if isinstance(data, dict) else {}
+    items = page.get('items')
+    return (
+        items if isinstance(items, list) else [],
+        page.get('nextCursor'),
+        bool(page.get('hasMore', False)),
+    )
+
+
+def _page_query(
+    limit: Optional[int] = None,
+    cursor: Optional[str] = None,
+    **extra: Optional[str],
+) -> str:
+    """Serialize limit/cursor (plus anything else) into a query string."""
+    params: Dict[str, str] = {}
+    if limit is not None:
+        params['limit'] = str(limit)
+    if cursor is not None:
+        params['cursor'] = cursor
+    for key, value in extra.items():
+        if value is not None:
+            params[key] = value
+    query = urllib.parse.urlencode(params)
+    return f'?{query}' if query else ''
 
 
 _MODEL_USAGE_WIRE_KEYS = {'spentUsd', 'spendSource', 'maxTrialSpendUsd'}
@@ -707,25 +826,23 @@ def _map_regrade_filter(data: Any) -> Optional[RegradeFilter]:
 
 
 def _map_regrade_job(data: Dict[str, Any]) -> RegradeJob:
-    counts = data.get('counts') if isinstance(data.get('counts'), dict) else {}
-    results = data.get('results')
+    raw_results = data.get('results') if isinstance(data.get('results'), dict) else {}
+    items, next_cursor, has_more = _page_parts(raw_results)
     return RegradeJob(
         id=data['id'],
         source_job_id=data.get('sourceJobId', ''),
         status=data.get('status', ''),
         sandbox_provider=data.get('sandboxProvider', ''),
-        counts=RegradeJobCounts(
-            results=int(counts.get('results', 0)),
-            by_status=counts.get('byStatus') or {},
+        results=RegradeResultsPage(
+            total=int(raw_results.get('total', 0)),
+            by_status=raw_results.get('byStatus') or {},
+            items=[_map_regrade_result(item) for item in items],
+            next_cursor=next_cursor,
+            has_more=has_more,
         ),
         created_at=data.get('createdAt', ''),
         updated_at=data.get('updatedAt', ''),
         filter=_map_regrade_filter(data.get('filter')),
-        results=(
-            [_map_regrade_result(item) for item in results]
-            if isinstance(results, list)
-            else None
-        ),
     )
 
 
@@ -896,6 +1013,41 @@ class _HostedHttp:
             raise  # unreachable; _raise_api_error always raises
 
 
+def _multipart_body(
+    fields: Dict[str, Optional[str]],
+    file: Optional['tuple[str, bytes]'] = None,
+) -> 'tuple[bytes, str]':
+    """Build the multipart/form-data body both upload routes take.
+
+    Metadata goes in named parts FIRST, then the bytes as a ``file`` part —
+    order matters, because the server refuses a name it will never accept
+    before receiving the upload, and it can only do that if the metadata
+    arrives first. Nothing rides the query string: a run command and a set of
+    environment values in a URL land in every access log and proxy buffer
+    between the caller and the server.
+    """
+    boundary = f'----evolve{uuid.uuid4().hex}'
+    parts: List[bytes] = []
+    for name, value in fields.items():
+        if value is None:
+            continue
+        parts.append(
+            f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n'.encode('utf-8')
+            + value.encode('utf-8')
+            + b'\r\n'
+        )
+    if file is not None:
+        filename, data = file
+        parts.append(
+            f'--{boundary}\r\nContent-Disposition: form-data; name="file"; '
+            f'filename="{filename}"\r\nContent-Type: application/gzip\r\n\r\n'.encode('utf-8')
+        )
+        parts.append(data)
+        parts.append(b'\r\n')
+    parts.append(f'--{boundary}--\r\n'.encode('utf-8'))
+    return b''.join(parts), f'multipart/form-data; boundary={boundary}'
+
+
 def _tar_gzip_directory(directory: str) -> bytes:
     """Deterministically tar + gzip a corpus directory for the directory import.
 
@@ -1006,32 +1158,64 @@ class BenchmarksClient:
     async def close(self) -> None:
         return None
 
-    async def list(self) -> List[Benchmark]:
-        """List every benchmark with its active version."""
-        data = await self._http.request_json('/api/benchmarks')
-        result: List[Benchmark] = []
-        for raw in data.get('benchmarks', []):
-            active = raw.get('activeVersion')
-            result.append(Benchmark(
-                name=raw['name'],
-                title=raw.get('title'),
-                description=raw.get('description'),
-                active_version=_map_benchmark_version(active) if active else None,
-            ))
-        return result
+    def list(
+        self,
+        *,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    ) -> _PaginatedList:
+        """List benchmarks with their active versions (cursor-paged).
 
-    async def get(self, ref: str) -> Benchmark:
-        """Get one benchmark: all versions + the selected version's task list.
+        ``await`` the result for one page (honoring ``limit``/``cursor``), or
+        ``async for`` it to walk the whole catalog across cursor pages.
+        """
+        async def fetch_page(page_limit, page_cursor) -> BenchmarkPage:
+            raw = await self._http.request_json(
+                f'/api/benchmarks{_page_query(page_limit, page_cursor)}'
+            )
+            items, next_cursor, has_more = _page_parts(raw)
+            return BenchmarkPage(
+                items=[
+                    Benchmark(
+                        name=item['name'],
+                        title=item.get('title'),
+                        description=item.get('description'),
+                        active_version=(
+                            _map_benchmark_version(item['activeVersion'])
+                            if item.get('activeVersion')
+                            else None
+                        ),
+                    )
+                    for item in items
+                ],
+                next_cursor=next_cursor,
+                has_more=has_more,
+            )
 
-        ``ref`` is ``"name"`` (active version's tasks) or ``"name@version"``.
+        return _PaginatedList(
+            fetch_page, lambda page: page.items, limit=limit, cursor=cursor
+        )
+
+    async def get(
+        self,
+        ref: str,
+        *,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    ) -> Benchmark:
+        """Get one benchmark: all versions + one page of the selected version's tasks.
+
+        ``ref`` is ``"name"`` (active version's tasks) or ``"name@version"``;
+        ``limit``/``cursor`` page the TASK list.
         """
         name, ref_version = _parse_benchmark_ref(ref)
-        query = f'?version={urllib.parse.quote(ref_version)}' if ref_version is not None else ''
+        query = _page_query(limit, cursor, version=ref_version)
         raw = await self._http.request_json(
             f'/api/benchmarks/{urllib.parse.quote(name)}{query}'
         )
         active = raw.get('activeVersion')
         selected = raw.get('selectedVersion')
+        task_items, task_cursor, task_more = _page_parts(raw.get('tasks'))
         return Benchmark(
             name=raw['name'],
             title=raw.get('title'),
@@ -1039,19 +1223,29 @@ class BenchmarksClient:
             active_version=_map_benchmark_version(active) if active else None,
             versions=[_map_benchmark_version(item) for item in raw.get('versions', [])],
             selected_version=_map_benchmark_version(selected) if selected else None,
-            tasks=[_map_task(item) for item in raw.get('tasks', [])],
+            tasks=TaskPage(
+                items=[_map_task(item) for item in task_items],
+                next_cursor=task_cursor,
+                has_more=task_more,
+            ),
             created_at=raw.get('createdAt'),
             updated_at=raw.get('updatedAt'),
         )
 
-    async def get_active(self, name: str) -> ActiveBenchmark:
+    async def get_active(
+        self,
+        name: str,
+        *,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    ) -> ActiveBenchmark:
         """Get a benchmark's active version resolved to a runnable shape.
 
         Unlike :meth:`get`, ``version`` and ``tasks`` are guaranteed present.
         Raises :class:`NoActiveVersionError` when the benchmark has no active
         version. Use :meth:`get` for the full multi-version detail.
         """
-        bench = await self.get(name)
+        bench = await self.get(name, limit=limit, cursor=cursor)
         if bench.active_version is None:
             raise NoActiveVersionError(name)
         return ActiveBenchmark(
@@ -1060,7 +1254,7 @@ class BenchmarksClient:
             description=bench.description,
             active_version=bench.active_version,
             version=bench.active_version.version,
-            tasks=bench.tasks or [],
+            tasks=bench.tasks or TaskPage(items=[], next_cursor=None, has_more=False),
             versions=bench.versions or [],
             created_at=bench.created_at,
             updated_at=bench.updated_at,
@@ -1082,31 +1276,30 @@ class BenchmarksClient:
         uploaded). Returns immediately; poll with :meth:`get_import` /
         :meth:`watch_import`. ``version`` labels the imported benchmark version.
         """
+        # ONE body grammar: multipart/form-data, metadata in named parts. The
+        # corpus is the ``file`` part; a git source is the gitUrl + ref parts.
         if directory is not None:
-            # Directory import: the body IS the gzipped tarball, so
-            # benchmarkName/version ride the query string.
             gzipped = await asyncio.to_thread(_tar_gzip_directory, directory)
-            query = urllib.parse.urlencode(
-                {'benchmarkName': benchmark_name, 'version': version}
+            body, content_type = _multipart_body(
+                {'benchmarkName': benchmark_name, 'version': version},
+                ('corpus.tar.gz', gzipped),
             )
-            raw = await self._http.request_upload(
-                f'/api/benchmarks/imports?{query}',
-                gzipped,
-                {'Content-Type': 'application/gzip'},
-            )
-            return _map_benchmark_import(raw)
-        if not git_url or not ref:
+        elif git_url and ref:
+            body, content_type = _multipart_body({
+                'benchmarkName': benchmark_name,
+                'version': version,
+                'gitUrl': git_url,
+                'ref': ref,
+            })
+        else:
             raise ValueError(
                 'import_benchmark() requires either a git source (git_url=..., ref=...) '
                 'or a local corpus directory (directory=...), plus benchmark_name=... '
                 'and version=...'
             )
-        body: Dict[str, Any] = {
-            'source': {'type': 'git', 'url': git_url, 'ref': ref},
-            'benchmarkName': benchmark_name,
-            'version': version,
-        }
-        raw = await self._http.request_json('/api/benchmarks/imports', method='POST', body=body)
+        raw = await self._http.request_upload(
+            '/api/benchmarks/imports', body, {'Content-Type': content_type}
+        )
         return _map_benchmark_import(raw)
 
     async def get_import(self, id: str) -> BenchmarkImport:
@@ -1217,40 +1410,57 @@ class CustomHarnessesClient:
                 'create() takes EITHER an install script (install_script=...) '
                 'or a local directory (directory=...), not both'
             )
-        if directory is not None:
-            # Tarball source: the body IS the gzipped tarball, so the metadata
-            # rides the query string — repeated `env` pairs, exactly like the
-            # benchmark archive-import lane.
-            gzipped = await asyncio.to_thread(_tar_gzip_directory, directory)
-            params: List['tuple[str, str]'] = [('name', name), ('runCommand', run_command)]
-            for key, value in (env or {}).items():
-                params.append(('env', f'{key}={value}'))
-            query = urllib.parse.urlencode(params)
-            raw = await self._http.request_upload(
-                f'/api/custom-harnesses?{query}',
-                gzipped,
-                {'Content-Type': 'application/gzip'},
-            )
-            return _map_custom_harness(raw)
-        if install_script is None:
+        if install_script is None and directory is None:
             raise ValueError(
                 'create() requires either an install script (install_script=...) '
                 'or a local directory (directory=...), plus name=... and run_command=...'
             )
-        body: Dict[str, Any] = {
+        # ONE body grammar: multipart/form-data. The run command and the
+        # declared env are named PARTS — they used to ride the query string of
+        # an upload, which put a shell command and a set of environment values
+        # into every access log and proxy buffer on the way here.
+        fields: Dict[str, Optional[str]] = {
             'name': name,
-            'installScript': install_script,
             'runCommand': run_command,
         }
         if env is not None:
-            body['env'] = env
-        raw = await self._http.request_json('/api/custom-harnesses', method='POST', body=body)
+            fields['env'] = json.dumps(env)
+        if install_script is not None:
+            fields['installScript'] = install_script
+        file: Optional['tuple[str, bytes]'] = None
+        if directory is not None:
+            gzipped = await asyncio.to_thread(_tar_gzip_directory, directory)
+            file = ('source.tar.gz', gzipped)
+        body, content_type = _multipart_body(fields, file)
+        raw = await self._http.request_upload(
+            '/api/custom-harnesses', body, {'Content-Type': content_type}
+        )
         return _map_custom_harness(raw)
 
-    async def list(self) -> List[CustomHarness]:
-        """List the caller's registered custom harnesses."""
-        data = await self._http.request_json('/api/custom-harnesses')
-        return [_map_custom_harness(item) for item in data.get('customHarnesses', [])]
+    def list(
+        self,
+        *,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    ) -> _PaginatedList:
+        """List the caller's registered custom harnesses (cursor-paged).
+
+        ``await`` the result for one page, or ``async for`` it to walk them all.
+        """
+        async def fetch_page(page_limit, page_cursor) -> CustomHarnessPage:
+            raw = await self._http.request_json(
+                f'/api/custom-harnesses{_page_query(page_limit, page_cursor)}'
+            )
+            items, next_cursor, has_more = _page_parts(raw)
+            return CustomHarnessPage(
+                items=[_map_custom_harness(item) for item in items],
+                next_cursor=next_cursor,
+                has_more=has_more,
+            )
+
+        return _PaginatedList(
+            fetch_page, lambda page: page.items, limit=limit, cursor=cursor
+        )
 
     async def get(self, name: str) -> CustomHarness:
         """Get one custom harness by name."""
@@ -1396,22 +1606,18 @@ class JobsClient:
         ``async for`` it to walk every job across cursor pages.
         """
         async def fetch_page(page_limit, page_cursor) -> JobPage:
-            params: Dict[str, str] = {}
-            if page_limit is not None:
-                params['limit'] = str(page_limit)
-            if page_cursor is not None:
-                params['cursor'] = page_cursor
-            query = urllib.parse.urlencode(params)
             raw = await self._http.request_json(
-                f'/api/jobs{("?" + query) if query else ""}'
+                f'/api/jobs{_page_query(page_limit, page_cursor)}'
             )
+            items, next_cursor, has_more = _page_parts(raw)
             return JobPage(
-                jobs=[_map_job(item) for item in raw.get('jobs', [])],
-                next_cursor=raw.get('nextCursor'),
+                items=[_map_job(item) for item in items],
+                next_cursor=next_cursor,
+                has_more=has_more,
             )
 
         return _PaginatedList(
-            fetch_page, lambda page: page.jobs, limit=limit, cursor=cursor
+            fetch_page, lambda page: page.items, limit=limit, cursor=cursor
         )
 
     def trials(
@@ -1430,24 +1636,23 @@ class JobsClient:
         across cursor pages.
         """
         async def fetch_page(page_limit, page_cursor) -> TrialPage:
-            params: Dict[str, str] = {}
-            if status:
-                params['status'] = ','.join(status)
-            if page_limit is not None:
-                params['limit'] = str(page_limit)
-            if page_cursor is not None:
-                params['cursor'] = page_cursor
-            query = urllib.parse.urlencode(params)
-            raw = await self._http.request_json(
-                f'/api/jobs/{urllib.parse.quote(id)}/trials{("?" + query) if query else ""}'
+            query = _page_query(
+                page_limit,
+                page_cursor,
+                status=','.join(status) if status else None,
             )
+            raw = await self._http.request_json(
+                f'/api/jobs/{urllib.parse.quote(id)}/trials{query}'
+            )
+            items, next_cursor, has_more = _page_parts(raw)
             return TrialPage(
-                trials=[_map_trial(item) for item in raw.get('trials', [])],
-                next_cursor=raw.get('nextCursor'),
+                items=[_map_trial(item) for item in items],
+                next_cursor=next_cursor,
+                has_more=has_more,
             )
 
         return _PaginatedList(
-            fetch_page, lambda page: page.trials, limit=limit, cursor=cursor
+            fetch_page, lambda page: page.items, limit=limit, cursor=cursor
         )
 
     # ------------------------------------------------------------------ watch
@@ -1709,10 +1914,20 @@ class JobsClient:
         )
         return _map_regrade_job(raw)
 
-    async def regrade_job(self, job_id: str) -> RegradeJob:
-        """Read a regrade job and its per-trial results (with lineage + reward deltas)."""
+    async def regrade_job(
+        self,
+        job_id: str,
+        *,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    ) -> RegradeJob:
+        """Read a regrade job and one page of its per-trial results.
+
+        Each result carries its lineage and reward delta. ``limit``/``cursor``
+        page the results — a regrade of a 10,000-trial job holds 10,000 of them.
+        """
         raw = await self._http.request_json(
-            f'/api/regrades/{urllib.parse.quote(job_id)}'
+            f'/api/regrades/{urllib.parse.quote(job_id)}{_page_query(limit, cursor)}'
         )
         return _map_regrade_job(raw)
 
@@ -1756,27 +1971,25 @@ class JobsClient:
         id: str,
         trial_id: str,
         *,
-        after: Optional[int] = None,
+        cursor: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> TrialTracePage:
-        """Get one seq-paged slice of a trial's trace.
+        """Get one page of a trial's trace.
 
-        ``after`` returns events with seq strictly greater than it (omit =
-        from the beginning); resume with ``after=page.next_after``.
+        ``cursor`` returns events with seq strictly greater than it (omit =
+        from the beginning); resume with ``cursor=page.next_cursor``. A None
+        ``next_cursor`` means CAUGHT UP — to resume a poll later, keep the last
+        event's ``seq`` and pass it as ``cursor``.
         """
-        params: Dict[str, str] = {}
-        if after is not None:
-            params['after'] = str(after)
-        if limit is not None:
-            params['limit'] = str(limit)
-        query = urllib.parse.urlencode(params)
         raw = await self._http.request_json(
             f'/api/jobs/{urllib.parse.quote(id)}'
-            f'/trials/{urllib.parse.quote(trial_id)}/trace{("?" + query) if query else ""}'
+            f'/trials/{urllib.parse.quote(trial_id)}/trace{_page_query(limit, cursor)}'
         )
+        items, next_cursor, has_more = _page_parts(raw)
         return TrialTracePage(
-            events=[_map_trace_event(item) for item in raw.get('events', [])],
-            next_after=raw.get('nextAfter'),
+            items=[_map_trace_event(item) for item in items],
+            next_cursor=next_cursor,
+            has_more=has_more,
         )
 
     async def trial_trace_events(
@@ -1784,27 +1997,24 @@ class JobsClient:
         id: str,
         trial_id: str,
         *,
-        after: Optional[int] = None,
+        cursor: Optional[str] = None,
         limit: Optional[int] = None,
     ):
         """Iterate a trial's trace events, fetching pages under the hood.
 
-        Drains the currently available trace, then stops: an empty page, or a
-        short page when the caller pinned an explicit page size. Resume later
-        by passing the last seen seq as ``after``.
+        Drains the currently available trace, then stops: ``next_cursor`` is
+        None when there is no next page, which now says "caught up" rather than
+        echoing the position back. Resume later by passing the last seen seq as
+        ``cursor``.
         """
-        position = after
+        position = cursor
         while True:
-            page = await self.trial_trace(id, trial_id, after=position, limit=limit)
-            for event in page.events:
+            page = await self.trial_trace(id, trial_id, cursor=position, limit=limit)
+            for event in page.items:
                 yield event
-            if not page.events:
+            if not page.next_cursor:
                 return
-            if limit is not None and len(page.events) < limit:
-                return
-            if page.next_after is None:
-                return
-            position = page.next_after
+            position = page.next_cursor
 
     async def compare(self, ids: List[str]) -> JobComparison:
         """Side-by-side comparison of 2-5 owned jobs.
