@@ -1053,7 +1053,9 @@ class TestJobs:
                         'failurePhase': None,
                         'failureDetail': None,
                         'phaseTimingsMs': {'agentMs': 203000},
-                        'modelUsage': {'spentUsd': 0.93, 'spendSource': 'measured'},
+                        'modelUsage': None,
+                        'spentUsd': 0.93,
+                        'spendSource': 'measured',
                         'sandboxProvider': 'daytona',
                         'verifierMode': 'separate',
                         'resolvedHarnessVersion': 'codex-cli 0.145.0',
@@ -1077,9 +1079,11 @@ class TestJobs:
         run = page.items[0]
         assert run.reward == 1
         assert run.metrics == {'f2p': 1.0}
-        # Wire camelCase never reaches the user: typed ModelUsage + snake_case timings
-        assert run.model_usage.spent_usd == 0.93
-        assert run.model_usage.spend_source == 'measured'
+        # Wire camelCase never reaches the user: typed ModelUsage + snake_case timings.
+        # Spend is a FIRST-CLASS trial field now, not a modelUsage key — one
+        # place per fact, and None means the trial never ran rather than zero.
+        assert run.spent_usd == 0.93
+        assert run.spend_source == 'measured'
         assert run.phase_timings_ms == {'agent_ms': 203000}
         # First-class run facts on list rows — same shape as the detail route
         assert run.sandbox_provider == 'daytona'
@@ -1159,7 +1163,7 @@ class TestJobs:
             client = jobs_factory(CONFIG)
             per_run = await client.regrade_trial('job-1', 'run-1')
             per_job = await client.regrade('job-1', status=['SCORED'], task_key='demo-task')
-            read = await client.regrade_job('rj-1')
+            read = await client.get_regrade('rj-1')
 
         # Per-run regrade: POST the per-run route, one queued result.
         assert fake.requests[0].get_method() == 'POST'
@@ -1470,11 +1474,11 @@ class TestJobs:
                 'failureDetail': None,
                 'phaseTimingsMs': {'agentMs': 203000, 'verifyMs': 41000},
                 'modelUsage': {
-                    'spentUsd': 0.93,
-                    'spendSource': 'measured',
                     'maxTrialSpendUsd': 2,
                     'inputTokens': 1234,
                 },
+                'spentUsd': 0.93,
+                'spendSource': 'measured',
                 'sandboxProvider': 'e2b',
                 'verifierMode': 'shared',
                 'resolvedHarnessVersion': '0.29.0',
@@ -1492,11 +1496,13 @@ class TestJobs:
         assert run.sandbox_provider == 'e2b'
         assert run.verifier_mode == 'shared'
         assert run.phase_timings_ms == {'agent_ms': 203000, 'verify_ms': 41000}
+        # Spend is FIRST-CLASS on the trial, not a key of the blob: one place
+        # per fact, and None would mean "never ran" rather than zero.
+        assert run.spent_usd == 0.93
+        assert run.spend_source == 'measured'
         usage = run.model_usage
-        # One money vocabulary: actuals are spent_usd, the cap is
-        # max_trial_spend_usd
-        assert usage.spent_usd == 0.93
-        assert usage.spend_source == 'measured'
+        # The one spend-adjacent key that stays in the blob is the CAP, which is
+        # history (the cap THIS trial's key carried), not a queryable dimension.
         assert usage.max_trial_spend_usd == 2
         # Unknown harness-specific keys land in extra, snake_cased
         assert usage.extra == {'input_tokens': 1234}

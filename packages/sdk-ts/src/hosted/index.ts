@@ -46,8 +46,11 @@ import type {
   ListCustomHarnessesOptions,
   ListImportsOptions,
   ListJobsOptions,
+  ListRegradesOptions,
+  RegradeList,
   ListTrialsOptions,
   ModelUsage,
+  SpendSource,
   Page,
   PageOptions,
   RegradeFilter,
@@ -139,6 +142,8 @@ export type {
   ListBenchmarksOptions,
   ListCustomHarnessesOptions,
   ListJobsOptions,
+  ListRegradesOptions,
+  RegradeList,
   ListTrialsOptions,
   ModelUsage,
   Page,
@@ -479,6 +484,10 @@ function mapTrial(raw: Record<string, unknown>): Trial {
     modelUsage: (raw.modelUsage as ModelUsage | null) ?? null,
     sandboxProvider: (raw.sandboxProvider as EvalSandboxProvider | null) ?? null,
     verifierMode: (raw.verifierMode as VerifierMode | null) ?? null,
+    // First-class since the server promoted these out of the modelUsage blob.
+    // NULL means the trial never ran — never zero.
+    spentUsd: (raw.spentUsd as number | null) ?? null,
+    spendSource: (raw.spendSource as SpendSource | null) ?? null,
     resolvedHarnessVersion: (raw.resolvedHarnessVersion as string | null) ?? null,
     sessionRef: (raw.sessionRef as string | null) ?? null,
     createdAt: raw.createdAt as string,
@@ -913,6 +922,12 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
       // ONE body grammar: multipart/form-data, metadata in named parts. The
       // corpus is the `file` part; a git source is the gitUrl + ref parts.
       // Nothing rides the query string, where it would land in access logs.
+      //
+      // The run-time checks below STAY even though BenchmarkImportSource is a
+      // union that makes `{}` and both-at-once uncompilable. The type guards
+      // TypeScript callers; these guard JavaScript ones, and anything that
+      // arrived through a JSON.parse — a config file, an HTTP body, a CLI flag
+      // — where no type was ever checked.
       if (src?.directory) {
         const { tarGzipDirectory } = await import("./tar");
         const gzipped = tarGzipDirectory(src.directory);
@@ -925,7 +940,12 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
         });
         return mapBenchmarkImport((await res.json()) as Record<string, unknown>);
       }
-      if (src?.gitUrl && src?.ref) {
+      // `"gitUrl" in src` rather than testing both fields: the union makes ref
+      // REQUIRED on the git branch, so a source carrying gitUrl without ref is
+      // already a compile error for a typed caller — and for an untyped one,
+      // the server refuses it with a named param, which is a better error than
+      // this function's generic sentence.
+      if (src && "gitUrl" in src && src.gitUrl) {
         const res = await request(cfg, "/api/benchmarks/imports", {
           method: "POST",
           body: uploadForm({
@@ -1068,6 +1088,10 @@ async function harnessUploadBody(
   caller: string,
   input: CustomHarnessInput
 ): Promise<FormData> {
+  // Same division of labour as benchmarks().import(): CustomHarnessSourceInput
+  // is a union, so a TypeScript caller cannot pass both or neither. These
+  // checks are for JavaScript callers and for values that crossed a JSON
+  // boundary with no type behind them.
   const hasInstallScript = typeof input.installScript === "string";
   const hasDirectory = typeof input.directory === "string";
   if (hasInstallScript && hasDirectory) {
@@ -1232,11 +1256,17 @@ export function jobs(config?: HostedClientConfig): JobsClient {
       const pending: JobEvent[] = [];
       const parser = createSseParser((frame) => {
         const seq = Number(frame.id);
-        const event: JobEvent = {
+        // The ONE place the wire crosses into the typed union, and it belongs
+        // here rather than at every call site: the server is the authority on
+        // which `type` carries which `data`, and every member of JobEvent was
+        // read off its emit site. A frame whose type is not in the union still
+        // flows through (an older or newer server may send one) — it simply
+        // will not narrow to a known member for the caller.
+        const event = {
           seq: Number.isInteger(seq) ? seq : -1,
           type: frame.event || "message",
           data: frame.data ? safeJsonParse(frame.data) : {},
-        };
+        } as unknown as JobEvent;
         if (Number.isInteger(seq)) lastSeq = seq;
         receivedEvent = true;
         if (TERMINAL_EVENT_TYPES.has(event.type)) terminal = true;
@@ -1409,10 +1439,35 @@ export function jobs(config?: HostedClientConfig): JobsClient {
       return mapRegradeJob((await res.json()) as Record<string, unknown>);
     },
 
-    async regradeJob(jobId: string, options?: RegradeJobOptions): Promise<RegradeJob> {
+    listRegrades(options?: ListRegradesOptions): RegradeList {
+      // Await for one page; for-await to walk every regrade across cursors.
+      // ?jobId= rides along on every page fetch, exactly as the trials list
+      // carries its status filter.
+      return makePaginated(
+        async (opts) => {
+          const res = await request(
+            cfg,
+            `/api/regrades${pageQuery(opts, { jobId: options?.jobId })}`
+          );
+          const body = (await res.json()) as {
+            items: Record<string, unknown>[];
+            nextCursor: string | null;
+            hasMore: boolean;
+          };
+          return {
+            items: body.items.map(mapRegradeJob),
+            nextCursor: body.nextCursor,
+            hasMore: body.hasMore,
+          };
+        },
+        options
+      );
+    },
+
+    async getRegrade(regradeId: string, options?: RegradeJobOptions): Promise<RegradeJob> {
       const res = await request(
         cfg,
-        `/api/regrades/${encodeURIComponent(jobId)}${pageQuery(options)}`
+        `/api/regrades/${encodeURIComponent(regradeId)}${pageQuery(options)}`
       );
       return mapRegradeJob((await res.json()) as Record<string, unknown>);
     },

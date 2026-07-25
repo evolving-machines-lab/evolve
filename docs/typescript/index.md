@@ -100,7 +100,7 @@ await evolve.run({ prompt: "Hello world" });
 | `watch()` (SSE stream with resume) | [Hosted Evals → Watch It Live](./06-hosted-evals.md#watch-it-live) |
 | Results (`get`, `list`, `trials`, spend, trace) | [Hosted Evals → Read the Results](./06-hosted-evals.md#read-the-results) |
 | `cancel()` / `rerunFailed()` | [Hosted Evals → Cancel / Rerun Failures](./06-hosted-evals.md#cancel--rerun-failures) |
-| Regrade (`regrade()`, `regradeTrial()`, `regradeJob()`) | [Hosted Evals → Regrade](./06-hosted-evals.md#regrade) |
+| Regrade (`regrade()`, `regradeTrial()`, `getRegrade()`, `listRegrades()`) | [Hosted Evals → Regrade](./06-hosted-evals.md#regrade) |
 | `compare()` (aggregates + task matrix) | [Hosted Evals → Compare](./06-hosted-evals.md#compare) |
 | `export()` (archive, Harbor bundle) | [Hosted Evals → Export](./06-hosted-evals.md#export) |
 | `evolve-evals` CLI | [Hosted Evals → CLI](./06-hosted-evals.md#cli) |

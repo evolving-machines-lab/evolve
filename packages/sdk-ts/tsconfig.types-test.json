@@ -1,0 +1,22 @@
+{
+  // Type-LEVEL tests only.
+  //
+  // The main tsconfig excludes `**/*.test.ts` (tests run through tsx, which
+  // strips types rather than checking them), so a file full of
+  // `@ts-expect-error` assertions living under tests/ is never type-checked —
+  // and an unchecked @ts-expect-error asserts nothing at all. Verified: with
+  // the main config, deleting a directive produced no error.
+  //
+  // This config exists to type-check exactly that file, so `npm run
+  // type-check:types-test` is what turns those directives back into
+  // assertions. noEmit because there is nothing to build here.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "declaration": false,
+    "declarationMap": false
+  },
+  "include": ["src/**/*", "tests/unit/hosted-types.test.ts"],
+  "exclude": ["dist", "node_modules"]
+}

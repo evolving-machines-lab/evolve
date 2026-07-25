@@ -525,13 +525,15 @@ class ModelUsage:
     one money vocabulary (the cap is max_trial_spend_usd, actuals are
     spent_usd).
 
-    ``spend_source`` is "measured" (measured model spend reported by the
-    platform) or "assumed_cap" (spend could not be measured for this trial, so
-    the per-trial cap is reported). Harness-specific keys land in ``extra``
-    with snake_case keys.
+    SPEND IS NO LONGER HERE. ``spent_usd`` and ``spend_source`` are fields of
+    ``Trial``, because they are columns on the server rather than keys in an
+    untyped blob — so a client reads them off the trial and each fact is stated
+    exactly once. The one spend-adjacent key that remains is the CAP, which is
+    history rather than a queryable dimension: it is the cap THIS trial's key
+    carried, which can differ from the job's current cap for a trial settled
+    before a change. Harness-specific keys land in ``extra`` with snake_case
+    keys.
     """
-    spent_usd: Optional[float] = None
-    spend_source: Optional[str] = None
     # The per-trial model-spend cap that applied to this trial
     max_trial_spend_usd: Optional[float] = None
     extra: Dict[str, Any] = field(default_factory=dict)
@@ -557,6 +559,12 @@ class Trial:
     # Where the verifier ran ("separate" pristine box | "shared" inside the
     # agent box); None until recorded
     verifier_mode: Optional[str]
+    # What this trial's model calls cost, in USD. None means the trial never ran
+    # (QUEUED, CANCELLED) — never zero. Zero is a real measurement, and it only
+    # appears when no gateway key was ever minted for the trial.
+    spent_usd: Optional[float]
+    # Whether spent_usd was measured or is the cap charged conservatively
+    spend_source: Optional[str]
     # Harness version actually resolved and used for the trial; None until resolved
     resolved_harness_version: Optional[str]
     session_ref: Optional[str]
@@ -836,6 +844,13 @@ class BenchmarkPage:
 
 
 @dataclass
+class RegradePage:
+    items: List['RegradeJob']
+    next_cursor: Optional[str]
+    has_more: bool
+
+
+@dataclass
 class BenchmarkImportPage:
     items: List[BenchmarkImport]
     next_cursor: Optional[str]
@@ -1035,15 +1050,16 @@ def _page_query(
     return f'?{query}' if query else ''
 
 
-_MODEL_USAGE_WIRE_KEYS = {'spentUsd', 'spendSource', 'maxTrialSpendUsd'}
+# Only the cap is a named field now — spend moved to Trial. An OLD server that
+# still sends spentUsd/spendSource inside the blob lands them in ``extra``
+# rather than silently shadowing the trial's own fields.
+_MODEL_USAGE_WIRE_KEYS = {'maxTrialSpendUsd'}
 
 
 def _map_model_usage(data: Any) -> Optional[ModelUsage]:
     if not isinstance(data, dict):
         return None
     return ModelUsage(
-        spent_usd=data.get('spentUsd'),
-        spend_source=data.get('spendSource'),
         max_trial_spend_usd=data.get('maxTrialSpendUsd'),
         extra={
             _snake_key(key): value
@@ -1068,6 +1084,8 @@ def _map_trial(data: Dict[str, Any]) -> Trial:
         model_usage=_map_model_usage(data.get('modelUsage')),
         sandbox_provider=data.get('sandboxProvider'),
         verifier_mode=data.get('verifierMode'),
+        spent_usd=data.get('spentUsd'),
+        spend_source=data.get('spendSource'),
         resolved_harness_version=data.get('resolvedHarnessVersion'),
         session_ref=data.get('sessionRef'),
         created_at=data.get('createdAt', ''),
@@ -2493,22 +2511,63 @@ class JobsClient:
         )
         return _map_regrade_job(raw)
 
-    async def regrade_job(
+    async def get_regrade(
         self,
-        job_id: str,
+        regrade_id: str,
         *,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
     ) -> RegradeJob:
-        """Read a regrade job and one page of its per-trial results.
+        """Read ONE regrade job by the REGRADE's id.
 
-        Each result carries its lineage and reward delta. ``limit``/``cursor``
-        page the results — a regrade of a 10,000-trial job holds 10,000 of them.
+        The id is the one ``regrade()``/``regrade_trial()`` returned, and the
+        one their ``Location`` header names. Each result carries its lineage and
+        reward delta; ``limit``/``cursor`` page them — a regrade of a
+        10,000-trial job holds 10,000 results.
+
+        Renamed from ``regrade_job()``. That name read as a verb, sat directly
+        beside ``regrade()`` which IS that verb, and took a parameter called
+        ``job_id`` that was not a job id — so the natural call,
+        ``regrade_job(some_job_id)``, ran and 404'd. Use ``list_regrades(
+        job_id=...)`` for the question that call looked like it was asking.
         """
         raw = await self._http.request_json(
-            f'/api/regrades/{urllib.parse.quote(job_id)}{_page_query(limit, cursor)}'
+            f'/api/regrades/{urllib.parse.quote(regrade_id)}{_page_query(limit, cursor)}'
         )
         return _map_regrade_job(raw)
+
+    def list_regrades(
+        self,
+        *,
+        job_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    ) -> _PaginatedList:
+        """List the caller's regrade jobs, newest first (cursor-paged).
+
+        ``job_id`` narrows to the regrades OF ONE JOB. Naming a job you do not
+        own yields an empty page rather than a 404 — a list is never an
+        existence oracle.
+
+        ``await`` the result for one page (honoring ``limit``/``cursor``), or
+        ``async for`` it to walk every regrade across cursor pages.
+        """
+        async def fetch_page(page_limit, page_cursor) -> RegradePage:
+            query = _page_query(page_limit, page_cursor)
+            if job_id is not None:
+                sep = '&' if query else '?'
+                query = f'{query}{sep}jobId={urllib.parse.quote(job_id)}'
+            raw = await self._http.request_json(f'/api/regrades{query}')
+            items, next_cursor, has_more = _page_parts(raw)
+            return RegradePage(
+                items=[_map_regrade_job(item) for item in items],
+                next_cursor=next_cursor,
+                has_more=has_more,
+            )
+
+        return _PaginatedList(
+            fetch_page, lambda page: page.items, limit=limit, cursor=cursor
+        )
 
     async def export(
         self,

@@ -132,7 +132,11 @@ A key on its own is not enough to make a request idempotent, so the server also 
 for await (const event of evals.watch(job.id)) {
     // event.seq  — monotonic sequence number
     // event.type — "job.created" | "trial.settled" | "job.completed" | ...
-    if (event.type === "trial.settled") updateProgress(event.data);
+    if (event.type === "trial.settled") {
+        // JobEvent is a discriminated union: switching on `type` narrows
+        // `data`, so taskKey and status are typed here with no cast.
+        updateProgress(event.data.taskKey, event.data.status, event.data.reward);
+    }
 }
 
 // Or await the final Job
@@ -202,13 +206,15 @@ const trial = await evals.trial(
 );
 console.log(trial.reward, trial.metrics);              // reward + named sub-scores
 console.log(trial.phaseTimingsMs);                     // { agentMs, verifyMs }
-console.log(trial.modelUsage?.spentUsd, trial.modelUsage?.spendSource);
+console.log(trial.spentUsd, trial.spendSource);        // what it cost, and how we know
 console.log(trial.sandboxProvider, trial.verifierMode); // where the trial and its verifier executed
 console.log(trial.resolvedHarnessVersion);             // harness version actually used
 console.log(trial.failurePhase, trial.failureDetail);  // untruncated in this response
 ```
 
-> **Reading spend:** `spendSource: "measured"` is platform-measured model spend; `"assumed_cap"` means the trial's spend could not be measured yet, so the per-trial cap is reported conservatively (`modelUsage.maxTrialSpendUsd`). Fresh trials can briefly show the cap while metering catches up.
+> **Reading spend:** `spendSource: "measured"` is platform-measured model spend; `"assumed_cap"` means the trial's spend could not be measured, so the per-trial cap is reported conservatively. Fresh trials can briefly show the cap while metering catches up.
+>
+> Both fields live on the trial itself. `spentUsd: null` means the trial never ran — a queued or cancelled trial — and is not the same as `0`, which is a real measurement and appears when no gateway key was ever minted. `modelUsage` keeps only open-ended per-harness detail (bundle identity, token counts) plus `maxTrialSpendUsd`, the cap that trial's key actually carried.
 
 Fetch a trial's recorded event timeline:
 
@@ -266,15 +272,29 @@ const bulk = await evals.regrade(job.id, {
     taskKey: "task-001",      // (optional) only source trials of this task
 });
 
-// Read it back: QUEUED → RUNNING → COMPLETED, one result per source trial
-const done = await evals.regradeJob(bulk.id, { limit: 100 });
+// Read it back by the REGRADE's id: QUEUED → RUNNING → COMPLETED
+const done = await evals.getRegrade(bulk.id, { limit: 100 });
 for (const result of done.results.items) {
     console.log(result.taskKey, result.sourceReward, "→", result.reward,
         result.rewardDelta);  // reward − sourceReward, the per-trial delta
 }
 ```
 
-All three return a `RegradeJob`. A per-trial regrade holds one result; a per-job regrade holds one per selected source trial. `results` is one object named for the collection: `total` and `byStatus` cover the whole job, `items`/`nextCursor`/`hasMore` are the page you asked for — a regrade of a 10,000-trial job is not one response. Poll `regradeJob()` until `status` is `COMPLETED`; `results.byStatus` is the running histogram, and it is derived from the whole result set rather than the page in hand.
+All three return a `RegradeJob`. A per-trial regrade holds one result; a per-job regrade holds one per selected source trial. `results` is one object named for the collection: `total` and `byStatus` cover the whole job, `items`/`nextCursor`/`hasMore` are the page you asked for — a regrade of a 10,000-trial job is not one response. Poll `getRegrade()` until `status` is `COMPLETED`; `results.byStatus` is the running histogram, and it is derived from the whole result set rather than the page in hand.
+
+`getRegrade()` takes the **regrade's** id — the one `regrade()` and `regradeTrial()` return, and the one their `Location` header names. To find a regrade you no longer hold the id for, or to see every regrade of a job, list them:
+
+```ts
+// Every regrade of one job, newest first
+for await (const regrade of evals.listRegrades({ jobId: job.id })) {
+    console.log(regrade.id, regrade.status, regrade.results.total);
+}
+
+// Or one page at a time
+const page = await evals.listRegrades({ limit: 20 });
+```
+
+Naming a job you do not own returns an empty page rather than a 404 — a list never reveals whether someone else's id exists.
 
 ### Eligibility
 
@@ -1084,9 +1104,11 @@ interface Trial {
     failurePhase: string | null;
     failureDetail: string | null;            // truncated to 2000 chars in list responses
     phaseTimingsMs: Record<string, number> | null;  // { agentMs, verifyMs }
-    modelUsage: ModelUsage | null;
+    modelUsage: ModelUsage | null;           // per-harness detail only; never spend
     sandboxProvider: EvalSandboxProvider | null;  // where the trial executed; null until it has
     verifierMode: "separate" | "shared" | null;   // where the verifier ran
+    spentUsd: number | null;                 // null = never ran (NOT zero, which is a measurement)
+    spendSource: "measured" | "assumed_cap" | null;
     resolvedHarnessVersion: string | null;   // harness version actually used
     sessionRef: string | null;               // agent session/trace reference
     createdAt: string;
@@ -1097,17 +1119,31 @@ interface TrialDetail extends Trial {        // evals.trial(id, trialId)
     jobId: string;                           // failureDetail is untruncated here
 }
 
-interface ModelUsage {                       // one money vocabulary: caps are
-    spentUsd?: number;                       // the cap is maxTrialSpendUsd, actuals are spentUsd
-    spendSource?: "measured" | "assumed_cap";
-    maxTrialSpendUsd?: number;               // the per-trial cap that applied to this trial
-    [key: string]: unknown;                  // open map: harness-specific keys may appear
+interface ModelUsage {                       // open-ended per-harness detail
+    maxTrialSpendUsd?: number;               // the cap THIS trial's key carried (history)
+    [key: string]: unknown;                  // bundle identity, token counts, ...
 }
 
-interface JobEvent {
-    seq: number;                             // monotonic; the watch resume position
-    type: string;                            // "trial.settled", "job.completed", ...
-    data: Record<string, unknown>;
+// A discriminated union: switch on `type` and `data` narrows, no cast needed.
+type JobEvent =
+    | { seq: number; type: "job.created";    data: JobCreatedData }
+    | { seq: number; type: "job.running";    data: { jobId: string } }
+    | { seq: number; type: "job.cancelling"; data: { jobId: string; cancelledTrials: number; activeTrials: number } }
+    | { seq: number; type: "job.cancelled";  data: { jobId: string; cancelledTrials: number } }
+    | { seq: number; type: "job.completed";  data: { jobId: string; undispatched: number } }
+    | { seq: number; type: "job.failed";     data: { jobId: string } }   // reserved; nothing emits it yet
+    | { seq: number; type: "trial.running";  data: { trialId: string; taskKey: string } }
+    | { seq: number; type: "trial.scoring";  data: { trialId: string; capturedBytes: number } }
+    | { seq: number; type: "trial.settled";  data: TrialSettledData };
+
+interface TrialSettledData {
+    trialId: string;
+    taskKey: string;                         // on EVERY trial.settled, no exceptions
+    status: TrialStatus;
+    reward?: number | null;                  // scored path only; zero is a reward
+    failurePhase?: string;                   // failures only
+    attemptId?: string;                      // only when the REAPER settled it
+    attemptPhase?: string | null;
 }
 
 interface TrialTraceEvent {
@@ -1148,7 +1184,7 @@ interface RegradeResult {
     settledAt: string | null;                // null while QUEUED/RUNNING
 }
 
-interface RegradeJob {                       // regrade() / regradeTrial() / regradeJob()
+interface RegradeJob {                       // regrade() / regradeTrial() / getRegrade() / listRegrades()
     id: string;
     sourceJobId: string;                     // the job the source trials belong to
     status: "QUEUED" | "RUNNING" | "COMPLETED";  // derived from the WHOLE result set
@@ -1163,11 +1199,11 @@ interface RegradeJob {                       // regrade() / regradeTrial() / reg
     updatedAt: string;
 }
 
-interface BenchmarkImportSource {            // benchmarks().import() — EITHER git OR directory
-    gitUrl?: string;                         // a git repository URL — pair with ref
-    ref?: string;                            // a pinned branch, tag, or commit — pair with gitUrl
-    directory?: string;                      // a local Harbor-layout corpus, tarred + uploaded
-}
+// A union, so `{}`, both branches at once, and a git source without a ref are
+// all COMPILE errors rather than a 400 you discover after shipping.
+type BenchmarkImportSource =              // benchmarks().import() — EITHER git OR directory
+    | { gitUrl: string; ref: string; directory?: never }   // ref REQUIRED: unpinned is not reproducible
+    | { directory: string; gitUrl?: never; ref?: never };  // a local Harbor-layout corpus, tarred + uploaded
 
 interface BenchmarkImport {
     id: string;
@@ -1188,13 +1224,16 @@ interface CustomHarness {                    // harnesses.list() / get() / creat
     updatedAt: string;
 }
 
-interface CustomHarnessInput {               // harnesses.create()
+// Same union treatment: exactly one source, enforced by the compiler.
+type CustomHarnessSourceInput =
+    | { installScript: string; directory?: never }   // the script itself, not a path
+    | { directory: string; installScript?: never };  // a local directory, tarred + uploaded
+
+type CustomHarnessInput = CustomHarnessSourceInput & {   // harnesses.create()
     name: string;
-    installScript?: string;                  // the script itself — EITHER this
-    directory?: string;                      // OR a local directory (tarred + uploaded)
     runCommand: string;
     env?: Record<string, string>;
-}
+};
 ```
 
 ### Errors

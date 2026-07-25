@@ -569,7 +569,7 @@ function trialRow(run: Trial): string[] {
     String(run.runNumber),
     run.status,
     run.reward !== null ? String(run.reward) : "-",
-    fmtUsd(run.modelUsage?.spentUsd ?? null),
+    fmtUsd(run.spentUsd),
     run.id,
   ];
 }
@@ -593,7 +593,7 @@ function trialDetailLines(run: TrialDetail): string[] {
         .join(" · "),
     ]);
   }
-  rows.push(["spent", fmtUsd(run.modelUsage?.spentUsd ?? null)]);
+  rows.push(["spent", fmtUsd(run.spentUsd)]);
   if (run.sandboxProvider) rows.push(["provider", run.sandboxProvider]);
   if (run.verifierMode) rows.push(["verifier", run.verifierMode]);
   if (run.resolvedHarnessVersion) rows.push(["harness version", run.resolvedHarnessVersion]);
@@ -739,7 +739,11 @@ export function importStatusLine(job: BenchmarkImport): string {
 
 /** Compact one-line rendering of one SSE event for --watch. */
 export function eventLine(event: JobEvent): string {
-  const data = event.data ?? {};
+  // JobEvent is a discriminated union now, so `data` is a different shape per
+  // type. This renderer is deliberately shape-agnostic — it prints the salient
+  // fields first and then everything else — so it reads the payload as a plain
+  // record ONCE, here, rather than narrowing nine ways to print one line.
+  const data: Record<string, unknown> = { ...(event.data ?? {}) };
   const parts: string[] = [];
   if (typeof data.trialId === "string") parts.push(data.trialId);
   if (typeof data.taskKey === "string") parts.push(data.taskKey);
@@ -1019,7 +1023,7 @@ async function cmdRegrade(inv: Invocation, io: CliIO): Promise<number> {
 
 async function cmdRegradeJob(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
-  const job = await client.regradeJob(inv.positionals[0], pageOptions(inv));
+  const job = await client.getRegrade(inv.positionals[0], pageOptions(inv));
   if (inv.flags.json === true) {
     io.out(JSON.stringify(job));
   } else {

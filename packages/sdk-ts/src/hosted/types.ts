@@ -307,15 +307,18 @@ export interface Job {
 export type SpendSource = "measured" | "assumed_cap";
 
 /**
- * Model usage/spend recorded for a trial — purely spend/usage, in the one
- * money vocabulary (the cap is maxTrialSpendUsd, actuals are spentUsd). Open
- * map: harness-specific keys may appear.
+ * Open-ended per-harness detail recorded for a trial: bundle identity, token
+ * counts, whatever the harness found worth keeping.
+ *
+ * SPEND IS NO LONGER HERE. spentUsd and spendSource are first-class fields of
+ * Trial, because they are columns on the server rather than keys in an untyped
+ * blob — so a client reads them off the trial and there is exactly one place
+ * each fact is stated. The one spend-adjacent key that remains is the CAP,
+ * which is history rather than a queryable dimension: it is the cap THIS
+ * trial's key carried, which can differ from the job's current cap for a trial
+ * settled before a change.
  */
 export interface ModelUsage {
-  /** Model spend in USD for this trial */
-  spentUsd?: number;
-  /** Where the spend figure came from */
-  spendSource?: SpendSource;
   /** The per-trial model-spend cap that applied to this trial */
   maxTrialSpendUsd?: number;
   [key: string]: unknown;
@@ -339,11 +342,20 @@ export interface Trial {
   failureDetail: string | null;
   /** Wall-clock per phase, e.g. { agentMs, verifyMs } */
   phaseTimingsMs: Record<string, number> | null;
+  /** Open-ended per-harness detail (bundle identity, token counts). Never spend. */
   modelUsage: ModelUsage | null;
   /** Sandbox provider the trial executed on; null until it has executed */
   sandboxProvider: EvalSandboxProvider | null;
   /** Where the verifier ran; null until recorded */
   verifierMode: VerifierMode | null;
+  /**
+   * What this trial's model calls cost, in USD. NULL means the trial never ran
+   * (QUEUED, CANCELLED) — never zero. Zero is a real measurement, and it only
+   * appears when no gateway key was ever minted for the trial.
+   */
+  spentUsd: number | null;
+  /** Whether spentUsd was measured or is the cap charged conservatively */
+  spendSource: SpendSource | null;
   /** Harness version actually resolved and used for the trial; null until resolved */
   resolvedHarnessVersion: string | null;
   /** Reference to the agent session/trace, when recorded */
@@ -352,14 +364,108 @@ export interface Trial {
   updatedAt: string;
 }
 
-/** One server-sent event from jobs().watch() */
-export interface JobEvent {
+/** Fields every job event carries, whatever its type. */
+interface JobEventBase {
   /** Monotonic sequence number (SSE id; the Last-Event-ID resume position) */
   seq: number;
-  /** Event type, e.g. "job.created", "trial.settled", "job.completed" */
-  type: string;
-  data: Record<string, unknown>;
 }
+
+/** The job's resolved creation inputs, echoed so a watcher that joined late knows what it is watching. */
+export interface JobCreatedData {
+  /** Resolved "name@version", never the caller's bare name */
+  benchmark: string;
+  taskCount: number;
+  agents: JobAgent[];
+  runsPerTask: number;
+  concurrency: number;
+  maxTrialSpendUsd: number;
+  sandboxProvider: EvalSandboxProvider;
+  trialCount: number;
+}
+
+export interface JobCancellingData {
+  jobId: string;
+  /** Queued trials cancelled outright by the request */
+  cancelledTrials: number;
+  /** Trials still in flight, which wind down on their own before the job settles */
+  activeTrials: number;
+}
+
+export interface JobCancelledData {
+  jobId: string;
+  /** Total queued trials cancelled across the request and the settle */
+  cancelledTrials: number;
+}
+
+export interface JobCompletedData {
+  jobId: string;
+  /**
+   * Always 0. Retained for wire compatibility: a QUEUED trial now blocks the
+   * COMPLETED settle outright, so the "undispatched trial" concept has no
+   * referent under trial-level claiming.
+   */
+  undispatched: number;
+}
+
+export interface TrialRunningData {
+  trialId: string;
+  taskKey: string;
+}
+
+export interface TrialScoringData {
+  trialId: string;
+  /** Bytes of agent stdout retained for the failure detail */
+  capturedBytes: number;
+}
+
+/**
+ * A trial reached a terminal status. `reward` is present only on the scored
+ * path; `failurePhase` only on a failure. `attemptId`/`attemptPhase` appear
+ * only when the REAPER settled the trial (its worker died), which is exactly
+ * the case where knowing which attempt and which phase is worth having.
+ */
+export interface TrialSettledData {
+  trialId: string;
+  taskKey: string;
+  status: TrialStatus;
+  /** The reward-file reward. Zero is a reward; absent means the trial did not score. */
+  reward?: number | null;
+  failurePhase?: string;
+  attemptId?: string;
+  attemptPhase?: string | null;
+}
+
+/**
+ * One server-sent event from jobs().watch(), as a DISCRIMINATED UNION on `type`.
+ *
+ * `data: Record<string, unknown>` was the worst-typed line in this SDK: it is
+ * the payload of the headline docs example, and it told a reader nothing about
+ * what a trial.settled actually carries. Switching on `type` now narrows `data`.
+ *
+ * Every member below was read off its emit site in the server, not inferred:
+ *   job.created    api/jobs/route.ts, api/jobs/[id]/rerun-failed/route.ts
+ *   job.running    worker/runner.ts, worker/reaper.ts
+ *   job.cancelling api/jobs/[id]/cancel/route.ts
+ *   job.cancelled  worker/settle.ts, api/jobs/[id]/cancel/route.ts
+ *   job.completed  worker/settle.ts
+ *   trial.*        worker/executor.ts, worker/runner.ts, worker/reaper.ts
+ *
+ * job.failed is declared terminal by the event stream and by this SDK, but NO
+ * SERVER PATH EMITS IT and nothing sets a job's status to FAILED. It stays in
+ * the union because both consumers already treat it as terminal — removing it
+ * is the breaking half of a change nobody asked for — so treat it as RESERVED
+ * rather than expected.
+ */
+export type JobEvent =
+  | (JobEventBase & { type: "job.created"; data: JobCreatedData })
+  | (JobEventBase & { type: "job.running"; data: { jobId: string } })
+  | (JobEventBase & { type: "job.cancelling"; data: JobCancellingData })
+  | (JobEventBase & { type: "job.cancelled"; data: JobCancelledData })
+  | (JobEventBase & { type: "job.completed"; data: JobCompletedData })
+  | (JobEventBase & { type: "job.failed"; data: { jobId: string } })
+  | (JobEventBase & { type: "trial.running"; data: TrialRunningData })
+  | (JobEventBase & { type: "trial.scoring"; data: TrialScoringData })
+  | (JobEventBase & { type: "trial.settled"; data: TrialSettledData });
 
 /**
  * The handle returned by jobs().watch(). It is both:
@@ -432,7 +538,12 @@ export interface BenchmarkImportList
  * which the upsert takes as its first argument — the name is the resource
  * identity, not a field of it.
  */
-export type CustomHarnessUpsertInput = Omit<CustomHarnessInput, "name">;
+export type CustomHarnessUpsertInput = CustomHarnessSourceInput & {
+  /** Command run headless with `sh -c` at the task working directory */
+  runCommand: string;
+  /** Env injected at RUN time only; may not override the run contract's keys */
+  env?: Record<string, string>;
+};
 
 /** Cursor page of custom harnesses */
 export type CustomHarnessPage = Page<CustomHarness>;
@@ -642,16 +753,32 @@ export interface RegradeJob {
 /**
  * Source for benchmarks().import(): EITHER a git repository pinned to a ref, OR
  * a local corpus directory (tarred deterministically on the client and
- * uploaded). Provide `{ gitUrl, ref }` or `{ directory }`, not both.
+ * uploaded).
+ *
+ * A UNION, not three optional fields. The old shape accepted `{}` and accepted
+ * both branches at once and threw at run time — exactly where a first-time user
+ * errs, and the one place a type could have said so first. `?: never` on the
+ * absent branch's keys is what makes `{ gitUrl, directory }` a compile error
+ * rather than a run-time one; a bare union would happily accept the excess
+ * property through a variable.
+ *
+ * Note that `ref` is REQUIRED on the git branch. It always was, in the sense
+ * that the server refuses without it — the type simply used to disagree.
  */
-export interface BenchmarkImportSource {
-  /** A git repository URL — pair with `ref`. */
-  gitUrl?: string;
-  /** A pinned branch, tag, or commit — pair with `gitUrl`. */
-  ref?: string;
-  /** A local Harbor-layout corpus directory — tarred + gzipped and uploaded. */
-  directory?: string;
-}
+export type BenchmarkImportSource =
+  | {
+      /** A git repository URL (https://, ssh://, or git@). */
+      gitUrl: string;
+      /** A pinned branch, tag, or commit. Required: an unpinned import is not reproducible. */
+      ref: string;
+      directory?: never;
+    }
+  | {
+      /** A local Harbor-layout corpus directory — tarred + gzipped and uploaded. */
+      directory: string;
+      gitUrl?: never;
+      ref?: never;
+    };
 
 /** Input for benchmarks().import() */
 export interface BenchmarkImportInput {
@@ -754,30 +881,43 @@ export interface CustomHarness {
 }
 
 /**
- * Input for customHarnesses().create(): a name, a run command, and EITHER an
- * install script (`installScript`, the script itself — sent as JSON) OR a local
- * directory (`directory`, tarred deterministically on the client and uploaded).
- * Provide one source, not both.
+ * The two sources a custom harness's executables can come from. A union, not
+ * two optional fields — see BenchmarkImportSource for why `?: never` is
+ * load-bearing rather than decorative.
  */
-export interface CustomHarnessInput {
+export type CustomHarnessSourceInput =
+  | {
+      /**
+       * The install script itself (not a path). It runs in a throwaway builder
+       * sandbox that has internet and ZERO secrets, so everything it fetches
+       * must be publicly fetchable, and it must leave executables in
+       * `$PREFIX/bin`.
+       */
+      installScript: string;
+      directory?: never;
+    }
+  | {
+      /**
+       * A local directory holding the harness — tarred + gzipped and uploaded.
+       * Same build rules as an install script.
+       */
+      directory: string;
+      installScript?: never;
+    };
+
+/**
+ * Input for customHarnesses().create(): a name, a run command, and EXACTLY ONE
+ * source. The source half is a union, so omitting both or passing both is a
+ * compile error rather than a 400 the caller discovers at run time.
+ */
+export type CustomHarnessInput = CustomHarnessSourceInput & {
   /** Harness name; also the value used later in agents[].harness */
   name: string;
-  /**
-   * The install script itself (not a path). It runs in a throwaway builder
-   * sandbox that has internet and ZERO secrets, so everything it fetches must
-   * be publicly fetchable, and it must leave executables in `$PREFIX/bin`.
-   */
-  installScript?: string;
-  /**
-   * A local directory holding the harness — tarred + gzipped and uploaded.
-   * Same build rules as an install script.
-   */
-  directory?: string;
   /** Command run headless with `sh -c` at the task working directory */
   runCommand: string;
   /** Env injected at RUN time only; may not override the run contract's keys */
   env?: Record<string, string>;
-}
+};
 
 // =============================================================================
 // OPTIONS
@@ -812,6 +952,26 @@ export interface GetBenchmarkOptions extends PageOptions {}
 
 /** Options for jobs().regradeJob(): pages the RESULT list (default 50, max 200) */
 export interface RegradeJobOptions extends PageOptions {}
+
+/** Options for jobs().listRegrades() (default page 50, max 200) */
+export interface ListRegradesOptions extends PageOptions {
+  /** Only regrades of this job (the SOURCE job's id) */
+  jobId?: string;
+}
+
+/** Cursor page of regrade jobs */
+export type RegradePage = Page<RegradeJob>;
+
+/**
+ * The handle returned by jobs().listRegrades(). Both:
+ * - a promise for a single RegradePage — `await client.listRegrades()` returns
+ *   one page; and
+ * - an async iterable — `for await (const regrade of client.listRegrades())`
+ *   walks every regrade across cursor pages, fetching the next page for you.
+ */
+export interface RegradeList
+  extends Awaitable<RegradePage>,
+    AsyncIterable<RegradeJob> {}
 
 /**
  * Options for jobs().regrade() (per-job): narrow the set of
@@ -1030,10 +1190,23 @@ export interface JobsClient {
    */
   regradeTrial(id: string, trialId: string): Promise<RegradeJob>;
   /**
-   * Read a regrade job and one page of its per-trial results (with lineage +
-   * reward deltas). { limit, cursor } page the results.
+   * Read ONE regrade job by the REGRADE's id (the id returned by regrade() or
+   * regradeTrial(), and echoed in their Location header) — with one page of its
+   * per-trial results, their lineage and reward deltas.
+   *
+   * Renamed from regradeJob(). That name read as a verb, sat directly beside
+   * regrade() which IS that verb, and took a parameter called jobId that was
+   * not a job id — so the natural call, regradeJob(someJobId), compiled and
+   * 404'd.
    */
-  regradeJob(jobId: string, options?: RegradeJobOptions): Promise<RegradeJob>;
+  getRegrade(regradeId: string, options?: RegradeJobOptions): Promise<RegradeJob>;
+  /**
+   * List the caller's regrade jobs, newest first (cursor-paged); { jobId }
+   * narrows to the regrades OF ONE JOB — the question regradeJob(jobId) looked
+   * like it answered and did not. Await for one page, or `for await` to walk
+   * them all.
+   */
+  listRegrades(options?: ListRegradesOptions): RegradeList;
   /**
    * Side-by-side comparison of 2-5 owned jobs: per-job
    * aggregates plus a per-task matrix with disagreement rows first.

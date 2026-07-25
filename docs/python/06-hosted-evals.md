@@ -198,11 +198,14 @@ print(detail.metrics)             # named sub-scores
 print(detail.phase_timings_ms)    # {'agent_ms': ..., 'verify_ms': ...}
 ```
 
-Read per-trial spend from `model_usage` — one money vocabulary everywhere: the cap is `max_trial_spend_usd`, actuals are `spent_usd`. `spend_source='measured'` is platform-measured spend; `'assumed_cap'` means spend could not be measured yet, so the value conservatively assumes the trial's cap:
+Read per-trial spend from the trial itself. `spend_source='measured'` is platform-measured spend; `'assumed_cap'` means spend could not be measured, so the value conservatively assumes the trial's cap. `spent_usd=None` means the trial never ran — a queued or cancelled trial — and is not the same as `0`, which is a real measurement:
 
 ```python
+print(detail.spent_usd, detail.spend_source)
 if detail.model_usage:
-    print(detail.model_usage.spent_usd, detail.model_usage.spend_source)
+    # The blob keeps open-ended per-harness detail plus the cap THIS trial's
+    # key carried — never the spend itself.
+    print(detail.model_usage.max_trial_spend_usd)
 ```
 
 Stream a trial's recorded event trace; resume later from the last seen `seq`:
@@ -257,14 +260,27 @@ bulk = await evals.regrade(
     task_key='task-001',      # (optional) only source trials of this task
 )
 
-# Read it back: QUEUED → RUNNING → COMPLETED, one result per source trial
-done = await evals.regrade_job(bulk.id, limit=100)
+# Read it back by the REGRADE's id: QUEUED → RUNNING → COMPLETED
+done = await evals.get_regrade(bulk.id, limit=100)
 for result in done.results.items:
     print(result.task_key, result.source_reward, '→', result.reward,
           result.reward_delta)   # reward − source_reward, the per-trial delta
 ```
 
-All three return a `RegradeJob`. A per-trial regrade holds one result; a per-job regrade holds one per selected source trial. `results` is one object named for the collection: `total` and `by_status` cover the whole job, `items`/`next_cursor`/`has_more` are the page you asked for — a regrade of a 10,000-trial job is not one response. Poll `regrade_job()` until `status` is `'COMPLETED'`; `results.by_status` is the running histogram, derived from the whole result set rather than the page in hand.
+All three return a `RegradeJob`. A per-trial regrade holds one result; a per-job regrade holds one per selected source trial. `results` is one object named for the collection: `total` and `by_status` cover the whole job, `items`/`next_cursor`/`has_more` are the page you asked for — a regrade of a 10,000-trial job is not one response. Poll `get_regrade()` until `status` is `'COMPLETED'`; `results.by_status` is the running histogram, derived from the whole result set rather than the page in hand.
+
+`get_regrade()` takes the **regrade's** id — the one `regrade()` and `regrade_trial()` return, and the one their `Location` header names. To find a regrade you no longer hold the id for, or to see every regrade of a job, list them:
+
+```python
+# Every regrade of one job, newest first
+async for regrade in evals.list_regrades(job_id=job.id):
+    print(regrade.id, regrade.status, regrade.results.total)
+
+# Or one page at a time
+page = await evals.list_regrades(limit=20)
+```
+
+Naming a job you do not own returns an empty page rather than a 404 — a list never reveals whether someone else's id exists.
 
 ### Eligibility
 
@@ -892,7 +908,13 @@ class Job:                                # ONE shape from every call, nothing o
 @dataclass
 class JobEvent:                           # watch() / watch_iter()
     seq: int                              # monotonic; the watch resume position
-    type: str                             # 'trial.settled', 'job.completed', ...
+    # One of: 'job.created', 'job.running', 'job.cancelling', 'job.cancelled',
+    # 'job.completed', 'job.failed' (reserved — nothing emits it yet),
+    # 'trial.running', 'trial.scoring', 'trial.settled'.
+    type: str
+    # Payload keys depend on `type`. Every 'trial.settled' carries trial_id,
+    # task_key and status; reward only on the scored path, failure_phase only on
+    # a failure, and attempt_id/attempt_phase only when the reaper settled it.
     data: dict
 
 @dataclass
@@ -907,9 +929,11 @@ class Trial:
     failure_phase: str | None
     failure_detail: str | None            # truncated in list rows; full via trial()
     phase_timings_ms: dict | None         # {'agent_ms': ..., 'verify_ms': ...}
-    model_usage: ModelUsage | None
+    model_usage: ModelUsage | None        # per-harness detail only; never spend
     sandbox_provider: str | None          # where the trial executed; None until it has
     verifier_mode: str | None             # 'separate' | 'shared'
+    spent_usd: float | None               # None = never ran (NOT 0, which is a measurement)
+    spend_source: str | None              # 'measured' | 'assumed_cap'
     resolved_harness_version: str | None  # harness version actually used
     session_ref: str | None               # agent session/trace reference
     created_at: str
@@ -920,11 +944,9 @@ class TrialDetail(Trial):                 # trial(id, trial_id)
     job_id: str                           # failure_detail is untruncated here
 
 @dataclass
-class ModelUsage:                         # one money vocabulary: the cap is
-    spent_usd: float | None               # max_trial_spend_usd, actuals are spent_usd
-    spend_source: str | None              # 'measured' | 'assumed_cap'
-    max_trial_spend_usd: float | None     # the per-trial cap that applied to this trial
-    extra: dict                           # harness-specific keys, snake_case
+class ModelUsage:                         # open-ended per-harness detail
+    max_trial_spend_usd: float | None     # the cap THIS trial's key carried (history)
+    extra: dict                           # bundle identity, token counts, snake_case
 
 @dataclass
 class TrialTraceEvent:
@@ -967,7 +989,7 @@ class RegradeResultsPage:                 # how many, and one page of them
     has_more: bool
 
 @dataclass
-class RegradeJob:                         # regrade() / regrade_trial() / regrade_job()
+class RegradeJob:                         # regrade() / regrade_trial() / get_regrade() / list_regrades()
     id: str
     source_job_id: str                    # the job the source trials belong to
     status: str                           # 'QUEUED' | 'RUNNING' | 'COMPLETED' — derived from

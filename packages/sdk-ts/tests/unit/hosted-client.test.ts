@@ -1351,12 +1351,14 @@ async function testRegradeJob() {
 }
 
 async function testRegradeJobRead() {
-  console.log("\n--- jobs().regradeJob() reads results with deltas + lineage ---");
+  console.log("\n--- jobs().getRegrade() reads results with deltas + lineage ---");
   installMockFetch();
   try {
-    setMockResponse("/api/regrades/job-1", { status: 200, body: REGRADE_JOB });
+    // The path is unchanged — only the PARAM's meaning ever was wrong — so the
+    // rename cannot break a client that already had a regrade id in hand.
+    setMockResponse("/api/regrades/regrade-1", { status: 200, body: REGRADE_JOB });
     const e = jobs({ apiKey: "test-key", baseUrl: BASE });
-    const job = await e.regradeJob("job-1");
+    const job = await e.getRegrade("regrade-1");
     assertEqual(job.status, "COMPLETED", "maps the derived job status");
     assertEqual(job.results.items.length, 1, "carries the per-trial results");
     assertEqual(job.results.nextCursor, null, "a complete page says so rather than echoing a position");
