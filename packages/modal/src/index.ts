@@ -607,6 +607,9 @@ export interface SandboxProvider {
   /** Provider type identifier */
   readonly providerType: string;
 
+  /** Human-readable provider name for logging */
+  readonly name?: string;
+
   /** Create new sandbox */
   create(options: SandboxCreateOptions): Promise<SandboxInstance>;
 
@@ -981,7 +984,10 @@ export class ModalFiles implements SandboxFiles {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        await p.stdin.writeBytes(value);
+        // Split per chunk, not just per call: a source yielding >100MiB in one
+        // chunk would otherwise blow Modal's gRPC message cap. fs read streams
+        // (what writeFromPath feeds in) stay at 64KiB, so this is a no-op there.
+        await this.writeStdinChunked(p.stdin, value);
       }
     } finally {
       reader.releaseLock();

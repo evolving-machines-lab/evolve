@@ -1,11 +1,20 @@
 /**
  * Provider Parity Check
  *
- * Compile-time + runtime verification that all sandbox providers
- * expose the same API surface expected by the SDK.
+ * Compile-time + runtime verification that all sandbox providers expose the
+ * API surface the SDK expects, against the one contract in src/types.ts.
  *
- * If this file fails to compile, a provider has drifted from the
- * SDK's canonical interfaces in types.ts.
+ * The compile-time half is enforced by the `tsc --noEmit` run at the bottom of
+ * this file, NOT by the test runner. Unit tests execute under tsx, which
+ * strips types without checking them, and the package's own `tsc --noEmit`
+ * excludes `**\/*.test.ts` — so before that run existed, the type assertions
+ * in this file were checked by nothing at all and drift could ship silently.
+ *
+ * Two layers are checked:
+ *   - this file: the SHIPPED provider types (dist/*.d.ts) vs the contract
+ *   - packages/{e2b,daytona,modal}/tests/unit/contract-conformance.ts:
+ *     each provider's SOURCE, including its concrete classes and the
+ *     create-options direction TypeScript's bivariant methods hide
  */
 
 import type {
@@ -78,6 +87,21 @@ const _modal4: _ModalFiles = true;
 import { createE2BProvider } from "@evolvingmachines/e2b";
 import { createDaytonaProvider } from "@evolvingmachines/daytona";
 import { createModalProvider } from "@evolvingmachines/modal";
+
+import { spawnSync } from "node:child_process";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+/** packages/sdk-ts/tests/unit → repo root */
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
+
+/** Files the compiler must accept for the contract to be considered intact. */
+const CONFORMANCE_FILES = [
+  "packages/e2b/tests/unit/contract-conformance.ts",
+  "packages/daytona/tests/unit/contract-conformance.ts",
+  "packages/modal/tests/unit/contract-conformance.ts",
+  "packages/sdk-ts/tests/unit/provider-parity.test.ts",
+];
 
 // Methods the SDK actually calls
 const REQUIRED_PROVIDER = ["providerType", "create", "connect"] as const;
@@ -213,6 +237,37 @@ assert(typeof createModalProvider === "function", "createModalProvider exists");
   assert(
     modalNetworkError.includes("only valid when outbound is blocked"),
     "Modal validates network policy (open + allowedDestinations rejected) instead of rejecting all policies",
+  );
+
+  // ─── Contract conformance, actually compiled ────────────────────
+  // tsx runs this file without type-checking it, so the assertions above are
+  // only real if something invokes the compiler. This does, over this file
+  // (shipped provider types) and each provider's conformance file (provider
+  // source + concrete classes). A drifted member fails the unit suite here.
+
+  console.log("\nContract conformance (tsc --noEmit):");
+  const check = spawnSync(
+    process.execPath,
+    [
+      resolve(REPO_ROOT, "node_modules/typescript/bin/tsc"),
+      "--noEmit",
+      "--strict",
+      "--target", "es2022",
+      "--module", "esnext",
+      "--moduleResolution", "bundler",
+      "--esModuleInterop",
+      "--skipLibCheck",
+      "--forceConsistentCasingInFileNames",
+      ...CONFORMANCE_FILES.map((f) => resolve(REPO_ROOT, f)),
+    ],
+    { encoding: "utf8", cwd: REPO_ROOT },
+  );
+  if (check.status !== 0) {
+    console.error((check.stdout || "") + (check.stderr || ""));
+  }
+  assert(
+    check.status === 0,
+    `all ${CONFORMANCE_FILES.length} conformance files type-check against src/types.ts`,
   );
 
   console.log(`\n═══ ${passed} passed, ${failed} failed ═══\n`);

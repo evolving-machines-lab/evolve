@@ -45,17 +45,40 @@ export interface EvolveConfig {
 // SANDBOX ABSTRACTION (provider-agnostic)
 // =============================================================================
 //
-// These interfaces define the MINIMUM contract the SDK requires from any
-// sandbox provider. They are intentionally minimal to support multiple
-// providers (E2B, Docker, Fly.io, local, etc.).
+// These interfaces are the ONE contract between the SDK and any sandbox
+// provider (E2B, Daytona, Modal, Docker, Fly.io, local, ...). The provider
+// packages each declare their own wider surface; every one of those surfaces
+// is pinned to this file by tests/unit/provider-parity.test.ts, which type-
+// checks a conformance file per provider package and fails the unit suite on
+// drift. Change a member here and the providers must follow.
 //
-// Richer features (connect to running process, sendStdin, file streaming,
-// presigned URLs, isRunning, getInfo) are available on providers that
-// implement them. Access via the provider's native types:
+// Members fall into three tiers:
 //
-//   import { E2BSandbox } from "@evolvingmachines/e2b";
-//   const e2b = sandbox as E2BSandbox;
-//   await e2b.commands.sendStdin(pid, "input");
+//   REQUIRED — the SDK itself calls these, so every provider must have them.
+//     provider: providerType, create, connect
+//     instance: sandboxId, commands, files, getHost, kill, pause
+//     commands: run, spawn, list, kill
+//     files:    read, write, writeBatch, makeDir
+//
+//   OPTIONAL CAPABILITY — provider-neutral operations that all three
+//     first-party providers implement but the SDK never calls. Declared
+//     optional so a third-party provider passed to .withSandbox() is not
+//     forced to implement what the SDK does not use, while any provider that
+//     DOES offer them is held to one signature. Probe before calling:
+//     `if (sandbox.files.writeFromPath) ...`.
+//     provider: name, list
+//     instance: isRunning, getInfo
+//     files:    writeFromPath, exists, list, remove, rename
+//
+//   PROVIDER-NATIVE — deliberately NOT in this contract, because they are
+//     backend-shaped and not offered by every provider (Daytona has none of
+//     them): commands.connect, commands.sendStdin, files.readStream,
+//     files.writeStream, files.uploadUrl, files.downloadUrl, files.watchDir.
+//     Reach them through the provider's own types:
+//
+//       import type { SandboxInstance as E2BInstance } from "@evolvingmachines/e2b";
+//       const e2b = sandbox as E2BInstance;
+//       await e2b.commands.sendStdin(pid, "input");
 //
 // =============================================================================
 
@@ -136,6 +159,37 @@ export interface SandboxCreateOptions {
   homeDir?: string;
 }
 
+/** Options for listing sandboxes (capability: SandboxProvider.list). */
+export interface SandboxListOptions {
+  /**
+   * Provider-neutral states. Providers map them onto their own vocabulary and
+   * must not invent matches for a state they do not have (Modal has no paused
+   * state, so a filter excluding "running" matches nothing there).
+   */
+  state?: ("running" | "paused")[];
+  metadata?: Record<string, string>;
+  limit?: number;
+}
+
+/** File or directory entry (capability: SandboxFiles.list). */
+export interface FileInfo {
+  name: string;
+  path: string;
+  type: "file" | "dir";
+}
+
+/** Sandbox metadata and lifecycle info (capability: SandboxProvider.list, SandboxInstance.getInfo). */
+export interface SandboxInfo {
+  sandboxId: string;
+  /** The provider-neutral image/template the sandbox booted from. */
+  image: string;
+  name?: string;
+  metadata: Record<string, string>;
+  startedAt: string;
+  /** End time (undefined for running sandboxes). */
+  endAt?: string;
+}
+
 /** Command execution capabilities */
 export interface SandboxCommands {
   run(command: string, options?: SandboxRunOptions): Promise<SandboxCommandResult>;
@@ -163,6 +217,18 @@ export interface SandboxFiles {
    * omits this, and uploadFileFromPath() falls back to write().
    */
   writeFromPath?(sandboxPath: string, localPath: string): Promise<void>;
+
+  // --- Optional capabilities (all three first-party providers implement these;
+  //     the SDK never calls them, so a provider may omit them) ---
+
+  /** Check whether a file or directory exists. */
+  exists?(path: string): Promise<boolean>;
+  /** List directory contents. */
+  list?(path: string): Promise<FileInfo[]>;
+  /** Delete a file or directory. */
+  remove?(path: string): Promise<void>;
+  /** Rename or move a file or directory. */
+  rename?(oldPath: string, newPath: string): Promise<void>;
 }
 
 /** Sandbox instance */
@@ -174,16 +240,33 @@ export interface SandboxInstance {
   getHost(port: number): Promise<string>;
   kill(): Promise<void>;
   pause(): Promise<void>;
+
+  // --- Optional capabilities (see the tier notes at the top of this section) ---
+
+  /** Whether the sandbox is currently running. */
+  isRunning?(): Promise<boolean>;
+  /** Sandbox metadata and timing. */
+  getInfo?(): Promise<SandboxInfo>;
 }
 
 /** Sandbox lifecycle management - providers implement this */
 export interface SandboxProvider {
   /** Provider type identifier (e.g., "e2b") */
   readonly providerType: string;
-  /** Human-readable provider name for logging */
+  /** Human-readable provider name for logging (e.g., "E2B") */
   readonly name?: string;
   create(options: SandboxCreateOptions): Promise<SandboxInstance>;
   connect(sandboxId: string, timeoutMs?: number): Promise<SandboxInstance>;
+
+  /**
+   * List sandboxes (first page only, up to `limit`).
+   *
+   * OPTIONAL: all three first-party providers implement it, but the SDK never
+   * calls it, so requiring it would break third-party providers passed to
+   * .withSandbox() for no gain. Declared here so every provider that offers it
+   * offers the SAME signature.
+   */
+  list?(options?: SandboxListOptions): Promise<SandboxInfo[]>;
 }
 
 // =============================================================================

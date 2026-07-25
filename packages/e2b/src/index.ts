@@ -157,7 +157,14 @@ export interface SandboxConnectOptions {
 
 /** Options for creating a sandbox */
 export interface SandboxCreateOptions {
-  image: string;
+  /**
+   * E2B template ID. OPTIONAL: create() falls back to the provider's
+   * configured `templateId`, then to "evolve-all" — declaring it required
+   * contradicted that implementation and only went unnoticed because TS
+   * method parameters are bivariant, so the SDK could already call
+   * create({}) through the shared contract.
+   */
+  image?: string;
   envs?: Record<string, string>;
   metadata?: Record<string, string>;
   timeoutMs?: number;
@@ -295,6 +302,9 @@ export interface SandboxInstance {
 export interface SandboxProvider {
   /** Provider type identifier */
   readonly providerType: string;
+
+  /** Human-readable provider name for logging */
+  readonly name?: string;
 
   /** Create new sandbox */
   create(options: SandboxCreateOptions): Promise<SandboxInstance>;
@@ -669,6 +679,7 @@ class E2BSandboxImpl implements SandboxInstance {
 
 export class E2BProvider implements SandboxProvider {
   readonly providerType = "e2b" as const;
+  readonly name = "E2B";
   private readonly apiKey: string;
   private readonly apiUrl?: string;
   private readonly defaultTimeoutMs: number;
