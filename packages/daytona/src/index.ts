@@ -182,6 +182,33 @@ export class DaytonaResourcesError extends Error {
  * and `-n` fails fast (typed non-zero exit) instead of hanging on a
  * password prompt if the image lacks passwordless sudo.
  */
+/**
+ * Enforce the timeout INSIDE the box. Daytona has no fixed sandbox lifetime and
+ * its auto-stop timer measures INACTIVITY ("how long it remains active after
+ * the last interaction"), so a busy runaway is never reclaimed by the provider
+ * — unlike e2b and Modal, which both kill the process server-side. The session
+ * API does take a timeout, but we launch with runAsync:true, so that argument
+ * bounds the *call*, not the process, and the only real deadline was a
+ * client-side poll in wait(): if this process died, the agent kept burning.
+ *
+ * coreutils `timeout` closes that hole: the kernel kills the harness whether or
+ * not anything is still watching. The script is passed base64 -> file so no
+ * quoting of the caller's command is ever attempted, and a box without
+ * coreutils degrades to the un-timed run rather than failing outright (the
+ * client-side deadline in wait() still covers it).
+ */
+function withInBoxTimeout(wrapped: string, timeoutSec?: number): string {
+  if (!timeoutSec || timeoutSec <= 0) return wrapped;
+  const encoded = Buffer.from(wrapped).toString("base64");
+  const path = `/tmp/.evolve-cmd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.sh`;
+  return (
+    `echo ${encoded} | base64 -d > ${path}; ` +
+    `if command -v timeout >/dev/null 2>&1; then ` +
+    `timeout -k 10 ${timeoutSec} bash ${path}; else bash ${path}; fi; ` +
+    `__rc=$?; rm -f ${path}; exit $__rc`
+  );
+}
+
 function wrapCommand(
   command: string,
   cwd?: string,
@@ -696,7 +723,7 @@ export class DaytonaCommands implements SandboxCommands {
     }
   }
 
-  async spawn(command: string, options?: SandboxSpawnOptions): Promise<SandboxCommandHandle> {
+    async spawn(command: string, options?: SandboxSpawnOptions): Promise<SandboxCommandHandle> {
     const sessionId = `evolve-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     await this.sandbox.process.createSession(sessionId);
 
@@ -705,7 +732,10 @@ export class DaytonaCommands implements SandboxCommands {
     const timeoutMs = options?.timeoutMs;
 
     const resp = await this.sandbox.process.executeSessionCommand(sessionId, {
-      command: wrapCommand(command, options?.cwd, options?.envs, this.user),
+      command: withInBoxTimeout(
+        wrapCommand(command, options?.cwd, options?.envs, this.user),
+        timeoutSec
+      ),
       runAsync: true,
     }, timeoutSec);
 
@@ -999,8 +1029,14 @@ export class DaytonaProvider implements SandboxProvider {
     const user = options.user;
     const osUser = user && user !== "root" ? user : undefined;
 
-    // Daytona uses inactivity-based auto-stop, not fixed lifetime
-    // Convert timeoutMs to autoStopInterval in minutes for parity with E2B/Modal
+    // LIFETIME IS NOT PARITY. e2b and Modal take an absolute sandbox lifetime;
+    // Daytona has none — its documented controls are auto-stop ("how long it
+    // remains active after the last interaction"), auto-archive (inactivity)
+    // and auto-delete (measured after STOPPING). So the timeout can only be
+    // mapped onto the inactivity clock, and a box that keeps looking busy is
+    // never reclaimed by the provider. The process-level deadline is enforced
+    // in-box instead (withInBoxTimeout in spawn), which is what actually bounds
+    // a runaway harness here.
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
     const autoStopMinutes = Math.max(1, Math.ceil(timeoutMs / 60000)); // Min 1 minute
     const imageName = options.image || this.snapshotName;
@@ -1009,6 +1045,11 @@ export class DaytonaProvider implements SandboxProvider {
       envVars: options.envs,
       labels: options.metadata,
       autoStopInterval: autoStopMinutes,
+      // Delete on stop (0 = "delete immediately upon stopping"). Without it a
+      // stopped box lingers as billable state that nothing is watching: the
+      // eval worker's reaper only kills boxes it still has a DB row for, and a
+      // stopped-but-kept sandbox outlives that row.
+      autoDeleteInterval: 0,
       ...(osUser ? { user: osUser } : {}),
       ...networkParams,
     };
