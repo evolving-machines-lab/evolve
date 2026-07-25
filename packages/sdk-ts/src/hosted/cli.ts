@@ -33,6 +33,7 @@ import type {
   TrialDetail,
   TrialStatus,
   TrialTraceEvent,
+  UpstreamStatus,
 } from "./types";
 
 // =============================================================================
@@ -703,12 +704,12 @@ export function traceEventLine(event: TrialTraceEvent): string {
   return `#${String(event.seq).padStart(4)} ${event.type.padEnd(26)} ${detail}`.trimEnd();
 }
 
-/** One line for a structured import error: the message plus a failure count. */
-function importErrorText(error: NonNullable<BenchmarkImport["error"]>): string {
-  const failures = error.failures?.length
-    ? ` (${error.failures.length} task failure${error.failures.length === 1 ? "" : "s"})`
+/** One line for a structured import failure: the message plus a failure count. */
+function importFailureText(failure: NonNullable<BenchmarkImport["failure"]>): string {
+  const failures = failure.failures?.length
+    ? ` (${failure.failures.length} task failure${failure.failures.length === 1 ? "" : "s"})`
     : "";
-  return `${error.message}${failures}`;
+  return `${failure.message}${failures}`;
 }
 
 function importLines(job: BenchmarkImport): string[] {
@@ -719,9 +720,9 @@ function importLines(job: BenchmarkImport): string[] {
   if (job.benchmarkName !== undefined) rows.push(["benchmark", job.benchmarkName]);
   if (job.version !== undefined) rows.push(["version", job.version]);
   if (job.taskCount !== undefined) rows.push(["tasks", String(job.taskCount)]);
-  if (job.error) {
-    rows.push(["error", importErrorText(job.error)]);
-    for (const failure of job.error.failures ?? []) {
+  if (job.failure) {
+    rows.push(["failure", importFailureText(job.failure)]);
+    for (const failure of job.failure.failures ?? []) {
       rows.push([`  ${failure.taskKey}`, failure.error]);
     }
   }
@@ -732,7 +733,7 @@ function importLines(job: BenchmarkImport): string[] {
 export function importStatusLine(job: BenchmarkImport): string {
   const parts: string[] = [];
   if (job.taskCount !== undefined) parts.push(`tasks=${job.taskCount}`);
-  if (job.error) parts.push(truncate(importErrorText(job.error), 140));
+  if (job.failure) parts.push(truncate(importFailureText(job.failure), 140));
   return `status ${job.status.padEnd(12)} ${parts.join(" ")}`.trimEnd();
 }
 
@@ -1114,6 +1115,7 @@ async function cmdBenchmarks(inv: Invocation, io: CliIO): Promise<number> {
       ]);
     }
     for (const line of table(rows)) io.out(line);
+    for (const line of upstreamNotices(catalog.items)) io.out(line);
     return 0;
   }
 
@@ -1128,8 +1130,38 @@ async function cmdBenchmarks(inv: Invocation, io: CliIO): Promise<number> {
     io.out(JSON.stringify(detail));
   } else {
     for (const line of benchmarkDetailLines(detail)) io.out(line);
+    for (const line of upstreamNotices([detail])) io.out(line);
   }
   return 0;
+}
+
+/**
+ * One quiet line per benchmark whose upstream has moved, and the command that
+ * acts on it.
+ *
+ * QUIET IS THE REQUIREMENT. This is an FYI printed under a table nobody asked
+ * to be interrupted, so it is one line, it never appears when nothing moved,
+ * and it never appears in --json output (a machine-readable stream must stay
+ * machine-readable — the same fact is already on the `upstream` field there).
+ *
+ * It never offers to import for you. Importing creates an immutable version and
+ * costs a build; that is a decision, and the line's whole job is to hand the
+ * decision back with the exact command already written out.
+ */
+function upstreamNotices(
+  items: { name: string; activeVersion: { version: string } | null; upstream: UpstreamStatus | null }[]
+): string[] {
+  const lines: string[] = [];
+  for (const item of items) {
+    if (!item.upstream?.moved) continue;
+    const at = item.activeVersion ? `@${item.activeVersion.version}` : "";
+    lines.push(
+      `${item.name}${at} · upstream ${item.upstream.ref} moved — ` +
+        `run: evolve-evals import --benchmark ${item.name} --version <new-version> ` +
+        `--git-url <url> --ref ${item.upstream.ref}`
+    );
+  }
+  return lines;
 }
 
 async function cmdImport(inv: Invocation, io: CliIO): Promise<number> {

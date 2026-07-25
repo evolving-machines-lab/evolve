@@ -14,6 +14,18 @@ evals = jobs()                  # create, watch, and read jobs
 
 All three read `EVOLVE_API_KEY` (or take `HostedClientConfig(api_key=..., base_url=...)`) and work standalone or as `async with` context managers.
 
+If you would rather configure once, `hosted()` is the same three clients behind one door:
+
+```python
+from evolve import hosted
+
+client = hosted()                       # or hosted(HostedClientConfig(api_key=...))
+catalog = await client.benchmarks.list()
+job = await client.jobs.run(...)
+```
+
+It is called `hosted()` rather than `evolve()` because `Evolve` is already the local-sandbox class in this package, and two names a shift key apart doing unrelated things is a trap worth avoiding. The three clients are built on first access, so `client.meta()` — the one call that needs no credentials — works before an API key is set.
+
 ---
 
 ## Run a job
@@ -113,10 +125,10 @@ A key on its own is not enough to make a request idempotent, so the server also 
 
 ## Watch it live
 
-Both forms consume the job's server-sent event stream — replayed from the beginning, resumed with `Last-Event-ID` on reconnect (exponential backoff), completing on the terminal event. Iterate the events, or block for the final job:
+`watch()` consumes the job's server-sent event stream — replayed from the beginning, resumed with `Last-Event-ID` on reconnect (exponential backoff), completing on the terminal event. It hands back a handle you can use either way: `await` it for the final job, or `async for` it for each event.
 
 ```python
-async for event in evals.watch_iter(job.id):
+async for event in evals.watch(job.id):
     # event.seq  — monotonic sequence number
     # event.type — 'job.created' | 'trial.settled' | 'job.completed' | ...
     print(event.seq, event.type, event.data)
@@ -131,7 +143,9 @@ final = await evals.watch(
 print(final.status, final.mean_reward, final.spent_usd)
 ```
 
-`watch_iter()` takes the same `timeout_s` and backoff keywords. Attaching late loses nothing (the stream replays), and a disconnect resumes from the last seen sequence number — no gaps, no duplicates.
+Pick one form per handle — both drive the same stream. Attaching late loses nothing (the stream replays), and a disconnect resumes from the last seen sequence number: no gaps, no duplicates.
+
+This is the same shape `list()` has always had here, and the same shape the TypeScript SDK's `jobs().watch()` returns. It used to be two methods (`watch()` and `watch_iter()`), which made this SDK disagree with TypeScript and with its own pagination idiom at once. `watch_iter()` still works and is a thin alias; prefer `async for … in watch(...)`.
 
 ---
 
@@ -331,6 +345,66 @@ Python ships no separate CLI. The TypeScript package's `evolve-evals` binary (`n
 
 ---
 
+## What the platform supports
+
+Everything a client would otherwise hardcode — the legal harness names, the status enums, the limits, the error codes — is one public, cacheable document. It needs no API key.
+
+```python
+from evolve import meta
+
+doc = await meta()
+
+# A model picker, without a hardcoded table
+for harness in doc.harnesses:
+    print(harness.name, harness.default_model, len(harness.models))
+```
+
+`GET /api/meta` is the wire form. Every field is derived from the module that enforces it, so a published limit and an enforced limit cannot drift apart, and a new harness appears here the moment the platform can run it.
+
+What is in it:
+
+**`harnesses`** — every built-in, with `default_model` and the full `models` list for a picker, `runnable` (and `reason` when it is not), `version_pinnable`, and `latest_version` for a "your pin is out of date" badge. `default_model` is a suggestion, not a server-side default: `doc.limits['job']['modelRequired']` is `True`, and a job that omits `model` is refused.
+
+**`sandbox_providers`** — each provider's real resource ceilings and, in `refuses`, the capabilities it will not run with the reason the runner itself would give. `platform_constraints` holds the refusals that apply everywhere, so "runs nowhere" is distinguishable from "runs somewhere else".
+
+**`statuses`** — the job, trial, import, regrade-job, regrade-result, and benchmark-version vocabularies, each with its `terminal` members marked. A watcher stops on `terminal`; a status bar renders `values` without hardcoding the enum.
+
+**`limits`** — the concurrency ceiling and default, the per-trial spend default, the trial-matrix ceiling, upload caps, the per-user harness cap, and the pagination bounds of every paged collection.
+
+**`error_codes`** — the whole vocabulary below, in one list.
+
+**`custom_harnesses`** — the registration rules (name pattern, size caps, reserved names and reserved env keys), so a form can validate before it POSTs.
+
+`limits`, `custom_harnesses`, and the inside of `statuses` are plain dicts with the wire's own camelCase keys. They are nested configuration you read by key, not objects you construct, and a dataclass per level would be five classes to edit every time the server adds a field — the exact coupling this document exists to remove.
+
+`schema_version` moves when a field is added, removed, or changes meaning — never when a value changes. Pin behavior to it, not to a deploy date.
+
+---
+
+## Errors
+
+Every failure is one shape:
+
+```python
+from evolve import EvolveAPIError
+
+try:
+    await evals.run(benchmark='deep-swe', agents=agents, sandbox_provider='modal')
+except EvolveAPIError as err:
+    if err.code == 'provider_unsupported':
+        # Every refused task, with its reason. Not a sentence to regex.
+        refused = err.details['refusedTasks']
+        print(f"{len(refused)} tasks cannot run on {err.details['provider']}")
+```
+
+- **`code`** is the stable identifier. `HOSTED_ERROR_CODES` and `is_hosted_error_code()` are exported, and `HostedErrorCode` is a `Literal` you can annotate with so a type checker catches `'insufficient_creidts'`. A server newer than your SDK may send a code the list does not have, which is why `code` stays a plain `str`.
+- **`str(err)`** is the human sentence, and it may be shortened. **`err.details`** never is. When a refusal says "and 8 more", all of them are in `details` — that is the rule, and it is why `details` exists.
+- **`err.param`** names the input that was wrong — a body path (`agents[0].harness`), a query parameter (`limit`), or a multipart part (`run_command`) — so a form can highlight one field instead of showing a banner.
+- **`err.retry_after_sec`** is set on `429` and `503`, read from the body first and the `Retry-After` header second.
+- **`err.request_id`** identifies the failure server-side. Quote it in a support thread.
+
+---
+
 ## What runs
 
 Any benchmark in Harbor task format. Three environment shapes, all first-class:
@@ -448,10 +522,58 @@ async with benchmarks() as catalog:
         timeout_s=1800,               # (optional) raises TimeoutError past the deadline
     )
     if done.status == 'FAILED':
-        print(done.error.message)     # e.g. "2/113 task(s) failed to parse"
-        for failure in done.error.failures:
-            print(failure.task_key, failure.error)
+        # `failure`, not `error` — `error` is the key the FAILURE ENVELOPE uses,
+        # so a client checking for it stays correct on a healthy read of a
+        # failed import. Same grammar as a job's `failure`.
+        print(done.failure.code, done.failure.message)   # "2/113 task(s) failed to parse"
+        for failed in done.failure.failures:
+            print(failed.task_key, failed.error)
 ```
+
+```python
+# Lost the id? List your imports — await one page, or walk them all.
+async for job in catalog.list_imports(status='FAILED'):
+    print(job.id, job.benchmark_name, job.version, job.failure)
+```
+
+### Deleting one
+
+A benchmark name is a global resource, and a typo used to squat one permanently. `delete()` takes it back:
+
+```python
+await catalog.delete('my-bnech')   # and the archived solutions go with it
+```
+
+The rules are worth knowing before you reach for it:
+
+- **You must own it.** A platform-curated benchmark is refused with `benchmark_not_owned`; a name you cannot see reads as a plain not-found, exactly like a name that does not exist, so the route cannot be used to discover what other accounts have.
+- **A referenced benchmark is never deleted.** If any job ran against it, you get `409 benchmark_in_use`, and `err.details['sampleJobIds']` names some of the jobs blocking it (with `err.details['jobCount']` for how many there are). There is no cascade and no force: a job's meaning is "this agent scored 0.42 on *these* tasks", and deleting the tasks would leave a number that refers to nothing. Delete the jobs first if you mean it.
+- **Versions, tasks, and the private solutions archive go with it.** Mirrored task images do not — they are content-addressed and shared with any other benchmark pinning the same image.
+
+### When upstream moves
+
+A benchmark imported from git records what it was built from, and the platform periodically re-resolves where that ref points now. The answer rides on the benchmark:
+
+```python
+bench = await catalog.get('my-bench')
+
+if bench.upstream and bench.upstream.moved:
+    print(f'{bench.upstream.ref} has moved past {bench.upstream.current_commit}')
+    # → import a NEW version when you want it; nothing happens automatically
+```
+
+`UpstreamStatus` carries `ref`, `current_commit`, `latest_commit`, `moved`, `behind_by`, `checked_at`, and `error`.
+
+Four things this deliberately does **not** do:
+
+- **It never imports.** A new version is always an immutable row you create, with `catalog.import_benchmark()`. Watching produces a fact, never an action.
+- **It never modifies an existing version.** A version is what it was built from, permanently.
+- **`upstream` is `None`, not "up to date", when there is nothing to watch** — an uploaded corpus, a seeded one, or one imported before provenance was recorded. `None` means nobody checked, and a badge should not appear.
+- **`behind_by` is always `None` today.** Counting commits between two SHAs needs the commit graph, i.e. a real fetch from the remote per benchmark per check. The check is a single reference advertisement (`git ls-remote`) precisely so it can be cheap, and `moved` is what a badge actually needs. The field stays in the shape so a host comparison API could fill it later without a wire change.
+
+A failed check keeps the last known `latest_commit` and sets `error`: a network blip should not quietly erase an update that is genuinely available. Show "could not check", never "up to date".
+
+The same idea covers harnesses from the other direction: a job records the `harness_version` it pinned, and `meta().harnesses[].latest_version` is the newest published one. Compare the two for a "your pin is out of date" badge — one cached lookup for every job, rather than a registry round trip per job read.
 
 Every lane resolves to the same thing — a Harbor-layout directory — and is held to the same rules. The corpus root is a directory whose `tasks/` subdirectory holds one directory per task, or the tasks directory itself. Provenance is recorded per lane: the resolved commit for a git import, the sha256 of the exact uploaded bytes for a directory. On the wire an import is `multipart/form-data`: `benchmarkName` and `version` as named parts, and either `gitUrl` + `ref` or the gzipped corpus as a `file` part — the SDK produces it for you — and uploads past the compressed-size cap (512 MB by default) are refused with a `413 import_too_large`. The metadata parts come first, so a name owned by someone else is refused with a `409 benchmark_name_taken` before the upload is received rather than after.
 
@@ -464,7 +586,7 @@ What happens next:
   - **gold** — the task's reference solution (`solution/`) is pushed through the real agent-side + verifier path and must score exactly `1.0`. Proof the task is solvable as written.
   - **no-op** — an empty submission goes straight to the verifier and must *not* score `1.0`. A task a do-nothing agent passes measures nothing.
 
-`IMPORTED` is the import job's terminal success: the corpus landed as a benchmark version, visible in the catalog (`catalog.get('my-bench@1.0')`) in state `VALIDATING`. Activation is a separate, operator-run step — importing never triggers it. The version stays `VALIDATING` until the gate passes in full and promotes it to `READY`, the one state that accepts jobs; watch the state through `catalog.get()`. `run()` against any other state raises a `409 version_not_ready` naming it. Once `READY`:
+`COMPLETED` is the import job's terminal success: the corpus landed as a benchmark version, visible in the catalog (`catalog.get('my-bench@1.0')`) in state `VALIDATING`. Activation is a separate, operator-run step — importing never triggers it. The version stays `VALIDATING` until the gate passes in full and promotes it to `READY`, the one state that accepts jobs; watch the state through `catalog.get()`. `run()` against any other state raises a `409 version_not_ready` naming it. Once `READY`:
 
 ```python
 job = await evals.run(
@@ -628,6 +750,13 @@ Read and remove them the same way:
 registered = await harnesses.list()      # one page of your harnesses (async for walks them all)
 one = await harnesses.get('acme-cli')    # name, source, run_command, env, timestamps
 await harnesses.delete('acme-cli')       # past jobs keep the harness they recorded
+
+# Change one WITHOUT a window where it stops existing:
+await harnesses.upsert(
+    'acme-cli',
+    run_command='acme-cli --headless --v2',
+    install_script='curl -fsSL https://acme.dev/install.sh | sh',
+)
 ```
 
 The same surface is on the `evolve-evals` CLI — see [TypeScript → Bring your own harness](../typescript/06-hosted-evals.md#bring-your-own-harness).
@@ -668,7 +797,8 @@ If your CLI ignores `OPENAI_BASE_URL` and you do not do this, it will try to rea
 How it is built, and what that costs you:
 
 - The install script (or the uploaded tarball) runs once in a **throwaway builder sandbox that has internet and ZERO secrets**. Everything it fetches must therefore be **publicly fetchable** — a private registry that needs a token cannot be reached from there — and it must leave its executables in **`$PREFIX/bin`**.
-- A custom harness is **versioned by its registered content** — the install source, the `run_command` and the declared `env`, together — so `harness_version` on an agent using it is rejected. Change any of the three and you get a new recorded version and a new bundle digest; re-register (delete, then create) to change what runs.
+- A custom harness is **versioned by its registered content** — the install source, the `run_command` and the declared `env`, together — so `harness_version` on an agent using it is rejected. Change any of the three and you get a new recorded version and a new bundle digest.
+- **`upsert()` is how you change one.** `delete()` then `create()` leaves a window where the harness does not exist, and anything naming it in that window — a scripted job, a colleague's run — fails with "no such harness" for a change that was only ever meant to be an edit. `upsert()` is one call: the name holds the old registration or the new one, never nothing. It creates when the name is free and replaces when it is not, and replacing consumes no new registration slot, so you can still fix a broken run command at the ceiling. It is a full REPLACEMENT, not a patch: every field comes from the call, so an omitted `env` becomes empty and the source switches wholesale.
 - **You may register up to 25 harnesses.** Past that, registration is refused with `custom_harness_limit_reached`; delete one to make room. Each registration is a full CLI the platform builds and caches for you.
 
 **What keeps a trial inside its budget.** The spend cap is enforced on the gateway key, so model traffic that goes through `$EVOLVE_GATEWAY_BASE_URL` is metered and capped. What confines traffic to that route is the **task's network policy**, not the harness: under `no-network` — the default — the box can reach the gateway and nothing else, and the cap is a hard guarantee. On a task declaring `allowlist` or `public`, a harness *can* reach a provider directly, and that traffic is neither metered nor capped. Registration refuses credential-shaped `env` keys, but that is a guardrail against the obvious mistake, not a boundary.
@@ -705,7 +835,7 @@ What you give up versus a built-in:
 | `INDETERMINATE` | the outcome could not be determined |
 | `CANCELLED` | cancelled before settling |
 
-**Benchmark version** — `DRAFT → IMPORTING → BUILDING → VALIDATING → READY`, with `FAILED` and `ARCHIVED` as off-ramps: a failed parse or environment build lands `FAILED` before `VALIDATING` is ever reached, and `ARCHIVED` shelves a version that has been moved past. An import lands a version at `VALIDATING`; the activation gate (gold + no-op, above) then promotes it. Only `READY` versions accept jobs. (The import job's own statuses are `IMPORTING → IMPORTED | FAILED`.)
+**Benchmark version** — `DRAFT → IMPORTING → BUILDING → VALIDATING → READY`, with `FAILED` and `ARCHIVED` as off-ramps: a failed parse or environment build lands `FAILED` before `VALIDATING` is ever reached, and `ARCHIVED` shelves a version that has been moved past. An import lands a version at `VALIDATING`; the activation gate (gold + no-op, above) then promotes it. Only `READY` versions accept jobs. (An import job uses the shared job vocabulary: `QUEUED → RUNNING → COMPLETED | FAILED`.)
 
 ---
 
@@ -887,7 +1017,8 @@ class Task:
 @dataclass
 class BenchmarkImport:
     id: str
-    status: str                           # 'IMPORTING' | 'IMPORTED' | 'FAILED'
+    status: str                           # 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED'
+    failure: Optional[ImportFailure]      # never `error` on a 200 body
     benchmark_name: str
     version: str
     error: BenchmarkImportError | None    # .message + .failures[(task_key, error)]

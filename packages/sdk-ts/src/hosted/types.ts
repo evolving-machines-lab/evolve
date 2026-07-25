@@ -23,6 +23,26 @@ export interface Page<T> {
   hasMore: boolean;
 }
 
+/**
+ * A value you can `await`, with the rest of the promise surface attached.
+ *
+ * The dual-use handles below were `PromiseLike` alone, which is enough for
+ * `await` and nothing else — so `client.list().catch(...)` was a compile error
+ * two lines after `await client.list()` compiled fine, and `.finally()` for a
+ * spinner was unavailable. A handle that is 90% of a promise is worse than one
+ * that is none of it, because the missing 10% is only discovered at the call
+ * site that needed it.
+ *
+ * `then`/`catch`/`finally` all return real Promises, so anything chained off a
+ * handle behaves exactly like promise code from that point on.
+ */
+export interface Awaitable<T> extends PromiseLike<T> {
+  catch<TResult = never>(
+    onrejected?: ((reason: unknown) => TResult | PromiseLike<TResult>) | null
+  ): Promise<T | TResult>;
+  finally(onfinally?: (() => void) | null): Promise<T>;
+}
+
 /** Cursor + page-size options, accepted by every paged call */
 export interface PageOptions {
   /** Max items per page */
@@ -119,6 +139,15 @@ export interface Benchmark {
    * pass { limit, cursor } to get() and follow nextCursor.
    */
   tasks?: Page<Task>;
+  /**
+   * Where this benchmark's git source points now, versus what its active
+   * version was built from — the data behind a "new version available" badge.
+   * Null when there is nothing to watch (an uploaded corpus, a seeded one, or
+   * one imported before provenance was recorded); null is never "up to date".
+   *
+   * Nothing here imports anything. A new version is always a row you create.
+   */
+  upstream: UpstreamStatus | null;
   /** get() only */
   createdAt?: string;
   /** get() only */
@@ -343,7 +372,7 @@ export interface JobEvent {
  * single handle should not be awaited and iterated at once.
  */
 export interface JobWatch
-  extends PromiseLike<Job>,
+  extends Awaitable<Job>,
     AsyncIterable<JobEvent> {}
 
 /** Cursor page of jobs (newest first) */
@@ -357,7 +386,7 @@ export type JobPage = Page<Job>;
  *   job across cursor pages, fetching the next page for you.
  */
 export interface JobList
-  extends PromiseLike<JobPage>,
+  extends Awaitable<JobPage>,
     AsyncIterable<Job> {}
 
 /** Cursor page of trials */
@@ -371,7 +400,7 @@ export type TrialPage = Page<Trial>;
  *   every trial across cursor pages, fetching the next page for you.
  */
 export interface TrialList
-  extends PromiseLike<TrialPage>,
+  extends Awaitable<TrialPage>,
     AsyncIterable<Trial> {}
 
 /** Cursor page of benchmarks */
@@ -379,15 +408,38 @@ export type BenchmarkPage = Page<Benchmark>;
 
 /** Dual-use handle from benchmarks().list(): await one page, or iterate them all */
 export interface BenchmarkList
-  extends PromiseLike<BenchmarkPage>,
+  extends Awaitable<BenchmarkPage>,
     AsyncIterable<Benchmark> {}
+
+/** Options for benchmarks().listImports() */
+export interface ListImportsOptions extends PageOptions {
+  /** Only imports in this status */
+  status?: BenchmarkImportStatus;
+  /** Only imports of this benchmark name */
+  benchmark?: string;
+}
+
+/** Cursor page of benchmark imports */
+export type BenchmarkImportPage = Page<BenchmarkImport>;
+
+/** Dual-use handle from benchmarks().listImports(): await one page, or iterate them all */
+export interface BenchmarkImportList
+  extends Awaitable<BenchmarkImportPage>,
+    AsyncIterable<BenchmarkImport> {}
+
+/**
+ * A custom-harness upsert body. Same shape as CustomHarnessInput minus `name`,
+ * which the upsert takes as its first argument — the name is the resource
+ * identity, not a field of it.
+ */
+export type CustomHarnessUpsertInput = Omit<CustomHarnessInput, "name">;
 
 /** Cursor page of custom harnesses */
 export type CustomHarnessPage = Page<CustomHarness>;
 
 /** Dual-use handle from customHarnesses().list(): await one page, or iterate them all */
 export interface CustomHarnessList
-  extends PromiseLike<CustomHarnessPage>,
+  extends Awaitable<CustomHarnessPage>,
     AsyncIterable<CustomHarness> {}
 
 // =============================================================================
@@ -611,15 +663,25 @@ export interface BenchmarkImportInput {
 }
 
 /**
- * Benchmark import job status — the import surface's own vocabulary.
- * Terminal: "IMPORTED" (the corpus landed as a benchmark version; it becomes
+ * Benchmark import job status.
+ *
+ * These are the SAME four words a job and a regrade use, and that is the point:
+ * an import used to speak a private IMPORTING/IMPORTED/FAILED vocabulary, so a
+ * status chip rendering all three had to carry a translation table for three
+ * spellings of the same four ideas.
+ *
+ * Terminal: "COMPLETED" (the corpus landed as a benchmark version; it becomes
  * runnable once the platform activates it) and "FAILED".
  */
-export type BenchmarkImportStatus = "IMPORTING" | "IMPORTED" | "FAILED";
+export type BenchmarkImportStatus = "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED";
 
 /**
- * A benchmark import job. Terminal statuses: "IMPORTED" and "FAILED".
- * Self-describing: every response names the benchmark@version being imported.
+ * A benchmark import job. Terminal statuses: "COMPLETED" and "FAILED".
+ *
+ * Self-describing: every response names the benchmark@version being imported,
+ * and every route that returns one — the 202 from import(), getImport(), and
+ * listImports() — returns this same shape, so a caller can render the row it
+ * just created without a follow-up read.
  */
 export interface BenchmarkImport {
   /** Import job id */
@@ -630,14 +692,24 @@ export interface BenchmarkImport {
   benchmarkName: string;
   /** Version label of the imported version */
   version: string;
-  /** Failure detail when status is "FAILED" */
-  error?: BenchmarkImportError | null;
-  /** Number of tasks parsed, once counted (getImport() responses) */
+  /**
+   * Why the import failed, when status is "FAILED"; null otherwise.
+   *
+   * Named `failure` and NOT `error`, deliberately: `error` is the key the
+   * FAILURE envelope uses, so the obvious client idiom `if (body.error) throw`
+   * has to stay correct on a perfectly healthy read of a failed import.
+   */
+  failure: BenchmarkImportFailure | null;
+  /** Number of tasks parsed, once counted */
   taskCount?: number;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 /** Structured failure detail for a FAILED import. */
-export interface BenchmarkImportError {
+export interface BenchmarkImportFailure {
+  /** Stable machine-readable cause; "import_failed" when none was recorded. */
+  code: string;
   /** What went wrong, e.g. "2/113 task(s) failed to parse" */
   message: string;
   /** Per-task parse/validation failures, when the corpus was reachable */
@@ -836,6 +908,25 @@ export interface BenchmarksClient {
    * "FAILED") and resolve with the final import.
    */
   watchImport(id: string, options?: WatchImportOptions): Promise<BenchmarkImport>;
+  /**
+   * List the caller's own imports, newest first (cursor-paged). This is how you
+   * find an import again after losing the id that import() returned — without
+   * it, closing a tab made a running import permanently unwatchable.
+   *
+   * Await for one page, or `for await` to walk them all. { status } filters on
+   * the import vocabulary ("IMPORTING" | "IMPORTED" | "FAILED"); { benchmark }
+   * narrows to one benchmark name.
+   */
+  listImports(options?: ListImportsOptions): BenchmarkImportList;
+  /**
+   * Delete a benchmark you own, with every version, task, and archived
+   * solution. Refused (benchmark_in_use) while any job still references it —
+   * a benchmark is never deleted out from under a job that measured against it,
+   * and `err.details.sampleJobIds` names the jobs blocking it. A platform
+   * benchmark is refused with benchmark_not_owned; a name you cannot see is a
+   * plain not-found.
+   */
+  delete(name: string): Promise<void>;
 }
 
 /** Client for the caller's own private (bring-your-own) harnesses */
@@ -855,6 +946,16 @@ export interface CustomHarnessesClient {
   get(name: string): Promise<CustomHarness>;
   /** Delete a custom harness. Past jobs keep their recorded harness. */
   delete(name: string): Promise<void>;
+  /**
+   * Register or replace a harness in ONE call, under the name you give.
+   *
+   * Use this instead of delete()+create() to change an existing registration:
+   * the pair leaves a window where the harness does not exist, and anything
+   * naming it in that window fails for a change that was only ever meant to be
+   * an edit. This is a full replacement, not a patch — every field comes from
+   * this call, and an omitted `env` becomes empty.
+   */
+  upsert(name: string, input: CustomHarnessUpsertInput): Promise<CustomHarness>;
 }
 
 /** Client for hosted jobs */
@@ -955,4 +1056,236 @@ export interface JobsClient {
     id: string,
     options?: ExportJobOptions
   ): Promise<Buffer | string | ReadableStream<Uint8Array>>;
+}
+
+// =============================================================================
+// ERROR VOCABULARY
+// =============================================================================
+
+/**
+ * Every error code the hosted API can return, as a closed list.
+ *
+ * This exists so a typo cannot compile. `err.code === "insufficient_creidts"`
+ * used to typecheck (code was `string`) and then silently never match, which is
+ * the worst shape a bug can take: the branch looks handled and never runs.
+ *
+ * It mirrors HOSTED_API_ERROR_CODES on the server and is published verbatim at
+ * GET /api/meta as `errorCodes`. A server newer than this SDK may send a code
+ * that is not listed here — `EvolveApiError.code` widens to string for exactly
+ * that case, so an unknown code is still readable, just not narrowable.
+ */
+export const HOSTED_ERROR_CODES = [
+  "missing_authorization",
+  "invalid_api_key",
+  "credential_service_unavailable",
+  "rate_limited",
+  "insufficient_credits",
+  "invalid_json",
+  "invalid_input",
+  "invalid_limit",
+  "invalid_status",
+  "invalid_cursor",
+  "invalid_after",
+  "invalid_format",
+  "invalid_ids",
+  "invalid_multipart",
+  "idempotency_key_reused",
+  "benchmark_not_found",
+  "benchmark_version_not_found",
+  "benchmark_name_taken",
+  "benchmark_in_use",
+  "benchmark_not_owned",
+  "no_active_version",
+  "version_not_ready",
+  "unknown_task_keys",
+  "no_tasks",
+  "custom_harness_not_found",
+  "custom_harness_name_taken",
+  "custom_harness_name_reserved",
+  "custom_harness_invalid_name",
+  "custom_harness_source_required",
+  "custom_harness_source_conflict",
+  "custom_harness_invalid_env",
+  "custom_harness_too_large",
+  "custom_harness_limit_reached",
+  "harness_version_not_found",
+  "job_too_large",
+  "provider_unsupported",
+  "job_not_found",
+  "job_not_terminal",
+  "no_failed_runs",
+  "trial_not_found",
+  "concurrent_update",
+  "regrade_source_ineligible",
+  "no_regradable_runs",
+  "regrade_not_found",
+  "import_not_found",
+  "import_too_large",
+  "invalid_archive",
+  "internal_error",
+] as const;
+
+/** One of the API's stable error codes. */
+export type HostedErrorCode = (typeof HOSTED_ERROR_CODES)[number];
+
+/** True when `value` is a code this SDK version knows about (narrowing guard). */
+export function isHostedErrorCode(value: unknown): value is HostedErrorCode {
+  return (
+    typeof value === "string" && (HOSTED_ERROR_CODES as readonly string[]).includes(value)
+  );
+}
+
+// =============================================================================
+// CAPABILITY DOCUMENT (GET /api/meta)
+// =============================================================================
+
+/** A closed vocabulary a client renders, with the members that end it. */
+export interface StatusVocabulary {
+  values: string[];
+  /** Members after which nothing more happens — a watcher may stop here. */
+  terminal: string[];
+  description: string;
+}
+
+/** One model a harness can drive. */
+export interface HarnessModel {
+  alias: string;
+  modelId: string;
+  description: string | null;
+}
+
+/** One harness the platform can run. */
+export interface HarnessCapability {
+  name: string;
+  /** false = registered but not runnable; `reason` says why. */
+  runnable: boolean;
+  reason: string | null;
+  /**
+   * What the local SDK would run if no model were named. The hosted API always
+   * requires an explicit model, so this is a picker's pre-selection, not a
+   * server-side default.
+   */
+  defaultModel: string | null;
+  models: HarnessModel[];
+  /** Whether `agents[].harnessVersion` may pin this harness. */
+  versionPinnable: boolean;
+  /**
+   * Newest published version, for a "your pin is out of date" badge. Null means
+   * "not known right now", never "up to date".
+   */
+  latestVersion: string | null;
+}
+
+/** One sandbox provider, its ceilings, and what it refuses. */
+export interface ProviderCapability {
+  name: string;
+  default: boolean;
+  sizing: {
+    maxCpus: number;
+    maxMemoryMb: number;
+    maxStorageMb: number;
+    storage: "sized" | "fixed";
+  };
+  refuses: { capability: string; reason: string }[];
+}
+
+/**
+ * The capability document: everything a client would otherwise hardcode.
+ *
+ * Public and cacheable — no API key needed, so a signed-out page can populate
+ * its own harness picker.
+ */
+export interface CapabilityDocument {
+  /** Bumped when a FIELD changes meaning, never when a value changes. */
+  schemaVersion: number;
+  harnesses: HarnessCapability[];
+  customHarnesses: {
+    namePattern: string;
+    maxNameLength: number;
+    maxRunCommandLength: number;
+    maxInstallScriptLength: number;
+    maxEnvEntries: number;
+    maxPerUser: number;
+    maxUploadBytes: number;
+    /** Built-in names a registration may not reuse. */
+    reservedNames: string[];
+    /** Env keys the platform owns; declaring one is refused at registration. */
+    reservedEnvKeys: string[];
+  };
+  sandboxProviders: ProviderCapability[];
+  /** Constraints that hold on EVERY provider. */
+  platformConstraints: { capability: string; reason: string }[];
+  networkModes: string[];
+  statuses: {
+    job: StatusVocabulary;
+    trial: StatusVocabulary;
+    import: StatusVocabulary;
+    regradeJob: StatusVocabulary;
+    regradeResult: StatusVocabulary;
+    benchmarkVersion: StatusVocabulary;
+  };
+  limits: {
+    job: {
+      maxRunsPerTask: number;
+      maxAgents: number;
+      maxTrials: number;
+      concurrency: { default: number; max: number };
+      defaultMaxTrialSpendUsd: number;
+      defaultSandboxProvider: string;
+      defaultSizing: { cpus: number; memoryMb: number; storageMb: number };
+      /** Every agent must name a model; the server applies no default. */
+      modelRequired: boolean;
+    };
+    pagination: {
+      collections: { default: number; max: number };
+      benchmarkTasks: { default: number; max: number };
+      regradeResults: { default: number; max: number };
+    };
+    uploads: {
+      benchmarkArchiveBytes: number;
+      customHarnessTarballBytes: number;
+    };
+    benchmarkNames: {
+      pattern: string;
+      maxNameLength: number;
+      maxVersionLength: number;
+      maxGitUrlLength: number;
+      maxGitRefLength: number;
+    };
+    /** How many items an error MESSAGE names before "and N more". */
+    maxItemsNamedInErrorMessage: number;
+  };
+  errorCodes: string[];
+}
+
+// =============================================================================
+// UPSTREAM (version awareness)
+// =============================================================================
+
+/**
+ * Where a benchmark's git source points now, versus what its active version was
+ * built from. Null on a benchmark whose source cannot be re-resolved — an
+ * uploaded corpus, a seeded one, or one imported before provenance was
+ * recorded. Null is "nothing to watch", never "up to date".
+ */
+export interface UpstreamStatus {
+  /** The ref the active version was imported from. */
+  ref: string;
+  /** The commit the active version was built from. */
+  currentCommit: string;
+  /** Where the ref points upstream now; null when the last check failed. */
+  latestCommit: string | null;
+  /** True when upstream has moved off the built-from commit. Branch on this. */
+  moved: boolean;
+  /**
+   * Always null today. Counting commits between two SHAs needs the commit
+   * graph, i.e. a real fetch per benchmark per check; the watcher deliberately
+   * only does a reference advertisement. Reserved so a host comparison API
+   * could fill it later without a wire change.
+   */
+  behindBy: number | null;
+  /** When the cached answer was taken; null before the first check. */
+  checkedAt: string | null;
+  /** Why the last check failed. Show "could not check", not "up to date". */
+  error: string | null;
 }

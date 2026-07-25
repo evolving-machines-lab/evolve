@@ -11,7 +11,8 @@ Coverage:
   not-found, name-taken
 - benchmarks().get_active() — runnable shape (non-optional version/tasks) + NoActiveVersionError
 - benchmarks().import_benchmark()/get_import()/watch_import() — git import flow
-  (self-describing jobs, IMPORTED/FAILED terminal statuses)
+  (self-describing jobs; the shared job vocabulary QUEUED -> RUNNING ->
+  COMPLETED | FAILED, with COMPLETED/FAILED terminal)
 - jobs().run() — contract body (field order), Idempotency-Key header
 - jobs().get()/list()/trials() — mapping + cursor params + status filter
 - jobs().list()/trials() — await one page + async-for auto-pagination across cursors
@@ -339,7 +340,7 @@ class TestBenchmarks:
     async def test_import_benchmark_posts_git_source(self):
         fake = FakeUrlopen([
             ('/api/benchmarks/imports', {
-                'id': 'imp-1', 'status': 'IMPORTING', 'benchmarkName': 'my-benchmark', 'version': '1.2',
+                'id': 'imp-1', 'status': 'QUEUED', 'benchmarkName': 'my-benchmark', 'version': '1.2',
             }),
         ])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
@@ -364,7 +365,7 @@ class TestBenchmarks:
             'ref': b'v1.2.0',
         }
         assert job.id == 'imp-1'
-        assert job.status == 'IMPORTING'
+        assert job.status == 'QUEUED'
         assert job.benchmark_name == 'my-benchmark'
         assert job.version == '1.2'
 
@@ -382,7 +383,7 @@ class TestBenchmarks:
 
         fake = FakeUrlopen([
             ('/api/benchmarks/imports', {
-                'id': 'imp-9', 'status': 'IMPORTING', 'benchmarkName': 'my-bench', 'version': '0.1',
+                'id': 'imp-9', 'status': 'QUEUED', 'benchmarkName': 'my-bench', 'version': '0.1',
             }),
         ])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
@@ -411,27 +412,27 @@ class TestBenchmarks:
         assert _tar_gzip_directory(str(tmp_path)) == _tar_gzip_directory(str(tmp_path))
 
         assert job.id == 'imp-9'
-        assert job.status == 'IMPORTING'
+        assert job.status == 'QUEUED'
         assert job.benchmark_name == 'my-bench'
 
     @pytest.mark.asyncio
     async def test_get_import_maps_status(self):
         fake = FakeUrlopen([
             ('/api/benchmarks/imports/imp-1', {
-                'id': 'imp-1', 'status': 'IMPORTED', 'benchmarkName': 'my-benchmark',
-                'version': '1.2', 'taskCount': 113, 'error': None,
+                'id': 'imp-1', 'status': 'COMPLETED', 'benchmarkName': 'my-benchmark',
+                'version': '1.2', 'taskCount': 113, 'failure': None,
             }),
         ])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
             job = await benchmarks_factory(CONFIG).get_import('imp-1')
 
         assert job.id == 'imp-1'
-        assert job.status == 'IMPORTED'
+        assert job.status == 'COMPLETED'
         # Self-describing: a watcher holding only the id learns what it watches
         assert job.benchmark_name == 'my-benchmark'
         assert job.version == '1.2'
         assert job.task_count == 113
-        assert job.error is None
+        assert job.failure is None
 
     @pytest.mark.asyncio
     async def test_get_import_maps_structured_error_to_snake_case(self):
@@ -441,7 +442,8 @@ class TestBenchmarks:
                 'status': 'FAILED',
                 'benchmarkName': 'my-benchmark',
                 'version': '1.2',
-                'error': {
+                'failure': {
+                    'code': 'import_failed',
                     'message': '1/2 task(s) failed to parse',
                     'failures': [{'taskKey': 'bad-task', 'error': 'boom'}],
                 },
@@ -452,19 +454,19 @@ class TestBenchmarks:
             job = await benchmarks_factory(CONFIG).get_import('imp-2')
 
         assert job.status == 'FAILED'
-        assert job.error is not None
-        assert job.error.message == '1/2 task(s) failed to parse'
+        assert job.failure is not None
+        assert job.failure.message == '1/2 task(s) failed to parse'
         # Wire camelCase (taskKey) never reaches Python users
-        assert job.error.failures[0].task_key == 'bad-task'
-        assert job.error.failures[0].error == 'boom'
+        assert job.failure.failures[0].task_key == 'bad-task'
+        assert job.failure.failures[0].error == 'boom'
 
     @pytest.mark.asyncio
     async def test_watch_import_polls_until_terminal(self):
         job = {'id': 'imp-1', 'benchmarkName': 'my-benchmark', 'version': '1.2'}
         responses = iter([
-            {**job, 'status': 'IMPORTING'},
-            {**job, 'status': 'IMPORTING', 'taskCount': 0},
-            {**job, 'status': 'IMPORTED', 'taskCount': 113},
+            {**job, 'status': 'QUEUED'},
+            {**job, 'status': 'RUNNING', 'taskCount': 0},
+            {**job, 'status': 'COMPLETED', 'taskCount': 113},
         ])
 
         class SequenceUrlopen(FakeUrlopen):
@@ -481,10 +483,10 @@ class TestBenchmarks:
                 poll_interval_s=0.001,
             )
 
-        assert done.status == 'IMPORTED'
+        assert done.status == 'COMPLETED'
         assert done.task_count == 113
         assert len(fake.requests) == 3
-        assert statuses == ['IMPORTING', 'IMPORTED']
+        assert statuses == ['QUEUED', 'RUNNING', 'COMPLETED']
 
     @pytest.mark.asyncio
     async def test_import_requires_complete_git_source(self):

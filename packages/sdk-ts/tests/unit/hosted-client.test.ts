@@ -297,7 +297,7 @@ async function testImportGitSource() {
   try {
     setMockResponse("/api/benchmarks/imports", {
       status: 202,
-      body: { id: "imp-1", benchmarkName: "deep-swe", version: "1.2", status: "IMPORTING" },
+      body: { id: "imp-1", benchmarkName: "deep-swe", version: "1.2", status: "QUEUED" },
     });
 
     const b = benchmarks({ apiKey: "test-key", baseUrl: BASE });
@@ -323,8 +323,8 @@ async function testImportGitSource() {
 
     assertEqual(
       imported,
-      { id: "imp-1", status: "IMPORTING", benchmarkName: "deep-swe", version: "1.2" },
-      "202 response mapped (id, status, benchmarkName, version)"
+      { id: "imp-1", status: "QUEUED", benchmarkName: "deep-swe", version: "1.2", failure: null },
+      "202 response mapped (id, status, benchmarkName, version, failure)"
     );
   } finally {
     restoreFetch();
@@ -363,7 +363,7 @@ async function testImportDirectorySource() {
     await writeFile(join(dir, "tasks", "abc", "task.toml"), 'schema_version = "1.1"\n');
     setMockResponse("/api/benchmarks/imports", {
       status: 202,
-      body: { id: "imp-2", benchmarkName: "my-bench", version: "0.1", status: "IMPORTING" },
+      body: { id: "imp-2", benchmarkName: "my-bench", version: "0.1", status: "QUEUED" },
     });
 
     const b = benchmarks({ apiKey: "test-key", baseUrl: BASE });
@@ -399,8 +399,8 @@ async function testImportDirectorySource() {
 
     assertEqual(
       imported,
-      { id: "imp-2", status: "IMPORTING", benchmarkName: "my-bench", version: "0.1" },
-      "202 response mapped (id, status, benchmarkName, version)"
+      { id: "imp-2", status: "QUEUED", benchmarkName: "my-bench", version: "0.1", failure: null },
+      "202 response mapped (id, status, benchmarkName, version, failure)"
     );
   } finally {
     restoreFetch();
@@ -414,7 +414,7 @@ async function testGetImport() {
   try {
     setMockResponse("/api/benchmarks/imports/imp-1", {
       status: 200,
-      body: { id: "imp-1", status: "IMPORTED", benchmarkName: "deep-swe", version: "1.2", taskCount: 113, error: null },
+      body: { id: "imp-1", status: "COMPLETED", benchmarkName: "deep-swe", version: "1.2", taskCount: 113, failure: null },
     });
 
     const b = benchmarks({ apiKey: "test-key", baseUrl: BASE });
@@ -426,8 +426,8 @@ async function testGetImport() {
     );
     assertEqual(
       imported,
-      { id: "imp-1", status: "IMPORTED", benchmarkName: "deep-swe", version: "1.2", error: null, taskCount: 113 },
-      "self-describing job: id/status/benchmarkName/version/error/taskCount"
+      { id: "imp-1", status: "COMPLETED", benchmarkName: "deep-swe", version: "1.2", failure: null, taskCount: 113 },
+      "self-describing job: id/status/benchmarkName/version/failure/taskCount"
     );
   } finally {
     restoreFetch();
@@ -440,9 +440,9 @@ async function testWatchImportPollsToTerminal() {
   try {
     const job = { id: "imp-1", benchmarkName: "deep-swe", version: "1.2" };
     const statuses = [
-      { ...job, status: "IMPORTING", error: null, taskCount: 0 },
-      { ...job, status: "IMPORTING", error: null, taskCount: 0 },
-      { ...job, status: "IMPORTED", error: null, taskCount: 113 },
+      { ...job, status: "QUEUED", failure: null, taskCount: 0 },
+      { ...job, status: "RUNNING", failure: null, taskCount: 0 },
+      { ...job, status: "COMPLETED", failure: null, taskCount: 113 },
     ];
     let calls = 0;
     (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
@@ -460,19 +460,23 @@ async function testWatchImportPollsToTerminal() {
     });
 
     assertEqual(calls, 3, "polled until the terminal status");
-    assertEqual(seen, ["IMPORTING", "IMPORTED"], "onStatus fires only on status changes");
-    assertEqual(final.status, "IMPORTED", "resolves with the terminal import");
+    assertEqual(seen, ["QUEUED", "RUNNING", "COMPLETED"], "onStatus fires on every status change");
+    assertEqual(final.status, "COMPLETED", "resolves with the terminal import");
     assertEqual(final.taskCount, 113, "terminal import carries taskCount");
 
     // FAILED is terminal too, with the structured error surfaced
     installMockFetch();
     setMockResponse("/api/benchmarks/imports/imp-2", {
       status: 200,
-      body: { ...job, id: "imp-2", status: "FAILED", error: { message: "task.yaml missing for task abc" }, taskCount: 0 },
+      body: { ...job, id: "imp-2", status: "FAILED", failure: { code: "import_failed", message: "task.yaml missing for task abc" }, taskCount: 0 },
     });
     const failed = await b.watchImport("imp-2", { pollIntervalMs: 1 });
     assertEqual(failed.status, "FAILED", "FAILED ends the watch");
-    assertEqual(failed.error, { message: "task.yaml missing for task abc" }, "failure detail surfaced");
+    assertEqual(
+      failed.failure,
+      { code: "import_failed", message: "task.yaml missing for task abc" },
+      "failure detail surfaced on `failure`, never `error` — `error` means the REQUEST failed"
+    );
   } finally {
     restoreFetch();
   }
@@ -2379,7 +2383,7 @@ async function testRootExportsHostedTypes() {
 
   // Source: the hosted export block in src/index.ts names the documented types
   const rootSrc = await readFile(new URL("../../src/index.ts", import.meta.url), "utf-8");
-  for (const t of ["EvalSandboxProvider", "BenchmarkImportError", "JobInput", "JobStatus", "CustomHarness", "CustomHarnessInput"]) {
+  for (const t of ["EvalSandboxProvider", "BenchmarkImportFailure", "JobInput", "JobStatus", "CustomHarness", "CustomHarnessInput"]) {
     assert(new RegExp(`type ${t},`).test(rootSrc), `src/index.ts exports type ${t}`);
   }
 

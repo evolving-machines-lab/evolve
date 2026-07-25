@@ -14,6 +14,18 @@ const evals = jobs();                // your jobs
 
 All three read `EVOLVE_API_KEY` from the environment, or accept `{ apiKey, baseUrl }`.
 
+If you would rather configure once, `hosted()` is the same three clients behind one door:
+
+```ts
+import { hosted } from "@evolvingmachines/sdk";
+
+const evolve = hosted();                    // or hosted({ apiKey, baseUrl })
+const catalog = await evolve.benchmarks.list();
+const job = await evolve.jobs.run({ /* … */ });
+```
+
+It is called `hosted()` rather than `evolve()` because `Evolve` is already the local-sandbox class in this package, and two exports a shift key apart doing unrelated things is a trap worth avoiding. The three clients are built on first access, so `evolve.meta()` — the one call that needs no credentials — works before an API key is set.
+
 ---
 
 ## Run a job
@@ -401,9 +413,71 @@ npx evolve-evals custom-harnesses remove acme-cli
 - `--limit` and `--cursor` page every listing the same way — `list`, `trials`, `trace`, `benchmarks`, `benchmarks get` (its task list), `custom-harnesses`, and `regrade-job`.
 - Human-readable tables by default; `--json` emits machine-readable JSON (NDJSON for `--watch` streams).
 - Credentials: `$EVOLVE_API_KEY`, or `--api-key`; `--base-url` targets a non-default deployment.
-- Exit codes: `0` success (with `--watch`: `COMPLETED` / import `IMPORTED`), `1` runtime failure (with `--watch`: `FAILED` or `CANCELLED`), `2` usage error.
+- Exit codes: `0` success (with `--watch`: `COMPLETED`, for a job or an import alike), `1` runtime failure (with `--watch`: `FAILED` or `CANCELLED`), `2` usage error.
 
 Benchmark imports and harness registration have their own subcommands — `npx evolve-evals import …` and `npx evolve-evals custom-harnesses add …` — shown in [Bring your own benchmark](#bring-your-own-benchmark) and [Bring your own harness](#bring-your-own-harness).
+
+---
+
+## What the platform supports
+
+Everything a client would otherwise hardcode — the legal harness names, the status enums, the limits, the error codes — is one public, cacheable document. It needs no API key, so a signed-out page can populate its own harness picker.
+
+```ts
+const { harnesses, sandboxProviders, statuses, limits, errorCodes } = await hosted().meta();
+
+// A model picker, without a hardcoded table
+for (const harness of harnesses) {
+    console.log(harness.name, harness.defaultModel, harness.models.length);
+}
+```
+
+`GET /api/meta` is the wire form. Every field is derived from the module that enforces it, so a published limit and an enforced limit cannot drift apart, and a new harness appears here the moment the platform can run it.
+
+What is in it:
+
+**`harnesses`** — every built-in, with `defaultModel` and the full `models` list for a picker, `runnable` (and `reason` when it is not), `versionPinnable`, and `latestVersion` for a "your pin is out of date" badge. `defaultModel` is a suggestion, not a server-side default: `limits.job.modelRequired` is `true`, and a job that omits `model` is refused.
+
+**`sandboxProviders`** — each provider's real resource ceilings and, in `refuses`, the capabilities it will not run with the reason the runner itself would give. `platformConstraints` holds the refusals that apply everywhere, so "runs nowhere" is distinguishable from "runs somewhere else".
+
+**`statuses`** — the job, trial, import, regrade-job, regrade-result, and benchmark-version vocabularies, each with its `terminal` members marked. A watcher stops on `terminal`; a status bar renders `values` without hardcoding the enum.
+
+**`limits`** — the concurrency ceiling and default, the per-trial spend default, the trial-matrix ceiling, upload caps, the per-user harness cap, and the pagination bounds of every paged collection.
+
+**`errorCodes`** — the whole vocabulary below, in one array.
+
+**`customHarnesses`** — the registration rules (name pattern, size caps, reserved names and reserved env keys), so a form can validate before it POSTs.
+
+`schemaVersion` moves when a field is added, removed, or changes meaning — never when a value changes. Pin behavior to it, not to a deploy date. Responses carry an `ETag` and `Cache-Control: public, max-age=300`; a conditional request gets a 304.
+
+---
+
+## Errors
+
+Every failure is one shape:
+
+```ts
+import { EvolveApiError } from "@evolvingmachines/sdk";
+
+try {
+    await evolve.jobs.run({ benchmark: "deep-swe", agents, sandboxProvider: "modal" });
+} catch (err) {
+    if (err instanceof EvolveApiError && err.code === "provider_unsupported") {
+        // Every refused task, with its reason. Not a sentence to regex.
+        const { provider, refusedTasks } = err.details as {
+            provider: string;
+            refusedTasks: { taskKey: string; reason: string }[];
+        };
+        console.log(`${refusedTasks.length} tasks cannot run on ${provider}`);
+    }
+}
+```
+
+- **`code`** is the stable identifier, typed as a closed union, so `err.code === "insufficient_creidts"` is a compile error rather than a branch that silently never runs. `HOSTED_ERROR_CODES` and `isHostedErrorCode()` are exported for runtime checks; a server newer than your SDK may send a code the union does not list, which is why `code` widens to `string`.
+- **`message`** is the human sentence, and it may be shortened. **`details`** never is. When a refusal says "and 8 more", all of them are in `details` — that is the rule, and it is why `details` exists.
+- **`param`** names the input that was wrong — a body path (`agents[0].harness`), a query parameter (`limit`), or a multipart part (`runCommand`) — so a form can highlight one field instead of showing a banner.
+- **`retryAfterSec`** is set on `429` and `503`, read from the body first and the `Retry-After` header second (a cross-origin browser fetch cannot always see the header).
+- **`requestId`** identifies the failure server-side. Quote it in a support thread.
 
 ---
 
@@ -518,7 +592,7 @@ const localImport = await catalog.import({
     version: "1.0",
 });
 
-// Block until IMPORTED or FAILED
+// Block until COMPLETED or FAILED
 const done = await catalog.watchImport(
     importJob.id,
     {
@@ -528,10 +602,18 @@ const done = await catalog.watchImport(
 );
 
 if (done.status === "FAILED") {
-    console.log(done.error?.message);              // e.g. "2/113 task(s) failed to parse"
-    for (const failure of done.error?.failures ?? []) {
-        console.log(failure.taskKey, failure.error);
+    // `failure`, not `error` — `error` is the key the FAILURE ENVELOPE uses, so
+    // `if (body.error) throw` has to stay correct on a healthy read of a failed
+    // import. Same grammar as a job's `failure`.
+    console.log(done.failure?.code, done.failure?.message);  // "2/113 task(s) failed to parse"
+    for (const failed of done.failure?.failures ?? []) {
+        console.log(failed.taskKey, failed.error);
     }
+}
+
+// Lost the id? List your imports — await one page, or walk them all.
+for await (const job of catalog.listImports({ status: "FAILED" })) {
+    console.log(job.id, job.benchmarkName, job.version, job.error?.message);
 }
 ```
 
@@ -548,6 +630,64 @@ npx evolve-evals import status <id>
 
 Every lane resolves to the same thing — a Harbor-layout directory — and is held to the same rules. The corpus root is a directory whose `tasks/` subdirectory holds one directory per task, or the tasks directory itself. Provenance is recorded per lane: the resolved commit for a git import, the sha256 of the exact uploaded bytes for a directory. On the wire an import is `multipart/form-data`: `benchmarkName` and `version` as named parts, and either `gitUrl` + `ref` or the gzipped corpus as a `file` part — the SDK produces it for you — and uploads past the compressed-size cap (512 MB by default) are refused with a `413 import_too_large`. The metadata parts come first, so a name owned by someone else is refused with a `409 benchmark_name_taken` before the upload is received rather than after.
 
+### Deleting one
+
+A benchmark name is a global resource, and a typo used to squat one permanently. `delete()` takes it back:
+
+```ts
+await catalog.delete("my-bnech");   // 204, and the archived solutions go with it
+```
+
+The rules are worth knowing before you reach for it:
+
+- **You must own it.** A platform-curated benchmark is refused with `benchmark_not_owned`; a name you cannot see reads as a plain not-found, exactly like a name that does not exist, so the route cannot be used to discover what other accounts have.
+- **A referenced benchmark is never deleted.** If any job ran against it, you get `409 benchmark_in_use`, and `details.sampleJobIds` names some of the jobs blocking it (with `details.jobCount` for how many there are). There is no cascade and no force: a job's meaning is "this agent scored 0.42 on *these* tasks", and deleting the tasks would leave a number that refers to nothing. Delete the jobs first if you mean it.
+- **Versions, tasks, and the private solutions archive go with it.** Mirrored task images do not — they are content-addressed and shared with any other benchmark pinning the same image.
+
+### When upstream moves
+
+A benchmark imported from git records what it was built from, and the platform periodically re-resolves where that ref points now. The answer rides on the benchmark:
+
+```ts
+const bench = await catalog.get("my-bench");
+
+if (bench.upstream?.moved) {
+    console.log(`${bench.upstream.ref} has moved past ${bench.upstream.currentCommit}`);
+    // → import a NEW version when you want it; nothing happens automatically
+}
+```
+
+```
+upstream: {
+    ref: "main",                  // what the active version was imported from
+    currentCommit: "a1b2c3…",     // what it was built from
+    latestCommit: "d4e5f6…",      // where the ref points now (null if the check failed)
+    moved: true,                  // branch on this
+    behindBy: null,               // see below
+    checkedAt: "2026-07-24T…",    // null before the first check
+    error: null,                  // why the last check failed
+}
+```
+
+Four things this deliberately does **not** do:
+
+- **It never imports.** A new version is always an immutable row you create, with `catalog.import()`. Watching produces a fact, never an action.
+- **It never modifies an existing version.** A version is what it was built from, permanently.
+- **`upstream` is `null`, not "up to date", when there is nothing to watch** — an uploaded corpus, a seeded one, or one imported before provenance was recorded. Null means nobody checked, and a badge should not appear.
+- **`behindBy` is always `null` today.** Counting commits between two SHAs needs the commit graph, i.e. a real fetch from the remote per benchmark per check. The check is a single reference advertisement (`git ls-remote`) precisely so it can be cheap, and `moved` is what a badge actually needs. The field stays in the shape so a host comparison API could fill it later without a wire change.
+
+A failed check keeps the last known `latestCommit` and sets `error`: a network blip should not quietly erase an update that is genuinely available. Show "could not check", never "up to date".
+
+The same idea covers harnesses from the other direction: a job records the `harnessVersion` it pinned, and `meta().harnesses[].latestVersion` is the newest published one. Compare the two for a "your pin is out of date" badge — one cached lookup for every job, rather than a registry round trip per job read.
+
+The CLI prints one quiet line for each moved benchmark under `benchmarks` and `benchmarks get`, and nothing at all when nothing moved:
+
+```
+my-bench@1.0 · upstream main moved — run: evolve-evals import --benchmark my-bench --version <new-version> --git-url <url> --ref main
+```
+
+It never appears in `--json` output; the same fact is on the `upstream` field there.
+
 What happens next:
 
 - **All-or-nothing parse.** Every task is parsed before anything lands; one bad task fails the whole import, with each failure named in `error.failures`. No partial corpus ever exists.
@@ -557,7 +697,7 @@ What happens next:
   - **gold** — the task's reference solution (`solution/`) is pushed through the real agent-side + verifier path and must score exactly `1.0`. Proof the task is solvable as written.
   - **no-op** — an empty submission goes straight to the verifier and must *not* score `1.0`. A task a do-nothing agent passes measures nothing.
 
-`IMPORTED` is the import job's terminal success: the corpus landed as a benchmark version, visible in the catalog (`catalog.get("my-bench@1.0")`) in state `VALIDATING`. Activation is a separate, operator-run step — importing never triggers it. The version stays `VALIDATING` until the gate passes in full and promotes it to `READY`, the one state that accepts jobs; watch the state through `catalog.get()`. `evals.run()` against any other state is rejected with a `409 version_not_ready` naming it. Once `READY`:
+`COMPLETED` is the import job's terminal success: the corpus landed as a benchmark version, visible in the catalog (`catalog.get("my-bench@1.0")`) in state `VALIDATING`. Activation is a separate, operator-run step — importing never triggers it. The version stays `VALIDATING` until the gate passes in full and promotes it to `READY`, the one state that accepts jobs; watch the state through `catalog.get()`. `evals.run()` against any other state is rejected with a `409 version_not_ready` naming it. Once `READY`:
 
 ```ts
 const job = await evals.run({
@@ -720,6 +860,12 @@ const registered = await harnesses.list();     // one page of your harnesses
 for await (const h of harnesses.list()) { /* … */ }  // or walk them all
 const one = await harnesses.get("acme-cli");   // name, source, runCommand, env, timestamps
 await harnesses.delete("acme-cli");            // past jobs keep the harness they recorded
+
+// Change one WITHOUT a window where it stops existing:
+await harnesses.upsert("acme-cli", {
+    runCommand: "acme-cli --headless --v2",
+    installScript: "curl -fsSL https://acme.dev/install.sh | sh",
+});
 ```
 
 Both upload lanes — a harness and a benchmark corpus — send `multipart/form-data`: the metadata travels as named parts and the bytes as a `file` part. The SDK builds that for you, and it is why nothing sensitive rides a URL: a run command and a set of environment values in a query string end up in every access log and proxy buffer between you and the server.
@@ -773,7 +919,8 @@ If your CLI ignores `OPENAI_BASE_URL` and you do not do this, it will try to rea
 How it is built, and what that costs you:
 
 - The install script (or the uploaded tarball) runs once in a **throwaway builder sandbox that has internet and ZERO secrets**. Everything it fetches must therefore be **publicly fetchable** — a private registry that needs a token cannot be reached from there — and it must leave its executables in **`$PREFIX/bin`**.
-- A custom harness is **versioned by its registered content** — the install source, the `runCommand` and the declared `env`, together — so `harnessVersion` on an agent using it is rejected. Change any of the three and you get a new recorded version and a new bundle digest; re-register (delete, then create) to change what runs.
+- A custom harness is **versioned by its registered content** — the install source, the `runCommand` and the declared `env`, together — so `harnessVersion` on an agent using it is rejected. Change any of the three and you get a new recorded version and a new bundle digest.
+- **`upsert()` is how you change one.** `delete()` then `create()` leaves a window where the harness does not exist, and anything naming it in that window — a scripted job, a colleague's run — fails with "no such harness" for a change that was only ever meant to be an edit. `upsert()` is one call: the name holds the old registration or the new one, never nothing. It creates when the name is free (`201`, with `Location`) and replaces when it is not (`200`), and replacing consumes no new registration slot, so you can still fix a broken run command at the ceiling. It is a full REPLACEMENT, not a patch: every field comes from the call, so an omitted `env` becomes empty and the source switches wholesale.
 - **You may register up to 25 harnesses.** Past that, registration is refused with `custom_harness_limit_reached`; delete one to make room. Each registration is a full CLI the platform builds and caches for you.
 
 **What keeps a trial inside its budget.** The spend cap is enforced on the gateway key, so model traffic that goes through `$EVOLVE_GATEWAY_BASE_URL` is metered and capped. What confines traffic to that route is the **task's network policy**, not the harness: under `no-network` — the default — the box can reach the gateway and nothing else, and the cap is a hard guarantee. On a task declaring `allowlist` or `public`, a harness *can* reach a provider directly, and that traffic is neither metered nor capped. Registration refuses credential-shaped `env` keys, but that is a guardrail against the obvious mistake, not a boundary.
@@ -810,7 +957,20 @@ What you give up versus a built-in:
 | `INDETERMINATE` | The platform cannot tell whether the trial completed |
 | `CANCELLED` | Cancelled before settling |
 
-**Benchmark version** (`BenchmarkVersion.state`) — the catalog's lifecycle, distinct from the import job's `IMPORTING → IMPORTED | FAILED`:
+**Import** (`BenchmarkImport.status`) — the SAME four words a job uses, because an import is a job:
+
+| Status | Meaning |
+|--------|---------|
+| `QUEUED` | Accepted; the corpus row exists and nothing has started |
+| `RUNNING` | Cloning or extracting, then parsing and building the environment |
+| `COMPLETED` | Terminal — the corpus landed as a benchmark version |
+| `FAILED` | Terminal — read `failure` |
+
+It used to spell these `IMPORTING → IMPORTED | FAILED`. Nothing published depended on that, and a third status vocabulary is exactly what forces a status chip to carry a translation table forever.
+
+A terminal import stays readable. A successful import used to start answering `404` the moment its version was superseded, telling a watcher holding a week-old id that the import never happened — it `COMPLETED`, and the catalog moving on afterwards does not unmake that.
+
+**Benchmark version** (`BenchmarkVersion.state`) — the catalog's lifecycle, distinct from the import job's statuses above:
 
 ```
 DRAFT → IMPORTING → BUILDING → VALIDATING → READY
@@ -857,11 +1017,35 @@ interface Page<T> {                      // every collection, top level or neste
     hasMore: boolean;
 }
 
+// Every list() and watch() returns a DUAL-USE handle: await it for one page (or
+// the final job), or `for await` it to iterate. The handle is a full promise —
+// `.then()`, `.catch()`, and `.finally()` all work — and however many of them
+// you use, it issues exactly one request underneath.
+//
+//   const page = await catalog.list();
+//   const safe = await catalog.list().catch(() => null);
+//   await catalog.list().finally(() => spinner.stop());
+interface Awaitable<T> extends PromiseLike<T> {
+    catch<R = never>(onrejected?: ((reason: unknown) => R | PromiseLike<R>) | null): Promise<T | R>;
+    finally(onfinally?: (() => void) | null): Promise<T>;
+}
+
+interface UpstreamStatus {               // where the git source points NOW
+    ref: string;                         // what the active version was imported from
+    currentCommit: string;               // what it was built from
+    latestCommit: string | null;         // where the ref points now; null = last check failed
+    moved: boolean;                      // branch on this
+    behindBy: number | null;             // always null — see "When upstream moves"
+    checkedAt: string | null;            // null before the first check
+    error: string | null;                // why the last check failed
+}
+
 interface Benchmark {                    // catalog.list() / catalog.get(ref)
     name: string;
     title: string | null;
     description: string | null;
     activeVersion: BenchmarkVersion | null;
+    upstream: UpstreamStatus | null;     // null = nothing to watch, NEVER "up to date"
     versions?: BenchmarkVersion[];       // get() only, newest first
     selectedVersion?: BenchmarkVersion | null;  // get() only — the tasks' provenance
     tasks?: Page<Task>;                  // get() only; page with { limit, cursor }
@@ -987,7 +1171,8 @@ interface BenchmarkImportSource {            // benchmarks().import() — EITHER
 
 interface BenchmarkImport {
     id: string;
-    status: "IMPORTING" | "IMPORTED" | "FAILED";
+    status: "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED";   // the job vocabulary
+    failure: BenchmarkImportFailure | null;                  // never `error` on a 200 body
     benchmarkName: string;
     version: string;
     taskCount?: number;                      // tasks parsed, once counted

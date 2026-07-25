@@ -8,7 +8,7 @@ import type {
   ActiveBenchmark,
   Benchmark,
   BenchmarkImport,
-  BenchmarkImportError,
+  BenchmarkImportFailure,
   BenchmarkImportInput,
   BenchmarkImportStatus,
   BenchmarkList,
@@ -40,8 +40,11 @@ import type {
   JobsClient,
   JobStatus,
   JobWatch,
+  BenchmarkImportList,
+  CustomHarnessUpsertInput,
   ListBenchmarksOptions,
   ListCustomHarnessesOptions,
+  ListImportsOptions,
   ListJobsOptions,
   ListTrialsOptions,
   ModelUsage,
@@ -66,16 +69,40 @@ import type {
   TrialTraceEvent,
   TrialTraceOptions,
   TrialTracePage,
+  UpstreamStatus,
   VerifierMode,
   WatchImportOptions,
   WatchJobOptions,
+} from "./types";
+
+// Re-exported from the hosted barrel so the package root can hand them on.
+export { HOSTED_ERROR_CODES, isHostedErrorCode } from "./types";
+export type {
+  Awaitable,
+  BenchmarkImportList,
+  BenchmarkImportPage,
+  CapabilityDocument,
+  CustomHarnessUpsertInput,
+  HarnessCapability,
+  HarnessModel,
+  HostedErrorCode,
+  ListImportsOptions,
+  ProviderCapability,
+  StatusVocabulary,
+  UpstreamStatus,
+} from "./types";
+import {
+  isHostedErrorCode,
+  type Awaitable,
+  type CapabilityDocument,
+  type HostedErrorCode,
 } from "./types";
 
 export type {
   ActiveBenchmark,
   Benchmark,
   BenchmarkImport,
-  BenchmarkImportError,
+  BenchmarkImportFailure,
   BenchmarkImportInput,
   BenchmarkImportSource,
   BenchmarkImportStatus,
@@ -142,42 +169,125 @@ export type {
   WatchImportOptions,
   WatchJobOptions,
 } from "./types";
-
 /**
- * A typed failure from the hosted evals API. `message` is the server's own
- * product sentence; `code` is the stable machine-readable identifier (e.g.
- * "benchmark_not_found", "version_not_ready", "provider_unsupported",
- * "rate_limited") so callers branch on codes, never on English.
+ * A typed failure from the hosted evals API.
+ *
+ * `message` is the server's own product sentence and `code` is the stable
+ * machine-readable identifier, so callers branch on codes and never on English.
+ * `code` is typed as the closed HostedErrorCode union (widened to string for
+ * forward compatibility with a newer server), which is what makes a typo like
+ * `insufficient_creidts` a compile error instead of a branch that never runs.
+ *
+ * `param` and `details` are the machine-readable half of the refusal:
+ *
+ *   catch (err) {
+ *     if (err instanceof EvolveApiError && err.code === "provider_unsupported") {
+ *       // every refused task WITH its reason — not a sentence to regex
+ *       const refused = err.details?.refusedTasks as { taskKey: string }[];
+ *     }
+ *   }
+ *
+ * The server truncates the MESSAGE when a list is long and never truncates
+ * `details`, so the data is always complete even when the sentence says
+ * "and 8 more".
  */
 export class EvolveApiError extends Error {
   /** HTTP status of the failed response */
   readonly status: number;
   /** Stable snake_case error code from the API ("unknown_error" when absent) */
-  readonly code: string;
-  constructor(status: number, code: string, message: string) {
+  readonly code: HostedErrorCode | "unknown_error" | (string & {});
+  /**
+   * The input field this refusal is about — a body path ("agents[0].harness"),
+   * a query parameter ("limit"), or a multipart part name ("runCommand").
+   * Undefined when the failure is not about a particular field.
+   */
+  readonly param?: string;
+  /** The complete machine-readable data behind the message. Never truncated. */
+  readonly details?: Record<string, unknown>;
+  /**
+   * Seconds to wait before retrying (429/503). Read from the body first and the
+   * Retry-After header second, because a browser fetch cannot always see the
+   * header on a cross-origin response.
+   */
+  readonly retryAfterSec?: number;
+  /** Server-side id for this failure; the string to quote in a support thread. */
+  readonly requestId?: string;
+
+  constructor(
+    status: number,
+    code: string,
+    message: string,
+    extra?: {
+      param?: string;
+      details?: Record<string, unknown>;
+      retryAfterSec?: number;
+      requestId?: string;
+    }
+  ) {
     super(message);
     this.name = "EvolveApiError";
     this.status = status;
     this.code = code;
+    if (extra?.param !== undefined) this.param = extra.param;
+    if (extra?.details !== undefined) this.details = extra.details;
+    if (extra?.retryAfterSec !== undefined) this.retryAfterSec = extra.retryAfterSec;
+    if (extra?.requestId !== undefined) this.requestId = extra.requestId;
+  }
+
+  /** True when this code is one this SDK version knows about. */
+  isKnownCode(): boolean {
+    return isHostedErrorCode(this.code);
   }
 }
 
 /** Map a non-ok Response to the typed EvolveApiError and throw it. */
 async function throwApiError(res: Response): Promise<never> {
   const text = await res.text().catch(() => "");
+  // Header fallbacks, read before the body so an unparseable body still yields
+  // a usable requestId and retry delay.
+  const headerRequestId = res.headers?.get?.("x-request-id") ?? undefined;
+  const headerRetryAfter = Number(res.headers?.get?.("retry-after"));
+  const retryAfterFromHeader = Number.isFinite(headerRetryAfter)
+    ? headerRetryAfter
+    : undefined;
+
   try {
-    const body = JSON.parse(text) as { error?: { code?: unknown; message?: unknown } };
+    const body = JSON.parse(text) as {
+      error?: {
+        code?: unknown;
+        message?: unknown;
+        param?: unknown;
+        details?: unknown;
+        retryAfterSec?: unknown;
+        requestId?: unknown;
+      };
+    };
     if (body?.error && typeof body.error === "object") {
       const code = typeof body.error.code === "string" ? body.error.code : "unknown_error";
       const message =
         typeof body.error.message === "string" ? body.error.message : res.statusText;
-      throw new EvolveApiError(res.status, code, message);
+      throw new EvolveApiError(res.status, code, message, {
+        param: typeof body.error.param === "string" ? body.error.param : undefined,
+        details:
+          body.error.details && typeof body.error.details === "object"
+            ? (body.error.details as Record<string, unknown>)
+            : undefined,
+        retryAfterSec:
+          typeof body.error.retryAfterSec === "number"
+            ? body.error.retryAfterSec
+            : retryAfterFromHeader,
+        requestId:
+          typeof body.error.requestId === "string" ? body.error.requestId : headerRequestId,
+      });
     }
   } catch (error) {
     if (error instanceof EvolveApiError) throw error;
     // Fall through: unparseable body.
   }
-  throw new EvolveApiError(res.status, "unknown_error", text || res.statusText);
+  throw new EvolveApiError(res.status, "unknown_error", text || res.statusText, {
+    retryAfterSec: retryAfterFromHeader,
+    requestId: headerRequestId,
+  });
 }
 
 /**
@@ -214,7 +324,7 @@ const TERMINAL_EVENT_TYPES: ReadonlySet<string> = new Set([
 const DEFAULT_IMPORT_POLL_INTERVAL_MS = 2_000;
 
 // Terminal import statuses.
-const TERMINAL_IMPORT_STATUSES: ReadonlySet<string> = new Set(["IMPORTED", "FAILED"]);
+const TERMINAL_IMPORT_STATUSES: ReadonlySet<string> = new Set(["COMPLETED", "FAILED"]);
 
 // =============================================================================
 // SHARED HELPERS
@@ -435,13 +545,13 @@ function mapBenchmarkImport(raw: Record<string, unknown>): BenchmarkImport {
     status: raw.status as BenchmarkImportStatus,
     benchmarkName: raw.benchmarkName as string,
     version: raw.version as string,
+    failure: (raw.failure as BenchmarkImportFailure | null) ?? null,
   };
-  if ("error" in raw) {
-    benchmarkImport.error = (raw.error as BenchmarkImportError | null) ?? null;
-  }
   if (typeof raw.taskCount === "number") {
     benchmarkImport.taskCount = raw.taskCount;
   }
+  if (typeof raw.createdAt === "string") benchmarkImport.createdAt = raw.createdAt;
+  if (typeof raw.updatedAt === "string") benchmarkImport.updatedAt = raw.updatedAt;
   return benchmarkImport;
 }
 
@@ -578,16 +688,28 @@ function createSseParser(onFrame: (frame: SseFrame) => void): { push(chunk: stri
 function makePaginated<TRow>(
   fetchPage: (opts: PageOptions) => Promise<Page<TRow>>,
   options?: PageOptions
-): PromiseLike<Page<TRow>> & AsyncIterable<TRow> {
+): Awaitable<Page<TRow>> & AsyncIterable<TRow> {
+  // ONE underlying request per handle, no matter which promise method reaches
+  // it first. Without the memo, `handle.then(...)` and a later `handle.catch()`
+  // would each issue their own fetch — two pages billed for one await.
+  let firstPage: Promise<Page<TRow>> | undefined;
+  const page = (): Promise<Page<TRow>> =>
+    (firstPage ??= fetchPage({ limit: options?.limit, cursor: options?.cursor }));
+
   return {
     then<TResult1 = Page<TRow>, TResult2 = never>(
       onfulfilled?: ((value: Page<TRow>) => TResult1 | PromiseLike<TResult1>) | null,
       onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
     ): Promise<TResult1 | TResult2> {
-      return fetchPage({ limit: options?.limit, cursor: options?.cursor }).then(
-        onfulfilled,
-        onrejected
-      );
+      return page().then(onfulfilled, onrejected);
+    },
+    catch<TResult = never>(
+      onrejected?: ((reason: unknown) => TResult | PromiseLike<TResult>) | null
+    ): Promise<Page<TRow> | TResult> {
+      return page().catch(onrejected);
+    },
+    finally(onfinally?: (() => void) | null): Promise<Page<TRow>> {
+      return page().finally(onfinally);
     },
     async *[Symbol.asyncIterator](): AsyncIterator<TRow> {
       let cursor = options?.cursor;
@@ -651,6 +773,16 @@ function makeWatch(
     ): Promise<TResult1 | TResult2> {
       return drain().then(onfulfilled, onrejected);
     },
+    // drain() is already memoized, so catching or finally-ing a handle drives
+    // the same single SSE stream rather than opening a second one.
+    catch<TResult = never>(
+      onrejected?: ((reason: unknown) => TResult | PromiseLike<TResult>) | null
+    ): Promise<Job | TResult> {
+      return drain().catch(onrejected);
+    },
+    finally(onfinally?: (() => void) | null): Promise<Job> {
+      return drain().finally(onfinally);
+    },
     [Symbol.asyncIterator](): AsyncIterator<JobEvent> {
       return gen;
     },
@@ -683,6 +815,28 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
     return mapBenchmarkImport((await res.json()) as Record<string, unknown>);
   }
 
+  /**
+   * Map the `upstream` field, tolerating an older server that omits it.
+   *
+   * A missing field and an explicit null mean the same thing to a caller —
+   * nothing to watch — so both become null rather than undefined, and a client
+   * never has to distinguish "this server is old" from "this benchmark has no
+   * git source".
+   */
+  function mapUpstream(raw: unknown): UpstreamStatus | null {
+    if (!raw || typeof raw !== "object") return null;
+    const value = raw as Record<string, unknown>;
+    return {
+      ref: value.ref as string,
+      currentCommit: value.currentCommit as string,
+      latestCommit: (value.latestCommit as string | null) ?? null,
+      moved: value.moved === true,
+      behindBy: typeof value.behindBy === "number" ? value.behindBy : null,
+      checkedAt: (value.checkedAt as string | null) ?? null,
+      error: (value.error as string | null) ?? null,
+    };
+  }
+
   async function getBenchmark(
     ref: string,
     options?: GetBenchmarkOptions
@@ -707,6 +861,7 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
         ? mapBenchmarkVersion(raw.selectedVersion as Record<string, unknown>)
         : null,
       tasks: mapPage(raw.tasks, mapTask),
+      upstream: mapUpstream(raw.upstream),
       createdAt: raw.createdAt as string,
       updatedAt: raw.updatedAt as string,
     };
@@ -721,6 +876,7 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
       activeVersion: raw.activeVersion
         ? mapBenchmarkVersion(raw.activeVersion as Record<string, unknown>)
         : null,
+      upstream: mapUpstream(raw.upstream),
     }));
   }
 
@@ -803,6 +959,27 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
         await sleep(pollIntervalMs, options?.signal);
       }
     },
+
+    listImports(options?: ListImportsOptions): BenchmarkImportList {
+      // Await for one page; for-await to walk them all across cursor pages.
+      return makePaginated(async (opts) => {
+        const query = new URLSearchParams();
+        if (opts.limit !== undefined) query.set("limit", String(opts.limit));
+        if (opts.cursor !== undefined) query.set("cursor", opts.cursor);
+        if (options?.status !== undefined) query.set("status", options.status);
+        if (options?.benchmark !== undefined) query.set("benchmark", options.benchmark);
+        const suffix = query.toString() ? `?${query}` : "";
+        const res = await request(cfg, `/api/benchmarks/imports${suffix}`);
+        return mapPage((await res.json()) as Record<string, unknown>, mapBenchmarkImport);
+      }, options);
+    },
+
+    async delete(name: string): Promise<void> {
+      // 204 No Content — nothing to map. A benchmark some job still references
+      // is refused with benchmark_in_use, and err.details.sampleJobIds names
+      // the jobs blocking it.
+      await request(cfg, `/api/benchmarks/${encodeURIComponent(name)}`, { method: "DELETE" });
+    },
   };
 }
 
@@ -839,38 +1016,11 @@ export function customHarnesses(config?: HostedClientConfig): CustomHarnessesCli
 
   return {
     async create(input: CustomHarnessInput): Promise<CustomHarness> {
-      const hasInstallScript = typeof input.installScript === "string";
-      const hasDirectory = typeof input.directory === "string";
-      if (hasInstallScript && hasDirectory) {
-        throw new Error(
-          "customHarnesses().create() takes EITHER an install script ({ installScript }) " +
-            "or a local directory ({ directory }), not both"
-        );
-      }
-      if (!hasInstallScript && !hasDirectory) {
-        throw new Error(
-          "customHarnesses().create() requires either an install script ({ installScript }) " +
-            "or a local directory ({ directory }), plus name and runCommand"
-        );
-      }
       // ONE body grammar: multipart/form-data. The run command and the declared
       // env are named PARTS — they used to ride the query string of an upload,
       // which put a shell command and a set of environment values into every
       // access log and proxy buffer on the way here.
-      const fields: Record<string, string | undefined> = {
-        name: input.name,
-        runCommand: input.runCommand,
-        ...(input.env !== undefined ? { env: JSON.stringify(input.env) } : {}),
-        ...(hasInstallScript ? { installScript: input.installScript } : {}),
-      };
-      let body: FormData;
-      if (hasDirectory) {
-        const { tarGzipDirectory } = await import("./tar");
-        const gzipped = tarGzipDirectory(input.directory as string);
-        body = uploadForm(fields, { bytes: gzipped, filename: "source.tar.gz" });
-      } else {
-        body = uploadForm(fields);
-      }
+      const body = await harnessUploadBody("customHarnesses().create()", input);
       const res = await request(cfg, "/api/custom-harnesses", { method: "POST", body });
       return mapCustomHarness((await res.json()) as Record<string, unknown>);
     },
@@ -894,7 +1044,56 @@ export function customHarnesses(config?: HostedClientConfig): CustomHarnessesCli
         method: "DELETE",
       });
     },
+
+    async upsert(name: string, input: CustomHarnessUpsertInput): Promise<CustomHarness> {
+      // One request, so the name never briefly stops resolving the way
+      // delete()+create() makes it. Same body grammar as create(), minus the
+      // name part — the URL carries it.
+      const body = await harnessUploadBody("customHarnesses().upsert()", { ...input, name });
+      const res = await request(cfg, `/api/custom-harnesses/${encodeURIComponent(name)}`, {
+        method: "PUT",
+        body,
+      });
+      return mapCustomHarness((await res.json()) as Record<string, unknown>);
+    },
   };
+}
+
+/**
+ * The multipart body both create() and upsert() send. Shared because the two
+ * differ only in method and URL: one grammar means a harness registered by
+ * either route is byte-identical on the wire.
+ */
+async function harnessUploadBody(
+  caller: string,
+  input: CustomHarnessInput
+): Promise<FormData> {
+  const hasInstallScript = typeof input.installScript === "string";
+  const hasDirectory = typeof input.directory === "string";
+  if (hasInstallScript && hasDirectory) {
+    throw new Error(
+      `${caller} takes EITHER an install script ({ installScript }) ` +
+        "or a local directory ({ directory }), not both"
+    );
+  }
+  if (!hasInstallScript && !hasDirectory) {
+    throw new Error(
+      `${caller} requires either an install script ({ installScript }) ` +
+        "or a local directory ({ directory }), plus runCommand"
+    );
+  }
+  const fields: Record<string, string | undefined> = {
+    name: input.name,
+    runCommand: input.runCommand,
+    ...(input.env !== undefined ? { env: JSON.stringify(input.env) } : {}),
+    ...(hasInstallScript ? { installScript: input.installScript } : {}),
+  };
+  if (hasDirectory) {
+    const { tarGzipDirectory } = await import("./tar");
+    const gzipped = tarGzipDirectory(input.directory as string);
+    return uploadForm(fields, { bytes: gzipped, filename: "source.tar.gz" });
+  }
+  return uploadForm(fields);
 }
 
 // =============================================================================
@@ -1253,4 +1452,108 @@ function safeJsonParse(text: string): Record<string, unknown> {
   } catch {
     return { raw: text };
   }
+}
+
+// =============================================================================
+// FRONT DOOR
+// =============================================================================
+
+/**
+ * The hosted surface, configured once.
+ *
+ * The three factories are the right decomposition — a benchmark catalog, your
+ * own harness registrations, and jobs are three genuinely different lifetimes —
+ * but they made you say the same thing three times:
+ *
+ *   const b = benchmarks({ apiKey, baseUrl });
+ *   const h = customHarnesses({ apiKey, baseUrl });   // again
+ *   const j = jobs({ apiKey, baseUrl });              // and again
+ *
+ * and any one of those going out of sync with the others is a bug that looks
+ * like a permissions problem. One door, one config:
+ *
+ *   const evolve = hosted({ apiKey });
+ *   const catalog = await evolve.benchmarks.list();
+ *   const job = await evolve.jobs.run({ ... });
+ *
+ * The three clients are built LAZILY, on first access. That matters because
+ * they throw when no API key is present, and `meta()` needs no key at all — so
+ * `hosted().meta()` works on a signed-out page, while `hosted().jobs` still
+ * fails loudly and immediately the moment you reach for something that does
+ * need credentials.
+ */
+export interface HostedEvolve {
+  /** The benchmark catalog: list, get, import, delete. */
+  readonly benchmarks: BenchmarksClient;
+  /** Your own bring-your-own harness registrations. */
+  readonly customHarnesses: CustomHarnessesClient;
+  /** Jobs: run, watch, compare, regrade, export. */
+  readonly jobs: JobsClient;
+  /**
+   * The capability document — every harness, provider, status, limit, and
+   * error code the platform supports. Public: no API key required.
+   *
+   * Fetch it once and stop hardcoding. It is what tells you the legal harness
+   * names without having to send a bad one and read the 400.
+   */
+  meta(): Promise<CapabilityDocument>;
+}
+
+/**
+ * Open the hosted surface with one configuration.
+ *
+ * Named `hosted()` rather than `evolve()` deliberately: `Evolve` is already the
+ * local-sandbox SDK class in this same package, and two exports one shift key
+ * apart that do completely different things is a trap. `hosted()` says which
+ * half of the SDK you are reaching for.
+ *
+ * @example
+ * ```ts
+ * import { hosted } from "@evolvingmachines/sdk";
+ *
+ * const evolve = hosted();                       // EVOLVE_API_KEY from env
+ * const { harnesses } = await evolve.meta();     // no key needed for this one
+ * const job = await evolve.jobs.run({
+ *   benchmark: "deep-swe",
+ *   agents: [{ harness: "claude", model: harnesses[0].defaultModel! }],
+ * });
+ * ```
+ */
+export function hosted(config?: HostedClientConfig): HostedEvolve {
+  let benchmarksClient: BenchmarksClient | undefined;
+  let customHarnessesClient: CustomHarnessesClient | undefined;
+  let jobsClient: JobsClient | undefined;
+
+  return {
+    get benchmarks(): BenchmarksClient {
+      return (benchmarksClient ??= benchmarks(config));
+    },
+    get customHarnesses(): CustomHarnessesClient {
+      return (customHarnessesClient ??= customHarnesses(config));
+    },
+    get jobs(): JobsClient {
+      return (jobsClient ??= jobs(config));
+    },
+    meta(): Promise<CapabilityDocument> {
+      return meta(config);
+    },
+  };
+}
+
+/**
+ * Fetch the capability document.
+ *
+ * NO API KEY. The document is the same information the docs publish, and
+ * requiring credentials would mean a signed-out page could not populate its own
+ * harness picker — so this is the one hosted call that takes only a base URL.
+ */
+export async function meta(config?: HostedClientConfig): Promise<CapabilityDocument> {
+  const baseUrl = (
+    config?.baseUrl ||
+    process.env.EVOLVE_DASHBOARD_URL ||
+    DEFAULT_DASHBOARD_URL
+  ).replace(/\/$/, "");
+  const res = await fetch(`${baseUrl}/api/meta`);
+  if (!res.ok) await throwApiError(res);
+  return (await res.json()) as CapabilityDocument;
 }

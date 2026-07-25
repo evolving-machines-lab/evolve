@@ -25,7 +25,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Union
+from typing import Any, AsyncIterator, Callable, Dict, List, Literal, Optional, Union
 
 from .config import HostedClientConfig
 
@@ -34,7 +34,7 @@ DEFAULT_BASE_URL = 'https://dashboard.evolvingmachines.ai'
 _TERMINAL_JOB_STATUSES = {'COMPLETED', 'CANCELLED', 'FAILED'}
 
 # Terminal import job statuses.
-_TERMINAL_IMPORT_STATUSES = {'IMPORTED', 'FAILED'}
+_TERMINAL_IMPORT_STATUSES = {'COMPLETED', 'FAILED'}
 
 # Seeing one of these on the wire is the authoritative end-of-stream signal.
 _TERMINAL_EVENT_TYPES = {'job.completed', 'job.cancelled', 'job.failed'}
@@ -55,6 +55,127 @@ def _snake_keys(data: Any) -> Optional[Dict[str, Any]]:
     return {_snake_key(key): value for key, value in data.items()}
 
 
+#: Every error code the hosted API can return, as a closed list.
+#:
+#: This exists so a typo is catchable rather than silently never matching:
+#: ``err.code == "insufficient_creidts"`` is a branch that looks handled and
+#: never runs. Type-check against :data:`HostedErrorCode`, or guard at runtime
+#: with :func:`is_hosted_error_code`.
+#:
+#: Mirrors HOSTED_API_ERROR_CODES on the server and the TypeScript SDK's
+#: HOSTED_ERROR_CODES, and is published verbatim at ``GET /api/meta`` as
+#: ``errorCodes``. A server newer than this SDK may send a code that is not
+#: listed here, so ``EvolveAPIError.code`` stays a plain ``str``.
+HOSTED_ERROR_CODES: 'tuple[str, ...]' = (
+    'missing_authorization',
+    'invalid_api_key',
+    'credential_service_unavailable',
+    'rate_limited',
+    'insufficient_credits',
+    'invalid_json',
+    'invalid_input',
+    'invalid_limit',
+    'invalid_status',
+    'invalid_cursor',
+    'invalid_after',
+    'invalid_format',
+    'invalid_ids',
+    'invalid_multipart',
+    'idempotency_key_reused',
+    'benchmark_not_found',
+    'benchmark_version_not_found',
+    'benchmark_name_taken',
+    'benchmark_in_use',
+    'benchmark_not_owned',
+    'no_active_version',
+    'version_not_ready',
+    'unknown_task_keys',
+    'no_tasks',
+    'custom_harness_not_found',
+    'custom_harness_name_taken',
+    'custom_harness_name_reserved',
+    'custom_harness_invalid_name',
+    'custom_harness_source_required',
+    'custom_harness_source_conflict',
+    'custom_harness_invalid_env',
+    'custom_harness_too_large',
+    'custom_harness_limit_reached',
+    'harness_version_not_found',
+    'job_too_large',
+    'provider_unsupported',
+    'job_not_found',
+    'job_not_terminal',
+    'no_failed_runs',
+    'trial_not_found',
+    'concurrent_update',
+    'regrade_source_ineligible',
+    'no_regradable_runs',
+    'regrade_not_found',
+    'import_not_found',
+    'import_too_large',
+    'invalid_archive',
+    'internal_error',
+)
+
+#: One of the API's stable error codes. Use it in annotations to make a typo a
+#: type error: ``def handle(code: HostedErrorCode) -> None: ...``
+HostedErrorCode = Literal[
+    'missing_authorization',
+    'invalid_api_key',
+    'credential_service_unavailable',
+    'rate_limited',
+    'insufficient_credits',
+    'invalid_json',
+    'invalid_input',
+    'invalid_limit',
+    'invalid_status',
+    'invalid_cursor',
+    'invalid_after',
+    'invalid_format',
+    'invalid_ids',
+    'invalid_multipart',
+    'idempotency_key_reused',
+    'benchmark_not_found',
+    'benchmark_version_not_found',
+    'benchmark_name_taken',
+    'benchmark_in_use',
+    'benchmark_not_owned',
+    'no_active_version',
+    'version_not_ready',
+    'unknown_task_keys',
+    'no_tasks',
+    'custom_harness_not_found',
+    'custom_harness_name_taken',
+    'custom_harness_name_reserved',
+    'custom_harness_invalid_name',
+    'custom_harness_source_required',
+    'custom_harness_source_conflict',
+    'custom_harness_invalid_env',
+    'custom_harness_too_large',
+    'custom_harness_limit_reached',
+    'harness_version_not_found',
+    'job_too_large',
+    'provider_unsupported',
+    'job_not_found',
+    'job_not_terminal',
+    'no_failed_runs',
+    'trial_not_found',
+    'concurrent_update',
+    'regrade_source_ineligible',
+    'no_regradable_runs',
+    'regrade_not_found',
+    'import_not_found',
+    'import_too_large',
+    'invalid_archive',
+    'internal_error',
+]
+
+
+def is_hosted_error_code(value: Any) -> bool:
+    """True when ``value`` is a code this SDK version knows about."""
+    return isinstance(value, str) and value in HOSTED_ERROR_CODES
+
+
 class EvolveAPIError(Exception):
     """A typed failure from the hosted evals API.
 
@@ -62,12 +183,50 @@ class EvolveAPIError(Exception):
     is the stable machine-readable identifier (e.g. ``benchmark_not_found``,
     ``version_not_ready``, ``provider_unsupported``, ``rate_limited``) so
     callers branch on codes, never on English. ``status`` is the HTTP status.
+
+    ``param`` and ``details`` are the machine-readable half of the refusal::
+
+        try:
+            await jobs().run(...)
+        except EvolveAPIError as err:
+            if err.code == 'provider_unsupported':
+                # every refused task WITH its reason — not a sentence to regex
+                refused = (err.details or {}).get('refusedTasks', [])
+
+    The server truncates the MESSAGE when a list is long and never truncates
+    ``details``, so the data stays complete even when the sentence says
+    "and 8 more".
     """
 
-    def __init__(self, status: int, code: str, message: str):
+    def __init__(
+        self,
+        status: int,
+        code: str,
+        message: str,
+        *,
+        param: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+        retry_after_sec: Optional[float] = None,
+        request_id: Optional[str] = None,
+    ):
         super().__init__(message)
         self.status = status
         self.code = code
+        #: The input field this refusal is about — a body path
+        #: ("agents[0].harness"), a query parameter ("limit"), or a multipart
+        #: part name ("runCommand"). None when it is not about one field.
+        self.param = param
+        #: The complete machine-readable data behind the message. Never truncated.
+        self.details = details
+        #: Seconds to wait before retrying (429/503), from the body or the
+        #: Retry-After header.
+        self.retry_after_sec = retry_after_sec
+        #: Server-side id for this failure — the string to quote in a support thread.
+        self.request_id = request_id
+
+    def is_known_code(self) -> bool:
+        """True when this code is one this SDK version knows about."""
+        return is_hosted_error_code(self.code)
 
 
 class NoActiveVersionError(Exception):
@@ -128,6 +287,32 @@ class TaskPage:
 
 
 @dataclass
+class UpstreamStatus:
+    """Where a benchmark's git source points now, versus what its active
+    version was built from — the data behind a "new version available" badge.
+
+    Nothing here imports anything. A new version is always a row you create.
+    """
+    #: The ref the active version was imported from.
+    ref: str
+    #: The commit the active version was built from.
+    current_commit: str
+    #: Where the ref points upstream now; None when the last check failed.
+    latest_commit: Optional[str]
+    #: True when upstream has moved off the built-from commit. Branch on this.
+    moved: bool
+    #: Always None today. Counting commits between two SHAs needs the commit
+    #: graph, i.e. a real fetch per benchmark per check; the watcher deliberately
+    #: only does a reference advertisement. Reserved so a host comparison API
+    #: could fill it later without a wire change.
+    behind_by: Optional[int]
+    #: When the cached answer was taken; None before the first check.
+    checked_at: Optional[str]
+    #: Why the last check failed. Show "could not check", not "up to date".
+    error: Optional[str]
+
+
+@dataclass
 class Benchmark:
     """A benchmark in the shared catalog.
 
@@ -138,6 +323,11 @@ class Benchmark:
     title: Optional[str]
     description: Optional[str]
     active_version: Optional[BenchmarkVersion]
+    #: Where this benchmark's git source points now versus what its active
+    #: version was built from. None when there is nothing to watch (an uploaded
+    #: corpus, a seeded one, or one imported before provenance was recorded);
+    #: None is never "up to date".
+    upstream: Optional[UpstreamStatus] = None
     versions: Optional[List[BenchmarkVersion]] = None
     # The version whose tasks are listed (get() only)
     selected_version: Optional[BenchmarkVersion] = None
@@ -146,6 +336,76 @@ class Benchmark:
     tasks: Optional[TaskPage] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+
+
+@dataclass
+class StatusVocabulary:
+    """A closed vocabulary a client renders, with the members that end it."""
+    values: List[str]
+    #: Members after which nothing more happens — a watcher may stop here.
+    terminal: List[str]
+    description: str
+
+
+@dataclass
+class HarnessModel:
+    """One model a harness can drive."""
+    alias: str
+    model_id: str
+    description: Optional[str]
+
+
+@dataclass
+class HarnessCapability:
+    """One harness the platform can run."""
+    name: str
+    #: False = registered but not runnable; ``reason`` says why.
+    runnable: bool
+    reason: Optional[str]
+    #: What the local SDK would run if no model were named. The hosted API
+    #: always requires an explicit model, so this is a picker's pre-selection,
+    #: not a server-side default.
+    default_model: Optional[str]
+    models: List[HarnessModel]
+    #: Whether ``agents[].harness_version`` may pin this harness.
+    version_pinnable: bool
+    #: Newest published version, for a "your pin is out of date" badge. None
+    #: means "not known right now", never "up to date".
+    latest_version: Optional[str]
+
+
+@dataclass
+class ProviderCapability:
+    """One sandbox provider, its ceilings, and what it refuses."""
+    name: str
+    default: bool
+    sizing: Dict[str, Any]
+    refuses: List[Dict[str, str]]
+
+
+@dataclass
+class CapabilityDocument:
+    """Everything a client would otherwise hardcode, in one public document.
+
+    Fetch it with :func:`evolve.meta` (no API key required) and stop guessing
+    at harness names, status enums, limits, and error codes.
+
+    ``custom_harnesses``, ``limits`` and ``statuses`` are handed through as
+    plain dicts with the wire's own camelCase keys. They are nested
+    configuration a client reads by key, not objects it constructs, and a
+    dataclass per level would be five classes that must be edited every time
+    the server adds a field — the exact coupling this document exists to remove.
+    """
+    schema_version: int
+    harnesses: List[HarnessCapability]
+    custom_harnesses: Dict[str, Any]
+    sandbox_providers: List[ProviderCapability]
+    #: Constraints that hold on EVERY provider.
+    platform_constraints: List[Dict[str, str]]
+    network_modes: List[str]
+    statuses: Dict[str, StatusVocabulary]
+    limits: Dict[str, Any]
+    error_codes: List[str]
 
 
 @dataclass
@@ -479,8 +739,10 @@ class BenchmarkImportFailure:
 
 
 @dataclass
-class BenchmarkImportError:
-    """Structured failure detail for a FAILED import."""
+class ImportFailure:
+    """Structured detail for a FAILED import."""
+    # Stable machine-readable cause; "import_failed" when none was recorded.
+    code: str
     # What went wrong, e.g. "2/113 task(s) failed to parse"
     message: str
     # Per-task parse/validation failures, when the corpus was reachable
@@ -491,21 +753,36 @@ class BenchmarkImportError:
 class BenchmarkImport:
     """A benchmark import job.
 
-    Terminal statuses: "IMPORTED" (the corpus landed as a benchmark version;
-    it becomes runnable once the platform activates it) and "FAILED".
-    Self-describing: every response names the benchmark@version being imported.
+    Statuses are the SAME four words a job and a regrade use — QUEUED, RUNNING,
+    COMPLETED, FAILED — because an import IS an asynchronous job. It used to
+    speak a private IMPORTING/IMPORTED/FAILED vocabulary, so a status chip
+    rendering all three had to carry a translation table for three spellings of
+    the same four ideas.
+
+    Terminal: "COMPLETED" (the corpus landed as a benchmark version; it becomes
+    runnable once the platform activates it) and "FAILED".
+
+    Self-describing: every response names the benchmark@version being imported,
+    and every route that returns one — the 202 from ``import_benchmark()``,
+    ``get_import()``, and ``list_imports()`` — returns this same shape.
     """
     id: str
-    # Job status: "IMPORTING" | "IMPORTED" | "FAILED"
+    # Job status: "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED"
     status: str
     # Catalog benchmark name the import creates or extends
     benchmark_name: str
     # Version label of the imported version
     version: str
-    # Failure detail when status is "FAILED"
-    error: Optional[BenchmarkImportError] = None
-    # Number of tasks parsed, once counted (get_import() responses)
+    # Why the import failed, when status is "FAILED"; None otherwise.
+    #
+    # Named `failure` and NOT `error`, deliberately: `error` is the key the
+    # FAILURE envelope uses, so a client checking for it has to stay correct on
+    # a perfectly healthy read of a failed import.
+    failure: Optional[ImportFailure] = None
+    # Number of tasks parsed, once counted
     task_count: Optional[int] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
 
 @dataclass
@@ -559,6 +836,13 @@ class BenchmarkPage:
 
 
 @dataclass
+class BenchmarkImportPage:
+    items: List[BenchmarkImport]
+    next_cursor: Optional[str]
+    has_more: bool
+
+
+@dataclass
 class CustomHarnessPage:
     items: List[CustomHarness]
     next_cursor: Optional[str]
@@ -577,6 +861,75 @@ def _map_job_agent(data: Dict[str, Any]) -> JobAgent:
         harness=data.get('harness', ''),
         model=data.get('model', ''),
         harness_version=data.get('harnessVersion'),
+    )
+
+
+def _map_upstream(data: Any) -> Optional[UpstreamStatus]:
+    """Map the ``upstream`` field, tolerating an older server that omits it.
+
+    A missing field and an explicit null mean the same thing to a caller —
+    nothing to watch — so both become None, and a client never has to
+    distinguish "this server is old" from "this benchmark has no git source".
+    """
+    if not isinstance(data, dict):
+        return None
+    behind_by = data.get('behindBy')
+    return UpstreamStatus(
+        ref=data['ref'],
+        current_commit=data['currentCommit'],
+        latest_commit=data.get('latestCommit'),
+        moved=data.get('moved') is True,
+        behind_by=behind_by if isinstance(behind_by, int) else None,
+        checked_at=data.get('checkedAt'),
+        error=data.get('error'),
+    )
+
+
+def _map_capability_document(raw: Dict[str, Any]) -> CapabilityDocument:
+    """Map GET /api/meta into the public dataclass."""
+    return CapabilityDocument(
+        schema_version=raw.get('schemaVersion', 0),
+        harnesses=[
+            HarnessCapability(
+                name=item['name'],
+                runnable=item.get('runnable', False),
+                reason=item.get('reason'),
+                default_model=item.get('defaultModel'),
+                models=[
+                    HarnessModel(
+                        alias=model['alias'],
+                        model_id=model['modelId'],
+                        description=model.get('description'),
+                    )
+                    for model in item.get('models', [])
+                ],
+                version_pinnable=item.get('versionPinnable', False),
+                latest_version=item.get('latestVersion'),
+            )
+            for item in raw.get('harnesses', [])
+        ],
+        custom_harnesses=raw.get('customHarnesses', {}),
+        sandbox_providers=[
+            ProviderCapability(
+                name=item['name'],
+                default=item.get('default', False),
+                sizing=item.get('sizing', {}),
+                refuses=item.get('refuses', []),
+            )
+            for item in raw.get('sandboxProviders', [])
+        ],
+        platform_constraints=raw.get('platformConstraints', []),
+        network_modes=raw.get('networkModes', []),
+        statuses={
+            key: StatusVocabulary(
+                values=value.get('values', []),
+                terminal=value.get('terminal', []),
+                description=value.get('description', ''),
+            )
+            for key, value in (raw.get('statuses') or {}).items()
+        },
+        limits=raw.get('limits', {}),
+        error_codes=raw.get('errorCodes', []),
     )
 
 
@@ -781,10 +1134,11 @@ def _map_comparison_task_row(data: Dict[str, Any]) -> ComparisonTaskRow:
     )
 
 
-def _map_import_error(data: Any) -> Optional[BenchmarkImportError]:
+def _map_import_failure(data: Any) -> Optional[ImportFailure]:
     if not isinstance(data, dict):
         return None
-    return BenchmarkImportError(
+    return ImportFailure(
+        code=data.get('code', 'import_failed'),
         message=data.get('message', ''),
         failures=[
             BenchmarkImportFailure(
@@ -864,10 +1218,13 @@ def _map_benchmark_import(data: Dict[str, Any]) -> BenchmarkImport:
         benchmark_name=data.get('benchmarkName', ''),
         version=data.get('version', ''),
     )
-    if 'error' in data:
-        benchmark_import.error = _map_import_error(data.get('error'))
+    benchmark_import.failure = _map_import_failure(data.get('failure'))
     if isinstance(data.get('taskCount'), int):
         benchmark_import.task_count = data.get('taskCount')
+    if isinstance(data.get('createdAt'), str):
+        benchmark_import.created_at = data['createdAt']
+    if isinstance(data.get('updatedAt'), str):
+        benchmark_import.updated_at = data['updatedAt']
     return benchmark_import
 
 
@@ -875,24 +1232,48 @@ def _map_benchmark_import(data: Dict[str, Any]) -> BenchmarkImport:
 # HTTP CORE
 # =============================================================================
 
-def _parse_error_body(text: str, fallback: str) -> 'tuple[str, str]':
-    """Extract (code, message) from a hosted error body {error: {code, message}}."""
+def _parse_error_body(text: str, fallback: str) -> Dict[str, Any]:
+    """Extract the hosted error envelope {error: {code, message, param, details, ...}}."""
+    unparsed = {'code': 'unknown_error', 'message': text or fallback}
     try:
         body = json.loads(text)
     except ValueError:
-        return 'unknown_error', text or fallback
+        return unparsed
     error = body.get('error') if isinstance(body, dict) else None
-    if isinstance(error, dict):
-        code = error.get('code') if isinstance(error.get('code'), str) else 'unknown_error'
-        message = error.get('message') if isinstance(error.get('message'), str) else fallback
-        return code, message
-    return 'unknown_error', text or fallback
+    if not isinstance(error, dict):
+        return unparsed
+    retry_after = error.get('retryAfterSec')
+    return {
+        'code': error['code'] if isinstance(error.get('code'), str) else 'unknown_error',
+        'message': error['message'] if isinstance(error.get('message'), str) else fallback,
+        'param': error['param'] if isinstance(error.get('param'), str) else None,
+        'details': error['details'] if isinstance(error.get('details'), dict) else None,
+        'retry_after_sec': retry_after if isinstance(retry_after, (int, float)) else None,
+        'request_id': error['requestId'] if isinstance(error.get('requestId'), str) else None,
+    }
 
 
 def _raise_api_error(exc: urllib.error.HTTPError) -> None:
     detail = exc.read().decode('utf-8', errors='replace')
-    code, message = _parse_error_body(detail, str(exc.reason))
-    raise EvolveAPIError(exc.code, code, message) from exc
+    parsed = _parse_error_body(detail, str(exc.reason))
+    # Header fallbacks, so an unparseable body still yields a usable request id
+    # and retry delay.
+    headers = getattr(exc, 'headers', None)
+    header_request_id = headers.get('X-Request-Id') if headers else None
+    header_retry_after = headers.get('Retry-After') if headers else None
+    try:
+        header_retry_sec = float(header_retry_after) if header_retry_after else None
+    except ValueError:
+        header_retry_sec = None
+    raise EvolveAPIError(
+        exc.code,
+        parsed['code'],
+        parsed['message'],
+        param=parsed.get('param'),
+        details=parsed.get('details'),
+        retry_after_sec=parsed.get('retry_after_sec') or header_retry_sec,
+        request_id=parsed.get('request_id') or header_request_id,
+    ) from exc
 
 
 class _HostedHttp:
@@ -929,12 +1310,18 @@ class _HostedHttp:
         return await asyncio.to_thread(self._request_sync, path, 'GET', None, None, True)
 
     async def request_upload(
-        self, path: str, data: bytes, headers: Dict[str, str]
+        self, path: str, data: bytes, headers: Dict[str, str], method: str = 'POST'
     ) -> Dict[str, Any]:
-        """POST raw bytes (e.g. a gzipped corpus tarball) and parse the JSON reply."""
-        return await asyncio.to_thread(self._upload_sync, path, data, headers)
+        """Send raw bytes (e.g. a gzipped tarball) and parse the JSON reply.
 
-    def _upload_sync(self, path: str, data: bytes, headers: Dict[str, str]) -> Dict[str, Any]:
+        ``method`` exists for the custom-harness upsert, which is the same body
+        grammar at the same content type under PUT.
+        """
+        return await asyncio.to_thread(self._upload_sync, path, data, headers, method)
+
+    def _upload_sync(
+        self, path: str, data: bytes, headers: Dict[str, str], method: str = 'POST'
+    ) -> Dict[str, Any]:
         request_headers = {
             'Authorization': f'Bearer {self.api_key()}',
             'Accept': 'application/json',
@@ -944,7 +1331,7 @@ class _HostedHttp:
             f'{self.base_url()}{path}',
             data=data,
             headers=request_headers,
-            method='POST',
+            method=method,
         )
         try:
             with urllib.request.urlopen(request, timeout=600) as response:
@@ -1048,6 +1435,41 @@ def _multipart_body(
     return b''.join(parts), f'multipart/form-data; boundary={boundary}'
 
 
+def _harness_upload_body(
+    caller: str,
+    *,
+    name: str,
+    run_command: str,
+    install_script: Optional[str],
+    directory: Optional[str],
+    env: Optional[Dict[str, str]],
+) -> 'tuple[bytes, str]':
+    """The multipart body both ``create()`` and ``upsert()`` send.
+
+    Shared because the two differ only in method and URL: one grammar means a
+    harness registered by either route is byte-identical on the wire.
+    """
+    if install_script is not None and directory is not None:
+        raise ValueError(
+            f'{caller} takes EITHER an install script (install_script=...) '
+            'or a local directory (directory=...), not both'
+        )
+    if install_script is None and directory is None:
+        raise ValueError(
+            f'{caller} requires either an install script (install_script=...) '
+            'or a local directory (directory=...), plus run_command=...'
+        )
+    fields: Dict[str, Optional[str]] = {'name': name, 'runCommand': run_command}
+    if env is not None:
+        fields['env'] = json.dumps(env)
+    if install_script is not None:
+        fields['installScript'] = install_script
+    file: Optional['tuple[str, bytes]'] = None
+    if directory is not None:
+        file = ('source.tar.gz', _tar_gzip_directory(directory))
+    return _multipart_body(fields, file)
+
+
 def _tar_gzip_directory(directory: str) -> bytes:
     """Deterministically tar + gzip a corpus directory for the directory import.
 
@@ -1127,6 +1549,37 @@ class _PaginatedList:
             cursor = page.next_cursor
 
 
+class _JobWatch:
+    """A job watch that is both awaitable and async-iterable.
+
+    ``await j.watch(id)`` resolves the final :class:`Job` once the terminal
+    event arrives; ``async for event in j.watch(id)`` yields each
+    :class:`JobEvent`. This is the same dual-use shape :class:`_PaginatedList`
+    already uses for ``list()``, and the same shape the TypeScript SDK's
+    ``jobs().watch()`` returns — TS/Python parity is a law here, and the two
+    disagreed: TS had one dual-use method, Python had ``watch`` plus
+    ``watch_iter``.
+
+    Python won on nothing and lost on consistency: it already spelled the
+    dual-use idiom for pagination, so having a second, split idiom for watching
+    made the SDK disagree with ITSELF as well as with TypeScript.
+    ``watch_iter()`` remains as a thin alias so existing code keeps working.
+
+    Pick one form per handle: both drive the same underlying SSE stream.
+    """
+
+    def __init__(self, events, final):
+        # events: () -> AsyncIterator[JobEvent]; final: async () -> Job
+        self._events = events
+        self._final = final
+
+    def __await__(self):
+        return self._final().__await__()
+
+    def __aiter__(self):
+        return self._events()
+
+
 # =============================================================================
 # BENCHMARKS CLIENT
 # =============================================================================
@@ -1185,6 +1638,7 @@ class BenchmarksClient:
                             if item.get('activeVersion')
                             else None
                         ),
+                        upstream=_map_upstream(item.get('upstream')),
                     )
                     for item in items
                 ],
@@ -1221,6 +1675,7 @@ class BenchmarksClient:
             title=raw.get('title'),
             description=raw.get('description'),
             active_version=_map_benchmark_version(active) if active else None,
+            upstream=_map_upstream(raw.get('upstream')),
             versions=[_map_benchmark_version(item) for item in raw.get('versions', [])],
             selected_version=_map_benchmark_version(selected) if selected else None,
             tasks=TaskPage(
@@ -1339,6 +1794,58 @@ class BenchmarksClient:
                 raise TimeoutError(f'watch_import({id!r}) timed out after {timeout_s}s')
             await asyncio.sleep(poll_interval_s)
 
+    def list_imports(
+        self,
+        *,
+        status: Optional[str] = None,
+        benchmark: Optional[str] = None,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    ) -> _PaginatedList:
+        """List your own imports, newest first (cursor-paged).
+
+        This is how you find an import again after losing the id ``import_()``
+        returned — without it, closing a tab made a running import permanently
+        unwatchable.
+
+        ``await`` for one page, or ``async for`` to walk them all. ``status``
+        filters on the import vocabulary ("IMPORTING" | "IMPORTED" | "FAILED");
+        ``benchmark`` narrows to one benchmark name.
+        """
+        async def fetch_page(page_limit, page_cursor) -> BenchmarkImportPage:
+            query = _page_query(page_limit, page_cursor)
+            extra = []
+            if status is not None:
+                extra.append(f'status={urllib.parse.quote(status)}')
+            if benchmark is not None:
+                extra.append(f'benchmark={urllib.parse.quote(benchmark)}')
+            if extra:
+                query = f'{query}&{"&".join(extra)}' if query else f'?{"&".join(extra)}'
+            raw = await self._http.request_json(f'/api/benchmarks/imports{query}')
+            items, next_cursor, has_more = _page_parts(raw)
+            return BenchmarkImportPage(
+                items=[_map_benchmark_import(item) for item in items],
+                next_cursor=next_cursor,
+                has_more=has_more,
+            )
+
+        return _PaginatedList(
+            fetch_page, lambda page: page.items, limit=limit, cursor=cursor
+        )
+
+    async def delete(self, name: str) -> None:
+        """Delete a benchmark you own, with every version, task, and archived solution.
+
+        Refused (``benchmark_in_use``) while any job still references it — a
+        benchmark is never deleted out from under a job that measured against
+        it, and ``err.details['sampleJobIds']`` names the jobs blocking it. A
+        platform benchmark is refused with ``benchmark_not_owned``; a name you
+        cannot see is a plain not-found.
+        """
+        await self._http.request_json(
+            f'/api/benchmarks/{urllib.parse.quote(name)}', method='DELETE'
+        )
+
 
 # =============================================================================
 # CUSTOM HARNESSES CLIENT
@@ -1405,33 +1912,18 @@ class CustomHarnessesClient:
         directory. ``env`` is injected at RUN time only and may not override
         the run contract's own keys.
         """
-        if install_script is not None and directory is not None:
-            raise ValueError(
-                'create() takes EITHER an install script (install_script=...) '
-                'or a local directory (directory=...), not both'
-            )
-        if install_script is None and directory is None:
-            raise ValueError(
-                'create() requires either an install script (install_script=...) '
-                'or a local directory (directory=...), plus name=... and run_command=...'
-            )
         # ONE body grammar: multipart/form-data. The run command and the
         # declared env are named PARTS — they used to ride the query string of
         # an upload, which put a shell command and a set of environment values
         # into every access log and proxy buffer on the way here.
-        fields: Dict[str, Optional[str]] = {
-            'name': name,
-            'runCommand': run_command,
-        }
-        if env is not None:
-            fields['env'] = json.dumps(env)
-        if install_script is not None:
-            fields['installScript'] = install_script
-        file: Optional['tuple[str, bytes]'] = None
-        if directory is not None:
-            gzipped = await asyncio.to_thread(_tar_gzip_directory, directory)
-            file = ('source.tar.gz', gzipped)
-        body, content_type = _multipart_body(fields, file)
+        body, content_type = _harness_upload_body(
+            'create()',
+            name=name,
+            run_command=run_command,
+            install_script=install_script,
+            directory=directory,
+            env=env,
+        )
         raw = await self._http.request_upload(
             '/api/custom-harnesses', body, {'Content-Type': content_type}
         )
@@ -1466,6 +1958,41 @@ class CustomHarnessesClient:
         """Get one custom harness by name."""
         raw = await self._http.request_json(
             f'/api/custom-harnesses/{urllib.parse.quote(name)}'
+        )
+        return _map_custom_harness(raw)
+
+    async def upsert(
+        self,
+        name: str,
+        *,
+        run_command: str,
+        install_script: Optional[str] = None,
+        directory: Optional[str] = None,
+        env: Optional[Dict[str, str]] = None,
+    ) -> CustomHarness:
+        """Register or replace a harness in ONE call, under ``name``.
+
+        Use this instead of ``delete()`` + ``create()`` to change an existing
+        registration: the pair leaves a window where the harness does not exist,
+        and anything naming it in that window fails for a change that was only
+        ever meant to be an edit.
+
+        This is a full REPLACEMENT, not a patch — every field comes from this
+        call, and an omitted ``env`` becomes empty.
+        """
+        body, content_type = _harness_upload_body(
+            'upsert()',
+            name=name,
+            run_command=run_command,
+            install_script=install_script,
+            directory=directory,
+            env=env,
+        )
+        raw = await self._http.request_upload(
+            f'/api/custom-harnesses/{urllib.parse.quote(name)}',
+            body,
+            {'Content-Type': content_type},
+            method='PUT',
         )
         return _map_custom_harness(raw)
 
@@ -1718,8 +2245,10 @@ class JobsClient:
                         data_lines.append(value)
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode('utf-8', errors='replace')
-            code, message = _parse_error_body(detail, str(exc.reason))
-            put(('http_error', exc.code, code, message))
+            # The whole parsed envelope, not just (code, message): an error that
+            # arrives over the event stream should be exactly as actionable as
+            # one that arrives from a request, param and details included.
+            put(('http_error', exc.code, _parse_error_body(detail, str(exc.reason))))
             return
         except Exception as exc:
             put(('error', exc))
@@ -1738,8 +2267,12 @@ class JobsClient:
 
         Replays from the beginning, resumes with Last-Event-ID on reconnect
         (exponential backoff), and completes on the terminal event
-        (``job.completed`` / ``job.cancelled`` /
-        ``job.failed``). The iterator sibling of :meth:`watch`.
+        (``job.completed`` / ``job.cancelled`` / ``job.failed``).
+
+        .. deprecated::
+            Prefer ``async for event in j.watch(job_id)``. :meth:`watch` is now
+            dual-use (awaitable OR iterable), matching the TypeScript SDK's one
+            ``watch()``; this method stays so existing code keeps working.
 
         Example::
 
@@ -1791,11 +2324,19 @@ class JobsClient:
                         if terminal:
                             break
                     elif kind == 'http_error':
-                        status, code, message = item[1], item[2], item[3]
+                        status, parsed = item[1], item[2]
                         if status == 429 or status >= 500:
                             reconnect = True
                             break
-                        raise EvolveAPIError(status, code, message)
+                        raise EvolveAPIError(
+                            status,
+                            parsed['code'],
+                            parsed['message'],
+                            param=parsed.get('param'),
+                            details=parsed.get('details'),
+                            retry_after_sec=parsed.get('retry_after_sec'),
+                            request_id=parsed.get('request_id'),
+                        )
                     elif kind == 'error':
                         reconnect = True
                         break
@@ -1828,7 +2369,7 @@ class JobsClient:
             await asyncio.sleep(min(delay, remaining() or delay))
             delay = min(delay * 2, max_reconnect_delay_s)
 
-    async def watch(
+    def watch(
         self,
         id: str,
         *,
@@ -1836,14 +2377,52 @@ class JobsClient:
         timeout_s: Optional[float] = None,
         reconnect_delay_s: float = 1.0,
         max_reconnect_delay_s: float = 30.0,
-    ) -> Job:
-        """Watch the job's event stream and return the final job.
+    ) -> _JobWatch:
+        """Watch the job's event stream. Dual-use: await it, or iterate it.
 
-        Consumes the same server-sent events as :meth:`watch_iter` (replay +
-        live, Last-Event-ID resume with exponential backoff), firing
-        ``on_event`` for each one, and resolves with the final
-        :class:`Job` once the terminal event arrives.
+        ``await`` resolves the final :class:`Job` once the terminal event
+        arrives, firing ``on_event`` for each event on the way — exactly what
+        this method did before, so ``job = await j.watch(id)`` is unchanged.
+
+        ``async for`` yields each :class:`JobEvent` instead, which is what
+        :meth:`watch_iter` did. One method now covers both, matching the
+        TypeScript SDK's ``jobs().watch()``.
+
+        Either form consumes the same stream (replay + live, Last-Event-ID
+        resume with exponential backoff), so use one form per handle.
+
+        Example::
+
+            job = await j.watch(job_id)                  # final job
+            async for event in j.watch(job_id):          # each event
+                print(event.seq, event.type)
         """
+        def events() -> AsyncIterator[JobEvent]:
+            return self._watch_events(
+                id,
+                on_event=on_event,
+                timeout_s=timeout_s,
+                reconnect_delay_s=reconnect_delay_s,
+                max_reconnect_delay_s=max_reconnect_delay_s,
+            )
+
+        async def final() -> Job:
+            async for _ in events():
+                pass
+            return await self.get(id)
+
+        return _JobWatch(events, final)
+
+    async def _watch_events(
+        self,
+        id: str,
+        *,
+        on_event: Optional[Callable[[JobEvent], None]] = None,
+        timeout_s: Optional[float] = None,
+        reconnect_delay_s: float = 1.0,
+        max_reconnect_delay_s: float = 30.0,
+    ) -> AsyncIterator[JobEvent]:
+        """The one stream both watch() forms drive; fires on_event as it goes."""
         async for event in self.watch_iter(
             id,
             timeout_s=timeout_s,
@@ -1852,7 +2431,7 @@ class JobsClient:
         ):
             if on_event is not None:
                 on_event(event)
-        return await self.get(id)
+            yield event
 
     # ---------------------------------------------------------------- actions
 
@@ -2043,3 +2622,110 @@ def _parse_benchmark_ref(ref: str) -> 'tuple[str, Optional[str]]':
     if not name or not version:
         raise ValueError(f'Invalid benchmark ref "{ref}": expected "name" or "name@version"')
     return name, version
+
+
+# =============================================================================
+# FRONT DOOR
+# =============================================================================
+
+class HostedEvolve:
+    """The hosted surface, configured once.
+
+    The three clients are the right decomposition — a benchmark catalog, your
+    own harness registrations, and jobs are three genuinely different lifetimes
+    — but they made you say the same thing three times::
+
+        b = benchmarks(config)
+        h = custom_harnesses(config)   # again
+        j = jobs(config)               # and again
+
+    and any one of those drifting out of sync with the others is a bug that
+    looks like a permissions problem. One door, one config::
+
+        from evolve import hosted
+
+        client = hosted()
+        catalog = await client.benchmarks.list()
+        job = await client.jobs.run(benchmark='deep-swe', agents=[...])
+
+    The three clients are built LAZILY, on first access. That matters because
+    they raise when no API key is present, and :meth:`meta` needs no key at all
+    — so ``await hosted().meta()`` works with no credentials configured, while
+    ``hosted().jobs`` still fails loudly the moment you reach for something
+    that does need them.
+    """
+
+    def __init__(self, config: Optional[HostedClientConfig] = None):
+        self._config = config
+        self._benchmarks: Optional[BenchmarksClient] = None
+        self._custom_harnesses: Optional[CustomHarnessesClient] = None
+        self._jobs: Optional[JobsClient] = None
+
+    @property
+    def benchmarks(self) -> BenchmarksClient:
+        """The benchmark catalog: list, get, import, delete."""
+        if self._benchmarks is None:
+            self._benchmarks = BenchmarksClient(self._config)
+        return self._benchmarks
+
+    @property
+    def custom_harnesses(self) -> CustomHarnessesClient:
+        """Your own bring-your-own harness registrations."""
+        if self._custom_harnesses is None:
+            self._custom_harnesses = CustomHarnessesClient(self._config)
+        return self._custom_harnesses
+
+    @property
+    def jobs(self) -> JobsClient:
+        """Jobs: run, watch, compare, regrade, export."""
+        if self._jobs is None:
+            self._jobs = JobsClient(self._config)
+        return self._jobs
+
+    async def meta(self) -> CapabilityDocument:
+        """The capability document. Public: no API key required.
+
+        Fetch it once and stop hardcoding. It is what tells you the legal
+        harness names without having to send a bad one and read the 400.
+        """
+        return await meta(self._config)
+
+    async def __aenter__(self) -> 'HostedEvolve':
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        await self.close()
+
+    async def close(self) -> None:
+        for client in (self._benchmarks, self._custom_harnesses, self._jobs):
+            if client is not None:
+                await client.close()
+
+
+async def meta(config: Optional[HostedClientConfig] = None) -> CapabilityDocument:
+    """Fetch the capability document.
+
+    NO API KEY. The document is the same information the docs publish, and
+    requiring credentials would mean a signed-out page could not populate its
+    own harness picker — so this is the one hosted call that takes only a base
+    URL.
+    """
+    resolved = config or HostedClientConfig()
+    base_url = (
+        resolved.base_url
+        or os.environ.get('EVOLVE_DASHBOARD_URL')
+        or DEFAULT_BASE_URL
+    ).rstrip('/')
+
+    def fetch() -> Dict[str, Any]:
+        request = urllib.request.Request(
+            f'{base_url}/api/meta', headers={'Accept': 'application/json'}
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return json.loads(response.read().decode('utf-8'))
+        except urllib.error.HTTPError as exc:
+            _raise_api_error(exc)
+            raise  # unreachable; _raise_api_error always raises
+
+    return _map_capability_document(await asyncio.to_thread(fetch))

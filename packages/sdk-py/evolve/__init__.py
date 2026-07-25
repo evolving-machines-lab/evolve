@@ -35,10 +35,22 @@ from .hosted import (
     ActiveBenchmark,
     Benchmark,
     BenchmarkImport,
-    BenchmarkImportError,
+    ImportFailure,
     BenchmarkImportFailure,
+    BenchmarkImportPage,
     BenchmarkVersion,
     BenchmarksClient,
+    CapabilityDocument,
+    HarnessCapability,
+    HarnessModel,
+    HostedEvolve,
+    HOSTED_ERROR_CODES,
+    HostedErrorCode,
+    ProviderCapability,
+    StatusVocabulary,
+    UpstreamStatus,
+    is_hosted_error_code,
+    meta,
     ComparisonAggregate,
     ComparisonCell,
     ComparisonCoverage,
@@ -237,6 +249,26 @@ def custom_harnesses(config: Optional[HostedClientConfig] = None) -> CustomHarne
     return CustomHarnessesClient(config)
 
 
+def hosted(config: Optional[HostedClientConfig] = None) -> HostedEvolve:
+    """Open the hosted surface with ONE configuration.
+
+    Named ``hosted()`` rather than ``evolve()`` deliberately: ``Evolve`` is
+    already the local-sandbox class in this same package, and two exports one
+    shift key apart that do completely different things is a trap. ``hosted()``
+    says which half of the SDK you are reaching for.
+
+    The three clients underneath are built lazily, so ``await hosted().meta()``
+    works with no API key configured::
+
+        from evolve import hosted
+
+        client = hosted()
+        doc = await client.meta()          # public, no key needed
+        job = await client.jobs.run(...)   # needs EVOLVE_API_KEY
+    """
+    return HostedEvolve(config)
+
+
 def jobs(config: Optional[HostedClientConfig] = None) -> JobsClient:
     """Create a standalone hosted-evals jobs client.
 
@@ -366,7 +398,7 @@ __all__ = [
     'Benchmark',
     'ActiveBenchmark',
     'BenchmarkImport',
-    'BenchmarkImportError',
+    'ImportFailure',
     'BenchmarkImportFailure',
     'BenchmarkVersion',
     'Task',
@@ -397,9 +429,22 @@ __all__ = [
     'CustomHarnessPage',
     'TaskPage',
     'CustomHarness',
+    'BenchmarkImportPage',
     'benchmarks',
     'custom_harnesses',
     'jobs',
+    'hosted',
+    'meta',
+    'HostedEvolve',
+    'CapabilityDocument',
+    'HarnessCapability',
+    'HarnessModel',
+    'ProviderCapability',
+    'StatusVocabulary',
+    'UpstreamStatus',
+    'HOSTED_ERROR_CODES',
+    'HostedErrorCode',
+    'is_hosted_error_code',
 
     # Standalone functions
     'storage',

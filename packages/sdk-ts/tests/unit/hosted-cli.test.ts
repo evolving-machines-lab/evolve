@@ -7,7 +7,7 @@
  * POST /api/jobs -> SSE event stream -> terminal status, asserting the
  * request bodies, the rendered status lines, and the exit code. Also covers
  * `import` / `import status`: POST /api/benchmarks/imports, the getImport poll
- * loop of --watch, IMPORTED/FAILED exit codes, and the new trial / trace /
+ * loop of --watch, COMPLETED/FAILED exit codes, and the new trial / trace /
  * compare commands plus the trials --status filter. Also covers
  * `custom-harnesses` (add / list / remove): the --install-script file read, the
  * repeatable --env pairs, and the rendered harness.
@@ -552,10 +552,10 @@ function testParseCustomHarnesses() {
 function testImportStatusLine() {
   console.log("\n--- importStatusLine: compact status lines ---");
   const job = { id: "imp-1", benchmarkName: "my-bench", version: "1.0" };
-  const imported = importStatusLine({ ...job, status: "IMPORTED", taskCount: 12 });
-  assert(imported.includes("IMPORTED"), "includes the status");
+  const imported = importStatusLine({ ...job, status: "COMPLETED", failure: null, taskCount: 12 });
+  assert(imported.includes("COMPLETED"), "includes the status");
   assert(imported.includes("tasks=12"), "includes the task count");
-  const failed = importStatusLine({ ...job, status: "FAILED", error: { message: "bad tasks.json", failures: [{ taskKey: "t1", error: "boom" }] } });
+  const failed = importStatusLine({ ...job, status: "FAILED", failure: { code: "import_failed", message: "bad tasks.json", failures: [{ taskKey: "t1", error: "boom" }] } });
   assert(failed.includes("FAILED") && failed.includes("bad tasks.json") && failed.includes("1 task failure"), "FAILED line carries message + failure count");
 }
 
@@ -764,11 +764,11 @@ async function testImportWatchEndToEnd() {
     // Insertion order matters: most-specific patterns first.
     setMockResponse("/api/benchmarks/imports/imp-1", {
       status: 200,
-      body: { id: "imp-1", status: "IMPORTED", benchmarkName: "my-bench", version: "1.0", taskCount: 12, error: null },
+      body: { id: "imp-1", status: "COMPLETED", benchmarkName: "my-bench", version: "1.0", taskCount: 12, failure: null },
     });
     setMockResponse("/api/benchmarks/imports", {
       status: 202,
-      body: { id: "imp-1", status: "IMPORTING", benchmarkName: "my-bench", version: "1.0" },
+      body: { id: "imp-1", status: "QUEUED", benchmarkName: "my-bench", version: "1.0", failure: null },
     });
 
     const { io, out, err } = captureIO();
@@ -786,7 +786,7 @@ async function testImportWatchEndToEnd() {
       io
     );
 
-    assertEqual(code, 0, "exit code 0 on IMPORTED");
+    assertEqual(code, 0, "exit code 0 on COMPLETED");
     assertEqual(err, [], "nothing on stderr");
 
     // The create request
@@ -808,7 +808,7 @@ async function testImportWatchEndToEnd() {
 
     // Rendered output
     assert(out[0].includes("imp-1") && out[0].includes("my-bench") && out[0].includes("watching"), "prints the created header");
-    assert(out.some((l) => l.includes("IMPORTED") && l.includes("tasks=12")), "renders the IMPORTED status line");
+    assert(out.some((l) => l.includes("COMPLETED") && l.includes("tasks=12")), "renders the COMPLETED status line");
   } finally {
     restoreFetch();
   }
@@ -820,11 +820,11 @@ async function testImportWatchFailedAndStatus() {
   try {
     setMockResponse("/api/benchmarks/imports/imp-2", {
       status: 200,
-      body: { id: "imp-2", status: "FAILED", benchmarkName: "b", version: "1.0", error: { message: "bad tasks.json" } },
+      body: { id: "imp-2", status: "FAILED", benchmarkName: "b", version: "1.0", failure: { code: "import_failed", message: "bad tasks.json" } },
     });
     setMockResponse("/api/benchmarks/imports", {
       status: 202,
-      body: { id: "imp-2", status: "IMPORTING", benchmarkName: "b", version: "1.0" },
+      body: { id: "imp-2", status: "QUEUED", benchmarkName: "b", version: "1.0", failure: null },
     });
 
     const failed = captureIO();
@@ -844,7 +844,13 @@ async function testImportWatchFailedAndStatus() {
     assertEqual(codeStatus, 0, "import status exits 0");
     assertEqual(
       JSON.parse(status.out[0]),
-      { id: "imp-2", status: "FAILED", benchmarkName: "b", version: "1.0", error: { message: "bad tasks.json" } },
+      {
+        id: "imp-2",
+        status: "FAILED",
+        benchmarkName: "b",
+        version: "1.0",
+        failure: { code: "import_failed", message: "bad tasks.json" },
+      },
       "import status --json emits the self-describing job"
     );
 
