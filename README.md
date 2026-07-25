@@ -12,13 +12,14 @@
 
 <br>
 
-- Run any CLI agent ([Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi Code](https://github.com/MoonshotAI/kimi-code), [OpenCode](https://github.com/anomalyco/opencode)) in secure cloud sandboxes
+- Run any CLI agent ([Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi Code](https://github.com/MoonshotAI/kimi-code), [OpenCode](https://github.com/anomalyco/opencode), Droid) in secure cloud sandboxes
 - Checkpointing: snapshot agent state to S3, restore into fresh sandboxes, content-addressed dedup, lineage tracking
 - Persistent filesystem for infinite context
 - Full computer access: terminal, browser, MCP tools
 - [Agent skills](https://agentskills.io/home): extend agents with custom capabilities (PDF, dev-browser, etc.)
 - Managed integrations for Gmail, GitHub, Slack, Notion, and more
 - Functional programming abstractions (map, filter, reduce) for massively parallel workloads
+- Hosted evals: score agents against a benchmark on managed infrastructure — bring your own benchmark or your own harness
 - Streaming and structured output
 - Built-in [agent observability and analytics dashboard](https://dashboard.evolvingmachines.ai/)
 - Much more coming...
@@ -54,7 +55,7 @@ Get your Evolve API key at [dashboard.evolvingmachines.ai](https://dashboard.evo
 EVOLVE_API_KEY=sk-...
 ```
 
-To bring your own provider billing while keeping gateway features, save supported provider keys (Anthropic, OpenAI, Gemini, DashScope, Kimi, OpenRouter, or Droid/Factory) in Dashboard → Secrets → BYO Provider Keys. Your app still uses only `EVOLVE_API_KEY`.
+To bring your own provider billing while keeping gateway features, save an Anthropic or OpenAI key in Dashboard → Secrets → BYO Provider Keys — those are the two providers this route serves today. Your app still uses only `EVOLVE_API_KEY`.
 
 For fully local direct provider keys:
 ```bash
@@ -97,10 +98,12 @@ Check out the [documentation](./docs) and [cookbooks](./cookbooks).
 
 ## Documentation
 
-- [TypeScript SDK](./docs/typescript-sdk.md)
-- [Python SDK](./docs/python-sdk.md)
+- [TypeScript SDK](./docs/typescript/)
+- [Python SDK](./docs/python/)
+- [Hosted Evals](./docs/typescript/06-hosted-evals.md)
 - [Cookbooks](./cookbooks)
 - [Skills](./skills)
+- [Changelog](./CHANGELOG.md)
 
 ## Support + Talk with Founders
 

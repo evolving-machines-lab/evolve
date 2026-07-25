@@ -72,7 +72,7 @@ await evolve.run(prompt='Hello world')
 | Streaming events (content, lifecycle, stdout, stderr) | [Streaming Events](./04-streaming.md) |
 | OutputEvent / SessionUpdate types | [Streaming → Type Definitions](./04-streaming.md#type-definitions) |
 | LifecycleEvent / LifecycleReason | [Streaming → LifecycleEvent](./04-streaming.md#lifecycleevent-typeddict-shape) |
-| Tool events (ToolCall, ToolCallUpdate, ToolKind) | [Streaming → Type Definitions](./04-streaming.md#tool-types) |
+| Tool events (ToolCall, ToolCallUpdate, ToolKind) | [Streaming → Type Definitions](./04-streaming.md#type-definitions) |
 | Browser lifecycle event fields | [Streaming → Browser Automation Streaming](./04-streaming.md#browser-automation-streaming) |
 | UI integration example | [Streaming → UI Integration Example](./04-streaming.md#ui-integration-example) |
 | Upload files (`upload_context()`, `upload_files()`) | [Runtime → Upload](./03-runtime.md#upload-local--sandbox) |
@@ -97,20 +97,29 @@ await evolve.run(prompt='Hello world')
 
 | Topic | Link |
 |-------|------|
+| `hosted()` — all three clients behind one config | [Hosted Evals](./06-hosted-evals.md) |
 | Run a job (catalog → `run()`, idempotency) | [Hosted Evals → Run a Job](./06-hosted-evals.md#run-a-job) |
-| `watch()` / `watch_iter()` (SSE stream with resume) | [Hosted Evals → Watch It Live](./06-hosted-evals.md#watch-it-live) |
+| Spend model (`max_trial_spend_usd`, `worst_case_spend_usd`, credits, BYOK) | [Hosted Evals → Run a Job](./06-hosted-evals.md#run-a-job) |
+| Paging (`items` / `next_cursor` / `has_more`, `limit=` / `cursor=`) | [Hosted Evals → Run a Job](./06-hosted-evals.md#run-a-job) |
+| `watch()` (SSE stream with resume, `JobEvent` payloads) | [Hosted Evals → Watch It Live](./06-hosted-evals.md#watch-it-live) |
 | Results (`get`, `list`, `trials`, spend, trace) | [Hosted Evals → Read the Results](./06-hosted-evals.md#read-the-results) |
 | `cancel()` / `rerun_failed()` | [Hosted Evals → Cancel / Rerun Failures](./06-hosted-evals.md#cancel--rerun-failures) |
 | Regrade (`regrade()`, `regrade_trial()`, `get_regrade()`, `list_regrades()`) | [Hosted Evals → Regrade](./06-hosted-evals.md#regrade) |
 | `compare()` (aggregates + task matrix) | [Hosted Evals → Compare](./06-hosted-evals.md#compare) |
 | `export()` (research archive, Harbor bundle) | [Hosted Evals → Export](./06-hosted-evals.md#export) |
 | CLI (via the TypeScript `evolve-evals` binary) | [Hosted Evals → CLI](./06-hosted-evals.md#cli) |
+| `meta()` / `GET /api/meta` — the public capability document | [Hosted Evals → What the Platform Supports](./06-hosted-evals.md#what-the-platform-supports) |
+| Errors (`code`, `param`, `details`, `retry_after_sec`, `request_id`) | [Hosted Evals → Errors](./06-hosted-evals.md#errors) |
 | Task format & declarations (network, verifier, sizing) | [Hosted Evals → What Runs](./06-hosted-evals.md#what-runs) |
 | Sandbox providers (`sandbox_provider`, per-task verdicts) | [Hosted Evals → Where It Runs](./06-hosted-evals.md#where-it-runs) |
 | Bring your own benchmark (import → activation → `READY`) | [Hosted Evals → Bring Your Own Benchmark](./06-hosted-evals.md#bring-your-own-benchmark) |
-| Bring your own harness (`custom_harnesses()`, run contract) | [Hosted Evals → Bring Your Own Harness](./06-hosted-evals.md#bring-your-own-harness) |
-| Statuses (job, trial, benchmark version) | [Hosted Evals → Statuses](./06-hosted-evals.md#statuses) |
-| Types & errors | [Hosted Evals → Types](./06-hosted-evals.md#types) |
+| `list_imports()` (find an import you lost the id for) | [Hosted Evals → Already in Harbor Format](./06-hosted-evals.md#already-in-harbor-format) |
+| `benchmarks().delete()` (reclaim a name) | [Hosted Evals → Deleting One](./06-hosted-evals.md#deleting-one) |
+| Upstream version awareness (`upstream`, `moved`) | [Hosted Evals → When Upstream Moves](./06-hosted-evals.md#when-upstream-moves) |
+| Bring your own harness (`custom_harnesses()`, `upsert()`, run contract) | [Hosted Evals → Bring Your Own Harness](./06-hosted-evals.md#bring-your-own-harness) |
+| Statuses (job, trial, import, regrade, benchmark version) | [Hosted Evals → Statuses](./06-hosted-evals.md#statuses) |
+| Types | [Hosted Evals → Types](./06-hosted-evals.md#types) |
+| Error codes (the full vocabulary) | [Hosted Evals → Error Codes](./06-hosted-evals.md#error-codes) |
 
 ### Swarm & Pipeline
 
@@ -126,7 +135,7 @@ await evolve.run(prompt='Hello world')
 | `verify` (quality gate with feedback loop) | [Swarm → verify](./05-swarm-pipeline.md#verify-quality-gate) |
 | Result types (SwarmResult, ReduceResult, BestOfResult) | [Swarm → Result Types](./05-swarm-pipeline.md#result-types) |
 | Chaining operations (result.json → data.json) | [Swarm → Chaining Operations](./05-swarm-pipeline.md#chaining-operations) |
-| AgentOverride (per-operation agent config) | [Swarm → AgentOverride](./05-swarm-pipeline.md#agentoverride) |
+| AgentOverride (per-operation agent config — `AgentConfig` in Python) | [Swarm → AgentOverride](./05-swarm-pipeline.md#agentoverride) |
 | Concurrency (semaphore, ordering guarantees) | [Swarm → Concurrency](./05-swarm-pipeline.md#concurrency) |
 | RetryConfig (exponential backoff) | [Swarm & Pipeline](./05-swarm-pipeline.md) |
 | Pipeline (fluent chaining) | [Swarm → Pipeline](./05-swarm-pipeline.md#pipeline) |

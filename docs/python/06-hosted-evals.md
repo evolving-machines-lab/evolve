@@ -60,9 +60,14 @@ async with jobs() as evals:
         concurrency=4,
         max_trial_spend_usd=25,
     )
-    print(job.id, job.status)   # QUEUED
-    print(job.benchmark)        # 'deep-swe@1.1' — the resolved version, echoed back
+    print(job.id, job.status)     # QUEUED
+    print(job.benchmark)          # 'deep-swe@1.1' — the resolved version, echoed back
+    print(job.counts)             # JobCounts(agents=2, tasks=2) — entity cardinality
+    print(job.trials.total)       # 4
+    print(job.trials.by_status)   # {'QUEUED': 4, 'RUNNING': 0, 'SCORED': 0, ...} — every status
 ```
+
+Every collection on this surface is the same page: `items`, `next_cursor`, `has_more`, paged with `limit=`/`cursor=`. `next_cursor` means one thing everywhere — pass it back for the next page, and `None` means there is no next page. Every list call hands you a value you can either await for a single page or `async for` to walk every row, fetching pages as it goes.
 
 Tasks expose public fields only — `task_key`, `agent_timeout_sec`, `verifier_timeout_sec`, and `providers`, the per-provider capability verdict ([Where it runs](#where-it-runs)). Instructions, environments, and tests never leave the server.
 
@@ -74,10 +79,12 @@ Tasks expose public fields only — `task_key`, `agent_timeout_sec`, `verifier_t
 | `agents` | required | list of `JobAgent(harness=..., model=..., harness_version=None)` |
 | `tasks` | all tasks | task keys to run |
 | `runs_per_task` | `1` | runs per task × agent |
-| `concurrency` | `1` | parallel trials |
+| `concurrency` | `4` | parallel trials; ceiling 16 |
 | `max_trial_spend_usd` | `200` | hard model-spend cap (USD) for EACH trial |
 | `sandbox_provider` | `'e2b'` | see [Where it runs](#where-it-runs) |
 | `idempotency_key` | none | safe-retry key (below) |
+
+Every job response is the same shape, whatever produced it. `run()`, `get()`, `cancel()`, `rerun_failed()` and each row of `list()` carry the same fields, so a job card renders from any of them without your knowing which call it came from. `counts` is entity cardinality — the parts a job is made of — and `trials` is the one "how many" structure: a total plus a status histogram that names every status, zeros included, so a status bar never needs the enum hardcoded.
 
 `max_trial_spend_usd` caps what a single trial may spend on model calls, and it is the only spend limit the platform enforces: every trial runs on its own freshly minted gateway key, and the cap is that key's budget. Leave it out and the platform applies $200 per trial. The response always reports the cap that actually applied — `job.max_trial_spend_usd` — so an omitted one is never a mystery.
 
@@ -85,7 +92,11 @@ There is no job-wide budget, which means a job's real ceiling is simply its tria
 
 Runs on your own provider key are the one exception to the credit ledger. When a [managed BYO provider key](./01-getting-started.md#managed-byo-provider-keys) is enabled for the model's provider (Anthropic and OpenAI today), the trial's model calls bill your provider account directly and draw no Evolve credits — the per-trial cap still meters and bounds the trial exactly as before.
 
-A job expands to `tasks × agents × runs_per_task` trials, each in its own sandbox. Valid harness + model pairs are listed once in [Getting Started → Harness and Model Pairing](./01-getting-started.md#harness-and-model-pairing). `harness` also accepts a harness you registered yourself — see [Bring your own harness](#bring-your-own-harness).
+The exception is about who pays for model calls, not about the gate at the door. The zero-balance check runs on every job create and every `rerun_failed()`, BYOK included, so an account sitting at zero is refused with `402 insufficient_credits` even when the run would have drawn nothing. Keep a non-zero balance if you run BYOK-only.
+
+A job expands to `tasks × agents × runs_per_task` trials, each in its own sandbox. `concurrency` is how many of them run at once: four by default, sixteen at the ceiling, and every one of those numbers is published under `limits['job']['concurrency']` in the [capability document](#what-the-platform-supports) rather than only here.
+
+Three ceilings bound that expansion, and all three refuse at create rather than partway through: at most **8 distinct agents** after de-duplication and at most **100 `runs_per_task`**, each a `400 invalid_input`, and a total matrix of at most **10,000 trials**, which is `400 job_too_large`. They are published as `limits['job']['maxAgents']`, `['maxRunsPerTask']` and `['maxTrials']`, so a form can check a sweep before it POSTs. `sandbox_provider` (optional, default `'e2b'`) picks where those sandboxes run — see [Where it runs](#where-it-runs). Valid harness + model pairs are listed once in [Getting Started → Harness and Model Pairing](./01-getting-started.md#harness-and-model-pairing). `harness` also accepts a harness you registered yourself — see [Bring your own harness](#bring-your-own-harness).
 
 Pin a harness version when you need the comparison to hold still across weeks:
 
@@ -158,14 +169,15 @@ print(detail.counts)                      # JobCounts(agents=2, tasks=2) — ent
 print(detail.trials.total, detail.trials.by_status)   # 20, {'SCORED': 12, 'RUNNING': 3, ...}
 print(detail.mean_reward)                 # mean over SCORED trials; None until something scores
 print(detail.spent_usd, '/', detail.worst_case_spend_usd)
-print(detail.failure)                     # why it FAILED, or None
+print(detail.failure)                     # why it FAILED — None on every job today
 
-# Your jobs, newest first
+# Your jobs, newest first — await one page, or iterate them all
+page = await evals.list(limit=50)         # page.next_cursor continues
 async for item in evals.list():
     print(item.id, item.benchmark, item.status, item.mean_reward, item.spent_usd)
 ```
 
-Every job response is the same shape, whatever produced it: `run()`, `get()`, `cancel()`, `rerun_failed()` and each row of `list()` carry the same fields. `counts` is entity cardinality and `trials` is the one "how many" structure — a total plus a status histogram naming every status, zeros included, so a status bar never needs the enum hardcoded. A failed job says why on `failure`, as `code` + `message`, and that rides on list rows too.
+A failed job says why on `failure`, as `code` + `message` — the same grammar an API error uses, under a different key so that a client checking for `error` stays correct on a healthy read. It rides on list rows too, so a dashboard shows the reason without a detail call per row. In practice you will not see it fire: `FAILED` is a [reserved job status](#statuses) that nothing sets today, so `failure` is `None` on every job. Read `trials.by_status` for where a job actually went wrong.
 
 Iterate trials (pages fetched for you), or `await` one page. `status` filters, e.g. to the failures behind a rerun decision:
 
@@ -198,14 +210,17 @@ print(detail.metrics)             # named sub-scores
 print(detail.phase_timings_ms)    # {'agent_ms': ..., 'verify_ms': ...}
 ```
 
-Read per-trial spend from the trial itself. `spend_source='measured'` is platform-measured spend; `'assumed_cap'` means spend could not be measured, so the value conservatively assumes the trial's cap. `spent_usd=None` means the trial never ran — a queued or cancelled trial — and is not the same as `0`, which is a real measurement:
+Read per-trial spend from the trial itself. `spend_source='measured'` is platform-measured model spend; `'assumed_cap'` means the trial's spend could not be measured, so the per-trial cap is reported conservatively. Fresh trials can briefly show the cap while metering catches up. `spent_usd=None` means the trial never ran — a queued or cancelled trial — and is not the same as `0`, which is a real measurement and appears when no gateway key was ever minted:
 
 ```python
 print(detail.spent_usd, detail.spend_source)
+```
+
+Read spend from `spent_usd`, never from `model_usage`. `model_usage` is the open-ended per-harness blob: `max_trial_spend_usd` is the cap *that* trial's key carried (which can differ from the job's cap today), and everything else — bundle identity, token counts, and on trials settled by an earlier executor a historical `cost_usd` — lands in `model_usage.extra` under snake_cased keys. That leftover cost is a usage fact the harness reported, not the platform's spend answer, and only `spent_usd` carries `spend_source` to tell you how it was arrived at.
+
+```python
 if detail.model_usage:
-    # The blob keeps open-ended per-harness detail plus the cap THIS trial's
-    # key carried — never the spend itself.
-    print(detail.model_usage.max_trial_spend_usd)
+    print(detail.model_usage.max_trial_spend_usd)   # history, not this job's cap
 ```
 
 Stream a trial's recorded event trace; resume later from the last seen `seq`:
@@ -226,7 +241,7 @@ page = await evals.trial_trace(
 print(page.items, page.next_cursor, page.has_more)
 ```
 
-Every collection here is the same page — `items`, `next_cursor`, `has_more` — paged with `limit=`/`cursor=`. `next_cursor` means one thing everywhere: pass it back for the next page, and `None` means there is no next page, so a trace poller can tell it has caught up. A trace cursor is a position in the seq timeline, so keep the last event's `seq` to resume later.
+`trial_trace_events()` drains the currently available trace, then stops — `next_cursor` is `None` once you are caught up, which is how the drain knows. A trace cursor is a position in the seq timeline, so to follow an in-flight trial later, keep the last event's `seq` and resume with `cursor=str(last_seen_seq)`.
 
 ### Cancel / rerun failures
 
@@ -324,15 +339,19 @@ Compare 2–5 of your jobs side by side — per-job aggregates plus a per-task m
 comparison = await evals.compare([baseline.id, candidate.id])
 
 for aggregate in comparison.jobs:
-    print(aggregate.id, aggregate.mean_reward,
-          f'{aggregate.coverage.scored}/{aggregate.coverage.total} scored')
+    print(aggregate.benchmark, aggregate.mean_reward,
+          f'{aggregate.coverage.scored}/{aggregate.coverage.total} scored',
+          aggregate.spent_usd)
 
 for row in comparison.task_matrix:
-    print(row.task_key, row.disagreement,
-          [(cell.status, cell.mean_reward) for cell in row.cells])
+    if not row.disagreement:
+        continue
+    for cell in row.cells:
+        print(row.task_key, cell.status, cell.mean_reward)
+        # cell.status: a trial status, 'MIXED' (trials disagree), or 'MISSING' (no trials)
 ```
 
-Means cover `SCORED` trials only; coverage is always reported so a high mean over few scored trials stays visible. A cell's status is `'MIXED'` when its trials disagree and `'MISSING'` when the job has no trials for that task.
+Mean rewards cover `SCORED` trials only; `coverage` is always reported so a high mean over few scored trials stays visible. Zero is a reward, never a gap.
 
 ---
 
@@ -352,6 +371,8 @@ harbor_path = await evals.export(
 ) # Harbor job layout
 archive_bytes = await evals.export(job.id) # bytes in memory
 ```
+
+Two delivery shapes, not three: `to=` streams straight to disk and returns the saved path, and omitting it returns the bytes. The TypeScript SDK also offers `stream: true` for a raw response stream; Python has no equivalent, so pass `to=` for anything large enough that you would not want it in memory. `format='harbor'` composes with either shape.
 
 ---
 
@@ -381,19 +402,25 @@ What is in it:
 
 **`harnesses`** — every built-in, with `default_model` and the full `models` list for a picker, `runnable` (and `reason` when it is not), `version_pinnable`, and `latest_version` for a "your pin is out of date" badge. `default_model` is a suggestion, not a server-side default: `doc.limits['job']['modelRequired']` is `True`, and a job that omits `model` is refused.
 
-**`sandbox_providers`** — each provider's real resource ceilings and, in `refuses`, the capabilities it will not run with the reason the runner itself would give. `platform_constraints` holds the refusals that apply everywhere, so "runs nowhere" is distinguishable from "runs somewhere else".
+**`sandbox_providers`** — each provider's real resource ceilings and, in `refuses`, the capabilities it will not run with the reason the runner itself would give.
+
+**`platform_constraints`** — a top-level list of its own, holding the refusals that apply on *every* provider, so "runs nowhere" is distinguishable from "runs somewhere else".
+
+**`network_modes`** — the three modes a task may declare, which is exactly the list a "Network modes" filter needs. They are explained in [What runs](#network-modes).
 
 **`statuses`** — the job, trial, import, regrade-job, regrade-result, and benchmark-version vocabularies, each with its `terminal` members marked. A watcher stops on `terminal`; a status bar renders `values` without hardcoding the enum.
 
-**`limits`** — the concurrency ceiling and default, the per-trial spend default, the trial-matrix ceiling, upload caps, the per-user harness cap, and the pagination bounds of every paged collection.
+**`limits`** — five keys. `'job'` carries every create-time bound: `maxAgents`, `maxRunsPerTask`, `maxTrials`, `concurrency` (default and ceiling), `defaultMaxTrialSpendUsd`, `defaultSandboxProvider`, `modelRequired`, and `defaultSizing`. `'pagination'` is three separate scopes with three different pairs — `collections`, `benchmarkTasks`, and `regradeResults` each publish their own `default` and `max`, so read the one for the collection you are paging rather than applying a single pair everywhere. `'uploads'` holds the two archive size caps, `'benchmarkNames'` the name pattern and length bounds, and `'maxItemsNamedInErrorMessage'` sits at the top level: it is how many offending items a refusal names in its English sentence before "and N more", which is why `err.details` exists.
 
 **`error_codes`** — the whole vocabulary below, in one list.
 
-**`custom_harnesses`** — the registration rules (name pattern, size caps, reserved names and reserved env keys), so a form can validate before it POSTs.
+**`custom_harnesses`** — the registration rules, so a form can validate before it POSTs: the name pattern, the size caps, the reserved names and reserved env keys, and `maxPerUser`, the per-account registration ceiling. That ceiling lives here rather than under `limits` because it belongs to the same rules a registration form already reads.
 
-`limits`, `custom_harnesses`, and the inside of `statuses` are plain dicts with the wire's own camelCase keys. They are nested configuration you read by key, not objects you construct, and a dataclass per level would be five classes to edit every time the server adds a field — the exact coupling this document exists to remove.
+`limits` and `custom_harnesses` are plain dicts with the wire's own camelCase keys — `doc.limits['job']['concurrency']['max']`, `doc.custom_harnesses['maxPerUser']`. They are nested configuration you read by key, not objects you construct, and a dataclass per level would be five classes to edit every time the server adds a field — the exact coupling this document exists to remove.
 
-`schema_version` moves when a field is added, removed, or changes meaning — never when a value changes. Pin behavior to it, not to a deploy date.
+`statuses` is the exception, and the one place to read carefully: it is a dict *of dataclasses*. The outer keys are the wire's own (`'job'`, `'trial'`, `'import'`, `'regradeJob'`, `'regradeResult'`, `'benchmarkVersion'`), but each value is a `StatusVocabulary` you reach by attribute — `doc.statuses['job'].values`, `.terminal`, `.description`. Subscripting it like a dict raises `TypeError`.
+
+`schema_version` moves when a field is added, removed, or changes meaning — never when a value changes. Pin behavior to it, not to a deploy date. Responses carry an `ETag` and `Cache-Control: public, max-age=300, stale-while-revalidate=300`; send the ETag back as `If-None-Match` and a matching document answers `304` with no body.
 
 ---
 
@@ -415,7 +442,7 @@ except EvolveAPIError as err:
 
 - **`code`** is the stable identifier. `HOSTED_ERROR_CODES` and `is_hosted_error_code()` are exported, and `HostedErrorCode` is a `Literal` you can annotate with so a type checker catches `'insufficient_creidts'`. A server newer than your SDK may send a code the list does not have, which is why `code` stays a plain `str`.
 - **`str(err)`** is the human sentence, and it may be shortened. **`err.details`** never is. When a refusal says "and 8 more", all of them are in `details` — that is the rule, and it is why `details` exists.
-- **`err.param`** names the input that was wrong — a body path (`agents[0].harness`), a query parameter (`limit`), or a multipart part (`run_command`) — so a form can highlight one field instead of showing a banner.
+- **`err.param`** names the input that was wrong — a body path (`agents[0].harness`), a query parameter (`limit`), or a multipart part (`runCommand`) — so a form can highlight one field instead of showing a banner. It is a wire name handed through unconverted, so it stays camelCase even though the keyword you passed was `run_command`.
 - **`err.retry_after_sec`** is set on `429` and `503`, read from the body first and the `Retry-After` header second.
 - **`err.request_id`** identifies the failure server-side. Quote it in a support thread.
 
@@ -437,7 +464,9 @@ Tasks declare the agent sandbox's network access:
 
 - `no-network` — sealed; the agent reaches nothing but its model.
 - `allowlist` — only the hosts the task names.
-- `public` — open internet (Harbor's default when a task declares nothing).
+- `public` — open internet.
+
+**A task that declares no mode gets `public`**, which is Harbor's own default and therefore ours. That is worth knowing before you assume a sealed box: only `no-network` makes the per-trial spend cap a hard boundary, because only then is the gateway the sole route out. See [What keeps a trial inside its budget](#the-run-contract).
 
 The **verifier never gets network**, in any mode — it always runs sealed, regardless of what the task declares.
 
@@ -492,15 +521,18 @@ for task in bench.tasks.items:
         print(task.task_key, 'cannot run on modal:', verdict.reason)
 ```
 
-Creating a job whose selected tasks include one refused on the chosen provider is rejected with a `400 provider_unsupported` naming the tasks and each task's reason — never accepted and left to fail mid-run.
+Creating a job whose selected tasks include one refused on the chosen provider is rejected with a `400 provider_unsupported` naming the tasks and each task's reason, rather than accepted and billed until it fails.
 
-What the verdicts encode today:
+The verdict is narrower than the full set of things a provider can decline, and knowing where the line falls saves you a confusing trial. Three refusals are decided from the task's stored spec, so they are in `providers` and they are what a job creation checks against:
 
 - **Multi-container tasks run on `e2b` and `daytona`.** Modal cannot run them today — the task's `providers['modal']` verdict names the reason, and the task stays runnable on the other two providers.
 - **Multi-container + `no-network` is declined on every provider** for now. Run those tasks with an `allowlist` or `public` network policy.
-- **Daytona serves IP-based allowlists only.** Its network filter takes IPv4 addresses and CIDRs, capped at 10 entries — a cap that also has to fit the address the agent uses to reach its model, so a task's own list gets slightly fewer. A task whose allowlist names a hostname is refused on Daytona with the reason — run it on e2b or Modal, which serve hostname allowlists.
-- **Modal caps every sandbox at 24 hours.** A task whose timeout exceeds the cap fails fast when its sandbox is created (read the trial's `failure_detail`) — never truncated mid-run.
 - **Sizing above a provider's ceiling** refuses on that provider only — see [Compute sizing](#compute-sizing).
+
+The rest are decided when the sandbox is actually created, so they surface as a trial that ends `INFRASTRUCTURE_ERROR` with the reason in its `failure_detail` rather than as a `400` at creation. There are two, and both are Daytona-and-Modal specifics you can check yourself before choosing a provider:
+
+- **Daytona serves IP-based allowlists only.** Its network filter takes IPv4 addresses and CIDRs, capped at 10 entries — a cap that also has to fit the address the agent uses to reach its model, so a task's own list gets slightly fewer. A task whose `allowlist` names a hostname, or needs more than the cap, fails on Daytona when its sandbox is created. Run it on e2b or Modal, which serve hostname allowlists. Daytona serves `no-network` and `public` normally.
+- **Modal caps every sandbox at 24 hours.** A task whose timeout exceeds the cap fails fast when its sandbox is created — never truncated mid-run.
 
 ---
 
@@ -549,15 +581,24 @@ async with benchmarks() as catalog:
 ```python
 # Lost the id? List your imports — await one page, or walk them all.
 async for job in catalog.list_imports(status='FAILED'):
-    print(job.id, job.benchmark_name, job.version, job.failure)
+    print(job.id, job.benchmark_name, job.version, job.failure.message if job.failure else None)
+
+# Narrow to one benchmark's import history, newest first
+history = await catalog.list_imports(benchmark='my-bench', limit=20)
 ```
+
+`list_imports()` takes `status=` and `benchmark=` as filters and `limit=`/`cursor=` for paging, and returns the same `BenchmarkImport` shape the `202` did — so a row renders without a follow-up read.
+
+`get_import(id)` is the single read behind all of this, and it is what you want when you are not blocking: it returns one `BenchmarkImport` — status, `task_count`, and `failure` once there is one. `watch_import()` is a poll loop over it, so reach for `get_import()` when you are driving your own scheduler or rendering a status chip on request rather than holding a coroutine open. A terminal import stays readable indefinitely, id included.
+
+Every lane resolves to the same thing — a Harbor-layout directory — and is held to the same rules. The corpus root is a directory whose `tasks/` subdirectory holds one directory per task, or the tasks directory itself. Provenance is recorded per lane: the resolved commit for a git import, the sha256 of the exact uploaded bytes for a directory. On the wire an import is `multipart/form-data`: `benchmarkName` and `version` as named parts, and either `gitUrl` + `ref` or the gzipped corpus as a `file` part — the SDK produces it for you — and uploads past the compressed-size cap (512 MB by default) are refused with a `413 import_too_large`. The metadata parts come first, so a name owned by someone else is refused with a `409 benchmark_name_taken` before the upload is received rather than after.
 
 ### Deleting one
 
 A benchmark name is a global resource, and a typo used to squat one permanently. `delete()` takes it back:
 
 ```python
-await catalog.delete('my-bnech')   # and the archived solutions go with it
+await catalog.delete('my-bnech')   # 204, and the archived solutions go with it
 ```
 
 The rules are worth knowing before you reach for it:
@@ -578,31 +619,50 @@ if bench.upstream and bench.upstream.moved:
     # → import a NEW version when you want it; nothing happens automatically
 ```
 
-`UpstreamStatus` carries `ref`, `current_commit`, `latest_commit`, `moved`, `behind_by`, `checked_at`, and `error`.
+```python
+UpstreamStatus(
+    ref='main',                     # what the active version was imported from
+    current_commit='a1b2c3…',       # what it was built from
+    latest_commit='d4e5f6…',        # where the ref points now (None if the check failed)
+    moved=True,                     # branch on this
+    behind_by=None,                 # see below
+    checked_at='2026-07-24T…',      # None before the first check
+    error=None,                     # why the last check failed
+)
+```
 
 Four things this deliberately does **not** do:
 
 - **It never imports.** A new version is always an immutable row you create, with `catalog.import_benchmark()`. Watching produces a fact, never an action.
 - **It never modifies an existing version.** A version is what it was built from, permanently.
-- **`upstream` is `None`, not "up to date", when there is nothing to watch** — an uploaded corpus, a seeded one, or one imported before provenance was recorded. `None` means nobody checked, and a badge should not appear.
+- **`upstream` is `None`, not "up to date", when there is nothing to watch** — an uploaded corpus, a seeded one, one imported before provenance was recorded, or one imported at an exact commit sha. That last case is the one that surprises people: a commit pin is the *most* reproducible way to import, and a pinned commit cannot move, so there is no question to ask the remote and no badge to show. Import from a branch or tag if you want the watch. `None` always means nobody checked.
 - **`behind_by` is always `None` today.** Counting commits between two SHAs needs the commit graph, i.e. a real fetch from the remote per benchmark per check. The check is a single reference advertisement (`git ls-remote`) precisely so it can be cheap, and `moved` is what a badge actually needs. The field stays in the shape so a host comparison API could fill it later without a wire change.
 
 A failed check keeps the last known `latest_commit` and sets `error`: a network blip should not quietly erase an update that is genuinely available. Show "could not check", never "up to date".
 
 The same idea covers harnesses from the other direction: a job records the `harness_version` it pinned, and `meta().harnesses[].latest_version` is the newest published one. Compare the two for a "your pin is out of date" badge — one cached lookup for every job, rather than a registry round trip per job read.
 
-Every lane resolves to the same thing — a Harbor-layout directory — and is held to the same rules. The corpus root is a directory whose `tasks/` subdirectory holds one directory per task, or the tasks directory itself. Provenance is recorded per lane: the resolved commit for a git import, the sha256 of the exact uploaded bytes for a directory. On the wire an import is `multipart/form-data`: `benchmarkName` and `version` as named parts, and either `gitUrl` + `ref` or the gzipped corpus as a `file` part — the SDK produces it for you — and uploads past the compressed-size cap (512 MB by default) are refused with a `413 import_too_large`. The metadata parts come first, so a name owned by someone else is refused with a `409 benchmark_name_taken` before the upload is received rather than after.
+The `evolve-evals` CLI prints one quiet line under `benchmarks` and `benchmarks get` for each benchmark whose ref has moved — naming the benchmark, its active version, and the ref — and nothing at all when nothing moved. It never offers to import for you, because importing builds an immutable version and that is a decision. When you want the new version, it is the ordinary import command with a new version label:
+
+```bash
+npx evolve-evals import --git https://github.com/acme/my-bench.git --ref main \
+    --name my-bench --version 1.1 --watch
+```
+
+The notice never appears in `--json` output; the same fact is on the `upstream` field there.
 
 What happens next:
 
-- **All-or-nothing parse.** Every task is parsed before anything lands; one bad task fails the whole import, with each failure named in `error.failures`. No partial corpus ever exists.
+- **All-or-nothing parse.** Every task is parsed before anything lands; one bad task fails the whole import, with each failure named in `failure.failures`. No partial corpus ever exists.
 - **Strict by design.** Every `task.toml` field is either honored or the import is refused with the field and reason named — a task never silently runs on weaker semantics than it declares. Notably not yet supported: multi-step tasks (`[[steps]]`) and GPU tasks.
 - **Environments are prepared at import.** Dockerfile-defined environments are built once; multi-container service images are resolved and pinned so runs are reproducible.
 - **The activation gate certifies every task** before the version can activate:
   - **gold** — the task's reference solution (`solution/`) is pushed through the real agent-side + verifier path and must score exactly `1.0`. Proof the task is solvable as written.
   - **no-op** — an empty submission goes straight to the verifier and must *not* score `1.0`. A task a do-nothing agent passes measures nothing.
 
-`COMPLETED` is the import job's terminal success: the corpus landed as a benchmark version, visible in the catalog (`catalog.get('my-bench@1.0')`) in state `VALIDATING`. Activation is a separate, operator-run step — importing never triggers it. The version stays `VALIDATING` until the gate passes in full and promotes it to `READY`, the one state that accepts jobs; watch the state through `catalog.get()`. `run()` against any other state raises a `409 version_not_ready` naming it. Once `READY`:
+`COMPLETED` is the import job's terminal success: the corpus landed as a benchmark version, visible in the catalog (`catalog.get('my-bench@1.0')`) in state `VALIDATING`. Activation is a separate, operator-run step — importing never triggers it. The version stays `VALIDATING` until the gate passes in full and promotes it to `READY`, the one state that accepts jobs; watch the state through `catalog.get()`. `run()` against any other state raises a `409 version_not_ready` naming it.
+
+Be clear-eyed about what that means for you today: there is no SDK method, CLI verb or dashboard button that requests activation. A version you import sits at `VALIDATING` until Evolve runs the gate for it, so ask us to activate it — quote the benchmark name and version — rather than polling and waiting for a state change that nothing on your side can cause. Self-serve activation is coming; until it lands this is the one step in the chapter that is not in your hands. Once `READY`:
 
 ```python
 job = await evals.run(
@@ -760,6 +820,10 @@ await harnesses.create(
 )
 ```
 
+"Never both" is checked before anything leaves your process: `create()` and `upsert()` raise `ValueError` when you pass both sources or neither. The TypeScript SDK expresses that same rule as a union type, so there it is a compile error instead — the promise is identical, only the moment it is kept differs.
+
+`import_benchmark()` is looser, and worth knowing: it raises only when you name *no* usable source (neither `directory` nor a complete `git_url` + `ref`). Pass a `directory` and a git source together and it does not complain — the directory wins and the git source is ignored. The TypeScript SDK does reject that combination at compile time, so this is the one place the two SDKs genuinely differ. Pass exactly one.
+
 Read and remove them the same way:
 
 ```python
@@ -774,6 +838,8 @@ await harnesses.upsert(
     install_script='curl -fsSL https://acme.dev/install.sh | sh',
 )
 ```
+
+Both upload lanes — a harness and a benchmark corpus — send `multipart/form-data`: the metadata travels as named parts and the bytes as a `file` part. The SDK builds that for you, and it is why nothing sensitive rides a URL: a run command and a set of environment values in a query string end up in every access log and proxy buffer between you and the server.
 
 The same surface is on the `evolve-evals` CLI — see [TypeScript → Bring your own harness](../typescript/06-hosted-evals.md#bring-your-own-harness).
 
@@ -814,10 +880,12 @@ How it is built, and what that costs you:
 
 - The install script (or the uploaded tarball) runs once in a **throwaway builder sandbox that has internet and ZERO secrets**. Everything it fetches must therefore be **publicly fetchable** — a private registry that needs a token cannot be reached from there — and it must leave its executables in **`$PREFIX/bin`**.
 - A custom harness is **versioned by its registered content** — the install source, the `run_command` and the declared `env`, together — so `harness_version` on an agent using it is rejected. Change any of the three and you get a new recorded version and a new bundle digest.
-- **`upsert()` is how you change one.** `delete()` then `create()` leaves a window where the harness does not exist, and anything naming it in that window — a scripted job, a colleague's run — fails with "no such harness" for a change that was only ever meant to be an edit. `upsert()` is one call: the name holds the old registration or the new one, never nothing. It creates when the name is free and replaces when it is not, and replacing consumes no new registration slot, so you can still fix a broken run command at the ceiling. It is a full REPLACEMENT, not a patch: every field comes from the call, so an omitted `env` becomes empty and the source switches wholesale.
+- **`upsert()` is how you change one.** `delete()` then `create()` leaves a window where the harness does not exist, and anything naming it in that window — a scripted job, a colleague's run — fails with "no such harness" for a change that was only ever meant to be an edit. `upsert()` is one call: the name holds the old registration or the new one, never nothing. It creates when the name is free (`201`, with `Location`) and replaces when it is not (`200`), and replacing consumes no new registration slot, so you can still fix a broken run command at the ceiling. It is a full REPLACEMENT, not a patch: every field comes from the call, so an omitted `env` becomes empty and the source switches wholesale.
 - **You may register up to 25 harnesses.** Past that, registration is refused with `custom_harness_limit_reached`; delete one to make room. Each registration is a full CLI the platform builds and caches for you.
 
-**What keeps a trial inside its budget.** The spend cap is enforced on the gateway key, so model traffic that goes through `$EVOLVE_GATEWAY_BASE_URL` is metered and capped. What confines traffic to that route is the **task's network policy**, not the harness: under `no-network` — the default — the box can reach the gateway and nothing else, and the cap is a hard guarantee. On a task declaring `allowlist` or `public`, a harness *can* reach a provider directly, and that traffic is neither metered nor capped. Registration refuses credential-shaped `env` keys, but that is a guardrail against the obvious mistake, not a boundary.
+**What keeps a trial inside its budget — and when it does not.** The spend cap is enforced on the gateway key, so model traffic through `$EVOLVE_GATEWAY_BASE_URL` is metered and capped. What confines traffic to that route is the **task's network policy**, not the harness. Under `no-network` the box reaches the gateway and nothing else, and the cap is a hard guarantee. Under `allowlist` or `public` a harness *can* reach a provider directly with a key of its own, and that traffic is neither metered nor capped.
+
+Read that second sentence with [Network modes](#network-modes) in hand, because `public` is what a task gets when it declares no policy at all. If you care about the cap being airtight, run against tasks that declare `network_mode = "no-network"` — do not assume it. Registration refuses credential-shaped `env` keys, but that is a guardrail against the obvious mistake, not a boundary.
 
 What you give up versus a built-in:
 
@@ -836,7 +904,9 @@ What you give up versus a built-in:
 | `CANCELLING` | `cancel()` requested; in-flight trials winding down |
 | `COMPLETED` | terminal — all trials settled |
 | `CANCELLED` | terminal — cancelled before completion |
-| `FAILED` | terminal — the job itself failed (see `error`) |
+| `FAILED` | terminal, and **reserved** — see below |
+
+`FAILED` is in the vocabulary and declared terminal, but nothing on the server sets it and nothing emits a `job.failed` event. A job that goes wrong does so one trial at a time: the trials land in `INFRASTRUCTURE_ERROR` or `SCORING_ERROR` and the job still reaches `COMPLETED`. So `job.failure` is `None` on every job you will read today. Handle `FAILED` if you are switching exhaustively over the enum — the capability document lists it and it may become reachable — but do not build a failure banner and expect to see it fire; the histogram in `job.trials.by_status` is where a job's trouble actually shows.
 
 **Trial** — a valid reward (including 0) is `SCORED`; a verifier crash or out-of-domain reward is `SCORING_ERROR`, never a fabricated zero:
 
@@ -847,15 +917,61 @@ What you give up versus a built-in:
 | `SCORING` | agent finished; verifier running |
 | `SCORED` | valid reward recorded (`reward` set; 0 counts) |
 | `SCORING_ERROR` | verifier crashed or returned an out-of-domain reward |
-| `INFRASTRUCTURE_ERROR` | sandbox failed before a result was recorded (see `failure_phase`) |
+| `INFRASTRUCTURE_ERROR` | trial lost before a result was recorded — read `failure_phase`, then `rerun_failed()` |
 | `INDETERMINATE` | the outcome could not be determined |
 | `CANCELLED` | cancelled before settling |
 
-**Benchmark version** — `DRAFT → IMPORTING → BUILDING → VALIDATING → READY`, with `FAILED` and `ARCHIVED` as off-ramps: a failed parse or environment build lands `FAILED` before `VALIDATING` is ever reached, and `ARCHIVED` shelves a version that has been moved past. An import lands a version at `VALIDATING`; the activation gate (gold + no-op, above) then promotes it. Only `READY` versions accept jobs. (An import job uses the shared job vocabulary: `QUEUED → RUNNING → COMPLETED | FAILED`.)
+**Import** (`BenchmarkImport.status`) — the SAME four words a job uses, because an import is a job:
+
+| Status | Meaning |
+|--------|---------|
+| `QUEUED` | accepted; the corpus row exists and nothing has started |
+| `RUNNING` | cloning or extracting, then parsing and building the environment |
+| `COMPLETED` | terminal — the corpus landed as a benchmark version |
+| `FAILED` | terminal — read `failure` |
+
+It used to spell these `IMPORTING → IMPORTED | FAILED`. Nothing published depended on that, and a third status vocabulary is exactly what forces a status chip to carry a translation table forever.
+
+A terminal import stays readable. A successful import used to start answering `404` the moment its version was superseded, telling a watcher holding a week-old id that the import never happened — it `COMPLETED`, and the catalog moving on afterwards does not unmake that.
+
+**Regrade job** (`RegradeJob.status`) — shorter than a job's, because a regrade cannot be cancelled:
+
+| Status | Meaning |
+|--------|---------|
+| `QUEUED` | accepted; eligible source trials selected, nothing re-scored yet |
+| `RUNNING` | verifiers re-running |
+| `COMPLETED` | terminal — every selected trial has settled, whatever it settled as |
+
+**Regrade result** (`RegradeResult.status`) — the SAME reward law as a trial, minus the states a regrade cannot reach (there is no agent phase, so no `SCORING`, and nothing to cancel):
+
+| Status | Meaning |
+|--------|---------|
+| `QUEUED` | waiting for a verifier slot |
+| `RUNNING` | verifier re-running against the source trial's recorded inputs |
+| `SCORED` | valid reward recorded (`reward` set; 0 counts) |
+| `SCORING_ERROR` | verifier crashed or returned an out-of-domain reward |
+| `INFRASTRUCTURE_ERROR` | verifier box lost before a durable verdict |
+| `INDETERMINATE` | the verifier wrote no reward file |
+
+A `COMPLETED` regrade job is not a claim that every result `SCORED` — read `by_status` on `regrade.results` for that, exactly as with a job's trials.
+
+**Benchmark version** (`BenchmarkVersion.state`) — the catalog's lifecycle, distinct from the import job's statuses above:
+
+```
+DRAFT → IMPORTING → BUILDING → VALIDATING → READY
+```
+
+with `FAILED` and `ARCHIVED` as off-ramps: a failed parse or environment build lands `FAILED` before `VALIDATING` is ever reached, and `ARCHIVED` shelves a version that has been moved past. An import lands a version at `VALIDATING`; the activation gate (gold + no-op, above) then promotes it — `READY` is the only state that accepts jobs.
 
 ---
 
 ## Types
+
+These are the shapes the surface actually returns. Most of the names below are importable from `evolve` and can be annotated with — `Job`, `JobCounts`, `TrialTally`, `Trial`, `TrialDetail`, `JobEvent`, `Benchmark`, `Task`, `BenchmarkImport`, `ImportFailure`, `CustomHarness`, `RegradeJob`, `RegradeResult`, `UpstreamStatus`, `CapabilityDocument`, `StatusVocabulary`, and the concrete page classes `JobPage` / `TrialPage` / `TrialTracePage` / `BenchmarkImportPage`.
+
+Two things below are written out for reading rather than importing. `Page` is the shape every collection shares, not a class you can import — import the concrete page class for the collection you are paging. And the per-event `data` payloads inside `JobEvent` are plain dicts, so they have no class at all.
+
+That last one has a consequence worth stating plainly: a `JobEvent`'s `data` is the wire payload exactly as it arrived, so its keys stay camelCase (`trialId`, not `trial_id`). The same is true of `TrialTraceEvent.data`, of `err.details`, and of the nested dicts inside the capability document. Everywhere else this SDK converts to snake_case for you.
 
 ```python
 @dataclass
@@ -869,10 +985,15 @@ class JobAgent:
                                           # harness -> invalid_input (content-versioned)
 
 @dataclass
-class Page:                               # every collection, top level or nested
-    items: list                           # this page's rows
-    next_cursor: str | None               # pass back as cursor=; None = no next page
-    has_more: bool
+class Page:                               # the shape EVERY collection shares, top
+    items: list                           # level or nested. Not importable: use the
+    next_cursor: str | None               # concrete JobPage / TrialPage / TaskPage /
+    has_more: bool                        # TrialTracePage / BenchmarkImportPage / …
+
+@dataclass
+class JobCounts:                          # Job.counts — entity cardinality only,
+    agents: int                           # the parts a job is made of. Nothing here
+    tasks: int                            # has a status; TrialTally holds the "how many"
 
 @dataclass
 class TrialTally:
@@ -906,16 +1027,27 @@ class Job:                                # ONE shape from every call, nothing o
     updated_at: str
 
 @dataclass
-class JobEvent:                           # watch() / watch_iter()
+class JobEvent:                           # watch()
     seq: int                              # monotonic; the watch resume position
-    # One of: 'job.created', 'job.running', 'job.cancelling', 'job.cancelled',
-    # 'job.completed', 'job.failed' (reserved — nothing emits it yet),
-    # 'trial.running', 'trial.scoring', 'trial.settled'.
-    type: str
-    # Payload keys depend on `type`. Every 'trial.settled' carries trial_id,
-    # task_key and status; reward only on the scored path, failure_phase only on
-    # a failure, and attempt_id/attempt_phase only when the reaper settled it.
-    data: dict
+    type: str                             # one of the nine names below
+    data: dict                            # payload; keys are the WIRE's camelCase
+
+# What `data` holds, per `type`. Nine names, closed:
+#
+#   'job.created'     benchmark (resolved 'name@version'), taskCount, agents,
+#                     runsPerTask, concurrency, maxTrialSpendUsd,
+#                     sandboxProvider, trialCount
+#   'job.running'     jobId
+#   'job.cancelling'  jobId, cancelledTrials (queued trials cancelled outright),
+#                     activeTrials (still in flight, winding down)
+#   'job.cancelled'   jobId, cancelledTrials (the total across request + settle)
+#   'job.completed'   jobId, undispatched (always 0; kept for wire compatibility)
+#   'job.failed'      jobId — RESERVED; no server path emits it today
+#   'trial.running'   trialId, taskKey
+#   'trial.scoring'   trialId, capturedBytes (agent stdout kept for the detail)
+#   'trial.settled'   trialId, taskKey, status — always; plus reward on the
+#                     scored path (zero is a reward), failurePhase on a failure,
+#                     and attemptId/attemptPhase only when the REAPER settled it
 
 @dataclass
 class Trial:
@@ -927,9 +1059,9 @@ class Trial:
     reward: float | None                  # None until scored; 0 is a reward
     metrics: dict[str, float] | None      # named sub-scores
     failure_phase: str | None
-    failure_detail: str | None            # truncated in list rows; full via trial()
+    failure_detail: str | None            # truncated to 2000 chars in list rows; full via trial()
     phase_timings_ms: dict | None         # {'agent_ms': ..., 'verify_ms': ...}
-    model_usage: ModelUsage | None        # per-harness detail only; never spend
+    model_usage: ModelUsage | None        # per-harness detail; read spend from spent_usd
     sandbox_provider: str | None          # where the trial executed; None until it has
     verifier_mode: str | None             # 'separate' | 'shared'
     spent_usd: float | None               # None = never ran (NOT 0, which is a measurement)
@@ -946,7 +1078,9 @@ class TrialDetail(Trial):                 # trial(id, trial_id)
 @dataclass
 class ModelUsage:                         # open-ended per-harness detail
     max_trial_spend_usd: float | None     # the cap THIS trial's key carried (history)
-    extra: dict                           # bundle identity, token counts, snake_case
+    extra: dict                           # bundle identity, token counts, and on older
+                                          # trials a historical cost_usd — snake_cased
+                                          # keys; spend is trial.spent_usd, not this
 
 @dataclass
 class TrialTraceEvent:
@@ -1001,14 +1135,27 @@ class RegradeJob:                         # regrade() / regrade_trial() / get_re
     filter: RegradeFilter | None = None
 
 @dataclass
+class UpstreamStatus:                     # where the git source points NOW
+    ref: str                              # what the active version was imported from
+    current_commit: str                   # what it was built from
+    latest_commit: str | None             # where the ref points now; None = last check failed
+    moved: bool                           # branch on this
+    behind_by: int | None                 # always None — see "When upstream moves"
+    checked_at: str | None                # None before the first check
+    error: str | None                     # why the last check failed
+
+@dataclass
 class Benchmark:                          # catalog.list() / catalog.get(ref)
     name: str
     title: str | None
     description: str | None
     active_version: BenchmarkVersion | None
+    upstream: UpstreamStatus | None           # None = nothing to watch, NEVER "up to date"
     versions: list[BenchmarkVersion] | None   # get() only, newest first
     selected_version: BenchmarkVersion | None # get() only — the tasks' provenance
     tasks: TaskPage | None                    # get() only; page with limit=/cursor=
+    created_at: str | None                    # get() only
+    updated_at: str | None                    # get() only
     # ActiveBenchmark (get_active) is the same shape with version + tasks non-optional
 
 @dataclass
@@ -1040,11 +1187,23 @@ class Task:
 class BenchmarkImport:
     id: str
     status: str                           # 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED'
-    failure: Optional[ImportFailure]      # never `error` on a 200 body
     benchmark_name: str
     version: str
-    error: BenchmarkImportError | None    # .message + .failures[(task_key, error)]
-    task_count: int | None
+    failure: ImportFailure | None         # never `error` on a 200 body
+    task_count: int | None                # tasks parsed, once counted
+    created_at: str | None
+    updated_at: str | None
+
+@dataclass
+class ImportFailure:                      # BenchmarkImport.failure
+    code: str                             # 'import_failed' when none was recorded
+    message: str                          # e.g. '2/113 task(s) failed to parse'
+    failures: list[BenchmarkImportFailure]  # per-task, when the corpus was reachable
+
+@dataclass
+class BenchmarkImportFailure:             # one row of ImportFailure.failures
+    task_key: str
+    error: str
 
 @dataclass
 class CustomHarness:                      # harnesses.list() / get() / create()
@@ -1056,26 +1215,13 @@ class CustomHarness:                      # harnesses.list() / get() / create()
     updated_at: str
 ```
 
-`custom_harnesses().create()` keyword arguments: `name` and `run_command` are required, plus EITHER `install_script` (the script itself) OR `directory` (a local directory, tarred and uploaded); `env` is optional.
+`custom_harnesses().create()` and `.upsert()` take `name` and `run_command`, plus EXACTLY ONE of `install_script` (the script itself) or `directory` (a local directory, tarred and uploaded); `env` is optional. Passing both or neither raises `ValueError` before the call leaves your process. `import_benchmark()` only raises when no usable source is named at all — see [Already in Harbor format](#already-in-harbor-format).
 
-Both upload lanes — a harness and a benchmark corpus — send `multipart/form-data`: the metadata travels as named parts and the bytes as a `file` part. The SDK builds that for you, and it is why nothing sensitive rides a URL: a run command and a set of environment values in a query string end up in every access log and proxy buffer between you and the server.
+### Error codes
 
-### Errors
+The shape an error arrives in is described once, under [Errors](#errors); this is the vocabulary that fills its `code`. The same list is published as `error_codes` in the [capability document](#what-the-platform-supports), so a client can check its own branches against the server's.
 
-Every API failure raises `EvolveAPIError` — the server's own sentence as the message, plus a stable machine-readable code to branch on:
-
-```python
-from evolve import EvolveAPIError
-
-try:
-    await evals.run(benchmark='deep-swe', agents=[...], max_trial_spend_usd=25)
-except EvolveAPIError as error:
-    print(error.status)   # e.g. 409
-    print(error.code)     # e.g. 'version_not_ready', 'provider_unsupported', 'rate_limited'
-    print(error)          # 'Benchmark version deep-swe@1.2 is in state VALIDATING; ...'
-```
-
-Codes you will actually branch on: `benchmark_not_found` (also what another account's private benchmark reads as), `benchmark_version_not_found`, `benchmark_name_taken` (409 — the import name belongs to someone else), `import_too_large` (413), `no_active_version`, `version_not_ready`, `unknown_task_keys`, `provider_unsupported`, `job_not_found`, `job_not_terminal`, `no_failed_runs`, `trial_not_found`, `harness_version_not_found`, `insufficient_credits` (402 — the account is out of credits; add some and retry), `rate_limited` (retry after the `Retry-After` header), `invalid_api_key`, and `invalid_input`.
+Codes you will actually branch on: `benchmark_not_found` (also what another account's private benchmark reads as), `benchmark_version_not_found`, `benchmark_name_taken` (409 — the import name belongs to someone else), `import_too_large` (413), `no_active_version`, `version_not_ready`, `unknown_task_keys`, `provider_unsupported`, `job_not_found`, `job_not_terminal`, `no_failed_runs`, `trial_not_found`, `harness_version_not_found`, `insufficient_credits` (402 — the account is out of credits; add some and retry), `job_too_large` (400 — the trial matrix exceeds `limits['job']['maxTrials']`; the message states the count it would have created), `rate_limited` (retry after the `Retry-After` header), `invalid_api_key`, and `invalid_input` (which is also what the per-agent and per-`runs_per_task` ceilings refuse with).
 
 [Regrades](#regrade) add three: `regrade_source_ineligible` (409 — the source trial recorded no verifier inputs; the message names why), `no_regradable_runs` (409 — a whole-job regrade found nothing eligible), and `regrade_not_found`.
 

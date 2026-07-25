@@ -3,6 +3,9 @@
 - [TypeScript SDK](./typescript/)
 - [Python SDK](./python/)
 - [Cookbooks](https://github.com/evolving-machines-lab/evolve/tree/main/cookbooks)
+- [Changelog](https://github.com/evolving-machines-lab/evolve/blob/main/CHANGELOG.md)
+
+The SDK has two halves. One runs a CLI agent in a sandbox you control — that is the quickstart below. The other scores agents against a benchmark on Evolve's own infrastructure: you submit a job, and read back per-trial rewards. See [Hosted Evals](./typescript/06-hosted-evals.md) ([Python](./python/06-hosted-evals.md)) for `jobs()`, `benchmarks()`, and the `evolve-evals` CLI.
 
 ## Get Started
 
@@ -23,7 +26,7 @@ Get your Evolve API key at [dashboard.evolvingmachines.ai](https://dashboard.evo
 EVOLVE_API_KEY=sk-...
 ```
 
-To bring your own provider billing while keeping gateway features, save supported provider keys (Anthropic, OpenAI, Gemini, DashScope, Kimi, OpenRouter, or Droid/Factory) in Dashboard → Secrets → BYO Provider Keys. Your app still uses only `EVOLVE_API_KEY`.
+To bring your own provider billing while keeping gateway features, save an Anthropic or OpenAI key in Dashboard → Secrets → BYO Provider Keys — those are the two providers this route serves today. Your app still uses only `EVOLVE_API_KEY`.
 
 For fully local direct provider keys:
 ```bash

@@ -30,12 +30,14 @@ const swarm = new Swarm({
 **SwarmConfig** — configuration for Swarm instance:
 ```ts
 {
-    agent?: AgentOverride,
+    agent?: AgentConfig,
+    sandbox?: SandboxProvider,
     skills?: string[],
     integrations?: IntegrationsSetup,
     mcpServers?: Record<string, McpServerConfig>,
     concurrency?: number,
     timeoutMs?: number,
+    workspaceMode?: "knowledge" | "swe",
     tag?: string,
     retry?: RetryConfig,
 }
@@ -44,16 +46,20 @@ const swarm = new Swarm({
 | Option | Default | Notes |
 |--------|---------|-------|
 | `agent.type` | `'claude'` | Auto-resolved from env |
-| `agent.model` | per type | `'sonnet'` (claude), `'gpt-5.2'` (codex), etc. |
+| `agent.model` | per type | `'opus'` (claude), `'gpt-5.4'` (codex), etc. |
+| `sandbox` | auto-resolved | Provider for every worker; falls back to env (`E2B_API_KEY`, `DAYTONA_API_KEY`, `MODAL_TOKEN_*`, `EVOLVE_API_KEY`) |
 | `skills` | `undefined` | Set here or per-operation |
 | `integrations` | `undefined` | Set here or per-operation |
 | `mcpServers` | `undefined` | Set here or per-operation |
 | `concurrency` | `4` | Max parallel sandboxes |
 | `timeoutMs` | `3_600_000` | 1 hour per worker |
+| `workspaceMode` | `'knowledge'` | `'knowledge'` or `'swe'`; `'task'` is not a Swarm mode (the type excludes it) |
 | `tag` | `'swarm'` | Observability prefix |
 | `retry` | `undefined` | Set here or per-operation |
 
-**Minimal setup** — with `EVOLVE_API_KEY` set (see [1.1 Authentication](./01-getting-started.md#11-authentication)):
+The `agent` here is the full `AgentConfig` — the same shape `.withAgent()` takes, so `apiKey`, `providerApiKey`, `oauthToken` and `maxContextSize` all belong on it. The narrower `AgentOverride` (type, model, reasoningEffort) is what individual operations take when they override this default; see [AgentOverride](#agentoverride).
+
+**Minimal setup** — with `EVOLVE_API_KEY` set (see [Authentication](./01-getting-started.md#authentication)):
 
 ```ts
 import "dotenv/config";  // If using .env file

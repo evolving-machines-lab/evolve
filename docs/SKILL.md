@@ -120,20 +120,29 @@ Read on demand when the user's task requires them:
 
 | Topic | TypeScript | Python |
 |-------|-----------|--------|
+| hosted() — all three clients behind one config | [TS](references/typescript/06-hosted-evals.md) | [PY](references/python/06-hosted-evals.md) |
 | Run a job (catalog → run, idempotency) | [TS](references/typescript/06-hosted-evals.md#run-a-job) | [PY](references/python/06-hosted-evals.md#run-a-job) |
-| Watch it live (SSE stream with resume) | [TS](references/typescript/06-hosted-evals.md#watch-it-live) | [PY](references/python/06-hosted-evals.md#watch-it-live) |
+| Spend model (per-trial cap, worst case, credits, BYOK) | [TS](references/typescript/06-hosted-evals.md#run-a-job) | [PY](references/python/06-hosted-evals.md#run-a-job) |
+| Paging envelope (items / nextCursor / hasMore, limit + cursor) | [TS](references/typescript/06-hosted-evals.md#run-a-job) | [PY](references/python/06-hosted-evals.md#run-a-job) |
+| Watch it live (SSE stream with resume, JobEvent payloads) | [TS](references/typescript/06-hosted-evals.md#watch-it-live) | [PY](references/python/06-hosted-evals.md#watch-it-live) |
 | Read the results (trials, spend, trace) | [TS](references/typescript/06-hosted-evals.md#read-the-results) | [PY](references/python/06-hosted-evals.md#read-the-results) |
 | Cancel / rerun failures | [TS](references/typescript/06-hosted-evals.md#cancel--rerun-failures) | [PY](references/python/06-hosted-evals.md#cancel--rerun-failures) |
 | Regrade (verifier-only re-run, reward deltas) | [TS](references/typescript/06-hosted-evals.md#regrade) | [PY](references/python/06-hosted-evals.md#regrade) |
 | compare() (aggregates + task matrix) | [TS](references/typescript/06-hosted-evals.md#compare) | [PY](references/python/06-hosted-evals.md#compare) |
 | export() (archive, Harbor bundle) | [TS](references/typescript/06-hosted-evals.md#export) | [PY](references/python/06-hosted-evals.md#export) |
 | evolve-evals CLI | [TS](references/typescript/06-hosted-evals.md#cli) | [PY](references/python/06-hosted-evals.md#cli) |
+| Capability document (meta(), GET /api/meta — public, ETag'd) | [TS](references/typescript/06-hosted-evals.md#what-the-platform-supports) | [PY](references/python/06-hosted-evals.md#what-the-platform-supports) |
+| Errors (code, param, details, retryAfterSec, requestId) | [TS](references/typescript/06-hosted-evals.md#errors) | [PY](references/python/06-hosted-evals.md#errors) |
 | Task format & declarations (network, verifier, sizing) | [TS](references/typescript/06-hosted-evals.md#what-runs) | [PY](references/python/06-hosted-evals.md#what-runs) |
 | Sandbox providers (E2B/Daytona/Modal, per-task verdicts) | [TS](references/typescript/06-hosted-evals.md#where-it-runs) | [PY](references/python/06-hosted-evals.md#where-it-runs) |
 | Bring your own benchmark (import → activation → READY) | [TS](references/typescript/06-hosted-evals.md#bring-your-own-benchmark) | [PY](references/python/06-hosted-evals.md#bring-your-own-benchmark) |
-| Bring your own harness (customHarnesses()/custom_harnesses(), run contract) | [TS](references/typescript/06-hosted-evals.md#bring-your-own-harness) | [PY](references/python/06-hosted-evals.md#bring-your-own-harness) |
-| Statuses (job, trial, benchmark version) | [TS](references/typescript/06-hosted-evals.md#statuses) | [PY](references/python/06-hosted-evals.md#statuses) |
-| Types & errors | [TS](references/typescript/06-hosted-evals.md#types) | [PY](references/python/06-hosted-evals.md#types) |
+| Listing imports (listImports/list_imports) | [TS](references/typescript/06-hosted-evals.md#already-in-harbor-format) | [PY](references/python/06-hosted-evals.md#already-in-harbor-format) |
+| Deleting a benchmark (reclaim a name) | [TS](references/typescript/06-hosted-evals.md#deleting-one) | [PY](references/python/06-hosted-evals.md#deleting-one) |
+| Upstream version awareness (upstream, moved) | [TS](references/typescript/06-hosted-evals.md#when-upstream-moves) | [PY](references/python/06-hosted-evals.md#when-upstream-moves) |
+| Bring your own harness (customHarnesses()/custom_harnesses(), upsert, run contract) | [TS](references/typescript/06-hosted-evals.md#bring-your-own-harness) | [PY](references/python/06-hosted-evals.md#bring-your-own-harness) |
+| Statuses (job, trial, import, regrade, benchmark version) | [TS](references/typescript/06-hosted-evals.md#statuses) | [PY](references/python/06-hosted-evals.md#statuses) |
+| Types | [TS](references/typescript/06-hosted-evals.md#types) | [PY](references/python/06-hosted-evals.md#types) |
+| Error codes (the full vocabulary) | [TS](references/typescript/06-hosted-evals.md#error-codes) | [PY](references/python/06-hosted-evals.md#error-codes) |
 
 ### Swarm & Pipeline
 

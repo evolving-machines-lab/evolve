@@ -115,6 +115,7 @@ When using `EVOLVE_API_KEY`:
 - **Tracing:** Automatic tracing and agent analytics at [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) for observability and replay — no extra setup needed. Use `withSessionTagPrefix()` to label sessions for easy filtering.
 - **Browser Automation:** Call `.withBrowser()` for the default and recommended managed browser path with dashboard live view and replay.
 - **Checkpointing:** Snapshot sandbox state to Evolve-managed storage with `.withStorage()` — no S3 credentials needed. See [Storage & Checkpointing](./03-runtime.md#storage--checkpointing).
+- **Hosted Evals:** Score agents against a benchmark on managed infrastructure with `jobs()` and `benchmarks()`, or the `evolve-evals` CLI. See [Hosted Evals](./06-hosted-evals.md).
 
 ---
 
@@ -159,7 +160,7 @@ Use this when you want supported provider usage billed to your provider account 
 2. Keep `EVOLVE_API_KEY` in your app.
 3. Run any supported agent normally.
 
-Supported managed provider routes include Anthropic, OpenAI, Gemini, DashScope, Kimi, OpenRouter, and Droid/Factory.
+**You can save a key for Anthropic and OpenAI.** Those are the two providers this route serves today, so a Claude run or a Codex run can bill your own account. The gateway itself reaches seven providers — Anthropic, OpenAI, Gemini, DashScope, Kimi, OpenRouter, and Droid/Factory — but the other five have no bring-your-own path, and a run that routes through one of them is billed to Evolve whether or not you have a key saved. That is not a silent fallback so much as arithmetic: an Anthropic key cannot pay for a Moonshot call.
 
 When enabled, Evolve routes supported provider calls through a short-lived, sandbox-scoped credential. The SDK does not receive the raw provider key, and the sandbox does not receive `EVOLVE_API_KEY` for that provider route. If no managed key is enabled for that provider, gateway mode falls back to Evolve-managed model routing.
 
@@ -454,3 +455,11 @@ const evolve = new Evolve()
 ```
 
 ---
+
+## Where to go next
+
+- [Configuration](./02-configuration.md) shapes the sandbox: which provider, which image, which skills, secrets and integrations.
+- [Runtime](./03-runtime.md) covers everything after `run()` — files in and out, sessions, checkpointing, cost.
+- [Streaming](./04-streaming.md) is the event surface a UI subscribes to.
+- [Swarm & Pipeline](./05-swarm-pipeline.md) runs many agents in parallel and chains the results.
+- [Hosted Evals](./06-hosted-evals.md) is the other half of the SDK, and the part that is easiest to miss. Instead of driving one agent yourself, you hand Evolve a benchmark and a list of agents and read back scored trials — `jobs()` and `benchmarks()`, or `npx evolve-evals`, with no `Evolve` instance involved. Start with `benchmarks().list()`: what comes back is whatever the platform has published to your account. If that list is empty, you have not hit a wall — the same chapter's [Bring your own benchmark](./06-hosted-evals.md#bring-your-own-benchmark) section imports a corpus of your own.

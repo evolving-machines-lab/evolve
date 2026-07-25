@@ -1,6 +1,6 @@
 # Evolve SDK
 
-Run CLI agents (Claude, Codex, Gemini, Qwen) in secure sandboxes with built-in observability.
+Run CLI agents (Claude, Codex, Gemini, Qwen, Kimi, OpenCode, Droid) in secure sandboxes with built-in observability, and score them against benchmarks on hosted infrastructure.
 
 ## Repo Structure
 
@@ -15,8 +15,14 @@ evolve/
 │   │       ├── types.ts         # Shared types
 │   │       ├── constants.ts     # Constants
 │   │       ├── index.ts         # Public exports
-│   │       ├── parsers/         # CLI output parsers (claude, codex, gemini, qwen, kimi, opencode)
+│   │       ├── hosted/          # Hosted evals client + the evolve-evals CLI binary
+│   │       ├── parsers/         # CLI output parsers (claude, codex, gemini, qwen, kimi, opencode, droid)
 │   │       ├── integrations.ts  # Managed integration helpers
+│   │       ├── managed-secrets.ts   # Dashboard-stored secrets attached by name
+│   │       ├── provider-secrets.ts  # Managed BYO provider keys + runtime tokens
+│   │       ├── browser.ts, browser-credentials.ts, browser-profiles.ts
+│   │       ├── sandbox-artifacts.ts # Artifact collection from a sandbox
+│   │       ├── sessions/        # Historical sessions + trace download
 │   │       ├── mcp/             # MCP server config (json, toml, validation)
 │   │       ├── swarm/           # Swarm (map/filter/reduce/bestOf/verify, semaphore)
 │   │       ├── pipeline/        # Pipeline (fluent chaining)
@@ -41,11 +47,11 @@ evolve/
 │   ├── docker/                  # Docker image (Dockerfile, build.ts)
 │   ├── build.sh                 # Master build script
 │   └── README.md
-├── skills/                      # Agent skills (43 total)
+├── skills/                      # Agent skills (41 total) — CI-OWNED MIRROR of docs/
 │   ├── pdf, docx, pptx, xlsx   # Document processing
 │   ├── agent-browser, dev-browser, webapp-testing  # Browser automation
 │   ├── frontend-design, shadcn-webapp-design, web-design-guidelines  # Design
-│   ├── evolve, evolve-orchestrator  # SDK development
+│   ├── evolve                   # SDK development (generated from docs/)
 │   ├── skill-creator, skill-share, template-skill  # Skill tooling
 │   ├── remotion, slides-as-code, canvas-design  # Media & presentations
 │   ├── mcp-builder              # MCP server builder
@@ -53,23 +59,17 @@ evolve/
 ├── cookbooks/                   # Example applications
 │   ├── typescript/
 │   └── python/
-├── docs/                        # Documentation (source of truth)
+├── docs/                        # Documentation (SOURCE OF TRUTH — edit here only)
 │   ├── _meta.ts                 # Nextra navigation config
 │   ├── index.md                 # Docs landing page
-│   ├── changelog.md             # Symlink → ../CHANGELOG.md
-│   ├── typescript/              # TS SDK reference (5 chapters + index)
-│   └── python/                  # Python SDK reference (5 chapters + index)
-├── docs-site/                   # Nextra docs site (Next.js 16 + Nextra 4.6)
-│   ├── src/app/                 # Next.js app (layout, page)
-│   ├── tests/                   # Unit, integration, e2e, visual tests
-│   ├── next.config.mjs          # Next.js config (basePath: /evolve)
-│   └── package.json             # Workspace: docs-site
+│   ├── SKILL.md                 # Skill front matter + topic index
+│   ├── typescript/              # TS SDK reference (6 chapters + index)
+│   └── python/                  # Python SDK reference (6 chapters + index)
 ├── .claude/
-│   └── skills/evolve/           # Evolve skill (auto-synced from docs/)
+│   └── skills/evolve/           # CI-OWNED MIRROR, generated from docs/
 ├── .github/workflows/
-│   ├── docs.yml                 # Build + test + deploy docs to GitHub Pages
 │   ├── sync-docs-to-skill.yml   # Sync docs/ → skills/ + .claude/skills/
-│   └── publish.yml              # NPM publish
+│   └── publish.yml              # NPM + PyPI publish (owns versioning)
 ├── logo/                        # Brand assets (PNG, GIF, 3D HTML)
 ├── package.json                 # Monorepo root
 └── tsconfig.json                # Root TS config
@@ -80,3 +80,18 @@ evolve/
 - **Commits**: Conventional (`feat:`, `fix:`, `docs:`, `chore:`), single line, no co-authors
 - **Code**: TypeScript SDK is primary (Python wraps via bridge), registry-based (agent differences = data)
 - **Edit existing files**, don't create new ones unless necessary
+- **Versioning is the publish workflow's job.** Do not hand-edit `version` in `packages/sdk-ts/package.json` or `packages/sdk-py/pyproject.toml`.
+
+### Build and test
+
+```bash
+npm run build              # all packages (e2b, daytona, modal, sdk, python bridge)
+npm run test:ts:unit       # TypeScript unit tests
+npm run test:py:unit       # Python unit tests (builds the bridge first)
+npm run test:ts:integration  # TypeScript integration tests (needs live credentials)
+```
+
+### Documentation rules
+
+- **`docs/` is the only place documentation is edited.** `skills/` and `.claude/skills/` are mirrors regenerated on push by `.github/workflows/sync-docs-to-skill.yml`. Hand-editing a mirror gets overwritten and loses the change.
+- **`docs/typescript/` and `docs/python/` are exact mirrors of each other.** Same sections, same order, same facts, same caveats — only the code differs. A change to one chapter is not finished until the other says the same thing.

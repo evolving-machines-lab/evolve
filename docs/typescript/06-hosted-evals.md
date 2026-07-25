@@ -62,7 +62,7 @@ const job = await evals.run({
     ],
     tasks: ["task-001", "task-002"],    // (optional) default: every task of the version
     runsPerTask: 1,                     // (optional) default 1
-    concurrency: 4,                     // (optional) parallel trials, default 1
+    concurrency: 4,                     // (optional) parallel trials, default 4, ceiling 16
     maxTrialSpendUsd: 25,               // (optional) hard model-spend cap for EACH trial
 });
 
@@ -81,7 +81,11 @@ There is no job-wide budget, which means a job's real ceiling is simply its tria
 
 Runs on your own provider key are the one exception to the credit ledger. When a [managed BYO provider key](./01-getting-started.md#managed-byo-provider-keys) is enabled for the model's provider (Anthropic and OpenAI today), the trial's model calls bill your provider account directly and draw no Evolve credits — the per-trial cap still meters and bounds the trial exactly as before.
 
-A job expands to `tasks × agents × runsPerTask` trials, each in its own sandbox. `sandboxProvider` (optional, default `"e2b"`) picks where those sandboxes run — see [Where it runs](#where-it-runs). Valid harness + model pairs are the same as everywhere in the SDK — see [Getting Started → Harness and Model Pairing](./01-getting-started.md#harness-and-model-pairing). `harness` also accepts a harness you registered yourself — see [Bring your own harness](#bring-your-own-harness).
+The exception is about who pays for model calls, not about the gate at the door. The zero-balance check runs on every job create and every `rerunFailed()`, BYOK included, so an account sitting at zero is refused with `402 insufficient_credits` even when the run would have drawn nothing. Keep a non-zero balance if you run BYOK-only.
+
+A job expands to `tasks × agents × runsPerTask` trials, each in its own sandbox. `concurrency` is how many of them run at once: four by default, sixteen at the ceiling, and every one of those numbers is published under `limits.job.concurrency` in the [capability document](#what-the-platform-supports) rather than only here.
+
+Three ceilings bound that expansion, and all three refuse at create rather than partway through: at most **8 distinct agents** after de-duplication and at most **100 `runsPerTask`**, each a `400 invalid_input`, and a total matrix of at most **10,000 trials**, which is `400 job_too_large`. They are published as `limits.job.maxAgents`, `maxRunsPerTask` and `maxTrials`, so a form can check a sweep before it POSTs. `sandboxProvider` (optional, default `"e2b"`) picks where those sandboxes run — see [Where it runs](#where-it-runs). Valid harness + model pairs are the same as everywhere in the SDK — see [Getting Started → Harness and Model Pairing](./01-getting-started.md#harness-and-model-pairing). `harness` also accepts a harness you registered yourself — see [Bring your own harness](#bring-your-own-harness).
 
 Pin a harness version when you need the comparison to hold still across weeks:
 
@@ -174,7 +178,7 @@ const detail = await evals.get(job.id);
 console.log(detail.trials.total, detail.trials.byStatus);  // 20, { SCORED: 12, RUNNING: 3, … }
 console.log(detail.meanReward);                     // mean over SCORED trials; null until something scores
 console.log(detail.spentUsd, "/", detail.worstCaseSpendUsd);
-console.log(detail.failure);                        // why it FAILED, or null
+console.log(detail.failure);                        // why it FAILED — null on every job today
 
 // Your jobs, newest first — await one page, or iterate them all
 const jobPage = await evals.list({ limit: 50 });    // jobPage.nextCursor continues
@@ -183,7 +187,7 @@ for await (const item of evals.list()) {
 }
 ```
 
-A failed job says why on `failure`, as `{ code, message }` — the same grammar an API error uses, under a different key so that `if (body.error) throw` stays correct on a healthy read. It rides on list rows too, so a dashboard shows the reason without a detail call per row.
+A failed job says why on `failure`, as `{ code, message }` — the same grammar an API error uses, under a different key so that `if (body.error) throw` stays correct on a healthy read. It rides on list rows too, so a dashboard shows the reason without a detail call per row. In practice you will not see it fire: `FAILED` is a [reserved job status](#statuses) that nothing sets today, so `failure` is null on every job. Read `trials.byStatus` for where a job actually went wrong.
 
 Trials paginate the same way — await a page or iterate across pages. `status` filters, e.g. to the failures behind a rerun decision:
 
@@ -214,7 +218,9 @@ console.log(trial.failurePhase, trial.failureDetail);  // untruncated in this re
 
 > **Reading spend:** `spendSource: "measured"` is platform-measured model spend; `"assumed_cap"` means the trial's spend could not be measured, so the per-trial cap is reported conservatively. Fresh trials can briefly show the cap while metering catches up.
 >
-> Both fields live on the trial itself. `spentUsd: null` means the trial never ran — a queued or cancelled trial — and is not the same as `0`, which is a real measurement and appears when no gateway key was ever minted. `modelUsage` keeps only open-ended per-harness detail (bundle identity, token counts) plus `maxTrialSpendUsd`, the cap that trial's key actually carried.
+> Both fields live on the trial itself. `spentUsd: null` means the trial never ran — a queued or cancelled trial — and is not the same as `0`, which is a real measurement and appears when no gateway key was ever minted.
+>
+> Read spend from `spentUsd`, never from `modelUsage`. `modelUsage` is the open-ended per-harness blob: bundle identity, token counts, `maxTrialSpendUsd` (the cap *that* trial's key carried, which can differ from the job's cap today), and — on trials settled by an earlier executor — a historical `costUsd`. That leftover is a usage fact the harness reported, not the platform's spend answer, and only `spentUsd` carries `spendSource` to tell you how it was arrived at.
 
 Fetch a trial's recorded event timeline:
 
@@ -404,7 +410,7 @@ Run flags, in the order you decide them:
 - `--tasks <k1,k2,…>` — default: every task of the version
 - `--agent <harness:model[:version]>` — required; repeat once per agent. The optional third part pins the harness version (`codex:gpt-5.5:0.29.0`); omit it to resolve the latest
 - `--runs <n>` — runs per task × agent (default 1)
-- `--concurrency <n>` — parallel trials (default 1)
+- `--concurrency <n>` — parallel trials (default 4, ceiling 16)
 - `--max-trial-spend <usd>` — model-spend cap for each trial (default: the platform's $200)
 - `--provider <e2b|daytona|modal>` — default `e2b`
 - `--watch` — stream events until the job finishes
@@ -444,7 +450,12 @@ Benchmark imports and harness registration have their own subcommands — `npx e
 Everything a client would otherwise hardcode — the legal harness names, the status enums, the limits, the error codes — is one public, cacheable document. It needs no API key, so a signed-out page can populate its own harness picker.
 
 ```ts
-const { harnesses, sandboxProviders, statuses, limits, errorCodes } = await hosted().meta();
+import { meta } from "@evolvingmachines/sdk";
+
+// `meta` is exported from the package root, and is also `hosted().meta()` —
+// the same document either way. Use the standalone form when you have no
+// client to hand, which on a signed-out page is the usual case.
+const { harnesses, sandboxProviders, statuses, limits, errorCodes } = await meta();
 
 // A model picker, without a hardcoded table
 for (const harness of harnesses) {
@@ -458,17 +469,21 @@ What is in it:
 
 **`harnesses`** — every built-in, with `defaultModel` and the full `models` list for a picker, `runnable` (and `reason` when it is not), `versionPinnable`, and `latestVersion` for a "your pin is out of date" badge. `defaultModel` is a suggestion, not a server-side default: `limits.job.modelRequired` is `true`, and a job that omits `model` is refused.
 
-**`sandboxProviders`** — each provider's real resource ceilings and, in `refuses`, the capabilities it will not run with the reason the runner itself would give. `platformConstraints` holds the refusals that apply everywhere, so "runs nowhere" is distinguishable from "runs somewhere else".
+**`sandboxProviders`** — each provider's real resource ceilings and, in `refuses`, the capabilities it will not run with the reason the runner itself would give.
+
+**`platformConstraints`** — a top-level list of its own, holding the refusals that apply on *every* provider, so "runs nowhere" is distinguishable from "runs somewhere else".
+
+**`networkModes`** — the three modes a task may declare, which is exactly the list a "Network modes" filter needs. They are explained in [What runs](#network-modes).
 
 **`statuses`** — the job, trial, import, regrade-job, regrade-result, and benchmark-version vocabularies, each with its `terminal` members marked. A watcher stops on `terminal`; a status bar renders `values` without hardcoding the enum.
 
-**`limits`** — the concurrency ceiling and default, the per-trial spend default, the trial-matrix ceiling, upload caps, the per-user harness cap, and the pagination bounds of every paged collection.
+**`limits`** — five keys. `job` carries every create-time bound: `maxAgents`, `maxRunsPerTask`, `maxTrials`, `concurrency` (default and ceiling), `defaultMaxTrialSpendUsd`, `defaultSandboxProvider`, `modelRequired`, and `defaultSizing`. `pagination` is three separate scopes with three different pairs — `collections`, `benchmarkTasks`, and `regradeResults` each publish their own `default` and `max`, so read the one for the collection you are paging rather than applying a single pair everywhere. `uploads` holds the two archive size caps, `benchmarkNames` the name pattern and length bounds, and `maxItemsNamedInErrorMessage` sits at the top level: it is how many offending items a refusal names in its English sentence before "and N more", which is why `details` exists.
 
 **`errorCodes`** — the whole vocabulary below, in one array.
 
-**`customHarnesses`** — the registration rules (name pattern, size caps, reserved names and reserved env keys), so a form can validate before it POSTs.
+**`customHarnesses`** — the registration rules, so a form can validate before it POSTs: the name pattern, the size caps, the reserved names and reserved env keys, and `maxPerUser`, the per-account registration ceiling. That ceiling lives here rather than under `limits` because it belongs to the same rules a registration form already reads.
 
-`schemaVersion` moves when a field is added, removed, or changes meaning — never when a value changes. Pin behavior to it, not to a deploy date. Responses carry an `ETag` and `Cache-Control: public, max-age=300`; a conditional request gets a 304.
+`schemaVersion` moves when a field is added, removed, or changes meaning — never when a value changes. Pin behavior to it, not to a deploy date. Responses carry an `ETag` and `Cache-Control: public, max-age=300, stale-while-revalidate=300`; send the ETag back as `If-None-Match` and a matching document answers `304` with no body.
 
 ---
 
@@ -480,7 +495,11 @@ Every failure is one shape:
 import { EvolveApiError } from "@evolvingmachines/sdk";
 
 try {
-    await evolve.jobs.run({ benchmark: "deep-swe", agents, sandboxProvider: "modal" });
+    await evals.run({
+        benchmark: "deep-swe",
+        agents: [{ harness: "codex", model: "gpt-5.5" }],
+        sandboxProvider: "modal",
+    });
 } catch (err) {
     if (err instanceof EvolveApiError && err.code === "provider_unsupported") {
         // Every refused task, with its reason. Not a sentence to regex.
@@ -517,7 +536,9 @@ Tasks declare the agent sandbox's network access:
 
 - `no-network` — sealed; the agent reaches nothing but its model.
 - `allowlist` — only the hosts the task names.
-- `public` — open internet (Harbor's default when a task declares nothing).
+- `public` — open internet.
+
+**A task that declares no mode gets `public`**, which is Harbor's own default and therefore ours. That is worth knowing before you assume a sealed box: only `no-network` makes the per-trial spend cap a hard boundary, because only then is the gateway the sole route out. See [What keeps a trial inside its budget](#the-run-contract).
 
 The **verifier never gets network**, in any mode — it always runs sealed, regardless of what the task declares.
 
@@ -572,15 +593,18 @@ for (const task of bench.tasks?.items ?? []) {
 }
 ```
 
-Creating a job whose selected tasks include one refused on the chosen provider is rejected with a `400 provider_unsupported` naming the tasks and each task's reason — never accepted and left to fail mid-run.
+Creating a job whose selected tasks include one refused on the chosen provider is rejected with a `400 provider_unsupported` naming the tasks and each task's reason, rather than accepted and billed until it fails.
 
-What the verdicts encode today:
+The verdict is narrower than the full set of things a provider can decline, and knowing where the line falls saves you a confusing trial. Three refusals are decided from the task's stored spec, so they are in `providers` and they are what a job creation checks against:
 
 - **Multi-container tasks run on `e2b` and `daytona`.** Modal cannot run them today — the task's `providers.modal` verdict names the reason, and the task stays runnable on the other two providers.
 - **Multi-container + `no-network` is declined on every provider** for now. Run those tasks with an `allowlist` or `public` network policy.
-- **Daytona serves IP-based allowlists only.** Its network filter takes IPv4 addresses and CIDRs, capped at 10 entries — a cap that also has to fit the address the agent uses to reach its model, so a task's own list gets slightly fewer. A task whose allowlist names a hostname is refused on Daytona with the reason — run it on e2b or Modal, which serve hostname allowlists.
-- **Modal caps every sandbox at 24 hours.** A task whose timeout exceeds the cap fails fast when its sandbox is created (read the trial's `failureDetail`) — never truncated mid-run.
 - **Sizing above a provider's ceiling** refuses on that provider only — see [Compute sizing](#compute-sizing).
+
+The rest are decided when the sandbox is actually created, so they surface as a trial that ends `INFRASTRUCTURE_ERROR` with the reason in its `failureDetail` rather than as a `400` at creation. There are two, and both are Daytona-and-Modal specifics you can check yourself before choosing a provider:
+
+- **Daytona serves IP-based allowlists only.** Its network filter takes IPv4 addresses and CIDRs, capped at 10 entries — a cap that also has to fit the address the agent uses to reach its model, so a task's own list gets slightly fewer. A task whose `allowlist` names a hostname, or needs more than the cap, fails on Daytona when its sandbox is created. Run it on e2b or Modal, which serve hostname allowlists. Daytona serves `no-network` and `public` normally.
+- **Modal caps every sandbox at 24 hours.** A task whose timeout exceeds the cap fails fast when its sandbox is created — never truncated mid-run.
 
 ---
 
@@ -633,9 +657,16 @@ if (done.status === "FAILED") {
 
 // Lost the id? List your imports — await one page, or walk them all.
 for await (const job of catalog.listImports({ status: "FAILED" })) {
-    console.log(job.id, job.benchmarkName, job.version, job.error?.message);
+    console.log(job.id, job.benchmarkName, job.version, job.failure?.message);
 }
+
+// Narrow to one benchmark's import history, newest first
+const history = await catalog.listImports({ benchmark: "my-bench", limit: 20 });
 ```
+
+`listImports()` takes `status` and `benchmark` as filters and `limit`/`cursor` for paging, and returns the same `BenchmarkImport` shape the `202` did — so a row renders without a follow-up read.
+
+`getImport(id)` is the single read behind all of this, and it is what you want when you are not blocking: it returns one `BenchmarkImport` — status, `taskCount`, and `failure` once there is one. `watchImport()` is a poll loop over it, so reach for `getImport()` when you are driving your own scheduler or rendering a status chip on request rather than holding a process open. A terminal import stays readable indefinitely, id included.
 
 ```bash
 npx evolve-evals import \
@@ -693,31 +724,34 @@ Four things this deliberately does **not** do:
 
 - **It never imports.** A new version is always an immutable row you create, with `catalog.import()`. Watching produces a fact, never an action.
 - **It never modifies an existing version.** A version is what it was built from, permanently.
-- **`upstream` is `null`, not "up to date", when there is nothing to watch** — an uploaded corpus, a seeded one, or one imported before provenance was recorded. Null means nobody checked, and a badge should not appear.
+- **`upstream` is `null`, not "up to date", when there is nothing to watch** — an uploaded corpus, a seeded one, one imported before provenance was recorded, or one imported at an exact commit sha. That last case is the one that surprises people: a commit pin is the *most* reproducible way to import, and a pinned commit cannot move, so there is no question to ask the remote and no badge to show. Import from a branch or tag if you want the watch. Null always means nobody checked.
 - **`behindBy` is always `null` today.** Counting commits between two SHAs needs the commit graph, i.e. a real fetch from the remote per benchmark per check. The check is a single reference advertisement (`git ls-remote`) precisely so it can be cheap, and `moved` is what a badge actually needs. The field stays in the shape so a host comparison API could fill it later without a wire change.
 
 A failed check keeps the last known `latestCommit` and sets `error`: a network blip should not quietly erase an update that is genuinely available. Show "could not check", never "up to date".
 
 The same idea covers harnesses from the other direction: a job records the `harnessVersion` it pinned, and `meta().harnesses[].latestVersion` is the newest published one. Compare the two for a "your pin is out of date" badge — one cached lookup for every job, rather than a registry round trip per job read.
 
-The CLI prints one quiet line for each moved benchmark under `benchmarks` and `benchmarks get`, and nothing at all when nothing moved:
+The CLI prints one quiet line under `benchmarks` and `benchmarks get` for each benchmark whose ref has moved — naming the benchmark, its active version, and the ref — and nothing at all when nothing moved. It never offers to import for you, because importing builds an immutable version and that is a decision. When you want the new version, it is the ordinary import command with a new version label:
 
-```
-my-bench@1.0 · upstream main moved — run: evolve-evals import --benchmark my-bench --version <new-version> --git-url <url> --ref main
+```bash
+npx evolve-evals import --git https://github.com/acme/my-bench.git --ref main \
+    --name my-bench --version 1.1 --watch
 ```
 
-It never appears in `--json` output; the same fact is on the `upstream` field there.
+The notice never appears in `--json` output; the same fact is on the `upstream` field there.
 
 What happens next:
 
-- **All-or-nothing parse.** Every task is parsed before anything lands; one bad task fails the whole import, with each failure named in `error.failures`. No partial corpus ever exists.
+- **All-or-nothing parse.** Every task is parsed before anything lands; one bad task fails the whole import, with each failure named in `failure.failures`. No partial corpus ever exists.
 - **Strict by design.** Every `task.toml` field is either honored or the import is refused with the field and reason named — a task never silently runs on weaker semantics than it declares. Notably not yet supported: multi-step tasks (`[[steps]]`) and GPU tasks.
 - **Environments are prepared at import.** Dockerfile-defined environments are built once; multi-container service images are resolved and pinned so runs are reproducible.
 - **The activation gate certifies every task** before the version can activate:
   - **gold** — the task's reference solution (`solution/`) is pushed through the real agent-side + verifier path and must score exactly `1.0`. Proof the task is solvable as written.
   - **no-op** — an empty submission goes straight to the verifier and must *not* score `1.0`. A task a do-nothing agent passes measures nothing.
 
-`COMPLETED` is the import job's terminal success: the corpus landed as a benchmark version, visible in the catalog (`catalog.get("my-bench@1.0")`) in state `VALIDATING`. Activation is a separate, operator-run step — importing never triggers it. The version stays `VALIDATING` until the gate passes in full and promotes it to `READY`, the one state that accepts jobs; watch the state through `catalog.get()`. `evals.run()` against any other state is rejected with a `409 version_not_ready` naming it. Once `READY`:
+`COMPLETED` is the import job's terminal success: the corpus landed as a benchmark version, visible in the catalog (`catalog.get("my-bench@1.0")`) in state `VALIDATING`. Activation is a separate, operator-run step — importing never triggers it. The version stays `VALIDATING` until the gate passes in full and promotes it to `READY`, the one state that accepts jobs; watch the state through `catalog.get()`. `evals.run()` against any other state is rejected with a `409 version_not_ready` naming it.
+
+Be clear-eyed about what that means for you today: there is no SDK method, CLI verb or dashboard button that requests activation. A version you import sits at `VALIDATING` until Evolve runs the gate for it, so ask us to activate it — quote the benchmark name and version — rather than polling and waiting for a state change that nothing on your side can cause. Self-serve activation is coming; until it lands this is the one step in the chapter that is not in your hands. Once `READY`:
 
 ```ts
 const job = await evals.run({
@@ -943,7 +977,9 @@ How it is built, and what that costs you:
 - **`upsert()` is how you change one.** `delete()` then `create()` leaves a window where the harness does not exist, and anything naming it in that window — a scripted job, a colleague's run — fails with "no such harness" for a change that was only ever meant to be an edit. `upsert()` is one call: the name holds the old registration or the new one, never nothing. It creates when the name is free (`201`, with `Location`) and replaces when it is not (`200`), and replacing consumes no new registration slot, so you can still fix a broken run command at the ceiling. It is a full REPLACEMENT, not a patch: every field comes from the call, so an omitted `env` becomes empty and the source switches wholesale.
 - **You may register up to 25 harnesses.** Past that, registration is refused with `custom_harness_limit_reached`; delete one to make room. Each registration is a full CLI the platform builds and caches for you.
 
-**What keeps a trial inside its budget.** The spend cap is enforced on the gateway key, so model traffic that goes through `$EVOLVE_GATEWAY_BASE_URL` is metered and capped. What confines traffic to that route is the **task's network policy**, not the harness: under `no-network` — the default — the box can reach the gateway and nothing else, and the cap is a hard guarantee. On a task declaring `allowlist` or `public`, a harness *can* reach a provider directly, and that traffic is neither metered nor capped. Registration refuses credential-shaped `env` keys, but that is a guardrail against the obvious mistake, not a boundary.
+**What keeps a trial inside its budget — and when it does not.** The spend cap is enforced on the gateway key, so model traffic through `$EVOLVE_GATEWAY_BASE_URL` is metered and capped. What confines traffic to that route is the **task's network policy**, not the harness. Under `no-network` the box reaches the gateway and nothing else, and the cap is a hard guarantee. Under `allowlist` or `public` a harness *can* reach a provider directly with a key of its own, and that traffic is neither metered nor capped.
+
+Read that second sentence with [Network modes](#network-modes) in hand, because `public` is what a task gets when it declares no policy at all. If you care about the cap being airtight, run against tasks that declare `network_mode = "no-network"` — do not assume it. Registration refuses credential-shaped `env` keys, but that is a guardrail against the obvious mistake, not a boundary.
 
 What you give up versus a built-in:
 
@@ -962,7 +998,9 @@ What you give up versus a built-in:
 | `CANCELLING` | `cancel()` requested; in-flight trials are winding down |
 | `COMPLETED` | Terminal — all trials settled |
 | `CANCELLED` | Terminal — cancelled before completion |
-| `FAILED` | Terminal — the job itself failed; read `error` |
+| `FAILED` | Terminal, and **reserved** — see below |
+
+`FAILED` is in the vocabulary and declared terminal, but nothing on the server sets it and nothing emits a `job.failed` event. A job that goes wrong does so one trial at a time: the trials land in `INFRASTRUCTURE_ERROR` or `SCORING_ERROR` and the job still reaches `COMPLETED`. So `job.failure` is null on every job you will read today. Handle `FAILED` if you are switching exhaustively over the enum — the capability document lists it and it may become reachable — but do not build a failure banner and expect to see it fire; the histogram in `job.trials.byStatus` is where a job's trouble actually shows.
 
 **Trial** (`Trial.status`) — a valid reward, including 0, is `SCORED`; a failure is never reported as a fabricated zero:
 
@@ -990,6 +1028,27 @@ It used to spell these `IMPORTING → IMPORTED | FAILED`. Nothing published depe
 
 A terminal import stays readable. A successful import used to start answering `404` the moment its version was superseded, telling a watcher holding a week-old id that the import never happened — it `COMPLETED`, and the catalog moving on afterwards does not unmake that.
 
+**Regrade job** (`RegradeJob.status`) — shorter than a job's, because a regrade cannot be cancelled:
+
+| Status | Meaning |
+|--------|---------|
+| `QUEUED` | Accepted; eligible source trials selected, nothing re-scored yet |
+| `RUNNING` | Verifiers re-running |
+| `COMPLETED` | Terminal — every selected trial has settled, whatever it settled as |
+
+**Regrade result** (`RegradeResult.status`) — the SAME reward law as a trial, minus the states a regrade cannot reach (there is no agent phase, so no `SCORING`, and nothing to cancel):
+
+| Status | Meaning |
+|--------|---------|
+| `QUEUED` | Waiting for a verifier slot |
+| `RUNNING` | Verifier re-running against the source trial's recorded inputs |
+| `SCORED` | Valid reward recorded in `reward` (0 counts) |
+| `SCORING_ERROR` | Verifier crashed or returned an out-of-domain reward |
+| `INFRASTRUCTURE_ERROR` | Verifier box lost before a durable verdict |
+| `INDETERMINATE` | The verifier wrote no reward file |
+
+A `COMPLETED` regrade job is not a claim that every result `SCORED` — read `byStatus` on `regrade.results` for that, exactly as with a job's trials.
+
 **Benchmark version** (`BenchmarkVersion.state`) — the catalog's lifecycle, distinct from the import job's statuses above:
 
 ```
@@ -1001,6 +1060,10 @@ with `FAILED` and `ARCHIVED` as off-ramps: a failed parse or environment build l
 ---
 
 ## Types
+
+These are the shapes the surface actually returns. Most of the names below are exported from the package root and can be imported and annotated with — `Job`, `Trial`, `TrialDetail`, `JobEvent`, `Benchmark`, `Task`, `BenchmarkImport`, `BenchmarkImportInput`, `BenchmarkImportSource`, `CustomHarness`, `CustomHarnessInput`, `CustomHarnessUpsertInput`, `RegradeJob`, `RegradeResult`, `UpstreamStatus`, `CapabilityDocument`, `Awaitable`, and the concrete page aliases `JobPage` / `TrialPage` / `TrialTracePage` / `BenchmarkImportPage`.
+
+Three shapes below are written out for reading rather than importing, because the root does not export them: the generic `Page<T>` (import the concrete alias for the collection you are paging), the per-event `data` payloads inside `JobEvent` (you get them by narrowing on `type`, which is the point of the union), and `CustomHarnessSourceInput`, the bare either-or half of a harness registration — import `CustomHarnessInput` or `CustomHarnessUpsertInput`, which include it.
 
 ```ts
 type EvalSandboxProvider = "e2b" | "daytona" | "modal";
@@ -1069,6 +1132,8 @@ interface Benchmark {                    // catalog.list() / catalog.get(ref)
     versions?: BenchmarkVersion[];       // get() only, newest first
     selectedVersion?: BenchmarkVersion | null;  // get() only — the tasks' provenance
     tasks?: Page<Task>;                  // get() only; page with { limit, cursor }
+    createdAt?: string;                  // get() only
+    updatedAt?: string;                  // get() only
     // ActiveBenchmark (getActive) is the same shape with version + tasks non-optional
 }
 
@@ -1104,7 +1169,7 @@ interface Trial {
     failurePhase: string | null;
     failureDetail: string | null;            // truncated to 2000 chars in list responses
     phaseTimingsMs: Record<string, number> | null;  // { agentMs, verifyMs }
-    modelUsage: ModelUsage | null;           // per-harness detail only; never spend
+    modelUsage: ModelUsage | null;           // per-harness detail; read spend from spentUsd
     sandboxProvider: EvalSandboxProvider | null;  // where the trial executed; null until it has
     verifierMode: "separate" | "shared" | null;   // where the verifier ran
     spentUsd: number | null;                 // null = never ran (NOT zero, which is a measurement)
@@ -1121,7 +1186,9 @@ interface TrialDetail extends Trial {        // evals.trial(id, trialId)
 
 interface ModelUsage {                       // open-ended per-harness detail
     maxTrialSpendUsd?: number;               // the cap THIS trial's key carried (history)
-    [key: string]: unknown;                  // bundle identity, token counts, ...
+    [key: string]: unknown;                  // bundle identity, token counts, and on
+                                             // older trials a historical costUsd —
+                                             // spend is trial.spentUsd, not this
 }
 
 // A discriminated union: switch on `type` and `data` narrows, no cast needed.
@@ -1135,6 +1202,17 @@ type JobEvent =
     | { seq: number; type: "trial.running";  data: { trialId: string; taskKey: string } }
     | { seq: number; type: "trial.scoring";  data: { trialId: string; capturedBytes: number } }
     | { seq: number; type: "trial.settled";  data: TrialSettledData };
+
+interface JobCreatedData {                   // the job's resolved inputs, echoed
+    benchmark: string;                       // resolved "name@version", never your bare name
+    taskCount: number;
+    agents: JobAgent[];
+    runsPerTask: number;
+    concurrency: number;
+    maxTrialSpendUsd: number;
+    sandboxProvider: EvalSandboxProvider;
+    trialCount: number;
+}
 
 interface TrialSettledData {
     trialId: string;
@@ -1208,11 +1286,18 @@ type BenchmarkImportSource =              // benchmarks().import() — EITHER gi
 interface BenchmarkImport {
     id: string;
     status: "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED";   // the job vocabulary
-    failure: BenchmarkImportFailure | null;                  // never `error` on a 200 body
     benchmarkName: string;
     version: string;
+    failure: BenchmarkImportFailure | null;  // never `error` on a 200 body
     taskCount?: number;                      // tasks parsed, once counted
-    error?: { message: string; failures?: { taskKey: string; error: string }[] } | null;
+    createdAt?: string;
+    updatedAt?: string;
+}
+
+interface BenchmarkImportFailure {           // BenchmarkImport.failure
+    code: string;                            // "import_failed" when none was recorded
+    message: string;                         // e.g. "2/113 task(s) failed to parse"
+    failures?: { taskKey: string; error: string }[];  // per-task, when the corpus was reachable
 }
 
 interface CustomHarness {                    // harnesses.list() / get() / create()
@@ -1236,25 +1321,11 @@ type CustomHarnessInput = CustomHarnessSourceInput & {   // harnesses.create()
 };
 ```
 
-### Errors
+### Error codes
 
-Every API failure throws `EvolveApiError` — the server's own sentence as the message, plus a stable machine-readable code to branch on:
+The shape an error arrives in is described once, under [Errors](#errors); this is the vocabulary that fills its `code`. The same list is published as `errorCodes` in the [capability document](#what-the-platform-supports), so a client can check its own switch against the server's.
 
-```ts
-import { EvolveApiError } from "@evolvingmachines/sdk";
-
-try {
-    await evals.run(input);
-} catch (error) {
-    if (error instanceof EvolveApiError) {
-        console.log(error.status);   // e.g. 409
-        console.log(error.code);     // e.g. "version_not_ready", "provider_unsupported", "rate_limited"
-        console.log(error.message);  // "Benchmark version deep-swe@1.2 is in state VALIDATING; ..."
-    }
-}
-```
-
-Codes you will actually branch on: `benchmark_not_found` (also what another account's private benchmark reads as), `benchmark_version_not_found`, `benchmark_name_taken` (409 — the import name belongs to someone else), `import_too_large` (413), `no_active_version`, `version_not_ready`, `unknown_task_keys`, `provider_unsupported`, `job_not_found`, `job_not_terminal`, `no_failed_runs`, `trial_not_found`, `harness_version_not_found`, `insufficient_credits` (402 — the account is out of credits; add some and retry), `rate_limited` (retry after the `Retry-After` header), `invalid_api_key`, and `invalid_input`.
+Codes you will actually branch on: `benchmark_not_found` (also what another account's private benchmark reads as), `benchmark_version_not_found`, `benchmark_name_taken` (409 — the import name belongs to someone else), `import_too_large` (413), `no_active_version`, `version_not_ready`, `unknown_task_keys`, `provider_unsupported`, `job_not_found`, `job_not_terminal`, `no_failed_runs`, `trial_not_found`, `harness_version_not_found`, `insufficient_credits` (402 — the account is out of credits; add some and retry), `job_too_large` (400 — the trial matrix exceeds `limits.job.maxTrials`; the message states the count it would have created), `rate_limited` (retry after the `Retry-After` header), `invalid_api_key`, and `invalid_input` (which is also what the per-agent and per-`runsPerTask` ceilings refuse with).
 
 [Regrades](#regrade) add three: `regrade_source_ineligible` (409 — the source trial recorded no verifier inputs; the message names why), `no_regradable_runs` (409 — a whole-job regrade found nothing eligible), and `regrade_not_found`.
 

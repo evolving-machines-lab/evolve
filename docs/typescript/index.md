@@ -96,20 +96,29 @@ await evolve.run({ prompt: "Hello world" });
 
 | Topic | Link |
 |-------|------|
+| `hosted()` — all three clients behind one config | [Hosted Evals](./06-hosted-evals.md) |
 | Run a job (catalog → `run()`, idempotency) | [Hosted Evals → Run a Job](./06-hosted-evals.md#run-a-job) |
-| `watch()` (SSE stream with resume) | [Hosted Evals → Watch It Live](./06-hosted-evals.md#watch-it-live) |
+| Spend model (`maxTrialSpendUsd`, `worstCaseSpendUsd`, credits, BYOK) | [Hosted Evals → Run a Job](./06-hosted-evals.md#run-a-job) |
+| Paging (`{ items, nextCursor, hasMore }`, `limit` / `cursor`) | [Hosted Evals → Run a Job](./06-hosted-evals.md#run-a-job) |
+| `watch()` (SSE stream with resume, `JobEvent` union) | [Hosted Evals → Watch It Live](./06-hosted-evals.md#watch-it-live) |
 | Results (`get`, `list`, `trials`, spend, trace) | [Hosted Evals → Read the Results](./06-hosted-evals.md#read-the-results) |
 | `cancel()` / `rerunFailed()` | [Hosted Evals → Cancel / Rerun Failures](./06-hosted-evals.md#cancel--rerun-failures) |
 | Regrade (`regrade()`, `regradeTrial()`, `getRegrade()`, `listRegrades()`) | [Hosted Evals → Regrade](./06-hosted-evals.md#regrade) |
 | `compare()` (aggregates + task matrix) | [Hosted Evals → Compare](./06-hosted-evals.md#compare) |
 | `export()` (archive, Harbor bundle) | [Hosted Evals → Export](./06-hosted-evals.md#export) |
 | `evolve-evals` CLI | [Hosted Evals → CLI](./06-hosted-evals.md#cli) |
+| `meta()` / `GET /api/meta` — the public capability document | [Hosted Evals → What the Platform Supports](./06-hosted-evals.md#what-the-platform-supports) |
+| Errors (`code`, `param`, `details`, `retryAfterSec`, `requestId`) | [Hosted Evals → Errors](./06-hosted-evals.md#errors) |
 | Task format & declarations (network, verifier, sizing) | [Hosted Evals → What Runs](./06-hosted-evals.md#what-runs) |
 | Sandbox providers (`sandboxProvider`, per-task verdicts) | [Hosted Evals → Where It Runs](./06-hosted-evals.md#where-it-runs) |
 | Bring your own benchmark (import → activation → `READY`) | [Hosted Evals → Bring Your Own Benchmark](./06-hosted-evals.md#bring-your-own-benchmark) |
-| Bring your own harness (`customHarnesses()`, run contract) | [Hosted Evals → Bring Your Own Harness](./06-hosted-evals.md#bring-your-own-harness) |
-| Statuses (job, trial, benchmark version) | [Hosted Evals → Statuses](./06-hosted-evals.md#statuses) |
-| Types & errors | [Hosted Evals → Types](./06-hosted-evals.md#types) |
+| `listImports()` (find an import you lost the id for) | [Hosted Evals → Already in Harbor Format](./06-hosted-evals.md#already-in-harbor-format) |
+| `benchmarks().delete()` (reclaim a name) | [Hosted Evals → Deleting One](./06-hosted-evals.md#deleting-one) |
+| Upstream version awareness (`upstream`, `moved`) | [Hosted Evals → When Upstream Moves](./06-hosted-evals.md#when-upstream-moves) |
+| Bring your own harness (`customHarnesses()`, `upsert()`, run contract) | [Hosted Evals → Bring Your Own Harness](./06-hosted-evals.md#bring-your-own-harness) |
+| Statuses (job, trial, import, regrade, benchmark version) | [Hosted Evals → Statuses](./06-hosted-evals.md#statuses) |
+| Types | [Hosted Evals → Types](./06-hosted-evals.md#types) |
+| Error codes (the full vocabulary) | [Hosted Evals → Error Codes](./06-hosted-evals.md#error-codes) |
 
 ### Swarm & Pipeline
 
