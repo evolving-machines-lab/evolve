@@ -767,8 +767,11 @@ export class DaytonaCommands implements SandboxCommands {
             } catch {
               // Ignore cleanup errors after timeout
             }
+            // 124, the coreutils convention — the same code the in-box
+            // `timeout` produces and the same one the e2b adapter now returns,
+            // so a timeout means one thing across all three providers.
             return {
-              exitCode: -1,
+              exitCode: 124,
               stdout: "",
               stderr: "operation timed out",
             };

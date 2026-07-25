@@ -14,6 +14,18 @@
 
 import { Sandbox as E2BSandbox } from "@e2b/code-interpreter";
 
+/**
+ * E2B signals an expired command with TimeoutError. Matched by NAME rather than
+ * instanceof, so a duplicated copy of the SDK in the dependency tree cannot
+ * quietly turn a timeout back into an unrecognized throw.
+ */
+function isTimeoutError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  if ((err as { name?: unknown }).name === "TimeoutError") return true;
+  const message = (err as { message?: unknown }).message;
+  return typeof message === "string" && /timed?\s*out/i.test(message);
+}
+
 // ============================================================
 // MODULE-LEVEL CONSTANTS & HELPERS
 // ============================================================
@@ -370,6 +382,21 @@ export class E2BCommands implements SandboxCommands {
           stderr: cmdErr.stderr ?? "",
         };
       }
+      // A TIMEOUT IS AN OUTCOME, NOT AN ABSENCE. E2B raises for an expired
+      // command instead of returning a code, so a caller that treats a throw as
+      // "could not observe the run" ends up with exit code 0 — a harness that
+      // hung and emitted nothing then looks like a clean exit and gets SCORED
+      // (reward 0) instead of reported as infrastructure. Daytona and Modal both
+      // surface a nonzero code, so this was the one place the three providers
+      // disagreed on what a timeout MEANS. 124 is the coreutils convention the
+      // daytona path already produces in-box.
+      if (isTimeoutError(err)) {
+        return {
+          exitCode: 124,
+          stdout: "",
+          stderr: err instanceof Error ? err.message : "command timed out",
+        };
+      }
       throw err;
     }
   }
@@ -404,6 +431,21 @@ export class E2BCommands implements SandboxCommands {
               exitCode: cmdErr.exitCode,
               stdout: cmdErr.stdout ?? "",
               stderr: cmdErr.stderr ?? "",
+            };
+          }
+          // A TIMEOUT IS AN OUTCOME, NOT AN ABSENCE. E2B raises for an expired
+          // command instead of returning a code, so a caller that treats a throw as
+          // "could not observe the run" ends up with exit code 0 — a harness that
+          // hung and emitted nothing then looks like a clean exit and gets SCORED
+          // (reward 0) instead of reported as infrastructure. Daytona and Modal both
+          // surface a nonzero code, so this was the one place the three providers
+          // disagreed on what a timeout MEANS. 124 is the coreutils convention the
+          // daytona path already produces in-box.
+          if (isTimeoutError(err)) {
+            return {
+              exitCode: 124,
+              stdout: "",
+              stderr: err instanceof Error ? err.message : "command timed out",
             };
           }
           throw err;
@@ -446,6 +488,21 @@ export class E2BCommands implements SandboxCommands {
               exitCode: cmdErr.exitCode,
               stdout: cmdErr.stdout ?? "",
               stderr: cmdErr.stderr ?? "",
+            };
+          }
+          // A TIMEOUT IS AN OUTCOME, NOT AN ABSENCE. E2B raises for an expired
+          // command instead of returning a code, so a caller that treats a throw as
+          // "could not observe the run" ends up with exit code 0 — a harness that
+          // hung and emitted nothing then looks like a clean exit and gets SCORED
+          // (reward 0) instead of reported as infrastructure. Daytona and Modal both
+          // surface a nonzero code, so this was the one place the three providers
+          // disagreed on what a timeout MEANS. 124 is the coreutils convention the
+          // daytona path already produces in-box.
+          if (isTimeoutError(err)) {
+            return {
+              exitCode: 124,
+              stdout: "",
+              stderr: err instanceof Error ? err.message : "command timed out",
             };
           }
           throw err;
