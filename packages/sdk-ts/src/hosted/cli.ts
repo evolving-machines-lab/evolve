@@ -6,7 +6,7 @@
  * arg parsing, no dependencies. Human-readable tables by default; --json emits
  * machine-readable JSON (NDJSON for --watch event streams).
  *
- * Exit codes: 0 success (watch: job COMPLETED / import READY), 1
+ * Exit codes: 0 success (watch: job COMPLETED / import IMPORTED), 1
  * runtime/API failure (watch: FAILED or CANCELLED), 2 usage error.
  */
 

@@ -109,7 +109,7 @@ class Task:
     ``providers`` maps each sandbox provider to a :class:`TaskProviderVerdict`.
     Advisory for choosing a job's provider — creating a job
     whose tasks include one refused on the chosen provider is rejected with
-    the same reason, so nothing is ever spent on a run that cannot execute.
+    the same reason, so nothing is ever spent on a trial that cannot execute.
     """
     task_key: str
     agent_timeout_sec: int
@@ -207,7 +207,7 @@ class Job:
     counts: JobCounts
     created_at: str
     trial_counts: Optional[Dict[str, int]] = None
-    # Mean reward over SCORED runs only; None when none. Zero is a reward. (get/list)
+    # Mean reward over SCORED trials only; None when none. Zero is a reward. (get/list)
     mean_reward: Optional[float] = None
     agents: Optional[List[JobAgent]] = None
     error: Optional[str] = None
@@ -249,12 +249,12 @@ class Trial:
     # Wall-clock per phase with snake_case keys, e.g. {"agent_ms", "verify_ms"}
     phase_timings_ms: Optional[Dict[str, float]]
     model_usage: Optional[ModelUsage]
-    # Sandbox provider the run executed on; None until it has executed
+    # Sandbox provider the trial executed on; None until it has executed
     sandbox_provider: Optional[str]
     # Where the verifier ran ("separate" pristine box | "shared" inside the
     # agent box); None until recorded
     verifier_mode: Optional[str]
-    # Harness version actually resolved and used for the run; None until resolved
+    # Harness version actually resolved and used for the trial; None until resolved
     resolved_harness_version: Optional[str]
     session_ref: Optional[str]
     created_at: str
@@ -300,7 +300,7 @@ class TrialTracePage:
 
 @dataclass
 class ComparisonCoverage:
-    """Scored-run coverage behind an aggregate (means cover SCORED runs only)."""
+    """Scored-trial coverage behind an aggregate (means cover SCORED trials only)."""
     scored: int
     total: int
 
@@ -309,12 +309,12 @@ class ComparisonCoverage:
 class ComparisonCell:
     """One (task_key x job) cell of the compare matrix.
 
-    status is the shared Trial status when the cell's runs agree, "MIXED"
-    when they differ, and "MISSING" when the job has no runs for the task.
+    status is the shared Trial status when the cell's trials agree, "MIXED"
+    when they differ, and "MISSING" when the job has no trials for the task.
     """
     job_id: str
     status: str
-    # Mean reward over the cell's SCORED runs; None when none. Zero is a reward.
+    # Mean reward over the cell's SCORED trials; None when none. Zero is a reward.
     mean_reward: Optional[float]
     coverage: ComparisonCoverage
 
@@ -335,7 +335,7 @@ class ComparisonAggregate:
     id: str
     benchmark: str
     status: str
-    # Mean reward over SCORED runs only; None when none. Zero is a reward.
+    # Mean reward over SCORED trials only; None when none. Zero is a reward.
     mean_reward: Optional[float]
     coverage: ComparisonCoverage
     spent_usd: float
@@ -372,7 +372,7 @@ class RegradeResult:
     # Where the verifier ran — always "separate" (regrade only re-runs separate)
     verifier_mode: str
     # Content digest of the resolved target verifier spec = the "verifier
-    # version"; equal to the source run's own verifier means a reproduce.
+    # version"; equal to the source trial's own verifier means a reproduce.
     verifier_digest: Optional[str]
     verifier_sandbox_id: Optional[str]
     failure_phase: Optional[str]
@@ -384,7 +384,7 @@ class RegradeResult:
 
 @dataclass
 class RegradeFilter:
-    """The filter applied when selecting source runs for a per-job regrade."""
+    """The filter applied when selecting source trials for a per-job regrade."""
     status: Optional[List[str]] = None
     task_key: Optional[str] = None
 
@@ -401,7 +401,7 @@ class RegradeJob:
     """A regrade job = a collection of regrade results.
 
     A per-trial regrade holds one result; a per-job regrade holds one
-    per eligible source run. ``status`` is derived from the results
+    per eligible source trial. ``status`` is derived from the results
     ("QUEUED"|"RUNNING"|"COMPLETED"). ``results`` is present on read + create.
     """
     id: str
@@ -1677,12 +1677,12 @@ class JobsClient:
         task_key: Optional[str] = None,
     ) -> RegradeJob:
         """Regrade a terminal job: re-run the verifier of every REGRADABLE
-        run (settled separate-mode runs, which recorded their verifier inputs)
-        against those recorded inputs, in fresh separate verifier boxes.
+        trial (settled separate-mode trials, which recorded their verifier
+        inputs) against those recorded inputs, in fresh separate verifier boxes.
 
-        The agent phase is never re-run and the source runs are never modified.
-        ``status`` / ``task_key`` narrow the set of source runs. Returns a new
-        regrade job with one result per selected run.
+        The agent phase is never re-run and the source trials are never
+        modified. ``status`` / ``task_key`` narrow the set of source trials.
+        Returns a new regrade job with one result per selected trial.
         """
         body: Dict[str, Any] = {}
         if status is not None:
@@ -1699,7 +1699,7 @@ class JobsClient:
         inputs in a fresh separate verifier box.
 
         Refused (``regrade_source_ineligible``) for shared-mode or
-        pre-persistence runs. Returns a regrade job with one result.
+        pre-persistence trials. Returns a regrade job with one result.
         """
         raw = await self._http.request_json(
             f'/api/jobs/{urllib.parse.quote(id)}'
@@ -1710,7 +1710,7 @@ class JobsClient:
         return _map_regrade_job(raw)
 
     async def regrade_job(self, job_id: str) -> RegradeJob:
-        """Read a regrade job and its per-run results (with lineage + reward deltas)."""
+        """Read a regrade job and its per-trial results (with lineage + reward deltas)."""
         raw = await self._http.request_json(
             f'/api/regrades/{urllib.parse.quote(job_id)}'
         )
@@ -1810,7 +1810,7 @@ class JobsClient:
         """Side-by-side comparison of 2-5 owned jobs.
 
         Per-job aggregates plus a per-task matrix with disagreement
-        rows first. Means cover SCORED runs only; coverage is always reported.
+        rows first. Means cover SCORED trials only; coverage is always reported.
         """
         query = ','.join(urllib.parse.quote(item) for item in ids)
         raw = await self._http.request_json(f'/api/jobs/compare?ids={query}')

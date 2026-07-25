@@ -679,8 +679,7 @@ export class Agent {
    * `max_tokens`. Three cases, in order:
    *
    *   1. `maxContextSize` on the agent config wins verbatim — the caller knows
-   *      the model's real ceiling (an eval worker reads it from the gateway's
-   *      /model/info `max_output_tokens`).
+   *      the model's real ceiling.
    *   2. A model the kimi registry entry itself declares keeps that entry's
    *      value (262144).
    *   3. Any other model — e.g. driving Kimi Code against `gpt-5.5` through an
