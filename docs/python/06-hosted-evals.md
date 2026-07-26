@@ -76,7 +76,7 @@ Tasks expose public fields only — `task_key`, `agent_timeout_sec`, `verifier_t
 | Keyword | Default | What it does |
 |---------|---------|--------------|
 | `benchmark` | required | `'name'` (active `READY` version) or `'name@version'` |
-| `agents` | required | list of `JobAgent(harness=..., model=..., harness_version=None)` |
+| `agents` | required | list of `JobAgent(harness=..., model=..., harness_version=None, reasoning_effort=None)` |
 | `tasks` | all tasks | task keys to run |
 | `runs_per_task` | `1` | runs per task × agent |
 | `concurrency` | `4` | parallel trials; ceiling 16 |
@@ -119,6 +119,32 @@ A pin is never silently downgraded to the latest — it is checked at creation a
 - **A pin on a custom harness** — `400 invalid_input`. Custom harnesses are versioned by the content of their own source, so there is no separate version axis to pin; re-register to change what runs.
 
 One harness resolves later than the others: installer-sourced `kimi` accepts any well-formed exact pin at creation, because its vendor publishes no version index to check against. The builder's version probe enforces it instead, so a bad `kimi` pin surfaces as a failed trial rather than a `400`.
+
+`reasoning_effort` is the other per-agent knob, and it belongs to the comparison rather than to the run:
+
+```python
+agents=[
+    JobAgent(
+        harness='codex',
+        model='gpt-5.5',
+        reasoning_effort='high',    # (optional) omit to take the platform default, 'medium'
+    ),
+],
+```
+
+The accepted values are `'off'`, `'minimal'`, `'low'`, `'medium'`, `'high'`, `'xhigh'`, `'max'` and `'thinking'`, published as `limits['job']['reasoningEfforts']` with the omitted-value default as `limits['job']['defaultReasoningEffort']`. Read both from the [capability document](#what-the-platform-supports) rather than from this sentence: effort changes the score, so a client comparing two jobs has to know what an omitted value meant in each of them.
+
+Effort is part of an agent system's identity, alongside the harness, the model and the version pin. The same harness and model at `'low'` and at `'high'` are two distinct systems — they de-duplicate separately, they each consume one of the eight agent slots, and every trial echoes the effort back on `trial.agent`. A `None` there means the agent declared none and took the platform default, not that it ran at no effort at all.
+
+Not every harness can honor one, and a request naming an effort a harness cannot apply is refused at creation with a `400 invalid_input` rather than accepted and quietly dropped. Recording `'high'` against a CLI that never received the flag would put a claim in the benchmark record that did not happen:
+
+- `claude`, `codex`, `droid` and `opencode` take a level, and the value reaches the CLI as one.
+- `kimi` can express only thinking on or off, so it accepts `'off'`, `'minimal'`, `'medium'` and `'thinking'`, and refuses every other level.
+- `gemini` and `qwen` take no effort input at all, so naming any effort for them is refused.
+
+Each harness publishes which of the three it is as `effort_support`, so a picker greys the control out instead of discovering the refusal after a POST. Omitting the field is always accepted, `gemini` and `qwen` included — the refusal is about a value that could not be applied, never about the field existing.
+
+A harness you registered yourself is never refused, because the platform makes no claim about what someone else's CLI accepts. It is also never handed the value: the [run contract](#the-run-contract) gives your command six environment keys and effort is not among them, so an effort set here is recorded on the agent system and reaches nothing. Put the flag in your own `run_command`.
 
 Retrying with the same `idempotency_key` returns the original job instead of creating a duplicate:
 
@@ -222,6 +248,23 @@ Read spend from `spent_usd`, never from `model_usage`. `model_usage` is the open
 if detail.model_usage:
     print(detail.model_usage.max_trial_spend_usd)   # history, not this job's cap
 ```
+
+While a trial is still in flight there is a mid-run reading as well, on two fields of its own:
+
+```python
+print(detail.live_spent_usd, detail.live_spend_at)   # 3.41  '2026-07-24T18:22:05.113Z'
+```
+
+Read them together or not at all. `live_spent_usd` is a **lagging lower bound**, never the trial's cost: the gateway settles spend 40–70 seconds behind the calls that incurred it, and the platform samples the trial's key roughly every two minutes, so the number is always behind and `live_spend_at` is how far behind. Render it as "at least $3.41, as of 90s ago" — never as "current cost".
+
+The rest of its behavior follows from that:
+
+- **`None` is "no reading yet", never `$0`.** A zero from the gateway means nothing has settled, not that the trial was free, so a zero is skipped rather than written.
+- **It is never part of a total.** `job.spent_usd` sums settled trials only, and folding a live reading into it would double-count the moment that trial settles.
+- **It stops moving when the trial does.** Nothing writes it once the row is terminal, so what remains is the last mid-run sample — stale by construction. On a terminal trial read `spent_usd` and `spend_source`; that is the settled truth, and it is the only one.
+- **Built-in harnesses only.** A custom harness runs your own command with no live poll around it, so its trials go from `None` straight to a settled `spent_usd`.
+
+The same reading reaches a watcher as a `trial.spend` event carrying `trialId`, `taskKey` and `liveSpentUsd`. It is emitted only when a sample actually landed on a live trial, so a poll that raced the settle never fires one.
 
 Stream a trial's recorded event trace; resume later from the last seen `seq`:
 
@@ -400,7 +443,7 @@ for harness in doc.harnesses:
 
 What is in it:
 
-**`harnesses`** — every built-in, with `default_model` and the full `models` list for a picker, `runnable` (and `reason` when it is not), `version_pinnable`, and `latest_version` for a "your pin is out of date" badge. `default_model` is a suggestion, not a server-side default: `doc.limits['job']['modelRequired']` is `True`, and a job that omits `model` is refused.
+**`harnesses`** — every built-in, with `default_model` and the full `models` list for a picker, `runnable` (and `reason` when it is not), `version_pinnable`, and `latest_version` for a "your pin is out of date" badge. `default_model` is a suggestion, not a server-side default: `doc.limits['job']['modelRequired']` is `True`, and a job that omits `model` is refused. `effort_support` is the same idea for the effort control — `'level'`, `'binary'` or `'none'`, exactly as [Run a job](#run-a-job) describes them — so a form can offer the right control, or none, instead of learning the harness's limits from a refusal.
 
 **`sandbox_providers`** — each provider's real resource ceilings and, in `refuses`, the capabilities it will not run with the reason the runner itself would give.
 
@@ -410,7 +453,7 @@ What is in it:
 
 **`statuses`** — the job, trial, import, regrade-job, regrade-result, and benchmark-version vocabularies, each with its `terminal` members marked. A watcher stops on `terminal`; a status bar renders `values` without hardcoding the enum.
 
-**`limits`** — five keys. `'job'` carries every create-time bound: `maxAgents`, `maxRunsPerTask`, `maxTrials`, `concurrency` (default and ceiling), `defaultMaxTrialSpendUsd`, `defaultSandboxProvider`, `modelRequired`, and `defaultSizing`. `'pagination'` is three separate scopes with three different pairs — `collections`, `benchmarkTasks`, and `regradeResults` each publish their own `default` and `max`, so read the one for the collection you are paging rather than applying a single pair everywhere. `'uploads'` holds the two archive size caps, `'benchmarkNames'` the name pattern and length bounds, and `'maxItemsNamedInErrorMessage'` sits at the top level: it is how many offending items a refusal names in its English sentence before "and N more", which is why `err.details` exists.
+**`limits`** — five keys. `'job'` carries every create-time bound: `maxAgents`, `maxRunsPerTask`, `maxTrials`, `concurrency` (default and ceiling), `defaultMaxTrialSpendUsd`, `defaultSandboxProvider`, `modelRequired`, and `defaultSizing`. Four more are the values a run inherits when nothing declares one: `reasoningEfforts` and `defaultReasoningEffort` are the effort vocabulary and the omitted-value default from [Run a job](#run-a-job), and `defaultAgentTimeoutSec` (3600) and `defaultVerifierTimeoutSec` (600) are the phase wall-clocks a task falls back to when its own `task.toml` declares none — a task that declares `agent.timeout_sec` or `verifier.timeout_sec` always wins, so these fill in rather than cap. They are published because nothing else on the document says how long a trial may run. `'pagination'` is three separate scopes with three different pairs — `collections`, `benchmarkTasks`, and `regradeResults` each publish their own `default` and `max`, so read the one for the collection you are paging rather than applying a single pair everywhere. `'uploads'` holds the two archive size caps, `'benchmarkNames'` the name pattern and length bounds, and `'maxItemsNamedInErrorMessage'` sits at the top level: it is how many offending items a refusal names in its English sentence before "and N more", which is why `err.details` exists.
 
 **`error_codes`** — the whole vocabulary below, in one list.
 
@@ -775,7 +818,7 @@ That's the whole format. The rules that matter when converting:
 
 - `task.toml`, `instruction.md`, `pre_artifacts.sh`, and `tests/test.sh` are required. `tests/grader.py`, `tests/config.json`, and `tests/test.patch` ride along when present. A `tests/Dockerfile` is accepted only while it stays trivial (`FROM`, `COPY`, `WORKDIR`, `LABEL`, and permission-only `RUN chmod` lines) — the verifier uploads the test files onto the task image instead of building this Dockerfile, so anything richer is refused. Any other file under `tests/` is rejected — it would silently never reach the verifier.
 - The environment is `environment/Dockerfile` (built at import), a pinned `docker_image` (the registry must be approved for imports, and the tag pinned — never `:latest`), or `environment/docker-compose.yaml` for multi-container tasks (the agent runs in the `main` service).
-- Timeouts are optional: agent defaults to 1800 s, verifier to 600 s.
+- Timeouts are optional: agent defaults to 3600 s, verifier to 600 s, both published as `limits['job']['defaultAgentTimeoutSec']` and `limits['job']['defaultVerifierTimeoutSec']`. A declared `timeout_sec` always wins — the corpus is the authority on how long its own task needs, and the fallback never shortens one.
 - `solution/` (`solve.sh`, or a `solution.patch` to apply) is what the gate certifies with — without it the version cannot reach `READY`.
 
 Then import and run it — exactly the [Harbor-format flow above](#already-in-harbor-format).
@@ -889,7 +932,11 @@ Read that second sentence with [Network modes](#network-modes) in hand, because 
 
 What you give up versus a built-in:
 
-- **No live trace events.** There is no output parser for an unknown CLI, so `trial_trace()` stays empty for these trials. Everything else is identical: the patch is collected, the verifier scores it, and artifacts, timings, spend and status are recorded exactly as for a built-in harness.
+- **No live trace events.** There is no output parser for an unknown CLI, so `trial_trace()` stays empty for these trials.
+- **No live spend reading.** `live_spent_usd` stays `None` and no `trial.spend` event fires; the trial goes straight to a settled `spent_usd`.
+- **No `reasoning_effort`.** An effort set on the agent is recorded but never reaches your command — the run contract's six keys are the whole environment. Put the flag in the `run_command`.
+
+Everything else is identical: the patch is collected, the verifier scores it, and artifacts, timings, settled spend and status are recorded exactly as for a built-in harness.
 
 ---
 
@@ -983,6 +1030,11 @@ class JobAgent:
                                           # EXACT (else invalid_input); unpublished ->
                                           # harness_version_not_found; a pin on a custom
                                           # harness -> invalid_input (content-versioned)
+    reasoning_effort: str | None = None   # 'off' | 'minimal' | 'low' | 'medium' | 'high' |
+                                          # 'xhigh' | 'max' | 'thinking'. None = the platform
+                                          # default ('medium'); PART OF THE AGENT'S IDENTITY,
+                                          # so two efforts are two systems. An effort the
+                                          # harness cannot apply -> invalid_input
 
 @dataclass
 class Page:                               # the shape EVERY collection shares, top
@@ -1032,7 +1084,7 @@ class JobEvent:                           # watch()
     type: str                             # one of the nine names below
     data: dict                            # payload; keys are the WIRE's camelCase
 
-# What `data` holds, per `type`. Nine names, closed:
+# What `data` holds, per `type`. Ten names, closed:
 #
 #   'job.created'     benchmark (resolved 'name@version'), taskCount, agents,
 #                     runsPerTask, concurrency, maxTrialSpendUsd,
@@ -1045,6 +1097,8 @@ class JobEvent:                           # watch()
 #   'job.failed'      jobId — RESERVED; no server path emits it today
 #   'trial.running'   trialId, taskKey
 #   'trial.scoring'   trialId, capturedBytes (agent stdout kept for the detail)
+#   'trial.spend'     trialId, taskKey, liveSpentUsd — a mid-run LOWER BOUND,
+#                     built-in harnesses only; never the trial's cost
 #   'trial.settled'   trialId, taskKey, status — always; plus reward on the
 #                     scored path (zero is a reward), failurePhase on a failure,
 #                     and attemptId/attemptPhase only when the REAPER settled it
@@ -1066,6 +1120,8 @@ class Trial:
     verifier_mode: str | None             # 'separate' | 'shared'
     spent_usd: float | None               # None = never ran (NOT 0, which is a measurement)
     spend_source: str | None              # 'measured' | 'assumed_cap'
+    live_spent_usd: float | None          # mid-run LOWER BOUND; None = no reading yet
+    live_spend_at: str | None             # when that reading was taken — show its age
     resolved_harness_version: str | None  # harness version actually used
     session_ref: str | None               # agent session/trace reference
     created_at: str

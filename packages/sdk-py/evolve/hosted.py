@@ -367,6 +367,11 @@ class HarnessCapability:
     #: not a server-side default.
     default_model: Optional[str]
     models: List[HarnessModel]
+    #: What this harness does with ``agents[].reasoning_effort``: 'level' = the
+    #: value reaches the CLI as one, 'binary' = thinking on/off only (a level is
+    #: refused at creation), 'none' = no effort input at all (any effort is
+    #: refused). Grey the control out instead of learning the refusal from a POST.
+    effort_support: str
     #: Whether ``agents[].harness_version`` may pin this harness.
     version_pinnable: bool
     #: Newest published version, for a "your pin is out of date" badge. None
@@ -429,7 +434,7 @@ class ActiveBenchmark:
 
 @dataclass
 class JobAgent:
-    """One agent: harness + model (+ optional pinned harness version).
+    """One agent: harness + model (+ optional pinned harness version and effort).
 
     ``harness`` is a built-in ("claude", "codex", ...) or a registered custom
     harness name. ``harness_version`` omitted (or None) resolves the latest at
@@ -438,15 +443,29 @@ class JobAgent:
     exact version (``invalid_input``), when the version is not published
     (``harness_version_not_found``), or when the harness is a custom one — those
     are versioned by the content of their own source (``invalid_input``).
+
+    ``reasoning_effort`` is how hard the model is asked to think. The accepted
+    values are published at ``meta().limits['job']['reasoningEfforts']`` and an
+    omitted one takes ``defaultReasoningEffort`` beside them — read both from
+    the capability document rather than hardcoding either. It is PART OF THE
+    AGENT'S IDENTITY, like the harness, the model and the version pin: the same
+    harness and model at 'low' and at 'high' are two systems, they de-duplicate
+    separately, and every trial echoes the effort back on ``trial.agent``. An
+    effort a harness cannot apply is refused at creation (``invalid_input``)
+    rather than recorded and never sent — see
+    :attr:`HarnessCapability.effort_support`.
     """
     harness: str
     model: str
     harness_version: Optional[str] = None
+    reasoning_effort: Optional[str] = None
 
     def _to_wire(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {'harness': self.harness, 'model': self.model}
         if self.harness_version is not None:
             result['harnessVersion'] = self.harness_version
+        if self.reasoning_effort is not None:
+            result['reasoningEffort'] = self.reasoning_effort
         return result
 
 
@@ -565,6 +584,16 @@ class Trial:
     spent_usd: Optional[float]
     # Whether spent_usd was measured or is the cap charged conservatively
     spend_source: Optional[str]
+    # A mid-run reading of this trial's spend, and a LAGGING LOWER BOUND rather
+    # than its cost: the gateway settles 40-70s behind the calls that incurred
+    # the spend and the platform samples the trial's key every ~120s, so this
+    # number is always behind and live_spend_at is how far. None is "no reading
+    # yet", never $0. It is NOT cleared when the trial settles — what remains is
+    # the last mid-run sample, stale by construction. On a terminal trial read
+    # spent_usd and spend_source; those are the settled truth, and the only one.
+    live_spent_usd: Optional[float]
+    # When that reading was taken — show its age, never the figure alone
+    live_spend_at: Optional[str]
     # Harness version actually resolved and used for the trial; None until resolved
     resolved_harness_version: Optional[str]
     session_ref: Optional[str]
@@ -876,6 +905,7 @@ def _map_job_agent(data: Dict[str, Any]) -> JobAgent:
         harness=data.get('harness', ''),
         model=data.get('model', ''),
         harness_version=data.get('harnessVersion'),
+        reasoning_effort=data.get('reasoningEffort'),
     )
 
 
@@ -918,6 +948,7 @@ def _map_capability_document(raw: Dict[str, Any]) -> CapabilityDocument:
                     )
                     for model in item.get('models', [])
                 ],
+                effort_support=item.get('effortSupport', 'none'),
                 version_pinnable=item.get('versionPinnable', False),
                 latest_version=item.get('latestVersion'),
             )
@@ -1086,6 +1117,10 @@ def _map_trial(data: Dict[str, Any]) -> Trial:
         verifier_mode=data.get('verifierMode'),
         spent_usd=data.get('spentUsd'),
         spend_source=data.get('spendSource'),
+        # Mid-run lower bound, kept beside the settled pair and never folded
+        # into it: it lags the gateway and survives the settle unchanged.
+        live_spent_usd=data.get('liveSpentUsd'),
+        live_spend_at=data.get('liveSpendAt'),
         resolved_harness_version=data.get('resolvedHarnessVersion'),
         session_ref=data.get('sessionRef'),
         created_at=data.get('createdAt', ''),
@@ -2108,7 +2143,8 @@ class JobsClient:
         version) or ``"name@version"``; the response always echoes
         ``"name@version"``. ``agents`` accepts :class:`JobAgent`
         instances or plain dicts with the same fields (``harness``, ``model``,
-        optional ``harness_version``). ``max_trial_spend_usd`` caps EACH
+        optional ``harness_version`` and ``reasoning_effort``).
+        ``max_trial_spend_usd`` caps EACH
         trial and is the platform's only spend enforcement; omitted, the server
         applies its own default ($200, operator-tunable). The response echoes
         the RESOLVED cap either way, so an omitted one is never invisible, and

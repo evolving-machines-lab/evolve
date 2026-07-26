@@ -387,6 +387,7 @@ function mapJobAgent(raw: Record<string, unknown>): JobAgent {
     harness: raw.harness as string,
     model: raw.model as string,
     harnessVersion: (raw.harnessVersion as string | null) ?? null,
+    reasoningEffort: (raw.reasoningEffort as string | null) ?? null,
   };
 }
 
@@ -488,6 +489,10 @@ function mapTrial(raw: Record<string, unknown>): Trial {
     // NULL means the trial never ran — never zero.
     spentUsd: (raw.spentUsd as number | null) ?? null,
     spendSource: (raw.spendSource as SpendSource | null) ?? null,
+    // Mid-run lower bound, kept beside the settled pair and never folded into
+    // it: it lags the gateway and survives the settle unchanged.
+    liveSpentUsd: (raw.liveSpentUsd as number | null) ?? null,
+    liveSpendAt: (raw.liveSpendAt as string | null) ?? null,
     resolvedHarnessVersion: (raw.resolvedHarnessVersion as string | null) ?? null,
     sessionRef: (raw.sessionRef as string | null) ?? null,
     createdAt: raw.createdAt as string,

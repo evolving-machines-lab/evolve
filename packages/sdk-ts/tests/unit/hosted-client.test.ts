@@ -1043,8 +1043,8 @@ async function testGetJobDetail() {
     );
     assertEqual(
       job.agents,
-      [{ harness: "codex", model: "gpt-5.5", harnessVersion: null }],
-      "agents is the public triple (wire sends nothing internal)"
+      [{ harness: "codex", model: "gpt-5.5", harnessVersion: null, reasoningEffort: null }],
+      "agents is the public agent shape (wire sends nothing internal)"
     );
     const system = job.agents?.[0] as Record<string, unknown>;
     assert(!("id" in system), "internal agent id not exposed");
@@ -1832,8 +1832,8 @@ async function testTrialDetail() {
     assertEqual(run.reward, 1, "maps reward");
     assertEqual(
       run.agent,
-      { harness: "codex", model: "gpt-5.5", harnessVersion: null },
-      "agent reduced to the public triple"
+      { harness: "codex", model: "gpt-5.5", harnessVersion: null, reasoningEffort: null },
+      "agent reduced to the public agent shape"
     );
   } finally {
     restoreFetch();
@@ -1999,8 +1999,8 @@ async function testCompare() {
     assertEqual(comparison.jobs[1].meanReward, 0, "zero meanReward preserved (never nulled)");
     assertEqual(
       comparison.jobs[0].agents,
-      [{ harness: "codex", model: "gpt-5.5", harnessVersion: null }],
-      "agents is the public triple (wire sends nothing internal)"
+      [{ harness: "codex", model: "gpt-5.5", harnessVersion: null, reasoningEffort: null }],
+      "agents is the public agent shape (wire sends nothing internal)"
     );
     const system = comparison.jobs[0].agents[0] as Record<string, unknown>;
     assert(!("id" in system), "internal agent id not exposed");

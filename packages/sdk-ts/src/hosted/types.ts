@@ -177,7 +177,7 @@ export interface ActiveBenchmark {
   updatedAt: string;
 }
 
-/** One agent: harness + model (+ optional pinned harness version) */
+/** One agent: harness + model (+ optional pinned harness version and effort) */
 export interface JobAgent {
   /** A built-in harness ("claude", "codex", ...) or a registered custom harness name */
   harness: string;
@@ -191,6 +191,20 @@ export interface JobAgent {
    * are versioned by the content of their own source (`invalid_input`).
    */
   harnessVersion?: string | null;
+  /**
+   * How hard the model is asked to think. The accepted values are published at
+   * `meta.limits.job.reasoningEfforts`, and omitted (or null) takes the value
+   * published beside them as `defaultReasoningEffort` — read them from the
+   * capability document rather than hardcoding either.
+   *
+   * PART OF THE AGENT'S IDENTITY, like the harness, the model and the version
+   * pin: the same harness and model at "low" and at "high" are two systems,
+   * they de-duplicate separately, and every trial echoes the effort back on
+   * `trial.agent`. An effort a harness cannot apply is refused at creation
+   * (`invalid_input`) rather than recorded and never sent — see
+   * `HarnessCapability.effortSupport`.
+   */
+  reasoningEffort?: string | null;
 }
 
 /**
@@ -356,6 +370,20 @@ export interface Trial {
   spentUsd: number | null;
   /** Whether spentUsd was measured or is the cap charged conservatively */
   spendSource: SpendSource | null;
+  /**
+   * A mid-run reading of this trial's spend, and a LAGGING LOWER BOUND rather
+   * than its cost: the gateway settles 40-70s behind the calls that incurred
+   * the spend and the platform samples the trial's key every ~120s, so this
+   * number is always behind and `liveSpendAt` is how far. Null is "no reading
+   * yet", never $0.
+   *
+   * It is NOT cleared when the trial settles — what remains is the last
+   * mid-run sample, stale by construction. On a terminal trial read spentUsd
+   * and spendSource; those are the settled truth, and the only one.
+   */
+  liveSpentUsd: number | null;
+  /** When that reading was taken — show its age, never the figure alone */
+  liveSpendAt: string | null;
   /** Harness version actually resolved and used for the trial; null until resolved */
   resolvedHarnessVersion: string | null;
   /** Reference to the agent session/trace, when recorded */
@@ -419,6 +447,18 @@ export interface TrialScoringData {
 }
 
 /**
+ * A mid-run spend sample landed on a still-live trial. Emitted only when the
+ * reading actually updated a RUNNING/SCORING row, so a poll that raced the
+ * settle never fires one.
+ */
+export interface TrialSpendData {
+  trialId: string;
+  taskKey: string;
+  /** The same lagging lower bound as Trial.liveSpentUsd — not the trial's cost */
+  liveSpentUsd: number;
+}
+
+/**
  * A trial reached a terminal status. `reward` is present only on the scored
  * path; `failurePhase` only on a failure. `attemptId`/`attemptPhase` appear
  * only when the REAPER settled the trial (its worker died), which is exactly
@@ -465,6 +505,7 @@ export type JobEvent =
   | (JobEventBase & { type: "job.failed"; data: { jobId: string } })
   | (JobEventBase & { type: "trial.running"; data: TrialRunningData })
   | (JobEventBase & { type: "trial.scoring"; data: TrialScoringData })
+  | (JobEventBase & { type: "trial.spend"; data: TrialSpendData })
   | (JobEventBase & { type: "trial.settled"; data: TrialSettledData });
 
 /**
@@ -1340,6 +1381,13 @@ export interface HarnessCapability {
    */
   defaultModel: string | null;
   models: HarnessModel[];
+  /**
+   * What this harness does with `agents[].reasoningEffort`: "level" = the value
+   * reaches the CLI as one, "binary" = thinking on/off only (a level is refused
+   * at creation), "none" = no effort input at all (any effort is refused). Grey
+   * the control out instead of learning the refusal from a POST.
+   */
+  effortSupport: "level" | "binary" | "none";
   /** Whether `agents[].harnessVersion` may pin this harness. */
   versionPinnable: boolean;
   /**
@@ -1408,6 +1456,16 @@ export interface CapabilityDocument {
       defaultSizing: { cpus: number; memoryMb: number; storageMb: number };
       /** Every agent must name a model; the server applies no default. */
       modelRequired: boolean;
+      /**
+       * Phase wall-clocks a task INHERITS when its own config declares none —
+       * a task that declares its own always wins, so these fill in rather than
+       * cap. Published because nothing else here says how long a trial may run.
+       */
+      defaultAgentTimeoutSec: number;
+      defaultVerifierTimeoutSec: number;
+      /** Values `agents[].reasoningEffort` accepts, and the one an omitted effort takes. */
+      reasoningEfforts: string[];
+      defaultReasoningEffort: string;
     };
     pagination: {
       collections: { default: number; max: number };

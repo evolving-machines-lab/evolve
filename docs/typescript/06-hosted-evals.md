@@ -109,6 +109,32 @@ A pin is never silently downgraded to the latest — it is checked at creation a
 
 One harness resolves later than the others: installer-sourced `kimi` accepts any well-formed exact pin at creation, because its vendor publishes no version index to check against. The builder's version probe enforces it instead, so a bad `kimi` pin surfaces as a failed trial rather than a `400`.
 
+`reasoningEffort` is the other per-agent knob, and it belongs to the comparison rather than to the run:
+
+```ts
+agents: [
+    {
+        harness: "codex",
+        model: "gpt-5.5",
+        reasoningEffort: "high",    // (optional) omit to take the platform default, "medium"
+    },
+],
+```
+
+The accepted values are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` and `thinking`, published as `limits.job.reasoningEfforts` with the omitted-value default as `limits.job.defaultReasoningEffort`. Read both from the [capability document](#what-the-platform-supports) rather than from this sentence: effort changes the score, so a client comparing two jobs has to know what an omitted value meant in each of them.
+
+Effort is part of an agent system's identity, alongside the harness, the model and the version pin. The same harness and model at `low` and at `high` are two distinct systems — they de-duplicate separately, they each consume one of the eight agent slots, and every trial echoes the effort back on `trial.agent`. A `null` there means the agent declared none and took the platform default, not that it ran at no effort at all.
+
+Not every harness can honor one, and a request naming an effort a harness cannot apply is refused at creation with a `400 invalid_input` rather than accepted and quietly dropped. Recording `high` against a CLI that never received the flag would put a claim in the benchmark record that did not happen:
+
+- `claude`, `codex`, `droid` and `opencode` take a level, and the value reaches the CLI as one.
+- `kimi` can express only thinking on or off, so it accepts `off`, `minimal`, `medium` and `thinking`, and refuses every other level.
+- `gemini` and `qwen` take no effort input at all, so naming any effort for them is refused.
+
+Each harness publishes which of the three it is as `effortSupport`, so a picker greys the control out instead of discovering the refusal after a POST. Omitting the field is always accepted, `gemini` and `qwen` included — the refusal is about a value that could not be applied, never about the field existing.
+
+A harness you registered yourself is never refused, because the platform makes no claim about what someone else's CLI accepts. It is also never handed the value: the [run contract](#the-run-contract) gives your command six environment keys and effort is not among them, so an effort set here is recorded on the agent system and reaches nothing. Put the flag in your own `runCommand`.
+
 Retries are safe — pass an idempotency key and a retry returns the original job instead of creating a duplicate:
 
 ```ts
@@ -221,6 +247,23 @@ console.log(trial.failurePhase, trial.failureDetail);  // untruncated in this re
 > Both fields live on the trial itself. `spentUsd: null` means the trial never ran — a queued or cancelled trial — and is not the same as `0`, which is a real measurement and appears when no gateway key was ever minted.
 >
 > Read spend from `spentUsd`, never from `modelUsage`. `modelUsage` is the open-ended per-harness blob: bundle identity, token counts, `maxTrialSpendUsd` (the cap *that* trial's key carried, which can differ from the job's cap today), and — on trials settled by an earlier executor — a historical `costUsd`. That leftover is a usage fact the harness reported, not the platform's spend answer, and only `spentUsd` carries `spendSource` to tell you how it was arrived at.
+
+While a trial is still in flight there is a mid-run reading as well, on two fields of its own:
+
+```ts
+console.log(trial.liveSpentUsd, trial.liveSpendAt);  // 3.41  "2026-07-24T18:22:05.113Z"
+```
+
+Read them together or not at all. `liveSpentUsd` is a **lagging lower bound**, never the trial's cost: the gateway settles spend 40–70 seconds behind the calls that incurred it, and the platform samples the trial's key roughly every two minutes, so the number is always behind and `liveSpendAt` is how far behind. Render it as "at least $3.41, as of 90s ago" — never as "current cost".
+
+The rest of its behavior follows from that:
+
+- **`null` is "no reading yet", never `$0`.** A zero from the gateway means nothing has settled, not that the trial was free, so a zero is skipped rather than written.
+- **It is never part of a total.** `job.spentUsd` sums settled trials only, and folding a live reading into it would double-count the moment that trial settles.
+- **It stops moving when the trial does.** Nothing writes it once the row is terminal, so what remains is the last mid-run sample — stale by construction. On a terminal trial read `spentUsd` and `spendSource`; that is the settled truth, and it is the only one.
+- **Built-in harnesses only.** A custom harness runs your own command with no live poll around it, so its trials go from `null` straight to a settled `spentUsd`.
+
+The same reading reaches a watcher as a `trial.spend` event carrying `trialId`, `taskKey` and `liveSpentUsd`. It is emitted only when a sample actually landed on a live trial, so a poll that raced the settle never fires one.
 
 Fetch a trial's recorded event timeline:
 
@@ -467,7 +510,7 @@ for (const harness of harnesses) {
 
 What is in it:
 
-**`harnesses`** — every built-in, with `defaultModel` and the full `models` list for a picker, `runnable` (and `reason` when it is not), `versionPinnable`, and `latestVersion` for a "your pin is out of date" badge. `defaultModel` is a suggestion, not a server-side default: `limits.job.modelRequired` is `true`, and a job that omits `model` is refused.
+**`harnesses`** — every built-in, with `defaultModel` and the full `models` list for a picker, `runnable` (and `reason` when it is not), `versionPinnable`, and `latestVersion` for a "your pin is out of date" badge. `defaultModel` is a suggestion, not a server-side default: `limits.job.modelRequired` is `true`, and a job that omits `model` is refused. `effortSupport` is the same idea for the effort control — `"level"`, `"binary"` or `"none"`, exactly as [Run a job](#run-a-job) describes them — so a form can offer the right control, or none, instead of learning the harness's limits from a refusal.
 
 **`sandboxProviders`** — each provider's real resource ceilings and, in `refuses`, the capabilities it will not run with the reason the runner itself would give.
 
@@ -477,7 +520,7 @@ What is in it:
 
 **`statuses`** — the job, trial, import, regrade-job, regrade-result, and benchmark-version vocabularies, each with its `terminal` members marked. A watcher stops on `terminal`; a status bar renders `values` without hardcoding the enum.
 
-**`limits`** — five keys. `job` carries every create-time bound: `maxAgents`, `maxRunsPerTask`, `maxTrials`, `concurrency` (default and ceiling), `defaultMaxTrialSpendUsd`, `defaultSandboxProvider`, `modelRequired`, and `defaultSizing`. `pagination` is three separate scopes with three different pairs — `collections`, `benchmarkTasks`, and `regradeResults` each publish their own `default` and `max`, so read the one for the collection you are paging rather than applying a single pair everywhere. `uploads` holds the two archive size caps, `benchmarkNames` the name pattern and length bounds, and `maxItemsNamedInErrorMessage` sits at the top level: it is how many offending items a refusal names in its English sentence before "and N more", which is why `details` exists.
+**`limits`** — five keys. `job` carries every create-time bound: `maxAgents`, `maxRunsPerTask`, `maxTrials`, `concurrency` (default and ceiling), `defaultMaxTrialSpendUsd`, `defaultSandboxProvider`, `modelRequired`, and `defaultSizing`. Four more are the values a run inherits when nothing declares one: `reasoningEfforts` and `defaultReasoningEffort` are the effort vocabulary and the omitted-value default from [Run a job](#run-a-job), and `defaultAgentTimeoutSec` (3600) and `defaultVerifierTimeoutSec` (600) are the phase wall-clocks a task falls back to when its own `task.toml` declares none — a task that declares `agent.timeout_sec` or `verifier.timeout_sec` always wins, so these fill in rather than cap. They are published because nothing else on the document says how long a trial may run. `pagination` is three separate scopes with three different pairs — `collections`, `benchmarkTasks`, and `regradeResults` each publish their own `default` and `max`, so read the one for the collection you are paging rather than applying a single pair everywhere. `uploads` holds the two archive size caps, `benchmarkNames` the name pattern and length bounds, and `maxItemsNamedInErrorMessage` sits at the top level: it is how many offending items a refusal names in its English sentence before "and N more", which is why `details` exists.
 
 **`errorCodes`** — the whole vocabulary below, in one array.
 
@@ -864,7 +907,7 @@ That's the whole format. The rules that matter when converting:
 
 - `task.toml`, `instruction.md`, `pre_artifacts.sh`, and `tests/test.sh` are required. `tests/grader.py`, `tests/config.json`, and `tests/test.patch` ride along when present. A `tests/Dockerfile` is accepted only while it stays trivial (`FROM`, `COPY`, `WORKDIR`, `LABEL`, and permission-only `RUN chmod` lines) — the verifier uploads the test files onto the task image instead of building this Dockerfile, so anything richer is refused. Any other file under `tests/` is rejected — it would silently never reach the verifier.
 - The environment is `environment/Dockerfile` (built at import), a pinned `docker_image` (the registry must be approved for imports, and the tag pinned — never `:latest`), or `environment/docker-compose.yaml` for multi-container tasks (the agent runs in the `main` service).
-- Timeouts are optional: agent defaults to 1800 s, verifier to 600 s.
+- Timeouts are optional: agent defaults to 3600 s, verifier to 600 s, both published as `limits.job.defaultAgentTimeoutSec` and `limits.job.defaultVerifierTimeoutSec`. A declared `timeout_sec` always wins — the corpus is the authority on how long its own task needs, and the fallback never shortens one.
 - `solution/` (`solve.sh`, or a `solution.patch` to apply) is what the gate certifies with — without it the version cannot reach `READY`.
 
 Then import and run it — exactly the [Harbor-format flow above](#already-in-harbor-format).
@@ -983,7 +1026,11 @@ Read that second sentence with [Network modes](#network-modes) in hand, because 
 
 What you give up versus a built-in:
 
-- **No live trace events.** There is no output parser for an unknown CLI, so `trialTrace()` stays empty for these trials. Everything else is identical: the patch is collected, the verifier scores it, and artifacts, timings, spend and status are recorded exactly as for a built-in harness.
+- **No live trace events.** There is no output parser for an unknown CLI, so `trialTrace()` stays empty for these trials.
+- **No live spend reading.** `liveSpentUsd` stays `null` and no `trial.spend` event fires; the trial goes straight to a settled `spentUsd`.
+- **No `reasoningEffort`.** An effort set on the agent is recorded but never reaches your command — the run contract's six keys are the whole environment. Put the flag in the `runCommand`.
+
+Everything else is identical: the patch is collected, the verifier scores it, and artifacts, timings, settled spend and status are recorded exactly as for a built-in harness.
 
 ---
 
@@ -1076,6 +1123,11 @@ interface JobAgent {
                                      // Must be EXACT (else invalid_input); unpublished ->
                                      // harness_version_not_found; a pin on a custom
                                      // harness -> invalid_input (content-versioned)
+    reasoningEffort?: string | null; // "off" | "minimal" | "low" | "medium" | "high" |
+                                     // "xhigh" | "max" | "thinking". Omit/null = the
+                                     // platform default ("medium"); PART OF THE AGENT'S
+                                     // IDENTITY, so two efforts are two systems. An effort
+                                     // the harness cannot apply -> invalid_input
 }
 
 type TaskProviderVerdict = { ok: true } | { ok: false; reason: string };
@@ -1174,6 +1226,8 @@ interface Trial {
     verifierMode: "separate" | "shared" | null;   // where the verifier ran
     spentUsd: number | null;                 // null = never ran (NOT zero, which is a measurement)
     spendSource: "measured" | "assumed_cap" | null;
+    liveSpentUsd: number | null;             // mid-run LOWER BOUND; null = no reading yet
+    liveSpendAt: string | null;              // when that reading was taken — show its age
     resolvedHarnessVersion: string | null;   // harness version actually used
     sessionRef: string | null;               // agent session/trace reference
     createdAt: string;
@@ -1201,6 +1255,7 @@ type JobEvent =
     | { seq: number; type: "job.failed";     data: { jobId: string } }   // reserved; nothing emits it yet
     | { seq: number; type: "trial.running";  data: { trialId: string; taskKey: string } }
     | { seq: number; type: "trial.scoring";  data: { trialId: string; capturedBytes: number } }
+    | { seq: number; type: "trial.spend";    data: { trialId: string; taskKey: string; liveSpentUsd: number } }
     | { seq: number; type: "trial.settled";  data: TrialSettledData };
 
 interface JobCreatedData {                   // the job's resolved inputs, echoed

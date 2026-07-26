@@ -123,9 +123,11 @@ Read on demand when the user's task requires them:
 | hosted() — all three clients behind one config | [TS](references/typescript/06-hosted-evals.md) | [PY](references/python/06-hosted-evals.md) |
 | Run a job (catalog → run, idempotency) | [TS](references/typescript/06-hosted-evals.md#run-a-job) | [PY](references/python/06-hosted-evals.md#run-a-job) |
 | Spend model (per-trial cap, worst case, credits, BYOK) | [TS](references/typescript/06-hosted-evals.md#run-a-job) | [PY](references/python/06-hosted-evals.md#run-a-job) |
+| Reasoning effort (per-agent, part of the system identity, per-harness support) | [TS](references/typescript/06-hosted-evals.md#run-a-job) | [PY](references/python/06-hosted-evals.md#run-a-job) |
 | Paging envelope (items / nextCursor / hasMore, limit + cursor) | [TS](references/typescript/06-hosted-evals.md#run-a-job) | [PY](references/python/06-hosted-evals.md#run-a-job) |
 | Watch it live (SSE stream with resume, JobEvent payloads) | [TS](references/typescript/06-hosted-evals.md#watch-it-live) | [PY](references/python/06-hosted-evals.md#watch-it-live) |
 | Read the results (trials, spend, trace) | [TS](references/typescript/06-hosted-evals.md#read-the-results) | [PY](references/python/06-hosted-evals.md#read-the-results) |
+| Live per-trial spend (lagging lower bound + its age, trial.spend event) | [TS](references/typescript/06-hosted-evals.md#read-the-results) | [PY](references/python/06-hosted-evals.md#read-the-results) |
 | Cancel / rerun failures | [TS](references/typescript/06-hosted-evals.md#cancel--rerun-failures) | [PY](references/python/06-hosted-evals.md#cancel--rerun-failures) |
 | Regrade (verifier-only re-run, reward deltas) | [TS](references/typescript/06-hosted-evals.md#regrade) | [PY](references/python/06-hosted-evals.md#regrade) |
 | compare() (aggregates + task matrix) | [TS](references/typescript/06-hosted-evals.md#compare) | [PY](references/python/06-hosted-evals.md#compare) |
