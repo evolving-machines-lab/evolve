@@ -334,7 +334,20 @@ async function mapNetworkPolicy(
     if (network?.allowedDestinations?.length) {
       throw new Error("network.allowedDestinations is only valid when outbound is blocked");
     }
-    return {};
+    // AN EXPLICIT OPEN POLICY IS SENT, NOT OMITTED. Both cases leave the box
+    // with unrestricted egress, and Daytona's default is already unrestricted,
+    // so networkBlockAll:false changes no behaviour whatsoever. What it changes
+    // is the EVIDENCE: a create body carrying networkBlockAll:false says
+    // "someone decided this box may reach the internet", while a body carrying
+    // no network fields at all is indistinguishable from a caller who forgot.
+    // Reading an audit log of the second kind, there is no way to tell an
+    // intended open box from a dropped policy — which is exactly the question
+    // an audited open sandbox raises, and exactly the question we could not
+    // answer on 2026-07-26 about a real create. A caller that passes no policy
+    // still gets today's empty body, because in direct mode that IS the
+    // documented default and refusing it would break every existing program;
+    // the eval lane forbids reaching that state on its own side instead.
+    return network ? { networkBlockAll: false } : {};
   }
 
   const destinations = network.allowedDestinations ?? [];
@@ -1087,12 +1100,36 @@ export class DaytonaCommands implements SandboxCommands {
             }
           } catch (error) {
             const msg = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
-            // Session may disappear after kill()/interrupt() - treat as interrupted completion
+            // A poll that 404s ends the wait — but WHICH thing vanished decides
+            // what the caller should do next, and reporting the wrong one costs
+            // hours. A deleted SESSION is an interrupt: kill() and interrupt()
+            // both delete the session out from under this loop, the sandbox is
+            // still there, and anything the caller wants to collect afterwards
+            // still can be. A deleted SANDBOX is an infrastructure event: the
+            // box is gone, every later file read and command will fail too, and
+            // the run did not "terminate" so much as have its machine removed.
+            //
+            // Both used to answer "session terminated", which is how a trial
+            // whose sandbox had been deleted mid-run (measured 2026-07-26: the
+            // box disappeared at 6m57s, this loop reported exit -1 "session
+            // terminated" within its next 500ms poll, and the artifact collect
+            // that followed failed with "sandbox not found") sent its reader
+            // looking at the harness for a fault that was never there.
+            //
+            // Discriminated on the upstream's own noun, which it does supply:
+            // Daytona's 404 for the box says "sandbox not found" verbatim —
+            // that exact string is what the collect step surfaced in the same
+            // incident. The exit code stays -1 in both cases so no caller's
+            // adjudication changes; only the reason does.
             if (msg.includes("not found")) {
+              const sandboxGone = msg.includes("sandbox");
               return {
                 exitCode: -1,
                 stdout: "",
-                stderr: "session terminated",
+                stderr: sandboxGone
+                  ? `sandbox ${sandbox.id} no longer exists — it was deleted while this command was running, ` +
+                    "so the command's own outcome is unknown and nothing further can be collected from it"
+                  : "session terminated",
               };
             }
             throw error;

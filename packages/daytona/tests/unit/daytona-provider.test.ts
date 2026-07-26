@@ -165,8 +165,16 @@ async function testWrapCommandNonStringEnv(): Promise<void> {
 async function testNetworkNoPolicy(): Promise<void> {
   console.log("\n[2a] mapNetworkPolicy() - no policy / open outbound");
 
+  // The two cases behave identically on the box — Daytona's default is already
+  // unrestricted — and must NOT look identical on the wire. A create body with
+  // no network fields cannot be told apart from a caller who dropped the
+  // policy; networkBlockAll:false records that someone decided.
   assertEqual(await _testMapNetworkPolicy(undefined), {}, "No policy → no Daytona network params");
-  assertEqual(await _testMapNetworkPolicy({ outbound: "open" }), {}, "Open outbound → no Daytona network params");
+  assertEqual(
+    await _testMapNetworkPolicy({ outbound: "open" }),
+    { networkBlockAll: false },
+    "Open outbound → an EXPLICIT unblocked policy, so an audit log can tell it from a dropped one",
+  );
 }
 
 async function testNetworkOpenWithDestinationsThrows(): Promise<void> {
@@ -726,6 +734,41 @@ async function testCommandsSpawnRootWrapper(): Promise<void> {
   assert(typeof handle.processId === "string" && handle.processId.length > 0, "spawn returns a process handle");
 }
 
+async function testSpawnWaitDistinguishesSandboxFromSession(): Promise<void> {
+  console.log("\n[7d] spawn().wait() - a deleted SANDBOX is not a terminated session");
+
+  // Measured 2026-07-26: an eval box was deleted 6m57s into a run, this poll
+  // loop reported exit -1 "session terminated" within its next 500ms, and the
+  // artifact collect that followed failed with "sandbox not found". The reader
+  // spent the investigation on the harness. Both cases still end the wait at
+  // -1 — only the reason changes, so no caller's adjudication moves.
+  const sessionGone = createMockDaytonaSandbox();
+  sessionGone.sandbox.process.getSessionCommand = async () => {
+    throw new Error("Session not found");
+  };
+  const sessionHandle = await new DaytonaCommands(sessionGone.sandbox as any, "root").spawn("sleep 1");
+  const sessionResult = await sessionHandle.wait();
+  assertEqual(sessionResult.exitCode, -1, "a vanished session still ends the wait at -1");
+  assertEqual(sessionResult.stderr, "session terminated", "a vanished session is still an interrupt");
+
+  const sandboxGone = createMockDaytonaSandbox();
+  sandboxGone.sandbox.process.getSessionCommand = async () => {
+    throw new Error("Sandbox not found");
+  };
+  const sandboxHandle = await new DaytonaCommands(sandboxGone.sandbox as any, "root").spawn("sleep 1");
+  const sandboxResult = await sandboxHandle.wait();
+  assertEqual(sandboxResult.exitCode, -1, "a vanished sandbox also ends the wait at -1");
+  assert(
+    sandboxResult.stderr.includes("daytona-sandbox-123") &&
+      sandboxResult.stderr.includes("no longer exists"),
+    "a vanished sandbox names the box and says the machine is gone, not the session"
+  );
+  assert(
+    !sandboxResult.stderr.includes("session terminated"),
+    "and never reports itself as a terminated session"
+  );
+}
+
 // =============================================================================
 // RUNNER
 // =============================================================================
@@ -768,6 +811,7 @@ const tests = [
   testCommandsRunAsRootUsesSudoWrapper,
   testCommandsRunDefaultUserNoWrapper,
   testCommandsSpawnRootWrapper,
+  testSpawnWaitDistinguishesSandboxFromSession,
 ];
 
 (async () => {
