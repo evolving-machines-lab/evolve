@@ -492,11 +492,17 @@ class TestE2BSandboxEnvResolution:
         assert provider.config['apiKey'] == 'e2b-direct-key'
 
     def test_e2b_provider_gateway_mode(self):
-        """E2BProvider without api_key uses env var fallback in TS SDK.
+        """E2BProvider without api_key leaves resolution to the TS SDK.
 
-        Resolution order in TS resolveDefaultSandbox() (gateway first for revenue):
-        1. EVOLVE_API_KEY env → gateway mode (sets E2B_API_URL)
-        2. E2B_API_KEY env → direct to E2B
+        Resolution order in TS resolveDefaultSandbox() (provider keys first,
+        the Evolve key as fallback):
+        1. E2B_API_KEY env → direct E2B
+        2. DAYTONA_API_KEY env → direct Daytona
+        3. MODAL_TOKEN_ID + MODAL_TOKEN_SECRET env → direct Modal
+        4. EVOLVE_API_KEY env → managed E2B via the Dashboard
+
+        Managed mode does NOT set E2B_API_URL: the managed URL is passed to the
+        provider object, not written into the environment.
         """
         provider = E2BProvider()  # No api_key - TS SDK resolves from env
 
@@ -506,13 +512,16 @@ class TestE2BSandboxEnvResolution:
     def test_e2b_provider_env_priority_documented(self):
         """Document the env var priority for E2B sandbox.
 
-        TS SDK resolveDefaultSandbox() priority (gateway first for revenue):
-        1. EVOLVE_API_KEY set → Through gateway (recommended)
-        2. E2B_API_KEY set → Direct to E2B (fallback)
+        TS SDK resolveDefaultSandbox() priority:
+        1. E2B_API_KEY set → direct to E2B (user's own account and bill)
+        2. EVOLVE_API_KEY set → managed E2B (fallback)
+
+        A provider key wins over EVOLVE_API_KEY, so the Evolve key can stay set
+        for model routing while sandbox time bills to the user's own account.
         """
-        # When both are set, EVOLVE_API_KEY takes priority (gateway mode)
+        # When both are set, E2B_API_KEY takes priority (direct mode)
         # This is resolved by TS SDK, not Python
-        # Python just passes the config, TS does the resolution
+        # Python just builds the config object asserted below
         provider = E2BProvider()
         assert provider.type == 'e2b'
 
