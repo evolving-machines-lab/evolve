@@ -20,6 +20,7 @@
 import {
   _testCreateLogDemuxer,
   _testFollowManagedSessionLogs,
+  _testReadCommandStreams,
   createDaytonaProvider,
   DaytonaResourcesError,
 } from "../../src/index.ts";
@@ -113,8 +114,12 @@ function testDemuxHandlesSplitUtf8(): void {
   assert(out === "padépad", `decoded across the boundary (got ${JSON.stringify(out)})`);
 }
 
-function testDemuxDropsUnlabeledBytes(): void {
-  console.log("\n[1d] Bytes before the first marker belong to no stream");
+function testDemuxKeepsUnframedBytes(): void {
+  console.log("\n[1d] Unframed output is delivered, not dropped");
+  // Some Daytona daemon builds return combined bytes with NO markers at all —
+  // measured on a live ubuntu:22.04 sandbox. Dropping everything before the
+  // first marker (which is what the SDK's own demux does) turns that into a
+  // command that printed nothing, with exit 0. Unframed bytes are stdout.
   let out = "";
   let err = "";
   const demuxer = _testCreateLogDemuxer(
@@ -122,11 +127,56 @@ function testDemuxDropsUnlabeledBytes(): void {
     (chunk) => (err += chunk),
   );
 
-  demuxer.push(bytes("orphan", STDOUT_MARK, "kept"));
+  demuxer.push(bytes("unframed", STDOUT_MARK, "framed"));
   demuxer.flush();
 
-  assert(out === "kept", `only labeled bytes reach stdout (got ${JSON.stringify(out)})`);
+  assert(out === "unframedframed", `unframed bytes reach stdout (got ${JSON.stringify(out)})`);
   assert(err === "", "nothing leaked into stderr");
+
+  let plainOut = "";
+  const plain = _testCreateLogDemuxer(
+    (chunk) => (plainOut += chunk),
+    () => {},
+  );
+  plain.push(bytes("hello-managed\noops\n"));
+  plain.flush();
+  assert(
+    plainOut === "hello-managed\noops\n",
+    `a wholly unframed stream still arrives (got ${JSON.stringify(plainOut)})`,
+  );
+}
+
+function testReadCommandStreams(): void {
+  console.log("\n[1e] An empty demuxed stream is not the same as no output");
+  // The SDK's demux returns "" for a stream whose marker never appears, and ??
+  // does not fall through an empty string — so `stdout ?? output` reported
+  // every unframed command as silent. Measured: exit 0, stdout "", while
+  // output held both lines.
+  const unframed = _testReadCommandStreams({
+    output: "hello-managed\noops\n",
+    stdout: "",
+    stderr: "",
+  });
+  assert(
+    unframed.stdout === "hello-managed\noops\n",
+    `unframed output becomes stdout (got ${JSON.stringify(unframed.stdout)})`,
+  );
+
+  const framed = _testReadCommandStreams({
+    output: "combined",
+    stdout: "out",
+    stderr: "err",
+  });
+  assert(framed.stdout === "out" && framed.stderr === "err", "a framed response is untouched");
+
+  const stderrOnly = _testReadCommandStreams({ output: "boom", stdout: "", stderr: "boom" });
+  assert(
+    stderrOnly.stdout === "" && stderrOnly.stderr === "boom",
+    "a command that only wrote to stderr keeps stdout empty",
+  );
+
+  const silent = _testReadCommandStreams({ output: "", stdout: "", stderr: "" });
+  assert(silent.stdout === "" && silent.stderr === "", "a genuinely silent command stays silent");
 }
 
 // =============================================================================
@@ -260,7 +310,8 @@ const tests = [
   testDemuxSplitsStreams,
   testDemuxHandlesMarkerAcrossChunks,
   testDemuxHandlesSplitUtf8,
-  testDemuxDropsUnlabeledBytes,
+  testDemuxKeepsUnframedBytes,
+  testReadCommandStreams,
   testFollowUsesHttpChunks,
   testFollowSurfacesUpstreamFailure,
   testManagedProviderAnswersDiscoveryLocally,

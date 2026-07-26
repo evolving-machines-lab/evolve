@@ -777,14 +777,17 @@ function createLogDemuxer(
   const stdoutDecoder = new TextDecoder("utf-8");
   const stderrDecoder = new TextDecoder("utf-8");
   let buffer = new Uint8Array(0);
-  let current: "stdout" | "stderr" | null = null;
+  // Starts at stdout rather than "unknown". A framed stream opens with a
+  // marker, so nothing precedes it and this costs nothing; an UNFRAMED one
+  // (see readCommandStreams — some daemon builds return combined bytes with no
+  // markers at all) would otherwise be dropped byte for byte and reported as a
+  // command that printed nothing.
+  let current: "stdout" | "stderr" = "stdout";
 
   const emit = (bytes: Uint8Array) => {
     if (bytes.length === 0) return;
     if (current === "stdout") onStdout(stdoutDecoder.decode(bytes, { stream: true }));
-    else if (current === "stderr") onStderr(stderrDecoder.decode(bytes, { stream: true }));
-    // Bytes before the first marker belong to no stream and are dropped, which
-    // is what the SDK's own demux does with them.
+    else onStderr(stderrDecoder.decode(bytes, { stream: true }));
   };
 
   return {
@@ -794,7 +797,7 @@ function createLogDemuxer(
         const stdoutAt = indexOfBytes(buffer, STDOUT_PREFIX_BYTES, 0);
         const stderrAt = indexOfBytes(buffer, STDERR_PREFIX_BYTES, 0);
         let at = -1;
-        let next: "stdout" | "stderr" | null = null;
+        let next: "stdout" | "stderr" = "stdout";
         let markerLen = 0;
         if (stdoutAt !== -1 && (stderrAt === -1 || stdoutAt < stderrAt)) {
           at = stdoutAt;
@@ -893,6 +896,34 @@ async function followManagedSessionLogs(
 // IMPLEMENTATION
 // ============================================================
 
+/**
+ * Read a command's streams out of whatever shape Daytona returned.
+ *
+ * Session logs are USUALLY framed with per-stream markers, and the Daytona
+ * SDK's demux returns "" for a stream whose marker never appears. An empty
+ * string is not "this command printed nothing" — it means "this daemon build
+ * did not frame the output" — and `??` does not fall through an empty string,
+ * so reading `stdout ?? output` silently reports every such command as silent.
+ *
+ * Measured 2026-07-26 on a live sandbox booted from ubuntu:22.04: a command
+ * printing one line to each stream came back as
+ * {output: "hello-managed\noops\n", stdout: null, exitCode: 0} with no marker
+ * bytes anywhere in the log body, and the provider reported exit 0 with empty
+ * stdout. Unframed output goes to stdout, because that is what the combined
+ * `output` field is; a framed response is untouched.
+ */
+function readCommandStreams(source: {
+  stdout?: string | null;
+  stderr?: string | null;
+  output?: string | null;
+}): { stdout: string; stderr: string } {
+  const stdout = source.stdout || "";
+  const stderr = source.stderr || "";
+  const combined = source.output || "";
+  if (!stdout && !stderr && combined) return { stdout: combined, stderr: "" };
+  return { stdout, stderr };
+}
+
 export class DaytonaCommands implements SandboxCommands {
   constructor(
     private sandbox: DaytonaSandbox,
@@ -957,14 +988,14 @@ export class DaytonaCommands implements SandboxCommands {
         );
       }
 
-      // Try inline stdout first; if empty and we have cmdId, fetch logs explicitly
-      let stdout = resp.stdout ?? resp.output ?? "";
-      let stderr = resp.stderr ?? "";
-      if (!stdout && cmdId && !options?.onStdout) {
+      // Try inline output first; if empty and we have cmdId, fetch logs explicitly
+      let { stdout, stderr } = readCommandStreams(resp);
+      if (!stdout && !stderr && cmdId && !options?.onStdout) {
         try {
           const logs = await this.sandbox.process.getSessionCommandLogs(sessionId, cmdId);
-          stdout = (logs as any).stdout ?? (logs as any).output ?? "";
-          stderr = (logs as any).stderr ?? stderr;
+          const fromLogs = readCommandStreams(logs as any);
+          stdout = fromLogs.stdout;
+          stderr = fromLogs.stderr || stderr;
         } catch {
           // Ignore log fetch errors — use inline response
         }
@@ -1044,8 +1075,7 @@ export class DaytonaCommands implements SandboxCommands {
                 const logs = await sandbox.process.getSessionCommandLogs(sessionId, cmdId);
                 return {
                   exitCode: cmd.exitCode,
-                  stdout: logs.stdout ?? logs.output ?? "",
-                  stderr: logs.stderr ?? "",
+                  ...readCommandStreams(logs as any),
                 };
               } catch {
                 return {
@@ -1520,3 +1550,4 @@ export const _testToSandboxInfo = toSandboxInfo;
 export const _testDaytonaStateToEvolveState = daytonaStateToEvolveState;
 export const _testCreateLogDemuxer = createLogDemuxer;
 export const _testFollowManagedSessionLogs = followManagedSessionLogs;
+export const _testReadCommandStreams = readCommandStreams;
