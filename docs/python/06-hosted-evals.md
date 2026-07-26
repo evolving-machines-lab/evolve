@@ -443,7 +443,7 @@ for harness in doc.harnesses:
 
 What is in it:
 
-**`harnesses`** — every built-in, with `default_model` and the full `models` list for a picker, `runnable` (and `reason` when it is not), `version_pinnable`, and `latest_version` for a "your pin is out of date" badge. `default_model` is a suggestion, not a server-side default: `doc.limits['job']['modelRequired']` is `True`, and a job that omits `model` is refused. `effort_support` is the same idea for the effort control — `'level'`, `'binary'` or `'none'`, exactly as [Run a job](#run-a-job) describes them — so a form can offer the right control, or none, instead of learning the harness's limits from a refusal.
+**`harnesses`** — every built-in, with `default_model` and the full `models` list for a picker, `runnable` (and `reason` when it is not), `version_pinnable`, and `latest_version` for a "your pin is out of date" badge. `default_model` is a suggestion, not a server-side default: `doc.limits['job']['modelRequired']` is `True`, and a job that omits `model` is refused. `effort_support` is the same idea for the effort control — `'level'`, `'binary'` or `'none'`, exactly as [Run a job](#run-a-job) describes them — so a form can offer the right control, or none, instead of learning the harness's limits from a refusal. For a `'binary'` harness the acceptable spellings are published as `limits['job']['binaryEffortValues']`, so a picker can narrow its options instead of offering eight values the server will refuse six of.
 
 **`sandbox_providers`** — each provider's real resource ceilings and, in `refuses`, the capabilities it will not run with the reason the runner itself would give.
 

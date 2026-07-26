@@ -153,6 +153,32 @@ function captureIO(): { io: CliIO; out: string[]; err: string[] } {
 // PARSING TESTS
 // =============================================================================
 
+function testEffortFlag() {
+  console.log("\n--- buildJobInput: --effort stamps EVERY agent, verbatim ---");
+  const inv = parseArgs([
+    "run",
+    "--benchmark", "deep-swe@1.1",
+    "--agent", "codex:gpt-5.5",
+    "--agent", "gemini:gemini-2.5-flash-lite",
+    "--effort", "low",
+  ]);
+  const input = buildJobInput(inv);
+  assertEqual(
+    input.agents,
+    [
+      { harness: "codex", model: "gpt-5.5", reasoningEffort: "low" },
+      // gemini gets the value TOO: the server's per-harness refusal is the
+      // single source of truth, and the CLI silently unstamping some agents
+      // would submit a sweep the flag no longer describes.
+      { harness: "gemini", model: "gemini-2.5-flash-lite", reasoningEffort: "low" },
+    ],
+    "--effort applied to every agent, refusal left to the server"
+  );
+
+  const bare = buildJobInput(parseArgs(["run", "--benchmark", "b@1", "--agent", "codex:m"]));
+  assertEqual(bare.agents, [{ harness: "codex", model: "m" }], "no --effort, no field — the server resolves its default");
+}
+
 function testParseRunFull() {
   console.log("\n--- parseArgs + buildJobInput: full run command ---");
   const inv = parseArgs([
@@ -1119,6 +1145,8 @@ async function main() {
   console.log("evolve-evals CLI Unit Tests\n");
 
   testParseRunFull();
+
+  testEffortFlag();
   testParseRunMinimal();
   testParseRunNoSpendCap();
   testParseJobAgent();

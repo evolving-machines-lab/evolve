@@ -71,6 +71,12 @@ Run options:
   --benchmark <name[@version]>        Benchmark (required; bare name = active version)
   --tasks <k1,k2,...>                 Task keys (default: every task of the version)
   --agent <harness:model[:version]>   Agent; repeatable (at least one required)
+  --effort <value>                    Reasoning effort for EVERY agent (values:
+                                      GET /api/meta limits.job.reasoningEfforts).
+                                      Applied verbatim — an agent whose harness
+                                      cannot honor it is refused by the server,
+                                      never silently skipped. Per-agent efforts
+                                      need the SDK. Omitted: the server default.
   --runs <n>                          Runs per task x agent (default 1)
   --concurrency <n>                   Parallel trials (default 1)
   --max-trial-spend <usd>             Model-spend cap for EACH trial (default: the server's, $200)
@@ -154,6 +160,7 @@ const COMMAND_SPECS: Record<string, CommandSpec> = {
       benchmark: "string",
       tasks: "string",
       agent: "repeat",
+      effort: "string",
       runs: "number",
       concurrency: "number",
       "max-trial-spend": "number",
@@ -379,7 +386,14 @@ export function buildJobInput(inv: Invocation): JobInput {
   return {
     benchmark: f.benchmark as string,
     ...(tasks !== undefined ? { tasks } : {}),
-    agents: (f.agent as string[]).map(parseJobAgent),
+    // --effort is stamped on EVERY agent, verbatim. The server owns the
+    // per-harness refusal (a level on gemini is a 400 naming the harness), so
+    // the CLI never edits the list to dodge one — silently dropping the value
+    // for some agents would run a sweep the flag no longer describes.
+    agents: (f.agent as string[]).map((spec) => {
+      const agent = parseJobAgent(spec);
+      return f.effort !== undefined ? { ...agent, reasoningEffort: f.effort as string } : agent;
+    }),
     ...(f.runs !== undefined ? { runsPerTask: f.runs as number } : {}),
     ...(f.concurrency !== undefined ? { concurrency: f.concurrency as number } : {}),
     ...(f["max-trial-spend"] !== undefined

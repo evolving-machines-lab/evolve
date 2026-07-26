@@ -452,6 +452,7 @@ Run flags, in the order you decide them:
 - `--benchmark <name[@version]>` — required; bare name = active version
 - `--tasks <k1,k2,…>` — default: every task of the version
 - `--agent <harness:model[:version]>` — required; repeat once per agent. The optional third part pins the harness version (`codex:gpt-5.5:0.29.0`); omit it to resolve the latest
+- `--effort <value>` — reasoning effort for **every** agent in the run, applied verbatim; an agent whose harness cannot honor it is refused by the server rather than silently skipped, so a mixed sweep that needs per-agent efforts belongs in the SDK. Omit it to take the platform default
 - `--runs <n>` — runs per task × agent (default 1)
 - `--concurrency <n>` — parallel trials (default 4, ceiling 16)
 - `--max-trial-spend <usd>` — model-spend cap for each trial (default: the platform's $200)
@@ -510,7 +511,7 @@ for (const harness of harnesses) {
 
 What is in it:
 
-**`harnesses`** — every built-in, with `defaultModel` and the full `models` list for a picker, `runnable` (and `reason` when it is not), `versionPinnable`, and `latestVersion` for a "your pin is out of date" badge. `defaultModel` is a suggestion, not a server-side default: `limits.job.modelRequired` is `true`, and a job that omits `model` is refused. `effortSupport` is the same idea for the effort control — `"level"`, `"binary"` or `"none"`, exactly as [Run a job](#run-a-job) describes them — so a form can offer the right control, or none, instead of learning the harness's limits from a refusal.
+**`harnesses`** — every built-in, with `defaultModel` and the full `models` list for a picker, `runnable` (and `reason` when it is not), `versionPinnable`, and `latestVersion` for a "your pin is out of date" badge. `defaultModel` is a suggestion, not a server-side default: `limits.job.modelRequired` is `true`, and a job that omits `model` is refused. `effortSupport` is the same idea for the effort control — `"level"`, `"binary"` or `"none"`, exactly as [Run a job](#run-a-job) describes them — so a form can offer the right control, or none, instead of learning the harness's limits from a refusal. For a `"binary"` harness the acceptable spellings are published as `limits.job.binaryEffortValues`, so a picker can narrow its options instead of offering eight values the server will refuse six of.
 
 **`sandboxProviders`** — each provider's real resource ceilings and, in `refuses`, the capabilities it will not run with the reason the runner itself would give.
 
