@@ -237,6 +237,20 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     apiKeyEnv: "OPENAI_API_KEY",
     oauthEnv: "CODEX_OAUTH_FILE_PATH",
     oauthFileName: "auth.json",
+    // NOT A ROUTING KNOB FOR CODEX — kept only because the env var is still
+    // read by other OpenAI-shaped tooling that may share this box, and because
+    // removing it silently would change what gets exported into the sandbox.
+    //
+    // codex 0.145 IGNORES OPENAI_BASE_URL outright. Measured 2026-07-26: with
+    // OPENAI_BASE_URL=http://127.0.0.1:9/v1 codex still dialled
+    // wss://api.openai.com/v1/responses and then https://api.openai.com/v1/responses
+    // — with and without auth.json present, and with the variable exported
+    // before `codex login`. The ONLY thing that redirects codex is a provider
+    // block: `-c model_provider=X -c model_providers.X.base_url=…`, which is
+    // exactly what mcp/toml.ts writes into ~/.codex/config.toml as
+    // [model_providers.evolve-gateway]. Gateway routing therefore does not
+    // depend on this field, and anything that starts depending on it is broken
+    // before it ships.
     baseUrlEnv: "OPENAI_BASE_URL",
     defaultModel: "gpt-5.4",
     models: [
