@@ -57,6 +57,30 @@ export function createCodexParser() {
       case "turn.completed":
         return null;
 
+      // FAILURES THE HARNESS REPORTED. codex streams these on stdout beside its
+      // normal output while stderr carries only "Reading prompt from stdin...",
+      // so dropping them (which this parser used to do, via the default case)
+      // made a run that never reached the model indistinguishable from one that
+      // produced nothing — the exact blindness that cost a night of diagnosis on
+      // a "stream disconnected before completion" failure nobody could see.
+      //
+      // They are emitted as the `error` variant, NOT as message chunks, so that
+      // anything asking "did the harness do work" can exclude them
+      // (isAgentWorkUpdate). `error` is retryable//transient in codex's own
+      // stream (it emits "Reconnecting… n/5" as one), while `turn.failed` is the
+      // turn giving up — hence the fatal flag rather than two variants.
+      case "error": {
+        const message = typeof data.message === "string" ? data.message : JSON.stringify(data);
+        events.push({ update: { sessionUpdate: "error", message, fatal: false } });
+        break;
+      }
+      case "turn.failed": {
+        const message =
+          typeof data.error?.message === "string" ? data.error.message : JSON.stringify(data.error ?? data);
+        events.push({ update: { sessionUpdate: "error", message, fatal: true } });
+        break;
+      }
+
       // Item started - tool calls begin, todo_list initial
       case "item.started": {
         const item = data.item;
@@ -183,6 +207,15 @@ export function createCodexParser() {
     const itemType = item.type;
 
     switch (itemType) {
+      // exec_events.rs ErrorItem — the SAME failure the top-level "error" event
+      // carries, arriving as a completed item (observed live: codex reports its
+      // transport fallback this way, e.g. "Falling back from WebSockets to HTTPS
+      // transport…"). Non-fatal: the turn may still succeed after it.
+      case "error": {
+        const message = typeof item.message === "string" ? item.message : JSON.stringify(item);
+        return { sessionUpdate: "error", message, fatal: false };
+      }
+
       // exec_events.rs:134 ReasoningItem { text: String }
       // v2.rs:1580 also supports Reasoning { summary: Vec<String>, content: Vec<String> }
       case "reasoning": {

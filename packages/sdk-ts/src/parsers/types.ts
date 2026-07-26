@@ -160,7 +160,43 @@ export type SessionUpdate =
   | UserMessageChunk
   | ToolCall
   | ToolCallUpdate
-  | Plan;
+  | Plan
+  | AgentError;
+
+/**
+ * A failure the HARNESS itself reported — not model output, not work.
+ *
+ * WHY THIS IS ITS OWN VARIANT AND NOT AN agent_message_chunk. Harnesses stream
+ * their failures on the same channel as their output: codex writes
+ * {"type":"error"} and {"type":"turn.failed"} to stdout as JSONL while its
+ * stderr says only "Reading prompt from stdin...". Dropping those left a run
+ * that could not reach the model looking identical to a run that produced
+ * nothing at all, which cost a full night of blind diagnosis. Folding them into
+ * agent_message_chunk would be worse than dropping them: a consumer counting
+ * "did the agent do any work" would count the error as work.
+ *
+ * So the transcript records the failure, and the discriminant says plainly that
+ * it is a failure. Anything deciding whether a harness RAN must exclude this
+ * variant — see isAgentWorkUpdate() below, and the eval runner's
+ * harnessNeverRan law, which must keep firing for an error-only run so an
+ * infrastructure failure is never scored as a zero.
+ */
+export interface AgentError {
+  sessionUpdate: "error";
+  /** The harness's own message, verbatim. */
+  message: string;
+  /** True when the harness treated it as terminal for the turn. */
+  fatal: boolean;
+}
+
+/**
+ * Is this update evidence the harness did WORK, as opposed to reporting a
+ * failure? The one predicate every "did it run" check should use, so the answer
+ * cannot drift between callers.
+ */
+export function isAgentWorkUpdate(update: { sessionUpdate?: unknown } | null | undefined): boolean {
+  return !!update && update.sessionUpdate !== "error";
+}
 
 /**
  * Streaming text/image from agent.
