@@ -201,12 +201,21 @@ function withInBoxTimeout(wrapped: string, timeoutSec?: number): string {
   if (!timeoutSec || timeoutSec <= 0) return wrapped;
   const encoded = Buffer.from(wrapped).toString("base64");
   const path = `/tmp/.evolve-cmd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.sh`;
-  return (
+  // RUN IT IN A CHILD SHELL. The whole thing is handed to `sh -c` rather than
+  // appended to the session's own shell, because the script has to end by
+  // propagating the timed command's status — and an `exit` evaluated by the
+  // SESSION shell terminates the session itself, after which Daytona never
+  // records the command as finished and the poll in wait() spins until the
+  // client deadline. Measured: a bare `echo hello` came back exit 124 after 31s
+  // that way, while the same command without this wrapper returned in 1.4s.
+  // Single-quoted, and the body deliberately contains no single quote of its
+  // own (the payload is base64) so no escaping is required.
+  const inner =
     `echo ${encoded} | base64 -d > ${path}; ` +
     `if command -v timeout >/dev/null 2>&1; then ` +
     `timeout -k 10 ${timeoutSec} bash ${path}; else bash ${path}; fi; ` +
-    `__rc=$?; rm -f ${path}; exit $__rc`
-  );
+    `rc=$?; rm -f ${path}; exit $rc`;
+  return `sh -c '${inner}'`;
 }
 
 function wrapCommand(
