@@ -1248,7 +1248,17 @@ export class ModalProvider implements SandboxProvider {
     const results: SandboxInfo[] = [];
 
     // Scope to our app; tag filter narrows server-side to sandboxes carrying
-    // at least the requested metadata
+    // at least the requested metadata.
+    //
+    // COST WARNING — this loop is O(N) ROUND TRIPS, not O(1). `list()` itself is
+    // one streamed call, but `getTags()` is a separate gRPC request per sandbox
+    // (`sandboxTagsGet`), so listing N sandboxes costs N+1 calls. That is fine
+    // for the SDK's own use (a user listing their handful of boxes, needing
+    // metadata) and NOT fine for fleet-wide bookkeeping: anything that only
+    // needs to know WHICH sandbox ids are alive — lifecycle polling, orphan
+    // sweeps, reconciliation — must iterate `client.sandboxes.list({appId})`
+    // directly and read `sandbox.sandboxId`, never through here. Please do not
+    // "optimize" by reintroducing tag reads into those paths.
     for await (const sandbox of this.client.sandboxes.list({
       appId: app.appId,
       tags: options?.metadata,
@@ -1259,6 +1269,35 @@ export class ModalProvider implements SandboxProvider {
     }
 
     return results;
+  }
+
+  /**
+   * Live sandbox ids for the whole app, in ONE streamed call and O(1) round
+   * trips — the fleet-bookkeeping counterpart to `list()`.
+   *
+   * Exists because `list()` cannot be made cheap without dropping metadata from
+   * its contract: it owes callers a populated `SandboxInfo.metadata`, and Modal
+   * only serves tags per sandbox. Anything that just needs "which ids are
+   * alive" — lifecycle polling, orphan sweeps, reconciliation — uses this and
+   * pays one request no matter how large the fleet is.
+   *
+   * `complete` is the load-bearing field, not a nicety: absence from this list
+   * is what callers read as "terminated", so a truncated or errored enumeration
+   * MUST NOT be mistaken for an empty fleet. A caller that sees complete=false
+   * has to leave rows alone rather than mass-marking live sandboxes dead.
+   */
+  async listSandboxIds(): Promise<{ ids: Set<string>; complete: boolean }> {
+    const ids = new Set<string>();
+    try {
+      const app = await this.getApp();
+      for await (const sandbox of this.client.sandboxes.list({ appId: app.appId })) {
+        ids.add(sandbox.sandboxId);
+      }
+      return { ids, complete: true };
+    } catch {
+      // Partial results are worse than none for a terminal-state decision.
+      return { ids: new Set(), complete: false };
+    }
   }
 }
 
