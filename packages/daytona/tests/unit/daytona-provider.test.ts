@@ -25,6 +25,7 @@ import {
   _testToSandboxInfo,
   _testDaytonaStateToEvolveState,
   DAYTONA_MAX_NETWORK_ALLOWLIST,
+  DAYTONA_AUTO_DELETE_GRACE_MINUTES,
   DaytonaNetworkPolicyError,
   DaytonaResourcesError,
   DaytonaImagePullError,
@@ -742,30 +743,48 @@ async function testSpawnWaitDistinguishesSandboxFromSession(): Promise<void> {
   // artifact collect that followed failed with "sandbox not found". The reader
   // spent the investigation on the harness. Both cases still end the wait at
   // -1 — only the reason changes, so no caller's adjudication moves.
+  // The box is still there: refreshData() answers, so only the session went.
   const sessionGone = createMockDaytonaSandbox();
   sessionGone.sandbox.process.getSessionCommand = async () => {
     throw new Error("Session not found");
   };
+  (sessionGone.sandbox as any).refreshData = async () => undefined;
   const sessionHandle = await new DaytonaCommands(sessionGone.sandbox as any, "root").spawn("sleep 1");
   const sessionResult = await sessionHandle.wait();
   assertEqual(sessionResult.exitCode, -1, "a vanished session still ends the wait at -1");
   assertEqual(sessionResult.stderr, "session terminated", "a vanished session is still an interrupt");
 
+  // The box is gone: the probe 404s the same way the poll did.
   const sandboxGone = createMockDaytonaSandbox();
   sandboxGone.sandbox.process.getSessionCommand = async () => {
+    throw new Error("Session not found");
+  };
+  (sandboxGone.sandbox as any).refreshData = async () => {
     throw new Error("Sandbox not found");
   };
   const sandboxHandle = await new DaytonaCommands(sandboxGone.sandbox as any, "root").spawn("sleep 1");
   const sandboxResult = await sandboxHandle.wait();
   assertEqual(sandboxResult.exitCode, -1, "a vanished sandbox also ends the wait at -1");
+  assertEqual(
+    sandboxResult.stderr,
+    "sandbox deleted during run",
+    "the API is ASKED, so a 404 whose wording says 'session' is still reported as the box being gone"
+  );
+}
+
+async function testAutoDeleteGrace(): Promise<void> {
+  console.log("\n[7e] create() - a stopped box gets a grace period, not instant deletion");
+
+  // 0 meant "delete immediately upon stopping", which turns any stop into
+  // unrecoverable loss of a box whose work was never collected — and destroys
+  // the evidence needed to attribute the stop.
   assert(
-    sandboxResult.stderr.includes("daytona-sandbox-123") &&
-      sandboxResult.stderr.includes("no longer exists"),
-    "a vanished sandbox names the box and says the machine is gone, not the session"
+    DAYTONA_AUTO_DELETE_GRACE_MINUTES > 0,
+    "a stopped sandbox survives long enough to be inspected and collected from"
   );
   assert(
-    !sandboxResult.stderr.includes("session terminated"),
-    "and never reports itself as a terminated session"
+    DAYTONA_AUTO_DELETE_GRACE_MINUTES <= 30,
+    "and not so long that it becomes a way to hold billable state"
   );
 }
 
@@ -812,6 +831,7 @@ const tests = [
   testCommandsRunDefaultUserNoWrapper,
   testCommandsSpawnRootWrapper,
   testSpawnWaitDistinguishesSandboxFromSession,
+  testAutoDeleteGrace,
 ];
 
 (async () => {

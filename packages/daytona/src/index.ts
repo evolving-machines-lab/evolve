@@ -56,6 +56,13 @@ const IMAGE_MAP: Record<string, string> = {
  * Daytona's hard cap on network allowlist size (validated server-side too).
  * Policies that resolve to more CIDRs throw DaytonaNetworkPolicyError.
  */
+/**
+ * Minutes a STOPPED sandbox is kept before Daytona deletes it. Long enough that
+ * a stop nobody ordered leaves something to look at and something to collect
+ * from; short enough that it is never a way to hold billable state.
+ */
+export const DAYTONA_AUTO_DELETE_GRACE_MINUTES = 10;
+
 export const DAYTONA_MAX_NETWORK_ALLOWLIST = 10;
 
 const BINARY_EXTENSIONS = new Set([
@@ -1122,14 +1129,27 @@ export class DaytonaCommands implements SandboxCommands {
             // incident. The exit code stays -1 in both cases so no caller's
             // adjudication changes; only the reason does.
             if (msg.includes("not found")) {
-              const sandboxGone = msg.includes("sandbox");
+              // ASK THE API rather than parse the message. A 404's wording is
+              // the vendor's to change, and the two cases are far enough apart
+              // to be worth one extra call on an error path that has already
+              // ended the wait: refreshData() succeeding proves the box is
+              // still there and only the session went, while it failing the
+              // same way proves the box itself is gone.
+              let sandboxGone = msg.includes("sandbox");
+              try {
+                await sandbox.refreshData();
+                sandboxGone = false;
+              } catch (probeError) {
+                const probeMsg =
+                  probeError instanceof Error
+                    ? probeError.message.toLowerCase()
+                    : String(probeError).toLowerCase();
+                if (probeMsg.includes("not found")) sandboxGone = true;
+              }
               return {
                 exitCode: -1,
                 stdout: "",
-                stderr: sandboxGone
-                  ? `sandbox ${sandbox.id} no longer exists — it was deleted while this command was running, ` +
-                    "so the command's own outcome is unknown and nothing further can be collected from it"
-                  : "session terminated",
+                stderr: sandboxGone ? "sandbox deleted during run" : "session terminated",
               };
             }
             throw error;
@@ -1389,11 +1409,25 @@ export class DaytonaProvider implements SandboxProvider {
       envVars: options.envs,
       labels: options.metadata,
       autoStopInterval: autoStopMinutes,
-      // Delete on stop (0 = "delete immediately upon stopping"). Without it a
-      // stopped box lingers as billable state that nothing is watching: the
-      // eval worker's reaper only kills boxes it still has a DB row for, and a
-      // stopped-but-kept sandbox outlives that row.
-      autoDeleteInterval: 0,
+      // Delete a stopped box after a short GRACE, not instantly. The reason for
+      // reclaiming at all is unchanged — a stopped box lingers as billable
+      // state that nothing is watching, because the eval worker's reaper only
+      // kills boxes it still has a DB row for and a stopped-but-kept sandbox
+      // outlives that row — but 0 meant "delete immediately upon stopping",
+      // which turns ANY stop into instant, unrecoverable loss of a box whose
+      // work has not been collected yet.
+      //
+      // That is not hypothetical. On 2026-07-26 a box ceased to exist mid-run
+      // and the artifact collect that followed had nothing to read; because the
+      // box was already deleted rather than merely stopped, there was no state
+      // left to inspect and the cause could not be attributed at all. A stop we
+      // did not order is exactly when the box is worth keeping for a few
+      // minutes.
+      //
+      // Nothing depends on instant deletion: the phase's own finally-kill, the
+      // eval reaper, and the provider's inactivity TTL all still reclaim, and
+      // they run in minutes, not hours.
+      autoDeleteInterval: DAYTONA_AUTO_DELETE_GRACE_MINUTES,
       ...(osUser ? { user: osUser } : {}),
       ...networkParams,
     };

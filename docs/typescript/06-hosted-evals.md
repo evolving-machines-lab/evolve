@@ -238,6 +238,8 @@ console.log(trial.reward, trial.metrics);              // reward + named sub-sco
 console.log(trial.phaseTimingsMs);                     // { agentMs, verifyMs }
 console.log(trial.spentUsd, trial.spendSource);        // what it cost, and how we know
 console.log(trial.sandboxProvider, trial.verifierMode); // where the trial and its verifier executed
+console.log(trial.modelUsage.networkMode,              // "no-network" | "allowlist" | "public"
+            trial.modelUsage.networkPolicySource);     // "explicit" | "legacy_allow_internet" | "upstream_default"
 console.log(trial.resolvedHarnessVersion);             // harness version actually used
 console.log(trial.failurePhase, trial.failureDetail);  // untruncated in this response
 ```
@@ -247,6 +249,11 @@ console.log(trial.failurePhase, trial.failureDetail);  // untruncated in this re
 > Both fields live on the trial itself. `spentUsd: null` means the trial never ran — a queued or cancelled trial — and is not the same as `0`, which is a real measurement and appears when no gateway key was ever minted.
 >
 > Read spend from `spentUsd`, never from `modelUsage`. `modelUsage` is the open-ended per-harness blob: bundle identity, token counts, `maxTrialSpendUsd` (the cap *that* trial's key carried, which can differ from the job's cap today), and — on trials settled by an earlier executor — a historical `costUsd`. That leftover is a usage fact the harness reported, not the platform's spend answer, and only `spentUsd` carries `spendSource` to tell you how it was arrived at.
+
+> **Reading the trial's egress:** `networkMode` is what the agent could reach, and
+> `networkPolicySource` is where that came from — `"upstream_default"` means the task declared
+> nothing and the omitted-means-public rule applied. Compare rewards only across trials that
+> agree on both: an agent with internet access ran a different experiment from a sealed one.
 
 While a trial is still in flight there is a mid-run reading as well, on two fields of its own:
 

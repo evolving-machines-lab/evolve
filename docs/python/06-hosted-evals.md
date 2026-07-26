@@ -247,7 +247,15 @@ Read spend from `spent_usd`, never from `model_usage`. `model_usage` is the open
 ```python
 if detail.model_usage:
     print(detail.model_usage.max_trial_spend_usd)   # history, not this job's cap
+    extra = detail.model_usage.extra
+    print(extra.get('network_mode'),                # 'no-network' | 'allowlist' | 'public'
+          extra.get('network_policy_source'))       # 'explicit' | 'legacy_allow_internet' | 'upstream_default'
 ```
+
+`network_mode` is what the agent could reach, and `network_policy_source` is where that came
+from — `'upstream_default'` means the task declared nothing and the omitted-means-public rule
+applied. Compare rewards only across trials that agree on both: an agent with internet access ran
+a different experiment from a sealed one.
 
 While a trial is still in flight there is a mid-run reading as well, on two fields of its own:
 

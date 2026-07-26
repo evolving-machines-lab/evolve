@@ -72,48 +72,15 @@ await evolve.run({ prompt: "Hello" });
 The provider is an argument rather than an environment variable on purpose: which provider your
 program runs on is part of the program.
 
-Managed Daytona runs a full agent session — creating and listing sandboxes, and every command and
-file operation the agent performs, including streamed command output. Images come from the
-snapshots the platform publishes, so a `resources` request an existing snapshot cannot honor is
-refused rather than quietly ignored.
+Managed Daytona carries both of Daytona's planes through the Dashboard — creating and listing
+sandboxes, and every command and file operation the agent performs, including streamed command
+output. Images come from the snapshots the platform publishes: a managed create names one and
+never builds one, so a `resources` request that an existing snapshot cannot honor is refused
+rather than silently ignored.
 
-Managed Modal is not available yet: `managedSandbox("modal")` throws and names the file
-operations its managed API is missing. Pass Modal tokens for direct mode instead.
-
-`EVOLVE_DASHBOARD_URL` points the SDK at a different Evolve deployment. Against the hosted
-platform you never need it.
-
-#### Which sandbox you get when you pass none
-
-`.withSandbox()` is optional. When it is missing the SDK reads the environment in a fixed order,
-and your own provider credentials come first — the Evolve key is the fallback, not the winner:
-
-```
-E2B_API_KEY                          → direct E2B, your account, your bill
-DAYTONA_API_KEY                      → direct Daytona, your account, your bill
-MODAL_TOKEN_ID + MODAL_TOKEN_SECRET  → direct Modal, your account, your bill
-EVOLVE_API_KEY                       → managed E2B, the platform's account
-```
-
-The order runs that way so the two kinds of key can coexist. Keep `EVOLVE_API_KEY` set for model
-routing and the dashboard, then add a provider key whenever you want sandbox time billed to your
-own account — the provider key wins without you having to unset anything. If none of the four are
-present, resolution fails and names every option rather than guessing.
-
-#### Managed secrets need a managed sandbox
-
-`.withManagedSecrets()` works only on a sandbox the platform runs, and the SDK says so before any
-sandbox is created rather than failing part-way through a run. Without `EVOLVE_API_KEY` you get
-`withManagedSecrets() is available only in gateway mode with EVOLVE_API_KEY`. Alongside
-`.withSession()` it is refused too, because a secret grant is scoped to the sandbox this run
-creates and not to one you reconnect to. And a sandbox you built yourself is refused with
-`withManagedSecrets() requires an Evolve-managed sandbox; remove withSandbox() or pass a managed
-sandbox provider.` — which holds even if you aimed that provider at the managed URL, since only
-`managedSandbox()` produces a sandbox the platform will bind a grant to.
-
-Leaving `.withSandbox()` off is the simplest path: managed secrets then resolve a managed sandbox
-for you and ignore any provider key in your environment, so a stray `E2B_API_KEY` cannot quietly
-move the run somewhere the grant would not bind.
+Managed Modal is not available yet. Its managed API serves create, list, get, kill and exec and
+has no filesystem operations, and an agent session writes files into its sandbox before it runs
+anything. Pass Modal tokens for direct mode instead.
 
 ---
 
