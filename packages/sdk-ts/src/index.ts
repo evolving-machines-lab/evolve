@@ -185,7 +185,8 @@ export { AGENT_TYPES } from "./types";
 // =============================================================================
 
 // Output event types
-export type { OutputEvent, AgentParser } from "./parsers";
+export type { OutputEvent, AgentParser, SessionUpdate, AgentError } from "./parsers";
+export { isAgentWorkUpdate } from "./parsers";
 
 // Parser functions
 export {
