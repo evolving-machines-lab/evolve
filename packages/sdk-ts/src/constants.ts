@@ -47,6 +47,41 @@ export function getDashboardUrl(path = ""): string {
 }
 
 /**
+ * Sandbox providers the Dashboard runs on the customer's behalf.
+ *
+ * Managed mode means the customer holds one Evolve API key and no provider
+ * credential at all: the Dashboard authenticates the key, records ownership,
+ * and makes the provider call with platform credentials. Each provider has its
+ * own door under /api/managed/<provider>.
+ */
+export const MANAGED_SANDBOX_PROVIDERS = ["e2b", "daytona", "modal"] as const;
+
+export type ManagedSandboxProviderName = (typeof MANAGED_SANDBOX_PROVIDERS)[number];
+
+/**
+ * Get a managed provider's control-plane URL.
+ *
+ * @internal
+ */
+export function getManagedProviderUrl(provider: ManagedSandboxProviderName): string {
+  return getDashboardUrl(`/api/managed/${provider}`);
+}
+
+/**
+ * Get the managed Daytona TOOLBOX URL — the second plane.
+ *
+ * Daytona sends every command and file operation to a per-sandbox runner it
+ * discovers at runtime, not to the control-plane URL. Managed mode answers
+ * that discovery with this route, so exec and filesystem traffic reaches the
+ * Dashboard like everything else.
+ *
+ * @internal
+ */
+export function getManagedDaytonaToolboxUrl(): string {
+  return `${getManagedProviderUrl("daytona")}/toolbox`;
+}
+
+/**
  * Get the managed E2B control-plane URL.
  *
  * Managed sandbox control-plane requests go to the Dashboard endpoint.
@@ -54,7 +89,7 @@ export function getDashboardUrl(path = ""): string {
  * @internal
  */
 export function getE2BGatewayUrl(): string {
-  return getDashboardUrl("/api/managed/e2b");
+  return getManagedProviderUrl("e2b");
 }
 
 /**

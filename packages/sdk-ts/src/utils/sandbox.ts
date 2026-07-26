@@ -13,6 +13,10 @@ import {
   ENV_MODAL_TOKEN_ID,
   ENV_MODAL_TOKEN_SECRET,
   getE2BGatewayUrl,
+  getManagedDaytonaToolboxUrl,
+  getManagedProviderUrl,
+  MANAGED_SANDBOX_PROVIDERS,
+  type ManagedSandboxProviderName,
 } from "../constants";
 
 /**
@@ -38,11 +42,84 @@ export function isEvolveManagedSandboxProvider(provider: SandboxProvider): boole
   return evolveManagedSandboxProviders.has(provider);
 }
 
-export async function resolveManagedSandbox(evolveKey?: string): Promise<SandboxProvider> {
+function missingProviderPackage(pkg: string, install: string): Error {
+  return new Error(
+    `${ENV_EVOLVE_API_KEY} is set but ${pkg} failed to load.\n` + `Try installing: ${install}`,
+  );
+}
+
+function isMissingModule(error: Error): boolean {
+  return (
+    error.message?.includes("Cannot find module") || error.message?.includes("MODULE_NOT_FOUND")
+  );
+}
+
+/**
+ * Resolve a sandbox provider that runs on the platform's credentials.
+ *
+ * The caller holds one Evolve API key and no provider credential. Which
+ * provider backs the sandbox is a choice, not an environment accident, so it
+ * is an argument here and a value on the public `managedSandbox()` helper —
+ * never an env var.
+ */
+export async function resolveManagedSandbox(
+  evolveKey?: string,
+  provider: ManagedSandboxProviderName = "e2b",
+): Promise<SandboxProvider> {
   const apiKey = evolveKey || process.env[ENV_EVOLVE_API_KEY];
   if (!apiKey) {
     throw new Error(`${ENV_EVOLVE_API_KEY} is required for Evolve-managed sandbox features`);
   }
+  if (!MANAGED_SANDBOX_PROVIDERS.includes(provider)) {
+    throw new Error(
+      `Unknown managed sandbox provider "${provider}". ` +
+        `Supported: ${MANAGED_SANDBOX_PROVIDERS.join(", ")}`,
+    );
+  }
+
+  if (provider === "daytona") {
+    try {
+      const { createDaytonaProvider } = await import("@evolvingmachines/daytona");
+      // Both planes ride the Dashboard: apiUrl for create/list/delete, and
+      // managedToolboxUrl for every command and file operation, which Daytona
+      // would otherwise send straight to a runner host this process holds no
+      // credential for. The Evolve key travels as the Daytona apiKey because
+      // that is the header the Daytona client puts it in and the header both
+      // managed doors read.
+      return markEvolveManagedSandbox(
+        createDaytonaProvider({
+          apiKey,
+          apiUrl: getManagedProviderUrl("daytona"),
+          managedToolboxUrl: getManagedDaytonaToolboxUrl(),
+        }),
+      );
+    } catch (e) {
+      const error = e as Error;
+      if (isMissingModule(error)) {
+        throw missingProviderPackage(
+          "@evolvingmachines/daytona",
+          "npm install @evolvingmachines/daytona",
+        );
+      }
+      throw error;
+    }
+  }
+
+  if (provider === "modal") {
+    // Stated rather than half-built. The managed Modal door serves exactly
+    // create / list / get / kill / exec — there is no filesystem surface on
+    // it, and an Evolve agent session writes files into its sandbox before it
+    // runs anything (prompts, skills, the artifact collector). A provider that
+    // could create a box and never put a file in it would look like it worked
+    // right up until the first real run.
+    throw new Error(
+      "Managed Modal sandboxes are not available yet: the managed Modal API serves " +
+        "create/list/get/kill/exec and has no filesystem operations, which an agent " +
+        "session requires. Use managedSandbox(\"e2b\") or managedSandbox(\"daytona\"), " +
+        "or pass Modal tokens for direct mode.",
+    );
+  }
+
   try {
     const { createE2BProvider } = await import("@evolvingmachines/e2b");
     return markEvolveManagedSandbox(
@@ -50,14 +127,33 @@ export async function resolveManagedSandbox(evolveKey?: string): Promise<Sandbox
     );
   } catch (e) {
     const error = e as Error;
-    if (error.message?.includes("Cannot find module") || error.message?.includes("MODULE_NOT_FOUND")) {
-      throw new Error(
-        `${ENV_EVOLVE_API_KEY} is set but @evolvingmachines/e2b failed to load.\n` +
-          "Try reinstalling: npm install @evolvingmachines/sdk"
+    if (isMissingModule(error)) {
+      throw missingProviderPackage(
+        "@evolvingmachines/e2b",
+        "npm install @evolvingmachines/sdk",
       );
     }
     throw error;
   }
+}
+
+/**
+ * A sandbox the platform runs for you.
+ *
+ * ```ts
+ * const kit = new Evolve()
+ *   .withAgent({ agentType: "claude" })
+ *   .withSandbox(await managedSandbox("daytona"));
+ * ```
+ *
+ * Requires an Evolve API key and no provider credential of any kind. Omit the
+ * provider to take the platform default (E2B).
+ */
+export function managedSandbox(
+  provider: ManagedSandboxProviderName = "e2b",
+  evolveKey?: string,
+): Promise<SandboxProvider> {
+  return resolveManagedSandbox(evolveKey, provider);
 }
 
 /**

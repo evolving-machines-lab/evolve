@@ -232,6 +232,43 @@ class SandboxProvider(Protocol):
 
 
 @dataclass
+class ManagedProvider:
+    """A sandbox the Evolve platform runs for you.
+
+    Managed mode means you hold an Evolve API key and no provider credential at
+    all: the Dashboard authenticates the key, records ownership, and makes the
+    provider call with platform credentials.
+
+    Which provider backs the sandbox is an argument here — never an
+    environment variable — so a program says what it runs on.
+
+    Args:
+        provider: 'e2b' (default) or 'daytona'. 'modal' is not available yet:
+            the managed Modal API serves create/list/get/kill/exec and has no
+            filesystem operations, which an agent session requires.
+        api_key: Evolve API key (defaults to the EVOLVE_API_KEY env var)
+
+    Example:
+        >>> evolve = Evolve(sandbox=ManagedProvider(provider='daytona'))
+    """
+    provider: Literal['e2b', 'daytona', 'modal'] = 'e2b'
+    api_key: Optional[str] = None
+
+    @property
+    def type(self) -> Literal['managed']:
+        """Provider type."""
+        return 'managed'
+
+    @property
+    def config(self) -> dict:
+        """Provider configuration dict."""
+        result: dict = {'provider': self.provider}
+        if self.api_key:
+            result['apiKey'] = self.api_key
+        return result
+
+
+@dataclass
 class E2BProvider:
     """E2B sandbox provider configuration.
 

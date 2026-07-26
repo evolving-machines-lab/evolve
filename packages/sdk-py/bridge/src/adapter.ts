@@ -25,6 +25,7 @@ import {
   type SessionsClient as TSSessionsClient,
   type SessionInfo as TSSessionInfo,
   type BrowserReplay as TSBrowserReplay,
+  managedSandbox,
 } from '../../../sdk-ts/dist/index.js';
 import { createE2BProvider } from '../../../e2b/dist/index.js';
 import { createDaytonaProvider } from '../../../daytona/dist/index.js';
@@ -137,7 +138,7 @@ export class EvolveAdapter {
   // PRIVATE: EVOLVE BUILDER (shared by initialize and createInstance)
   // ===========================================================================
 
-  private createSandboxProvider(config: { type: string; config: Record<string, any> }) {
+  private async createSandboxProvider(config: { type: string; config: Record<string, any> }) {
     switch (config.type) {
       case 'e2b':
         return createE2BProvider(config.config as any);
@@ -145,6 +146,12 @@ export class EvolveAdapter {
         return createDaytonaProvider(config.config as any);
       case 'modal':
         return createModalProvider(config.config as any);
+      case 'managed':
+        // ManagedProvider carries only which provider to ask for; the SDK owns
+        // every URL and credential decision, so Python and TypeScript resolve a
+        // managed sandbox through the same function rather than through two
+        // copies of the same rules.
+        return managedSandbox(config.config.provider, config.config.apiKey);
       default:
         throw new Error(`Unsupported sandbox provider: ${config.type}`);
     }
@@ -167,7 +174,7 @@ export class EvolveAdapter {
     } as AgentConfig;
   }
 
-  private buildEvolve(params: InitializeParams): Evolve {
+  private async buildEvolve(params: InitializeParams): Promise<Evolve> {
     const kit = new Evolve()
       .withWorkspaceMode(params.workspace_mode ?? 'knowledge');
 
@@ -179,7 +186,7 @@ export class EvolveAdapter {
 
     // Only call .withSandbox() if provider provided (TS SDK resolves from EVOLVE_API_KEY)
     if (params.sandbox_provider) {
-      kit.withSandbox(this.createSandboxProvider(params.sandbox_provider));
+      kit.withSandbox(await this.createSandboxProvider(params.sandbox_provider));
     }
     if (params.sandbox_create_options) {
       kit.withSandboxCreateOptions(params.sandbox_create_options);
@@ -361,7 +368,7 @@ export class EvolveAdapter {
   // ===========================================================================
 
   async initialize(params: InitializeParams, callbacks?: EventCallbacks): Promise<StatusResponse> {
-    this.evolve = this.buildEvolve(params);
+    this.evolve = await this.buildEvolve(params);
 
     // Initialize-only configurations (not used by Swarm workers)
     if (params.files && Object.keys(params.files).length > 0) {
@@ -831,7 +838,7 @@ export class EvolveAdapter {
       throw new Error(`Instance ${instance_id} already exists`);
     }
 
-    const kit = this.buildEvolve(initParams);
+    const kit = await this.buildEvolve(initParams);
     this.instances.set(instance_id, kit);
     return { status: 'ok' };
   }

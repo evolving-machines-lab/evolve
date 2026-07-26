@@ -50,6 +50,42 @@ Only use explicit provider creation (below) if you need custom settings like tim
 
 ---
 
+### Managed Sandboxes
+
+With `EVOLVE_API_KEY` and no provider key, the platform runs the sandbox for you: Evolve
+authenticates your key, creates the box on its own account, and records who owns it. You never
+hold an E2B or Daytona credential, and you are never billed by them directly.
+
+That is already what auto-resolution does when only `EVOLVE_API_KEY` is set — it gives you a
+managed **E2B** sandbox. To run on a different provider, say which one:
+
+```python
+from evolve import AgentConfig, Evolve, ManagedProvider
+
+evolve = Evolve(
+    config=AgentConfig(type='claude'),
+    sandbox=ManagedProvider(provider='daytona'),
+)
+
+await evolve.run(prompt='Hello')
+```
+
+`ManagedProvider()` with no argument is managed E2B — the same sandbox auto-resolution gives you.
+The provider is an argument rather than an environment variable on purpose: which provider your
+program runs on is part of the program.
+
+Managed Daytona carries both of Daytona's planes through the Dashboard — creating and listing
+sandboxes, and every command and file operation the agent performs, including streamed command
+output. Images come from the snapshots the platform publishes: a managed create names one and
+never builds one, so a `resources` request that an existing snapshot cannot honor is refused
+rather than silently ignored.
+
+Managed Modal is not available yet. Its managed API serves create, list, get, kill and exec and
+has no filesystem operations, and an agent session writes files into its sandbox before it runs
+anything. Pass Modal tokens for direct mode instead.
+
+---
+
 ### E2B (default)
 ```bash
 # .env - Gateway mode

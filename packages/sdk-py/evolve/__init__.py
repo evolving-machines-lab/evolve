@@ -4,6 +4,7 @@ from .agent import Evolve
 from .config import (
     AgentConfig,
     E2BProvider,
+    ManagedProvider,
     DaytonaProvider,
     ModalProvider,
     SandboxCreateOptions,
@@ -335,6 +336,7 @@ __all__ = [
     # Evolve Configuration
     'AgentConfig',
     'E2BProvider',
+    'ManagedProvider',
     'DaytonaProvider',
     'ModalProvider',
     'SandboxProvider',

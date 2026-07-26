@@ -21,8 +21,14 @@
  */
 
 import { resolveAgentConfig } from "../../src/utils/config.js";
-import { resolveDefaultSandbox, toManagedE2BKey } from "../../src/utils/sandbox.js";
-import { getE2BGatewayUrl, getGatewayUrl } from "../../src/constants.js";
+import { managedSandbox, resolveDefaultSandbox, toManagedE2BKey } from "../../src/utils/sandbox.js";
+import {
+  getDashboardUrl,
+  getE2BGatewayUrl,
+  getGatewayUrl,
+  getManagedDaytonaToolboxUrl,
+  getManagedProviderUrl,
+} from "../../src/constants.js";
 import { AGENT_REGISTRY } from "../../src/registry.js";
 
 // =============================================================================
@@ -109,6 +115,15 @@ function clearEnv(): void {
   delete process.env.E2B_API_KEY;
   delete process.env.E2B_API_URL;
   delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  // Daytona and Modal too, and not only for symmetry: the Daytona client calls
+  // dotenv.config() whenever its own config is incomplete, so constructing one
+  // anywhere in this file can load a developer's .env into process.env and
+  // hand a later "no keys configured" case a key it never set.
+  delete process.env.DAYTONA_API_KEY;
+  delete process.env.DAYTONA_API_URL;
+  delete process.env.DAYTONA_TARGET;
+  delete process.env.MODAL_TOKEN_ID;
+  delete process.env.MODAL_TOKEN_SECRET;
 }
 
 function restoreEnv(): void {
@@ -576,6 +591,69 @@ async function runTests(): Promise<void> {
     assert(provider !== null, "returns a provider");
     assertEqual(provider.providerType, "e2b", "provider type is e2b");
     assertEqual(process.env.E2B_API_URL, undefined, "does not mutate E2B_API_URL for gateway routing");
+  }
+
+  // -------------------------------------------------------------------------
+  console.log("\nmanagedSandbox(provider) — the platform runs the box");
+  // -------------------------------------------------------------------------
+
+  clearEnv();
+  process.env.EVOLVE_API_KEY = "sk-evolve-key";
+  {
+    const e2b = await managedSandbox();
+    assertEqual(e2b.providerType, "e2b", "default managed provider is e2b");
+
+    const daytona = await managedSandbox("daytona");
+    assertEqual(daytona.providerType, "daytona", "managed daytona resolves a daytona provider");
+    assertEqual(
+      getManagedProviderUrl("daytona"),
+      `${getDashboardUrl()}/api/managed/daytona`,
+      "managed daytona control plane is the Dashboard door"
+    );
+    assertEqual(
+      getManagedDaytonaToolboxUrl(),
+      `${getDashboardUrl()}/api/managed/daytona/toolbox`,
+      "managed daytona exec/files ride the toolbox door, not Daytona's runner"
+    );
+  }
+
+  {
+    // Stated, not half-built: the managed Modal door has no filesystem verbs,
+    // and an agent session writes files before it runs anything.
+    let message = "";
+    try {
+      await managedSandbox("modal");
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    assert(
+      message.includes("filesystem operations"),
+      "managed modal refuses with the reason, rather than returning a half-provider"
+    );
+  }
+
+  {
+    let message = "";
+    try {
+      await managedSandbox("nomad" as never);
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    assert(message.includes("Unknown managed sandbox provider"), "an unknown provider is refused");
+  }
+
+  clearEnv();
+  {
+    let message = "";
+    try {
+      await managedSandbox("daytona");
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    assert(
+      message.includes("EVOLVE_API_KEY"),
+      "managed mode without an Evolve key names the missing credential"
+    );
   }
 
   console.log("\ntoManagedE2BKey (gateway key wrapped for upstream e2b client)");
