@@ -33,7 +33,13 @@
  *   endAt is always undefined.
  */
 
-import { Daytona, Image } from "@daytonaio/sdk";
+import {
+  Daytona,
+  Image,
+  MAX_PREFIX_LEN,
+  STDERR_PREFIX_BYTES,
+  STDOUT_PREFIX_BYTES,
+} from "@daytonaio/sdk";
 import type { Sandbox as DaytonaSandbox } from "@daytonaio/sdk";
 import { resolve4 } from "node:dns/promises";
 
@@ -661,6 +667,20 @@ export interface DaytonaConfig {
   defaultTimeoutMs?: number;
   /** Daytona snapshot name (default: 'evolve-all'). Create custom snapshots via `cd assets && ./build.sh daytona` */
   snapshotName?: string;
+  /**
+   * Evolve-managed toolbox base URL. Setting it puts the provider in MANAGED
+   * mode, where `apiKey` is an Evolve API key rather than a Daytona one and
+   * both planes ride the Dashboard.
+   *
+   * One field rather than a separate `managed: true` because the two effects
+   * have one cause: if the toolbox belongs to the platform, so do the
+   * snapshots behind it, so managed creates name an existing platform snapshot
+   * and never build one. Resolved by the Evolve SDK; direct/BYO callers leave
+   * it unset.
+   *
+   * @internal
+   */
+  managedToolboxUrl?: string;
 }
 
 interface ResolvedDaytonaConfig {
@@ -669,6 +689,204 @@ interface ResolvedDaytonaConfig {
   target?: string;
   defaultTimeoutMs?: number;
   snapshotName?: string;
+  managedToolboxUrl?: string;
+}
+
+// ============================================================
+// EVOLVE-MANAGED MODE
+// ============================================================
+
+/**
+ * Daytona is a TWO-PLANE provider, and that is the whole reason this section
+ * exists.
+ *
+ * `apiUrl` covers the control plane only. Everything an agent actually does —
+ * every command, every file read and write — goes to a per-sandbox runner the
+ * SDK discovers by calling GET /sandbox/{id}/toolbox-proxy-url and then talks
+ * to DIRECTLY (@daytonaio/sdk/src/Daytona.js:409-419, Sandbox.js:569-578). So
+ * pointing `apiUrl` at the Evolve Dashboard, the way the managed E2B lane
+ * points E2B's, captures create and list and nothing an agent does.
+ *
+ * Managed mode closes that by answering the discovery call locally with the
+ * Dashboard's own toolbox route, so the client builds
+ * `<dashboard>/api/managed/daytona/toolbox/<sandboxId>/…` for exactly the
+ * paths it would otherwise have sent to Daytona's runner. The client is not
+ * patched and no path is rewritten: the base URL is the only thing that moves,
+ * which is the same seam the control plane already uses.
+ */
+class ManagedDaytona extends Daytona {
+  constructor(
+    config: { apiKey: string; apiUrl?: string; target?: string },
+    private readonly managedToolboxUrl: string,
+  ) {
+    super(config);
+  }
+
+  /**
+   * Answered locally, never upstream. The real discovery call would hand back
+   * Daytona's runner host, which a managed caller has no credential for — the
+   * account key that opens it lives gateway-side and never reaches an SDK
+   * process. The Dashboard resolves that host itself, per sandbox, and
+   * forwards with a per-sandbox token.
+   */
+  override async getProxyToolboxUrl(): Promise<string> {
+    return this.managedToolboxUrl;
+  }
+}
+
+/** What a managed sandbox's streaming log follow needs to reach the Dashboard. */
+interface ManagedStreamContext {
+  toolboxUrl: string;
+  apiKey: string;
+}
+
+function concatBytes(left: Uint8Array, right: Uint8Array): Uint8Array<ArrayBuffer> {
+  const out = new Uint8Array(new ArrayBuffer(left.length + right.length));
+  out.set(left, 0);
+  out.set(right, left.length);
+  return out;
+}
+
+function indexOfBytes(haystack: Uint8Array, needle: Uint8Array, from: number): number {
+  outer: for (let i = from; i + needle.length <= haystack.length; i++) {
+    for (let j = 0; j < needle.length; j++) {
+      if (haystack[i + j] !== needle[j]) continue outer;
+    }
+    return i;
+  }
+  return -1;
+}
+
+/**
+ * Split Daytona's multiplexed command log into stdout and stderr as the bytes
+ * arrive.
+ *
+ * The wire format is one byte stream with 3-byte markers announcing which
+ * stream the following bytes belong to (STDOUT_PREFIX_BYTES /
+ * STDERR_PREFIX_BYTES, both exported by the Daytona SDK — this reads their
+ * framing, it does not invent one). Two things make a streaming demux
+ * different from the SDK's whole-buffer one: a marker can be split across two
+ * chunks, so the last MAX_PREFIX_LEN-1 bytes are always held back rather than
+ * emitted; and a multi-byte UTF-8 character can be split too, so each stream
+ * keeps its own decoder in streaming mode.
+ */
+function createLogDemuxer(
+  onStdout: (chunk: string) => void,
+  onStderr: (chunk: string) => void,
+) {
+  const stdoutDecoder = new TextDecoder("utf-8");
+  const stderrDecoder = new TextDecoder("utf-8");
+  let buffer = new Uint8Array(0);
+  let current: "stdout" | "stderr" | null = null;
+
+  const emit = (bytes: Uint8Array) => {
+    if (bytes.length === 0) return;
+    if (current === "stdout") onStdout(stdoutDecoder.decode(bytes, { stream: true }));
+    else if (current === "stderr") onStderr(stderrDecoder.decode(bytes, { stream: true }));
+    // Bytes before the first marker belong to no stream and are dropped, which
+    // is what the SDK's own demux does with them.
+  };
+
+  return {
+    push(chunk: Uint8Array) {
+      buffer = concatBytes(buffer, chunk);
+      for (;;) {
+        const stdoutAt = indexOfBytes(buffer, STDOUT_PREFIX_BYTES, 0);
+        const stderrAt = indexOfBytes(buffer, STDERR_PREFIX_BYTES, 0);
+        let at = -1;
+        let next: "stdout" | "stderr" | null = null;
+        let markerLen = 0;
+        if (stdoutAt !== -1 && (stderrAt === -1 || stdoutAt < stderrAt)) {
+          at = stdoutAt;
+          next = "stdout";
+          markerLen = STDOUT_PREFIX_BYTES.length;
+        } else if (stderrAt !== -1) {
+          at = stderrAt;
+          next = "stderr";
+          markerLen = STDERR_PREFIX_BYTES.length;
+        }
+
+        if (at === -1) {
+          // No complete marker in the buffer. Emit everything that cannot be
+          // the start of one and keep the rest for the next chunk.
+          const safe = Math.max(0, buffer.length - (MAX_PREFIX_LEN - 1));
+          emit(buffer.subarray(0, safe));
+          buffer = buffer.slice(safe);
+          return;
+        }
+
+        emit(buffer.subarray(0, at));
+        current = next;
+        buffer = buffer.slice(at + markerLen);
+      }
+    },
+    flush() {
+      emit(buffer);
+      buffer = new Uint8Array(0);
+      const stdoutTail = stdoutDecoder.decode();
+      if (stdoutTail) onStdout(stdoutTail);
+      const stderrTail = stderrDecoder.decode();
+      if (stderrTail) onStderr(stderrTail);
+    },
+  };
+}
+
+/**
+ * Follow a session command's logs over plain HTTP.
+ *
+ * The Daytona SDK follows logs over a WEBSOCKET (Process.js:289 rewrites the
+ * toolbox base to ws:// and opens a socket). A managed sandbox's toolbox base
+ * is a Next.js route handler, and a Next route handler never sees a websocket
+ * upgrade — the codebase's one websocket proxy lives in a separate custom
+ * server for exactly that reason. So managed mode cannot use that transport.
+ *
+ * It does not have to. MEASURED 2026-07-26 against a live sandbox: the same
+ * endpoint with `?follow=true` over ordinary HTTP answers 200 with
+ * `transfer-encoding: chunked` and `content-type: application/octet-stream`,
+ * and chunks arrive as the command produces them — 95 ms, 1045 ms, 2127 ms,
+ * 2984 ms, 3976 ms for a command printing one line per second. That is real
+ * streaming through a plain response body, which is what the Dashboard route
+ * pipes through unbuffered.
+ */
+async function followManagedSessionLogs(
+  context: ManagedStreamContext,
+  sandboxId: string,
+  sessionId: string,
+  commandId: string,
+  onStdout: (chunk: string) => void,
+  onStderr: (chunk: string) => void,
+): Promise<void> {
+  const url =
+    `${context.toolboxUrl.replace(/\/+$/, "")}/${encodeURIComponent(sandboxId)}` +
+    `/process/session/${encodeURIComponent(sessionId)}` +
+    `/command/${encodeURIComponent(commandId)}/logs?follow=true`;
+
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${context.apiKey}`,
+      accept: "application/octet-stream",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `Daytona managed log follow failed: ${response.status} ${await response.text()}`,
+    );
+  }
+  if (!response.body) return;
+
+  const demuxer = createLogDemuxer(onStdout, onStderr);
+  const reader = response.body.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) demuxer.push(value);
+    }
+  } finally {
+    demuxer.flush();
+    await reader.cancel().catch(() => undefined);
+  }
 }
 
 // ============================================================
@@ -676,7 +894,41 @@ interface ResolvedDaytonaConfig {
 // ============================================================
 
 export class DaytonaCommands implements SandboxCommands {
-  constructor(private sandbox: DaytonaSandbox, private user?: string) {}
+  constructor(
+    private sandbox: DaytonaSandbox,
+    private user?: string,
+    private managedStream?: ManagedStreamContext,
+  ) {}
+
+  /**
+   * Stream a command's output to callbacks. Direct mode uses the Daytona
+   * SDK's own follow, which is a websocket; managed mode uses the HTTP
+   * chunked follow, because a Dashboard route handler cannot terminate a
+   * websocket upgrade (see followManagedSessionLogs).
+   */
+  private followLogs(
+    sessionId: string,
+    commandId: string,
+    onStdout: (chunk: string) => void,
+    onStderr: (chunk: string) => void,
+  ): Promise<void> {
+    if (this.managedStream) {
+      return followManagedSessionLogs(
+        this.managedStream,
+        this.sandbox.id,
+        sessionId,
+        commandId,
+        onStdout,
+        onStderr,
+      );
+    }
+    return this.sandbox.process.getSessionCommandLogs(
+      sessionId,
+      commandId,
+      onStdout,
+      onStderr,
+    ) as Promise<void>;
+  }
 
   async run(command: string, options?: SandboxRunOptions): Promise<SandboxCommandResult> {
     const timeoutSec = options?.timeoutMs ? Math.floor(options.timeoutMs / 1000) : undefined;
@@ -697,7 +949,7 @@ export class DaytonaCommands implements SandboxCommands {
 
       // Streaming: pipe logs to callbacks
       if (cmdId && (options?.onStdout || options?.onStderr)) {
-        await this.sandbox.process.getSessionCommandLogs(
+        await this.followLogs(
           sessionId,
           cmdId,
           options.onStdout || (() => {}),
@@ -751,7 +1003,7 @@ export class DaytonaCommands implements SandboxCommands {
     const cmdId = resp.cmdId;
 
     if (cmdId && (options?.onStdout || options?.onStderr)) {
-      this.sandbox.process.getSessionCommandLogs(
+      this.followLogs(
         sessionId,
         cmdId,
         options.onStdout || (() => {}),
@@ -957,8 +1209,12 @@ class DaytonaSandboxImpl implements SandboxInstance {
   readonly commands: SandboxCommands;
   readonly files: SandboxFiles;
 
-  constructor(private sandbox: DaytonaSandbox, user?: string) {
-    this.commands = new DaytonaCommands(sandbox, user);
+  constructor(
+    private sandbox: DaytonaSandbox,
+    user?: string,
+    managedStream?: ManagedStreamContext,
+  ) {
+    this.commands = new DaytonaCommands(sandbox, user, managedStream);
     this.files = new DaytonaFiles(sandbox);
   }
 
@@ -1017,12 +1273,21 @@ export class DaytonaProvider implements SandboxProvider {
    */
   private readonly sandboxUsers = new Map<string, string>();
 
+  /** Set only in Evolve-managed mode; see the EVOLVE-MANAGED MODE section. */
+  private readonly managedStream?: ManagedStreamContext;
+
   constructor(config: ResolvedDaytonaConfig) {
-    this.client = new Daytona({
+    const clientConfig = {
       apiKey: config.apiKey,
       apiUrl: config.apiUrl,
       target: config.target,
-    });
+    };
+    this.client = config.managedToolboxUrl
+      ? new ManagedDaytona(clientConfig, config.managedToolboxUrl)
+      : new Daytona(clientConfig);
+    if (config.managedToolboxUrl) {
+      this.managedStream = { toolboxUrl: config.managedToolboxUrl, apiKey: config.apiKey };
+    }
     this.defaultTimeoutMs = config.defaultTimeoutMs ?? 3600000;
     this.snapshotName = config.snapshotName ?? "evolve-all";
   }
@@ -1076,6 +1341,26 @@ export class DaytonaProvider implements SandboxProvider {
       (options.resources.cpu !== undefined ||
         options.resources.memory !== undefined ||
         options.resources.disk !== undefined);
+
+    // Managed mode never builds. Snapshots are platform artifacts on the
+    // Evolve organization's Daytona account: a managed caller who could
+    // trigger a build would be spending our image-build budget on an image
+    // nothing here would ever clean up, so the managed door does not serve
+    // /snapshots at all. A create names a snapshot the platform already
+    // publishes, and a name that does not exist fails loudly at create rather
+    // than quietly building something.
+    if (this.managedStream) {
+      if (wantsResources) throw new DaytonaResourcesError(imageName);
+      const sandbox = await this.client.create(
+        { snapshot: imageName, ...baseParams },
+        { timeout: 600 },
+      );
+      if (options.workingDirectory) {
+        await sandbox.fs.createFolder(options.workingDirectory, "755");
+      }
+      if (user) this.sandboxUsers.set(sandbox.id, user);
+      return new DaytonaSandboxImpl(sandbox, user, this.managedStream);
+    }
 
     // Try to use existing snapshot first (fast path for returning users or ./build.sh daytona)
     try {
@@ -1168,7 +1453,7 @@ export class DaytonaProvider implements SandboxProvider {
       this.sandboxUsers.set(sandbox.id, user);
     }
 
-    return new DaytonaSandboxImpl(sandbox, user);
+    return new DaytonaSandboxImpl(sandbox, user, this.managedStream);
   }
 
   async connect(sandboxId: string, _timeoutMs?: number): Promise<SandboxInstance> {
@@ -1176,7 +1461,7 @@ export class DaytonaProvider implements SandboxProvider {
     if (sandbox.state !== "started") {
       await sandbox.start();
     }
-    return new DaytonaSandboxImpl(sandbox, this.sandboxUsers.get(sandboxId));
+    return new DaytonaSandboxImpl(sandbox, this.sandboxUsers.get(sandboxId), this.managedStream);
   }
 
   async list(options?: SandboxListOptions): Promise<SandboxInfo[]> {
@@ -1233,3 +1518,5 @@ export const _testMapNetworkPolicy = mapNetworkPolicy;
 export const _testImageRegistryHost = imageRegistryHost;
 export const _testToSandboxInfo = toSandboxInfo;
 export const _testDaytonaStateToEvolveState = daytonaStateToEvolveState;
+export const _testCreateLogDemuxer = createLogDemuxer;
+export const _testFollowManagedSessionLogs = followManagedSessionLogs;
