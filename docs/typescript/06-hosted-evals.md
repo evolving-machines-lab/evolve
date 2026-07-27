@@ -244,7 +244,7 @@ console.log(trial.resolvedHarnessVersion);             // harness version actual
 console.log(trial.failurePhase, trial.failureDetail);  // untruncated in this response
 ```
 
-> **Reading spend:** `spendSource: "measured"` is platform-measured model spend; `"assumed_cap"` means the trial's spend could not be measured, so the per-trial cap is reported conservatively. Fresh trials can briefly show the cap while metering catches up.
+> **Reading spend:** `spendSource: "measured"` is the platform's settled figure and the only final one. `"measured_provisional"` is a real reading taken before the gateway finished writing this trial's spend — a lower bound that can only move UP, finalized within about half an hour of the trial settling. `"assumed_cap"` means spend could not be measured at all, so the per-trial cap is reported conservatively. Fresh trials commonly show one of the latter two for a few minutes; wait for `"measured"` before treating a number as final.
 >
 > Both fields live on the trial itself. `spentUsd: null` means the trial never ran — a queued or cancelled trial — and is not the same as `0`, which is a real measurement and appears when no gateway key was ever minted.
 >

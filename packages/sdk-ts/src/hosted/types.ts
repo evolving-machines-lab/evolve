@@ -314,11 +314,21 @@ export interface Job {
 }
 
 /**
- * Where a trial's spend figure came from: "measured" is the measured model
- * spend reported by the platform; "assumed_cap" means spend could not be
- * measured for this trial, so the per-trial cap is reported.
+ * Where a trial's spend figure came from.
+ *
+ *   "measured"              the platform's settled figure — final.
+ *   "measured_provisional"  a real reading taken before the gateway finished
+ *                           writing this trial's spend. It is a LOWER BOUND and
+ *                           can only ever move UP; the platform re-reads and
+ *                           finalizes it within about half an hour of the trial
+ *                           settling. Treat it as "at least this much".
+ *   "assumed_cap"           spend could not be measured at all, so the
+ *                           per-trial cap is reported conservatively.
+ *
+ * Only "measured" is final. A freshly settled trial commonly shows one of the
+ * other two for a few minutes.
  */
-export type SpendSource = "measured" | "assumed_cap";
+export type SpendSource = "measured" | "measured_provisional" | "assumed_cap";
 
 /**
  * Open-ended per-harness detail recorded for a trial: bundle identity, token
