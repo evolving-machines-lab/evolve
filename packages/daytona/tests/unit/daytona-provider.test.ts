@@ -28,6 +28,7 @@ import {
   DAYTONA_AUTO_DELETE_GRACE_MINUTES,
   DaytonaNetworkPolicyError,
   DaytonaResourcesError,
+  DaytonaIdleTimeoutError,
   DaytonaImagePullError,
   DaytonaCommands,
   createDaytonaProvider,
@@ -597,6 +598,48 @@ async function testCreateNoLongerRejectsUserAndNetwork(): Promise<void> {
   );
 }
 
+async function testCreateRejectsIdleTimeout(): Promise<void> {
+  console.log("\n[6d] DaytonaProvider.create() - idleTimeoutMs is refused: auto-stop is already timeoutMs");
+
+  const provider = createDaytonaProvider({ apiKey: "test-key" });
+  // A marker on the client proves the refusal happens before ANY API call —
+  // this one fires before even the DNS pinning that mapNetworkPolicy does.
+  (provider as unknown as { client: unknown }).client = {
+    snapshot: { get: async () => ({ state: "active" }) },
+    create: async () => {
+      throw new Error("MARKER_CLIENT_CREATE_CALLED");
+    },
+  };
+
+  let error: unknown;
+  try {
+    await provider.create({ image: "eval-env-cafe", idleTimeoutMs: 1_800_000 });
+  } catch (e) {
+    error = e;
+  }
+  assert(error instanceof DaytonaIdleTimeoutError, "idleTimeoutMs throws DaytonaIdleTimeoutError");
+  assert(
+    String(error).includes("autoStopInterval"),
+    "Message names the knob timeoutMs already drives"
+  );
+  assert(
+    !String(error).includes("MARKER_CLIENT_CREATE_CALLED"),
+    "Refused before any Daytona API call"
+  );
+
+  // Unset stays unset: the ordinary path is untouched by the new guard.
+  let unsetError = "";
+  try {
+    await provider.create({ image: "eval-env-cafe" });
+  } catch (e) {
+    unsetError = String(e);
+  }
+  assert(
+    unsetError.includes("MARKER_CLIENT_CREATE_CALLED"),
+    "Without idleTimeoutMs the create proceeds to the client as before"
+  );
+}
+
 async function testCreateRejectsResourcesOnCachedSnapshot(): Promise<void> {
   console.log("\n[6c] DaytonaProvider.create() - resources vs cached snapshot: typed refusal, never silent ignore");
 
@@ -826,6 +869,7 @@ const tests = [
   testCreateValidatesBeforeNetwork,
   testCreateNoLongerRejectsUserAndNetwork,
   testCreateRejectsResourcesOnCachedSnapshot,
+  testCreateRejectsIdleTimeout,
   // [7] DaytonaCommands
   testCommandsRunAsRootUsesSudoWrapper,
   testCommandsRunDefaultUserNoWrapper,

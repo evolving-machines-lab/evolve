@@ -112,6 +112,49 @@ function validateTimeout(timeoutMs: number): void {
 }
 
 /**
+ * Typed error for an idle timeout Modal could not act on. Both bounds are
+ * refusals rather than clamps: silently raising a zero, or lowering a value past
+ * the lifetime cap, would hand back a box that dies on a schedule the caller
+ * never asked for.
+ */
+export class ModalIdleTimeoutError extends Error {
+  readonly requestedIdleTimeoutMs: number;
+
+  constructor(requestedIdleTimeoutMs: number, reason: string) {
+    super(`Modal idleTimeoutMs of ${requestedIdleTimeoutMs}ms is invalid: ${reason}`);
+    this.name = "ModalIdleTimeoutError";
+    this.requestedIdleTimeoutMs = requestedIdleTimeoutMs;
+  }
+}
+
+/**
+ * Evolve's idle bound -> Modal's create params, same shape as mapNetworkPolicy
+ * and mapResources: provider-neutral option in, Modal fragment out.
+ *
+ * ABSENT MEANS ABSENT. Modal's own default is no idle timer at all, so an unset
+ * option must spread to nothing — inventing a default here would start killing
+ * boxes that today live out their lifetime, for every caller who never asked.
+ *
+ * An idle timeout has to be a positive span, and one above the 24h lifetime cap
+ * can never fire because the sandbox is already gone. Both are caller mistakes,
+ * and both throw rather than clamp: silently raising a zero or lowering an
+ * over-cap value hands back a box that dies on a schedule nobody chose.
+ */
+function mapIdleTimeout(idleTimeoutMs?: number): { idleTimeoutMs?: number } {
+  if (idleTimeoutMs === undefined) return {};
+  if (!Number.isFinite(idleTimeoutMs) || idleTimeoutMs <= 0) {
+    throw new ModalIdleTimeoutError(idleTimeoutMs, "it must be a positive number of milliseconds");
+  }
+  if (idleTimeoutMs > MODAL_MAX_LIFETIME_MS) {
+    throw new ModalIdleTimeoutError(
+      idleTimeoutMs,
+      "it exceeds Modal's 24h lifetime cap, so the sandbox would always die of the lifetime first"
+    );
+  }
+  return { idleTimeoutMs };
+}
+
+/**
  * Wrap a command with cwd + env handling and (when not root) an
  * `su <user> -c` wrapper.
  *
@@ -461,6 +504,19 @@ export interface SandboxCreateOptions {
   metadata?: Record<string, string>;
   /** Sandbox lifetime in ms. Modal hard-caps lifetime at 24h (MODAL_MAX_LIFETIME_MS). */
   timeoutMs?: number;
+  /**
+   * Terminate the sandbox after this long with nothing running in it — the
+   * bound that reclaims a box whose client died, without waiting out the whole
+   * lifetime. Modal is the only provider with both clocks.
+   *
+   * OMITTED BY DEFAULT: Modal runs no idle timer unless asked. Modal counts a
+   * sandbox active while an exec is running, while its stdin is being written,
+   * or while a tunnel connection is open — file operations are not named in
+   * that list, and this adapter is safe only because it routes reads and writes
+   * through exec (`cat` / `cat >`). A future native filesystem path would need
+   * this re-checked.
+   */
+  idleTimeoutMs?: number;
   workingDirectory?: string;
   /**
    * Per-sandbox compute sizing: cpu in cores, memory in GiB — mapped to
@@ -1168,6 +1224,9 @@ export class ModalProvider implements SandboxProvider {
     // Validate before any network call so misconfigurations fail fast
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
     validateTimeout(timeoutMs);
+    // Resolved HERE, not at the create call, so an invalid idle bound throws
+    // before the app/image round trips like every other validation above.
+    const idleParams = mapIdleTimeout(options.idleTimeoutMs);
     const networkParams = mapNetworkPolicy(options.network);
     const sizing = mapResources(options.resources);
     const user = options.user ?? DEFAULT_SANDBOX_USER;
@@ -1207,6 +1266,7 @@ export class ModalProvider implements SandboxProvider {
       cpu: sizing.cpu,
       memoryMiB: sizing.memoryMiB,
       timeoutMs,
+      ...idleParams,
       workdir: options.workingDirectory,
       env,
       tags,
@@ -1339,3 +1399,4 @@ export const _testMapResources = mapResources;
 export const _testResolveImageRegistry = resolveImageRegistry;
 export const _testBuildSandboxInfo = buildSandboxInfo;
 export const _testValidateTimeout = validateTimeout;
+export const _testMapIdleTimeout = mapIdleTimeout;

@@ -176,6 +176,24 @@ export class DaytonaResourcesError extends Error {
   }
 }
 
+/**
+ * Typed error for an idle timeout Daytona cannot take as a SEPARATE bound.
+ * Daytona has no absolute lifetime at all: auto-stop is an inactivity clock and
+ * it is the only one there is, so `timeoutMs` is already mapped onto it. A
+ * second option pointing at the same knob could only contradict the first.
+ */
+export class DaytonaIdleTimeoutError extends Error {
+  constructor() {
+    super(
+      "Daytona has no separate idle timeout: auto-stop IS its only clock and it already " +
+        "measures inactivity, so `timeoutMs` is what sets it (autoStopInterval). Set the " +
+        "inactivity bound with `timeoutMs`; a hard bound on the process itself is enforced " +
+        "in-box instead (see withInBoxTimeout)."
+    );
+    this.name = "DaytonaIdleTimeoutError";
+  }
+}
+
 // ============================================================
 // COMMAND WRAPPING
 // ============================================================
@@ -592,6 +610,12 @@ export interface SandboxCreateOptions {
   envs?: Record<string, string>;
   metadata?: Record<string, string>;
   timeoutMs?: number;
+  /**
+   * REJECTED with DaytonaIdleTimeoutError — not for want of an idle clock, but
+   * because auto-stop is the ONLY clock Daytona has and `timeoutMs` is already
+   * mapped onto it (autoStopInterval). Two options, one knob.
+   */
+  idleTimeoutMs?: number;
   workingDirectory?: string;
   /**
    * Resource allocation (cpu cores, memory GiB, disk GiB), applied when a
@@ -1398,6 +1422,13 @@ export class DaytonaProvider implements SandboxProvider {
   }
 
   async create(options: SandboxCreateOptions): Promise<SandboxInstance> {
+    // Provider law: reject what cannot be enforced, never silently ignore.
+    // Daytona's refusal is the opposite of e2b's: it is not that there is no
+    // idle clock, it is that the idle clock is the ONLY one, and timeoutMs is
+    // already mapped onto it (autoStopInterval, below). Honouring both would be
+    // two options steering one knob.
+    if (options.idleTimeoutMs !== undefined) throw new DaytonaIdleTimeoutError();
+
     // Validate the network policy before any Daytona API call: the invalid
     // open+allowlist combination and every unenforceable destination
     // (wildcard/IPv6/unresolvable/too-many) fail fast with typed errors.

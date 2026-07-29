@@ -9,6 +9,9 @@
  *   3. resolveImageRegistry() — ECR / GCP Artifact Registry / generic detection
  *   4. buildSandboxInfo() — tags → SandboxInfo, no fabricated timestamps
  *   5. validateTimeout() — Modal's hard 24h lifetime cap (typed error)
+ *   5b. mapIdleTimeout() — the idle bound: absent by default, refused rather
+ *      than clamped when nonsensical (Modal is the only provider with both an
+ *      absolute lifetime and an inactivity timer)
  *   6. ModalProvider.create() — offline validation order (cap + network fire
  *      before any network call; user option no longer rejected)
  *   7. ModalCommands — exec args carry the su wrapper / root passthrough
@@ -24,9 +27,11 @@ import {
   _testResolveImageRegistry,
   _testBuildSandboxInfo,
   _testValidateTimeout,
+  _testMapIdleTimeout,
   _testMapResources,
   MODAL_MAX_LIFETIME_MS,
   MODAL_STDIN_CHUNK_BYTES,
+  ModalIdleTimeoutError,
   ModalSandboxLifetimeError,
   ModalNetworkPolicyError,
   ModalResourcesError,
@@ -461,8 +466,86 @@ async function testTimeoutCap(): Promise<void> {
 }
 
 // =============================================================================
+// [5b] mapIdleTimeout() — the idle bound, which reclaims a box whose client died
+//
+// Modal is the one provider with BOTH an absolute lifetime and an idle timer.
+// The lifetime alone caps the loss at the full agent budget; the idle timer is
+// what ends a box nobody is driving any more, long before that.
+// =============================================================================
+
+async function testIdleTimeoutUnsetIsAbsent(): Promise<void> {
+  console.log("\n[5b] mapIdleTimeout() - unset spreads to nothing (Modal's default is no idle timer)");
+
+  const params = _testMapIdleTimeout(undefined);
+  assertEqual(Object.keys(params).length, 0, "No key at all, so Modal's own default stands");
+  assert(!("idleTimeoutMs" in params), "Not even an explicit undefined");
+}
+
+async function testIdleTimeoutHonored(): Promise<void> {
+  console.log("\n[5c] mapIdleTimeout() - a positive bound is passed through unchanged");
+
+  assertEqual(_testMapIdleTimeout(1_800_000).idleTimeoutMs, 1_800_000, "30min passes through");
+  assertEqual(_testMapIdleTimeout(1).idleTimeoutMs, 1, "The smallest positive value is allowed");
+  assertEqual(
+    _testMapIdleTimeout(MODAL_MAX_LIFETIME_MS).idleTimeoutMs,
+    MODAL_MAX_LIFETIME_MS,
+    "Exactly the 24h cap is allowed"
+  );
+}
+
+async function testIdleTimeoutRejectsNonPositive(): Promise<void> {
+  console.log("\n[5d] mapIdleTimeout() - zero, negative and non-finite are refused, not clamped");
+
+  for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    let error: unknown;
+    try {
+      _testMapIdleTimeout(bad);
+    } catch (e) {
+      error = e;
+    }
+    assert(error instanceof ModalIdleTimeoutError, `${bad} throws ModalIdleTimeoutError`);
+    assertEqual(
+      (error as ModalIdleTimeoutError).requestedIdleTimeoutMs,
+      bad,
+      `Typed error carries the requested value (${bad})`
+    );
+  }
+}
+
+async function testIdleTimeoutRejectsOverCap(): Promise<void> {
+  console.log("\n[5e] mapIdleTimeout() - above the 24h lifetime cap it could never fire");
+
+  let error: unknown;
+  try {
+    _testMapIdleTimeout(MODAL_MAX_LIFETIME_MS + 1);
+  } catch (e) {
+    error = e;
+  }
+  assert(error instanceof ModalIdleTimeoutError, "Over-cap idle timeout throws ModalIdleTimeoutError");
+  assert(String(error).includes("24h"), "Error names the 24h cap");
+  assert(String(error).includes("lifetime first"), "Error explains why the value is meaningless");
+}
+
+// =============================================================================
 // [6] ModalProvider.create() — offline validation order + enforcement wiring
 // =============================================================================
+
+async function testCreateValidatesIdleTimeoutBeforeNetwork(): Promise<void> {
+  console.log("\n[6c] ModalProvider.create() - a bad idle bound throws before any API call");
+
+  const provider = createModalProvider({ tokenId: "test-id", tokenSecret: "test-secret" });
+
+  // Tokens are fake, so anything that reached the network would fail with a
+  // transport error instead — the typed error IS the proof it never got there.
+  let error: unknown;
+  try {
+    await provider.create({ image: "evolve-all", timeoutMs: 3_600_000, idleTimeoutMs: 0 });
+  } catch (e) {
+    error = e;
+  }
+  assert(error instanceof ModalIdleTimeoutError, "create() enforces the idle bound offline (typed error)");
+}
+
 
 async function testCreateValidatesBeforeNetwork(): Promise<void> {
   console.log("\n[6a] ModalProvider.create() - cap and network validation fire before any API call");
@@ -838,9 +921,15 @@ const tests = [
   testSandboxInfoFallbackImage,
   // [5] validateTimeout
   testTimeoutCap,
+  // [5b] mapIdleTimeout
+  testIdleTimeoutUnsetIsAbsent,
+  testIdleTimeoutHonored,
+  testIdleTimeoutRejectsNonPositive,
+  testIdleTimeoutRejectsOverCap,
   // [6] provider create validation
   testCreateValidatesBeforeNetwork,
   testCreateNoLongerRejectsUserAndNetwork,
+  testCreateValidatesIdleTimeoutBeforeNetwork,
   // [7] ModalCommands
   testCommandsRunAsUser,
   testCommandsRunAsRoot,

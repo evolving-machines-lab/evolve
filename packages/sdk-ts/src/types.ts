@@ -135,6 +135,25 @@ export interface SandboxCreateOptions {
   envs?: Record<string, string>;
   metadata?: Record<string, string>;
   timeoutMs?: number;
+  /**
+   * Terminate the sandbox after this long with nothing running in it. This is
+   * an INACTIVITY bound, not a lifetime: `timeoutMs` caps how long the box may
+   * live at all, this caps how long it may sit doing nothing — which is what
+   * reclaims a box whose client died between commands, long before the lifetime
+   * would.
+   *
+   * Providers must reject it if they cannot enforce it, never silently ignore
+   * it. Only modal has a true idle timer alongside an absolute lifetime; e2b has
+   * no idle concept, and daytona's only clock IS an inactivity one, which
+   * `timeoutMs` already drives there.
+   *
+   * WHAT COUNTS AS ACTIVITY IS THE PROVIDER'S DEFINITION, and it is narrower
+   * than "the client is doing something" — Modal counts a running exec, a stdin
+   * write, and an open tunnel connection, and says nothing about filesystem
+   * calls. Size this above the longest gap between commands the caller expects,
+   * not above the longest gap between API calls.
+   */
+  idleTimeoutMs?: number;
   workingDirectory?: string;
   /**
    * Per-sandbox compute sizing: cpu in cores, memory and disk in GiB.

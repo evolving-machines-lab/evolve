@@ -76,6 +76,24 @@ export class E2BResourcesError extends Error {
   }
 }
 
+/**
+ * Typed error for an idle timeout E2B cannot enforce. E2B has exactly one
+ * clock and it is absolute: the sandbox is killed when its timeout expires,
+ * and only explicit client calls (create, connect, setTimeout) move that
+ * deadline — never what the sandbox is or is not doing. An `idleTimeoutMs`
+ * would therefore be silently ignored, so it is refused instead.
+ */
+export class E2BIdleTimeoutError extends Error {
+  constructor() {
+    super(
+      "E2B has no idle timeout: its sandbox timeout is an ABSOLUTE lifetime that " +
+        "in-sandbox activity never extends. Use `timeoutMs` for the lifetime, and " +
+        "call setTimeout() to extend a sandbox you know is still working."
+    );
+    this.name = "E2BIdleTimeoutError";
+  }
+}
+
 // ============================================================
 // CORE TYPES
 // ============================================================
@@ -180,6 +198,12 @@ export interface SandboxCreateOptions {
   envs?: Record<string, string>;
   metadata?: Record<string, string>;
   timeoutMs?: number;
+  /**
+   * REJECTED with E2BIdleTimeoutError. E2B's timeout is an ABSOLUTE lifetime
+   * that in-sandbox activity never extends, so there is no inactivity clock to
+   * map this onto and honouring it would be a lie.
+   */
+  idleTimeoutMs?: number;
   workingDirectory?: string;
   /**
    * Per-sandbox compute sizing (cpu cores, memory GiB, disk GiB). E2B sizes
@@ -757,6 +781,14 @@ export class E2BProvider implements SandboxProvider {
   }
 
   async create(options: SandboxCreateOptions): Promise<SandboxInstance> {
+    if (options.idleTimeoutMs !== undefined) {
+      // Provider law: reject what cannot be enforced, never silently ignore.
+      // E2B's only clock is an absolute lifetime — the timeout set at create (or
+      // extended by setTimeout/connect) kills the sandbox when it expires, and
+      // nothing about what the box is doing moves it. There is no inactivity
+      // knob to map this onto.
+      throw new E2BIdleTimeoutError();
+    }
     if (
       options.resources &&
       (options.resources.cpu !== undefined ||
