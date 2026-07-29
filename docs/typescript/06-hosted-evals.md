@@ -1065,10 +1065,23 @@ Everything else is identical: the patch is collected, the verifier scores it, an
 | `RUNNING` | Agent phase in progress |
 | `SCORING` | Agent finished; verifier running |
 | `SCORED` | Valid reward recorded in `reward` |
-| `SCORING_ERROR` | Verifier crashed or returned an out-of-domain reward — read `failureDetail` |
+| `SCORING_ERROR` | Verifier crashed or returned an out-of-domain reward — read `failurePhase`, then `failureDetail` |
 | `INFRASTRUCTURE_ERROR` | Trial lost before a result was recorded — read `failurePhase`, then `rerunFailed()` |
 | `INDETERMINATE` | The platform cannot tell whether the trial completed |
 | `CANCELLED` | Cancelled before settling |
+
+`SCORING_ERROR` is the one status a task author has to act on, so it says which of four things went wrong. `failurePhase` carries the machine-readable cause and `failureDetail` carries a sentence plus the last few kilobytes of the verifier's own stdout and stderr — the tail, because a grader prints its progress first and its traceback last. The box those bytes came from is destroyed seconds later, so this is the only record of them.
+
+| `failurePhase` | What happened |
+|--------|---------|
+| `verifier_timeout` | The verifier command hit its wall-clock budget and was killed. Raise `verifier_timeout_sec` on the task, or make the grader cheaper. |
+| `verifier_crash` | The verifier exited non-zero, or never reported an exit status at all. The excerpt usually names the missing module or failed assertion. |
+| `reward_out_of_range` | The verifier finished and wrote a number, but not one in `[0, 1]` — `-1` is the conventional crash sentinel, and a reward above 1 usually means a rubric was summed rather than normalized. |
+| `reward_unparseable` | The verifier claimed success and wrote something that is not a score: malformed JSON, no `reward` key, or an empty `reward.txt`. |
+
+The verifier's exit takes precedence over the reward's shape, because a killed grader leaves a truncated `reward.json` and reporting that as `reward_unparseable` would send you to debug your JSON instead of your timeout. Nothing is lost by the ordering — `failureDetail` always states both.
+
+Regrade results use the same four values in the same field, and the `failureDetail` on a list row is truncated to 2000 characters; fetch the trial itself for the whole excerpt.
 
 **Import** (`BenchmarkImport.status`) — the SAME four words a job uses, because an import is a job:
 
@@ -1098,7 +1111,7 @@ A terminal import stays readable. A successful import used to start answering `4
 | `QUEUED` | Waiting for a verifier slot |
 | `RUNNING` | Verifier re-running against the source trial's recorded inputs |
 | `SCORED` | Valid reward recorded in `reward` (0 counts) |
-| `SCORING_ERROR` | Verifier crashed or returned an out-of-domain reward |
+| `SCORING_ERROR` | Verifier crashed or returned an out-of-domain reward — read `failurePhase`, then `failureDetail` |
 | `INFRASTRUCTURE_ERROR` | Verifier box lost before a durable verdict |
 | `INDETERMINATE` | The verifier wrote no reward file |
 
