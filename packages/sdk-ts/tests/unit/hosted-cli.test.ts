@@ -67,6 +67,8 @@ interface MockResponse {
   headers?: Record<string, string>;
   /** If set, response.body will be a ReadableStream of this string */
   streamBody?: string;
+  /** If set, response.body streams these bytes (binary downloads). */
+  bodyBytes?: Buffer;
 }
 
 let mockResponses: Map<string, MockResponse> = new Map();
@@ -77,8 +79,10 @@ function setMockResponse(urlPattern: string, response: MockResponse) {
 
 function buildMockResponse(resp: MockResponse): Response {
   let body: ReadableStream | null = null;
-  if (resp.streamBody != null) {
-    const nodeStream = Readable.from(Buffer.from(resp.streamBody, "utf-8"));
+  const streamSource =
+    resp.streamBody != null ? Buffer.from(resp.streamBody, "utf-8") : resp.bodyBytes;
+  if (streamSource != null) {
+    const nodeStream = Readable.from(streamSource);
     body = Readable.toWeb(nodeStream) as ReadableStream;
   }
   return {
@@ -123,7 +127,7 @@ function restoreFetch() {
 // IMPORT (after mock setup)
 // =============================================================================
 
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -1141,6 +1145,66 @@ async function testCustomHarnessesCliUnknownSubcommand() {
 // RUN
 // =============================================================================
 
+async function testDownloadCli() {
+  console.log("\n--- runCli: download saves the corpus package; --json prints the path ---");
+  installMockFetch();
+  const tmpDir = join(tmpdir(), `cli-download-${Date.now()}`);
+  try {
+    const pkg = Buffer.from("corpus bytes");
+    setMockResponse("/api/benchmarks/imports/imp-9/package", {
+      status: 200,
+      body: null,
+      bodyBytes: pkg,
+      headers: { "Content-Disposition": 'attachment; filename="acme@1.1-corpus.tar.gz"' },
+    });
+
+    const saved = captureIO();
+    const code = await runCli(
+      ["download", "imp-9", "--to", tmpDir, "--api-key", "test-key", "--base-url", BASE],
+      saved.io
+    );
+    assertEqual(code, 0, "download exits 0");
+    assert(
+      saved.out.some((l) => l.includes("acme@1.1-corpus.tar.gz")),
+      "prints the saved path"
+    );
+    const written = await readFile(join(tmpDir, "acme@1.1-corpus.tar.gz"));
+    assertEqual(written.equals(pkg), true, "file bytes match the package");
+
+    const asJson = captureIO();
+    const jsonCode = await runCli(
+      ["download", "imp-9", "--to", tmpDir, "--json", "--api-key", "test-key", "--base-url", BASE],
+      asJson.io
+    );
+    assertEqual(jsonCode, 0, "download --json exits 0");
+    assert(
+      typeof JSON.parse(asJson.out[0]).path === "string",
+      "--json emits { path }"
+    );
+
+    // An id nobody owns is import_not_found, exactly like a bad id — the CLI
+    // reports it rather than pretending the file was written.
+    setMockResponse("/api/benchmarks/imports/not-mine/package", {
+      status: 404,
+      body: { error: { code: "import_not_found", message: "Import not found: not-mine" } },
+    });
+    const denied = captureIO();
+    const deniedCode = await runCli(
+      ["download", "not-mine", "--to", tmpDir, "--api-key", "test-key", "--base-url", BASE],
+      denied.io
+    );
+    assertEqual(deniedCode, 1, "a package the caller does not own exits 1");
+    assert(denied.err.some((l) => l.includes("Import not found")), "the refusal reaches stderr");
+
+    const noId = captureIO();
+    const noIdCode = await runCli(["download", "--api-key", "k", "--base-url", BASE], noId.io);
+    assertEqual(noIdCode, 2, "download without an id is a usage error");
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    restoreFetch();
+  }
+}
+
 async function main() {
   console.log("evolve-evals CLI Unit Tests\n");
 
@@ -1167,6 +1231,7 @@ async function main() {
   await testCustomHarnessesCliAdd();
   await testCustomHarnessesCliListAndRemove();
   await testCustomHarnessesCliUnknownSubcommand();
+  await testDownloadCli();
 
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

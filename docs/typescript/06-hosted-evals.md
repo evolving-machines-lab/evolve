@@ -43,7 +43,7 @@ const active = await catalog.getActive("deep-swe");  // active READY version, gu
 
 Every collection on this surface is the same page: `{ items, nextCursor, hasMore }`, paged with `{ limit, cursor }`. `nextCursor` means one thing everywhere — pass it back for the next page, and `null` means there is no next page. Both list calls hand you a value you can either await for a single page or iterate to walk every row, fetching pages as it goes.
 
-`READY` is the one benchmark-version state that accepts jobs — see [Statuses](#statuses). Tasks expose public fields only — `taskKey`, `agentTimeoutSec`, `verifierTimeoutSec`, and `providers`, the per-provider capability verdict ([Where it runs](#where-it-runs)). Instructions, environments, and tests never leave the server.
+`READY` is the one benchmark-version state that accepts jobs — see [Statuses](#statuses). Tasks expose public fields only — `taskKey`, `agentTimeoutSec`, `verifierTimeoutSec`, and `providers`, the per-provider capability verdict ([Where it runs](#where-it-runs)). Instructions, environments, and tests never leave the server — with one deliberate exception, the benchmark's own owner downloading the package they imported ([Getting your corpus back](#getting-your-corpus-back)).
 
 Then create the job. Only `benchmark` and `agents` are required:
 
@@ -732,6 +732,28 @@ npx evolve-evals import status <id>
 
 Every lane resolves to the same thing — a Harbor-layout directory — and is held to the same rules. The corpus root is a directory whose `tasks/` subdirectory holds one directory per task, or the tasks directory itself. Provenance is recorded per lane: the resolved commit for a git import, the sha256 of the exact uploaded bytes for a directory. On the wire an import is `multipart/form-data`: `benchmarkName` and `version` as named parts, and either `gitUrl` + `ref` or the gzipped corpus as a `file` part — the SDK produces it for you — and uploads past the compressed-size cap (512 MB by default) are refused with a `413 import_too_large`. The metadata parts come first, so a name owned by someone else is refused with a `409 benchmark_name_taken` before the upload is received rather than after.
 
+### Getting your corpus back
+
+The platform keeps the exact package a version was imported from, and its owner can download it:
+
+```ts
+const bytes = await catalog.downloadPackage(job.id);            // Buffer
+const path = await catalog.downloadPackage(job.id, { to: "." }); // saved file path
+const stream = await catalog.downloadPackage(job.id, { stream: true });
+```
+
+```bash
+npx evolve-evals download <import-id> --to ./restored
+```
+
+Reach for `{ to }` on anything sizeable: the default shape buffers the whole package in memory (the same trade `export()` makes), and a corpus can be 512 MB. The id is the import id — what `import()` returned and what `getImport()` polls. You get back the gzipped tarball you uploaded, or, for a git import, the checked-out tree packed at import time. Either way it is the whole corpus directory: `task.toml`, `instruction.md`, `tests/`, `environment/`, and your `solution/`.
+
+**This is the one call that returns task files, and it returns them only to you.** Ownership is a single equality — the benchmark's owner is the caller — with no admin path and no exception for platform-curated benchmarks, which have no owner and so cannot be downloaded by anyone. Somebody else's import answers `import_not_found`, the same answer a made-up id gets, because a `403` that only appears for real ids is a way to discover which ids are real.
+
+The server re-hashes the stored bytes and compares them against the digest recorded at import before it sends anything, and echoes the verified value in `x-package-sha256`. The SDK then re-checks that header against the bytes it actually received and throws `EvolveDigestMismatchError` if they disagree — so the chain is closed at both ends, storage and wire. The to-disk shape hashes while streaming and deletes the file rather than leaving one that looks like your corpus and is not. Only `{ stream: true }` is unverified, because you hold the bytes, not the SDK; read the header and hash as you go.
+
+Three things are worth knowing before you rely on it. Versions imported before packages were retained have none, and it cannot be reconstructed: those answer `package_not_retained`, a different code from `import_not_found` so a client can say which happened. A version whose stored object has since gone answers `410 package_missing` — also terminal, also fixed only by re-importing. And this is the only way to recover `task.toml`: the importer parses it into environment specs and keeps a digest, so it exists nowhere else on the server.
+
 ### Deleting one
 
 A benchmark name is a global resource, and a typo used to squat one permanently. `delete()` takes it back:
@@ -1065,10 +1087,24 @@ Everything else is identical: the patch is collected, the verifier scores it, an
 | `RUNNING` | Agent phase in progress |
 | `SCORING` | Agent finished; verifier running |
 | `SCORED` | Valid reward recorded in `reward` |
-| `SCORING_ERROR` | Verifier crashed or returned an out-of-domain reward — read `failureDetail` |
+| `SCORING_ERROR` | Verifier crashed or returned an out-of-domain reward — read `failurePhase`, then `failureDetail` |
 | `INFRASTRUCTURE_ERROR` | Trial lost before a result was recorded — read `failurePhase`, then `rerunFailed()` |
-| `INDETERMINATE` | The platform cannot tell whether the trial completed |
+| `INDETERMINATE` | The verifier produced no reward file at all — read `failurePhase`, then `failureDetail` |
 | `CANCELLED` | Cancelled before settling |
+
+`SCORING_ERROR` and `INDETERMINATE` are the two statuses a task author has to act on, so both say what went wrong. `failurePhase` carries the machine-readable cause and `failureDetail` carries a sentence plus the last few kilobytes of the verifier's own stdout and stderr — the tail, because a grader prints its progress first and its traceback last. The box those bytes came from is destroyed seconds later, so this is the only record of them.
+
+| `failurePhase` | What happened |
+|--------|---------|
+| `verifier_timeout` | The verifier command hit its wall-clock budget and was killed. Raise `verifier_timeout_sec` on the task, or make the grader cheaper. |
+| `verifier_crash` | The verifier exited non-zero, or never reported an exit status at all. The excerpt usually names the missing module or failed assertion. |
+| `reward_out_of_range` | The verifier finished and wrote a number, but not one in `[0, 1]` — `-1` is the conventional crash sentinel, and a reward above 1 usually means a rubric was summed rather than normalized. |
+| `reward_unparseable` | The verifier claimed success and wrote something that is not a score: malformed JSON, no `reward` key, or an empty `reward.txt`. |
+| `reward_missing` | No reward file at all, which is `INDETERMINATE` rather than `SCORING_ERROR`. On its own it means a verifier that exited cleanly without writing a verdict; paired with `verifier_crash` or `verifier_timeout` it is the hard-crash case, and the excerpt is the only evidence of it. |
+
+The verifier's exit takes precedence over the reward's shape, because a killed grader leaves a truncated `reward.json` and reporting that as `reward_unparseable` would send you to debug your JSON instead of your timeout. Nothing is lost by the ordering — `failureDetail` always states both.
+
+Regrade results use the same five values in the same field, and the `failureDetail` on a list row is truncated to 2000 characters; fetch the trial itself for the whole excerpt.
 
 **Import** (`BenchmarkImport.status`) — the SAME four words a job uses, because an import is a job:
 
@@ -1098,7 +1134,7 @@ A terminal import stays readable. A successful import used to start answering `4
 | `QUEUED` | Waiting for a verifier slot |
 | `RUNNING` | Verifier re-running against the source trial's recorded inputs |
 | `SCORED` | Valid reward recorded in `reward` (0 counts) |
-| `SCORING_ERROR` | Verifier crashed or returned an out-of-domain reward |
+| `SCORING_ERROR` | Verifier crashed or returned an out-of-domain reward — read `failurePhase`, then `failureDetail` |
 | `INFRASTRUCTURE_ERROR` | Verifier box lost before a durable verdict |
 | `INDETERMINATE` | The verifier wrote no reward file |
 

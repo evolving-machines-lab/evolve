@@ -122,10 +122,11 @@ function restoreFetch() {
 // IMPORT (after mock setup)
 // =============================================================================
 
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
+import { createHash } from "node:crypto";
 import { gunzipSync, gzipSync } from "node:zlib";
 
 import {
@@ -133,6 +134,9 @@ import {
   customHarnesses,
   jobs,
   EvolveApiError,
+  EvolveDigestMismatchError,
+  EvolveIncompleteDownloadError,
+  isHostedErrorCode,
   NoActiveVersionError,
 } from "../../src/hosted/index.ts";
 import type { JobEvent } from "../../src/hosted/index.ts";
@@ -2394,6 +2398,251 @@ async function testRootExportsHostedTypes() {
   assert(distDts.includes("EvalSandboxProvider"), "dist/index.d.ts declares EvalSandboxProvider");
 }
 
+
+// =============================================================================
+// benchmarks().downloadPackage() — the OWNER-ONLY corpus retrieval
+// =============================================================================
+
+async function testDownloadPackageBuffer() {
+  console.log("\n--- downloadPackage() returns the corpus tarball as a Buffer ---");
+  installMockFetch();
+  try {
+    const pkg = gzipSync(Buffer.from("corpus bytes"));
+    setMockResponse("/api/benchmarks/imports/ver-1/package", {
+      status: 200,
+      body: null,
+      bodyBytes: pkg,
+      headers: {
+        "Content-Type": "application/gzip",
+        "Content-Disposition": 'attachment; filename="acme@1.1-corpus.tar.gz"',
+        "x-package-sha256": createHash("sha256").update(pkg).digest("hex"),
+      },
+    });
+
+    const b = benchmarks({ apiKey: "test-key", baseUrl: BASE });
+    const buf = await b.downloadPackage("ver-1");
+
+    assert(Buffer.isBuffer(buf), "returns a Buffer");
+    assertEqual(buf.equals(pkg), true, "buffer bytes match the stored package");
+    assert(
+      fetchCalls[0].url.includes("/api/benchmarks/imports/ver-1/package"),
+      "hits the package route on the import id",
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testDownloadPackageToFile() {
+  console.log("\n--- downloadPackage({ to }) saves under the server-chosen filename ---");
+  installMockFetch();
+  const tmpDir = join(tmpdir(), `hosted-package-${Date.now()}`);
+  try {
+    const pkg = gzipSync(Buffer.from("corpus bytes"));
+    setMockResponse("/api/benchmarks/imports/ver-1/package", {
+      status: 200,
+      body: null,
+      bodyBytes: pkg,
+      headers: {
+        "Content-Disposition": 'attachment; filename="acme@1.1-corpus.tar.gz"',
+        "x-package-sha256": createHash("sha256").update(pkg).digest("hex"),
+      },
+    });
+
+    const b = benchmarks({ apiKey: "test-key", baseUrl: BASE });
+    const filePath = await b.downloadPackage("ver-1", { to: tmpDir });
+
+    assert(filePath.endsWith("acme@1.1-corpus.tar.gz"), "filename from Content-Disposition");
+    const written = await readFile(filePath);
+    assertEqual(written.equals(pkg), true, "file bytes match the stored package");
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    restoreFetch();
+  }
+}
+
+async function testDownloadPackageStream() {
+  console.log("\n--- downloadPackage({ stream: true }) returns the raw stream ---");
+  installMockFetch();
+  try {
+    const pkg = gzipSync(Buffer.from("stream-the-corpus"));
+    setMockResponse("/api/benchmarks/imports/ver-1/package", {
+      status: 200,
+      body: null,
+      bodyBytes: pkg,
+    });
+
+    const b = benchmarks({ apiKey: "test-key", baseUrl: BASE });
+    const stream = await b.downloadPackage("ver-1", { stream: true });
+
+    assert(typeof (stream as ReadableStream).getReader === "function", "returns a ReadableStream");
+    const chunks: Buffer[] = [];
+    const reader = (stream as ReadableStream<Uint8Array>).getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(Buffer.from(value));
+    }
+    assertEqual(Buffer.concat(chunks).equals(pkg), true, "stream bytes match the package");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testDownloadPackageDigestMismatch() {
+  console.log("\n--- downloadPackage() REFUSES bytes that fail the stated digest ---");
+  installMockFetch();
+  const tmpDir = join(tmpdir(), `hosted-package-bad-${Date.now()}`);
+  try {
+    const pkg = gzipSync(Buffer.from("corpus bytes"));
+    setMockResponse("/api/benchmarks/imports/ver-bad/package", {
+      status: 200,
+      body: null,
+      bodyBytes: pkg,
+      headers: {
+        "Content-Disposition": 'attachment; filename="acme@1.1-corpus.tar.gz"',
+        "x-package-sha256": "f".repeat(64), // not the bytes above
+      },
+    });
+
+    const b = benchmarks({ apiKey: "test-key", baseUrl: BASE });
+
+    let bufferThrew = false;
+    try {
+      await b.downloadPackage("ver-bad");
+    } catch (error) {
+      bufferThrew = error instanceof EvolveDigestMismatchError;
+    }
+    assert(bufferThrew, "the in-memory shape throws EvolveDigestMismatchError");
+
+    let fileThrew = false;
+    try {
+      await b.downloadPackage("ver-bad", { to: tmpDir });
+    } catch (error) {
+      fileThrew = error instanceof EvolveDigestMismatchError;
+    }
+    assert(fileThrew, "the to-disk shape throws too");
+    // A file that does not match its digest looks like the corpus and is not,
+    // so it must not survive the failure.
+    const leftBehind = await readFile(join(tmpDir, "acme@1.1-corpus.tar.gz")).catch(() => null);
+    assertEqual(leftBehind, null, "the mismatched file is removed, not left on disk");
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    restoreFetch();
+  }
+}
+
+async function testDownloadPackageTruncated() {
+  console.log("\n--- downloadPackage() REFUSES a body shorter than Content-Length ---");
+  installMockFetch();
+  const tmpDir = join(tmpdir(), `hosted-package-short-${Date.now()}`);
+  try {
+    const pkg = gzipSync(Buffer.from("corpus bytes"));
+    setMockResponse("/api/benchmarks/imports/ver-short/package", {
+      status: 200,
+      body: null,
+      bodyBytes: pkg,
+      headers: {
+        "Content-Disposition": 'attachment; filename="acme@1.1-corpus.tar.gz"',
+        // The server promised more than it sent: a socket cut mid-body is not
+        // an error to fetch, so without this check a partial read returned as
+        // SUCCESS.
+        "Content-Length": String(pkg.length + 1000),
+        "x-package-sha256": createHash("sha256").update(pkg).digest("hex"),
+      },
+    });
+
+    const b = benchmarks({ apiKey: "test-key", baseUrl: BASE });
+
+    let bufferThrew = false;
+    try {
+      await b.downloadPackage("ver-short");
+    } catch (error) {
+      bufferThrew = error instanceof EvolveIncompleteDownloadError;
+    }
+    assert(bufferThrew, "the in-memory shape throws EvolveIncompleteDownloadError");
+
+    let fileThrew = false;
+    try {
+      await b.downloadPackage("ver-short", { to: tmpDir });
+    } catch (error) {
+      fileThrew = error instanceof EvolveIncompleteDownloadError;
+    }
+    assert(fileThrew, "the to-disk shape throws too");
+
+    const left = await readdir(tmpDir).catch(() => [] as string[]);
+    // Neither the final path nor the .part temp survives a failed transfer.
+    assertEqual(left, [], "no file and no partial left behind");
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    restoreFetch();
+  }
+}
+
+async function testDownloadPackageFilenameTraversal() {
+  console.log("\n--- downloadPackage({ to }) refuses a traversing Content-Disposition ---");
+  installMockFetch();
+  const parent = join(tmpdir(), `hosted-package-esc-${Date.now()}`);
+  const tmpDir = join(parent, "inner");
+  try {
+    const pkg = gzipSync(Buffer.from("corpus bytes"));
+    setMockResponse("/api/benchmarks/imports/ver-esc/package", {
+      status: 200,
+      body: null,
+      bodyBytes: pkg,
+      headers: {
+        // The filename interpolates a user-supplied version label, so this is
+        // attacker-influenced, not merely server-supplied.
+        "Content-Disposition": 'attachment; filename="../../escaped.tar.gz"',
+        "Content-Length": String(pkg.length),
+        "x-package-sha256": createHash("sha256").update(pkg).digest("hex"),
+      },
+    });
+
+    const b = benchmarks({ apiKey: "test-key", baseUrl: BASE });
+    const filePath = await b.downloadPackage("ver-esc", { to: tmpDir });
+
+    assert(filePath.startsWith(tmpDir), "the file stays inside --to");
+    assert(!filePath.includes(".."), "no traversal survives into the path");
+    // basename() would still yield "escaped.tar.gz"; the fallback fires only
+    // for names that are empty or dot-entries. Either way it cannot escape.
+    const escaped = await readFile(join(parent, "escaped.tar.gz")).catch(() => null);
+    assertEqual(escaped, null, "nothing was written outside the chosen directory");
+  } finally {
+    await rm(parent, { recursive: true, force: true }).catch(() => {});
+    restoreFetch();
+  }
+}
+
+async function testDownloadPackageNotRetained() {
+  console.log("\n--- downloadPackage() surfaces package_not_retained as a typed code ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/benchmarks/imports/old-ver/package", {
+      status: 404,
+      body: {
+        error: {
+          code: "package_not_retained",
+          message: "No original package is stored for import old-ver.",
+        },
+      },
+    });
+
+    const b = benchmarks({ apiKey: "test-key", baseUrl: BASE });
+    let code: string | undefined;
+    try {
+      await b.downloadPackage("old-ver");
+    } catch (error) {
+      code = (error as { code?: string }).code;
+    }
+    // Distinct from import_not_found so a client can say WHY rather than guess.
+    assertEqual(code, "package_not_retained", "typed code reaches the caller");
+    assert(isHostedErrorCode("package_not_retained"), "code is in the closed vocabulary");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function main() {
   console.log("Hosted Evals Client Unit Tests\n");
 
@@ -2436,6 +2685,13 @@ async function main() {
   await testExportToFile();
   await testExportStream();
   await testExportHarborFormat();
+  await testDownloadPackageBuffer();
+  await testDownloadPackageToFile();
+  await testDownloadPackageStream();
+  await testDownloadPackageDigestMismatch();
+  await testDownloadPackageTruncated();
+  await testDownloadPackageFilenameTraversal();
+  await testDownloadPackageNotRetained();
   await testExportTerminalRequired();
   await testWatchStreamsToTerminal();
   await testWatchAsIterator();

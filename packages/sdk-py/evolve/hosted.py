@@ -13,6 +13,7 @@ the message plus the stable machine-readable ``code``.
 
 import asyncio
 import gzip
+import hashlib
 import io
 import json
 import os
@@ -30,6 +31,16 @@ from typing import Any, AsyncIterator, Callable, Dict, List, Literal, Optional, 
 from .config import HostedClientConfig
 
 DEFAULT_BASE_URL = 'https://dashboard.evolvingmachines.ai'
+
+# Request budgets. A status poll and a 512 MB package are not the same wait, and
+# sizing both by the smaller one made large downloads fail on the in-memory
+# shape while succeeding on the to-disk shape.
+REQUEST_TIMEOUT_SEC = 60
+DOWNLOAD_TIMEOUT_SEC = 600
+
+#: The server states the verified digest of a download here. When it is present
+#: the client re-checks it — a digest nobody verifies is decoration.
+PACKAGE_DIGEST_HEADER = 'x-package-sha256'
 
 _TERMINAL_JOB_STATUSES = {'COMPLETED', 'CANCELLED', 'FAILED'}
 
@@ -114,6 +125,9 @@ HOSTED_ERROR_CODES: 'tuple[str, ...]' = (
     'import_not_found',
     'import_too_large',
     'invalid_archive',
+    'package_not_retained',
+    'package_corrupt',
+    'package_missing',
     'internal_error',
 )
 
@@ -167,6 +181,9 @@ HostedErrorCode = Literal[
     'import_not_found',
     'import_too_large',
     'invalid_archive',
+    'package_not_retained',
+    'package_corrupt',
+    'package_missing',
     'internal_error',
 ]
 
@@ -174,6 +191,41 @@ HostedErrorCode = Literal[
 def is_hosted_error_code(value: Any) -> bool:
     """True when ``value`` is a code this SDK version knows about."""
     return isinstance(value, str) and value in HOSTED_ERROR_CODES
+
+
+class EvolveDigestMismatchError(Exception):
+    """Downloaded bytes did not match the digest the server stated for them.
+
+    The server verifies a package against its recorded sha256 before sending,
+    and echoes the verified value; this is the client half of that chain,
+    covering the wire. It is NOT an API error — the request succeeded — so it is
+    its own type rather than an EvolveAPIError with an invented code.
+    """
+
+    def __init__(self, expected: str, actual: str):
+        super().__init__(
+            f'downloaded bytes do not match the digest the server stated '
+            f'(expected {expected}, got {actual})'
+        )
+        self.expected = expected
+        self.actual = actual
+
+
+class EvolveIncompleteDownloadError(Exception):
+    """A download ended early: fewer bytes arrived than Content-Length promised.
+
+    Its own type because a truncated body is not a wrong body — the distinction
+    tells a caller whether to retry (yes) or to stop trusting the stored object
+    (that is the digest error).
+    """
+
+    def __init__(self, expected_bytes: int, received_bytes: int):
+        super().__init__(
+            f'download ended early: the server declared {expected_bytes} bytes '
+            f'and {received_bytes} arrived'
+        )
+        self.expected_bytes = expected_bytes
+        self.received_bytes = received_bytes
 
 
 class EvolveAPIError(Exception):
@@ -1359,8 +1411,20 @@ class _HostedHttp:
     ) -> Dict[str, Any]:
         return await asyncio.to_thread(self._request_sync, path, method, body, headers, False)
 
-    async def request_bytes(self, path: str) -> 'tuple[bytes, Dict[str, str]]':
-        return await asyncio.to_thread(self._request_sync, path, 'GET', None, None, True)
+    async def request_bytes(
+        self, path: str, *, timeout: int = DOWNLOAD_TIMEOUT_SEC
+    ) -> 'tuple[bytes, Dict[str, str]]':
+        """GET raw bytes plus response headers.
+
+        The timeout defaults to the DOWNLOAD budget, not the JSON one: every
+        caller of this is fetching an archive or a package, and a 512 MB body
+        does not arrive inside a request timeout sized for a status poll. The
+        to-disk path has always used the larger budget, and the two shapes
+        failing at different sizes is the kind of difference nobody debugs.
+        """
+        return await asyncio.to_thread(
+            self._request_sync, path, 'GET', None, None, True, timeout
+        )
 
     async def request_upload(
         self, path: str, data: bytes, headers: Dict[str, str], method: str = 'POST'
@@ -1405,6 +1469,7 @@ class _HostedHttp:
         body: Optional[Dict[str, Any]],
         headers: Optional[Dict[str, str]],
         raw: bool,
+        timeout: int = REQUEST_TIMEOUT_SEC,
     ):
         data = json.dumps(body).encode('utf-8') if body is not None else None
         request_headers = {
@@ -1422,7 +1487,7 @@ class _HostedHttp:
             method=method,
         )
         try:
-            with urllib.request.urlopen(request, timeout=60) as response:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
                 payload = response.read()
                 if raw:
                     return payload, dict(response.headers.items())
@@ -1439,18 +1504,72 @@ class _HostedHttp:
             headers={'Authorization': f'Bearer {self.api_key()}'},
         )
         try:
-            with urllib.request.urlopen(request, timeout=600) as response:
+            with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT_SEC) as response:
                 os.makedirs(to_dir, exist_ok=True)
                 disposition = response.headers.get('Content-Disposition', '') or ''
                 match = re.search(r'filename="([^"]+)"', disposition)
-                filename = match.group(1) if match else default_filename
+                filename = _safe_download_filename(
+                    match.group(1) if match else None, default_filename
+                )
                 target = os.path.join(to_dir, filename)
-                with open(target, 'wb') as f:
-                    shutil.copyfileobj(response, f)
+                # TEMP-THEN-RENAME: bytes never appear at the final path until
+                # they are complete AND verified, so a transfer that dies partway
+                # leaves nothing a later run could mistake for the corpus.
+                part = f'{target}.part'
+                declared = response.headers.get('Content-Length')
+                expected = response.headers.get(PACKAGE_DIGEST_HEADER)
+                digest = hashlib.sha256()
+                received = 0
+                try:
+                    with open(part, 'wb') as f:
+                        while True:
+                            chunk = response.read(1024 * 1024)
+                            if not chunk:
+                                break
+                            digest.update(chunk)
+                            received += len(chunk)
+                            f.write(chunk)
+                    # TRUNCATION. copyfileobj over urllib treats a socket cut
+                    # mid-body as a normal end of stream, so a short read used to
+                    # return a partial file as SUCCESS. Content-Length is the
+                    # server's own count; disagreeing with it means the body did
+                    # not all arrive.
+                    if declared is not None and received != int(declared):
+                        raise EvolveIncompleteDownloadError(int(declared), received)
+                    if expected and digest.hexdigest() != expected:
+                        raise EvolveDigestMismatchError(expected, digest.hexdigest())
+                    os.replace(part, target)
+                except BaseException:
+                    # The partial is never promoted and never survives: a file
+                    # that looks like the corpus and is not is worse than none.
+                    try:
+                        os.unlink(part)
+                    except OSError:
+                        pass
+                    raise
                 return target
         except urllib.error.HTTPError as exc:
             _raise_api_error(exc)
             raise  # unreachable; _raise_api_error always raises
+
+
+def _safe_download_filename(candidate: Optional[str], fallback: str) -> str:
+    """The filename to save a download under, taken from Content-Disposition.
+
+    THE SERVER DOES NOT GET TO CHOOSE A PATH. This value is joined onto a
+    directory the user picked, so a filename carrying a separator or ".." would
+    write outside it — and the benchmark download's filename interpolates a
+    user-supplied version label, which makes it attacker-influenced rather than
+    merely server-supplied. basename() strips any directory part, and anything
+    that still looks like a path component, is empty, or is a dot-entry falls
+    back to the caller's own name.
+    """
+    if not candidate:
+        return fallback
+    name = os.path.basename(candidate.replace('\\', '/'))
+    if name in ('', '.', '..') or '/' in name or any(ord(c) < 32 for c in name):
+        return fallback
+    return name
 
 
 def _multipart_body(
@@ -1846,6 +1965,49 @@ class BenchmarksClient:
             if deadline is not None and time.monotonic() >= deadline:
                 raise TimeoutError(f'watch_import({id!r}) timed out after {timeout_s}s')
             await asyncio.sleep(poll_interval_s)
+
+    async def download_package(
+        self,
+        id: str,
+        *,
+        to: Optional[str] = None,
+    ):
+        """Download the ORIGINAL corpus package a version was imported from.
+
+        The gzipped tarball you uploaded, or — for a git import — the
+        checked-out tree packed at import time. ``id`` is the import id that
+        ``import_()`` returned.
+
+        OWNER ONLY. This is the one call that returns task files, and it
+        returns them only to the account that owns the benchmark; a
+        platform-curated benchmark has no owner, so nobody can download it.
+        Someone else's import answers ``import_not_found``, never a 403.
+
+        The server verifies the stored bytes against their recorded sha256
+        before sending anything, so a successful call is byte-identical to
+        what was imported.
+
+        A version imported before packages were retained has none, and it
+        cannot be reconstructed: that is ``package_not_retained``, distinct
+        from "not found" so you can say so. Re-import the corpus as a new
+        version to get one.
+
+        Returns the package bytes, or — when ``to`` (a directory) is given —
+        streams straight to disk and returns the saved file path.
+        """
+        path = f'/api/benchmarks/imports/{urllib.parse.quote(id)}/package'
+        if to is not None:
+            return await self._http.download(path, to, f'import-{id}-corpus.tar.gz')
+        payload, headers = await self._http.request_bytes(path)
+        declared = headers.get('Content-Length')
+        if declared is not None and len(payload) != int(declared):
+            raise EvolveIncompleteDownloadError(int(declared), len(payload))
+        expected = headers.get(PACKAGE_DIGEST_HEADER)
+        if expected:
+            actual = hashlib.sha256(payload).hexdigest()
+            if actual != expected:
+                raise EvolveDigestMismatchError(expected, actual)
+        return payload
 
     def list_imports(
         self,

@@ -1,6 +1,6 @@
 import { createWriteStream } from "fs";
-import { mkdir } from "fs/promises";
-import { join } from "path";
+import { mkdir, rename, rm } from "fs/promises";
+import { basename, join } from "path";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { DEFAULT_DASHBOARD_URL, ENV_EVOLVE_API_KEY } from "../constants";
@@ -45,6 +45,7 @@ import type {
   ListBenchmarksOptions,
   ListCustomHarnessesOptions,
   ListImportsOptions,
+  DownloadPackageOptions,
   ListJobsOptions,
   ListRegradesOptions,
   RegradeList,
@@ -803,6 +804,108 @@ function makeWatch(
   };
 }
 
+/**
+ * The server states the verified digest of a package here. When it is present
+ * the client re-checks it: the server hashes the stored object before sending,
+ * and this closes the other half of the chain — the wire. A digest nobody
+ * verifies is decoration.
+ */
+export const PACKAGE_DIGEST_HEADER = "x-package-sha256";
+
+/**
+ * Downloaded bytes did not match the digest the server stated for them.
+ *
+ * NOT an EvolveApiError: the request succeeded, so it gets its own type rather
+ * than an invented error code.
+ */
+export class EvolveDigestMismatchError extends Error {
+  readonly name = "EvolveDigestMismatchError";
+  constructor(
+    readonly expected: string,
+    readonly actual: string
+  ) {
+    super(
+      `downloaded bytes do not match the digest the server stated ` +
+        `(expected ${expected}, got ${actual})`
+    );
+  }
+}
+
+/**
+ * A download ended early: fewer bytes arrived than Content-Length promised.
+ *
+ * Its own type because a truncated body is not a wrong body — the distinction
+ * tells a caller whether to retry (yes) or to stop trusting the stored object
+ * (that is the digest error).
+ */
+export class EvolveIncompleteDownloadError extends Error {
+  readonly name = "EvolveIncompleteDownloadError";
+  constructor(
+    readonly expectedBytes: number,
+    readonly receivedBytes: number
+  ) {
+    super(
+      `download ended early: the server declared ${expectedBytes} bytes and ` +
+        `${receivedBytes} arrived`
+    );
+  }
+}
+
+/** Throw when fewer bytes arrived than Content-Length promised (no header = nothing to check). */
+function assertCompleteBody(res: Response, received: number): void {
+  const declared = res.headers.get("Content-Length");
+  if (declared === null) return;
+  const expected = Number(declared);
+  if (Number.isFinite(expected) && received !== expected) {
+    throw new EvolveIncompleteDownloadError(expected, received);
+  }
+}
+
+/**
+ * Throw unless `bytes` hash to the digest the response declared (no header =
+ * nothing to check). The in-memory shape only — the to-disk shape hashes while
+ * streaming, because it must not hold the package in memory to check it.
+ */
+async function verifyPackageDigest(res: Response, bytes: Buffer): Promise<void> {
+  const expected = res.headers.get(PACKAGE_DIGEST_HEADER);
+  if (!expected) return;
+  const { createHash } = await import("crypto");
+  const actual = createHash("sha256").update(bytes).digest("hex");
+  if (actual !== expected) throw new EvolveDigestMismatchError(expected, actual);
+}
+
+/**
+ * The filename to save a download under, taken from Content-Disposition.
+ *
+ * THE SERVER DOES NOT GET TO CHOOSE A PATH. This value is joined onto a
+ * directory the user picked, so a filename carrying "/" or ".." would write
+ * outside it — and the benchmark download's filename interpolates a
+ * user-supplied version label, which makes it attacker-influenced rather than
+ * merely server-supplied. basename() strips any directory part, and anything
+ * that still looks like a path component, is empty, or is a dot-entry falls
+ * back to the caller's own name.
+ *
+ * One helper for both download surfaces on purpose: exportFilename had the same
+ * bug, and a second copy is how one of them gets fixed and the other does not.
+ */
+function safeDownloadFilename(res: Response, fallback: string): string {
+  const disposition = res.headers.get("Content-Disposition") || "";
+  const match = disposition.match(/filename="([^"]+)"/);
+  if (!match) return fallback;
+  const candidate = basename(match[1]);
+  if (
+    candidate === "" ||
+    candidate === "." ||
+    candidate === ".." ||
+    /[/\\]/.test(candidate) ||
+    // eslint-disable-next-line no-control-regex
+    /[\u0000-\u001f]/.test(candidate)
+  ) {
+    return fallback;
+  }
+  return candidate;
+}
+
 // =============================================================================
 // BENCHMARKS CLIENT
 // =============================================================================
@@ -984,6 +1087,77 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
         await sleep(pollIntervalMs, options?.signal);
       }
     },
+
+    downloadPackage: (async (
+      id: string,
+      options?: DownloadPackageOptions
+    ): Promise<Buffer | string | ReadableStream<Uint8Array>> => {
+      // Same three delivery shapes as jobs().export(), because it is the same
+      // job for the caller: a potentially large binary that they want in
+      // memory, on disk, or piped somewhere.
+      const res = await request(
+        cfg,
+        `/api/benchmarks/imports/${encodeURIComponent(id)}/package`
+      );
+      if (options?.stream) {
+        if (!res.body) throw new Error("Package response has no body");
+        // The ONLY shape that cannot be verified here: the caller consumes the
+        // stream, so only they ever hold the whole body. Read
+        // PACKAGE_DIGEST_HEADER off the response and hash as you go.
+        return res.body as ReadableStream<Uint8Array>;
+      }
+      if (options?.to) {
+        if (!res.body) throw new Error("Package response has no body");
+        const dir = options.to;
+        await mkdir(dir, { recursive: true });
+        const filePath = join(dir, safeDownloadFilename(res, `import-${id}-corpus.tar.gz`));
+        // TEMP-THEN-RENAME. Bytes never appear at the final path until they are
+        // complete AND verified, so a transfer that dies partway leaves nothing
+        // a later run could mistake for the corpus. rename within one directory
+        // is atomic on every platform we target.
+        const partPath = `${filePath}.part`;
+        // Hashed WHILE streaming, never buffered: a package can be 512 MB, and
+        // reading it into memory to check a digest would trade one correctness
+        // problem for a heap one.
+        const { createHash } = await import("crypto");
+        const hash = createHash("sha256");
+        let received = 0;
+        const nodeStream = Readable.fromWeb(
+          res.body as import("stream/web").ReadableStream
+        );
+        nodeStream.on("data", (chunk: Buffer) => {
+          hash.update(chunk);
+          received += chunk.length;
+        });
+        try {
+          await pipeline(nodeStream, createWriteStream(partPath));
+          // TRUNCATION. A socket cut mid-body is not an error to fetch — the
+          // stream simply ends — so a short read returned a partial file as
+          // success. Content-Length is the server's own count; disagreeing with
+          // it means the body did not all arrive.
+          const declared = res.headers.get("Content-Length");
+          if (declared !== null && received !== Number(declared)) {
+            throw new EvolveIncompleteDownloadError(Number(declared), received);
+          }
+          const expected = res.headers.get(PACKAGE_DIGEST_HEADER);
+          const actual = hash.digest("hex");
+          if (expected && actual !== expected) {
+            throw new EvolveDigestMismatchError(expected, actual);
+          }
+          await rename(partPath, filePath);
+        } catch (error) {
+          // The partial never gets promoted, and never survives: a file that
+          // looks like the corpus and is not is worse than no file at all.
+          await rm(partPath, { force: true }).catch(() => {});
+          throw error;
+        }
+        return filePath;
+      }
+      const bytes = Buffer.from(await res.arrayBuffer());
+      assertCompleteBody(res, bytes.length);
+      await verifyPackageDigest(res, bytes);
+      return bytes;
+    }) as BenchmarksClient["downloadPackage"],
 
     listImports(options?: ListImportsOptions): BenchmarkImportList {
       // Await for one page; for-await to walk them all across cursor pages.
@@ -1193,11 +1367,6 @@ export function jobs(config?: HostedClientConfig): JobsClient {
     return request(cfg, `/api/jobs/${encodeURIComponent(id)}/export${qs}`);
   }
 
-  function exportFilename(res: Response, id: string): string {
-    const disposition = res.headers.get("Content-Disposition") || "";
-    const match = disposition.match(/filename="([^"]+)"/);
-    return match ? match[1] : `job-${id}-export.json.gz`;
-  }
 
   /**
    * Drive the SSE watch stream, yielding each event and returning the final
@@ -1490,7 +1659,7 @@ export function jobs(config?: HostedClientConfig): JobsClient {
         if (!res.body) throw new Error("Export response has no body");
         const dir = options.to;
         await mkdir(dir, { recursive: true });
-        const filePath = join(dir, exportFilename(res, id));
+        const filePath = join(dir, safeDownloadFilename(res, `job-${id}-export.json.gz`));
         const nodeStream = Readable.fromWeb(
           res.body as import("stream/web").ReadableStream
         );

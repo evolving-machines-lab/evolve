@@ -182,6 +182,24 @@ class TestErrorEnvelope:
         ts_codes = re.findall(r'"([a-z_]+)"', block.group(1))
         assert ts_codes == list(HOSTED_ERROR_CODES)
 
+        # THE LITERAL TOO. Python states the vocabulary TWICE — once as the
+        # runtime tuple above, once as the HostedErrorCode Literal a type
+        # checker reads — and only the tuple was asserted. A code deleted from
+        # the Literal alone left 76 green tests and a type that silently
+        # rejected a code the server can actually send.
+        py_source = (
+            Path(__file__).resolve().parents[1].parent / 'evolve' / 'hosted.py'
+        ).read_text()
+        literal = re.search(
+            r'HostedErrorCode = Literal\[(.*?)\]', py_source, re.S
+        )
+        assert literal, 'HostedErrorCode Literal not found in the Python SDK'
+        literal_codes = re.findall(r"'([a-z_]+)'", literal.group(1))
+        assert set(literal_codes) == set(HOSTED_ERROR_CODES), (
+            'HostedErrorCode Literal and HOSTED_ERROR_CODES disagree: '
+            f'{set(literal_codes) ^ set(HOSTED_ERROR_CODES)}'
+        )
+
 
 # =============================================================================
 # THE MISSING VERBS

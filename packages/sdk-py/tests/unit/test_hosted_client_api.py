@@ -28,6 +28,7 @@ Mocks urllib at the module boundary; no real network calls.
 """
 
 import gzip
+import hashlib
 import json
 import urllib.parse as urllib_parse
 from unittest.mock import patch
@@ -39,6 +40,8 @@ from evolve import (
     JobCounts,
     JobFailure,
     EvolveAPIError,
+    EvolveDigestMismatchError,
+    EvolveIncompleteDownloadError,
     HostedClientConfig,
     NoActiveVersionError,
     TaskProviderVerdict,
@@ -1228,6 +1231,133 @@ class TestJobs:
         assert path.endswith('job-job-1-export.json.gz')
         with open(path, 'rb') as f:
             assert f.read() == archive
+
+    @pytest.mark.asyncio
+    async def test_download_package_bytes_and_streamed_file(self, tmp_path):
+        """The OWNER-ONLY corpus retrieval: bytes, or straight to a directory."""
+        package = gzip.compress(b'corpus bytes')
+        digest = hashlib.sha256(package).hexdigest()
+        fake = FakeUrlopen([
+            (
+                '/package',
+                package,
+                {
+                    'Content-Disposition': 'attachment; filename="acme@1.1-corpus.tar.gz"',
+                    'x-package-sha256': digest,
+                },
+            ),
+        ])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            client = benchmarks_factory(CONFIG)
+            payload = await client.download_package('imp-1')
+            path = await client.download_package('imp-1', to=str(tmp_path))
+
+        assert payload == package
+        with open(path, 'rb') as f:
+            assert f.read() == package
+        assert '/api/benchmarks/imports/imp-1/package' in fake.requests[0].full_url
+
+    @pytest.mark.asyncio
+    async def test_download_package_refuses_bytes_failing_the_stated_digest(self, tmp_path):
+        """The server hashes before sending; the client closes the wire half."""
+        package = gzip.compress(b'corpus bytes')
+        headers = {
+            'Content-Disposition': 'attachment; filename="acme@1.1-corpus.tar.gz"',
+            'x-package-sha256': 'f' * 64,  # not the bytes above
+        }
+        with patch(
+            'evolve.hosted.urllib.request.urlopen',
+            FakeUrlopen([('/package', package, headers)]),
+        ):
+            with pytest.raises(EvolveDigestMismatchError):
+                await benchmarks_factory(CONFIG).download_package('imp-bad')
+
+        with patch(
+            'evolve.hosted.urllib.request.urlopen',
+            FakeUrlopen([('/package', package, headers)]),
+        ):
+            with pytest.raises(EvolveDigestMismatchError):
+                await benchmarks_factory(CONFIG).download_package(
+                    'imp-bad', to=str(tmp_path)
+                )
+        # A file that does not match its digest looks like the corpus and is
+        # not, so it must not survive the failure.
+        assert list(tmp_path.iterdir()) == []
+
+    @pytest.mark.asyncio
+    async def test_download_package_refuses_a_truncated_body(self, tmp_path):
+        """A socket cut mid-body is a normal end of stream to urllib.
+
+        copyfileobj therefore returned a PARTIAL file as success. Content-Length
+        is the server's own count, and disagreeing with it is the only signal
+        that the body did not all arrive.
+        """
+        package = gzip.compress(b'corpus bytes')
+        headers = {
+            'Content-Disposition': 'attachment; filename="acme@1.1-corpus.tar.gz"',
+            'Content-Length': str(len(package) + 1000),  # promised more than sent
+            'x-package-sha256': hashlib.sha256(package).hexdigest(),
+        }
+        with patch(
+            'evolve.hosted.urllib.request.urlopen',
+            FakeUrlopen([('/package', package, headers)]),
+        ):
+            with pytest.raises(EvolveIncompleteDownloadError):
+                await benchmarks_factory(CONFIG).download_package('imp-short')
+
+        with patch(
+            'evolve.hosted.urllib.request.urlopen',
+            FakeUrlopen([('/package', package, headers)]),
+        ):
+            with pytest.raises(EvolveIncompleteDownloadError):
+                await benchmarks_factory(CONFIG).download_package(
+                    'imp-short', to=str(tmp_path)
+                )
+        # Neither the final path nor the .part temp survives.
+        assert list(tmp_path.iterdir()) == []
+
+    @pytest.mark.asyncio
+    async def test_download_package_refuses_a_traversing_filename(self, tmp_path):
+        """The filename interpolates a user-supplied version label."""
+        package = gzip.compress(b'corpus bytes')
+        inner = tmp_path / 'inner'
+        headers = {
+            'Content-Disposition': 'attachment; filename="../../escaped.tar.gz"',
+            'Content-Length': str(len(package)),
+            'x-package-sha256': hashlib.sha256(package).hexdigest(),
+        }
+        with patch(
+            'evolve.hosted.urllib.request.urlopen',
+            FakeUrlopen([('/package', package, headers)]),
+        ):
+            path = await benchmarks_factory(CONFIG).download_package(
+                'imp-esc', to=str(inner)
+            )
+
+        assert path.startswith(str(inner))
+        assert '..' not in path
+        assert not (tmp_path / 'escaped.tar.gz').exists()
+
+    @pytest.mark.asyncio
+    async def test_download_package_not_retained_is_distinguishable(self):
+        """A pre-retention version answers its own code, not import_not_found."""
+        import io
+        import urllib.error
+
+        def raise_http_error(request, timeout=None):
+            raise urllib.error.HTTPError(
+                request.full_url, 404, 'Not Found', {},
+                io.BytesIO(json.dumps({'error': {
+                    'code': 'package_not_retained',
+                    'message': 'No original package is stored for import imp-old.',
+                }}).encode('utf-8')),
+            )
+
+        with patch('evolve.hosted.urllib.request.urlopen', raise_http_error):
+            with pytest.raises(EvolveAPIError) as exc:
+                await benchmarks_factory(CONFIG).download_package('imp-old')
+        assert exc.value.status == 404
+        assert exc.value.code == 'package_not_retained'
 
     @pytest.mark.asyncio
     async def test_export_rejects_unknown_format(self):

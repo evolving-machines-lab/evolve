@@ -61,6 +61,7 @@ Commands:
   benchmarks get <name[@version]>   Show one benchmark (versions + tasks + providers)
   import                            Import a benchmark from a git source or a local directory (--watch to follow)
   import status <id>                Show one import job
+  download <import-id>              Download the original corpus package (owner only)
   custom-harnesses                  List your registered custom harnesses
   custom-harnesses get <name>       Show one custom harness
   custom-harnesses add              Register a custom harness (install script or local directory)
@@ -113,7 +114,7 @@ Other options:
   --limit <n>, --cursor <c>           Pagination — one envelope on every collection
                                       (list, trials, trace, benchmarks, benchmarks get,
                                       custom-harnesses, regrade-job)
-  --to <dir>                          Export target directory (default: current dir)
+  --to <dir>                          Directory to save into, for export and download (default: current dir)
   --format harbor                     Export the Harbor job-layout bundle
   --json                              Machine-readable JSON output
   --api-key <key>                     API key (default: $EVOLVE_API_KEY)
@@ -241,6 +242,15 @@ const COMMAND_SPECS: Record<string, CommandSpec> = {
     },
     minPositionals: 0,
     maxPositionals: 2,
+  },
+  // "download" is deliberately NOT "export-corpus": "export" already names one
+  // thing in this CLI (a job's research archive), and the inverse of "import"
+  // is the word a reader reaches for.
+  download: {
+    flags: { to: "string" },
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalUsage: "<import-id>",
   },
   // "custom-harnesses" lists; "get <name>" / "remove <name>" take a name, and
   // "add" takes the registration flags (all validated in the handler).
@@ -1064,6 +1074,26 @@ async function cmdExport(inv: Invocation, io: CliIO): Promise<number> {
   return 0;
 }
 
+/**
+ * Save a version's original corpus package. The mirror image of `import`, and
+ * shaped like `export`: default to the working directory, print the path.
+ *
+ * OWNER ONLY on the server, so a benchmark someone else owns reports
+ * import_not_found — the same answer as a bad id, on purpose.
+ */
+async function cmdDownload(inv: Invocation, io: CliIO): Promise<number> {
+  const client = benchmarks(clientConfig(inv));
+  const filePath = await client.downloadPackage(inv.positionals[0], {
+    to: (inv.flags.to as string | undefined) ?? process.cwd(),
+  });
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify({ path: filePath }));
+  } else {
+    io.out(`Saved ${filePath}`);
+  }
+  return 0;
+}
+
 function benchmarkDetailLines(b: Benchmark): string[] {
   const lines = table([
     ["name", b.name],
@@ -1361,6 +1391,8 @@ export async function runCli(argv: string[], io: CliIO = defaultIO): Promise<num
         return await cmdBenchmarks(inv, io);
       case "import":
         return await cmdImport(inv, io);
+      case "download":
+        return await cmdDownload(inv, io);
       case "custom-harnesses":
         return await cmdCustomHarnesses(inv, io);
       default:
