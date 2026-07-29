@@ -5,8 +5,76 @@
  * All differences between agents are data, not code.
  */
 
-import type { AgentType, SkillsConfig } from "./types";
+import type { AgentType, ReasoningEffort, SkillsConfig } from "./types";
 import { DEFAULT_HOME_DIR } from "./constants";
+
+// =============================================================================
+// REASONING-EFFORT VOCABULARY
+// =============================================================================
+
+/**
+ * What a CLI does with a reasoning-effort input:
+ *   'level'   the value reaches the CLI as a graded level
+ *   'binary'  thinking on/off only — only BINARY_EFFORT_VALUES are honest inputs
+ *   'none'    the CLI takes no effort input at all
+ */
+export type EffortSupport = "level" | "binary" | "none";
+
+/**
+ * The effort vocabulary a graded ('level') harness accepts, in ascending order
+ * of thinking. This is the ADVERTISED list: the ReasoningEffort union in
+ * types.ts additionally accepts the legacy spelling "no-thinking" (same
+ * behaviour as "off"), which is deliberately not advertised anywhere.
+ */
+export const REASONING_EFFORTS = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "thinking",
+] as const satisfies readonly ReasoningEffort[];
+
+/**
+ * The subset a 'binary' harness can honestly represent. Four SPELLINGS, two
+ * BEHAVIOURS: 'off' and 'minimal' disable thinking, 'medium' and 'thinking'
+ * enable it (isThinkingEnabled draws the same line). The graded levels are
+ * excluded because a binary CLI cannot express a gradation — accepting 'high'
+ * would record a claim the CLI never received.
+ */
+export const BINARY_EFFORT_VALUES = [
+  "off",
+  "minimal",
+  "medium",
+  "thinking",
+] as const satisfies readonly ReasoningEffort[];
+
+/**
+ * The effort a run takes when it names none, for harnesses that take one at
+ * all. Owned HERE because managed evals and managed agents must advertise the
+ * same defaults: the hosted-evals lane resolves an omitted effort to this value
+ * at job creation and publishes it on GET /api/meta via the generated
+ * harness-capabilities.json artifact.
+ */
+export const DEFAULT_REASONING_EFFORT: ReasoningEffort = "medium";
+
+/**
+ * The effort vocabulary one harness accepts and the value an unnamed effort
+ * takes there — pure data derivation from its effortSupport. The
+ * harness-capabilities artifact generator and picker UIs share this.
+ */
+export function harnessEffortVocabulary(support: EffortSupport): {
+  efforts: readonly ReasoningEffort[];
+  defaultEffort: ReasoningEffort | null;
+} {
+  if (support === "none") return { efforts: [], defaultEffort: null };
+  return {
+    efforts: support === "binary" ? BINARY_EFFORT_VALUES : REASONING_EFFORTS,
+    defaultEffort: DEFAULT_REASONING_EFFORT,
+  };
+}
 
 // =============================================================================
 // REGISTRY TYPES
@@ -63,6 +131,14 @@ export interface BuildCommandOptions {
 export interface AgentRegistryEntry {
   /** Sandbox image/template identifier (provider maps to its own concept) */
   image: string;
+
+  /**
+   * What this CLI does with a reasoning-effort input (see EffortSupport).
+   * Advertised DATA beside the buildCommand BEHAVIOUR: the generated
+   * harness-capabilities.json artifact reads this so the hosted-evals lane
+   * advertises exactly the vocabulary the local SDK drives.
+   */
+  effortSupport: EffortSupport;
 
   /** Environment variable name for API key */
   apiKeyEnv: string;
@@ -206,6 +282,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
   claude: {
     image: "evolve-all",
     apiKeyEnv: "ANTHROPIC_API_KEY",
+    effortSupport: "level",
     oauthEnv: "CLAUDE_CODE_OAUTH_TOKEN",
     baseUrlEnv: "ANTHROPIC_BASE_URL",
     customHeadersEnv: "ANTHROPIC_CUSTOM_HEADERS",
@@ -240,6 +317,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     image: "evolve-all",
     apiKeyEnv: "OPENAI_API_KEY",
     oauthEnv: "CODEX_OAUTH_FILE_PATH",
+    effortSupport: "level",
     oauthFileName: "auth.json",
     // NOT A ROUTING KNOB FOR CODEX — kept only because the env var is still
     // read by other OpenAI-shaped tooling that may share this box, and because
@@ -292,6 +370,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
   gemini: {
     image: "evolve-all",
     apiKeyEnv: "GEMINI_API_KEY",
+    effortSupport: "none",
     oauthEnv: "GEMINI_OAUTH_FILE_PATH",
     oauthFileName: "oauth_creds.json",
     oauthActivationEnv: { key: "GOOGLE_GENAI_USE_GCA", value: "true" },
@@ -334,6 +413,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     image: "evolve-all",
     apiKeyEnv: "OPENAI_API_KEY",
     baseUrlEnv: "OPENAI_BASE_URL",
+    effortSupport: "none",
     defaultModel: "qwen3.7-max",
     models: [
       { alias: "qwen3.7-max", modelId: "qwen3.7-max", description: "Strongest reasoning and coding option" },
@@ -380,6 +460,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     // SDK-facing direct-mode inputs. Kimi Code itself receives KIMI_MODEL_* envs
     // or ~/.kimi-code/config.toml from Agent.buildEnvironmentVariables()/run().
     apiKeyEnv: "KIMI_API_KEY",
+    effortSupport: "binary",
     baseUrlEnv: "KIMI_BASE_URL",
     defaultModel: "kimi-k3",
     models: [
@@ -430,6 +511,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
   opencode: {
     image: "evolve-all",
     apiKeyEnv: "OPENROUTER_API_KEY",
+    effortSupport: "level",
     baseUrlEnv: "OPENAI_BASE_URL",
     defaultModel: "openrouter/anthropic/claude-opus-5",
     // OpenRouter-only: all models route through OpenRouter (direct or via the Evolve gateway)
@@ -498,6 +580,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
   droid: {
     image: "evolve-all",
     apiKeyEnv: "FACTORY_API_KEY",
+    effortSupport: "level",
     defaultModel: "claude-opus-5",
     models: [
       { alias: "claude-opus-5", modelId: "claude-opus-5", description: "Factory-managed Claude Opus 5" },
