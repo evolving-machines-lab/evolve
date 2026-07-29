@@ -14,6 +14,11 @@
  *   npx tsx tests/unit/daytona-commands.test.ts
  */
 
+import { execSync } from "node:child_process";
+import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { DaytonaCommands, _testWithInBoxTimeout, _testWrapCommand } from "../../src/index.ts";
 
 // =============================================================================
@@ -522,6 +527,39 @@ async function testSpawnWithoutEnvs(): Promise<void> {
 // whole reason the wrapper is on run() and not just spawn().
 // =============================================================================
 
+/**
+ * ACTUALLY RUN the generated wrapper in a real shell. The property under test is
+ * shell semantics — `A && B || { C; }` precedence, and what `>` does before its
+ * pipeline runs — which no assertion over the command STRING can decide, and
+ * which is precisely what the fail-open bug turned on.
+ *
+ * `stripBase64` puts a PATH in front that contains only `sh`, so the wrapper's
+ * own `base64 -d` is missing exactly as it would be on a minimal task image.
+ * Nothing else is needed from that PATH: `[`, `command` and `exit` are shell
+ * builtins, and the failure branch's `rm` may fail harmlessly.
+ */
+function runWrapper(wrapped: string, opts: { stripBase64?: boolean } = {}): {
+  code: number;
+  stdout: string;
+} {
+  let shimDir: string | undefined;
+  try {
+    const env = { ...process.env };
+    if (opts.stripBase64) {
+      shimDir = mkdtempSync(join(tmpdir(), "evolve-inbox-"));
+      symlinkSync("/bin/sh", join(shimDir, "sh"));
+      env.PATH = shimDir;
+    }
+    const stdout = execSync(wrapped, { shell: "/bin/sh", env, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    return { code: 0, stdout };
+  } catch (error) {
+    const e = error as { status?: number; stdout?: string };
+    return { code: e.status ?? -1, stdout: e.stdout ?? "" };
+  } finally {
+    if (shimDir) rmSync(shimDir, { recursive: true, force: true });
+  }
+}
+
 /** The base64 payload the wrapper decodes into the script it runs. */
 function decodePayload(command: string): string {
   const match = /echo ([A-Za-z0-9+/=]+) \| base64 -d/.exec(command);
@@ -610,6 +648,38 @@ async function testInBoxTimeoutNeedsNoQuoting(): Promise<void> {
   assertEqual(decodePayload(wrapped), nasty, "The caller's command survives verbatim");
 }
 
+async function testInBoxTimeoutFailsClosedOnBadDecode(): Promise<void> {
+  console.log("\n[4h] withInBoxTimeout() - a box with no `base64` FAILS, it does not report success");
+
+  // THE REGRESSION THIS PINS. `>` creates the script before its pipeline runs,
+  // so a missing `base64` used to leave a zero-byte file — and `bash <empty>`
+  // exits 0 having printed nothing. The eval artifact listing is itself a
+  // `find ... | base64 -w0`, so such a box failed that listing loudly BEFORE
+  // this wrapper existed; fail-open would have converted it into an empty
+  // listing: no files, no patch, clean exit all the way up.
+  const wrapped = _testWithInBoxTimeout("echo hello; exit 7", 30);
+
+  const broken = runWrapper(wrapped, { stripBase64: true });
+  assertEqual(broken.code, 126, "No base64: exits 126, which is nonzero and therefore visible");
+  assertEqual(broken.stdout, "", "No base64: nothing is printed that could be mistaken for output");
+
+  // The same wrapper on a normal box still runs the payload and hands back ITS
+  // status — the guard must not cost the happy path.
+  const ok = runWrapper(wrapped);
+  assertEqual(ok.code, 7, "With base64: the payload's own exit code propagates");
+  assertEqual(ok.stdout.trim(), "hello", "With base64: the payload's stdout is intact");
+}
+
+async function testInBoxTimeoutGuardShape(): Promise<void> {
+  console.log("\n[4i] withInBoxTimeout() - the decode is chained, and the script is size-checked");
+
+  const wrapped = _testWithInBoxTimeout("echo hi", 30);
+
+  assert(/base64 -d > \/tmp\/\.evolve-cmd-\S+ && \[ -s /.test(wrapped), "Decode is chained with && , not ;");
+  assert(wrapped.includes("exit 126"), "The bail-out is an explicit nonzero exit");
+  assert(/\{ rm -f \/tmp\/\.evolve-cmd-\S+; exit 126; \}/.test(wrapped), "The bail-out cleans up its stray file");
+}
+
 async function testInBoxTimeoutOmittedWhenNoDeadline(): Promise<void> {
   console.log("\n[4g] withInBoxTimeout() - no deadline, no wrapper");
 
@@ -649,6 +719,8 @@ const tests = [
   testRunPropagatesTimeoutExitCode,
   testInBoxTimeoutDegradesWithoutCoreutils,
   testInBoxTimeoutNeedsNoQuoting,
+  testInBoxTimeoutFailsClosedOnBadDecode,
+  testInBoxTimeoutGuardShape,
   testInBoxTimeoutOmittedWhenNoDeadline,
 ];
 

@@ -237,6 +237,19 @@ export class DaytonaIdleTimeoutError extends Error {
  * the caller's command is ever attempted, and a box without coreutils degrades
  * to the un-timed run rather than failing outright (the client-side deadlines
  * still cover the case where a client is alive to enforce them).
+ *
+ * IT FAILS CLOSED ON A BAD DECODE, and that is not a nicety. `>` creates the
+ * file before the pipeline runs, so on an image with no `base64` the decode
+ * fails and leaves a ZERO-BYTE script — and `bash <empty>` exits 0 having
+ * printed nothing. This wrapper would then have turned a command that used to
+ * fail loudly into one that reports success with empty output, on exactly the
+ * images where it breaks: the eval artifact listing is itself a
+ * `find ... | base64 -w0`, so a box missing base64 failed that listing outright
+ * before this wrapper existed, and would afterwards have returned an empty
+ * listing instead — no files, no patch, and a clean exit all the way up. So the
+ * decode is chained with `&&` and the script is size-checked before bash is
+ * handed it; either way out is exit 126, which is nonzero and therefore visible
+ * to every caller that checks.
  */
 function withInBoxTimeout(wrapped: string, timeoutSec?: number): string {
   if (!timeoutSec || timeoutSec <= 0) return wrapped;
@@ -252,8 +265,11 @@ function withInBoxTimeout(wrapped: string, timeoutSec?: number): string {
   // command without this wrapper returned in 1.4s.
   // Single-quoted, and the body deliberately contains no single quote of its
   // own (the payload is base64) so no escaping is required.
+  // 126 for "the script never became runnable": nonzero, and distinct from both
+  // 124 (timed out) and anything the caller's own command can return.
   const inner =
-    `echo ${encoded} | base64 -d > ${path}; ` +
+    `echo ${encoded} | base64 -d > ${path} && [ -s ${path} ] || ` +
+    `{ rm -f ${path}; exit 126; }; ` +
     `if command -v timeout >/dev/null 2>&1; then ` +
     `timeout -k 10 ${timeoutSec} bash ${path}; else bash ${path}; fi; ` +
     `rc=$?; rm -f ${path}; exit $rc`;
