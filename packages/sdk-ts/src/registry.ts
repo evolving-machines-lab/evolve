@@ -440,7 +440,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     image: "evolve-all",
     apiKeyEnv: "OPENAI_API_KEY",
     baseUrlEnv: "OPENAI_BASE_URL",
-    effortSupport: "none",
+    effortSupport: "binary",
     defaultModel: "qwen3.7-max",
     // Qwen models default to thinking on; pinned so the enable_thinking config
     // write is always an explicit choice, never the CLI's silent default.
@@ -488,7 +488,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     // SDK-facing direct-mode inputs. Kimi Code itself receives KIMI_MODEL_* envs
     // or ~/.kimi-code/config.toml from Agent.buildEnvironmentVariables()/run().
     apiKeyEnv: "KIMI_API_KEY",
-    effortSupport: "binary",
+    effortSupport: "level",
     baseUrlEnv: "KIMI_BASE_URL",
     defaultModel: "kimi-k3",
     // Moonshot's K3 API documents reasoning_effort default max (thinking always

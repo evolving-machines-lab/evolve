@@ -92,7 +92,9 @@ export function buildHarnessCapabilitiesArtifact(): HarnessCapabilitiesArtifact 
       })),
       effortSupport: entry.effortSupport,
       efforts: [...vocabulary.efforts],
-      defaultEffort: vocabulary.defaultEffort,
+      // The harness's own pinned default is the truth; the vocabulary-level
+      // default is only the fallback for entries that pin nothing.
+      defaultEffort: entry.defaultReasoningEffort ?? vocabulary.defaultEffort,
     };
   }
   return {
