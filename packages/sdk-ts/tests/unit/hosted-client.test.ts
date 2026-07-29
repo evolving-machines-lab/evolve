@@ -122,7 +122,7 @@ function restoreFetch() {
 // IMPORT (after mock setup)
 // =============================================================================
 
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -135,6 +135,7 @@ import {
   jobs,
   EvolveApiError,
   EvolveDigestMismatchError,
+  EvolveIncompleteDownloadError,
   isHostedErrorCode,
   NoActiveVersionError,
 } from "../../src/hosted/index.ts";
@@ -2531,6 +2532,88 @@ async function testDownloadPackageDigestMismatch() {
   }
 }
 
+async function testDownloadPackageTruncated() {
+  console.log("\n--- downloadPackage() REFUSES a body shorter than Content-Length ---");
+  installMockFetch();
+  const tmpDir = join(tmpdir(), `hosted-package-short-${Date.now()}`);
+  try {
+    const pkg = gzipSync(Buffer.from("corpus bytes"));
+    setMockResponse("/api/benchmarks/imports/ver-short/package", {
+      status: 200,
+      body: null,
+      bodyBytes: pkg,
+      headers: {
+        "Content-Disposition": 'attachment; filename="acme@1.1-corpus.tar.gz"',
+        // The server promised more than it sent: a socket cut mid-body is not
+        // an error to fetch, so without this check a partial read returned as
+        // SUCCESS.
+        "Content-Length": String(pkg.length + 1000),
+        "x-package-sha256": createHash("sha256").update(pkg).digest("hex"),
+      },
+    });
+
+    const b = benchmarks({ apiKey: "test-key", baseUrl: BASE });
+
+    let bufferThrew = false;
+    try {
+      await b.downloadPackage("ver-short");
+    } catch (error) {
+      bufferThrew = error instanceof EvolveIncompleteDownloadError;
+    }
+    assert(bufferThrew, "the in-memory shape throws EvolveIncompleteDownloadError");
+
+    let fileThrew = false;
+    try {
+      await b.downloadPackage("ver-short", { to: tmpDir });
+    } catch (error) {
+      fileThrew = error instanceof EvolveIncompleteDownloadError;
+    }
+    assert(fileThrew, "the to-disk shape throws too");
+
+    const left = await readdir(tmpDir).catch(() => [] as string[]);
+    // Neither the final path nor the .part temp survives a failed transfer.
+    assertEqual(left, [], "no file and no partial left behind");
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    restoreFetch();
+  }
+}
+
+async function testDownloadPackageFilenameTraversal() {
+  console.log("\n--- downloadPackage({ to }) refuses a traversing Content-Disposition ---");
+  installMockFetch();
+  const parent = join(tmpdir(), `hosted-package-esc-${Date.now()}`);
+  const tmpDir = join(parent, "inner");
+  try {
+    const pkg = gzipSync(Buffer.from("corpus bytes"));
+    setMockResponse("/api/benchmarks/imports/ver-esc/package", {
+      status: 200,
+      body: null,
+      bodyBytes: pkg,
+      headers: {
+        // The filename interpolates a user-supplied version label, so this is
+        // attacker-influenced, not merely server-supplied.
+        "Content-Disposition": 'attachment; filename="../../escaped.tar.gz"',
+        "Content-Length": String(pkg.length),
+        "x-package-sha256": createHash("sha256").update(pkg).digest("hex"),
+      },
+    });
+
+    const b = benchmarks({ apiKey: "test-key", baseUrl: BASE });
+    const filePath = await b.downloadPackage("ver-esc", { to: tmpDir });
+
+    assert(filePath.startsWith(tmpDir), "the file stays inside --to");
+    assert(!filePath.includes(".."), "no traversal survives into the path");
+    // basename() would still yield "escaped.tar.gz"; the fallback fires only
+    // for names that are empty or dot-entries. Either way it cannot escape.
+    const escaped = await readFile(join(parent, "escaped.tar.gz")).catch(() => null);
+    assertEqual(escaped, null, "nothing was written outside the chosen directory");
+  } finally {
+    await rm(parent, { recursive: true, force: true }).catch(() => {});
+    restoreFetch();
+  }
+}
+
 async function testDownloadPackageNotRetained() {
   console.log("\n--- downloadPackage() surfaces package_not_retained as a typed code ---");
   installMockFetch();
@@ -2606,6 +2689,8 @@ async function main() {
   await testDownloadPackageToFile();
   await testDownloadPackageStream();
   await testDownloadPackageDigestMismatch();
+  await testDownloadPackageTruncated();
+  await testDownloadPackageFilenameTraversal();
   await testDownloadPackageNotRetained();
   await testExportTerminalRequired();
   await testWatchStreamsToTerminal();

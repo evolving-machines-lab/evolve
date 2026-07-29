@@ -114,7 +114,7 @@ Other options:
   --limit <n>, --cursor <c>           Pagination — one envelope on every collection
                                       (list, trials, trace, benchmarks, benchmarks get,
                                       custom-harnesses, regrade-job)
-  --to <dir>                          Export target directory (default: current dir)
+  --to <dir>                          Directory to save into, for export and download (default: current dir)
   --format harbor                     Export the Harbor job-layout bundle
   --json                              Machine-readable JSON output
   --api-key <key>                     API key (default: $EVOLVE_API_KEY)

@@ -340,6 +340,7 @@ export {
   isHostedErrorCode,
   EvolveApiError,
   EvolveDigestMismatchError,
+  EvolveIncompleteDownloadError,
   NoActiveVersionError,
   type HostedEvolve,
   type HostedErrorCode,

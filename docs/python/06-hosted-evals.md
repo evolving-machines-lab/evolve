@@ -657,7 +657,7 @@ path = await catalog.download_package(job.id, to='./restored')    # saved file p
 npx evolve-evals download <import-id> --to ./restored
 ```
 
-The id is the import id — what `import_()` returned and what `get_import()` polls. You get back the gzipped tarball you uploaded, or, for a git import, the checked-out tree packed at import time. Either way it is the whole corpus directory: `task.toml`, `instruction.md`, `tests/`, `environment/`, and your `solution/`.
+Reach for `to=` on anything sizeable: the default shape buffers the whole package in memory (the same trade `export()` makes), and a corpus can be 512 MB. The id is the import id — what `import_()` returned and what `get_import()` polls. You get back the gzipped tarball you uploaded, or, for a git import, the checked-out tree packed at import time. Either way it is the whole corpus directory: `task.toml`, `instruction.md`, `tests/`, `environment/`, and your `solution/`.
 
 **This is the one call that returns task files, and it returns them only to you.** Ownership is a single equality — the benchmark's owner is the caller — with no admin path and no exception for platform-curated benchmarks, which have no owner and so cannot be downloaded by anyone. Somebody else's import answers `import_not_found`, the same answer a made-up id gets, because a `403` that only appears for real ids is a way to discover which ids are real.
 

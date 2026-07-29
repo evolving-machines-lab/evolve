@@ -41,6 +41,7 @@ from evolve import (
     JobFailure,
     EvolveAPIError,
     EvolveDigestMismatchError,
+    EvolveIncompleteDownloadError,
     HostedClientConfig,
     NoActiveVersionError,
     TaskProviderVerdict,
@@ -1282,6 +1283,60 @@ class TestJobs:
         # A file that does not match its digest looks like the corpus and is
         # not, so it must not survive the failure.
         assert list(tmp_path.iterdir()) == []
+
+    @pytest.mark.asyncio
+    async def test_download_package_refuses_a_truncated_body(self, tmp_path):
+        """A socket cut mid-body is a normal end of stream to urllib.
+
+        copyfileobj therefore returned a PARTIAL file as success. Content-Length
+        is the server's own count, and disagreeing with it is the only signal
+        that the body did not all arrive.
+        """
+        package = gzip.compress(b'corpus bytes')
+        headers = {
+            'Content-Disposition': 'attachment; filename="acme@1.1-corpus.tar.gz"',
+            'Content-Length': str(len(package) + 1000),  # promised more than sent
+            'x-package-sha256': hashlib.sha256(package).hexdigest(),
+        }
+        with patch(
+            'evolve.hosted.urllib.request.urlopen',
+            FakeUrlopen([('/package', package, headers)]),
+        ):
+            with pytest.raises(EvolveIncompleteDownloadError):
+                await benchmarks_factory(CONFIG).download_package('imp-short')
+
+        with patch(
+            'evolve.hosted.urllib.request.urlopen',
+            FakeUrlopen([('/package', package, headers)]),
+        ):
+            with pytest.raises(EvolveIncompleteDownloadError):
+                await benchmarks_factory(CONFIG).download_package(
+                    'imp-short', to=str(tmp_path)
+                )
+        # Neither the final path nor the .part temp survives.
+        assert list(tmp_path.iterdir()) == []
+
+    @pytest.mark.asyncio
+    async def test_download_package_refuses_a_traversing_filename(self, tmp_path):
+        """The filename interpolates a user-supplied version label."""
+        package = gzip.compress(b'corpus bytes')
+        inner = tmp_path / 'inner'
+        headers = {
+            'Content-Disposition': 'attachment; filename="../../escaped.tar.gz"',
+            'Content-Length': str(len(package)),
+            'x-package-sha256': hashlib.sha256(package).hexdigest(),
+        }
+        with patch(
+            'evolve.hosted.urllib.request.urlopen',
+            FakeUrlopen([('/package', package, headers)]),
+        ):
+            path = await benchmarks_factory(CONFIG).download_package(
+                'imp-esc', to=str(inner)
+            )
+
+        assert path.startswith(str(inner))
+        assert '..' not in path
+        assert not (tmp_path / 'escaped.tar.gz').exists()
 
     @pytest.mark.asyncio
     async def test_download_package_not_retained_is_distinguishable(self):

@@ -211,6 +211,23 @@ class EvolveDigestMismatchError(Exception):
         self.actual = actual
 
 
+class EvolveIncompleteDownloadError(Exception):
+    """A download ended early: fewer bytes arrived than Content-Length promised.
+
+    Its own type because a truncated body is not a wrong body — the distinction
+    tells a caller whether to retry (yes) or to stop trusting the stored object
+    (that is the digest error).
+    """
+
+    def __init__(self, expected_bytes: int, received_bytes: int):
+        super().__init__(
+            f'download ended early: the server declared {expected_bytes} bytes '
+            f'and {received_bytes} arrived'
+        )
+        self.expected_bytes = expected_bytes
+        self.received_bytes = received_bytes
+
+
 class EvolveAPIError(Exception):
     """A typed failure from the hosted evals API.
 
@@ -1491,27 +1508,68 @@ class _HostedHttp:
                 os.makedirs(to_dir, exist_ok=True)
                 disposition = response.headers.get('Content-Disposition', '') or ''
                 match = re.search(r'filename="([^"]+)"', disposition)
-                filename = match.group(1) if match else default_filename
+                filename = _safe_download_filename(
+                    match.group(1) if match else None, default_filename
+                )
                 target = os.path.join(to_dir, filename)
+                # TEMP-THEN-RENAME: bytes never appear at the final path until
+                # they are complete AND verified, so a transfer that dies partway
+                # leaves nothing a later run could mistake for the corpus.
+                part = f'{target}.part'
+                declared = response.headers.get('Content-Length')
                 expected = response.headers.get(PACKAGE_DIGEST_HEADER)
                 digest = hashlib.sha256()
-                with open(target, 'wb') as f:
-                    while True:
-                        chunk = response.read(1024 * 1024)
-                        if not chunk:
-                            break
-                        digest.update(chunk)
-                        f.write(chunk)
-                if expected and digest.hexdigest() != expected:
-                    # Delete first: a file on disk that does not match its stated
-                    # digest is worse than no file, because it looks like the
-                    # corpus and is not.
-                    os.unlink(target)
-                    raise EvolveDigestMismatchError(expected, digest.hexdigest())
+                received = 0
+                try:
+                    with open(part, 'wb') as f:
+                        while True:
+                            chunk = response.read(1024 * 1024)
+                            if not chunk:
+                                break
+                            digest.update(chunk)
+                            received += len(chunk)
+                            f.write(chunk)
+                    # TRUNCATION. copyfileobj over urllib treats a socket cut
+                    # mid-body as a normal end of stream, so a short read used to
+                    # return a partial file as SUCCESS. Content-Length is the
+                    # server's own count; disagreeing with it means the body did
+                    # not all arrive.
+                    if declared is not None and received != int(declared):
+                        raise EvolveIncompleteDownloadError(int(declared), received)
+                    if expected and digest.hexdigest() != expected:
+                        raise EvolveDigestMismatchError(expected, digest.hexdigest())
+                    os.replace(part, target)
+                except BaseException:
+                    # The partial is never promoted and never survives: a file
+                    # that looks like the corpus and is not is worse than none.
+                    try:
+                        os.unlink(part)
+                    except OSError:
+                        pass
+                    raise
                 return target
         except urllib.error.HTTPError as exc:
             _raise_api_error(exc)
             raise  # unreachable; _raise_api_error always raises
+
+
+def _safe_download_filename(candidate: Optional[str], fallback: str) -> str:
+    """The filename to save a download under, taken from Content-Disposition.
+
+    THE SERVER DOES NOT GET TO CHOOSE A PATH. This value is joined onto a
+    directory the user picked, so a filename carrying a separator or ".." would
+    write outside it — and the benchmark download's filename interpolates a
+    user-supplied version label, which makes it attacker-influenced rather than
+    merely server-supplied. basename() strips any directory part, and anything
+    that still looks like a path component, is empty, or is a dot-entry falls
+    back to the caller's own name.
+    """
+    if not candidate:
+        return fallback
+    name = os.path.basename(candidate.replace('\\', '/'))
+    if name in ('', '.', '..') or '/' in name or any(ord(c) < 32 for c in name):
+        return fallback
+    return name
 
 
 def _multipart_body(
@@ -1941,6 +1999,9 @@ class BenchmarksClient:
         if to is not None:
             return await self._http.download(path, to, f'import-{id}-corpus.tar.gz')
         payload, headers = await self._http.request_bytes(path)
+        declared = headers.get('Content-Length')
+        if declared is not None and len(payload) != int(declared):
+            raise EvolveIncompleteDownloadError(int(declared), len(payload))
         expected = headers.get(PACKAGE_DIGEST_HEADER)
         if expected:
             actual = hashlib.sha256(payload).hexdigest()
