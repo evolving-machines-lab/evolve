@@ -1,5 +1,5 @@
 import { createWriteStream } from "fs";
-import { mkdir } from "fs/promises";
+import { mkdir, rm } from "fs/promises";
 import { join } from "path";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
@@ -823,6 +823,46 @@ function makeWatch(
  * ```
  */
 /**
+ * The server states the verified digest of a package here. When it is present
+ * the client re-checks it: the server hashes the stored object before sending,
+ * and this closes the other half of the chain — the wire. A digest nobody
+ * verifies is decoration.
+ */
+export const PACKAGE_DIGEST_HEADER = "x-package-sha256";
+
+/**
+ * Downloaded bytes did not match the digest the server stated for them.
+ *
+ * NOT an EvolveApiError: the request succeeded, so it gets its own type rather
+ * than an invented error code.
+ */
+export class EvolveDigestMismatchError extends Error {
+  readonly name = "EvolveDigestMismatchError";
+  constructor(
+    readonly expected: string,
+    readonly actual: string
+  ) {
+    super(
+      `downloaded bytes do not match the digest the server stated ` +
+        `(expected ${expected}, got ${actual})`
+    );
+  }
+}
+
+/**
+ * Throw unless `bytes` hash to the digest the response declared (no header =
+ * nothing to check). The in-memory shape only — the to-disk shape hashes while
+ * streaming, because it must not hold the package in memory to check it.
+ */
+async function verifyPackageDigest(res: Response, bytes: Buffer): Promise<void> {
+  const expected = res.headers.get(PACKAGE_DIGEST_HEADER);
+  if (!expected) return;
+  const { createHash } = await import("crypto");
+  const actual = createHash("sha256").update(bytes).digest("hex");
+  if (actual !== expected) throw new EvolveDigestMismatchError(expected, actual);
+}
+
+/**
  * Server-chosen filename for a downloaded package ("<benchmark>@<version>-
  * corpus.tar.gz"), falling back to the import id when a proxy strips
  * Content-Disposition. Mirrors exportFilename() in jobs().
@@ -1010,6 +1050,9 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
       );
       if (options?.stream) {
         if (!res.body) throw new Error("Package response has no body");
+        // The ONLY shape that cannot be verified here: the caller consumes the
+        // stream, so only they ever hold the whole body. Read
+        // PACKAGE_DIGEST_HEADER off the response and hash as you go.
         return res.body as ReadableStream<Uint8Array>;
       }
       if (options?.to) {
@@ -1017,14 +1060,29 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
         const dir = options.to;
         await mkdir(dir, { recursive: true });
         const filePath = join(dir, packageFilename(res, id));
+        // Hashed WHILE streaming, never buffered: a package can be 512 MB, and
+        // reading it into memory to check a digest would trade one correctness
+        // problem for a heap one.
+        const { createHash } = await import("crypto");
+        const hash = createHash("sha256");
         const nodeStream = Readable.fromWeb(
           res.body as import("stream/web").ReadableStream
         );
+        nodeStream.on("data", (chunk: Buffer) => hash.update(chunk));
         await pipeline(nodeStream, createWriteStream(filePath));
+        const expected = res.headers.get(PACKAGE_DIGEST_HEADER);
+        const actual = hash.digest("hex");
+        if (expected && actual !== expected) {
+          // Removed first: a file on disk that does not match its stated digest
+          // is worse than no file, because it looks like the corpus and is not.
+          await rm(filePath, { force: true }).catch(() => {});
+          throw new EvolveDigestMismatchError(expected, actual);
+        }
         return filePath;
       }
-      const bytes = await res.arrayBuffer();
-      return Buffer.from(bytes);
+      const bytes = Buffer.from(await res.arrayBuffer());
+      await verifyPackageDigest(res, bytes);
+      return bytes;
     }) as BenchmarksClient["downloadPackage"],
 
     listImports(options?: ListImportsOptions): BenchmarkImportList {

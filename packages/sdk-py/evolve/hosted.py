@@ -13,6 +13,7 @@ the message plus the stable machine-readable ``code``.
 
 import asyncio
 import gzip
+import hashlib
 import io
 import json
 import os
@@ -30,6 +31,16 @@ from typing import Any, AsyncIterator, Callable, Dict, List, Literal, Optional, 
 from .config import HostedClientConfig
 
 DEFAULT_BASE_URL = 'https://dashboard.evolvingmachines.ai'
+
+# Request budgets. A status poll and a 512 MB package are not the same wait, and
+# sizing both by the smaller one made large downloads fail on the in-memory
+# shape while succeeding on the to-disk shape.
+REQUEST_TIMEOUT_SEC = 60
+DOWNLOAD_TIMEOUT_SEC = 600
+
+#: The server states the verified digest of a download here. When it is present
+#: the client re-checks it — a digest nobody verifies is decoration.
+PACKAGE_DIGEST_HEADER = 'x-package-sha256'
 
 _TERMINAL_JOB_STATUSES = {'COMPLETED', 'CANCELLED', 'FAILED'}
 
@@ -116,6 +127,7 @@ HOSTED_ERROR_CODES: 'tuple[str, ...]' = (
     'invalid_archive',
     'package_not_retained',
     'package_corrupt',
+    'package_missing',
     'internal_error',
 )
 
@@ -171,6 +183,7 @@ HostedErrorCode = Literal[
     'invalid_archive',
     'package_not_retained',
     'package_corrupt',
+    'package_missing',
     'internal_error',
 ]
 
@@ -178,6 +191,24 @@ HostedErrorCode = Literal[
 def is_hosted_error_code(value: Any) -> bool:
     """True when ``value`` is a code this SDK version knows about."""
     return isinstance(value, str) and value in HOSTED_ERROR_CODES
+
+
+class EvolveDigestMismatchError(Exception):
+    """Downloaded bytes did not match the digest the server stated for them.
+
+    The server verifies a package against its recorded sha256 before sending,
+    and echoes the verified value; this is the client half of that chain,
+    covering the wire. It is NOT an API error — the request succeeded — so it is
+    its own type rather than an EvolveAPIError with an invented code.
+    """
+
+    def __init__(self, expected: str, actual: str):
+        super().__init__(
+            f'downloaded bytes do not match the digest the server stated '
+            f'(expected {expected}, got {actual})'
+        )
+        self.expected = expected
+        self.actual = actual
 
 
 class EvolveAPIError(Exception):
@@ -1363,8 +1394,20 @@ class _HostedHttp:
     ) -> Dict[str, Any]:
         return await asyncio.to_thread(self._request_sync, path, method, body, headers, False)
 
-    async def request_bytes(self, path: str) -> 'tuple[bytes, Dict[str, str]]':
-        return await asyncio.to_thread(self._request_sync, path, 'GET', None, None, True)
+    async def request_bytes(
+        self, path: str, *, timeout: int = DOWNLOAD_TIMEOUT_SEC
+    ) -> 'tuple[bytes, Dict[str, str]]':
+        """GET raw bytes plus response headers.
+
+        The timeout defaults to the DOWNLOAD budget, not the JSON one: every
+        caller of this is fetching an archive or a package, and a 512 MB body
+        does not arrive inside a request timeout sized for a status poll. The
+        to-disk path has always used the larger budget, and the two shapes
+        failing at different sizes is the kind of difference nobody debugs.
+        """
+        return await asyncio.to_thread(
+            self._request_sync, path, 'GET', None, None, True, timeout
+        )
 
     async def request_upload(
         self, path: str, data: bytes, headers: Dict[str, str], method: str = 'POST'
@@ -1409,6 +1452,7 @@ class _HostedHttp:
         body: Optional[Dict[str, Any]],
         headers: Optional[Dict[str, str]],
         raw: bool,
+        timeout: int = REQUEST_TIMEOUT_SEC,
     ):
         data = json.dumps(body).encode('utf-8') if body is not None else None
         request_headers = {
@@ -1426,7 +1470,7 @@ class _HostedHttp:
             method=method,
         )
         try:
-            with urllib.request.urlopen(request, timeout=60) as response:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
                 payload = response.read()
                 if raw:
                     return payload, dict(response.headers.items())
@@ -1443,14 +1487,27 @@ class _HostedHttp:
             headers={'Authorization': f'Bearer {self.api_key()}'},
         )
         try:
-            with urllib.request.urlopen(request, timeout=600) as response:
+            with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT_SEC) as response:
                 os.makedirs(to_dir, exist_ok=True)
                 disposition = response.headers.get('Content-Disposition', '') or ''
                 match = re.search(r'filename="([^"]+)"', disposition)
                 filename = match.group(1) if match else default_filename
                 target = os.path.join(to_dir, filename)
+                expected = response.headers.get(PACKAGE_DIGEST_HEADER)
+                digest = hashlib.sha256()
                 with open(target, 'wb') as f:
-                    shutil.copyfileobj(response, f)
+                    while True:
+                        chunk = response.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        digest.update(chunk)
+                        f.write(chunk)
+                if expected and digest.hexdigest() != expected:
+                    # Delete first: a file on disk that does not match its stated
+                    # digest is worse than no file, because it looks like the
+                    # corpus and is not.
+                    os.unlink(target)
+                    raise EvolveDigestMismatchError(expected, digest.hexdigest())
                 return target
         except urllib.error.HTTPError as exc:
             _raise_api_error(exc)
@@ -1883,7 +1940,12 @@ class BenchmarksClient:
         path = f'/api/benchmarks/imports/{urllib.parse.quote(id)}/package'
         if to is not None:
             return await self._http.download(path, to, f'import-{id}-corpus.tar.gz')
-        payload, _headers = await self._http.request_bytes(path)
+        payload, headers = await self._http.request_bytes(path)
+        expected = headers.get(PACKAGE_DIGEST_HEADER)
+        if expected:
+            actual = hashlib.sha256(payload).hexdigest()
+            if actual != expected:
+                raise EvolveDigestMismatchError(expected, actual)
         return payload
 
     def list_imports(

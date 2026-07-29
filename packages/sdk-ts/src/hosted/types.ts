@@ -1387,6 +1387,7 @@ export const HOSTED_ERROR_CODES = [
   "invalid_archive",
   "package_not_retained",
   "package_corrupt",
+  "package_missing",
   "internal_error",
 ] as const;
 

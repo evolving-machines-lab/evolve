@@ -750,9 +750,9 @@ The id is the import id — what `import()` returned and what `getImport()` poll
 
 **This is the one call that returns task files, and it returns them only to you.** Ownership is a single equality — the benchmark's owner is the caller — with no admin path and no exception for platform-curated benchmarks, which have no owner and so cannot be downloaded by anyone. Somebody else's import answers `import_not_found`, the same answer a made-up id gets, because a `403` that only appears for real ids is a way to discover which ids are real.
 
-The server re-hashes the stored bytes and compares them against the digest recorded at import before it sends anything, so a successful call is byte-identical to what you uploaded. The verified digest comes back in the `x-package-sha256` header if you want to check again after transfer. Bytes that fail that comparison are refused rather than served — handing you a corpus that quietly differs from your own would be worse than handing you nothing.
+The server re-hashes the stored bytes and compares them against the digest recorded at import before it sends anything, and echoes the verified value in `x-package-sha256`. The SDK then re-checks that header against the bytes it actually received and throws `EvolveDigestMismatchError` if they disagree — so the chain is closed at both ends, storage and wire. The to-disk shape hashes while streaming and deletes the file rather than leaving one that looks like your corpus and is not. Only `{ stream: true }` is unverified, because you hold the bytes, not the SDK; read the header and hash as you go.
 
-Two things are worth knowing before you rely on it. Versions imported before packages were retained have none, and it cannot be reconstructed: those answer `package_not_retained`, which is deliberately a different code from `import_not_found` so a client can say which happened. Re-import the corpus as a new version to get a package for it. And this is the only way to recover `task.toml` — the importer parses it into environment specs and keeps a digest, so it exists nowhere else on the server.
+Three things are worth knowing before you rely on it. Versions imported before packages were retained have none, and it cannot be reconstructed: those answer `package_not_retained`, a different code from `import_not_found` so a client can say which happened. A version whose stored object has since gone answers `410 package_missing` — also terminal, also fixed only by re-importing. And this is the only way to recover `task.toml`: the importer parses it into environment specs and keeps a digest, so it exists nowhere else on the server.
 
 ### Deleting one
 
@@ -1089,10 +1089,10 @@ Everything else is identical: the patch is collected, the verifier scores it, an
 | `SCORED` | Valid reward recorded in `reward` |
 | `SCORING_ERROR` | Verifier crashed or returned an out-of-domain reward — read `failurePhase`, then `failureDetail` |
 | `INFRASTRUCTURE_ERROR` | Trial lost before a result was recorded — read `failurePhase`, then `rerunFailed()` |
-| `INDETERMINATE` | The platform cannot tell whether the trial completed |
+| `INDETERMINATE` | The verifier produced no reward file at all — read `failurePhase`, then `failureDetail` |
 | `CANCELLED` | Cancelled before settling |
 
-`SCORING_ERROR` is the one status a task author has to act on, so it says which of four things went wrong. `failurePhase` carries the machine-readable cause and `failureDetail` carries a sentence plus the last few kilobytes of the verifier's own stdout and stderr — the tail, because a grader prints its progress first and its traceback last. The box those bytes came from is destroyed seconds later, so this is the only record of them.
+`SCORING_ERROR` and `INDETERMINATE` are the two statuses a task author has to act on, so both say what went wrong. `failurePhase` carries the machine-readable cause and `failureDetail` carries a sentence plus the last few kilobytes of the verifier's own stdout and stderr — the tail, because a grader prints its progress first and its traceback last. The box those bytes came from is destroyed seconds later, so this is the only record of them.
 
 | `failurePhase` | What happened |
 |--------|---------|
@@ -1100,10 +1100,11 @@ Everything else is identical: the patch is collected, the verifier scores it, an
 | `verifier_crash` | The verifier exited non-zero, or never reported an exit status at all. The excerpt usually names the missing module or failed assertion. |
 | `reward_out_of_range` | The verifier finished and wrote a number, but not one in `[0, 1]` — `-1` is the conventional crash sentinel, and a reward above 1 usually means a rubric was summed rather than normalized. |
 | `reward_unparseable` | The verifier claimed success and wrote something that is not a score: malformed JSON, no `reward` key, or an empty `reward.txt`. |
+| `reward_missing` | No reward file at all, which is `INDETERMINATE` rather than `SCORING_ERROR`. On its own it means a verifier that exited cleanly without writing a verdict; paired with `verifier_crash` or `verifier_timeout` it is the hard-crash case, and the excerpt is the only evidence of it. |
 
 The verifier's exit takes precedence over the reward's shape, because a killed grader leaves a truncated `reward.json` and reporting that as `reward_unparseable` would send you to debug your JSON instead of your timeout. Nothing is lost by the ordering — `failureDetail` always states both.
 
-Regrade results use the same four values in the same field, and the `failureDetail` on a list row is truncated to 2000 characters; fetch the trial itself for the whole excerpt.
+Regrade results use the same five values in the same field, and the `failureDetail` on a list row is truncated to 2000 characters; fetch the trial itself for the whole excerpt.
 
 **Import** (`BenchmarkImport.status`) — the SAME four words a job uses, because an import is a job:
 

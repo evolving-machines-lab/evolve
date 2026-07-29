@@ -126,6 +126,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
+import { createHash } from "node:crypto";
 import { gunzipSync, gzipSync } from "node:zlib";
 
 import {
@@ -133,6 +134,7 @@ import {
   customHarnesses,
   jobs,
   EvolveApiError,
+  EvolveDigestMismatchError,
   isHostedErrorCode,
   NoActiveVersionError,
 } from "../../src/hosted/index.ts";
@@ -2412,7 +2414,7 @@ async function testDownloadPackageBuffer() {
       headers: {
         "Content-Type": "application/gzip",
         "Content-Disposition": 'attachment; filename="acme@1.1-corpus.tar.gz"',
-        "x-package-sha256": "abc123",
+        "x-package-sha256": createHash("sha256").update(pkg).digest("hex"),
       },
     });
 
@@ -2442,6 +2444,7 @@ async function testDownloadPackageToFile() {
       bodyBytes: pkg,
       headers: {
         "Content-Disposition": 'attachment; filename="acme@1.1-corpus.tar.gz"',
+        "x-package-sha256": createHash("sha256").update(pkg).digest("hex"),
       },
     });
 
@@ -2481,6 +2484,49 @@ async function testDownloadPackageStream() {
     }
     assertEqual(Buffer.concat(chunks).equals(pkg), true, "stream bytes match the package");
   } finally {
+    restoreFetch();
+  }
+}
+
+async function testDownloadPackageDigestMismatch() {
+  console.log("\n--- downloadPackage() REFUSES bytes that fail the stated digest ---");
+  installMockFetch();
+  const tmpDir = join(tmpdir(), `hosted-package-bad-${Date.now()}`);
+  try {
+    const pkg = gzipSync(Buffer.from("corpus bytes"));
+    setMockResponse("/api/benchmarks/imports/ver-bad/package", {
+      status: 200,
+      body: null,
+      bodyBytes: pkg,
+      headers: {
+        "Content-Disposition": 'attachment; filename="acme@1.1-corpus.tar.gz"',
+        "x-package-sha256": "f".repeat(64), // not the bytes above
+      },
+    });
+
+    const b = benchmarks({ apiKey: "test-key", baseUrl: BASE });
+
+    let bufferThrew = false;
+    try {
+      await b.downloadPackage("ver-bad");
+    } catch (error) {
+      bufferThrew = error instanceof EvolveDigestMismatchError;
+    }
+    assert(bufferThrew, "the in-memory shape throws EvolveDigestMismatchError");
+
+    let fileThrew = false;
+    try {
+      await b.downloadPackage("ver-bad", { to: tmpDir });
+    } catch (error) {
+      fileThrew = error instanceof EvolveDigestMismatchError;
+    }
+    assert(fileThrew, "the to-disk shape throws too");
+    // A file that does not match its digest looks like the corpus and is not,
+    // so it must not survive the failure.
+    const leftBehind = await readFile(join(tmpDir, "acme@1.1-corpus.tar.gz")).catch(() => null);
+    assertEqual(leftBehind, null, "the mismatched file is removed, not left on disk");
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
     restoreFetch();
   }
 }
@@ -2559,6 +2605,7 @@ async function main() {
   await testDownloadPackageBuffer();
   await testDownloadPackageToFile();
   await testDownloadPackageStream();
+  await testDownloadPackageDigestMismatch();
   await testDownloadPackageNotRetained();
   await testExportTerminalRequired();
   await testWatchStreamsToTerminal();

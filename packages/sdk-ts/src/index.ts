@@ -339,6 +339,7 @@ export {
   HOSTED_ERROR_CODES,
   isHostedErrorCode,
   EvolveApiError,
+  EvolveDigestMismatchError,
   NoActiveVersionError,
   type HostedEvolve,
   type HostedErrorCode,

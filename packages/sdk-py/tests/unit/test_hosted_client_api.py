@@ -28,6 +28,7 @@ Mocks urllib at the module boundary; no real network calls.
 """
 
 import gzip
+import hashlib
 import json
 import urllib.parse as urllib_parse
 from unittest.mock import patch
@@ -39,6 +40,7 @@ from evolve import (
     JobCounts,
     JobFailure,
     EvolveAPIError,
+    EvolveDigestMismatchError,
     HostedClientConfig,
     NoActiveVersionError,
     TaskProviderVerdict,
@@ -1233,11 +1235,15 @@ class TestJobs:
     async def test_download_package_bytes_and_streamed_file(self, tmp_path):
         """The OWNER-ONLY corpus retrieval: bytes, or straight to a directory."""
         package = gzip.compress(b'corpus bytes')
+        digest = hashlib.sha256(package).hexdigest()
         fake = FakeUrlopen([
             (
                 '/package',
                 package,
-                {'Content-Disposition': 'attachment; filename="acme@1.1-corpus.tar.gz"'},
+                {
+                    'Content-Disposition': 'attachment; filename="acme@1.1-corpus.tar.gz"',
+                    'x-package-sha256': digest,
+                },
             ),
         ])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
@@ -1249,6 +1255,33 @@ class TestJobs:
         with open(path, 'rb') as f:
             assert f.read() == package
         assert '/api/benchmarks/imports/imp-1/package' in fake.requests[0].full_url
+
+    @pytest.mark.asyncio
+    async def test_download_package_refuses_bytes_failing_the_stated_digest(self, tmp_path):
+        """The server hashes before sending; the client closes the wire half."""
+        package = gzip.compress(b'corpus bytes')
+        headers = {
+            'Content-Disposition': 'attachment; filename="acme@1.1-corpus.tar.gz"',
+            'x-package-sha256': 'f' * 64,  # not the bytes above
+        }
+        with patch(
+            'evolve.hosted.urllib.request.urlopen',
+            FakeUrlopen([('/package', package, headers)]),
+        ):
+            with pytest.raises(EvolveDigestMismatchError):
+                await benchmarks_factory(CONFIG).download_package('imp-bad')
+
+        with patch(
+            'evolve.hosted.urllib.request.urlopen',
+            FakeUrlopen([('/package', package, headers)]),
+        ):
+            with pytest.raises(EvolveDigestMismatchError):
+                await benchmarks_factory(CONFIG).download_package(
+                    'imp-bad', to=str(tmp_path)
+                )
+        # A file that does not match its digest looks like the corpus and is
+        # not, so it must not survive the failure.
+        assert list(tmp_path.iterdir()) == []
 
     @pytest.mark.asyncio
     async def test_download_package_not_retained_is_distinguishable(self):
