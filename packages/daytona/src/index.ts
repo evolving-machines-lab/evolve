@@ -265,8 +265,11 @@ function withInBoxTimeout(wrapped: string, timeoutSec?: number): string {
   // command without this wrapper returned in 1.4s.
   // Single-quoted, and the body deliberately contains no single quote of its
   // own (the payload is base64) so no escaping is required.
-  // 126 for "the script never became runnable": nonzero, and distinct from both
-  // 124 (timed out) and anything the caller's own command can return.
+  // 126 is the conventional "found but could not execute" status, and it is
+  // what a non-executable script would exit with anyway — so it is NOT a
+  // private signal and nothing should branch on the value. NONZERO is the
+  // load-bearing property: every caller that checks an exit code sees a failure
+  // instead of a success with empty output.
   const inner =
     `echo ${encoded} | base64 -d > ${path} && [ -s ${path} ] || ` +
     `{ rm -f ${path}; exit 126; }; ` +
