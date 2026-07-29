@@ -73,7 +73,7 @@ async function testClaudeBuildCommandUsesReasoningEffort(): Promise<void> {
   console.log("\n[0] Claude buildCommand passes reasoning effort");
   const defaultAgent = createAgent();
   const defaultCmd = (defaultAgent as any).buildCommand("hello") as string;
-  assert(!defaultCmd.includes("--effort"), "omits effort flag when unset");
+  assert(defaultCmd.includes("--effort high"), "omitted effort stamps the pinned Claude Code default (high)");
 
   const maxAgent = new Agent({
     type: "claude",
@@ -82,7 +82,61 @@ async function testClaudeBuildCommandUsesReasoningEffort(): Promise<void> {
     reasoningEffort: "max",
   } as any, {});
   const maxCmd = (maxAgent as any).buildCommand("hello") as string;
-  assert(maxCmd.includes("--effort max"), "passes Claude effort flag when set");
+  assert(maxCmd.includes("--effort max"), "caller's effort overrides the pin");
+}
+
+async function testPinnedReasoningEffortDefaults(): Promise<void> {
+  console.log("\n[0b] Omitted reasoningEffort stamps each harness's registry pin on the wire");
+  const { AGENT_REGISTRY, resolveReasoningEffort, isThinkingEnabled } =
+    await import("../../src/registry.js");
+
+  // Registry pins — one per harness that supports effort/thinking.
+  assertEqual(AGENT_REGISTRY.claude.defaultReasoningEffort, "high", "claude pin is high (Claude Code documented default)");
+  assertEqual(AGENT_REGISTRY.codex.defaultReasoningEffort, "medium", "codex pin is medium (OpenAI documented default)");
+  assertEqual(AGENT_REGISTRY.qwen.defaultReasoningEffort, "thinking", "qwen pin is thinking");
+  assertEqual(AGENT_REGISTRY.kimi.defaultReasoningEffort, "max", "kimi pin is max (K3 API default)");
+  assertEqual(AGENT_REGISTRY.opencode.defaultReasoningEffort, "medium", "opencode pin is medium variant");
+  assertEqual(AGENT_REGISTRY.droid.defaultReasoningEffort, "medium", "droid pin is medium (Evolve's choice; Factory documents none)");
+  assertEqual(AGENT_REGISTRY.gemini.defaultReasoningEffort, undefined, "gemini has no effort control, no pin");
+
+  // Resolution: caller's value wins, pin fills omission.
+  assertEqual(resolveReasoningEffort("codex", "xhigh"), "xhigh", "caller effort beats the pin");
+  assertEqual(resolveReasoningEffort("codex", undefined), "medium", "omitted effort resolves to the pin");
+
+  // codex: omitted effort stamps -c model_reasoning_effort="medium".
+  const codexAgent = new Agent({ type: "codex", apiKey: "test-gateway-key", isDirectMode: false } as any, {});
+  const codexCmd = (codexAgent as any).buildCommand("hello") as string;
+  assert(codexCmd.includes('-c model_reasoning_effort="medium"'), "codex omitted effort stamps medium on the command");
+
+  // droid: omitted effort stamps --reasoning-effort medium.
+  const droidAgent = new Agent({ type: "droid", apiKey: "test-gateway-key", isDirectMode: false } as any, {});
+  const droidCmd = (droidAgent as any).buildCommand("hello") as string;
+  assert(droidCmd.includes("--reasoning-effort medium"), "droid omitted effort stamps medium on the command");
+
+  // kimi: omitted effort stamps max thinking in the KIMI_MODEL_* envs
+  // (direct wiring path; the config.toml path resolves through the same
+  // Agent.reasoningEffort()).
+  const kimiAgent = new Agent({ type: "kimi", apiKey: "direct-api-key", isDirectMode: true, model: "kimi-k3" } as any, {});
+  const kimiEnvs = (kimiAgent as any).buildKimiDirectModelEnvs() as Record<string, string>;
+  assertEqual(kimiEnvs.KIMI_MODEL_THINKING_EFFORT, "max", "kimi omitted effort stamps max thinking effort env");
+  assertEqual(kimiEnvs.KIMI_MODEL_DEFAULT_THINKING, "true", "kimi omitted effort keeps thinking on");
+  assertEqual(kimiEnvs.KIMI_MODEL_THINKING_MODE, "on", "kimi omitted effort sets thinking mode on");
+
+  // qwen: omitted effort resolves to "thinking", which the per-run
+  // writeQwenThinkingConfig() stamps as enable_thinking=true.
+  const qwenAgent = new Agent({ type: "qwen", apiKey: "test-gateway-key", isDirectMode: false } as any, {});
+  assertEqual((qwenAgent as any).reasoningEffort(), "thinking", "qwen omitted effort resolves to thinking");
+  assert(isThinkingEnabled(resolveReasoningEffort("qwen", undefined)), "qwen pin enables thinking in the config write");
+
+  // opencode: omitted effort stamps the medium variant (also covered in [33b]).
+  const opencodeAgent = new Agent({ type: "opencode", apiKey: "test-gateway-key", isDirectMode: false } as any, {});
+  const opencodeCmd = (opencodeAgent as any).buildCommand("hello") as string;
+  assert(opencodeCmd.includes("--variant medium --thinking"), "opencode omitted effort stamps the medium variant");
+
+  // gemini: no effort control — nothing stamped.
+  const geminiAgent = new Agent({ type: "gemini", apiKey: "test-gateway-key", isDirectMode: false } as any, {});
+  const geminiCmd = (geminiAgent as any).buildCommand("hello") as string;
+  assert(!geminiCmd.includes("effort"), "gemini command carries no effort flag");
 }
 
 async function testSessionCostNormalization(): Promise<void> {
@@ -1691,6 +1745,7 @@ async function main(): Promise<void> {
   console.log("Cost API Unit Tests");
   console.log("============================================================");
   await testClaudeBuildCommandUsesReasoningEffort();
+  await testPinnedReasoningEffortDefaults();
   await testSessionCostNormalization();
   await testRunCostSelectors();
   await testNoActivitySessionSwitchDoesNotClobberTag();

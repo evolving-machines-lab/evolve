@@ -42,6 +42,7 @@ import {
   getAgentConfig,
   getOpenCodeReasoningVariant,
   isThinkingEnabled,
+  resolveReasoningEffort,
   type AgentRegistryEntry,
 } from "./registry";
 import {
@@ -277,15 +278,16 @@ const KIMI_CODE_THINKING_EFFORTS = new Set([
   "max",
 ]);
 
-// When the caller does not pass a reasoningEffort, pin max thinking in the
-// Kimi Code config (K3's own API default is already max; this makes the
-// SDK default explicit rather than relying on the provider's default).
-const KIMI_CODE_DEFAULT_THINKING_EFFORT = "max";
-
+// The omitted-effort pin ("max", matching K3's own API default) lives in
+// AGENT_REGISTRY.kimi.defaultReasoningEffort and is applied by
+// Agent.reasoningEffort() before this mapper runs — callers here always
+// receive the resolved value. Values outside the CLI's effort enum (e.g.
+// "thinking"/"no-thinking") map to undefined: thinking on/off is carried
+// separately via isThinkingEnabled().
 function getKimiCodeThinkingEffort(
   reasoningEffort?: string,
 ): string | undefined {
-  if (!reasoningEffort) return KIMI_CODE_DEFAULT_THINKING_EFFORT;
+  if (!reasoningEffort) return undefined;
   return KIMI_CODE_THINKING_EFFORTS.has(reasoningEffort)
     ? reasoningEffort
     : undefined;
@@ -716,15 +718,26 @@ export class Agent {
   }
 
   /**
+   * The effort this agent's runs stamp on the wire: the caller's
+   * reasoningEffort when given, else the harness's registry-pinned default.
+   * Every command/env/config build path reads this, so an omitted effort is
+   * an explicit stamp of the pin — never the vendor's silent default.
+   */
+  private reasoningEffort(): string | undefined {
+    return resolveReasoningEffort(
+      this.agentConfig.type,
+      this.agentConfig.reasoningEffort,
+    );
+  }
+
+  /**
    * Kimi Code model envs for direct-style credential injection (direct mode
    * and externalGateway mode). Kimi Code reads KIMI_MODEL_* — the registry's
    * KIMI_API_KEY/KIMI_BASE_URL are SDK-facing inputs the CLI never reads.
    */
   private buildKimiDirectModelEnvs(): Record<string, string> {
-    const thinkingEnabled = isThinkingEnabled(this.agentConfig.reasoningEffort);
-    const thinkingEffort = getKimiCodeThinkingEffort(
-      this.agentConfig.reasoningEffort,
-    );
+    const thinkingEnabled = isThinkingEnabled(this.reasoningEffort());
+    const thinkingEffort = getKimiCodeThinkingEffort(this.reasoningEffort());
     const envVars: Record<string, string> = {
       KIMI_MODEL_NAME: this.resolveCommandModel(
         this.agentConfig.model || this.registry.defaultModel,
@@ -1239,7 +1252,7 @@ export class Agent {
       (existingModel.headers as Record<string, string>) ?? {};
     const reasoningVariant =
       this.agentConfig.type === "opencode"
-        ? getOpenCodeReasoningVariant(this.agentConfig.reasoningEffort)
+        ? getOpenCodeReasoningVariant(this.reasoningEffort())
         : undefined;
     const existingVariants =
       (existingModel.variants as Record<string, unknown>) ?? {};
@@ -1927,7 +1940,7 @@ export class Agent {
       isResume: this.hasRun,
       sessionId:
         this.agentConfig.type === "droid" ? this.droidSessionId : undefined,
-      reasoningEffort: this.agentConfig.reasoningEffort,
+      reasoningEffort: this.reasoningEffort(),
       isDirectMode: this.agentConfig.isDirectMode,
       isExternalGateway: Boolean(this.agentConfig.externalGateway),
       skills: this.skills,
@@ -2139,7 +2152,7 @@ export class Agent {
     if (this.agentConfig.type === "qwen") {
       await writeQwenThinkingConfig(
         sandbox,
-        isThinkingEnabled(this.agentConfig.reasoningEffort),
+        isThinkingEnabled(this.reasoningEffort()),
         this.homeDir,
       );
     }
@@ -2173,10 +2186,8 @@ export class Agent {
           model: this.resolveCommandModel(
             this.agentConfig.model || this.registry.defaultModel,
           ),
-          defaultThinking: isThinkingEnabled(this.agentConfig.reasoningEffort),
-          thinkingEffort: getKimiCodeThinkingEffort(
-            this.agentConfig.reasoningEffort,
-          ),
+          defaultThinking: isThinkingEnabled(this.reasoningEffort()),
+          thinkingEffort: getKimiCodeThinkingEffort(this.reasoningEffort()),
         },
         this.homeDir,
       );

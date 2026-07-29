@@ -5,7 +5,7 @@
  * All differences between agents are data, not code.
  */
 
-import type { AgentType, SkillsConfig } from "./types";
+import type { AgentType, ReasoningEffort, SkillsConfig } from "./types";
 import { DEFAULT_HOME_DIR } from "./constants";
 
 // =============================================================================
@@ -81,6 +81,19 @@ export interface AgentRegistryEntry {
 
   /** Default model alias */
   defaultModel: string;
+
+  /**
+   * Reasoning effort Evolve pins when the caller omits `reasoningEffort`.
+   *
+   * Every run stamps this value explicitly on the wire (flag/env/config file)
+   * instead of relying on the vendor's silent default — managed-evals
+   * reproducibility requires the effort a run used to be recorded, not implied
+   * by whatever the CLI happened to default to that week. Where the vendor
+   * documents a default, the pin matches it; where none is documented, the pin
+   * is Evolve's choice (noted per entry). Absent only for harnesses with no
+   * effort control (Gemini).
+   */
+  defaultReasoningEffort?: ReasoningEffort;
 
   /** Available models for this agent */
   models: ModelInfo[];
@@ -172,6 +185,20 @@ export interface AgentRegistryEntry {
   checkpointExcludes?: string[];
 }
 
+/**
+ * The effort a run actually stamps: the caller's value when given, else the
+ * harness's pinned default. Undefined only for harnesses with no effort
+ * control (Gemini). All command/env/config build paths resolve through this
+ * so an omitted effort is an explicit stamp of the pin, never the vendor's
+ * silent default.
+ */
+export function resolveReasoningEffort(
+  agentType: AgentType,
+  reasoningEffort?: string,
+): string | undefined {
+  return reasoningEffort ?? AGENT_REGISTRY[agentType]?.defaultReasoningEffort;
+}
+
 export function isThinkingEnabled(reasoningEffort?: string): boolean {
   return reasoningEffort !== "off"
     && reasoningEffort !== "none"
@@ -210,6 +237,12 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     baseUrlEnv: "ANTHROPIC_BASE_URL",
     customHeadersEnv: "ANTHROPIC_CUSTOM_HEADERS",
     defaultModel: "opus",
+    // Claude Code's own documented default (code.claude.com/docs/en/model-config,
+    // "Adjust effort level", checked 2026-07-29): "The default effort is `high`
+    // on every model that supports effort, except Opus 4.7, which defaults to
+    // `xhigh`." No model in this lineup is Opus 4.7, so `high` is the vendor
+    // default for all of them — stamped explicitly via --effort.
+    defaultReasoningEffort: "high",
     models: [
       { alias: "fable", modelId: "claude-fable-5", description: "Highest capability, long-horizon agentic work" },
       { alias: "opus", modelId: "claude-opus-5", description: "Complex reasoning, R&D, architecting" },
@@ -257,6 +290,9 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     // before it ships.
     baseUrlEnv: "OPENAI_BASE_URL",
     defaultModel: "gpt-5.6-sol",
+    // OpenAI's documented default for codex (model_reasoning_effort: medium).
+    // Stamped explicitly via -c model_reasoning_effort on every run.
+    defaultReasoningEffort: "medium",
     models: [
       { alias: "gpt-5.6-sol", modelId: "gpt-5.6-sol", description: "Newest frontier flagship" },
       { alias: "gpt-5.6-terra", modelId: "gpt-5.6-terra", description: "Balances intelligence and cost" },
@@ -325,6 +361,9 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     apiKeyEnv: "OPENAI_API_KEY",
     baseUrlEnv: "OPENAI_BASE_URL",
     defaultModel: "qwen3.7-max",
+    // Qwen models default to thinking on; pinned so the enable_thinking config
+    // write is always an explicit choice, never the CLI's silent default.
+    defaultReasoningEffort: "thinking",
     models: [
       { alias: "qwen3.7-max", modelId: "qwen3.7-max", description: "Strongest reasoning and coding option" },
       { alias: "qwen3.7-plus", modelId: "qwen3.7-plus", description: "Latest balanced Qwen Cloud recommendation" },
@@ -370,6 +409,10 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     apiKeyEnv: "KIMI_API_KEY",
     baseUrlEnv: "KIMI_BASE_URL",
     defaultModel: "kimi-k3",
+    // Moonshot's K3 API documents reasoning_effort default max (thinking always
+    // on). Pinned here so both kimi wiring paths (KIMI_MODEL_* envs and
+    // config.toml) stamp it explicitly.
+    defaultReasoningEffort: "max",
     models: [
       { alias: "kimi-k3", modelId: "moonshot/kimi-k3", description: "Latest flagship: 1M context, always-on thinking", maxContextSize: 1048576 },
       { alias: "kimi-k2.7-code", modelId: "moonshot/kimi-k2.7-code", description: "Latest coding-specialized standard model" },
@@ -422,6 +465,10 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     apiKeyEnv: "OPENROUTER_API_KEY",
     baseUrlEnv: "OPENAI_BASE_URL",
     defaultModel: "openrouter/anthropic/claude-opus-5",
+    // OpenCode runs thinking at the "medium" variant when effort is omitted
+    // (see getOpenCodeReasoningVariant); pinned so that choice is registry
+    // data, stamped via --variant/--thinking and the litellm variants config.
+    defaultReasoningEffort: "medium",
     // OpenRouter-only: all models route through OpenRouter (direct or via the Evolve gateway)
     providerEnvMap: {
       openrouter: { keyEnv: "OPENROUTER_API_KEY" },
@@ -477,6 +524,9 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     image: "evolve-all",
     apiKeyEnv: "FACTORY_API_KEY",
     defaultModel: "claude-opus-5",
+    // Factory documents no default reasoning effort for droid; Evolve pins
+    // medium and stamps it via --reasoning-effort on every run.
+    defaultReasoningEffort: "medium",
     models: [
       { alias: "claude-fable-5", modelId: "claude-fable-5", description: "Factory-managed Claude Fable 5" },
       { alias: "claude-opus-5", modelId: "claude-opus-5", description: "Factory-managed Claude Opus 5" },

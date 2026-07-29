@@ -304,17 +304,19 @@ The Direct key column applies to Direct Provider Key Mode. Managed BYO Provider 
 
 Agent-specific option: `reasoningEffort` controls how much reasoning/thinking the selected agent uses when that agent supports it.
 
-| Agent | Default when omitted | Supported `reasoningEffort` |
-|-------|----------------------|-----------------------------|
-| `"claude"` | Claude/model default | `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
-| `"codex"` | `"medium"` (the OpenAI default for GPT-5.6) | `"none"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"` (`"none"` and `"max"` are GPT-5.6 values) |
-| `"gemini"` | Gemini CLI/model default | Not supported |
+| Agent | Default when omitted (pinned by Evolve) | Supported `reasoningEffort` |
+|-------|------------------------------------------|-----------------------------|
+| `"claude"` | `"high"` — Claude Code's documented default | `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
+| `"codex"` | `"medium"` — the OpenAI-documented default | `"none"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"` (`"none"` and `"max"` are GPT-5.6 values) |
+| `"gemini"` | No effort control | Not supported |
 | `"qwen"` | `"thinking"` | `"thinking"` `"no-thinking"` |
-| `"kimi"` | `"thinking"` at `"max"` effort | `"thinking"` `"no-thinking"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
+| `"kimi"` | `"thinking"` at `"max"` effort — the Kimi K3 API default | `"thinking"` `"no-thinking"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
 | `"opencode"` | `"thinking"` + `"medium"` | `"thinking"` `"no-thinking"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
-| `"droid"` | Droid/model default | `"off"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"`; exact values depend on the Droid model |
+| `"droid"` | `"medium"` — Factory documents no default, so Evolve pins one | `"off"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"`; exact values depend on the Droid model |
 
-When you omit `reasoningEffort` on the `kimi` harness, the SDK pins `effort = "max"` in the Kimi Code config (Kimi K3's own API default is already max thinking, so this makes the default explicit). Note that thinking cannot be disabled on Kimi K3 at the API level — `"no-thinking"` applies to the K2-generation models.
+When you omit `reasoningEffort`, Evolve does not leave the choice to the CLI. For every harness with an effort control, the SDK stamps the pinned default from the table explicitly on the run — as a flag, an environment variable, or a config-file entry, whatever that CLI reads. This keeps runs reproducible: the effort a run used is always recorded in the run itself, never implied by a vendor default that could change under you. Where the vendor documents a default, the pin matches it; `gemini` has no effort control, so nothing is stamped there.
+
+Note that thinking cannot be disabled on Kimi K3 at the API level — `"no-thinking"` applies to the K2-generation models.
 
 For Claude Fable 5, use `model: "fable"`. For OpenCode via OpenRouter, use `model: "openrouter/anthropic/claude-fable-5"`. For Claude 1M context window, use `model: "sonnet[1m]"` or `model: "opus[1m]"`.
 
