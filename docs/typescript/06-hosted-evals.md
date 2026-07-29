@@ -116,22 +116,22 @@ agents: [
     {
         harness: "codex",
         model: "gpt-5.5",
-        reasoningEffort: "high",    // (optional) omit to take the platform default, "medium"
+        reasoningEffort: "high",    // (optional) omit to take the harness's own pinned default
     },
 ],
 ```
 
-The accepted values are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` and `thinking`, published as `limits.job.reasoningEfforts` with the omitted-value default as `limits.job.defaultReasoningEffort`. Read both from the [capability document](#what-the-platform-supports) rather than from this sentence: effort changes the score, so a client comparing two jobs has to know what an omitted value meant in each of them.
+The accepted values are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` and `thinking`, published as `limits.job.reasoningEfforts`. What an omitted value means is per harness: each harness entry in the capability document publishes its own `defaultEffort` (today `high` for the graded harnesses, `max` for `kimi`, `thinking` for `qwen`), and the create door resolves an omitted effort to that pin and stores it on the record. Read it from the [capability document](#what-the-platform-supports) rather than from this sentence: effort changes the score, so a client comparing two jobs has to know what an omitted value meant in each of them.
 
-Effort is part of an agent system's identity, alongside the harness, the model and the version pin. The same harness and model at `low` and at `high` are two distinct systems — they de-duplicate separately, they each consume one of the eight agent slots, and every trial echoes the effort back on `trial.agent`. A `null` there means the agent declared none and took the platform default, not that it ran at no effort at all.
+Effort is part of an agent system's identity, alongside the harness, the model and the version pin. The same harness and model at `low` and at `high` are two distinct systems — they de-duplicate separately, they each consume one of the eight agent slots, and every trial echoes the effort back on `trial.agent`. A `null` there is reserved for harnesses where no effort applies at all — an omitted effort on a harness that takes one is resolved to the harness's pinned default at create, so the record always says what the CLI was actually asked.
 
 Not every harness can honor one, and a request naming an effort a harness cannot apply is refused at creation with a `400 invalid_input` rather than accepted and quietly dropped. Recording `high` against a CLI that never received the flag would put a claim in the benchmark record that did not happen:
 
-- `claude`, `codex`, `droid` and `opencode` take a level, and the value reaches the CLI as one.
-- `kimi` can express only thinking on or off, so it accepts `off`, `minimal`, `medium` and `thinking`, and refuses every other level.
-- `gemini` and `qwen` take no effort input at all, so naming any effort for them is refused.
+- `claude`, `codex`, `droid`, `opencode` and `kimi` take a graded level, and the value reaches the CLI as one (`kimi` runs at `max` when omitted — the Kimi K3 API's own default).
+- `qwen` can express only thinking on or off, so it accepts the binary values (`thinking`, `off`, `minimal`, `medium`) and refuses every graded level above them.
+- `gemini` takes no effort input at all, so naming any effort for it is refused.
 
-Each harness publishes which of the three it is as `effortSupport`, so a picker greys the control out instead of discovering the refusal after a POST. Omitting the field is always accepted, `gemini` and `qwen` included — the refusal is about a value that could not be applied, never about the field existing.
+Each harness publishes which of the three it is as `effortSupport`, so a picker greys the control out instead of discovering the refusal after a POST. Omitting the field is always accepted, `gemini` included — the refusal is about a value that could not be applied, never about the field existing.
 
 A harness you registered yourself is never refused, because the platform makes no claim about what someone else's CLI accepts. It is also never handed the value: the [run contract](#the-run-contract) gives your command six environment keys and effort is not among them, so an effort set here is recorded on the agent system and reaches nothing. Put the flag in your own `runCommand`.
 
@@ -294,6 +294,8 @@ const more = await evals.trialTrace(
     { cursor: trace.nextCursor! },
 );
 ```
+
+The first event of every trace (`seq` 0) is the task instruction itself, carried as `_prompt` — a trace read on its own opens with the prompt rather than mid-conversation, the same promise Harbor's trajectories make.
 
 `trialTraceEvents()` drains the currently available trace, then stops — `nextCursor` is `null` once you are caught up, which is how the drain knows. A trace cursor is a position in the seq timeline, so to follow an in-flight trial later, keep the last event's `seq` and resume with `{ cursor: String(lastSeenSeq) }`.
 

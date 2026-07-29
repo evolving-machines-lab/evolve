@@ -302,6 +302,8 @@ The Direct key column applies to Direct Provider Key Mode. Managed BYO Provider 
 | `"opencode"` | `"openrouter/anthropic/claude-fable-5"` `"openrouter/anthropic/claude-opus-5"` `"openrouter/anthropic/claude-sonnet-5"` `"openrouter/anthropic/claude-haiku-4.5"` `"openrouter/openai/gpt-5.6-sol"` `"openrouter/openai/gpt-5.6-terra"` `"openrouter/openai/gpt-5.6-luna"` `"openrouter/google/gemini-3.6-flash"` `"openrouter/qwen/qwen3.7-max"` `"openrouter/moonshotai/kimi-k3"` `"openrouter/z-ai/glm-5.2"` | `"openrouter/anthropic/claude-opus-5"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
 | `"droid"` | `"claude-fable-5"` `"claude-opus-5"` `"claude-sonnet-5"` `"claude-haiku-4-5"` `"gpt-5.6-sol"` `"gpt-5.6-terra"` `"gpt-5.6-luna"` `"gemini-3.6-flash"` `"qwen3.7-max"` `"kimi-k3"` `"glm-5.2"` | `"claude-opus-5"` | `EVOLVE_API_KEY` | `FACTORY_API_KEY` |
 
+Model names route by themselves: pass just the name from the table and Evolve serves it on its default provider, or pass a provider-prefixed name (`openai/gpt-5.5`, `openrouter/moonshotai/kimi-k3`) to pick the provider explicitly. The table's names are the supported, priced set — prefixed routing beyond it works for advanced use but is outside the supported lineup.
+
 Agent-specific option: `reasoningEffort` controls how much reasoning/thinking the selected agent uses when that agent supports it.
 
 | Agent | Default when omitted (pinned by Evolve) | Supported `reasoningEffort` |
@@ -347,7 +349,6 @@ These models require Gateway mode (`EVOLVE_API_KEY`) and are routed by Evolve fo
 | Agent | Model | Use |
 |-------|-------|-----|
 | `"kimi"` | `"kimi-k3-raptor"` | Kimi K3 fast route for latency-sensitive agent runs |
-| `"kimi"` | | Kimi K2.6 Raptor route for interactive coding and agent runs |
 | `"kimi"` | `"kimi-k2p7-code-raptor"` | Kimi K2.7 Code Raptor route for interactive coding and agent runs |
 
 ### Agent Examples
