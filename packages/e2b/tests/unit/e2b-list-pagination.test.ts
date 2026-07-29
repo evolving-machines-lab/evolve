@@ -108,7 +108,7 @@ async function testMapsFields(): Promise<void> {
 }
 
 async function testLimitStopsEarly(): Promise<void> {
-  console.log("\n[3] An explicit limit is a bound on ITEMS, and stopping there is complete");
+  console.log("\n[3] An explicit limit bounds ITEMS — and a limit that hides sandboxes is INCOMPLETE");
 
   const paginator = paginatorOf([
     { sandboxIds: ids(100, "a"), token: "t1" },
@@ -119,10 +119,36 @@ async function testLimitStopsEarly(): Promise<void> {
 
   assert(page.sandboxes.length === 150, "returns exactly the limit");
   assert(page.pagesFetched === 2, "and stops requesting pages once it has them");
+  // THE FINDING: this used to report complete:true. The only real consumer is a
+  // sweep that ALWAYS passes a limit, so calling a limit-truncated walk
+  // "complete" meant truncation could never raise there — the flag existed and
+  // could not fire.
   assert(
-    page.complete === true,
-    "COMPLETE, because the caller got what it asked for — this is not truncation",
+    page.complete === false,
+    "INCOMPLETE, because more sandboxes provably exist behind the limit",
   );
+  assert((page.error ?? "").includes("limit"), "and the reason names the limit");
+}
+
+async function testLimitExactlyAtFleetEnd(): Promise<void> {
+  console.log("\n[3b] A limit that lands exactly on the end of the fleet IS complete");
+
+  // The discriminating case: nothing is hidden, so this is not truncation.
+  const page = await _testCollectSandboxPages(paginatorOf([{ sandboxIds: ids(5, "a") }]), 5);
+
+  assert(page.sandboxes.length === 5, "returns all five");
+  assert(page.complete === true, "complete — the limit and the fleet ended together");
+  assert(page.error === undefined, "and carries no error");
+}
+
+async function testLimitZero(): Promise<void> {
+  console.log("\n[3c] limit: 0 returns nothing, not one");
+
+  // The bound was checked AFTER the push, so zero returned one sandbox.
+  const page = await _testCollectSandboxPages(paginatorOf([{ sandboxIds: ids(3, "a") }]), 0);
+
+  assert(page.sandboxes.length === 0, "returns zero sandboxes");
+  assert(page.complete === false, "and says so — three were hidden by the bound");
 }
 
 async function testFailureMidWalk(): Promise<void> {
@@ -229,6 +255,8 @@ const tests = [
   testDrainsEveryPage,
   testMapsFields,
   testLimitStopsEarly,
+  testLimitExactlyAtFleetEnd,
+  testLimitZero,
   testFailureMidWalk,
   testFirstPageFailure,
   testRepeatedTokenCannotSpin,

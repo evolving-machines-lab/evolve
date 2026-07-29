@@ -124,7 +124,10 @@ async function testStateFilterBeforeLimit(): Promise<void> {
     page.sandboxes.every((s) => s.sandboxId.startsWith("live-")),
     "and none of the archived ones",
   );
-  assert(page.complete === true, "COMPLETE — the caller got what it asked for");
+  // A third running sandbox sits behind the limit, so this is a truncated
+  // answer — the state filter changes WHICH sandboxes count toward the bound,
+  // not whether stopping at it hides any.
+  assert(page.complete === false, "and reports INCOMPLETE, because a third running box exists");
 }
 
 async function testStateFilterExcludesArchived(): Promise<void> {
@@ -141,7 +144,7 @@ async function testStateFilterExcludesArchived(): Promise<void> {
 }
 
 async function testLimitStopsEarly(): Promise<void> {
-  console.log("\n[4] An explicit limit is a bound on ITEMS, and stopping there is complete");
+  console.log("\n[4] An explicit limit bounds ITEMS — and a limit that hides sandboxes is INCOMPLETE");
 
   const { fetch, requested } = pagesOf([
     { ids: ids(100, "a") },
@@ -152,7 +155,50 @@ async function testLimitStopsEarly(): Promise<void> {
 
   assert(page.sandboxes.length === 150, "returns exactly the limit");
   assert(requested.length === 2, "and stops requesting pages once it has them");
-  assert(page.complete === true, "COMPLETE, because this is not truncation");
+  // THE FINDING: reported complete:true, so the sweep — which always passed a
+  // limit — could never learn it had been truncated.
+  assert(page.complete === false, "INCOMPLETE, because a third page provably exists");
+  assert((page.error ?? "").includes("limit"), "and the reason names the limit");
+}
+
+async function testLimitExactlyAtFleetEnd(): Promise<void> {
+  console.log("\n[4b] A limit that lands exactly on the end of the fleet IS complete");
+
+  const { fetch } = pagesOf([{ ids: ids(5, "a") }]);
+  const page = await _testCollectSandboxPages(fetch, { limit: 5 });
+
+  assert(page.sandboxes.length === 5, "returns all five");
+  assert(page.complete === true, "complete — nothing was hidden");
+}
+
+async function testLimitZero(): Promise<void> {
+  console.log("\n[4c] limit: 0 returns nothing, not one");
+
+  const { fetch } = pagesOf([{ ids: ids(3, "a") }]);
+  const page = await _testCollectSandboxPages(fetch, { limit: 0 });
+
+  assert(page.sandboxes.length === 0, "returns zero sandboxes");
+  assert(page.complete === false, "and says so — three were hidden by the bound");
+}
+
+async function testDedupesAcrossPages(): Promise<void> {
+  console.log("\n[4d] Offset paging over a MUTATING fleet must not repeat a sandbox");
+
+  // A sandbox deleted mid-walk shifts everything after it back one page, so the
+  // next page re-serves a row the walk already has. Measured, not theorised.
+  const fetch = async (page: number): Promise<DaytonaSandboxPage> =>
+    ({
+      items: page === 1 ? [box("a"), box("b")] : [box("b"), box("c")],
+      totalPages: 2,
+    }) as unknown as DaytonaSandboxPage;
+
+  const result = await _testCollectSandboxPages(fetch);
+
+  assert(result.sandboxes.length === 3, "three distinct sandboxes, not four");
+  assert(
+    result.sandboxes.map((s) => s.sandboxId).join(",") === "a,b,c",
+    "and the duplicate is dropped, keeping first-seen order",
+  );
 }
 
 async function testFailureMidWalk(): Promise<void> {
@@ -263,6 +309,9 @@ const tests = [
   testStateFilterBeforeLimit,
   testStateFilterExcludesArchived,
   testLimitStopsEarly,
+  testLimitExactlyAtFleetEnd,
+  testLimitZero,
+  testDedupesAcrossPages,
   testFailureMidWalk,
   testFirstPageFailure,
   testEmptyPageEndsWalk,

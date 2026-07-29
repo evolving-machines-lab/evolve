@@ -193,7 +193,14 @@ export interface FileInfo {
  */
 export interface SandboxListPage {
   sandboxes: SandboxInfo[];
-  /** False means the enumeration could not be finished. Absence proves nothing. */
+  /**
+   * False means THIS IS NOT THE WHOLE FLEET — for any reason, including a
+   * `limit` the caller set. A caller-imposed limit that stopped the walk while
+   * more sandboxes existed is still a truncated answer, and reporting it as
+   * complete is what made this flag useless at its only real consumer: a sweep
+   * that always passes a limit could never learn it had been truncated.
+   * Complete means the provider ran out, not that we stopped asking.
+   */
   complete: boolean;
   /** Provider requests made. Diagnostic — a fleet that suddenly costs 40 pages. */
   pagesFetched: number;
@@ -310,9 +317,21 @@ export interface SandboxProvider {
    * a failure comes back as `complete: false` rather than as an exception the
    * caller might catch and treat as an empty list.
    *
-   * OPTIONAL for the same reason `list` is.
+   * REQUIRED, unlike `list`. It was optional in the first cut, and that is
+   * precisely what let one provider keep silently truncating while this
+   * interface promised exhaustive listing — a provider that cannot answer "is
+   * this the whole fleet?" cannot be used for fleet bookkeeping at all, so the
+   * type refuses to let a fourth one ship without saying so.
+   *
+   * PARTIAL RESULTS ARE RETURNED, not discarded: `complete: false` with a
+   * non-empty `sandboxes` means "at least these, and there are more". Modal's
+   * own `listSandboxIds` takes the stricter line and returns an empty set on
+   * failure, on the grounds that partial results are worse than none for a
+   * terminal-state decision. Both are safe because `complete` is what callers
+   * branch on; the divergence is deliberate and noted here so nobody "fixes"
+   * one to match the other without deciding which rule they want.
    */
-  listAll?(options?: SandboxListOptions): Promise<SandboxListPage>;
+  listAll(options?: SandboxListOptions): Promise<SandboxListPage>;
 }
 
 // =============================================================================

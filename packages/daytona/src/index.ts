@@ -1613,7 +1613,10 @@ export class DaytonaProvider implements SandboxProvider {
    */
   async list(options?: SandboxListOptions): Promise<SandboxInfo[]> {
     const page = await this.paginate(options);
-    if (page.error) throw new Error(page.error);
+    // A walk that stopped on the caller's own limit is not a failure — the
+    // caller asked for a sample and got one. Only a walk that could not finish
+    // is an exception here; `listAll` reports the distinction instead.
+    if (page.error && !page.stoppedAtLimit) throw new Error(page.error);
     return page.sandboxes;
   }
 
@@ -1626,14 +1629,64 @@ export class DaytonaProvider implements SandboxProvider {
    * stopped early".
    */
   async listAll(options?: SandboxListOptions): Promise<SandboxListPage> {
-    return this.paginate(options);
+    const { stoppedAtLimit: _stoppedAtLimit, ...page } = await this.paginate(options);
+    return page;
   }
 
-  private async paginate(options?: SandboxListOptions): Promise<SandboxListPage> {
+  private async paginate(
+    options?: SandboxListOptions,
+  ): Promise<SandboxListPage & { stoppedAtLimit: boolean }> {
     return collectSandboxPages(
-      (page) => this.client.list(options?.metadata, page, DAYTONA_LIST_PAGE_SIZE),
+      (page) => this.listPage(options, page),
       options,
     );
+  }
+
+  /**
+   * One page, asking the API to do the state filtering when it can.
+   *
+   * Daytona's REST endpoint takes a `states` array
+   * (api-client sandbox-api.d.ts listSandboxesPaginated), but the SDK wrapper
+   * this provider is built on does not expose it — `Daytona.list(labels, page,
+   * limit)` is the whole public surface, and `sandboxApi` is declared private.
+   * Without the server-side filter, `state: ['running']` on an organization
+   * full of archived boxes pages through all of them client-side looking for a
+   * handful of live ones.
+   *
+   * So the server filter is applied OPPORTUNISTICALLY, through the private
+   * field when it is shaped the way we expect, and the client-side filter in
+   * the walk stays the authority regardless. That ordering is the whole point:
+   * if a future SDK refactor renames or removes the field, this degrades to the
+   * request count it has today, and can never degrade to admitting states the
+   * caller excluded.
+   */
+  private async listPage(
+    options: SandboxListOptions | undefined,
+    page: number,
+  ): Promise<DaytonaSandboxPage> {
+    const states = options?.state ? evolveStatesToDaytonaStates(options.state) : undefined;
+    if (states && states.length > 0) {
+      const api = (this.client as unknown as { sandboxApi?: DaytonaSandboxApiShape }).sandboxApi;
+      if (typeof api?.listSandboxesPaginated === "function") {
+        try {
+          const response = await api.listSandboxesPaginated(
+            undefined,
+            page,
+            DAYTONA_LIST_PAGE_SIZE,
+            undefined,
+            undefined,
+            options?.metadata ? JSON.stringify(options.metadata) : undefined,
+            undefined,
+            states,
+          );
+          return { items: response.data.items, totalPages: response.data.totalPages };
+        } catch {
+          // Any shape surprise falls through to the supported path rather than
+          // failing a list; the walk filters client-side either way.
+        }
+      }
+    }
+    return this.client.list(options?.metadata, page, DAYTONA_LIST_PAGE_SIZE);
   }
 }
 
@@ -1641,6 +1694,40 @@ export class DaytonaProvider implements SandboxProvider {
 export interface DaytonaSandboxPage {
   items: DaytonaSandbox[];
   totalPages?: number;
+}
+
+/**
+ * The one api-client method the opportunistic server-side state filter uses.
+ * Declared structurally rather than imported: it is reached through a field the
+ * SDK marks private, so this is a shape we CHECK for, never a contract we can
+ * rely on.
+ */
+interface DaytonaSandboxApiShape {
+  listSandboxesPaginated(
+    organizationId?: string,
+    page?: number,
+    limit?: number,
+    id?: string,
+    name?: string,
+    labels?: string,
+    includeErroredDeleted?: boolean,
+    states?: string[],
+  ): Promise<{ data: { items: DaytonaSandbox[]; totalPages?: number } }>;
+}
+
+/**
+ * Our provider-neutral states, in Daytona's vocabulary — the inverse of
+ * daytonaStateToEvolveState, used only to narrow the server-side query. The
+ * client-side filter remains the authority, so an omission here costs requests
+ * and never correctness.
+ */
+function evolveStatesToDaytonaStates(states: ("running" | "paused")[]): string[] {
+  const out: string[] = [];
+  for (const state of states) {
+    if (state === "running") out.push("started");
+    if (state === "paused") out.push("stopped", "archived");
+  }
+  return out;
 }
 
 /**
@@ -1657,10 +1744,18 @@ export interface DaytonaSandboxPage {
 async function collectSandboxPages(
   fetchPage: (page: number) => Promise<DaytonaSandboxPage>,
   options?: SandboxListOptions,
-): Promise<SandboxListPage> {
+): Promise<SandboxListPage & { stoppedAtLimit: boolean }> {
   const wanted = options?.limit;
   const sandboxes: SandboxInfo[] = [];
   let pagesFetched = 0;
+  /**
+   * OFFSET PAGING OVER A MUTATING FLEET REPEATS ROWS. Daytona pages by number,
+   * so a sandbox deleted while the walk is in flight shifts everything after it
+   * back one page and the walk sees a row it already has — measured, not
+   * theorised. A fleet enumeration that reports the same sandbox twice makes
+   * every count downstream wrong, so ids are deduped as they arrive.
+   */
+  const seenIds = new Set<string>();
 
   for (let page = 1; page <= DAYTONA_MAX_LIST_PAGES; page += 1) {
     let result: DaytonaSandboxPage;
@@ -1671,6 +1766,7 @@ async function collectSandboxPages(
         sandboxes,
         complete: false,
         pagesFetched,
+        stoppedAtLimit: false,
         error: `sandbox list failed: ${err instanceof Error ? err.message : String(err)}`,
       };
     }
@@ -1678,35 +1774,59 @@ async function collectSandboxPages(
 
     for (const sandbox of result.items) {
       if (options?.state) {
-        // Daytona's list API has no state filter param — filter on the real
-        // API-reported state client-side, BEFORE the limit is counted, so
-        // "ten running" means ten running rather than ten rows minus misses.
+        // The state filter runs client-side on the REAL API-reported state, and
+        // it stays the authority even when the server was asked to narrow too:
+        // an opportunistic server filter that silently stopped applying must
+        // never be able to admit a state the caller excluded. It runs BEFORE
+        // the limit is counted, so "ten running" means ten running rather than
+        // ten rows minus misses.
         const evolveState = daytonaStateToEvolveState(sandbox.state);
         if (evolveState === undefined || !options.state.includes(evolveState)) continue;
       }
-      sandboxes.push(toSandboxInfo(sandbox));
-      // A caller-supplied limit is a bound on items, and stopping here is
-      // COMPLETE: the caller got exactly what it asked for.
+      if (seenIds.has(sandbox.id)) continue;
+      // BOUND CHECKED BEFORE THE PUSH: checked after, `limit: 0` returns one.
       if (wanted !== undefined && sandboxes.length >= wanted) {
-        return { sandboxes, complete: true, pagesFetched };
+        // Stopping on the caller's limit is NOT completion — there is at least
+        // one more sandbox here and we are holding it.
+        return {
+          sandboxes,
+          complete: false,
+          pagesFetched,
+          stoppedAtLimit: true,
+          error: `stopped at the requested limit of ${wanted} with more sandboxes available`,
+        };
       }
+      seenIds.add(sandbox.id);
+      sandboxes.push(toSandboxInfo(sandbox));
     }
 
     // totalPages is the server's own count; an empty page ends the walk too, so
     // a server that omits or miscounts totalPages still cannot spin us.
-    if (result.items.length === 0) break;
-    if (typeof result.totalPages === "number" && page >= result.totalPages) break;
+    const exhausted =
+      result.items.length === 0 ||
+      (typeof result.totalPages === "number" && page >= result.totalPages);
+    if (wanted !== undefined && sandboxes.length >= wanted && !exhausted) {
+      return {
+        sandboxes,
+        complete: false,
+        pagesFetched,
+        stoppedAtLimit: true,
+        error: `stopped at the requested limit of ${wanted} with more sandboxes available`,
+      };
+    }
+    if (exhausted) break;
     if (page === DAYTONA_MAX_LIST_PAGES) {
       return {
         sandboxes,
         complete: false,
         pagesFetched,
+        stoppedAtLimit: false,
         error: `sandbox list exceeded ${DAYTONA_MAX_LIST_PAGES} pages`,
       };
     }
   }
 
-  return { sandboxes, complete: true, pagesFetched };
+  return { sandboxes, complete: true, pagesFetched, stoppedAtLimit: false };
 }
 
 export const _testCollectSandboxPages = collectSandboxPages;

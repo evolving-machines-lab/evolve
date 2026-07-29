@@ -874,7 +874,11 @@ export class E2BProvider implements SandboxProvider {
    */
   async list(options?: SandboxListOptions): Promise<SandboxInfo[]> {
     const page = await this.paginate(options);
-    if (page.error) throw new Error(page.error);
+    // A walk that stopped on the caller's own limit is not a failure — the
+    // caller asked for a sample and got one. Only a walk that could not finish
+    // is an exception here; `listAll` is where the distinction is reported
+    // rather than thrown.
+    if (page.error && !page.stoppedAtLimit) throw new Error(page.error);
     return page.sandboxes;
   }
 
@@ -888,10 +892,13 @@ export class E2BProvider implements SandboxProvider {
    * exactly that difference.
    */
   async listAll(options?: SandboxListOptions): Promise<SandboxListPage> {
-    return this.paginate(options);
+    const { stoppedAtLimit: _stoppedAtLimit, ...page } = await this.paginate(options);
+    return page;
   }
 
-  private async paginate(options?: SandboxListOptions): Promise<SandboxListPage> {
+  private async paginate(
+    options?: SandboxListOptions,
+  ): Promise<SandboxListPage & { stoppedAtLimit: boolean }> {
     const wanted = options?.limit;
     return collectSandboxPages(
       E2BSandbox.list({
@@ -938,7 +945,7 @@ export interface E2BSandboxPaginator {
 async function collectSandboxPages(
   paginator: E2BSandboxPaginator,
   wanted?: number,
-): Promise<SandboxListPage> {
+): Promise<SandboxListPage & { stoppedAtLimit: boolean }> {
   const sandboxes: SandboxInfo[] = [];
   let pagesFetched = 0;
   // Pagination tokens come off the wire, so a server that repeats one would
@@ -952,13 +959,20 @@ async function collectSandboxPages(
         sandboxes,
         complete: false,
         pagesFetched,
+        stoppedAtLimit: false,
         error: `sandbox list exceeded ${E2B_MAX_LIST_PAGES} pages`,
       };
     }
     const token = paginator.nextToken;
     if (token !== undefined) {
       if (seenTokens.has(token)) {
-        return { sandboxes, complete: false, pagesFetched, error: "pagination token repeated" };
+        return {
+          sandboxes,
+          complete: false,
+          pagesFetched,
+          stoppedAtLimit: false,
+          error: "pagination token repeated",
+        };
       }
       seenTokens.add(token);
     }
@@ -971,12 +985,32 @@ async function collectSandboxPages(
         sandboxes,
         complete: false,
         pagesFetched,
+        stoppedAtLimit: false,
         error: `sandbox list failed: ${err instanceof Error ? err.message : String(err)}`,
       };
     }
     pagesFetched += 1;
 
     for (const item of items) {
+      // BOUND CHECKED BEFORE THE PUSH, not after. Checked after, `limit: 0`
+      // returns one sandbox — the loop pushes, then discovers it was already
+      // over. "Give me none" is a strange request but it has an obvious right
+      // answer, and off-by-one on a bound is not the kind of thing to leave to
+      // whether a caller ever passes zero.
+      if (wanted !== undefined && sandboxes.length >= wanted) {
+        // STOPPING ON THE CALLER'S LIMIT IS NOT COMPLETION. There is at least
+        // one more sandbox here — we are holding it — so this fleet was
+        // truncated, and a caller that reads absence as death must be told.
+        // Reporting this as complete is what made the flag useless at its only
+        // real consumer, which always passes a limit.
+        return {
+          sandboxes,
+          complete: false,
+          pagesFetched,
+          stoppedAtLimit: true,
+          error: `stopped at the requested limit of ${wanted} with more sandboxes available`,
+        };
+      }
       sandboxes.push({
         sandboxId: item.sandboxId,
         image: item.templateId,  // E2B calls it templateId, we expose as image
@@ -985,15 +1019,23 @@ async function collectSandboxPages(
         startedAt: toISOString(item.startedAt),
         endAt: item.endAt ? toISOString(item.endAt) : undefined,
       });
-      // A caller-supplied limit is a bound on items, and stopping here is
-      // COMPLETE: the caller got exactly what it asked for.
-      if (wanted !== undefined && sandboxes.length >= wanted) {
-        return { sandboxes, complete: true, pagesFetched };
-      }
     }
+
+    // The limit landed exactly on the end of a page: whether that was the whole
+    // fleet is the paginator's answer, not ours.
+    if (wanted !== undefined && sandboxes.length >= wanted && paginator.hasNext) {
+      return {
+        sandboxes,
+        complete: false,
+        pagesFetched,
+        stoppedAtLimit: true,
+        error: `stopped at the requested limit of ${wanted} with more sandboxes available`,
+      };
+    }
+    if (wanted !== undefined && sandboxes.length >= wanted) break;
   }
 
-  return { sandboxes, complete: true, pagesFetched };
+  return { sandboxes, complete: true, pagesFetched, stoppedAtLimit: false };
 }
 
 export const _testCollectSandboxPages = collectSandboxPages;
