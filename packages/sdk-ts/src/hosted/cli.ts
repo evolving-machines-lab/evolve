@@ -1417,8 +1417,10 @@ export async function runCli(argv: string[], io: CliIO = defaultIO): Promise<num
 // install is node_modules/.bin/evolve-evals — a SYMLINK. Node dereferences
 // symlinks when it builds import.meta.url, so the two agree only once argv[1]
 // is resolved as well; comparing the raw path made the installed bin a silent
-// no-op. Both forms are tried because --preserve-symlinks-main flips which side
-// is the real path.
+// no-op. The raw form is still tried first: it serves direct, relative and
+// Windows-shim invocation without a syscall, and the realpath fallback is what
+// makes the symlinked bin work. (A --preserve-symlinks-main bin never reaches
+// this gate — the bundle's chunk import fails resolution before it.)
 const invokedAsBin = (() => {
   const entry = process.argv[1];
   if (!entry) return false;
