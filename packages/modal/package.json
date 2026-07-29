@@ -34,7 +34,7 @@
     "build": "tsup --minify",
     "dev": "tsup --watch",
     "type-check": "tsc --noEmit",
-    "test:unit": "tsx tests/unit/modal-provider.test.ts"
+    "test:unit": "tsx tests/unit/modal-provider.test.ts && tsx tests/unit/modal-list-pagination.test.ts"
   },
   "dependencies": {
     "modal": "^0.9.0",

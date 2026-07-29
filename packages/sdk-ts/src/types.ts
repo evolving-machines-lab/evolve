@@ -197,6 +197,36 @@ export interface FileInfo {
   type: "file" | "dir";
 }
 
+/**
+ * A COMPLETE (or admittedly incomplete) enumeration of a provider's fleet.
+ *
+ * `complete` is the load-bearing field, not a nicety. The callers that need a
+ * whole fleet — orphan sweeps, lifecycle reconciliation — read a sandbox's
+ * ABSENCE from the list as evidence it is gone, so a truncated page and a small
+ * fleet must never be the same answer. Returning a short array with no signal
+ * makes them identical, and the caller that acts on that difference is the one
+ * deleting machines.
+ *
+ * A caller that sees `complete: false` has to leave every row alone, exactly as
+ * if it had never asked.
+ */
+export interface SandboxListPage {
+  sandboxes: SandboxInfo[];
+  /**
+   * False means THIS IS NOT THE WHOLE FLEET — for any reason, including a
+   * `limit` the caller set. A caller-imposed limit that stopped the walk while
+   * more sandboxes existed is still a truncated answer, and reporting it as
+   * complete is what made this flag useless at its only real consumer: a sweep
+   * that always passes a limit could never learn it had been truncated.
+   * Complete means the provider ran out, not that we stopped asking.
+   */
+  complete: boolean;
+  /** Provider requests made. Diagnostic — a fleet that suddenly costs 40 pages. */
+  pagesFetched: number;
+  /** Why it could not be finished, when it could not. */
+  error?: string;
+}
+
 /** Sandbox metadata and lifecycle info (capability: SandboxProvider.list, SandboxInstance.getInfo). */
 export interface SandboxInfo {
   sandboxId: string;
@@ -278,7 +308,15 @@ export interface SandboxProvider {
   connect(sandboxId: string, timeoutMs?: number): Promise<SandboxInstance>;
 
   /**
-   * List sandboxes (first page only, up to `limit`).
+   * List sandboxes, paginating to exhaustion.
+   *
+   * `limit` bounds the number of items RETURNED, so a caller that wants one
+   * cheap page still asks for one; without it the answer is the whole fleet.
+   * It used to be first-page-only regardless, which silently truncated any
+   * account past a provider's page size.
+   *
+   * Errors throw. A caller that cannot treat a failed enumeration as an
+   * exception — because it reads absence as termination — wants `listAll`.
    *
    * OPTIONAL: all three first-party providers implement it, but the SDK never
    * calls it, so requiring it would break third-party providers passed to
@@ -286,6 +324,33 @@ export interface SandboxProvider {
    * offers the SAME signature.
    */
   list?(options?: SandboxListOptions): Promise<SandboxInfo[]>;
+
+  /**
+   * The fleet-bookkeeping counterpart to `list()`: paginates to exhaustion and
+   * NEVER throws.
+   *
+   * The difference is not error style, it is what a failure MEANS to the
+   * caller. Anything that reads a sandbox's absence as "terminated" cannot
+   * distinguish a provider that answered "nothing" from one that could not
+   * finish answering — and acting on that confusion mass-kills a live fleet. So
+   * a failure comes back as `complete: false` rather than as an exception the
+   * caller might catch and treat as an empty list.
+   *
+   * REQUIRED, unlike `list`. It was optional in the first cut, and that is
+   * precisely what let one provider keep silently truncating while this
+   * interface promised exhaustive listing — a provider that cannot answer "is
+   * this the whole fleet?" cannot be used for fleet bookkeeping at all, so the
+   * type refuses to let a fourth one ship without saying so.
+   *
+   * PARTIAL RESULTS ARE RETURNED, not discarded: `complete: false` with a
+   * non-empty `sandboxes` means "at least these, and there are more". Modal's
+   * own `listSandboxIds` takes the stricter line and returns an empty set on
+   * failure, on the grounds that partial results are worse than none for a
+   * terminal-state decision. Both are safe because `complete` is what callers
+   * branch on; the divergence is deliberate and noted here so nobody "fixes"
+   * one to match the other without deciding which rule they want.
+   */
+  listAll(options?: SandboxListOptions): Promise<SandboxListPage>;
 }
 
 // =============================================================================

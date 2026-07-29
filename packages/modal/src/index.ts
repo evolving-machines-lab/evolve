@@ -554,6 +554,31 @@ export interface SandboxListOptions {
   limit?: number;
 }
 
+/**
+ * A COMPLETE (or admittedly incomplete) enumeration of the app's fleet.
+ *
+ * `complete` is the load-bearing field. Callers that need a whole fleet —
+ * orphan sweeps, lifecycle reconciliation — read a sandbox's ABSENCE from the
+ * list as evidence it is gone, so a truncated walk and a small fleet must never
+ * be the same answer. That includes a walk stopped by the caller's own `limit`:
+ * "you asked for ten and there are more" is a truncated fleet.
+ */
+export interface SandboxListPage {
+  sandboxes: SandboxInfo[];
+  complete: boolean;
+  pagesFetched: number;
+  error?: string;
+}
+
+/**
+ * Sandboxes a single enumeration will walk before it gives up and reports
+ * itself incomplete. Modal's list is an async generator with no page size we
+ * control, so the ceiling is counted in SANDBOXES rather than pages — same
+ * purpose as the other providers' page caps: never return a short list that
+ * reads like a whole one.
+ */
+export const MODAL_MAX_LIST_SANDBOXES = 10_000;
+
 // ============================================================
 // INTERFACES
 // ============================================================
@@ -673,7 +698,10 @@ export interface SandboxProvider {
   connect(sandboxId: string, timeoutMs?: number): Promise<SandboxInstance>;
 
   /** List sandboxes (first page only, up to limit) */
+  /** List sandboxes, walking the whole app. `limit` bounds items returned. */
   list(options?: SandboxListOptions): Promise<SandboxInfo[]>;
+  /** The same enumeration for fleet bookkeeping: never throws, reports completeness. */
+  listAll(options?: SandboxListOptions): Promise<SandboxListPage>;
 }
 
 // ============================================================
@@ -1297,38 +1325,73 @@ export class ModalProvider implements SandboxProvider {
     return new ModalSandboxImpl(sandbox, undefined, user);
   }
 
+  /**
+   * List sandboxes, walking the whole app.
+   *
+   * This used to stop at a hardcoded default of 100 regardless of fleet size,
+   * which silently truncated any app with more — and said nothing about it
+   * while the shared SandboxProvider interface promised exhaustive listing.
+   * `limit` still bounds the sandboxes RETURNED, so a caller wanting one cheap
+   * sample asks for one; without it the answer is the whole app.
+   *
+   * The O(N)-round-trips warning below is unchanged and is the reason `limit`
+   * matters here more than on the other providers.
+   */
   async list(options?: SandboxListOptions): Promise<SandboxInfo[]> {
+    const page = await this.walk(options);
+    // A walk stopped by the caller's own limit is not a failure; only one that
+    // could not finish is. `listAll` reports that distinction instead.
+    if (page.error && !page.stoppedAtLimit) throw new Error(page.error);
+    return page.sandboxes;
+  }
+
+  /**
+   * The fleet-bookkeeping enumeration: same walk, never throws.
+   *
+   * Modal has no lifecycle webhooks, so absence from a list is the ONLY
+   * termination signal either lane gets — which makes the difference between
+   * "the app is empty" and "the enumeration stopped early" the difference
+   * between a quiet fleet and one about to be reclaimed.
+   *
+   * NOTE the divergence from `listSandboxIds` below, which returns an EMPTY set
+   * on failure on the grounds that partial results are worse than none for a
+   * terminal-state decision. This one returns what it saw alongside
+   * `complete: false`. Both are safe because `complete` is what callers branch
+   * on, and the shared type documents the choice; do not align one to the other
+   * without deciding which rule you want.
+   */
+  async listAll(options?: SandboxListOptions): Promise<SandboxListPage> {
+    const { stoppedAtLimit: _stoppedAtLimit, ...page } = await this.walk(options);
+    return page;
+  }
+
+  private async walk(
+    options?: SandboxListOptions,
+  ): Promise<SandboxListPage & { stoppedAtLimit: boolean }> {
     // Modal has no paused state; a filter that excludes "running" matches nothing
     if (options?.state && !options.state.includes("running")) {
-      return [];
+      return { sandboxes: [], complete: true, pagesFetched: 0, stoppedAtLimit: false };
     }
 
-    const app = await this.getApp();
-    const limit = options?.limit ?? 100;
-    const results: SandboxInfo[] = [];
+    let app: Awaited<ReturnType<typeof this.getApp>>;
+    try {
+      app = await this.getApp();
+    } catch (err) {
+      return {
+        sandboxes: [],
+        complete: false,
+        pagesFetched: 0,
+        stoppedAtLimit: false,
+        error: `sandbox list failed: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
 
     // Scope to our app; tag filter narrows server-side to sandboxes carrying
     // at least the requested metadata.
-    //
-    // COST WARNING — this loop is O(N) ROUND TRIPS, not O(1). `list()` itself is
-    // one streamed call, but `getTags()` is a separate gRPC request per sandbox
-    // (`sandboxTagsGet`), so listing N sandboxes costs N+1 calls. That is fine
-    // for the SDK's own use (a user listing their handful of boxes, needing
-    // metadata) and NOT fine for fleet-wide bookkeeping: anything that only
-    // needs to know WHICH sandbox ids are alive — lifecycle polling, orphan
-    // sweeps, reconciliation — must iterate `client.sandboxes.list({appId})`
-    // directly and read `sandbox.sandboxId`, never through here. Please do not
-    // "optimize" by reintroducing tag reads into those paths.
-    for await (const sandbox of this.client.sandboxes.list({
-      appId: app.appId,
-      tags: options?.metadata,
-    })) {
-      const tags = await sandbox.getTags();
-      results.push(buildSandboxInfo(sandbox.sandboxId, tags));
-      if (results.length >= limit) break;
-    }
-
-    return results;
+    return collectSandboxes(
+      () => this.client.sandboxes.list({ appId: app.appId, tags: options?.metadata }),
+      options?.limit,
+    );
   }
 
   /**
@@ -1359,6 +1422,76 @@ export class ModalProvider implements SandboxProvider {
       return { ids: new Set(), complete: false };
     }
   }
+}
+
+/** The streamed sandbox surface this walk needs — Modal's list() satisfies it. */
+export interface ModalSandboxStream {
+  sandboxId: string;
+  getTags(): Promise<Record<string, string>>;
+}
+
+/**
+ * Drain Modal's sandbox generator into one answer, with an honest completeness
+ * verdict.
+ *
+ * Separate from the provider because everything worth getting wrong lives here
+ * and none of it needs a gRPC connection: the difference between "the caller
+ * asked for ten" and "the app ran out", the ceiling that stops an unbounded
+ * walk, and the rule that a failure mid-walk yields what it saw marked
+ * INCOMPLETE rather than an exception or a short complete list.
+ *
+ * COST WARNING — this loop is O(N) ROUND TRIPS, not O(1). `list()` itself is one
+ * streamed call, but `getTags()` is a separate gRPC request per sandbox
+ * (`sandboxTagsGet`), so listing N sandboxes costs N+1 calls. That is fine for a
+ * user listing their handful of boxes with metadata, and NOT fine for fleet-wide
+ * bookkeeping: anything that only needs to know WHICH ids are alive must use
+ * `listSandboxIds`, never this. Please do not "optimize" by reintroducing tag
+ * reads into those paths.
+ *
+ * Exported for its test (`_testCollectSandboxes`).
+ */
+async function collectSandboxes(
+  iterate: () => AsyncIterable<ModalSandboxStream>,
+  wanted?: number,
+): Promise<SandboxListPage & { stoppedAtLimit: boolean }> {
+  const sandboxes: SandboxInfo[] = [];
+  try {
+    for await (const sandbox of iterate()) {
+      // BOUND CHECKED BEFORE THE PUSH: checked after, `limit: 0` returns one.
+      if (wanted !== undefined && sandboxes.length >= wanted) {
+        // We are holding a sandbox we did not return, so this app has more than
+        // the caller asked for — a truncated fleet, not a complete one.
+        return {
+          sandboxes,
+          complete: false,
+          pagesFetched: sandboxes.length,
+          stoppedAtLimit: true,
+          error: `stopped at the requested limit of ${wanted} with more sandboxes available`,
+        };
+      }
+      if (sandboxes.length >= MODAL_MAX_LIST_SANDBOXES) {
+        return {
+          sandboxes,
+          complete: false,
+          pagesFetched: sandboxes.length,
+          stoppedAtLimit: false,
+          error: `sandbox list exceeded ${MODAL_MAX_LIST_SANDBOXES} sandboxes`,
+        };
+      }
+      const tags = await sandbox.getTags();
+      sandboxes.push(buildSandboxInfo(sandbox.sandboxId, tags));
+    }
+  } catch (err) {
+    return {
+      sandboxes,
+      complete: false,
+      pagesFetched: sandboxes.length,
+      stoppedAtLimit: false,
+      error: `sandbox list failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  return { sandboxes, complete: true, pagesFetched: sandboxes.length, stoppedAtLimit: false };
 }
 
 // ============================================================
@@ -1398,5 +1531,6 @@ export const _testMapNetworkPolicy = mapNetworkPolicy;
 export const _testMapResources = mapResources;
 export const _testResolveImageRegistry = resolveImageRegistry;
 export const _testBuildSandboxInfo = buildSandboxInfo;
+export const _testCollectSandboxes = collectSandboxes;
 export const _testValidateTimeout = validateTimeout;
 export const _testMapIdleTimeout = mapIdleTimeout;
