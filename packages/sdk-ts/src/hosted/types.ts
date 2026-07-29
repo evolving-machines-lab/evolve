@@ -381,15 +381,17 @@ export interface Trial {
   /** Whether spentUsd was measured or is the cap charged conservatively */
   spendSource: SpendSource | null;
   /**
-   * A mid-run reading of this trial's spend, and a LAGGING LOWER BOUND rather
-   * than its cost: the gateway settles 40-70s behind the calls that incurred
-   * the spend and the platform samples the trial's key every ~120s, so this
-   * number is always behind and `liveSpendAt` is how far. Null is "no reading
-   * yet", never $0.
+   * A mid-run reading of this trial's spend, and a LOWER BOUND rather than its
+   * cost. Two feeds raise it, and each misses what the other sees: the door
+   * accumulates the gateway's per-response cost the moment a non-streaming
+   * call completes (seconds fresh, but blind to streamed completions), and the
+   * platform's ~120s key poll sees everything, 40-70s late. The row keeps
+   * whichever bound is higher, only ever climbs while the trial runs, and
+   * `liveSpendAt` says how fresh it is. Null is "no reading yet", never $0.
    *
-   * It is NOT cleared when the trial settles — what remains is the last
-   * mid-run sample, stale by construction. On a terminal trial read spentUsd
-   * and spendSource; those are the settled truth, and the only one.
+   * CLEARED when the trial settles, on the same statement as the terminal
+   * status: on a terminal trial read spentUsd and spendSource — those are the
+   * settled truth, and the only one.
    */
   liveSpentUsd: number | null;
   /** When that reading was taken — show its age, never the figure alone */

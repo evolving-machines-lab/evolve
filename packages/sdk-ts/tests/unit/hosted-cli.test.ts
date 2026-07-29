@@ -142,8 +142,10 @@ import {
   parseJobAgent,
   parseArgs,
   runCli,
+  trialDetailLines,
 } from "../../src/hosted/cli.ts";
 import type { CliIO } from "../../src/hosted/cli.ts";
+import type { TrialDetail } from "../../src/hosted/types.ts";
 
 const BASE = "http://localhost:3000";
 
@@ -601,6 +603,69 @@ function testEventLine() {
   assert(line.includes("run-1"), "includes trialId");
   assert(line.includes("SCORED"), "includes status");
   assert(line.includes("reward=1"), "includes reward");
+
+  // The live-spend beat: --watch must show money moving while a trial runs.
+  const spend = eventLine({
+    seq: 3,
+    type: "trial.spend",
+    data: { trialId: "run-1", taskKey: "abs-module-cache-flags", liveSpentUsd: 0.0421 },
+  });
+  assert(spend.includes("trial.spend"), "spend line includes event type");
+  assert(spend.includes("run-1"), "spend line includes trialId");
+  assert(spend.includes("liveSpentUsd=0.0421"), "spend line carries the live figure");
+}
+
+// =============================================================================
+// trialDetailLines: live spend shown while RUNNING, gone once settled
+// =============================================================================
+
+function trialDetailFixture(overrides: Partial<TrialDetail>): TrialDetail {
+  return {
+    id: "run-1",
+    jobId: "eval-1",
+    taskKey: "abs-module-cache-flags",
+    agent: { harness: "claude", model: "claude-sonnet-5", harnessVersion: null },
+    runNumber: 1,
+    status: "RUNNING",
+    reward: null,
+    metrics: null,
+    failurePhase: null,
+    failureDetail: null,
+    phaseTimingsMs: null,
+    modelUsage: null,
+    sandboxProvider: null,
+    verifierMode: null,
+    spentUsd: null,
+    spendSource: null,
+    liveSpentUsd: null,
+    liveSpendAt: null,
+    resolvedHarnessVersion: null,
+    sandboxId: null,
+    verifierSandboxId: null,
+    sessionRef: null,
+    createdAt: "2026-07-29T00:00:00.000Z",
+    updatedAt: "2026-07-29T00:00:10.000Z",
+    ...overrides,
+  } as TrialDetail;
+}
+
+function testTrialDetailLiveSpend() {
+  console.log("\n--- trialDetailLines: live spend while RUNNING ---");
+  const running = trialDetailLines(
+    trialDetailFixture({ liveSpentUsd: 0.0421, liveSpendAt: "2026-07-29T00:00:09.000Z" }),
+  ).join("\n");
+  assert(running.includes("spent (live)"), "RUNNING trial shows the live row");
+  assert(running.includes("at least $0.0421"), "live figure is labeled a lower bound, 4 decimals");
+  assert(running.includes("as of 2026-07-29T00:00:09.000Z"), "live figure carries its age");
+
+  const settled = trialDetailLines(
+    trialDetailFixture({ status: "SCORED", reward: 1, spentUsd: 0.31, liveSpentUsd: 0.0421 }),
+  ).join("\n");
+  assert(!settled.includes("spent (live)"), "a settled trial shows no live row");
+  assert(settled.includes("$0.31"), "a settled trial shows the settled figure");
+
+  const noReading = trialDetailLines(trialDetailFixture({})).join("\n");
+  assert(!noReading.includes("spent (live)"), "no reading yet means no live row, never $0");
 }
 
 // =============================================================================
@@ -1220,6 +1285,7 @@ async function main() {
   testParseCustomHarnesses();
   testImportStatusLine();
   testEventLine();
+  testTrialDetailLiveSpend();
   await testRunWatchEndToEnd();
   await testRunWatchJsonNdjson();
   await testImportWatchEndToEnd();
