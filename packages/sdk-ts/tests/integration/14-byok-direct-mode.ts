@@ -82,7 +82,7 @@ function getBYOKAgentConfig(type: AgentType): BYOKAgentConfig | null {
       return {
         type: "codex",
         providerApiKey: env.OPENAI_API_KEY,
-        model: process.env.CODEX_MODEL || "gpt-5.2",
+        model: process.env.CODEX_MODEL || "gpt-5.5",
         reasoningEffort: (process.env.CODEX_REASONING_EFFORT as "low" | "medium" | "high") || "medium",
       };
 
@@ -91,7 +91,7 @@ function getBYOKAgentConfig(type: AgentType): BYOKAgentConfig | null {
       return {
         type: "gemini",
         providerApiKey: env.GEMINI_API_KEY,
-        model: process.env.GEMINI_MODEL || "gemini-3-flash-preview",
+        model: process.env.GEMINI_MODEL || "gemini-3.6-flash",
       };
 
     case "qwen":

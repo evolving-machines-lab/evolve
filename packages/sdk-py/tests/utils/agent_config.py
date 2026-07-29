@@ -56,7 +56,7 @@ def get_agent_config() -> Optional[AgentConfig]:
         return AgentConfig(
             type='gemini',
             api_key=evolve_api_key,
-            model=os.getenv('GEMINI_MODEL', 'gemini-2.5-flash'),
+            model=os.getenv('GEMINI_MODEL', 'gemini-3.6-flash'),
         )
 
     elif agent_type == 'qwen':
@@ -77,7 +77,7 @@ def get_agent_config() -> Optional[AgentConfig]:
         return AgentConfig(
             type='opencode',
             api_key=evolve_api_key,
-            model=os.getenv('OPENCODE_MODEL', 'openrouter/anthropic/claude-sonnet-4.6'),
+            model=os.getenv('OPENCODE_MODEL', 'openrouter/anthropic/claude-sonnet-5'),
         )
 
     elif agent_type == 'droid':

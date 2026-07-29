@@ -153,7 +153,7 @@ export function getAgentConfig(type: AgentType): AgentConfig {
       return {
         type: "codex",
         apiKey: env.EVOLVE_API_KEY || env.OPENAI_API_KEY || "",
-        model: process.env.CODEX_MODEL || "gpt-5.2",
+        model: process.env.CODEX_MODEL || "gpt-5.5",
         reasoningEffort: (process.env.CODEX_REASONING_EFFORT as "low" | "medium" | "high") || "medium",
       };
 
@@ -182,7 +182,7 @@ export function getAgentConfig(type: AgentType): AgentConfig {
       return {
         type: "opencode",
         apiKey: env.EVOLVE_API_KEY || process.env.OPENROUTER_API_KEY || "",
-        model: process.env.OPENCODE_MODEL || "openrouter/anthropic/claude-sonnet-4.6",
+        model: process.env.OPENCODE_MODEL || "openrouter/anthropic/claude-sonnet-5",
       };
 
     case "droid":

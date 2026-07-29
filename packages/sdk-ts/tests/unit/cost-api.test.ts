@@ -611,13 +611,13 @@ async function testGeminiBuildCommandUsesPromptFlag(): Promise<void> {
     type: "gemini",
     apiKey: "test-gateway-key",
     isDirectMode: false,
-    model: "gemini-2.5-flash-lite",
+    model: "gemini-3.5-flash-lite",
   };
   const agent = new Agent(config as any, {});
 
   const command = (agent as any).buildCommand("say 'ok'") as string;
   assert(command.includes("--prompt 'say '\\''ok'\\'''"), "uses --prompt with shell-escaped prompt");
-  assert(command.includes("--model gemini-2.5-flash-lite"), "passes selected Gemini model");
+  assert(command.includes("--model gemini-3.5-flash-lite"), "passes selected Gemini model");
   assert(command.includes("--output-format stream-json"), "keeps stream-json output");
   assert(!command.startsWith('gemini "'), "does not use positional prompt interactive mode");
 }
@@ -1409,8 +1409,8 @@ async function testOpenCodeMergesUserSecrets(): Promise<void> {
       litellm: {
         npm: "@ai-sdk/openai-compatible",
         models: {
-          "openrouter/anthropic/claude-sonnet-4.6": {
-            name: "openrouter/anthropic/claude-sonnet-4.6",
+          "openrouter/anthropic/claude-sonnet-5": {
+            name: "openrouter/anthropic/claude-sonnet-5",
             headers: { "x-user-header": "keep-me" },
           },
         },
@@ -1444,7 +1444,7 @@ async function testOpenCodeMergesUserSecrets(): Promise<void> {
   assertEqual(parsed.theme, "dark", "user theme setting preserved");
 
   // User's existing model header preserved alongside spend headers
-  const model = parsed.provider.litellm.models["openrouter/anthropic/claude-sonnet-4.6"];
+  const model = parsed.provider.litellm.models["openrouter/anthropic/claude-sonnet-5"];
   assertEqual(model.headers["x-user-header"], "keep-me", "user model header preserved");
   // Injected spend plumbing lands on the DEFAULT model's entry (Opus 5).
   const activeModel = parsed.provider.litellm.models["openrouter/anthropic/claude-opus-5"];
@@ -1540,7 +1540,7 @@ async function testDroidWriteGatewaySettings(): Promise<void> {
     {
       settingsPath: "~/.factory/evolve-settings.json",
       displayName: "Evolve Gateway",
-      model: "gpt-5.5",
+      model: "gpt-5.6-terra",
       baseUrl: "https://gateway.example.com/v1",
       apiKeyEnv: "FACTORY_API_KEY",
       provider: "generic-chat-completion-api",
@@ -1557,7 +1557,7 @@ async function testDroidWriteGatewaySettings(): Promise<void> {
   const parsed = JSON.parse(written[0].content);
   const model = parsed.customModels?.[0];
   assertEqual(parsed.cloudSessionSync, false, "disables Factory cloud sync for gateway mode");
-  assertEqual(model.model, "gpt-5.5", "sets underlying gateway model");
+  assertEqual(model.model, "gpt-5.6-terra", "sets underlying gateway model");
   assertEqual(model.displayName, "Evolve Gateway", "sets stable custom model display name");
   assertEqual(model.baseUrl, "https://gateway.example.com/v1", "sets gateway base URL");
   assertEqual(model.apiKey, "${FACTORY_API_KEY}", "uses runtime token env reference");
@@ -1577,12 +1577,13 @@ async function testDroidBuildCommand(): Promise<void> {
     "generic-chat-completion-api",
     "Droid gateway uses LiteLLM-compatible multi-provider API shape"
   );
-  assertEqual(droid.gatewayModelAliases?.["kimi-k2.6"], "moonshot/kimi-k2.6", "Droid gateway maps Kimi alias");
-  assertEqual(droid.gatewayModelAliases?.["glm-5.1"], "openrouter/z-ai/glm-5.1", "Droid gateway maps GLM alias");
+  assertEqual(droid.gatewayModelAliases?.["kimi-k3"], "moonshot/kimi-k3", "Droid gateway maps Kimi alias");
+  assertEqual(droid.gatewayModelAliases?.["glm-5.2"], "openrouter/z-ai/glm-5.2", "Droid gateway maps GLM alias");
+  assertEqual(droid.gatewayModelAliases?.["qwen3.7-max"], "dashscope/qwen3.7-max", "Droid gateway maps Qwen alias");
 
   const gatewayCmd = droid.buildCommand({
     prompt: "hello",
-    model: "claude-sonnet-4-6",
+    model: "claude-sonnet-5",
     isResume: false,
     isDirectMode: false,
     reasoningEffort: "high",
@@ -1596,18 +1597,18 @@ async function testDroidBuildCommand(): Promise<void> {
 
   const directCmd = droid.buildCommand({
     prompt: "hello",
-    model: "claude-opus-4-8",
+    model: "claude-opus-5",
     isResume: false,
     isDirectMode: true,
     reasoningEffort: "max",
   });
   assert(!directCmd.includes("--settings"), "direct mode does not pass Evolve settings file");
-  assert(directCmd.includes("--model 'claude-opus-4-8'"), "direct mode uses Factory model directly");
+  assert(directCmd.includes("--model 'claude-opus-5'"), "direct mode uses Factory model directly");
   assert(directCmd.includes("--reasoning-effort max"), "direct mode forwards reasoning effort");
 
   const resumedCmd = droid.buildCommand({
     prompt: "hello again",
-    model: "claude-opus-4-8",
+    model: "claude-opus-5",
     isResume: true,
     sessionId: "droid-session-123",
     isDirectMode: true,
@@ -1628,11 +1629,11 @@ async function testDroidGatewayModelAliases(): Promise<void> {
     isDirectMode: true,
   } as any, {});
 
-  assertEqual((gatewayAgent as any).resolveGatewayModel("kimi-k2.6"), "moonshot/kimi-k2.6", "gateway maps Kimi to Moonshot route");
-  assertEqual((gatewayAgent as any).resolveGatewayModel("deepseek-v4-pro"), "deepseek/deepseek-v4-pro", "gateway maps DeepSeek route");
-  assertEqual((gatewayAgent as any).resolveGatewayModel("minimax-m2.7"), "minimax/minimax-m2.7", "gateway maps MiniMax route");
-  assertEqual((gatewayAgent as any).resolveGatewayModel("claude-sonnet-4-6"), "claude-sonnet-4-6", "gateway leaves Claude model unchanged");
-  assertEqual((directAgent as any).resolveGatewayModel("kimi-k2.6"), "kimi-k2.6", "direct mode leaves Droid-native Kimi model unchanged");
+  assertEqual((gatewayAgent as any).resolveGatewayModel("kimi-k3"), "moonshot/kimi-k3", "gateway maps Kimi to Moonshot route");
+  assertEqual((gatewayAgent as any).resolveGatewayModel("glm-5.2"), "openrouter/z-ai/glm-5.2", "gateway maps GLM to OpenRouter route");
+  assertEqual((gatewayAgent as any).resolveGatewayModel("qwen3.7-max"), "dashscope/qwen3.7-max", "gateway maps Qwen to DashScope route");
+  assertEqual((gatewayAgent as any).resolveGatewayModel("claude-sonnet-5"), "claude-sonnet-5", "gateway leaves Claude model unchanged");
+  assertEqual((directAgent as any).resolveGatewayModel("kimi-k3"), "kimi-k3", "direct mode leaves Droid-native Kimi model unchanged");
 }
 
 async function testDroidBuildRunEnvsReturnsUndefined(): Promise<void> {

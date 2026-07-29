@@ -102,7 +102,7 @@ def get_byok_agent_config(agent_type: str) -> Optional[AgentConfig]:
         return AgentConfig(
             type='codex',
             provider_api_key=env['OPENAI_API_KEY'],
-            model=os.getenv('CODEX_MODEL', 'gpt-5.2'),
+            model=os.getenv('CODEX_MODEL', 'gpt-5.5'),
             reasoning_effort=os.getenv('CODEX_REASONING_EFFORT', 'medium'),
         )
 
@@ -112,7 +112,7 @@ def get_byok_agent_config(agent_type: str) -> Optional[AgentConfig]:
         return AgentConfig(
             type='gemini',
             provider_api_key=env['GEMINI_API_KEY'],
-            model=os.getenv('GEMINI_MODEL', 'gemini-3-flash-preview'),
+            model=os.getenv('GEMINI_MODEL', 'gemini-3.6-flash'),
         )
 
     elif agent_type == 'qwen':

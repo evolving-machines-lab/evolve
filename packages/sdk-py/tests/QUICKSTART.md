@@ -83,7 +83,7 @@ EVOLVE_API_KEY=sk_your_gateway_key            # Single key for all agents
 # EVOLVE_GATEWAY_URL=http://localhost:4000    # Point at custom LiteLLM gateway
 CODEX_MODEL=gpt-5.3-codex
 CLAUDE_MODEL=claude-sonnet-4-6
-GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL=gemini-3.6-flash
 QWEN_MODEL=qwen3.7-max
 
 # Optional: MCP server testing
@@ -203,7 +203,7 @@ Comment out `await evolve.kill()` in failing tests to keep sandbox running.
 Set model environment variables:
 
 ```bash
-CODEX_MODEL=gpt-5.4-mini TEST_AGENT_TYPE=codex python -m pytest tests/integration/
+CODEX_MODEL=gpt-5.6-luna TEST_AGENT_TYPE=codex python -m pytest tests/integration/
 ANTHROPIC_MODEL=claude-sonnet-4-6 TEST_AGENT_TYPE=claude python tests/integration/test_01_basic_methods.py
 ```
 

@@ -389,10 +389,10 @@ async function runTests(): Promise<void> {
   {
     const result = resolveAgentConfig({
       type: "codex",
-      model: "gpt-5.2",
+      model: "gpt-5.5",
       reasoningEffort: "high",
     });
-    assertEqual(result.model, "gpt-5.2", "preserves model in gateway mode");
+    assertEqual(result.model, "gpt-5.5", "preserves model in gateway mode");
     assertEqual(result.reasoningEffort, "high", "preserves reasoningEffort in gateway mode");
   }
 

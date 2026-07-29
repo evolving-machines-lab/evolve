@@ -163,7 +163,7 @@ function testEffortFlag() {
     "run",
     "--benchmark", "deep-swe@1.1",
     "--agent", "codex:gpt-5.5",
-    "--agent", "gemini:gemini-2.5-flash-lite",
+    "--agent", "gemini:gemini-3.5-flash-lite",
     "--effort", "low",
   ]);
   const input = buildJobInput(inv);
@@ -174,7 +174,7 @@ function testEffortFlag() {
       // gemini gets the value TOO: the server's per-harness refusal is the
       // single source of truth, and the CLI silently unstamping some agents
       // would submit a sweep the flag no longer describes.
-      { harness: "gemini", model: "gemini-2.5-flash-lite", reasoningEffort: "low" },
+      { harness: "gemini", model: "gemini-3.5-flash-lite", reasoningEffort: "low" },
     ],
     "--effort applied to every agent, refusal left to the server"
   );
