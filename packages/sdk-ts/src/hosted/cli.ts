@@ -10,7 +10,7 @@
  * runtime/API failure (watch: FAILED or CANCELLED), 2 usage error.
  */
 
-import { readFileSync } from "fs";
+import { readFileSync, realpathSync } from "fs";
 import { pathToFileURL } from "url";
 import { benchmarks, customHarnesses, jobs } from "./index";
 import type {
@@ -1412,11 +1412,26 @@ export async function runCli(argv: string[], io: CliIO = defaultIO): Promise<num
 }
 
 // Run only when invoked as the `evolve-evals` bin — never on test/library import.
+//
+// argv[1] is the path the process was STARTED with, which after a normal
+// install is node_modules/.bin/evolve-evals — a SYMLINK. Node dereferences
+// symlinks when it builds import.meta.url, so the two agree only once argv[1]
+// is resolved as well; comparing the raw path made the installed bin a silent
+// no-op. Both forms are tried because --preserve-symlinks-main flips which side
+// is the real path.
 const invokedAsBin = (() => {
   const entry = process.argv[1];
   if (!entry) return false;
+  const isThisModule = (path: string): boolean => {
+    try {
+      return import.meta.url === pathToFileURL(path).href;
+    } catch {
+      return false;
+    }
+  };
+  if (isThisModule(entry)) return true;
   try {
-    return import.meta.url === pathToFileURL(entry).href;
+    return isThisModule(realpathSync(entry));
   } catch {
     return false;
   }
