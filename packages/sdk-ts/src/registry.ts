@@ -431,13 +431,14 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     image: "evolve-all",
     apiKeyEnv: "OPENROUTER_API_KEY",
     baseUrlEnv: "OPENAI_BASE_URL",
-    defaultModel: "openrouter/anthropic/claude-sonnet-4.6",
+    defaultModel: "openrouter/anthropic/claude-opus-5",
     // OpenRouter-only: all models route through OpenRouter (direct or via the Evolve gateway)
     providerEnvMap: {
       openrouter: { keyEnv: "OPENROUTER_API_KEY" },
     },
     gatewayConfigEnv: "OPENCODE_CONFIG_CONTENT",
     models: [
+      { alias: "openrouter/anthropic/claude-opus-5", modelId: "openrouter/anthropic/claude-opus-5", description: "Anthropic Opus 5 via OpenRouter" },
       { alias: "openrouter/anthropic/claude-fable-5", modelId: "openrouter/anthropic/claude-fable-5", description: "Anthropic Fable via OpenRouter" },
       { alias: "openrouter/anthropic/claude-sonnet-4.6", modelId: "openrouter/anthropic/claude-sonnet-4.6", description: "Anthropic Sonnet via OpenRouter" },
       { alias: "openrouter/anthropic/claude-opus-4.8", modelId: "openrouter/anthropic/claude-opus-4.8", description: "Anthropic Opus via OpenRouter" },
@@ -499,8 +500,11 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
   droid: {
     image: "evolve-all",
     apiKeyEnv: "FACTORY_API_KEY",
-    defaultModel: "gpt-5.5",
+    defaultModel: "claude-opus-5",
     models: [
+      { alias: "claude-opus-5", modelId: "claude-opus-5", description: "Factory-managed Claude Opus 5" },
+      { alias: "claude-opus-5-fast", modelId: "claude-opus-5-fast", description: "Factory-managed Claude Opus 5 Fast Mode" },
+      { alias: "gpt-5.6-sol", modelId: "gpt-5.6-sol", description: "Factory-managed GPT-5.6 Sol" },
       { alias: "claude-opus-4-8", modelId: "claude-opus-4-8", description: "Factory-managed Claude Opus 4.8" },
       { alias: "claude-opus-4-8-fast", modelId: "claude-opus-4-8-fast", description: "Factory-managed Claude Opus 4.8 Fast Mode" },
       { alias: "claude-sonnet-4-6", modelId: "claude-sonnet-4-6", description: "Factory-managed Claude Sonnet 4.6" },
