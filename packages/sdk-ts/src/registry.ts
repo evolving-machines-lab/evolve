@@ -290,10 +290,10 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     // before it ships.
     baseUrlEnv: "OPENAI_BASE_URL",
     defaultModel: "gpt-5.6-sol",
-    // OpenAI's GPT-5.6 API default when the field is omitted (their 5.6
-    // reasoning guide); pinned so a vendor-side change cannot move it.
-    // Stamped explicitly via -c model_reasoning_effort on every run.
-    defaultReasoningEffort: "medium",
+    // Owner policy: graded-effort harnesses pin "high" (kimi alone pins max).
+    // Stamped explicitly via -c model_reasoning_effort on every run, so a
+    // vendor-side default change cannot move results.
+    defaultReasoningEffort: "high",
     models: [
       { alias: "gpt-5.6-sol", modelId: "gpt-5.6-sol", description: "Newest frontier flagship" },
       { alias: "gpt-5.6-terra", modelId: "gpt-5.6-terra", description: "Balances intelligence and cost" },
@@ -469,7 +469,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     // OpenCode runs thinking at the "medium" variant when effort is omitted
     // (see getOpenCodeReasoningVariant); pinned so that choice is registry
     // data, stamped via --variant/--thinking and the litellm variants config.
-    defaultReasoningEffort: "medium",
+    defaultReasoningEffort: "high",
     // OpenRouter-only: all models route through OpenRouter (direct or via the Evolve gateway)
     providerEnvMap: {
       openrouter: { keyEnv: "OPENROUTER_API_KEY" },

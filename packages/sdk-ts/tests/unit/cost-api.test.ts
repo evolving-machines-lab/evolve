@@ -92,21 +92,21 @@ async function testPinnedReasoningEffortDefaults(): Promise<void> {
 
   // Registry pins — one per harness that supports effort/thinking.
   assertEqual(AGENT_REGISTRY.claude.defaultReasoningEffort, "high", "claude pin is high (Claude Code documented default)");
-  assertEqual(AGENT_REGISTRY.codex.defaultReasoningEffort, "medium", "codex pin is medium (OpenAI documented default)");
+  assertEqual(AGENT_REGISTRY.codex.defaultReasoningEffort, "high", "codex pin is high (owner policy)");
   assertEqual(AGENT_REGISTRY.qwen.defaultReasoningEffort, "thinking", "qwen pin is thinking");
   assertEqual(AGENT_REGISTRY.kimi.defaultReasoningEffort, "max", "kimi pin is max (K3 API default)");
-  assertEqual(AGENT_REGISTRY.opencode.defaultReasoningEffort, "medium", "opencode pin is medium variant");
+  assertEqual(AGENT_REGISTRY.opencode.defaultReasoningEffort, "high", "opencode pin is high variant");
   assertEqual(AGENT_REGISTRY.droid.defaultReasoningEffort, "high", "droid pin is high (matches Droid's own Opus 5 default)");
   assertEqual(AGENT_REGISTRY.gemini.defaultReasoningEffort, undefined, "gemini has no effort control, no pin");
 
   // Resolution: caller's value wins, pin fills omission.
   assertEqual(resolveReasoningEffort("codex", "xhigh"), "xhigh", "caller effort beats the pin");
-  assertEqual(resolveReasoningEffort("codex", undefined), "medium", "omitted effort resolves to the pin");
+  assertEqual(resolveReasoningEffort("codex", undefined), "high", "omitted effort resolves to the pin");
 
-  // codex: omitted effort stamps -c model_reasoning_effort="medium".
+  // codex: omitted effort stamps -c model_reasoning_effort="high".
   const codexAgent = new Agent({ type: "codex", apiKey: "test-gateway-key", isDirectMode: false } as any, {});
   const codexCmd = (codexAgent as any).buildCommand("hello") as string;
-  assert(codexCmd.includes('-c model_reasoning_effort="medium"'), "codex omitted effort stamps medium on the command");
+  assert(codexCmd.includes('-c model_reasoning_effort="high"'), "codex omitted effort stamps high on the command");
 
   // droid: omitted effort stamps --reasoning-effort high.
   const droidAgent = new Agent({ type: "droid", apiKey: "test-gateway-key", isDirectMode: false } as any, {});
@@ -140,7 +140,7 @@ async function testPinnedReasoningEffortDefaults(): Promise<void> {
   // opencode: omitted effort stamps the medium variant (also covered in [33b]).
   const opencodeAgent = new Agent({ type: "opencode", apiKey: "test-gateway-key", isDirectMode: false } as any, {});
   const opencodeCmd = (opencodeAgent as any).buildCommand("hello") as string;
-  assert(opencodeCmd.includes("--variant medium --thinking"), "opencode omitted effort stamps the medium variant");
+  assert(opencodeCmd.includes("--variant high --thinking"), "opencode omitted effort stamps the high variant");
 
   // gemini: no effort control — nothing stamped.
   const geminiAgent = new Agent({ type: "gemini", apiKey: "test-gateway-key", isDirectMode: false } as any, {});
@@ -1418,7 +1418,7 @@ async function testOpenCodeBuildRunEnvsIncludesHeaders(): Promise<void> {
   assertEqual(modelEntry.headers?.["x-litellm-customer-id"], "evolve-opencode-session", "session tag in headers");
   assert(modelEntry.headers?.["x-litellm-tags"]?.includes("run:run-oc-001"), "run tag in headers");
   assertEqual(modelEntry.headers?.["x-evolve-provider-runtime-binding"], "evrb_openrouter_binding_secret", "binding header in model config");
-  assertEqual(modelEntry.variants?.medium?.reasoningEffort, "medium", "default variant sets medium reasoning effort");
+  assertEqual(modelEntry.variants?.high?.reasoningEffort, "high", "default variant sets high reasoning effort");
   assert(!("EVOLVE_API_KEY" in envs!), "does not expose Evolve gateway key");
   assert(!("OPENROUTER_API_KEY" in envs!), "does not expose OpenRouter env for config-file auth");
 }
@@ -1514,7 +1514,7 @@ async function testOpenCodeMergesUserSecrets(): Promise<void> {
   assertEqual(activeModel.headers["x-litellm-customer-id"], "evolve-oc-merge", "spend session header injected");
   assert(activeModel.headers["x-litellm-tags"]?.includes("run:run-merge-001"), "spend run tag injected");
   assertEqual(activeModel.headers["x-evolve-provider-runtime-binding"], "evrb_openrouter_binding_secret", "provider runtime binding injected");
-  assertEqual(activeModel.variants?.medium?.reasoningEffort, "medium", "reasoning variant injected");
+  assertEqual(activeModel.variants?.high?.reasoningEffort, "high", "reasoning variant injected");
 
   // SDK overrides litellm options (proxy URL + runtime token)
   assertEqual(parsed.provider.litellm.options.baseURL, "https://dashboard.test/api/model-proxy/openrouter/v1", "model proxy baseURL set");
@@ -1525,7 +1525,7 @@ async function testOpenCodeReasoningFlags(): Promise<void> {
   console.log("\n[33b] OpenCode buildCommand() passes reasoning flags");
   const defaultAgent = new Agent({ type: "opencode", apiKey: "test-gateway-key", isDirectMode: false } as any, {});
   const defaultCmd = (defaultAgent as any).buildCommand("hello") as string;
-  assert(defaultCmd.includes("--variant medium"), "defaults OpenCode to medium variant");
+  assert(defaultCmd.includes("--variant high"), "defaults OpenCode to high variant");
   assert(defaultCmd.includes("--thinking"), "shows thinking output");
 
   const noThinkingAgent = new Agent({
