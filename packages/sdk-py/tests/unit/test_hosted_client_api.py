@@ -27,9 +27,11 @@ Coverage:
 Mocks urllib at the module boundary; no real network calls.
 """
 
+import asyncio
 import gzip
 import hashlib
 import json
+import os
 import urllib.parse as urllib_parse
 from unittest.mock import patch
 
@@ -1256,6 +1258,67 @@ class TestJobs:
         with open(path, 'rb') as f:
             assert f.read() == package
         assert '/api/benchmarks/imports/imp-1/package' in fake.requests[0].full_url
+
+    @pytest.mark.asyncio
+    async def test_download_package_refuses_a_backslash_filename(self, tmp_path):
+        """PARITY: refused, not repaired.
+
+        This used to translate the backslash to a separator and save
+        ``b.tar.gz`` while the TypeScript SDK fell back to its own name — one
+        response, two files. Refusing is the half that was kept: on POSIX
+        ``a\\b.tar.gz`` is ONE legal filename, so treating the backslash as a
+        separator renames the user's file on a guess about which platform wrote
+        the header.
+        """
+        package = gzip.compress(b'corpus bytes')
+        fake = FakeUrlopen([
+            (
+                '/package',
+                package,
+                {
+                    'Content-Disposition': 'attachment; filename="a\\b.tar.gz"',
+                    'x-package-sha256': hashlib.sha256(package).hexdigest(),
+                },
+            ),
+        ])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            path = await benchmarks_factory(CONFIG).download_package(
+                'imp-bs', to=str(tmp_path)
+            )
+
+        assert os.path.basename(path) == 'import-imp-bs-corpus.tar.gz'
+        with open(path, 'rb') as f:
+            assert f.read() == package
+
+    @pytest.mark.asyncio
+    async def test_two_concurrent_downloads_into_one_directory_both_succeed(self, tmp_path):
+        """The scratch file is per call, so neither download is the other's.
+
+        With ``<file>.part`` verbatim the two calls wrote into ONE file and the
+        loser died on a bare ENOENT from os.replace — and the digest each had
+        checked described its own stream rather than the bytes that landed.
+        """
+        package = gzip.compress(b'corpus bytes for the race')
+        headers = {
+            'Content-Disposition': 'attachment; filename="acme@1.1-corpus.tar.gz"',
+            'Content-Length': str(len(package)),
+            'x-package-sha256': hashlib.sha256(package).hexdigest(),
+        }
+        with patch(
+            'evolve.hosted.urllib.request.urlopen',
+            FakeUrlopen([('/package', package, headers)]),
+        ):
+            client = benchmarks_factory(CONFIG)
+            first, second = await asyncio.gather(
+                client.download_package('imp-race', to=str(tmp_path)),
+                client.download_package('imp-race', to=str(tmp_path)),
+            )
+
+        assert first == second
+        with open(first, 'rb') as f:
+            assert f.read() == package
+        # No scratch file survives either call.
+        assert [p.name for p in tmp_path.iterdir()] == ['acme@1.1-corpus.tar.gz']
 
     @pytest.mark.asyncio
     async def test_download_package_refuses_bytes_failing_the_stated_digest(self, tmp_path):

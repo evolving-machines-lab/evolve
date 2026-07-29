@@ -1115,11 +1115,21 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
         // complete AND verified, so a transfer that dies partway leaves nothing
         // a later run could mistake for the corpus. rename within one directory
         // is atomic on every platform we target.
-        const partPath = `${filePath}.part`;
+        //
+        // THE SUFFIX IS PER CALL, and it is not decoration. Two concurrent
+        // downloads of one package into one directory shared `<file>.part`
+        // verbatim: they interleaved writes into the same file, then the first
+        // rename won and the second died on a bare ENOENT with no hint of why.
+        // Worse quietly: each call hashed ITS OWN stream, so the digest check
+        // proved something about bytes that were never the ones on disk. With a
+        // random name per call, each stream owns its file end to end, the
+        // verification covers exactly what gets promoted, and both callers get
+        // the package.
+        const { createHash, randomBytes } = await import("crypto");
+        const partPath = `${filePath}.${randomBytes(8).toString("hex")}.part`;
         // Hashed WHILE streaming, never buffered: a package can be 512 MB, and
         // reading it into memory to check a digest would trade one correctness
         // problem for a heap one.
-        const { createHash } = await import("crypto");
         const hash = createHash("sha256");
         let received = 0;
         const nodeStream = Readable.fromWeb(

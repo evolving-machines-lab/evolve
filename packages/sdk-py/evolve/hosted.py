@@ -18,6 +18,7 @@ import io
 import json
 import os
 import re
+import secrets
 import shutil
 import tarfile
 import time
@@ -1523,7 +1524,17 @@ class _HostedHttp:
                 # TEMP-THEN-RENAME: bytes never appear at the final path until
                 # they are complete AND verified, so a transfer that dies partway
                 # leaves nothing a later run could mistake for the corpus.
-                part = f'{target}.part'
+                #
+                # THE SUFFIX IS PER CALL, and it is not decoration. Two
+                # concurrent downloads of one package into one directory shared
+                # ``<file>.part`` verbatim: they interleaved writes into the same
+                # file, then the first replace won and the second died on a bare
+                # ENOENT with no hint of why. Worse quietly: each call hashed ITS
+                # OWN stream, so the digest check proved something about bytes
+                # that were never the ones on disk. With a random name per call,
+                # each stream owns its file end to end, the verification covers
+                # exactly what gets promoted, and both callers get the package.
+                part = f'{target}.{secrets.token_hex(8)}.part'
                 declared = response.headers.get('Content-Length')
                 expected = response.headers.get(PACKAGE_DIGEST_HEADER)
                 digest = hashlib.sha256()
@@ -1571,11 +1582,25 @@ def _safe_download_filename(candidate: Optional[str], fallback: str) -> str:
     merely server-supplied. basename() strips any directory part, and anything
     that still looks like a path component, is empty, or is a dot-entry falls
     back to the caller's own name.
+
+    A BACKSLASH IS REFUSED, NOT REPAIRED, which is where this used to disagree
+    with the TypeScript SDK: ``a\\b.tar.gz`` was rewritten here to ``b.tar.gz``
+    while TypeScript fell back to its own name, so the same response produced
+    two different files. Refusing is the half worth keeping. On POSIX that
+    string is one legal filename, so treating the backslash as a separator
+    silently renames the user's file on a guess about which platform wrote the
+    header — the same "two parsers, one string" ambiguity the git URL rules
+    refuse rather than resolve. The fallback is a name we chose and can explain.
     """
     if not candidate:
         return fallback
-    name = os.path.basename(candidate.replace('\\', '/'))
-    if name in ('', '.', '..') or '/' in name or any(ord(c) < 32 for c in name):
+    name = os.path.basename(candidate)
+    if (
+        name in ('', '.', '..')
+        or '/' in name
+        or '\\' in name
+        or any(ord(c) < 32 for c in name)
+    ):
         return fallback
     return name
 

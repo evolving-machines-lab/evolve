@@ -2614,6 +2614,90 @@ async function testDownloadPackageFilenameTraversal() {
   }
 }
 
+async function testDownloadPackageBackslashFilename() {
+  console.log("\n--- downloadPackage({ to }) refuses a backslash filename rather than repairing it ---");
+  installMockFetch();
+  const tmpDir = join(tmpdir(), `hosted-package-bs-${Date.now()}`);
+  try {
+    const pkg = gzipSync(Buffer.from("corpus bytes"));
+    setMockResponse("/api/benchmarks/imports/ver-bs/package", {
+      status: 200,
+      body: null,
+      bodyBytes: pkg,
+      headers: {
+        "Content-Disposition": 'attachment; filename="a\\b.tar.gz"',
+        "Content-Length": String(pkg.length),
+        "x-package-sha256": createHash("sha256").update(pkg).digest("hex"),
+      },
+    });
+
+    const b = benchmarks({ apiKey: "test-key", baseUrl: BASE });
+    const filePath = await b.downloadPackage("ver-bs", { to: tmpDir });
+
+    // PARITY: Python used to translate the backslash to a separator and save
+    // "b.tar.gz" while this SDK fell back — one response, two files. Refusing
+    // is the half that was kept: on POSIX "a\b.tar.gz" is ONE legal filename,
+    // so treating the backslash as a separator renames the user's file on a
+    // guess about which platform wrote the header.
+    assert(
+      filePath.endsWith("import-ver-bs-corpus.tar.gz"),
+      "falls back to the SDK's own name",
+    );
+    assert(!filePath.endsWith("b.tar.gz"), "does not silently rewrite it to b.tar.gz");
+    const written = await readFile(filePath);
+    assertEqual(written.equals(pkg), true, "the package still lands intact");
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    restoreFetch();
+  }
+}
+
+async function testDownloadPackageConcurrent() {
+  console.log("\n--- two concurrent downloads into one directory BOTH succeed ---");
+  installMockFetch();
+  const tmpDir = join(tmpdir(), `hosted-package-race-${Date.now()}`);
+  try {
+    const pkg = gzipSync(Buffer.from("corpus bytes for the race"));
+    setMockResponse("/api/benchmarks/imports/ver-race/package", {
+      status: 200,
+      body: null,
+      bodyBytes: pkg,
+      headers: {
+        "Content-Disposition": 'attachment; filename="acme@1.1-corpus.tar.gz"',
+        "Content-Length": String(pkg.length),
+        "x-package-sha256": createHash("sha256").update(pkg).digest("hex"),
+      },
+    });
+
+    const b = benchmarks({ apiKey: "test-key", baseUrl: BASE });
+    // Both calls resolve the SAME final path. When the scratch file was
+    // `<file>.part` verbatim they wrote into one file and the loser died on a
+    // bare ENOENT from rename — and the digest each had checked described a
+    // stream, not the bytes that landed.
+    const results = await Promise.allSettled([
+      b.downloadPackage("ver-race", { to: tmpDir }),
+      b.downloadPackage("ver-race", { to: tmpDir }),
+    ]);
+
+    const rejected = results.filter(r => r.status === "rejected");
+    assertEqual(
+      rejected.length,
+      0,
+      `neither call fails${rejected.length ? `: ${String((rejected[0] as PromiseRejectedResult).reason)}` : ""}`,
+    );
+    const paths = results.map(r => (r as PromiseFulfilledResult<string>).value);
+    assertEqual(paths[0], paths[1], "both report the same promoted path");
+    const written = await readFile(paths[0]);
+    assertEqual(written.equals(pkg), true, "the promoted file is the whole package");
+    // No scratch file survives either call.
+    const leftovers = (await readdir(tmpDir)).filter(name => name.includes(".part"));
+    assertEqual(leftovers.length, 0, "no .part scratch files are left behind");
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    restoreFetch();
+  }
+}
+
 async function testDownloadPackageNotRetained() {
   console.log("\n--- downloadPackage() surfaces package_not_retained as a typed code ---");
   installMockFetch();
@@ -2691,6 +2775,8 @@ async function main() {
   await testDownloadPackageDigestMismatch();
   await testDownloadPackageTruncated();
   await testDownloadPackageFilenameTraversal();
+  await testDownloadPackageBackslashFilename();
+  await testDownloadPackageConcurrent();
   await testDownloadPackageNotRetained();
   await testExportTerminalRequired();
   await testWatchStreamsToTerminal();
