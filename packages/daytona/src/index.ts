@@ -196,19 +196,29 @@ export class DaytonaResourcesError extends Error {
  * password prompt if the image lacks passwordless sudo.
  */
 /**
- * Enforce the timeout INSIDE the box. Daytona has no fixed sandbox lifetime and
- * its auto-stop timer measures INACTIVITY ("how long it remains active after
- * the last interaction"), so a busy runaway is never reclaimed by the provider
- * — unlike e2b and Modal, which both kill the process server-side. The session
- * API does take a timeout, but we launch with runAsync:true, so that argument
- * bounds the *call*, not the process, and the only real deadline was a
- * client-side poll in wait(): if this process died, the agent kept burning.
+ * Enforce the timeout INSIDE the box, on BOTH execution paths. Daytona has no
+ * fixed sandbox lifetime, and its auto-stop timer measures INACTIVITY over SDK
+ * interactions ("no new events ... state changes or interactions with the
+ * Sandbox through the sdk"), so it bounds nothing that matters here: while a
+ * client is polling, that polling is itself an interaction and resets the clock,
+ * and once the client is gone the box still runs for the whole remaining
+ * interval before it merely STOPS. e2b and Modal both take an absolute,
+ * server-side lifetime; Daytona takes none.
  *
- * coreutils `timeout` closes that hole: the kernel kills the harness whether or
- * not anything is still watching. The script is passed base64 -> file so no
- * quoting of the caller's command is ever attempted, and a box without
- * coreutils degrades to the un-timed run rather than failing outright (the
- * client-side deadline in wait() still covers it).
+ * The session API's timeout argument does not close the hole on either path.
+ * spawn launches with runAsync:true, where that argument bounds the *call*, not
+ * the process, and the only deadline is a client-side poll in wait(). run blocks
+ * with runAsync:false, where the argument is documented as how long to WAIT for
+ * the command — and it is this process that waits, so a wait that ends because
+ * this process died is not a kill.
+ *
+ * coreutils `timeout` closes it for both: the kernel kills the command whether
+ * or not anything is still watching, and exits 124 — the same code wait()'s own
+ * deadline and the e2b adapter return, so a timeout means one thing across every
+ * provider and both paths. The script is passed base64 -> file so no quoting of
+ * the caller's command is ever attempted, and a box without coreutils degrades
+ * to the un-timed run rather than failing outright (the client-side deadlines
+ * still cover the case where a client is alive to enforce them).
  */
 function withInBoxTimeout(wrapped: string, timeoutSec?: number): string {
   if (!timeoutSec || timeoutSec <= 0) return wrapped;
@@ -218,9 +228,10 @@ function withInBoxTimeout(wrapped: string, timeoutSec?: number): string {
   // appended to the session's own shell, because the script has to end by
   // propagating the timed command's status — and an `exit` evaluated by the
   // SESSION shell terminates the session itself, after which Daytona never
-  // records the command as finished and the poll in wait() spins until the
-  // client deadline. Measured: a bare `echo hello` came back exit 124 after 31s
-  // that way, while the same command without this wrapper returned in 1.4s.
+  // records the command as finished: the poll in wait() spins until the client
+  // deadline, and a blocking run() never learns its exit code at all. Measured:
+  // a bare `echo hello` came back exit 124 after 31s that way, while the same
+  // command without this wrapper returned in 1.4s.
   // Single-quoted, and the body deliberately contains no single quote of its
   // own (the payload is base64) so no escaping is required.
   const inner =
@@ -991,8 +1002,15 @@ export class DaytonaCommands implements SandboxCommands {
     await this.sandbox.process.createSession(sessionId);
 
     try {
+      // The third argument stays the wait bound — this call still blocks until
+      // the command finishes — and withInBoxTimeout is what survives this
+      // process dying while it waits (see the wrapper's header). Both are the
+      // caller's own timeout, so whichever fires first, nothing outlives it.
       const resp = await this.sandbox.process.executeSessionCommand(sessionId, {
-        command: wrapCommand(command, options?.cwd, options?.envs, this.user),
+        command: withInBoxTimeout(
+          wrapCommand(command, options?.cwd, options?.envs, this.user),
+          timeoutSec
+        ),
         runAsync: false,
       }, timeoutSec);
 
@@ -1615,6 +1633,7 @@ export function createDaytonaProvider(config: DaytonaConfig = {}): SandboxProvid
 
 /** @internal Test-only export for unit testing wrapCommand logic. */
 export const _testWrapCommand = wrapCommand;
+export const _testWithInBoxTimeout = withInBoxTimeout;
 export const _testMapNetworkPolicy = mapNetworkPolicy;
 export const _testImageRegistryHost = imageRegistryHost;
 export const _testToSandboxInfo = toSandboxInfo;

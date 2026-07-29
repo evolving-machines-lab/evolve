@@ -6,12 +6,15 @@
  *   1. wrapCommand() — pure function: cwd, envs, escaping, passthrough
  *   2. DaytonaCommands.run() — always-session-based execution, empty stdout fallback
  *   3. DaytonaCommands.spawn() — envs passed through to wrapCommand
+ *   4. The in-box kill on run() — coreutils `timeout` planted inside the box,
+ *      because Daytona has no server-side lifetime and run()'s own timeout is a
+ *      wait bound this process enforces (and stops enforcing when it dies)
  *
  * Usage:
  *   npx tsx tests/unit/daytona-commands.test.ts
  */
 
-import { _testWrapCommand } from "../../src/index.ts";
+import { DaytonaCommands, _testWithInBoxTimeout, _testWrapCommand } from "../../src/index.ts";
 
 // =============================================================================
 // TEST HELPERS
@@ -160,7 +163,13 @@ interface MockSession {
 
 interface MockProcessApi {
   sessions: Map<string, MockSession>;
-  lastSessionCommand: { sessionId: string; command: string; runAsync: boolean } | null;
+  lastSessionCommand: {
+    sessionId: string;
+    command: string;
+    runAsync: boolean;
+    /** The session API's own timeout argument, as sent. */
+    timeoutSec?: number;
+  } | null;
   /** Override response for executeSessionCommand */
   execResponse: {
     cmdId?: string;
@@ -201,11 +210,11 @@ function createMockDaytonaSandbox(processApi: MockProcessApi) {
       executeSessionCommand: async (
         sessionId: string,
         params: { command: string; runAsync: boolean },
-        _timeout?: number
+        timeoutSec?: number
       ) => {
         const session = processApi.sessions.get(sessionId);
         if (session) session.commands.push(params);
-        processApi.lastSessionCommand = { sessionId, ...params };
+        processApi.lastSessionCommand = { sessionId, ...params, timeoutSec };
         return { ...processApi.execResponse };
       },
       getSessionCommandLogs: async (
@@ -254,14 +263,10 @@ function createMockDaytonaSandbox(processApi: MockProcessApi) {
   };
 }
 
-// DaytonaCommands is not exported, so we instantiate it indirectly via DaytonaSandboxImpl.
-// However, DaytonaSandboxImpl is also not exported. We need to work around this by
-// dynamically instantiating the class. Let's import and use the constructor pattern.
-// Actually, the simplest approach: create a DaytonaProvider and use its create() method
-// with our mock. But DaytonaProvider requires Daytona client.
-//
-// Best approach: test through the mock Daytona sandbox by directly constructing the
-// command wrapping behavior and verifying through executeSessionCommand captured args.
+/** DaytonaCommands over the mock process API — section [4] drives the real methods. */
+function createCommands(processApi: MockProcessApi, user?: string): DaytonaCommands {
+  return new DaytonaCommands(createMockDaytonaSandbox(processApi) as never, user);
+}
 
 async function testRunAlwaysUsesSession(): Promise<void> {
   console.log("\n[2a] DaytonaCommands.run() - always creates ephemeral session");
@@ -509,6 +514,110 @@ async function testSpawnWithoutEnvs(): Promise<void> {
 }
 
 // =============================================================================
+// [4] The in-box kill — DaytonaCommands.run() (real method, not simulated)
+//
+// Daytona has no server-side lifetime, and run()'s session-API timeout is a WAIT
+// bound honored by THIS process. If it dies mid-run, only the coreutils
+// `timeout` planted inside the box still bounds the command — which is the
+// whole reason the wrapper is on run() and not just spawn().
+// =============================================================================
+
+/** The base64 payload the wrapper decodes into the script it runs. */
+function decodePayload(command: string): string {
+  const match = /echo ([A-Za-z0-9+/=]+) \| base64 -d/.exec(command);
+  if (!match) throw new Error(`no base64 payload in: ${command}`);
+  return Buffer.from(match[1], "base64").toString("utf8");
+}
+
+async function testRunPlantsInBoxTimeout(): Promise<void> {
+  console.log("\n[4a] run() - plants coreutils `timeout` inside the box");
+
+  const processApi = createMockProcessApi();
+  const commands = createCommands(processApi);
+
+  await commands.run("sleep 999", { timeoutMs: 30_000, cwd: "/workspace" });
+
+  const sent = processApi.lastSessionCommand!;
+  assert(sent.command.startsWith("sh -c '"), "Runs in a CHILD shell, not the session shell");
+  assert(sent.command.includes("timeout -k 10 30 bash "), "coreutils timeout carries the caller's seconds");
+  assertEqual(
+    decodePayload(sent.command),
+    "cd '/workspace' && sleep 999",
+    "The timed payload is exactly the wrapped command"
+  );
+}
+
+async function testRunKeepsBlockingSemantics(): Promise<void> {
+  console.log("\n[4b] run() - still blocks, and still sends the wait bound");
+
+  const processApi = createMockProcessApi();
+  const commands = createCommands(processApi);
+
+  await commands.run("echo hi", { timeoutMs: 45_000 });
+
+  const sent = processApi.lastSessionCommand!;
+  assertEqual(sent.runAsync, false, "runAsync stays false — run() blocks");
+  assertEqual(sent.timeoutSec, 45, "The session API still gets the wait bound");
+}
+
+async function testRunWithoutTimeoutIsUnchanged(): Promise<void> {
+  console.log("\n[4c] run() - no timeout requested, no wrapper");
+
+  const processApi = createMockProcessApi();
+  const commands = createCommands(processApi);
+
+  await commands.run("echo hi", { cwd: "/app" });
+
+  const sent = processApi.lastSessionCommand!;
+  assertEqual(sent.command, "cd '/app' && echo hi", "Command is passed through untouched");
+  assertEqual(sent.timeoutSec, undefined, "No wait bound either");
+}
+
+async function testRunPropagatesTimeoutExitCode(): Promise<void> {
+  console.log("\n[4d] run() - the timed command's status is what comes back");
+
+  const processApi = createMockProcessApi();
+  // 124 is what coreutils `timeout` exits with, and the wrapper's `exit $rc`
+  // is what carries it out through the child shell.
+  processApi.execResponse = { cmdId: "cmd-124", exitCode: 124, stdout: "", stderr: "" };
+  const commands = createCommands(processApi);
+
+  const result = await commands.run("sleep 999", { timeoutMs: 5_000 });
+
+  assertEqual(result.exitCode, 124, "Exit code propagates unchanged");
+  assert(processApi.lastSessionCommand!.command.includes("exit $rc"), "Child shell propagates the status");
+}
+
+async function testInBoxTimeoutDegradesWithoutCoreutils(): Promise<void> {
+  console.log("\n[4e] withInBoxTimeout() - a box with no coreutils still runs the command");
+
+  const wrapped = _testWithInBoxTimeout("echo hi", 30);
+
+  assert(wrapped.includes("if command -v timeout >/dev/null 2>&1; then"), "coreutils presence is tested");
+  assert(/else bash \/tmp\/\.evolve-cmd-[^;]+; fi/.test(wrapped), "Falls back to an un-timed run");
+  assert(wrapped.includes("rm -f /tmp/.evolve-cmd-"), "The script file is cleaned up either way");
+}
+
+async function testInBoxTimeoutNeedsNoQuoting(): Promise<void> {
+  console.log("\n[4f] withInBoxTimeout() - a caller's quotes cannot break out of `sh -c`");
+
+  // The payload is base64 precisely so the single-quoted body never has to
+  // escape anything the caller wrote.
+  const nasty = `echo 'it'\\''s here'; rm -rf /`;
+  const wrapped = _testWithInBoxTimeout(nasty, 10);
+
+  assertEqual((wrapped.match(/'/g) || []).length, 2, "Exactly the two quotes that delimit `sh -c`");
+  assertEqual(decodePayload(wrapped), nasty, "The caller's command survives verbatim");
+}
+
+async function testInBoxTimeoutOmittedWhenNoDeadline(): Promise<void> {
+  console.log("\n[4g] withInBoxTimeout() - no deadline, no wrapper");
+
+  assertEqual(_testWithInBoxTimeout("echo hi", undefined), "echo hi", "undefined returns the command unchanged");
+  assertEqual(_testWithInBoxTimeout("echo hi", 0), "echo hi", "Zero returns the command unchanged");
+}
+
+// =============================================================================
 // RUNNER
 // =============================================================================
 
@@ -533,6 +642,14 @@ const tests = [
   // [3] spawn with envs
   testSpawnWithEnvs,
   testSpawnWithoutEnvs,
+  // [4] the in-box kill on run()
+  testRunPlantsInBoxTimeout,
+  testRunKeepsBlockingSemantics,
+  testRunWithoutTimeoutIsUnchanged,
+  testRunPropagatesTimeoutExitCode,
+  testInBoxTimeoutDegradesWithoutCoreutils,
+  testInBoxTimeoutNeedsNoQuoting,
+  testInBoxTimeoutOmittedWhenNoDeadline,
 ];
 
 (async () => {
