@@ -96,7 +96,7 @@ async function testPinnedReasoningEffortDefaults(): Promise<void> {
   assertEqual(AGENT_REGISTRY.qwen.defaultReasoningEffort, "thinking", "qwen pin is thinking");
   assertEqual(AGENT_REGISTRY.kimi.defaultReasoningEffort, "max", "kimi pin is max (K3 API default)");
   assertEqual(AGENT_REGISTRY.opencode.defaultReasoningEffort, "medium", "opencode pin is medium variant");
-  assertEqual(AGENT_REGISTRY.droid.defaultReasoningEffort, "medium", "droid pin is medium (Evolve's choice; Factory documents none)");
+  assertEqual(AGENT_REGISTRY.droid.defaultReasoningEffort, "high", "droid pin is high (matches Droid's own Opus 5 default)");
   assertEqual(AGENT_REGISTRY.gemini.defaultReasoningEffort, undefined, "gemini has no effort control, no pin");
 
   // Resolution: caller's value wins, pin fills omission.
@@ -108,10 +108,10 @@ async function testPinnedReasoningEffortDefaults(): Promise<void> {
   const codexCmd = (codexAgent as any).buildCommand("hello") as string;
   assert(codexCmd.includes('-c model_reasoning_effort="medium"'), "codex omitted effort stamps medium on the command");
 
-  // droid: omitted effort stamps --reasoning-effort medium.
+  // droid: omitted effort stamps --reasoning-effort high.
   const droidAgent = new Agent({ type: "droid", apiKey: "test-gateway-key", isDirectMode: false } as any, {});
   const droidCmd = (droidAgent as any).buildCommand("hello") as string;
-  assert(droidCmd.includes("--reasoning-effort medium"), "droid omitted effort stamps medium on the command");
+  assert(droidCmd.includes("--reasoning-effort high"), "droid omitted effort stamps high on the command");
 
   // kimi: omitted effort stamps max thinking in the KIMI_MODEL_* envs
   // (direct wiring path; the config.toml path resolves through the same
@@ -120,6 +120,15 @@ async function testPinnedReasoningEffortDefaults(): Promise<void> {
   const kimiEnvs = (kimiAgent as any).buildKimiDirectModelEnvs() as Record<string, string>;
   assertEqual(kimiEnvs.KIMI_MODEL_THINKING_EFFORT, "max", "kimi omitted effort stamps max thinking effort env");
   assertEqual(kimiEnvs.KIMI_MODEL_DEFAULT_THINKING, "true", "kimi omitted effort keeps thinking on");
+
+  // kimi GATEWAY path: the per-run config.toml write carries the same pin.
+  const kimiGw = new Agent({ type: "kimi", apiKey: "gw-key", isDirectMode: false } as any, {});
+  attachProviderRuntimeToken(kimiGw, "kimi", "https://dashboard.test/api/model-proxy/kimi/v1");
+  const tomlWrites: Array<{ path: string; content: string }> = [];
+  const fakeSandbox = { files: { makeDir: async () => {}, write: async (p: string, c: string) => { tomlWrites.push({ path: p, content: c }); } } };
+  await (kimiGw as any).writeKimiPerRunConfig(fakeSandbox, "run-effort-pin");
+  assertEqual(tomlWrites.length, 1, "kimi gateway path writes exactly one config");
+  assert(tomlWrites[0].content.includes('effort = "max"'), "kimi gateway config.toml stamps the max pin when effort is omitted");
   assertEqual(kimiEnvs.KIMI_MODEL_THINKING_MODE, "on", "kimi omitted effort sets thinking mode on");
 
   // qwen: omitted effort resolves to "thinking", which the per-run

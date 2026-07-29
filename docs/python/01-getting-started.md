@@ -304,12 +304,12 @@ Agent-specific option: `reasoning_effort` controls how much reasoning/thinking t
 | Agent | Default when omitted (pinned by Evolve) | Supported `reasoning_effort` |
 |-------|------------------------------------------|------------------------------|
 | `'claude'` | `'high'` — Claude Code's documented default | `'low'` `'medium'` `'high'` `'xhigh'` `'max'` |
-| `'codex'` | `'medium'` — the OpenAI-documented default | `'none'` `'low'` `'medium'` `'high'` `'xhigh'` `'max'` (`'none'` and `'max'` are GPT-5.6 values) |
+| `'codex'` | `'medium'` — OpenAI's GPT-5.6 API default, pinned | `'none'` `'low'` `'medium'` `'high'` `'xhigh'` `'max'` (`'none'` and `'max'` are GPT-5.6 values) |
 | `'gemini'` | No effort control | Not supported |
 | `'qwen'` | `'thinking'` | `'thinking'` `'no-thinking'` |
 | `'kimi'` | `'thinking'` at `'max'` effort — the Kimi K3 API default | `'thinking'` `'no-thinking'` `'low'` `'medium'` `'high'` `'xhigh'` `'max'` |
 | `'opencode'` | `'thinking'` + `'medium'` | `'thinking'` `'no-thinking'` `'minimal'` `'low'` `'medium'` `'high'` `'xhigh'` `'max'` |
-| `'droid'` | `'medium'` — Factory documents no default, so Evolve pins one | `'off'` `'minimal'` `'low'` `'medium'` `'high'` `'xhigh'` `'max'`; exact values depend on the Droid model |
+| `'droid'` | `'high'` — matches Droid’s own default for Opus 5, pinned by Evolve | `'off'` `'minimal'` `'low'` `'medium'` `'high'` `'xhigh'` `'max'`; exact values depend on the Droid model |
 
 When you omit `reasoning_effort`, Evolve does not leave the choice to the CLI. For every harness with an effort control, the SDK stamps the pinned default from the table explicitly on the run — as a flag, an environment variable, or a config-file entry, whatever that CLI reads. This keeps runs reproducible: the effort a run used is always recorded in the run itself, never implied by a vendor default that could change under you. Where the vendor documents a default, the pin matches it; `gemini` has no effort control, so nothing is stamped there.
 

@@ -1957,6 +1957,48 @@ export class Agent {
    *
    * Streams output via callbacks, returns final response.
    */
+  /** Per-run TOML provider spend tracking (Kimi): write provider with
+   *  custom_headers before spawning. CLI reads config at startup, so each run
+   *  gets a fresh write. Extracted so the effort pin on this path is testable. */
+  private async writeKimiPerRunConfig(
+    sandbox: SandboxInstance,
+    runId: string,
+  ): Promise<void> {
+    if (
+      this.agentConfig.isDirectMode ||
+      !this.registry.spendTrackingTomlProvider
+    ) {
+      return;
+    }
+    const providerRuntime = this.requireActiveProviderRuntimeToken();
+    await writeKimiSpendConfig(
+      sandbox,
+      // Same per-model ceiling the direct-mode envs use — never Kimi's own
+      // 262144 for a model from another family.
+      {
+        ...this.registry.spendTrackingTomlProvider,
+        maxContextSize: this.resolveKimiMaxContextSize(),
+      },
+      {
+        [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
+        [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
+        ...this.providerRuntimeHeaderUpdates(),
+      },
+      {
+        baseUrl: withOpenAiV1Path(
+          providerRuntime?.baseUrl ?? getGatewayUrl(this.registry.gatewayPath),
+        ),
+        apiKey: providerRuntime?.token ?? this.agentConfig.apiKey,
+        model: this.resolveCommandModel(
+          this.agentConfig.model || this.registry.defaultModel,
+        ),
+        defaultThinking: isThinkingEnabled(this.reasoningEffort()),
+        thinkingEffort: getKimiCodeThinkingEffort(this.reasoningEffort()),
+      },
+      this.homeDir,
+    );
+  }
+
   async run(
     options: RunOptions,
     callbacks?: StreamCallbacks,
@@ -2157,41 +2199,7 @@ export class Agent {
       );
     }
 
-    // Per-run TOML provider spend tracking (Kimi): write provider with custom_headers
-    // before spawning. CLI reads config at startup, so each run gets a fresh write.
-    if (
-      !this.agentConfig.isDirectMode &&
-      this.registry.spendTrackingTomlProvider
-    ) {
-      const providerRuntime = this.requireActiveProviderRuntimeToken();
-      await writeKimiSpendConfig(
-        sandbox,
-        // Same per-model ceiling the direct-mode envs use — never Kimi's own
-        // 262144 for a model from another family.
-        {
-          ...this.registry.spendTrackingTomlProvider,
-          maxContextSize: this.resolveKimiMaxContextSize(),
-        },
-        {
-          [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
-          [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
-          ...this.providerRuntimeHeaderUpdates(),
-        },
-        {
-          baseUrl: withOpenAiV1Path(
-            providerRuntime?.baseUrl ??
-              getGatewayUrl(this.registry.gatewayPath),
-          ),
-          apiKey: providerRuntime?.token ?? this.agentConfig.apiKey,
-          model: this.resolveCommandModel(
-            this.agentConfig.model || this.registry.defaultModel,
-          ),
-          defaultThinking: isThinkingEnabled(this.reasoningEffort()),
-          thinkingEffort: getKimiCodeThinkingEffort(this.reasoningEffort()),
-        },
-        this.homeDir,
-      );
-    }
+    await this.writeKimiPerRunConfig(sandbox, runId);
 
     // Per-run Droid gateway settings: Droid custom models read extraHeaders from
     // settings at startup, so rewrite the Evolve-owned settings file each run.

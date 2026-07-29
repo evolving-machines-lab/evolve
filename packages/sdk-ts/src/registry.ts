@@ -290,7 +290,8 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     // before it ships.
     baseUrlEnv: "OPENAI_BASE_URL",
     defaultModel: "gpt-5.6-sol",
-    // OpenAI's documented default for codex (model_reasoning_effort: medium).
+    // OpenAI's GPT-5.6 API default when the field is omitted (their 5.6
+    // reasoning guide); pinned so a vendor-side change cannot move it.
     // Stamped explicitly via -c model_reasoning_effort on every run.
     defaultReasoningEffort: "medium",
     models: [
@@ -524,9 +525,11 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     image: "evolve-all",
     apiKeyEnv: "FACTORY_API_KEY",
     defaultModel: "claude-opus-5",
-    // Factory documents no default reasoning effort for droid; Evolve pins
-    // medium and stamps it via --reasoning-effort on every run.
-    defaultReasoningEffort: "medium",
+    // Droid 0.182.0 documents per-model defaults (Opus 5, Fable 5 and Kimi K3
+    // default to high). Evolve pins "high" — the default model's own
+    // ceiling-of-record — and stamps it via --reasoning-effort on every run,
+    // so results cannot drift on a vendor-side change.
+    defaultReasoningEffort: "high",
     models: [
       { alias: "claude-fable-5", modelId: "claude-fable-5", description: "Factory-managed Claude Fable 5" },
       { alias: "claude-opus-5", modelId: "claude-opus-5", description: "Factory-managed Claude Opus 5" },
