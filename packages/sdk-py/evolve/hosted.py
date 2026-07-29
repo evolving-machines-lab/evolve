@@ -1910,6 +1910,10 @@ class BenchmarksClient:
         ``directory`` (tarred + gzipped deterministically on the client and
         uploaded). Returns immediately; poll with :meth:`get_import` /
         :meth:`watch_import`. ``version`` labels the imported benchmark version.
+
+        ``git_url`` must be https — the import runs on a worker with no ssh
+        client, so ssh:// and git@ remotes are refused at validation. For a
+        private repository, put a token in the https url.
         """
         # ONE body grammar: multipart/form-data, metadata in named parts. The
         # corpus is the ``file`` part; a git source is the gitUrl + ref parts.

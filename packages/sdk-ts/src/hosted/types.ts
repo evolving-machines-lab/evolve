@@ -818,7 +818,11 @@ export interface RegradeJob {
  */
 export type BenchmarkImportSource =
   | {
-      /** A git repository URL (https://, ssh://, or git@). */
+      /**
+       * A git repository URL. https:// only — the import runs on a worker with
+       * no ssh client, so ssh:// and git@ remotes are refused at validation.
+       * For a private repository, put a token in the https url.
+       */
       gitUrl: string;
       /** A pinned branch, tag, or commit. Required: an unpinned import is not reproducible. */
       ref: string;
