@@ -380,7 +380,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     defaultModel: "kimi-k3",
     models: [
       { alias: "kimi-k3", modelId: "moonshot/kimi-k3", description: "Latest flagship: 1M context, always-on thinking" },
-      { alias: "kimi-k3-fast", modelId: "moonshot/kimi-k3-fast", description: "Evolve-managed Kimi K3 fast route for latency-sensitive agent runs" },
+      { alias: "kimi-k3-raptor", modelId: "kimi-k3-raptor", description: "Evolve-managed Kimi K3 Raptor route for latency-sensitive agent runs" },
       { alias: "kimi-k2.6", modelId: "moonshot/kimi-k2.6", description: "Long-horizon coding, swarm orchestration" },
       { alias: "kimi-k2p6-raptor", modelId: "kimi-k2p6-raptor", description: "Evolve-managed Kimi K2.6 Raptor route for latency-sensitive agent runs" },
       { alias: "kimi-k2p7-code-raptor", modelId: "kimi-k2p7-code-raptor", description: "Evolve-managed Kimi K2.7 Code Raptor route for latency-sensitive agent runs" },
@@ -411,7 +411,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     ],
     gatewayModelAliases: {
       "kimi-k3": "moonshot/kimi-k3",
-      "kimi-k3-fast": "moonshot/kimi-k3-fast",
+      "kimi-k3-raptor": "kimi-k3-raptor",
       "kimi-k2.6": "moonshot/kimi-k2.6",
       "kimi-k2p6-raptor": "kimi-k2p6-raptor",
       "kimi-k2p7-code-raptor": "kimi-k2p7-code-raptor",
