@@ -657,6 +657,14 @@ class Trial:
     live_spend_at: Optional[str]
     # Harness version actually resolved and used for the trial; None until resolved
     resolved_harness_version: Optional[str]
+    # WHERE THIS TRIAL RAN: the provider id of the box the agent executed in.
+    # None is honest and common — a QUEUED or CANCELLED trial never booted a
+    # box. Also None from servers that predate the field.
+    sandbox_id: Optional[str]
+    # The separate box the verifier ran in. None when the verifier ran inside
+    # the agent's box (shared mode), when the trial never got that far, or
+    # from servers that predate the field.
+    verifier_sandbox_id: Optional[str]
     session_ref: Optional[str]
     created_at: str
     updated_at: str
@@ -1183,6 +1191,10 @@ def _map_trial(data: Dict[str, Any]) -> Trial:
         live_spent_usd=data.get('liveSpentUsd'),
         live_spend_at=data.get('liveSpendAt'),
         resolved_harness_version=data.get('resolvedHarnessVersion'),
+        # Where the trial ran. Absent entirely from servers that predate the
+        # fields, which reads the same as "never booted a box": None.
+        sandbox_id=data.get('sandboxId'),
+        verifier_sandbox_id=data.get('verifierSandboxId'),
         session_ref=data.get('sessionRef'),
         created_at=data.get('createdAt', ''),
         updated_at=data.get('updatedAt', ''),

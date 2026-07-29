@@ -1135,6 +1135,8 @@ async function testTrials() {
             sandboxProvider: "daytona",
             verifierMode: "separate",
             resolvedHarnessVersion: "codex-cli 0.145.0",
+            sandboxId: "im8f0wgqwehvng70evvro",
+            verifierSandboxId: "iv2k1xbqwehvng70evvrp",
             sessionRef: "sess-9",
             createdAt: "2026-07-22T00:00:00.000Z",
             updatedAt: "2026-07-22T00:04:00.000Z",
@@ -1179,10 +1181,20 @@ async function testTrials() {
     assertEqual(page.items[0].sandboxProvider, "daytona", "first-class sandboxProvider on list rows");
     assertEqual(page.items[0].verifierMode, "separate", "first-class verifierMode on list rows");
     assertEqual(page.items[0].resolvedHarnessVersion, "codex-cli 0.145.0", "first-class resolvedHarnessVersion on list rows");
+    assertEqual(page.items[0].sandboxId, "im8f0wgqwehvng70evvro", "maps sandboxId — the box the agent ran in");
+    assertEqual(
+      page.items[0].verifierSandboxId,
+      "iv2k1xbqwehvng70evvrp",
+      "maps verifierSandboxId — the box the verifier ran in"
+    );
     assertEqual(page.items[0].sessionRef, "sess-9", "maps sessionRef");
     assertEqual(page.items[1].status, "INFRASTRUCTURE_ERROR", "maps failure status");
     assertEqual(page.items[1].failurePhase, "verifier_boot", "maps failurePhase");
     assertEqual(page.items[1].reward, null, "unscored trial keeps null reward (never a fake zero)");
+    // An old server omits both id fields entirely — same reading as "never
+    // booted a box": null, never undefined.
+    assertEqual(page.items[1].sandboxId, null, "absent sandboxId (old server) stays null");
+    assertEqual(page.items[1].verifierSandboxId, null, "absent verifierSandboxId (old server) stays null");
 
     // Status filter: comma-joined ?status= for the failures behind a rerun decision
     await e.trials("eval-1", { status: ["INFRASTRUCTURE_ERROR", "SCORING_ERROR"] });
@@ -1807,6 +1819,8 @@ async function testTrialDetail() {
         sandboxProvider: "e2b",
         verifierMode: "shared",
         resolvedHarnessVersion: "codex-cli 0.145.0",
+        sandboxId: "im8f0wgqwehvng70evvro",
+        verifierSandboxId: null,
         sessionRef: "sess-9",
         createdAt: "2026-07-22T00:00:00.000Z",
         updatedAt: "2026-07-22T00:04:00.000Z",
@@ -1825,6 +1839,8 @@ async function testTrialDetail() {
     assertEqual(run.resolvedHarnessVersion, "codex-cli 0.145.0", "maps resolvedHarnessVersion");
     assertEqual(run.sandboxProvider, "e2b", "maps sandboxProvider");
     assertEqual(run.verifierMode, "shared", "maps verifierMode");
+    assertEqual(run.sandboxId, "im8f0wgqwehvng70evvro", "maps sandboxId on the detail route");
+    assertEqual(run.verifierSandboxId, null, "shared-mode trial has no second box: null");
     assertEqual(run.modelUsage?.spentUsd, 0.93, "one money vocabulary: actuals are spentUsd");
     assertEqual(
       run.modelUsage?.maxTrialSpendUsd,

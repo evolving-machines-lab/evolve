@@ -396,6 +396,18 @@ export interface Trial {
   liveSpendAt: string | null;
   /** Harness version actually resolved and used for the trial; null until resolved */
   resolvedHarnessVersion: string | null;
+  /**
+   * WHERE THIS TRIAL RAN: the provider id of the box the agent executed in.
+   * Null is honest and common — a QUEUED or CANCELLED trial never booted a
+   * box. Also null from servers that predate the field.
+   */
+  sandboxId: string | null;
+  /**
+   * The separate box the verifier ran in. Null when the verifier ran inside
+   * the agent's box (shared mode), when the trial never got that far, or from
+   * servers that predate the field.
+   */
+  verifierSandboxId: string | null;
   /** Reference to the agent session/trace, when recorded */
   sessionRef: string | null;
   createdAt: string;

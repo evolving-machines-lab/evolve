@@ -619,7 +619,9 @@ function trialDetailLines(run: TrialDetail): string[] {
   }
   rows.push(["spent", fmtUsd(run.spentUsd)]);
   if (run.sandboxProvider) rows.push(["provider", run.sandboxProvider]);
+  if (run.sandboxId) rows.push(["sandbox", run.sandboxId]);
   if (run.verifierMode) rows.push(["verifier", run.verifierMode]);
+  if (run.verifierSandboxId) rows.push(["verifier sandbox", run.verifierSandboxId]);
   if (run.resolvedHarnessVersion) rows.push(["harness version", run.resolvedHarnessVersion]);
   if (run.phaseTimingsMs && Object.keys(run.phaseTimingsMs).length > 0) {
     rows.push([

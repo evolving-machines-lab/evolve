@@ -1064,6 +1064,8 @@ class TestJobs:
                         'sandboxProvider': 'daytona',
                         'verifierMode': 'separate',
                         'resolvedHarnessVersion': 'codex-cli 0.145.0',
+                        'sandboxId': 'im8f0wgqwehvng70evvro',
+                        'verifierSandboxId': 'iv2k1xbqwehvng70evvrp',
                         'sessionRef': 'sess-9',
                         'createdAt': '2026-07-22T00:00:00.000Z',
                         'updatedAt': '2026-07-22T00:04:00.000Z',
@@ -1094,6 +1096,9 @@ class TestJobs:
         assert run.sandbox_provider == 'daytona'
         assert run.verifier_mode == 'separate'
         assert run.resolved_harness_version == 'codex-cli 0.145.0'
+        # Where the trial ran: the agent's box and the verifier's box
+        assert run.sandbox_id == 'im8f0wgqwehvng70evvro'
+        assert run.verifier_sandbox_id == 'iv2k1xbqwehvng70evvrp'
         assert run.session_ref == 'sess-9'
 
     @pytest.mark.asyncio
@@ -1675,6 +1680,7 @@ class TestJobs:
                 'sandboxProvider': 'e2b',
                 'verifierMode': 'shared',
                 'resolvedHarnessVersion': '0.29.0',
+                'sandboxId': 'im8f0wgqwehvng70evvro',
                 'sessionRef': 'sess-9',
                 'createdAt': '2026-07-22T00:00:00.000Z',
                 'updatedAt': '2026-07-22T00:04:00.000Z',
@@ -1688,6 +1694,10 @@ class TestJobs:
         assert run.resolved_harness_version == '0.29.0'
         assert run.sandbox_provider == 'e2b'
         assert run.verifier_mode == 'shared'
+        assert run.sandbox_id == 'im8f0wgqwehvng70evvro'
+        # Absent on the wire (shared mode boots no second box; old servers
+        # omit the field entirely) — stays None, never a KeyError.
+        assert run.verifier_sandbox_id is None
         assert run.phase_timings_ms == {'agent_ms': 203000, 'verify_ms': 41000}
         # Spend is FIRST-CLASS on the trial, not a key of the blob: one place
         # per fact, and None would mean "never ran" rather than zero.

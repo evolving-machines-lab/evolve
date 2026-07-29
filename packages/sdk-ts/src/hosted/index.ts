@@ -495,6 +495,10 @@ function mapTrial(raw: Record<string, unknown>): Trial {
     liveSpentUsd: (raw.liveSpentUsd as number | null) ?? null,
     liveSpendAt: (raw.liveSpendAt as string | null) ?? null,
     resolvedHarnessVersion: (raw.resolvedHarnessVersion as string | null) ?? null,
+    // Where the trial ran. Absent entirely from servers that predate the
+    // fields, which reads the same as "never booted a box": null.
+    sandboxId: (raw.sandboxId as string | null) ?? null,
+    verifierSandboxId: (raw.verifierSandboxId as string | null) ?? null,
     sessionRef: (raw.sessionRef as string | null) ?? null,
     createdAt: raw.createdAt as string,
     updatedAt: raw.updatedAt as string,
