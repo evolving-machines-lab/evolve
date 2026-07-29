@@ -381,10 +381,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     models: [
       { alias: "kimi-k3", modelId: "moonshot/kimi-k3", description: "Latest flagship: 1M context, always-on thinking" },
       { alias: "kimi-k3-raptor", modelId: "kimi-k3-raptor", description: "Evolve-managed Kimi K3 Raptor route for latency-sensitive agent runs" },
-      { alias: "kimi-k2.6", modelId: "moonshot/kimi-k2.6", description: "Long-horizon coding, swarm orchestration" },
-      { alias: "kimi-k2p6-raptor", modelId: "kimi-k2p6-raptor", description: "Evolve-managed Kimi K2.6 Raptor route for latency-sensitive agent runs" },
       { alias: "kimi-k2p7-code-raptor", modelId: "kimi-k2p7-code-raptor", description: "Evolve-managed Kimi K2.7 Code Raptor route for latency-sensitive agent runs" },
-      { alias: "kimi-k2.5", modelId: "moonshot/kimi-k2.5", description: "Previous multimodal flagship" },
     ],
     systemPromptFile: "AGENTS.md",
     mcpConfig: {
@@ -412,10 +409,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     gatewayModelAliases: {
       "kimi-k3": "moonshot/kimi-k3",
       "kimi-k3-raptor": "kimi-k3-raptor",
-      "kimi-k2.6": "moonshot/kimi-k2.6",
-      "kimi-k2p6-raptor": "kimi-k2p6-raptor",
       "kimi-k2p7-code-raptor": "kimi-k2p7-code-raptor",
-      "kimi-k2.5": "moonshot/kimi-k2.5",
     },
     buildCommand: ({ prompt, isResume, reasoningEffort, homeDir = DEFAULT_HOME_DIR }) => {
       const continueFlag = isResume ? "--continue " : "";
@@ -461,8 +455,6 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       { alias: "openrouter/qwen/qwen3-coder-next", modelId: "openrouter/qwen/qwen3-coder-next", description: "Qwen Coder Next via OpenRouter" },
       { alias: "openrouter/qwen/qwen3-coder-plus", modelId: "openrouter/qwen/qwen3-coder-plus", description: "Qwen Coder via OpenRouter" },
       { alias: "openrouter/moonshotai/kimi-k3", modelId: "openrouter/moonshotai/kimi-k3", description: "Kimi K3 via OpenRouter" },
-      { alias: "openrouter/moonshotai/kimi-k2.6", modelId: "openrouter/moonshotai/kimi-k2.6", description: "Kimi K2.6 via OpenRouter" },
-      { alias: "openrouter/moonshotai/kimi-k2.5", modelId: "openrouter/moonshotai/kimi-k2.5", description: "Kimi K2.5 via OpenRouter" },
       { alias: "openrouter/z-ai/glm-5.2", modelId: "openrouter/z-ai/glm-5.2", description: "Zhipu GLM-5.2 via OpenRouter" },
       { alias: "openrouter/z-ai/glm-5", modelId: "openrouter/z-ai/glm-5", description: "Zhipu GLM-5 via OpenRouter" },
     ],
