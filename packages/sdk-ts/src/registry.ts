@@ -454,6 +454,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       { alias: "openrouter/google/gemini-3.5-flash", modelId: "openrouter/google/gemini-3.5-flash", description: "Gemini 3.5 Flash via OpenRouter" },
       { alias: "openrouter/google/gemini-3.1-pro-preview", modelId: "openrouter/google/gemini-3.1-pro-preview", description: "Gemini 3.1 Pro via OpenRouter" },
       { alias: "openrouter/google/gemini-3-flash-preview", modelId: "openrouter/google/gemini-3-flash-preview", description: "Gemini 3 Flash via OpenRouter" },
+      { alias: "openrouter/qwen/qwen3.7-max", modelId: "openrouter/qwen/qwen3.7-max", description: "Qwen 3.7 Max via OpenRouter" },
       { alias: "openrouter/qwen/qwen3-coder-next", modelId: "openrouter/qwen/qwen3-coder-next", description: "Qwen Coder Next via OpenRouter" },
       { alias: "openrouter/qwen/qwen3-coder-plus", modelId: "openrouter/qwen/qwen3-coder-plus", description: "Qwen Coder via OpenRouter" },
       { alias: "openrouter/moonshotai/kimi-k3", modelId: "openrouter/moonshotai/kimi-k3", description: "Kimi K3 via OpenRouter" },
