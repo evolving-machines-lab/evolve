@@ -41,6 +41,21 @@ const BINARY_EXTENSIONS = new Set([
   ".sqlite", ".db", ".pickle", ".pkl", ".parquet",
 ]);
 
+/**
+ * Largest page E2B will serve. Not a taste choice — a larger `limit` is refused
+ * outright: `400 validation error: parameter "limit" in query has an error:
+ * number must be at most 100`.
+ */
+export const E2B_MAX_PAGE_SIZE = 100;
+
+/**
+ * Page ceiling for one enumeration — 10,000 sandboxes at the maximum page size.
+ * A walk that reaches it stops and reports itself INCOMPLETE, because the one
+ * thing a fleet enumeration may never do is return a short list that reads like
+ * a whole one.
+ */
+export const E2B_MAX_LIST_PAGES = 100;
+
 function toISOString(value: unknown): string {
   return value instanceof Date ? value.toISOString() : String(value);
 }
@@ -206,6 +221,21 @@ export interface SandboxListOptions {
   limit?: number;
 }
 
+/**
+ * A COMPLETE (or admittedly incomplete) enumeration of the project's fleet.
+ *
+ * `complete` is the load-bearing field. Callers that need a whole fleet —
+ * orphan sweeps, lifecycle reconciliation — read a sandbox's ABSENCE from the
+ * list as evidence it is gone, so a truncated page and a small fleet must never
+ * be the same answer. `complete: false` means leave every row alone.
+ */
+export interface SandboxListPage {
+  sandboxes: SandboxInfo[];
+  complete: boolean;
+  pagesFetched: number;
+  error?: string;
+}
+
 // ============================================================
 // INTERFACES
 // ============================================================
@@ -324,8 +354,11 @@ export interface SandboxProvider {
   /** Connect to existing sandbox */
   connect(sandboxId: string, timeoutMs?: number): Promise<SandboxInstance>;
 
-  /** List sandboxes (first page only, up to limit) */
+  /** List sandboxes, paginating to exhaustion. `limit` bounds items returned. */
   list(options?: SandboxListOptions): Promise<SandboxInfo[]>;
+
+  /** The same enumeration for fleet bookkeeping: never throws, reports completeness. */
+  listAll(options?: SandboxListOptions): Promise<SandboxListPage>;
 }
 
 // ============================================================
@@ -824,29 +857,146 @@ export class E2BProvider implements SandboxProvider {
     );
   }
 
+  /**
+   * List sandboxes, walking every page.
+   *
+   * This used to call `nextItems()` exactly once and return whatever the first
+   * page held — an account with more than E2B_MAX_PAGE_SIZE sandboxes was
+   * silently truncated, and nothing in the return value said so. That is a
+   * correctness bug rather than a performance one for any caller that reads
+   * absence from the list as "this sandbox is gone".
+   *
+   * `limit` still means what a caller expects: stop after this many ITEMS, so
+   * an explicit limit remains a cost bound. The per-request page size is capped
+   * separately at E2B_MAX_PAGE_SIZE because E2B rejects anything larger
+   * outright (`400 validation error: parameter "limit" ... must be at most
+   * 100`), so a caller asking for 500 gets five requests, not one refusal.
+   */
   async list(options?: SandboxListOptions): Promise<SandboxInfo[]> {
-    const paginator = E2BSandbox.list({
-      apiKey: this.apiKey,
-      apiUrl: this.apiUrl,
-      query: {
-        state: options?.state,
-        metadata: options?.metadata,
-      },
-      limit: options?.limit ?? 100,
-    } as Parameters<typeof E2BSandbox.list>[0]);
+    const page = await this.paginate(options);
+    if (page.error) throw new Error(page.error);
+    return page.sandboxes;
+  }
 
-    const items = await paginator.nextItems();
+  /**
+   * The fleet-bookkeeping enumeration: same walk, never throws.
+   *
+   * The distinction from `list()` is what a failure MEANS to the caller. An
+   * orphan sweep treats a missing sandbox as a terminated one, so it must be
+   * able to tell "the project has no sandboxes" from "the enumeration stopped
+   * early" — and an exception it catches and turns into an empty array erases
+   * exactly that difference.
+   */
+  async listAll(options?: SandboxListOptions): Promise<SandboxListPage> {
+    return this.paginate(options);
+  }
 
-    return items.map((item) => ({
-      sandboxId: item.sandboxId,
-      image: item.templateId,  // E2B calls it templateId, we expose as image
-      name: item.name,
-      metadata: item.metadata ?? {},
-      startedAt: toISOString(item.startedAt),
-      endAt: item.endAt ? toISOString(item.endAt) : undefined,
-    }));
+  private async paginate(options?: SandboxListOptions): Promise<SandboxListPage> {
+    const wanted = options?.limit;
+    return collectSandboxPages(
+      E2BSandbox.list({
+        apiKey: this.apiKey,
+        apiUrl: this.apiUrl,
+        query: {
+          state: options?.state,
+          metadata: options?.metadata,
+        },
+        limit: wanted === undefined ? E2B_MAX_PAGE_SIZE : Math.min(wanted, E2B_MAX_PAGE_SIZE),
+      } as Parameters<typeof E2BSandbox.list>[0]),
+      wanted,
+    );
   }
 }
+
+/** The paginator surface this walk needs — E2B's SandboxPaginator satisfies it. */
+export interface E2BSandboxPaginator {
+  readonly hasNext: boolean;
+  readonly nextToken?: string;
+  nextItems(): Promise<
+    Array<{
+      sandboxId: string;
+      templateId: string;
+      name?: string;
+      metadata?: Record<string, string>;
+      startedAt: unknown;
+      endAt?: unknown;
+    }>
+  >;
+}
+
+/**
+ * Drain a paginator into one answer, with an honest completeness verdict.
+ *
+ * Separate from the provider because everything worth getting wrong lives here
+ * and none of it needs a network: the two ways a walk can fail to terminate,
+ * the difference between "the caller asked for ten" and "the provider ran out",
+ * and the rule that a failure mid-walk yields the sandboxes seen so far marked
+ * INCOMPLETE rather than either an exception or a short complete list.
+ *
+ * Exported for its test (`_testCollectSandboxPages`).
+ */
+async function collectSandboxPages(
+  paginator: E2BSandboxPaginator,
+  wanted?: number,
+): Promise<SandboxListPage> {
+  const sandboxes: SandboxInfo[] = [];
+  let pagesFetched = 0;
+  // Pagination tokens come off the wire, so a server that repeats one would
+  // spin here forever. This guard and the page ceiling both end the walk as
+  // INCOMPLETE rather than returning a short answer that reads as a whole fleet.
+  const seenTokens = new Set<string>();
+
+  while (paginator.hasNext) {
+    if (pagesFetched >= E2B_MAX_LIST_PAGES) {
+      return {
+        sandboxes,
+        complete: false,
+        pagesFetched,
+        error: `sandbox list exceeded ${E2B_MAX_LIST_PAGES} pages`,
+      };
+    }
+    const token = paginator.nextToken;
+    if (token !== undefined) {
+      if (seenTokens.has(token)) {
+        return { sandboxes, complete: false, pagesFetched, error: "pagination token repeated" };
+      }
+      seenTokens.add(token);
+    }
+
+    let items: Awaited<ReturnType<E2BSandboxPaginator["nextItems"]>>;
+    try {
+      items = await paginator.nextItems();
+    } catch (err) {
+      return {
+        sandboxes,
+        complete: false,
+        pagesFetched,
+        error: `sandbox list failed: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+    pagesFetched += 1;
+
+    for (const item of items) {
+      sandboxes.push({
+        sandboxId: item.sandboxId,
+        image: item.templateId,  // E2B calls it templateId, we expose as image
+        name: item.name,
+        metadata: item.metadata ?? {},
+        startedAt: toISOString(item.startedAt),
+        endAt: item.endAt ? toISOString(item.endAt) : undefined,
+      });
+      // A caller-supplied limit is a bound on items, and stopping here is
+      // COMPLETE: the caller got exactly what it asked for.
+      if (wanted !== undefined && sandboxes.length >= wanted) {
+        return { sandboxes, complete: true, pagesFetched };
+      }
+    }
+  }
+
+  return { sandboxes, complete: true, pagesFetched };
+}
+
+export const _testCollectSandboxPages = collectSandboxPages;
 
 // ============================================================
 // FACTORY

@@ -65,6 +65,20 @@ export const DAYTONA_AUTO_DELETE_GRACE_MINUTES = 10;
 
 export const DAYTONA_MAX_NETWORK_ALLOWLIST = 10;
 
+/**
+ * Sandboxes requested per list page. Held at the value every provider in this
+ * lineup accepts, so one number is valid everywhere a fleet is enumerated.
+ */
+export const DAYTONA_LIST_PAGE_SIZE = 100;
+
+/**
+ * Page ceiling for one enumeration — 10,000 sandboxes at the page size above.
+ * A walk that reaches it stops and reports itself INCOMPLETE, because the one
+ * thing a fleet enumeration may never do is return a short list that reads like
+ * a whole one.
+ */
+export const DAYTONA_MAX_LIST_PAGES = 100;
+
 const BINARY_EXTENSIONS = new Set([
   ".xlsx", ".xls", ".docx", ".doc", ".pptx", ".ppt",
   ".pdf", ".zip", ".tar", ".gz", ".7z", ".rar",
@@ -629,6 +643,21 @@ export interface SandboxListOptions {
   limit?: number;
 }
 
+/**
+ * A COMPLETE (or admittedly incomplete) enumeration of the organization's fleet.
+ *
+ * `complete` is the load-bearing field. Callers that need a whole fleet —
+ * orphan sweeps, lifecycle reconciliation — read a sandbox's ABSENCE from the
+ * list as evidence it is gone, so a truncated page and a small fleet must never
+ * be the same answer. `complete: false` means leave every row alone.
+ */
+export interface SandboxListPage {
+  sandboxes: SandboxInfo[];
+  complete: boolean;
+  pagesFetched: number;
+  error?: string;
+}
+
 /** Command execution capabilities */
 export interface SandboxCommands {
   run(command: string, options?: SandboxRunOptions): Promise<SandboxCommandResult>;
@@ -669,7 +698,10 @@ export interface SandboxProvider {
   readonly name?: string;
   create(options: SandboxCreateOptions): Promise<SandboxInstance>;
   connect(sandboxId: string, timeoutMs?: number): Promise<SandboxInstance>;
+  /** List sandboxes, paginating to exhaustion. `limit` bounds items returned. */
   list(options?: SandboxListOptions): Promise<SandboxInfo[]>;
+  /** The same enumeration for fleet bookkeeping: never throws, reports completeness. */
+  listAll(options?: SandboxListOptions): Promise<SandboxListPage>;
 }
 
 // ============================================================
@@ -1565,25 +1597,119 @@ export class DaytonaProvider implements SandboxProvider {
     return new DaytonaSandboxImpl(sandbox, this.sandboxUsers.get(sandboxId), this.managedStream);
   }
 
+  /**
+   * List sandboxes, walking every page.
+   *
+   * This used to request page 1 and stop, discarding `totalPages` — an
+   * organization with more than one page of sandboxes was silently truncated,
+   * and nothing in the return value said so. For any caller that reads absence
+   * from the list as "this sandbox is gone", that is a correctness bug.
+   *
+   * ORDER OF OPERATIONS, because it is observable: `limit` bounds the sandboxes
+   * RETURNED, and Daytona has no server-side state filter, so the state filter
+   * runs client-side on each page BEFORE the limit is counted. Asking for 10
+   * running sandboxes therefore keeps paging until ten running ones have been
+   * found, rather than filtering ten arbitrary rows down to whatever survives.
+   */
   async list(options?: SandboxListOptions): Promise<SandboxInfo[]> {
-    // Evidence: Daytona SDK list(labels?, page?, limit?) returns PaginatedSandboxes.
-    // API errors propagate; nothing is fabricated for missing fields.
-    const limit = options?.limit ?? 100;
-    const result = await this.client.list(options?.metadata, 1, limit);
+    const page = await this.paginate(options);
+    if (page.error) throw new Error(page.error);
+    return page.sandboxes;
+  }
 
-    let items = result.items;
-    if (options?.state) {
-      // Daytona's list API has no state filter param — filter on the real
-      // API-reported state client-side.
-      items = items.filter((sandbox) => {
-        const evolveState = daytonaStateToEvolveState(sandbox.state);
-        return evolveState !== undefined && options.state!.includes(evolveState);
-      });
-    }
+  /**
+   * The fleet-bookkeeping enumeration: same walk, never throws.
+   *
+   * The distinction from `list()` is what a failure MEANS to the caller. An
+   * orphan sweep treats a missing sandbox as a terminated one, so it must be
+   * able to tell "the organization has no sandboxes" from "the enumeration
+   * stopped early".
+   */
+  async listAll(options?: SandboxListOptions): Promise<SandboxListPage> {
+    return this.paginate(options);
+  }
 
-    return items.map(toSandboxInfo);
+  private async paginate(options?: SandboxListOptions): Promise<SandboxListPage> {
+    return collectSandboxPages(
+      (page) => this.client.list(options?.metadata, page, DAYTONA_LIST_PAGE_SIZE),
+      options,
+    );
   }
 }
+
+/** One page as Daytona's `list(labels?, page?, limit?)` returns it. */
+export interface DaytonaSandboxPage {
+  items: DaytonaSandbox[];
+  totalPages?: number;
+}
+
+/**
+ * Walk every page into one answer, with an honest completeness verdict.
+ *
+ * Separate from the provider because everything worth getting wrong lives here
+ * and none of it needs a network: the ways a walk can fail to terminate, the
+ * difference between "the caller asked for ten" and "the provider ran out", and
+ * the rule that a failure mid-walk yields the sandboxes seen so far marked
+ * INCOMPLETE rather than either an exception or a short complete list.
+ *
+ * Exported for its test (`_testCollectSandboxPages`).
+ */
+async function collectSandboxPages(
+  fetchPage: (page: number) => Promise<DaytonaSandboxPage>,
+  options?: SandboxListOptions,
+): Promise<SandboxListPage> {
+  const wanted = options?.limit;
+  const sandboxes: SandboxInfo[] = [];
+  let pagesFetched = 0;
+
+  for (let page = 1; page <= DAYTONA_MAX_LIST_PAGES; page += 1) {
+    let result: DaytonaSandboxPage;
+    try {
+      result = await fetchPage(page);
+    } catch (err) {
+      return {
+        sandboxes,
+        complete: false,
+        pagesFetched,
+        error: `sandbox list failed: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+    pagesFetched += 1;
+
+    for (const sandbox of result.items) {
+      if (options?.state) {
+        // Daytona's list API has no state filter param — filter on the real
+        // API-reported state client-side, BEFORE the limit is counted, so
+        // "ten running" means ten running rather than ten rows minus misses.
+        const evolveState = daytonaStateToEvolveState(sandbox.state);
+        if (evolveState === undefined || !options.state.includes(evolveState)) continue;
+      }
+      sandboxes.push(toSandboxInfo(sandbox));
+      // A caller-supplied limit is a bound on items, and stopping here is
+      // COMPLETE: the caller got exactly what it asked for.
+      if (wanted !== undefined && sandboxes.length >= wanted) {
+        return { sandboxes, complete: true, pagesFetched };
+      }
+    }
+
+    // totalPages is the server's own count; an empty page ends the walk too, so
+    // a server that omits or miscounts totalPages still cannot spin us.
+    if (result.items.length === 0) break;
+    if (typeof result.totalPages === "number" && page >= result.totalPages) break;
+    if (page === DAYTONA_MAX_LIST_PAGES) {
+      return {
+        sandboxes,
+        complete: false,
+        pagesFetched,
+        error: `sandbox list exceeded ${DAYTONA_MAX_LIST_PAGES} pages`,
+      };
+    }
+  }
+
+  return { sandboxes, complete: true, pagesFetched };
+}
+
+export const _testCollectSandboxPages = collectSandboxPages;
 
 // ============================================================
 // FACTORY
