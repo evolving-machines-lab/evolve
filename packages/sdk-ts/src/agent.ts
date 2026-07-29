@@ -686,8 +686,9 @@ export class Agent {
    *
    *   1. `maxContextSize` on the agent config wins verbatim — the caller knows
    *      the model's real ceiling.
-   *   2. A model the kimi registry entry itself declares keeps that entry's
-   *      value (262144).
+   *   2. A model the kimi registry entry itself declares keeps that model's
+   *      own ceiling when the row declares one (K3: 1048576), else the
+   *      harness default (262144).
    *   3. Any other model — e.g. driving Kimi Code against `gpt-5.5` through an
    *      OpenAI-compatible gateway — gets the conservative constant, because
    *      262144 is above that model's ceiling and the gateway answers 400.
@@ -704,7 +705,11 @@ export class Agent {
       registryOwnsModel(this.registry, configuredModel) ||
       registryOwnsModel(this.registry, this.resolveCommandModel(configuredModel));
     if (!ownsModel) return FOREIGN_MODEL_MAX_CONTEXT_SIZE;
+    const ownedRow = this.registry.models.find(
+      (m) => m.alias === configuredModel || m.modelId === configuredModel,
+    );
     return (
+      ownedRow?.maxContextSize ??
       this.registry.spendTrackingTomlProvider?.maxContextSize ??
       KIMI_CODE_DEFAULT_CONTEXT_SIZE
     );

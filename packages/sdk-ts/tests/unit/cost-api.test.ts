@@ -925,8 +925,7 @@ async function testKimiBuildCommandUsesPromptMode(): Promise<void> {
   const kimi = AGENT_REGISTRY.kimi;
   assertEqual(kimi.defaultModel, "kimi-k3", "Kimi default is user-facing");
   assertEqual(kimi.gatewayModelAliases?.["kimi-k3"], "moonshot/kimi-k3", "Kimi gateway maps K3 to Moonshot route");
-  assertEqual(kimi.gatewayModelAliases?.["kimi-k2.5"], "moonshot/kimi-k2.5", "Kimi gateway maps to Moonshot route");
-  assertEqual(kimi.gatewayModelAliases?.["kimi-k2p6-raptor"], "kimi-k2p6-raptor", "Kimi K2.6 Raptor alias maps to gateway route");
+  assertEqual(kimi.gatewayModelAliases?.["kimi-k3-raptor"], "kimi-k3-raptor", "Kimi K3 Raptor alias maps to gateway route");
   assertEqual(kimi.gatewayModelAliases?.["kimi-k2p7-code-raptor"], "kimi-k2p7-code-raptor", "Kimi K2.7 Code Raptor alias maps to gateway route");
   assertEqual(kimi.mcpConfig.settingsDir, "~/.kimi-code", "Kimi Code settings dir");
   // Registry skill dirs are ~-relative and expanded against the sandbox homeDir at use sites.
@@ -1043,17 +1042,29 @@ async function testKimiMaxContextSizePerModel(): Promise<void> {
     "explicit maxContextSize reaches KIMI_MODEL_MAX_CONTEXT_SIZE",
   );
 
-  // 2. A model the kimi registry entry owns keeps Kimi's own 262144.
+  // 2. An owned model without its own ceiling keeps the harness's 262144.
   const kimiModelAgent = new Agent({
     type: "kimi",
     apiKey: "direct-api-key",
     isDirectMode: true,
-    model: "kimi-k2.5",
+    model: "kimi-k2p7-code-raptor",
   } as any, {});
   assertEqual(
     (kimiModelAgent as any).resolveKimiMaxContextSize(),
     262144,
     "a kimi model keeps the registry's 262144",
+  );
+  // 2b. A model that declares its own ceiling wins over the harness default.
+  const k3Agent = new Agent({
+    type: "kimi",
+    apiKey: "direct-api-key",
+    isDirectMode: true,
+    model: "kimi-k3",
+  } as any, {});
+  assertEqual(
+    (k3Agent as any).resolveKimiMaxContextSize(),
+    1048576,
+    "K3 resolves its declared 1M ceiling",
   );
   assertEqual(
     ((kimiModelAgent as any).buildEnvironmentVariables() as Record<string, string>)
@@ -1070,8 +1081,8 @@ async function testKimiMaxContextSizePerModel(): Promise<void> {
   } as any, {});
   assertEqual(
     (defaultModelAgent as any).resolveKimiMaxContextSize(),
-    262144,
-    "the default kimi model keeps 262144",
+    1048576,
+    "the default kimi model (K3) resolves its declared 1M ceiling",
   );
 
   // 3. A model from another family — external gateway resolves isDirectMode

@@ -20,6 +20,10 @@ export interface ModelInfo {
   modelId: string;
   /** What this model is best for */
   description: string;
+  /** Per-model context ceiling where it differs from the harness default
+   *  (e.g. Kimi K3's 1M window vs the K2-era 262144). Consumers fall back to
+   *  the harness-level value when absent. */
+  maxContextSize?: number;
 }
 
 /** MCP configuration for an agent */
@@ -379,8 +383,8 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     baseUrlEnv: "KIMI_BASE_URL",
     defaultModel: "kimi-k3",
     models: [
-      { alias: "kimi-k3", modelId: "moonshot/kimi-k3", description: "Latest flagship: 1M context, always-on thinking" },
-      { alias: "kimi-k3-raptor", modelId: "kimi-k3-raptor", description: "Evolve-managed Kimi K3 Raptor route for latency-sensitive agent runs" },
+      { alias: "kimi-k3", modelId: "moonshot/kimi-k3", description: "Latest flagship: 1M context, always-on thinking", maxContextSize: 1048576 },
+      { alias: "kimi-k3-raptor", modelId: "kimi-k3-raptor", description: "Evolve-managed Kimi K3 Raptor route for latency-sensitive agent runs", maxContextSize: 1048576 },
       { alias: "kimi-k2p7-code-raptor", modelId: "kimi-k2p7-code-raptor", description: "Evolve-managed Kimi K2.7 Code Raptor route for latency-sensitive agent runs" },
     ],
     systemPromptFile: "AGENTS.md",
