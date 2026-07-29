@@ -491,7 +491,7 @@ function mapTrial(raw: Record<string, unknown>): Trial {
     spentUsd: (raw.spentUsd as number | null) ?? null,
     spendSource: (raw.spendSource as SpendSource | null) ?? null,
     // Mid-run lower bound, kept beside the settled pair and never folded into
-    // it: it lags the gateway and survives the settle unchanged.
+    // it: it lags the gateway and is CLEARED when the trial settles.
     liveSpentUsd: (raw.liveSpentUsd as number | null) ?? null,
     liveSpendAt: (raw.liveSpendAt as string | null) ?? null,
     resolvedHarnessVersion: (raw.resolvedHarnessVersion as string | null) ?? null,

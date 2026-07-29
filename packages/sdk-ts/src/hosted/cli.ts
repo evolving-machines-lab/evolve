@@ -598,8 +598,11 @@ function trialRow(run: Trial): string[] {
   ];
 }
 
-/** Full-detail rendering of one trial — evolve-evals trial. */
-function trialDetailLines(run: TrialDetail): string[] {
+/**
+ * Full-detail rendering of one trial — evolve-evals trial. Exported for tests,
+ * like the other line renderers.
+ */
+export function trialDetailLines(run: TrialDetail): string[] {
   const rows: string[][] = [
     ["trial id", run.id],
     ["job", run.jobId],
@@ -618,6 +621,18 @@ function trialDetailLines(run: TrialDetail): string[] {
     ]);
   }
   rows.push(["spent", fmtUsd(run.spentUsd)]);
+  // WHILE THE TRIAL RUNS, show the live sample beside the (still empty) settled
+  // figure. It is a lagging lower bound, and the row says so with "at least";
+  // once the trial settles, spentUsd is the truth and this row disappears.
+  // Four decimals rather than fmtUsd's two: a run minutes in has often spent
+  // fractions of a cent, and "at least $0.00" would say nothing.
+  if (
+    (run.status === "RUNNING" || run.status === "SCORING") &&
+    run.liveSpentUsd !== null
+  ) {
+    const asOf = run.liveSpendAt ? ` as of ${run.liveSpendAt}` : "";
+    rows.push(["spent (live)", `at least $${run.liveSpentUsd.toFixed(4)}${asOf}`]);
+  }
   if (run.sandboxProvider) rows.push(["provider", run.sandboxProvider]);
   if (run.sandboxId) rows.push(["sandbox", run.sandboxId]);
   if (run.verifierMode) rows.push(["verifier", run.verifierMode]);
