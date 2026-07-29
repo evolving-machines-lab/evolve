@@ -1501,6 +1501,10 @@ export class DaytonaProvider implements SandboxProvider {
     // never reclaimed by the provider. The process-level deadline is enforced
     // in-box instead (withInBoxTimeout in spawn), which is what actually bounds
     // a runaway harness here.
+    // So `timeoutMs` is a MISNOMER on this provider, and worth naming as one at
+    // the line that makes it true: the number below is an idle clock, not a
+    // lifetime. `timeoutMs: 3_600_000` means "stop after an hour of doing
+    // nothing", never "stop after an hour".
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
     const autoStopMinutes = Math.max(1, Math.ceil(timeoutMs / 60000)); // Min 1 minute
     const imageName = options.image || this.snapshotName;
