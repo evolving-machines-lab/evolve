@@ -1070,6 +1070,14 @@ export interface WatchJobOptions {
   maxReconnectDelayMs?: number;
 }
 
+/** Options for benchmarks().downloadPackage() */
+export interface DownloadPackageOptions {
+  /** Directory to save the package into (returns the file path) */
+  to?: string;
+  /** Return the raw response stream instead of a Buffer */
+  stream?: boolean;
+}
+
 /** Options for jobs().export() */
 export interface ExportJobOptions {
   /** Directory to save the archive into (returns the file path) */
@@ -1129,6 +1137,37 @@ export interface BenchmarksClient {
    * narrows to one benchmark name.
    */
   listImports(options?: ListImportsOptions): BenchmarkImportList;
+  /**
+   * Download the ORIGINAL corpus package a version was imported from — the
+   * gzipped tarball you uploaded, or, for a git import, the checked-out tree
+   * packed at import time. `id` is the import id (what import() returned).
+   *
+   * OWNER ONLY. This is the one call that returns task files, and it returns
+   * them only to the account that owns the benchmark; a platform-curated
+   * benchmark has no owner, so nobody can download it. Someone else's import is
+   * a plain `import_not_found`, never a 403.
+   *
+   * The server verifies the stored bytes against their recorded sha256 before
+   * sending anything, so a successful call is byte-identical to what was
+   * imported.
+   *
+   * A version imported before packages were retained has none, and it cannot be
+   * reconstructed: that is `package_not_retained`, distinct from "not found" so
+   * you can say so. Re-import the corpus as a new version to get one.
+   *
+   * Default: Buffer. { to } saves into a directory and returns the file path.
+   * { stream: true } returns the raw response stream.
+   */
+  downloadPackage(id: string): Promise<Buffer>;
+  downloadPackage(id: string, options: { to: string }): Promise<string>;
+  downloadPackage(
+    id: string,
+    options: { stream: true }
+  ): Promise<ReadableStream<Uint8Array>>;
+  downloadPackage(
+    id: string,
+    options?: DownloadPackageOptions
+  ): Promise<Buffer | string | ReadableStream<Uint8Array>>;
   /**
    * Delete a benchmark you own, with every version, task, and archived
    * solution. Refused (benchmark_in_use) while any job still references it —
@@ -1346,6 +1385,8 @@ export const HOSTED_ERROR_CODES = [
   "import_not_found",
   "import_too_large",
   "invalid_archive",
+  "package_not_retained",
+  "package_corrupt",
   "internal_error",
 ] as const;
 

@@ -45,6 +45,7 @@ import type {
   ListBenchmarksOptions,
   ListCustomHarnessesOptions,
   ListImportsOptions,
+  DownloadPackageOptions,
   ListJobsOptions,
   ListRegradesOptions,
   RegradeList,
@@ -821,6 +822,17 @@ function makeWatch(
  * const deepSwe = await b.get("deep-swe@1.1");
  * ```
  */
+/**
+ * Server-chosen filename for a downloaded package ("<benchmark>@<version>-
+ * corpus.tar.gz"), falling back to the import id when a proxy strips
+ * Content-Disposition. Mirrors exportFilename() in jobs().
+ */
+function packageFilename(res: Response, id: string): string {
+  const disposition = res.headers.get("Content-Disposition") || "";
+  const match = disposition.match(/filename="([^"]+)"/);
+  return match ? match[1] : `import-${id}-corpus.tar.gz`;
+}
+
 export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
   const cfg = resolveConfig("benchmarks", config);
 
@@ -984,6 +996,36 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
         await sleep(pollIntervalMs, options?.signal);
       }
     },
+
+    downloadPackage: (async (
+      id: string,
+      options?: DownloadPackageOptions
+    ): Promise<Buffer | string | ReadableStream<Uint8Array>> => {
+      // Same three delivery shapes as jobs().export(), because it is the same
+      // job for the caller: a potentially large binary that they want in
+      // memory, on disk, or piped somewhere.
+      const res = await request(
+        cfg,
+        `/api/benchmarks/imports/${encodeURIComponent(id)}/package`
+      );
+      if (options?.stream) {
+        if (!res.body) throw new Error("Package response has no body");
+        return res.body as ReadableStream<Uint8Array>;
+      }
+      if (options?.to) {
+        if (!res.body) throw new Error("Package response has no body");
+        const dir = options.to;
+        await mkdir(dir, { recursive: true });
+        const filePath = join(dir, packageFilename(res, id));
+        const nodeStream = Readable.fromWeb(
+          res.body as import("stream/web").ReadableStream
+        );
+        await pipeline(nodeStream, createWriteStream(filePath));
+        return filePath;
+      }
+      const bytes = await res.arrayBuffer();
+      return Buffer.from(bytes);
+    }) as BenchmarksClient["downloadPackage"],
 
     listImports(options?: ListImportsOptions): BenchmarkImportList {
       // Await for one page; for-await to walk them all across cursor pages.

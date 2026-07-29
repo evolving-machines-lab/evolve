@@ -133,6 +133,7 @@ import {
   customHarnesses,
   jobs,
   EvolveApiError,
+  isHostedErrorCode,
   NoActiveVersionError,
 } from "../../src/hosted/index.ts";
 import type { JobEvent } from "../../src/hosted/index.ts";
@@ -2394,6 +2395,125 @@ async function testRootExportsHostedTypes() {
   assert(distDts.includes("EvalSandboxProvider"), "dist/index.d.ts declares EvalSandboxProvider");
 }
 
+
+// =============================================================================
+// benchmarks().downloadPackage() — the OWNER-ONLY corpus retrieval
+// =============================================================================
+
+async function testDownloadPackageBuffer() {
+  console.log("\n--- downloadPackage() returns the corpus tarball as a Buffer ---");
+  installMockFetch();
+  try {
+    const pkg = gzipSync(Buffer.from("corpus bytes"));
+    setMockResponse("/api/benchmarks/imports/ver-1/package", {
+      status: 200,
+      body: null,
+      bodyBytes: pkg,
+      headers: {
+        "Content-Type": "application/gzip",
+        "Content-Disposition": 'attachment; filename="acme@1.1-corpus.tar.gz"',
+        "x-package-sha256": "abc123",
+      },
+    });
+
+    const b = benchmarks({ apiKey: "test-key", baseUrl: BASE });
+    const buf = await b.downloadPackage("ver-1");
+
+    assert(Buffer.isBuffer(buf), "returns a Buffer");
+    assertEqual(buf.equals(pkg), true, "buffer bytes match the stored package");
+    assert(
+      fetchCalls[0].url.includes("/api/benchmarks/imports/ver-1/package"),
+      "hits the package route on the import id",
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testDownloadPackageToFile() {
+  console.log("\n--- downloadPackage({ to }) saves under the server-chosen filename ---");
+  installMockFetch();
+  const tmpDir = join(tmpdir(), `hosted-package-${Date.now()}`);
+  try {
+    const pkg = gzipSync(Buffer.from("corpus bytes"));
+    setMockResponse("/api/benchmarks/imports/ver-1/package", {
+      status: 200,
+      body: null,
+      bodyBytes: pkg,
+      headers: {
+        "Content-Disposition": 'attachment; filename="acme@1.1-corpus.tar.gz"',
+      },
+    });
+
+    const b = benchmarks({ apiKey: "test-key", baseUrl: BASE });
+    const filePath = await b.downloadPackage("ver-1", { to: tmpDir });
+
+    assert(filePath.endsWith("acme@1.1-corpus.tar.gz"), "filename from Content-Disposition");
+    const written = await readFile(filePath);
+    assertEqual(written.equals(pkg), true, "file bytes match the stored package");
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    restoreFetch();
+  }
+}
+
+async function testDownloadPackageStream() {
+  console.log("\n--- downloadPackage({ stream: true }) returns the raw stream ---");
+  installMockFetch();
+  try {
+    const pkg = gzipSync(Buffer.from("stream-the-corpus"));
+    setMockResponse("/api/benchmarks/imports/ver-1/package", {
+      status: 200,
+      body: null,
+      bodyBytes: pkg,
+    });
+
+    const b = benchmarks({ apiKey: "test-key", baseUrl: BASE });
+    const stream = await b.downloadPackage("ver-1", { stream: true });
+
+    assert(typeof (stream as ReadableStream).getReader === "function", "returns a ReadableStream");
+    const chunks: Buffer[] = [];
+    const reader = (stream as ReadableStream<Uint8Array>).getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(Buffer.from(value));
+    }
+    assertEqual(Buffer.concat(chunks).equals(pkg), true, "stream bytes match the package");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testDownloadPackageNotRetained() {
+  console.log("\n--- downloadPackage() surfaces package_not_retained as a typed code ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/benchmarks/imports/old-ver/package", {
+      status: 404,
+      body: {
+        error: {
+          code: "package_not_retained",
+          message: "No original package is stored for import old-ver.",
+        },
+      },
+    });
+
+    const b = benchmarks({ apiKey: "test-key", baseUrl: BASE });
+    let code: string | undefined;
+    try {
+      await b.downloadPackage("old-ver");
+    } catch (error) {
+      code = (error as { code?: string }).code;
+    }
+    // Distinct from import_not_found so a client can say WHY rather than guess.
+    assertEqual(code, "package_not_retained", "typed code reaches the caller");
+    assert(isHostedErrorCode("package_not_retained"), "code is in the closed vocabulary");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function main() {
   console.log("Hosted Evals Client Unit Tests\n");
 
@@ -2436,6 +2556,10 @@ async function main() {
   await testExportToFile();
   await testExportStream();
   await testExportHarborFormat();
+  await testDownloadPackageBuffer();
+  await testDownloadPackageToFile();
+  await testDownloadPackageStream();
+  await testDownloadPackageNotRetained();
   await testExportTerminalRequired();
   await testWatchStreamsToTerminal();
   await testWatchAsIterator();

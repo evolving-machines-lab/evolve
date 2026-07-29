@@ -43,7 +43,7 @@ const active = await catalog.getActive("deep-swe");  // active READY version, gu
 
 Every collection on this surface is the same page: `{ items, nextCursor, hasMore }`, paged with `{ limit, cursor }`. `nextCursor` means one thing everywhere — pass it back for the next page, and `null` means there is no next page. Both list calls hand you a value you can either await for a single page or iterate to walk every row, fetching pages as it goes.
 
-`READY` is the one benchmark-version state that accepts jobs — see [Statuses](#statuses). Tasks expose public fields only — `taskKey`, `agentTimeoutSec`, `verifierTimeoutSec`, and `providers`, the per-provider capability verdict ([Where it runs](#where-it-runs)). Instructions, environments, and tests never leave the server.
+`READY` is the one benchmark-version state that accepts jobs — see [Statuses](#statuses). Tasks expose public fields only — `taskKey`, `agentTimeoutSec`, `verifierTimeoutSec`, and `providers`, the per-provider capability verdict ([Where it runs](#where-it-runs)). Instructions, environments, and tests never leave the server — with one deliberate exception, the benchmark's own owner downloading the package they imported ([Getting your corpus back](#getting-your-corpus-back)).
 
 Then create the job. Only `benchmark` and `agents` are required:
 
@@ -731,6 +731,28 @@ npx evolve-evals import status <id>
 ```
 
 Every lane resolves to the same thing — a Harbor-layout directory — and is held to the same rules. The corpus root is a directory whose `tasks/` subdirectory holds one directory per task, or the tasks directory itself. Provenance is recorded per lane: the resolved commit for a git import, the sha256 of the exact uploaded bytes for a directory. On the wire an import is `multipart/form-data`: `benchmarkName` and `version` as named parts, and either `gitUrl` + `ref` or the gzipped corpus as a `file` part — the SDK produces it for you — and uploads past the compressed-size cap (512 MB by default) are refused with a `413 import_too_large`. The metadata parts come first, so a name owned by someone else is refused with a `409 benchmark_name_taken` before the upload is received rather than after.
+
+### Getting your corpus back
+
+The platform keeps the exact package a version was imported from, and its owner can download it:
+
+```ts
+const bytes = await catalog.downloadPackage(job.id);            // Buffer
+const path = await catalog.downloadPackage(job.id, { to: "." }); // saved file path
+const stream = await catalog.downloadPackage(job.id, { stream: true });
+```
+
+```bash
+npx evolve-evals download <import-id> --to ./restored
+```
+
+The id is the import id — what `import()` returned and what `getImport()` polls. You get back the gzipped tarball you uploaded, or, for a git import, the checked-out tree packed at import time. Either way it is the whole corpus directory: `task.toml`, `instruction.md`, `tests/`, `environment/`, and your `solution/`.
+
+**This is the one call that returns task files, and it returns them only to you.** Ownership is a single equality — the benchmark's owner is the caller — with no admin path and no exception for platform-curated benchmarks, which have no owner and so cannot be downloaded by anyone. Somebody else's import answers `import_not_found`, the same answer a made-up id gets, because a `403` that only appears for real ids is a way to discover which ids are real.
+
+The server re-hashes the stored bytes and compares them against the digest recorded at import before it sends anything, so a successful call is byte-identical to what you uploaded. The verified digest comes back in the `x-package-sha256` header if you want to check again after transfer. Bytes that fail that comparison are refused rather than served — handing you a corpus that quietly differs from your own would be worse than handing you nothing.
+
+Two things are worth knowing before you rely on it. Versions imported before packages were retained have none, and it cannot be reconstructed: those answer `package_not_retained`, which is deliberately a different code from `import_not_found` so a client can say which happened. Re-import the corpus as a new version to get a package for it. And this is the only way to recover `task.toml` — the importer parses it into environment specs and keeps a digest, so it exists nowhere else on the server.
 
 ### Deleting one
 

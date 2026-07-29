@@ -1230,6 +1230,48 @@ class TestJobs:
             assert f.read() == archive
 
     @pytest.mark.asyncio
+    async def test_download_package_bytes_and_streamed_file(self, tmp_path):
+        """The OWNER-ONLY corpus retrieval: bytes, or straight to a directory."""
+        package = gzip.compress(b'corpus bytes')
+        fake = FakeUrlopen([
+            (
+                '/package',
+                package,
+                {'Content-Disposition': 'attachment; filename="acme@1.1-corpus.tar.gz"'},
+            ),
+        ])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            client = benchmarks_factory(CONFIG)
+            payload = await client.download_package('imp-1')
+            path = await client.download_package('imp-1', to=str(tmp_path))
+
+        assert payload == package
+        with open(path, 'rb') as f:
+            assert f.read() == package
+        assert '/api/benchmarks/imports/imp-1/package' in fake.requests[0].full_url
+
+    @pytest.mark.asyncio
+    async def test_download_package_not_retained_is_distinguishable(self):
+        """A pre-retention version answers its own code, not import_not_found."""
+        import io
+        import urllib.error
+
+        def raise_http_error(request, timeout=None):
+            raise urllib.error.HTTPError(
+                request.full_url, 404, 'Not Found', {},
+                io.BytesIO(json.dumps({'error': {
+                    'code': 'package_not_retained',
+                    'message': 'No original package is stored for import imp-old.',
+                }}).encode('utf-8')),
+            )
+
+        with patch('evolve.hosted.urllib.request.urlopen', raise_http_error):
+            with pytest.raises(EvolveAPIError) as exc:
+                await benchmarks_factory(CONFIG).download_package('imp-old')
+        assert exc.value.status == 404
+        assert exc.value.code == 'package_not_retained'
+
+    @pytest.mark.asyncio
     async def test_export_rejects_unknown_format(self):
         with pytest.raises(ValueError, match='harbor'):
             await jobs_factory(CONFIG).export('job-1', format='zip')

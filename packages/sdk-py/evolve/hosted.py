@@ -114,6 +114,8 @@ HOSTED_ERROR_CODES: 'tuple[str, ...]' = (
     'import_not_found',
     'import_too_large',
     'invalid_archive',
+    'package_not_retained',
+    'package_corrupt',
     'internal_error',
 )
 
@@ -167,6 +169,8 @@ HostedErrorCode = Literal[
     'import_not_found',
     'import_too_large',
     'invalid_archive',
+    'package_not_retained',
+    'package_corrupt',
     'internal_error',
 ]
 
@@ -1846,6 +1850,41 @@ class BenchmarksClient:
             if deadline is not None and time.monotonic() >= deadline:
                 raise TimeoutError(f'watch_import({id!r}) timed out after {timeout_s}s')
             await asyncio.sleep(poll_interval_s)
+
+    async def download_package(
+        self,
+        id: str,
+        *,
+        to: Optional[str] = None,
+    ):
+        """Download the ORIGINAL corpus package a version was imported from.
+
+        The gzipped tarball you uploaded, or — for a git import — the
+        checked-out tree packed at import time. ``id`` is the import id that
+        ``import_()`` returned.
+
+        OWNER ONLY. This is the one call that returns task files, and it
+        returns them only to the account that owns the benchmark; a
+        platform-curated benchmark has no owner, so nobody can download it.
+        Someone else's import answers ``import_not_found``, never a 403.
+
+        The server verifies the stored bytes against their recorded sha256
+        before sending anything, so a successful call is byte-identical to
+        what was imported.
+
+        A version imported before packages were retained has none, and it
+        cannot be reconstructed: that is ``package_not_retained``, distinct
+        from "not found" so you can say so. Re-import the corpus as a new
+        version to get one.
+
+        Returns the package bytes, or — when ``to`` (a directory) is given —
+        streams straight to disk and returns the saved file path.
+        """
+        path = f'/api/benchmarks/imports/{urllib.parse.quote(id)}/package'
+        if to is not None:
+            return await self._http.download(path, to, f'import-{id}-corpus.tar.gz')
+        payload, _headers = await self._http.request_bytes(path)
+        return payload
 
     def list_imports(
         self,
