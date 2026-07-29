@@ -208,8 +208,8 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     defaultModel: "opus",
     models: [
       { alias: "fable", modelId: "claude-fable-5", description: "Highest capability, long-horizon agentic work" },
-      { alias: "opus", modelId: "claude-opus-4-8", description: "Complex reasoning, R&D, architecting" },
-      { alias: "sonnet", modelId: "claude-sonnet-4-6", description: "Daily coding, features, tests" },
+      { alias: "opus", modelId: "claude-opus-5", description: "Complex reasoning, R&D, architecting" },
+      { alias: "sonnet", modelId: "claude-sonnet-5", description: "Daily coding, features, tests" },
       { alias: "haiku", modelId: "claude-haiku-4-5-20251001", description: "Quick tasks, syntax correction" },
       { alias: "opus[1m]", modelId: "opus[1m]", description: "Complex reasoning with 1M context window" },
       { alias: "sonnet[1m]", modelId: "sonnet[1m]", description: "Daily coding with 1M context window" },

@@ -1435,10 +1435,12 @@ async function testOpenCodeMergesUserSecrets(): Promise<void> {
   // User's existing model header preserved alongside spend headers
   const model = parsed.provider.litellm.models["openrouter/anthropic/claude-sonnet-4.6"];
   assertEqual(model.headers["x-user-header"], "keep-me", "user model header preserved");
-  assertEqual(model.headers["x-litellm-customer-id"], "evolve-oc-merge", "spend session header injected");
-  assert(model.headers["x-litellm-tags"]?.includes("run:run-merge-001"), "spend run tag injected");
-  assertEqual(model.headers["x-evolve-provider-runtime-binding"], "evrb_openrouter_binding_secret", "provider runtime binding injected");
-  assertEqual(model.variants?.medium?.reasoningEffort, "medium", "reasoning variant injected");
+  // Injected spend plumbing lands on the DEFAULT model's entry (Opus 5).
+  const activeModel = parsed.provider.litellm.models["openrouter/anthropic/claude-opus-5"];
+  assertEqual(activeModel.headers["x-litellm-customer-id"], "evolve-oc-merge", "spend session header injected");
+  assert(activeModel.headers["x-litellm-tags"]?.includes("run:run-merge-001"), "spend run tag injected");
+  assertEqual(activeModel.headers["x-evolve-provider-runtime-binding"], "evrb_openrouter_binding_secret", "provider runtime binding injected");
+  assertEqual(activeModel.variants?.medium?.reasoningEffort, "medium", "reasoning variant injected");
 
   // SDK overrides litellm options (proxy URL + runtime token)
   assertEqual(parsed.provider.litellm.options.baseURL, "https://dashboard.test/api/model-proxy/openrouter/v1", "model proxy baseURL set");
@@ -1558,7 +1560,7 @@ async function testDroidBuildCommand(): Promise<void> {
   console.log("\n[37] Droid buildCommand() uses custom model in gateway mode");
   const { AGENT_REGISTRY } = await import("../../src/registry.js");
   const droid = AGENT_REGISTRY.droid;
-  assertEqual(droid.defaultModel, "gpt-5.5", "Droid defaults to GPT-5.5");
+  assertEqual(droid.defaultModel, "claude-opus-5", "Droid defaults to Claude Opus 5");
   assertEqual(
     droid.droidGatewaySettings?.provider,
     "generic-chat-completion-api",
