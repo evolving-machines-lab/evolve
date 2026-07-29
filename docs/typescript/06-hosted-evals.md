@@ -1268,6 +1268,8 @@ interface Trial {
     modelUsage: ModelUsage | null;           // per-harness detail; read spend from spentUsd
     sandboxProvider: EvalSandboxProvider | null;  // where the trial executed; null until it has
     verifierMode: "separate" | "shared" | null;   // where the verifier ran
+    sandboxId: string | null;                // agent box id; null until the box exists
+    verifierSandboxId: string | null;        // verifier box id; null in shared mode or before verify
     spentUsd: number | null;                 // null = never ran (NOT zero, which is a measurement)
     spendSource: "measured" | "assumed_cap" | null;
     liveSpentUsd: number | null;             // mid-run LOWER BOUND; null = no reading yet

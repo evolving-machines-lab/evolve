@@ -1161,6 +1161,8 @@ class Trial:
     model_usage: ModelUsage | None        # per-harness detail; read spend from spent_usd
     sandbox_provider: str | None          # where the trial executed; None until it has
     verifier_mode: str | None             # 'separate' | 'shared'
+    sandbox_id: str | None                # agent box id; None until the box exists
+    verifier_sandbox_id: str | None       # verifier box id; None in shared mode or before verify
     spent_usd: float | None               # None = never ran (NOT 0, which is a measurement)
     spend_source: str | None              # 'measured' | 'assumed_cap'
     live_spent_usd: float | None          # mid-run LOWER BOUND; None = no reading yet
