@@ -266,8 +266,9 @@ function registryOwnsModel(registry: AgentRegistryEntry, model: string): boolean
     directAliases && (model in directAliases || Object.values(directAliases).includes(model)),
   );
 }
-// Kimi Code accepts these as provider-dependent config/env values; Moonshot's
-// public Kimi API documents thinking on/off/keep, not stable effort levels.
+// Kimi Code accepts these as provider-dependent config/env values. Moonshot's
+// K3 API documents reasoning_effort low|high|max (default max, thinking
+// always on); the Kimi Code CLI effort enum is low|medium|high|xhigh|max.
 const KIMI_CODE_THINKING_EFFORTS = new Set([
   "low",
   "medium",
@@ -276,10 +277,15 @@ const KIMI_CODE_THINKING_EFFORTS = new Set([
   "max",
 ]);
 
+// When the caller does not pass a reasoningEffort, pin max thinking in the
+// Kimi Code config (K3's own API default is already max; this makes the
+// SDK default explicit rather than relying on the provider's default).
+const KIMI_CODE_DEFAULT_THINKING_EFFORT = "max";
+
 function getKimiCodeThinkingEffort(
   reasoningEffort?: string,
 ): string | undefined {
-  if (!reasoningEffort) return undefined;
+  if (!reasoningEffort) return KIMI_CODE_DEFAULT_THINKING_EFFORT;
   return KIMI_CODE_THINKING_EFFORTS.has(reasoningEffort)
     ? reasoningEffort
     : undefined;

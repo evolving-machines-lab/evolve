@@ -70,7 +70,7 @@ def get_agent_config() -> Optional[AgentConfig]:
         return AgentConfig(
             type='kimi',
             api_key=evolve_api_key,
-            model=os.getenv('KIMI_MODEL', 'kimi-k2.6'),
+            model=os.getenv('KIMI_MODEL', 'kimi-k3'),
         )
 
     elif agent_type == 'opencode':

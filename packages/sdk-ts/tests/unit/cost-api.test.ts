@@ -923,7 +923,8 @@ async function testKimiBuildCommandUsesPromptMode(): Promise<void> {
   console.log("\n[27] Kimi buildCommand() uses Kimi Code prompt mode");
   const { AGENT_REGISTRY } = await import("../../src/registry.js");
   const kimi = AGENT_REGISTRY.kimi;
-  assertEqual(kimi.defaultModel, "kimi-k2.6", "Kimi default is user-facing");
+  assertEqual(kimi.defaultModel, "kimi-k3", "Kimi default is user-facing");
+  assertEqual(kimi.gatewayModelAliases?.["kimi-k3"], "moonshot/kimi-k3", "Kimi gateway maps K3 to Moonshot route");
   assertEqual(kimi.gatewayModelAliases?.["kimi-k2.5"], "moonshot/kimi-k2.5", "Kimi gateway maps to Moonshot route");
   assertEqual(kimi.gatewayModelAliases?.["kimi-k2p6-raptor"], "kimi-k2p6-raptor", "Kimi K2.6 Raptor alias maps to gateway route");
   assertEqual(kimi.gatewayModelAliases?.["kimi-k2p7-code-raptor"], "kimi-k2p7-code-raptor", "Kimi K2.7 Code Raptor alias maps to gateway route");

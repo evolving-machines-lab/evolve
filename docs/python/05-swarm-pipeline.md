@@ -48,7 +48,7 @@ SwarmConfig(
 | Option | Default | Notes |
 |--------|---------|-------|
 | `agent.type` | `'claude'` | Auto-resolved from env |
-| `agent.model` | per type | `'opus'` (claude), `'gpt-5.4'` (codex), etc. |
+| `agent.model` | per type | `'opus'` (claude), `'gpt-5.6-sol'` (codex), etc. |
 | `sandbox` | auto-resolved | Provider for every worker; falls back to env (`E2B_API_KEY`, `DAYTONA_API_KEY`, `MODAL_TOKEN_*`, `EVOLVE_API_KEY`) |
 | `skills` | `None` | Set here or per-operation |
 | `integrations` | `None` | Set here or per-operation |

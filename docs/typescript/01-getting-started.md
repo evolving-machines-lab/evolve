@@ -295,11 +295,11 @@ The Direct key column applies to Direct Provider Key Mode. Managed BYO Provider 
 | type | models | default | Gateway | Direct key |
 |------|--------|---------|---------|------|
 | `"claude"` | `"fable"` `"opus"` `"sonnet"` `"haiku"` `"opus[1m]"` `"sonnet[1m]"` | `"opus"` | `EVOLVE_API_KEY` | `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` |
-| `"codex"` | `"gpt-5.5"` `"gpt-5.4"` `"gpt-5.4-mini"` `"gpt-5.3-codex"` `"gpt-5.2"` | `"gpt-5.4"` | `EVOLVE_API_KEY` | `OPENAI_API_KEY` or `CODEX_OAUTH_FILE_PATH` |
-| `"gemini"` | `"gemini-3.1-pro-preview"` `"gemini-3.1-flash-lite-preview"` `"gemini-3.5-flash"` `"gemini-3-flash-preview"` `"gemini-2.5-pro"` `"gemini-2.5-flash"` `"gemini-2.5-flash-lite"` | `"gemini-3.1-pro-preview"` | `EVOLVE_API_KEY` | `GEMINI_API_KEY` or `GEMINI_OAUTH_FILE_PATH` |
+| `"codex"` | `"gpt-5.6-sol"` `"gpt-5.6-terra"` `"gpt-5.6-luna"` `"gpt-5.5"` `"gpt-5.4"` `"gpt-5.4-mini"` `"gpt-5.3-codex"` `"gpt-5.2"` | `"gpt-5.6-sol"` | `EVOLVE_API_KEY` | `OPENAI_API_KEY` or `CODEX_OAUTH_FILE_PATH` |
+| `"gemini"` | `"gemini-3.6-flash"` `"gemini-3.5-flash"` `"gemini-3.5-flash-lite"` `"gemini-3.1-pro-preview"` `"gemini-3.1-flash-lite"` `"gemini-3.1-flash-lite-preview"` `"gemini-3-flash-preview"` `"gemini-2.5-pro"` `"gemini-2.5-flash"` `"gemini-2.5-flash-lite"` | `"gemini-3.6-flash"` | `EVOLVE_API_KEY` | `GEMINI_API_KEY` or `GEMINI_OAUTH_FILE_PATH` |
 | `"qwen"` | `"qwen3.7-max"` `"qwen3.7-plus"` `"qwen3.6-flash"` `"qwen3.6-plus"` | `"qwen3.7-max"` | `EVOLVE_API_KEY` | `OPENAI_API_KEY` |
-| `"kimi"` | `"kimi-k2.6"` `"kimi-k2p6-raptor"` `"kimi-k2p7-code-raptor"` `"kimi-k2.5"` | `"kimi-k2.6"` | `EVOLVE_API_KEY` | `KIMI_API_KEY` |
-| `"opencode"` | `"openrouter/anthropic/claude-fable-5"` `"openrouter/anthropic/claude-opus-4.8"` `"openrouter/anthropic/claude-sonnet-4.6"` `"openrouter/anthropic/claude-haiku-4.5"` `"openrouter/openai/gpt-5.5"` `"openrouter/openai/gpt-5.4"` `"openrouter/openai/gpt-5.4-mini"` `"openrouter/openai/gpt-5.3-codex"` `"openrouter/openai/gpt-5.2"` `"openrouter/google/gemini-3.1-pro-preview"` `"openrouter/google/gemini-3.5-flash"` `"openrouter/google/gemini-3-flash-preview"` `"openrouter/qwen/qwen3-coder-next"` `"openrouter/qwen/qwen3-coder-plus"` `"openrouter/moonshotai/kimi-k2.6"` `"openrouter/moonshotai/kimi-k2.5"` `"openrouter/z-ai/glm-5"` | `"openrouter/anthropic/claude-sonnet-4.6"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
+| `"kimi"` | `"kimi-k3"` `"kimi-k2.6"` `"kimi-k2p6-raptor"` `"kimi-k2p7-code-raptor"` `"kimi-k2.5"` | `"kimi-k3"` | `EVOLVE_API_KEY` | `KIMI_API_KEY` |
+| `"opencode"` | `"openrouter/anthropic/claude-fable-5"` `"openrouter/anthropic/claude-opus-4.8"` `"openrouter/anthropic/claude-sonnet-4.6"` `"openrouter/anthropic/claude-haiku-4.5"` `"openrouter/openai/gpt-5.6-sol"` `"openrouter/openai/gpt-5.6-terra"` `"openrouter/openai/gpt-5.6-luna"` `"openrouter/openai/gpt-5.5"` `"openrouter/openai/gpt-5.4"` `"openrouter/openai/gpt-5.4-mini"` `"openrouter/openai/gpt-5.3-codex"` `"openrouter/openai/gpt-5.2"` `"openrouter/google/gemini-3.6-flash"` `"openrouter/google/gemini-3.5-flash"` `"openrouter/google/gemini-3.1-pro-preview"` `"openrouter/google/gemini-3-flash-preview"` `"openrouter/qwen/qwen3-coder-next"` `"openrouter/qwen/qwen3-coder-plus"` `"openrouter/moonshotai/kimi-k3"` `"openrouter/moonshotai/kimi-k2.6"` `"openrouter/moonshotai/kimi-k2.5"` `"openrouter/z-ai/glm-5.2"` `"openrouter/z-ai/glm-5"` | `"openrouter/anthropic/claude-sonnet-4.6"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
 | `"droid"` | `"claude-opus-4-8"` `"claude-opus-4-8-fast"` `"claude-sonnet-4-6"` `"claude-opus-4-6"` `"claude-opus-4-6-fast"` `"claude-opus-4-5"` `"claude-sonnet-4-5"` `"claude-haiku-4-5"` `"gpt-5.5"` `"gpt-5.5-fast"` `"gpt-5.5-pro"` `"gpt-5.4"` `"gpt-5.4-fast"` `"gpt-5.4-mini"` `"gpt-5.3-codex"` `"gpt-5.3-codex-fast"` `"gpt-5.2"` `"gpt-5.2-codex"` `"gemini-3.1-pro-preview"` `"gemini-3-pro-preview"` `"gemini-3-flash-preview"` `"kimi-k2.6"` `"kimi-k2.5"` `"deepseek-v4-pro"` `"minimax-m2.7"` `"minimax-m2.5"` `"glm-5.1"` | `"gpt-5.5"` | `EVOLVE_API_KEY` | `FACTORY_API_KEY` |
 
 Agent-specific option: `reasoningEffort` controls how much reasoning/thinking the selected agent uses when that agent supports it.
@@ -307,14 +307,14 @@ Agent-specific option: `reasoningEffort` controls how much reasoning/thinking th
 | Agent | Default when omitted | Supported `reasoningEffort` |
 |-------|----------------------|-----------------------------|
 | `"claude"` | Claude/model default | `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
-| `"codex"` | OpenAI model default | `"low"` `"medium"` `"high"` `"xhigh"` |
+| `"codex"` | `"medium"` (the OpenAI default for GPT-5.6) | `"none"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"` (`"none"` and `"max"` are GPT-5.6 values) |
 | `"gemini"` | Gemini CLI/model default | Not supported |
 | `"qwen"` | `"thinking"` | `"thinking"` `"no-thinking"` |
-| `"kimi"` | `"thinking"` | `"thinking"` `"no-thinking"` |
+| `"kimi"` | `"thinking"` at `"max"` effort | `"thinking"` `"no-thinking"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
 | `"opencode"` | `"thinking"` + `"medium"` | `"thinking"` `"no-thinking"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
 | `"droid"` | Droid/model default | `"off"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"`; exact values depend on the Droid model |
 
-Kimi Code has provider-dependent internal effort settings, but the Moonshot/Kimi API documents thinking on/off and preserved-thinking controls, not public effort levels.
+When you omit `reasoningEffort` on the `kimi` harness, the SDK pins `effort = "max"` in the Kimi Code config (Kimi K3's own API default is already max thinking, so this makes the default explicit). Note that thinking cannot be disabled on Kimi K3 at the API level — `"no-thinking"` applies to the K2-generation models.
 
 For Claude Fable 5, use `model: "fable"`. For OpenCode via OpenRouter, use `model: "openrouter/anthropic/claude-fable-5"`. For Claude 1M context window, use `model: "sonnet[1m]"` or `model: "opus[1m]"`.
 
@@ -420,7 +420,7 @@ const evolve = new Evolve()
     .withAgent({ type: "kimi" });
 
 const evolve = new Evolve()
-    .withAgent({ type: "kimi", model: "kimi-k2.6" });
+    .withAgent({ type: "kimi", model: "kimi-k3" });
 
 const evolve = new Evolve()
     .withAgent({
