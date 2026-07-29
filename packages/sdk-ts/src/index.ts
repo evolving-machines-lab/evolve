@@ -218,12 +218,17 @@ export {
 
 export {
   AGENT_REGISTRY,
+  BINARY_EFFORT_VALUES,
+  DEFAULT_REASONING_EFFORT,
+  REASONING_EFFORTS,
   getAgentConfig,
+  harnessEffortVocabulary,
   isValidAgentType,
   expandPath,
   getMcpSettingsPath,
   getMcpSettingsDir,
   type AgentRegistryEntry,
+  type EffortSupport,
   type ModelInfo,
   type McpConfigInfo,
 } from "./registry";
