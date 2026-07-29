@@ -1336,6 +1336,11 @@ export interface JobsClient {
  * GET /api/meta as `errorCodes`. A server newer than this SDK may send a code
  * that is not listed here — `EvolveApiError.code` widens to string for exactly
  * that case, so an unknown code is still readable, just not narrowable.
+ *
+ * Held to the server's list by hosted-error-codes.json at the package root, the
+ * checked-in copy the dashboard regenerates and both SDKs assert against; the
+ * list drifted silently before that file existed. Adding a code means editing
+ * the server array, that file, this list, and the Python pair.
  */
 export const HOSTED_ERROR_CODES = [
   "missing_authorization",
@@ -1358,6 +1363,7 @@ export const HOSTED_ERROR_CODES = [
   "benchmark_name_taken",
   "benchmark_in_use",
   "benchmark_not_owned",
+  "upstream_not_watchable",
   "no_active_version",
   "version_not_ready",
   "unknown_task_keys",

@@ -77,6 +77,12 @@ def _snake_keys(data: Any) -> Optional[Dict[str, Any]]:
 #: HOSTED_ERROR_CODES, and is published verbatim at ``GET /api/meta`` as
 #: ``errorCodes``. A server newer than this SDK may send a code that is not
 #: listed here, so ``EvolveAPIError.code`` stays a plain ``str``.
+#:
+#: Held to the server's list by ``packages/sdk-ts/hosted-error-codes.json``, the
+#: checked-in copy the dashboard regenerates and both SDKs assert against; the
+#: list drifted silently before that file existed. Adding a code means editing
+#: the server array, that file, the TypeScript list, and BOTH halves of the pair
+#: below — the tuple and the Literal.
 HOSTED_ERROR_CODES: 'tuple[str, ...]' = (
     'missing_authorization',
     'invalid_api_key',
@@ -98,6 +104,7 @@ HOSTED_ERROR_CODES: 'tuple[str, ...]' = (
     'benchmark_name_taken',
     'benchmark_in_use',
     'benchmark_not_owned',
+    'upstream_not_watchable',
     'no_active_version',
     'version_not_ready',
     'unknown_task_keys',
@@ -154,6 +161,7 @@ HostedErrorCode = Literal[
     'benchmark_name_taken',
     'benchmark_in_use',
     'benchmark_not_owned',
+    'upstream_not_watchable',
     'no_active_version',
     'version_not_ready',
     'unknown_task_keys',
