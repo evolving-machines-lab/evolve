@@ -50,7 +50,7 @@ Commands:
   get <id>                          Show one job
   trials <id>                       List a job's trials
   trial <id> <trial-id>             Show one trial in full detail
-  trace <id> <trial-id>             Print a trial's trace events
+  trace <id> <trial-id>             Print a trial's trace events (--stream <raw-artifact>, --save <dir> for all)
   compare <id> <id> [...]           Compare 2-5 jobs side by side
   cancel <id>                       Request cancellation of a job
   rerun-failed <id>                 New job from a terminal job's failed trials
@@ -942,6 +942,71 @@ async function cmdTrial(inv: Invocation, io: CliIO): Promise<number> {
 async function cmdTrace(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
   const json = inv.flags.json === true;
+
+  // --stream: one RAW artifact instead of the parsed events.
+  const stream = inv.flags.stream as string | undefined;
+  if (stream !== undefined) {
+    if (stream === "verifier" || stream === "agent-stdout" || stream === "agent-stderr") {
+      const log = await client.trialArtifact(inv.positionals[0], inv.positionals[1], stream);
+      if (log === null) {
+        io.out(json ? JSON.stringify({ log: null }) : `No ${stream} log was stored for this trial.`);
+        return 0;
+      }
+      io.out(json ? JSON.stringify({ log }) : log);
+      return 0;
+    }
+    if (stream === "session-files") {
+      const files = await client.trialArtifact(inv.positionals[0], inv.positionals[1], "session-files");
+      if (files === null) {
+        io.out(json ? JSON.stringify({ files: null }) : "No native session files were stored for this trial.");
+        return 0;
+      }
+      if (json) {
+        io.out(JSON.stringify({ files }));
+      } else {
+        for (const [path, content] of Object.entries(files)) {
+          io.out(`===== ${path} (${Buffer.byteLength(content, "utf8")} bytes) =====`);
+          io.out(content);
+        }
+      }
+      return 0;
+    }
+    io.err('--stream must be "verifier", "agent-stdout", "agent-stderr" or "session-files"');
+    return 1;
+  }
+
+  // --save <dir>: everything a trial recorded, one directory. The parsed
+  // events land as trace.jsonl; each raw artifact under its own name; native
+  // session files under session-files/ with their sandbox paths preserved.
+  const saveDir = inv.flags.save as string | undefined;
+  if (saveDir !== undefined) {
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    const { join, dirname } = await import("node:path");
+    await mkdir(saveDir, { recursive: true });
+    const lines: string[] = [];
+    for await (const event of client.trialTraceEvents(inv.positionals[0], inv.positionals[1])) {
+      lines.push(JSON.stringify(event));
+    }
+    await writeFile(join(saveDir, "trace.jsonl"), lines.join("\n") + (lines.length ? "\n" : ""));
+    io.out(`trace.jsonl (${lines.length} events)`);
+    for (const which of ["verifier", "agent-stdout", "agent-stderr"] as const) {
+      const log = await client.trialArtifact(inv.positionals[0], inv.positionals[1], which);
+      if (log === null) continue;
+      await writeFile(join(saveDir, `${which}.log`), log);
+      io.out(`${which}.log (${Buffer.byteLength(log, "utf8")} bytes)`);
+    }
+    const files = await client.trialArtifact(inv.positionals[0], inv.positionals[1], "session-files");
+    if (files !== null) {
+      for (const [path, content] of Object.entries(files)) {
+        const target = join(saveDir, "session-files", ...path.split("/").filter(Boolean));
+        await mkdir(dirname(target), { recursive: true });
+        await writeFile(target, content);
+      }
+      io.out(`session-files/ (${Object.keys(files).length} files)`);
+    }
+    return 0;
+  }
+
   let count = 0;
   for await (const event of client.trialTraceEvents(inv.positionals[0], inv.positionals[1], {
     ...(inv.flags.cursor !== undefined ? { cursor: String(inv.flags.cursor) } : {}),

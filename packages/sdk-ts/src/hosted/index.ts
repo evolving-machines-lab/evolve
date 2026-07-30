@@ -1376,6 +1376,37 @@ export function jobs(config?: HostedClientConfig): JobsClient {
     return mapPage((await res.json()) as Record<string, unknown>, mapTraceEvent);
   }
 
+  /**
+   * One raw trace artifact for a trial, by the trace route's ?stream=
+   * selector: "verifier" | "agent-stdout" | "agent-stderr" answer
+   * { log: string | null }, and "session-files" answers
+   * { files: Record<sandbox-path, text> | null }. Null = never stored
+   * (normal answer, not an error): a QUEUED/CANCELLED trial, a harness that
+   * wrote nothing, or a purged trace.
+   */
+  async function getTrialArtifact(
+    id: string,
+    trialId: string,
+    stream: "verifier" | "agent-stdout" | "agent-stderr"
+  ): Promise<string | null>;
+  async function getTrialArtifact(
+    id: string,
+    trialId: string,
+    stream: "session-files"
+  ): Promise<Record<string, string> | null>;
+  async function getTrialArtifact(
+    id: string,
+    trialId: string,
+    stream: "verifier" | "agent-stdout" | "agent-stderr" | "session-files"
+  ): Promise<string | Record<string, string> | null> {
+    const res = await request(
+      cfg,
+      `/api/jobs/${encodeURIComponent(id)}/trials/${encodeURIComponent(trialId)}/trace?stream=${stream}`
+    );
+    const body = (await res.json()) as { log?: string | null; files?: Record<string, string> | null };
+    return stream === "session-files" ? (body.files ?? null) : (body.log ?? null);
+  }
+
   async function exportResponse(id: string, format?: "harbor"): Promise<Response> {
     const qs = format ? `?format=${encodeURIComponent(format)}` : "";
     return request(cfg, `/api/jobs/${encodeURIComponent(id)}/export${qs}`);
@@ -1549,6 +1580,7 @@ export function jobs(config?: HostedClientConfig): JobsClient {
     },
 
     trialTrace: getTrialTrace,
+    trialArtifact: getTrialArtifact,
 
     async *trialTraceEvents(
       id: string,

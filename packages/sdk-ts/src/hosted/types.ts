@@ -1266,6 +1266,22 @@ export interface JobsClient {
     options?: TrialTraceOptions
   ): AsyncIterableIterator<TrialTraceEvent>;
   /**
+   * One RAW trace artifact, by the trace route's ?stream= selector.
+   * "verifier" | "agent-stdout" | "agent-stderr" answer the log text;
+   * "session-files" answers the native transcript files keyed by their
+   * sandbox path. Null = never stored (a normal answer, not an error).
+   */
+  trialArtifact(
+    id: string,
+    trialId: string,
+    stream: "verifier" | "agent-stdout" | "agent-stderr"
+  ): Promise<string | null>;
+  trialArtifact(
+    id: string,
+    trialId: string,
+    stream: "session-files"
+  ): Promise<Record<string, string> | null>;
+  /**
    * Watch a job's event stream (SSE). Replays from the beginning,
    * resumes with Last-Event-ID on reconnect (exponential backoff), and
    * finishes on the terminal event.
