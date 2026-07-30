@@ -946,7 +946,7 @@ async function cmdTrace(inv: Invocation, io: CliIO): Promise<number> {
   // --stream: one RAW artifact instead of the parsed events.
   const stream = inv.flags.stream as string | undefined;
   if (stream !== undefined) {
-    if (stream === "verifier" || stream === "agent-stdout" || stream === "agent-stderr") {
+    if (stream === "verifier" || stream === "trace-stdout" || stream === "trace-stderr") {
       const log = await client.trialArtifact(inv.positionals[0], inv.positionals[1], stream);
       if (log === null) {
         io.out(json ? JSON.stringify({ log: null }) : `No ${stream} log was stored for this trial.`);
@@ -955,10 +955,10 @@ async function cmdTrace(inv: Invocation, io: CliIO): Promise<number> {
       io.out(json ? JSON.stringify({ log }) : log);
       return 0;
     }
-    if (stream === "session-files") {
-      const files = await client.trialArtifact(inv.positionals[0], inv.positionals[1], "session-files");
+    if (stream === "agent-home" || stream === "trace-native") {
+      const files = await client.trialArtifact(inv.positionals[0], inv.positionals[1], stream);
       if (files === null) {
-        io.out(json ? JSON.stringify({ files: null }) : "No native session files were stored for this trial.");
+        io.out(json ? JSON.stringify({ files: null }) : `No ${stream} content was stored for this trial.`);
         return 0;
       }
       if (json) {
@@ -971,7 +971,7 @@ async function cmdTrace(inv: Invocation, io: CliIO): Promise<number> {
       }
       return 0;
     }
-    io.err('--stream must be "verifier", "agent-stdout", "agent-stderr" or "session-files"');
+    io.err('--stream must be "verifier", "trace-stdout", "trace-stderr", "agent-home" or "trace-native"');
     return 1;
   }
 
@@ -987,22 +987,31 @@ async function cmdTrace(inv: Invocation, io: CliIO): Promise<number> {
     for await (const event of client.trialTraceEvents(inv.positionals[0], inv.positionals[1])) {
       lines.push(JSON.stringify(event));
     }
-    await writeFile(join(saveDir, "trace.jsonl"), lines.join("\n") + (lines.length ? "\n" : ""));
-    io.out(`trace.jsonl (${lines.length} events)`);
-    for (const which of ["verifier", "agent-stdout", "agent-stderr"] as const) {
+    await writeFile(join(saveDir, "trace-parsed.jsonl"), lines.join("\n") + (lines.length ? "\n" : ""));
+    io.out(`trace-parsed.jsonl (${lines.length} events)`);
+    for (const which of ["verifier", "trace-stdout", "trace-stderr"] as const) {
       const log = await client.trialArtifact(inv.positionals[0], inv.positionals[1], which);
       if (log === null) continue;
       await writeFile(join(saveDir, `${which}.log`), log);
       io.out(`${which}.log (${Buffer.byteLength(log, "utf8")} bytes)`);
     }
-    const files = await client.trialArtifact(inv.positionals[0], inv.positionals[1], "session-files");
-    if (files !== null) {
-      for (const [path, content] of Object.entries(files)) {
-        const target = join(saveDir, "session-files", ...path.split("/").filter(Boolean));
+    const home = await client.trialArtifact(inv.positionals[0], inv.positionals[1], "agent-home");
+    if (home !== null) {
+      for (const [path, content] of Object.entries(home)) {
+        const target = join(saveDir, "agent-home", ...path.split("/").filter(Boolean));
         await mkdir(dirname(target), { recursive: true });
         await writeFile(target, content);
       }
-      io.out(`session-files/ (${Object.keys(files).length} files)`);
+      io.out(`agent-home/ (${Object.keys(home).length} files)`);
+    }
+    const native = await client.trialArtifact(inv.positionals[0], inv.positionals[1], "trace-native");
+    if (native !== null) {
+      for (const [path, content] of Object.entries(native)) {
+        const target = join(saveDir, "trace-native", path.split("/").pop() || "transcript");
+        await mkdir(dirname(target), { recursive: true });
+        await writeFile(target, content);
+      }
+      io.out(`trace-native/ (${Object.keys(native).length} files)`);
     }
     return 0;
   }
