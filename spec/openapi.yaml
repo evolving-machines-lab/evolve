@@ -65,7 +65,9 @@ info:
     intentionally NOT in this document: job sharing
     (`GET /api/jobs/{jobId}/shares`, `POST /api/jobs/{jobId}/share`), copying
     (`POST /api/jobs/{jobId}/copy`, `POST /api/trials/{trialId}/copy`), job
-    deletion (`DELETE /api/jobs/{jobId}`), and the leaderboard family. They
+    deletion (`DELETE /api/jobs/{jobId}`), dataset visibility
+    (`POST /api/datasets/{name}/visibility` — public/private toggling arrives
+    with the registry/sharing model), and the leaderboard family. They
     will be specified when they are designed; their absence here is a
     decision, not an omission.
 
@@ -398,7 +400,7 @@ paths:
         A gzipped archive of the job in the standard results layout
         (`config.json`, `result.json`, per-trial `config.json`/`result.json`).
         Only terminal jobs are downloadable. The archive is deterministic:
-        sorted keys at every depth, no export timestamp, zero gzip mtime.
+        sorted keys at every depth, no generation timestamp, zero gzip mtime.
         Task environment identity only — instructions, verifier commands, and
         test files never leave the server.
       parameters:
