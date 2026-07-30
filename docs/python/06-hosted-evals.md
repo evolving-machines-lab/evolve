@@ -292,6 +292,37 @@ page = await evals.trial_trace(
 print(page.items, page.next_cursor, page.has_more)
 ```
 
+### Trial artifacts — the raw record
+
+Beside the parsed trace, every trial archives its raw record, and one
+vocabulary names the pieces everywhere — API, SDK, CLI, and the dashboard's
+download menu:
+
+```python
+stdout = evals.trial_artifact(job.id, trial_id, "trace-stdout")   # str | None
+stderr = evals.trial_artifact(job.id, trial_id, "trace-stderr")   # str | None
+grader = evals.trial_artifact(job.id, trial_id, "verifier")       # str | None
+home   = evals.trial_artifact(job.id, trial_id, "agent-home")     # dict[str, str] | None
+```
+
+`trace-stdout` and `trace-stderr` are the harness process's streams, byte for
+byte — the referee whenever the parsed trace looks wrong. `verifier` is
+everything the scoring step printed. `agent-home` is the CLI's entire home
+folder (`/root/.claude`, `/root/.codex`, ...) collected whole after the run,
+subagent transcripts included by construction, keyed by sandbox path. Null is
+a normal answer, never an error: the trial never stored that artifact (it was
+cancelled early, the harness wrote nothing, or the trace was purged).
+
+The CLI speaks the same words: `evolve-evals trace <job> <trial>
+--stream trace-stdout` prints one artifact, and `--save <dir>` writes the
+whole set — `trace-parsed.jsonl`, `trace-stdout.log`, `trace-stderr.log`,
+`verifier.log`, and `agent-home/` with the folder tree preserved. On the wire
+these are `?stream=` selectors on the trace route.
+
+This archive belongs to hosted evals: trials are scoring evidence. A managed
+agent session keeps its parsed transcript download; its raw stream lives in
+the SDK's local session log and its home folder inside your own sandbox.
+
 The first event of every trace (`seq` 0) is the task instruction itself, carried as `_prompt` — a trace read on its own opens with the prompt rather than mid-conversation, the same promise Harbor's trajectories make.
 
 `trial_trace_events()` drains the currently available trace, then stops — `next_cursor` is `None` once you are caught up, which is how the drain knows. A trace cursor is a position in the seq timeline, so to follow an in-flight trial later, keep the last event's `seq` and resume with `cursor=str(last_seen_seq)`.
