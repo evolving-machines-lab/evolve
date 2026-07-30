@@ -955,7 +955,7 @@ async function cmdTrace(inv: Invocation, io: CliIO): Promise<number> {
       io.out(json ? JSON.stringify({ log }) : log);
       return 0;
     }
-    if (stream === "agent-home" || stream === "trace-native") {
+    if (stream === "agent-home") {
       const files = await client.trialArtifact(inv.positionals[0], inv.positionals[1], stream);
       if (files === null) {
         io.out(json ? JSON.stringify({ files: null }) : `No ${stream} content was stored for this trial.`);
@@ -971,7 +971,7 @@ async function cmdTrace(inv: Invocation, io: CliIO): Promise<number> {
       }
       return 0;
     }
-    io.err('--stream must be "verifier", "trace-stdout", "trace-stderr", "agent-home" or "trace-native"');
+    io.err('--stream must be "verifier", "trace-stdout", "trace-stderr" or "agent-home"');
     return 1;
   }
 
@@ -1003,15 +1003,6 @@ async function cmdTrace(inv: Invocation, io: CliIO): Promise<number> {
         await writeFile(target, content);
       }
       io.out(`agent-home/ (${Object.keys(home).length} files)`);
-    }
-    const native = await client.trialArtifact(inv.positionals[0], inv.positionals[1], "trace-native");
-    if (native !== null) {
-      for (const [path, content] of Object.entries(native)) {
-        const target = join(saveDir, "trace-native", path.split("/").pop() || "transcript");
-        await mkdir(dirname(target), { recursive: true });
-        await writeFile(target, content);
-      }
-      io.out(`trace-native/ (${Object.keys(native).length} files)`);
     }
     return 0;
   }

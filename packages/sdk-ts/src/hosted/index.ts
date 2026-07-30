@@ -1379,8 +1379,8 @@ export function jobs(config?: HostedClientConfig): JobsClient {
   /**
    * One raw trace artifact for a trial, by the trace route's ?stream=
    * selector: "verifier" | "trace-stdout" | "trace-stderr" answer
-   * { log: string | null }; "agent-home" (the CLI's whole home folder) and
-   * "trace-native" (just its conversation transcript) answer
+   * { log: string | null }; "agent-home" (the CLI's whole home folder,
+   * subagent transcripts included by construction) answers
    * { files: Record<sandbox-path, text> | null }. Null = never stored
    * (normal answer, not an error): a QUEUED/CANCELLED trial, a harness that
    * wrote nothing, or a purged trace.
@@ -1393,19 +1393,19 @@ export function jobs(config?: HostedClientConfig): JobsClient {
   async function getTrialArtifact(
     id: string,
     trialId: string,
-    stream: "agent-home" | "trace-native"
+    stream: "agent-home"
   ): Promise<Record<string, string> | null>;
   async function getTrialArtifact(
     id: string,
     trialId: string,
-    stream: "verifier" | "trace-stdout" | "trace-stderr" | "agent-home" | "trace-native"
+    stream: "verifier" | "trace-stdout" | "trace-stderr" | "agent-home"
   ): Promise<string | Record<string, string> | null> {
     const res = await request(
       cfg,
       `/api/jobs/${encodeURIComponent(id)}/trials/${encodeURIComponent(trialId)}/trace?stream=${stream}`
     );
     const body = (await res.json()) as { log?: string | null; files?: Record<string, string> | null };
-    return stream === "agent-home" || stream === "trace-native" ? (body.files ?? null) : (body.log ?? null);
+    return stream === "agent-home" ? (body.files ?? null) : (body.log ?? null);
   }
 
   async function exportResponse(id: string, format?: "harbor"): Promise<Response> {

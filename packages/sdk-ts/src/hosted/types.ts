@@ -1268,8 +1268,8 @@ export interface JobsClient {
   /**
    * One RAW trace artifact, by the trace route's ?stream= selector.
    * "verifier" | "trace-stdout" | "trace-stderr" answer the log text;
-   * "agent-home" answers the CLI's whole home folder, "trace-native" just its
-   * conversation transcript, keyed by sandbox path. Null = never stored
+   * "agent-home" answers the CLI's whole home folder (subagent transcripts
+   * included), keyed by sandbox path. Null = never stored
    * (a normal answer, not an error).
    */
   trialArtifact(
@@ -1280,7 +1280,7 @@ export interface JobsClient {
   trialArtifact(
     id: string,
     trialId: string,
-    stream: "agent-home" | "trace-native"
+    stream: "agent-home"
   ): Promise<Record<string, string> | null>;
   /**
    * Watch a job's event stream (SSE). Replays from the beginning,
