@@ -406,6 +406,37 @@ class TestDatasets:
         assert exc_info.value.dataset == 'draft-set'
 
     @pytest.mark.asyncio
+    async def test_update_patches_the_one_settable_field(self):
+        fake = FakeUrlopen([
+            ('/api/datasets/deep-swe', {
+                'name': 'deep-swe',
+                'title': 'DeepSWE',
+                'description': 'SWE tasks',
+                'active_version': {'version': '1.1', 'state': 'READY', 'created_at': '2026-07-21', 'task_count': 113},
+                'upstream': {
+                    'ref': 'refs/heads/main',
+                    'current_commit': 'abc123',
+                    'latest_commit': 'def456',
+                    'moved': True,
+                    'behind_by': None,
+                    'checked_at': '2026-07-29',
+                    'error': None,
+                    'auto_import': True,
+                },
+            }),
+        ])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            updated = await datasets_factory(CONFIG).update(
+                'deep-swe', upstream_auto_import=True
+            )
+
+        request = fake.requests[0]
+        assert request.get_method() == 'PATCH'
+        assert json.loads(request.data.decode('utf-8')) == {'upstream_auto_import': True}
+        assert updated.name == 'deep-swe'
+        assert updated.upstream.auto_import is True
+
+    @pytest.mark.asyncio
     async def test_publish_posts_git_source(self):
         fake = FakeUrlopen([
             ('/api/datasets/publish', {

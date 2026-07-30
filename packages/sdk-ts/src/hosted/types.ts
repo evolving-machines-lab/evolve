@@ -827,6 +827,12 @@ export interface Dataset {
   updated_at?: string;
 }
 
+/** Body of datasets().update() — the only settable dataset field. */
+export interface DatasetPatch {
+  /** Automatically import a new version when the upstream git ref moves. */
+  upstream_auto_import: boolean;
+}
+
 /**
  * A dataset's active version resolved to a runnable shape.
  *
@@ -1218,6 +1224,14 @@ export interface DatasetsClient {
     ref: string,
     options?: DownloadDatasetOptions
   ): Promise<Buffer | string | ReadableStream<Uint8Array>>;
+  /**
+   * Update dataset settings. The only settable field is
+   * `upstream_auto_import`: automatically import a new version when the
+   * dataset's upstream git ref moves. Refused (upstream_not_watchable) when
+   * the dataset has no moving git ref to follow, and dataset_not_owned on a
+   * platform-curated dataset. Returns the updated dataset.
+   */
+  update(name: string, patch: DatasetPatch): Promise<Dataset>;
   /**
    * Delete a dataset you own, with every version, task, and archived
    * solution. Refused (dataset_in_use) while any job still references it — a

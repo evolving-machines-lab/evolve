@@ -1088,6 +1088,21 @@ def _map_dataset_version(data: Dict[str, Any]) -> DatasetVersion:
     )
 
 
+def _map_dataset_summary(data: Dict[str, Any]) -> Dataset:
+    """The summary Dataset shape: list rows and the update() echo share it."""
+    return Dataset(
+        name=data['name'],
+        title=data.get('title'),
+        description=data.get('description'),
+        active_version=(
+            _map_dataset_version(data['active_version'])
+            if data.get('active_version')
+            else None
+        ),
+        upstream=_map_upstream(data.get('upstream')),
+    )
+
+
 def _map_task(data: Dict[str, Any]) -> Task:
     providers_raw = data.get('providers') or {}
     return Task(
@@ -1885,20 +1900,7 @@ class DatasetsClient:
             )
             items, next_cursor, has_more = _page_parts(raw)
             return DatasetPage(
-                items=[
-                    Dataset(
-                        name=item['name'],
-                        title=item.get('title'),
-                        description=item.get('description'),
-                        active_version=(
-                            _map_dataset_version(item['active_version'])
-                            if item.get('active_version')
-                            else None
-                        ),
-                        upstream=_map_upstream(item.get('upstream')),
-                    )
-                    for item in items
-                ],
+                items=[_map_dataset_summary(item) for item in items],
                 next_cursor=next_cursor,
                 has_more=has_more,
             )
@@ -2080,7 +2082,12 @@ class DatasetsClient:
         ``package_not_retained``, distinct from "not found" so you can say so.
 
         Returns the package bytes, or — when ``to`` (a directory) is given —
-        streams straight to disk and returns the saved file path.
+        streams straight to disk and returns the saved file path. Same ruling
+        as ``jobs().download()``: no stream shape here where the TypeScript
+        SDK has one — urllib in a worker thread makes an async chunk iterator
+        a thread hop per chunk of unverified bytes, and ``to=`` already
+        streams in constant memory with the digest checked before the file is
+        promoted.
         """
         name, version = _parse_dataset_ref(ref)
         query = f'?version={urllib.parse.quote(version)}' if version else ''
@@ -2136,6 +2143,22 @@ class DatasetsClient:
         return _PaginatedList(
             fetch_page, lambda page: page.items, limit=limit, cursor=cursor
         )
+
+    async def update(self, name: str, *, upstream_auto_import: bool) -> Dataset:
+        """Update dataset settings; returns the updated dataset.
+
+        The only settable field is ``upstream_auto_import``: automatically
+        import a new version when the dataset's upstream git ref moves.
+        Refused with ``upstream_not_watchable`` (409) when the dataset has no
+        moving git ref to follow, and ``dataset_not_owned`` (403) on a
+        platform-curated dataset — both typed errors, not silent no-ops.
+        """
+        raw = await self._http.request_json(
+            f'/api/datasets/{urllib.parse.quote(name)}',
+            method='PATCH',
+            body={'upstream_auto_import': upstream_auto_import},
+        )
+        return _map_dataset_summary(raw)
 
     async def delete(self, name: str) -> None:
         """Delete a dataset you own, with every version, task, and archived solution.
@@ -2805,6 +2828,13 @@ class JobsClient:
         Content-Length and, when the server states one, its digest — or, when
         ``to`` (a directory) is given, streams straight to disk
         (temp-then-rename, same verification) and returns the saved file path.
+
+        Two delivery shapes where the TypeScript SDK has three: no stream
+        shape, deliberately. The HTTP layer is urllib inside a worker thread,
+        so an async chunk iterator would be a thread hop per chunk handing out
+        bytes no one has verified — while ``to=`` already streams in constant
+        memory and promotes the file only after the digest check. Pipe from
+        the file.
         """
         path = f'/api/jobs/{urllib.parse.quote(id)}/download'
         if to is not None:

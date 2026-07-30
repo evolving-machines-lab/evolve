@@ -30,6 +30,7 @@ import type {
   DatasetImportStatus,
   DatasetList,
   DatasetPage,
+  DatasetPatch,
   DatasetRef,
   DatasetVersion,
   DatasetVersionState,
@@ -118,6 +119,7 @@ export type {
   DatasetImportStatus,
   DatasetList,
   DatasetPage,
+  DatasetPatch,
   DatasetRef,
   DatasetSelector,
   DatasetSource,
@@ -1074,9 +1076,9 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
     };
   }
 
-  async function listPage(options?: ListDatasetsOptions): Promise<DatasetPage> {
-    const res = await request(cfg, `/api/datasets${pageQuery(options)}`);
-    return mapPage((await res.json()) as Record<string, unknown>, (raw) => ({
+  /** The summary Dataset shape: list rows and the update() echo share it. */
+  function mapDatasetSummary(raw: Record<string, unknown>): Dataset {
+    return {
       name: raw.name as string,
       title: (raw.title as string | null) ?? null,
       description: (raw.description as string | null) ?? null,
@@ -1084,7 +1086,12 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
         ? mapDatasetVersion(raw.active_version as Record<string, unknown>)
         : null,
       upstream: mapUpstream(raw.upstream),
-    }));
+    };
+  }
+
+  async function listPage(options?: ListDatasetsOptions): Promise<DatasetPage> {
+    const res = await request(cfg, `/api/datasets${pageQuery(options)}`);
+    return mapPage((await res.json()) as Record<string, unknown>, mapDatasetSummary);
   }
 
   return {
@@ -1222,6 +1229,19 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
         const res = await request(cfg, `/api/datasets/imports${suffix}`);
         return mapPage((await res.json()) as Record<string, unknown>, mapDatasetImport);
       }, options);
+    },
+
+    async update(name: string, patch: DatasetPatch): Promise<Dataset> {
+      // The one settable field, upstream_auto_import. Refused with
+      // upstream_not_watchable when the dataset has no moving git ref to
+      // follow, and dataset_not_owned on a platform-curated dataset — both
+      // typed EvolveApiError, not silent no-ops.
+      const res = await request(cfg, `/api/datasets/${encodeURIComponent(name)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      return mapDatasetSummary((await res.json()) as Record<string, unknown>);
     },
 
     async delete(name: string): Promise<void> {

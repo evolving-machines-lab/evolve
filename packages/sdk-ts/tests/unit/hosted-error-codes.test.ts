@@ -60,8 +60,8 @@ assert(
 
 // THE JSON'S OWN PROVENANCE. Its $comment claims the contract's ErrorCode enum
 // owns the vocabulary; this proves the claim instead of trusting it. The spec
-// lives at the repo root and ships in the published package (files: spec/), so
-// the same check runs against a published tarball.
+// lives at the repo root (the published package carries its own copy under
+// spec/, but tests do not ship), so this check runs in-repo only.
 const SPEC_PATH = join(PACKAGE_ROOT, "..", "..", "spec", "openapi.yaml");
 const specText = readFileSync(SPEC_PATH, "utf8");
 const enumBlock = specText.split("    ErrorCode:")[1]?.split("\n    Error:")[0] ?? "";

@@ -407,6 +407,7 @@ export {
   type ResumeRequest,
   type RegradeRequest,
   type DatasetImport,
+  type DatasetPatch,
   type PublishDatasetInput,
   type DatasetSource,
   type DatasetImportStatus,

@@ -1,6 +1,6 @@
 /**
- * Deterministic USTAR + gzip writer for the directory import path
- * (benchmarks().import({ source: { directory } })).
+ * Deterministic USTAR + gzip writer for the directory publish path
+ * (datasets().publish({ source: { directory } })).
  *
  * "Deterministic" means the SAME directory content always produces the SAME
  * bytes — so the tarball sha256 the server records as the import's source

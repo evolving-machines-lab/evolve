@@ -295,6 +295,49 @@ async function testDatasetsGet() {
   }
 }
 
+async function testDatasetUpdate() {
+  console.log("\n--- datasets().update() PATCHes the one settable field ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/datasets/deep-swe", {
+      status: 200,
+      body: {
+        name: "deep-swe",
+        title: "DeepSWE",
+        description: "SWE-bench style tasks",
+        active_version: { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113 },
+        upstream: {
+          ref: "refs/heads/main",
+          current_commit: "abc123",
+          latest_commit: "def456",
+          moved: true,
+          behind_by: null,
+          checked_at: "2026-07-29T00:00:00.000Z",
+          error: null,
+          auto_import: true,
+        },
+      },
+    });
+
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    const updated = await d.update("deep-swe", { upstream_auto_import: true });
+
+    const call = fetchCalls[0];
+    assertEqual(call.init?.method, "PATCH", "update() uses PATCH");
+    assertEqual(
+      JSON.parse(call.init?.body as string),
+      { upstream_auto_import: true },
+      "body carries the one settable field, nothing else"
+    );
+    const headers = call.init?.headers as Record<string, string>;
+    assertEqual(headers?.["Content-Type"], "application/json", "JSON body declares itself");
+    assertEqual(updated.name, "deep-swe", "echoes the dataset");
+    assertEqual(updated.upstream?.auto_import, true, "the new setting reads back from upstream");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testPublishGitSource() {
   console.log("\n--- datasets().publish() POSTs the git-source contract ---");
   installMockFetch();
@@ -2956,6 +2999,7 @@ async function main() {
   await testDatasetsGet();
   await testGetActive();
   await testGetActiveNoActiveVersion();
+  await testDatasetUpdate();
   await testPublishGitSource();
   await testPublishRequiresGitSource();
   await testPublishDirectorySource();
