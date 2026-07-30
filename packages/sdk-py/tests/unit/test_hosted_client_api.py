@@ -16,7 +16,8 @@ Coverage:
 - jobs().run() — contract body (field order), Idempotency-Key header
 - jobs().get()/list()/trials() — mapping + cursor params + status filter
 - jobs().list()/trials() — await one page + async-for auto-pagination across cursors
-- jobs().trial()/trial_trace()/compare() — detail, trace paging, comparison
+- jobs().trial()/trial_trace()/trial_artifact()/compare() — detail, trace
+  paging, raw artifacts, comparison
 - jobs().cancel()/rerun_failed() — POST semantics
 - jobs().export() — bytes, streamed-to-file, and format='harbor' modes
 - jobs().watch()/watch_iter() — SSE event stream: replay, Last-Event-ID
@@ -1736,6 +1737,29 @@ class TestJobs:
         assert page.items[0].type == 'agent.message'
         assert page.next_cursor == '4'
         assert page.has_more is True
+
+    @pytest.mark.asyncio
+    async def test_trial_artifact_selectors(self):
+        fake = FakeUrlopen([
+            ('stream=trace-stdout', {'log': 'raw harness stdout'}),
+            ('stream=agent-home', {'files': {'/root/.claude/history.jsonl': '{}'}}),
+            ('stream=verifier', {'log': None}),
+        ])
+        client = jobs_factory(CONFIG)
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            log = await client.trial_artifact('job-1', 'run-1', 'trace-stdout')
+            home = await client.trial_artifact('job-1', 'run-1', 'agent-home')
+            grader = await client.trial_artifact('job-1', 'run-1', 'verifier')
+
+        assert (
+            '/api/jobs/job-1/trials/run-1/trace?stream=trace-stdout'
+            in fake.requests[0].full_url
+        )
+        # Log selectors answer the text; agent-home answers path -> text.
+        assert log == 'raw harness stdout'
+        assert home == {'/root/.claude/history.jsonl': '{}'}
+        # Never stored is a normal answer, not an error.
+        assert grader is None
 
     @pytest.mark.asyncio
     async def test_trial_trace_events_drains_pages(self):

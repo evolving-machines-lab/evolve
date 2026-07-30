@@ -299,10 +299,10 @@ vocabulary names the pieces everywhere — API, SDK, CLI, and the dashboard's
 download menu:
 
 ```python
-stdout = evals.trial_artifact(job.id, trial_id, "trace-stdout")   # str | None
-stderr = evals.trial_artifact(job.id, trial_id, "trace-stderr")   # str | None
-grader = evals.trial_artifact(job.id, trial_id, "verifier")       # str | None
-home   = evals.trial_artifact(job.id, trial_id, "agent-home")     # dict[str, str] | None
+stdout = await evals.trial_artifact(job.id, trial_id, "trace-stdout")   # str | None
+stderr = await evals.trial_artifact(job.id, trial_id, "trace-stderr")   # str | None
+grader = await evals.trial_artifact(job.id, trial_id, "verifier")       # str | None
+home   = await evals.trial_artifact(job.id, trial_id, "agent-home")     # dict[str, str] | None
 ```
 
 `trace-stdout` and `trace-stderr` are the harness process's streams, byte for

@@ -94,6 +94,10 @@ Regrade options (whole-job regrade only):
 Trace options:
   --cursor <seq>                      Resume after this trace seq (a trace cursor IS a seq)
   --limit <n>                         Max events per page
+  --stream <artifact>                 Print ONE raw artifact instead: verifier |
+                                      trace-stdout | trace-stderr | agent-home
+  --save <dir>                        Save everything the trial recorded into <dir>:
+                                      trace-parsed.jsonl, each raw log, agent-home/
 
 Import options (a git source OR a local directory; --name and --version required):
   --git <url>                         Git repository URL (with --ref)
@@ -191,7 +195,7 @@ const COMMAND_SPECS: Record<string, CommandSpec> = {
     positionalUsage: "<id> <trial-id>",
   },
   trace: {
-    flags: { cursor: "string", limit: "number" },
+    flags: { cursor: "string", limit: "number", stream: "string", save: "string" },
     minPositionals: 2,
     maxPositionals: 2,
     positionalUsage: "<id> <trial-id>",
@@ -976,8 +980,8 @@ async function cmdTrace(inv: Invocation, io: CliIO): Promise<number> {
   }
 
   // --save <dir>: everything a trial recorded, one directory. The parsed
-  // events land as trace.jsonl; each raw artifact under its own name; native
-  // session files under session-files/ with their sandbox paths preserved.
+  // events land as trace-parsed.jsonl; each raw log under its own name; the
+  // agent's home folder under agent-home/ with its sandbox paths preserved.
   const saveDir = inv.flags.save as string | undefined;
   if (saveDir !== undefined) {
     const { mkdir, writeFile } = await import("node:fs/promises");

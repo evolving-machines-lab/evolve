@@ -366,6 +366,16 @@ function testParseOtherCommands() {
     "trace command with cursor/limit — one pagination vocabulary everywhere"
   );
   assertEqual(
+    parseArgs(["trace", "eval-1", "run-9", "--stream", "trace-stdout"]),
+    { command: "trace", positionals: ["eval-1", "run-9"], flags: { stream: "trace-stdout" } },
+    "trace with --stream — the raw-artifact selector reaches the handler"
+  );
+  assertEqual(
+    parseArgs(["trace", "eval-1", "run-9", "--save", "/tmp/out"]),
+    { command: "trace", positionals: ["eval-1", "run-9"], flags: { save: "/tmp/out" } },
+    "trace with --save — the target directory reaches the handler"
+  );
+  assertEqual(
     parseArgs(["compare", "eval-1", "eval-2", "eval-3"]),
     { command: "compare", positionals: ["eval-1", "eval-2", "eval-3"], flags: {} },
     "compare with 3 ids"
@@ -1104,6 +1114,75 @@ async function testRegradeCliPerRunRejectsFilter() {
   assert(err.some((l) => l.includes("whole-job regrade")), "explains filters are for whole-job regrade");
 }
 
+async function testTraceStreamCli() {
+  console.log("\n--- runCli: trace --stream prints one raw artifact ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs/eval-1/trials/run-1/trace?stream=trace-stdout", {
+      status: 200,
+      body: { log: "raw harness stdout" },
+    });
+    const { io, out, err } = captureIO();
+    const code = await runCli(
+      ["trace", "eval-1", "run-1", "--stream", "trace-stdout", "--api-key", "test-key", "--base-url", BASE],
+      io
+    );
+    assertEqual(code, 0, "exit 0");
+    assertEqual(err, [], "nothing on stderr");
+    const call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.includes("/trace?stream=trace-stdout"), "hits the ?stream= selector route");
+    assertEqual(out, ["raw harness stdout"], "prints the raw log verbatim");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testTraceSaveCli() {
+  console.log("\n--- runCli: trace --save writes trace-parsed.jsonl + raw artifacts ---");
+  installMockFetch();
+  const tmpDir = await mkdtemp(join(tmpdir(), "evolve-evals-trace-"));
+  try {
+    // Stream selectors first: the mock matches by substring, and a plain
+    // "/trace" pattern would swallow "/trace?stream=…" if it were checked first.
+    setMockResponse("/trace?stream=verifier", { status: 200, body: { log: "verifier says 1.0" } });
+    setMockResponse("/trace?stream=trace-stdout", { status: 200, body: { log: null } });
+    setMockResponse("/trace?stream=trace-stderr", { status: 200, body: { log: null } });
+    setMockResponse("/trace?stream=agent-home", {
+      status: 200,
+      body: { files: { "/root/.claude/history.jsonl": "{}" } },
+    });
+    setMockResponse("/trace", {
+      status: 200,
+      body: { items: [{ seq: 0, type: "agent.message", data: {} }], nextCursor: null, hasMore: false },
+    });
+    const { io, out, err } = captureIO();
+    const code = await runCli(
+      ["trace", "eval-1", "run-1", "--save", tmpDir, "--api-key", "test-key", "--base-url", BASE],
+      io
+    );
+    assertEqual(code, 0, "exit 0");
+    assertEqual(err, [], "nothing on stderr");
+    const parsed = await readFile(join(tmpDir, "trace-parsed.jsonl"), "utf-8");
+    assert(parsed.includes('"seq":0'), "parsed events land in trace-parsed.jsonl");
+    const verifier = await readFile(join(tmpDir, "verifier.log"), "utf-8");
+    assertEqual(verifier, "verifier says 1.0", "each stored raw log lands under its own name");
+    const home = await readFile(join(tmpDir, "agent-home", "root", ".claude", "history.jsonl"), "utf-8");
+    assertEqual(home, "{}", "agent-home/ preserves the sandbox folder tree");
+    // Null logs were never stored — absence is a normal answer, no empty files.
+    let missingThrew = false;
+    try {
+      await readFile(join(tmpDir, "trace-stdout.log"), "utf-8");
+    } catch {
+      missingThrew = true;
+    }
+    assert(missingThrew, "an unstored artifact writes no file");
+    assert(out.some((l) => l.includes("trace-parsed.jsonl")), "reports the parsed trace file");
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    restoreFetch();
+  }
+}
+
 const CLI_CUSTOM_HARNESS = {
   name: "acme-cli",
   source: "install_script",
@@ -1294,6 +1373,8 @@ async function main() {
   await testRegradeCliCreate();
   await testRegradeCliRead();
   await testRegradeCliPerRunRejectsFilter();
+  await testTraceStreamCli();
+  await testTraceSaveCli();
   await testCustomHarnessesCliAdd();
   await testCustomHarnessesCliListAndRemove();
   await testCustomHarnessesCliUnknownSubcommand();

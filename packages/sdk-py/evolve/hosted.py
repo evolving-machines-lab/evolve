@@ -2877,6 +2877,28 @@ class JobsClient:
             has_more=has_more,
         )
 
+    async def trial_artifact(
+        self,
+        id: str,
+        trial_id: str,
+        stream: Literal['verifier', 'trace-stdout', 'trace-stderr', 'agent-home'],
+    ) -> Union[str, Dict[str, str], None]:
+        """One raw trace artifact for a trial, by the trace route's ``?stream=``
+        selector.
+
+        ``"verifier"`` / ``"trace-stdout"`` / ``"trace-stderr"`` answer the log
+        text; ``"agent-home"`` (the CLI's whole home folder, subagent
+        transcripts included by construction) answers a dict of sandbox path to
+        text. None = never stored (normal answer, not an error): a
+        QUEUED/CANCELLED trial, a harness that wrote nothing, or a purged
+        trace.
+        """
+        raw = await self._http.request_json(
+            f'/api/jobs/{urllib.parse.quote(id)}'
+            f'/trials/{urllib.parse.quote(trial_id)}/trace?stream={stream}'
+        )
+        return raw.get('files') if stream == 'agent-home' else raw.get('log')
+
     async def trial_trace_events(
         self,
         id: str,
