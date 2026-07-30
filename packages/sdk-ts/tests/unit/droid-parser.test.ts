@@ -254,6 +254,52 @@ async function testInvalidLine(): Promise<void> {
   assert(events === null, "returns null");
 }
 
+async function testLiveStreamJsonToolShapes(): Promise<void> {
+  console.log("\n[X] parses the LIVE droid stream-json tool shapes (captured 2026-07-29)");
+
+  // Verbatim shapes from a real managed droid run (glm-5.2, prod gateway):
+  // tool_call carries {id, toolId, toolName, parameters}; tool_result carries
+  // {id, toolId, isError, value}. Neither uses input/arguments/tool_use_id.
+  const parser = createDroidParser();
+  const call = parser(JSON.stringify({
+    type: "tool_call",
+    id: "call_99241daa8f044512bf5c9999",
+    messageId: "27f8fffe-3d4c-4c1c-aa41-6a1cf7146b03",
+    toolId: "Create",
+    toolName: "Create",
+    parameters: { content: "hello\n", file_path: "/home/user/workspace/output/notes.txt" },
+    session_id: "droid-live-1",
+  }));
+  const result = parser(JSON.stringify({
+    type: "tool_result",
+    id: "call_99241daa8f044512bf5c9999",
+    toolId: "Create",
+    isError: false,
+    value: '{"success":true,"file_path":"/home/user/workspace/output/notes.txt"}',
+    session_id: "droid-live-1",
+  }));
+
+  const callUpdate = call?.[0]?.update;
+  assert(callUpdate?.sessionUpdate === "tool_call", "emits tool_call");
+  assert(
+    (callUpdate as { rawInput?: Record<string, unknown> })?.rawInput?.file_path ===
+      "/home/user/workspace/output/notes.txt",
+    "carries the parameters as rawInput"
+  );
+  const resultUpdate = result?.[0]?.update;
+  assert(resultUpdate?.sessionUpdate === "tool_call_update", "emits tool_call_update for the result");
+  assert(
+    (resultUpdate as { toolCallId?: string })?.toolCallId === "call_99241daa8f044512bf5c9999",
+    "matches the call by its id"
+  );
+  assert(
+    (resultUpdate as { status?: string })?.status === "completed",
+    "completes the call"
+  );
+  const resultContent = JSON.stringify((resultUpdate as { content?: unknown })?.content ?? "");
+  assert(resultContent.includes("success"), "carries the value as content");
+}
+
 async function main(): Promise<void> {
   console.log("=".repeat(60));
   console.log("Droid Parser Unit Tests");
@@ -268,6 +314,7 @@ async function main(): Promise<void> {
   await testToolEvents();
   await testTodoWritePlan();
   await testUserEchoIgnored();
+  await testLiveStreamJsonToolShapes();
   await testInvalidLine();
 
   console.log("\n" + "=".repeat(60));

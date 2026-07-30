@@ -331,6 +331,8 @@ function handleToolUse(
   const input = asRecord(toolUse.input) ??
     asRecord(toolUse.toolInput) ??
     asRecord(toolUse.arguments) ??
+    // Droid >= 0.24 stream-json: {type:"tool_call", parameters:{...}} (live-captured)
+    asRecord(toolUse.parameters) ??
     {};
 
   if (normalizeToolName(name) === "todowrite") {
@@ -357,7 +359,10 @@ function handleToolResult(
 ): SessionUpdate | null {
   const toolCallId = stringField(data, "toolUseId") ||
     stringField(data, "tool_use_id") ||
-    stringField(data, "tool_id");
+    stringField(data, "tool_id") ||
+    // Droid >= 0.24 stream-json: tool_result carries {id, toolId} (live-captured)
+    stringField(data, "id") ||
+    stringField(data, "toolId");
   if (!toolCallId) return null;
 
   const toolName = stringField(data, "toolName") ||
@@ -370,14 +375,16 @@ function handleToolResult(
     toolCallId,
     status: data.isError === true || data.is_error === true ? "failed" : "completed",
     title: toolName,
-    content: contentList(data.content ?? data.result ?? data.error),
+    content: contentList(data.content ?? data.result ?? data.value ?? data.error),
   };
 }
 
 function handleToolProgress(data: Record<string, unknown>): SessionUpdate | null {
   const toolCallId = stringField(data, "toolUseId") ||
     stringField(data, "tool_use_id") ||
-    stringField(data, "tool_id");
+    stringField(data, "tool_id") ||
+    stringField(data, "id") ||
+    stringField(data, "toolId");
   if (!toolCallId) return null;
 
   const update = asRecord(data.update);
