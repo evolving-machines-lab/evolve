@@ -91,7 +91,7 @@ Regrade options (whole-job regrade only):
   --status <s1,s2,...>                Only regrade source trials in these statuses
   --task <key>                        Only regrade source trials of this task
 
-Trace options:
+Trace options (--stream and --save are exclusive; --cursor/--limit page the events only):
   --cursor <seq>                      Resume after this trace seq (a trace cursor IS a seq)
   --limit <n>                         Max events per page
   --stream <artifact>                 Print ONE raw artifact instead: verifier |
@@ -947,8 +947,21 @@ async function cmdTrace(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
   const json = inv.flags.json === true;
 
-  // --stream: one RAW artifact instead of the parsed events.
+  // --stream, --save, and the paged event listing are three mutually
+  // exclusive output modes; mixing them is a usage error, never a silent
+  // precedence. --stream + --save is ambiguous (one artifact or all of
+  // them?), and --cursor/--limit page only the parsed events — under
+  // --stream/--save they would be accepted-but-dead flags.
   const stream = inv.flags.stream as string | undefined;
+  const saveDir = inv.flags.save as string | undefined;
+  if (stream !== undefined && saveDir !== undefined) {
+    throw new CliUsageError('"trace" takes EITHER --stream OR --save, not both');
+  }
+  if ((stream !== undefined || saveDir !== undefined) && (inv.flags.cursor !== undefined || inv.flags.limit !== undefined)) {
+    throw new CliUsageError("--cursor/--limit page the parsed events; they do not apply to --stream/--save");
+  }
+
+  // --stream: one RAW artifact instead of the parsed events.
   if (stream !== undefined) {
     if (stream === "verifier" || stream === "trace-stdout" || stream === "trace-stderr") {
       const log = await client.trialArtifact(inv.positionals[0], inv.positionals[1], stream);
@@ -975,14 +988,12 @@ async function cmdTrace(inv: Invocation, io: CliIO): Promise<number> {
       }
       return 0;
     }
-    io.err('--stream must be "verifier", "trace-stdout", "trace-stderr" or "agent-home"');
-    return 1;
+    throw new CliUsageError('--stream must be "verifier", "trace-stdout", "trace-stderr" or "agent-home"');
   }
 
   // --save <dir>: everything a trial recorded, one directory. The parsed
   // events land as trace-parsed.jsonl; each raw log under its own name; the
   // agent's home folder under agent-home/ with its sandbox paths preserved.
-  const saveDir = inv.flags.save as string | undefined;
   if (saveDir !== undefined) {
     const { mkdir, writeFile } = await import("node:fs/promises");
     const { join, dirname } = await import("node:path");

@@ -33,7 +33,9 @@ import gzip
 import hashlib
 import json
 import os
+import typing
 import urllib.parse as urllib_parse
+from typing import Dict
 from unittest.mock import patch
 
 import pytest
@@ -1760,6 +1762,10 @@ class TestJobs:
         assert home == {'/root/.claude/history.jsonl': '{}'}
         # Never stored is a normal answer, not an error.
         assert grader is None
+        # The signature says so too: the return annotation is the nullable
+        # union (str | Dict[str, str] | None), not just the stored shapes.
+        hints = typing.get_type_hints(client.trial_artifact)
+        assert typing.get_args(hints['return']) == (str, Dict[str, str], type(None))
 
     @pytest.mark.asyncio
     async def test_trial_trace_events_drains_pages(self):

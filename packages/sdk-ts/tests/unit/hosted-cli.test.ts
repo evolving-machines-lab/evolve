@@ -1183,6 +1183,46 @@ async function testTraceSaveCli() {
   }
 }
 
+async function testTraceUsageErrors() {
+  console.log("\n--- runCli: trace flag misuse is a usage error (exit 2, not 1) ---");
+  // Every case throws before any request is made, so no mock fetch is needed.
+  {
+    const { io, err } = captureIO();
+    const code = await runCli(
+      ["trace", "eval-1", "run-1", "--stream", "bogus", "--api-key", "k", "--base-url", BASE],
+      io
+    );
+    assertEqual(code, 2, "invalid --stream value exits 2 like every other usage error");
+    assert(err.some((l) => l.includes('--stream must be "verifier"')), "names the valid selectors");
+  }
+  {
+    const { io, err } = captureIO();
+    const code = await runCli(
+      ["trace", "eval-1", "run-1", "--stream", "verifier", "--save", "/tmp/x", "--api-key", "k", "--base-url", BASE],
+      io
+    );
+    assertEqual(code, 2, "--stream + --save refused, exit 2");
+    assert(err.some((l) => l.includes("EITHER --stream OR --save")), "explains the exclusive modes");
+  }
+  {
+    const { io, err } = captureIO();
+    const code = await runCli(
+      ["trace", "eval-1", "run-1", "--stream", "verifier", "--cursor", "5", "--api-key", "k", "--base-url", BASE],
+      io
+    );
+    assertEqual(code, 2, "--cursor under --stream refused, exit 2");
+    assert(err.some((l) => l.includes("page the parsed events")), "explains cursor/limit scope");
+  }
+  {
+    const { io } = captureIO();
+    const code = await runCli(
+      ["trace", "eval-1", "run-1", "--save", "/tmp/x", "--limit", "10", "--api-key", "k", "--base-url", BASE],
+      io
+    );
+    assertEqual(code, 2, "--limit under --save refused, exit 2");
+  }
+}
+
 const CLI_CUSTOM_HARNESS = {
   name: "acme-cli",
   source: "install_script",
@@ -1375,6 +1415,7 @@ async function main() {
   await testRegradeCliPerRunRejectsFilter();
   await testTraceStreamCli();
   await testTraceSaveCli();
+  await testTraceUsageErrors();
   await testCustomHarnessesCliAdd();
   await testCustomHarnessesCliListAndRemove();
   await testCustomHarnessesCliUnknownSubcommand();

@@ -317,7 +317,9 @@ The CLI speaks the same words: `evolve-evals trace <job> <trial>
 --stream trace-stdout` prints one artifact, and `--save <dir>` writes the
 whole set — `trace-parsed.jsonl`, `trace-stdout.log`, `trace-stderr.log`,
 `verifier.log`, and `agent-home/` with the folder tree preserved. On the wire
-these are `?stream=` selectors on the trace route.
+these are `?stream=` selectors on the trace route. The two modes are
+exclusive, and `--cursor`/`--limit` page only the plain event listing — the
+CLI refuses any mix as a usage error instead of letting one flag silently win.
 
 This archive belongs to hosted evals: trials are scoring evidence. A managed
 agent session keeps its parsed transcript download; its raw stream lives in

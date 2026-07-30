@@ -2882,7 +2882,7 @@ class JobsClient:
         id: str,
         trial_id: str,
         stream: Literal['verifier', 'trace-stdout', 'trace-stderr', 'agent-home'],
-    ) -> Union[str, Dict[str, str], None]:
+    ) -> Optional[Union[str, Dict[str, str]]]:
         """One raw trace artifact for a trial, by the trace route's ``?stream=``
         selector.
 
