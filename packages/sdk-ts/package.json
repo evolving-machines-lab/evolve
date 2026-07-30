@@ -32,6 +32,7 @@
   "files": [
     "dist",
     "LICENSE",
+    "spec",
     "hosted-error-codes.json",
     "harness-capabilities.json"
   ],
@@ -44,7 +45,7 @@
     "./harness-capabilities.json": "./harness-capabilities.json"
   },
   "scripts": {
-    "build": "tsx scripts/generate-harness-capabilities.ts --check && tsup --minify",
+    "build": "tsx scripts/generate-harness-capabilities.ts --check && tsup --minify && node scripts/copy-spec.mjs",
     "generate:capabilities": "tsx scripts/generate-harness-capabilities.ts",
     "dev": "tsup src/index.ts --watch",
     "type-check": "tsc --noEmit && tsc -p tsconfig.types-test.json",
@@ -108,7 +109,8 @@
     "test:qwen": "tsx tests/integration/01-all-agents-parallel.ts qwen",
     "test:unit:hosted-cli": "tsx tests/unit/hosted-cli.test.ts",
     "test:unit:hosted-cli-bin": "tsx tests/unit/hosted-cli-bin.test.ts",
-    "test:unit:sandbox-artifacts": "tsx tests/unit/sandbox-artifacts.test.ts"
+    "test:unit:sandbox-artifacts": "tsx tests/unit/sandbox-artifacts.test.ts",
+    "prepack": "node scripts/copy-spec.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.5.1",

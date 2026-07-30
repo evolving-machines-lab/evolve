@@ -1,11 +1,12 @@
-"""Hosted evals clients: standalone benchmarks() and jobs().
+"""Hosted evals clients: datasets(), agents(), jobs() and trials().
 
-Direct-HTTP clients against the dashboard API (same pattern as
+Direct-HTTP clients against the platform API (same pattern as
 browser_credentials.py — no Node bridge). Mirrors the TypeScript SDK's hosted
-module 1-1: ``watch()`` consumes the server-sent event stream (replay from the
-beginning, Last-Event-ID resume on reconnect, terminal-event completion), and
-``watch_iter()`` is its async-iterator sibling yielding each
-:class:`JobEvent`.
+module 1-1, and both SDKs speak the wire's own vocabulary: every field below is
+spelled exactly as spec/openapi.yaml spells it (snake_case), so the spec reads
+as the SDK's own field reference. ``watch()`` is dual-use — ``await`` it for
+the final job, or ``async for`` its events (replay from the beginning,
+Last-Event-ID resume on reconnect, terminal-event completion).
 
 API failures raise :class:`EvolveAPIError` — the server's product sentence as
 the message plus the stable machine-readable ``code``.
@@ -19,7 +20,6 @@ import json
 import os
 import re
 import secrets
-import shutil
 import tarfile
 import time
 import urllib.error
@@ -51,21 +51,6 @@ _TERMINAL_IMPORT_STATUSES = {'COMPLETED', 'FAILED'}
 # Seeing one of these on the wire is the authoritative end-of-stream signal.
 _TERMINAL_EVENT_TYPES = {'job.completed', 'job.cancelled', 'job.failed'}
 
-# camelCase -> snake_case boundary (only between a lower/digit and an upper,
-# so all-caps status keys are never mangled).
-_CAMEL_BOUNDARY = re.compile(r'(?<=[a-z0-9])(?=[A-Z])')
-
-
-def _snake_key(key: str) -> str:
-    return _CAMEL_BOUNDARY.sub('_', key).lower()
-
-
-def _snake_keys(data: Any) -> Optional[Dict[str, Any]]:
-    """Map a wire dict's camelCase keys to snake_case (None passes through)."""
-    if not isinstance(data, dict):
-        return None
-    return {_snake_key(key): value for key, value in data.items()}
-
 
 #: Every error code the hosted API can return, as a closed list.
 #:
@@ -74,16 +59,16 @@ def _snake_keys(data: Any) -> Optional[Dict[str, Any]]:
 #: never runs. Type-check against :data:`HostedErrorCode`, or guard at runtime
 #: with :func:`is_hosted_error_code`.
 #:
-#: Mirrors HOSTED_API_ERROR_CODES on the server and the TypeScript SDK's
+#: Mirrors the ErrorCode enum in spec/openapi.yaml and the TypeScript SDK's
 #: HOSTED_ERROR_CODES, and is published verbatim at ``GET /api/meta`` as
-#: ``errorCodes``. A server newer than this SDK may send a code that is not
+#: ``error_codes``. A server newer than this SDK may send a code that is not
 #: listed here, so ``EvolveAPIError.code`` stays a plain ``str``.
 #:
-#: Held to the server's list by ``packages/sdk-ts/hosted-error-codes.json``, the
-#: checked-in copy the dashboard regenerates and both SDKs assert against; the
-#: list drifted silently before that file existed. Adding a code means editing
-#: the server array, that file, the TypeScript list, and BOTH halves of the pair
-#: below — the tuple and the Literal.
+#: Held to the spec by ``packages/sdk-ts/hosted-error-codes.json``, the
+#: checked-in copy both SDKs assert against; the list drifted silently before
+#: that file existed. Adding a code means editing the spec enum, that file, the
+#: TypeScript list, and BOTH halves of the pair below — the tuple and the
+#: Literal.
 HOSTED_ERROR_CODES: 'tuple[str, ...]' = (
     'missing_authorization',
     'invalid_api_key',
@@ -100,36 +85,36 @@ HOSTED_ERROR_CODES: 'tuple[str, ...]' = (
     'invalid_ids',
     'invalid_multipart',
     'idempotency_key_reused',
-    'benchmark_not_found',
-    'benchmark_version_not_found',
-    'benchmark_name_taken',
-    'benchmark_in_use',
-    'benchmark_not_owned',
+    'dataset_not_found',
+    'dataset_version_not_found',
+    'dataset_name_taken',
+    'dataset_in_use',
+    'dataset_not_owned',
     'upstream_not_watchable',
     'no_active_version',
     'version_not_ready',
-    'unknown_task_keys',
+    'version_not_activatable',
+    'unknown_task_names',
     'no_tasks',
-    'custom_harness_not_found',
-    'custom_harness_name_taken',
-    'custom_harness_name_reserved',
-    'custom_harness_invalid_name',
-    'custom_harness_source_required',
-    'custom_harness_source_conflict',
-    'custom_harness_invalid_env',
-    'custom_harness_too_large',
-    'custom_harness_limit_reached',
-    'harness_version_not_found',
+    'agent_not_found',
+    'agent_name_taken',
+    'agent_name_reserved',
+    'agent_invalid_name',
+    'agent_source_required',
+    'agent_source_conflict',
+    'agent_invalid_env',
+    'agent_too_large',
+    'agent_limit_reached',
+    'agent_version_not_found',
     'job_too_large',
     'provider_unsupported',
     'job_not_found',
     'job_not_terminal',
-    'no_failed_runs',
+    'no_failed_trials',
     'trial_not_found',
     'concurrent_update',
     'regrade_source_ineligible',
-    'no_regradable_runs',
-    'regrade_not_found',
+    'no_regradable_trials',
     'import_not_found',
     'import_too_large',
     'invalid_archive',
@@ -157,36 +142,36 @@ HostedErrorCode = Literal[
     'invalid_ids',
     'invalid_multipart',
     'idempotency_key_reused',
-    'benchmark_not_found',
-    'benchmark_version_not_found',
-    'benchmark_name_taken',
-    'benchmark_in_use',
-    'benchmark_not_owned',
+    'dataset_not_found',
+    'dataset_version_not_found',
+    'dataset_name_taken',
+    'dataset_in_use',
+    'dataset_not_owned',
     'upstream_not_watchable',
     'no_active_version',
     'version_not_ready',
-    'unknown_task_keys',
+    'version_not_activatable',
+    'unknown_task_names',
     'no_tasks',
-    'custom_harness_not_found',
-    'custom_harness_name_taken',
-    'custom_harness_name_reserved',
-    'custom_harness_invalid_name',
-    'custom_harness_source_required',
-    'custom_harness_source_conflict',
-    'custom_harness_invalid_env',
-    'custom_harness_too_large',
-    'custom_harness_limit_reached',
-    'harness_version_not_found',
+    'agent_not_found',
+    'agent_name_taken',
+    'agent_name_reserved',
+    'agent_invalid_name',
+    'agent_source_required',
+    'agent_source_conflict',
+    'agent_invalid_env',
+    'agent_too_large',
+    'agent_limit_reached',
+    'agent_version_not_found',
     'job_too_large',
     'provider_unsupported',
     'job_not_found',
     'job_not_terminal',
-    'no_failed_runs',
+    'no_failed_trials',
     'trial_not_found',
     'concurrent_update',
     'regrade_source_ineligible',
-    'no_regradable_runs',
-    'regrade_not_found',
+    'no_regradable_trials',
     'import_not_found',
     'import_too_large',
     'invalid_archive',
@@ -241,14 +226,14 @@ class EvolveAPIError(Exception):
     """A typed failure from the hosted evals API.
 
     ``message`` (``str(error)``) is the server's own product sentence; ``code``
-    is the stable machine-readable identifier (e.g. ``benchmark_not_found``,
+    is the stable machine-readable identifier (e.g. ``dataset_not_found``,
     ``version_not_ready``, ``provider_unsupported``, ``rate_limited``) so
     callers branch on codes, never on English. ``status`` is the HTTP status.
 
     ``param`` and ``details`` are the machine-readable half of the refusal::
 
         try:
-            await jobs().run(...)
+            await jobs().start(...)
         except EvolveAPIError as err:
             if err.code == 'provider_unsupported':
                 # every refused task WITH its reason — not a sentence to regex
@@ -274,8 +259,8 @@ class EvolveAPIError(Exception):
         self.status = status
         self.code = code
         #: The input field this refusal is about — a body path
-        #: ("agents[0].harness"), a query parameter ("limit"), or a multipart
-        #: part name ("runCommand"). None when it is not about one field.
+        #: ("agents[0].name"), a query parameter ("limit"), or a multipart
+        #: part name ("run_command"). None when it is not about one field.
         self.param = param
         #: The complete machine-readable data behind the message. Never truncated.
         self.details = details
@@ -291,16 +276,16 @@ class EvolveAPIError(Exception):
 
 
 class NoActiveVersionError(Exception):
-    """Raised by ``benchmarks().get_active()`` when the benchmark has no active version.
+    """Raised by ``datasets().get_active()`` when the dataset has no active version.
 
-    The benchmark exists but no version is active, so there is no runnable
-    version to resolve. Use ``get()`` to inspect a benchmark that may not have
+    The dataset exists but no version is active, so there is no runnable
+    version to resolve. Use ``get()`` to inspect a dataset that may not have
     an active version yet.
     """
 
     def __init__(self, name: str):
-        super().__init__(f'Benchmark {name!r} has no active version')
-        self.benchmark = name
+        super().__init__(f'Dataset {name!r} has no active version')
+        self.dataset = name
 
 
 # =============================================================================
@@ -308,8 +293,8 @@ class NoActiveVersionError(Exception):
 # =============================================================================
 
 @dataclass
-class BenchmarkVersion:
-    """One immutable version of a benchmark — one shape on every surface."""
+class DatasetVersion:
+    """One immutable version of a dataset — one shape on every surface."""
     version: str
     state: str
     created_at: str
@@ -328,20 +313,20 @@ class Task:
     """Public task fields only — instructions/environments/tests never leave the server.
 
     ``providers`` maps each sandbox provider to a :class:`TaskProviderVerdict`.
-    Advisory for choosing a job's provider — creating a job
-    whose tasks include one refused on the chosen provider is rejected with
-    the same reason, so nothing is ever spent on a trial that cannot execute.
+    Advisory for choosing a job's provider — creating a job whose tasks include
+    one refused on the chosen provider is rejected with the same reason, so
+    nothing is ever spent on a trial that cannot execute.
     """
-    task_key: str
-    agent_timeout_sec: int
-    verifier_timeout_sec: int
+    task_name: str
+    agent_timeout_sec: float
+    verifier_timeout_sec: float
     providers: Dict[str, TaskProviderVerdict]
 
 
 @dataclass
 class TaskPage:
-    """One page of a benchmark version's tasks — paged like every collection,
-    because a SWE-bench-scale benchmark has thousands of them."""
+    """One page of a dataset version's tasks — paged like every collection,
+    because a SWE-bench-scale dataset has thousands of them."""
     items: List[Task]
     next_cursor: Optional[str]
     has_more: bool
@@ -349,10 +334,11 @@ class TaskPage:
 
 @dataclass
 class UpstreamStatus:
-    """Where a benchmark's git source points now, versus what its active
-    version was built from — the data behind a "new version available" badge.
+    """Where a dataset's git source points now, versus what its active version
+    was built from — the data behind a "new version available" badge.
 
-    Nothing here imports anything. A new version is always a row you create.
+    Nothing here imports anything by itself — a new version is always a row you
+    create, or ``auto_import`` creates.
     """
     #: The ref the active version was imported from.
     ref: str
@@ -362,20 +348,19 @@ class UpstreamStatus:
     latest_commit: Optional[str]
     #: True when upstream has moved off the built-from commit. Branch on this.
     moved: bool
-    #: Always None today. Counting commits between two SHAs needs the commit
-    #: graph, i.e. a real fetch per benchmark per check; the watcher deliberately
-    #: only does a reference advertisement. Reserved so a host comparison API
-    #: could fill it later without a wire change.
+    #: Reserved; always None today.
     behind_by: Optional[int]
     #: When the cached answer was taken; None before the first check.
     checked_at: Optional[str]
     #: Why the last check failed. Show "could not check", not "up to date".
     error: Optional[str]
+    #: Whether a moved upstream automatically imports a new version.
+    auto_import: bool = False
 
 
 @dataclass
-class Benchmark:
-    """A benchmark in the shared catalog.
+class Dataset:
+    """A dataset in the shared catalog.
 
     list() returns the summary fields; get() additionally populates versions,
     selected_version, tasks, created_at, and updated_at.
@@ -383,18 +368,37 @@ class Benchmark:
     name: str
     title: Optional[str]
     description: Optional[str]
-    active_version: Optional[BenchmarkVersion]
-    #: Where this benchmark's git source points now versus what its active
+    active_version: Optional[DatasetVersion]
+    #: Where this dataset's git source points now versus what its active
     #: version was built from. None when there is nothing to watch (an uploaded
     #: corpus, a seeded one, or one imported before provenance was recorded);
     #: None is never "up to date".
     upstream: Optional[UpstreamStatus] = None
-    versions: Optional[List[BenchmarkVersion]] = None
+    versions: Optional[List[DatasetVersion]] = None
     # The version whose tasks are listed (get() only)
-    selected_version: Optional[BenchmarkVersion] = None
+    selected_version: Optional[DatasetVersion] = None
     # One page of the selected version's tasks (get() only); pass limit=/cursor=
     # to get() and follow next_cursor.
     tasks: Optional[TaskPage] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+@dataclass
+class ActiveDataset:
+    """A dataset's active version resolved to a runnable shape.
+
+    Unlike :class:`Dataset`, ``version`` and ``tasks`` are non-optional:
+    ``get_active()`` raises :class:`NoActiveVersionError` when there is no
+    active version, so callers never branch on a missing active version.
+    """
+    name: str
+    title: Optional[str]
+    description: Optional[str]
+    active_version: DatasetVersion
+    version: str
+    tasks: TaskPage
+    versions: List[DatasetVersion]
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
@@ -405,39 +409,19 @@ class StatusVocabulary:
     values: List[str]
     #: Members after which nothing more happens — a watcher may stop here.
     terminal: List[str]
-    description: str
 
 
 @dataclass
-class HarnessModel:
-    """One model a harness can drive."""
-    alias: str
-    model_id: str
-    description: Optional[str]
-
-
-@dataclass
-class HarnessCapability:
-    """One harness the platform can run."""
+class AgentCapability:
+    """One built-in agent's declared capabilities."""
     name: str
-    #: False = registered but not runnable; ``reason`` says why.
-    runnable: bool
-    reason: Optional[str]
-    #: What the local SDK would run if no model were named. The hosted API
-    #: always requires an explicit model, so this is a picker's pre-selection,
-    #: not a server-side default.
-    default_model: Optional[str]
-    models: List[HarnessModel]
-    #: What this harness does with ``agents[].reasoning_effort``: 'level' = the
-    #: value reaches the CLI as one, 'binary' = thinking on/off only (a level is
-    #: refused at creation), 'none' = no effort input at all (any effort is
-    #: refused). Grey the control out instead of learning the refusal from a POST.
-    effort_support: str
-    #: Whether ``agents[].harness_version`` may pin this harness.
+    #: Whether job ``agents[].reasoning_effort`` reaches this agent.
+    effort_support: bool
+    #: Whether job ``agents[].version`` may pin this agent.
     version_pinnable: bool
     #: Newest published version, for a "your pin is out of date" badge. None
     #: means "not known right now", never "up to date".
-    latest_version: Optional[str]
+    latest_version: Optional[str] = None
 
 
 @dataclass
@@ -454,80 +438,113 @@ class CapabilityDocument:
     """Everything a client would otherwise hardcode, in one public document.
 
     Fetch it with :func:`evolve.meta` (no API key required) and stop guessing
-    at harness names, status enums, limits, and error codes.
+    at agent names, status enums, limits, and error codes.
 
-    ``custom_harnesses``, ``limits`` and ``statuses`` are handed through as
-    plain dicts with the wire's own camelCase keys. They are nested
-    configuration a client reads by key, not objects it constructs, and a
-    dataclass per level would be five classes that must be edited every time
-    the server adds a field — the exact coupling this document exists to remove.
+    ``agent_registration`` and ``limits`` are handed through as plain dicts
+    with the wire's own keys. They are nested configuration a client reads by
+    key, not objects it constructs, and a dataclass per level would be five
+    classes that must be edited every time the server adds a field — the exact
+    coupling this document exists to remove.
     """
     schema_version: int
-    harnesses: List[HarnessCapability]
-    custom_harnesses: Dict[str, Any]
+    #: Built-in agents and their declared capabilities.
+    agents: List[AgentCapability]
+    #: Rules a bring-your-own agent registration must satisfy.
+    agent_registration: Dict[str, Any]
     sandbox_providers: List[ProviderCapability]
+    #: Providers whose credentials the platform manages.
+    managed_providers: List[str]
     #: Constraints that hold on EVERY provider.
     platform_constraints: List[Dict[str, str]]
     network_modes: List[str]
     statuses: Dict[str, StatusVocabulary]
     limits: Dict[str, Any]
+    #: The ImportWarning codes the platform can attach to an import.
+    import_warning_codes: List[str]
     error_codes: List[str]
 
 
 @dataclass
-class ActiveBenchmark:
-    """A benchmark's active version resolved to a runnable shape.
-
-    Unlike :class:`Benchmark`, ``version`` and ``tasks`` are non-optional:
-    ``get_active()`` raises :class:`NoActiveVersionError` when there is no
-    active version, so callers never branch on a missing active version.
-    """
+class DatasetRef:
+    """A resolved dataset reference as echoed on job bodies."""
     name: str
-    title: Optional[str]
-    description: Optional[str]
-    active_version: BenchmarkVersion
     version: str
-    tasks: TaskPage
-    versions: List[BenchmarkVersion]
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
 
 
 @dataclass
-class JobAgent:
-    """One agent: harness + model (+ optional pinned harness version and effort).
+class DatasetSelector:
+    """One dataset a job runs, with per-dataset task filters.
 
-    ``harness`` is a built-in ("claude", "codex", ...) or a registered custom
-    harness name. ``harness_version`` omitted (or None) resolves the latest at
-    dispatch time; the version that actually ran is recorded on every trial
-    as ``resolved_harness_version``. Rejected at creation when the pin is not an
-    exact version (``invalid_input``), when the version is not published
-    (``harness_version_not_found``), or when the harness is a custom one — those
-    are versioned by the content of their own source (``invalid_input``).
+    ``task_names`` and ``exclude_task_names`` are glob patterns; ``n_tasks``
+    caps the task count AFTER filtering. A bare ``name`` resolves to the
+    active version (``no_active_version`` when none).
+    """
+    name: str
+    version: Optional[str] = None
+    task_names: Optional[List[str]] = None
+    exclude_task_names: Optional[List[str]] = None
+    n_tasks: Optional[int] = None
+
+    def _to_wire(self) -> Dict[str, Any]:
+        result: Dict[str, Any] = {'name': self.name}
+        if self.version is not None:
+            result['version'] = self.version
+        if self.task_names is not None:
+            result['task_names'] = self.task_names
+        if self.exclude_task_names is not None:
+            result['exclude_task_names'] = self.exclude_task_names
+        if self.n_tasks is not None:
+            result['n_tasks'] = self.n_tasks
+        return result
+
+
+@dataclass
+class AgentArm:
+    """One agent arm of a job: an agent (built-in or registered) plus a model.
+
+    ``name`` is a built-in ("claude", "codex", ...) or a registered agent name.
+    ``model_name`` is always required; the server applies no default.
+    ``version`` pins an agent version; omitted (or None) resolves the latest at
+    dispatch time — the version that actually RAN is recorded on every trial as
+    ``agent_info.version``. A pin that cannot resolve is refused
+    (``agent_version_not_found``); a non-exact pin is ``invalid_input``.
 
     ``reasoning_effort`` is how hard the model is asked to think. The accepted
-    values are published at ``meta().limits['job']['reasoningEfforts']`` and an
-    omitted one takes ``defaultReasoningEffort`` beside them — read both from
-    the capability document rather than hardcoding either. It is PART OF THE
-    AGENT'S IDENTITY, like the harness, the model and the version pin: the same
-    harness and model at 'low' and at 'high' are two systems, they de-duplicate
-    separately, and every trial echoes the effort back on ``trial.agent``. An
-    effort a harness cannot apply is refused at creation (``invalid_input``)
-    rather than recorded and never sent — see
-    :attr:`HarnessCapability.effort_support`.
+    values are published at ``meta().limits['job']['reasoning_efforts']`` and
+    an omitted one takes ``default_reasoning_effort`` beside them — read both
+    from the capability document rather than hardcoding either. It is PART OF
+    THE ARM'S IDENTITY, like the agent, the model and the version pin: the same
+    agent and model at 'low' and at 'high' are two systems, they de-duplicate
+    separately, and every trial echoes the effort back on
+    ``trial.agent_info``. An effort an agent cannot apply is refused at
+    creation rather than recorded and never sent — see
+    :attr:`AgentCapability.effort_support`.
     """
-    harness: str
-    model: str
-    harness_version: Optional[str] = None
+    name: str
+    model_name: str
+    version: Optional[str] = None
     reasoning_effort: Optional[str] = None
 
     def _to_wire(self) -> Dict[str, Any]:
-        result: Dict[str, Any] = {'harness': self.harness, 'model': self.model}
-        if self.harness_version is not None:
-            result['harnessVersion'] = self.harness_version
+        result: Dict[str, Any] = {'name': self.name, 'model_name': self.model_name}
+        if self.version is not None:
+            result['version'] = self.version
         if self.reasoning_effort is not None:
-            result['reasoningEffort'] = self.reasoning_effort
+            result['reasoning_effort'] = self.reasoning_effort
         return result
+
+
+@dataclass
+class SourceJob:
+    """Provenance of a derived job.
+
+    ``action='regrade'`` = verifier-only re-run of the source;
+    ``action='resume'`` = new job over the source's failed trials. ``type`` is
+    always ``'hub'`` on this hosted surface.
+    """
+    action: str
+    type: str
+    job_id: str
 
 
 @dataclass
@@ -542,7 +559,8 @@ class TrialTally:
     """How many trials there are, and how they break down by status.
 
     ``by_status`` names EVERY trial status, zeros included, so a status bar can
-    be drawn straight off the response without hardcoding the enum.
+    be drawn straight off the response without hardcoding the enum. (On the
+    wire the key is the frozen ``byStatus``.)
     """
     total: int
     by_status: Dict[str, int] = field(default_factory=dict)
@@ -562,127 +580,213 @@ class JobFailure:
 
 @dataclass
 class Job:
-    """A job = tasks x agents x runs_per_task.
-
-    ONE shape from every call — run, get, cancel, rerun_failed and each list
-    row are the same fields, so a job card renders from any of them without
-    knowing where it came from. Nothing here is optional.
+    """THE job body — the same shape from start, get, list rows, cancel,
+    resume, and regrade responses; no field appears on some responses and not
+    others. A regrade IS a job: ``source_jobs`` records the provenance and
+    ``is_regrade`` derives from it.
     """
     id: str
+    #: User-facing label.
+    job_name: str
     status: str
-    # "name@version"
-    benchmark: str
-    agents: List[JobAgent]
-    runs_per_task: int
-    concurrency: int
-    #: The resolved per-trial cap every trial of this job runs under.
+    #: The resolved dataset references this job ran.
+    datasets: List[DatasetRef]
+    agents: List[AgentArm]
+    n_attempts: int
+    n_concurrent_trials: int
+    #: The resolved per-trial cap every trial key was minted with.
     max_trial_spend_usd: float
-    #: The most this job can cost: trials x the per-trial cap. There is no
-    #: job-wide budget, so this product is the real ceiling.
+    #: The most this job can cost: every trial spending its whole cap. There is
+    #: no job-wide budget, so this product is the real ceiling.
     worst_case_spend_usd: float
     #: Sandbox provider this job runs on ("e2b" | "daytona" | "modal").
     sandbox_provider: str
-    #: What the trials have actually spent so far (reporting, not a limit).
-    spent_usd: float
     counts: JobCounts
-    #: How many trials, and the status histogram (all statuses, zeros included).
+    n_total_trials: int
+    #: The zeros-included 8-status histogram, beside the coarser counters in
+    #: ``stats``.
     trials: TrialTally
-    #: Mean reward over SCORED trials only; None when none. Zero is a reward.
-    mean_reward: Optional[float]
+    #: Aggregate statistics (progress counters, token totals, ``cost_usd`` —
+    #: measured spend, never a gate; ``evals`` keyed ``agent__model__dataset``).
+    #: A plain dict with the wire's own keys, read by key, never constructed.
+    stats: Dict[str, Any]
     #: Why the job FAILED, or None.
     failure: Optional[JobFailure]
-    #: The job whose failed trials this one reruns; None for an original job.
-    source_job_id: Optional[str]
+    #: Provenance of a derived job; empty for an original one.
+    source_jobs: List[SourceJob]
+    #: Derived: any source_jobs entry with action "regrade".
+    is_regrade: bool
     #: True when the server replayed an existing job for this Idempotency-Key.
     idempotent_replay: bool
-    created_at: str
+    started_at: str
     updated_at: str
+    #: None while the job is live.
+    finished_at: Optional[str]
 
 
 @dataclass
-class ModelUsage:
-    """Model usage/spend recorded for a trial — purely spend/usage, in the
-    one money vocabulary (the cap is max_trial_spend_usd, actuals are
-    spent_usd).
+class TimingInfo:
+    """A phase's wall-clock as a start/stop pair (never a duration).
 
-    SPEND IS NO LONGER HERE. ``spent_usd`` and ``spend_source`` are fields of
-    ``Trial``, because they are columns on the server rather than keys in an
-    untyped blob — so a client reads them off the trial and each fact is stated
-    exactly once. The one spend-adjacent key that remains is the CAP, which is
-    history rather than a queryable dimension: it is the cap THIS trial's key
-    carried, which can differ from the job's current cap for a trial settled
-    before a change. Harness-specific keys land in ``extra`` with snake_case
-    keys.
+    Either bound is None while the phase has not reached it."""
+    started_at: Optional[str]
+    finished_at: Optional[str]
+
+
+@dataclass
+class ModelInfo:
+    name: str
+    #: None means "not specified", never "unknown provider".
+    provider: Optional[str] = None
+
+
+@dataclass
+class AgentInfo:
+    """The agent that ran a trial.
+
+    ``version`` is the version actually RESOLVED and used (None until
+    resolved) — the requested pin lives on the job's ``agents[].version``.
     """
-    # The per-trial model-spend cap that applied to this trial
-    max_trial_spend_usd: Optional[float] = None
-    extra: Dict[str, Any] = field(default_factory=dict)
+    name: str
+    version: Optional[str]
+    model_info: ModelInfo
+    reasoning_effort: Optional[str] = None
+
+
+@dataclass
+class AgentResult:
+    """What the agent phase produced and consumed.
+
+    ``n_input_tokens`` includes cache tokens. ``cost_usd`` is the settled spend
+    (see ``spend_source`` on the trial for whether it was measured or assumed);
+    None until the trial has executed, and None never means $0. ``metadata``
+    carries open per-run detail (bundle digest, network mode, harness-reported
+    usage).
+    """
+    n_input_tokens: Optional[int] = None
+    n_cache_tokens: Optional[int] = None
+    n_output_tokens: Optional[int] = None
+    cost_usd: Optional[float] = None
+    rollout_details: Optional[List[Dict[str, Any]]] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class VerifierResult:
+    """The verifier's rewards map.
+
+    The primary-reward convention: the value under the key ``"reward"``; else,
+    when exactly one key exists, that value; else no primary reward. Zero is a
+    reward.
+    """
+    rewards: Optional[Dict[str, float]] = None
+
+
+@dataclass
+class ExceptionInfo:
+    """Why a trial failed, when it did.
+
+    ``exception_type`` is one of the platform's stable failure names
+    (``ScoringError``, ``InfrastructureError``, ``CancelledError``,
+    ``IncompleteTrialError``) — but filter with ``Trial.status``, which is the
+    primary key for failure classes; this is the detail.
+    """
+    exception_type: str
+    #: Truncated to 2000 chars on list rows; full on the detail route.
+    exception_message: str
+    exception_traceback: str = ''
+    occurred_at: str = ''
 
 
 @dataclass
 class Trial:
-    """One task x one agent x one run_number (1-based)."""
+    """The ONE public trial shape, shared verbatim by list rows and the detail
+    route (detail returns ``exception_info.exception_message`` untruncated —
+    the only documented difference). A trial id is globally addressable;
+    ``job_id`` is the reverse pointer.
+
+    Execution facts (``sandbox_provider``, ``verifier_environment_mode``,
+    ``agent_result.cost_usd``, ``spend_source``) are None until the trial has
+    actually executed: a QUEUED or CANCELLED trial never ran, so None means
+    "did not run" and never zero.
+    """
     id: str
-    task_key: str
-    agent: JobAgent
-    run_number: int
+    job_id: str
+    task_name: str
+    #: The dataset this trial's task came from.
+    source: str
+    agent_info: AgentInfo
+    #: Attempt index within the arm (1..n_attempts).
+    attempt: int
     status: str
+    #: Convenience primary reward derived from ``verifier_result.rewards``.
+    #: Zero is a reward; None means the trial did not score.
     reward: Optional[float]
-    metrics: Optional[Dict[str, float]]
-    failure_phase: Optional[str]
-    failure_detail: Optional[str]
-    # Wall-clock per phase with snake_case keys, e.g. {"agent_ms", "verify_ms"}
-    phase_timings_ms: Optional[Dict[str, float]]
-    model_usage: Optional[ModelUsage]
-    # Sandbox provider the trial executed on; None until it has executed
-    sandbox_provider: Optional[str]
-    # Where the verifier ran ("separate" pristine box | "shared" inside the
-    # agent box); None until recorded
-    verifier_mode: Optional[str]
-    # What this trial's model calls cost, in USD. None means the trial never ran
-    # (QUEUED, CANCELLED) — never zero. Zero is a real measurement, and it only
-    # appears when no gateway key was ever minted for the trial.
-    spent_usd: Optional[float]
-    # Whether spent_usd was measured or is the cap charged conservatively
+    verifier_result: Optional[VerifierResult]
+    exception_info: Optional[ExceptionInfo]
+    agent_result: Optional[AgentResult]
+    environment_setup: Optional[TimingInfo]
+    agent_setup: Optional[TimingInfo]
+    agent_execution: Optional[TimingInfo]
+    verifier: Optional[TimingInfo]
+    #: Multi-step placeholder; None today.
+    step_results: Optional[List[Dict[str, Any]]]
+    #: Whether ``agent_result.cost_usd`` was measured or is the cap charged
+    #: conservatively ("measured" | "assumed").
     spend_source: Optional[str]
-    # A mid-run reading of this trial's spend, and a LAGGING LOWER BOUND rather
-    # than its cost: the gateway settles 40-70s behind the calls that incurred
-    # the spend and the platform samples the trial's key every ~120s, so this
-    # number is always behind and live_spend_at is how far. None is "no reading
-    # yet", never $0. It is NOT cleared when the trial settles — what remains is
-    # the last mid-run sample, stale by construction. On a terminal trial read
-    # spent_usd and spend_source; those are the settled truth, and the only one.
+    # A mid-run LOWER BOUND on spend, never the trial's cost. Only ever climbs
+    # while the trial runs, and is CLEARED when the trial settles, on the same
+    # statement as the terminal status — on a terminal trial read
+    # agent_result.cost_usd and spend_source; those are the settled truth, and
+    # the only one. None is "no reading yet", never $0.
     live_spent_usd: Optional[float]
     # When that reading was taken — show its age, never the figure alone
     live_spend_at: Optional[str]
-    # Harness version actually resolved and used for the trial; None until resolved
-    resolved_harness_version: Optional[str]
+    #: The cap THIS trial's gateway key carried — history, which can differ
+    #: from the job's current cap for rows settled before a change.
+    max_trial_spend_usd: Optional[float]
+    # Sandbox provider the trial executed on; None until it has executed
+    sandbox_provider: Optional[str]
     # WHERE THIS TRIAL RAN: the provider id of the box the agent executed in.
-    # None is honest and common — a QUEUED or CANCELLED trial never booted a
-    # box. Also None from servers that predate the field.
+    # None is honest and common — a QUEUED or CANCELLED trial never booted one.
     sandbox_id: Optional[str]
     # The separate box the verifier ran in. None when the verifier ran inside
-    # the agent's box (shared mode), when the trial never got that far, or
-    # from servers that predate the field.
+    # the agent's box (shared mode) or when the trial never got that far.
     verifier_sandbox_id: Optional[str]
+    #: Where the verifier ran ("shared" | "separate"); None until recorded.
+    verifier_environment_mode: Optional[str]
+    #: Which step a RUNNING trial is in ("prepare" | "build" | "boot" |
+    #: "install" | "agent" | "verify" | "persist"), so a polling caller can
+    #: tell a slow build from a slow agent. None when not mid-phase.
+    attempt_phase: Optional[str]
     session_ref: Optional[str]
-    created_at: str
-    updated_at: str
+    started_at: Optional[str]
+    finished_at: Optional[str]
 
 
 @dataclass
-class TrialDetail(Trial):
-    """Full detail of one trial — jobs().trial(id, trial_id).
-
-    Same shape as a list row, plus the owning job; unlike list rows,
-    failure_detail is untruncated here.
-    """
-    job_id: str
+class StopResponse:
+    """Per-trial outcome of ``trials().stop()``; every requested id appears in
+    exactly one list."""
+    #: Trials killed and settled by this request, with their settled rows.
+    stopped: List[Trial]
+    #: Ids that were already terminal; untouched.
+    already_terminal: List[str]
+    #: Ids that do not exist or are not the caller's.
+    not_found: List[str]
 
 
 @dataclass
 class JobEvent:
-    """One server-sent event from jobs().watch()/watch_iter()."""
+    """One server-sent event from jobs().watch().
+
+    ``data`` stays a plain dict DELIBERATELY: the payload shapes are fixed by
+    the contract (spec/openapi.yaml, JobEvent — keys like ``job_id``,
+    ``trial_id``, ``task_name``, ``live_spent_usd``, ``attempt_phase``), and a
+    dict passes them through verbatim where a per-type dataclass would have to
+    chase every payload change. TypeScript narrows the same union statically;
+    in Python, branch on ``type`` and read ``data`` by key.
+    """
     # Monotonic sequence number (SSE id; the Last-Event-ID resume position)
     seq: int
     # Event type, e.g. "job.created", "trial.settled", "job.completed"
@@ -691,192 +795,130 @@ class JobEvent:
 
 
 @dataclass
-class TrialTraceEvent:
-    """One trace event of a trial (seq-ordered timeline)."""
+class TraceEvent:
+    """One parsed trace event of a trial (seq-ordered timeline)."""
     seq: int
     type: str
     data: Dict[str, Any]
 
 
 @dataclass
-class TrialTracePage:
-    """One page of a trial's trace — jobs().trial_trace().
+class TraceEventPage:
+    """One page of a trial's trace — trials().trace().
 
     Same envelope as every other collection, and ``next_cursor`` means the same
     thing: pass it back as ``cursor=`` for the next page, and NONE MEANS CAUGHT
     UP. To resume a poll later, keep the last event's ``seq`` and pass it as
     ``cursor`` — a trace cursor IS a position in the seq timeline.
     """
-    items: List[TrialTraceEvent]
+    items: List[TraceEvent]
     next_cursor: Optional[str]
     has_more: bool
 
 
 @dataclass
-class ComparisonCoverage:
+class CompareCoverage:
     """Scored-trial coverage behind an aggregate (means cover SCORED trials only)."""
     scored: int
     total: int
 
 
 @dataclass
-class ComparisonCell:
-    """One (task_key x job) cell of the compare matrix.
+class CompareCell:
+    """One (task, job) cell of the compare matrix.
 
-    status is the shared Trial status when the cell's trials agree, "MIXED"
+    status is the shared trial status when the cell's trials agree, "MIXED"
     when they differ, and "MISSING" when the job has no trials for the task.
     """
     job_id: str
     status: str
     # Mean reward over the cell's SCORED trials; None when none. Zero is a reward.
     mean_reward: Optional[float]
-    coverage: ComparisonCoverage
+    coverage: CompareCoverage
 
 
 @dataclass
-class ComparisonTaskRow:
+class CompareTaskRow:
     """One matrix row of jobs().compare(): a task across the compared jobs."""
-    task_key: str
+    task_name: str
     # True when the jobs' cells differ in status or reward for this task
     disagreement: bool
     # Cells in the caller's job-id order
-    cells: List[ComparisonCell]
+    cells: List[CompareCell]
 
 
 @dataclass
-class ComparisonAggregate:
+class CompareJobAggregate:
     """Per-job aggregate of jobs().compare()."""
     id: str
-    benchmark: str
+    datasets: List[DatasetRef]
     status: str
     # Mean reward over SCORED trials only; None when none. Zero is a reward.
     mean_reward: Optional[float]
-    coverage: ComparisonCoverage
-    spent_usd: float
-    agents: List[JobAgent]
-    created_at: str
+    coverage: CompareCoverage
+    cost_usd: float
+    agents: List[AgentArm]
+    started_at: str
 
 
 @dataclass
-class JobComparison:
-    """Result of jobs().compare([ids]): aggregates + per-task matrix."""
+class CompareResponse:
+    """Result of jobs().compare([ids]): aggregates + per-task matrix.
+
+    (On the wire the matrix key is the frozen ``taskMatrix``.)"""
     # Aggregates in the caller's id order
-    jobs: List[ComparisonAggregate]
+    jobs: List[CompareJobAggregate]
     # Per-task matrix, disagreement rows first
-    task_matrix: List[ComparisonTaskRow]
+    task_matrix: List[CompareTaskRow]
 
 
 @dataclass
-class RegradeResult:
-    """One regrade of one source trial: the verifier re-run against that trial's
-    RECORDED inputs, in a fresh separate verifier box. The agent phase is never
-    re-run and the source trial is never modified — ``source_reward``/
-    ``source_status`` are immutable snapshots taken when the regrade was created.
-    """
-    id: str
-    source_trial_id: str
-    task_key: str
-    status: str
-    reward: Optional[float]
-    metrics: Optional[Dict[str, float]]
-    source_reward: Optional[float]
-    source_status: str
-    # reward − source_reward when both are real numbers, else None (Harbor delta)
-    reward_delta: Optional[float]
-    # Where the verifier ran — always "separate" (regrade only re-runs separate)
-    verifier_mode: str
-    # Content digest of the resolved target verifier spec = the "verifier
-    # version"; equal to the source trial's own verifier means a reproduce.
-    verifier_digest: Optional[str]
-    verifier_sandbox_id: Optional[str]
-    failure_phase: Optional[str]
-    failure_detail: Optional[str]
-    phase_timings_ms: Optional[Dict[str, float]]
-    created_at: str
-    settled_at: Optional[str]
-
-
-@dataclass
-class RegradeFilter:
-    """The filter applied when selecting source trials for a per-job regrade."""
-    status: Optional[List[str]] = None
-    task_key: Optional[str] = None
-
-
-@dataclass
-class RegradeResultsPage:
-    """A regrade job's results: how many there are in the WHOLE job, how they
-    break down by status (every status, zeros included), and one page of them.
-
-    One object named for the collection rather than a ``counts`` sitting beside
-    a separately-named list — and paged, because a regrade of a 10,000-trial
-    job holds 10,000 results.
-    """
-    total: int
-    by_status: Dict[str, int]
-    items: List[RegradeResult]
-    next_cursor: Optional[str]
-    has_more: bool
-
-
-@dataclass
-class RegradeJob:
-    """A regrade job = a collection of regrade results.
-
-    A per-trial regrade holds one result; a per-job regrade holds one
-    per eligible source trial. ``status`` is derived from the WHOLE result set
-    ("QUEUED"|"RUNNING"|"COMPLETED"), never from one page.
-    """
-    id: str
-    source_job_id: str
-    status: str
-    sandbox_provider: str
-    results: RegradeResultsPage
-    created_at: str
-    updated_at: str
-    filter: Optional[RegradeFilter] = None
-
-
-@dataclass
-class BenchmarkImportFailure:
+class ImportTaskFailure:
     """One task that failed to parse or validate during an import."""
-    task_key: str
+    task_name: str
     error: str
 
 
 @dataclass
-class ImportFailure:
+class DatasetImportFailure:
     """Structured detail for a FAILED import."""
     # Stable machine-readable cause; "import_failed" when none was recorded.
     code: str
     # What went wrong, e.g. "2/113 task(s) failed to parse"
     message: str
     # Per-task parse/validation failures, when the corpus was reachable
-    failures: List[BenchmarkImportFailure] = field(default_factory=list)
+    failures: List[ImportTaskFailure] = field(default_factory=list)
 
 
 @dataclass
-class BenchmarkImport:
-    """A benchmark import job.
+class ImportWarning:
+    """Non-fatal but consequential import outcome.
 
-    Statuses are the SAME four words a job and a regrade use — QUEUED, RUNNING,
-    COMPLETED, FAILED — because an import IS an asynchronous job. It used to
-    speak a private IMPORTING/IMPORTED/FAILED vocabulary, so a status chip
-    rendering all three had to carry a translation table for three spellings of
-    the same four ideas.
+    A version whose warnings include ``no_solutions_archived`` cannot be
+    activated through this API (``version_not_activatable``) — an import that
+    will never become runnable must not look identical to one that will.
+    """
+    code: str
+    message: Optional[str] = None
 
-    Terminal: "COMPLETED" (the corpus landed as a benchmark version; it becomes
-    runnable once the platform activates it) and "FAILED".
 
-    Self-describing: every response names the benchmark@version being imported,
-    and every route that returns one — the 202 from ``import_benchmark()``,
+@dataclass
+class DatasetImport:
+    """An asynchronous publish (a dataset import job).
+
+    Statuses are the SAME four words a job uses — QUEUED, RUNNING, COMPLETED,
+    FAILED. Terminal: "COMPLETED" (the corpus landed as a dataset version;
+    runnable once activated) and "FAILED".
+
+    Self-describing: every response names the dataset@version being imported,
+    and every route that returns one — the 202 from ``publish()``,
     ``get_import()``, and ``list_imports()`` — returns this same shape.
     """
     id: str
     # Job status: "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED"
     status: str
-    # Catalog benchmark name the import creates or extends
-    benchmark_name: str
+    # Catalog dataset name the import creates or extends
+    name: str
     # Version label of the imported version
     version: str
     # Why the import failed, when status is "FAILED"; None otherwise.
@@ -884,7 +926,9 @@ class BenchmarkImport:
     # Named `failure` and NOT `error`, deliberately: `error` is the key the
     # FAILURE envelope uses, so a client checking for it has to stay correct on
     # a perfectly healthy read of a failed import.
-    failure: Optional[ImportFailure] = None
+    failure: Optional[DatasetImportFailure] = None
+    #: Non-fatal but consequential outcomes — see :class:`ImportWarning`.
+    warnings: List[ImportWarning] = field(default_factory=list)
     # Number of tasks parsed, once counted
     task_count: Optional[int] = None
     created_at: Optional[str] = None
@@ -892,15 +936,15 @@ class BenchmarkImport:
 
 
 @dataclass
-class CustomHarness:
-    """A private harness registered by the caller.
+class Agent:
+    """A private agent registered by the caller.
 
-    Once registered, ``name`` is usable in ``agents[].harness`` exactly
-    like a built-in ("claude", "codex", ...). Private to its owner: another
-    user's name reads as ``custom_harness_not_found``, never as a permission
-    error — existence is never leaked.
+    Once registered, ``name`` is usable in job ``agents[].name`` exactly like a
+    built-in ("claude", "codex", ...). Private to its owner: another user's
+    name reads as ``agent_not_found``, never as a permission error — existence
+    is never leaked.
     """
-    # The harness name to put in agents[].harness
+    # The name to put in job agents[].name
     name: str
     # How the executables were produced: "install_script" | "tarball"
     source: str
@@ -908,7 +952,7 @@ class CustomHarness:
     run_command: str
     # Caller-declared env injected at RUN time only. It may not override the
     # run contract's own keys — the server rejects that at registration with
-    # ``custom_harness_invalid_env``.
+    # ``agent_invalid_env``.
     env: Dict[str, str] = field(default_factory=dict)
     created_at: str = ''
     updated_at: str = ''
@@ -918,6 +962,7 @@ class CustomHarness:
 # or nested. ``next_cursor`` means one thing everywhere: pass it back as
 # ``cursor=`` for the next page, and None means there is no next page. It never
 # echoes where you already are, so a poller can always tell it has caught up.
+# (On the wire the envelope keys are the frozen items/nextCursor/hasMore.)
 
 
 @dataclass
@@ -935,46 +980,41 @@ class TrialPage:
 
 
 @dataclass
-class BenchmarkPage:
-    items: List[Benchmark]
+class DatasetPage:
+    items: List[Dataset]
     next_cursor: Optional[str]
     has_more: bool
 
 
 @dataclass
-class RegradePage:
-    items: List['RegradeJob']
+class DatasetImportPage:
+    items: List[DatasetImport]
     next_cursor: Optional[str]
     has_more: bool
 
 
 @dataclass
-class BenchmarkImportPage:
-    items: List[BenchmarkImport]
+class AgentPage:
+    items: List[Agent]
     next_cursor: Optional[str]
     has_more: bool
-
-
-@dataclass
-class CustomHarnessPage:
-    items: List[CustomHarness]
-    next_cursor: Optional[str]
-    has_more: bool
-
-
 
 
 # =============================================================================
 # MAPPERS
 # =============================================================================
 
-def _map_job_agent(data: Dict[str, Any]) -> JobAgent:
-    # Map only the public JobAgent fields.
-    return JobAgent(
-        harness=data.get('harness', ''),
-        model=data.get('model', ''),
-        harness_version=data.get('harnessVersion'),
-        reasoning_effort=data.get('reasoningEffort'),
+def _map_dataset_ref(data: Dict[str, Any]) -> DatasetRef:
+    return DatasetRef(name=data.get('name', ''), version=data.get('version', ''))
+
+
+def _map_agent_arm(data: Dict[str, Any]) -> AgentArm:
+    # Map only the public arm fields.
+    return AgentArm(
+        name=data.get('name', ''),
+        model_name=data.get('model_name', ''),
+        version=data.get('version'),
+        reasoning_effort=data.get('reasoning_effort'),
     )
 
 
@@ -983,47 +1023,37 @@ def _map_upstream(data: Any) -> Optional[UpstreamStatus]:
 
     A missing field and an explicit null mean the same thing to a caller —
     nothing to watch — so both become None, and a client never has to
-    distinguish "this server is old" from "this benchmark has no git source".
+    distinguish "this server is old" from "this dataset has no git source".
     """
     if not isinstance(data, dict):
         return None
-    behind_by = data.get('behindBy')
+    behind_by = data.get('behind_by')
     return UpstreamStatus(
         ref=data['ref'],
-        current_commit=data['currentCommit'],
-        latest_commit=data.get('latestCommit'),
+        current_commit=data['current_commit'],
+        latest_commit=data.get('latest_commit'),
         moved=data.get('moved') is True,
         behind_by=behind_by if isinstance(behind_by, int) else None,
-        checked_at=data.get('checkedAt'),
+        checked_at=data.get('checked_at'),
         error=data.get('error'),
+        auto_import=data.get('auto_import') is True,
     )
 
 
 def _map_capability_document(raw: Dict[str, Any]) -> CapabilityDocument:
     """Map GET /api/meta into the public dataclass."""
     return CapabilityDocument(
-        schema_version=raw.get('schemaVersion', 0),
-        harnesses=[
-            HarnessCapability(
+        schema_version=raw.get('schema_version', 0),
+        agents=[
+            AgentCapability(
                 name=item['name'],
-                runnable=item.get('runnable', False),
-                reason=item.get('reason'),
-                default_model=item.get('defaultModel'),
-                models=[
-                    HarnessModel(
-                        alias=model['alias'],
-                        model_id=model['modelId'],
-                        description=model.get('description'),
-                    )
-                    for model in item.get('models', [])
-                ],
-                effort_support=item.get('effortSupport', 'none'),
-                version_pinnable=item.get('versionPinnable', False),
-                latest_version=item.get('latestVersion'),
+                effort_support=item.get('effort_support') is True,
+                version_pinnable=item.get('version_pinnable') is True,
+                latest_version=item.get('latest_version'),
             )
-            for item in raw.get('harnesses', [])
+            for item in raw.get('agents', [])
         ],
-        custom_harnesses=raw.get('customHarnesses', {}),
+        agent_registration=raw.get('agent_registration', {}),
         sandbox_providers=[
             ProviderCapability(
                 name=item['name'],
@@ -1031,38 +1061,39 @@ def _map_capability_document(raw: Dict[str, Any]) -> CapabilityDocument:
                 sizing=item.get('sizing', {}),
                 refuses=item.get('refuses', []),
             )
-            for item in raw.get('sandboxProviders', [])
+            for item in raw.get('sandbox_providers', [])
         ],
-        platform_constraints=raw.get('platformConstraints', []),
-        network_modes=raw.get('networkModes', []),
+        managed_providers=raw.get('managed_providers', []),
+        platform_constraints=raw.get('platform_constraints', []),
+        network_modes=raw.get('network_modes', []),
         statuses={
             key: StatusVocabulary(
                 values=value.get('values', []),
                 terminal=value.get('terminal', []),
-                description=value.get('description', ''),
             )
             for key, value in (raw.get('statuses') or {}).items()
         },
         limits=raw.get('limits', {}),
-        error_codes=raw.get('errorCodes', []),
+        import_warning_codes=raw.get('import_warning_codes', []),
+        error_codes=raw.get('error_codes', []),
     )
 
 
-def _map_benchmark_version(data: Dict[str, Any]) -> BenchmarkVersion:
-    return BenchmarkVersion(
+def _map_dataset_version(data: Dict[str, Any]) -> DatasetVersion:
+    return DatasetVersion(
         version=data['version'],
         state=data.get('state', ''),
-        created_at=data.get('createdAt', ''),
-        task_count=int(data.get('taskCount', 0)),
+        created_at=data.get('created_at', ''),
+        task_count=int(data.get('task_count', 0)),
     )
 
 
 def _map_task(data: Dict[str, Any]) -> Task:
     providers_raw = data.get('providers') or {}
     return Task(
-        task_key=data['taskKey'],
-        agent_timeout_sec=int(data.get('agentTimeoutSec', 0)),
-        verifier_timeout_sec=int(data.get('verifierTimeoutSec', 0)),
+        task_name=data['task_name'],
+        agent_timeout_sec=data.get('agent_timeout_sec', 0),
+        verifier_timeout_sec=data.get('verifier_timeout_sec', 0),
         providers={
             provider: TaskProviderVerdict(
                 ok=bool(verdict.get('ok')),
@@ -1086,6 +1117,7 @@ def _map_trial_tally(data: Any) -> TrialTally:
     tally = data if isinstance(data, dict) else {}
     return TrialTally(
         total=int(tally.get('total', 0)),
+        # byStatus is one of the four frozen camelCase wire keys.
         by_status=tally.get('byStatus') or {},
     )
 
@@ -1096,28 +1128,49 @@ def _map_job_failure(data: Any) -> Optional[JobFailure]:
     return JobFailure(code=data.get('code', ''), message=data.get('message', ''))
 
 
+def _map_source_job(data: Dict[str, Any]) -> SourceJob:
+    return SourceJob(
+        action=data.get('action', ''),
+        type=data.get('type', ''),
+        job_id=data.get('job_id', ''),
+    )
+
+
 def _map_job(data: Dict[str, Any]) -> Job:
     """The ONE job mapper — nothing conditional, because nothing is optional."""
     agents = data.get('agents')
+    datasets = data.get('datasets')
+    source_jobs = data.get('source_jobs')
     return Job(
         id=data['id'],
+        job_name=data.get('job_name', ''),
         status=data.get('status', ''),
-        benchmark=data.get('benchmark', ''),
-        agents=[_map_job_agent(item) for item in agents] if isinstance(agents, list) else [],
-        runs_per_task=int(data.get('runsPerTask', 0)),
-        concurrency=int(data.get('concurrency', 0)),
-        max_trial_spend_usd=float(data.get('maxTrialSpendUsd', 0)),
-        worst_case_spend_usd=float(data.get('worstCaseSpendUsd', 0)),
-        sandbox_provider=data.get('sandboxProvider', ''),
-        spent_usd=float(data.get('spentUsd', 0)),
+        datasets=(
+            [_map_dataset_ref(item) for item in datasets]
+            if isinstance(datasets, list)
+            else []
+        ),
+        agents=[_map_agent_arm(item) for item in agents] if isinstance(agents, list) else [],
+        n_attempts=int(data.get('n_attempts', 0)),
+        n_concurrent_trials=int(data.get('n_concurrent_trials', 0)),
+        max_trial_spend_usd=float(data.get('max_trial_spend_usd', 0)),
+        worst_case_spend_usd=float(data.get('worst_case_spend_usd', 0)),
+        sandbox_provider=data.get('sandbox_provider', ''),
         counts=_map_counts(data.get('counts')),
+        n_total_trials=int(data.get('n_total_trials', 0)),
         trials=_map_trial_tally(data.get('trials')),
-        mean_reward=data.get('meanReward'),
+        stats=data.get('stats') or {},
         failure=_map_job_failure(data.get('failure')),
-        source_job_id=data.get('sourceJobId'),
-        idempotent_replay=bool(data.get('idempotentReplay', False)),
-        created_at=data.get('createdAt', ''),
-        updated_at=data.get('updatedAt', ''),
+        source_jobs=(
+            [_map_source_job(item) for item in source_jobs]
+            if isinstance(source_jobs, list)
+            else []
+        ),
+        is_regrade=data.get('is_regrade') is True,
+        idempotent_replay=bool(data.get('idempotent_replay', False)),
+        started_at=data.get('started_at', ''),
+        updated_at=data.get('updated_at', ''),
+        finished_at=data.get('finished_at'),
     )
 
 
@@ -1150,125 +1203,160 @@ def _page_query(
     return f'?{query}' if query else ''
 
 
-# Only the cap is a named field now — spend moved to Trial. An OLD server that
-# still sends spentUsd/spendSource inside the blob lands them in ``extra``
-# rather than silently shadowing the trial's own fields.
-_MODEL_USAGE_WIRE_KEYS = {'maxTrialSpendUsd'}
-
-
-def _map_model_usage(data: Any) -> Optional[ModelUsage]:
+def _map_timing(data: Any) -> Optional[TimingInfo]:
     if not isinstance(data, dict):
         return None
-    return ModelUsage(
-        max_trial_spend_usd=data.get('maxTrialSpendUsd'),
-        extra={
-            _snake_key(key): value
-            for key, value in data.items()
-            if key not in _MODEL_USAGE_WIRE_KEYS
-        },
+    return TimingInfo(
+        started_at=data.get('started_at'),
+        finished_at=data.get('finished_at'),
+    )
+
+
+def _map_agent_info(data: Any) -> AgentInfo:
+    info = data if isinstance(data, dict) else {}
+    model = info.get('model_info') if isinstance(info.get('model_info'), dict) else {}
+    return AgentInfo(
+        name=info.get('name', ''),
+        version=info.get('version'),
+        model_info=ModelInfo(
+            name=model.get('name', ''),
+            provider=model.get('provider'),
+        ),
+        reasoning_effort=info.get('reasoning_effort'),
+    )
+
+
+def _map_agent_result(data: Any) -> Optional[AgentResult]:
+    if not isinstance(data, dict):
+        return None
+    return AgentResult(
+        n_input_tokens=data.get('n_input_tokens'),
+        n_cache_tokens=data.get('n_cache_tokens'),
+        n_output_tokens=data.get('n_output_tokens'),
+        cost_usd=data.get('cost_usd'),
+        rollout_details=data.get('rollout_details'),
+        metadata=data.get('metadata'),
+    )
+
+
+def _map_verifier_result(data: Any) -> Optional[VerifierResult]:
+    if not isinstance(data, dict):
+        return None
+    return VerifierResult(rewards=data.get('rewards'))
+
+
+def _map_exception_info(data: Any) -> Optional[ExceptionInfo]:
+    if not isinstance(data, dict):
+        return None
+    return ExceptionInfo(
+        exception_type=data.get('exception_type', ''),
+        exception_message=data.get('exception_message', ''),
+        exception_traceback=data.get('exception_traceback', ''),
+        occurred_at=data.get('occurred_at', ''),
     )
 
 
 def _map_trial(data: Dict[str, Any]) -> Trial:
     return Trial(
         id=data['id'],
-        task_key=data.get('taskKey', ''),
-        agent=_map_job_agent(data.get('agent') or {}),
-        run_number=int(data.get('runNumber', 0)),
+        job_id=data.get('job_id', ''),
+        task_name=data.get('task_name', ''),
+        source=data.get('source', ''),
+        agent_info=_map_agent_info(data.get('agent_info')),
+        attempt=int(data.get('attempt', 0)),
         status=data.get('status', ''),
         reward=data.get('reward'),
-        metrics=data.get('metrics'),
-        failure_phase=data.get('failurePhase'),
-        failure_detail=data.get('failureDetail'),
-        phase_timings_ms=_snake_keys(data.get('phaseTimingsMs')),
-        model_usage=_map_model_usage(data.get('modelUsage')),
-        sandbox_provider=data.get('sandboxProvider'),
-        verifier_mode=data.get('verifierMode'),
-        spent_usd=data.get('spentUsd'),
-        spend_source=data.get('spendSource'),
+        verifier_result=_map_verifier_result(data.get('verifier_result')),
+        exception_info=_map_exception_info(data.get('exception_info')),
+        agent_result=_map_agent_result(data.get('agent_result')),
+        environment_setup=_map_timing(data.get('environment_setup')),
+        agent_setup=_map_timing(data.get('agent_setup')),
+        agent_execution=_map_timing(data.get('agent_execution')),
+        verifier=_map_timing(data.get('verifier')),
+        step_results=data.get('step_results'),
+        spend_source=data.get('spend_source'),
         # Mid-run lower bound, kept beside the settled pair and never folded
-        # into it: it lags the gateway and survives the settle unchanged.
-        live_spent_usd=data.get('liveSpentUsd'),
-        live_spend_at=data.get('liveSpendAt'),
-        resolved_harness_version=data.get('resolvedHarnessVersion'),
-        # Where the trial ran. Absent entirely from servers that predate the
-        # fields, which reads the same as "never booted a box": None.
-        sandbox_id=data.get('sandboxId'),
-        verifier_sandbox_id=data.get('verifierSandboxId'),
-        session_ref=data.get('sessionRef'),
-        created_at=data.get('createdAt', ''),
-        updated_at=data.get('updatedAt', ''),
+        # into it: it lags the gateway and is CLEARED when the trial settles.
+        live_spent_usd=data.get('live_spent_usd'),
+        live_spend_at=data.get('live_spend_at'),
+        max_trial_spend_usd=data.get('max_trial_spend_usd'),
+        sandbox_provider=data.get('sandbox_provider'),
+        # Where the trial ran. Absent reads the same as "never booted a box".
+        sandbox_id=data.get('sandbox_id'),
+        verifier_sandbox_id=data.get('verifier_sandbox_id'),
+        verifier_environment_mode=data.get('verifier_environment_mode'),
+        attempt_phase=data.get('attempt_phase'),
+        session_ref=data.get('session_ref'),
+        started_at=data.get('started_at'),
+        finished_at=data.get('finished_at'),
     )
 
 
-def _map_trial_detail(data: Dict[str, Any]) -> TrialDetail:
-    base = _map_trial(data)
-    return TrialDetail(
-        **base.__dict__,
-        job_id=data.get('jobId', ''),
-    )
-
-
-def _map_trace_event(data: Dict[str, Any]) -> TrialTraceEvent:
-    return TrialTraceEvent(
+def _map_trace_event(data: Dict[str, Any]) -> TraceEvent:
+    return TraceEvent(
         seq=int(data.get('seq', -1)),
         type=data.get('type', ''),
         data=data.get('data') or {},
     )
 
 
-def _map_coverage(data: Any) -> ComparisonCoverage:
+def _map_coverage(data: Any) -> CompareCoverage:
     data = data if isinstance(data, dict) else {}
-    return ComparisonCoverage(
+    return CompareCoverage(
         scored=int(data.get('scored', 0)),
         total=int(data.get('total', 0)),
     )
 
 
-def _map_comparison_aggregate(data: Dict[str, Any]) -> ComparisonAggregate:
+def _map_compare_aggregate(data: Dict[str, Any]) -> CompareJobAggregate:
     agents = data.get('agents')
-    return ComparisonAggregate(
+    datasets = data.get('datasets')
+    return CompareJobAggregate(
         id=data.get('id', ''),
-        benchmark=data.get('benchmark', ''),
+        datasets=(
+            [_map_dataset_ref(item) for item in datasets]
+            if isinstance(datasets, list)
+            else []
+        ),
         status=data.get('status', ''),
-        mean_reward=data.get('meanReward'),
+        mean_reward=data.get('mean_reward'),
         coverage=_map_coverage(data.get('coverage')),
-        spent_usd=float(data.get('spentUsd', 0)),
+        cost_usd=float(data.get('cost_usd', 0)),
         agents=(
-            [_map_job_agent(item) for item in agents]
+            [_map_agent_arm(item) for item in agents]
             if isinstance(agents, list)
             else []
         ),
-        created_at=data.get('createdAt', ''),
+        started_at=data.get('started_at', ''),
     )
 
 
-def _map_comparison_cell(data: Dict[str, Any]) -> ComparisonCell:
-    return ComparisonCell(
-        job_id=data.get('jobId', ''),
+def _map_compare_cell(data: Dict[str, Any]) -> CompareCell:
+    return CompareCell(
+        job_id=data.get('job_id', ''),
         status=data.get('status', ''),
-        mean_reward=data.get('meanReward'),
+        mean_reward=data.get('mean_reward'),
         coverage=_map_coverage(data.get('coverage')),
     )
 
 
-def _map_comparison_task_row(data: Dict[str, Any]) -> ComparisonTaskRow:
-    return ComparisonTaskRow(
-        task_key=data.get('taskKey', ''),
+def _map_compare_task_row(data: Dict[str, Any]) -> CompareTaskRow:
+    return CompareTaskRow(
+        task_name=data.get('task_name', ''),
         disagreement=bool(data.get('disagreement', False)),
-        cells=[_map_comparison_cell(item) for item in data.get('cells', [])],
+        cells=[_map_compare_cell(item) for item in data.get('cells', [])],
     )
 
 
-def _map_import_failure(data: Any) -> Optional[ImportFailure]:
+def _map_import_failure(data: Any) -> Optional[DatasetImportFailure]:
     if not isinstance(data, dict):
         return None
-    return ImportFailure(
+    return DatasetImportFailure(
         code=data.get('code', 'import_failed'),
         message=data.get('message', ''),
         failures=[
-            BenchmarkImportFailure(
-                task_key=item.get('taskKey', ''),
+            ImportTaskFailure(
+                task_name=item.get('task_name', ''),
                 error=item.get('error', ''),
             )
             for item in data.get('failures', [])
@@ -1277,81 +1365,40 @@ def _map_import_failure(data: Any) -> Optional[ImportFailure]:
     )
 
 
-def _map_regrade_result(data: Dict[str, Any]) -> RegradeResult:
-    return RegradeResult(
-        id=data['id'],
-        source_trial_id=data.get('sourceTrialId', ''),
-        task_key=data.get('taskKey', ''),
-        status=data.get('status', ''),
-        reward=data.get('reward'),
-        metrics=data.get('metrics'),
-        source_reward=data.get('sourceReward'),
-        source_status=data.get('sourceStatus', ''),
-        reward_delta=data.get('rewardDelta'),
-        verifier_mode=data.get('verifierMode', 'separate'),
-        verifier_digest=data.get('verifierDigest'),
-        verifier_sandbox_id=data.get('verifierSandboxId'),
-        failure_phase=data.get('failurePhase'),
-        failure_detail=data.get('failureDetail'),
-        phase_timings_ms=_snake_keys(data.get('phaseTimingsMs')),
-        created_at=data.get('createdAt', ''),
-        settled_at=data.get('settledAt'),
-    )
-
-
-def _map_regrade_filter(data: Any) -> Optional[RegradeFilter]:
-    if not isinstance(data, dict):
-        return None
-    return RegradeFilter(status=data.get('status'), task_key=data.get('taskKey'))
-
-
-def _map_regrade_job(data: Dict[str, Any]) -> RegradeJob:
-    raw_results = data.get('results') if isinstance(data.get('results'), dict) else {}
-    items, next_cursor, has_more = _page_parts(raw_results)
-    return RegradeJob(
-        id=data['id'],
-        source_job_id=data.get('sourceJobId', ''),
-        status=data.get('status', ''),
-        sandbox_provider=data.get('sandboxProvider', ''),
-        results=RegradeResultsPage(
-            total=int(raw_results.get('total', 0)),
-            by_status=raw_results.get('byStatus') or {},
-            items=[_map_regrade_result(item) for item in items],
-            next_cursor=next_cursor,
-            has_more=has_more,
-        ),
-        created_at=data.get('createdAt', ''),
-        updated_at=data.get('updatedAt', ''),
-        filter=_map_regrade_filter(data.get('filter')),
-    )
-
-
-def _map_custom_harness(data: Dict[str, Any]) -> CustomHarness:
-    return CustomHarness(
+def _map_agent(data: Dict[str, Any]) -> Agent:
+    return Agent(
         name=data.get('name', ''),
         source=data.get('source', ''),
-        run_command=data.get('runCommand', ''),
+        run_command=data.get('run_command', ''),
         env=data.get('env') or {},
-        created_at=data.get('createdAt', ''),
-        updated_at=data.get('updatedAt', ''),
+        created_at=data.get('created_at', ''),
+        updated_at=data.get('updated_at', ''),
     )
 
 
-def _map_benchmark_import(data: Dict[str, Any]) -> BenchmarkImport:
-    benchmark_import = BenchmarkImport(
+def _map_dataset_import(data: Dict[str, Any]) -> DatasetImport:
+    dataset_import = DatasetImport(
         id=data.get('id', ''),
         status=data.get('status', ''),
-        benchmark_name=data.get('benchmarkName', ''),
+        name=data.get('name', ''),
         version=data.get('version', ''),
     )
-    benchmark_import.failure = _map_import_failure(data.get('failure'))
-    if isinstance(data.get('taskCount'), int):
-        benchmark_import.task_count = data.get('taskCount')
-    if isinstance(data.get('createdAt'), str):
-        benchmark_import.created_at = data['createdAt']
-    if isinstance(data.get('updatedAt'), str):
-        benchmark_import.updated_at = data['updatedAt']
-    return benchmark_import
+    dataset_import.failure = _map_import_failure(data.get('failure'))
+    # Consequential, not cosmetic: an import whose warnings include
+    # no_solutions_archived can never be activated, and dropping the field made
+    # it look identical to one that can.
+    dataset_import.warnings = [
+        ImportWarning(code=item.get('code', ''), message=item.get('message'))
+        for item in data.get('warnings', [])
+        if isinstance(item, dict)
+    ]
+    if isinstance(data.get('task_count'), int):
+        dataset_import.task_count = data.get('task_count')
+    if isinstance(data.get('created_at'), str):
+        dataset_import.created_at = data['created_at']
+    if isinstance(data.get('updated_at'), str):
+        dataset_import.updated_at = data['updated_at']
+    return dataset_import
 
 
 # =============================================================================
@@ -1452,8 +1499,8 @@ class _HostedHttp:
     ) -> Dict[str, Any]:
         """Send raw bytes (e.g. a gzipped tarball) and parse the JSON reply.
 
-        ``method`` exists for the custom-harness upsert, which is the same body
-        grammar at the same content type under PUT.
+        ``method`` exists for the agent upsert, which is the same body grammar
+        at the same content type under PUT.
         """
         return await asyncio.to_thread(self._upload_sync, path, data, headers, method)
 
@@ -1589,7 +1636,7 @@ def _safe_download_filename(candidate: Optional[str], fallback: str) -> str:
 
     THE SERVER DOES NOT GET TO CHOOSE A PATH. This value is joined onto a
     directory the user picked, so a filename carrying a separator or ".." would
-    write outside it — and the benchmark download's filename interpolates a
+    write outside it — and the dataset download's filename interpolates a
     user-supplied version label, which makes it attacker-influenced rather than
     merely server-supplied. basename() strips any directory part, and anything
     that still looks like a path component, is empty, or is a dot-entry falls
@@ -1619,11 +1666,11 @@ def _safe_download_filename(candidate: Optional[str], fallback: str) -> str:
 
 def _multipart_body(
     fields: Dict[str, Optional[str]],
-    file: Optional['tuple[str, bytes]'] = None,
+    archive: Optional['tuple[str, bytes]'] = None,
 ) -> 'tuple[bytes, str]':
     """Build the multipart/form-data body both upload routes take.
 
-    Metadata goes in named parts FIRST, then the bytes as a ``file`` part —
+    Metadata goes in named parts FIRST, then the bytes as the ``archive`` part —
     order matters, because the server refuses a name it will never accept
     before receiving the upload, and it can only do that if the metadata
     arrives first. Nothing rides the query string: a run command and a set of
@@ -1640,10 +1687,10 @@ def _multipart_body(
             + value.encode('utf-8')
             + b'\r\n'
         )
-    if file is not None:
-        filename, data = file
+    if archive is not None:
+        filename, data = archive
         parts.append(
-            f'--{boundary}\r\nContent-Disposition: form-data; name="file"; '
+            f'--{boundary}\r\nContent-Disposition: form-data; name="archive"; '
             f'filename="{filename}"\r\nContent-Type: application/gzip\r\n\r\n'.encode('utf-8')
         )
         parts.append(data)
@@ -1652,7 +1699,7 @@ def _multipart_body(
     return b''.join(parts), f'multipart/form-data; boundary={boundary}'
 
 
-def _harness_upload_body(
+def _agent_upload_body(
     caller: str,
     *,
     name: str,
@@ -1663,8 +1710,8 @@ def _harness_upload_body(
 ) -> 'tuple[bytes, str]':
     """The multipart body both ``create()`` and ``upsert()`` send.
 
-    Shared because the two differ only in method and URL: one grammar means a
-    harness registered by either route is byte-identical on the wire.
+    Shared because the two differ only in method and URL: one grammar means an
+    agent registered by either route is byte-identical on the wire.
     """
     if install_script is not None and directory is not None:
         raise ValueError(
@@ -1676,19 +1723,19 @@ def _harness_upload_body(
             f'{caller} requires either an install script (install_script=...) '
             'or a local directory (directory=...), plus run_command=...'
         )
-    fields: Dict[str, Optional[str]] = {'name': name, 'runCommand': run_command}
+    fields: Dict[str, Optional[str]] = {'name': name, 'run_command': run_command}
     if env is not None:
         fields['env'] = json.dumps(env)
     if install_script is not None:
-        fields['installScript'] = install_script
-    file: Optional['tuple[str, bytes]'] = None
+        fields['install_script'] = install_script
+    archive: Optional['tuple[str, bytes]'] = None
     if directory is not None:
-        file = ('source.tar.gz', _tar_gzip_directory(directory))
-    return _multipart_body(fields, file)
+        archive = ('source.tar.gz', _tar_gzip_directory(directory))
+    return _multipart_body(fields, archive)
 
 
 def _tar_gzip_directory(directory: str) -> bytes:
-    """Deterministically tar + gzip a corpus directory for the directory import.
+    """Deterministically tar + gzip a corpus directory for the directory publish.
 
     Same content -> same bytes (so the tarball sha256 the server records as the
     import's source identity is reproducible): entries sorted by path, headers
@@ -1771,16 +1818,9 @@ class _JobWatch:
 
     ``await j.watch(id)`` resolves the final :class:`Job` once the terminal
     event arrives; ``async for event in j.watch(id)`` yields each
-    :class:`JobEvent`. This is the same dual-use shape :class:`_PaginatedList`
-    already uses for ``list()``, and the same shape the TypeScript SDK's
-    ``jobs().watch()`` returns — TS/Python parity is a law here, and the two
-    disagreed: TS had one dual-use method, Python had ``watch`` plus
-    ``watch_iter``.
-
-    Python won on nothing and lost on consistency: it already spelled the
-    dual-use idiom for pagination, so having a second, split idiom for watching
-    made the SDK disagree with ITSELF as well as with TypeScript.
-    ``watch_iter()`` remains as a thin alias so existing code keeps working.
+    :class:`JobEvent`. The same dual-use shape :class:`_PaginatedList` uses for
+    ``list()``, and the same shape the TypeScript SDK's ``jobs().watch()``
+    returns — TS/Python parity is a law here.
 
     Pick one form per handle: both drive the same underlying SSE stream.
     """
@@ -1798,28 +1838,28 @@ class _JobWatch:
 
 
 # =============================================================================
-# BENCHMARKS CLIENT
+# DATASETS CLIENT
 # =============================================================================
 
-class BenchmarksClient:
-    """Client for the shared benchmark catalog.
+class DatasetsClient:
+    """Client for the shared dataset catalog.
 
-    Created via the standalone ``benchmarks()`` factory. Requires
+    Created via the standalone ``datasets()`` factory. Requires
     ``EVOLVE_API_KEY`` unless ``HostedClientConfig(api_key=...)`` is given.
 
     Example::
 
-        from evolve import benchmarks
+        from evolve import datasets
 
-        async with benchmarks() as b:
-            catalog = await b.list()
-            deep_swe = await b.get('deep-swe@1.1')
+        async with datasets() as d:
+            catalog = await d.list()
+            deep_swe = await d.get('deep-swe@1.1')
     """
 
     def __init__(self, config: Optional[HostedClientConfig] = None):
-        self._http = _HostedHttp('benchmarks', config)
+        self._http = _HostedHttp('datasets', config)
 
-    async def __aenter__(self) -> 'BenchmarksClient':
+    async def __aenter__(self) -> 'DatasetsClient':
         return self
 
     async def __aexit__(self, *args: Any) -> None:
@@ -1834,25 +1874,25 @@ class BenchmarksClient:
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
     ) -> _PaginatedList:
-        """List benchmarks with their active versions (cursor-paged).
+        """List datasets with their active versions (cursor-paged).
 
         ``await`` the result for one page (honoring ``limit``/``cursor``), or
         ``async for`` it to walk the whole catalog across cursor pages.
         """
-        async def fetch_page(page_limit, page_cursor) -> BenchmarkPage:
+        async def fetch_page(page_limit, page_cursor) -> DatasetPage:
             raw = await self._http.request_json(
-                f'/api/benchmarks{_page_query(page_limit, page_cursor)}'
+                f'/api/datasets{_page_query(page_limit, page_cursor)}'
             )
             items, next_cursor, has_more = _page_parts(raw)
-            return BenchmarkPage(
+            return DatasetPage(
                 items=[
-                    Benchmark(
+                    Dataset(
                         name=item['name'],
                         title=item.get('title'),
                         description=item.get('description'),
                         active_version=(
-                            _map_benchmark_version(item['activeVersion'])
-                            if item.get('activeVersion')
+                            _map_dataset_version(item['active_version'])
+                            if item.get('active_version')
                             else None
                         ),
                         upstream=_map_upstream(item.get('upstream')),
@@ -1873,35 +1913,35 @@ class BenchmarksClient:
         *,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
-    ) -> Benchmark:
-        """Get one benchmark: all versions + one page of the selected version's tasks.
+    ) -> Dataset:
+        """Get one dataset: all versions + one page of the selected version's tasks.
 
         ``ref`` is ``"name"`` (active version's tasks) or ``"name@version"``;
         ``limit``/``cursor`` page the TASK list.
         """
-        name, ref_version = _parse_benchmark_ref(ref)
+        name, ref_version = _parse_dataset_ref(ref)
         query = _page_query(limit, cursor, version=ref_version)
         raw = await self._http.request_json(
-            f'/api/benchmarks/{urllib.parse.quote(name)}{query}'
+            f'/api/datasets/{urllib.parse.quote(name)}{query}'
         )
-        active = raw.get('activeVersion')
-        selected = raw.get('selectedVersion')
+        active = raw.get('active_version')
+        selected = raw.get('selected_version')
         task_items, task_cursor, task_more = _page_parts(raw.get('tasks'))
-        return Benchmark(
+        return Dataset(
             name=raw['name'],
             title=raw.get('title'),
             description=raw.get('description'),
-            active_version=_map_benchmark_version(active) if active else None,
+            active_version=_map_dataset_version(active) if active else None,
             upstream=_map_upstream(raw.get('upstream')),
-            versions=[_map_benchmark_version(item) for item in raw.get('versions', [])],
-            selected_version=_map_benchmark_version(selected) if selected else None,
+            versions=[_map_dataset_version(item) for item in raw.get('versions', [])],
+            selected_version=_map_dataset_version(selected) if selected else None,
             tasks=TaskPage(
                 items=[_map_task(item) for item in task_items],
                 next_cursor=task_cursor,
                 has_more=task_more,
             ),
-            created_at=raw.get('createdAt'),
-            updated_at=raw.get('updatedAt'),
+            created_at=raw.get('created_at'),
+            updated_at=raw.get('updated_at'),
         )
 
     async def get_active(
@@ -1910,92 +1950,93 @@ class BenchmarksClient:
         *,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
-    ) -> ActiveBenchmark:
-        """Get a benchmark's active version resolved to a runnable shape.
+    ) -> ActiveDataset:
+        """Get a dataset's active version resolved to a runnable shape.
 
         Unlike :meth:`get`, ``version`` and ``tasks`` are guaranteed present.
-        Raises :class:`NoActiveVersionError` when the benchmark has no active
+        Raises :class:`NoActiveVersionError` when the dataset has no active
         version. Use :meth:`get` for the full multi-version detail.
         """
-        bench = await self.get(name, limit=limit, cursor=cursor)
-        if bench.active_version is None:
+        dataset = await self.get(name, limit=limit, cursor=cursor)
+        if dataset.active_version is None:
             raise NoActiveVersionError(name)
-        return ActiveBenchmark(
-            name=bench.name,
-            title=bench.title,
-            description=bench.description,
-            active_version=bench.active_version,
-            version=bench.active_version.version,
-            tasks=bench.tasks or TaskPage(items=[], next_cursor=None, has_more=False),
-            versions=bench.versions or [],
-            created_at=bench.created_at,
-            updated_at=bench.updated_at,
+        return ActiveDataset(
+            name=dataset.name,
+            title=dataset.title,
+            description=dataset.description,
+            active_version=dataset.active_version,
+            version=dataset.active_version.version,
+            tasks=dataset.tasks or TaskPage(items=[], next_cursor=None, has_more=False),
+            versions=dataset.versions or [],
+            created_at=dataset.created_at,
+            updated_at=dataset.updated_at,
         )
 
-    async def import_benchmark(
+    async def publish(
         self,
         *,
         git_url: Optional[str] = None,
-        ref: Optional[str] = None,
+        git_ref: Optional[str] = None,
         directory: Optional[str] = None,
-        benchmark_name: str,
+        name: str,
         version: str,
-    ) -> BenchmarkImport:
-        """Start a benchmark import job.
+    ) -> DatasetImport:
+        """Publish a dataset version (asynchronous server-side import).
 
-        Provide EITHER a git source (``git_url`` + ``ref``) OR a local corpus
-        ``directory`` (tarred + gzipped deterministically on the client and
-        uploaded). Returns immediately; poll with :meth:`get_import` /
-        :meth:`watch_import`. ``version`` labels the imported benchmark version.
+        Provide EITHER a git source (``git_url`` + pinned ``git_ref``) OR a
+        local corpus ``directory`` (tarred + gzipped deterministically on the
+        client and uploaded). Returns immediately; poll with
+        :meth:`get_import` / :meth:`watch_import`. ``version`` labels the new
+        immutable version.
 
         ``git_url`` must be https — the import runs on a worker with no ssh
         client, so ssh:// and git@ remotes are refused at validation. For a
         private repository, put a token in the https url.
         """
         # ONE body grammar: multipart/form-data, metadata in named parts. The
-        # corpus is the ``file`` part; a git source is the gitUrl + ref parts.
+        # corpus is the ``archive`` part; a git source is git_url + git_ref.
         if directory is not None:
             gzipped = await asyncio.to_thread(_tar_gzip_directory, directory)
             body, content_type = _multipart_body(
-                {'benchmarkName': benchmark_name, 'version': version},
+                {'name': name, 'version': version},
                 ('corpus.tar.gz', gzipped),
             )
-        elif git_url and ref:
+        elif git_url and git_ref:
             body, content_type = _multipart_body({
-                'benchmarkName': benchmark_name,
+                'name': name,
                 'version': version,
-                'gitUrl': git_url,
-                'ref': ref,
+                'git_url': git_url,
+                'git_ref': git_ref,
             })
         else:
             raise ValueError(
-                'import_benchmark() requires either a git source (git_url=..., ref=...) '
-                'or a local corpus directory (directory=...), plus benchmark_name=... '
+                'publish() requires either a git source (git_url=..., git_ref=...) '
+                'or a local corpus directory (directory=...), plus name=... '
                 'and version=...'
             )
         raw = await self._http.request_upload(
-            '/api/benchmarks/imports', body, {'Content-Type': content_type}
+            '/api/datasets/publish', body, {'Content-Type': content_type}
         )
-        return _map_benchmark_import(raw)
+        return _map_dataset_import(raw)
 
-    async def get_import(self, id: str) -> BenchmarkImport:
-        """Get an import job's status (error and task_count when available)."""
+    async def get_import(self, id: str) -> DatasetImport:
+        """Get an import job's status (failure, warnings, and task_count when available)."""
         raw = await self._http.request_json(
-            f'/api/benchmarks/imports/{urllib.parse.quote(id)}'
+            f'/api/datasets/imports/{urllib.parse.quote(id)}'
         )
-        return _map_benchmark_import(raw)
+        return _map_dataset_import(raw)
 
     async def watch_import(
         self,
         id: str,
         *,
-        on_status: Optional[Callable[[BenchmarkImport], None]] = None,
+        on_status: Optional[Callable[[DatasetImport], None]] = None,
         poll_interval_s: float = 2.0,
         timeout_s: Optional[float] = None,
-    ) -> BenchmarkImport:
-        """Poll ``get_import()`` until the job reaches a terminal status.
+    ) -> DatasetImport:
+        """Poll ``get_import()`` until the import reaches a terminal status.
 
-        Terminal statuses: "IMPORTED" or "FAILED" (``error`` populated).
+        Terminal statuses: "COMPLETED" or "FAILED" (``failure`` populated).
         ``on_status`` fires on every observed status change, including the
         first status seen.
         """
@@ -2004,49 +2045,48 @@ class BenchmarksClient:
         deadline = time.monotonic() + timeout_s if timeout_s is not None else None
         last_status: Optional[str] = None
         while True:
-            benchmark_import = await self.get_import(id)
-            if benchmark_import.status != last_status:
-                last_status = benchmark_import.status
+            dataset_import = await self.get_import(id)
+            if dataset_import.status != last_status:
+                last_status = dataset_import.status
                 if on_status is not None:
-                    on_status(benchmark_import)
-            if benchmark_import.status in _TERMINAL_IMPORT_STATUSES:
-                return benchmark_import
+                    on_status(dataset_import)
+            if dataset_import.status in _TERMINAL_IMPORT_STATUSES:
+                return dataset_import
             if deadline is not None and time.monotonic() >= deadline:
                 raise TimeoutError(f'watch_import({id!r}) timed out after {timeout_s}s')
             await asyncio.sleep(poll_interval_s)
 
-    async def download_package(
+    async def download(
         self,
-        id: str,
+        ref: str,
         *,
         to: Optional[str] = None,
     ):
-        """Download the ORIGINAL corpus package a version was imported from.
+        """Download the ORIGINAL corpus package a version was published from.
 
-        The gzipped tarball you uploaded, or — for a git import — the
-        checked-out tree packed at import time. ``id`` is the import id that
-        ``import_()`` returned.
+        The gzipped tarball you uploaded, or — for a git publish — the
+        checked-out tree packed at import time. ``ref`` is ``"name"`` (the
+        active version's package) or ``"name@version"``.
 
         OWNER ONLY. This is the one call that returns task files, and it
-        returns them only to the account that owns the benchmark; a
-        platform-curated benchmark has no owner, so nobody can download it.
-        Someone else's import answers ``import_not_found``, never a 403.
+        returns them only to the account that owns the dataset; a
+        platform-curated dataset has no owner, so nobody can download it.
+        Someone else's dataset answers not-found, never a 403.
 
         The server verifies the stored bytes against their recorded sha256
         before sending anything, so a successful call is byte-identical to
-        what was imported.
-
-        A version imported before packages were retained has none, and it
-        cannot be reconstructed: that is ``package_not_retained``, distinct
-        from "not found" so you can say so. Re-import the corpus as a new
-        version to get one.
+        what was published. A version published before packages were retained
+        has none, and it cannot be reconstructed: that is
+        ``package_not_retained``, distinct from "not found" so you can say so.
 
         Returns the package bytes, or — when ``to`` (a directory) is given —
         streams straight to disk and returns the saved file path.
         """
-        path = f'/api/benchmarks/imports/{urllib.parse.quote(id)}/package'
+        name, version = _parse_dataset_ref(ref)
+        query = f'?version={urllib.parse.quote(version)}' if version else ''
+        path = f'/api/datasets/{urllib.parse.quote(name)}/download{query}'
         if to is not None:
-            return await self._http.download(path, to, f'import-{id}-corpus.tar.gz')
+            return await self._http.download(path, to, f'{name}-corpus.tar.gz')
         payload, headers = await self._http.request_bytes(path)
         declared = headers.get('Content-Length')
         if declared is not None and len(payload) != int(declared):
@@ -2062,33 +2102,33 @@ class BenchmarksClient:
         self,
         *,
         status: Optional[str] = None,
-        benchmark: Optional[str] = None,
+        dataset: Optional[str] = None,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
     ) -> _PaginatedList:
         """List your own imports, newest first (cursor-paged).
 
-        This is how you find an import again after losing the id ``import_()``
+        This is how you find an import again after losing the id ``publish()``
         returned — without it, closing a tab made a running import permanently
         unwatchable.
 
         ``await`` for one page, or ``async for`` to walk them all. ``status``
-        filters on the import vocabulary ("IMPORTING" | "IMPORTED" | "FAILED");
-        ``benchmark`` narrows to one benchmark name.
+        filters on the import vocabulary ("QUEUED" | "RUNNING" | "COMPLETED" |
+        "FAILED"); ``dataset`` narrows to one dataset name.
         """
-        async def fetch_page(page_limit, page_cursor) -> BenchmarkImportPage:
+        async def fetch_page(page_limit, page_cursor) -> DatasetImportPage:
             query = _page_query(page_limit, page_cursor)
             extra = []
             if status is not None:
                 extra.append(f'status={urllib.parse.quote(status)}')
-            if benchmark is not None:
-                extra.append(f'benchmark={urllib.parse.quote(benchmark)}')
+            if dataset is not None:
+                extra.append(f'dataset={urllib.parse.quote(dataset)}')
             if extra:
                 query = f'{query}&{"&".join(extra)}' if query else f'?{"&".join(extra)}'
-            raw = await self._http.request_json(f'/api/benchmarks/imports{query}')
+            raw = await self._http.request_json(f'/api/datasets/imports{query}')
             items, next_cursor, has_more = _page_parts(raw)
-            return BenchmarkImportPage(
-                items=[_map_benchmark_import(item) for item in items],
+            return DatasetImportPage(
+                items=[_map_dataset_import(item) for item in items],
                 next_cursor=next_cursor,
                 has_more=has_more,
             )
@@ -2098,54 +2138,53 @@ class BenchmarksClient:
         )
 
     async def delete(self, name: str) -> None:
-        """Delete a benchmark you own, with every version, task, and archived solution.
+        """Delete a dataset you own, with every version, task, and archived solution.
 
-        Refused (``benchmark_in_use``) while any job still references it — a
-        benchmark is never deleted out from under a job that measured against
+        Refused (``dataset_in_use``) while any job still references it — a
+        dataset is never deleted out from under a job that measured against
         it, and ``err.details['sampleJobIds']`` names the jobs blocking it. A
-        platform benchmark is refused with ``benchmark_not_owned``; a name you
+        platform dataset is refused with ``dataset_not_owned``; a name you
         cannot see is a plain not-found.
         """
         await self._http.request_json(
-            f'/api/benchmarks/{urllib.parse.quote(name)}', method='DELETE'
+            f'/api/datasets/{urllib.parse.quote(name)}', method='DELETE'
         )
 
 
 # =============================================================================
-# CUSTOM HARNESSES CLIENT
+# AGENTS CLIENT (bring-your-own)
 # =============================================================================
 
-class CustomHarnessesClient:
-    """Client for the caller's own private (bring-your-own) harnesses.
+class AgentsClient:
+    """Client for the caller's own private registered agents.
 
-    Created via the standalone ``custom_harnesses()`` factory. Register a
-    harness once, then name it in ``agents[].harness`` exactly like a
-    built-in. Requires ``EVOLVE_API_KEY`` unless
-    ``HostedClientConfig(api_key=...)`` is given.
+    Created via the standalone ``agents()`` factory. Register an agent once,
+    then name it in job ``agents[].name`` exactly like a built-in. Requires
+    ``EVOLVE_API_KEY`` unless ``HostedClientConfig(api_key=...)`` is given.
 
     Example::
 
-        from evolve import custom_harnesses, jobs, JobAgent
+        from evolve import agents, jobs, AgentArm
 
-        async with custom_harnesses() as harnesses:
-            await harnesses.create(
+        async with agents() as registered:
+            await registered.create(
                 name='acme-cli',
                 install_script='curl -fsSL https://acme.dev/install.sh | sh',
                 run_command='acme-cli --headless',
             )
 
         async with jobs() as jobs_client:
-            await jobs_client.run(
-                benchmark='deep-swe',
-                agents=[JobAgent(harness='acme-cli', model='gpt-5.5')],
+            await jobs_client.start(
+                datasets=[{'name': 'deep-swe'}],
+                agents=[AgentArm(name='acme-cli', model_name='gpt-5.5')],
                 max_trial_spend_usd=25,
             )
     """
 
     def __init__(self, config: Optional[HostedClientConfig] = None):
-        self._http = _HostedHttp('custom_harnesses', config)
+        self._http = _HostedHttp('agents', config)
 
-    async def __aenter__(self) -> 'CustomHarnessesClient':
+    async def __aenter__(self) -> 'AgentsClient':
         return self
 
     async def __aexit__(self, *args: Any) -> None:
@@ -2162,8 +2201,8 @@ class CustomHarnessesClient:
         directory: Optional[str] = None,
         run_command: str,
         env: Optional[Dict[str, str]] = None,
-    ) -> CustomHarness:
-        """Register a private harness.
+    ) -> Agent:
+        """Register a private agent.
 
         Provide EITHER an ``install_script`` (the script itself, not a path) OR
         a local ``directory`` (tarred + gzipped deterministically on the client
@@ -2180,7 +2219,7 @@ class CustomHarnessesClient:
         # declared env are named PARTS — they used to ride the query string of
         # an upload, which put a shell command and a set of environment values
         # into every access log and proxy buffer on the way here.
-        body, content_type = _harness_upload_body(
+        body, content_type = _agent_upload_body(
             'create()',
             name=name,
             run_command=run_command,
@@ -2189,9 +2228,9 @@ class CustomHarnessesClient:
             env=env,
         )
         raw = await self._http.request_upload(
-            '/api/custom-harnesses', body, {'Content-Type': content_type}
+            '/api/agents', body, {'Content-Type': content_type}
         )
-        return _map_custom_harness(raw)
+        return _map_agent(raw)
 
     def list(
         self,
@@ -2199,17 +2238,17 @@ class CustomHarnessesClient:
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
     ) -> _PaginatedList:
-        """List the caller's registered custom harnesses (cursor-paged).
+        """List the caller's registered agents (cursor-paged).
 
         ``await`` the result for one page, or ``async for`` it to walk them all.
         """
-        async def fetch_page(page_limit, page_cursor) -> CustomHarnessPage:
+        async def fetch_page(page_limit, page_cursor) -> AgentPage:
             raw = await self._http.request_json(
-                f'/api/custom-harnesses{_page_query(page_limit, page_cursor)}'
+                f'/api/agents{_page_query(page_limit, page_cursor)}'
             )
             items, next_cursor, has_more = _page_parts(raw)
-            return CustomHarnessPage(
-                items=[_map_custom_harness(item) for item in items],
+            return AgentPage(
+                items=[_map_agent(item) for item in items],
                 next_cursor=next_cursor,
                 has_more=has_more,
             )
@@ -2218,12 +2257,12 @@ class CustomHarnessesClient:
             fetch_page, lambda page: page.items, limit=limit, cursor=cursor
         )
 
-    async def get(self, name: str) -> CustomHarness:
-        """Get one custom harness by name."""
+    async def get(self, name: str) -> Agent:
+        """Get one registered agent by name."""
         raw = await self._http.request_json(
-            f'/api/custom-harnesses/{urllib.parse.quote(name)}'
+            f'/api/agents/{urllib.parse.quote(name)}'
         )
-        return _map_custom_harness(raw)
+        return _map_agent(raw)
 
     async def upsert(
         self,
@@ -2233,18 +2272,18 @@ class CustomHarnessesClient:
         install_script: Optional[str] = None,
         directory: Optional[str] = None,
         env: Optional[Dict[str, str]] = None,
-    ) -> CustomHarness:
-        """Register or replace a harness in ONE call, under ``name``.
+    ) -> Agent:
+        """Register or replace an agent in ONE call, under ``name``.
 
         Use this instead of ``delete()`` + ``create()`` to change an existing
-        registration: the pair leaves a window where the harness does not exist,
+        registration: the pair leaves a window where the agent does not exist,
         and anything naming it in that window fails for a change that was only
         ever meant to be an edit.
 
         This is a full REPLACEMENT, not a patch — every field comes from this
         call, and an omitted ``env`` becomes empty.
         """
-        body, content_type = _harness_upload_body(
+        body, content_type = _agent_upload_body(
             'upsert()',
             name=name,
             run_command=run_command,
@@ -2253,18 +2292,18 @@ class CustomHarnessesClient:
             env=env,
         )
         raw = await self._http.request_upload(
-            f'/api/custom-harnesses/{urllib.parse.quote(name)}',
+            f'/api/agents/{urllib.parse.quote(name)}',
             body,
             {'Content-Type': content_type},
             method='PUT',
         )
-        return _map_custom_harness(raw)
+        return _map_agent(raw)
 
     async def delete(self, name: str) -> None:
-        """Delete a custom harness. Past jobs keep their recorded harness."""
+        """Delete a registered agent. Past jobs keep their recorded agent."""
         # 204 No Content — nothing to map.
         await self._http.request_json(
-            f'/api/custom-harnesses/{urllib.parse.quote(name)}', method='DELETE'
+            f'/api/agents/{urllib.parse.quote(name)}', method='DELETE'
         )
 
 
@@ -2307,18 +2346,18 @@ class JobsClient:
     Created via the standalone ``jobs()`` factory. Requires
     ``EVOLVE_API_KEY`` unless ``HostedClientConfig(api_key=...)`` is given.
 
-    ``watch()`` consumes the server-sent event stream (replay + live,
-    Last-Event-ID resume on reconnect) and resolves with the final job;
-    ``watch_iter()`` yields each :class:`JobEvent` instead.
+    ``watch()`` is dual-use: ``await`` it for the final job (consuming the
+    server-sent event stream — replay + live, Last-Event-ID resume on
+    reconnect), or ``async for`` it to yield each :class:`JobEvent`.
 
     Example::
 
-        from evolve import jobs, JobAgent
+        from evolve import jobs, AgentArm
 
         async with jobs() as j:
-            job = await j.run(
-                benchmark='deep-swe@1.1',
-                agents=[JobAgent(harness='codex', model='gpt-5.5')],
+            job = await j.start(
+                datasets=[{'name': 'deep-swe', 'version': '1.1'}],
+                agents=[AgentArm(name='codex', model_name='gpt-5.5')],
                 max_trial_spend_usd=25,
             )
             final = await j.watch(job.id)
@@ -2336,47 +2375,52 @@ class JobsClient:
     async def close(self) -> None:
         return None
 
-    async def run(
+    async def start(
         self,
         *,
-        benchmark: str,
-        tasks: Optional[List[str]] = None,
-        agents: List[Union[JobAgent, Dict[str, Any]]],
-        runs_per_task: Optional[int] = None,
-        concurrency: Optional[int] = None,
+        datasets: List[Union[DatasetSelector, Dict[str, Any]]],
+        agents: List[Union[AgentArm, Dict[str, Any]]],
+        job_name: Optional[str] = None,
+        n_attempts: Optional[int] = None,
+        n_concurrent_trials: Optional[int] = None,
         max_trial_spend_usd: Optional[float] = None,
         sandbox_provider: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> Job:
-        """Create a job.
+        """Start a job over one or more catalog datasets.
 
-        ``benchmark`` is ``"name"`` (resolved server-side to the active READY
-        version) or ``"name@version"``; the response always echoes
-        ``"name@version"``. ``agents`` accepts :class:`JobAgent`
-        instances or plain dicts with the same fields (``harness``, ``model``,
-        optional ``harness_version`` and ``reasoning_effort``).
-        ``max_trial_spend_usd`` caps EACH
-        trial and is the platform's only spend enforcement; omitted, the server
-        applies its own default ($200, operator-tunable). The response echoes
-        the RESOLVED cap either way, so an omitted one is never invisible, and
-        reports the resulting worst case for the whole job. Supports
-        Idempotency-Key.
+        ``datasets`` is a LIST of selectors — :class:`DatasetSelector`
+        instances or plain dicts with the same fields (``name``, optional
+        ``version``, glob ``task_names`` / ``exclude_task_names``,
+        ``n_tasks``); a bare name resolves server-side to the active version.
+        ``agents`` accepts :class:`AgentArm` instances or plain dicts
+        (``name``, ``model_name``, optional ``version`` and
+        ``reasoning_effort``); every arm must name a model.
+        ``max_trial_spend_usd`` caps EACH trial and is the platform's only
+        spend enforcement; omitted, the server applies its own default ($200,
+        operator-tunable). The response echoes the RESOLVED cap either way, so
+        an omitted one is never invisible, and reports the resulting worst
+        case for the whole job. Supports Idempotency-Key.
         """
-        body: Dict[str, Any] = {'benchmark': benchmark}
-        if tasks is not None:
-            body['tasks'] = tasks
+        body: Dict[str, Any] = {}
+        if job_name is not None:
+            body['job_name'] = job_name
+        body['datasets'] = [
+            (item if isinstance(item, DatasetSelector) else DatasetSelector(**item))._to_wire()
+            for item in datasets
+        ]
         body['agents'] = [
-            (agent if isinstance(agent, JobAgent) else JobAgent(**agent))._to_wire()
+            (agent if isinstance(agent, AgentArm) else AgentArm(**agent))._to_wire()
             for agent in agents
         ]
-        if runs_per_task is not None:
-            body['runsPerTask'] = runs_per_task
-        if concurrency is not None:
-            body['concurrency'] = concurrency
+        if n_attempts is not None:
+            body['n_attempts'] = n_attempts
+        if n_concurrent_trials is not None:
+            body['n_concurrent_trials'] = n_concurrent_trials
         if max_trial_spend_usd is not None:
-            body['maxTrialSpendUsd'] = max_trial_spend_usd
+            body['max_trial_spend_usd'] = max_trial_spend_usd
         if sandbox_provider is not None:
-            body['sandboxProvider'] = sandbox_provider
+            body['sandbox_provider'] = sandbox_provider
         headers = {'Idempotency-Key': idempotency_key} if idempotency_key else None
         raw = await self._http.request_json('/api/jobs', method='POST', body=body, headers=headers)
         return _map_job(raw)
@@ -2423,7 +2467,7 @@ class JobsClient:
         """List a job's trials (cursor-paged).
 
         ``status`` filters to the given statuses (e.g. the failures behind a
-        rerun decision). ``await`` the result for one page (honoring
+        resume decision). ``await`` the result for one page (honoring
         ``limit``/``cursor``), or ``async for`` it to walk every trial
         across cursor pages.
         """
@@ -2520,7 +2564,7 @@ class JobsClient:
             return
         put(('eof', None))
 
-    async def watch_iter(
+    async def _iter_events(
         self,
         id: str,
         *,
@@ -2528,21 +2572,11 @@ class JobsClient:
         reconnect_delay_s: float = 1.0,
         max_reconnect_delay_s: float = 30.0,
     ) -> AsyncIterator[JobEvent]:
-        """Async-iterate the job's server-sent events until terminal.
+        """The one SSE loop both watch() forms drive.
 
         Replays from the beginning, resumes with Last-Event-ID on reconnect
         (exponential backoff), and completes on the terminal event
         (``job.completed`` / ``job.cancelled`` / ``job.failed``).
-
-        .. deprecated::
-            Prefer ``async for event in j.watch(job_id)``. :meth:`watch` is now
-            dual-use (awaitable OR iterable), matching the TypeScript SDK's one
-            ``watch()``; this method stays so existing code keeps working.
-
-        Example::
-
-            async for event in j.watch_iter(job.id):
-                print(event.seq, event.type, event.data)
         """
         deadline = time.monotonic() + timeout_s if timeout_s is not None else None
 
@@ -2646,12 +2680,9 @@ class JobsClient:
         """Watch the job's event stream. Dual-use: await it, or iterate it.
 
         ``await`` resolves the final :class:`Job` once the terminal event
-        arrives, firing ``on_event`` for each event on the way — exactly what
-        this method did before, so ``job = await j.watch(id)`` is unchanged.
-
-        ``async for`` yields each :class:`JobEvent` instead, which is what
-        :meth:`watch_iter` did. One method now covers both, matching the
-        TypeScript SDK's ``jobs().watch()``.
+        arrives, firing ``on_event`` for each event on the way. ``async for``
+        yields each :class:`JobEvent` instead. One method covers both,
+        matching the TypeScript SDK's ``jobs().watch()``.
 
         Either form consumes the same stream (replay + live, Last-Event-ID
         resume with exponential backoff), so use one form per handle.
@@ -2688,7 +2719,7 @@ class JobsClient:
         max_reconnect_delay_s: float = 30.0,
     ) -> AsyncIterator[JobEvent]:
         """The one stream both watch() forms drive; fires on_event as it goes."""
-        async for event in self.watch_iter(
+        async for event in self._iter_events(
             id,
             timeout_s=timeout_s,
             reconnect_delay_s=reconnect_delay_s,
@@ -2707,13 +2738,30 @@ class JobsClient:
         )
         return _map_job(raw)
 
-    async def rerun_failed(self, id: str, *, idempotency_key: Optional[str] = None) -> Job:
-        """Create a NEW linked job of only the failed trials."""
+    async def resume(
+        self,
+        id: str,
+        *,
+        filter_error_types: Optional[List[str]] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> Job:
+        """Resume a terminal job: a NEW linked job over its failed trials.
+
+        ``source_jobs`` on the new job records ``action="resume"``; the source
+        is never mutated. ``filter_error_types`` selects which failures to
+        resume by their ``exception_info.exception_type``; omitted, the server
+        default set applies (ScoringError, InfrastructureError,
+        IncompleteTrialError, plus still-QUEUED trials of a cancelled source).
+        Supports Idempotency-Key.
+        """
+        body: Dict[str, Any] = {}
+        if filter_error_types is not None:
+            body['filter_error_types'] = filter_error_types
         headers = {'Idempotency-Key': idempotency_key} if idempotency_key else None
         raw = await self._http.request_json(
-            f'/api/jobs/{urllib.parse.quote(id)}/rerun-failed',
+            f'/api/jobs/{urllib.parse.quote(id)}/resume',
             method='POST',
-            body={},
+            body=body,
             headers=headers,
         )
         return _map_job(raw)
@@ -2722,143 +2770,116 @@ class JobsClient:
         self,
         id: str,
         *,
-        status: Optional[List[str]] = None,
-        task_key: Optional[str] = None,
-    ) -> RegradeJob:
+        statuses: Optional[List[str]] = None,
+        task_name: Optional[str] = None,
+    ) -> Job:
         """Regrade a terminal job: re-run the verifier of every REGRADABLE
-        trial (settled separate-mode trials, which recorded their verifier
-        inputs) against those recorded inputs, in fresh separate verifier boxes.
+        trial against its recorded inputs, in fresh separate verifier boxes.
 
         The agent phase is never re-run and the source trials are never
-        modified. ``status`` / ``task_key`` narrow the set of source trials.
-        Returns a new regrade job with one result per selected trial.
+        modified. THE RESPONSE IS A JOB — a regrade is an ordinary job whose
+        ``source_jobs`` records ``action="regrade"`` and whose ``is_regrade``
+        is true; view it with :meth:`get`. ``statuses`` / ``task_name`` narrow
+        the set of source trials.
         """
         body: Dict[str, Any] = {}
-        if status is not None:
-            body['status'] = status
-        if task_key is not None:
-            body['taskKey'] = task_key
+        if statuses is not None:
+            body['statuses'] = statuses
+        if task_name is not None:
+            body['task_name'] = task_name
         raw = await self._http.request_json(
             f'/api/jobs/{urllib.parse.quote(id)}/regrade', method='POST', body=body
         )
-        return _map_regrade_job(raw)
+        return _map_job(raw)
 
-    async def regrade_trial(self, id: str, trial_id: str) -> RegradeJob:
-        """Regrade one settled trial: re-run its verifier against its recorded
-        inputs in a fresh separate verifier box.
-
-        Refused (``regrade_source_ineligible``) for shared-mode or
-        pre-persistence trials. Returns a regrade job with one result.
-        """
-        raw = await self._http.request_json(
-            f'/api/jobs/{urllib.parse.quote(id)}'
-            f'/trials/{urllib.parse.quote(trial_id)}/regrade',
-            method='POST',
-            body={},
-        )
-        return _map_regrade_job(raw)
-
-    async def get_regrade(
-        self,
-        regrade_id: str,
-        *,
-        limit: Optional[int] = None,
-        cursor: Optional[str] = None,
-    ) -> RegradeJob:
-        """Read ONE regrade job by the REGRADE's id.
-
-        The id is the one ``regrade()``/``regrade_trial()`` returned, and the
-        one their ``Location`` header names. Each result carries its lineage and
-        reward delta; ``limit``/``cursor`` page them — a regrade of a
-        10,000-trial job holds 10,000 results.
-
-        Renamed from ``regrade_job()``. That name read as a verb, sat directly
-        beside ``regrade()`` which IS that verb, and took a parameter called
-        ``job_id`` that was not a job id — so the natural call,
-        ``regrade_job(some_job_id)``, ran and 404'd. Use ``list_regrades(
-        job_id=...)`` for the question that call looked like it was asking.
-        """
-        raw = await self._http.request_json(
-            f'/api/regrades/{urllib.parse.quote(regrade_id)}{_page_query(limit, cursor)}'
-        )
-        return _map_regrade_job(raw)
-
-    def list_regrades(
-        self,
-        *,
-        job_id: Optional[str] = None,
-        limit: Optional[int] = None,
-        cursor: Optional[str] = None,
-    ) -> _PaginatedList:
-        """List the caller's regrade jobs, newest first (cursor-paged).
-
-        ``job_id`` narrows to the regrades OF ONE JOB. Naming a job you do not
-        own yields an empty page rather than a 404 — a list is never an
-        existence oracle.
-
-        ``await`` the result for one page (honoring ``limit``/``cursor``), or
-        ``async for`` it to walk every regrade across cursor pages.
-        """
-        async def fetch_page(page_limit, page_cursor) -> RegradePage:
-            query = _page_query(page_limit, page_cursor)
-            if job_id is not None:
-                sep = '&' if query else '?'
-                query = f'{query}{sep}jobId={urllib.parse.quote(job_id)}'
-            raw = await self._http.request_json(f'/api/regrades{query}')
-            items, next_cursor, has_more = _page_parts(raw)
-            return RegradePage(
-                items=[_map_regrade_job(item) for item in items],
-                next_cursor=next_cursor,
-                has_more=has_more,
-            )
-
-        return _PaginatedList(
-            fetch_page, lambda page: page.items, limit=limit, cursor=cursor
-        )
-
-    async def export(
+    async def download(
         self,
         id: str,
         *,
         to: Optional[str] = None,
-        format: Optional[str] = None,
     ):
-        """Download the research archive (gzipped JSON) of a terminal job.
+        """Download a terminal job's results archive (gzipped, standard
+        results layout, deterministic bytes).
 
-        Returns the archive bytes, or — when ``to`` (a directory) is given —
-        streams straight to disk and returns the saved file path.
-        ``format='harbor'`` selects the Harbor job-layout bundle instead of
-        the canonical archive.
+        Returns the archive bytes — verified against the response's
+        Content-Length and, when the server states one, its digest — or, when
+        ``to`` (a directory) is given, streams straight to disk
+        (temp-then-rename, same verification) and returns the saved file path.
         """
-        if format is not None and format != 'harbor':
-            raise ValueError(f"Unknown format {format!r}; supported: 'harbor'")
-        query = f'?format={urllib.parse.quote(format)}' if format else ''
-        path = f'/api/jobs/{urllib.parse.quote(id)}/export{query}'
+        path = f'/api/jobs/{urllib.parse.quote(id)}/download'
         if to is not None:
-            return await self._http.download(path, to, f'job-{id}-export.json.gz')
-        payload, _headers = await self._http.request_bytes(path)
+            return await self._http.download(path, to, f'job-{id}-results.tar.gz')
+        payload, headers = await self._http.request_bytes(path)
+        declared = headers.get('Content-Length')
+        if declared is not None and len(payload) != int(declared):
+            raise EvolveIncompleteDownloadError(int(declared), len(payload))
+        expected = headers.get(PACKAGE_DIGEST_HEADER)
+        if expected:
+            actual = hashlib.sha256(payload).hexdigest()
+            if actual != expected:
+                raise EvolveDigestMismatchError(expected, actual)
         return payload
 
-    async def trial(self, id: str, trial_id: str) -> TrialDetail:
-        """Get one trial's full detail.
+    async def compare(self, ids: List[str]) -> CompareResponse:
+        """Side-by-side comparison of 2-10 owned jobs.
 
-        Same shape as a list row plus ``job_id``; unlike list rows,
-        ``failure_detail`` is untruncated.
+        Per-job aggregates plus a per-task matrix with disagreement
+        rows first. Means cover SCORED trials only; coverage is always reported.
+        """
+        query = ','.join(urllib.parse.quote(item) for item in ids)
+        raw = await self._http.request_json(f'/api/jobs/compare?ids={query}')
+        return CompareResponse(
+            jobs=[
+                _map_compare_aggregate(item) for item in raw.get('jobs', [])
+            ],
+            task_matrix=[
+                _map_compare_task_row(item) for item in raw.get('taskMatrix', [])
+            ],
+        )
+
+
+# =============================================================================
+# TRIALS CLIENT (globally addressable)
+# =============================================================================
+
+class TrialsClient:
+    """Client for globally addressable trials — no method here takes a job id;
+    the trial body carries ``job_id`` as the reverse pointer.
+
+    Created via the standalone ``trials()`` factory. Requires
+    ``EVOLVE_API_KEY`` unless ``HostedClientConfig(api_key=...)`` is given.
+    """
+
+    def __init__(self, config: Optional[HostedClientConfig] = None):
+        self._http = _HostedHttp('trials', config)
+
+    async def __aenter__(self) -> 'TrialsClient':
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        await self.close()
+
+    async def close(self) -> None:
+        return None
+
+    async def get(self, trial_id: str) -> Trial:
+        """Get one trial by its globally addressable id.
+
+        Same shape as a list row; unlike list rows,
+        ``exception_info.exception_message`` is untruncated here.
         """
         raw = await self._http.request_json(
-            f'/api/jobs/{urllib.parse.quote(id)}'
-            f'/trials/{urllib.parse.quote(trial_id)}'
+            f'/api/trials/{urllib.parse.quote(trial_id)}'
         )
-        return _map_trial_detail(raw)
+        return _map_trial(raw)
 
-    async def trial_trace(
+    async def trace(
         self,
-        id: str,
         trial_id: str,
         *,
         cursor: Optional[str] = None,
         limit: Optional[int] = None,
-    ) -> TrialTracePage:
+    ) -> TraceEventPage:
         """Get one page of a trial's trace.
 
         ``cursor`` returns events with seq strictly greater than it (omit =
@@ -2867,19 +2888,41 @@ class JobsClient:
         event's ``seq`` and pass it as ``cursor``.
         """
         raw = await self._http.request_json(
-            f'/api/jobs/{urllib.parse.quote(id)}'
-            f'/trials/{urllib.parse.quote(trial_id)}/trace{_page_query(limit, cursor)}'
+            f'/api/trials/{urllib.parse.quote(trial_id)}/trace'
+            f'{_page_query(limit, cursor)}'
         )
         items, next_cursor, has_more = _page_parts(raw)
-        return TrialTracePage(
+        return TraceEventPage(
             items=[_map_trace_event(item) for item in items],
             next_cursor=next_cursor,
             has_more=has_more,
         )
 
-    async def trial_artifact(
+    async def trace_events(
         self,
-        id: str,
+        trial_id: str,
+        *,
+        cursor: Optional[str] = None,
+        limit: Optional[int] = None,
+    ):
+        """Iterate a trial's trace events, fetching pages under the hood.
+
+        Drains the currently available trace, then stops: ``next_cursor`` is
+        None when there is no next page, which says "caught up" rather than
+        echoing the position back. Resume later by passing the last seen seq as
+        ``cursor``.
+        """
+        position = cursor
+        while True:
+            page = await self.trace(trial_id, cursor=position, limit=limit)
+            for event in page.items:
+                yield event
+            if not page.next_cursor:
+                return
+            position = page.next_cursor
+
+    async def artifact(
+        self,
         trial_id: str,
         stream: Literal['verifier', 'trace-stdout', 'trace-stderr', 'agent-home'],
     ) -> Optional[Union[str, Dict[str, str]]]:
@@ -2894,61 +2937,57 @@ class JobsClient:
         trace.
         """
         raw = await self._http.request_json(
-            f'/api/jobs/{urllib.parse.quote(id)}'
-            f'/trials/{urllib.parse.quote(trial_id)}/trace?stream={stream}'
+            f'/api/trials/{urllib.parse.quote(trial_id)}/trace?stream={stream}'
         )
         return raw.get('files') if stream == 'agent-home' else raw.get('log')
 
-    async def trial_trace_events(
-        self,
-        id: str,
-        trial_id: str,
-        *,
-        cursor: Optional[str] = None,
-        limit: Optional[int] = None,
-    ):
-        """Iterate a trial's trace events, fetching pages under the hood.
+    async def regrade(self, trial_id: str) -> Job:
+        """Regrade one settled trial: re-run its verifier against its recorded
+        inputs in a fresh separate verifier box.
 
-        Drains the currently available trace, then stops: ``next_cursor`` is
-        None when there is no next page, which now says "caught up" rather than
-        echoing the position back. Resume later by passing the last seen seq as
-        ``cursor``.
+        Refused (``regrade_source_ineligible``) for shared-mode or
+        pre-persistence trials. THE RESPONSE IS A JOB — a one-trial regrade job
+        with ``source_jobs`` recording the provenance.
         """
-        position = cursor
-        while True:
-            page = await self.trial_trace(id, trial_id, cursor=position, limit=limit)
-            for event in page.items:
-                yield event
-            if not page.next_cursor:
-                return
-            position = page.next_cursor
+        raw = await self._http.request_json(
+            f'/api/trials/{urllib.parse.quote(trial_id)}/regrade',
+            method='POST',
+            body={},
+        )
+        return _map_job(raw)
 
-    async def compare(self, ids: List[str]) -> JobComparison:
-        """Side-by-side comparison of 2-5 owned jobs.
+    async def stop(self, trial_ids: List[str]) -> StopResponse:
+        """Stop selected in-flight trials without cancelling their job.
 
-        Per-job aggregates plus a per-task matrix with disagreement
-        rows first. Means cover SCORED trials only; coverage is always reported.
+        Each trial's sandbox is killed and the trial is settled with its spend
+        read from the gateway. Only the caller's own trials; ids belonging to
+        someone else are reported in ``not_found`` (existence is never leaked).
+        Idempotent — already-terminal trials are reported as such and left
+        untouched.
         """
-        query = ','.join(urllib.parse.quote(item) for item in ids)
-        raw = await self._http.request_json(f'/api/jobs/compare?ids={query}')
-        return JobComparison(
-            jobs=[
-                _map_comparison_aggregate(item) for item in raw.get('jobs', [])
-            ],
-            task_matrix=[
-                _map_comparison_task_row(item) for item in raw.get('taskMatrix', [])
-            ],
+        raw = await self._http.request_json(
+            '/api/trials/stop', method='POST', body={'trial_ids': trial_ids}
+        )
+        stopped = raw.get('stopped')
+        return StopResponse(
+            stopped=(
+                [_map_trial(item) for item in stopped]
+                if isinstance(stopped, list)
+                else []
+            ),
+            already_terminal=raw.get('already_terminal') or [],
+            not_found=raw.get('not_found') or [],
         )
 
 
-def _parse_benchmark_ref(ref: str) -> 'tuple[str, Optional[str]]':
+def _parse_dataset_ref(ref: str) -> 'tuple[str, Optional[str]]':
     at = ref.find('@')
     if at == -1:
         return ref.strip(), None
     name = ref[:at].strip()
     version = ref[at + 1:].strip()
     if not name or not version:
-        raise ValueError(f'Invalid benchmark ref "{ref}": expected "name" or "name@version"')
+        raise ValueError(f'Invalid dataset ref "{ref}": expected "name" or "name@version"')
     return name, version
 
 
@@ -2959,13 +2998,13 @@ def _parse_benchmark_ref(ref: str) -> 'tuple[str, Optional[str]]':
 class HostedEvolve:
     """The hosted surface, configured once.
 
-    The three clients are the right decomposition — a benchmark catalog, your
-    own harness registrations, and jobs are three genuinely different lifetimes
-    — but they made you say the same thing three times::
+    The four clients are the right decomposition — a dataset catalog, your own
+    agent registrations, jobs, and globally addressable trials are genuinely
+    different lifetimes — but they made you say the same thing four times::
 
-        b = benchmarks(config)
-        h = custom_harnesses(config)   # again
-        j = jobs(config)               # and again
+        d = datasets(config)
+        a = agents(config)     # again
+        j = jobs(config)       # and again
 
     and any one of those drifting out of sync with the others is a bug that
     looks like a permissions problem. One door, one config::
@@ -2973,48 +3012,56 @@ class HostedEvolve:
         from evolve import hosted
 
         client = hosted()
-        catalog = await client.benchmarks.list()
-        job = await client.jobs.run(benchmark='deep-swe', agents=[...])
+        catalog = await client.datasets.list()
+        job = await client.jobs.start(datasets=[...], agents=[...])
 
-    The three clients are built LAZILY, on first access. That matters because
-    they raise when no API key is present, and :meth:`meta` needs no key at all
-    — so ``await hosted().meta()`` works with no credentials configured, while
+    The clients are built LAZILY, on first access. That matters because they
+    raise when no API key is present, and :meth:`meta` needs no key at all —
+    so ``await hosted().meta()`` works with no credentials configured, while
     ``hosted().jobs`` still fails loudly the moment you reach for something
     that does need them.
     """
 
     def __init__(self, config: Optional[HostedClientConfig] = None):
         self._config = config
-        self._benchmarks: Optional[BenchmarksClient] = None
-        self._custom_harnesses: Optional[CustomHarnessesClient] = None
+        self._datasets: Optional[DatasetsClient] = None
+        self._agents: Optional[AgentsClient] = None
         self._jobs: Optional[JobsClient] = None
+        self._trials: Optional[TrialsClient] = None
 
     @property
-    def benchmarks(self) -> BenchmarksClient:
-        """The benchmark catalog: list, get, import, delete."""
-        if self._benchmarks is None:
-            self._benchmarks = BenchmarksClient(self._config)
-        return self._benchmarks
+    def datasets(self) -> DatasetsClient:
+        """The dataset catalog: list, get, publish, download, delete."""
+        if self._datasets is None:
+            self._datasets = DatasetsClient(self._config)
+        return self._datasets
 
     @property
-    def custom_harnesses(self) -> CustomHarnessesClient:
-        """Your own bring-your-own harness registrations."""
-        if self._custom_harnesses is None:
-            self._custom_harnesses = CustomHarnessesClient(self._config)
-        return self._custom_harnesses
+    def agents(self) -> AgentsClient:
+        """Your own bring-your-own agent registrations."""
+        if self._agents is None:
+            self._agents = AgentsClient(self._config)
+        return self._agents
 
     @property
     def jobs(self) -> JobsClient:
-        """Jobs: run, watch, compare, regrade, export."""
+        """Jobs: start, watch, compare, resume, regrade, download."""
         if self._jobs is None:
             self._jobs = JobsClient(self._config)
         return self._jobs
+
+    @property
+    def trials(self) -> TrialsClient:
+        """Globally addressable trials: get, trace, artifact, regrade, stop."""
+        if self._trials is None:
+            self._trials = TrialsClient(self._config)
+        return self._trials
 
     async def meta(self) -> CapabilityDocument:
         """The capability document. Public: no API key required.
 
         Fetch it once and stop hardcoding. It is what tells you the legal
-        harness names without having to send a bad one and read the 400.
+        agent names without having to send a bad one and read the 400.
         """
         return await meta(self._config)
 
@@ -3025,7 +3072,7 @@ class HostedEvolve:
         await self.close()
 
     async def close(self) -> None:
-        for client in (self._benchmarks, self._custom_harnesses, self._jobs):
+        for client in (self._datasets, self._agents, self._jobs, self._trials):
             if client is not None:
                 await client.close()
 
@@ -3035,7 +3082,7 @@ async def meta(config: Optional[HostedClientConfig] = None) -> CapabilityDocumen
 
     NO API KEY. The document is the same information the docs publish, and
     requiring credentials would mean a signed-out page could not populate its
-    own harness picker — so this is the one hosted call that takes only a base
+    own agent picker — so this is the one hosted call that takes only a base
     URL.
     """
     resolved = config or HostedClientConfig()

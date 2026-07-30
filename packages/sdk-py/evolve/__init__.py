@@ -33,60 +33,64 @@ from .config import (
     HostedClientConfig,
 )
 from .hosted import (
-    ActiveBenchmark,
-    Benchmark,
-    BenchmarkImport,
-    ImportFailure,
-    BenchmarkImportFailure,
-    BenchmarkImportPage,
-    BenchmarkVersion,
-    BenchmarksClient,
+    ActiveDataset,
+    Agent,
+    AgentArm,
+    AgentCapability,
+    AgentInfo,
+    AgentPage,
+    AgentResult,
+    AgentsClient,
     CapabilityDocument,
-    HarnessCapability,
-    HarnessModel,
-    HostedEvolve,
-    HOSTED_ERROR_CODES,
-    HostedErrorCode,
-    ProviderCapability,
-    StatusVocabulary,
-    UpstreamStatus,
-    is_hosted_error_code,
-    meta,
-    ComparisonAggregate,
-    ComparisonCell,
-    ComparisonCoverage,
-    ComparisonTaskRow,
-    CustomHarness,
-    CustomHarnessesClient,
+    CompareCell,
+    CompareCoverage,
+    CompareJobAggregate,
+    CompareResponse,
+    CompareTaskRow,
+    Dataset,
+    DatasetImport,
+    DatasetImportFailure,
+    DatasetImportPage,
+    DatasetPage,
+    DatasetRef,
+    DatasetSelector,
+    DatasetVersion,
+    DatasetsClient,
     EvolveAPIError,
     EvolveDigestMismatchError,
     EvolveIncompleteDownloadError,
-    BenchmarkPage,
-    CustomHarnessPage,
+    ExceptionInfo,
+    HostedEvolve,
+    HOSTED_ERROR_CODES,
+    HostedErrorCode,
+    ImportTaskFailure,
+    ImportWarning,
     Job,
-    JobAgent,
-    JobComparison,
     JobCounts,
     JobEvent,
     JobFailure,
     JobPage,
     JobsClient,
-    ModelUsage,
+    ModelInfo,
     NoActiveVersionError,
-    RegradeFilter,
-    RegradeJob,
-    RegradePage,
-    RegradeResultsPage,
-    RegradeResult,
+    ProviderCapability,
+    SourceJob,
+    StatusVocabulary,
+    StopResponse,
     Task,
     TaskPage,
     TaskProviderVerdict,
+    TimingInfo,
+    TraceEvent,
+    TraceEventPage,
     Trial,
-    TrialDetail,
     TrialPage,
     TrialTally,
-    TrialTraceEvent,
-    TrialTracePage,
+    TrialsClient,
+    UpstreamStatus,
+    VerifierResult,
+    is_hosted_error_code,
+    meta,
 )
 from .results import (
     AgentResponse,
@@ -235,22 +239,22 @@ def browser_profiles(config: Optional[BrowserProfilesClientConfig] = None) -> Br
     return BrowserProfilesClient(config or BrowserProfilesClientConfig())
 
 
-def benchmarks(config: Optional[HostedClientConfig] = None) -> BenchmarksClient:
-    """Create a standalone hosted-evals benchmarks client (shared catalog).
+def datasets(config: Optional[HostedClientConfig] = None) -> DatasetsClient:
+    """Create a standalone hosted-evals datasets client (shared catalog).
 
     Uses EVOLVE_API_KEY unless HostedClientConfig(api_key=...) is provided.
     """
-    return BenchmarksClient(config)
+    return DatasetsClient(config)
 
 
-def custom_harnesses(config: Optional[HostedClientConfig] = None) -> CustomHarnessesClient:
-    """Create a standalone hosted-evals custom harnesses client.
+def agents(config: Optional[HostedClientConfig] = None) -> AgentsClient:
+    """Create a standalone hosted-evals registered-agents client.
 
-    Register a private harness once, then name it in agents[].harness
+    Register a private agent once, then name it in job agents[].name
     exactly like a built-in. Uses EVOLVE_API_KEY unless
     HostedClientConfig(api_key=...) is provided.
     """
-    return CustomHarnessesClient(config)
+    return AgentsClient(config)
 
 
 def hosted(config: Optional[HostedClientConfig] = None) -> HostedEvolve:
@@ -261,14 +265,14 @@ def hosted(config: Optional[HostedClientConfig] = None) -> HostedEvolve:
     shift key apart that do completely different things is a trap. ``hosted()``
     says which half of the SDK you are reaching for.
 
-    The three clients underneath are built lazily, so ``await hosted().meta()``
+    The four clients underneath are built lazily, so ``await hosted().meta()``
     works with no API key configured::
 
         from evolve import hosted
 
         client = hosted()
-        doc = await client.meta()          # public, no key needed
-        job = await client.jobs.run(...)   # needs EVOLVE_API_KEY
+        doc = await client.meta()            # public, no key needed
+        job = await client.jobs.start(...)   # needs EVOLVE_API_KEY
     """
     return HostedEvolve(config)
 
@@ -281,6 +285,15 @@ def jobs(config: Optional[HostedClientConfig] = None) -> JobsClient:
     terminal, mirroring the TypeScript SDK.
     """
     return JobsClient(config)
+
+
+def trials(config: Optional[HostedClientConfig] = None) -> TrialsClient:
+    """Create a standalone hosted-evals trials client.
+
+    A trial id is globally addressable — no method takes a job id. Uses
+    EVOLVE_API_KEY unless HostedClientConfig(api_key=...) is provided.
+    """
+    return TrialsClient(config)
 
 
 def managed_secrets(config: Optional[ManagedSecretsClientConfig] = None) -> ManagedSecretsClient:
@@ -393,60 +406,65 @@ __all__ = [
     'browser_profiles',
     'managed_secrets',
 
-    # Hosted evals (benchmarks + custom harnesses + jobs)
+    # Hosted evals (datasets + agents + jobs + trials)
     'HostedClientConfig',
-    'BenchmarksClient',
-    'CustomHarnessesClient',
+    'DatasetsClient',
+    'AgentsClient',
     'JobsClient',
+    'TrialsClient',
     'EvolveAPIError',
     'EvolveDigestMismatchError',
     'EvolveIncompleteDownloadError',
     'NoActiveVersionError',
-    'Benchmark',
-    'ActiveBenchmark',
-    'BenchmarkImport',
-    'ImportFailure',
-    'BenchmarkImportFailure',
-    'BenchmarkVersion',
+    'Dataset',
+    'ActiveDataset',
+    'DatasetVersion',
+    'DatasetRef',
+    'DatasetSelector',
+    'DatasetImport',
+    'DatasetImportFailure',
+    'ImportTaskFailure',
+    'ImportWarning',
     'Task',
     'TaskProviderVerdict',
-    'JobAgent',
+    'AgentArm',
     'Job',
     'JobCounts',
     'JobFailure',
+    'SourceJob',
     'TrialTally',
     'JobEvent',
-    'JobComparison',
-    'ComparisonAggregate',
-    'ComparisonCell',
-    'ComparisonCoverage',
-    'ComparisonTaskRow',
-    'RegradeJob',
-    'RegradeResult',
-    'RegradeFilter',
-    'RegradeResultsPage',
-    'ModelUsage',
-    'RegradePage',
+    'CompareResponse',
+    'CompareJobAggregate',
+    'CompareCell',
+    'CompareCoverage',
+    'CompareTaskRow',
     'Trial',
-    'TrialDetail',
-    'TrialTraceEvent',
-    'TrialTracePage',
+    'TimingInfo',
+    'ModelInfo',
+    'AgentInfo',
+    'AgentResult',
+    'VerifierResult',
+    'ExceptionInfo',
+    'StopResponse',
+    'TraceEvent',
+    'TraceEventPage',
     'JobPage',
     'TrialPage',
-    'BenchmarkPage',
-    'CustomHarnessPage',
+    'DatasetPage',
+    'AgentPage',
     'TaskPage',
-    'CustomHarness',
-    'BenchmarkImportPage',
-    'benchmarks',
-    'custom_harnesses',
+    'Agent',
+    'DatasetImportPage',
+    'datasets',
+    'agents',
     'jobs',
+    'trials',
     'hosted',
     'meta',
     'HostedEvolve',
     'CapabilityDocument',
-    'HarnessCapability',
-    'HarnessModel',
+    'AgentCapability',
     'ProviderCapability',
     'StatusVocabulary',
     'UpstreamStatus',

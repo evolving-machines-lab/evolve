@@ -1,8 +1,17 @@
 /**
- * Public types for the hosted benchmarks/jobs API.
+ * Public types for the hosted evaluations API — datasets, jobs, trials, agents.
+ *
+ * THE VOCABULARY IS THE WIRE'S. Every field on a wire-shaped object below is
+ * spelled exactly as spec/openapi.yaml spells it (snake_case), in BOTH SDKs, so
+ * the spec reads as the SDK's own field reference and nothing is ever lost in a
+ * casing translation. The only camelCase keys are the four frozen historical
+ * spots the spec names: the page envelope (`items`/`nextCursor`/`hasMore`), the
+ * job body's `trials.byStatus`, the compare response's `taskMatrix`, and the
+ * error envelope. SDK-side controls that never touch the wire — client config,
+ * delivery options, callbacks — stay TypeScript-idiomatic camelCase.
  */
 
-/** Configuration for the benchmarks() / jobs() factories */
+/** Configuration for the datasets() / agents() / jobs() / trials() factories */
 export interface HostedClientConfig {
   /** API key (default: process.env.EVOLVE_API_KEY) */
   apiKey?: string;
@@ -16,6 +25,7 @@ export interface HostedClientConfig {
  * `nextCursor` means one thing everywhere: pass it back as the next call's
  * `cursor` for the next page, and `null` means there is no next page. It never
  * echoes where you already are, so a poller can always tell it has caught up.
+ * The three envelope keys are frozen verbatim on the wire.
  */
 export interface Page<T> {
   items: T[];
@@ -53,6 +63,7 @@ export interface PageOptions {
 
 /**
  * Job lifecycle status (wire values, as the API emits them).
+ * Terminal: COMPLETED, CANCELLED, FAILED.
  */
 export type JobStatus =
   | "QUEUED"
@@ -78,172 +89,34 @@ export type TrialStatus =
   | "INDETERMINATE"
   | "CANCELLED";
 
-/** Benchmark version lifecycle state (wire values) */
-export type BenchmarkVersionState =
-  | "DRAFT"
-  | "IMPORTING"
-  | "BUILDING"
-  | "VALIDATING"
-  | "READY"
-  | "FAILED"
-  | "ARCHIVED";
-
-/** One immutable version of a benchmark — one shape on every surface */
-export interface BenchmarkVersion {
-  version: string;
-  state: BenchmarkVersionState;
-  createdAt: string;
-  taskCount: number;
-}
-
 /**
- * One provider's verdict for a task: runnable there, or refused with the
- * limitation named (e.g. a multi-container task on a provider that cannot
- * host its services, or declared resources above the provider's ceiling).
- */
-export type TaskProviderVerdict = { ok: true } | { ok: false; reason: string };
-
-/** Public task fields only — instructions, environments, and tests never leave the server */
-export interface Task {
-  taskKey: string;
-  agentTimeoutSec: number;
-  verifierTimeoutSec: number;
-  /**
-   * Where the task can run, per sandbox provider. Advisory for planning a
-   * job's provider choice — creating a job whose tasks include
-   * one refused on the chosen provider is rejected with the same reason, so
-   * nothing is ever spent on a trial that cannot execute.
-   */
-  providers: Record<EvalSandboxProvider, TaskProviderVerdict>;
-}
-
-/**
- * A benchmark in the shared catalog.
- *
- * list() returns the summary fields; get() additionally populates versions,
- * selectedVersion, tasks, createdAt, and updatedAt.
- */
-export interface Benchmark {
-  name: string;
-  title: string | null;
-  description: string | null;
-  /** The active version, or null when none is active */
-  activeVersion: BenchmarkVersion | null;
-  /** All versions, newest first (get() only) */
-  versions?: BenchmarkVersion[];
-  /** The version whose tasks are listed below (get() only) */
-  selectedVersion?: BenchmarkVersion | null;
-  /**
-   * One page of the selected version's tasks (get() only). Paged like every
-   * other collection: a SWE-bench-scale benchmark has thousands of tasks, so
-   * pass { limit, cursor } to get() and follow nextCursor.
-   */
-  tasks?: Page<Task>;
-  /**
-   * Where this benchmark's git source points now, versus what its active
-   * version was built from — the data behind a "new version available" badge.
-   * Null when there is nothing to watch (an uploaded corpus, a seeded one, or
-   * one imported before provenance was recorded); null is never "up to date".
-   *
-   * Nothing here imports anything. A new version is always a row you create.
-   */
-  upstream: UpstreamStatus | null;
-  /** get() only */
-  createdAt?: string;
-  /** get() only */
-  updatedAt?: string;
-}
-
-/**
- * A benchmark's active version resolved to a runnable shape.
- *
- * Unlike Benchmark, `version` and `tasks` are non-optional: benchmarks()
- * .getActive() throws NoActiveVersionError when there is no active version,
- * so callers never branch on a missing active version.
- */
-export interface ActiveBenchmark {
-  name: string;
-  title: string | null;
-  description: string | null;
-  /** The active version (always present) */
-  activeVersion: BenchmarkVersion;
-  /** The active version string (identical to activeVersion.version) */
-  version: string;
-  /** One page of the active version's tasks */
-  tasks: Page<Task>;
-  /** All versions, newest first */
-  versions: BenchmarkVersion[];
-  createdAt: string;
-  updatedAt: string;
-}
-
-/** One agent: harness + model (+ optional pinned harness version and effort) */
-export interface JobAgent {
-  /** A built-in harness ("claude", "codex", ...) or a registered custom harness name */
-  harness: string;
-  model: string;
-  /**
-   * Pin the harness version. Omitted (or null) resolves the latest at dispatch
-   * time; the version that actually ran is recorded on every trial as
-   * `resolvedHarnessVersion`. Rejected at creation when the pin is not an exact
-   * version (`invalid_input`), when the version is not published
-   * (`harness_version_not_found`), or when the harness is a custom one — those
-   * are versioned by the content of their own source (`invalid_input`).
-   */
-  harnessVersion?: string | null;
-  /**
-   * How hard the model is asked to think. The accepted values are published at
-   * `meta.limits.job.reasoningEfforts`, and omitted (or null) takes the value
-   * published beside them as `defaultReasoningEffort` — read them from the
-   * capability document rather than hardcoding either.
-   *
-   * PART OF THE AGENT'S IDENTITY, like the harness, the model and the version
-   * pin: the same harness and model at "low" and at "high" are two systems,
-   * they de-duplicate separately, and every trial echoes the effort back on
-   * `trial.agent`. An effort a harness cannot apply is refused at creation
-   * (`invalid_input`) rather than recorded and never sent — see
-   * `HarnessCapability.effortSupport`.
-   */
-  reasoningEffort?: string | null;
-}
-
-/**
- * Sandbox provider a hosted job runs on. Named `EvalSandboxProvider` to
- * avoid colliding with the core SDK's `SandboxProvider` (the sandbox-abstraction
+ * Sandbox provider a hosted job runs on. Named `EvalSandboxProvider` to avoid
+ * colliding with the core SDK's `SandboxProvider` (the sandbox-abstraction
  * interface).
  */
 export type EvalSandboxProvider = "e2b" | "daytona" | "modal";
 
-/** Where a trial's verifier executed: a separate pristine box, or inside the agent box */
-export type VerifierMode = "separate" | "shared";
+/**
+ * Whether a settled trial's `agent_result.cost_usd` was measured from the
+ * gateway or is the cap charged conservatively.
+ */
+export type SpendSource = "measured" | "assumed";
 
-/** The input contract for creating a job */
-export interface JobInput {
-  /**
-   * Benchmark reference: "name@version" for a pinned run, or a bare "name" —
-   * a bare name resolves server-side to the benchmark's active READY version.
-   * Responses always echo the resolved "name@version".
-   */
-  benchmark: string;
-  /** Task keys to run (omitted = every task of the version) */
-  tasks?: string[];
-  agents: JobAgent[];
-  /** Runs per task x agent (default: 1) */
-  runsPerTask?: number;
-  /** Parallel trials (default: 1) */
-  concurrency?: number;
-  /**
-   * Hard model-spend cap in USD for EACH TRIAL — the platform's only spend
-   * enforcement, applied as the budget of the gateway key that trial runs on.
-   * Optional: omitted, the server applies its own default ($200,
-   * operator-tunable). The response echoes the RESOLVED cap either way, so an
-   * omitted one is never invisible, and states the resulting worst case for
-   * the job as a whole.
-   */
-  maxTrialSpendUsd?: number;
-  /** Sandbox provider to run on (optional; server default: `e2b`) */
-  sandboxProvider?: EvalSandboxProvider;
-}
+/** Where a trial's verifier executed: inside the agent's environment, or a separate one */
+export type VerifierEnvironmentMode = "shared" | "separate";
+
+/**
+ * Which step a RUNNING trial is in, so a polling caller can tell a slow build
+ * from a slow agent — RUNNING alone cannot.
+ */
+export type AttemptPhase =
+  | "prepare"
+  | "build"
+  | "boot"
+  | "install"
+  | "agent"
+  | "verify"
+  | "persist";
 
 /**
  * Trial count histogram by status. EVERY status is present, zeros included, so
@@ -252,169 +125,478 @@ export interface JobInput {
  */
 export type TrialCounts = Record<TrialStatus, number>;
 
-/** How many trials there are, and how they break down by status */
-export interface TrialTally {
+/**
+ * The one "how many" shape: a total plus the zeros-included histogram.
+ * `byStatus` is one of the four frozen camelCase wire keys.
+ */
+export interface TrialStatusTally {
   total: number;
   byStatus: TrialCounts;
 }
 
+// =============================================================================
+// JOB — CONFIG SIDE
+// =============================================================================
+
+/** A resolved dataset reference as echoed on job bodies. */
+export interface DatasetRef {
+  name: string;
+  version: string;
+}
+
 /**
- * Why a job FAILED — the same {code, message} grammar as an API failure, and
- * deliberately NOT under the key `error`, which on this surface means "this
- * request failed". `if (body.error) throw` stays correct on a healthy read of a
- * failed job.
+ * One dataset a job runs, with per-dataset task filters. `task_names` and
+ * `exclude_task_names` are glob patterns; `n_tasks` caps the task count AFTER
+ * filtering. A bare `name` resolves to the active version (`no_active_version`
+ * when none).
+ */
+export interface DatasetSelector {
+  /** Catalog dataset name. */
+  name: string;
+  /** Pin a version; omitted, the active version is used. */
+  version?: string;
+  /** Include filter — glob patterns over task names. */
+  task_names?: string[];
+  /** Exclude filter — glob patterns over task names. */
+  exclude_task_names?: string[];
+  /** Cap the task count after filters are applied. */
+  n_tasks?: number;
+}
+
+/**
+ * One agent arm of a job: an agent (built-in or registered) plus a model. A
+ * model is always required; the server applies no default.
+ *
+ * `version` pins an agent version; omitted, the platform resolves the latest
+ * supported (`agent_version_not_found` when a pin cannot resolve). The version
+ * that actually RAN is recorded on every trial as `agent_info.version`.
+ *
+ * `reasoning_effort` is the platform extension: declared effort, PART OF THE
+ * ARM'S IDENTITY like the agent, the model and the version pin — the same
+ * agent and model at "low" and at "high" are two systems, and they
+ * de-duplicate separately. Accepted values are published by /api/meta; an
+ * effort the agent cannot apply is refused at creation, never recorded and
+ * silently dropped.
+ */
+export interface AgentArmInput {
+  /** Agent name — a built-in or one registered under /api/agents. */
+  name: string;
+  model_name: string;
+  version?: string | null;
+  reasoning_effort?: string | null;
+}
+
+/** One agent arm as echoed on job bodies (requested pin; null = took the latest). */
+export interface AgentArm {
+  name: string;
+  model_name: string;
+  version: string | null;
+  reasoning_effort: string | null;
+}
+
+/**
+ * Provenance of a derived job. `action: "regrade"` = verifier-only re-run of
+ * the source; `action: "resume"` (platform extension) = new job over the
+ * source's failed trials. `type` is always "hub" on this hosted surface.
+ */
+export interface SourceJob {
+  action: "regrade" | "resume";
+  type: "hub";
+  job_id: string;
+}
+
+/** The job-creation body — POST /api/jobs. */
+export interface JobCreate {
+  /** User-facing label; server-generated when omitted. */
+  job_name?: string;
+  datasets: DatasetSelector[];
+  agents: AgentArmInput[];
+  /** Attempts per task per agent arm (default 1, max 100). */
+  n_attempts?: number;
+  /** Parallel trials across the job (default 4, max 16). */
+  n_concurrent_trials?: number;
+  /**
+   * Per-trial spend cap in USD, minted onto each trial's gateway key — the
+   * platform's ONLY spend enforcement (there is no job-wide budget). Omitted,
+   * the server applies its published default ($200 unless the operator tuned
+   * it); the response echoes the RESOLVED cap either way, and states the
+   * resulting worst case for the job as a whole.
+   */
+  max_trial_spend_usd?: number;
+  /** Sandbox provider to run on (optional; server default: `e2b`). */
+  sandbox_provider?: EvalSandboxProvider;
+}
+
+/** Body of POST /api/jobs/{jobId}/resume. */
+export interface ResumeRequest {
+  /**
+   * Which failures to resume, matched against
+   * `exception_info.exception_type`. Omitted, the default set is
+   * ["ScoringError", "InfrastructureError", "IncompleteTrialError"] plus
+   * still-QUEUED trials of a cancelled source.
+   */
+  filter_error_types?: string[];
+}
+
+/**
+ * Optional filter narrowing which trials a job-level regrade re-runs.
+ * Omitted, every regradable trial is regraded.
+ */
+export interface RegradeRequest {
+  statuses?: TrialStatus[];
+  /** Restrict to one task's trials. */
+  task_name?: string;
+}
+
+// =============================================================================
+// JOB — RESULT SIDE
+// =============================================================================
+
+/**
+ * Per-(agent, model, dataset) statistics. The evals key format is
+ * `{agent}__{model}__{dataset}`, with the platform extension of a fourth
+ * `__{effort}` segment when a declared reasoning effort is part of the arm
+ * identity.
+ */
+export interface AgentDatasetStats {
+  n_trials?: number;
+  n_errors?: number;
+  /** Metric results (a mean-reward entry per arm today); open objects. */
+  metrics?: Record<string, unknown>[];
+  /**
+   * pass@k slot — keys are k as strings, values in [0,1]. Present and empty
+   * until the platform computes it; the slot exists so adding the statistic is
+   * not a wire change.
+   */
+  pass_at_k?: Record<string, number>;
+  /** reward key -> reward value -> trial identifiers. */
+  reward_stats?: Record<string, Record<string, string[]>>;
+  /** exception type -> trial identifiers. */
+  exception_stats?: Record<string, string[]>;
+}
+
+/**
+ * Aggregate statistics of a job. Progress counters, token totals, and measured
+ * cost. `cost_usd` is what the trials actually spent so far — reporting, never
+ * a gate (enforcement is the per-trial cap).
+ */
+export interface JobStats {
+  n_completed_trials?: number;
+  n_errored_trials?: number;
+  n_running_trials?: number;
+  n_pending_trials?: number;
+  n_cancelled_trials?: number;
+  n_retries?: number;
+  /** Keyed `{agent}__{model}__{dataset}` (+ optional effort segment). */
+  evals?: Record<string, AgentDatasetStats>;
+  /** Total input tokens (cache included); null until recorded. */
+  n_input_tokens?: number | null;
+  n_cache_tokens?: number | null;
+  n_output_tokens?: number | null;
+  /** Measured spend across settled trials; null before any settled. */
+  cost_usd?: number | null;
+}
+
+/**
+ * Why a job FAILED — deliberately NOT under the key `error`, which on this
+ * surface always means "this request failed". `if (body.error) throw` stays
+ * correct on a healthy 200 read of a failed job.
  */
 export interface JobFailure {
-  /** Stable machine-readable cause, e.g. "job_execution_failed" */
+  /** `job_execution_failed` when the runner recorded no code. */
   code: string;
   message: string;
 }
 
 /**
- * A job = tasks x agents x runsPerTask.
- *
- * ONE shape from every call — run, get, cancel, rerunFailed and each list row
- * are the same fields, so a job card renders from any of them without knowing
- * where it came from. Nothing here is optional and nothing is "get() only".
+ * THE job body — the same shape from create, get, list items, cancel, resume,
+ * and regrade responses; no field appears on some responses and not others.
  */
 export interface Job {
   id: string;
+  /** User-facing label. */
+  job_name: string;
   status: JobStatus;
-  /** "name@version" */
-  benchmark: string;
-  agents: JobAgent[];
-  runsPerTask: number;
-  concurrency: number;
-  /** The resolved per-trial cap every trial of this job runs under */
-  maxTrialSpendUsd: number;
+  /** The resolved dataset references this job ran. */
+  datasets: DatasetRef[];
+  agents: AgentArm[];
+  n_attempts: number;
+  n_concurrent_trials: number;
+  /** The resolved per-trial cap every trial key was minted with. */
+  max_trial_spend_usd: number;
   /**
-   * The most this job can cost: its trial count times the per-trial cap. There
-   * is no job-wide budget, so this product is the real ceiling — stated here
-   * rather than left to you to multiply.
+   * The most this job can cost: every trial spending its whole cap. Stated
+   * outright — the per-trial cap is the only enforcement, so the product is
+   * the number someone approving a 500-trial run actually needs to see.
    */
-  worstCaseSpendUsd: number;
-  /** Sandbox provider this job runs on */
-  sandboxProvider: EvalSandboxProvider;
-  /** What the trials have actually spent so far (reporting, not a limit) */
-  spentUsd: number;
-  createdAt: string;
-  updatedAt: string;
-  /** Entity cardinality only — the parts of a job that have no status of their own */
+  worst_case_spend_usd: number;
+  sandbox_provider: EvalSandboxProvider;
+  /** Entity cardinality only — things with no status of their own. */
   counts: { agents: number; tasks: number };
-  /** How many trials, and the status histogram (all statuses, zeros included) */
-  trials: TrialTally;
-  /** Mean reward over SCORED trials only; null when none. Zero is a reward. */
-  meanReward: number | null;
+  n_total_trials: number;
+  /** The zeros-included 8-status histogram, beside the coarser counters in `stats`. */
+  trials: TrialStatusTally;
+  stats: JobStats;
   /** Why the job FAILED, or null. Never the key `error` — see JobFailure. */
   failure: JobFailure | null;
-  /** The job whose failed trials this one reruns; null for an original job */
-  sourceJobId: string | null;
-  /** True when the server replayed an existing job for this Idempotency-Key */
-  idempotentReplay: boolean;
+  /** Empty for an original job. */
+  source_jobs: SourceJob[];
+  /** Derived: any source_jobs entry with action "regrade". */
+  is_regrade: boolean;
+  /** True only on a response that replayed an existing job for an Idempotency-Key. */
+  idempotent_replay: boolean;
+  started_at: string;
+  updated_at: string;
+  /** Null while the job is live. */
+  finished_at: string | null;
+}
+
+// =============================================================================
+// TRIAL
+// =============================================================================
+
+/**
+ * A phase's wall-clock as a start/stop pair (never a duration). Either bound
+ * is null while the phase has not reached it.
+ */
+export interface TimingInfo {
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface ModelInfo {
+  name: string;
+  /** Null means "not specified", never "unknown provider". */
+  provider?: string | null;
 }
 
 /**
- * Where a trial's spend figure came from.
- *
- *   "measured"              the platform's settled figure — final.
- *   "measured_provisional"  a real reading taken before the gateway finished
- *                           writing this trial's spend. It is a LOWER BOUND and
- *                           can only ever move UP; the platform re-reads and
- *                           finalizes it within about half an hour of the trial
- *                           settling. Treat it as "at least this much".
- *   "assumed_cap"           spend could not be measured at all, so the
- *                           per-trial cap is reported conservatively.
- *
- * Only "measured" is final. A freshly settled trial commonly shows one of the
- * other two for a few minutes.
+ * The agent that ran a trial. `version` is the version actually RESOLVED and
+ * used (null until resolved) — the requested pin lives on the job's
+ * `agents[].version`. `reasoning_effort` is the platform's arm-identity
+ * extension.
  */
-export type SpendSource = "measured" | "measured_provisional" | "assumed_cap";
-
-/**
- * Open-ended per-harness detail recorded for a trial: bundle identity, token
- * counts, whatever the harness found worth keeping.
- *
- * SPEND IS NO LONGER HERE. spentUsd and spendSource are first-class fields of
- * Trial, because they are columns on the server rather than keys in an untyped
- * blob — so a client reads them off the trial and there is exactly one place
- * each fact is stated. The one spend-adjacent key that remains is the CAP,
- * which is history rather than a queryable dimension: it is the cap THIS
- * trial's key carried, which can differ from the job's current cap for a trial
- * settled before a change.
- */
-export interface ModelUsage {
-  /** The per-trial model-spend cap that applied to this trial */
-  maxTrialSpendUsd?: number;
-  [key: string]: unknown;
+export interface AgentInfo {
+  name: string;
+  version: string | null;
+  model_info: ModelInfo;
+  reasoning_effort?: string | null;
 }
 
-/** One task x one agent x one runNumber */
+/**
+ * What the agent phase produced and consumed. `n_input_tokens` includes cache
+ * tokens. `cost_usd` is the settled spend (see `spend_source` on the trial for
+ * whether it was measured or assumed). `metadata` carries open per-run detail:
+ * the harness bundle digest and runtime, the network mode the trial ran under
+ * and where that decision came from, and any harness-reported usage detail.
+ */
+export interface AgentResult {
+  n_input_tokens?: number | null;
+  n_cache_tokens?: number | null;
+  n_output_tokens?: number | null;
+  /** Null until the trial has executed; null never means $0. */
+  cost_usd?: number | null;
+  /** Reserved for token-level rollout detail; null today. */
+  rollout_details?: Record<string, unknown>[] | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+/**
+ * The verifier's rewards map. The primary-reward convention: the value under
+ * the key "reward"; else, when exactly one key exists, that value; else no
+ * primary reward. Zero is a reward.
+ */
+export interface VerifierResult {
+  rewards?: Record<string, number> | null;
+}
+
+/**
+ * Why a trial failed, when it did. `exception_type` is one of the platform's
+ * stable failure names (ScoringError, InfrastructureError, CancelledError,
+ * IncompleteTrialError) — but filter with `Trial.status`, which is the primary
+ * key for failure classes; this is the detail.
+ */
+export interface ExceptionInfo {
+  exception_type: string;
+  /** Truncated to 2000 chars on list rows; full on the detail route. */
+  exception_message: string;
+  /** Empty when the platform recorded no traceback. */
+  exception_traceback?: string;
+  occurred_at: string;
+}
+
+/**
+ * Placeholder for multi-step tasks. Always null on trials today — declared so
+ * multi-step lands without a wire change.
+ */
+export interface StepResult {
+  step_name?: string;
+  agent_result?: AgentResult | null;
+  verifier_result?: VerifierResult | null;
+  exception_info?: ExceptionInfo | null;
+  agent_execution?: TimingInfo | null;
+  verifier?: TimingInfo | null;
+}
+
+/**
+ * The ONE public trial shape, shared verbatim by list rows and the detail
+ * route (detail returns `exception_info.exception_message` untruncated — the
+ * only documented difference). A trial id is globally addressable; `job_id` is
+ * the reverse pointer.
+ *
+ * Execution facts (`sandbox_provider`, `verifier_environment_mode`,
+ * `agent_result.cost_usd`, `spend_source`) are null until the trial has
+ * actually executed: a QUEUED or CANCELLED trial never ran, so null means
+ * "did not run" and never zero.
+ */
 export interface Trial {
   id: string;
-  taskKey: string;
-  agent: JobAgent;
-  /** 1-based user-requested run number */
-  runNumber: number;
+  job_id: string;
+  task_name: string;
+  /** The dataset this trial's task came from. */
+  source: string;
+  agent_info: AgentInfo;
+  /** Attempt index within the arm (1..n_attempts). */
+  attempt: number;
   status: TrialStatus;
-  /** The reward-file reward; null until scored */
+  /**
+   * Convenience primary reward derived from `verifier_result.rewards` by the
+   * primary-reward convention. Zero is a reward; null means the trial did not
+   * score.
+   */
   reward: number | null;
-  /** Named metrics map (reward.json sub-scores) */
-  metrics: Record<string, number> | null;
-  /** Phase where an infrastructure failure occurred, when status is a failure */
-  failurePhase: string | null;
-  /** Failure detail (truncated to 2000 chars in list responses) */
-  failureDetail: string | null;
-  /** Wall-clock per phase, e.g. { agentMs, verifyMs } */
-  phaseTimingsMs: Record<string, number> | null;
-  /** Open-ended per-harness detail (bundle identity, token counts). Never spend. */
-  modelUsage: ModelUsage | null;
-  /** Sandbox provider the trial executed on; null until it has executed */
-  sandboxProvider: EvalSandboxProvider | null;
-  /** Where the verifier ran; null until recorded */
-  verifierMode: VerifierMode | null;
+  verifier_result: VerifierResult | null;
+  exception_info: ExceptionInfo | null;
+  agent_result: AgentResult | null;
+  environment_setup: TimingInfo | null;
+  agent_setup: TimingInfo | null;
+  agent_execution: TimingInfo | null;
+  verifier: TimingInfo | null;
+  /** Multi-step placeholder; null today. */
+  step_results: StepResult[] | null;
+  /** Whether `agent_result.cost_usd` was measured or is the cap charged conservatively. */
+  spend_source: SpendSource | null;
   /**
-   * What this trial's model calls cost, in USD. NULL means the trial never ran
-   * (QUEUED, CANCELLED) — never zero. Zero is a real measurement, and it only
-   * appears when no gateway key was ever minted for the trial.
+   * A mid-run LOWER BOUND on spend, never the trial's cost. Only ever climbs
+   * while the trial runs, and is CLEARED when the trial settles — on a
+   * terminal trial read `agent_result.cost_usd` and `spend_source`; those are
+   * the settled truth. Null is "no reading yet", never $0.
    */
-  spentUsd: number | null;
-  /** Whether spentUsd was measured or is the cap charged conservatively */
-  spendSource: SpendSource | null;
+  live_spent_usd: number | null;
+  /** When that reading was taken — show its age, never the figure alone. */
+  live_spend_at: string | null;
   /**
-   * A mid-run reading of this trial's spend, and a LOWER BOUND rather than its
-   * cost. Two feeds raise it, and each misses what the other sees: the door
-   * accumulates the gateway's per-response cost the moment a non-streaming
-   * call completes (seconds fresh, but blind to streamed completions), and the
-   * platform's ~120s key poll sees everything, 40-70s late. The row keeps
-   * whichever bound is higher, only ever climbs while the trial runs, and
-   * `liveSpendAt` says how fresh it is. Null is "no reading yet", never $0.
-   *
-   * CLEARED when the trial settles, on the same statement as the terminal
-   * status: on a terminal trial read spentUsd and spendSource — those are the
-   * settled truth, and the only one.
+   * The cap THIS trial's gateway key carried — history, which can differ from
+   * the job's current cap for rows settled before a change.
    */
-  liveSpentUsd: number | null;
-  /** When that reading was taken — show its age, never the figure alone */
-  liveSpendAt: string | null;
-  /** Harness version actually resolved and used for the trial; null until resolved */
-  resolvedHarnessVersion: string | null;
+  max_trial_spend_usd: number | null;
+  sandbox_provider: EvalSandboxProvider | null;
+  /** Provider id of the box the agent executed in; null when none booted. */
+  sandbox_id: string | null;
+  /** The separate verifier box; null in shared mode or when never reached. */
+  verifier_sandbox_id: string | null;
+  verifier_environment_mode: VerifierEnvironmentMode | null;
   /**
-   * WHERE THIS TRIAL RAN: the provider id of the box the agent executed in.
-   * Null is honest and common — a QUEUED or CANCELLED trial never booted a
-   * box. Also null from servers that predate the field.
+   * Which step a RUNNING trial is in, so a polling caller can tell a slow
+   * build from a slow agent. Null when the trial is not mid-phase.
    */
-  sandboxId: string | null;
-  /**
-   * The separate box the verifier ran in. Null when the verifier ran inside
-   * the agent's box (shared mode), when the trial never got that far, or from
-   * servers that predate the field.
-   */
-  verifierSandboxId: string | null;
-  /** Reference to the agent session/trace, when recorded */
-  sessionRef: string | null;
-  createdAt: string;
-  updatedAt: string;
+  attempt_phase: AttemptPhase | null;
+  /** Reference to the agent session/trace, when recorded. */
+  session_ref: string | null;
+  started_at: string | null;
+  finished_at: string | null;
 }
+
+/** Per-trial outcome of POST /api/trials/stop; every requested id appears in exactly one list. */
+export interface StopResponse {
+  /** Trials killed and settled by this request, with their settled rows. */
+  stopped: Trial[];
+  /** Ids that were already terminal; untouched. */
+  already_terminal: string[];
+  /** Ids that do not exist or are not the caller's. */
+  not_found: string[];
+}
+
+/**
+ * One parsed trace event of a trial's transcript. `seq` orders the stream and
+ * is the paging cursor. `data` is the harness-native payload, deliberately
+ * open.
+ */
+export interface TraceEvent {
+  /** Monotonic sequence number (the resume position). */
+  seq: number;
+  type: string;
+  data: Record<string, unknown>;
+}
+
+/**
+ * One page of a trial's trace — trials().trace().
+ *
+ * Same envelope as every other collection, and nextCursor means the same
+ * thing: pass it back as { cursor } for the next page, and NULL MEANS CAUGHT
+ * UP. To resume a poll later, keep the last event's `seq` and pass it as
+ * { cursor } — the trace's cursor IS its position in the seq timeline.
+ */
+export type TraceEventPage = Page<TraceEvent>;
+
+// =============================================================================
+// COMPARE
+// =============================================================================
+
+/** How many of the trials behind an aggregate were SCORED (means cover SCORED only). */
+export interface CompareCoverage {
+  scored: number;
+  total: number;
+}
+
+/**
+ * One (task, job) cell. `status` is a TrialStatus when every trial in the cell
+ * shares it, "MIXED" when they differ, "MISSING" when the job has no trials
+ * for the task.
+ */
+export interface CompareCell {
+  job_id: string;
+  status: TrialStatus | "MIXED" | "MISSING";
+  /** Mean reward over the cell's SCORED trials; null when none. Zero is a reward. */
+  mean_reward: number | null;
+  coverage: CompareCoverage;
+}
+
+/** One matrix row of jobs().compare(): a task across the compared jobs */
+export interface CompareTaskRow {
+  task_name: string;
+  /** True when the jobs' cells differ in status or reward for this task */
+  disagreement: boolean;
+  /** Cells in the caller's job-id order */
+  cells: CompareCell[];
+}
+
+/** Per-job aggregate of jobs().compare() */
+export interface CompareJobAggregate {
+  id: string;
+  datasets: DatasetRef[];
+  status: JobStatus;
+  /** Mean reward over SCORED trials only; null when none. Zero is a reward. */
+  mean_reward: number | null;
+  coverage: CompareCoverage;
+  cost_usd: number;
+  agents: AgentArm[];
+  started_at: string;
+}
+
+/**
+ * Result of jobs().compare([ids]): per-job aggregates plus a per-task matrix
+ * (disagreement rows first). `taskMatrix` is a frozen camelCase wire key.
+ */
+export interface CompareResponse {
+  /** Aggregates in the caller's id order */
+  jobs: CompareJobAggregate[];
+  taskMatrix: CompareTaskRow[];
+}
+
+// =============================================================================
+// SSE EVENTS
+// =============================================================================
 
 /** Fields every job event carries, whatever its type. */
 interface JobEventBase {
@@ -424,50 +606,39 @@ interface JobEventBase {
 
 /** The job's resolved creation inputs, echoed so a watcher that joined late knows what it is watching. */
 export interface JobCreatedData {
-  /** Resolved "name@version", never the caller's bare name */
-  benchmark: string;
-  taskCount: number;
-  agents: JobAgent[];
-  runsPerTask: number;
-  concurrency: number;
-  maxTrialSpendUsd: number;
-  sandboxProvider: EvalSandboxProvider;
-  trialCount: number;
+  datasets: DatasetRef[];
+  task_count: number;
+  agents: AgentArm[];
+  n_attempts: number;
+  n_concurrent_trials: number;
+  max_trial_spend_usd: number;
+  sandbox_provider: EvalSandboxProvider;
+  trial_count: number;
 }
 
 export interface JobCancellingData {
-  jobId: string;
+  job_id: string;
   /** Queued trials cancelled outright by the request */
-  cancelledTrials: number;
-  /** Trials still in flight, which wind down on their own before the job settles */
-  activeTrials: number;
+  cancelled_trials: number;
+  /** Trials still in flight, winding down before the job settles */
+  active_trials: number;
 }
 
 export interface JobCancelledData {
-  jobId: string;
+  job_id: string;
   /** Total queued trials cancelled across the request and the settle */
-  cancelledTrials: number;
-}
-
-export interface JobCompletedData {
-  jobId: string;
-  /**
-   * Always 0. Retained for wire compatibility: a QUEUED trial now blocks the
-   * COMPLETED settle outright, so the "undispatched trial" concept has no
-   * referent under trial-level claiming.
-   */
-  undispatched: number;
+  cancelled_trials: number;
 }
 
 export interface TrialRunningData {
-  trialId: string;
-  taskKey: string;
+  trial_id: string;
+  task_name: string;
 }
 
 export interface TrialScoringData {
-  trialId: string;
+  trial_id: string;
   /** Bytes of agent stdout retained for the failure detail */
-  capturedBytes: number;
+  captured_bytes?: number;
 }
 
 /**
@@ -476,57 +647,47 @@ export interface TrialScoringData {
  * settle never fires one.
  */
 export interface TrialSpendData {
-  trialId: string;
-  taskKey: string;
-  /** The same lagging lower bound as Trial.liveSpentUsd — not the trial's cost */
-  liveSpentUsd: number;
+  trial_id: string;
+  task_name: string;
+  /** The same lagging lower bound as Trial.live_spent_usd — not the trial's cost */
+  live_spent_usd: number;
 }
 
 /**
  * A trial reached a terminal status. `reward` is present only on the scored
- * path; `failurePhase` only on a failure. `attemptId`/`attemptPhase` appear
- * only when the REAPER settled the trial (its worker died), which is exactly
- * the case where knowing which attempt and which phase is worth having.
+ * path; `exception_type` only on a failure; `attempt_phase` appears when the
+ * settle happened mid-phase (worker death), which is exactly when knowing the
+ * phase is worth having.
  */
 export interface TrialSettledData {
-  trialId: string;
-  taskKey: string;
+  trial_id: string;
+  task_name: string;
   status: TrialStatus;
-  /** The reward-file reward. Zero is a reward; absent means the trial did not score. */
+  /** Zero is a reward; absent means the trial did not score. */
   reward?: number | null;
-  failurePhase?: string;
-  attemptId?: string;
-  attemptPhase?: string | null;
+  exception_type?: string;
+  attempt_phase?: AttemptPhase | null;
 }
 
 /**
- * One server-sent event from jobs().watch(), as a DISCRIMINATED UNION on `type`.
- *
- * `data: Record<string, unknown>` was the worst-typed line in this SDK: it is
- * the payload of the headline docs example, and it told a reader nothing about
- * what a trial.settled actually carries. Switching on `type` now narrows `data`.
- *
- * Every member below was read off its emit site in the server, not inferred:
- *   job.created    api/jobs/route.ts, api/jobs/[id]/rerun-failed/route.ts
- *   job.running    worker/runner.ts, worker/reaper.ts
- *   job.cancelling api/jobs/[id]/cancel/route.ts
- *   job.cancelled  worker/settle.ts, api/jobs/[id]/cancel/route.ts
- *   job.completed  worker/settle.ts
- *   trial.*        worker/executor.ts, worker/runner.ts, worker/reaper.ts
+ * One server-sent event from jobs().watch(), as a DISCRIMINATED UNION on
+ * `type` and ONLY on `type`: several event types carry identically shaped
+ * payloads (`job.running` and `job.completed` are both `{job_id}`), so payload
+ * shape can never route a reader — the `type` constant does. Switching on
+ * `type` narrows `data`.
  *
  * job.failed is declared terminal by the event stream and by this SDK, but NO
- * SERVER PATH EMITS IT and nothing sets a job's status to FAILED. It stays in
- * the union because both consumers already treat it as terminal — removing it
- * is the breaking half of a change nobody asked for — so treat it as RESERVED
- * rather than expected.
+ * SERVER PATH EMITS IT today. It stays in the union because both consumers
+ * treat it as terminal — the payload is fixed now so a client written today
+ * parses it when it first appears. Treat it as RESERVED rather than expected.
  */
 export type JobEvent =
   | (JobEventBase & { type: "job.created"; data: JobCreatedData })
-  | (JobEventBase & { type: "job.running"; data: { jobId: string } })
+  | (JobEventBase & { type: "job.running"; data: { job_id: string } })
   | (JobEventBase & { type: "job.cancelling"; data: JobCancellingData })
   | (JobEventBase & { type: "job.cancelled"; data: JobCancelledData })
-  | (JobEventBase & { type: "job.completed"; data: JobCompletedData })
-  | (JobEventBase & { type: "job.failed"; data: { jobId: string } })
+  | (JobEventBase & { type: "job.completed"; data: { job_id: string } })
+  | (JobEventBase & { type: "job.failed"; data: { job_id: string } })
   | (JobEventBase & { type: "trial.running"; data: TrialRunningData })
   | (JobEventBase & { type: "trial.scoring"; data: TrialScoringData })
   | (JobEventBase & { type: "trial.spend"; data: TrialSpendData })
@@ -542,9 +703,7 @@ export type JobEvent =
  * Pick one form per call: both drive the same underlying SSE stream, so a
  * single handle should not be awaited and iterated at once.
  */
-export interface JobWatch
-  extends Awaitable<Job>,
-    AsyncIterable<JobEvent> {}
+export interface JobWatch extends Awaitable<Job>, AsyncIterable<JobEvent> {}
 
 /** Cursor page of jobs (newest first) */
 export type JobPage = Page<Job>;
@@ -556,9 +715,7 @@ export type JobPage = Page<Job>;
  * - an async iterable — `for await (const item of client.list())` walks every
  *   job across cursor pages, fetching the next page for you.
  */
-export interface JobList
-  extends Awaitable<JobPage>,
-    AsyncIterable<Job> {}
+export interface JobList extends Awaitable<JobPage>, AsyncIterable<Job> {}
 
 /** Cursor page of trials */
 export type TrialPage = Page<Trial>;
@@ -570,391 +727,286 @@ export type TrialPage = Page<Trial>;
  * - an async iterable — `for await (const trial of client.trials(id))` walks
  *   every trial across cursor pages, fetching the next page for you.
  */
-export interface TrialList
-  extends Awaitable<TrialPage>,
-    AsyncIterable<Trial> {}
-
-/** Cursor page of benchmarks */
-export type BenchmarkPage = Page<Benchmark>;
-
-/** Dual-use handle from benchmarks().list(): await one page, or iterate them all */
-export interface BenchmarkList
-  extends Awaitable<BenchmarkPage>,
-    AsyncIterable<Benchmark> {}
-
-/** Options for benchmarks().listImports() */
-export interface ListImportsOptions extends PageOptions {
-  /** Only imports in this status */
-  status?: BenchmarkImportStatus;
-  /** Only imports of this benchmark name */
-  benchmark?: string;
-}
-
-/** Cursor page of benchmark imports */
-export type BenchmarkImportPage = Page<BenchmarkImport>;
-
-/** Dual-use handle from benchmarks().listImports(): await one page, or iterate them all */
-export interface BenchmarkImportList
-  extends Awaitable<BenchmarkImportPage>,
-    AsyncIterable<BenchmarkImport> {}
-
-/**
- * A custom-harness upsert body. Same shape as CustomHarnessInput minus `name`,
- * which the upsert takes as its first argument — the name is the resource
- * identity, not a field of it.
- */
-export type CustomHarnessUpsertInput = CustomHarnessSourceInput & {
-  /** Command run headless with `sh -c` at the task working directory */
-  runCommand: string;
-  /** Env injected at RUN time only; may not override the run contract's keys */
-  env?: Record<string, string>;
-};
-
-/** Cursor page of custom harnesses */
-export type CustomHarnessPage = Page<CustomHarness>;
-
-/** Dual-use handle from customHarnesses().list(): await one page, or iterate them all */
-export interface CustomHarnessList
-  extends Awaitable<CustomHarnessPage>,
-    AsyncIterable<CustomHarness> {}
+export interface TrialList extends Awaitable<TrialPage>, AsyncIterable<Trial> {}
 
 // =============================================================================
-// TRIAL DETAIL + TRACE
+// DATASETS
 // =============================================================================
 
-/**
- * Full detail of one trial — jobs().trial(id, trialId).
- * Same shape as a list row, plus the owning job; unlike list rows,
- * failureDetail is untruncated here.
- */
-export interface TrialDetail extends Trial {
-  /** The job this trial belongs to */
-  jobId: string;
-}
+/** Dataset version lifecycle state (wire values). Terminal: READY, FAILED, ARCHIVED. */
+export type DatasetVersionState =
+  | "DRAFT"
+  | "IMPORTING"
+  | "BUILDING"
+  | "VALIDATING"
+  | "READY"
+  | "FAILED"
+  | "ARCHIVED";
 
-/** One trace event of a trial (seq-ordered timeline) */
-export interface TrialTraceEvent {
-  /** Monotonic sequence number (the ?after= resume position) */
-  seq: number;
-  /** Event type */
-  type: string;
-  data: Record<string, unknown>;
-}
-
-/**
- * One page of a trial's trace — jobs().trialTrace().
- *
- * Same envelope as every other collection, and nextCursor means the same
- * thing: pass it back as { cursor } for the next page, and NULL MEANS CAUGHT
- * UP. To resume a poll later, keep the last event's `seq` and pass it as
- * { cursor } — the trace's cursor IS its position in the seq timeline.
- */
-export type TrialTracePage = Page<TrialTraceEvent>;
-
-// =============================================================================
-// COMPARE
-// =============================================================================
-
-/** Scored-trial coverage behind an aggregate (means cover SCORED trials only) */
-export interface ComparisonCoverage {
-  scored: number;
-  total: number;
+/** One immutable version of a dataset — one shape on every surface */
+export interface DatasetVersion {
+  version: string;
+  state: DatasetVersionState;
+  created_at: string;
+  task_count: number;
 }
 
 /**
- * One (taskKey x job) cell of the compare matrix. status is the shared
- * TrialStatus when the cell's trials agree, "MIXED" when they differ, and
- * "MISSING" when the job has no trials for the task.
+ * One provider's verdict for a task: runnable there, or refused with the
+ * limitation named (e.g. a multi-container task on a provider that cannot
+ * host its services, or declared resources above the provider's ceiling).
  */
-export interface ComparisonCell {
-  jobId: string;
-  status: TrialStatus | "MIXED" | "MISSING";
-  /** Mean reward over the cell's SCORED trials; null when none. Zero is a reward. */
-  meanReward: number | null;
-  coverage: ComparisonCoverage;
-}
+export type TaskProviderVerdict = { ok: true } | { ok: false; reason: string };
 
-/** One matrix row of jobs().compare(): a task across the compared jobs */
-export interface ComparisonTaskRow {
-  taskKey: string;
-  /** True when the jobs' cells differ in status or reward for this task */
-  disagreement: boolean;
-  /** Cells in the caller's job-id order */
-  cells: ComparisonCell[];
-}
-
-/** Per-job aggregate of jobs().compare() */
-export interface ComparisonAggregate {
-  id: string;
-  /** "name@version" */
-  benchmark: string;
-  status: JobStatus;
-  /** Mean reward over SCORED trials only; null when none. Zero is a reward. */
-  meanReward: number | null;
-  coverage: ComparisonCoverage;
-  spentUsd: number;
-  agents: JobAgent[];
-  createdAt: string;
-}
-
-/**
- * Result of jobs().compare([ids]): per-job aggregates plus a
- * per-task matrix (disagreement rows first).
- */
-export interface JobComparison {
-  /** Aggregates in the caller's id order */
-  jobs: ComparisonAggregate[];
-  taskMatrix: ComparisonTaskRow[];
-}
-
-// =============================================================================
-// REGRADE
-// =============================================================================
-
-/**
- * A regrade result's verdict status. Mirrors the reward law: a valid reward
- * (including 0) = SCORED; verifier crash/out-of-domain = SCORING_ERROR; no
- * reward file = INDETERMINATE; a verifier box lost before a durable verdict =
- * INFRASTRUCTURE_ERROR. QUEUED/RUNNING while the regrade is in flight.
- */
-export type RegradeStatus =
-  | "QUEUED"
-  | "RUNNING"
-  | "SCORED"
-  | "SCORING_ERROR"
-  | "INFRASTRUCTURE_ERROR"
-  | "INDETERMINATE";
-
-/** A regrade job's derived status: QUEUED until any result starts, then RUNNING, then COMPLETED. */
-export type RegradeJobStatus = "QUEUED" | "RUNNING" | "COMPLETED";
-
-/**
- * One regrade of one source trial: the verifier re-run against that trial's
- * RECORDED inputs, in a fresh separate verifier box. The agent phase is never
- * re-run, and the source trial is never modified — `sourceReward`/`sourceStatus`
- * are immutable snapshots taken when the regrade was created.
- */
-export interface RegradeResult {
-  /** Regrade result id */
-  id: string;
-  /** The source trial this regrade re-scored (immutable) */
-  sourceTrialId: string;
-  /** The source trial's task key */
-  taskKey: string;
-  status: RegradeStatus;
-  /** The regrade's reward-file reward; null until scored */
-  reward: number | null;
-  /** Named metrics map (reward.json sub-scores) */
-  metrics: Record<string, number> | null;
-  /** The recorded source-trial reward at regrade time (immutable snapshot) */
-  sourceReward: number | null;
-  /** The recorded source-trial status at regrade time (immutable snapshot) */
-  sourceStatus: string;
-  /** reward − sourceReward when both are real numbers, else null (Harbor's per-trial delta) */
-  rewardDelta: number | null;
-  /** Where the verifier ran — always "separate" (regrade only re-runs separate verifiers) */
-  verifierMode: VerifierMode;
+/** Public task fields only — instructions, environments, and tests never leave the server */
+export interface Task {
+  task_name: string;
+  agent_timeout_sec: number;
+  verifier_timeout_sec: number;
   /**
-   * Content digest of the resolved target verifier spec — the "verifier
-   * version". A digest equal to the source trial's own verifier reproduces the
-   * recorded reward; a different digest is a genuine new-verifier prediction.
-   * Null until the regrade runs.
+   * Where the task can run, per sandbox provider. Advisory for planning a
+   * job's provider choice — creating a job whose tasks include one refused on
+   * the chosen provider is rejected with the same reason, so nothing is ever
+   * spent on a trial that cannot execute.
    */
-  verifierDigest: string | null;
-  /** Provider box id of the verifier sandbox, recorded for provenance */
-  verifierSandboxId: string | null;
-  failurePhase: string | null;
-  failureDetail: string | null;
-  phaseTimingsMs: Record<string, number> | null;
-  createdAt: string;
-  /** When the regrade settled; null while QUEUED/RUNNING */
-  settledAt: string | null;
-}
-
-/** The filter applied when selecting source trials for a per-job regrade */
-export interface RegradeFilter {
-  status?: string[];
-  taskKey?: string;
+  providers: Record<EvalSandboxProvider, TaskProviderVerdict>;
 }
 
 /**
- * A regrade job's results: how many there are in the WHOLE job, how they break
- * down by status (every status, zeros included), and one page of them.
+ * Where a dataset's git source points now, versus what its active version was
+ * built from — the data behind a "new version available" badge. Null on a
+ * dataset whose source cannot be re-resolved; null is "nothing to watch",
+ * never "up to date". Nothing here imports anything — a new version is always
+ * a row you create (or `auto_import` creates).
+ */
+export interface UpstreamStatus {
+  /** The ref the active version was imported from. */
+  ref: string;
+  /** The commit the active version was built from. */
+  current_commit: string;
+  /** Where the ref points upstream now; null when the last check failed. */
+  latest_commit: string | null;
+  /** True when upstream has moved off the built-from commit. Branch on this. */
+  moved: boolean;
+  /** Reserved; always null today. */
+  behind_by: number | null;
+  /** When the cached answer was taken; null before the first check. */
+  checked_at: string | null;
+  /** Why the last check failed. Show "could not check", not "up to date". */
+  error: string | null;
+  /** Whether a moved upstream automatically imports a new version. */
+  auto_import: boolean;
+}
+
+/**
+ * A dataset in the catalog.
  *
- * One key named for the collection rather than a `counts` object sitting beside
- * a separately-named array — and paged, because a regrade of a 10,000-trial job
- * holds 10,000 results.
+ * list() returns the summary fields; get() additionally populates versions,
+ * selected_version, tasks, created_at, and updated_at.
  */
-export interface RegradeResultsPage extends Page<RegradeResult> {
-  /** Results in the whole job, not in this page */
-  total: number;
-  byStatus: Record<RegradeStatus, number>;
+export interface Dataset {
+  name: string;
+  title: string | null;
+  description: string | null;
+  /** The active version, or null when none is active (bare-name job refs refuse). */
+  active_version: DatasetVersion | null;
+  /** All versions, newest first (get() only) */
+  versions?: DatasetVersion[];
+  /** The version whose tasks are listed below (get() only) */
+  selected_version?: DatasetVersion | null;
+  /**
+   * One page of the selected version's tasks (get() only). Paged like every
+   * other collection: a SWE-bench-scale dataset has thousands of tasks, so
+   * pass { limit, cursor } to get() and follow nextCursor.
+   */
+  tasks?: Page<Task>;
+  upstream: UpstreamStatus | null;
+  /** get() only */
+  created_at?: string;
+  /** get() only */
+  updated_at?: string;
 }
 
 /**
- * A regrade job = a collection of regrade results. A per-trial regrade holds
- * one result; a per-job regrade holds one per eligible source trial. The
- * job's `status` is derived from the whole result set, never from one page.
+ * A dataset's active version resolved to a runnable shape.
+ *
+ * Unlike Dataset, `version` and `tasks` are non-optional: datasets()
+ * .getActive() throws NoActiveVersionError when there is no active version,
+ * so callers never branch on a missing active version.
  */
-export interface RegradeJob {
-  id: string;
-  /** The job the source trials belong to */
-  sourceJobId: string;
-  status: RegradeJobStatus;
-  /** Sandbox provider the verifier boxes run on (copied from the source job) */
-  sandboxProvider: EvalSandboxProvider;
-  /** The filter applied to select source trials (per-job regrade), or null */
-  filter: RegradeFilter | null;
-  /** How many results, their status histogram, and one page of them */
-  results: RegradeResultsPage;
-  createdAt: string;
-  updatedAt: string;
+export interface ActiveDataset {
+  name: string;
+  title: string | null;
+  description: string | null;
+  /** The active version (always present) */
+  active_version: DatasetVersion;
+  /** The active version string (identical to active_version.version) */
+  version: string;
+  /** One page of the active version's tasks */
+  tasks: Page<Task>;
+  /** All versions, newest first */
+  versions: DatasetVersion[];
+  created_at: string;
+  updated_at: string;
 }
 
+/** Cursor page of datasets */
+export type DatasetPage = Page<Dataset>;
+
+/** Dual-use handle from datasets().list(): await one page, or iterate them all */
+export interface DatasetList extends Awaitable<DatasetPage>, AsyncIterable<Dataset> {}
+
 // =============================================================================
-// BENCHMARK IMPORT
+// DATASET PUBLISH (async import)
 // =============================================================================
 
 /**
- * Source for benchmarks().import(): EITHER a git repository pinned to a ref, OR
+ * Source for datasets().publish(): EITHER a git repository pinned to a ref, OR
  * a local corpus directory (tarred deterministically on the client and
  * uploaded).
  *
- * A UNION, not three optional fields. The old shape accepted `{}` and accepted
- * both branches at once and threw at run time — exactly where a first-time user
- * errs, and the one place a type could have said so first. `?: never` on the
- * absent branch's keys is what makes `{ gitUrl, directory }` a compile error
- * rather than a run-time one; a bare union would happily accept the excess
- * property through a variable.
- *
- * Note that `ref` is REQUIRED on the git branch. It always was, in the sense
- * that the server refuses without it — the type simply used to disagree.
+ * A UNION, not three optional fields: `{}` and both-branches-at-once are
+ * compile errors rather than a 400 the caller discovers at run time, and
+ * `?: never` on the absent branch's keys is what rejects the excess property
+ * through a variable. `git_ref` is REQUIRED on the git branch — an unpinned
+ * import is not reproducible.
  */
-export type BenchmarkImportSource =
+export type DatasetSource =
   | {
       /**
        * A git repository URL. https:// only — the import runs on a worker with
        * no ssh client, so ssh:// and git@ remotes are refused at validation.
        * For a private repository, put a token in the https url.
        */
-      gitUrl: string;
+      git_url: string;
       /** A pinned branch, tag, or commit. Required: an unpinned import is not reproducible. */
-      ref: string;
+      git_ref: string;
       directory?: never;
     }
   | {
-      /** A local Harbor-layout corpus directory — tarred + gzipped and uploaded. */
+      /** A local standard-layout corpus directory — tarred + gzipped and uploaded. */
       directory: string;
-      gitUrl?: never;
-      ref?: never;
+      git_url?: never;
+      git_ref?: never;
     };
 
-/** Input for benchmarks().import() */
-export interface BenchmarkImportInput {
-  source: BenchmarkImportSource;
-  /** Catalog benchmark name the import creates or extends */
-  benchmarkName: string;
-  /** Version label for the imported benchmark version */
+/** Input for datasets().publish() */
+export interface PublishDatasetInput {
+  source: DatasetSource;
+  /** Catalog dataset name the version lands under (created or extended) */
+  name: string;
+  /** Version label for the new immutable version */
   version: string;
 }
 
 /**
- * Benchmark import job status.
+ * Dataset import status.
  *
- * These are the SAME four words a job and a regrade use, and that is the point:
- * an import used to speak a private IMPORTING/IMPORTED/FAILED vocabulary, so a
- * status chip rendering all three had to carry a translation table for three
- * spellings of the same four ideas.
- *
- * Terminal: "COMPLETED" (the corpus landed as a benchmark version; it becomes
- * runnable once the platform activates it) and "FAILED".
+ * The SAME four words a job uses, deliberately: a status chip rendering both
+ * never carries a translation table. Terminal: "COMPLETED" (the corpus landed
+ * as a dataset version; runnable once activated) and "FAILED".
  */
-export type BenchmarkImportStatus = "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED";
-
-/**
- * A benchmark import job. Terminal statuses: "COMPLETED" and "FAILED".
- *
- * Self-describing: every response names the benchmark@version being imported,
- * and every route that returns one — the 202 from import(), getImport(), and
- * listImports() — returns this same shape, so a caller can render the row it
- * just created without a follow-up read.
- */
-export interface BenchmarkImport {
-  /** Import job id */
-  id: string;
-  /** Job status */
-  status: BenchmarkImportStatus;
-  /** Catalog benchmark name the import creates or extends */
-  benchmarkName: string;
-  /** Version label of the imported version */
-  version: string;
-  /**
-   * Why the import failed, when status is "FAILED"; null otherwise.
-   *
-   * Named `failure` and NOT `error`, deliberately: `error` is the key the
-   * FAILURE envelope uses, so the obvious client idiom `if (body.error) throw`
-   * has to stay correct on a perfectly healthy read of a failed import.
-   */
-  failure: BenchmarkImportFailure | null;
-  /** Number of tasks parsed, once counted */
-  taskCount?: number;
-  createdAt?: string;
-  updatedAt?: string;
-}
+export type DatasetImportStatus = "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED";
 
 /** Structured failure detail for a FAILED import. */
-export interface BenchmarkImportFailure {
+export interface DatasetImportFailure {
   /** Stable machine-readable cause; "import_failed" when none was recorded. */
   code: string;
   /** What went wrong, e.g. "2/113 task(s) failed to parse" */
   message: string;
   /** Per-task parse/validation failures, when the corpus was reachable */
-  failures?: { taskKey: string; error: string }[];
+  failures?: { task_name: string; error: string }[];
 }
 
+/**
+ * Non-fatal but consequential import outcome. A version whose warnings include
+ * `no_solutions_archived` cannot be activated through this API
+ * (`version_not_activatable`) — an import that will never become runnable must
+ * not look identical to one that will.
+ */
+export interface ImportWarning {
+  code:
+    | "solutions_archiving_disabled"
+    | "no_solutions_archived"
+    | "partial_solutions_archived";
+  message?: string;
+}
+
+/**
+ * An asynchronous publish. Self-describing: every response names the
+ * dataset@version being imported — the 202 from publish(), getImport(), and
+ * listImports() all return this same shape, so a caller can render the row it
+ * just created without a follow-up read.
+ */
+export interface DatasetImport {
+  /** Import job id */
+  id: string;
+  status: DatasetImportStatus;
+  /** Catalog dataset name the import creates or extends */
+  name: string;
+  /** Version label of the imported version */
+  version: string;
+  /**
+   * Why the import FAILED; null otherwise. Named `failure`, never `error` —
+   * see JobFailure.
+   */
+  failure: DatasetImportFailure | null;
+  /** Non-fatal but consequential outcomes — see ImportWarning. */
+  warnings: ImportWarning[];
+  /** Number of tasks parsed, once counted */
+  task_count?: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+/** Cursor page of dataset imports */
+export type DatasetImportPage = Page<DatasetImport>;
+
+/** Dual-use handle from datasets().listImports(): await one page, or iterate them all */
+export interface DatasetImportList
+  extends Awaitable<DatasetImportPage>,
+    AsyncIterable<DatasetImport> {}
+
 // =============================================================================
-// CUSTOM HARNESSES
+// REGISTERED AGENTS (bring-your-own)
 // =============================================================================
 
 /**
- * Where a custom harness's executables came from: a publicly fetchable install
- * script run in a throwaway builder sandbox, or a tarball uploaded from a local
- * directory. Echoed on every response; the SDK never guesses it.
+ * Where a registered agent's executables came from: an install script run in a
+ * throwaway builder sandbox, or a tarball uploaded from a local directory.
+ * Echoed on every response; the SDK never guesses it.
  */
-export type CustomHarnessSource = "install_script" | "tarball";
+export type AgentSource = "install_script" | "tarball";
 
 /**
- * A private harness registered by the caller. Once registered, its `name` is
- * usable in `agents[].harness` exactly like a built-in ("claude",
- * "codex", ...).
- *
- * Private to its owner: another user's name reads as
- * `custom_harness_not_found`, never as a permission error — existence is never
- * leaked.
+ * A private agent registered by the caller. Once registered, its `name` is
+ * usable in job `agents[].name` exactly like a built-in ("claude", "codex",
+ * ...). Private to its owner: another user's name reads as `agent_not_found`,
+ * never as a permission error — existence is never leaked.
  */
-export interface CustomHarness {
-  /** The harness name to put in agents[].harness */
+export interface Agent {
+  /** The name to put in job agents[].name */
   name: string;
   /** How the executables were produced */
-  source: CustomHarnessSource;
+  source: AgentSource;
   /** The command run headless with `sh -c` at the task working directory */
-  runCommand: string;
+  run_command: string;
   /**
    * Caller-declared env injected at RUN time only. It may not override the run
-   * contract's own keys (see the docs) — the server rejects that at
-   * registration with `custom_harness_invalid_env`.
+   * contract's own keys — the server rejects that at registration with
+   * `agent_invalid_env`.
    */
   env: Record<string, string>;
-  createdAt: string;
-  updatedAt: string;
+  created_at: string;
+  updated_at: string;
 }
 
 /**
- * The two sources a custom harness's executables can come from. A union, not
- * two optional fields — see BenchmarkImportSource for why `?: never` is
- * load-bearing rather than decorative.
+ * The two sources a registered agent's executables can come from. A union, not
+ * two optional fields — see DatasetSource for why `?: never` is load-bearing
+ * rather than decorative.
  */
-export type CustomHarnessSourceInput =
+export type AgentSourceInput =
   | {
       /**
        * The install script itself (not a path). It runs in a throwaway builder
@@ -962,41 +1014,59 @@ export type CustomHarnessSourceInput =
        * must be publicly fetchable, and it must leave executables in
        * `$PREFIX/bin`.
        */
-      installScript: string;
+      install_script: string;
       directory?: never;
     }
   | {
       /**
-       * A local directory holding the harness — tarred + gzipped and uploaded.
+       * A local directory holding the agent — tarred + gzipped and uploaded.
        * Same build rules as an install script.
        */
       directory: string;
-      installScript?: never;
+      install_script?: never;
     };
 
 /**
- * Input for customHarnesses().create(): a name, a run command, and EXACTLY ONE
- * source. The source half is a union, so omitting both or passing both is a
- * compile error rather than a 400 the caller discovers at run time.
+ * Input for agents().create(): a name, a run command, and EXACTLY ONE source.
+ * The source half is a union, so omitting both or passing both is a compile
+ * error rather than a 400 the caller discovers at run time.
  */
-export type CustomHarnessInput = CustomHarnessSourceInput & {
-  /** Harness name; also the value used later in agents[].harness */
+export type AgentInput = AgentSourceInput & {
+  /** Agent name; also the value used later in job agents[].name */
   name: string;
   /** Command run headless with `sh -c` at the task working directory */
-  runCommand: string;
+  run_command: string;
   /** Env injected at RUN time only; may not override the run contract's keys */
   env?: Record<string, string>;
 };
+
+/**
+ * An agent upsert body. Same shape as AgentInput minus `name`, which the
+ * upsert takes as its first argument — the name is the resource identity, not
+ * a field of it.
+ */
+export type AgentUpsertInput = AgentSourceInput & {
+  /** Command run headless with `sh -c` at the task working directory */
+  run_command: string;
+  /** Env injected at RUN time only; may not override the run contract's keys */
+  env?: Record<string, string>;
+};
+
+/** Cursor page of registered agents */
+export type AgentPage = Page<Agent>;
+
+/** Dual-use handle from agents().list(): await one page, or iterate them all */
+export interface AgentList extends Awaitable<AgentPage>, AsyncIterable<Agent> {}
 
 // =============================================================================
 // OPTIONS
 // =============================================================================
 
-/** Options for jobs().run() and rerunFailed() */
-export interface RunJobOptions {
+/** Options for jobs().start() and resume() */
+export interface StartJobOptions {
   /**
    * Idempotency-Key header value: retries with the same key return the
-   * original job (idempotentReplay: true) instead of creating a new one.
+   * original job (idempotent_replay: true) instead of creating a new one.
    */
   idempotencyKey?: string;
 }
@@ -1006,56 +1076,29 @@ export interface ListJobsOptions extends PageOptions {}
 
 /** Options for jobs().trials() (default page 50, max 200) */
 export interface ListTrialsOptions extends PageOptions {
-  /** Only trials in these statuses (e.g. the failures behind a rerun decision) */
+  /** Only trials in these statuses (e.g. the failures behind a resume decision) */
   status?: TrialStatus[];
 }
 
-/** Options for benchmarks().list() (default page 50, max 200) */
-export interface ListBenchmarksOptions extends PageOptions {}
+/** Options for datasets().list() (default page 50, max 200) */
+export interface ListDatasetsOptions extends PageOptions {}
 
-/** Options for customHarnesses().list() (default page 50, max 200) */
-export interface ListCustomHarnessesOptions extends PageOptions {}
+/** Options for agents().list() (default page 50, max 200) */
+export interface ListAgentsOptions extends PageOptions {}
 
-/** Options for benchmarks().get() / getActive(): pages the TASK list (default 200, max 500) */
-export interface GetBenchmarkOptions extends PageOptions {}
+/** Options for datasets().get() / getActive(): pages the TASK list (default 200, max 500) */
+export interface GetDatasetOptions extends PageOptions {}
 
-/** Options for jobs().regradeJob(): pages the RESULT list (default 50, max 200) */
-export interface RegradeJobOptions extends PageOptions {}
-
-/** Options for jobs().listRegrades() (default page 50, max 200) */
-export interface ListRegradesOptions extends PageOptions {
-  /** Only regrades of this job (the SOURCE job's id) */
-  jobId?: string;
+/** Options for datasets().listImports() */
+export interface ListImportsOptions extends PageOptions {
+  /** Only imports in this status */
+  status?: DatasetImportStatus;
+  /** Only imports of this dataset name */
+  dataset?: string;
 }
 
-/** Cursor page of regrade jobs */
-export type RegradePage = Page<RegradeJob>;
-
-/**
- * The handle returned by jobs().listRegrades(). Both:
- * - a promise for a single RegradePage — `await client.listRegrades()` returns
- *   one page; and
- * - an async iterable — `for await (const regrade of client.listRegrades())`
- *   walks every regrade across cursor pages, fetching the next page for you.
- */
-export interface RegradeList
-  extends Awaitable<RegradePage>,
-    AsyncIterable<RegradeJob> {}
-
-/**
- * Options for jobs().regrade() (per-job): narrow the set of
- * source trials. A trial is regradable only if it recorded separate-mode verifier
- * inputs; these filters further restrict that set.
- */
-export interface RegradeOptions {
-  /** Only regrade source trials in these statuses */
-  status?: TrialStatus[];
-  /** Only regrade source trials of this task */
-  taskKey?: string;
-}
-
-/** Options for jobs().trialTrace() and trialTraceEvents() */
-export interface TrialTraceOptions extends PageOptions {
+/** Options for trials().trace() and traceEvents() */
+export interface TraceOptions extends PageOptions {
   /**
    * Resume position: events with seq strictly greater than this cursor (omit =
    * from the beginning). A trace cursor IS a seq, so to resume a poll later
@@ -1066,10 +1109,10 @@ export interface TrialTraceOptions extends PageOptions {
   limit?: number;
 }
 
-/** Options for benchmarks().watchImport() */
+/** Options for datasets().watchImport() */
 export interface WatchImportOptions {
   /** Called on every observed status change (including the first status seen) */
-  onStatus?: (benchmarkImport: BenchmarkImport) => void;
+  onStatus?: (datasetImport: DatasetImport) => void;
   /** Abort the watch (rejects with the abort reason) */
   signal?: AbortSignal;
   /** Poll interval between getImport() calls (default: 2000ms) */
@@ -1088,151 +1131,141 @@ export interface WatchJobOptions {
   maxReconnectDelayMs?: number;
 }
 
-/** Options for benchmarks().downloadPackage() */
-export interface DownloadPackageOptions {
+/** Delivery options for datasets().download() */
+export interface DownloadDatasetOptions {
   /** Directory to save the package into (returns the file path) */
   to?: string;
   /** Return the raw response stream instead of a Buffer */
   stream?: boolean;
 }
 
-/** Options for jobs().export() */
-export interface ExportJobOptions {
+/** Delivery options for jobs().download() */
+export interface DownloadJobOptions {
   /** Directory to save the archive into (returns the file path) */
   to?: string;
   /** Return the raw response stream instead of a Buffer */
   stream?: boolean;
-  /**
-   * Export layout. Omit for the canonical research archive; "harbor" requests
-   * the Harbor job-layout bundle (?format=harbor on the export endpoint).
-   */
-  format?: "harbor";
 }
 
 // =============================================================================
 // CLIENTS
 // =============================================================================
 
-/** Client for the shared benchmark catalog */
-export interface BenchmarksClient {
+/** Client for the shared dataset catalog */
+export interface DatasetsClient {
   /**
-   * List benchmarks with their active versions (cursor-paged). Await the
+   * List datasets with their active versions (cursor-paged). Await the
    * result for one page, or `for await` it to walk the whole catalog.
    */
-  list(options?: ListBenchmarksOptions): BenchmarkList;
+  list(options?: ListDatasetsOptions): DatasetList;
   /**
-   * Get one benchmark: all versions + one page of the selected version's tasks.
+   * Get one dataset: all versions + one page of the selected version's tasks.
    * ref is "name" (active version's tasks) or "name@version"; { limit, cursor }
    * page the tasks.
    */
-  get(ref: string, options?: GetBenchmarkOptions): Promise<Benchmark>;
+  get(ref: string, options?: GetDatasetOptions): Promise<Dataset>;
   /**
-   * Get a benchmark's active version resolved to a runnable shape: unlike
+   * Get a dataset's active version resolved to a runnable shape: unlike
    * get(), `version` and `tasks` are guaranteed present. Throws
-   * NoActiveVersionError when the benchmark has no active version. Use get()
+   * NoActiveVersionError when the dataset has no active version. Use get()
    * for the full multi-version detail with optional fields.
    */
-  getActive(name: string, options?: GetBenchmarkOptions): Promise<ActiveBenchmark>;
+  getActive(name: string, options?: GetDatasetOptions): Promise<ActiveDataset>;
   /**
-   * Start a benchmark import job from a git source pinned to a ref.
-   * Returns immediately; poll with getImport()/watchImport().
+   * Publish a dataset version (asynchronous server-side import) from a git
+   * source pinned to a ref, or a local corpus directory. Returns immediately;
+   * poll with getImport()/watchImport().
    */
-  import(input: BenchmarkImportInput): Promise<BenchmarkImport>;
-  /** Get an import job's status (error and taskCount when available) */
-  getImport(id: string): Promise<BenchmarkImport>;
+  publish(input: PublishDatasetInput): Promise<DatasetImport>;
+  /** Get an import job's status (failure, warnings, and task_count when available) */
+  getImport(id: string): Promise<DatasetImport>;
   /**
-   * Poll getImport() until the job reaches a terminal status ("IMPORTED" or
-   * "FAILED") and resolve with the final import.
+   * Poll getImport() until the import reaches a terminal status ("COMPLETED"
+   * or "FAILED") and resolve with the final import.
    */
-  watchImport(id: string, options?: WatchImportOptions): Promise<BenchmarkImport>;
+  watchImport(id: string, options?: WatchImportOptions): Promise<DatasetImport>;
   /**
-   * List the caller's own imports, newest first (cursor-paged). This is how you
-   * find an import again after losing the id that import() returned — without
-   * it, closing a tab made a running import permanently unwatchable.
-   *
-   * Await for one page, or `for await` to walk them all. { status } filters on
-   * the import vocabulary ("IMPORTING" | "IMPORTED" | "FAILED"); { benchmark }
-   * narrows to one benchmark name.
+   * List the caller's own imports, newest first (cursor-paged). This is how
+   * you find an import again after losing the id publish() returned. Await
+   * for one page, or `for await` to walk them all. { status } filters on the
+   * import vocabulary; { dataset } narrows to one dataset name.
    */
-  listImports(options?: ListImportsOptions): BenchmarkImportList;
+  listImports(options?: ListImportsOptions): DatasetImportList;
   /**
-   * Download the ORIGINAL corpus package a version was imported from — the
-   * gzipped tarball you uploaded, or, for a git import, the checked-out tree
-   * packed at import time. `id` is the import id (what import() returned).
+   * Download the ORIGINAL corpus package one of your own dataset versions was
+   * published from — the gzipped tarball you uploaded, or, for a git publish,
+   * the checked-out tree packed at import time. `ref` is "name" (the active
+   * version's package) or "name@version".
    *
    * OWNER ONLY. This is the one call that returns task files, and it returns
-   * them only to the account that owns the benchmark; a platform-curated
-   * benchmark has no owner, so nobody can download it. Someone else's import is
-   * a plain `import_not_found`, never a 403.
+   * them only to the account that owns the dataset; a platform-curated dataset
+   * has no owner, so nobody can download it. Someone else's dataset is a plain
+   * not-found, never a 403.
    *
    * The server verifies the stored bytes against their recorded sha256 before
-   * sending anything, so a successful call is byte-identical to what was
-   * imported.
-   *
-   * A version imported before packages were retained has none, and it cannot be
-   * reconstructed: that is `package_not_retained`, distinct from "not found" so
-   * you can say so. Re-import the corpus as a new version to get one.
+   * sending anything and echoes the digest; the client re-checks the digest
+   * and the Content-Length, so a successful call is byte-identical to what was
+   * published. A version published before packages were retained has none
+   * (`package_not_retained`, distinct from "not found").
    *
    * Default: Buffer. { to } saves into a directory and returns the file path.
    * { stream: true } returns the raw response stream.
    */
-  downloadPackage(id: string): Promise<Buffer>;
-  downloadPackage(id: string, options: { to: string }): Promise<string>;
-  downloadPackage(
-    id: string,
-    options: { stream: true }
-  ): Promise<ReadableStream<Uint8Array>>;
-  downloadPackage(
-    id: string,
-    options?: DownloadPackageOptions
+  download(ref: string): Promise<Buffer>;
+  download(ref: string, options: { to: string }): Promise<string>;
+  download(ref: string, options: { stream: true }): Promise<ReadableStream<Uint8Array>>;
+  download(
+    ref: string,
+    options?: DownloadDatasetOptions
   ): Promise<Buffer | string | ReadableStream<Uint8Array>>;
   /**
-   * Delete a benchmark you own, with every version, task, and archived
-   * solution. Refused (benchmark_in_use) while any job still references it —
-   * a benchmark is never deleted out from under a job that measured against it,
+   * Delete a dataset you own, with every version, task, and archived
+   * solution. Refused (dataset_in_use) while any job still references it — a
+   * dataset is never deleted out from under a job that measured against it,
    * and `err.details.sampleJobIds` names the jobs blocking it. A platform
-   * benchmark is refused with benchmark_not_owned; a name you cannot see is a
+   * dataset is refused with dataset_not_owned; a name you cannot see is a
    * plain not-found.
    */
   delete(name: string): Promise<void>;
 }
 
-/** Client for the caller's own private (bring-your-own) harnesses */
-export interface CustomHarnessesClient {
+/** Client for the caller's own private (bring-your-own) agents */
+export interface AgentsClient {
   /**
-   * Register a private harness. Provide either an install script
-   * (`{ installScript }`) or a local directory (`{ directory }`), never both.
-   * The name is then usable in `agents[].harness` like a built-in.
+   * Register a private agent. Provide either an install script
+   * (`{ install_script }`) or a local directory (`{ directory }`), never both.
+   * The name is then usable in job `agents[].name` like a built-in.
    */
-  create(input: CustomHarnessInput): Promise<CustomHarness>;
+  create(input: AgentInput): Promise<Agent>;
   /**
-   * List the caller's registered custom harnesses (cursor-paged). Await the
-   * result for one page, or `for await` it to walk them all.
+   * List the caller's registered agents (cursor-paged). Await the result for
+   * one page, or `for await` it to walk them all.
    */
-  list(options?: ListCustomHarnessesOptions): CustomHarnessList;
-  /** Get one custom harness by name */
-  get(name: string): Promise<CustomHarness>;
-  /** Delete a custom harness. Past jobs keep their recorded harness. */
+  list(options?: ListAgentsOptions): AgentList;
+  /** Get one registered agent by name */
+  get(name: string): Promise<Agent>;
+  /** Delete a registered agent. Past jobs keep their recorded agent. */
   delete(name: string): Promise<void>;
   /**
-   * Register or replace a harness in ONE call, under the name you give.
+   * Register or replace an agent in ONE call, under the name you give.
    *
    * Use this instead of delete()+create() to change an existing registration:
-   * the pair leaves a window where the harness does not exist, and anything
+   * the pair leaves a window where the agent does not exist, and anything
    * naming it in that window fails for a change that was only ever meant to be
    * an edit. This is a full replacement, not a patch — every field comes from
    * this call, and an omitted `env` becomes empty.
    */
-  upsert(name: string, input: CustomHarnessUpsertInput): Promise<CustomHarness>;
+  upsert(name: string, input: AgentUpsertInput): Promise<Agent>;
 }
 
 /** Client for hosted jobs */
 export interface JobsClient {
   /**
-   * Create a job. benchmark may be a bare "name" (resolved to the
-   * active READY version) or a pinned "name@version". Supports Idempotency-Key.
+   * Start a job over one or more catalog datasets. Each dataset selector may
+   * carry glob task filters; every agent arm must name a model. Supports
+   * Idempotency-Key.
    */
-  run(input: JobInput, options?: RunJobOptions): Promise<Job>;
+  start(input: JobCreate, options?: StartJobOptions): Promise<Job>;
   /** Get one job */
   get(id: string): Promise<Job>;
   /**
@@ -1247,41 +1280,6 @@ export interface JobsClient {
    * walk every trial across cursor pages transparently.
    */
   trials(id: string, options?: ListTrialsOptions): TrialList;
-  /** Get one trial's full detail (untruncated failureDetail) */
-  trial(id: string, trialId: string): Promise<TrialDetail>;
-  /** Get one page of a trial's trace; resume with { cursor: page.nextCursor } */
-  trialTrace(
-    id: string,
-    trialId: string,
-    options?: TrialTraceOptions
-  ): Promise<TrialTracePage>;
-  /**
-   * Iterate a trial's trace events, fetching pages under the hood until
-   * the currently available trace is drained. Resume later by passing the
-   * last seen seq as { cursor }.
-   */
-  trialTraceEvents(
-    id: string,
-    trialId: string,
-    options?: TrialTraceOptions
-  ): AsyncIterableIterator<TrialTraceEvent>;
-  /**
-   * One RAW trace artifact, by the trace route's ?stream= selector.
-   * "verifier" | "trace-stdout" | "trace-stderr" answer the log text;
-   * "agent-home" answers the CLI's whole home folder (subagent transcripts
-   * included), keyed by sandbox path. Null = never stored
-   * (a normal answer, not an error).
-   */
-  trialArtifact(
-    id: string,
-    trialId: string,
-    stream: "verifier" | "trace-stdout" | "trace-stderr"
-  ): Promise<string | null>;
-  trialArtifact(
-    id: string,
-    trialId: string,
-    stream: "agent-home"
-  ): Promise<Record<string, string> | null>;
   /**
    * Watch a job's event stream (SSE). Replays from the beginning,
    * resumes with Last-Event-ID on reconnect (exponential backoff), and
@@ -1295,65 +1293,88 @@ export interface JobsClient {
   /** Request cancellation. Idempotent; a terminal job is a no-op. */
   cancel(id: string): Promise<Job>;
   /**
-   * Create a NEW linked job of only the failed (and never-dispatched)
-   * trials of a terminal job. Supports Idempotency-Key.
+   * Resume a terminal job: a NEW linked job holding fresh trials for the
+   * source's failed work (`source_jobs` records `action: "resume"`); the
+   * source is never mutated. `request.filter_error_types` selects which
+   * failures to resume by `exception_info.exception_type`. Supports
+   * Idempotency-Key.
    */
-  rerunFailed(id: string, options?: RunJobOptions): Promise<Job>;
+  resume(id: string, request?: ResumeRequest, options?: StartJobOptions): Promise<Job>;
   /**
    * Regrade a terminal job: re-run the verifier of every REGRADABLE trial
-   * (settled separate-mode trials, which recorded their verifier inputs) against
-   * those recorded inputs, in fresh separate verifier boxes. The agent phase is
-   * never re-run and the source trials are never modified. `options` narrows the
-   * set by status and/or task. Returns a new regrade job (one result per trial).
+   * against its recorded inputs, in fresh separate verifier boxes. The agent
+   * phase is never re-run and the source trials are never modified. THE
+   * RESPONSE IS A JOB — a regrade is an ordinary job whose `source_jobs`
+   * records `action: "regrade"` and whose `is_regrade` is true; view it with
+   * get(). `request` narrows the set by statuses and/or task.
    */
-  regrade(id: string, options?: RegradeOptions): Promise<RegradeJob>;
+  regrade(id: string, request?: RegradeRequest): Promise<Job>;
   /**
-   * Regrade one settled trial: re-run its verifier against its recorded
-   * inputs in a fresh separate verifier box. Refused (regrade_source_ineligible)
-   * for shared-mode or pre-persistence trials. Returns a regrade job with one
-   * result.
-   */
-  regradeTrial(id: string, trialId: string): Promise<RegradeJob>;
-  /**
-   * Read ONE regrade job by the REGRADE's id (the id returned by regrade() or
-   * regradeTrial(), and echoed in their Location header) — with one page of its
-   * per-trial results, their lineage and reward deltas.
-   *
-   * Renamed from regradeJob(). That name read as a verb, sat directly beside
-   * regrade() which IS that verb, and took a parameter called jobId that was
-   * not a job id — so the natural call, regradeJob(someJobId), compiled and
-   * 404'd.
-   */
-  getRegrade(regradeId: string, options?: RegradeJobOptions): Promise<RegradeJob>;
-  /**
-   * List the caller's regrade jobs, newest first (cursor-paged); { jobId }
-   * narrows to the regrades OF ONE JOB — the question regradeJob(jobId) looked
-   * like it answered and did not. Await for one page, or `for await` to walk
-   * them all.
-   */
-  listRegrades(options?: ListRegradesOptions): RegradeList;
-  /**
-   * Side-by-side comparison of 2-5 owned jobs: per-job
+   * Side-by-side comparison of 2-10 owned jobs: per-job
    * aggregates plus a per-task matrix with disagreement rows first.
    */
-  compare(ids: string[]): Promise<JobComparison>;
+  compare(ids: string[]): Promise<CompareResponse>;
   /**
-   * Download the full research archive (gzipped JSON) of a terminal
-   * job. Default: Buffer. { to } saves to a directory and returns the
-   * file path. { stream: true } returns the raw response stream.
-   * { format: "harbor" } selects the Harbor job-layout bundle instead of the
-   * canonical archive (composable with any of the delivery shapes).
+   * Download a terminal job's results archive (gzipped, standard results
+   * layout, deterministic bytes). Default: Buffer — verified against the
+   * response's Content-Length and, when the server states one, its digest.
+   * { to } saves to a directory (temp-then-rename, same verification) and
+   * returns the file path. { stream: true } returns the raw response stream,
+   * the one shape the caller must verify themselves.
    */
-  export(id: string, options?: { format?: "harbor" }): Promise<Buffer>;
-  export(id: string, options: { to: string; format?: "harbor" }): Promise<string>;
-  export(
+  download(id: string): Promise<Buffer>;
+  download(id: string, options: { to: string }): Promise<string>;
+  download(id: string, options: { stream: true }): Promise<ReadableStream<Uint8Array>>;
+  download(
     id: string,
-    options: { stream: true; format?: "harbor" }
-  ): Promise<ReadableStream<Uint8Array>>;
-  export(
-    id: string,
-    options?: ExportJobOptions
+    options?: DownloadJobOptions
   ): Promise<Buffer | string | ReadableStream<Uint8Array>>;
+}
+
+/** Client for globally addressable trials — no job id in any signature */
+export interface TrialsClient {
+  /**
+   * Get one trial by its globally addressable id. The body carries `job_id`
+   * as the reverse pointer; `exception_info.exception_message` is untruncated
+   * here, unlike list rows.
+   */
+  get(trialId: string): Promise<Trial>;
+  /** Get one page of a trial's trace; resume with { cursor: page.nextCursor } */
+  trace(trialId: string, options?: TraceOptions): Promise<TraceEventPage>;
+  /**
+   * Iterate a trial's trace events, fetching pages under the hood until
+   * the currently available trace is drained. Resume later by passing the
+   * last seen seq as { cursor }.
+   */
+  traceEvents(trialId: string, options?: TraceOptions): AsyncIterableIterator<TraceEvent>;
+  /**
+   * One RAW trace artifact, by the trace route's ?stream= selector.
+   * "verifier" | "trace-stdout" | "trace-stderr" answer the log text;
+   * "agent-home" answers the CLI's whole home folder (subagent transcripts
+   * included), keyed by sandbox path. Null = never stored
+   * (a normal answer, not an error).
+   */
+  artifact(
+    trialId: string,
+    stream: "verifier" | "trace-stdout" | "trace-stderr"
+  ): Promise<string | null>;
+  artifact(trialId: string, stream: "agent-home"): Promise<Record<string, string> | null>;
+  /**
+   * Regrade one settled trial: re-run its verifier against its recorded
+   * inputs in a fresh separate verifier box. Refused
+   * (regrade_source_ineligible) for shared-mode or pre-persistence trials.
+   * THE RESPONSE IS A JOB — a one-trial regrade job with `source_jobs`
+   * recording the provenance.
+   */
+  regrade(trialId: string): Promise<Job>;
+  /**
+   * Stop selected in-flight trials without cancelling their job: each trial's
+   * sandbox is killed and the trial is settled with its spend read from the
+   * gateway. Only the caller's own trials; ids belonging to someone else are
+   * reported in `not_found` (existence is never leaked). Idempotent —
+   * already-terminal trials are reported as such and left untouched.
+   */
+  stop(trialIds: string[]): Promise<StopResponse>;
 }
 
 // =============================================================================
@@ -1367,15 +1388,15 @@ export interface JobsClient {
  * used to typecheck (code was `string`) and then silently never match, which is
  * the worst shape a bug can take: the branch looks handled and never runs.
  *
- * It mirrors HOSTED_API_ERROR_CODES on the server and is published verbatim at
- * GET /api/meta as `errorCodes`. A server newer than this SDK may send a code
- * that is not listed here — `EvolveApiError.code` widens to string for exactly
- * that case, so an unknown code is still readable, just not narrowable.
+ * It mirrors the ErrorCode enum in spec/openapi.yaml and is published verbatim
+ * at GET /api/meta as `error_codes`. A server newer than this SDK may send a
+ * code that is not listed here — `EvolveApiError.code` widens to string for
+ * exactly that case, so an unknown code is still readable, just not narrowable.
  *
- * Held to the server's list by hosted-error-codes.json at the package root, the
- * checked-in copy the dashboard regenerates and both SDKs assert against; the
- * list drifted silently before that file existed. Adding a code means editing
- * the server array, that file, this list, and the Python pair.
+ * Held to the spec by hosted-error-codes.json at the package root, the
+ * checked-in copy both SDKs assert against; the list drifted silently before
+ * that file existed. Adding a code means editing the spec, that file, this
+ * list, and the Python pair.
  */
 export const HOSTED_ERROR_CODES = [
   "missing_authorization",
@@ -1393,36 +1414,36 @@ export const HOSTED_ERROR_CODES = [
   "invalid_ids",
   "invalid_multipart",
   "idempotency_key_reused",
-  "benchmark_not_found",
-  "benchmark_version_not_found",
-  "benchmark_name_taken",
-  "benchmark_in_use",
-  "benchmark_not_owned",
+  "dataset_not_found",
+  "dataset_version_not_found",
+  "dataset_name_taken",
+  "dataset_in_use",
+  "dataset_not_owned",
   "upstream_not_watchable",
   "no_active_version",
   "version_not_ready",
-  "unknown_task_keys",
+  "version_not_activatable",
+  "unknown_task_names",
   "no_tasks",
-  "custom_harness_not_found",
-  "custom_harness_name_taken",
-  "custom_harness_name_reserved",
-  "custom_harness_invalid_name",
-  "custom_harness_source_required",
-  "custom_harness_source_conflict",
-  "custom_harness_invalid_env",
-  "custom_harness_too_large",
-  "custom_harness_limit_reached",
-  "harness_version_not_found",
+  "agent_not_found",
+  "agent_name_taken",
+  "agent_name_reserved",
+  "agent_invalid_name",
+  "agent_source_required",
+  "agent_source_conflict",
+  "agent_invalid_env",
+  "agent_too_large",
+  "agent_limit_reached",
+  "agent_version_not_found",
   "job_too_large",
   "provider_unsupported",
   "job_not_found",
   "job_not_terminal",
-  "no_failed_runs",
+  "no_failed_trials",
   "trial_not_found",
   "concurrent_update",
   "regrade_source_ineligible",
-  "no_regradable_runs",
-  "regrade_not_found",
+  "no_regradable_trials",
   "import_not_found",
   "import_too_large",
   "invalid_archive",
@@ -1451,43 +1472,20 @@ export interface StatusVocabulary {
   values: string[];
   /** Members after which nothing more happens — a watcher may stop here. */
   terminal: string[];
-  description: string;
 }
 
-/** One model a harness can drive. */
-export interface HarnessModel {
-  alias: string;
-  modelId: string;
-  description: string | null;
-}
-
-/** One harness the platform can run. */
-export interface HarnessCapability {
+/** One built-in agent's declared capabilities. */
+export interface AgentCapability {
   name: string;
-  /** false = registered but not runnable; `reason` says why. */
-  runnable: boolean;
-  reason: string | null;
+  /** Whether job agents[].reasoning_effort reaches this agent. */
+  effort_support: boolean;
+  /** Whether job agents[].version may pin this agent. */
+  version_pinnable: boolean;
   /**
-   * What the local SDK would run if no model were named. The hosted API always
-   * requires an explicit model, so this is a picker's pre-selection, not a
-   * server-side default.
+   * Newest published version, for a "your pin is out of date" badge. Null
+   * means "not known right now", never "up to date".
    */
-  defaultModel: string | null;
-  models: HarnessModel[];
-  /**
-   * What this harness does with `agents[].reasoningEffort`: "level" = the value
-   * reaches the CLI as one, "binary" = thinking on/off only (a level is refused
-   * at creation), "none" = no effort input at all (any effort is refused). Grey
-   * the control out instead of learning the refusal from a POST.
-   */
-  effortSupport: "level" | "binary" | "none";
-  /** Whether `agents[].harnessVersion` may pin this harness. */
-  versionPinnable: boolean;
-  /**
-   * Newest published version, for a "your pin is out of date" badge. Null means
-   * "not known right now", never "up to date".
-   */
-  latestVersion: string | null;
+  latest_version?: string | null;
 }
 
 /** One sandbox provider, its ceilings, and what it refuses. */
@@ -1495,9 +1493,9 @@ export interface ProviderCapability {
   name: string;
   default: boolean;
   sizing: {
-    maxCpus: number;
-    maxMemoryMb: number;
-    maxStorageMb: number;
+    max_cpus: number;
+    max_memory_mb: number;
+    max_storage_mb: number;
     storage: "sized" | "fixed";
   };
   refuses: { capability: string; reason: string }[];
@@ -1507,109 +1505,84 @@ export interface ProviderCapability {
  * The capability document: everything a client would otherwise hardcode.
  *
  * Public and cacheable — no API key needed, so a signed-out page can populate
- * its own harness picker.
+ * its own agent picker. `schema_version` bumps when a FIELD changes meaning,
+ * never when a value changes.
  */
 export interface CapabilityDocument {
-  /** Bumped when a FIELD changes meaning, never when a value changes. */
-  schemaVersion: number;
-  harnesses: HarnessCapability[];
-  customHarnesses: {
-    namePattern: string;
-    maxNameLength: number;
-    maxRunCommandLength: number;
-    maxInstallScriptLength: number;
-    maxEnvEntries: number;
-    maxPerUser: number;
-    maxUploadBytes: number;
+  schema_version: number;
+  /** Built-in agents and their declared capabilities. */
+  agents: AgentCapability[];
+  /** Rules a bring-your-own agent registration must satisfy. */
+  agent_registration: {
+    name_pattern: string;
+    max_name_length: number;
+    max_run_command_length: number;
+    max_install_script_length: number;
+    max_env_entries: number;
+    max_per_user: number;
+    max_upload_bytes: number;
     /** Built-in names a registration may not reuse. */
-    reservedNames: string[];
+    reserved_names: string[];
     /** Env keys the platform owns; declaring one is refused at registration. */
-    reservedEnvKeys: string[];
+    reserved_env_keys: string[];
   };
-  sandboxProviders: ProviderCapability[];
+  sandbox_providers: ProviderCapability[];
+  /** Providers whose credentials the platform manages. */
+  managed_providers: string[];
   /** Constraints that hold on EVERY provider. */
-  platformConstraints: { capability: string; reason: string }[];
-  networkModes: string[];
+  platform_constraints: { capability: string; reason: string }[];
+  network_modes: string[];
+  /** Every status vocabulary on the surface, with terminal members. */
   statuses: {
     job: StatusVocabulary;
     trial: StatusVocabulary;
     import: StatusVocabulary;
-    regradeJob: StatusVocabulary;
-    regradeResult: StatusVocabulary;
-    benchmarkVersion: StatusVocabulary;
+    dataset_version: StatusVocabulary;
   };
   limits: {
     job: {
-      maxRunsPerTask: number;
-      maxAgents: number;
-      maxTrials: number;
-      concurrency: { default: number; max: number };
-      defaultMaxTrialSpendUsd: number;
-      defaultSandboxProvider: string;
-      defaultSizing: { cpus: number; memoryMb: number; storageMb: number };
+      max_n_attempts: number;
+      max_agents: number;
+      max_trials: number;
+      n_concurrent_trials: { default: number; max: number };
+      default_max_trial_spend_usd: number;
+      default_sandbox_provider: string;
+      default_sizing: { cpus: number; memory_mb: number; storage_mb: number };
       /** Every agent must name a model; the server applies no default. */
-      modelRequired: boolean;
+      model_required: boolean;
       /**
        * Phase wall-clocks a task INHERITS when its own config declares none —
        * a task that declares its own always wins, so these fill in rather than
        * cap. Published because nothing else here says how long a trial may run.
        */
-      defaultAgentTimeoutSec: number;
-      defaultVerifierTimeoutSec: number;
-      /** Values `agents[].reasoningEffort` accepts, and the one an omitted effort takes. */
-      reasoningEfforts: string[];
-      defaultReasoningEffort: string;
+      default_agent_timeout_sec: number;
+      default_verifier_timeout_sec: number;
+      /** Values agents[].reasoning_effort accepts, and the one an omitted effort takes. */
+      reasoning_efforts: string[];
+      default_reasoning_effort: string;
     };
+    compare: { min_ids: number; max_ids: number };
     pagination: {
       collections: { default: number; max: number };
-      benchmarkTasks: { default: number; max: number };
-      regradeResults: { default: number; max: number };
+      dataset_tasks: { default: number; max: number };
+      trace_events: { default: number; max: number };
     };
     uploads: {
-      benchmarkArchiveBytes: number;
-      customHarnessTarballBytes: number;
+      dataset_archive_bytes: number;
+      agent_tarball_bytes: number;
     };
-    benchmarkNames: {
+    dataset_names: {
       pattern: string;
-      maxNameLength: number;
-      maxVersionLength: number;
-      maxGitUrlLength: number;
-      maxGitRefLength: number;
+      max_name_length: number;
+      max_version_length: number;
+      max_git_url_length: number;
+      max_git_ref_length: number;
     };
     /** How many items an error MESSAGE names before "and N more". */
-    maxItemsNamedInErrorMessage: number;
+    max_items_named_in_error_message: number;
   };
-  errorCodes: string[];
-}
-
-// =============================================================================
-// UPSTREAM (version awareness)
-// =============================================================================
-
-/**
- * Where a benchmark's git source points now, versus what its active version was
- * built from. Null on a benchmark whose source cannot be re-resolved — an
- * uploaded corpus, a seeded one, or one imported before provenance was
- * recorded. Null is "nothing to watch", never "up to date".
- */
-export interface UpstreamStatus {
-  /** The ref the active version was imported from. */
-  ref: string;
-  /** The commit the active version was built from. */
-  currentCommit: string;
-  /** Where the ref points upstream now; null when the last check failed. */
-  latestCommit: string | null;
-  /** True when upstream has moved off the built-from commit. Branch on this. */
-  moved: boolean;
-  /**
-   * Always null today. Counting commits between two SHAs needs the commit
-   * graph, i.e. a real fetch per benchmark per check; the watcher deliberately
-   * only does a reference advertisement. Reserved so a host comparison API
-   * could fill it later without a wire change.
-   */
-  behindBy: number | null;
-  /** When the cached answer was taken; null before the first check. */
-  checkedAt: string | null;
-  /** Why the last check failed. Show "could not check", not "up to date". */
-  error: string | null;
+  /** The ImportWarning codes the platform can attach to an import. */
+  import_warning_codes: string[];
+  /** The closed error-code union, enumerated at runtime. */
+  error_codes: string[];
 }

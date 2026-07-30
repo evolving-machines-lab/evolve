@@ -5,76 +5,81 @@ import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { DEFAULT_DASHBOARD_URL, ENV_EVOLVE_API_KEY } from "../constants";
 import type {
-  ActiveBenchmark,
-  Benchmark,
-  BenchmarkImport,
-  BenchmarkImportFailure,
-  BenchmarkImportInput,
-  BenchmarkImportStatus,
-  BenchmarkList,
-  BenchmarkPage,
-  BenchmarksClient,
-  BenchmarkVersion,
-  BenchmarkVersionState,
-  ComparisonAggregate,
-  ComparisonCell,
-  ComparisonCoverage,
-  ComparisonTaskRow,
-  CustomHarness,
-  CustomHarnessesClient,
-  CustomHarnessInput,
-  CustomHarnessList,
-  CustomHarnessSource,
+  ActiveDataset,
+  Agent,
+  AgentArm,
+  AgentArmInput,
+  AgentInfo,
+  AgentInput,
+  AgentList,
+  AgentPage,
+  AgentResult,
+  AgentSource,
+  AgentUpsertInput,
+  AgentsClient,
+  AttemptPhase,
+  CompareCell,
+  CompareCoverage,
+  CompareJobAggregate,
+  CompareResponse,
+  CompareTaskRow,
+  Dataset,
+  DatasetImport,
+  DatasetImportFailure,
+  DatasetImportList,
+  DatasetImportStatus,
+  DatasetList,
+  DatasetPage,
+  DatasetRef,
+  DatasetVersion,
+  DatasetVersionState,
+  DatasetsClient,
+  DownloadDatasetOptions,
+  DownloadJobOptions,
   EvalSandboxProvider,
-  ExportJobOptions,
-  GetBenchmarkOptions,
+  ExceptionInfo,
+  GetDatasetOptions,
   HostedClientConfig,
+  ImportWarning,
   Job,
-  JobAgent,
-  JobComparison,
+  JobCreate,
   JobEvent,
   JobFailure,
-  JobInput,
   JobList,
   JobPage,
-  JobsClient,
+  JobStats,
   JobStatus,
   JobWatch,
-  BenchmarkImportList,
-  CustomHarnessUpsertInput,
-  ListBenchmarksOptions,
-  ListCustomHarnessesOptions,
+  JobsClient,
+  ListAgentsOptions,
+  ListDatasetsOptions,
   ListImportsOptions,
-  DownloadPackageOptions,
   ListJobsOptions,
-  ListRegradesOptions,
-  RegradeList,
   ListTrialsOptions,
-  ModelUsage,
-  SpendSource,
   Page,
   PageOptions,
-  RegradeFilter,
-  RegradeJob,
-  RegradeJobOptions,
-  RegradeJobStatus,
-  RegradeOptions,
-  RegradeResult,
-  RegradeResultsPage,
-  RegradeStatus,
-  RunJobOptions,
+  PublishDatasetInput,
+  RegradeRequest,
+  ResumeRequest,
+  SourceJob,
+  SpendSource,
+  StartJobOptions,
+  StepResult,
+  StopResponse,
   Task,
+  TimingInfo,
+  TraceEvent,
+  TraceEventPage,
+  TraceOptions,
   Trial,
   TrialCounts,
-  TrialDetail,
   TrialList,
   TrialPage,
   TrialStatus,
-  TrialTraceEvent,
-  TrialTraceOptions,
-  TrialTracePage,
+  TrialsClient,
   UpstreamStatus,
-  VerifierMode,
+  VerifierEnvironmentMode,
+  VerifierResult,
   WatchImportOptions,
   WatchJobOptions,
 } from "./types";
@@ -82,18 +87,97 @@ import type {
 // Re-exported from the hosted barrel so the package root can hand them on.
 export { HOSTED_ERROR_CODES, isHostedErrorCode } from "./types";
 export type {
+  ActiveDataset,
+  Agent,
+  AgentArm,
+  AgentArmInput,
+  AgentCapability,
+  AgentDatasetStats,
+  AgentInfo,
+  AgentInput,
+  AgentList,
+  AgentPage,
+  AgentResult,
+  AgentSource,
+  AgentSourceInput,
+  AgentUpsertInput,
+  AgentsClient,
+  AttemptPhase,
   Awaitable,
-  BenchmarkImportList,
-  BenchmarkImportPage,
   CapabilityDocument,
-  CustomHarnessUpsertInput,
-  HarnessCapability,
-  HarnessModel,
+  CompareCell,
+  CompareCoverage,
+  CompareJobAggregate,
+  CompareResponse,
+  CompareTaskRow,
+  Dataset,
+  DatasetImport,
+  DatasetImportFailure,
+  DatasetImportList,
+  DatasetImportPage,
+  DatasetImportStatus,
+  DatasetList,
+  DatasetPage,
+  DatasetRef,
+  DatasetSelector,
+  DatasetSource,
+  DatasetVersion,
+  DatasetVersionState,
+  DatasetsClient,
+  DownloadDatasetOptions,
+  DownloadJobOptions,
+  EvalSandboxProvider,
+  ExceptionInfo,
+  GetDatasetOptions,
+  HostedClientConfig,
   HostedErrorCode,
+  ImportWarning,
+  Job,
+  JobCreate,
+  JobEvent,
+  JobFailure,
+  JobList,
+  JobPage,
+  JobStats,
+  JobStatus,
+  JobWatch,
+  JobsClient,
+  ListAgentsOptions,
+  ListDatasetsOptions,
   ListImportsOptions,
+  ListJobsOptions,
+  ListTrialsOptions,
+  ModelInfo,
+  Page,
+  PageOptions,
   ProviderCapability,
+  PublishDatasetInput,
+  RegradeRequest,
+  ResumeRequest,
+  SourceJob,
+  SpendSource,
+  StartJobOptions,
   StatusVocabulary,
+  StepResult,
+  StopResponse,
+  Task,
+  TaskProviderVerdict,
+  TimingInfo,
+  TraceEvent,
+  TraceEventPage,
+  TraceOptions,
+  Trial,
+  TrialCounts,
+  TrialList,
+  TrialPage,
+  TrialStatus,
+  TrialStatusTally,
+  TrialsClient,
   UpstreamStatus,
+  VerifierEnvironmentMode,
+  VerifierResult,
+  WatchImportOptions,
+  WatchJobOptions,
 } from "./types";
 import {
   isHostedErrorCode,
@@ -102,79 +186,6 @@ import {
   type HostedErrorCode,
 } from "./types";
 
-export type {
-  ActiveBenchmark,
-  Benchmark,
-  BenchmarkImport,
-  BenchmarkImportFailure,
-  BenchmarkImportInput,
-  BenchmarkImportSource,
-  BenchmarkImportStatus,
-  BenchmarkList,
-  BenchmarkPage,
-  BenchmarksClient,
-  BenchmarkVersion,
-  BenchmarkVersionState,
-  ComparisonAggregate,
-  ComparisonCell,
-  ComparisonCoverage,
-  ComparisonTaskRow,
-  CustomHarness,
-  CustomHarnessesClient,
-  CustomHarnessInput,
-  CustomHarnessList,
-  CustomHarnessPage,
-  CustomHarnessSource,
-  EvalSandboxProvider,
-  ExportJobOptions,
-  GetBenchmarkOptions,
-  HostedClientConfig,
-  Job,
-  JobAgent,
-  JobComparison,
-  JobEvent,
-  JobFailure,
-  JobInput,
-  JobList,
-  JobPage,
-  JobsClient,
-  JobStatus,
-  JobWatch,
-  ListBenchmarksOptions,
-  ListCustomHarnessesOptions,
-  ListJobsOptions,
-  ListRegradesOptions,
-  RegradeList,
-  ListTrialsOptions,
-  ModelUsage,
-  Page,
-  PageOptions,
-  RegradeFilter,
-  RegradeJob,
-  RegradeJobOptions,
-  RegradeJobStatus,
-  RegradeOptions,
-  RegradeResult,
-  RegradeResultsPage,
-  RegradeStatus,
-  RunJobOptions,
-  SpendSource,
-  Task,
-  TaskProviderVerdict,
-  Trial,
-  TrialCounts,
-  TrialDetail,
-  TrialList,
-  TrialPage,
-  TrialStatus,
-  TrialTally,
-  TrialTraceEvent,
-  TrialTraceOptions,
-  TrialTracePage,
-  VerifierMode,
-  WatchImportOptions,
-  WatchJobOptions,
-} from "./types";
 /**
  * A typed failure from the hosted evals API.
  *
@@ -189,7 +200,7 @@ export type {
  *   catch (err) {
  *     if (err instanceof EvolveApiError && err.code === "provider_unsupported") {
  *       // every refused task WITH its reason — not a sentence to regex
- *       const refused = err.details?.refusedTasks as { taskKey: string }[];
+ *       const refused = err.details?.refusedTasks as { task_name: string }[];
  *     }
  *   }
  *
@@ -203,8 +214,8 @@ export class EvolveApiError extends Error {
   /** Stable snake_case error code from the API ("unknown_error" when absent) */
   readonly code: HostedErrorCode | "unknown_error" | (string & {});
   /**
-   * The input field this refusal is about — a body path ("agents[0].harness"),
-   * a query parameter ("limit"), or a multipart part name ("runCommand").
+   * The input field this refusal is about — a body path ("agents[0].name"),
+   * a query parameter ("limit"), or a multipart part name ("run_command").
    * Undefined when the failure is not about a particular field.
    */
   readonly param?: string;
@@ -297,17 +308,17 @@ async function throwApiError(res: Response): Promise<never> {
 }
 
 /**
- * Thrown by benchmarks().getActive() when the named benchmark exists but has no
+ * Thrown by datasets().getActive() when the named dataset exists but has no
  * active version, so there is no runnable version to resolve. Use get() to
- * inspect a benchmark that may not have an active version yet.
+ * inspect a dataset that may not have an active version yet.
  */
 export class NoActiveVersionError extends Error {
-  /** The benchmark name that had no active version */
-  readonly benchmark: string;
-  constructor(benchmark: string) {
-    super(`Benchmark "${benchmark}" has no active version`);
+  /** The dataset name that had no active version */
+  readonly dataset: string;
+  constructor(dataset: string) {
+    super(`Dataset "${dataset}" has no active version`);
     this.name = "NoActiveVersionError";
-    this.benchmark = benchmark;
+    this.dataset = dataset;
   }
 }
 
@@ -371,44 +382,59 @@ async function request(
 }
 
 /** Parse "name" or "name@version" into its parts. */
-function parseBenchmarkRef(ref: string): { name: string; version?: string } {
+function parseDatasetRef(ref: string): { name: string; version?: string } {
   const at = ref.indexOf("@");
   if (at === -1) return { name: ref.trim() };
   const name = ref.slice(0, at).trim();
   const version = ref.slice(at + 1).trim();
   if (!name || !version) {
-    throw new Error(`Invalid benchmark ref "${ref}": expected "name" or "name@version"`);
+    throw new Error(`Invalid dataset ref "${ref}": expected "name" or "name@version"`);
   }
   return { name, version };
 }
 
-function mapJobAgent(raw: Record<string, unknown>): JobAgent {
-  // Map only the public JobAgent fields.
+function mapDatasetRef(raw: Record<string, unknown>): DatasetRef {
   return {
-    harness: raw.harness as string,
-    model: raw.model as string,
-    harnessVersion: (raw.harnessVersion as string | null) ?? null,
-    reasoningEffort: (raw.reasoningEffort as string | null) ?? null,
+    name: raw.name as string,
+    version: raw.version as string,
   };
 }
 
-function mapBenchmarkVersion(raw: Record<string, unknown>): BenchmarkVersion {
+function mapAgentArm(raw: Record<string, unknown>): AgentArm {
+  // Map only the public arm fields.
+  return {
+    name: raw.name as string,
+    model_name: raw.model_name as string,
+    version: (raw.version as string | null) ?? null,
+    reasoning_effort: (raw.reasoning_effort as string | null) ?? null,
+  };
+}
+
+function mapDatasetVersion(raw: Record<string, unknown>): DatasetVersion {
   return {
     version: raw.version as string,
-    state: raw.state as BenchmarkVersionState,
-    createdAt: raw.createdAt as string,
-    taskCount: (raw.taskCount as number) ?? 0,
+    state: raw.state as DatasetVersionState,
+    created_at: raw.created_at as string,
+    task_count: (raw.task_count as number) ?? 0,
   };
 }
 
 function mapTask(raw: Record<string, unknown>): Task {
   return {
-    taskKey: raw.taskKey as string,
-    agentTimeoutSec: raw.agentTimeoutSec as number,
-    verifierTimeoutSec: raw.verifierTimeoutSec as number,
+    task_name: raw.task_name as string,
+    agent_timeout_sec: raw.agent_timeout_sec as number,
+    verifier_timeout_sec: raw.verifier_timeout_sec as number,
     // Per-provider capability verdicts — the law: where a task can run is
     // visible before any money is spent.
     providers: raw.providers as Task["providers"],
+  };
+}
+
+function mapSourceJob(raw: Record<string, unknown>): SourceJob {
+  return {
+    action: raw.action as SourceJob["action"],
+    type: raw.type as SourceJob["type"],
+    job_id: raw.job_id as string,
   };
 }
 
@@ -417,26 +443,30 @@ function mapJob(raw: Record<string, unknown>): Job {
   const trials = (raw.trials ?? {}) as Record<string, unknown>;
   return {
     id: raw.id as string,
+    job_name: raw.job_name as string,
     status: raw.status as JobStatus,
-    benchmark: raw.benchmark as string,
-    agents: ((raw.agents as Record<string, unknown>[]) ?? []).map(mapJobAgent),
-    runsPerTask: raw.runsPerTask as number,
-    concurrency: raw.concurrency as number,
-    maxTrialSpendUsd: raw.maxTrialSpendUsd as number,
-    worstCaseSpendUsd: raw.worstCaseSpendUsd as number,
-    sandboxProvider: raw.sandboxProvider as EvalSandboxProvider,
-    spentUsd: (raw.spentUsd as number) ?? 0,
-    createdAt: raw.createdAt as string,
-    updatedAt: raw.updatedAt as string,
+    datasets: ((raw.datasets as Record<string, unknown>[]) ?? []).map(mapDatasetRef),
+    agents: ((raw.agents as Record<string, unknown>[]) ?? []).map(mapAgentArm),
+    n_attempts: raw.n_attempts as number,
+    n_concurrent_trials: raw.n_concurrent_trials as number,
+    max_trial_spend_usd: raw.max_trial_spend_usd as number,
+    worst_case_spend_usd: raw.worst_case_spend_usd as number,
+    sandbox_provider: raw.sandbox_provider as EvalSandboxProvider,
     counts: raw.counts as Job["counts"],
+    n_total_trials: (raw.n_total_trials as number) ?? 0,
     trials: {
       total: (trials.total as number) ?? 0,
+      // byStatus is one of the four frozen camelCase wire keys.
       byStatus: (trials.byStatus as TrialCounts) ?? ({} as TrialCounts),
     },
-    meanReward: (raw.meanReward as number | null) ?? null,
+    stats: (raw.stats as JobStats) ?? {},
     failure: (raw.failure as JobFailure | null) ?? null,
-    sourceJobId: (raw.sourceJobId as string | null) ?? null,
-    idempotentReplay: raw.idempotentReplay === true,
+    source_jobs: ((raw.source_jobs as Record<string, unknown>[]) ?? []).map(mapSourceJob),
+    is_regrade: raw.is_regrade === true,
+    idempotent_replay: raw.idempotent_replay === true,
+    started_at: raw.started_at as string,
+    updated_at: raw.updated_at as string,
+    finished_at: (raw.finished_at as string | null) ?? null,
   };
 }
 
@@ -471,110 +501,99 @@ function pageQuery(
   return qs ? `?${qs}` : "";
 }
 
+function mapTimingInfo(raw: unknown): TimingInfo | null {
+  if (!raw || typeof raw !== "object") return null;
+  const value = raw as Record<string, unknown>;
+  return {
+    started_at: (value.started_at as string | null) ?? null,
+    finished_at: (value.finished_at as string | null) ?? null,
+  };
+}
+
+function mapAgentInfo(raw: Record<string, unknown>): AgentInfo {
+  const modelInfo = (raw.model_info ?? {}) as Record<string, unknown>;
+  return {
+    name: raw.name as string,
+    // The version actually RESOLVED and used — null until resolved; the
+    // requested pin lives on the job's agents[].version.
+    version: (raw.version as string | null) ?? null,
+    model_info: {
+      name: modelInfo.name as string,
+      provider: (modelInfo.provider as string | null) ?? null,
+    },
+    reasoning_effort: (raw.reasoning_effort as string | null) ?? null,
+  };
+}
+
 function mapTrial(raw: Record<string, unknown>): Trial {
   return {
     id: raw.id as string,
-    taskKey: raw.taskKey as string,
-    agent: mapJobAgent((raw.agent as Record<string, unknown>) || {}),
-    runNumber: raw.runNumber as number,
+    job_id: raw.job_id as string,
+    task_name: raw.task_name as string,
+    source: raw.source as string,
+    agent_info: mapAgentInfo((raw.agent_info as Record<string, unknown>) || {}),
+    attempt: raw.attempt as number,
     status: raw.status as TrialStatus,
     reward: (raw.reward as number | null) ?? null,
-    metrics: (raw.metrics as Record<string, number> | null) ?? null,
-    failurePhase: (raw.failurePhase as string | null) ?? null,
-    failureDetail: (raw.failureDetail as string | null) ?? null,
-    phaseTimingsMs: (raw.phaseTimingsMs as Record<string, number> | null) ?? null,
-    modelUsage: (raw.modelUsage as ModelUsage | null) ?? null,
-    sandboxProvider: (raw.sandboxProvider as EvalSandboxProvider | null) ?? null,
-    verifierMode: (raw.verifierMode as VerifierMode | null) ?? null,
-    // First-class since the server promoted these out of the modelUsage blob.
-    // NULL means the trial never ran — never zero.
-    spentUsd: (raw.spentUsd as number | null) ?? null,
-    spendSource: (raw.spendSource as SpendSource | null) ?? null,
+    verifier_result: (raw.verifier_result as VerifierResult | null) ?? null,
+    exception_info: (raw.exception_info as ExceptionInfo | null) ?? null,
+    agent_result: (raw.agent_result as AgentResult | null) ?? null,
+    environment_setup: mapTimingInfo(raw.environment_setup),
+    agent_setup: mapTimingInfo(raw.agent_setup),
+    agent_execution: mapTimingInfo(raw.agent_execution),
+    verifier: mapTimingInfo(raw.verifier),
+    step_results: (raw.step_results as StepResult[] | null) ?? null,
+    spend_source: (raw.spend_source as SpendSource | null) ?? null,
     // Mid-run lower bound, kept beside the settled pair and never folded into
     // it: it lags the gateway and is CLEARED when the trial settles.
-    liveSpentUsd: (raw.liveSpentUsd as number | null) ?? null,
-    liveSpendAt: (raw.liveSpendAt as string | null) ?? null,
-    resolvedHarnessVersion: (raw.resolvedHarnessVersion as string | null) ?? null,
-    // Where the trial ran. Absent entirely from servers that predate the
-    // fields, which reads the same as "never booted a box": null.
-    sandboxId: (raw.sandboxId as string | null) ?? null,
-    verifierSandboxId: (raw.verifierSandboxId as string | null) ?? null,
-    sessionRef: (raw.sessionRef as string | null) ?? null,
-    createdAt: raw.createdAt as string,
-    updatedAt: raw.updatedAt as string,
+    live_spent_usd: (raw.live_spent_usd as number | null) ?? null,
+    live_spend_at: (raw.live_spend_at as string | null) ?? null,
+    max_trial_spend_usd: (raw.max_trial_spend_usd as number | null) ?? null,
+    sandbox_provider: (raw.sandbox_provider as EvalSandboxProvider | null) ?? null,
+    // Where the trial ran. Absent reads the same as "never booted a box": null.
+    sandbox_id: (raw.sandbox_id as string | null) ?? null,
+    verifier_sandbox_id: (raw.verifier_sandbox_id as string | null) ?? null,
+    verifier_environment_mode:
+      (raw.verifier_environment_mode as VerifierEnvironmentMode | null) ?? null,
+    attempt_phase: (raw.attempt_phase as AttemptPhase | null) ?? null,
+    session_ref: (raw.session_ref as string | null) ?? null,
+    started_at: (raw.started_at as string | null) ?? null,
+    finished_at: (raw.finished_at as string | null) ?? null,
   };
 }
 
-function mapRegradeResult(raw: Record<string, unknown>): RegradeResult {
-  return {
-    id: raw.id as string,
-    sourceTrialId: raw.sourceTrialId as string,
-    taskKey: raw.taskKey as string,
-    status: raw.status as RegradeStatus,
-    reward: (raw.reward as number | null) ?? null,
-    metrics: (raw.metrics as Record<string, number> | null) ?? null,
-    sourceReward: (raw.sourceReward as number | null) ?? null,
-    sourceStatus: raw.sourceStatus as string,
-    rewardDelta: (raw.rewardDelta as number | null) ?? null,
-    verifierMode: (raw.verifierMode as VerifierMode) ?? "separate",
-    verifierDigest: (raw.verifierDigest as string | null) ?? null,
-    verifierSandboxId: (raw.verifierSandboxId as string | null) ?? null,
-    failurePhase: (raw.failurePhase as string | null) ?? null,
-    failureDetail: (raw.failureDetail as string | null) ?? null,
-    phaseTimingsMs: (raw.phaseTimingsMs as Record<string, number> | null) ?? null,
-    createdAt: raw.createdAt as string,
-    settledAt: (raw.settledAt as string | null) ?? null,
-  };
-}
-
-function mapRegradeJob(raw: Record<string, unknown>): RegradeJob {
-  const results = (raw.results ?? {}) as Record<string, unknown>;
-  return {
-    id: raw.id as string,
-    sourceJobId: raw.sourceJobId as string,
-    status: raw.status as RegradeJobStatus,
-    sandboxProvider: raw.sandboxProvider as EvalSandboxProvider,
-    filter: (raw.filter as RegradeJob["filter"]) ?? null,
-    results: {
-      ...mapPage(results, mapRegradeResult),
-      total: (results.total as number) ?? 0,
-      byStatus:
-        (results.byStatus as RegradeResultsPage["byStatus"]) ??
-        ({} as RegradeResultsPage["byStatus"]),
-    },
-    createdAt: raw.createdAt as string,
-    updatedAt: raw.updatedAt as string,
-  };
-}
-
-function mapCustomHarness(raw: Record<string, unknown>): CustomHarness {
+function mapAgent(raw: Record<string, unknown>): Agent {
   return {
     name: raw.name as string,
-    source: raw.source as CustomHarnessSource,
-    runCommand: raw.runCommand as string,
+    source: raw.source as AgentSource,
+    run_command: raw.run_command as string,
     env: (raw.env as Record<string, string>) ?? {},
-    createdAt: raw.createdAt as string,
-    updatedAt: raw.updatedAt as string,
+    created_at: raw.created_at as string,
+    updated_at: raw.updated_at as string,
   };
 }
 
-function mapBenchmarkImport(raw: Record<string, unknown>): BenchmarkImport {
-  const benchmarkImport: BenchmarkImport = {
+function mapDatasetImport(raw: Record<string, unknown>): DatasetImport {
+  const datasetImport: DatasetImport = {
     id: raw.id as string,
-    status: raw.status as BenchmarkImportStatus,
-    benchmarkName: raw.benchmarkName as string,
+    status: raw.status as DatasetImportStatus,
+    name: raw.name as string,
     version: raw.version as string,
-    failure: (raw.failure as BenchmarkImportFailure | null) ?? null,
+    failure: (raw.failure as DatasetImportFailure | null) ?? null,
+    // Consequential, not cosmetic: an import whose warnings include
+    // no_solutions_archived can never be activated, and dropping the field
+    // made it look identical to one that can.
+    warnings: (raw.warnings as ImportWarning[]) ?? [],
   };
-  if (typeof raw.taskCount === "number") {
-    benchmarkImport.taskCount = raw.taskCount;
+  if (typeof raw.task_count === "number") {
+    datasetImport.task_count = raw.task_count;
   }
-  if (typeof raw.createdAt === "string") benchmarkImport.createdAt = raw.createdAt;
-  if (typeof raw.updatedAt === "string") benchmarkImport.updatedAt = raw.updatedAt;
-  return benchmarkImport;
+  if (typeof raw.created_at === "string") datasetImport.created_at = raw.created_at;
+  if (typeof raw.updated_at === "string") datasetImport.updated_at = raw.updated_at;
+  return datasetImport;
 }
 
-function mapCoverage(raw: unknown): ComparisonCoverage {
+function mapCoverage(raw: unknown): CompareCoverage {
   const coverage = (raw ?? {}) as Record<string, unknown>;
   return {
     scored: (coverage.scored as number) ?? 0,
@@ -582,38 +601,38 @@ function mapCoverage(raw: unknown): ComparisonCoverage {
   };
 }
 
-function mapComparisonAggregate(raw: Record<string, unknown>): ComparisonAggregate {
+function mapCompareJobAggregate(raw: Record<string, unknown>): CompareJobAggregate {
   return {
     id: raw.id as string,
-    benchmark: raw.benchmark as string,
+    datasets: ((raw.datasets as Record<string, unknown>[]) ?? []).map(mapDatasetRef),
     status: raw.status as JobStatus,
-    meanReward: (raw.meanReward as number | null) ?? null,
+    mean_reward: (raw.mean_reward as number | null) ?? null,
     coverage: mapCoverage(raw.coverage),
-    spentUsd: (raw.spentUsd as number) ?? 0,
-    // Public JobAgent fields only.
-    agents: ((raw.agents as Record<string, unknown>[]) || []).map(mapJobAgent),
-    createdAt: raw.createdAt as string,
+    cost_usd: (raw.cost_usd as number) ?? 0,
+    // Public arm fields only.
+    agents: ((raw.agents as Record<string, unknown>[]) || []).map(mapAgentArm),
+    started_at: raw.started_at as string,
   };
 }
 
-function mapComparisonCell(raw: Record<string, unknown>): ComparisonCell {
+function mapCompareCell(raw: Record<string, unknown>): CompareCell {
   return {
-    jobId: raw.jobId as string,
-    status: raw.status as ComparisonCell["status"],
-    meanReward: (raw.meanReward as number | null) ?? null,
+    job_id: raw.job_id as string,
+    status: raw.status as CompareCell["status"],
+    mean_reward: (raw.mean_reward as number | null) ?? null,
     coverage: mapCoverage(raw.coverage),
   };
 }
 
-function mapComparisonTaskRow(raw: Record<string, unknown>): ComparisonTaskRow {
+function mapCompareTaskRow(raw: Record<string, unknown>): CompareTaskRow {
   return {
-    taskKey: raw.taskKey as string,
+    task_name: raw.task_name as string,
     disagreement: raw.disagreement === true,
-    cells: ((raw.cells as Record<string, unknown>[]) || []).map(mapComparisonCell),
+    cells: ((raw.cells as Record<string, unknown>[]) || []).map(mapCompareCell),
   };
 }
 
-function mapTraceEvent(raw: Record<string, unknown>): TrialTraceEvent {
+function mapTraceEvent(raw: Record<string, unknown>): TraceEvent {
   return {
     seq: raw.seq as number,
     type: raw.type as string,
@@ -744,23 +763,23 @@ function makePaginated<TRow>(
 
 /**
  * Build the multipart/form-data body both upload routes take: metadata as
- * named parts FIRST, then the bytes as a `file` part. Order matters — the
+ * named parts FIRST, then the bytes as an `archive` part. Order matters — the
  * server refuses a name it will never accept before receiving the upload, and
  * it can only do that if the metadata arrives first.
  */
 function uploadForm(
   fields: Record<string, string | undefined>,
-  file?: { bytes: Uint8Array; filename: string }
+  archive?: { bytes: Uint8Array; filename: string }
 ): FormData {
   const form = new FormData();
   for (const [name, value] of Object.entries(fields)) {
     if (value !== undefined) form.set(name, value);
   }
-  if (file) {
+  if (archive) {
     form.set(
-      "file",
-      new Blob([file.bytes as unknown as BlobPart], { type: "application/gzip" }),
-      file.filename
+      "archive",
+      new Blob([archive.bytes as unknown as BlobPart], { type: "application/gzip" }),
+      archive.filename
     );
   }
   return form;
@@ -883,14 +902,15 @@ async function verifyPackageDigest(res: Response, bytes: Buffer): Promise<void> 
  *
  * THE SERVER DOES NOT GET TO CHOOSE A PATH. This value is joined onto a
  * directory the user picked, so a filename carrying "/" or ".." would write
- * outside it — and the benchmark download's filename interpolates a
+ * outside it — and the dataset download's filename interpolates a
  * user-supplied version label, which makes it attacker-influenced rather than
  * merely server-supplied. basename() strips any directory part, and anything
  * that still looks like a path component, is empty, or is a dot-entry falls
  * back to the caller's own name.
  *
- * One helper for both download surfaces on purpose: exportFilename had the same
- * bug, and a second copy is how one of them gets fixed and the other does not.
+ * One helper for both download surfaces on purpose: the job download had the
+ * same bug, and a second copy is how one of them gets fixed and the other does
+ * not.
  */
 function safeDownloadFilename(res: Response, fallback: string): string {
   const disposition = res.headers.get("Content-Disposition") || "";
@@ -910,30 +930,95 @@ function safeDownloadFilename(res: Response, fallback: string): string {
   return candidate;
 }
 
+/**
+ * Stream a download to `dir` with the full integrity dance, and return the
+ * saved path. ONE implementation for both download surfaces (dataset package
+ * and job archive) — the job download used to do a bare pipeline with no
+ * Content-Length or digest check twelve lines below the hardened package path,
+ * and Python never had that hole because both of its shapes share one helper.
+ *
+ * TEMP-THEN-RENAME. Bytes never appear at the final path until they are
+ * complete AND verified, so a transfer that dies partway leaves nothing a
+ * later run could mistake for the real object. rename within one directory is
+ * atomic on every platform we target.
+ *
+ * THE SUFFIX IS PER CALL, and it is not decoration. Two concurrent downloads
+ * of one object into one directory shared `<file>.part` verbatim: they
+ * interleaved writes into the same file, then the first rename won and the
+ * second died on a bare ENOENT with no hint of why. Worse quietly: each call
+ * hashed ITS OWN stream, so the digest check proved something about bytes that
+ * were never the ones on disk. With a random name per call, each stream owns
+ * its file end to end, the verification covers exactly what gets promoted, and
+ * both callers get the object.
+ *
+ * Hashed WHILE streaming, never buffered: a package can be 512 MB, and reading
+ * it into memory to check a digest would trade one correctness problem for a
+ * heap one.
+ */
+async function downloadToDir(res: Response, dir: string, fallback: string): Promise<string> {
+  if (!res.body) throw new Error("Download response has no body");
+  await mkdir(dir, { recursive: true });
+  const filePath = join(dir, safeDownloadFilename(res, fallback));
+  const { createHash, randomBytes } = await import("crypto");
+  const partPath = `${filePath}.${randomBytes(8).toString("hex")}.part`;
+  const hash = createHash("sha256");
+  let received = 0;
+  const nodeStream = Readable.fromWeb(
+    res.body as import("stream/web").ReadableStream
+  );
+  nodeStream.on("data", (chunk: Buffer) => {
+    hash.update(chunk);
+    received += chunk.length;
+  });
+  try {
+    await pipeline(nodeStream, createWriteStream(partPath));
+    // TRUNCATION. A socket cut mid-body is not an error to fetch — the stream
+    // simply ends — so a short read returned a partial file as success.
+    // Content-Length is the server's own count; disagreeing with it means the
+    // body did not all arrive.
+    const declared = res.headers.get("Content-Length");
+    if (declared !== null && received !== Number(declared)) {
+      throw new EvolveIncompleteDownloadError(Number(declared), received);
+    }
+    const expected = res.headers.get(PACKAGE_DIGEST_HEADER);
+    const actual = hash.digest("hex");
+    if (expected && actual !== expected) {
+      throw new EvolveDigestMismatchError(expected, actual);
+    }
+    await rename(partPath, filePath);
+  } catch (error) {
+    // The partial never gets promoted, and never survives: a file that looks
+    // like the real object and is not is worse than no file at all.
+    await rm(partPath, { force: true }).catch(() => {});
+    throw error;
+  }
+  return filePath;
+}
+
 // =============================================================================
-// BENCHMARKS CLIENT
+// DATASETS CLIENT
 // =============================================================================
 
 /**
- * Create a BenchmarksClient for the shared benchmark catalog.
+ * Create a DatasetsClient for the shared dataset catalog.
  *
  * Requires EVOLVE_API_KEY (or { apiKey } in config).
  *
  * @example
  * ```ts
- * import { benchmarks } from "@evolvingmachines/sdk";
+ * import { datasets } from "@evolvingmachines/sdk";
  *
- * const b = benchmarks();
- * const catalog = await b.list();
- * const deepSwe = await b.get("deep-swe@1.1");
+ * const d = datasets();
+ * const catalog = await d.list();
+ * const deepSwe = await d.get("deep-swe@1.1");
  * ```
  */
-export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
-  const cfg = resolveConfig("benchmarks", config);
+export function datasets(config?: HostedClientConfig): DatasetsClient {
+  const cfg = resolveConfig("datasets", config);
 
-  async function getImport(id: string): Promise<BenchmarkImport> {
-    const res = await request(cfg, `/api/benchmarks/imports/${encodeURIComponent(id)}`);
-    return mapBenchmarkImport((await res.json()) as Record<string, unknown>);
+  async function getImport(id: string): Promise<DatasetImport> {
+    const res = await request(cfg, `/api/datasets/imports/${encodeURIComponent(id)}`);
+    return mapDatasetImport((await res.json()) as Record<string, unknown>);
   }
 
   /**
@@ -941,7 +1026,7 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
    *
    * A missing field and an explicit null mean the same thing to a caller —
    * nothing to watch — so both become null rather than undefined, and a client
-   * never has to distinguish "this server is old" from "this benchmark has no
+   * never has to distinguish "this server is old" from "this dataset has no
    * git source".
    */
   function mapUpstream(raw: unknown): UpstreamStatus | null {
@@ -949,135 +1034,137 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
     const value = raw as Record<string, unknown>;
     return {
       ref: value.ref as string,
-      currentCommit: value.currentCommit as string,
-      latestCommit: (value.latestCommit as string | null) ?? null,
+      current_commit: value.current_commit as string,
+      latest_commit: (value.latest_commit as string | null) ?? null,
       moved: value.moved === true,
-      behindBy: typeof value.behindBy === "number" ? value.behindBy : null,
-      checkedAt: (value.checkedAt as string | null) ?? null,
+      behind_by: typeof value.behind_by === "number" ? value.behind_by : null,
+      checked_at: (value.checked_at as string | null) ?? null,
       error: (value.error as string | null) ?? null,
+      auto_import: value.auto_import === true,
     };
   }
 
-  async function getBenchmark(
+  async function getDataset(
     ref: string,
-    options?: GetBenchmarkOptions
-  ): Promise<Benchmark> {
-    const parsed = parseBenchmarkRef(ref);
+    options?: GetDatasetOptions
+  ): Promise<Dataset> {
+    const parsed = parseDatasetRef(ref);
     const query = pageQuery(options, { version: parsed.version });
     const res = await request(
       cfg,
-      `/api/benchmarks/${encodeURIComponent(parsed.name)}${query}`
+      `/api/datasets/${encodeURIComponent(parsed.name)}${query}`
     );
     const raw = (await res.json()) as Record<string, unknown>;
     return {
       name: raw.name as string,
       title: (raw.title as string | null) ?? null,
       description: (raw.description as string | null) ?? null,
-      // activeVersion is the full version object on every route (list + detail).
-      activeVersion: raw.activeVersion
-        ? mapBenchmarkVersion(raw.activeVersion as Record<string, unknown>)
+      // active_version is the full version object on every route (list + detail).
+      active_version: raw.active_version
+        ? mapDatasetVersion(raw.active_version as Record<string, unknown>)
         : null,
-      versions: ((raw.versions as Record<string, unknown>[]) || []).map(mapBenchmarkVersion),
-      selectedVersion: raw.selectedVersion
-        ? mapBenchmarkVersion(raw.selectedVersion as Record<string, unknown>)
+      versions: ((raw.versions as Record<string, unknown>[]) || []).map(mapDatasetVersion),
+      selected_version: raw.selected_version
+        ? mapDatasetVersion(raw.selected_version as Record<string, unknown>)
         : null,
       tasks: mapPage(raw.tasks, mapTask),
       upstream: mapUpstream(raw.upstream),
-      createdAt: raw.createdAt as string,
-      updatedAt: raw.updatedAt as string,
+      created_at: raw.created_at as string,
+      updated_at: raw.updated_at as string,
     };
   }
 
-  async function listPage(options?: ListBenchmarksOptions): Promise<BenchmarkPage> {
-    const res = await request(cfg, `/api/benchmarks${pageQuery(options)}`);
+  async function listPage(options?: ListDatasetsOptions): Promise<DatasetPage> {
+    const res = await request(cfg, `/api/datasets${pageQuery(options)}`);
     return mapPage((await res.json()) as Record<string, unknown>, (raw) => ({
       name: raw.name as string,
       title: (raw.title as string | null) ?? null,
       description: (raw.description as string | null) ?? null,
-      activeVersion: raw.activeVersion
-        ? mapBenchmarkVersion(raw.activeVersion as Record<string, unknown>)
+      active_version: raw.active_version
+        ? mapDatasetVersion(raw.active_version as Record<string, unknown>)
         : null,
       upstream: mapUpstream(raw.upstream),
     }));
   }
 
   return {
-    list(options?: ListBenchmarksOptions): BenchmarkList {
+    list(options?: ListDatasetsOptions): DatasetList {
       // Await for one page; for-await to walk the catalog across cursor pages.
       return makePaginated(listPage, options);
     },
 
-    get: getBenchmark,
+    get: getDataset,
 
-    async getActive(name: string, options?: GetBenchmarkOptions): Promise<ActiveBenchmark> {
+    async getActive(name: string, options?: GetDatasetOptions): Promise<ActiveDataset> {
       // get(name) with a bare name resolves the active version's task list; the
       // detail route echoes the active version so we can hard-require it here.
-      const bench = await getBenchmark(name, options);
-      if (bench.activeVersion === null) {
+      const dataset = await getDataset(name, options);
+      if (dataset.active_version === null) {
         throw new NoActiveVersionError(name);
       }
       return {
-        name: bench.name,
-        title: bench.title,
-        description: bench.description,
-        activeVersion: bench.activeVersion,
-        version: bench.activeVersion.version,
-        tasks: bench.tasks ?? { items: [], nextCursor: null, hasMore: false },
-        versions: bench.versions ?? [],
-        createdAt: bench.createdAt as string,
-        updatedAt: bench.updatedAt as string,
+        name: dataset.name,
+        title: dataset.title,
+        description: dataset.description,
+        active_version: dataset.active_version,
+        version: dataset.active_version.version,
+        tasks: dataset.tasks ?? { items: [], nextCursor: null, hasMore: false },
+        versions: dataset.versions ?? [],
+        created_at: dataset.created_at as string,
+        updated_at: dataset.updated_at as string,
       };
     },
 
-    async import(input: BenchmarkImportInput): Promise<BenchmarkImport> {
+    async publish(input: PublishDatasetInput): Promise<DatasetImport> {
       const src = input.source;
       // ONE body grammar: multipart/form-data, metadata in named parts. The
-      // corpus is the `file` part; a git source is the gitUrl + ref parts.
-      // Nothing rides the query string, where it would land in access logs.
+      // corpus is the `archive` part; a git source is the git_url + git_ref
+      // parts. Nothing rides the query string, where it would land in access
+      // logs.
       //
-      // The run-time checks below STAY even though BenchmarkImportSource is a
-      // union that makes `{}` and both-at-once uncompilable. The type guards
+      // The run-time checks below STAY even though DatasetSource is a union
+      // that makes `{}` and both-at-once uncompilable. The type guards
       // TypeScript callers; these guard JavaScript ones, and anything that
       // arrived through a JSON.parse — a config file, an HTTP body, a CLI flag
       // — where no type was ever checked.
       if (src?.directory) {
         const { tarGzipDirectory } = await import("./tar");
         const gzipped = tarGzipDirectory(src.directory);
-        const res = await request(cfg, "/api/benchmarks/imports", {
+        const res = await request(cfg, "/api/datasets/publish", {
           method: "POST",
           body: uploadForm(
-            { benchmarkName: input.benchmarkName, version: input.version },
+            { name: input.name, version: input.version },
             { bytes: gzipped, filename: "corpus.tar.gz" }
           ),
         });
-        return mapBenchmarkImport((await res.json()) as Record<string, unknown>);
+        return mapDatasetImport((await res.json()) as Record<string, unknown>);
       }
-      // `"gitUrl" in src` rather than testing both fields: the union makes ref
-      // REQUIRED on the git branch, so a source carrying gitUrl without ref is
-      // already a compile error for a typed caller — and for an untyped one,
-      // the server refuses it with a named param, which is a better error than
-      // this function's generic sentence.
-      if (src && "gitUrl" in src && src.gitUrl) {
-        const res = await request(cfg, "/api/benchmarks/imports", {
+      // `"git_url" in src` rather than testing both fields: the union makes
+      // git_ref REQUIRED on the git branch, so a source carrying git_url
+      // without git_ref is already a compile error for a typed caller — and
+      // for an untyped one, the server refuses it with a named param, which is
+      // a better error than this function's generic sentence.
+      if (src && "git_url" in src && src.git_url) {
+        const res = await request(cfg, "/api/datasets/publish", {
           method: "POST",
           body: uploadForm({
-            benchmarkName: input.benchmarkName,
+            name: input.name,
             version: input.version,
-            gitUrl: src.gitUrl,
-            ref: src.ref,
+            git_url: src.git_url,
+            git_ref: src.git_ref,
           }),
         });
-        return mapBenchmarkImport((await res.json()) as Record<string, unknown>);
+        return mapDatasetImport((await res.json()) as Record<string, unknown>);
       }
       throw new Error(
-        "benchmarks().import() requires either a git source ({ source: { gitUrl, ref } }) " +
-          "or a local corpus directory ({ source: { directory } }), plus benchmarkName and version"
+        "datasets().publish() requires either a git source ({ source: { git_url, git_ref } }) " +
+          "or a local corpus directory ({ source: { directory } }), plus name and version"
       );
     },
 
     getImport,
 
-    async watchImport(id: string, options?: WatchImportOptions): Promise<BenchmarkImport> {
+    async watchImport(id: string, options?: WatchImportOptions): Promise<DatasetImport> {
       const pollIntervalMs = options?.pollIntervalMs ?? DEFAULT_IMPORT_POLL_INTERVAL_MS;
       let lastStatus: string | null = null;
       for (;;) {
@@ -1092,16 +1179,20 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
       }
     },
 
-    downloadPackage: (async (
-      id: string,
-      options?: DownloadPackageOptions
+    download: (async (
+      ref: string,
+      options?: DownloadDatasetOptions
     ): Promise<Buffer | string | ReadableStream<Uint8Array>> => {
-      // Same three delivery shapes as jobs().export(), because it is the same
-      // job for the caller: a potentially large binary that they want in
+      // Same three delivery shapes as jobs().download(), because it is the
+      // same job for the caller: a potentially large binary that they want in
       // memory, on disk, or piped somewhere.
+      const parsed = parseDatasetRef(ref);
+      const query = parsed.version
+        ? `?version=${encodeURIComponent(parsed.version)}`
+        : "";
       const res = await request(
         cfg,
-        `/api/benchmarks/imports/${encodeURIComponent(id)}/package`
+        `/api/datasets/${encodeURIComponent(parsed.name)}/download${query}`
       );
       if (options?.stream) {
         if (!res.body) throw new Error("Package response has no body");
@@ -1111,199 +1202,145 @@ export function benchmarks(config?: HostedClientConfig): BenchmarksClient {
         return res.body as ReadableStream<Uint8Array>;
       }
       if (options?.to) {
-        if (!res.body) throw new Error("Package response has no body");
-        const dir = options.to;
-        await mkdir(dir, { recursive: true });
-        const filePath = join(dir, safeDownloadFilename(res, `import-${id}-corpus.tar.gz`));
-        // TEMP-THEN-RENAME. Bytes never appear at the final path until they are
-        // complete AND verified, so a transfer that dies partway leaves nothing
-        // a later run could mistake for the corpus. rename within one directory
-        // is atomic on every platform we target.
-        //
-        // THE SUFFIX IS PER CALL, and it is not decoration. Two concurrent
-        // downloads of one package into one directory shared `<file>.part`
-        // verbatim: they interleaved writes into the same file, then the first
-        // rename won and the second died on a bare ENOENT with no hint of why.
-        // Worse quietly: each call hashed ITS OWN stream, so the digest check
-        // proved something about bytes that were never the ones on disk. With a
-        // random name per call, each stream owns its file end to end, the
-        // verification covers exactly what gets promoted, and both callers get
-        // the package.
-        const { createHash, randomBytes } = await import("crypto");
-        const partPath = `${filePath}.${randomBytes(8).toString("hex")}.part`;
-        // Hashed WHILE streaming, never buffered: a package can be 512 MB, and
-        // reading it into memory to check a digest would trade one correctness
-        // problem for a heap one.
-        const hash = createHash("sha256");
-        let received = 0;
-        const nodeStream = Readable.fromWeb(
-          res.body as import("stream/web").ReadableStream
-        );
-        nodeStream.on("data", (chunk: Buffer) => {
-          hash.update(chunk);
-          received += chunk.length;
-        });
-        try {
-          await pipeline(nodeStream, createWriteStream(partPath));
-          // TRUNCATION. A socket cut mid-body is not an error to fetch — the
-          // stream simply ends — so a short read returned a partial file as
-          // success. Content-Length is the server's own count; disagreeing with
-          // it means the body did not all arrive.
-          const declared = res.headers.get("Content-Length");
-          if (declared !== null && received !== Number(declared)) {
-            throw new EvolveIncompleteDownloadError(Number(declared), received);
-          }
-          const expected = res.headers.get(PACKAGE_DIGEST_HEADER);
-          const actual = hash.digest("hex");
-          if (expected && actual !== expected) {
-            throw new EvolveDigestMismatchError(expected, actual);
-          }
-          await rename(partPath, filePath);
-        } catch (error) {
-          // The partial never gets promoted, and never survives: a file that
-          // looks like the corpus and is not is worse than no file at all.
-          await rm(partPath, { force: true }).catch(() => {});
-          throw error;
-        }
-        return filePath;
+        return downloadToDir(res, options.to, `${parsed.name}-corpus.tar.gz`);
       }
       const bytes = Buffer.from(await res.arrayBuffer());
       assertCompleteBody(res, bytes.length);
       await verifyPackageDigest(res, bytes);
       return bytes;
-    }) as BenchmarksClient["downloadPackage"],
+    }) as DatasetsClient["download"],
 
-    listImports(options?: ListImportsOptions): BenchmarkImportList {
+    listImports(options?: ListImportsOptions): DatasetImportList {
       // Await for one page; for-await to walk them all across cursor pages.
       return makePaginated(async (opts) => {
         const query = new URLSearchParams();
         if (opts.limit !== undefined) query.set("limit", String(opts.limit));
         if (opts.cursor !== undefined) query.set("cursor", opts.cursor);
         if (options?.status !== undefined) query.set("status", options.status);
-        if (options?.benchmark !== undefined) query.set("benchmark", options.benchmark);
+        if (options?.dataset !== undefined) query.set("dataset", options.dataset);
         const suffix = query.toString() ? `?${query}` : "";
-        const res = await request(cfg, `/api/benchmarks/imports${suffix}`);
-        return mapPage((await res.json()) as Record<string, unknown>, mapBenchmarkImport);
+        const res = await request(cfg, `/api/datasets/imports${suffix}`);
+        return mapPage((await res.json()) as Record<string, unknown>, mapDatasetImport);
       }, options);
     },
 
     async delete(name: string): Promise<void> {
-      // 204 No Content — nothing to map. A benchmark some job still references
-      // is refused with benchmark_in_use, and err.details.sampleJobIds names
+      // 204 No Content — nothing to map. A dataset some job still references
+      // is refused with dataset_in_use, and err.details.sampleJobIds names
       // the jobs blocking it.
-      await request(cfg, `/api/benchmarks/${encodeURIComponent(name)}`, { method: "DELETE" });
+      await request(cfg, `/api/datasets/${encodeURIComponent(name)}`, { method: "DELETE" });
     },
   };
 }
 
 // =============================================================================
-// CUSTOM HARNESSES CLIENT
+// AGENTS CLIENT (bring-your-own)
 // =============================================================================
 
 /**
- * Create a CustomHarnessesClient for the caller's own private harnesses.
+ * Create an AgentsClient for the caller's own private registered agents.
  *
- * Register a harness once, then name it in `agents[].harness` exactly
+ * Register an agent once, then name it in job `agents[].name` exactly
  * like a built-in. Requires EVOLVE_API_KEY (or { apiKey } in config).
  *
  * @example
  * ```ts
- * import { customHarnesses, jobs } from "@evolvingmachines/sdk";
+ * import { agents, jobs } from "@evolvingmachines/sdk";
  *
- * const harnesses = customHarnesses();
- * await harnesses.create({
+ * const registered = agents();
+ * await registered.create({
  *   name: "acme-cli",
- *   installScript: "curl -fsSL https://acme.dev/install.sh | sh",
- *   runCommand: "acme-cli --headless",
+ *   install_script: "curl -fsSL https://acme.dev/install.sh | sh",
+ *   run_command: "acme-cli --headless",
  * });
  *
- * await jobs().run({
- *   benchmark: "deep-swe",
- *   agents: [{ harness: "acme-cli", model: "gpt-5.5" }],
- *   maxTrialSpendUsd: 25,
+ * await jobs().start({
+ *   datasets: [{ name: "deep-swe" }],
+ *   agents: [{ name: "acme-cli", model_name: "gpt-5.5" }],
+ *   max_trial_spend_usd: 25,
  * });
  * ```
  */
-export function customHarnesses(config?: HostedClientConfig): CustomHarnessesClient {
-  const cfg = resolveConfig("customHarnesses", config);
+export function agents(config?: HostedClientConfig): AgentsClient {
+  const cfg = resolveConfig("agents", config);
 
   return {
-    async create(input: CustomHarnessInput): Promise<CustomHarness> {
+    async create(input: AgentInput): Promise<Agent> {
       // ONE body grammar: multipart/form-data. The run command and the declared
       // env are named PARTS — they used to ride the query string of an upload,
       // which put a shell command and a set of environment values into every
       // access log and proxy buffer on the way here.
-      const body = await harnessUploadBody("customHarnesses().create()", input);
-      const res = await request(cfg, "/api/custom-harnesses", { method: "POST", body });
-      return mapCustomHarness((await res.json()) as Record<string, unknown>);
+      const body = await agentUploadBody("agents().create()", input);
+      const res = await request(cfg, "/api/agents", { method: "POST", body });
+      return mapAgent((await res.json()) as Record<string, unknown>);
     },
 
-    list(options?: ListCustomHarnessesOptions): CustomHarnessList {
+    list(options?: ListAgentsOptions): AgentList {
       // Await for one page; for-await to walk them all across cursor pages.
       return makePaginated(async (opts) => {
-        const res = await request(cfg, `/api/custom-harnesses${pageQuery(opts)}`);
-        return mapPage((await res.json()) as Record<string, unknown>, mapCustomHarness);
+        const res = await request(cfg, `/api/agents${pageQuery(opts)}`);
+        return mapPage((await res.json()) as Record<string, unknown>, mapAgent);
       }, options);
     },
 
-    async get(name: string): Promise<CustomHarness> {
-      const res = await request(cfg, `/api/custom-harnesses/${encodeURIComponent(name)}`);
-      return mapCustomHarness((await res.json()) as Record<string, unknown>);
+    async get(name: string): Promise<Agent> {
+      const res = await request(cfg, `/api/agents/${encodeURIComponent(name)}`);
+      return mapAgent((await res.json()) as Record<string, unknown>);
     },
 
     async delete(name: string): Promise<void> {
       // 204 No Content — nothing to map.
-      await request(cfg, `/api/custom-harnesses/${encodeURIComponent(name)}`, {
+      await request(cfg, `/api/agents/${encodeURIComponent(name)}`, {
         method: "DELETE",
       });
     },
 
-    async upsert(name: string, input: CustomHarnessUpsertInput): Promise<CustomHarness> {
+    async upsert(name: string, input: AgentUpsertInput): Promise<Agent> {
       // One request, so the name never briefly stops resolving the way
       // delete()+create() makes it. Same body grammar as create(), minus the
       // name part — the URL carries it.
-      const body = await harnessUploadBody("customHarnesses().upsert()", { ...input, name });
-      const res = await request(cfg, `/api/custom-harnesses/${encodeURIComponent(name)}`, {
+      const body = await agentUploadBody("agents().upsert()", { ...input, name });
+      const res = await request(cfg, `/api/agents/${encodeURIComponent(name)}`, {
         method: "PUT",
         body,
       });
-      return mapCustomHarness((await res.json()) as Record<string, unknown>);
+      return mapAgent((await res.json()) as Record<string, unknown>);
     },
   };
 }
 
 /**
  * The multipart body both create() and upsert() send. Shared because the two
- * differ only in method and URL: one grammar means a harness registered by
+ * differ only in method and URL: one grammar means an agent registered by
  * either route is byte-identical on the wire.
  */
-async function harnessUploadBody(
+async function agentUploadBody(
   caller: string,
-  input: CustomHarnessInput
+  input: AgentInput
 ): Promise<FormData> {
-  // Same division of labour as benchmarks().import(): CustomHarnessSourceInput
-  // is a union, so a TypeScript caller cannot pass both or neither. These
-  // checks are for JavaScript callers and for values that crossed a JSON
-  // boundary with no type behind them.
-  const hasInstallScript = typeof input.installScript === "string";
+  // Same division of labour as datasets().publish(): AgentSourceInput is a
+  // union, so a TypeScript caller cannot pass both or neither. These checks
+  // are for JavaScript callers and for values that crossed a JSON boundary
+  // with no type behind them.
+  const hasInstallScript = typeof input.install_script === "string";
   const hasDirectory = typeof input.directory === "string";
   if (hasInstallScript && hasDirectory) {
     throw new Error(
-      `${caller} takes EITHER an install script ({ installScript }) ` +
+      `${caller} takes EITHER an install script ({ install_script }) ` +
         "or a local directory ({ directory }), not both"
     );
   }
   if (!hasInstallScript && !hasDirectory) {
     throw new Error(
-      `${caller} requires either an install script ({ installScript }) ` +
-        "or a local directory ({ directory }), plus runCommand"
+      `${caller} requires either an install script ({ install_script }) ` +
+        "or a local directory ({ directory }), plus run_command"
     );
   }
   const fields: Record<string, string | undefined> = {
     name: input.name,
-    runCommand: input.runCommand,
+    run_command: input.run_command,
     ...(input.env !== undefined ? { env: JSON.stringify(input.env) } : {}),
-    ...(hasInstallScript ? { installScript: input.installScript } : {}),
+    ...(hasInstallScript ? { install_script: input.install_script } : {}),
   };
   if (hasDirectory) {
     const { tarGzipDirectory } = await import("./tar");
@@ -1327,13 +1364,13 @@ async function harnessUploadBody(
  * import { jobs } from "@evolvingmachines/sdk";
  *
  * const client = jobs();
- * // benchmark: bare name = active version; "name@version" pins a version
- * const job = await client.run({
- *   benchmark: "deep-swe",
- *   agents: [{ harness: "codex", model: "gpt-5.5" }],
- *   runsPerTask: 1,
- *   concurrency: 4,
- *   maxTrialSpendUsd: 25,
+ * // datasets: bare name = active version; { name, version } pins one
+ * const job = await client.start({
+ *   datasets: [{ name: "deep-swe" }],
+ *   agents: [{ name: "codex", model_name: "gpt-5.5" }],
+ *   n_attempts: 1,
+ *   n_concurrent_trials: 4,
+ *   max_trial_spend_usd: 25,
  * });
  * const final = await client.watch(job.id, {
  *   onEvent: (event) => console.log(event.type, event.data),
@@ -1363,56 +1400,6 @@ export function jobs(config?: HostedClientConfig): JobsClient {
     const res = await request(cfg, `/api/jobs/${encodeURIComponent(id)}/trials${query}`);
     return mapPage((await res.json()) as Record<string, unknown>, mapTrial);
   }
-
-  async function getTrialTrace(
-    id: string,
-    trialId: string,
-    options?: TrialTraceOptions
-  ): Promise<TrialTracePage> {
-    const res = await request(
-      cfg,
-      `/api/jobs/${encodeURIComponent(id)}/trials/${encodeURIComponent(trialId)}/trace${pageQuery(options)}`
-    );
-    return mapPage((await res.json()) as Record<string, unknown>, mapTraceEvent);
-  }
-
-  /**
-   * One raw trace artifact for a trial, by the trace route's ?stream=
-   * selector: "verifier" | "trace-stdout" | "trace-stderr" answer
-   * { log: string | null }; "agent-home" (the CLI's whole home folder,
-   * subagent transcripts included by construction) answers
-   * { files: Record<sandbox-path, text> | null }. Null = never stored
-   * (normal answer, not an error): a QUEUED/CANCELLED trial, a harness that
-   * wrote nothing, or a purged trace.
-   */
-  async function getTrialArtifact(
-    id: string,
-    trialId: string,
-    stream: "verifier" | "trace-stdout" | "trace-stderr"
-  ): Promise<string | null>;
-  async function getTrialArtifact(
-    id: string,
-    trialId: string,
-    stream: "agent-home"
-  ): Promise<Record<string, string> | null>;
-  async function getTrialArtifact(
-    id: string,
-    trialId: string,
-    stream: "verifier" | "trace-stdout" | "trace-stderr" | "agent-home"
-  ): Promise<string | Record<string, string> | null> {
-    const res = await request(
-      cfg,
-      `/api/jobs/${encodeURIComponent(id)}/trials/${encodeURIComponent(trialId)}/trace?stream=${stream}`
-    );
-    const body = (await res.json()) as { log?: string | null; files?: Record<string, string> | null };
-    return stream === "agent-home" ? (body.files ?? null) : (body.log ?? null);
-  }
-
-  async function exportResponse(id: string, format?: "harbor"): Promise<Response> {
-    const qs = format ? `?format=${encodeURIComponent(format)}` : "";
-    return request(cfg, `/api/jobs/${encodeURIComponent(id)}/export${qs}`);
-  }
-
 
   /**
    * Drive the SSE watch stream, yielding each event and returning the final
@@ -1479,7 +1466,7 @@ export function jobs(config?: HostedClientConfig): JobsClient {
         // The ONE place the wire crosses into the typed union, and it belongs
         // here rather than at every call site: the server is the authority on
         // which `type` carries which `data`, and every member of JobEvent was
-        // read off its emit site. A frame whose type is not in the union still
+        // read off the contract. A frame whose type is not in the union still
         // flows through (an older or newer server may send one) — it simply
         // will not narrow to a known member for the caller.
         const event = {
@@ -1537,7 +1524,7 @@ export function jobs(config?: HostedClientConfig): JobsClient {
   }
 
   return {
-    async run(input: JobInput, options?: RunJobOptions): Promise<Job> {
+    async start(input: JobCreate, options?: StartJobOptions): Promise<Job> {
       const res = await request(cfg, "/api/jobs", {
         method: "POST",
         headers: {
@@ -1568,37 +1555,6 @@ export function jobs(config?: HostedClientConfig): JobsClient {
       );
     },
 
-    async trial(id: string, trialId: string): Promise<TrialDetail> {
-      const res = await request(
-        cfg,
-        `/api/jobs/${encodeURIComponent(id)}/trials/${encodeURIComponent(trialId)}`
-      );
-      const raw = (await res.json()) as Record<string, unknown>;
-      return {
-        ...mapTrial(raw),
-        jobId: raw.jobId as string,
-      };
-    },
-
-    trialTrace: getTrialTrace,
-    trialArtifact: getTrialArtifact,
-
-    async *trialTraceEvents(
-      id: string,
-      trialId: string,
-      options?: TrialTraceOptions
-    ): AsyncIterableIterator<TrialTraceEvent> {
-      let cursor = options?.cursor;
-      for (;;) {
-        const page = await getTrialTrace(id, trialId, { cursor, limit: options?.limit });
-        for (const event of page.items) yield event;
-        // Drained: nextCursor is null when there is no next page, which now
-        // says "caught up" rather than echoing the position back.
-        if (!page.nextCursor) return;
-        cursor = page.nextCursor;
-      }
-    },
-
     watch(id: string, options?: WatchJobOptions): JobWatch {
       // Dual-use handle: await it for the final Job, or `for await` its
       // events. onEvent (when given) fires from the generator in both forms.
@@ -1612,7 +1568,7 @@ export function jobs(config?: HostedClientConfig): JobsClient {
       return mapJob((await res.json()) as Record<string, unknown>);
     },
 
-    async compare(ids: string[]): Promise<JobComparison> {
+    async compare(ids: string[]): Promise<CompareResponse> {
       const idsQuery = ids.map(encodeURIComponent).join(",");
       const res = await request(cfg, `/api/jobs/compare?ids=${idsQuery}`);
       const data = (await res.json()) as {
@@ -1620,102 +1576,171 @@ export function jobs(config?: HostedClientConfig): JobsClient {
         taskMatrix?: Record<string, unknown>[];
       };
       return {
-        jobs: (data.jobs || []).map(mapComparisonAggregate),
-        taskMatrix: (data.taskMatrix || []).map(mapComparisonTaskRow),
+        jobs: (data.jobs || []).map(mapCompareJobAggregate),
+        taskMatrix: (data.taskMatrix || []).map(mapCompareTaskRow),
       };
     },
 
-    async rerunFailed(id: string, options?: RunJobOptions): Promise<Job> {
+    async resume(
+      id: string,
+      req?: ResumeRequest,
+      options?: StartJobOptions
+    ): Promise<Job> {
       const res = await request(
         cfg,
-        `/api/jobs/${encodeURIComponent(id)}/rerun-failed`,
+        `/api/jobs/${encodeURIComponent(id)}/resume`,
         {
           method: "POST",
-          headers: options?.idempotencyKey
-            ? { "Idempotency-Key": options.idempotencyKey }
-            : undefined,
+          headers: {
+            "Content-Type": "application/json",
+            ...(options?.idempotencyKey
+              ? { "Idempotency-Key": options.idempotencyKey }
+              : {}),
+          },
+          body: JSON.stringify(req ?? {}),
         }
       );
       return mapJob((await res.json()) as Record<string, unknown>);
     },
 
-    async regrade(id: string, options?: RegradeOptions): Promise<RegradeJob> {
+    async regrade(id: string, req?: RegradeRequest): Promise<Job> {
+      // A regrade IS a job: the response is the ordinary job body with
+      // source_jobs recording {action: "regrade"} — view it with get().
       const body: Record<string, unknown> = {};
-      if (options?.status?.length) body.status = options.status;
-      if (options?.taskKey !== undefined) body.taskKey = options.taskKey;
+      if (req?.statuses?.length) body.statuses = req.statuses;
+      if (req?.task_name !== undefined) body.task_name = req.task_name;
       const res = await request(cfg, `/api/jobs/${encodeURIComponent(id)}/regrade`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      return mapRegradeJob((await res.json()) as Record<string, unknown>);
+      return mapJob((await res.json()) as Record<string, unknown>);
     },
 
-    async regradeTrial(id: string, trialId: string): Promise<RegradeJob> {
-      const res = await request(
-        cfg,
-        `/api/jobs/${encodeURIComponent(id)}/trials/${encodeURIComponent(trialId)}/regrade`,
-        { method: "POST" }
-      );
-      return mapRegradeJob((await res.json()) as Record<string, unknown>);
-    },
-
-    listRegrades(options?: ListRegradesOptions): RegradeList {
-      // Await for one page; for-await to walk every regrade across cursors.
-      // ?jobId= rides along on every page fetch, exactly as the trials list
-      // carries its status filter.
-      return makePaginated(
-        async (opts) => {
-          const res = await request(
-            cfg,
-            `/api/regrades${pageQuery(opts, { jobId: options?.jobId })}`
-          );
-          const body = (await res.json()) as {
-            items: Record<string, unknown>[];
-            nextCursor: string | null;
-            hasMore: boolean;
-          };
-          return {
-            items: body.items.map(mapRegradeJob),
-            nextCursor: body.nextCursor,
-            hasMore: body.hasMore,
-          };
-        },
-        options
-      );
-    },
-
-    async getRegrade(regradeId: string, options?: RegradeJobOptions): Promise<RegradeJob> {
-      const res = await request(
-        cfg,
-        `/api/regrades/${encodeURIComponent(regradeId)}${pageQuery(options)}`
-      );
-      return mapRegradeJob((await res.json()) as Record<string, unknown>);
-    },
-
-    export: (async (
+    download: (async (
       id: string,
-      options?: ExportJobOptions
+      options?: DownloadJobOptions
     ): Promise<Buffer | string | ReadableStream<Uint8Array>> => {
-      const res = await exportResponse(id, options?.format);
+      const res = await request(cfg, `/api/jobs/${encodeURIComponent(id)}/download`);
       if (options?.stream) {
-        if (!res.body) throw new Error("Export response has no body");
+        if (!res.body) throw new Error("Download response has no body");
         return res.body as ReadableStream<Uint8Array>;
       }
       if (options?.to) {
-        if (!res.body) throw new Error("Export response has no body");
-        const dir = options.to;
-        await mkdir(dir, { recursive: true });
-        const filePath = join(dir, safeDownloadFilename(res, `job-${id}-export.json.gz`));
-        const nodeStream = Readable.fromWeb(
-          res.body as import("stream/web").ReadableStream
-        );
-        await pipeline(nodeStream, createWriteStream(filePath));
-        return filePath;
+        // The same hardened path as the dataset package download — this shape
+        // used to skip both the truncation and the digest check while the
+        // package path twelve lines away did the full dance.
+        return downloadToDir(res, options.to, `job-${id}-results.tar.gz`);
       }
-      const bytes = await res.arrayBuffer();
-      return Buffer.from(bytes);
-    }) as JobsClient["export"],
+      const bytes = Buffer.from(await res.arrayBuffer());
+      assertCompleteBody(res, bytes.length);
+      await verifyPackageDigest(res, bytes);
+      return bytes;
+    }) as JobsClient["download"],
+  };
+}
+
+// =============================================================================
+// TRIALS CLIENT (globally addressable)
+// =============================================================================
+
+/**
+ * Create a TrialsClient. A trial id is globally addressable — no method here
+ * takes a job id; the trial body carries `job_id` as the reverse pointer.
+ *
+ * Requires EVOLVE_API_KEY (or { apiKey } in config).
+ */
+export function trials(config?: HostedClientConfig): TrialsClient {
+  const cfg = resolveConfig("trials", config);
+
+  async function getTrace(
+    trialId: string,
+    options?: TraceOptions
+  ): Promise<TraceEventPage> {
+    const res = await request(
+      cfg,
+      `/api/trials/${encodeURIComponent(trialId)}/trace${pageQuery(options)}`
+    );
+    return mapPage((await res.json()) as Record<string, unknown>, mapTraceEvent);
+  }
+
+  /**
+   * One raw trace artifact for a trial, by the trace route's ?stream=
+   * selector: "verifier" | "trace-stdout" | "trace-stderr" answer
+   * { log: string | null }; "agent-home" (the CLI's whole home folder,
+   * subagent transcripts included by construction) answers
+   * { files: Record<sandbox-path, text> | null }. Null = never stored
+   * (normal answer, not an error): a QUEUED/CANCELLED trial, a harness that
+   * wrote nothing, or a purged trace.
+   */
+  async function getArtifact(
+    trialId: string,
+    stream: "verifier" | "trace-stdout" | "trace-stderr"
+  ): Promise<string | null>;
+  async function getArtifact(
+    trialId: string,
+    stream: "agent-home"
+  ): Promise<Record<string, string> | null>;
+  async function getArtifact(
+    trialId: string,
+    stream: "verifier" | "trace-stdout" | "trace-stderr" | "agent-home"
+  ): Promise<string | Record<string, string> | null> {
+    const res = await request(
+      cfg,
+      `/api/trials/${encodeURIComponent(trialId)}/trace?stream=${stream}`
+    );
+    const body = (await res.json()) as { log?: string | null; files?: Record<string, string> | null };
+    return stream === "agent-home" ? (body.files ?? null) : (body.log ?? null);
+  }
+
+  return {
+    async get(trialId: string): Promise<Trial> {
+      const res = await request(cfg, `/api/trials/${encodeURIComponent(trialId)}`);
+      return mapTrial((await res.json()) as Record<string, unknown>);
+    },
+
+    trace: getTrace,
+    artifact: getArtifact,
+
+    async *traceEvents(
+      trialId: string,
+      options?: TraceOptions
+    ): AsyncIterableIterator<TraceEvent> {
+      let cursor = options?.cursor;
+      for (;;) {
+        const page = await getTrace(trialId, { cursor, limit: options?.limit });
+        for (const event of page.items) yield event;
+        // Drained: nextCursor is null when there is no next page, which says
+        // "caught up" rather than echoing the position back.
+        if (!page.nextCursor) return;
+        cursor = page.nextCursor;
+      }
+    },
+
+    async regrade(trialId: string): Promise<Job> {
+      // A one-trial regrade is still a JOB — same body, source_jobs recording
+      // the provenance.
+      const res = await request(
+        cfg,
+        `/api/trials/${encodeURIComponent(trialId)}/regrade`,
+        { method: "POST" }
+      );
+      return mapJob((await res.json()) as Record<string, unknown>);
+    },
+
+    async stop(trialIds: string[]): Promise<StopResponse> {
+      const res = await request(cfg, "/api/trials/stop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trial_ids: trialIds }),
+      });
+      const body = (await res.json()) as Record<string, unknown>;
+      return {
+        stopped: ((body.stopped as Record<string, unknown>[]) ?? []).map(mapTrial),
+        already_terminal: (body.already_terminal as string[]) ?? [],
+        not_found: (body.not_found as string[]) ?? [],
+      };
+    },
   };
 }
 
@@ -1737,39 +1762,41 @@ function safeJsonParse(text: string): Record<string, unknown> {
 /**
  * The hosted surface, configured once.
  *
- * The three factories are the right decomposition — a benchmark catalog, your
- * own harness registrations, and jobs are three genuinely different lifetimes —
- * but they made you say the same thing three times:
+ * The four factories are the right decomposition — a dataset catalog, your own
+ * agent registrations, jobs, and globally addressable trials are genuinely
+ * different lifetimes — but they made you say the same thing four times:
  *
- *   const b = benchmarks({ apiKey, baseUrl });
- *   const h = customHarnesses({ apiKey, baseUrl });   // again
- *   const j = jobs({ apiKey, baseUrl });              // and again
+ *   const d = datasets({ apiKey, baseUrl });
+ *   const a = agents({ apiKey, baseUrl });     // again
+ *   const j = jobs({ apiKey, baseUrl });       // and again
  *
  * and any one of those going out of sync with the others is a bug that looks
  * like a permissions problem. One door, one config:
  *
  *   const evolve = hosted({ apiKey });
- *   const catalog = await evolve.benchmarks.list();
- *   const job = await evolve.jobs.run({ ... });
+ *   const catalog = await evolve.datasets.list();
+ *   const job = await evolve.jobs.start({ ... });
  *
- * The three clients are built LAZILY, on first access. That matters because
- * they throw when no API key is present, and `meta()` needs no key at all — so
+ * The clients are built LAZILY, on first access. That matters because they
+ * throw when no API key is present, and `meta()` needs no key at all — so
  * `hosted().meta()` works on a signed-out page, while `hosted().jobs` still
  * fails loudly and immediately the moment you reach for something that does
  * need credentials.
  */
 export interface HostedEvolve {
-  /** The benchmark catalog: list, get, import, delete. */
-  readonly benchmarks: BenchmarksClient;
-  /** Your own bring-your-own harness registrations. */
-  readonly customHarnesses: CustomHarnessesClient;
-  /** Jobs: run, watch, compare, regrade, export. */
+  /** The dataset catalog: list, get, publish, download, delete. */
+  readonly datasets: DatasetsClient;
+  /** Your own bring-your-own agent registrations. */
+  readonly agents: AgentsClient;
+  /** Jobs: start, watch, compare, resume, regrade, download. */
   readonly jobs: JobsClient;
+  /** Globally addressable trials: get, trace, artifact, regrade, stop. */
+  readonly trials: TrialsClient;
   /**
-   * The capability document — every harness, provider, status, limit, and
+   * The capability document — every agent, provider, status, limit, and
    * error code the platform supports. Public: no API key required.
    *
-   * Fetch it once and stop hardcoding. It is what tells you the legal harness
+   * Fetch it once and stop hardcoding. It is what tells you the legal agent
    * names without having to send a bad one and read the 400.
    */
   meta(): Promise<CapabilityDocument>;
@@ -1787,28 +1814,32 @@ export interface HostedEvolve {
  * ```ts
  * import { hosted } from "@evolvingmachines/sdk";
  *
- * const evolve = hosted();                       // EVOLVE_API_KEY from env
- * const { harnesses } = await evolve.meta();     // no key needed for this one
- * const job = await evolve.jobs.run({
- *   benchmark: "deep-swe",
- *   agents: [{ harness: "claude", model: harnesses[0].defaultModel! }],
+ * const evolve = hosted();                    // EVOLVE_API_KEY from env
+ * const { agents } = await evolve.meta();     // no key needed for this one
+ * const job = await evolve.jobs.start({
+ *   datasets: [{ name: "deep-swe" }],
+ *   agents: [{ name: "claude", model_name: "claude-fable-5" }],
  * });
  * ```
  */
 export function hosted(config?: HostedClientConfig): HostedEvolve {
-  let benchmarksClient: BenchmarksClient | undefined;
-  let customHarnessesClient: CustomHarnessesClient | undefined;
+  let datasetsClient: DatasetsClient | undefined;
+  let agentsClient: AgentsClient | undefined;
   let jobsClient: JobsClient | undefined;
+  let trialsClient: TrialsClient | undefined;
 
   return {
-    get benchmarks(): BenchmarksClient {
-      return (benchmarksClient ??= benchmarks(config));
+    get datasets(): DatasetsClient {
+      return (datasetsClient ??= datasets(config));
     },
-    get customHarnesses(): CustomHarnessesClient {
-      return (customHarnessesClient ??= customHarnesses(config));
+    get agents(): AgentsClient {
+      return (agentsClient ??= agents(config));
     },
     get jobs(): JobsClient {
       return (jobsClient ??= jobs(config));
+    },
+    get trials(): TrialsClient {
+      return (trialsClient ??= trials(config));
     },
     meta(): Promise<CapabilityDocument> {
       return meta(config);
@@ -1821,7 +1852,7 @@ export function hosted(config?: HostedClientConfig): HostedEvolve {
  *
  * NO API KEY. The document is the same information the docs publish, and
  * requiring credentials would mean a signed-out page could not populate its own
- * harness picker — so this is the one hosted call that takes only a base URL.
+ * agent picker — so this is the one hosted call that takes only a base URL.
  */
 export async function meta(config?: HostedClientConfig): Promise<CapabilityDocument> {
   const baseUrl = (

@@ -53,3 +53,6 @@ cookbooks/python/agent-builder/
 docs-site/.next/
 docs-site/out/
 docs-site/content
+
+# Staged copy of the repo-root API contract (built artifact)
+packages/sdk-ts/spec/

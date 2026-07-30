@@ -9,11 +9,11 @@
  * codes. It drifted exactly that way once (`upstream_not_watchable` shipped
  * server-side and reached neither SDK).
  *
- * The referee is hosted-error-codes.json at the package root: a checked-in copy
- * of the server's HOSTED_API_ERROR_CODES that the dashboard's own test
- * regenerates and diffs. So the chain is server -> json (proven in the
- * dashboard repo) -> this SDK (proven here) -> Python (proven in its own test
- * against the same file). No link is a copy nobody checks.
+ * The referee is hosted-error-codes.json at the package root: the shadow of
+ * the contract's ErrorCode enum (spec/openapi.yaml), which the server's own
+ * test regenerates and diffs. So the chain is spec -> json (proven here) ->
+ * this SDK (proven here) -> Python (proven in its own test against the same
+ * file). No link is a copy nobody checks.
  *
  * Read from src, not dist: a drift detector that can pass against a stale build
  * is not a detector.
@@ -56,6 +56,23 @@ const referee = JSON.parse(readFileSync(REFEREE_PATH, "utf8")) as {
 assert(
   Array.isArray(referee.codes) && referee.codes.length > 10,
   `hosted-error-codes.json carries a vocabulary (${referee.codes?.length} codes)`,
+);
+
+// THE JSON'S OWN PROVENANCE. Its $comment claims the contract's ErrorCode enum
+// owns the vocabulary; this proves the claim instead of trusting it. The spec
+// lives at the repo root and ships in the published package (files: spec/), so
+// the same check runs against a published tarball.
+const SPEC_PATH = join(PACKAGE_ROOT, "..", "..", "spec", "openapi.yaml");
+const specText = readFileSync(SPEC_PATH, "utf8");
+const enumBlock = specText.split("    ErrorCode:")[1]?.split("\n    Error:")[0] ?? "";
+const specCodes = [...enumBlock.matchAll(/^\s+- ([a-z_]+)\s*(?:#.*)?$/gm)].map((m) => m[1]);
+assert(
+  JSON.stringify(specCodes) === JSON.stringify(referee.codes),
+  specCodes.length === referee.codes.length &&
+    specCodes.every((code, i) => code === referee.codes[i])
+    ? `hosted-error-codes.json is the contract's ErrorCode enum, in its order (${specCodes.length} codes)`
+    : "hosted-error-codes.json drifted from the contract's ErrorCode enum " +
+        `(spec has ${specCodes.length}, json has ${referee.codes.length})`,
 );
 
 const missing = referee.codes.filter(

@@ -1,20 +1,18 @@
 """
 Unit tests for the hosted SDK's ergonomics work, and for TS/Python parity.
 
-Parity is a law on this surface, and it was broken in one visible place:
-TypeScript's ``jobs().watch()`` was a single dual-use handle (await it OR
-iterate it) while Python had ``watch()`` plus ``watch_iter()``. Python already
-spelled the dual-use idiom for ``list()``, so the split made the SDK disagree
-with itself as well as with TypeScript. ``watch()`` is now the dual-use handle
-in both, and ``watch_iter()`` remains as an alias.
+Parity is a law on this surface. ``watch()`` is the ONE dual-use handle in
+both languages (await it OR iterate it) — the deprecated ``watch_iter`` split
+is gone, so the SDK cannot disagree with itself or with TypeScript again.
 
 Also covers:
 - EvolveAPIError carrying param / details / retry_after_sec / request_id, and
   the truncation law (short sentence, complete data)
-- the closed error-code vocabulary
-- the missing verbs: list_imports, benchmarks.delete, custom_harnesses.upsert
+- the closed error-code vocabulary, asserted against the TypeScript list AND
+  the Python Literal
+- list_imports filters, datasets.delete, agents.upsert
 - hosted() as one front door, with meta() reachable without an API key
-- upstream version awareness on a benchmark
+- upstream version awareness on a dataset
 
 Mocks urllib at the module boundary; no real network calls.
 """
@@ -30,8 +28,8 @@ from evolve import (
     HostedClientConfig,
     HOSTED_ERROR_CODES,
     UpstreamStatus,
-    benchmarks as benchmarks_factory,
-    custom_harnesses as custom_harnesses_factory,
+    agents as agents_factory,
+    datasets as datasets_factory,
     hosted,
     is_hosted_error_code,
     jobs as jobs_factory,
@@ -102,13 +100,13 @@ class TestErrorEnvelope:
     @pytest.mark.asyncio
     async def test_carries_param_details_and_request_id(self):
         """The refusal's machine-readable half, not just its sentence."""
-        refused = [{'taskKey': f't{i}', 'reason': 'no dockerd'} for i in range(11)]
+        refused = [{'task_name': f't{i}', 'reason': 'no dockerd'} for i in range(11)]
         error_body = {
             'error': {
                 'code': 'provider_unsupported',
                 'message': '11 of 40 tasks cannot run on modal: t0; t1; t2; and 8 more',
-                'param': 'sandboxProvider',
-                'details': {'provider': 'modal', 'refusedTasks': refused},
+                'param': 'sandbox_provider',
+                'details': {'provider': 'modal', 'refused_tasks': refused},
                 'requestId': 'req_abc123',
             }
         }
@@ -118,16 +116,16 @@ class TestErrorEnvelope:
 
         with patch('evolve.hosted.urllib.request.urlopen', fake):
             with pytest.raises(EvolveAPIError) as caught:
-                await benchmarks_factory(CONFIG).list()
+                await datasets_factory(CONFIG).list()
 
         err = caught.value
         assert err.code == 'provider_unsupported'
-        assert err.param == 'sandboxProvider'
+        assert err.param == 'sandbox_provider'
         assert err.request_id == 'req_abc123'
         # The truncation law: the message named three, the data has all eleven.
         assert 'and 8 more' in str(err)
-        assert len(err.details['refusedTasks']) == 11
-        assert err.details['refusedTasks'][10]['taskKey'] == 't10'
+        assert len(err.details['refused_tasks']) == 11
+        assert err.details['refused_tasks'][10]['task_name'] == 't10'
 
     @pytest.mark.asyncio
     async def test_retry_after_falls_back_to_the_header(self):
@@ -140,7 +138,7 @@ class TestErrorEnvelope:
 
         with patch('evolve.hosted.urllib.request.urlopen', fake):
             with pytest.raises(EvolveAPIError) as caught:
-                await benchmarks_factory(CONFIG).list()
+                await datasets_factory(CONFIG).list()
 
         assert caught.value.retry_after_sec == 12
         assert caught.value.request_id == 'req_hdr'
@@ -157,13 +155,14 @@ class TestErrorEnvelope:
 
         with patch('evolve.hosted.urllib.request.urlopen', fake):
             with pytest.raises(EvolveAPIError) as caught:
-                await benchmarks_factory(CONFIG).list()
+                await datasets_factory(CONFIG).list()
 
         assert caught.value.code == 'unknown_error'
         assert not caught.value.is_known_code()
 
     def test_the_code_vocabulary_is_closed_and_exported(self):
         assert 'insufficient_credits' in HOSTED_ERROR_CODES
+        assert 'dataset_not_found' in HOSTED_ERROR_CODES
         assert not is_hosted_error_code('insufficient_creidts')
         assert len(set(HOSTED_ERROR_CODES)) == len(HOSTED_ERROR_CODES)
 
@@ -185,8 +184,8 @@ class TestErrorEnvelope:
         # THE LITERAL TOO. Python states the vocabulary TWICE — once as the
         # runtime tuple above, once as the HostedErrorCode Literal a type
         # checker reads — and only the tuple was asserted. A code deleted from
-        # the Literal alone left 76 green tests and a type that silently
-        # rejected a code the server can actually send.
+        # the Literal alone left green tests and a type that silently rejected
+        # a code the server can actually send.
         py_source = (
             Path(__file__).resolve().parents[1].parent / 'evolve' / 'hosted.py'
         ).read_text()
@@ -202,48 +201,48 @@ class TestErrorEnvelope:
 
 
 # =============================================================================
-# THE MISSING VERBS
+# THE FIND-IT-AGAIN AND REPLACE-IN-ONE-CALL VERBS
 # =============================================================================
 
 class TestMissingVerbs:
     @pytest.mark.asyncio
     async def test_list_imports_passes_its_filters(self):
         """Lose the 202's id and an import used to be unwatchable forever."""
-        fake = FakeUrlopen([('/api/benchmarks/imports', EMPTY_PAGE)])
+        fake = FakeUrlopen([('/api/datasets/imports', EMPTY_PAGE)])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
-            await benchmarks_factory(CONFIG).list_imports(
-                status='FAILED', benchmark='deep-swe', limit=10
+            await datasets_factory(CONFIG).list_imports(
+                status='FAILED', dataset='deep-swe', limit=10
             )
 
         url = fake.requests[0].full_url
-        assert '/api/benchmarks/imports' in url
+        assert '/api/datasets/imports' in url
         assert 'status=FAILED' in url
-        assert 'benchmark=deep-swe' in url
+        assert 'dataset=deep-swe' in url
         assert 'limit=10' in url
 
     @pytest.mark.asyncio
-    async def test_benchmark_delete_sends_delete(self):
-        fake = FakeUrlopen([('/api/benchmarks/typo', {})])
+    async def test_dataset_delete_sends_delete(self):
+        fake = FakeUrlopen([('/api/datasets/typo', {})])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
-            await benchmarks_factory(CONFIG).delete('typo')
+            await datasets_factory(CONFIG).delete('typo')
 
         assert fake.requests[0].get_method() == 'DELETE'
-        assert fake.requests[0].full_url.endswith('/api/benchmarks/typo')
+        assert fake.requests[0].full_url.endswith('/api/datasets/typo')
 
     @pytest.mark.asyncio
     async def test_upsert_is_one_put_with_the_name_in_the_path(self):
-        """delete()+create() leaves a window where the harness does not exist."""
-        harness = {
+        """delete()+create() leaves a window where the agent does not exist."""
+        agent = {
             'name': 'my-agent',
             'source': 'install_script',
-            'runCommand': 'x',
+            'run_command': 'x',
             'env': {},
-            'createdAt': '',
-            'updatedAt': '',
+            'created_at': '',
+            'updated_at': '',
         }
-        fake = FakeUrlopen([('/api/custom-harnesses/my-agent', harness)])
+        fake = FakeUrlopen([('/api/agents/my-agent', agent)])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
-            await custom_harnesses_factory(CONFIG).upsert(
+            await agents_factory(CONFIG).upsert(
                 'my-agent',
                 run_command='my-agent --headless',
                 install_script='curl -fsSL https://example.test/install.sh | sh',
@@ -251,12 +250,12 @@ class TestMissingVerbs:
 
         assert len(fake.requests) == 1, 'exactly one call — no delete-then-create window'
         assert fake.requests[0].get_method() == 'PUT'
-        assert fake.requests[0].full_url.endswith('/api/custom-harnesses/my-agent')
+        assert fake.requests[0].full_url.endswith('/api/agents/my-agent')
         assert 'multipart/form-data' in fake.requests[0].get_header('Content-type')
 
     @pytest.mark.asyncio
     async def test_upsert_refuses_a_bad_source_before_sending_anything(self):
-        client = custom_harnesses_factory(CONFIG)
+        client = agents_factory(CONFIG)
         with pytest.raises(ValueError):
             await client.upsert('a', run_command='x', install_script='y', directory='/tmp')
         with pytest.raises(ValueError):
@@ -281,12 +280,14 @@ class TestWatchParity:
         handle = jobs_factory(CONFIG).watch('job-1')
         assert not inspect.iscoroutine(handle)
 
-    def test_watch_iter_still_exists_for_existing_code(self):
-        client = jobs_factory(CONFIG)
-        assert callable(client.watch_iter)
+    def test_watch_iter_is_gone(self):
+        """The deprecated split verb was deleted with the breaking wave —
+        carrying a second spelling of watch() through a rename would have
+        preserved the exact asymmetry the dual-use handle closed."""
+        assert not hasattr(jobs_factory(CONFIG), 'watch_iter')
 
     def test_list_uses_the_same_dual_use_idiom(self):
-        """Which is the internal consistency argument for changing watch()."""
+        """Which is the internal consistency argument for the watch() shape."""
         handle = jobs_factory(CONFIG).list()
         assert hasattr(handle, '__await__')
         assert hasattr(handle, '__aiter__')
@@ -299,43 +300,42 @@ class TestWatchParity:
 class TestFrontDoor:
     @pytest.mark.asyncio
     async def test_config_is_passed_once(self):
-        fake = FakeUrlopen([('/api/benchmarks', EMPTY_PAGE)])
+        fake = FakeUrlopen([('/api/datasets', EMPTY_PAGE)])
         client = hosted(CONFIG)
         with patch('evolve.hosted.urllib.request.urlopen', fake):
-            await client.benchmarks.list()
+            await client.datasets.list()
 
         assert fake.requests[0].full_url.startswith('https://api.test')
         assert fake.requests[0].get_header('Authorization') == 'Bearer test-key'
 
     def test_clients_are_built_once_and_reused(self):
         client = hosted(CONFIG)
-        assert client.benchmarks is client.benchmarks
+        assert client.datasets is client.datasets
         assert client.jobs is client.jobs
-        assert client.custom_harnesses is client.custom_harnesses
+        assert client.agents is client.agents
+        assert client.trials is client.trials
 
     @pytest.mark.asyncio
     async def test_meta_needs_no_api_key(self, monkeypatch):
-        """A signed-out page has to be able to populate its own harness picker."""
+        """A signed-out page has to be able to populate its own agent picker."""
         monkeypatch.delenv('EVOLVE_API_KEY', raising=False)
         document = {
-            'schemaVersion': 1,
-            'harnesses': [
+            'schema_version': 3,
+            'agents': [
                 {
                     'name': 'claude',
-                    'runnable': True,
-                    'reason': None,
-                    'defaultModel': 'opus',
-                    'models': [{'alias': 'opus', 'modelId': 'claude-opus', 'description': 'x'}],
-                    'versionPinnable': True,
-                    'latestVersion': '1.2.3',
+                    'effort_support': True,
+                    'version_pinnable': True,
+                    'latest_version': '1.2.3',
                 }
             ],
-            'customHarnesses': {'maxPerUser': 25},
-            'sandboxProviders': [
-                {'name': 'e2b', 'default': True, 'sizing': {'maxCpus': 8}, 'refuses': []}
+            'agent_registration': {'max_per_user': 25},
+            'sandbox_providers': [
+                {'name': 'e2b', 'default': True, 'sizing': {'max_cpus': 8}, 'refuses': []}
             ],
-            'platformConstraints': [],
-            'networkModes': ['no-network'],
+            'managed_providers': ['e2b'],
+            'platform_constraints': [],
+            'network_modes': ['no-network'],
             'statuses': {
                 'job': {
                     'values': ['QUEUED', 'COMPLETED'],
@@ -343,8 +343,9 @@ class TestFrontDoor:
                     'description': 'x',
                 }
             },
-            'limits': {'job': {'maxTrials': 10000}},
-            'errorCodes': ['invalid_input'],
+            'limits': {'job': {'max_trials': 10000}},
+            'import_warning_codes': ['no_solutions_archived'],
+            'error_codes': ['invalid_input'],
         }
         fake = FakeUrlopen([('/api/meta', document)])
 
@@ -352,11 +353,14 @@ class TestFrontDoor:
             result = await meta_fn(HostedClientConfig(base_url='https://api.test'))
 
         assert isinstance(result, CapabilityDocument)
-        assert result.schema_version == 1
-        assert result.harnesses[0].default_model == 'opus'
-        assert result.harnesses[0].latest_version == '1.2.3'
+        assert result.schema_version == 3
+        assert result.agents[0].effort_support is True
+        assert result.agents[0].latest_version == '1.2.3'
         assert result.statuses['job'].terminal == ['COMPLETED']
         assert result.sandbox_providers[0].default is True
+        assert result.managed_providers == ['e2b']
+        # An import that can never activate must be recognizable from here.
+        assert result.import_warning_codes == ['no_solutions_archived']
         # No credentials went out.
         assert fake.requests[0].get_header('Authorization') is None
 
@@ -376,35 +380,35 @@ class TestFrontDoor:
 
 class TestUpstream:
     @pytest.mark.asyncio
-    async def test_benchmark_carries_the_upstream_comparison(self):
+    async def test_dataset_carries_the_upstream_comparison(self):
         detail = {
             'name': 'deep-swe',
             'title': None,
             'description': None,
-            'activeVersion': None,
+            'active_version': None,
             'versions': [],
-            'selectedVersion': None,
+            'selected_version': None,
             'tasks': EMPTY_PAGE,
             'upstream': {
                 'ref': 'main',
-                'currentCommit': 'a' * 40,
-                'latestCommit': 'b' * 40,
+                'current_commit': 'a' * 40,
+                'latest_commit': 'b' * 40,
                 'moved': True,
-                'behindBy': None,
-                'checkedAt': '2026-07-24T00:00:00.000Z',
+                'behind_by': None,
+                'checked_at': '2026-07-24T00:00:00.000Z',
                 'error': None,
             },
-            'createdAt': '',
-            'updatedAt': '',
+            'created_at': '',
+            'updated_at': '',
         }
-        fake = FakeUrlopen([('/api/benchmarks/deep-swe', detail)])
+        fake = FakeUrlopen([('/api/datasets/deep-swe', detail)])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
-            benchmark = await benchmarks_factory(CONFIG).get('deep-swe')
+            dataset = await datasets_factory(CONFIG).get('deep-swe')
 
-        assert isinstance(benchmark.upstream, UpstreamStatus)
-        assert benchmark.upstream.moved is True
+        assert isinstance(dataset.upstream, UpstreamStatus)
+        assert dataset.upstream.moved is True
         # The watcher never fetches a commit graph, so this stays None.
-        assert benchmark.upstream.behind_by is None
+        assert dataset.upstream.behind_by is None
 
     @pytest.mark.asyncio
     async def test_a_missing_upstream_field_reads_as_nothing_to_watch(self):
@@ -412,29 +416,29 @@ class TestUpstream:
             'name': 'old',
             'title': None,
             'description': None,
-            'activeVersion': None,
+            'active_version': None,
             'versions': [],
-            'selectedVersion': None,
+            'selected_version': None,
             'tasks': EMPTY_PAGE,
-            'createdAt': '',
-            'updatedAt': '',
+            'created_at': '',
+            'updated_at': '',
         }
-        fake = FakeUrlopen([('/api/benchmarks/old', detail)])
+        fake = FakeUrlopen([('/api/datasets/old', detail)])
         with patch('evolve.hosted.urllib.request.urlopen', fake):
-            benchmark = await benchmarks_factory(CONFIG).get('old')
+            dataset = await datasets_factory(CONFIG).get('old')
 
-        assert benchmark.upstream is None
+        assert dataset.upstream is None
 
     def test_upstream_status_never_claims_moved_on_an_unknown_answer(self):
         """None is "nothing to watch", never "up to date"."""
         never_checked = _map_upstream(
             {
                 'ref': 'main',
-                'currentCommit': 'a' * 40,
-                'latestCommit': None,
+                'current_commit': 'a' * 40,
+                'latest_commit': None,
                 'moved': False,
-                'behindBy': None,
-                'checkedAt': None,
+                'behind_by': None,
+                'checked_at': None,
                 'error': None,
             }
         )

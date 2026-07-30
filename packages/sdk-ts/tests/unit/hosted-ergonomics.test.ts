@@ -10,7 +10,7 @@
  *      needed it.
  *   2. Errors a UI can act on: param, details, requestId, retryAfterSec, and a
  *      closed error-code union so a typo cannot compile.
- *   3. The missing verbs: listImports, benchmarks.delete, customHarnesses.upsert.
+ *   3. The registration verbs: listImports, datasets.delete, agents.upsert.
  *   4. One front door — hosted() — so configuration is passed once, with meta()
  *      reachable without an API key.
  *
@@ -19,8 +19,8 @@
  */
 
 import {
-  benchmarks,
-  customHarnesses,
+  agents,
+  datasets,
   hosted,
   meta,
   EvolveApiError,
@@ -100,24 +100,24 @@ async function main() {
   // ===========================================================================
   {
     installMockFetch();
-    mockResponses.set("/api/benchmarks", { status: 200, body: emptyPage });
+    mockResponses.set("/api/datasets", { status: 200, body: emptyPage });
 
-    const b = benchmarks();
+    const d = datasets();
 
     // .catch() used to be a compile error two lines after await worked.
-    const caught = await b.list().catch(() => "unreachable");
+    const caught = await d.list().catch(() => "unreachable");
     assert(typeof caught === "object" && caught !== null, "list().catch() resolves the page when nothing throws");
 
     let ranFinally = false;
-    const page = await b.list().finally(() => {
+    const page = await d.list().finally(() => {
       ranFinally = true;
     });
     assert(ranFinally, "list().finally() runs");
     assertEqual((page as { items: unknown[] }).items, [], "finally() passes the page through unchanged");
 
     // A rejection really reaches .catch() rather than escaping as unhandled.
-    mockResponses.set("/api/benchmarks", { status: 500, body: { error: { code: "internal_error", message: "boom" } } });
-    const failure = await benchmarks().list().catch((err: unknown) => err);
+    mockResponses.set("/api/datasets", { status: 500, body: { error: { code: "internal_error", message: "boom" } } });
+    const failure = await datasets().list().catch((err: unknown) => err);
     assert(failure instanceof EvolveApiError, "list().catch() receives the typed error");
   }
 
@@ -125,8 +125,8 @@ async function main() {
     // ONE request per handle, however many promise methods touch it: without
     // the memo, then() + a later catch() would each fetch a page.
     installMockFetch();
-    mockResponses.set("/api/benchmarks", { status: 200, body: emptyPage });
-    const handle = benchmarks().list();
+    mockResponses.set("/api/datasets", { status: 200, body: emptyPage });
+    const handle = datasets().list();
     await handle;
     await handle.catch(() => null);
     await handle.finally(() => {});
@@ -141,13 +141,13 @@ async function main() {
       call++;
       const body =
         call === 1
-          ? { items: [{ name: "a", title: null, description: null, activeVersion: null, upstream: null }], nextCursor: "c1", hasMore: true }
-          : { items: [{ name: "b", title: null, description: null, activeVersion: null, upstream: null }], nextCursor: null, hasMore: false };
+          ? { items: [{ name: "a", title: null, description: null, active_version: null, upstream: null }], nextCursor: "c1", hasMore: true }
+          : { items: [{ name: "b", title: null, description: null, active_version: null, upstream: null }], nextCursor: null, hasMore: false };
       fetchCalls.push({ url: url.toString() });
       return { ok: true, status: 200, headers: new Headers(), json: async () => body, text: async () => "" } as unknown as Response;
     };
     const names: string[] = [];
-    for await (const row of benchmarks().list()) names.push(row.name);
+    for await (const row of datasets().list()) names.push(row.name);
     assertEqual(names, ["a", "b"], "for-await still walks every page");
   }
 
@@ -156,16 +156,16 @@ async function main() {
   // ===========================================================================
   {
     installMockFetch();
-    mockResponses.set("/api/benchmarks", {
+    mockResponses.set("/api/datasets", {
       status: 400,
       body: {
         error: {
           code: "provider_unsupported",
           message: "11 of 40 tasks cannot run on modal: t1; t2; t3; and 8 more",
-          param: "sandboxProvider",
+          param: "sandbox_provider",
           details: {
             provider: "modal",
-            refusedTasks: Array.from({ length: 11 }, (_, i) => ({ taskKey: `t${i}`, reason: "no dockerd" })),
+            refusedTasks: Array.from({ length: 11 }, (_, i) => ({ task_name: `t${i}`, reason: "no dockerd" })),
           },
           retryAfterSec: undefined,
           requestId: "req_abc123",
@@ -173,10 +173,10 @@ async function main() {
       },
     });
 
-    const err = (await benchmarks().list().catch((e: unknown) => e)) as EvolveApiError;
+    const err = (await datasets().list().catch((e: unknown) => e)) as EvolveApiError;
     assert(err instanceof EvolveApiError, "a 400 maps to EvolveApiError");
     assertEqual(err.code, "provider_unsupported", "code survives");
-    assertEqual(err.param, "sandboxProvider", "param names the field that was wrong");
+    assertEqual(err.param, "sandbox_provider", "param names the field that was wrong");
     assertEqual(err.requestId, "req_abc123", "requestId is available to quote in a support thread");
     const refused = (err.details as { refusedTasks: unknown[] }).refusedTasks;
     assertEqual(refused.length, 11, "details carries all 11 refusals, not the 3 the sentence named");
@@ -187,20 +187,20 @@ async function main() {
     // retryAfterSec falls back to the header, because a cross-origin browser
     // fetch cannot always read it from there.
     installMockFetch();
-    mockResponses.set("/api/benchmarks", {
+    mockResponses.set("/api/datasets", {
       status: 429,
       body: { error: { code: "rate_limited", message: "slow down" } },
       headers: { "Retry-After": "12", "X-Request-Id": "req_hdr" },
     });
-    const err = (await benchmarks().list().catch((e: unknown) => e)) as EvolveApiError;
+    const err = (await datasets().list().catch((e: unknown) => e)) as EvolveApiError;
     assertEqual(err.retryAfterSec, 12, "retryAfterSec falls back to the Retry-After header");
     assertEqual(err.requestId, "req_hdr", "requestId falls back to the X-Request-Id header");
   }
 
   {
     installMockFetch();
-    mockResponses.set("/api/benchmarks", { status: 502, body: "<html>bad gateway</html>" });
-    const err = (await benchmarks().list().catch((e: unknown) => e)) as EvolveApiError;
+    mockResponses.set("/api/datasets", { status: 502, body: "<html>bad gateway</html>" });
+    const err = (await datasets().list().catch((e: unknown) => e)) as EvolveApiError;
     assertEqual(err.code, "unknown_error", "an unparseable body still yields a typed error");
     assert(!err.isKnownCode(), "isKnownCode() is false for unknown_error");
   }
@@ -212,39 +212,39 @@ async function main() {
   }
 
   // ===========================================================================
-  console.log("\n3. The missing verbs\n");
+  console.log("\n3. The registration verbs\n");
   // ===========================================================================
   {
     installMockFetch();
-    mockResponses.set("/api/benchmarks/imports", { status: 200, body: emptyPage });
-    await benchmarks().listImports({ status: "FAILED", benchmark: "deep-swe", limit: 10 });
+    mockResponses.set("/api/datasets/imports", { status: 200, body: emptyPage });
+    await datasets().listImports({ status: "FAILED", dataset: "deep-swe", limit: 10 });
     const url = fetchCalls[0].url;
-    assert(url.includes("/api/benchmarks/imports"), "listImports hits the import collection");
+    assert(url.includes("/api/datasets/imports"), "listImports hits the import collection");
     assert(url.includes("status=FAILED"), "listImports passes the status filter");
-    assert(url.includes("benchmark=deep-swe"), "listImports passes the benchmark filter");
+    assert(url.includes("dataset=deep-swe"), "listImports passes the dataset filter");
     assert(url.includes("limit=10"), "listImports passes the page limit");
   }
 
   {
     installMockFetch();
-    mockResponses.set("/api/benchmarks/typo", { status: 204, body: null });
-    await benchmarks().delete("typo");
-    assertEqual(fetchCalls[0].init?.method, "DELETE", "benchmarks().delete() sends DELETE");
-    assert(fetchCalls[0].url.endsWith("/api/benchmarks/typo"), "…at the named benchmark");
+    mockResponses.set("/api/datasets/typo", { status: 204, body: null });
+    await datasets().delete("typo");
+    assertEqual(fetchCalls[0].init?.method, "DELETE", "datasets().delete() sends DELETE");
+    assert(fetchCalls[0].url.endsWith("/api/datasets/typo"), "…at the named dataset");
   }
 
   {
     installMockFetch();
-    mockResponses.set("/api/custom-harnesses/my-agent", {
+    mockResponses.set("/api/agents/my-agent", {
       status: 200,
-      body: { name: "my-agent", source: "install_script", runCommand: "x", env: {}, createdAt: "", updatedAt: "" },
+      body: { name: "my-agent", source: "install_script", run_command: "x", env: {}, created_at: "", updated_at: "" },
     });
-    await customHarnesses().upsert("my-agent", {
-      runCommand: "my-agent --headless",
-      installScript: "curl -fsSL https://example.test/install.sh | sh",
+    await agents().upsert("my-agent", {
+      run_command: "my-agent --headless",
+      install_script: "curl -fsSL https://example.test/install.sh | sh",
     });
     assertEqual(fetchCalls[0].init?.method, "PUT", "upsert() sends PUT — one call, no window where the name is gone");
-    assert(fetchCalls[0].url.endsWith("/api/custom-harnesses/my-agent"), "…under the name in the path");
+    assert(fetchCalls[0].url.endsWith("/api/agents/my-agent"), "…under the name in the path");
     assert(fetchCalls[0].init?.body instanceof FormData, "upsert() uses the same multipart grammar as create()");
   }
 
@@ -253,7 +253,7 @@ async function main() {
     // client-side before a request is made.
     let threw = false;
     try {
-      await customHarnesses().upsert("a", { runCommand: "x", installScript: "y", directory: "/tmp" });
+      await agents().upsert("a", { run_command: "x", install_script: "y", directory: "/tmp" } as any);
     } catch {
       threw = true;
     }
@@ -261,7 +261,7 @@ async function main() {
 
     threw = false;
     try {
-      await customHarnesses().upsert("a", { runCommand: "x" });
+      await agents().upsert("a", { run_command: "x" } as any);
     } catch {
       threw = true;
     }
@@ -273,37 +273,38 @@ async function main() {
   // ===========================================================================
   {
     installMockFetch();
-    mockResponses.set("/api/benchmarks", { status: 200, body: emptyPage });
+    mockResponses.set("/api/datasets", { status: 200, body: emptyPage });
 
     const client = hosted({ apiKey: "explicit-key", baseUrl: "https://other.test" });
-    await client.benchmarks.list();
-    assert(fetchCalls[0].url.startsWith("https://other.test"), "config passed once reaches the benchmarks client");
+    await client.datasets.list();
+    assert(fetchCalls[0].url.startsWith("https://other.test"), "config passed once reaches the datasets client");
     const auth = (fetchCalls[0].init?.headers as Record<string, string>)?.Authorization;
     assertEqual(auth, "Bearer explicit-key", "…including the API key");
 
     // Same instance on repeat access — the clients are memoized, not rebuilt.
-    assert(client.benchmarks === client.benchmarks, "benchmarks is built once and reused");
+    assert(client.datasets === client.datasets, "datasets is built once and reused");
     assert(client.jobs === client.jobs, "jobs is built once and reused");
-    assert(client.customHarnesses === client.customHarnesses, "customHarnesses is built once and reused");
+    assert(client.agents === client.agents, "agents is built once and reused");
+    assert(client.trials === client.trials, "trials is built once and reused");
   }
 
   {
-    // meta() needs no key, so a signed-out page can populate a harness picker.
+    // meta() needs no key, so a signed-out page can populate an agent picker.
     installMockFetch();
     const savedKey = process.env.EVOLVE_API_KEY;
     delete process.env.EVOLVE_API_KEY;
     mockResponses.set("/api/meta", {
       status: 200,
-      body: { schemaVersion: 1, harnesses: [{ name: "claude" }], errorCodes: ["invalid_input"] },
+      body: { schema_version: 1, agents: [{ name: "claude" }], error_codes: ["invalid_input"] },
     });
 
     const document = await hosted().meta();
-    assertEqual(document.schemaVersion, 1, "meta() parses the capability document");
+    assertEqual(document.schema_version, 1, "meta() parses the capability document");
     const sentAuth = (fetchCalls[0].init?.headers as Record<string, string> | undefined)?.Authorization;
     assert(sentAuth === undefined, "meta() sends no Authorization header");
 
     const standalone = await meta({ baseUrl: "https://api.test" });
-    assertEqual(standalone.harnesses.length, 1, "meta() also works as a standalone function");
+    assertEqual(standalone.agents.length, 1, "meta() also works as a standalone function");
 
     // ...but reaching for something that DOES need a key still fails loudly.
     let threw = false;
@@ -322,47 +323,49 @@ async function main() {
   // ===========================================================================
   {
     installMockFetch();
-    mockResponses.set("/api/benchmarks/deep-swe", {
+    mockResponses.set("/api/datasets/deep-swe", {
       status: 200,
       body: {
         name: "deep-swe",
         title: null,
         description: null,
-        activeVersion: null,
+        active_version: null,
         versions: [],
-        selectedVersion: null,
+        selected_version: null,
         tasks: emptyPage,
         upstream: {
           ref: "main",
-          currentCommit: "a".repeat(40),
-          latestCommit: "b".repeat(40),
+          current_commit: "a".repeat(40),
+          latest_commit: "b".repeat(40),
           moved: true,
-          behindBy: null,
-          checkedAt: "2026-07-24T00:00:00.000Z",
+          behind_by: null,
+          checked_at: "2026-07-24T00:00:00.000Z",
           error: null,
+          auto_import: true,
         },
-        createdAt: "",
-        updatedAt: "",
+        created_at: "",
+        updated_at: "",
       },
     });
-    const benchmark = await benchmarks().get("deep-swe");
-    assertEqual(benchmark.upstream?.moved, true, "upstream.moved is what a badge branches on");
-    assertEqual(benchmark.upstream?.behindBy, null, "behindBy is null — the watcher never fetches a commit graph");
+    const dataset = await datasets().get("deep-swe");
+    assertEqual(dataset.upstream?.moved, true, "upstream.moved is what a badge branches on");
+    assertEqual(dataset.upstream?.behind_by, null, "behind_by is null — the watcher never fetches a commit graph");
+    assertEqual(dataset.upstream?.auto_import, true, "auto_import says whether a moved upstream imports itself");
   }
 
   {
     // An older server that omits the field must read as "nothing to watch",
     // never as undefined a caller has to distinguish from null.
     installMockFetch();
-    mockResponses.set("/api/benchmarks/old", {
+    mockResponses.set("/api/datasets/old", {
       status: 200,
       body: {
-        name: "old", title: null, description: null, activeVersion: null,
-        versions: [], selectedVersion: null, tasks: emptyPage, createdAt: "", updatedAt: "",
+        name: "old", title: null, description: null, active_version: null,
+        versions: [], selected_version: null, tasks: emptyPage, created_at: "", updated_at: "",
       },
     });
-    const benchmark = await benchmarks().get("old");
-    assertEqual(benchmark.upstream, null, "a missing upstream field maps to null, not undefined");
+    const dataset = await datasets().get("old");
+    assertEqual(dataset.upstream, null, "a missing upstream field maps to null, not undefined");
   }
 
   globalThis.fetch = originalFetch;

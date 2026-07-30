@@ -1,38 +1,41 @@
 #!/usr/bin/env node
 /**
- * evolve-evals — CLI for Evolve hosted benchmarks & jobs.
+ * evolve-evals — CLI for Evolve hosted datasets & jobs.
  *
- * Thin shell over the hosted client (benchmarks() / jobs()): plain node
- * arg parsing, no dependencies. Human-readable tables by default; --json emits
- * machine-readable JSON (NDJSON for --watch event streams).
+ * Thin shell over the hosted client (datasets() / jobs() / trials()): plain
+ * node arg parsing, no dependencies. Human-readable tables by default; --json
+ * emits machine-readable JSON (NDJSON for --watch event streams).
  *
- * Exit codes: 0 success (watch: job COMPLETED / import IMPORTED), 1
+ * Exit codes: 0 success (watch: job COMPLETED / import COMPLETED), 1
  * runtime/API failure (watch: FAILED or CANCELLED), 2 usage error.
+ *
+ * SDK-RENAME SHIM — the command grammar below is the OLD grammar, kept only so
+ * this file compiles and behaves against the renamed SDK surface; the CLI
+ * regrammar is the NEXT stage's work. Every place where an old command is
+ * bridged onto a renamed SDK verb or field is marked "CLI-STAGE:".
  */
 
 import { readFileSync, realpathSync } from "fs";
 import { pathToFileURL } from "url";
-import { benchmarks, customHarnesses, jobs } from "./index";
+import { agents, datasets, jobs, trials } from "./index";
 import type {
-  Benchmark,
-  BenchmarkImport,
-  BenchmarkImportInput,
-  CustomHarness,
-  CustomHarnessInput,
+  Agent,
+  AgentArm,
+  AgentArmInput,
+  AgentInput,
+  CompareResponse,
+  Dataset,
+  DatasetImport,
   EvalSandboxProvider,
   HostedClientConfig,
   Job,
-  JobAgent,
-  JobComparison,
+  JobCreate,
   JobEvent,
-  JobInput,
-  RegradeJob,
-  RegradeResult,
+  PublishDatasetInput,
   Task,
+  TraceEvent,
   Trial,
-  TrialDetail,
   TrialStatus,
-  TrialTraceEvent,
   UpstreamStatus,
 } from "./types";
 
@@ -49,37 +52,37 @@ Commands:
   list                              List your jobs (newest first)
   get <id>                          Show one job
   trials <id>                       List a job's trials
-  trial <id> <trial-id>             Show one trial in full detail
-  trace <id> <trial-id>             Print a trial's trace events (--stream <raw-artifact>, --save <dir> for all)
-  compare <id> <id> [...]           Compare 2-5 jobs side by side
+  trial <trial-id>                  Show one trial in full detail
+  trace <trial-id>                  Print a trial's trace events (--stream <raw-artifact>, --save <dir> for all)
+  compare <id> <id> [...]           Compare 2-10 jobs side by side
   cancel <id>                       Request cancellation of a job
   rerun-failed <id>                 New job from a terminal job's failed trials
   regrade <id> [trial-id]           Re-run the verifier on recorded trials (whole job, or one trial)
-  regrade-job <job-id>              Show a regrade job's results (rewards, deltas, lineage)
-  export <id>                       Download the research archive (gzipped JSON)
-  benchmarks                        List the benchmark catalog
-  benchmarks get <name[@version]>   Show one benchmark (versions + tasks + providers)
-  import                            Import a benchmark from a git source or a local directory (--watch to follow)
+  regrade-job <job-id>              Show a regrade job (a regrade IS a job)
+  export <id>                       Download the results archive (gzipped)
+  benchmarks                        List the dataset catalog
+  benchmarks get <name[@version]>   Show one dataset (versions + tasks + providers)
+  import                            Publish a dataset from a git source or a local directory (--watch to follow)
   import status <id>                Show one import job
-  download <import-id>              Download the original corpus package (owner only)
-  custom-harnesses                  List your registered custom harnesses
-  custom-harnesses get <name>       Show one custom harness
-  custom-harnesses add              Register a custom harness (install script or local directory)
-  custom-harnesses remove <name>    Delete a custom harness
+  download <name[@version]>         Download the original corpus package (owner only)
+  custom-harnesses                  List your registered agents
+  custom-harnesses get <name>       Show one registered agent
+  custom-harnesses add              Register an agent (install script or local directory)
+  custom-harnesses remove <name>    Delete a registered agent
   help                              Show this help
 
 Run options:
-  --benchmark <name[@version]>        Benchmark (required; bare name = active version)
-  --tasks <k1,k2,...>                 Task keys (default: every task of the version)
-  --agent <harness:model[:version]>   Agent; repeatable (at least one required)
+  --benchmark <name[@version]>        Dataset (required; bare name = active version)
+  --tasks <k1,k2,...>                 Task names (default: every task of the version)
+  --agent <agent:model[:version]>     Agent; repeatable (at least one required)
   --effort <value>                    Reasoning effort for EVERY agent (values:
-                                      GET /api/meta limits.job.reasoningEfforts).
-                                      Applied verbatim — an agent whose harness
-                                      cannot honor it is refused by the server,
+                                      GET /api/meta limits.job.reasoning_efforts).
+                                      Applied verbatim — an agent that cannot
+                                      honor it is refused by the server,
                                       never silently skipped. Per-agent efforts
                                       need the SDK. Omitted: the server default.
-  --runs <n>                          Runs per task x agent (default 1)
-  --concurrency <n>                   Parallel trials (default 1)
+  --runs <n>                          Attempts per task x agent (default 1)
+  --concurrency <n>                   Parallel trials (default 4)
   --max-trial-spend <usd>             Model-spend cap for EACH trial (default: the server's, $200)
   --provider <e2b|daytona|modal>      e2b | daytona | modal, default e2b
   --watch                             Stream events until the job finishes
@@ -89,7 +92,7 @@ Trial options:
 
 Regrade options (whole-job regrade only):
   --status <s1,s2,...>                Only regrade source trials in these statuses
-  --task <key>                        Only regrade source trials of this task
+  --task <name>                       Only regrade source trials of this task
 
 Trace options (--stream and --save are exclusive; --cursor/--limit page the events only):
   --cursor <seq>                      Resume after this trace seq (a trace cursor IS a seq)
@@ -103,23 +106,22 @@ Import options (a git source OR a local directory; --name and --version required
   --git <url>                         Git repository URL (with --ref)
   --ref <ref>                         Git ref: branch, tag, or commit (with --git)
   --dir <path>                        Local corpus directory (tarred + uploaded)
-  --name <benchmark>                  Catalog benchmark name to create or extend (required)
+  --name <dataset>                    Catalog dataset name to create or extend (required)
   --version <v>                       Version label for the imported version (required)
-  --watch                             Poll until the import is IMPORTED or FAILED
+  --watch                             Poll until the import is COMPLETED or FAILED
 
 Custom-harness options ("custom-harnesses add"; an install script OR a local directory):
-  --name <harness>                    Harness name, later used in --agent (required)
+  --name <agent>                      Agent name, later used in --agent (required)
   --install-script <path>             Install script file; its contents are uploaded
-  --dir <path>                        Local harness directory (tarred + uploaded)
+  --dir <path>                        Local agent directory (tarred + uploaded)
   --run <command>                     Run command, executed with sh -c (required)
   --env KEY=VALUE                     Env injected at run time; repeatable
 
 Other options:
   --limit <n>, --cursor <c>           Pagination — one envelope on every collection
                                       (list, trials, trace, benchmarks, benchmarks get,
-                                      custom-harnesses, regrade-job)
+                                      custom-harnesses)
   --to <dir>                          Directory to save into, for export and download (default: current dir)
-  --format harbor                     Export the Harbor job-layout bundle
   --json                              Machine-readable JSON output
   --api-key <key>                     API key (default: $EVOLVE_API_KEY)
   --base-url <url>                    API base URL (default: the Evolve dashboard API)`;
@@ -188,22 +190,23 @@ const COMMAND_SPECS: Record<string, CommandSpec> = {
     maxPositionals: 1,
     positionalUsage: "<id>",
   },
+  // CLI-STAGE: a trial id is globally addressable now — one positional.
   "trial": {
     flags: {},
-    minPositionals: 2,
-    maxPositionals: 2,
-    positionalUsage: "<id> <trial-id>",
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalUsage: "<trial-id>",
   },
   trace: {
     flags: { cursor: "string", limit: "number", stream: "string", save: "string" },
-    minPositionals: 2,
-    maxPositionals: 2,
-    positionalUsage: "<id> <trial-id>",
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalUsage: "<trial-id>",
   },
   compare: {
     flags: {},
     minPositionals: 2,
-    maxPositionals: 5,
+    maxPositionals: 10,
     positionalUsage: "<id> <id> [...]",
   },
   cancel: { flags: {}, minPositionals: 1, maxPositionals: 1, positionalUsage: "<id>" },
@@ -219,14 +222,15 @@ const COMMAND_SPECS: Record<string, CommandSpec> = {
     maxPositionals: 2,
     positionalUsage: "<id> [trial-id]",
   },
+  // CLI-STAGE: a regrade IS a job now; this verb is a plain job read.
   "regrade-job": {
-    flags: { limit: "number", cursor: "string" },
+    flags: {},
     minPositionals: 1,
     maxPositionals: 1,
     positionalUsage: "<job-id>",
   },
   export: {
-    flags: { to: "string", format: "string" },
+    flags: { to: "string" },
     minPositionals: 1,
     maxPositionals: 1,
     positionalUsage: "<id>",
@@ -247,14 +251,13 @@ const COMMAND_SPECS: Record<string, CommandSpec> = {
     minPositionals: 0,
     maxPositionals: 2,
   },
-  // "download" is deliberately NOT "export-corpus": "export" already names one
-  // thing in this CLI (a job's research archive), and the inverse of "import"
-  // is the word a reader reaches for.
+  // CLI-STAGE: the positional is a dataset ref now (packages are addressed by
+  // dataset name@version, not by import id).
   download: {
     flags: { to: "string" },
     minPositionals: 1,
     maxPositionals: 1,
-    positionalUsage: "<import-id>",
+    positionalUsage: "<name[@version]>",
   },
   // "custom-harnesses" lists; "get <name>" / "remove <name>" take a name, and
   // "add" takes the registration flags (all validated in the handler).
@@ -362,65 +365,73 @@ export function parseArgs(argv: string[]): Invocation {
   return { command, positionals, flags };
 }
 
-/** Parse "harness:model[:version]" (version may itself contain colons). */
-export function parseJobAgent(spec: string): JobAgent {
+/** Parse "agent:model[:version]" (version may itself contain colons). */
+export function parseJobAgent(spec: string): AgentArmInput {
   const first = spec.indexOf(":");
   if (first <= 0 || first === spec.length - 1) {
-    throw new CliUsageError(`Invalid --agent "${spec}": expected harness:model[:version]`);
+    throw new CliUsageError(`Invalid --agent "${spec}": expected agent:model[:version]`);
   }
-  const harness = spec.slice(0, first);
+  const name = spec.slice(0, first);
   const rest = spec.slice(first + 1);
   const second = rest.indexOf(":");
-  if (second === -1) return { harness, model: rest };
+  if (second === -1) return { name, model_name: rest };
   const model = rest.slice(0, second);
   const version = rest.slice(second + 1);
   if (!model || !version) {
-    throw new CliUsageError(`Invalid --agent "${spec}": expected harness:model[:version]`);
+    throw new CliUsageError(`Invalid --agent "${spec}": expected agent:model[:version]`);
   }
-  return { harness, model, harnessVersion: version };
+  return { name, model_name: model, version };
 }
 
 /**
  * Build the POST /api/jobs body from a parsed `run` invocation.
- * Keys follow the contract field order: benchmark, tasks, agents,
- * runsPerTask, concurrency, maxTrialSpendUsd, sandboxProvider.
+ *
+ * CLI-STAGE: --benchmark/--tasks are bridged onto the datasets-list shape —
+ * one selector, exact task names as the include filter. The multi-dataset and
+ * glob grammar arrives with the CLI regrammar.
  */
-export function buildJobInput(inv: Invocation): JobInput {
+export function buildJobInput(inv: Invocation): JobCreate {
   const f = inv.flags;
-  let tasks: string[] | undefined;
+  let taskNames: string[] | undefined;
   if (f.tasks !== undefined) {
-    tasks = String(f.tasks)
+    taskNames = String(f.tasks)
       .split(",")
       .map((t) => t.trim())
       .filter(Boolean);
-    if (tasks.length === 0) {
+    if (taskNames.length === 0) {
       throw new CliUsageError("--tasks got an empty task list");
     }
   }
+  const ref = String(f.benchmark);
+  const at = ref.indexOf("@");
+  const selector: JobCreate["datasets"][number] = {
+    name: at === -1 ? ref : ref.slice(0, at),
+    ...(at !== -1 ? { version: ref.slice(at + 1) } : {}),
+    ...(taskNames !== undefined ? { task_names: taskNames } : {}),
+  };
   return {
-    benchmark: f.benchmark as string,
-    ...(tasks !== undefined ? { tasks } : {}),
+    datasets: [selector],
     // --effort is stamped on EVERY agent, verbatim. The server owns the
-    // per-harness refusal (a level on gemini is a 400 naming the harness), so
+    // per-agent refusal (a level on gemini is a 400 naming the agent), so
     // the CLI never edits the list to dodge one — silently dropping the value
     // for some agents would run a sweep the flag no longer describes.
     agents: (f.agent as string[]).map((spec) => {
       const agent = parseJobAgent(spec);
-      return f.effort !== undefined ? { ...agent, reasoningEffort: f.effort as string } : agent;
+      return f.effort !== undefined ? { ...agent, reasoning_effort: f.effort as string } : agent;
     }),
-    ...(f.runs !== undefined ? { runsPerTask: f.runs as number } : {}),
-    ...(f.concurrency !== undefined ? { concurrency: f.concurrency as number } : {}),
+    ...(f.runs !== undefined ? { n_attempts: f.runs as number } : {}),
+    ...(f.concurrency !== undefined ? { n_concurrent_trials: f.concurrency as number } : {}),
     ...(f["max-trial-spend"] !== undefined
-      ? { maxTrialSpendUsd: f["max-trial-spend"] as number }
+      ? { max_trial_spend_usd: f["max-trial-spend"] as number }
       : {}),
     ...(f.provider !== undefined
-      ? { sandboxProvider: f.provider as JobInput["sandboxProvider"] }
+      ? { sandbox_provider: f.provider as EvalSandboxProvider }
       : {}),
   };
 }
 
-/** Build the benchmarks().import() input from a parsed `import` invocation. */
-export function buildImportInput(inv: Invocation): BenchmarkImportInput {
+/** Build the datasets().publish() input from a parsed `import` invocation. */
+export function buildImportInput(inv: Invocation): PublishDatasetInput {
   const f = inv.flags;
   const hasDir = typeof f.dir === "string";
   const hasGit = typeof f.git === "string" || typeof f.ref === "string";
@@ -435,7 +446,7 @@ export function buildImportInput(inv: Invocation): BenchmarkImportInput {
     }
     return {
       source: { directory: f.dir as string },
-      benchmarkName: f.name as string,
+      name: f.name as string,
       version: f.version as string,
     };
   }
@@ -448,8 +459,8 @@ export function buildImportInput(inv: Invocation): BenchmarkImportInput {
     }
   }
   return {
-    source: { gitUrl: f.git as string, ref: f.ref as string },
-    benchmarkName: f.name as string,
+    source: { git_url: f.git as string, git_ref: f.ref as string },
+    name: f.name as string,
     version: f.version as string,
   };
 }
@@ -468,14 +479,14 @@ export function parseHarnessEnv(pairs: string[]): Record<string, string> {
 }
 
 /**
- * Build the customHarnesses().create() input from a parsed
- * `custom-harnesses add` invocation. `--install-script` names a FILE; its
- * contents are what the SDK uploads.
+ * Build the agents().create() input from a parsed `custom-harnesses add`
+ * invocation. `--install-script` names a FILE; its contents are what the SDK
+ * uploads.
  */
 export function buildCustomHarnessInput(
   inv: Invocation,
   readScript: (path: string) => string = (path) => readFileSync(path, "utf-8")
-): CustomHarnessInput {
+): AgentInput {
   const f = inv.flags;
   const hasDir = typeof f.dir === "string";
   const hasInstallScript = typeof f["install-script"] === "string";
@@ -486,7 +497,7 @@ export function buildCustomHarnessInput(
   }
   if (!hasDir && !hasInstallScript) {
     throw new CliUsageError(
-      '"custom-harnesses add" requires --install-script (or --dir for a local harness directory)'
+      '"custom-harnesses add" requires --install-script (or --dir for a local agent directory)'
     );
   }
   for (const req of ["name", "run"] as const) {
@@ -499,8 +510,8 @@ export function buildCustomHarnessInput(
     name: f.name as string,
     ...(hasDir
       ? { directory: f.dir as string }
-      : { installScript: readScript(f["install-script"] as string) }),
-    runCommand: f.run as string,
+      : { install_script: readScript(f["install-script"] as string) }),
+    run_command: f.run as string,
     ...(Object.keys(env).length > 0 ? { env } : {}),
   };
 }
@@ -534,9 +545,13 @@ function fmtUsd(value: number | undefined | null): string {
   return typeof value === "number" ? `$${value.toFixed(2)}` : "-";
 }
 
-function fmtAgent(agent: JobAgent): string {
-  const base = `${agent.harness}:${agent.model}`;
-  return agent.harnessVersion ? `${base}:${agent.harnessVersion}` : base;
+function fmtAgent(agent: AgentArm | AgentArmInput): string {
+  const base = `${agent.name}:${agent.model_name}`;
+  return agent.version ? `${base}:${agent.version}` : base;
+}
+
+function fmtDatasets(refs: { name: string; version: string }[]): string {
+  return refs.map((ref) => `${ref.name}@${ref.version}`).join(", ") || "-";
 }
 
 function truncate(text: string, max: number): string {
@@ -544,25 +559,24 @@ function truncate(text: string, max: number): string {
 }
 
 function jobLines(e: Job): string[] {
-  // Row order mirrors the input contract: benchmark, agents, size, runs/task,
+  // Row order mirrors the input contract: datasets, agents, size, attempts,
   // concurrency, spend caps.
   const rows: string[][] = [
     ["id", e.id],
     ["status", e.status],
-    ["benchmark", e.benchmark],
+    ["datasets", fmtDatasets(e.datasets)],
   ];
   rows.push(["agents", e.agents.map(fmtAgent).join(", ")]);
   rows.push([
     "size",
-    `${e.counts.agents} agent(s) x ${e.counts.tasks} task(s) = ${e.trials.total} trial(s)`,
+    `${e.counts.agents} agent(s) x ${e.counts.tasks} task(s) = ${e.n_total_trials} trial(s)`,
   ]);
-  rows.push(["runs/task", String(e.runsPerTask)]);
-  rows.push(["concurrency", String(e.concurrency)]);
-  rows.push(["max spend/trial", fmtUsd(e.maxTrialSpendUsd)]);
-  rows.push(["worst case", fmtUsd(e.worstCaseSpendUsd)]);
-  rows.push(["provider", e.sandboxProvider]);
-  rows.push(["spent", fmtUsd(e.spentUsd)]);
-  rows.push(["mean reward", e.meanReward !== null ? String(e.meanReward) : "-"]);
+  rows.push(["attempts/task", String(e.n_attempts)]);
+  rows.push(["concurrency", String(e.n_concurrent_trials)]);
+  rows.push(["max spend/trial", fmtUsd(e.max_trial_spend_usd)]);
+  rows.push(["worst case", fmtUsd(e.worst_case_spend_usd)]);
+  rows.push(["provider", e.sandbox_provider]);
+  rows.push(["spent", fmtUsd(e.stats.cost_usd)]);
   // Only the statuses actually present: the response names all of them (so a
   // client never hardcodes the enum), but a row of eight zeros helps nobody.
   const histogram = Object.entries(e.trials.byStatus)
@@ -570,11 +584,13 @@ function jobLines(e: Job): string[] {
     .map(([status, count]) => `${status} ${count}`)
     .join(" · ");
   if (histogram) rows.push(["trials", histogram]);
-  if (e.sourceJobId) rows.push(["rerun of", e.sourceJobId]);
-  if (e.idempotentReplay) rows.push(["note", "idempotent replay of an existing job"]);
+  for (const source of e.source_jobs) {
+    rows.push([source.action === "regrade" ? "regrade of" : "resume of", source.job_id]);
+  }
+  if (e.idempotent_replay) rows.push(["note", "idempotent replay of an existing job"]);
   if (e.failure) rows.push(["failure", `${e.failure.code}: ${e.failure.message}`]);
-  rows.push(["created", e.createdAt]);
-  rows.push(["updated", e.updatedAt]);
+  rows.push(["started", e.started_at]);
+  rows.push(["updated", e.updated_at]);
   return table(rows);
 }
 
@@ -582,22 +598,26 @@ function jobRow(e: Job): string[] {
   return [
     e.id,
     e.status,
-    e.benchmark,
+    fmtDatasets(e.datasets),
     String(e.trials.total),
-    fmtReward(e.meanReward),
-    fmtUsd(e.spentUsd),
-    e.createdAt,
+    fmtUsd(e.stats.cost_usd),
+    e.started_at,
   ];
 }
 
 function trialRow(run: Trial): string[] {
   return [
-    run.taskKey,
-    fmtAgent(run.agent),
-    String(run.runNumber),
+    run.task_name,
+    fmtAgent({
+      name: run.agent_info.name,
+      model_name: run.agent_info.model_info.name,
+      version: run.agent_info.version,
+      reasoning_effort: run.agent_info.reasoning_effort ?? null,
+    }),
+    String(run.attempt),
     run.status,
     run.reward !== null ? String(run.reward) : "-",
-    fmtUsd(run.spentUsd),
+    fmtUsd(run.agent_result?.cost_usd),
     run.id,
   ];
 }
@@ -606,127 +626,70 @@ function trialRow(run: Trial): string[] {
  * Full-detail rendering of one trial — evolve-evals trial. Exported for tests,
  * like the other line renderers.
  */
-export function trialDetailLines(run: TrialDetail): string[] {
+export function trialDetailLines(run: Trial): string[] {
   const rows: string[][] = [
     ["trial id", run.id],
-    ["job", run.jobId],
-    ["task", run.taskKey],
-    ["agent", fmtAgent(run.agent)],
-    ["run", String(run.runNumber)],
+    ["job", run.job_id],
+    ["task", run.task_name],
+    ["dataset", run.source],
+    ["agent", `${run.agent_info.name}:${run.agent_info.model_info.name}`],
+    ["attempt", String(run.attempt)],
     ["status", run.status],
     ["reward", run.reward !== null ? String(run.reward) : "-"],
   ];
-  if (run.metrics && Object.keys(run.metrics).length > 0) {
+  const rewards = run.verifier_result?.rewards;
+  if (rewards && Object.keys(rewards).length > 0) {
     rows.push([
-      "metrics",
-      Object.entries(run.metrics)
+      "rewards",
+      Object.entries(rewards)
         .map(([key, value]) => `${key}=${value}`)
         .join(" · "),
     ]);
   }
-  rows.push(["spent", fmtUsd(run.spentUsd)]);
+  rows.push(["spent", fmtUsd(run.agent_result?.cost_usd)]);
   // WHILE THE TRIAL RUNS, show the live sample beside the (still empty) settled
   // figure. It is a lagging lower bound, and the row says so with "at least";
-  // once the trial settles, spentUsd is the truth and this row disappears.
-  // Four decimals rather than fmtUsd's two: a run minutes in has often spent
-  // fractions of a cent, and "at least $0.00" would say nothing.
+  // once the trial settles, agent_result.cost_usd is the truth and this row
+  // disappears. Four decimals rather than fmtUsd's two: a run minutes in has
+  // often spent fractions of a cent, and "at least $0.00" would say nothing.
   if (
     (run.status === "RUNNING" || run.status === "SCORING") &&
-    run.liveSpentUsd !== null
+    run.live_spent_usd !== null
   ) {
-    const asOf = run.liveSpendAt ? ` as of ${run.liveSpendAt}` : "";
-    rows.push(["spent (live)", `at least $${run.liveSpentUsd.toFixed(4)}${asOf}`]);
+    const asOf = run.live_spend_at ? ` as of ${run.live_spend_at}` : "";
+    rows.push(["spent (live)", `at least $${run.live_spent_usd.toFixed(4)}${asOf}`]);
   }
-  if (run.sandboxProvider) rows.push(["provider", run.sandboxProvider]);
-  if (run.sandboxId) rows.push(["sandbox", run.sandboxId]);
-  if (run.verifierMode) rows.push(["verifier", run.verifierMode]);
-  if (run.verifierSandboxId) rows.push(["verifier sandbox", run.verifierSandboxId]);
-  if (run.resolvedHarnessVersion) rows.push(["harness version", run.resolvedHarnessVersion]);
-  if (run.phaseTimingsMs && Object.keys(run.phaseTimingsMs).length > 0) {
-    rows.push([
-      "timings",
-      Object.entries(run.phaseTimingsMs)
-        .map(([key, value]) => `${key}=${value}ms`)
-        .join(" · "),
-    ]);
+  if (run.attempt_phase) rows.push(["phase", run.attempt_phase]);
+  if (run.sandbox_provider) rows.push(["provider", run.sandbox_provider]);
+  if (run.sandbox_id) rows.push(["sandbox", run.sandbox_id]);
+  if (run.verifier_environment_mode) rows.push(["verifier", run.verifier_environment_mode]);
+  if (run.verifier_sandbox_id) rows.push(["verifier sandbox", run.verifier_sandbox_id]);
+  if (run.agent_info.version) rows.push(["agent version", run.agent_info.version]);
+  if (run.exception_info) {
+    rows.push(["failure type", run.exception_info.exception_type]);
+    rows.push(["failure detail", run.exception_info.exception_message]);
   }
-  if (run.failurePhase) rows.push(["failure phase", run.failurePhase]);
-  if (run.failureDetail) rows.push(["failure detail", run.failureDetail]);
-  if (run.sessionRef) rows.push(["session", run.sessionRef]);
-  rows.push(["created", run.createdAt]);
-  rows.push(["updated", run.updatedAt]);
+  if (run.session_ref) rows.push(["session", run.session_ref]);
+  if (run.started_at) rows.push(["started", run.started_at]);
+  if (run.finished_at) rows.push(["finished", run.finished_at]);
   return table(rows);
 }
 
-function fmtDelta(delta: number | null): string {
-  if (delta === null) return "-";
-  const rounded = Math.round(delta * 1000) / 1000;
-  return rounded > 0 ? `+${rounded}` : String(rounded);
-}
-
-function regradeResultRow(result: RegradeResult): string[] {
-  return [
-    result.taskKey,
-    result.status,
-    fmtReward(result.sourceReward),
-    fmtReward(result.reward),
-    fmtDelta(result.rewardDelta),
-    result.sourceTrialId,
-  ];
-}
-
-/** Job envelope + per-trial results — evolve-evals regrade / regrade-job. */
-function regradeJobLines(job: RegradeJob): string[] {
-  const rows: string[][] = [
-    ["job id", job.id],
-    ["status", job.status],
-    ["source job", job.sourceJobId],
-    ["provider", job.sandboxProvider],
-    ["results", String(job.results.total)],
-  ];
-  const byStatus = Object.entries(job.results.byStatus)
-    .filter(([, count]) => count > 0)
-    .map(([status, count]) => `${status} ${count}`)
-    .join(" · ");
-  if (byStatus) rows.push(["by status", byStatus]);
-  if (job.filter && (job.filter.status?.length || job.filter.taskKey)) {
-    const parts: string[] = [];
-    if (job.filter.status?.length) parts.push(`status=${job.filter.status.join(",")}`);
-    if (job.filter.taskKey) parts.push(`task=${job.filter.taskKey}`);
-    rows.push(["filter", parts.join(" · ")]);
-  }
-  rows.push(["created", job.createdAt]);
-  const lines = table(rows);
-  if (job.results.items.length > 0) {
-    lines.push("");
-    const resultRows = [["TASK", "STATUS", "WAS", "NOW", "Δ", "SOURCE TRIAL ID"]];
-    for (const result of job.results.items) resultRows.push(regradeResultRow(result));
-    lines.push(...table(resultRows));
-    if (job.results.nextCursor) {
-      lines.push(
-        "",
-        `More: evolve-evals regrade-job ${job.id} --cursor ${job.results.nextCursor}`
-      );
-    }
-  }
-  return lines;
-}
-
 /**
- * One custom harness — evolve-evals custom-harnesses get / add. Declared env is
- * shown by KEY only; the values were the caller's to set and are not echoed
+ * One registered agent — evolve-evals custom-harnesses get / add. Declared env
+ * is shown by KEY only; the values were the caller's to set and are not echoed
  * back into a terminal. `--json` carries the response verbatim.
  */
-function customHarnessLines(harness: CustomHarness): string[] {
+function customHarnessLines(agent: Agent): string[] {
   const rows: string[][] = [
-    ["name", harness.name],
-    ["source", harness.source],
-    ["run command", harness.runCommand],
+    ["name", agent.name],
+    ["source", agent.source],
+    ["run command", agent.run_command],
   ];
-  const envKeys = Object.keys(harness.env ?? {});
+  const envKeys = Object.keys(agent.env ?? {});
   if (envKeys.length > 0) rows.push(["env", envKeys.sort().join(", ")]);
-  rows.push(["created", harness.createdAt]);
-  rows.push(["updated", harness.updatedAt]);
+  rows.push(["created", agent.created_at]);
+  rows.push(["updated", agent.updated_at]);
   return table(rows);
 }
 
@@ -744,57 +707,60 @@ function fmtReward(reward: number | null): string {
 }
 
 /** One trace event line — evolve-evals trace. */
-export function traceEventLine(event: TrialTraceEvent): string {
+export function traceEventLine(event: TraceEvent): string {
   const detail = truncate(JSON.stringify(event.data ?? {}), 140);
   return `#${String(event.seq).padStart(4)} ${event.type.padEnd(26)} ${detail}`.trimEnd();
 }
 
 /** One line for a structured import failure: the message plus a failure count. */
-function importFailureText(failure: NonNullable<BenchmarkImport["failure"]>): string {
+function importFailureText(failure: NonNullable<DatasetImport["failure"]>): string {
   const failures = failure.failures?.length
     ? ` (${failure.failures.length} task failure${failure.failures.length === 1 ? "" : "s"})`
     : "";
   return `${failure.message}${failures}`;
 }
 
-function importLines(job: BenchmarkImport): string[] {
+function importLines(job: DatasetImport): string[] {
   const rows: string[][] = [
     ["id", job.id],
     ["status", job.status],
   ];
-  if (job.benchmarkName !== undefined) rows.push(["benchmark", job.benchmarkName]);
+  if (job.name !== undefined) rows.push(["dataset", job.name]);
   if (job.version !== undefined) rows.push(["version", job.version]);
-  if (job.taskCount !== undefined) rows.push(["tasks", String(job.taskCount)]);
+  if (job.task_count !== undefined) rows.push(["tasks", String(job.task_count)]);
+  for (const warning of job.warnings) {
+    rows.push(["warning", warning.message ?? warning.code]);
+  }
   if (job.failure) {
     rows.push(["failure", importFailureText(job.failure)]);
     for (const failure of job.failure.failures ?? []) {
-      rows.push([`  ${failure.taskKey}`, failure.error]);
+      rows.push([`  ${failure.task_name}`, failure.error]);
     }
   }
   return table(rows);
 }
 
 /** Compact one-line rendering of one import status change for --watch. */
-export function importStatusLine(job: BenchmarkImport): string {
+export function importStatusLine(job: DatasetImport): string {
   const parts: string[] = [];
-  if (job.taskCount !== undefined) parts.push(`tasks=${job.taskCount}`);
+  if (job.task_count !== undefined) parts.push(`tasks=${job.task_count}`);
   if (job.failure) parts.push(truncate(importFailureText(job.failure), 140));
   return `status ${job.status.padEnd(12)} ${parts.join(" ")}`.trimEnd();
 }
 
 /** Compact one-line rendering of one SSE event for --watch. */
 export function eventLine(event: JobEvent): string {
-  // JobEvent is a discriminated union now, so `data` is a different shape per
+  // JobEvent is a discriminated union, so `data` is a different shape per
   // type. This renderer is deliberately shape-agnostic — it prints the salient
   // fields first and then everything else — so it reads the payload as a plain
   // record ONCE, here, rather than narrowing nine ways to print one line.
   const data: Record<string, unknown> = { ...(event.data ?? {}) };
   const parts: string[] = [];
-  if (typeof data.trialId === "string") parts.push(data.trialId);
-  if (typeof data.taskKey === "string") parts.push(data.taskKey);
+  if (typeof data.trial_id === "string") parts.push(data.trial_id);
+  if (typeof data.task_name === "string") parts.push(data.task_name);
   if (typeof data.status === "string") parts.push(data.status);
   if (typeof data.reward === "number") parts.push(`reward=${data.reward}`);
-  const used = new Set(["trialId", "taskKey", "status", "reward"]);
+  const used = new Set(["trial_id", "task_name", "status", "reward"]);
   for (const [key, value] of Object.entries(data)) {
     if (used.has(key)) continue;
     parts.push(`${key}=${typeof value === "object" ? JSON.stringify(value) : String(value)}`);
@@ -832,7 +798,7 @@ async function cmdRun(inv: Invocation, io: CliIO): Promise<number> {
   const watch = inv.flags.watch === true;
   const client = jobs(clientConfig(inv));
 
-  const created = await client.run(input);
+  const created = await client.start(input);
   if (!watch) {
     if (json) {
       io.out(JSON.stringify(created));
@@ -847,7 +813,7 @@ async function cmdRun(inv: Invocation, io: CliIO): Promise<number> {
   if (json) {
     io.out(JSON.stringify({ kind: "job.created", job: created }));
   } else {
-    io.out(`Job ${created.id} (${created.benchmark}) ${created.status} — watching…`);
+    io.out(`Job ${created.id} (${fmtDatasets(created.datasets)}) ${created.status} — watching…`);
   }
 
   const final = await client.watch(created.id, {
@@ -879,7 +845,7 @@ async function cmdList(inv: Invocation, io: CliIO): Promise<number> {
     io.out("No jobs.");
     return 0;
   }
-  const rows = [["ID", "STATUS", "BENCHMARK", "TRIALS", "MEAN REWARD", "SPENT", "CREATED"]];
+  const rows = [["ID", "STATUS", "DATASETS", "TRIALS", "SPENT", "STARTED"]];
   for (const e of page.items) rows.push(jobRow(e));
   for (const line of table(rows)) io.out(line);
   if (page.nextCursor) io.out(`\nMore: evolve-evals list --cursor ${page.nextCursor}`);
@@ -922,7 +888,7 @@ async function cmdTrials(inv: Invocation, io: CliIO): Promise<number> {
     io.out("No trials.");
     return 0;
   }
-  const rows = [["TASK", "AGENT", "RUN", "STATUS", "REWARD", "SPENT", "TRIAL ID"]];
+  const rows = [["TASK", "AGENT", "ATTEMPT", "STATUS", "REWARD", "SPENT", "TRIAL ID"]];
   for (const run of page.items) rows.push(trialRow(run));
   for (const line of table(rows)) io.out(line);
   io.out(`\n${page.items.length} trial(s) shown`);
@@ -933,8 +899,9 @@ async function cmdTrials(inv: Invocation, io: CliIO): Promise<number> {
 }
 
 async function cmdTrial(inv: Invocation, io: CliIO): Promise<number> {
-  const client = jobs(clientConfig(inv));
-  const run = await client.trial(inv.positionals[0], inv.positionals[1]);
+  // CLI-STAGE: globally addressable — one positional, the trial id.
+  const client = trials(clientConfig(inv));
+  const run = await client.get(inv.positionals[0]);
   if (inv.flags.json === true) {
     io.out(JSON.stringify(run));
   } else {
@@ -944,7 +911,9 @@ async function cmdTrial(inv: Invocation, io: CliIO): Promise<number> {
 }
 
 async function cmdTrace(inv: Invocation, io: CliIO): Promise<number> {
-  const client = jobs(clientConfig(inv));
+  // CLI-STAGE: globally addressable — one positional, the trial id.
+  const client = trials(clientConfig(inv));
+  const trialId = inv.positionals[0];
   const json = inv.flags.json === true;
 
   // --stream, --save, and the paged event listing are three mutually
@@ -964,7 +933,7 @@ async function cmdTrace(inv: Invocation, io: CliIO): Promise<number> {
   // --stream: one RAW artifact instead of the parsed events.
   if (stream !== undefined) {
     if (stream === "verifier" || stream === "trace-stdout" || stream === "trace-stderr") {
-      const log = await client.trialArtifact(inv.positionals[0], inv.positionals[1], stream);
+      const log = await client.artifact(trialId, stream);
       if (log === null) {
         io.out(json ? JSON.stringify({ log: null }) : `No ${stream} log was stored for this trial.`);
         return 0;
@@ -973,7 +942,7 @@ async function cmdTrace(inv: Invocation, io: CliIO): Promise<number> {
       return 0;
     }
     if (stream === "agent-home") {
-      const files = await client.trialArtifact(inv.positionals[0], inv.positionals[1], stream);
+      const files = await client.artifact(trialId, stream);
       if (files === null) {
         io.out(json ? JSON.stringify({ files: null }) : `No ${stream} content was stored for this trial.`);
         return 0;
@@ -999,18 +968,18 @@ async function cmdTrace(inv: Invocation, io: CliIO): Promise<number> {
     const { join, dirname } = await import("node:path");
     await mkdir(saveDir, { recursive: true });
     const lines: string[] = [];
-    for await (const event of client.trialTraceEvents(inv.positionals[0], inv.positionals[1])) {
+    for await (const event of client.traceEvents(trialId)) {
       lines.push(JSON.stringify(event));
     }
     await writeFile(join(saveDir, "trace-parsed.jsonl"), lines.join("\n") + (lines.length ? "\n" : ""));
     io.out(`trace-parsed.jsonl (${lines.length} events)`);
     for (const which of ["verifier", "trace-stdout", "trace-stderr"] as const) {
-      const log = await client.trialArtifact(inv.positionals[0], inv.positionals[1], which);
+      const log = await client.artifact(trialId, which);
       if (log === null) continue;
       await writeFile(join(saveDir, `${which}.log`), log);
       io.out(`${which}.log (${Buffer.byteLength(log, "utf8")} bytes)`);
     }
-    const home = await client.trialArtifact(inv.positionals[0], inv.positionals[1], "agent-home");
+    const home = await client.artifact(trialId, "agent-home");
     if (home !== null) {
       for (const [path, content] of Object.entries(home)) {
         const target = join(saveDir, "agent-home", ...path.split("/").filter(Boolean));
@@ -1023,7 +992,7 @@ async function cmdTrace(inv: Invocation, io: CliIO): Promise<number> {
   }
 
   let count = 0;
-  for await (const event of client.trialTraceEvents(inv.positionals[0], inv.positionals[1], {
+  for await (const event of client.traceEvents(trialId, {
     ...(inv.flags.cursor !== undefined ? { cursor: String(inv.flags.cursor) } : {}),
     ...(inv.flags.limit !== undefined ? { limit: inv.flags.limit as number } : {}),
   })) {
@@ -1034,17 +1003,17 @@ async function cmdTrace(inv: Invocation, io: CliIO): Promise<number> {
   return 0;
 }
 
-function comparisonLines(comparison: JobComparison): string[] {
+function comparisonLines(comparison: CompareResponse): string[] {
   const lines: string[] = [];
-  const aggregateRows = [["ID", "BENCHMARK", "STATUS", "MEAN REWARD", "COVERAGE", "SPENT"]];
+  const aggregateRows = [["ID", "DATASETS", "STATUS", "MEAN REWARD", "COVERAGE", "SPENT"]];
   for (const agg of comparison.jobs) {
     aggregateRows.push([
       agg.id,
-      agg.benchmark,
+      fmtDatasets(agg.datasets),
       agg.status,
-      fmtReward(agg.meanReward),
+      fmtReward(agg.mean_reward),
       `${agg.coverage.scored}/${agg.coverage.total}`,
-      fmtUsd(agg.spentUsd),
+      fmtUsd(agg.cost_usd),
     ]);
   }
   lines.push(...table(aggregateRows));
@@ -1056,15 +1025,15 @@ function comparisonLines(comparison: JobComparison): string[] {
     ];
     const columnOrder = comparison.jobs.map((agg) => agg.id);
     for (const row of comparison.taskMatrix) {
-      const cellById = new Map(row.cells.map((cell) => [cell.jobId, cell]));
+      const cellById = new Map(row.cells.map((cell) => [cell.job_id, cell]));
       matrixRows.push([
-        row.taskKey,
+        row.task_name,
         row.disagreement ? "!" : "",
         ...columnOrder.map((id) => {
           const cell = cellById.get(id);
           if (!cell) return "-";
-          return cell.meanReward !== null
-            ? `${cell.status} ${fmtReward(cell.meanReward)}`
+          return cell.mean_reward !== null
+            ? `${cell.status} ${fmtReward(cell.mean_reward)}`
             : cell.status;
         }),
       ]);
@@ -1097,8 +1066,9 @@ async function cmdCancel(inv: Invocation, io: CliIO): Promise<number> {
 }
 
 async function cmdRerunFailed(inv: Invocation, io: CliIO): Promise<number> {
+  // CLI-STAGE: "rerun-failed" is bridged onto jobs().resume().
   const client = jobs(clientConfig(inv));
-  const e = await client.rerunFailed(inv.positionals[0]);
+  const e = await client.resume(inv.positionals[0]);
   if (inv.flags.json === true) {
     io.out(JSON.stringify(e));
   } else {
@@ -1110,58 +1080,56 @@ async function cmdRerunFailed(inv: Invocation, io: CliIO): Promise<number> {
 }
 
 async function cmdRegrade(inv: Invocation, io: CliIO): Promise<number> {
-  const client = jobs(clientConfig(inv));
+  // CLI-STAGE: a regrade returns a JOB now; both forms print the job body.
   const [id, trialId] = inv.positionals;
-  let job: RegradeJob;
+  let job: Job;
   if (trialId !== undefined) {
     // Per-trial regrade takes no --status/--task filter (a single trial needs none).
     if (inv.flags.status !== undefined || inv.flags.task !== undefined) {
       throw new CliUsageError("--status/--task apply to a whole-job regrade, not a single trial");
     }
-    job = await client.regradeTrial(id, trialId);
+    job = await trials(clientConfig(inv)).regrade(trialId);
   } else {
-    const options: { status?: TrialStatus[]; taskKey?: string } = {};
+    const req: { statuses?: TrialStatus[]; task_name?: string } = {};
     if (inv.flags.status !== undefined) {
-      const status = String(inv.flags.status)
+      const statuses = String(inv.flags.status)
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean) as TrialStatus[];
-      if (status.length === 0) throw new CliUsageError("--status got an empty status list");
-      options.status = status;
+      if (statuses.length === 0) throw new CliUsageError("--status got an empty status list");
+      req.statuses = statuses;
     }
-    if (inv.flags.task !== undefined) options.taskKey = String(inv.flags.task);
-    job = await client.regrade(id, options);
+    if (inv.flags.task !== undefined) req.task_name = String(inv.flags.task);
+    job = await jobs(clientConfig(inv)).regrade(id, req);
   }
   if (inv.flags.json === true) {
     io.out(JSON.stringify(job));
   } else {
-    for (const line of regradeJobLines(job)) io.out(line);
+    for (const line of jobLines(job)) io.out(line);
     io.out("");
-    io.out(`Follow it with: evolve-evals regrade-job ${job.id}`);
+    io.out(`Follow it with: evolve-evals get ${job.id}`);
   }
   return 0;
 }
 
 async function cmdRegradeJob(inv: Invocation, io: CliIO): Promise<number> {
+  // CLI-STAGE: a regrade IS a job — this verb is a plain job read now.
   const client = jobs(clientConfig(inv));
-  const job = await client.getRegrade(inv.positionals[0], pageOptions(inv));
+  const job = await client.get(inv.positionals[0]);
   if (inv.flags.json === true) {
     io.out(JSON.stringify(job));
   } else {
-    for (const line of regradeJobLines(job)) io.out(line);
+    for (const line of jobLines(job)) io.out(line);
   }
   return 0;
 }
 
 async function cmdExport(inv: Invocation, io: CliIO): Promise<number> {
-  const format = inv.flags.format as string | undefined;
-  if (format !== undefined && format !== "harbor") {
-    throw new CliUsageError(`Unknown --format "${format}" (supported: harbor)`);
-  }
+  // CLI-STAGE: "export" is bridged onto jobs().download(); the standard
+  // results layout is the only layout, so --format is gone.
   const client = jobs(clientConfig(inv));
-  const filePath = await client.export(inv.positionals[0], {
+  const filePath = await client.download(inv.positionals[0], {
     to: (inv.flags.to as string | undefined) ?? process.cwd(),
-    ...(format === "harbor" ? { format: "harbor" as const } : {}),
   });
   if (inv.flags.json === true) {
     io.out(JSON.stringify({ path: filePath }));
@@ -1175,12 +1143,12 @@ async function cmdExport(inv: Invocation, io: CliIO): Promise<number> {
  * Save a version's original corpus package. The mirror image of `import`, and
  * shaped like `export`: default to the working directory, print the path.
  *
- * OWNER ONLY on the server, so a benchmark someone else owns reports
- * import_not_found — the same answer as a bad id, on purpose.
+ * OWNER ONLY on the server, so a dataset someone else owns reports not-found —
+ * the same answer as a bad name, on purpose.
  */
 async function cmdDownload(inv: Invocation, io: CliIO): Promise<number> {
-  const client = benchmarks(clientConfig(inv));
-  const filePath = await client.downloadPackage(inv.positionals[0], {
+  const client = datasets(clientConfig(inv));
+  const filePath = await client.download(inv.positionals[0], {
     to: (inv.flags.to as string | undefined) ?? process.cwd(),
   });
   if (inv.flags.json === true) {
@@ -1191,26 +1159,26 @@ async function cmdDownload(inv: Invocation, io: CliIO): Promise<number> {
   return 0;
 }
 
-function benchmarkDetailLines(b: Benchmark): string[] {
+function benchmarkDetailLines(b: Dataset): string[] {
   const lines = table([
     ["name", b.name],
     ["title", b.title ?? "-"],
     ["description", b.description ?? "-"],
-    ["active version", b.activeVersion?.version ?? "-"],
+    ["active version", b.active_version?.version ?? "-"],
   ]);
   if (b.versions && b.versions.length > 0) {
     lines.push("");
     const rows = [["VERSION", "STATE", "TASKS", "CREATED"]];
     for (const v of b.versions) {
-      rows.push([v.version, v.state, String(v.taskCount), v.createdAt ?? "-"]);
+      rows.push([v.version, v.state, String(v.task_count), v.created_at ?? "-"]);
     }
     lines.push(...table(rows));
   }
   if (b.tasks && b.tasks.items.length > 0) {
-    lines.push("", `Tasks (version ${b.selectedVersion?.version ?? "?"}):`);
+    lines.push("", `Tasks (version ${b.selected_version?.version ?? "?"}):`);
     const rows = [["TASK", "AGENT TIMEOUT", "VERIFIER TIMEOUT", "PROVIDERS"]];
     for (const t of b.tasks.items) {
-      rows.push([t.taskKey, `${t.agentTimeoutSec}s`, `${t.verifierTimeoutSec}s`, fmtProviders(t.providers)]);
+      rows.push([t.task_name, `${t.agent_timeout_sec}s`, `${t.verifier_timeout_sec}s`, fmtProviders(t.providers)]);
     }
     lines.push(...table(rows));
     if (b.tasks.nextCursor) {
@@ -1236,7 +1204,8 @@ function benchmarkDetailLines(b: Benchmark): string[] {
 }
 
 async function cmdBenchmarks(inv: Invocation, io: CliIO): Promise<number> {
-  const client = benchmarks(clientConfig(inv));
+  // CLI-STAGE: "benchmarks" is bridged onto the datasets() client.
+  const client = datasets(clientConfig(inv));
   const [sub, ref] = inv.positionals;
 
   if (sub === undefined) {
@@ -1246,16 +1215,16 @@ async function cmdBenchmarks(inv: Invocation, io: CliIO): Promise<number> {
       return 0;
     }
     if (catalog.items.length === 0) {
-      io.out("No benchmarks.");
+      io.out("No datasets.");
       return 0;
     }
     const rows = [["NAME", "ACTIVE", "STATE", "TASKS", "TITLE"]];
     for (const b of catalog.items) {
       rows.push([
         b.name,
-        b.activeVersion?.version ?? "-",
-        b.activeVersion?.state ?? "-",
-        b.activeVersion ? String(b.activeVersion.taskCount) : "-",
+        b.active_version?.version ?? "-",
+        b.active_version?.state ?? "-",
+        b.active_version ? String(b.active_version.task_count) : "-",
         b.title ?? "-",
       ]);
     }
@@ -1281,7 +1250,7 @@ async function cmdBenchmarks(inv: Invocation, io: CliIO): Promise<number> {
 }
 
 /**
- * One quiet line per benchmark whose upstream has moved, and the command that
+ * One quiet line per dataset whose upstream has moved, and the command that
  * acts on it.
  *
  * QUIET IS THE REQUIREMENT. This is an FYI printed under a table nobody asked
@@ -1294,25 +1263,26 @@ async function cmdBenchmarks(inv: Invocation, io: CliIO): Promise<number> {
  * decision back with the exact command already written out.
  */
 function upstreamNotices(
-  items: { name: string; activeVersion: { version: string } | null; upstream: UpstreamStatus | null }[]
+  items: { name: string; active_version: { version: string } | null; upstream: UpstreamStatus | null }[]
 ): string[] {
   const lines: string[] = [];
   for (const item of items) {
     if (!item.upstream?.moved) continue;
-    const at = item.activeVersion ? `@${item.activeVersion.version}` : "";
+    const at = item.active_version ? `@${item.active_version.version}` : "";
     lines.push(
       `${item.name}${at} · upstream ${item.upstream.ref} moved — ` +
-        `run: evolve-evals import --benchmark ${item.name} --version <new-version> ` +
-        `--git-url <url> --ref ${item.upstream.ref}`
+        `run: evolve-evals import --name ${item.name} --version <new-version> ` +
+        `--git <url> --ref ${item.upstream.ref}`
     );
   }
   return lines;
 }
 
 async function cmdImport(inv: Invocation, io: CliIO): Promise<number> {
+  // CLI-STAGE: "import" is bridged onto datasets().publish().
   const [sub, id] = inv.positionals;
   const json = inv.flags.json === true;
-  const client = benchmarks(clientConfig(inv));
+  const client = datasets(clientConfig(inv));
 
   if (sub === "status") {
     if (!id) {
@@ -1331,7 +1301,7 @@ async function cmdImport(inv: Invocation, io: CliIO): Promise<number> {
   }
 
   const input = buildImportInput(inv);
-  const created = await client.import(input);
+  const created = await client.publish(input);
   if (inv.flags.watch !== true) {
     if (json) {
       io.out(JSON.stringify(created));
@@ -1344,19 +1314,19 @@ async function cmdImport(inv: Invocation, io: CliIO): Promise<number> {
   }
 
   if (json) {
-    io.out(JSON.stringify({ kind: "import.created", benchmarkImport: created }));
+    io.out(JSON.stringify({ kind: "import.created", datasetImport: created }));
   } else {
-    io.out(`Import ${created.id} (${input.benchmarkName}) ${created.status} — watching…`);
+    io.out(`Import ${created.id} (${input.name}) ${created.status} — watching…`);
   }
 
   const final = await client.watchImport(created.id, {
     onStatus: (job) => {
-      io.out(json ? JSON.stringify({ kind: "import.status", benchmarkImport: job }) : importStatusLine(job));
+      io.out(json ? JSON.stringify({ kind: "import.status", datasetImport: job }) : importStatusLine(job));
     },
   });
 
   if (json) {
-    io.out(JSON.stringify({ kind: "import.final", benchmarkImport: final }));
+    io.out(JSON.stringify({ kind: "import.final", datasetImport: final }));
   } else {
     io.out("");
     for (const line of importLines(final)) io.out(line);
@@ -1365,7 +1335,8 @@ async function cmdImport(inv: Invocation, io: CliIO): Promise<number> {
 }
 
 async function cmdCustomHarnesses(inv: Invocation, io: CliIO): Promise<number> {
-  const client = customHarnesses(clientConfig(inv));
+  // CLI-STAGE: "custom-harnesses" is bridged onto the agents() client.
+  const client = agents(clientConfig(inv));
   const [sub, name] = inv.positionals;
   const json = inv.flags.json === true;
 
@@ -1380,12 +1351,12 @@ async function cmdCustomHarnesses(inv: Invocation, io: CliIO): Promise<number> {
       return 0;
     }
     const rows = [["NAME", "SOURCE", "RUN COMMAND", "UPDATED"]];
-    for (const harness of registered.items) {
+    for (const agent of registered.items) {
       rows.push([
-        harness.name,
-        harness.source,
-        truncate(harness.runCommand, 60),
-        harness.updatedAt,
+        agent.name,
+        agent.source,
+        truncate(agent.run_command, 60),
+        agent.updated_at,
       ]);
     }
     for (const line of table(rows)) io.out(line);
@@ -1411,11 +1382,11 @@ async function cmdCustomHarnesses(inv: Invocation, io: CliIO): Promise<number> {
     if (!name) {
       throw new CliUsageError('"custom-harnesses get" requires a <name>');
     }
-    const harness = await client.get(name);
+    const agent = await client.get(name);
     if (json) {
-      io.out(JSON.stringify(harness));
+      io.out(JSON.stringify(agent));
     } else {
-      for (const line of customHarnessLines(harness)) io.out(line);
+      for (const line of customHarnessLines(agent)) io.out(line);
     }
     return 0;
   }
