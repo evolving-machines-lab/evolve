@@ -1603,6 +1603,30 @@ export interface ProviderCapability {
 }
 
 /**
+ * One managed sandbox door and whether this deployment serves it — a
+ * different question from ProviderCapability, which is about the eval lane.
+ * A managed sandbox is one the caller drives directly holding nothing but an
+ * Evolve key.
+ */
+export interface ManagedProviderCapability {
+  name: string;
+  /**
+   * The operator config this door reads is present. NOT a health check: it
+   * says nothing about whether the pass-through behind the door is deployed
+   * or the credential behind it is valid.
+   */
+  configured: boolean;
+  /** Config this door reads, so an operator sees what to set. */
+  requires_config: string[];
+  /** The subset of `requires_config` missing right now — empty when configured. */
+  missing_config: string[];
+  /** A full SDK agent session can run on this door. */
+  agent_sessions: boolean;
+  /** Why not, when `agent_sessions` is false. Null otherwise. */
+  agent_sessions_reason: string | null;
+}
+
+/**
  * The capability document: everything a client would otherwise hardcode.
  *
  * Public and cacheable — no API key needed, so a signed-out page can populate
@@ -1628,8 +1652,8 @@ export interface CapabilityDocument {
     reserved_env_keys: string[];
   };
   sandbox_providers: ProviderCapability[];
-  /** Providers whose credentials the platform manages. */
-  managed_providers: string[];
+  /** The managed doors this deployment serves, and what each can carry. */
+  managed_providers: ManagedProviderCapability[];
   /** Constraints that hold on EVERY provider. */
   platform_constraints: { capability: string; reason: string }[];
   network_modes: string[];

@@ -354,6 +354,7 @@ export {
   type CapabilityDocument,
   type AgentCapability,
   type ProviderCapability,
+  type ManagedProviderCapability,
   type StatusVocabulary,
   type UpstreamStatus,
   type Awaitable,

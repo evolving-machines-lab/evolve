@@ -23,6 +23,7 @@
 
 import type {
   AgentInput,
+  CapabilityDocument,
   DatasetSource,
   JobEvent,
 } from "../../src/hosted/types.ts";
@@ -126,6 +127,24 @@ function rejectsWrongField(event: JobEvent): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 4. CapabilityDocument.managed_providers — objects, never bare names
+// ---------------------------------------------------------------------------
+
+// The wire serves one object per managed door; a client that treated the list
+// as `string[]` would call `.includes('e2b')` and silently never match.
+const managedDoor: CapabilityDocument["managed_providers"][number] = {
+  name: "modal",
+  configured: true,
+  requires_config: ["MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET"],
+  missing_config: [],
+  agent_sessions: false,
+  agent_sessions_reason: "The managed Modal door has no filesystem operations.",
+};
+
+// @ts-expect-error a bare provider name is not a managed door entry
+const bareDoorName: CapabilityDocument["managed_providers"][number] = "modal";
+
 // Reference every binding so `noUnusedLocals` cannot fire instead of the
 // directives above doing their job.
 void [
@@ -140,6 +159,8 @@ void [
   sourcelessAgent,
   narrows,
   rejectsWrongField,
+  managedDoor,
+  bareDoorName,
 ];
 
 console.log("=== Hosted SDK Type-Level Tests ===");

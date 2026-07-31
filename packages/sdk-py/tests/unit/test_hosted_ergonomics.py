@@ -27,6 +27,7 @@ from evolve import (
     EvolveAPIError,
     HostedClientConfig,
     HOSTED_ERROR_CODES,
+    ManagedProviderCapability,
     UpstreamStatus,
     agents as agents_factory,
     datasets as datasets_factory,
@@ -333,7 +334,16 @@ class TestFrontDoor:
             'sandbox_providers': [
                 {'name': 'e2b', 'default': True, 'sizing': {'max_cpus': 8}, 'refuses': []}
             ],
-            'managed_providers': ['e2b'],
+            'managed_providers': [
+                {
+                    'name': 'e2b',
+                    'configured': True,
+                    'requires_config': ['EVOLVE_INTERNAL_PROXY_SECRET'],
+                    'missing_config': [],
+                    'agent_sessions': True,
+                    'agent_sessions_reason': None,
+                }
+            ],
             'platform_constraints': [],
             'network_modes': ['no-network'],
             'statuses': {
@@ -358,7 +368,18 @@ class TestFrontDoor:
         assert result.agents[0].latest_version == '1.2.3'
         assert result.statuses['job'].terminal == ['COMPLETED']
         assert result.sandbox_providers[0].default is True
-        assert result.managed_providers == ['e2b']
+        # The door list is objects, never bare names — a client asks each door
+        # whether it is configured and whether it can carry an agent session.
+        assert result.managed_providers == [
+            ManagedProviderCapability(
+                name='e2b',
+                configured=True,
+                requires_config=['EVOLVE_INTERNAL_PROXY_SECRET'],
+                missing_config=[],
+                agent_sessions=True,
+                agent_sessions_reason=None,
+            )
+        ]
         # An import that can never activate must be recognizable from here.
         assert result.import_warning_codes == ['no_solutions_archived']
         # No credentials went out.

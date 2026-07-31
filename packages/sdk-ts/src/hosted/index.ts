@@ -161,6 +161,7 @@ export type {
   ListJobTasksOptions,
   ListJobsOptions,
   ListTrialsOptions,
+  ManagedProviderCapability,
   ModelInfo,
   Page,
   PageOptions,

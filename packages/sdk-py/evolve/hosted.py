@@ -434,6 +434,29 @@ class ProviderCapability:
 
 
 @dataclass
+class ManagedProviderCapability:
+    """One managed sandbox door and whether this deployment serves it.
+
+    A different question from :class:`ProviderCapability`, which is about the
+    eval lane — a managed sandbox is one the caller drives directly holding
+    nothing but an Evolve key.
+    """
+    name: str
+    #: The operator config this door reads is present. NOT a health check: it
+    #: says nothing about whether the pass-through behind the door is deployed
+    #: or the credential behind it is valid.
+    configured: bool
+    #: Config this door reads, so an operator sees what to set.
+    requires_config: List[str]
+    #: The subset of ``requires_config`` missing right now — empty when configured.
+    missing_config: List[str]
+    #: A full SDK agent session can run on this door.
+    agent_sessions: bool
+    #: Why not, when ``agent_sessions`` is false. None otherwise.
+    agent_sessions_reason: Optional[str] = None
+
+
+@dataclass
 class CapabilityDocument:
     """Everything a client would otherwise hardcode, in one public document.
 
@@ -452,8 +475,8 @@ class CapabilityDocument:
     #: Rules a bring-your-own agent registration must satisfy.
     agent_registration: Dict[str, Any]
     sandbox_providers: List[ProviderCapability]
-    #: Providers whose credentials the platform manages.
-    managed_providers: List[str]
+    #: The managed doors this deployment serves, and what each can carry.
+    managed_providers: List[ManagedProviderCapability]
     #: Constraints that hold on EVERY provider.
     platform_constraints: List[Dict[str, str]]
     network_modes: List[str]
@@ -1063,7 +1086,17 @@ def _map_capability_document(raw: Dict[str, Any]) -> CapabilityDocument:
             )
             for item in raw.get('sandbox_providers', [])
         ],
-        managed_providers=raw.get('managed_providers', []),
+        managed_providers=[
+            ManagedProviderCapability(
+                name=item['name'],
+                configured=item.get('configured', False),
+                requires_config=item.get('requires_config', []),
+                missing_config=item.get('missing_config', []),
+                agent_sessions=item.get('agent_sessions', False),
+                agent_sessions_reason=item.get('agent_sessions_reason'),
+            )
+            for item in raw.get('managed_providers', [])
+        ],
         platform_constraints=raw.get('platform_constraints', []),
         network_modes=raw.get('network_modes', []),
         statuses={

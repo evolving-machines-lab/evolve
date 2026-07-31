@@ -3407,6 +3407,41 @@ components:
               reason:
                 type: string
 
+    ManagedProviderCapability:
+      type: object
+      description: |
+        One managed sandbox door and whether this deployment serves it.
+        `configured` is derived from operator config presence only — it says
+        nothing about whether the pass-through behind the door is deployed or
+        the credential is valid. `agent_sessions` answers the separate
+        question of whether the door can carry a full SDK agent session.
+      required:
+        - name
+        - configured
+        - requires_config
+        - missing_config
+        - agent_sessions
+        - agent_sessions_reason
+      properties:
+        name:
+          type: string
+        configured:
+          type: boolean
+        requires_config:
+          type: array
+          items:
+            type: string
+        missing_config:
+          description: The subset of `requires_config` missing right now — empty when configured.
+          type: array
+          items:
+            type: string
+        agent_sessions:
+          type: boolean
+        agent_sessions_reason:
+          description: Why not, when `agent_sessions` is false. Null otherwise.
+          type: [string, 'null']
+
     CapabilityDocument:
       type: object
       description: |
@@ -3468,9 +3503,13 @@ components:
             $ref: '#/components/schemas/ProviderCapability'
         managed_providers:
           type: array
-          description: Providers whose credentials the platform manages.
+          description: |
+            The managed doors this deployment serves — a different question
+            from `sandbox_providers`, which is about the eval lane. A managed
+            sandbox is one the caller drives directly holding nothing but an
+            Evolve key.
           items:
-            type: string
+            $ref: '#/components/schemas/ManagedProviderCapability'
         platform_constraints:
           type: array
           description: Constraints that hold on EVERY provider.
