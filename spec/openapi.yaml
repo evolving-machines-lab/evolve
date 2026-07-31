@@ -1910,6 +1910,7 @@ components:
       properties:
         job_name:
           type: string
+          maxLength: 200
           description: User-facing label; server-generated when omitted.
         datasets:
           type: array
@@ -3625,6 +3626,9 @@ components:
                     type: string
                 default_reasoning_effort:
                   type: string
+                max_job_name_length:
+                  type: integer
+                  description: Longest accepted `job_name` (JobCreate mirrors it as maxLength).
             compare:
               type: object
               properties:
@@ -3632,6 +3636,12 @@ components:
                   type: integer
                 max_ids:
                   type: integer
+            stop:
+              type: object
+              properties:
+                max_trial_ids:
+                  type: integer
+                  description: Most trials one stop request may name (StopRequest mirrors it as maxItems).
             pagination:
               type: object
               properties:
