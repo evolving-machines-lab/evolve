@@ -85,7 +85,7 @@ function fileHeader(path: string, size: number): Buffer {
 
 /**
  * Deterministically tar + gzip a corpus directory into a single gzipped-tar
- * buffer, ready to upload to POST /api/benchmarks/imports.
+ * buffer, ready to upload to POST /api/datasets/publish.
  */
 export function tarGzipDirectory(root: string): Buffer {
   const files = listFiles(root);

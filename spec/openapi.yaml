@@ -56,9 +56,10 @@ info:
       unbounded: one GET must not become an unbounded server-side fan-out.
 
     ## Wave sequencing
-    Operations, parameters, and error codes marked `x-wave: 2` (per-task
-    rollup, dataset version activation, the auth surface, and server-side list
-    filters) ship in the second build wave. Everything unmarked is wave 1.
+    Operations, parameters, enum members, and error codes marked `x-wave: 2`
+    (per-task rollup, dataset version activation, the auth surface,
+    server-side list filters, and the `trajectory` artifact selector) ship in
+    the second build wave. Everything unmarked is wave 1.
 
     ## Deliberately absent (wave 3, not yet specified)
     The rename map's additive rows are new capabilities, not renames, and are
@@ -681,11 +682,11 @@ paths:
         (a sequence number) and `limit` (default 200, max 1000).
 
         With `stream`: raw artifacts instead of parsed events —
-        - `verifier`, `trace-stdout`, `trace-stderr`: the log text as JSON
-          (`{"log": string | null}`; null means this trial never stored that
-          log — a normal answer, never an error). With `format=log` a present
-          log is delivered as a `text/plain` attachment; an absent one still
-          answers the JSON `{"log": null}`.
+        - `verifier`, `trace-stdout`, `trace-stderr`, `trajectory` (wave 2):
+          the log text as JSON (`{"log": string | null}`; null means this
+          trial never stored that log — a normal answer, never an error).
+          With `format=log` a present log is delivered as a `text/plain`
+          attachment; an absent one still answers the JSON `{"log": null}`.
         - `agent-home`: the agent home tree as JSON
           (`{"files": {"<sandbox-path>": "<text>", ...} | null}`; null means
           nothing was collected). With `format=tgz` a present tree is
@@ -708,10 +709,18 @@ paths:
             default: 200
         - name: stream
           in: query
-          description: Raw artifact selector.
+          description: >
+            Raw artifact selector. `trajectory` is in the vocabulary ahead of
+            its server wave: until that wave lands the route answers
+            not-found for it, reported as the API error it is.
           schema:
             type: string
-            enum: [verifier, trace-stdout, trace-stderr, agent-home]
+            enum:
+              - verifier
+              - trace-stdout
+              - trace-stderr
+              - trajectory   # x-wave: 2 — normalized-trajectory artifact slot
+              - agent-home
         - name: format
           in: query
           description: >

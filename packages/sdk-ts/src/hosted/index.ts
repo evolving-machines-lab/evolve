@@ -78,6 +78,7 @@ import type {
   TraceEventPage,
   TraceOptions,
   Trial,
+  TrialArtifactStream,
   TrialCounts,
   TrialList,
   TrialPage,
@@ -91,7 +92,7 @@ import type {
 } from "./types";
 
 // Re-exported from the hosted barrel so the package root can hand them on.
-export { HOSTED_ERROR_CODES, isHostedErrorCode } from "./types";
+export { HOSTED_ERROR_CODES, TRIAL_ARTIFACT_STREAMS, isHostedErrorCode } from "./types";
 export type {
   ActiveDataset,
   Agent,
@@ -182,6 +183,7 @@ export type {
   TraceEventPage,
   TraceOptions,
   Trial,
+  TrialArtifactStream,
   TrialCounts,
   TrialList,
   TrialPage,
@@ -1757,7 +1759,7 @@ export function trials(config?: HostedClientConfig): TrialsClient {
    */
   async function getArtifact(
     trialId: string,
-    stream: "verifier" | "trace-stdout" | "trace-stderr" | "trajectory"
+    stream: Exclude<TrialArtifactStream, "agent-home">
   ): Promise<string | null>;
   async function getArtifact(
     trialId: string,
@@ -1765,7 +1767,7 @@ export function trials(config?: HostedClientConfig): TrialsClient {
   ): Promise<Record<string, string> | null>;
   async function getArtifact(
     trialId: string,
-    stream: "verifier" | "trace-stdout" | "trace-stderr" | "trajectory" | "agent-home"
+    stream: TrialArtifactStream
   ): Promise<string | Record<string, string> | null> {
     const res = await request(
       cfg,

@@ -1,0 +1,181 @@
+"""The Python half of the contract drift gate — the mirror of the TypeScript
+SDK's hosted-spec-gate.test.ts, against the same spec/openapi.yaml.
+
+Three axes, same law as the TypeScript gate:
+
+1. OPERATIONS. Every operationId in the spec appears in the explicit map
+   below, and every wave-1 operation resolves to a real client method. The
+   map is maintained by hand ON PURPOSE — it doubles as the documentation of
+   which spec operation each SDK method serves, and a new operation fails
+   the gate until someone states its SDK answer. Wave-aware: an operation
+   marked ``x-wave: 2`` may map to None (declared "not in the SDK yet"), a
+   wave-1 operation may not.
+
+2. ERROR CODES. ``HOSTED_ERROR_CODES`` equals the spec's ErrorCode enum
+   byte-exactly — same members, same order — sourced from the spec itself.
+
+3. ARTIFACT SELECTORS. The ``artifact()`` stream Literal equals the trace
+   route's ``?stream=`` enum byte-exactly. The SDK ships wave-2 selectors
+   ahead of the server (the route refuses them until its wave lands), so
+   equality against the full enum is exactly the law.
+
+The spec is parsed line-by-line against its own committed formatting; every
+parse asserts non-vacuity so an empty parse fails loudly instead of passing.
+"""
+
+import re
+import typing
+from pathlib import Path
+
+from evolve import (
+    HOSTED_ERROR_CODES,
+    AgentsClient,
+    AuthClient,
+    DatasetsClient,
+    JobsClient,
+    TrialsClient,
+    meta,
+)
+
+SPEC_PATH = Path(__file__).resolve().parents[4] / 'spec' / 'openapi.yaml'
+
+
+def _spec_lines() -> 'list[str]':
+    return SPEC_PATH.read_text().split('\n')
+
+
+def _spec_operations() -> 'dict[str, int]':
+    """operationId -> wave. Operation-level keys sit at exactly 6 spaces;
+    parameter-level x-wave markers sit deeper and are not the operation's."""
+    operations: 'dict[str, int]' = {}
+    current = None
+    for line in _spec_lines():
+        op = re.match(r'^ {6}operationId: (\w+)\s*$', line)
+        if op:
+            current = op.group(1)
+            operations[current] = 1
+            continue
+        wave = re.match(r'^ {6}x-wave: (\d+)\s*$', line)
+        if wave and current:
+            operations[current] = int(wave.group(1))
+    assert len(operations) >= 25, 'the operation parse found too few — spec moved?'
+    return operations
+
+
+def _enum_entries(start: str, end: str, entry: str) -> 'list[str]':
+    out = []
+    inside = False
+    for line in _spec_lines():
+        if not inside:
+            inside = re.match(start, line) is not None
+            continue
+        if re.match(end, line):
+            break
+        matched = re.match(entry, line)
+        if matched:
+            out.append(matched.group(1))
+    return out
+
+
+def _spec_error_codes() -> 'list[str]':
+    codes = _enum_entries(
+        r'^ {4}ErrorCode:\s*$',
+        r'^ {4}[A-Z]\w*:\s*$',
+        r'^ {8}- ([a-z_]+)\s*(?:#.*)?$',
+    )
+    assert len(codes) > 10, 'the ErrorCode parse found too few — spec moved?'
+    return codes
+
+
+def _spec_stream_selectors() -> 'list[str]':
+    selectors = _enum_entries(
+        r'^ {8}- name: stream\s*$',
+        r'^ {8}- name: ',
+        r'^ {14}- ([a-z-]+)\s*(?:#.*)?$',
+    )
+    assert len(selectors) >= 4, 'the stream-enum parse found too few — spec moved?'
+    return selectors
+
+
+# The operationId -> (client class, method) map. This IS the documentation of
+# which SDK method serves which contract operation; None means "wave-gated and
+# not in the SDK yet", legal only past wave 1. `meta` is the module-level
+# function — the one call that takes no client.
+OPERATION_TO_METHOD = {
+    # Jobs
+    'createJob': (JobsClient, 'start'),
+    'listJobs': (JobsClient, 'list'),
+    'compareJobs': (JobsClient, 'compare'),
+    'getJob': (JobsClient, 'get'),
+    'cancelJob': (JobsClient, 'cancel'),
+    'watchJob': (JobsClient, 'watch'),
+    'downloadJob': (JobsClient, 'download'),
+    'resumeJob': (JobsClient, 'resume'),
+    'regradeJob': (JobsClient, 'regrade'),
+    'listJobTrials': (JobsClient, 'trials'),
+    'listJobTasks': (JobsClient, 'tasks'),
+    # Trials (globally addressable)
+    'getTrial': (TrialsClient, 'get'),
+    'getTrialTrace': (TrialsClient, 'trace'),  # ?stream= raw selectors ride artifact()
+    'regradeTrial': (TrialsClient, 'regrade'),
+    'stopTrials': (TrialsClient, 'stop'),
+    # Datasets
+    'listDatasets': (DatasetsClient, 'list'),
+    'getDataset': (DatasetsClient, 'get'),
+    'updateDataset': (DatasetsClient, 'update'),
+    'deleteDataset': (DatasetsClient, 'delete'),
+    'downloadDataset': (DatasetsClient, 'download'),
+    'activateDatasetVersion': (DatasetsClient, 'activate'),
+    'publishDataset': (DatasetsClient, 'publish'),
+    'listDatasetImports': (DatasetsClient, 'list_imports'),
+    'getDatasetImport': (DatasetsClient, 'get_import'),
+    # Agents (bring-your-own)
+    'registerAgent': (AgentsClient, 'create'),
+    'listAgents': (AgentsClient, 'list'),
+    'getAgent': (AgentsClient, 'get'),
+    'upsertAgent': (AgentsClient, 'upsert'),
+    'deleteAgent': (AgentsClient, 'delete'),
+    # Meta + auth
+    'getMeta': meta,
+    'getAuthStatus': (AuthClient, 'status'),
+    'listApiKeys': None,   # wave 2 — no SDK method yet
+    'revokeApiKey': None,  # wave 2 — no SDK method yet
+}
+
+
+def _resolve(entry):
+    if isinstance(entry, tuple):
+        cls, method = entry
+        return getattr(cls, method, None)
+    return entry
+
+
+def test_every_spec_operation_is_mapped():
+    operations = _spec_operations()
+    unmapped = [op for op in operations if op not in OPERATION_TO_METHOD]
+    assert not unmapped, f'spec operations missing from the map (state their SDK answer): {unmapped}'
+    phantom = [op for op in OPERATION_TO_METHOD if op not in operations]
+    assert not phantom, f'map entries with no spec operation: {phantom}'
+
+
+def test_wave_1_operations_all_reach_a_method():
+    operations = _spec_operations()
+    null_wave1 = [
+        op for op, wave in operations.items()
+        if wave == 1 and OPERATION_TO_METHOD[op] is None
+    ]
+    assert not null_wave1, f'wave-1 operations mapped to None: {null_wave1}'
+    unreachable = [
+        op for op, entry in OPERATION_TO_METHOD.items()
+        if entry is not None and not callable(_resolve(entry))
+    ]
+    assert not unreachable, f'mapped methods that do not resolve: {unreachable}'
+
+
+def test_error_codes_match_the_spec_enum_byte_exactly():
+    assert list(HOSTED_ERROR_CODES) == _spec_error_codes()
+
+
+def test_artifact_selectors_match_the_spec_stream_enum():
+    hints = typing.get_type_hints(TrialsClient.artifact)
+    assert list(typing.get_args(hints['stream'])) == _spec_stream_selectors()

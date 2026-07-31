@@ -1408,6 +1408,23 @@ export interface JobsClient {
   ): Promise<Buffer | string | ReadableStream<Uint8Array>>;
 }
 
+/**
+ * The trace route's `?stream=` selectors, in the contract's own order — the
+ * raw-artifact vocabulary. A runtime value (not only a type) so a drift gate
+ * can hold it to the spec's enum, and the CLI can build its `--stream`
+ * validation from the same list instead of a second copy.
+ */
+export const TRIAL_ARTIFACT_STREAMS = [
+  "verifier",
+  "trace-stdout",
+  "trace-stderr",
+  "trajectory",
+  "agent-home",
+] as const;
+
+/** One raw-artifact selector on the trace route. */
+export type TrialArtifactStream = (typeof TRIAL_ARTIFACT_STREAMS)[number];
+
 /** Client for globally addressable trials — no job id in any signature */
 export interface TrialsClient {
   /**
@@ -1435,7 +1452,7 @@ export interface TrialsClient {
    */
   artifact(
     trialId: string,
-    stream: "verifier" | "trace-stdout" | "trace-stderr" | "trajectory"
+    stream: Exclude<TrialArtifactStream, "agent-home">
   ): Promise<string | null>;
   artifact(trialId: string, stream: "agent-home"): Promise<Record<string, string> | null>;
   /**

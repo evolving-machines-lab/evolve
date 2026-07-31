@@ -1,4 +1,4 @@
-"""Hosted evals clients: datasets(), agents(), jobs() and trials().
+"""Hosted evals clients: datasets(), agents(), jobs(), trials() and auth().
 
 Direct-HTTP clients against the platform API (same pattern as
 browser_credentials.py — no Node bridge). Mirrors the TypeScript SDK's hosted
@@ -27,7 +27,19 @@ import urllib.parse
 import urllib.request
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Callable, Dict, List, Literal, Optional, Union
+from typing import (
+    Any,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Dict,
+    List,
+    Literal,
+    NoReturn,
+    Optional,
+    Union,
+    get_args,
+)
 
 from .config import HostedClientConfig
 
@@ -35,9 +47,17 @@ DEFAULT_BASE_URL = 'https://dashboard.evolvingmachines.ai'
 
 # Request budgets. A status poll and a 512 MB package are not the same wait, and
 # sizing both by the smaller one made large downloads fail on the in-memory
-# shape while succeeding on the to-disk shape.
+# shape while succeeding on the to-disk shape. An upload is the download wait in
+# the other direction — a corpus tarball rides the request body — so it shares
+# the large budget. /api/meta gets a budget of its own: a small public document
+# that should answer fast or be treated as down, not hold a caller for a minute.
+# The SSE socket timeout is not a request budget at all — the server heartbeats
+# every 15s, so 60s of silence only ever means a genuinely dead connection.
 REQUEST_TIMEOUT_SEC = 60
 DOWNLOAD_TIMEOUT_SEC = 600
+UPLOAD_TIMEOUT_SEC = DOWNLOAD_TIMEOUT_SEC
+META_TIMEOUT_SEC = 30
+SSE_SOCKET_TIMEOUT_SEC = 60
 
 #: The server states the verified digest of a download here. When it is present
 #: the client re-checks it — a digest nobody verifies is decoration.
@@ -52,7 +72,8 @@ _TERMINAL_IMPORT_STATUSES = {'COMPLETED', 'FAILED'}
 _TERMINAL_EVENT_TYPES = {'job.completed', 'job.cancelled', 'job.failed'}
 
 
-#: Every error code the hosted API can return, as a closed list.
+#: One of the API's stable error codes. Use it in annotations to make a typo a
+#: type error: ``def handle(code: HostedErrorCode) -> None: ...``
 #:
 #: This exists so a typo is catchable rather than silently never matching:
 #: ``err.code == "insufficient_creidts"`` is a branch that looks handled and
@@ -66,66 +87,9 @@ _TERMINAL_EVENT_TYPES = {'job.completed', 'job.cancelled', 'job.failed'}
 #:
 #: Held to the spec by ``packages/sdk-ts/hosted-error-codes.json``, the
 #: checked-in copy both SDKs assert against; the list drifted silently before
-#: that file existed. Adding a code means editing the spec enum, that file, the
-#: TypeScript list, and BOTH halves of the pair below — the tuple and the
-#: Literal.
-HOSTED_ERROR_CODES: 'tuple[str, ...]' = (
-    'missing_authorization',
-    'invalid_api_key',
-    'credential_service_unavailable',
-    'rate_limited',
-    'insufficient_credits',
-    'invalid_json',
-    'invalid_input',
-    'invalid_limit',
-    'invalid_status',
-    'invalid_cursor',
-    'invalid_after',
-    'invalid_format',
-    'invalid_ids',
-    'invalid_multipart',
-    'idempotency_key_reused',
-    'dataset_not_found',
-    'dataset_version_not_found',
-    'dataset_name_taken',
-    'dataset_in_use',
-    'dataset_not_owned',
-    'upstream_not_watchable',
-    'no_active_version',
-    'version_not_ready',
-    'version_not_activatable',
-    'unknown_task_names',
-    'no_tasks',
-    'agent_not_found',
-    'agent_name_taken',
-    'agent_name_reserved',
-    'agent_invalid_name',
-    'agent_source_required',
-    'agent_source_conflict',
-    'agent_invalid_env',
-    'agent_too_large',
-    'agent_limit_reached',
-    'agent_version_not_found',
-    'job_too_large',
-    'provider_unsupported',
-    'job_not_found',
-    'job_not_terminal',
-    'no_failed_trials',
-    'trial_not_found',
-    'concurrent_update',
-    'regrade_source_ineligible',
-    'no_regradable_trials',
-    'import_not_found',
-    'import_too_large',
-    'invalid_archive',
-    'package_not_retained',
-    'package_corrupt',
-    'package_missing',
-    'internal_error',
-)
-
-#: One of the API's stable error codes. Use it in annotations to make a typo a
-#: type error: ``def handle(code: HostedErrorCode) -> None: ...``
+#: that file existed. Adding a code means editing the spec enum, that file,
+#: the TypeScript list, and this Literal — the runtime tuple below is derived
+#: from it, so the pair cannot disagree.
 HostedErrorCode = Literal[
     'missing_authorization',
     'invalid_api_key',
@@ -180,6 +144,11 @@ HostedErrorCode = Literal[
     'package_missing',
     'internal_error',
 ]
+
+#: Every error code the hosted API can return, as a closed runtime list —
+#: derived from the Literal above, in its order, so there is no second copy
+#: to keep in step.
+HOSTED_ERROR_CODES: 'tuple[str, ...]' = get_args(HostedErrorCode)
 
 
 def is_hosted_error_code(value: Any) -> bool:
@@ -800,6 +769,23 @@ class StopResponse:
 
 
 @dataclass
+class JobTaskRollup:
+    """One task's rollup within a job: its trial tally, mean reward over
+    SCORED trials, and measured cost. Sits between the job body and the trial
+    list so a caller need not fetch every trial to see which tasks are
+    dragging.
+    """
+    task_name: str
+    #: The dataset the task came from.
+    source: str
+    trials: TrialTally
+    #: Mean over SCORED trials only; None when none. Zero is a reward.
+    mean_reward: Optional[float]
+    #: Measured spend across the task's settled trials.
+    cost_usd: Optional[float]
+
+
+@dataclass
 class JobEvent:
     """One server-sent event from jobs().watch().
 
@@ -981,6 +967,23 @@ class Agent:
     updated_at: str = ''
 
 
+@dataclass
+class ApiKey:
+    """A key descriptor. The secret is never returned."""
+    id: str
+    label: Optional[str]
+    created_at: str
+    last_used_at: Optional[str]
+
+
+@dataclass
+class AuthStatus:
+    """Who the caller is and the key they used."""
+    user_id: str
+    email: Optional[str]
+    key: ApiKey
+
+
 # The ONE page envelope, on every collection this surface returns — top level
 # or nested. ``next_cursor`` means one thing everywhere: pass it back as
 # ``cursor=`` for the next page, and None means there is no next page. It never
@@ -998,6 +1001,13 @@ class JobPage:
 @dataclass
 class TrialPage:
     items: List[Trial]
+    next_cursor: Optional[str]
+    has_more: bool
+
+
+@dataclass
+class JobTaskRollupPage:
+    items: List[JobTaskRollup]
     next_cursor: Optional[str]
     has_more: bool
 
@@ -1153,6 +1163,29 @@ def _map_task(data: Dict[str, Any]) -> Task:
     )
 
 
+def _map_dataset_detail(raw: Dict[str, Any]) -> Dataset:
+    """The full detail Dataset shape: get() and activate() echo it."""
+    active = raw.get('active_version')
+    selected = raw.get('selected_version')
+    task_items, task_cursor, task_more = _page_parts(raw.get('tasks'))
+    return Dataset(
+        name=raw['name'],
+        title=raw.get('title'),
+        description=raw.get('description'),
+        active_version=_map_dataset_version(active) if active else None,
+        upstream=_map_upstream(raw.get('upstream')),
+        versions=[_map_dataset_version(item) for item in raw.get('versions', [])],
+        selected_version=_map_dataset_version(selected) if selected else None,
+        tasks=TaskPage(
+            items=[_map_task(item) for item in task_items],
+            next_cursor=task_cursor,
+            has_more=task_more,
+        ),
+        created_at=raw.get('created_at'),
+        updated_at=raw.get('updated_at'),
+    )
+
+
 def _map_counts(data: Any) -> JobCounts:
     counts = data if isinstance(data, dict) else {}
     return JobCounts(
@@ -1219,6 +1252,32 @@ def _map_job(data: Dict[str, Any]) -> Job:
         started_at=data.get('started_at', ''),
         updated_at=data.get('updated_at', ''),
         finished_at=data.get('finished_at'),
+    )
+
+
+def _map_job_task_rollup(data: Dict[str, Any]) -> JobTaskRollup:
+    mean_reward = data.get('mean_reward')
+    cost_usd = data.get('cost_usd')
+    return JobTaskRollup(
+        task_name=data.get('task_name', ''),
+        source=data.get('source', ''),
+        trials=_map_trial_tally(data.get('trials')),
+        mean_reward=float(mean_reward) if isinstance(mean_reward, (int, float)) else None,
+        cost_usd=float(cost_usd) if isinstance(cost_usd, (int, float)) else None,
+    )
+
+
+def _map_auth_status(data: Dict[str, Any]) -> AuthStatus:
+    key = data.get('key') if isinstance(data.get('key'), dict) else {}
+    return AuthStatus(
+        user_id=data.get('user_id', ''),
+        email=data.get('email'),
+        key=ApiKey(
+            id=key.get('id', ''),
+            label=key.get('label'),
+            created_at=key.get('created_at', ''),
+            last_used_at=key.get('last_used_at'),
+        ),
     )
 
 
@@ -1474,7 +1533,7 @@ def _parse_error_body(text: str, fallback: str) -> Dict[str, Any]:
     }
 
 
-def _raise_api_error(exc: urllib.error.HTTPError) -> None:
+def _raise_api_error(exc: urllib.error.HTTPError) -> NoReturn:
     detail = exc.read().decode('utf-8', errors='replace')
     parsed = _parse_error_body(detail, str(exc.reason))
     # Header fallbacks, so an unparseable body still yields a usable request id
@@ -1567,7 +1626,7 @@ class _HostedHttp:
             method=method,
         )
         try:
-            with urllib.request.urlopen(request, timeout=600) as response:
+            with urllib.request.urlopen(request, timeout=UPLOAD_TIMEOUT_SEC) as response:
                 payload = response.read()
         except urllib.error.HTTPError as exc:
             _raise_api_error(exc)
@@ -1676,7 +1735,6 @@ class _HostedHttp:
                 return target
         except urllib.error.HTTPError as exc:
             _raise_api_error(exc)
-            raise  # unreachable; _raise_api_error always raises
 
 
 def _safe_download_filename(candidate: Optional[str], fallback: str) -> str:
@@ -1837,8 +1895,14 @@ class _PaginatedList:
     following ``next_cursor`` from the caller's starting cursor.
     """
 
-    def __init__(self, fetch_page, rows_of, *, limit=None, cursor=None):
-        # fetch_page: async (limit, cursor) -> page
+    def __init__(
+        self,
+        fetch_page: Callable[[Optional[int], Optional[str]], Awaitable[Any]],
+        rows_of: Callable[[Any], List[Any]],
+        *,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    ):
         self._fetch_page = fetch_page
         self._rows_of = rows_of
         self._limit = limit
@@ -1873,8 +1937,11 @@ class _JobWatch:
     Pick one form per handle: both drive the same underlying SSE stream.
     """
 
-    def __init__(self, events, final):
-        # events: () -> AsyncIterator[JobEvent]; final: async () -> Job
+    def __init__(
+        self,
+        events: Callable[[], AsyncIterator['JobEvent']],
+        final: Callable[[], Awaitable['Job']],
+    ):
         self._events = events
         self._final = final
 
@@ -1919,6 +1986,7 @@ class DatasetsClient:
     def list(
         self,
         *,
+        search: Optional[str] = None,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
     ) -> _PaginatedList:
@@ -1926,10 +1994,13 @@ class DatasetsClient:
 
         ``await`` the result for one page (honoring ``limit``/``cursor``), or
         ``async for`` it to walk the whole catalog across cursor pages.
+        ``search`` is a free-text filter over name and description, sent
+        verbatim on every page fetch; the server owns availability (ignored or
+        refused until its wave lands).
         """
         async def fetch_page(page_limit, page_cursor) -> DatasetPage:
             raw = await self._http.request_json(
-                f'/api/datasets{_page_query(page_limit, page_cursor)}'
+                f'/api/datasets{_page_query(page_limit, page_cursor, search=search)}'
             )
             items, next_cursor, has_more = _page_parts(raw)
             return DatasetPage(
@@ -1959,25 +2030,7 @@ class DatasetsClient:
         raw = await self._http.request_json(
             f'/api/datasets/{urllib.parse.quote(name)}{query}'
         )
-        active = raw.get('active_version')
-        selected = raw.get('selected_version')
-        task_items, task_cursor, task_more = _page_parts(raw.get('tasks'))
-        return Dataset(
-            name=raw['name'],
-            title=raw.get('title'),
-            description=raw.get('description'),
-            active_version=_map_dataset_version(active) if active else None,
-            upstream=_map_upstream(raw.get('upstream')),
-            versions=[_map_dataset_version(item) for item in raw.get('versions', [])],
-            selected_version=_map_dataset_version(selected) if selected else None,
-            tasks=TaskPage(
-                items=[_map_task(item) for item in task_items],
-                next_cursor=task_cursor,
-                has_more=task_more,
-            ),
-            created_at=raw.get('created_at'),
-            updated_at=raw.get('updated_at'),
-        )
+        return _map_dataset_detail(raw)
 
     async def get_active(
         self,
@@ -2176,6 +2229,20 @@ class DatasetsClient:
         return _PaginatedList(
             fetch_page, lambda page: page.items, limit=limit, cursor=cursor
         )
+
+    async def activate(self, name: str, version: str) -> Dataset:
+        """Make a READY version the dataset's active version.
+
+        Wave-gated: until the server's wave lands the route answers
+        not-found, and that refusal is reported as the API error it is.
+        Returns the full detail shape, exactly like :meth:`get`.
+        """
+        raw = await self._http.request_json(
+            f'/api/datasets/{urllib.parse.quote(name)}'
+            f'/versions/{urllib.parse.quote(version)}/activate',
+            method='POST',
+        )
+        return _map_dataset_detail(raw)
 
     async def update(self, name: str, *, upstream_auto_import: bool) -> Dataset:
         """Update dataset settings; returns the updated dataset.
@@ -2441,6 +2508,8 @@ class JobsClient:
         n_concurrent_trials: Optional[int] = None,
         max_trial_spend_usd: Optional[float] = None,
         sandbox_provider: Optional[str] = None,
+        agent_env: Optional[Dict[str, str]] = None,
+        verifier_env: Optional[Dict[str, str]] = None,
         idempotency_key: Optional[str] = None,
     ) -> Job:
         """Start a job over one or more catalog datasets.
@@ -2456,7 +2525,10 @@ class JobsClient:
         spend enforcement; omitted, the server applies its own default ($200,
         operator-tunable). The response echoes the RESOLVED cap either way, so
         an omitted one is never invisible, and reports the resulting worst
-        case for the whole job. Supports Idempotency-Key.
+        case for the whole job. ``agent_env`` / ``verifier_env`` are
+        pass-through slots injected into every agent / verifier run — sent
+        verbatim; the server owns acceptance (refused until its wave lands,
+        never silently dropped). Supports Idempotency-Key.
         """
         body: Dict[str, Any] = {}
         if job_name is not None:
@@ -2477,6 +2549,10 @@ class JobsClient:
             body['max_trial_spend_usd'] = max_trial_spend_usd
         if sandbox_provider is not None:
             body['sandbox_provider'] = sandbox_provider
+        if agent_env is not None:
+            body['agent_env'] = agent_env
+        if verifier_env is not None:
+            body['verifier_env'] = verifier_env
         headers = {'Idempotency-Key': idempotency_key} if idempotency_key else None
         raw = await self._http.request_json('/api/jobs', method='POST', body=body, headers=headers)
         return _map_job(raw)
@@ -2489,17 +2565,21 @@ class JobsClient:
     def list(
         self,
         *,
+        search: Optional[str] = None,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
     ) -> _PaginatedList:
         """List the caller's jobs, newest first (cursor-paged).
 
         ``await`` the result for one page (honoring ``limit``/``cursor``), or
-        ``async for`` it to walk every job across cursor pages.
+        ``async for`` it to walk every job across cursor pages. ``search`` is
+        a free-text filter over job name and dataset names, sent verbatim on
+        every page fetch; the server owns availability (ignored or refused
+        until its wave lands).
         """
         async def fetch_page(page_limit, page_cursor) -> JobPage:
             raw = await self._http.request_json(
-                f'/api/jobs{_page_query(page_limit, page_cursor)}'
+                f'/api/jobs{_page_query(page_limit, page_cursor, search=search)}'
             )
             items, next_cursor, has_more = _page_parts(raw)
             return JobPage(
@@ -2550,6 +2630,37 @@ class JobsClient:
             fetch_page, lambda page: page.items, limit=limit, cursor=cursor
         )
 
+    def tasks(
+        self,
+        id: str,
+        *,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    ) -> _PaginatedList:
+        """Per-task rollup of a job (cursor-paged).
+
+        One row per distinct task: its trial-status histogram, mean reward
+        over SCORED trials, and measured cost — the layer between the job
+        body and the trial list, so a caller need not fetch every trial to
+        see which tasks are dragging. ``await`` the result for one page, or
+        ``async for`` it to walk every rollup across cursor pages.
+        """
+        async def fetch_page(page_limit, page_cursor) -> JobTaskRollupPage:
+            raw = await self._http.request_json(
+                f'/api/jobs/{urllib.parse.quote(id)}/tasks'
+                f'{_page_query(page_limit, page_cursor)}'
+            )
+            items, next_cursor, has_more = _page_parts(raw)
+            return JobTaskRollupPage(
+                items=[_map_job_task_rollup(item) for item in items],
+                next_cursor=next_cursor,
+                has_more=has_more,
+            )
+
+        return _PaginatedList(
+            fetch_page, lambda page: page.items, limit=limit, cursor=cursor
+        )
+
     # ------------------------------------------------------------------ watch
 
     def _read_sse_sync(
@@ -2561,8 +2672,8 @@ class JobsClient:
         connection: _SseConnection,
     ) -> None:
         """Blocking SSE reader (runs in a worker thread): pushes parsed events
-        onto the asyncio queue. The server heartbeats every 15s, so the 60s
-        socket timeout only trips on a genuinely dead connection."""
+        onto the asyncio queue. The server heartbeats every 15s, so
+        SSE_SOCKET_TIMEOUT_SEC only trips on a genuinely dead connection."""
 
         def put(item: Any) -> None:
             loop.call_soon_threadsafe(queue.put_nowait, item)
@@ -2578,7 +2689,7 @@ class JobsClient:
             headers=headers,
         )
         try:
-            with urllib.request.urlopen(request, timeout=60) as response:
+            with urllib.request.urlopen(request, timeout=SSE_SOCKET_TIMEOUT_SEC) as response:
                 connection.response = response
                 event_id: Optional[str] = None
                 event_type: Optional[str] = None
@@ -2990,7 +3101,7 @@ class TrialsClient:
     async def artifact(
         self,
         trial_id: str,
-        stream: Literal['verifier', 'trace-stdout', 'trace-stderr', 'agent-home'],
+        stream: Literal['verifier', 'trace-stdout', 'trace-stderr', 'trajectory', 'agent-home'],
     ) -> Optional[Union[str, Dict[str, str]]]:
         """One raw trace artifact for a trial, by the trace route's ``?stream=``
         selector.
@@ -3000,7 +3111,9 @@ class TrialsClient:
         transcripts included by construction) answers a dict of sandbox path to
         text. None = never stored (normal answer, not an error): a
         QUEUED/CANCELLED trial, a harness that wrote nothing, or a purged
-        trace.
+        trace. ``"trajectory"`` is in the vocabulary ahead of its server wave —
+        until that wave lands the route answers not-found, reported honestly as
+        the API error it is.
         """
         raw = await self._http.request_json(
             f'/api/trials/{urllib.parse.quote(trial_id)}/trace?stream={stream}'
@@ -3044,6 +3157,37 @@ class TrialsClient:
             already_terminal=raw.get('already_terminal') or [],
             not_found=raw.get('not_found') or [],
         )
+
+
+# =============================================================================
+# AUTH CLIENT
+# =============================================================================
+
+class AuthClient:
+    """Client for caller identity. Wave-gated: until the server's wave lands,
+    ``/api/auth/status`` answers not-found and :meth:`status` reports it as
+    the API error it is.
+
+    Created via the standalone ``auth()`` factory. Requires
+    ``EVOLVE_API_KEY`` unless ``HostedClientConfig(api_key=...)`` is given.
+    """
+
+    def __init__(self, config: Optional[HostedClientConfig] = None):
+        self._http = _HostedHttp('auth', config)
+
+    async def __aenter__(self) -> 'AuthClient':
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        await self.close()
+
+    async def close(self) -> None:
+        return None
+
+    async def status(self) -> AuthStatus:
+        """Identify the caller and the API key in use."""
+        raw = await self._http.request_json('/api/auth/status')
+        return _map_auth_status(raw)
 
 
 def _parse_dataset_ref(ref: str) -> 'tuple[str, Optional[str]]':
@@ -3163,10 +3307,9 @@ async def meta(config: Optional[HostedClientConfig] = None) -> CapabilityDocumen
             f'{base_url}/api/meta', headers={'Accept': 'application/json'}
         )
         try:
-            with urllib.request.urlopen(request, timeout=30) as response:
+            with urllib.request.urlopen(request, timeout=META_TIMEOUT_SEC) as response:
                 return json.loads(response.read().decode('utf-8'))
         except urllib.error.HTTPError as exc:
             _raise_api_error(exc)
-            raise  # unreachable; _raise_api_error always raises
 
     return _map_capability_document(await asyncio.to_thread(fetch))

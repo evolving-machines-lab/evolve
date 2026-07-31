@@ -41,6 +41,9 @@ from .hosted import (
     AgentPage,
     AgentResult,
     AgentsClient,
+    ApiKey,
+    AuthClient,
+    AuthStatus,
     CapabilityDocument,
     CompareCell,
     CompareCoverage,
@@ -70,6 +73,8 @@ from .hosted import (
     JobEvent,
     JobFailure,
     JobPage,
+    JobTaskRollup,
+    JobTaskRollupPage,
     JobsClient,
     ModelInfo,
     NoActiveVersionError,
@@ -297,6 +302,16 @@ def trials(config: Optional[HostedClientConfig] = None) -> TrialsClient:
     return TrialsClient(config)
 
 
+def auth(config: Optional[HostedClientConfig] = None) -> AuthClient:
+    """Create a standalone hosted-evals auth client (caller identity).
+
+    Wave-gated: until the server's wave lands, status() reports the route's
+    not-found as the API error it is. Uses EVOLVE_API_KEY unless
+    HostedClientConfig(api_key=...) is provided.
+    """
+    return AuthClient(config)
+
+
 def managed_secrets(config: Optional[ManagedSecretsClientConfig] = None) -> ManagedSecretsClient:
     """Create a standalone managed secrets client.
 
@@ -407,12 +422,13 @@ __all__ = [
     'browser_profiles',
     'managed_secrets',
 
-    # Hosted evals (datasets + agents + jobs + trials)
+    # Hosted evals (datasets + agents + jobs + trials + auth)
     'HostedClientConfig',
     'DatasetsClient',
     'AgentsClient',
     'JobsClient',
     'TrialsClient',
+    'AuthClient',
     'EvolveAPIError',
     'EvolveDigestMismatchError',
     'EvolveIncompleteDownloadError',
@@ -432,6 +448,7 @@ __all__ = [
     'Job',
     'JobCounts',
     'JobFailure',
+    'JobTaskRollup',
     'SourceJob',
     'TrialTally',
     'JobEvent',
@@ -452,15 +469,19 @@ __all__ = [
     'TraceEventPage',
     'JobPage',
     'TrialPage',
+    'JobTaskRollupPage',
     'DatasetPage',
     'AgentPage',
     'TaskPage',
     'Agent',
     'DatasetImportPage',
+    'ApiKey',
+    'AuthStatus',
     'datasets',
     'agents',
     'jobs',
     'trials',
+    'auth',
     'hosted',
     'meta',
     'HostedEvolve',

@@ -56,6 +56,7 @@ from evolve import (
     SourceJob,
     TaskProviderVerdict,
     agents as agents_factory,
+    auth as auth_factory,
     datasets as datasets_factory,
     jobs as jobs_factory,
     trials as trials_factory,
@@ -244,7 +245,9 @@ def sse_text(events):
 class TestFactories:
     def test_requires_api_key(self, monkeypatch):
         monkeypatch.delenv('EVOLVE_API_KEY', raising=False)
-        for factory in (datasets_factory, agents_factory, jobs_factory, trials_factory):
+        for factory in (
+            datasets_factory, agents_factory, jobs_factory, trials_factory, auth_factory,
+        ):
             client = factory()
             with pytest.raises(ValueError, match='API key'):
                 client._http.api_key()
@@ -602,6 +605,47 @@ class TestDatasets:
         with pytest.raises(TypeError):
             # version is required — the publish surface has no server-assigned labels
             await client.publish(git_url='g', git_ref='main', name='b')
+
+    @pytest.mark.asyncio
+    async def test_list_search_rides_every_page_fetch(self):
+        fake = FakeUrlopen([
+            ('/api/datasets', {'items': [], 'nextCursor': None, 'hasMore': False}),
+        ])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            await datasets_factory(CONFIG).list(search='deep swe', limit=5)
+
+        url = fake.requests[0].full_url
+        # Sent verbatim (form-encoded, as the TS SDK's URLSearchParams does);
+        # the server owns availability.
+        assert 'search=deep+swe' in url
+        assert 'limit=5' in url
+
+    @pytest.mark.asyncio
+    async def test_activate_posts_and_echoes_the_detail_shape(self):
+        fake = FakeUrlopen([
+            ('/api/datasets/my-swe/versions/1.0/activate', {
+                'name': 'my-swe',
+                'title': None,
+                'description': None,
+                'active_version': {'version': '1.0', 'state': 'READY', 'created_at': '2026-07-30', 'task_count': 12},
+                'versions': [
+                    {'version': '1.0', 'state': 'READY', 'created_at': '2026-07-30', 'task_count': 12},
+                ],
+                'selected_version': None,
+                'tasks': {'items': [], 'nextCursor': None, 'hasMore': False},
+                'created_at': '2026-07-30',
+                'updated_at': '2026-07-30',
+            }),
+        ])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            dataset = await datasets_factory(CONFIG).activate('my-swe', '1.0')
+
+        assert fake.requests[0].get_method() == 'POST'
+        assert fake.requests[0].full_url.endswith('/api/datasets/my-swe/versions/1.0/activate')
+        # The echo is the same detail shape get() returns.
+        assert dataset.active_version.version == '1.0'
+        assert dataset.active_version.state == 'READY'
+        assert dataset.versions[0].task_count == 12
 
 
 REGISTERED_AGENT = {
@@ -1660,6 +1704,83 @@ class TestJobs:
         assert exc_info.value.status == 502
         assert exc_info.value.code == 'unknown_error'
 
+    @pytest.mark.asyncio
+    async def test_start_posts_env_pass_through_slots(self):
+        """agent_env / verifier_env travel verbatim; the server owns acceptance."""
+        fake = FakeUrlopen([('/api/jobs', JOB_SUMMARY)])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            await jobs_factory(CONFIG).start(
+                datasets=[{'name': 'deep-swe'}],
+                agents=[{'name': 'codex', 'model_name': 'gpt-5.5'}],
+                agent_env={'ACME_PROFILE': 'bench'},
+                verifier_env={'STRICT': '1'},
+            )
+
+        sent = json.loads(fake.requests[0].data.decode('utf-8'))
+        assert sent['agent_env'] == {'ACME_PROFILE': 'bench'}
+        assert sent['verifier_env'] == {'STRICT': '1'}
+
+    @pytest.mark.asyncio
+    async def test_list_search_rides_every_page_fetch(self):
+        fake = FakeUrlopen([
+            ('/api/jobs', {'items': [], 'nextCursor': None, 'hasMore': False}),
+        ])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            await jobs_factory(CONFIG).list(search='deep', limit=10)
+
+        url = fake.requests[0].full_url
+        # Sent verbatim; the server owns availability.
+        assert 'search=deep' in url
+        assert 'limit=10' in url
+
+    @pytest.mark.asyncio
+    async def test_tasks_maps_the_per_task_rollup(self):
+        fake = FakeUrlopen([
+            ('/api/jobs/job-1/tasks', {
+                'items': [
+                    {
+                        'task_name': 'abs-module-cache-flags',
+                        'source': 'deep-swe',
+                        'trials': trial_tally(SCORED=3, SCORING_ERROR=1),
+                        'mean_reward': 0.67,
+                        'cost_usd': 3.41,
+                    },
+                    {
+                        # A task nothing has scored yet: None means "no mean",
+                        # never a fabricated zero — zero is a reward.
+                        'task_name': 'tricky-task',
+                        'source': 'deep-swe',
+                        'trials': trial_tally(QUEUED=4),
+                        'mean_reward': None,
+                        'cost_usd': None,
+                    },
+                ],
+                'nextCursor': 'abs-module-cache-flags',
+                'hasMore': True,
+            }),
+        ])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            page = await jobs_factory(CONFIG).tasks('job-1', limit=2)
+
+        url = fake.requests[0].full_url
+        assert '/api/jobs/job-1/tasks' in url
+        assert 'limit=2' in url
+        rollup = page.items[0]
+        assert rollup.task_name == 'abs-module-cache-flags'
+        # The dataset the task came from rides on the rollup.
+        assert rollup.source == 'deep-swe'
+        # The same zeros-included tally shape the job body carries.
+        assert rollup.trials.total == 4
+        assert rollup.trials.by_status['SCORED'] == 3
+        assert rollup.trials.by_status['QUEUED'] == 0
+        assert rollup.mean_reward == 0.67
+        assert rollup.cost_usd == 3.41
+        assert page.items[1].mean_reward is None
+        assert page.items[1].cost_usd is None
+        # The same page envelope as every other collection.
+        assert page.next_cursor == 'abs-module-cache-flags'
+        assert page.has_more is True
+
 
 class TestTrials:
     @pytest.mark.asyncio
@@ -1730,6 +1851,24 @@ class TestTrials:
         # union (str | Dict[str, str] | None), not just the stored shapes.
         hints = typing.get_type_hints(client.artifact)
         assert typing.get_args(hints['return']) == (str, Dict[str, str], type(None))
+
+    @pytest.mark.asyncio
+    async def test_artifact_trajectory_selector(self):
+        """The trajectory NAME is in the vocabulary ahead of its server wave;
+        it is a log-shaped selector, and a server whose wave has not landed
+        refuses it as the API error it is."""
+        fake = FakeUrlopen([('stream=trajectory', {'log': '{"steps":[]}'})])
+        client = trials_factory(CONFIG)
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            log = await client.artifact('run-1', 'trajectory')
+
+        assert '/api/trials/run-1/trace?stream=trajectory' in fake.requests[0].full_url
+        assert log == '{"steps":[]}'
+        # The Literal carries all five selectors, agent-home last.
+        hints = typing.get_type_hints(client.artifact)
+        assert typing.get_args(hints['stream']) == (
+            'verifier', 'trace-stdout', 'trace-stderr', 'trajectory', 'agent-home',
+        )
 
     @pytest.mark.asyncio
     async def test_trace_events_drains_pages(self):
@@ -1981,3 +2120,51 @@ class TestDatasetDownload:
                 await datasets_factory(CONFIG).download('acme@0.9')
         assert exc.value.status == 404
         assert exc.value.code == 'package_not_retained'
+
+
+class TestAuth:
+    @pytest.mark.asyncio
+    async def test_status_maps_the_caller_and_key(self):
+        fake = FakeUrlopen([
+            ('/api/auth/status', {
+                'user_id': 'user-7',
+                'email': 'dev@acme.dev',
+                'key': {
+                    'id': 'key-3',
+                    'label': 'ci',
+                    'created_at': '2026-07-01T00:00:00.000Z',
+                    'last_used_at': '2026-07-30T00:00:00.000Z',
+                },
+            }),
+        ])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            status = await auth_factory(CONFIG).status()
+
+        assert fake.requests[0].full_url.endswith('/api/auth/status')
+        assert fake.requests[0].get_header('Authorization') == 'Bearer test-key'
+        assert status.user_id == 'user-7'
+        assert status.email == 'dev@acme.dev'
+        # The key descriptor never carries the secret.
+        assert status.key.id == 'key-3'
+        assert status.key.label == 'ci'
+        assert status.key.last_used_at == '2026-07-30T00:00:00.000Z'
+
+    @pytest.mark.asyncio
+    async def test_status_before_the_wave_is_a_typed_error(self):
+        """Wave-gated: an older server answers not-found, surfaced honestly."""
+        import io
+        import urllib.error
+
+        def raise_http_error(request, timeout=None):
+            raise urllib.error.HTTPError(
+                request.full_url, 404, 'Not Found', {},
+                io.BytesIO(json.dumps({'error': {
+                    'code': 'not_found',
+                    'message': 'Unknown route: /api/auth/status',
+                }}).encode('utf-8')),
+            )
+
+        with patch('evolve.hosted.urllib.request.urlopen', raise_http_error):
+            with pytest.raises(EvolveAPIError) as exc:
+                await auth_factory(CONFIG).status()
+        assert exc.value.status == 404

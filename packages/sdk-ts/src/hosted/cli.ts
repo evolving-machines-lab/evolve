@@ -17,7 +17,7 @@
 
 import { existsSync, readFileSync, realpathSync } from "fs";
 import { fileURLToPath, pathToFileURL } from "url";
-import { agents, auth, datasets, jobs, trials } from "./index";
+import { TRIAL_ARTIFACT_STREAMS, agents, auth, datasets, jobs, trials } from "./index";
 import type {
   Agent,
   AgentArm,
@@ -322,7 +322,7 @@ const GROUPS: Record<string, GroupSpec> = {
             value: "<artifact>",
             help:
               "Print ONE artifact to stdout instead of saving: trace-parsed | verifier | " +
-              "trace-stdout | trace-stderr | agent-home | trajectory",
+              "trace-stdout | trace-stderr | trajectory | agent-home",
           },
           cursor: { kind: "string", value: "<seq>", help: "With --stream trace-parsed: resume after this seq" },
           limit: { kind: "number", value: "<n>", help: "With --stream trace-parsed: max events per page" },
@@ -1880,15 +1880,12 @@ async function cmdTrialShow(inv: Invocation, io: CliIO): Promise<number> {
   return 0;
 }
 
-/** The six artifact names `--stream` accepts — the trial-record vocabulary. */
-const STREAM_ARTIFACTS = [
-  "trace-parsed",
-  "verifier",
-  "trace-stdout",
-  "trace-stderr",
-  "agent-home",
-  "trajectory",
-] as const;
+/**
+ * The six artifact names `--stream` accepts — the parsed trace plus the
+ * contract's raw selectors, from the SDK's own list so there is no second
+ * copy of the vocabulary to keep in step.
+ */
+const STREAM_ARTIFACTS = ["trace-parsed", ...TRIAL_ARTIFACT_STREAMS] as const;
 type StreamArtifact = (typeof STREAM_ARTIFACTS)[number];
 
 async function cmdTrialDownload(inv: Invocation, io: CliIO): Promise<number> {

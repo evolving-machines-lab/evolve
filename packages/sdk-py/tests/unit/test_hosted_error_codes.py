@@ -49,10 +49,12 @@ def test_tuple_is_the_server_list_in_order():
 
 
 def test_literal_matches_the_tuple():
-    # The tuple and the Literal are spelled out separately — the type cannot be
-    # derived from the value in Python — so they are two places to forget, and
-    # forgetting the Literal is the half that only a type-checker would notice.
+    # The runtime tuple is DERIVED from the Literal (get_args), so today this
+    # cannot fail. It stays as the tripwire for the regression that created it:
+    # the two were once spelled out separately, and a hand-rewritten tuple
+    # would drift from the type in a way only a type-checker would notice.
     assert list(get_args(HostedErrorCode)) == list(HOSTED_ERROR_CODES)
+    assert len(HOSTED_ERROR_CODES) > 10
 
 
 def test_runtime_guard_reads_the_same_vocabulary():
