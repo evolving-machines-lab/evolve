@@ -19,7 +19,7 @@
 - [Agent skills](https://agentskills.io/home): extend agents with custom capabilities (PDF, dev-browser, etc.)
 - Managed integrations for Gmail, GitHub, Slack, Notion, and more
 - Functional programming abstractions (map, filter, reduce) for massively parallel workloads
-- Hosted evals: score agents against a benchmark on managed infrastructure — bring your own benchmark or your own harness
+- Hosted evals: score agents against a dataset on managed infrastructure — bring your own dataset or your own agent
 - Streaming and structured output
 - Built-in [agent observability and analytics dashboard](https://dashboard.evolvingmachines.ai/)
 - Much more coming...

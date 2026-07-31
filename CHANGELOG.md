@@ -4,46 +4,46 @@
 
 ### Highlights
 
-- Adopted Harbor's vocabulary across the whole hosted surface: benchmark, task, job, trial, agent, reward. `evaluations()` is now `jobs()`, task runs are trials, and scores are rewards.
+- Adopted Harbor's vocabulary across the whole hosted surface: dataset, task, job, trial, agent, reward. `evaluations()` is now `jobs()`, task runs are trials, and scores are rewards.
 - Made the hosted API uniform: one `Job` shape from every call, one `{ items, nextCursor, hasMore }` page on every collection, one error envelope carrying `param` and `details`, and `multipart/form-data` for both upload lanes.
 - Published `GET /api/meta`, an unauthenticated, ETag'd capability document naming every harness, status enum, limit, and error code the platform enforces — so a client stops hardcoding them.
-- Added regrades as a real resource, benchmark deletion, harness upsert, import listing, and upstream version awareness.
+- Added regrades as a real resource, dataset deletion, agent upsert, import listing, and upstream version awareness.
 - Settled the budget model on one per-trial cap: `maxTrialSpendUsd` optional ($200 server default, echoed resolved), `worstCaseSpendUsd` on job views, `402 insufficient_credits` at zero balance, and no credit draw for managed BYO provider key runs.
 - De-scoped the agent-side eval-composition primitives from the docs chapters; the APIs keep their JSDoc but are no longer advertised.
 
 ### SDK
 
 - Renamed the hosted client to Harbor's nouns: `jobs()` replaces `evaluations()`, `trials()` / `trial()` replace the task-run collection, `agents` replaces agent systems, and `reward` replaces score. `maxTrialSpendUsd` is the per-trial cap; the job-level pot is gone.
-- Added `hosted()`, one door that builds `benchmarks`, `customHarnesses` and `jobs` from a single configuration, and `meta()`, which reads the public capability document with no API key.
-- Added the `customHarnesses()` client (TypeScript and Python): register your own CLI by install script or uploaded directory, and use its name in `agents[].harness` exactly like a built-in. `upsert()` replaces a registration without a window where the name does not exist — `201` with `Location` when it creates, `200` when it replaces.
+- Added `hosted()`, one door that builds `datasets`, `agents` and `jobs` from a single configuration, and `meta()`, which reads the public capability document with no API key.
+- Added the `agents()` client (TypeScript and Python): register your own CLI by install script or uploaded directory, and use its name in `agents[].harness` exactly like a built-in. `upsert()` replaces a registration without a window where the name does not exist — `201` with `Location` when it creates, `200` when it replaces.
 - Unified every job response on one serializer: `run()`, `get()`, `list()`, `cancel()` and `rerunFailed()` return the same fields, including `trials: { total, byStatus }` with every status present at zero and `failure` — never a top-level `error` on a `200`.
 - Paged every collection the same way: `{ items, nextCursor, hasMore }` with `?cursor=&limit=`, including collections that previously had no paging at all, and every list handle is awaitable for one page or iterable for all of them.
 - Widened the error object: `code` (a closed union, with `HOSTED_ERROR_CODES` / `isHostedErrorCode()` exported), `param` naming the offending input, `details` that never truncates, plus `requestId` and `retryAfterSec`. A client no longer parses English.
 - Added regrades as a resource: `getRegrade()` / `get_regrade()` reads by the **regrade's** id (the one `regrade()` returns and the `202`'s `Location` names), and `listRegrades()` / `list_regrades()` finds them by `jobId`. This replaces `regradeJob()` / `regrade_job()`, which took a job id, compiled, and 404'd.
-- Made illegal states uncompilable: benchmark-import and custom-harness sources are discriminated unions, so passing both a git URL and a directory — or neither — is a type error in TypeScript and a `ValueError` before the request leaves the process in Python.
+- Made illegal states uncompilable: dataset-import and agent sources are discriminated unions, so passing both a git URL and a directory — or neither — is a type error in TypeScript and a `ValueError` before the request leaves the process in Python.
 - Published `JobEvent` as a discriminated union: switching on `type` narrows `data`, so `trial.settled` payload fields are typed with no cast.
 - Added `spentUsd` and `spendSource` to `Trial` — spend is a column now, not a key in the `modelUsage` blob — and `worstCaseSpendUsd` to `Job`.
-- Added `listImports()` / `list_imports()` (filter by `status` and `benchmark`), `benchmarks().delete()`, and upstream version awareness on `Benchmark.upstream`: what the ref points at now versus what the active version was built from. Nothing is ever auto-imported.
+- Added `listImports()` / `list_imports()` (filter by `status` and `dataset`), `datasets().delete()`, and upstream version awareness on `Dataset.upstream`: what the ref points at now versus what the active version was built from. Nothing is ever auto-imported.
 - Import statuses are now the job vocabulary — `QUEUED → RUNNING → COMPLETED | FAILED` — replacing the private `IMPORTING`/`IMPORTED` spelling, and the import failure field is `failure`, not `error`.
 - Moved both upload lanes to `multipart/form-data`: run commands and environment values no longer travel in query strings.
 - Fingerprinted idempotency keys: reusing a key with a different body is refused with `409 idempotency_key_reused` instead of silently replaying the earlier job.
-- Added the local-directory benchmark import lane alongside git, both feeding the same parse → build → activate pipeline.
-- Benchmark imports no longer require an admin role: any authenticated key imports into its own private catalog. Foreign private benchmarks read as `404 benchmark_not_found`; importing a name owned by anyone else refuses with `409 benchmark_name_taken`.
+- Added the local-directory dataset import lane alongside git, both feeding the same parse → build → activate pipeline.
+- Dataset imports no longer require an admin role: any authenticated key imports into its own private catalog. Foreign private datasets read as `404 dataset_not_found`; importing a name owned by anyone else refuses with `409 dataset_name_taken`.
 
 ### API
 
 - Added `GET /api/meta` — public, unauthenticated, `ETag`'d with `Cache-Control: public, max-age=300, stale-while-revalidate=300` and a `304` on a matching `If-None-Match`. It publishes harnesses and their defaults, sandbox providers and their refusals, the network modes, every status enum, the platform limits, and the error vocabulary, each derived from the module that enforces it.
-- Added `GET /api/benchmarks/imports`, `DELETE /api/benchmarks/[name]` (`409 benchmark_in_use` when a job references it, `benchmark_not_owned` for a curated one), `PUT /api/custom-harnesses/[name]`, `GET /api/regrades/[id]` and `GET /api/regrades?jobId=`.
+- Added `GET /api/datasets/imports`, `DELETE /api/datasets/[name]` (`409 dataset_in_use` when a job references it, `dataset_not_owned` for a curated one), `PUT /api/agents/[name]`, `GET /api/regrades/[id]` and `GET /api/regrades?jobId=`.
 - Managed traces now serve from the database, the same way eval trials do.
 
 ### CLI
 
 - Renamed `task-runs` to `trials` and added `--agent harness:model[:version]`, `--max-trial-spend`, and `--status` filtering.
-- Added `evolve-evals regrade <id> [trial-id]` (whole-job filters `--status` / `--task`), `evolve-evals regrade-job <id>`, `custom-harnesses` (`add` / `get` / `remove`), and `--dir` on `import`.
+- Added `evolve-evals regrade <id> [trial-id]` (whole-job filters `--status` / `--task`), `evolve-evals regrade-job <id>`, `agents` (`add` / `get` / `remove`), and `--dir` on `import`.
 
 ### Documentation And Skills
 
-- Swept both SDK chapters into Harbor's vocabulary and documented the capability document, the error envelope, the paging envelope, the per-trial budget model, the new verbs, upstream version awareness, and the run contract for custom harnesses.
+- Swept both SDK chapters into Harbor's vocabulary and documented the capability document, the error envelope, the paging envelope, the per-trial budget model, the new verbs, upstream version awareness, and the run contract for registered agents.
 - Corrected the managed BYO provider key surface: keys can be saved for Anthropic and OpenAI. The seven-provider list is what the gateway can route to, which is a different thing.
 - Corrected the network-mode default: a task that declares nothing gets `public`, not `no-network` — which is exactly when the per-trial spend cap stops being a hard boundary.
 - Corrected the concurrency default (4, ceiling 16) and the Swarm registry model defaults (`opus` for claude, `gpt-5.4` for codex).

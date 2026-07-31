@@ -1,6 +1,6 @@
 # Evolve SDK
 
-Run CLI agents (Claude, Codex, Gemini, Qwen, Kimi, OpenCode, Droid) in secure sandboxes with built-in observability, and score them against benchmarks on hosted infrastructure.
+Run CLI agents (Claude, Codex, Gemini, Qwen, Kimi, OpenCode, Droid) in secure sandboxes with built-in observability, and score them against datasets on hosted infrastructure.
 
 ## Repo Structure
 

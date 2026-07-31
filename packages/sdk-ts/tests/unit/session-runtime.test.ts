@@ -1892,7 +1892,7 @@ async function testTaskWorkspaceAndSandboxCreateOptions(): Promise<void> {
     .withSandboxCreateOptions({
       image: "prepared-task-v1",
       envs: { TASK_FLAG: "enabled" },
-      metadata: { evaluation: "eval-1" },
+      metadata: { job: "job-1" },
       timeoutMs: 45_000,
       workingDirectory: "/task",
     })
@@ -1903,8 +1903,8 @@ async function testTaskWorkspaceAndSandboxCreateOptions(): Promise<void> {
     assertEqual(provider.createOptions?.image, "prepared-task-v1", "image is forwarded");
     assertEqual(provider.createOptions?.timeoutMs, 45_000, "timeout is forwarded");
     assertEqual(
-      provider.createOptions?.metadata?.evaluation,
-      "eval-1",
+      provider.createOptions?.metadata?.job,
+      "job-1",
       "metadata is forwarded",
     );
     assertEqual(

@@ -249,7 +249,7 @@ evolve = Evolve(
 
     # (optional) Provider-neutral options for fresh sandbox creation (see Sandbox Create Options above)
     sandbox_create_options={
-        'image': 'my-benchmark-image',
+        'image': 'my-task-image',
         'network': {'outbound': 'blocked', 'allowedDestinations': ['pypi.org']},
         'user': 'root',
     },
