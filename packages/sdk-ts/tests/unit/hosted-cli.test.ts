@@ -855,6 +855,16 @@ async function testUsageErrorExitCode() {
     assertEqual(fetchCalls.length, 0, "no network call on usage error");
     assert(bad.err[1].includes("job start --help"), "the hint points at the command's own help");
 
+    // A typo'd provider is caught at the keyboard like --stream, never sent.
+    const badEnv = captureIO();
+    const codeEnv = await runCli(
+      ["job", "start", "-d", "b", "-a", "codex", "-m", "gpt-5.5", "-e", "modall"],
+      badEnv.io
+    );
+    assertEqual(codeEnv, 2, "an unknown -e/--env provider is a usage error");
+    assert(badEnv.err[0].includes("daytona"), "the message lists the legal providers");
+    assertEqual(fetchCalls.length, 0, "no network call on a bogus provider");
+
     setMockResponse("/api/jobs/eval-x", {
       status: 404,
       body: { error: { code: "job_not_found", message: "Job not found: eval-x" } },
@@ -1027,6 +1037,18 @@ async function testJobTrialsAndTasks() {
       2,
       "an empty --status list is a usage error"
     );
+
+    // A typo'd status is caught at the keyboard like --stream, never sent.
+    const beforeBogus = fetchCalls.length;
+    const bogusStatus = captureIO();
+    assertEqual(
+      await runCli(["job", "trials", "eval-1", "--status", "SCOREDD", ...AUTH], bogusStatus.io),
+      2,
+      "an unknown --status value is a usage error"
+    );
+    assert(bogusStatus.err[0].includes("SCOREDD"), "the message names the offending value");
+    assert(bogusStatus.err[0].includes("INDETERMINATE"), "the message lists the legal statuses");
+    assertEqual(fetchCalls.length, beforeBogus, "no network call on a bogus --status");
   } finally {
     restoreFetch();
   }

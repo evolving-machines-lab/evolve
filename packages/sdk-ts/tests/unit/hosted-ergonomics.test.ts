@@ -165,7 +165,7 @@ async function main() {
           param: "sandbox_provider",
           details: {
             provider: "modal",
-            refusedTasks: Array.from({ length: 11 }, (_, i) => ({ task_name: `t${i}`, reason: "no dockerd" })),
+            refused_tasks: Array.from({ length: 11 }, (_, i) => ({ task_name: `t${i}`, reason: "no dockerd" })),
           },
           retryAfterSec: undefined,
           requestId: "req_abc123",
@@ -178,7 +178,7 @@ async function main() {
     assertEqual(err.code, "provider_unsupported", "code survives");
     assertEqual(err.param, "sandbox_provider", "param names the field that was wrong");
     assertEqual(err.requestId, "req_abc123", "requestId is available to quote in a support thread");
-    const refused = (err.details as { refusedTasks: unknown[] }).refusedTasks;
+    const refused = (err.details as { refused_tasks: unknown[] }).refused_tasks;
     assertEqual(refused.length, 11, "details carries all 11 refusals, not the 3 the sentence named");
     assert(err.isKnownCode(), "isKnownCode() is true for a published code");
   }

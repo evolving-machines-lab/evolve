@@ -206,7 +206,7 @@ class EvolveAPIError(Exception):
         except EvolveAPIError as err:
             if err.code == 'provider_unsupported':
                 # every refused task WITH its reason — not a sentence to regex
-                refused = (err.details or {}).get('refusedTasks', [])
+                refused = (err.details or {}).get('refused_tasks', [])
 
     The server truncates the MESSAGE when a list is long and never truncates
     ``details``, so the data stays complete even when the sentence says
@@ -260,6 +260,32 @@ class NoActiveVersionError(Exception):
 # =============================================================================
 # PUBLIC TYPES
 # =============================================================================
+
+# The closed vocabularies, as Literal types like HostedErrorCode above — the
+# same unions the TypeScript SDK publishes, so a type-checker catches a typo'd
+# status the way the TS compiler does. Runtime stays permissive: the mappers
+# assign whatever string the server sent, exactly as TS casts, so a server
+# newer than this SDK still round-trips.
+JobStatus = Literal[
+    'QUEUED', 'RUNNING', 'CANCELLING', 'COMPLETED', 'CANCELLED', 'FAILED'
+]
+TrialStatus = Literal[
+    'QUEUED', 'RUNNING', 'SCORING', 'SCORED',
+    'SCORING_ERROR', 'INFRASTRUCTURE_ERROR', 'INDETERMINATE', 'CANCELLED',
+]
+EvalSandboxProvider = Literal['e2b', 'daytona', 'modal']
+#: Whether a settled trial's cost was measured from the gateway or is the cap
+#: charged conservatively.
+SpendSource = Literal['measured', 'assumed']
+#: Where a trial's verifier executed: inside the agent's environment, or a
+#: separate one.
+VerifierEnvironmentMode = Literal['shared', 'separate']
+#: Which step a RUNNING trial is in, so a polling caller can tell a slow build
+#: from a slow agent — RUNNING alone cannot.
+AttemptPhase = Literal[
+    'prepare', 'build', 'boot', 'install', 'agent', 'verify', 'persist'
+]
+
 
 @dataclass
 class DatasetVersion:
@@ -580,7 +606,7 @@ class Job:
     id: str
     #: User-facing label.
     job_name: str
-    status: str
+    status: JobStatus
     #: The resolved dataset references this job ran.
     datasets: List[DatasetRef]
     agents: List[AgentArm]
@@ -591,8 +617,7 @@ class Job:
     #: The most this job can cost: every trial spending its whole cap. There is
     #: no job-wide budget, so this product is the real ceiling.
     worst_case_spend_usd: float
-    #: Sandbox provider this job runs on ("e2b" | "daytona" | "modal").
-    sandbox_provider: str
+    sandbox_provider: EvalSandboxProvider
     counts: JobCounts
     n_total_trials: int
     #: The zeros-included 8-status histogram, beside the coarser counters in
@@ -710,7 +735,7 @@ class Trial:
     agent_info: AgentInfo
     #: Attempt index within the arm (1..n_attempts).
     attempt: int
-    status: str
+    status: TrialStatus
     #: Convenience primary reward derived from ``verifier_result.rewards``.
     #: Zero is a reward; None means the trial did not score.
     reward: Optional[float]
@@ -724,8 +749,8 @@ class Trial:
     #: Multi-step placeholder; None today.
     step_results: Optional[List[Dict[str, Any]]]
     #: Whether ``agent_result.cost_usd`` was measured or is the cap charged
-    #: conservatively ("measured" | "assumed").
-    spend_source: Optional[str]
+    #: conservatively.
+    spend_source: Optional[SpendSource]
     # A mid-run LOWER BOUND on spend, never the trial's cost. Only ever climbs
     # while the trial runs, and is CLEARED when the trial settles, on the same
     # statement as the terminal status — on a terminal trial read
@@ -738,19 +763,18 @@ class Trial:
     #: from the job's current cap for rows settled before a change.
     max_trial_spend_usd: Optional[float]
     # Sandbox provider the trial executed on; None until it has executed
-    sandbox_provider: Optional[str]
+    sandbox_provider: Optional[EvalSandboxProvider]
     # WHERE THIS TRIAL RAN: the provider id of the box the agent executed in.
     # None is honest and common — a QUEUED or CANCELLED trial never booted one.
     sandbox_id: Optional[str]
     # The separate box the verifier ran in. None when the verifier ran inside
     # the agent's box (shared mode) or when the trial never got that far.
     verifier_sandbox_id: Optional[str]
-    #: Where the verifier ran ("shared" | "separate"); None until recorded.
-    verifier_environment_mode: Optional[str]
-    #: Which step a RUNNING trial is in ("prepare" | "build" | "boot" |
-    #: "install" | "agent" | "verify" | "persist"), so a polling caller can
-    #: tell a slow build from a slow agent. None when not mid-phase.
-    attempt_phase: Optional[str]
+    #: Where the verifier ran; None until recorded.
+    verifier_environment_mode: Optional[VerifierEnvironmentMode]
+    #: Which step a RUNNING trial is in, so a polling caller can tell a slow
+    #: build from a slow agent. None when not mid-phase.
+    attempt_phase: Optional[AttemptPhase]
     session_ref: Optional[str]
     started_at: Optional[str]
     finished_at: Optional[str]
@@ -1994,9 +2018,8 @@ class DatasetsClient:
 
         ``await`` the result for one page (honoring ``limit``/``cursor``), or
         ``async for`` it to walk the whole catalog across cursor pages.
-        ``search`` is a free-text filter over name and description, sent
-        verbatim on every page fetch; the server owns availability (ignored or
-        refused until its wave lands).
+        ``search`` is a server-side free-text filter over name and
+        description, sent on every page fetch.
         """
         async def fetch_page(page_limit, page_cursor) -> DatasetPage:
             raw = await self._http.request_json(
@@ -2233,8 +2256,6 @@ class DatasetsClient:
     async def activate(self, name: str, version: str) -> Dataset:
         """Make a READY version the dataset's active version.
 
-        Wave-gated: until the server's wave lands the route answers
-        not-found, and that refusal is reported as the API error it is.
         Returns the full detail shape, exactly like :meth:`get`.
         """
         raw = await self._http.request_json(
@@ -2527,7 +2548,7 @@ class JobsClient:
         an omitted one is never invisible, and reports the resulting worst
         case for the whole job. ``agent_env`` / ``verifier_env`` are
         pass-through slots injected into every agent / verifier run — sent
-        verbatim; the server owns acceptance (refused until its wave lands,
+        verbatim; the server owns acceptance (refused where unsupported,
         never silently dropped). Supports Idempotency-Key.
         """
         body: Dict[str, Any] = {}
@@ -2573,9 +2594,8 @@ class JobsClient:
 
         ``await`` the result for one page (honoring ``limit``/``cursor``), or
         ``async for`` it to walk every job across cursor pages. ``search`` is
-        a free-text filter over job name and dataset names, sent verbatim on
-        every page fetch; the server owns availability (ignored or refused
-        until its wave lands).
+        a server-side free-text filter over job name and dataset names, sent
+        on every page fetch.
         """
         async def fetch_page(page_limit, page_cursor) -> JobPage:
             raw = await self._http.request_json(
@@ -3164,9 +3184,7 @@ class TrialsClient:
 # =============================================================================
 
 class AuthClient:
-    """Client for caller identity. Wave-gated: until the server's wave lands,
-    ``/api/auth/status`` answers not-found and :meth:`status` reports it as
-    the API error it is.
+    """Client for caller identity.
 
     Created via the standalone ``auth()`` factory. Requires
     ``EVOLVE_API_KEY`` unless ``HostedClientConfig(api_key=...)`` is given.

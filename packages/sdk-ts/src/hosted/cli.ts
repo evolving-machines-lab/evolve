@@ -17,7 +17,16 @@
 
 import { existsSync, readFileSync, realpathSync } from "fs";
 import { fileURLToPath, pathToFileURL } from "url";
-import { TRIAL_ARTIFACT_STREAMS, agents, auth, datasets, jobs, trials } from "./index";
+import {
+  EVAL_SANDBOX_PROVIDERS,
+  TRIAL_ARTIFACT_STREAMS,
+  TRIAL_STATUSES,
+  agents,
+  auth,
+  datasets,
+  jobs,
+  trials,
+} from "./index";
 import type {
   Agent,
   AgentArm,
@@ -1047,6 +1056,11 @@ export function buildJobInput(
     f["max-trial-spend"] !== undefined
       ? (f["max-trial-spend"] as number)
       : base.max_trial_spend_usd;
+  // Same posture as --stream and --status: a bad provider is a usage error
+  // at the keyboard, not a 400 after a round trip.
+  if (f.env !== undefined && !(EVAL_SANDBOX_PROVIDERS as readonly string[]).includes(String(f.env))) {
+    throw new CliUsageError(`-e/--env must be one of: ${EVAL_SANDBOX_PROVIDERS.join(", ")}`);
+  }
   const provider =
     f.env !== undefined ? (f.env as EvalSandboxProvider) : base.sandbox_provider;
 
@@ -1546,11 +1560,19 @@ function parseStatusFilter(inv: Invocation): TrialStatus[] | undefined {
   const statuses = String(inv.flags.status)
     .split(",")
     .map((s) => s.trim())
-    .filter(Boolean) as TrialStatus[];
+    .filter(Boolean);
   if (statuses.length === 0) {
     throw new CliUsageError("--status got an empty status list");
   }
-  return statuses;
+  // Validated here like --stream, not left to the server: a typo'd status is a
+  // usage error the moment it is typed, never a round trip later.
+  const unknown = statuses.filter((s) => !(TRIAL_STATUSES as readonly string[]).includes(s));
+  if (unknown.length > 0) {
+    throw new CliUsageError(
+      `--status must name trial statuses (${TRIAL_STATUSES.join(", ")}); got: ${unknown.join(", ")}`
+    );
+  }
+  return statuses as TrialStatus[];
 }
 
 function statusExitCode(e: Job): number {

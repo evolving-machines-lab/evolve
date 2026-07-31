@@ -78,23 +78,34 @@ export type JobStatus =
  * out-of-domain reward = SCORING_ERROR (never a fabricated zero);
  * INFRASTRUCTURE_ERROR: the trial was lost before a result was recorded;
  * INDETERMINATE: the platform cannot tell whether the trial completed.
+ *
+ * A runtime value (not only a type), like TRIAL_ARTIFACT_STREAMS, so the CLI
+ * can validate a `--status` filter against this list instead of a second copy.
  */
-export type TrialStatus =
-  | "QUEUED"
-  | "RUNNING"
-  | "SCORING"
-  | "SCORED"
-  | "SCORING_ERROR"
-  | "INFRASTRUCTURE_ERROR"
-  | "INDETERMINATE"
-  | "CANCELLED";
+export const TRIAL_STATUSES = [
+  "QUEUED",
+  "RUNNING",
+  "SCORING",
+  "SCORED",
+  "SCORING_ERROR",
+  "INFRASTRUCTURE_ERROR",
+  "INDETERMINATE",
+  "CANCELLED",
+] as const;
+
+/** One trial lifecycle status — see TRIAL_STATUSES for the law. */
+export type TrialStatus = (typeof TRIAL_STATUSES)[number];
 
 /**
  * Sandbox provider a hosted job runs on. Named `EvalSandboxProvider` to avoid
  * colliding with the core SDK's `SandboxProvider` (the sandbox-abstraction
- * interface).
+ * interface). A runtime value for the same reason as TRIAL_STATUSES: the CLI
+ * validates `-e/--env` against it.
  */
-export type EvalSandboxProvider = "e2b" | "daytona" | "modal";
+export const EVAL_SANDBOX_PROVIDERS = ["e2b", "daytona", "modal"] as const;
+
+/** One sandbox provider — see EVAL_SANDBOX_PROVIDERS. */
+export type EvalSandboxProvider = (typeof EVAL_SANDBOX_PROVIDERS)[number];
 
 /**
  * Whether a settled trial's `agent_result.cost_usd` was measured from the
@@ -227,7 +238,7 @@ export interface JobCreate {
   sandbox_provider?: EvalSandboxProvider;
   /**
    * Env injected into every agent run — a pass-through slot: the client sends
-   * it verbatim and the server owns acceptance (refused until its wave lands,
+   * it verbatim and the server owns acceptance (refused where unsupported,
    * never silently dropped).
    */
   agent_env?: Record<string, string>;
@@ -1114,10 +1125,7 @@ export interface StartJobOptions {
 
 /** Options for jobs().list() (default page 50, max 200) */
 export interface ListJobsOptions extends PageOptions {
-  /**
-   * Free-text filter over job name and dataset names. Sent verbatim; the
-   * server owns availability (ignored or refused until its wave lands).
-   */
+  /** Server-side free-text filter over job name and dataset names. */
   search?: string;
 }
 
@@ -1134,7 +1142,7 @@ export interface ListTrialsOptions extends PageOptions {
 
 /** Options for datasets().list() (default page 50, max 200) */
 export interface ListDatasetsOptions extends PageOptions {
-  /** Free-text filter over name and description — same pass-through contract as jobs. */
+  /** Server-side free-text filter over name and description. */
   search?: string;
 }
 
@@ -1285,8 +1293,7 @@ export interface DatasetsClient {
    * Activate a READY version you own: bare-name job references resolve to it
    * from then on. Refused with `version_not_ready` while the import still
    * runs and `version_not_activatable` for a version that can never be
-   * activated (for example, no reference solutions were archived). The route
-   * is wave-gated — the server may still answer not-found until its wave.
+   * activated (for example, no reference solutions were archived).
    */
   activate(name: string, version: string): Promise<Dataset>;
   /**
@@ -1353,8 +1360,9 @@ export interface JobsClient {
   trials(id: string, options?: ListTrialsOptions): TrialList;
   /**
    * Per-task rollup of a job (cursor-paged): one row per distinct task with
-   * its trial tally, mean reward, and cost. The route is wave-gated — the
-   * server may still answer not-found until its wave lands.
+   * its trial tally, mean reward, and cost. Sits between the job body and
+   * the trial list so a caller need not fetch every trial to see which
+   * tasks are dragging.
    */
   tasks(id: string, options?: ListJobTasksOptions): JobTaskRollupList;
   /**
@@ -1488,10 +1496,7 @@ export interface AuthStatus {
   key: ApiKey;
 }
 
-/**
- * Client for caller identity. The route is wave-gated — the server may still
- * answer not-found until its wave lands.
- */
+/** Client for caller identity. */
 export interface AuthClient {
   /** Identify the caller and the API key in use. */
   status(): Promise<AuthStatus>;

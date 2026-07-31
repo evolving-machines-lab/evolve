@@ -92,7 +92,13 @@ import type {
 } from "./types";
 
 // Re-exported from the hosted barrel so the package root can hand them on.
-export { HOSTED_ERROR_CODES, TRIAL_ARTIFACT_STREAMS, isHostedErrorCode } from "./types";
+export {
+  EVAL_SANDBOX_PROVIDERS,
+  HOSTED_ERROR_CODES,
+  TRIAL_ARTIFACT_STREAMS,
+  TRIAL_STATUSES,
+  isHostedErrorCode,
+} from "./types";
 export type {
   ActiveDataset,
   Agent,
@@ -217,7 +223,7 @@ import {
  *   catch (err) {
  *     if (err instanceof EvolveApiError && err.code === "provider_unsupported") {
  *       // every refused task WITH its reason — not a sentence to regex
- *       const refused = err.details?.refusedTasks as { task_name: string }[];
+ *       const refused = err.details?.refused_tasks as { task_name: string }[];
  *     }
  *   }
  *
@@ -1255,8 +1261,6 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
     },
 
     async activate(name: string, version: string): Promise<Dataset> {
-      // Wave-gated: until the server's wave lands the route answers
-      // not-found, and that refusal is reported as the API error it is.
       const res = await request(
         cfg,
         `/api/datasets/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/activate`,
@@ -1833,9 +1837,7 @@ export function trials(config?: HostedClientConfig): TrialsClient {
 // =============================================================================
 
 /**
- * Create an AuthClient for caller identity. Wave-gated: until the server's
- * wave lands, /api/auth/status answers not-found and status() reports it as
- * the API error it is.
+ * Create an AuthClient for caller identity.
  *
  * Requires EVOLVE_API_KEY (or { apiKey } in config).
  */

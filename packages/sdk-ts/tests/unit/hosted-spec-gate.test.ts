@@ -25,6 +25,10 @@
  *      the server (the route refuses them until its wave lands), so equality
  *      against the full enum is exactly the law.
  *
+ *   4. STATUS + PROVIDER VOCABULARIES. TRIAL_STATUSES and
+ *      EVAL_SANDBOX_PROVIDERS — the runtime lists the CLI validates flags
+ *      against — equal the contract's own enums byte-exactly.
+ *
  * The spec is parsed line-by-line against its own committed formatting. That
  * is a deliberate trade: the file is hand-written, its indentation is part of
  * its style, and a parse that finds nothing fails loudly (non-vacuity checks
@@ -39,8 +43,10 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 import {
+  EVAL_SANDBOX_PROVIDERS,
   HOSTED_ERROR_CODES,
   TRIAL_ARTIFACT_STREAMS,
+  TRIAL_STATUSES,
   agents,
   auth,
   datasets,
@@ -245,6 +251,50 @@ assert(
   JSON.stringify([...TRIAL_ARTIFACT_STREAMS]) === JSON.stringify(specStreamSelectors)
     ? `TRIAL_ARTIFACT_STREAMS is the spec's stream enum, byte-exactly (${specStreamSelectors.join(", ")})`
     : `artifact selectors drifted: SDK [${TRIAL_ARTIFACT_STREAMS.join(", ")}] vs spec [${specStreamSelectors.join(", ")}]`
+);
+
+// -----------------------------------------------------------------------------
+// 4. STATUS + PROVIDER VOCABULARIES — the runtime lists the CLI validates
+// flags against, byte-exact against the contract's own enums.
+// -----------------------------------------------------------------------------
+
+/** A schema's inline `enum: [a, b, c]` line, scoped to that schema's block. */
+function inlineEnum(schemaName: string): string[] {
+  let inside = false;
+  for (const line of specLines) {
+    if (!inside) {
+      if (new RegExp(`^ {4}${schemaName}:\\s*$`).test(line)) inside = true;
+      continue;
+    }
+    if (/^ {4}[A-Z]\w*:\s*$/.test(line)) break;
+    const m = /^ {6}enum: \[([^\]]+)\]\s*$/.exec(line);
+    if (m) return m[1].split(",").map((s) => s.trim());
+  }
+  return [];
+}
+
+const specTrialStatuses = enumEntries(
+  (line) => /^ {4}TrialStatus:\s*$/.test(line),
+  (line) => /^ {4}[A-Z]\w*:\s*$/.test(line),
+  /^ {8}- ([A-Z_]+)\s*(?:#.*)?$/
+);
+const specProviders = inlineEnum("SandboxProvider");
+
+assert(specTrialStatuses.length >= 8, `the spec's TrialStatus enum parsed (${specTrialStatuses.length} members)`);
+assert(specProviders.length >= 3, `the spec's SandboxProvider enum parsed (${specProviders.length} members)`);
+
+assert(
+  JSON.stringify([...TRIAL_STATUSES]) === JSON.stringify(specTrialStatuses),
+  JSON.stringify([...TRIAL_STATUSES]) === JSON.stringify(specTrialStatuses)
+    ? `TRIAL_STATUSES is the spec's TrialStatus enum, byte-exactly (${specTrialStatuses.length} members)`
+    : `trial statuses drifted: SDK [${TRIAL_STATUSES.join(", ")}] vs spec [${specTrialStatuses.join(", ")}]`
+);
+
+assert(
+  JSON.stringify([...EVAL_SANDBOX_PROVIDERS]) === JSON.stringify(specProviders),
+  JSON.stringify([...EVAL_SANDBOX_PROVIDERS]) === JSON.stringify(specProviders)
+    ? `EVAL_SANDBOX_PROVIDERS is the spec's SandboxProvider enum, byte-exactly (${specProviders.join(", ")})`
+    : `providers drifted: SDK [${EVAL_SANDBOX_PROVIDERS.join(", ")}] vs spec [${specProviders.join(", ")}]`
 );
 
 console.log(`\n═══ ${passed} passed, ${failed} failed ═══\n`);

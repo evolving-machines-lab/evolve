@@ -19,6 +19,10 @@ Three axes, same law as the TypeScript gate:
    ahead of the server (the route refuses them until its wave lands), so
    equality against the full enum is exactly the law.
 
+4. STATUS + PROVIDER VOCABULARIES. The ``JobStatus`` / ``TrialStatus`` /
+   ``EvalSandboxProvider`` Literals equal the contract's own enums — the
+   closed sets clients branch and filter on.
+
 The spec is parsed line-by-line against its own committed formatting; every
 parse asserts non-vacuity so an empty parse fails loudly instead of passing.
 """
@@ -32,7 +36,10 @@ from evolve import (
     AgentsClient,
     AuthClient,
     DatasetsClient,
+    EvalSandboxProvider,
+    JobStatus,
     JobsClient,
+    TrialStatus,
     TrialsClient,
     meta,
 )
@@ -179,3 +186,36 @@ def test_error_codes_match_the_spec_enum_byte_exactly():
 def test_artifact_selectors_match_the_spec_stream_enum():
     hints = typing.get_type_hints(TrialsClient.artifact)
     assert list(typing.get_args(hints['stream'])) == _spec_stream_selectors()
+
+
+def _spec_inline_enum(schema: str) -> 'list[str]':
+    """A schema's inline ``enum: [a, b, c]`` line, scoped to that schema's block."""
+    inside = False
+    for line in _spec_lines():
+        if not inside:
+            inside = re.match(rf'^ {{4}}{schema}:\s*$', line) is not None
+            continue
+        if re.match(r'^ {4}[A-Z]\w*:\s*$', line):
+            break
+        matched = re.match(r'^ {6}enum: \[([^\]]+)\]\s*$', line)
+        if matched:
+            return [member.strip() for member in matched.group(1).split(',')]
+    return []
+
+
+def test_status_and_provider_literals_match_the_spec_enums():
+    job_statuses = _spec_inline_enum('JobStatus')
+    assert len(job_statuses) >= 6, 'the JobStatus parse found too few — spec moved?'
+    assert list(typing.get_args(JobStatus)) == job_statuses
+
+    trial_statuses = _enum_entries(
+        r'^ {4}TrialStatus:\s*$',
+        r'^ {4}[A-Z]\w*:\s*$',
+        r'^ {8}- ([A-Z_]+)\s*(?:#.*)?$',
+    )
+    assert len(trial_statuses) >= 8, 'the TrialStatus parse found too few — spec moved?'
+    assert list(typing.get_args(TrialStatus)) == trial_statuses
+
+    providers = _spec_inline_enum('SandboxProvider')
+    assert len(providers) >= 3, 'the SandboxProvider parse found too few — spec moved?'
+    assert list(typing.get_args(EvalSandboxProvider)) == providers
