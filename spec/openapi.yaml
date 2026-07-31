@@ -622,6 +622,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/JobTaskRollupPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -1431,6 +1433,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiKeyPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '429':
@@ -3686,8 +3690,9 @@ components:
         label:
           type: [string, 'null']
         created_at:
-          type: string
+          type: [string, 'null']
           format: date-time
+          description: Null when the credential store predates creation stamping.
         last_used_at:
           type: [string, 'null']
           format: date-time
