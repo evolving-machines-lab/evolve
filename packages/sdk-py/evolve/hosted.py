@@ -3,8 +3,14 @@
 Direct-HTTP clients against the platform API (same pattern as
 browser_credentials.py — no Node bridge). Mirrors the TypeScript SDK's hosted
 module 1-1, and both SDKs speak the wire's own vocabulary: every field below is
-spelled exactly as spec/openapi.yaml spells it (snake_case), so the spec reads
-as the SDK's own field reference. ``watch()`` is dual-use — ``await`` it for
+spelled exactly as spec/openapi.yaml spells it (snake_case) — except the four
+frozen camelCase spots the spec names (the page envelope's
+``nextCursor``/``hasMore``, ``trials.byStatus``, the compare ``taskMatrix``,
+and the error envelope's ``retryAfterSec``/``requestId``). That freeze is a
+WIRE law: both SDKs send and receive those keys camelCase, and this SDK maps
+them to snake_case attributes (``next_cursor``/``has_more``/``by_status``/
+``task_matrix``, ``retry_after_sec``/``request_id``) so Python code reads one
+casing throughout. ``watch()`` is dual-use — ``await`` it for
 the final job, or ``async for`` its events (replay from the beginning,
 Last-Event-ID resume on reconnect, terminal-event completion).
 

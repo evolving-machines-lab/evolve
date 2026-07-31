@@ -2,13 +2,18 @@
  * Public types for the hosted evaluations API — datasets, jobs, trials, agents.
  *
  * THE VOCABULARY IS THE WIRE'S. Every field on a wire-shaped object below is
- * spelled exactly as spec/openapi.yaml spells it (snake_case), in BOTH SDKs, so
- * the spec reads as the SDK's own field reference and nothing is ever lost in a
- * casing translation. The only camelCase keys are the four frozen historical
- * spots the spec names: the page envelope (`items`/`nextCursor`/`hasMore`), the
- * job body's `trials.byStatus`, the compare response's `taskMatrix`, and the
- * error envelope. SDK-side controls that never touch the wire — client config,
- * delivery options, callbacks — stay TypeScript-idiomatic camelCase.
+ * spelled exactly as spec/openapi.yaml spells it (snake_case), so the spec
+ * reads as the SDK's own field reference and nothing is ever lost in a casing
+ * translation. The only camelCase keys are the four frozen historical spots
+ * the spec names: the page envelope (`items`/`nextCursor`/`hasMore`), the job
+ * body's `trials.byStatus`, the compare response's `taskMatrix`, and the error
+ * envelope (`retryAfterSec`/`requestId`). That freeze is a WIRE law, not a
+ * property-name law: both SDKs send and receive those keys camelCase, this SDK
+ * also exposes them verbatim, and the Python SDK maps them to snake_case
+ * attributes (`next_cursor`/`has_more`/`by_status`/`task_matrix`,
+ * `retry_after_sec`/`request_id`). SDK-side controls that never touch the
+ * wire — client config, delivery options, callbacks — stay
+ * TypeScript-idiomatic camelCase.
  */
 
 /** Configuration for the datasets() / agents() / jobs() / trials() factories */
@@ -663,13 +668,21 @@ export interface TrialScoringData {
 /**
  * A mid-run spend sample landed on a still-live trial. Emitted only when the
  * reading actually updated a RUNNING/SCORING row, so a poll that raced the
- * settle never fires one.
+ * settle never fires one. The token sums come from the same ledger aggregation
+ * that produced the money figure, present only when the sample carried them —
+ * an older event replays without them.
  */
 export interface TrialSpendData {
   trial_id: string;
   task_name: string;
   /** The same lagging lower bound as Trial.live_spent_usd — not the trial's cost */
   live_spent_usd: number;
+  /** Input tokens so far; includes cache tokens */
+  n_input_tokens?: number;
+  /** Cached input tokens so far (a subset of n_input_tokens) */
+  n_cache_tokens?: number;
+  /** Output tokens so far */
+  n_output_tokens?: number;
 }
 
 /**

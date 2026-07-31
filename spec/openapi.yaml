@@ -1261,6 +1261,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AgentPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '429':
@@ -1942,6 +1944,21 @@ components:
             tuned it).
         sandbox_provider:
           $ref: '#/components/schemas/SandboxProvider'
+        agent_env:
+          type: object
+          additionalProperties:
+            type: string
+          description: >
+            Env injected into every agent run — a pass-through slot: the
+            client sends it verbatim and the server owns acceptance (refused
+            where unsupported, never silently dropped).
+        verifier_env:
+          type: object
+          additionalProperties:
+            type: string
+          description: >
+            Env injected into every verifier run — same pass-through
+            contract.
 
     ResumeRequest:
       type: object
@@ -2955,7 +2972,10 @@ components:
       type: object
       description: >
         A mid-run spend sample landed on a still-live trial. Emitted only
-        when the reading actually updated a RUNNING/SCORING row.
+        when the reading actually updated a RUNNING/SCORING row. The token
+        sums come from the same ledger aggregation that produced the money
+        figure, present only when the sample carried them — an older event
+        replays without them.
       required: [trial_id, task_name, live_spent_usd]
       properties:
         trial_id:
@@ -2966,6 +2986,15 @@ components:
         live_spent_usd:
           type: number
           description: The same lagging lower bound as Trial.live_spent_usd.
+        n_input_tokens:
+          type: integer
+          description: Input tokens so far; includes cache tokens.
+        n_cache_tokens:
+          type: integer
+          description: Cached input tokens so far (a subset of n_input_tokens).
+        n_output_tokens:
+          type: integer
+          description: Output tokens so far.
 
     TrialSettledData:
       type: object

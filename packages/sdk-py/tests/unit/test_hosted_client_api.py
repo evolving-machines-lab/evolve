@@ -1442,9 +1442,13 @@ class TestJobs:
     async def test_watch_streams_events_to_terminal(self):
         stream = sse_text([
             {'seq': 0, 'type': 'job.created', 'data': {'trial_count': 2}},
-            {'seq': 1, 'type': 'trial.settled', 'data': {'trial_id': 'run-1', 'status': 'SCORED', 'reward': 1}},
+            {'seq': 1, 'type': 'trial.spend', 'data': {
+                'trial_id': 'run-1', 'task_name': 'fix-bug', 'live_spent_usd': 3.41,
+                'n_input_tokens': 1200, 'n_cache_tokens': 800, 'n_output_tokens': 300,
+            }},
+            {'seq': 2, 'type': 'trial.settled', 'data': {'trial_id': 'run-1', 'status': 'SCORED', 'reward': 1}},
         ]) + ': heartbeat\n\n' + sse_text([
-            {'seq': 2, 'type': 'job.completed', 'data': {'scored': 2}},
+            {'seq': 3, 'type': 'job.completed', 'data': {'scored': 2}},
         ])
 
         class WatchUrlopen(FakeUrlopen):
@@ -1461,10 +1465,16 @@ class TestJobs:
                 'job-1', on_event=lambda e: events.append(e)
             )
 
-        assert [e.seq for e in events] == [0, 1, 2]
+        assert [e.seq for e in events] == [0, 1, 2, 3]
         assert events[0].type == 'job.created'
         assert events[0].data == {'trial_count': 2}
-        assert events[2].type == 'job.completed'
+        # trial.spend passes through verbatim, token sums included.
+        assert events[1].type == 'trial.spend'
+        assert events[1].data == {
+            'trial_id': 'run-1', 'task_name': 'fix-bug', 'live_spent_usd': 3.41,
+            'n_input_tokens': 1200, 'n_cache_tokens': 800, 'n_output_tokens': 300,
+        }
+        assert events[3].type == 'job.completed'
         assert final.status == 'COMPLETED'
         stream_request = next(r for r in fake.requests if '/events' in r.full_url)
         assert stream_request.get_header('Accept') == 'text/event-stream'

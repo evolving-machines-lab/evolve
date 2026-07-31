@@ -27,6 +27,21 @@ import type {
   DatasetSource,
   JobEvent,
 } from "../../src/hosted/types.ts";
+// Root-surface check: the hosted barrel always exported these, the package
+// root did not — so a consumer could not name Job.failure's type or annotate
+// a paged result. Each import fails to compile if the root drops one.
+import type {
+  AgentList as RootAgentList,
+  AgentPage as RootAgentPage,
+  DatasetList as RootDatasetList,
+  DatasetPage as RootDatasetPage,
+  GetDatasetOptions as RootGetDatasetOptions,
+  JobFailure as RootJobFailure,
+  ListAgentsOptions as RootListAgentsOptions,
+  ListDatasetsOptions as RootListDatasetsOptions,
+  Page as RootPage,
+  PageOptions as RootPageOptions,
+} from "../../src/index.ts";
 
 // ---------------------------------------------------------------------------
 // 1. DatasetSource — EITHER a pinned git repo OR a local directory
@@ -109,7 +124,11 @@ function narrows(event: JobEvent): string {
     }
     case "trial.spend": {
       const lowerBound: number = event.data.live_spent_usd;
-      return String(lowerBound);
+      // The token sums ride only when the ledger sample carried them.
+      const inputTokens: number | undefined = event.data.n_input_tokens;
+      const cacheTokens: number | undefined = event.data.n_cache_tokens;
+      const outputTokens: number | undefined = event.data.n_output_tokens;
+      return `${lowerBound} ${inputTokens ?? "-"} ${cacheTokens ?? "-"} ${outputTokens ?? "-"}`;
     }
     default:
       return event.type;
@@ -145,6 +164,24 @@ const managedDoor: CapabilityDocument["managed_providers"][number] = {
 // @ts-expect-error a bare provider name is not a managed door entry
 const bareDoorName: CapabilityDocument["managed_providers"][number] = "modal";
 
+// ---------------------------------------------------------------------------
+// 5. Package root — the paging + failure vocabulary resolves from the root
+// ---------------------------------------------------------------------------
+
+type RootSurface = [
+  RootPage<unknown>,
+  RootPageOptions,
+  RootDatasetPage,
+  RootDatasetList,
+  RootAgentPage,
+  RootAgentList,
+  RootListDatasetsOptions,
+  RootListAgentsOptions,
+  RootGetDatasetOptions,
+  RootJobFailure,
+];
+const rootSurface: RootSurface | undefined = undefined;
+
 // Reference every binding so `noUnusedLocals` cannot fire instead of the
 // directives above doing their job.
 void [
@@ -161,6 +198,7 @@ void [
   rejectsWrongField,
   managedDoor,
   bareDoorName,
+  rootSurface,
 ];
 
 console.log("=== Hosted SDK Type-Level Tests ===");

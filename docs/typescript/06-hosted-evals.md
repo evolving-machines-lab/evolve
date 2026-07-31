@@ -1269,7 +1269,8 @@ type JobEvent =
     | { seq: number; type: "job.failed";     data: { job_id: string } }   // reserved; nothing emits it yet
     | { seq: number; type: "trial.running";  data: { trial_id: string; task_name: string } }
     | { seq: number; type: "trial.scoring";  data: { trial_id: string; captured_bytes?: number } }
-    | { seq: number; type: "trial.spend";    data: { trial_id: string; task_name: string; live_spent_usd: number } }
+    | { seq: number; type: "trial.spend";    data: { trial_id: string; task_name: string; live_spent_usd: number;
+                                                     n_input_tokens?: number; n_cache_tokens?: number; n_output_tokens?: number } }
     | { seq: number; type: "trial.settled";  data: TrialSettledData };
 
 interface TrialSettledData {
