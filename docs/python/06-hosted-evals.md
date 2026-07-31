@@ -1,348 +1,354 @@
 # Hosted Evals
 
-> **Gateway feature** — requires `EVOLVE_API_KEY` (see [Getting Started → Gateway Mode](./01-getting-started.md#gateway-mode-evolve_api_key)). Evolve runs the benchmark tasks, agents, and verifiers on managed infrastructure; you submit a job and read results.
+> **Gateway feature** — requires `EVOLVE_API_KEY` (see [Getting Started → Gateway Mode](./01-getting-started.md#gateway-mode-evolve_api_key)). Evolve runs the tasks, agents, and verifiers on managed infrastructure — you start a job and read results.
 
-Three standalone clients cover the whole surface — no `Evolve` instance needed:
+Four nouns cover the whole surface, used everywhere and without exception:
+
+- A **dataset** is a named, versioned set of tasks.
+- A **job** is one run: datasets × agents × attempts.
+- A **trial** is one attempt of one task by one agent. Trial ids are globally addressable — no call needs the job id to reach a trial.
+- An **agent** is the thing that attempts a task: a harness plus a model. You can register your own.
+
+Each noun has a client, plus one for identity — five standalone factories, no `Evolve` instance needed:
 
 ```python
-from evolve import benchmarks, custom_harnesses, jobs
+from evolve import agents, auth, datasets, jobs, trials
 
-catalog = benchmarks()          # shared benchmark catalog
-harnesses = custom_harnesses()  # your own private harnesses
-evals = jobs()                  # create, watch, and read jobs
+catalog = datasets()   # the shared dataset catalog
+mine = agents()        # your own registered agents
+evals = jobs()         # your jobs
+t = trials()           # globally addressable trials
+who = auth()           # identity: who am I, which key
 ```
 
-All three read `EVOLVE_API_KEY` (or take `HostedClientConfig(api_key=..., base_url=...)`) and work standalone or as `async with` context managers.
+All five read `EVOLVE_API_KEY` from the environment, or accept `HostedClientConfig(api_key=..., base_url=...)`. Every client is an async context manager (`async with jobs() as evals:`), and every method is `async`.
 
-If you would rather configure once, `hosted()` is the same three clients behind one door:
+If you would rather configure once, `hosted()` is the same clients behind one door:
 
 ```python
 from evolve import hosted
 
-client = hosted()                       # or hosted(HostedClientConfig(api_key=...))
-catalog = await client.benchmarks.list()
-job = await client.jobs.run(...)
+evolve = hosted()                            # or hosted(HostedClientConfig(api_key=...))
+catalog = await evolve.datasets.list()
+job = await evolve.jobs.start(datasets=[...], agents=[...])
 ```
 
-It is called `hosted()` rather than `evolve()` because `Evolve` is already the local-sandbox class in this package, and two names a shift key apart doing unrelated things is a trap worth avoiding. The three clients are built on first access, so `client.meta()` — the one call that needs no credentials — works before an API key is set.
+It is called `hosted()` rather than `evolve()` because `Evolve` is already the local-sandbox class in this package, and two names a shift key apart doing unrelated things is a trap worth avoiding. The clients are built on first access, so `evolve.meta()` — the one call that needs no credentials — works before an API key is set.
+
+Job and trial ids are UUIDs. Ids minted before the switch use an older alphabet and remain valid everywhere — every id-taking call accepts them — so treat ids as opaque strings and never parse their shape.
 
 ---
 
-## Run a job
+## Start a job
 
-Browse the catalog, then run. A bare benchmark name resolves server-side to the active `READY` version — the one benchmark-version state that accepts jobs (see [Statuses](#statuses)):
+Pick datasets from the catalog:
 
 ```python
-from evolve import benchmarks, jobs, JobAgent
+page = await catalog.list()                     # one page of datasets + active versions
+async for dataset in catalog.list():            # or walk the whole catalog
+    ...
 
-async with benchmarks() as catalog:
-    page = await catalog.list()                     # one page of the catalog
-    print([bench.name for bench in page.items])
-    async for bench in catalog.list():              # or walk it all
-        print(bench.name)
-
-    active = await catalog.get_active('deep-swe')   # raises NoActiveVersionError when none
-    print(active.version, [task.task_key for task in active.tasks.items])
-
-async with jobs() as evals:
-    job = await evals.run(
-        benchmark='deep-swe',                       # or pin a version: 'deep-swe@1.1'
-        agents=[
-            JobAgent(
-                harness='codex',
-                model='gpt-5.5',
-            ),
-            JobAgent(
-                harness='claude',
-                model='fable',
-            ),
-        ],
-        concurrency=4,
-        max_trial_spend_usd=25,
-    )
-    print(job.id, job.status)     # QUEUED
-    print(job.benchmark)          # 'deep-swe@1.1' — the resolved version, echoed back
-    print(job.counts)             # JobCounts(agents=2, tasks=2) — entity cardinality
-    print(job.trials.total)       # 4
-    print(job.trials.by_status)   # {'QUEUED': 4, 'RUNNING': 0, 'SCORED': 0, ...} — every status
+deep_swe = await catalog.get('deep-swe@1.1')    # one version: task list + timeouts
+active = await catalog.get_active('deep-swe')   # active READY version, guaranteed runnable
+# get_active() raises NoActiveVersionError when nothing is runnable yet
 ```
 
-Every collection on this surface is the same page: `items`, `next_cursor`, `has_more`, paged with `limit=`/`cursor=`. `next_cursor` means one thing everywhere — pass it back for the next page, and `None` means there is no next page. Every list call hands you a value you can either await for a single page or `async for` to walk every row, fetching pages as it goes.
+Every collection on this surface is the same page: `items`, `next_cursor`, `has_more`, paged with `limit`/`cursor`. `next_cursor` means one thing everywhere — pass it back for the next page, and `None` means there is no next page. Both list calls hand you a value you can either `await` for a single page or `async for` to walk every row, fetching pages as it goes. `list(search=...)` filters the catalog by free text over name and description, server-side.
 
-Tasks expose public fields only — `task_key`, `agent_timeout_sec`, `verifier_timeout_sec`, and `providers`, the per-provider capability verdict ([Where it runs](#where-it-runs)). Instructions, environments, and tests never leave the server — with one deliberate exception, the benchmark's own owner downloading the package they imported ([Getting your corpus back](#getting-your-corpus-back)).
+`READY` is the one dataset-version state that accepts jobs — see [Statuses](#statuses). Tasks expose public fields only — `task_name`, `agent_timeout_sec`, `verifier_timeout_sec`, and `providers`, the per-provider capability verdict ([Where it runs](#where-it-runs)). Instructions, environments, and tests never leave the server — with one deliberate exception, the dataset's own owner downloading the package they published ([Getting your corpus back](#getting-your-corpus-back)).
 
-`run()` keyword arguments:
-
-| Keyword | Default | What it does |
-|---------|---------|--------------|
-| `benchmark` | required | `'name'` (active `READY` version) or `'name@version'` |
-| `agents` | required | list of `JobAgent(harness=..., model=..., harness_version=None, reasoning_effort=None)` |
-| `tasks` | all tasks | task keys to run |
-| `runs_per_task` | `1` | runs per task × agent |
-| `concurrency` | `4` | parallel trials; ceiling 16 |
-| `max_trial_spend_usd` | `200` | hard model-spend cap (USD) for EACH trial |
-| `sandbox_provider` | `'e2b'` | see [Where it runs](#where-it-runs) |
-| `idempotency_key` | none | safe-retry key (below) |
-
-Every job response is the same shape, whatever produced it. `run()`, `get()`, `cancel()`, `rerun_failed()` and each row of `list()` carry the same fields, so a job card renders from any of them without your knowing which call it came from. `counts` is entity cardinality — the parts a job is made of — and `trials` is the one "how many" structure: a total plus a status histogram that names every status, zeros included, so a status bar never needs the enum hardcoded.
-
-`max_trial_spend_usd` caps what a single trial may spend on model calls, and it is the only spend limit the platform enforces: every trial runs on its own freshly minted gateway key, and the cap is that key's budget. Leave it out and the platform applies $200 per trial. The response always reports the cap that actually applied — `job.max_trial_spend_usd` — so an omitted one is never a mystery.
-
-There is no job-wide budget, which means a job's real ceiling is simply its trial count times that cap. The response states it for you as `job.worst_case_spend_usd`, so you can see what a large matrix commits you to before it starts running. Your account credit balance is the hard backstop underneath all of it: when the balance runs out, spending stops mid-job whatever the caps say, and creating a job while the balance is already at zero is refused up front with a `402 insufficient_credits`. A trial that exhausts its own cap is not a failure — the harness just runs out of budget, and the trial is still scored on whatever it produced.
-
-Runs on your own provider key are the one exception to the credit ledger. When a [managed BYO provider key](./01-getting-started.md#managed-byo-provider-keys) is enabled for the model's provider (Anthropic and OpenAI today), the trial's model calls bill your provider account directly and draw no Evolve credits — the per-trial cap still meters and bounds the trial exactly as before.
-
-The exception is about who pays for model calls, not about the gate at the door. The zero-balance check runs on every job create and every `rerun_failed()`, BYOK included, so an account sitting at zero is refused with `402 insufficient_credits` even when the run would have drawn nothing. Keep a non-zero balance if you run BYOK-only.
-
-A job expands to `tasks × agents × runs_per_task` trials, each in its own sandbox. `concurrency` is how many of them run at once: four by default, sixteen at the ceiling, and every one of those numbers is published under `limits['job']['concurrency']` in the [capability document](#what-the-platform-supports) rather than only here.
-
-Three ceilings bound that expansion, and all three refuse at create rather than partway through: at most **8 distinct agents** after de-duplication and at most **100 `runs_per_task`**, each a `400 invalid_input`, and a total matrix of at most **10,000 trials**, which is `400 job_too_large`. They are published as `limits['job']['maxAgents']`, `['maxRunsPerTask']` and `['maxTrials']`, so a form can check a sweep before it POSTs. `sandbox_provider` (optional, default `'e2b'`) picks where those sandboxes run — see [Where it runs](#where-it-runs). Valid harness + model pairs are listed once in [Getting Started → Harness and Model Pairing](./01-getting-started.md#harness-and-model-pairing). `harness` also accepts a harness you registered yourself — see [Bring your own harness](#bring-your-own-harness).
-
-Pin a harness version when you need the comparison to hold still across weeks:
+Then start the job. `datasets` is a **list** — one job can span several — and only `datasets` and `agents` are required:
 
 ```python
-agents=[
-    JobAgent(
-        harness='codex',
-        model='gpt-5.5',
-        harness_version='0.29.0',   # (optional) omit to resolve the latest at dispatch
-    ),
-],
-```
-
-Omitting it keeps the resolve-latest behavior; either way the version that actually ran is recorded on every trial as `resolved_harness_version`, so a trial is always attributable after the fact.
-
-A pin is never silently downgraded to the latest — it is checked at creation and rejected three ways:
-
-- **Not an exact version** (a range, a tag, `latest`) — `400 invalid_input`, naming the need for an exact version. Pins exist to hold a comparison still, and a range cannot.
-- **Exact but not published** — `404 harness_version_not_found`.
-- **A pin on a custom harness** — `400 invalid_input`. Custom harnesses are versioned by the content of their own source, so there is no separate version axis to pin; re-register to change what runs.
-
-One harness resolves later than the others: installer-sourced `kimi` accepts any well-formed exact pin at creation, because its vendor publishes no version index to check against. The builder's version probe enforces it instead, so a bad `kimi` pin surfaces as a failed trial rather than a `400`.
-
-`reasoning_effort` is the other per-agent knob, and it belongs to the comparison rather than to the run:
-
-```python
-agents=[
-    JobAgent(
-        harness='codex',
-        model='gpt-5.5',
-        reasoning_effort='high',    # (optional) omit to take the harness's own pinned default
-    ),
-],
-```
-
-The accepted values are `'off'`, `'minimal'`, `'low'`, `'medium'`, `'high'`, `'xhigh'`, `'max'` and `'thinking'`, published as `limits['job']['reasoningEfforts']`. What an omitted value means is per harness: each harness entry in the capability document publishes its own `defaultEffort` (today `'high'` for the graded harnesses, `'max'` for `kimi`, `'thinking'` for `qwen`), and the create door resolves an omitted effort to that pin and stores it on the record. Read it from the [capability document](#what-the-platform-supports) rather than from this sentence: effort changes the score, so a client comparing two jobs has to know what an omitted value meant in each of them.
-
-Effort is part of an agent system's identity, alongside the harness, the model and the version pin. The same harness and model at `'low'` and at `'high'` are two distinct systems — they de-duplicate separately, they each consume one of the eight agent slots, and every trial echoes the effort back on `trial.agent`. A `None` there is reserved for harnesses where no effort applies at all — an omitted effort on a harness that takes one is resolved to the harness's pinned default at create, so the record always says what the CLI was actually asked.
-
-Not every harness can honor one, and a request naming an effort a harness cannot apply is refused at creation with a `400 invalid_input` rather than accepted and quietly dropped. Recording `'high'` against a CLI that never received the flag would put a claim in the benchmark record that did not happen:
-
-- `claude`, `codex`, `droid`, `opencode` and `kimi` take a graded level, and the value reaches the CLI as one (`kimi` runs at `'max'` when omitted — the Kimi K3 API's own default).
-- `qwen` can express only thinking on or off, so it accepts the binary values (`'thinking'`, `'off'`, `'minimal'`, `'medium'`) and refuses every graded level above them.
-- `gemini` takes no effort input at all, so naming any effort for it is refused.
-
-Each harness publishes which of the three it is as `effort_support`, so a picker greys the control out instead of discovering the refusal after a POST. Omitting the field is always accepted, `gemini` included — the refusal is about a value that could not be applied, never about the field existing.
-
-A harness you registered yourself is never refused, because the platform makes no claim about what someone else's CLI accepts. It is also never handed the value: the [run contract](#the-run-contract) gives your command six environment keys and effort is not among them, so an effort set here is recorded on the agent system and reaches nothing. Put the flag in your own `run_command`.
-
-Retrying with the same `idempotency_key` returns the original job instead of creating a duplicate:
-
-```python
-job = await evals.run(
-    ...,
-    idempotency_key='nightly-2026-07-23',
+job = await evals.start(
+    datasets=[
+        {'name': 'deep-swe'},                       # bare name = active version
+        {'name': 'frontier-swe', 'version': '1.2'}, # or pin one
+    ],
+    agents=[
+        {'name': 'codex', 'model_name': 'gpt-5.5'},
+        {'name': 'claude', 'model_name': 'claude-fable-5'},
+    ],
+    n_attempts=1,               # (optional) attempts per task × agent arm, default 1
+    n_concurrent_trials=4,      # (optional) parallel trials, default 4, ceiling 16
+    max_trial_spend_usd=25,     # (optional) hard model-spend cap for EACH trial
 )
-print(job.idempotent_replay)   # True on a replay
+
+print(job.status)               # "QUEUED"
+print(job.datasets)             # [DatasetRef(name='deep-swe', version='1.1'), …] — resolved, echoed back
+print(job.counts)               # JobCounts(agents=2, tasks=214) — entity cardinality
+print(job.trials.total)         # 428
+print(job.trials.by_status)     # {'QUEUED': 428, 'RUNNING': 0, 'SCORED': 0, …} — every status, zeros included
 ```
 
-A key on its own is not enough to make a request idempotent, so the server also fingerprints the request behind it. Repeat the same request with the same key and you get the original job back; send a *different* request under a key you have already used and it is refused with a `409 idempotency_key_reused` rather than handed yesterday's job while you believe a new run started. Use a fresh key for a genuinely new run.
+`datasets` and `agents` take plain dicts or the `DatasetSelector` / `AgentArm` dataclasses — the same fields either way. Each dataset selector can also narrow its own task set: `task_names` and `exclude_task_names` are glob patterns over task names, and `n_tasks` caps the count after filtering — so a smoke run over the first twenty tasks of each dataset is a selector field, not a fork of the dataset:
+
+```python
+datasets=[
+    {'name': 'deep-swe', 'task_names': ['auth-*'], 'n_tasks': 20},
+],
+```
+
+Every job response is the same shape, whatever produced it. `start()`, `get()`, `cancel()`, `resume()`, `regrade()` and each row of `list()` carry the same fields, so a job card renders from any of them without your knowing which call it came from. `counts` is entity cardinality — the parts a job is made of — and `trials` is the one "how many" structure: a total plus a status histogram that names every status, zeros included, so a status bar never needs the enum hardcoded. `job_name` is a user-facing label — pass one or take the server's.
+
+### Money
+
+`max_trial_spend_usd` caps what a single trial may spend on model calls, and it is the only spend limit the platform enforces: every trial runs on its own freshly minted gateway key, and the cap is that key's budget. Leave it out and the platform applies its published default ($200 per trial). The response always reports the cap that actually applied — `job.max_trial_spend_usd` — so an omitted one is never a mystery.
+
+There is no job-wide budget, which means a job's real ceiling is simply its trial count times that cap. The response states it for you as `job.worst_case_spend_usd`, so you can see what a large matrix commits you to before it starts running. Your account credit balance is the hard backstop underneath: when the balance runs out, spending stops mid-job whatever the caps say, and starting a job while the balance is already at zero is refused up front with a `402 insufficient_credits`. A trial that exhausts its own cap is not a failure — the agent just runs out of budget, and the trial is still scored on whatever it produced.
+
+Runs on your own provider key are the one exception to the credit ledger. When a [managed BYO provider key](./01-getting-started.md#managed-byo-provider-keys) is enabled for the model's provider, the trial's model calls bill your provider account directly and draw no Evolve credits — the per-trial cap still meters and bounds the trial exactly as before. The exception is about who pays, not about the gate at the door: the zero-balance check runs on every job create and every `resume()`, BYOK included, so keep a non-zero balance even if you run BYOK-only.
+
+### Shape and ceilings
+
+A job expands to `tasks × agents × n_attempts` trials, each in its own sandbox. `n_concurrent_trials` is how many run at once. The ceilings — distinct agent arms per job, attempts per task, total trials — all refuse at create rather than partway through, and every one of them is published under `limits['job']` in the [capability document](#what-the-platform-supports) rather than only here, so a form can check a sweep before it POSTs. `sandbox_provider` (optional, default `"e2b"`) picks where the sandboxes run — see [Where it runs](#where-it-runs).
+
+`agent_env` and `verifier_env` inject environment values into every agent or verifier run. They are pass-through slots: the client sends them verbatim and the server owns acceptance — refused where unsupported, never silently dropped.
+
+### Agent arms
+
+An agent arm is `name` plus `model_name` plus two optional identity fields. `name` is a built-in (`claude`, `codex`, `gemini`, `qwen`, `kimi`, `opencode`, `droid`) or an agent you registered yourself ([Bring your own agent](#bring-your-own-agent)); `model_name` is always required — the server applies no model default. Valid pairs are the same as everywhere in the SDK — see [Getting Started → Harness and Model Pairing](./01-getting-started.md#harness-and-model-pairing).
+
+Pin an agent version when you need the comparison to hold still across weeks:
+
+```python
+agents=[
+    {'name': 'codex', 'model_name': 'gpt-5.5', 'version': '0.29.0'},
+],
+```
+
+Omitting it resolves the latest at dispatch; either way the version that actually ran is recorded on every trial as `agent_info.version`, so a trial is always attributable after the fact. A pin is never silently downgraded: an unresolvable pin is refused at creation (`agent_version_not_found`), and a pin on a registered agent is refused too — registered agents are versioned by their own content, so there is no separate version axis to pin.
+
+`reasoning_effort` is the other identity field, and it belongs to the comparison rather than to the run. The accepted values and the default an omitted effort takes are published as `limits['job']['reasoning_efforts']` and `default_reasoning_effort` — read them from the [capability document](#what-the-platform-supports), because effort changes the score, and a client comparing two jobs has to know what an omitted value meant in each. Effort is part of an arm's identity alongside the agent, the model, and the version pin: the same agent and model at `low` and at `high` are two distinct systems — they de-duplicate separately, they each consume an arm slot, and every trial echoes the effort back on `agent_info.reasoning_effort`. An effort the agent cannot apply is refused at creation with a `400 invalid_input` rather than accepted and quietly dropped — recording `high` against a CLI that never received the flag would put a claim in the record that did not happen. Each capability entry publishes `effort_support`, so a picker can grey the control out instead of discovering the refusal after a POST.
+
+### Idempotency
+
+Retries are safe — pass an idempotency key and a retry returns the original job instead of creating a duplicate:
+
+```python
+retry = await evals.start(
+    datasets=[{'name': 'deep-swe'}],
+    agents=[{'name': 'codex', 'model_name': 'gpt-5.5'}],
+    max_trial_spend_usd=25,
+    idempotency_key='nightly-2026-07-31',
+)
+print(retry.idempotent_replay)   # True when the key replayed an existing job
+```
+
+A key on its own is not enough, so the server also fingerprints the request behind it. Repeat the same request with the same key and you get the original job back; send a *different* request under a used key and it is refused with a `409 idempotency_key_reused` rather than handed yesterday's job while you believe a new run started. Use a fresh key for a genuinely new run.
 
 ---
 
 ## Watch it live
 
-`watch()` consumes the job's server-sent event stream — replayed from the beginning, resumed with `Last-Event-ID` on reconnect (exponential backoff), completing on the terminal event. It hands back a handle you can use either way: `await` it for the final job, or `async for` it for each event.
+`watch()` is a dual-use handle over the job's event stream. Iterate it for live events, or await it for the final job — pick one form per call:
 
 ```python
+# Iterate events as they arrive
 async for event in evals.watch(job.id):
     # event.seq  — monotonic sequence number
-    # event.type — 'job.created' | 'trial.settled' | 'job.completed' | ...
-    print(event.seq, event.type, event.data)
+    # event.type — "job.created" | "trial.settled" | "job.completed" | …
+    if event.type == 'trial.settled':
+        # event.data is the payload dict, keys in the wire's own vocabulary
+        update_progress(event.data['task_name'], event.data['status'], event.data.get('reward'))
 
-final = await evals.watch(
-    job.id,
-    on_event=lambda event: print(event.type, event.data),   # optional per-event callback
-    timeout_s=3600,               # (optional) raises TimeoutError past the deadline
-    reconnect_delay_s=1.0,        # (optional) initial backoff, default 1 s
-    max_reconnect_delay_s=30.0,   # (optional) backoff ceiling, default 30 s
-)
-print(final.status, final.mean_reward, final.spent_usd)
+# Or await the final Job
+final = await evals.watch(job.id)
+print(final.status, final.trials.by_status, final.stats.get('cost_usd'))
 ```
 
-Pick one form per handle — both drive the same stream. Attaching late loses nothing (the stream replays), and a disconnect resumes from the last seen sequence number: no gaps, no duplicates.
+Options apply in every form — tune backoff on an iterated watch the same way; `on_event` fires regardless:
 
-This is the same shape `list()` has always had here, and the same shape the TypeScript SDK's `jobs().watch()` returns. It used to be two methods (`watch()` and `watch_iter()`), which made this SDK disagree with TypeScript and with its own pagination idiom at once. `watch_iter()` still works and is a thin alias; prefer `async for … in watch(...)`.
+```python
+final = await evals.watch(
+    job.id,
+    on_event=lambda event: print(event.type, event.data),
+    timeout_s=3600,                # (optional) give up after this long
+    reconnect_delay_s=1.0,         # (optional) initial backoff, default 1s
+    max_reconnect_delay_s=30.0,    # (optional) backoff ceiling, default 30s
+)
+```
+
+The stream replays from the beginning, so attaching late loses nothing. On disconnect it resumes from the last sequence number with exponential backoff — no gaps, no duplicates. Once the job reaches a terminal status, the handle resolves with the final `Job`.
+
+### Live cost and live tokens
+
+While a trial runs, its spend is readable before anything settles, on two fields that travel together:
+
+```python
+print(trial.live_spent_usd, trial.live_spend_at)  # 3.41  "2026-07-31T18:22:05.113Z"
+```
+
+Two mechanisms feed that number, and knowing both tells you how fresh it is. Every non-streaming model call reports its own cost the moment its response headers arrive, and the platform accumulates those readings per trial — flushed to the record at most once every 5 seconds, so the figure starts moving within seconds of the first completed call. Underneath it, the gateway's spend ledger — the settled log of what each key actually spent — is read about every 30 seconds and can only raise the figure. The same 30-second ledger read carries **token counts** beside the money, so live token numbers move on that cadence.
+
+Read the pair together or not at all, and hold on to the rules that follow from what it is:
+
+- **It is a lagging lower bound, never the trial's cost.** Render it as "at least $3.41, as of that timestamp" — never as "current cost".
+- **`None` is "no reading yet", never `$0`.** Zero from the ledger means nothing has settled, not that the trial was free.
+- **It only climbs, and it is cleared at settle.** On a terminal trial read `agent_result.cost_usd` and `spend_source`; those are the settled truth, and the only one.
+- **It is never part of a total.** `stats['cost_usd']` sums settled trials only; folding a live reading in would double-count the moment that trial settles.
+- **Built-in agents only.** A registered agent runs your own command with no live poll around it, so its trials go from `None` straight to a settled cost.
+
+The same reading reaches a watcher as a `trial.spend` event carrying `trial_id`, `task_name` and `live_spent_usd` — and, when the ledger sample carried them, the token sums. It is emitted only when a sample actually landed on a live trial, so a poll that raced the settle never fires one.
 
 ---
 
 ## Read the results
 
 ```python
-# One job: size, status histogram, mean reward, spend
+# One job: size, status histogram, stats, spend
 detail = await evals.get(job.id)
-print(detail.counts)                      # JobCounts(agents=2, tasks=2) — entity cardinality
-print(detail.trials.total, detail.trials.by_status)   # 20, {'SCORED': 12, 'RUNNING': 3, ...}
-print(detail.mean_reward)                 # mean over SCORED trials; None until something scores
-print(detail.spent_usd, '/', detail.worst_case_spend_usd)
-print(detail.failure)                     # why it FAILED — None on every job today
+print(detail.trials.total, detail.trials.by_status)   # 428, {'SCORED': 301, 'RUNNING': 3, …}
+print(detail.stats.get('cost_usd'))                   # measured spend across settled trials
+print(detail.stats.get('n_input_tokens'), detail.stats.get('n_output_tokens'))  # token totals
+print(detail.failure)                                 # why it FAILED — None on every job today
 
 # Your jobs, newest first — await one page, or iterate them all
-page = await evals.list(limit=50)         # page.next_cursor continues
-async for item in evals.list():
-    print(item.id, item.benchmark, item.status, item.mean_reward, item.spent_usd)
+job_page = await evals.list(limit=50)                 # job_page.next_cursor continues
+async for item in evals.list(search='nightly'):
+    print(item.id, item.job_name, item.status, item.stats.get('cost_usd'))
 ```
 
-A failed job says why on `failure`, as `code` + `message` — the same grammar an API error uses, under a different key so that a client checking for `error` stays correct on a healthy read. It rides on list rows too, so a dashboard shows the reason without a detail call per row. In practice you will not see it fire: `FAILED` is a [reserved job status](#statuses) that nothing sets today, so `failure` is `None` on every job. Read `trials.by_status` for where a job actually went wrong.
+`list(search=...)` is a server-side free-text filter over the job name and its dataset names. `stats` is the aggregate block, a plain dict with the wire's own keys: progress counters, token totals (`n_input_tokens` includes cache tokens; `n_cache_tokens` and `n_output_tokens` beside it), measured `cost_usd`, and `evals` — per-(agent, model, dataset) statistics keyed `agent__model__dataset`, with a fourth `__effort` segment when a declared effort is part of the arm identity. A failed job says why on `failure`, as a `JobFailure(code, message)` — the same grammar an API error uses, under a different key so that "error means this request failed" stays true on a healthy read. In practice you will not see it fire: `FAILED` is a [reserved job status](#statuses) that nothing sets today; read `trials.by_status` for where a job actually went wrong.
 
-Iterate trials (pages fetched for you), or `await` one page. `status` filters, e.g. to the failures behind a rerun decision:
+### Trials
+
+Trials page the same way — await a page or iterate across pages. `status` filters, and on a multi-dataset job `dataset` narrows to one dataset's trials:
 
 ```python
 async for trial in evals.trials(job.id):
-    print(trial.task_key, trial.agent.model, trial.run_number, trial.status, trial.reward)
+    print(trial.task_name, trial.agent_info.name, trial.status, trial.reward)
 
-page = await evals.trials(
-    job.id,
-    limit=100,
-) # .items, .next_cursor, .has_more
-
-failures = await evals.trials(
-    job.id,
-    status=['INFRASTRUCTURE_ERROR', 'SCORING_ERROR'],
-)
+failures = await evals.trials(job.id, status=['INFRASTRUCTURE_ERROR', 'SCORING_ERROR'])
+one_lane = await evals.trials(job.id, dataset='deep-swe')
 ```
 
-Fetch one trial's full detail — untruncated `failure_detail`, plus the harness version actually used:
+### Per-task rollup
+
+Between the job body and the trial list sits `tasks()` — one row per distinct task, with its trial tally, mean reward, and cost, so you can see which tasks drag without fetching every trial:
 
 ```python
-detail = await evals.trial(
-    job.id,
-    trial.id,
-)
-print(detail.failure_phase, detail.failure_detail)
-print(detail.sandbox_provider, detail.verifier_mode)   # where the trial and its verifier executed
-print(detail.resolved_harness_version)
-print(detail.metrics)             # named sub-scores
-print(detail.phase_timings_ms)    # {'agent_ms': ..., 'verify_ms': ...}
+async for row in evals.tasks(job.id):
+    print(row.task_name, row.source, row.mean_reward, row.cost_usd)
+    # row.trials — the same TrialTally shape as the job's
 ```
 
-Read per-trial spend from the trial itself. `spend_source='measured'` is the platform's settled figure and the only final one. `'measured_provisional'` is a real reading taken before the gateway finished writing this trial's spend — a lower bound that can only move UP, finalized within about half an hour of the trial settling. `'assumed_cap'` means spend could not be measured at all, so the per-trial cap is reported conservatively. Fresh trials commonly show one of the latter two for a few minutes; wait for `'measured'` before treating a number as final. `spent_usd=None` means the trial never ran — a queued or cancelled trial — and is not the same as `0`, which is a real measurement and appears when no gateway key was ever minted:
+`source` names the dataset the task came from — the disambiguator a multi-dataset job needs.
+
+### One trial in depth
+
+A trial id is globally addressable — `trials().get(trial_id)` needs no job id; the body carries `job_id` as the reverse pointer:
 
 ```python
-print(detail.spent_usd, detail.spend_source)
+trial = await t.get(trial_id)
+
+print(trial.reward)                          # primary reward; None until scored, 0 is a reward
+print(trial.verifier_result.rewards if trial.verifier_result else None)
+print(trial.agent_result.cost_usd if trial.agent_result else None, trial.spend_source)
+print(trial.agent_result.n_input_tokens,     # token counts (input includes cache)
+      trial.agent_result.n_cache_tokens,
+      trial.agent_result.n_output_tokens)
+print(trial.agent_execution)                 # TimingInfo(started_at=…, finished_at=…) — a timing pair
+print(trial.sandbox_provider, trial.verifier_environment_mode)
+print(trial.agent_info.version)              # agent version actually used
+print(trial.attempt_phase)                   # which step a RUNNING trial is in
+if trial.exception_info:                     # why it failed, when it did
+    print(trial.exception_info.exception_type,
+          trial.exception_info.exception_message)  # untruncated in this response
 ```
 
-Read spend from `spent_usd`, never from `model_usage`. `model_usage` is the open-ended per-harness blob: `max_trial_spend_usd` is the cap *that* trial's key carried (which can differ from the job's cap today), and everything else — bundle identity, token counts, and on trials settled by an earlier executor a historical `cost_usd` — lands in `model_usage.extra` under snake_cased keys. That leftover cost is a usage fact the harness reported, not the platform's spend answer, and only `spent_usd` carries `spend_source` to tell you how it was arrived at.
+Every phase's wall-clock is a **start/stop pair**, never a duration: `environment_setup`, `agent_setup`, `agent_execution`, and `verifier` are each a `TimingInfo(started_at, finished_at)`, either bound `None` while the phase has not reached it. Durations you compute yourself keep their provenance — you always know which clock produced them.
+
+> **Reading spend:** `spend_source == 'measured'` is the platform's settled figure. `'assumed'` means spend could not be measured at all, so the per-trial cap is reported conservatively. `agent_result.cost_usd is None` means the trial never ran — a queued or cancelled trial — and is not the same as `0`, which is a real measurement. `trial.max_trial_spend_usd` is the cap *this* trial's key carried, which can differ from the job's current cap on rows settled before a change.
+
+> **Reading failures:** `status` is the primary key for failure classes; `exception_info` is the detail — `exception_type` is one of the platform's stable failure names (`ScoringError`, `InfrastructureError`, `CancelledError`, `IncompleteTrialError`), `exception_message` is truncated to 2000 characters on list rows and full on the detail route, and `exception_traceback` rides along when one was recorded.
+
+`attempt_phase` answers the question `RUNNING` alone cannot: which step the trial is in (`prepare`, `build`, `boot`, `install`, `agent`, `verify`, `persist`), so a polling caller can tell a slow environment build from a slow agent.
+
+### The trace
+
+Fetch a trial's recorded event timeline:
 
 ```python
-if detail.model_usage:
-    print(detail.model_usage.max_trial_spend_usd)   # history, not this job's cap
-    extra = detail.model_usage.extra
-    print(extra.get('network_mode'),                # 'no-network' | 'allowlist' | 'public'
-          extra.get('network_policy_source'))       # 'explicit' | 'legacy_allow_internet' | 'upstream_default'
-```
-
-`network_mode` is what the agent could reach, and `network_policy_source` is where that came
-from — `'upstream_default'` means the task declared nothing and the omitted-means-public rule
-applied. Compare rewards only across trials that agree on both: an agent with internet access ran
-a different experiment from a sealed one.
-
-While a trial is still in flight there is a mid-run reading as well, on two fields of its own:
-
-```python
-print(detail.live_spent_usd, detail.live_spend_at)   # 3.41  '2026-07-24T18:22:05.113Z'
-```
-
-Read them together or not at all. `live_spent_usd` is a **lagging lower bound**, never the trial's cost: the gateway settles spend 40–70 seconds behind the calls that incurred it, and the platform samples the trial's key roughly every two minutes, so the number is always behind and `live_spend_at` is how far behind. Render it as "at least $3.41, as of 90s ago" — never as "current cost".
-
-The rest of its behavior follows from that:
-
-- **`None` is "no reading yet", never `$0`.** A zero from the gateway means nothing has settled, not that the trial was free, so a zero is skipped rather than written.
-- **It is never part of a total.** `job.spent_usd` sums settled trials only, and folding a live reading into it would double-count the moment that trial settles.
-- **It stops moving when the trial does.** Nothing writes it once the row is terminal, so what remains is the last mid-run sample — stale by construction. On a terminal trial read `spent_usd` and `spend_source`; that is the settled truth, and it is the only one.
-- **Built-in harnesses only.** A custom harness runs your own command with no live poll around it, so its trials go from `None` straight to a settled `spent_usd`.
-
-The same reading reaches a watcher as a `trial.spend` event carrying `trialId`, `taskKey` and `liveSpentUsd`. It is emitted only when a sample actually landed on a live trial, so a poll that raced the settle never fires one.
-
-Stream a trial's recorded event trace; resume later from the last seen `seq`:
-
-```python
-async for event in evals.trial_trace_events(
-    job.id,
-    trial.id,
-):
+async for event in t.trace_events(trial_id):
     print(event.seq, event.type, event.data)
 
-page = await evals.trial_trace(
-    job.id,
-    trial.id,
-    cursor=str(last_seq),
-    limit=500,
-)
-print(page.items, page.next_cursor, page.has_more)
+# Or page manually — the same envelope as every collection
+trace = await t.trace(trial_id, limit=500)
+more = await t.trace(trial_id, cursor=trace.next_cursor)
 ```
 
-### Trial artifacts — the raw record
+The first event of every trace (`seq` 0) is the task instruction itself, carried as `_prompt` — a trace read on its own opens with the prompt rather than mid-conversation. `trace_events()` drains the currently available trace, then stops — `next_cursor` is `None` once you are caught up, which is how the drain knows. A trace cursor is a position in the seq timeline, so to follow an in-flight trial later, keep the last event's `seq` and resume with `cursor=str(last_seen_seq)`.
 
-Beside the parsed trace, every trial archives its raw record, and one
-vocabulary names the pieces everywhere — API, SDK, CLI, and the dashboard's
-download menu:
+---
+
+## Trial artifacts — the raw record
+
+Beside the parsed trace, every trial archives its raw record, and one six-name vocabulary names the pieces everywhere — API, SDK, CLI, and the dashboard's download menu:
+
+| Name | What it is |
+|------|------------|
+| `trace-parsed` | The parsed event timeline — what `trace()` / `trace_events()` page |
+| `trace-stdout` | The agent process's stdout, byte for byte |
+| `trace-stderr` | The agent process's stderr, byte for byte |
+| `trajectory` | The normalized-trajectory slot — in the vocabulary ahead of its server wave |
+| `agent-home` | The CLI's whole home folder, collected after the run |
+| `verifier` | Everything the scoring step printed |
+
+The raw ones come from `artifact()`:
 
 ```python
-stdout = await evals.trial_artifact(job.id, trial_id, "trace-stdout")   # str | None
-stderr = await evals.trial_artifact(job.id, trial_id, "trace-stderr")   # str | None
-grader = await evals.trial_artifact(job.id, trial_id, "verifier")       # str | None
-home   = await evals.trial_artifact(job.id, trial_id, "agent-home")     # dict[str, str] | None
+stdout = await t.artifact(trial_id, 'trace-stdout')   # str | None
+stderr = await t.artifact(trial_id, 'trace-stderr')   # str | None
+grader = await t.artifact(trial_id, 'verifier')       # str | None
+home = await t.artifact(trial_id, 'agent-home')       # dict[path, text] | None
 ```
 
-`trace-stdout` and `trace-stderr` are the harness process's streams, byte for
-byte — the referee whenever the parsed trace looks wrong. `verifier` is
-everything the scoring step printed. `agent-home` is the CLI's entire home
-folder (`/root/.claude`, `/root/.codex`, ...) collected whole after the run,
-subagent transcripts included by construction, keyed by sandbox path. Null is
-a normal answer, never an error: the trial never stored that artifact (it was
-cancelled early, the harness wrote nothing, or the trace was purged).
+`trace-stdout` and `trace-stderr` are the referee whenever the parsed trace looks wrong. `agent-home` is the agent CLI's entire home folder (`/root/.claude`, `/root/.codex`, …) collected whole after the run, subagent transcripts included by construction, keyed by sandbox path. `None` is a normal answer, never an error: the trial never stored that artifact (it was cancelled early, the agent wrote nothing, or the trace was purged).
 
-The CLI speaks the same words: `evolve-evals trace <job> <trial>
---stream trace-stdout` prints one artifact, and `--save <dir>` writes the
-whole set — `trace-parsed.jsonl`, `trace-stdout.log`, `trace-stderr.log`,
-`verifier.log`, and `agent-home/` with the folder tree preserved. On the wire
-these are `?stream=` selectors on the trace route. The two modes are
-exclusive, and `--cursor`/`--limit` page only the plain event listing — the
-CLI refuses any mix as a usage error instead of letting one flag silently win.
+`trajectory` is different: it is in the vocabulary **ahead of its server wave**. Until that wave lands, the route answers not-found for it, and the SDK and CLI report that as the API error it is — no silent empty answer. The name is published now so a client written today parses the slot the day it first fills.
 
-This archive belongs to hosted evals: trials are scoring evidence. A managed
-agent session keeps its parsed transcript download; its raw stream lives in
-the SDK's local session log and its home folder inside your own sandbox.
+The CLI speaks the same six words. `evolve-evals trial download <trial-id> --stream <name>` prints one artifact to stdout; without `--stream`, everything the trial recorded is saved under `<dir>/<trial-id>/` — `trace-parsed.jsonl`, `verifier.log`, `trace-stdout.log`, `trace-stderr.log`, and `agent-home/` with the folder tree preserved (`trajectory` joins the saved set when its wave lands). The two modes are exclusive, and `--cursor`/`--limit` page only `--stream trace-parsed` — the CLI refuses any other mix as a usage error instead of letting one flag silently win.
 
-The first event of every trace (`seq` 0) is the task instruction itself, carried as `_prompt` — a trace read on its own opens with the prompt rather than mid-conversation, the same promise Harbor's trajectories make.
+This archive belongs to hosted evals: trials are scoring evidence. A managed agent session keeps its parsed transcript download; its raw stream lives in the SDK's local session log and its home folder inside your own sandbox.
 
-`trial_trace_events()` drains the currently available trace, then stops — `next_cursor` is `None` once you are caught up, which is how the drain knows. A trace cursor is a position in the seq timeline, so to follow an in-flight trial later, keep the last event's `seq` and resume with `cursor=str(last_seen_seq)`.
+---
 
-### Cancel / rerun failures
+## Stopping work
+
+Two verbs, two scopes. `cancel()` stops a **job**; `stop()` stops **trials** and leaves their job running:
 
 ```python
-await evals.cancel(job.id)   # idempotent; a terminal job is a no-op
+await evals.cancel(job.id)     # idempotent; a terminal job is a no-op
 
-# New linked job of only the failed (and never-dispatched) trials
-rerun = await evals.rerun_failed(
-    job.id,
-    idempotency_key='rerun-1',
-)
-print(rerun.source_job_id)   # → job.id
+report = await t.stop([trial_a, trial_b])
+print([r.id for r in report.stopped])   # killed and settled by this request
+print(report.already_terminal)          # were already done; untouched
+print(report.not_found)                 # not yours or not real — never distinguished
 ```
 
-`rerun_failed()` requires a terminal source job. Scored trials are never re-executed.
+`stop()` kills each trial's sandbox and settles the trial with its spend read from the gateway. Every requested id appears in exactly one of the three lists. Ids belonging to someone else land in `not_found` — existence is never leaked — and already-terminal trials are reported as such and left untouched, so the call is idempotent. One request takes up to 100 ids.
+
+The CLI adds one convenience on top: `evolve-evals job stop <id> --dataset <name>` stops one dataset's live trials and leaves the job — and every other dataset — running. It is pure sugar over surfaces that already exist (the job's `datasets`, the trial list's `dataset` filter, and the stop door), pages its batch under the 100-id cap, and merges the reports into one outcome. Stopping a dataset the job never spanned is a refusal, not an empty no-op — silence would read as "nothing was running".
+
+---
+
+## Resume
+
+`resume()` takes a terminal job and creates a **new linked job** holding fresh trials for the source's failed work. The source is never mutated — it stays separately citable, and the new job's `source_jobs` records where it came from:
+
+```python
+follow_up = await evals.resume(job.id, idempotency_key='resume-1')
+print(follow_up.source_jobs)   # [SourceJob(action='resume', type='hub', job_id=job.id)]
+```
+
+By default the platform resumes its standard failure set — `ScoringError`, `InfrastructureError`, `IncompleteTrialError`, plus still-queued trials of a cancelled source. Narrow it by exception type when you mean something more surgical:
+
+```python
+await evals.resume(job.id, filter_error_types=['InfrastructureError'])
+```
+
+`resume()` requires a terminal source job (`409 job_not_terminal` otherwise) and answers `409 no_failed_trials` when nothing qualifies. Scored trials are never re-executed.
 
 ---
 
@@ -350,161 +356,188 @@ print(rerun.source_job_id)   # → job.id
 
 A regrade re-runs **only the verifier**. The trial's recorded submission — the patch and artifacts captured when it ran — is restored into a fresh, sealed verifier sandbox and scored again; the agent phase is never re-run, and the source trial is never modified. Use it when a verifier was fixed or tightened and you want the same agent work re-scored under it, without paying for a single new agent run.
 
-```python
-# One trial
-single = await evals.regrade_trial(job.id, trial.id)
+**The response is a job.** A regrade is an ordinary job whose `source_jobs` records `action='regrade'` and whose `is_regrade` is true — you watch it, list its trials, and read its stats with the same calls as any other job, and it shows up in `list()` like any other job:
 
+```python
 # Every regradable trial of a terminal job — optionally narrowed
-bulk = await evals.regrade(
+regrade = await evals.regrade(
     job.id,
-    status=['SCORED'],        # (optional) only source trials in these statuses
-    task_key='task-001',      # (optional) only source trials of this task
+    statuses=['SCORED'],         # (optional) only source trials in these statuses
+    task_name='task-001',        # (optional) only source trials of this task
 )
+print(regrade.is_regrade, regrade.source_jobs)   # True, [SourceJob(action='regrade', …)]
 
-# Read it back by the REGRADE's id: QUEUED → RUNNING → COMPLETED
-done = await evals.get_regrade(bulk.id, limit=100)
-for result in done.results.items:
-    print(result.task_key, result.source_reward, '→', result.reward,
-          result.reward_delta)   # reward − source_reward, the per-trial delta
+rescored = await evals.watch(regrade.id)          # an ordinary job watch
+
+# One trial — from the trials client, no job id needed
+single = await t.regrade(trial_id)
 ```
 
-All three return a `RegradeJob`. A per-trial regrade holds one result; a per-job regrade holds one per selected source trial. `results` is one object named for the collection: `total` and `by_status` cover the whole job, `items`/`next_cursor`/`has_more` are the page you asked for — a regrade of a 10,000-trial job is not one response. Poll `get_regrade()` until `status` is `'COMPLETED'`; `results.by_status` is the running histogram, derived from the whole result set rather than the page in hand.
+Eligibility is defined by the record, not by intent: a trial is regradable only if it **recorded its verifier inputs** when it settled. Settled `separate`-mode trials record them; nothing else does. Three consequences: shared-mode trials can never be regraded (their verifier inspected the live agent sandbox, which no longer exists); in-flight trials are not yet regradable; and trials that settled before the platform began recording verifier inputs are permanently ineligible. A single-trial regrade of an ineligible source is refused with `409 regrade_source_ineligible` naming the reason; a whole-job regrade requires a terminal source (`409 job_not_terminal`), selects only the eligible trials, and answers `409 no_regradable_trials` when there are none.
 
-`get_regrade()` takes the **regrade's** id — the one `regrade()` and `regrade_trial()` return, and the one their `Location` header names. To find a regrade you no longer hold the id for, or to see every regrade of a job, list them:
-
-```python
-# Every regrade of one job, newest first
-async for regrade in evals.list_regrades(job_id=job.id):
-    print(regrade.id, regrade.status, regrade.results.total)
-
-# Or one page at a time
-page = await evals.list_regrades(limit=20)
-```
-
-Naming a job you do not own returns an empty page rather than a 404 — a list never reveals whether someone else's id exists.
-
-### Eligibility
-
-Regradability is defined by the record, not by intent: a trial is regradable only if it **recorded its verifier inputs** when it settled. Settled `separate`-mode trials record them; nothing else does. That one gate has three consequences:
-
-- **Shared-mode trials can never be regraded.** Their verifier inspected the live agent sandbox, which no longer exists — there is nothing faithful to re-run.
-- **In-flight trials (`QUEUED`, `RUNNING`, `SCORING`) are not yet regradable** — they have not settled, so nothing is recorded.
-- **Trials that settled before the platform began recording verifier inputs are permanently ineligible.** The inputs were never captured, and cannot be reconstructed after the fact.
-
-A single-trial regrade of an ineligible source is refused with a `409 regrade_source_ineligible` naming the specific reason. A whole-job regrade requires a terminal source job (`409 job_not_terminal` otherwise), selects only the eligible trials, and is refused with a `409 no_regradable_runs` when there are none.
-
-### Reading a regrade
-
-Every `RegradeResult` carries the comparison you actually want:
-
-- `source_reward` and `source_status` — immutable snapshots of the source trial, taken when the regrade was created. The source trial's own row is untouched.
-- `reward` and `metrics` — what the fresh verifier run produced.
-- `reward_delta` — `reward − source_reward` when both are real numbers, else `None`.
-- `verifier_digest` — a content digest of the verifier that ran, the "verifier version". A digest equal to the source trial's own verifier means the regrade reproduces the recorded verdict; a different digest means a genuine prediction of what the new verifier scores.
-
-Result statuses mirror the trial reward law: a valid reward (including 0) is `SCORED`; a verifier crash or out-of-domain reward is `SCORING_ERROR`; a missing reward file is `INDETERMINATE`; a verifier box lost before a durable verdict is `INFRASTRUCTURE_ERROR`. The verifier always runs `separate` and sealed; `sandbox_provider` on the regrade job names where its verifier boxes run — the source job's provider.
-
-The same surface is on the CLI:
-
-```bash
-npx evolve-evals regrade <id>                       # whole job
-npx evolve-evals regrade <id> <trial-id>            # one trial
-npx evolve-evals regrade <id> --status SCORED --task task-001
-npx evolve-evals regrade-job <regrade-job-id>       # rewards, deltas, lineage
-```
-
-`--status` and `--task` apply to a whole-job regrade only; passing them with a trial id is a usage error.
+The verifier always re-runs `separate` and sealed. Compare the regrade job's trials against the source job's — same task names, same shapes — to read the deltas.
 
 ---
 
 ## Compare
 
-Compare 2–5 of your jobs side by side — per-job aggregates plus a per-task matrix, disagreement rows first:
+Compare 2–10 of your jobs side by side — per-job aggregates plus a per-task matrix, disagreement rows first:
 
 ```python
-comparison = await evals.compare([baseline.id, candidate.id])
+comparison = await evals.compare([job_a.id, job_b.id])
 
 for aggregate in comparison.jobs:
-    print(aggregate.benchmark, aggregate.mean_reward,
-          f'{aggregate.coverage.scored}/{aggregate.coverage.total} scored',
-          aggregate.spent_usd)
+    print(aggregate.id, aggregate.mean_reward,
+          f'{aggregate.coverage.scored}/{aggregate.coverage.total} scored', aggregate.cost_usd)
 
 for row in comparison.task_matrix:
     if not row.disagreement:
         continue
     for cell in row.cells:
-        print(row.task_key, cell.status, cell.mean_reward)
-        # cell.status: a trial status, 'MIXED' (trials disagree), or 'MISSING' (no trials)
+        print(row.task_name, cell.status, cell.mean_reward)
+        # cell.status: a trial status, "MIXED" (trials disagree), or "MISSING" (no trials)
 ```
 
 Mean rewards cover `SCORED` trials only; `coverage` is always reported so a high mean over few scored trials stays visible. Zero is a reward, never a gap.
 
 ---
 
-## Export
+## Download the archive
 
-Download the research archive (gzipped JSON) of a terminal job:
+Download the full results archive (gzipped, deterministic bytes) of a terminal job:
 
 ```python
-archive_path = await evals.export(
-    job.id,
-    to='./results',
-) # saved file path
-harbor_path = await evals.export(
-    job.id,
-    to='./results',
-    format='harbor',
-) # Harbor job layout
-archive_bytes = await evals.export(job.id) # bytes in memory
+data = await evals.download(job.id)                  # bytes (default)
+path = await evals.download(job.id, to='./results')  # save; returns file path
 ```
 
-Two delivery shapes, not three: `to=` streams straight to disk and returns the saved path, and omitting it returns the bytes. The TypeScript SDK also offers `stream: true` for a raw response stream; Python has no equivalent, so pass `to=` for anything large enough that you would not want it in memory. `format='harbor'` composes with either shape.
+Both shapes are verified — the bytes against the response's length and, when the server states one, its digest; the to-disk shape hashes while streaming and promotes the file only after the check. There is deliberately no stream shape here where the TypeScript SDK has one: the HTTP layer is urllib inside a worker thread, so a chunk iterator would hand out unverified bytes one thread hop at a time, while `to=` already streams to disk in constant memory. Pipe from the file.
 
 ---
 
 ## CLI
 
-Python ships no separate CLI. The TypeScript package's `evolve-evals` binary (`npx evolve-evals ...`) covers the full surface from any shell — see [TypeScript → Hosted Evals → CLI](../typescript/06-hosted-evals.md#cli).
+The SDK's TypeScript package ships the `evolve-evals` binary — a thin shell over the same five clients this chapter documents (`npx evolve-evals`, no Python required). The grammar is noun-verb: `evolve-evals <noun> <verb>`, with `run` as the one top-level shortcut (an alias of `job start`). Singular nouns are canonical; the plurals parse as hidden aliases, as does `ls` for `list`.
+
+```
+job      start | list | show | trials | tasks | compare | cancel | stop | resume | regrade | download
+trial    show | download | regrade | stop
+dataset  list | show | publish | download | activate
+agent    list | show | add | remove
+auth     status
+```
+
+Start a job with the short flags — each one mirrors a field of the create body:
+
+```bash
+npx evolve-evals run \
+    -d deep-swe@1.1 \            # --dataset, repeatable; bare name = active version
+    -d frontier-swe \
+    -a codex \                   # --agent <name[@version]> — the @version pins
+    -m gpt-5.5 \                 # --model, repeatable; each model is one arm
+    -k 2 \                       # --n-attempts per task × arm
+    -n 8 \                       # --n-concurrent trials
+    -e daytona \                 # --env: sandbox provider (e2b | daytona | modal)
+    --max-trial-spend 25 \
+    --watch                      # stream events until the job finishes
+```
+
+`-i/--include-task-name` and `-x/--exclude-task-name` filter task names by glob and `-l/--n-tasks` caps each dataset's count after filters — all three are stamped onto every dataset selector, so a glob that matches nothing in one dataset simply filters nothing there. `--effort <value>` sets the reasoning effort on **every** arm, verbatim; an agent that cannot honor it is refused by the server rather than silently skipped, so a mixed sweep that needs per-arm efforts belongs in the SDK. `--agent-env` / `--verifier-env` take `KEY=VALUE`, repeatable. `--job-name` labels the run.
+
+For a run you will repeat, put the body in a file. `-c/--config` loads YAML or JSON **in the spec's own vocabulary** — the same field names as `jobs().start()` — and explicit flags override its fields; `--print-config` prints the resolved body and exits without spending anything, the dry-run a paid remote run deserves:
+
+```yaml
+# nightly.yaml
+datasets:
+  - name: deep-swe
+    version: "1.1"
+  - name: frontier-swe
+agents:
+  - name: codex
+    model_name: gpt-5.5
+  - name: claude
+    model_name: claude-fable-5
+n_attempts: 2
+max_trial_spend_usd: 25
+```
+
+```bash
+npx evolve-evals job start -c nightly.yaml --print-config   # inspect the exact body
+npx evolve-evals job start -c nightly.yaml --watch          # then run it
+```
+
+The read side, worked through:
+
+```bash
+npx evolve-evals job list --limit 20 --search nightly
+npx evolve-evals job show <id> [id...]
+npx evolve-evals job trials <id> --status INFRASTRUCTURE_ERROR,SCORING_ERROR
+npx evolve-evals job trials <id> --dataset deep-swe
+npx evolve-evals job tasks <id>                      # per-task rollup
+npx evolve-evals job compare <id> <id>
+npx evolve-evals job cancel <id>
+npx evolve-evals job stop <id> --dataset deep-swe    # one dataset's live trials
+npx evolve-evals job resume <id> -f InfrastructureError
+npx evolve-evals job regrade <id> --task task-001
+npx evolve-evals job download <id> -o results/
+
+npx evolve-evals trial show <trial-id>
+npx evolve-evals trial download <trial-id> --stream trace-stdout
+npx evolve-evals trial download <trial-id> -o trials/
+npx evolve-evals trial regrade <trial-id>
+npx evolve-evals trial stop <trial-id> [trial-id...]
+
+npx evolve-evals dataset list -q
+npx evolve-evals dataset show deep-swe@1.1
+npx evolve-evals auth status
+```
+
+Output follows one precedence everywhere: human tables on a TTY, tab-separated rows when piped, `--json` for the machine shape (NDJSON for `--watch` streams), and `-q` for ids-only lists (on `job start --watch`, `-q` suppresses the event log and prints the final block only). `--columns` chooses and orders list columns (`--columns help` names them), `--no-trunc` disables cell truncation, `--no-headers` drops the header row from piped output. `--limit` and `--cursor` page every listing the same way.
+
+Closed sets are validated at the keyboard: a typo in `--stream`, `--status`, or `-e/--env` is a usage error naming the legal values, never a round trip.
+
+Credentials: `$EVOLVE_API_KEY`, or `--api-key`; `--base-url` targets a non-default deployment. Exit codes: `0` success (with `--watch`: the job `COMPLETED`, or a publish `COMPLETED`), `1` runtime failure (with `--watch`: `FAILED` or `CANCELLED`), `2` usage error.
+
+### Signing in
+
+Today the credential story is one step: create an API key in the dashboard and export it as `EVOLVE_API_KEY`. `auth().status()` then tells you who the platform thinks you are — your user, your email, and a descriptor of the key in use (the secret is never returned):
+
+```python
+status = await who.status()
+print(status.user_id, status.email, status.key.label)
+```
+
+`auth login` — the browser sign-in flow that mints the key for you — lands with the auth release. Key listing and revocation are already in the contract and served; their SDK and CLI verbs arrive with the same release.
+
+Dataset publishing and agent registration have their own subcommands — shown in [Bring your own dataset](#bring-your-own-dataset) and [Bring your own agent](#bring-your-own-agent).
 
 ---
 
 ## What the platform supports
 
-Everything a client would otherwise hardcode — the legal harness names, the status enums, the limits, the error codes — is one public, cacheable document. It needs no API key.
+Everything a client would otherwise hardcode — the legal agent names, the status enums, the limits, the error codes — is one public, cacheable document. It needs no API key, so a signed-out page can populate its own agent picker:
 
 ```python
 from evolve import meta
 
+# `meta` is a module-level function, and is also `hosted().meta()` —
+# the same document either way.
 doc = await meta()
 
-# A model picker, without a hardcoded table
-for harness in doc.harnesses:
-    print(harness.name, harness.default_model, len(harness.models))
+for agent in doc.agents:
+    print(agent.name, agent.effort_support, agent.latest_version)
 ```
 
-`GET /api/meta` is the wire form. Every field is derived from the module that enforces it, so a published limit and an enforced limit cannot drift apart, and a new harness appears here the moment the platform can run it.
+`GET /api/meta` is the wire form. Every field is derived from the module that enforces it, so a published limit and an enforced limit cannot drift apart, and a new agent appears here the moment the platform can run it. What is in it:
 
-What is in it:
-
-**`harnesses`** — every built-in, with `default_model` and the full `models` list for a picker, `runnable` (and `reason` when it is not), `version_pinnable`, and `latest_version` for a "your pin is out of date" badge. `default_model` is a suggestion, not a server-side default: `doc.limits['job']['modelRequired']` is `True`, and a job that omits `model` is refused. `effort_support` is the same idea for the effort control — `'level'`, `'binary'` or `'none'`, exactly as [Run a job](#run-a-job) describes them — so a form can offer the right control, or none, instead of learning the harness's limits from a refusal. For a `'binary'` harness the acceptable spellings are published as `limits['job']['binaryEffortValues']`, so a picker can narrow its options instead of offering eight values the server will refuse six of.
-
-**`sandbox_providers`** — each provider's real resource ceilings and, in `refuses`, the capabilities it will not run with the reason the runner itself would give.
-
-**`platform_constraints`** — a top-level list of its own, holding the refusals that apply on *every* provider, so "runs nowhere" is distinguishable from "runs somewhere else".
-
-**`network_modes`** — the three modes a task may declare, which is exactly the list a "Network modes" filter needs. They are explained in [What runs](#network-modes).
-
-**`statuses`** — the job, trial, import, regrade-job, regrade-result, and benchmark-version vocabularies, each with its `terminal` members marked. A watcher stops on `terminal`; a status bar renders `values` without hardcoding the enum.
-
-**`limits`** — five keys. `'job'` carries every create-time bound: `maxAgents`, `maxRunsPerTask`, `maxTrials`, `concurrency` (default and ceiling), `defaultMaxTrialSpendUsd`, `defaultSandboxProvider`, `modelRequired`, and `defaultSizing`. Four more are the values a run inherits when nothing declares one: `reasoningEfforts` and `defaultReasoningEffort` are the effort vocabulary and the omitted-value default from [Run a job](#run-a-job), and `defaultAgentTimeoutSec` (3600) and `defaultVerifierTimeoutSec` (600) are the phase wall-clocks a task falls back to when its own `task.toml` declares none — a task that declares `agent.timeout_sec` or `verifier.timeout_sec` always wins, so these fill in rather than cap. They are published because nothing else on the document says how long a trial may run. `'pagination'` is three separate scopes with three different pairs — `collections`, `benchmarkTasks`, and `regradeResults` each publish their own `default` and `max`, so read the one for the collection you are paging rather than applying a single pair everywhere. `'uploads'` holds the two archive size caps, `'benchmarkNames'` the name pattern and length bounds, and `'maxItemsNamedInErrorMessage'` sits at the top level: it is how many offending items a refusal names in its English sentence before "and N more", which is why `err.details` exists.
-
-**`error_codes`** — the whole vocabulary below, in one list.
-
-**`custom_harnesses`** — the registration rules, so a form can validate before it POSTs: the name pattern, the size caps, the reserved names and reserved env keys, and `maxPerUser`, the per-account registration ceiling. That ceiling lives here rather than under `limits` because it belongs to the same rules a registration form already reads.
-
-`limits` and `custom_harnesses` are plain dicts with the wire's own camelCase keys — `doc.limits['job']['concurrency']['max']`, `doc.custom_harnesses['maxPerUser']`. They are nested configuration you read by key, not objects you construct, and a dataclass per level would be five classes to edit every time the server adds a field — the exact coupling this document exists to remove.
-
-`statuses` is the exception, and the one place to read carefully: it is a dict *of dataclasses*. The outer keys are the wire's own (`'job'`, `'trial'`, `'import'`, `'regradeJob'`, `'regradeResult'`, `'benchmarkVersion'`), but each value is a `StatusVocabulary` you reach by attribute — `doc.statuses['job'].values`, `.terminal`, `.description`. Subscripting it like a dict raises `TypeError`.
+- **`agents`** — every built-in, with `effort_support` (whether `reasoning_effort` reaches it), `version_pinnable`, and `latest_version` for a "your pin is out of date" badge (`None` means "not known right now", never "up to date").
+- **`agent_registration`** — the rules a bring-your-own registration must satisfy: name pattern and length, size caps, `max_per_user`, the reserved built-in names, and the reserved env keys the platform owns. A plain dict with the wire's own keys.
+- **`sandbox_providers`** — each provider's real resource ceilings and, in `refuses`, the capabilities it will not run with the reason the runner itself would give. **`platform_constraints`** beside it holds the refusals that apply on *every* provider, so "runs nowhere" is distinguishable from "runs somewhere else".
+- **`managed_providers`** — the managed sandbox doors this deployment serves; a different question from the eval lane.
+- **`network_modes`** — the three modes a task may declare ([What runs](#what-runs)).
+- **`statuses`** — the job, trial, import, and dataset-version vocabularies, each with its `terminal` members marked. A watcher stops on `terminal`; a status bar renders `values` without hardcoding the enum.
+- **`limits`** — `limits['job']` carries every create-time bound (`max_agents`, `max_n_attempts`, `max_trials`, `n_concurrent_trials` default and ceiling, `default_max_trial_spend_usd`, `default_sandbox_provider`, `default_sizing`, `model_required`, the effort vocabulary, and the phase wall-clocks a task inherits when its own config declares none — `default_agent_timeout_sec` 3600, `default_verifier_timeout_sec` 600; a task that declares its own always wins). `compare` bounds the compare fan-out; `pagination` publishes a `default`/`max` pair per collection scope; `uploads` holds the two archive size caps; `dataset_names` the name pattern and length bounds; and `max_items_named_in_error_message` is how many offending items a refusal names in its English sentence before "and N more" — which is why `details` exists.
+- **`error_codes`** — the whole vocabulary from [Error codes](#error-codes), in one array. **`import_warning_codes`** beside it lists the warnings an import can carry.
 
 `schema_version` moves when a field is added, removed, or changes meaning — never when a value changes. Pin behavior to it, not to a deploy date. Responses carry an `ETag` and `Cache-Control: public, max-age=300, stale-while-revalidate=300`; send the ETag back as `If-None-Match` and a matching document answers `304` with no body.
 
@@ -518,25 +551,29 @@ Every failure is one shape:
 from evolve import EvolveAPIError
 
 try:
-    await evals.run(benchmark='deep-swe', agents=agents, sandbox_provider='modal')
+    await evals.start(
+        datasets=[{'name': 'deep-swe'}],
+        agents=[{'name': 'codex', 'model_name': 'gpt-5.5'}],
+        sandbox_provider='modal',
+    )
 except EvolveAPIError as err:
     if err.code == 'provider_unsupported':
         # Every refused task, with its reason. Not a sentence to regex.
-        refused = err.details['refusedTasks']
-        print(f"{len(refused)} tasks cannot run on {err.details['provider']}")
+        refused = (err.details or {}).get('refused_tasks', [])
+        print(f'{len(refused)} tasks cannot run on modal')
 ```
 
-- **`code`** is the stable identifier. `HOSTED_ERROR_CODES` and `is_hosted_error_code()` are exported, and `HostedErrorCode` is a `Literal` you can annotate with so a type checker catches `'insufficient_creidts'`. A server newer than your SDK may send a code the list does not have, which is why `code` stays a plain `str`.
-- **`str(err)`** is the human sentence, and it may be shortened. **`err.details`** never is. When a refusal says "and 8 more", all of them are in `details` — that is the rule, and it is why `details` exists.
-- **`err.param`** names the input that was wrong — a body path (`agents[0].harness`), a query parameter (`limit`), or a multipart part (`runCommand`) — so a form can highlight one field instead of showing a banner. It is a wire name handed through unconverted, so it stays camelCase even though the keyword you passed was `run_command`.
-- **`err.retry_after_sec`** is set on `429` and `503`, read from the body first and the `Retry-After` header second.
-- **`err.request_id`** identifies the failure server-side. Quote it in a support thread.
+- **`code`** is the stable identifier. `HOSTED_ERROR_CODES` (the runtime tuple), the `HostedErrorCode` Literal, and `is_hosted_error_code()` are exported so a type-checker catches a typo'd code the way the TypeScript compiler does; a server newer than your SDK may send a code the list does not know, so `err.is_known_code()` says which situation you are in.
+- **`message`** (`str(err)`) is the human sentence, and it may be shortened. **`details`** never is. When a refusal says "and 8 more", all of them are in `details` — that is the rule, and it is why `details` exists.
+- **`param`** names the input that was wrong — a body path (`agents[0].name`), a query parameter (`limit`), or a multipart part — so a form can highlight one field instead of showing a banner.
+- **`retry_after_sec`** is set on `429` and `503`, read from the body first and the `Retry-After` header second.
+- **`request_id`** identifies the failure server-side. Quote it in a support thread.
 
 ---
 
 ## What runs
 
-Any benchmark in Harbor task format. Three environment shapes, all first-class:
+Any corpus in the platform's task layout ([the format](#not-in-the-task-layout-yet)). Three environment shapes, all first-class:
 
 - **Single-container** — the task pins a Docker image; agent and verifier run in it.
 - **Dockerfile-built** — the task ships `environment/Dockerfile`; Evolve builds the image once at import.
@@ -552,20 +589,20 @@ Tasks declare the agent sandbox's network access:
 - `allowlist` — only the hosts the task names.
 - `public` — open internet.
 
-**A task that declares no mode gets `public`**, which is Harbor's own default and therefore ours. That is worth knowing before you assume a sealed box: only `no-network` makes the per-trial spend cap a hard boundary, because only then is the gateway the sole route out. See [What keeps a trial inside its budget](#the-run-contract).
+**A task that declares no mode gets `public`** — the task format's own omission rule, honored as written. That is worth knowing before you assume a sealed box: only `no-network` makes the per-trial spend cap a hard boundary, because only then is the gateway the sole route out. See [What keeps a trial inside its budget](#the-run-contract).
 
-The **verifier never gets network**, in any mode — it always runs sealed, regardless of what the task declares.
+The **verifier never gets network**, in any mode — it always runs sealed, regardless of what the task declares. Each trial records the mode it ran under and where that decision came from in `agent_result.metadata` — compare rewards only across trials that agree on both, because an agent with internet access ran a different experiment from a sealed one.
 
 ### Verifier modes
 
 - `separate` — the verifier boots a pristine copy of the task environment and judges the collected submission. Nothing the agent left behind can touch the verdict.
 - `shared` — the verifier command runs inside the agent's sandbox, after the agent finishes and its credentials are revoked.
 
-Both are supported; the task picks (Harbor's `environment_mode`). The mode that ran is recorded on every trial as `verifier_mode`.
+Both are supported; the task picks (`environment_mode` in its config). The mode that ran is recorded on every trial as `verifier_environment_mode` — and it decides [regrade eligibility](#regrade).
 
 ### Compute sizing
 
-Tasks declare `cpus`, `memory_mb`, and `storage_mb`, and get exactly that. A provider whose ceiling is below the declaration **refuses the trial** — named in the per-task provider verdicts below and in the trial's `failure_detail` — rather than silently provisioning less. Current ceilings:
+Tasks declare `cpus`, `memory_mb`, and `storage_mb`, and get exactly that. A provider whose ceiling is below the declaration **refuses the trial** — named in the per-task provider verdicts and in the trial's failure detail — rather than silently provisioning less. Current ceilings:
 
 | Provider | Max vCPUs | Max memory | Disk |
 |----------|-----------|------------|------|
@@ -582,214 +619,189 @@ A task sized above *every* ceiling is rejected at import — it could run nowher
 Every trial executes in its own sandbox. Pick the provider per job — the same task image, network policy, and agent command run unchanged:
 
 ```python
-job = await evals.run(
-    benchmark='swe-bench-verified@1.0',
-    agents=[
-        JobAgent(
-            harness='codex',
-            model='gpt-5.5',
-        ),
-    ],
+job = await evals.start(
+    datasets=[{'name': 'swe-bench-verified', 'version': '1.0'}],
+    agents=[{'name': 'codex', 'model_name': 'gpt-5.5'}],
     max_trial_spend_usd=25,
-    sandbox_provider='daytona',   # 'e2b' (default) | 'daytona' | 'modal'
+    sandbox_provider='daytona',   # "e2b" (default) | "daytona" | "modal"
 )
 ```
 
-An unknown value is rejected with a `400` at creation — never a silent fallback. Once chosen, the provider is fixed for the job's life; `rerun_failed()` inherits it.
+An unknown value is rejected with a `400` at creation — never a silent fallback. Once chosen, the provider is fixed for the job's life; `resume()` inherits it.
 
 Not every task can run everywhere. The catalog tells you **before any money is spent** — every task carries a per-provider verdict:
 
 ```python
-bench = await catalog.get('my-bench@1.0')
-for task in bench.tasks.items:
-    verdict = task.providers['modal']   # TaskProviderVerdict(ok=..., reason=...)
+dataset = await catalog.get('my-swe@1.0')
+for task in (dataset.tasks.items if dataset.tasks else []):
+    verdict = task.providers['modal']   # TaskProviderVerdict(ok=…, reason=…)
     if not verdict.ok:
-        print(task.task_key, 'cannot run on modal:', verdict.reason)
+        print(task.task_name, 'cannot run on modal:', verdict.reason)
 ```
 
-Creating a job whose selected tasks include one refused on the chosen provider is rejected with a `400 provider_unsupported` naming the tasks and each task's reason, rather than accepted and billed until it fails.
+Starting a job whose selected tasks include one refused on the chosen provider is rejected with a `400 provider_unsupported` naming the tasks and each task's reason, rather than accepted and billed until it fails.
 
 The verdict is narrower than the full set of things a provider can decline, and knowing where the line falls saves you a confusing trial. Three refusals are decided from the task's stored spec, so they are in `providers` and they are what a job creation checks against:
 
-- **Multi-container tasks run on `e2b` and `daytona`.** Modal cannot run them today — the task's `providers['modal']` verdict names the reason, and the task stays runnable on the other two providers.
+- **Multi-container tasks run on `e2b` and `daytona`.** Modal cannot run them today — the task's `providers['modal']` verdict names the reason, and the task stays runnable on the other two.
 - **Multi-container + `no-network` is declined on every provider** for now. Run those tasks with an `allowlist` or `public` network policy.
 - **Sizing above a provider's ceiling** refuses on that provider only — see [Compute sizing](#compute-sizing).
 
-The rest are decided when the sandbox is actually created, so they surface as a trial that ends `INFRASTRUCTURE_ERROR` with the reason in its `failure_detail` rather than as a `400` at creation. There are two, and both are Daytona-and-Modal specifics you can check yourself before choosing a provider:
+The rest are decided when the sandbox is actually created, so they surface as a trial that ends `INFRASTRUCTURE_ERROR` with the reason in its failure detail rather than as a `400` at creation. There are two, and both are Daytona-and-Modal specifics you can check yourself before choosing a provider:
 
 - **Daytona serves IP-based allowlists only.** Its network filter takes IPv4 addresses and CIDRs, capped at 10 entries — a cap that also has to fit the address the agent uses to reach its model, so a task's own list gets slightly fewer. A task whose `allowlist` names a hostname, or needs more than the cap, fails on Daytona when its sandbox is created. Run it on e2b or Modal, which serve hostname allowlists. Daytona serves `no-network` and `public` normally.
 - **Modal caps every sandbox at 24 hours.** A task whose timeout exceeds the cap fails fast when its sandbox is created — never truncated mid-run.
 
 ---
 
-## Bring your own benchmark
+## Bring your own dataset
 
-Any corpus of tasks in Harbor format runs on the hosted stack: point at it, import it, let the activation gate certify it, run it. A benchmark in another format gets converted *into* Harbor format first — the layout is small, and a complete task fits on one screen (below).
+Any corpus in the task layout runs on the hosted stack: point at it, publish it, let the activation gate certify it, run it. A corpus in another format gets converted *into* the layout first — it is small, and a complete task fits on one screen (below).
 
-What you import is **private to your account**. It never appears in anyone else's catalog, and another account asking for its name reads a plain `404 benchmark_not_found` — existence is never leaked. Your own `catalog.list()` shows the shared platform benchmarks plus your imports. A name belongs to its first importer: re-importing a name you own extends that benchmark with a new version (or refreshes one), while importing a name owned by anyone else — a platform benchmark or another account's private one — is refused with a `409 benchmark_name_taken`.
+What you publish is **private to your account**. It never appears in anyone else's catalog, and another account asking for its name reads a plain `404 dataset_not_found` — existence is never leaked. Your own `catalog.list()` shows the shared platform datasets plus your own. A name belongs to its first publisher: re-publishing a name you own extends that dataset with a new version, while publishing a name owned by anyone else — a platform dataset or another account's private one — is refused with a `409 dataset_name_taken`.
 
-### Already in Harbor format
+### Publishing
 
-Import from a git repository pinned to a ref, or upload a local corpus directory — the same corpus, the same pipeline, the same rules either way:
-
-```python
-async with benchmarks() as catalog:
-    # From a git repository, pinned to a ref
-    import_job = await catalog.import_benchmark(
-        git_url='https://github.com/acme/my-bench.git',
-        ref='v1.0.0',                 # a branch, tag, or commit — always pinned
-        benchmark_name='my-bench',
-        version='1.0',                # the version label for the imported corpus
-    )
-
-    # Or from a local directory — tarred + gzipped deterministically and uploaded
-    local_import = await catalog.import_benchmark(
-        directory='./my-bench',
-        benchmark_name='my-bench',
-        version='1.0',
-    )
-
-    done = await catalog.watch_import(
-        import_job.id,
-        on_status=lambda j: print(j.status, j.task_count),
-        poll_interval_s=2.0,          # (optional) default 2 s
-        timeout_s=1800,               # (optional) raises TimeoutError past the deadline
-    )
-    if done.status == 'FAILED':
-        # `failure`, not `error` — `error` is the key the FAILURE ENVELOPE uses,
-        # so a client checking for it stays correct on a healthy read of a
-        # failed import. Same grammar as a job's `failure`.
-        print(done.failure.code, done.failure.message)   # "2/113 task(s) failed to parse"
-        for failed in done.failure.failures:
-            print(failed.task_key, failed.error)
-```
+Publish from a git repository pinned to a ref, or upload a local corpus directory — the same corpus, the same pipeline, the same rules either way:
 
 ```python
-# Lost the id? List your imports — await one page, or walk them all.
-async for job in catalog.list_imports(status='FAILED'):
-    print(job.id, job.benchmark_name, job.version, job.failure.message if job.failure else None)
-
-# Narrow to one benchmark's import history, newest first
-history = await catalog.list_imports(benchmark='my-bench', limit=20)
-```
-
-`list_imports()` takes `status=` and `benchmark=` as filters and `limit=`/`cursor=` for paging, and returns the same `BenchmarkImport` shape the `202` did — so a row renders without a follow-up read.
-
-`get_import(id)` is the single read behind all of this, and it is what you want when you are not blocking: it returns one `BenchmarkImport` — status, `task_count`, and `failure` once there is one. `watch_import()` is a poll loop over it, so reach for `get_import()` when you are driving your own scheduler or rendering a status chip on request rather than holding a coroutine open. A terminal import stays readable indefinitely, id included.
-
-Every lane resolves to the same thing — a Harbor-layout directory — and is held to the same rules. The corpus root is a directory whose `tasks/` subdirectory holds one directory per task, or the tasks directory itself. Provenance is recorded per lane: the resolved commit for a git import, the sha256 of the exact uploaded bytes for a directory. On the wire an import is `multipart/form-data`: `benchmarkName` and `version` as named parts, and either `gitUrl` + `ref` or the gzipped corpus as a `file` part — the SDK produces it for you — and uploads past the compressed-size cap (512 MB by default) are refused with a `413 import_too_large`. The metadata parts come first, so a name owned by someone else is refused with a `409 benchmark_name_taken` before the upload is received rather than after. A git source must be an `https://` url: the import runs on a worker with no ssh client, so `ssh://` and `git@` remotes are refused at validation rather than failing inside the job — for a private repository, put a token in the https url.
-
-### Getting your corpus back
-
-The platform keeps the exact package a version was imported from, and its owner can download it:
-
-```python
-payload = await catalog.download_package(job.id)                  # bytes
-path = await catalog.download_package(job.id, to='./restored')    # saved file path
-```
-
-```bash
-npx evolve-evals download <import-id> --to ./restored
-```
-
-Reach for `to=` on anything sizeable: the default shape buffers the whole package in memory (the same trade `export()` makes), and a corpus can be 512 MB. The id is the import id — what `import_()` returned and what `get_import()` polls. You get back the gzipped tarball you uploaded, or, for a git import, the checked-out tree packed at import time. Either way it is the whole corpus directory: `task.toml`, `instruction.md`, `tests/`, `environment/`, and your `solution/`.
-
-**This is the one call that returns task files, and it returns them only to you.** Ownership is a single equality — the benchmark's owner is the caller — with no admin path and no exception for platform-curated benchmarks, which have no owner and so cannot be downloaded by anyone. Somebody else's import answers `import_not_found`, the same answer a made-up id gets, because a `403` that only appears for real ids is a way to discover which ids are real.
-
-The server re-hashes the stored bytes and compares them against the digest recorded at import before it sends anything, and echoes the verified value in `x-package-sha256`. The SDK then re-checks that header against the bytes it actually received and raises `EvolveDigestMismatchError` if they disagree — so the chain is closed at both ends, storage and wire. The to-disk shape hashes while streaming and deletes the file rather than leaving one that looks like your corpus and is not.
-
-Three things are worth knowing before you rely on it. Versions imported before packages were retained have none, and it cannot be reconstructed: those answer `package_not_retained`, a different code from `import_not_found` so a client can say which happened. A version whose stored object has since gone answers `410 package_missing` — also terminal, also fixed only by re-importing. And this is the only way to recover `task.toml`: the importer parses it into environment specs and keeps a digest, so it exists nowhere else on the server.
-
-### Deleting one
-
-A benchmark name is a global resource, and a typo used to squat one permanently. `delete()` takes it back:
-
-```python
-await catalog.delete('my-bnech')   # 204, and the archived solutions go with it
-```
-
-The rules are worth knowing before you reach for it:
-
-- **You must own it.** A platform-curated benchmark is refused with `benchmark_not_owned`; a name you cannot see reads as a plain not-found, exactly like a name that does not exist, so the route cannot be used to discover what other accounts have.
-- **A referenced benchmark is never deleted.** If any job ran against it, you get `409 benchmark_in_use`, and `err.details['sampleJobIds']` names some of the jobs blocking it (with `err.details['jobCount']` for how many there are). There is no cascade and no force: a job's meaning is "this agent scored 0.42 on *these* tasks", and deleting the tasks would leave a number that refers to nothing. Delete the jobs first if you mean it.
-- **Versions, tasks, and the private solutions archive go with it.** Mirrored task images do not — they are content-addressed and shared with any other benchmark pinning the same image.
-
-### When upstream moves
-
-A benchmark imported from git records what it was built from, and the platform periodically re-resolves where that ref points now. The answer rides on the benchmark:
-
-```python
-bench = await catalog.get('my-bench')
-
-if bench.upstream and bench.upstream.moved:
-    print(f'{bench.upstream.ref} has moved past {bench.upstream.current_commit}')
-    # → import a NEW version when you want it; nothing happens automatically
-```
-
-```python
-UpstreamStatus(
-    ref='main',                     # what the active version was imported from
-    current_commit='a1b2c3…',       # what it was built from
-    latest_commit='d4e5f6…',        # where the ref points now (None if the check failed)
-    moved=True,                     # branch on this
-    behind_by=None,                 # see below
-    checked_at='2026-07-24T…',      # None before the first check
-    error=None,                     # why the last check failed
+# From a git repository, pinned to a ref
+publish_job = await catalog.publish(
+    git_url='https://github.com/acme/my-swe.git',
+    git_ref='v1.0.0',             # a branch, tag, or commit — always pinned
+    name='my-swe',
+    version='1.0',                # the version label for the published corpus
 )
+
+# From a local directory — tarred + gzipped deterministically on the client and uploaded
+local_publish = await catalog.publish(
+    directory='./my-swe',
+    name='my-swe',
+    version='1.0',
+)
+
+# Block until COMPLETED or FAILED
+done = await catalog.watch_import(
+    publish_job.id,
+    on_status=lambda imp: print(imp.status, imp.task_count),
+    poll_interval_s=2.0,          # (optional) default 2s
+)
+
+if done.status == 'FAILED':
+    # `failure`, not `error` — `error` is the key the failure envelope uses, so
+    # "error means this request failed" stays true on a healthy read of a failed import.
+    print(done.failure.code, done.failure.message)   # "2/113 task(s) failed to parse"
+    for failed in (done.failure.failures or []):
+        print(failed.task_name, failed.error)
+
+# Lost the id? List your imports — await one page, or walk them all.
+async for imp in catalog.list_imports(status='FAILED'):
+    print(imp.id, imp.name, imp.version, imp.failure.message if imp.failure else None)
+
+# Narrow to one dataset's publish history, newest first
+history = await catalog.list_imports(dataset='my-swe', limit=20)
 ```
 
-Four things this deliberately does **not** do:
+`get_import(id)` is the single read behind all of this — status, `task_count`, `failure` once there is one, and `warnings`. `watch_import()` is a poll loop over it, so reach for `get_import()` when you drive your own scheduler. A terminal import stays readable indefinitely, id included.
 
-- **It never imports.** A new version is always an immutable row you create, with `catalog.import_benchmark()`. Watching produces a fact, never an action.
-- **It never modifies an existing version.** A version is what it was built from, permanently.
-- **`upstream` is `None`, not "up to date", when there is nothing to watch** — an uploaded corpus, a seeded one, one imported before provenance was recorded, or one imported at an exact commit sha. That last case is the one that surprises people: a commit pin is the *most* reproducible way to import, and a pinned commit cannot move, so there is no question to ask the remote and no badge to show. Import from a branch or tag if you want the watch. `None` always means nobody checked.
-- **`behind_by` is always `None` today.** Counting commits between two SHAs needs the commit graph, i.e. a real fetch from the remote per benchmark per check. The check is a single reference advertisement (`git ls-remote`) precisely so it can be cheap, and `moved` is what a badge actually needs. The field stays in the shape so a host comparison API could fill it later without a wire change.
-
-A failed check keeps the last known `latest_commit` and sets `error`: a network blip should not quietly erase an update that is genuinely available. Show "could not check", never "up to date".
-
-The same idea covers harnesses from the other direction: a job records the `harness_version` it pinned, and `meta().harnesses[].latest_version` is the newest published one. Compare the two for a "your pin is out of date" badge — one cached lookup for every job, rather than a registry round trip per job read.
-
-The `evolve-evals` CLI prints one quiet line under `benchmarks` and `benchmarks get` for each benchmark whose ref has moved — naming the benchmark, its active version, and the ref — and nothing at all when nothing moved. It never offers to import for you, because importing builds an immutable version and that is a decision. When you want the new version, it is the ordinary import command with a new version label:
+`warnings` is worth reading even on success: an import whose warnings include `no_solutions_archived` produced a version that can never be activated through this API (`version_not_activatable`) — an import that will never become runnable must not look identical to one that will.
 
 ```bash
-npx evolve-evals import --git https://github.com/acme/my-bench.git --ref main \
-    --name my-bench --version 1.1 --watch
+npx evolve-evals dataset publish \
+    --git https://github.com/acme/my-swe.git --ref v1.0.0 \
+    --name my-swe --version 1.0 --watch
+npx evolve-evals dataset publish --dir ./my-swe --name my-swe --version 1.0 --watch
 ```
 
-The notice never appears in `--json` output; the same fact is on the `upstream` field there.
+Every lane resolves to the same thing — a task-layout directory — and is held to the same rules. The corpus root is a directory whose `tasks/` subdirectory holds one directory per task, or the tasks directory itself. Provenance is recorded per lane: the resolved commit for a git publish, the sha256 of the exact uploaded bytes for a directory. On the wire a publish is `multipart/form-data` — the SDK produces it for you — and uploads past the compressed-size cap are refused with a `413 import_too_large`. The metadata parts come first, so a name owned by someone else is refused with the `409` before the upload is received rather than after. A git source must be an `https://` url: the import runs on a worker with no ssh client, so `ssh://` and `git@` remotes are refused at validation rather than failing inside the job — for a private repository, put a token in the https url.
 
 What happens next:
 
-- **All-or-nothing parse.** Every task is parsed before anything lands; one bad task fails the whole import, with each failure named in `failure.failures`. No partial corpus ever exists.
-- **Strict by design.** Every `task.toml` field is either honored or the import is refused with the field and reason named — a task never silently runs on weaker semantics than it declares. Notably not yet supported: multi-step tasks (`[[steps]]`) and GPU tasks.
+- **All-or-nothing parse.** Every task is parsed before anything lands; one bad task fails the whole publish, with each failure named in `failure.failures`. No partial corpus ever exists.
+- **Strict by design.** Every task-config field is either honored or the publish is refused with the field and reason named — a task never silently runs on weaker semantics than it declares. Notably not yet supported: multi-step tasks and GPU tasks.
 - **Environments are prepared at import.** Dockerfile-defined environments are built once; multi-container service images are resolved and pinned so runs are reproducible.
 - **The activation gate certifies every task** before the version can activate:
   - **gold** — the task's reference solution (`solution/`) is pushed through the real agent-side + verifier path and must score exactly `1.0`. Proof the task is solvable as written.
   - **no-op** — an empty submission goes straight to the verifier and must *not* score `1.0`. A task a do-nothing agent passes measures nothing.
 
-`COMPLETED` is the import job's terminal success: the corpus landed as a benchmark version, visible in the catalog (`catalog.get('my-bench@1.0')`) in state `VALIDATING`. Activation is a separate, operator-run step — importing never triggers it. The version stays `VALIDATING` until the gate passes in full and promotes it to `READY`, the one state that accepts jobs; watch the state through `catalog.get()`. `run()` against any other state raises a `409 version_not_ready` naming it.
+`COMPLETED` is the import's terminal success: the corpus landed as a dataset version, visible in the catalog (`catalog.get('my-swe@1.0')`) in state `VALIDATING`. The gate then runs, and a version that passes it in full reaches `READY` — the one state that accepts jobs. `evals.start()` against any other state is rejected with a `409 version_not_ready` naming it.
 
-Be clear-eyed about what that means for you today: there is no SDK method, CLI verb or dashboard button that requests activation. A version you import sits at `VALIDATING` until Evolve runs the gate for it, so ask us to activate it — quote the benchmark name and version — rather than polling and waiting for a state change that nothing on your side can cause. Self-serve activation is coming; until it lands this is the one step in the chapter that is not in your hands. Once `READY`:
+### Activating
+
+A `READY` version does not serve bare-name references until it is the dataset's **active** version. Activation is one call, on a version you own:
 
 ```python
-job = await evals.run(
-    benchmark='my-bench@1.0',
-    agents=[
-        JobAgent(
-            harness='codex',
-            model='gpt-5.5',
-        ),
-    ],
-    max_trial_spend_usd=25,
-)
+await catalog.activate('my-swe', '1.0')
 ```
 
-### Not in Harbor format yet
+```bash
+npx evolve-evals dataset activate my-swe 1.0
+```
 
-Convert it. A benchmark is a directory tree with one directory per task under `tasks/`; the directory name is the task key. A minimal complete task:
+From then on `{'name': 'my-swe'}` in a job resolves to that version. Activating is refused with `version_not_ready` while the import and gate still run, and with `version_not_activatable` for a version that can never activate (no reference solutions were archived — the import's `warnings` told you at publish time).
+
+### Getting your corpus back
+
+The platform keeps the exact package a version was published from, and its owner can download it:
+
+```python
+data = await catalog.download('my-swe@1.0')            # bytes
+path = await catalog.download('my-swe@1.0', to='.')    # saved file path
+```
+
+```bash
+npx evolve-evals dataset download my-swe@1.0 -o corpora/
+```
+
+Reach for `to=` on anything sizeable: the default shape buffers the whole package in memory, and a corpus can be hundreds of megabytes. The ref is `"name"` (the active version's package) or `"name@version"`. You get back the gzipped tarball you uploaded, or, for a git publish, the checked-out tree packed at import time. Either way it is the whole corpus directory: the task config, `instruction.md`, `tests/`, `environment/`, and your `solution/`.
+
+**This is the one call that returns task files, and it returns them only to you.** Ownership is a single equality — the dataset's owner is the caller — with no admin path and no exception for platform-curated datasets, which have no owner and so cannot be downloaded by anyone. Somebody else's dataset answers not-found, the same answer a made-up name gets, because a `403` that only appears for real names is a way to discover which names are real.
+
+The server re-hashes the stored bytes and compares them against the digest recorded at import before it sends anything, and echoes the verified value in a digest header. The SDK then re-checks that header against the bytes it actually received and raises `EvolveDigestMismatchError` if they disagree — so the chain is closed at both ends, storage and wire. The to-disk shape hashes while streaming and deletes the file rather than leaving one that looks like your corpus and is not. There is no unverified stream shape in Python — the same ruling as [Download the archive](#download-the-archive).
+
+Two edge cases are named codes, not mysteries: a version published before packages were retained answers `package_not_retained`, and a version whose stored object has since gone answers `410 package_missing` — both terminal, both fixed only by re-publishing. This is also the only way to recover the task config file: the importer parses it into environment specs and keeps a digest, so it exists nowhere else on the server.
+
+### Deleting one
+
+A dataset name is a global resource, and a typo used to squat one permanently. `delete()` takes it back:
+
+```python
+await catalog.delete('my-sew')   # 204, and the archived solutions go with it
+```
+
+The rules are worth knowing before you reach for it:
+
+- **You must own it.** A platform-curated dataset is refused with `dataset_not_owned`; a name you cannot see reads as a plain not-found, exactly like a name that does not exist, so the route cannot be used to discover what other accounts have.
+- **A referenced dataset is never deleted.** If any job ran against it, you get `409 dataset_in_use`, and `details` names the blocking job ids. There is no cascade and no force: a job's meaning is "this agent scored 0.42 on *these* tasks", and deleting the tasks would leave a number that refers to nothing. Delete the jobs first if you mean it.
+- **Versions, tasks, and the private solutions archive go with it.** Mirrored task images do not — they are content-addressed and shared with any other dataset pinning the same image.
+
+### When upstream moves
+
+A dataset published from git records what it was built from, and the platform periodically re-resolves where that ref points now. The answer rides on the dataset:
+
+```python
+dataset = await catalog.get('my-swe')
+
+if dataset.upstream and dataset.upstream.moved:
+    print(f'{dataset.upstream.ref} has moved past {dataset.upstream.current_commit}')
+```
+
+`upstream` carries the ref, the commit the active version was built from, where the ref points now (`latest_commit`, `None` when the last check failed), `moved` (the field a badge branches on), `checked_at`, `error` (why the last check failed — show "could not check", never "up to date"), and `auto_import`. It is `None`, not "up to date", when there is nothing to watch — an uploaded corpus, one imported at an exact commit sha (a pinned commit cannot move), or one published before provenance was recorded. A failed check keeps the last known answer and sets `error`: a network blip should not quietly erase an update that is genuinely available.
+
+By default, watching produces a fact, never an action — a new version is always an immutable row **you** create with `publish()`. The one exception is opt-in:
+
+```python
+await catalog.update('my-swe', upstream_auto_import=True)
+```
+
+With `auto_import` on, a moved ref imports a new version automatically. It is refused (`upstream_not_watchable`) on a dataset with no moving git ref to follow, and `dataset_not_owned` on a platform dataset. The CLI prints one quiet line under `dataset list` and `dataset show` for each dataset whose ref has moved, and nothing at all when nothing moved; the notice never appears in `--json` output — the same fact is on the `upstream` field there.
+
+### Not in the task layout yet
+
+Convert it. A corpus is a directory tree with one directory per task under `tasks/`; the directory name is the task name. A minimal complete task:
 
 ```
-my-bench/
+my-swe/
 └── tasks/
     └── greeting-fix/
         ├── task.toml
@@ -882,90 +894,91 @@ That's the whole format. The rules that matter when converting:
 
 - `task.toml`, `instruction.md`, `pre_artifacts.sh`, and `tests/test.sh` are required. `tests/grader.py`, `tests/config.json`, and `tests/test.patch` ride along when present. A `tests/Dockerfile` is accepted only while it stays trivial (`FROM`, `COPY`, `WORKDIR`, `LABEL`, and permission-only `RUN chmod` lines) — the verifier uploads the test files onto the task image instead of building this Dockerfile, so anything richer is refused. Any other file under `tests/` is rejected — it would silently never reach the verifier.
 - The environment is `environment/Dockerfile` (built at import), a pinned `docker_image` (the registry must be approved for imports, and the tag pinned — never `:latest`), or `environment/docker-compose.yaml` for multi-container tasks (the agent runs in the `main` service).
-- Timeouts are optional: agent defaults to 3600 s, verifier to 600 s, both published as `limits['job']['defaultAgentTimeoutSec']` and `limits['job']['defaultVerifierTimeoutSec']`. A declared `timeout_sec` always wins — the corpus is the authority on how long its own task needs, and the fallback never shortens one.
+- Timeouts are optional: agent defaults to 3600 s, verifier to 600 s, both published as `limits['job']['default_agent_timeout_sec']` and `default_verifier_timeout_sec`. A declared `timeout_sec` always wins — the corpus is the authority on how long its own task needs, and the fallback never shortens one.
 - `solution/` (`solve.sh`, or a `solution.patch` to apply) is what the gate certifies with — without it the version cannot reach `READY`.
 
-Then import and run it — exactly the [Harbor-format flow above](#already-in-harbor-format).
+Then publish and run it — exactly the [flow above](#publishing).
 
 ---
 
-## Bring your own harness
+## Bring your own agent
 
-The built-in harnesses (`claude`, `codex`, `gemini`, `qwen`, `kimi`, `opencode`, `droid`) are not the boundary. Register your own CLI once, and its name becomes usable in `agents[].harness` exactly like a built-in:
+The built-in agents are not the boundary. Register your own CLI once, and its name becomes usable in job `agents[].name` exactly like a built-in:
 
 ```python
-from evolve import custom_harnesses, jobs, JobAgent
+mine = agents()
 
-async with custom_harnesses() as harnesses:
-    await harnesses.create(
-        name='acme-cli',                                              # the name you will pass as harness
-        install_script='curl -fsSL https://acme.dev/install.sh | sh', # the script itself, not a path
-        run_command='acme-cli --headless',
-        env={'ACME_PROFILE': 'bench'},                                # (optional) injected at run time
-    )
+await mine.create(
+    name='acme-cli',                                                # the name you will pass in arms
+    install_script='curl -fsSL https://acme.dev/install.sh | sh',   # the script itself, not a path
+    run_command='acme-cli --headless',
+    env={'ACME_PROFILE': 'bench'},                                  # (optional) injected at run time
+)
 
-async with jobs() as evals:
-    job = await evals.run(
-        benchmark='deep-swe',
-        agents=[
-            JobAgent(
-                harness='acme-cli',
-                model='gpt-5.5',
-            ),
-        ],
-        max_trial_spend_usd=25,
-    )
+job = await evals.start(
+    datasets=[{'name': 'deep-swe'}],
+    agents=[{'name': 'acme-cli', 'model_name': 'gpt-5.5'}],
+    max_trial_spend_usd=25,
+)
 ```
 
-A harness that is not a one-line install ships as a directory instead — tarred deterministically on the client and uploaded:
+An agent that is not a one-line install ships as a directory instead — tarred deterministically on the client and uploaded:
 
 ```python
-await harnesses.create(
+await mine.create(
     name='acme-cli',
-    directory='./harnesses/acme-cli',   # EITHER directory OR install_script, never both
+    directory='./agents/acme-cli',   # EITHER directory OR install_script, never both
     run_command='acme-cli --headless',
 )
 ```
 
-"Never both" is checked before anything leaves your process: `create()` and `upsert()` raise `ValueError` when you pass both sources or neither. The TypeScript SDK expresses that same rule as a union type, so there it is a compile error instead — the promise is identical, only the moment it is kept differs.
-
-`import_benchmark()` is looser, and worth knowing: it raises only when you name *no* usable source (neither `directory` nor a complete `git_url` + `ref`). Pass a `directory` and a git source together and it does not complain — the directory wins and the git source is ignored. The TypeScript SDK does reject that combination at compile time, so this is the one place the two SDKs genuinely differ. Pass exactly one.
-
-Read and remove them the same way:
+Read, replace, and remove them the same way:
 
 ```python
-registered = await harnesses.list()      # one page of your harnesses (async for walks them all)
-one = await harnesses.get('acme-cli')    # name, source, run_command, env, timestamps
-await harnesses.delete('acme-cli')       # past jobs keep the harness they recorded
+registered = await mine.list()         # one page of your agents
+async for a in mine.list():            # or walk them all
+    ...
+one = await mine.get('acme-cli')       # name, source, run_command, env, timestamps
+await mine.delete('acme-cli')          # past jobs keep the agent they recorded
 
 # Change one WITHOUT a window where it stops existing:
-await harnesses.upsert(
+await mine.upsert(
     'acme-cli',
     run_command='acme-cli --headless --v2',
     install_script='curl -fsSL https://acme.dev/install.sh | sh',
 )
 ```
 
-Both upload lanes — a harness and a benchmark corpus — send `multipart/form-data`: the metadata travels as named parts and the bytes as a `file` part. The SDK builds that for you, and it is why nothing sensitive rides a URL: a run command and a set of environment values in a query string end up in every access log and proxy buffer between you and the server.
+Both upload lanes — an agent and a dataset corpus — send `multipart/form-data`: the metadata travels as named parts and the bytes as a `file` part. The SDK builds that for you, and it is why nothing sensitive rides a URL: a run command and a set of environment values in a query string end up in every access log and proxy buffer between you and the server.
 
-The same surface is on the `evolve-evals` CLI — see [TypeScript → Bring your own harness](../typescript/06-hosted-evals.md#bring-your-own-harness).
+```bash
+npx evolve-evals agent add acme-cli \
+    --install-script ./install.sh \
+    --run "acme-cli --headless" \
+    --agent-env ACME_PROFILE=bench
+npx evolve-evals agent list
+npx evolve-evals agent show acme-cli
+npx evolve-evals agent remove acme-cli
+```
 
-Harnesses are private to their owner. Another account's name reads as `custom_harness_not_found`, never as a permission error — existence is never leaked.
+The CLI's `--install-script` names a **file**; its contents are what gets uploaded. `--dir` is the directory lane, and `--agent-env KEY=VALUE` repeats once per variable.
+
+Registered agents are private to their owner. Another account's name reads as `agent_not_found`, never as a permission error — existence is never leaked.
 
 ### The run contract
 
-Everything a custom harness can rely on, and nothing else. Your `run_command` runs headless with `sh -c` at the task's working directory, and:
+Everything a registered agent can rely on, and nothing else. Your `run_command` runs headless with `sh -c` at the task's working directory, and:
 
 - **The task instruction arrives twice, so read it whichever way your CLI prefers.** It is written to the command's **stdin**, and it is also on disk at the path in `$EVOLVE_INSTRUCTION_FILE`.
 - **The model is reached through a gateway, not a provider.** `$EVOLVE_GATEWAY_BASE_URL` is an OpenAI-compatible base URL that **already ends in `/v1`** — never append it yourself — and `$EVOLVE_GATEWAY_API_KEY` is the credential for it. The same two values are also exported as `$OPENAI_BASE_URL` and `$OPENAI_API_KEY`, so a CLI that **reads its endpoint from the environment** works unchanged. A CLI that routes through a **config file** does not — see below.
-- **`$EVOLVE_MODEL` names the model being evaluated** — the `model` of the agent this trial belongs to.
-- **Your declared `env` is injected at run time only**, and it may **not** override those contract keys. An attempt to is rejected at registration with `custom_harness_invalid_env`, not silently dropped at run time. The six contract keys are `EVOLVE_GATEWAY_BASE_URL`, `EVOLVE_GATEWAY_API_KEY`, `EVOLVE_MODEL`, `EVOLVE_INSTRUCTION_FILE`, `OPENAI_BASE_URL` and `OPENAI_API_KEY`.
+- **`$EVOLVE_MODEL` names the model being evaluated** — the `model_name` of the arm this trial belongs to.
+- **Your declared `env` is injected at run time only**, and it may **not** override those contract keys. An attempt to is rejected at registration with `agent_invalid_env`, not silently dropped at run time. The six contract keys are `EVOLVE_GATEWAY_BASE_URL`, `EVOLVE_GATEWAY_API_KEY`, `EVOLVE_MODEL`, `EVOLVE_INSTRUCTION_FILE`, `OPENAI_BASE_URL` and `OPENAI_API_KEY`.
 
 #### If your CLI routes through a config file
 
 Env-only routing covers CLIs that read `OPENAI_BASE_URL`. Plenty do not: they want a config file, and they read it from a path in `$HOME`. Three of our own seven built-ins are in that group, so this is the common case and not an edge one.
 
-Write that file **inside your `run_command`**, from the contract values. It cannot be written at install time: the install ran in a different sandbox entirely, and by the time your harness runs the box has no network to fetch anything with. `codex` is the worked example — this is what the platform itself does for the built-in:
+Write that file **inside your `run_command`**, from the contract values. It cannot be written at install time: the install ran in a different sandbox entirely, and by the time your agent runs the box has no network to fetch anything with. `codex` is the worked example — this is what the platform itself does for the built-in:
 
 ```bash
 # run_command for a codex-shaped CLI
@@ -986,381 +999,270 @@ If your CLI ignores `OPENAI_BASE_URL` and you do not do this, it will try to rea
 How it is built, and what that costs you:
 
 - The install script (or the uploaded tarball) runs once in a **throwaway builder sandbox that has internet and ZERO secrets**. Everything it fetches must therefore be **publicly fetchable** — a private registry that needs a token cannot be reached from there — and it must leave its executables in **`$PREFIX/bin`**.
-- A custom harness is **versioned by its registered content** — the install source, the `run_command` and the declared `env`, together — so `harness_version` on an agent using it is rejected. Change any of the three and you get a new recorded version and a new bundle digest.
-- **`upsert()` is how you change one.** `delete()` then `create()` leaves a window where the harness does not exist, and anything naming it in that window — a scripted job, a colleague's run — fails with "no such harness" for a change that was only ever meant to be an edit. `upsert()` is one call: the name holds the old registration or the new one, never nothing. It creates when the name is free (`201`, with `Location`) and replaces when it is not (`200`), and replacing consumes no new registration slot, so you can still fix a broken run command at the ceiling. It is a full REPLACEMENT, not a patch: every field comes from the call, so an omitted `env` becomes empty and the source switches wholesale.
-- **You may register up to 25 harnesses.** Past that, registration is refused with `custom_harness_limit_reached`; delete one to make room. Each registration is a full CLI the platform builds and caches for you.
+- A registered agent is **versioned by its registered content** — the install source, the `run_command` and the declared `env`, together — so a `version` pin on an arm using it is rejected. Change any of the three and you get a new recorded version and a new bundle digest.
+- **`upsert()` is how you change one.** `delete()` then `create()` leaves a window where the agent does not exist, and anything naming it in that window — a scripted job, a colleague's run — fails with "no such agent" for a change that was only ever meant to be an edit. `upsert()` is one call: the name holds the old registration or the new one, never nothing. It creates when the name is free and replaces when it is not, and replacing consumes no new registration slot, so you can still fix a broken run command at the ceiling. It is a full REPLACEMENT, not a patch: every field comes from the call, so an omitted `env` becomes empty and the source switches wholesale.
+- **The registration ceiling is published** as `agent_registration['max_per_user']` in the capability document. Past it, registration is refused with `agent_limit_reached`; delete one to make room.
 
-**What keeps a trial inside its budget — and when it does not.** The spend cap is enforced on the gateway key, so model traffic through `$EVOLVE_GATEWAY_BASE_URL` is metered and capped. What confines traffic to that route is the **task's network policy**, not the harness. Under `no-network` the box reaches the gateway and nothing else, and the cap is a hard guarantee. Under `allowlist` or `public` a harness *can* reach a provider directly with a key of its own, and that traffic is neither metered nor capped.
+**What keeps a trial inside its budget — and when it does not.** The spend cap is enforced on the gateway key, so model traffic through `$EVOLVE_GATEWAY_BASE_URL` is metered and capped. What confines traffic to that route is the **task's network policy**, not the agent. Under `no-network` the box reaches the gateway and nothing else, and the cap is a hard guarantee. Under `allowlist` or `public` an agent *can* reach a provider directly with a key of its own, and that traffic is neither metered nor capped.
 
 Read that second sentence with [Network modes](#network-modes) in hand, because `public` is what a task gets when it declares no policy at all. If you care about the cap being airtight, run against tasks that declare `network_mode = "no-network"` — do not assume it. Registration refuses credential-shaped `env` keys, but that is a guardrail against the obvious mistake, not a boundary.
 
 What you give up versus a built-in:
 
-- **No live trace events.** There is no output parser for an unknown CLI, so `trial_trace()` stays empty for these trials.
-- **No live spend reading.** `live_spent_usd` stays `None` and no `trial.spend` event fires; the trial goes straight to a settled `spent_usd`.
-- **No `reasoning_effort`.** An effort set on the agent is recorded but never reaches your command — the run contract's six keys are the whole environment. Put the flag in the `run_command`.
+- **No live trace events.** There is no output parser for an unknown CLI, so the parsed trace stays empty for these trials.
+- **No live spend or token reading.** `live_spent_usd` stays `None` and no `trial.spend` event fires; the trial goes straight to a settled cost.
+- **No `reasoning_effort`.** An effort set on the arm is recorded but never reaches your command — the run contract's six keys are the whole environment. Put the flag in the `run_command`.
 
-Everything else is identical: the patch is collected, the verifier scores it, and artifacts, timings, settled spend and status are recorded exactly as for a built-in harness.
+Everything else is identical: the patch is collected, the verifier scores it, and artifacts, timing pairs, token counts, settled spend and status are recorded exactly as for a built-in.
 
 ---
 
 ## Statuses
 
-**Job** — `QUEUED → RUNNING (→ CANCELLING)`, then terminal:
+**Job** (`Job.status`):
 
 | Status | Meaning |
 |--------|---------|
-| `QUEUED` | accepted, waiting for dispatch |
-| `RUNNING` | trials executing |
-| `CANCELLING` | `cancel()` requested; in-flight trials winding down |
-| `COMPLETED` | terminal — all trials settled |
-| `CANCELLED` | terminal — cancelled before completion |
-| `FAILED` | terminal, and **reserved** — see below |
+| `QUEUED` | Accepted, waiting for dispatch |
+| `RUNNING` | Trials are executing |
+| `CANCELLING` | `cancel()` requested; in-flight trials are winding down |
+| `COMPLETED` | Terminal — all trials settled |
+| `CANCELLED` | Terminal — cancelled before completion |
+| `FAILED` | Terminal, and **reserved** — see below |
 
 `FAILED` is in the vocabulary and declared terminal, but nothing on the server sets it and nothing emits a `job.failed` event. A job that goes wrong does so one trial at a time: the trials land in `INFRASTRUCTURE_ERROR` or `SCORING_ERROR` and the job still reaches `COMPLETED`. So `job.failure` is `None` on every job you will read today. Handle `FAILED` if you are switching exhaustively over the enum — the capability document lists it and it may become reachable — but do not build a failure banner and expect to see it fire; the histogram in `job.trials.by_status` is where a job's trouble actually shows.
 
-**Trial** — a valid reward (including 0) is `SCORED`; a verifier crash or out-of-domain reward is `SCORING_ERROR`, never a fabricated zero:
+**Trial** (`Trial.status`) — a valid reward, including 0, is `SCORED`; a failure is never reported as a fabricated zero:
 
 | Status | Meaning |
 |--------|---------|
-| `QUEUED` | waiting for a sandbox slot |
-| `RUNNING` | agent phase in progress |
-| `SCORING` | agent finished; verifier running |
-| `SCORED` | valid reward recorded (`reward` set; 0 counts) |
-| `SCORING_ERROR` | verifier crashed or returned an out-of-domain reward — read `failure_phase`, then `failure_detail` |
-| `INFRASTRUCTURE_ERROR` | trial lost before a result was recorded — read `failure_phase`, then `rerun_failed()` |
-| `INDETERMINATE` | the verifier produced no reward file at all — read `failure_phase`, then `failure_detail` |
-| `CANCELLED` | cancelled before settling |
+| `QUEUED` | Waiting for a sandbox slot |
+| `RUNNING` | Agent phase in progress — `attempt_phase` says which step |
+| `SCORING` | Agent finished; verifier running |
+| `SCORED` | Valid reward recorded in `reward` |
+| `SCORING_ERROR` | Verifier crashed or returned an out-of-domain reward — read `exception_info` |
+| `INFRASTRUCTURE_ERROR` | Trial lost before a result was recorded — read `exception_info`, then `resume()` |
+| `INDETERMINATE` | The platform cannot tell whether the trial completed |
+| `CANCELLED` | Cancelled before settling |
 
-`SCORING_ERROR` and `INDETERMINATE` are the two statuses a task author has to act on, so both say what went wrong. `failure_phase` carries the machine-readable cause and `failure_detail` carries a sentence plus the last few kilobytes of the verifier's own stdout and stderr — the tail, because a grader prints its progress first and its traceback last. The box those bytes came from is destroyed seconds later, so this is the only record of them.
+`SCORING_ERROR` and `INDETERMINATE` are the two statuses a task author has to act on, so both say what went wrong: `exception_info.exception_type` carries the stable failure name and `exception_message` a sentence plus the last few kilobytes of the verifier's own output — the tail, because a grader prints its progress first and its traceback last. The box those bytes came from is destroyed seconds later, so this is the only record of them.
 
-| `failure_phase` | What happened |
-|--------|---------|
-| `verifier_timeout` | the verifier command hit its wall-clock budget and was killed — raise `verifier_timeout_sec` on the task, or make the grader cheaper |
-| `verifier_crash` | the verifier exited non-zero, or never reported an exit status at all; the excerpt usually names the missing module or failed assertion |
-| `reward_out_of_range` | the verifier finished and wrote a number, but not one in `[0, 1]` — `-1` is the conventional crash sentinel, and a reward above 1 usually means a rubric was summed rather than normalized |
-| `reward_unparseable` | the verifier claimed success and wrote something that is not a score: malformed JSON, no `reward` key, or an empty `reward.txt` |
-| `reward_missing` | no reward file at all, which is `INDETERMINATE` rather than `SCORING_ERROR`; on its own a verifier that exited cleanly without writing a verdict, and paired with `verifier_crash` or `verifier_timeout` the hard-crash case, where the excerpt is the only evidence |
-
-The verifier's exit takes precedence over the reward's shape, because a killed grader leaves a truncated `reward.json` and reporting that as `reward_unparseable` would send you to debug your JSON instead of your timeout. Nothing is lost by the ordering — `failure_detail` always states both.
-
-Regrade results use the same five values in the same field, and the `failure_detail` on a list row is truncated to 2000 characters; fetch the trial itself for the whole excerpt.
-
-**Import** (`BenchmarkImport.status`) — the SAME four words a job uses, because an import is a job:
+**Import** (`DatasetImport.status`) — the SAME four words a job uses, because an import is a job:
 
 | Status | Meaning |
 |--------|---------|
-| `QUEUED` | accepted; the corpus row exists and nothing has started |
-| `RUNNING` | cloning or extracting, then parsing and building the environment |
-| `COMPLETED` | terminal — the corpus landed as a benchmark version |
-| `FAILED` | terminal — read `failure` |
-
-It used to spell these `IMPORTING → IMPORTED | FAILED`. Nothing published depended on that, and a third status vocabulary is exactly what forces a status chip to carry a translation table forever.
+| `QUEUED` | Accepted; the corpus row exists and nothing has started |
+| `RUNNING` | Cloning or extracting, then parsing and building the environment |
+| `COMPLETED` | Terminal — the corpus landed as a dataset version |
+| `FAILED` | Terminal — read `failure` |
 
 A terminal import stays readable. A successful import used to start answering `404` the moment its version was superseded, telling a watcher holding a week-old id that the import never happened — it `COMPLETED`, and the catalog moving on afterwards does not unmake that.
 
-**Regrade job** (`RegradeJob.status`) — shorter than a job's, because a regrade cannot be cancelled:
-
-| Status | Meaning |
-|--------|---------|
-| `QUEUED` | accepted; eligible source trials selected, nothing re-scored yet |
-| `RUNNING` | verifiers re-running |
-| `COMPLETED` | terminal — every selected trial has settled, whatever it settled as |
-
-**Regrade result** (`RegradeResult.status`) — the SAME reward law as a trial, minus the states a regrade cannot reach (there is no agent phase, so no `SCORING`, and nothing to cancel):
-
-| Status | Meaning |
-|--------|---------|
-| `QUEUED` | waiting for a verifier slot |
-| `RUNNING` | verifier re-running against the source trial's recorded inputs |
-| `SCORED` | valid reward recorded (`reward` set; 0 counts) |
-| `SCORING_ERROR` | verifier crashed or returned an out-of-domain reward — read `failure_phase`, then `failure_detail` |
-| `INFRASTRUCTURE_ERROR` | verifier box lost before a durable verdict |
-| `INDETERMINATE` | the verifier wrote no reward file — read `failure_phase`, then `failure_detail` |
-
-A `COMPLETED` regrade job is not a claim that every result `SCORED` — read `by_status` on `regrade.results` for that, exactly as with a job's trials.
-
-**Benchmark version** (`BenchmarkVersion.state`) — the catalog's lifecycle, distinct from the import job's statuses above:
+**Dataset version** (`DatasetVersion.state`) — the catalog's lifecycle, distinct from the import's statuses above:
 
 ```
 DRAFT → IMPORTING → BUILDING → VALIDATING → READY
 ```
 
-with `FAILED` and `ARCHIVED` as off-ramps: a failed parse or environment build lands `FAILED` before `VALIDATING` is ever reached, and `ARCHIVED` shelves a version that has been moved past. An import lands a version at `VALIDATING`; the activation gate (gold + no-op, above) then promotes it — `READY` is the only state that accepts jobs.
+with `FAILED` and `ARCHIVED` as off-ramps: a failed parse or environment build lands `FAILED` before `VALIDATING` is ever reached, and `ARCHIVED` shelves a version that has been moved past. An import lands a version at `VALIDATING`; the activation gate (gold + no-op, above) then certifies it — `READY` is the only state that accepts jobs, and [`activate()`](#activating) makes a READY version the one bare names resolve to.
+
+All four vocabularies, with their terminal members marked, are published under `statuses` in the [capability document](#what-the-platform-supports) — render from there, not from these tables.
 
 ---
 
 ## Types
 
-These are the shapes the surface actually returns. Most of the names below are importable from `evolve` and can be annotated with — `Job`, `JobCounts`, `TrialTally`, `Trial`, `TrialDetail`, `JobEvent`, `Benchmark`, `Task`, `BenchmarkImport`, `ImportFailure`, `CustomHarness`, `RegradeJob`, `RegradeResult`, `UpstreamStatus`, `CapabilityDocument`, `StatusVocabulary`, and the concrete page classes `JobPage` / `TrialPage` / `TrialTracePage` / `BenchmarkImportPage`.
-
-Two things below are written out for reading rather than importing. `Page` is the shape every collection shares, not a class you can import — import the concrete page class for the collection you are paging. And the per-event `data` payloads inside `JobEvent` are plain dicts, so they have no class at all.
-
-That last one has a consequence worth stating plainly: a `JobEvent`'s `data` is the wire payload exactly as it arrived, so its keys stay camelCase (`trialId`, not `trial_id`). The same is true of `TrialTraceEvent.data`, of `err.details`, and of the nested dicts inside the capability document. Everywhere else this SDK converts to snake_case for you.
+These are the shapes the surface actually returns, all importable from `evolve`. Results are dataclasses with the wire's own `snake_case` field names; the closed vocabularies are `Literal` types — `JobStatus`, `TrialStatus`, `EvalSandboxProvider`, `SpendSource`, `VerifierEnvironmentMode`, `AttemptPhase`, `HostedErrorCode` — held to the same contract the server is, so a type-checker catches a typo'd status the way the TypeScript compiler does.
 
 ```python
-@dataclass
-class JobAgent:
-    harness: str                          # a built-in ('claude' | 'codex' | 'gemini' | 'qwen' |
-                                          # 'kimi' | 'opencode' | 'droid') or a registered custom harness
-    model: str                            # from that harness's family — see Getting Started
-    harness_version: str | None = None    # pin a harness version; None = resolve latest. Must be
-                                          # EXACT (else invalid_input); unpublished ->
-                                          # harness_version_not_found; a pin on a custom
-                                          # harness -> invalid_input (content-versioned)
-    reasoning_effort: str | None = None   # 'off' | 'minimal' | 'low' | 'medium' | 'high' |
-                                          # 'xhigh' | 'max' | 'thinking'. None = the platform
-                                          # default ('medium'); PART OF THE AGENT'S IDENTITY,
-                                          # so two efforts are two systems. An effort the
-                                          # harness cannot apply -> invalid_input
+JobStatus = Literal['QUEUED', 'RUNNING', 'CANCELLING', 'COMPLETED', 'CANCELLED', 'FAILED']
+TrialStatus = Literal['QUEUED', 'RUNNING', 'SCORING', 'SCORED',
+                      'SCORING_ERROR', 'INFRASTRUCTURE_ERROR', 'INDETERMINATE', 'CANCELLED']
+EvalSandboxProvider = Literal['e2b', 'daytona', 'modal']
+SpendSource = Literal['measured', 'assumed']
+VerifierEnvironmentMode = Literal['shared', 'separate']
+AttemptPhase = Literal['prepare', 'build', 'boot', 'install', 'agent', 'verify', 'persist']
 
 @dataclass
-class Page:                               # the shape EVERY collection shares, top
-    items: list                           # level or nested. Not importable: use the
-    next_cursor: str | None               # concrete JobPage / TrialPage / TaskPage /
-    has_more: bool                        # TrialTracePage / BenchmarkImportPage / …
+class DatasetSelector:              # one dataset a job runs
+    name: str                       # bare name = active version
+    version: Optional[str]
+    task_names: Optional[List[str]]           # include filter — glob patterns
+    exclude_task_names: Optional[List[str]]   # exclude filter — glob patterns
+    n_tasks: Optional[int]                    # cap AFTER filters
 
 @dataclass
-class JobCounts:                          # Job.counts — entity cardinality only,
-    agents: int                           # the parts a job is made of. Nothing here
-    tasks: int                            # has a status; TrialTally holds the "how many"
+class AgentArm:                     # one agent arm of a job
+    name: str                       # built-in or registered
+    model_name: str                 # always required; no server default
+    version: Optional[str]          # pin; omitted = resolve latest
+    reasoning_effort: Optional[str] # PART OF THE ARM'S IDENTITY
+
+# Pages: every collection answers items / next_cursor / has_more; the list
+# handles are dual-use (await one page, or async-for every row).
 
 @dataclass
-class TrialTally:
-    total: int
-    by_status: dict[str, int]             # EVERY trial status, zeros included
-
-@dataclass
-class JobFailure:                         # why a job FAILED — never the key `error`
-    code: str
-    message: str
-
-@dataclass
-class Job:                                # ONE shape from every call, nothing optional
+class Job:                          # ONE shape from every call
     id: str
-    status: str                           # job status above
-    benchmark: str                        # 'name@version'
-    agents: list[JobAgent]
-    runs_per_task: int
-    concurrency: int
-    max_trial_spend_usd: float            # the per-trial cap that applied: yours, or the default
-    worst_case_spend_usd: float           # trials x the cap — the most this job can cost
-    sandbox_provider: str                 # 'e2b' | 'daytona' | 'modal'
-    spent_usd: float                      # what the trials have spent so far
-    counts: JobCounts                     # agents, tasks — entity cardinality only
-    trials: TrialTally                    # total + the status histogram
-    mean_reward: float | None             # mean over SCORED trials; None when none
-    failure: JobFailure | None            # why it FAILED, or None
-    source_job_id: str | None             # set on rerun_failed() jobs
-    idempotent_replay: bool               # True when an Idempotency-Key replayed
-    created_at: str
+    job_name: str
+    status: JobStatus
+    datasets: List[DatasetRef]      # resolved (name, version) pairs
+    agents: List[AgentArm]          # echoed arms (requested pin; None = took latest)
+    n_attempts: int
+    n_concurrent_trials: int
+    max_trial_spend_usd: float      # the resolved per-trial cap
+    worst_case_spend_usd: float     # trials × the cap — stated, never left to you
+    sandbox_provider: EvalSandboxProvider
+    counts: JobCounts               # agents + tasks — entity cardinality only
+    n_total_trials: int
+    trials: TrialTally              # total + zeros-included by_status histogram
+    stats: Dict[str, Any]           # counters, token totals, measured cost_usd, evals
+    failure: Optional[JobFailure]   # never the key `error`
+    source_jobs: List[SourceJob]    # provenance of a derived job; empty on originals
+    is_regrade: bool
+    idempotent_replay: bool
+    started_at: str
     updated_at: str
+    finished_at: Optional[str]      # None while live
 
 @dataclass
-class JobEvent:                           # watch()
-    seq: int                              # monotonic; the watch resume position
-    type: str                             # one of the nine names below
-    data: dict                            # payload; keys are the WIRE's camelCase
-
-# What `data` holds, per `type`. Ten names, closed:
-#
-#   'job.created'     benchmark (resolved 'name@version'), taskCount, agents,
-#                     runsPerTask, concurrency, maxTrialSpendUsd,
-#                     sandboxProvider, trialCount
-#   'job.running'     jobId
-#   'job.cancelling'  jobId, cancelledTrials (queued trials cancelled outright),
-#                     activeTrials (still in flight, winding down)
-#   'job.cancelled'   jobId, cancelledTrials (the total across request + settle)
-#   'job.completed'   jobId, undispatched (always 0; kept for wire compatibility)
-#   'job.failed'      jobId — RESERVED; no server path emits it today
-#   'trial.running'   trialId, taskKey
-#   'trial.scoring'   trialId, capturedBytes (agent stdout kept for the detail)
-#   'trial.spend'     trialId, taskKey, liveSpentUsd — a mid-run LOWER BOUND,
-#                     built-in harnesses only; never the trial's cost
-#   'trial.settled'   trialId, taskKey, status — always; plus reward on the
-#                     scored path (zero is a reward), failurePhase on a failure,
-#                     and attemptId/attemptPhase only when the REAPER settled it
+class TimingInfo:                   # a phase wall-clock: a PAIR, never a duration
+    started_at: Optional[str]
+    finished_at: Optional[str]
 
 @dataclass
-class Trial:
-    id: str
-    task_key: str
-    agent: JobAgent
-    run_number: int                       # 1-based
-    status: str                           # trial status above
-    reward: float | None                  # None until scored; 0 is a reward
-    metrics: dict[str, float] | None      # named sub-scores
-    failure_phase: str | None
-    failure_detail: str | None            # truncated to 2000 chars in list rows; full via trial()
-    phase_timings_ms: dict | None         # {'agent_ms': ..., 'verify_ms': ...}
-    model_usage: ModelUsage | None        # per-harness detail; read spend from spent_usd
-    sandbox_provider: str | None          # where the trial executed; None until it has
-    verifier_mode: str | None             # 'separate' | 'shared'
-    sandbox_id: str | None                # agent box id; None until the box exists
-    verifier_sandbox_id: str | None       # verifier box id; None in shared mode or before verify
-    spent_usd: float | None               # None = never ran (NOT 0, which is a measurement)
-    spend_source: str | None              # 'measured' | 'assumed_cap'
-    live_spent_usd: float | None          # mid-run LOWER BOUND; None = no reading yet
-    live_spend_at: str | None             # when that reading was taken — show its age
-    resolved_harness_version: str | None  # harness version actually used
-    session_ref: str | None               # agent session/trace reference
-    created_at: str
-    updated_at: str
-
-@dataclass
-class TrialDetail(Trial):                 # trial(id, trial_id)
-    job_id: str                           # failure_detail is untruncated here
-
-@dataclass
-class ModelUsage:                         # open-ended per-harness detail
-    max_trial_spend_usd: float | None     # the cap THIS trial's key carried (history)
-    extra: dict                           # bundle identity, token counts, and on older
-                                          # trials a historical cost_usd — snake_cased
-                                          # keys; spend is trial.spent_usd, not this
-
-@dataclass
-class TrialTraceEvent:
-    seq: int                              # resume position — pass as cursor=
-    type: str
-    data: dict
-
-@dataclass
-class RegradeResult:
-    id: str
-    source_trial_id: str                  # the source trial this regrade re-scored
-    task_key: str
-    status: str                           # 'QUEUED' | 'RUNNING' | 'SCORED' | 'SCORING_ERROR'
-                                          # | 'INFRASTRUCTURE_ERROR' | 'INDETERMINATE'
-    reward: float | None                  # the regrade's reward; None until scored
-    metrics: dict[str, float] | None
-    source_reward: float | None           # source-trial reward at regrade time (immutable snapshot)
-    source_status: str                    # source-trial status at regrade time (immutable snapshot)
-    reward_delta: float | None            # reward − source_reward when both are numbers, else None
-    verifier_mode: str                    # always 'separate' — regrade only re-runs separate verifiers
-    verifier_digest: str | None           # the verifier version that ran; None until it runs
-    verifier_sandbox_id: str | None       # provider box id of the verifier sandbox (provenance)
-    failure_phase: str | None
-    failure_detail: str | None
-    phase_timings_ms: dict | None
-    created_at: str
-    settled_at: str | None                # None while QUEUED/RUNNING
-
-@dataclass
-class RegradeFilter:                      # per-job selection, echoed back
-    status: list[str] | None
-    task_key: str | None
-
-@dataclass
-class RegradeResultsPage:                 # how many, and one page of them
-    total: int                            # results in the WHOLE job, not this page
-    by_status: dict[str, int]             # EVERY regrade status, zeros included
-    items: list[RegradeResult]
-    next_cursor: str | None
-    has_more: bool
-
-@dataclass
-class RegradeJob:                         # regrade() / regrade_trial() / get_regrade() / list_regrades()
-    id: str
-    source_job_id: str                    # the job the source trials belong to
-    status: str                           # 'QUEUED' | 'RUNNING' | 'COMPLETED' — derived from
-                                          # the WHOLE result set, never from one page
-    sandbox_provider: str                 # where the verifier boxes run
-    results: RegradeResultsPage
-    created_at: str
-    updated_at: str
-    filter: RegradeFilter | None = None
-
-@dataclass
-class UpstreamStatus:                     # where the git source points NOW
-    ref: str                              # what the active version was imported from
-    current_commit: str                   # what it was built from
-    latest_commit: str | None             # where the ref points now; None = last check failed
-    moved: bool                           # branch on this
-    behind_by: int | None                 # always None — see "When upstream moves"
-    checked_at: str | None                # None before the first check
-    error: str | None                     # why the last check failed
-
-@dataclass
-class Benchmark:                          # catalog.list() / catalog.get(ref)
+class AgentInfo:                    # the agent that ran a trial
     name: str
-    title: str | None
-    description: str | None
-    active_version: BenchmarkVersion | None
-    upstream: UpstreamStatus | None           # None = nothing to watch, NEVER "up to date"
-    versions: list[BenchmarkVersion] | None   # get() only, newest first
-    selected_version: BenchmarkVersion | None # get() only — the tasks' provenance
-    tasks: TaskPage | None                    # get() only; page with limit=/cursor=
-    created_at: str | None                    # get() only
-    updated_at: str | None                    # get() only
-    # ActiveBenchmark (get_active) is the same shape with version + tasks non-optional
+    version: Optional[str]          # the version actually RESOLVED and used
+    model_info: ModelInfo           # name + optional provider
+    reasoning_effort: Optional[str]
 
 @dataclass
-class TaskPage:                           # Benchmark.tasks — a page of Task rows
-    items: list[Task]
-    next_cursor: str | None
-    has_more: bool
+class AgentResult:                  # what the agent phase produced and consumed
+    n_input_tokens: Optional[int]   # includes cache tokens
+    n_cache_tokens: Optional[int]
+    n_output_tokens: Optional[int]
+    cost_usd: Optional[float]       # settled spend; None never means $0
+    rollout_details: Optional[List[Dict[str, Any]]]   # reserved; None today
+    metadata: Optional[Dict[str, Any]]   # bundle digest, network mode + source, …
 
 @dataclass
-class BenchmarkVersion:                   # one shape on every surface
-    version: str
-    state: str                            # benchmark version state above
-    created_at: str
-    task_count: int
+class ExceptionInfo:                # why a trial failed, when it did
+    exception_type: str             # ScoringError | InfrastructureError | …
+    exception_message: str          # truncated to 2000 chars on list rows
+    exception_traceback: Optional[str]
+    occurred_at: str
 
 @dataclass
-class TaskProviderVerdict:
-    ok: bool
-    reason: str | None                    # the limitation, when ok is False
+class Trial:                        # list rows and detail, one shape
+    id: str
+    job_id: str                     # the reverse pointer
+    task_name: str
+    source: str                     # the dataset the task came from
+    agent_info: AgentInfo
+    attempt: int                    # 1..n_attempts
+    status: TrialStatus
+    reward: Optional[float]         # primary reward; zero is a reward
+    verifier_result: Optional[VerifierResult]     # the named rewards map
+    exception_info: Optional[ExceptionInfo]
+    agent_result: Optional[AgentResult]
+    environment_setup: Optional[TimingInfo]       # the four phase timing pairs
+    agent_setup: Optional[TimingInfo]
+    agent_execution: Optional[TimingInfo]
+    verifier: Optional[TimingInfo]
+    step_results: Optional[List[Dict[str, Any]]]  # multi-step placeholder; None today
+    spend_source: Optional[SpendSource]
+    live_spent_usd: Optional[float]               # mid-run LOWER BOUND; cleared at settle
+    live_spend_at: Optional[str]
+    max_trial_spend_usd: Optional[float]          # the cap THIS trial's key carried
+    sandbox_provider: Optional[EvalSandboxProvider]
+    sandbox_id: Optional[str]                     # agent box id; None when none booted
+    verifier_sandbox_id: Optional[str]            # None in shared mode or before verify
+    verifier_environment_mode: Optional[VerifierEnvironmentMode]
+    attempt_phase: Optional[AttemptPhase]         # which step a RUNNING trial is in
+    session_ref: Optional[str]
+    started_at: Optional[str]
+    finished_at: Optional[str]
 
 @dataclass
-class Task:
-    task_key: str
+class StopResponse:                 # trials().stop() — every id in exactly one list
+    stopped: List[Trial]            # killed and settled, with their settled rows
+    already_terminal: List[str]
+    not_found: List[str]            # not real or not yours — never distinguished
+
+@dataclass
+class JobTaskRollup:                # jobs().tasks() rows
+    task_name: str
+    source: str                     # the dataset the task came from
+    trials: TrialTally
+    mean_reward: Optional[float]    # over SCORED trials; zero is a reward
+    cost_usd: Optional[float]
+
+@dataclass
+class JobEvent:                     # one watch() event
+    seq: int
+    type: str                       # "job.created" | "trial.settled" | …
+    data: Dict[str, Any]            # the payload, keys in the wire's vocabulary
+
+@dataclass
+class Dataset:                      # datasets().list() / get(ref)
+    name: str
+    title: Optional[str]
+    description: Optional[str]
+    active_version: Optional[DatasetVersion]   # None = bare-name job refs refuse
+    versions: Optional[List[DatasetVersion]]   # get() only, newest first
+    selected_version: Optional[DatasetVersion] # get() only — the tasks' provenance
+    tasks: Optional[TaskPage]                  # get() only; page with limit/cursor
+    upstream: Optional[UpstreamStatus]         # None = nothing to watch, NEVER "up to date"
+    created_at: Optional[str]                  # get() only
+    updated_at: Optional[str]                  # get() only
+    # ActiveDataset (get_active) is the same shape with version + tasks guaranteed
+
+@dataclass
+class Task:                         # public fields only
+    task_name: str
     agent_timeout_sec: int
     verifier_timeout_sec: int
-    providers: dict[str, TaskProviderVerdict]  # where the task can run
+    providers: Dict[str, TaskProviderVerdict]  # where it can run, per provider
 
 @dataclass
-class BenchmarkImport:
+class DatasetImport:
     id: str
-    status: str                           # 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED'
-    benchmark_name: str
+    status: str                     # QUEUED | RUNNING | COMPLETED | FAILED — the job vocabulary
+    name: str                       # dataset the import creates or extends
     version: str
-    failure: ImportFailure | None         # never `error` on a 200 body
-    task_count: int | None                # tasks parsed, once counted
-    created_at: str | None
-    updated_at: str | None
+    failure: Optional[DatasetImportFailure]    # never `error` on a 200 body
+    warnings: List[ImportWarning]   # e.g. no_solutions_archived → not activatable
+    task_count: Optional[int]
+    created_at: Optional[str]
+    updated_at: Optional[str]
 
 @dataclass
-class ImportFailure:                      # BenchmarkImport.failure
-    code: str                             # 'import_failed' when none was recorded
-    message: str                          # e.g. '2/113 task(s) failed to parse'
-    failures: list[BenchmarkImportFailure]  # per-task, when the corpus was reachable
-
-@dataclass
-class BenchmarkImportFailure:             # one row of ImportFailure.failures
-    task_key: str
-    error: str
-
-@dataclass
-class CustomHarness:                      # harnesses.list() / get() / create()
-    name: str                             # the value you pass as agents[].harness
-    source: str                           # 'install_script' | 'tarball'
-    run_command: str                      # run headless with `sh -c` at the task directory
-    env: dict[str, str]                   # injected at RUN time; cannot override contract keys
+class Agent:                        # agents().list() / get() / create()
+    name: str                       # the value you pass in job arms
+    source: str                     # "install_script" | "tarball"
+    run_command: str                # run headless with `sh -c` at the task directory
+    env: Dict[str, str]             # injected at RUN time; cannot override contract keys
     created_at: str
     updated_at: str
-```
 
-`custom_harnesses().create()` and `.upsert()` take `name` and `run_command`, plus EXACTLY ONE of `install_script` (the script itself) or `directory` (a local directory, tarred and uploaded); `env` is optional. Passing both or neither raises `ValueError` before the call leaves your process. `import_benchmark()` only raises when no usable source is named at all — see [Already in Harbor format](#already-in-harbor-format).
+@dataclass
+class AuthStatus:                   # auth().status()
+    user_id: str
+    email: Optional[str]
+    key: ApiKey                     # id, label, created_at, last_used_at — never the secret
+```
 
 ### Error codes
 
-The shape an error arrives in is described once, under [Errors](#errors); this is the vocabulary that fills its `code`. The same list is published as `error_codes` in the [capability document](#what-the-platform-supports), so a client can check its own branches against the server's.
+The shape an error arrives in is described once, under [Errors](#errors); this is the vocabulary that fills its `code`. The same list is published as `error_codes` in the [capability document](#what-the-platform-supports), so a client can check its own branches against the server's, and both SDKs hold their unions to the contract's enum byte-exactly in their test suites.
 
-Codes you will actually branch on: `benchmark_not_found` (also what another account's private benchmark reads as), `benchmark_version_not_found`, `benchmark_name_taken` (409 — the import name belongs to someone else), `import_too_large` (413), `no_active_version`, `version_not_ready`, `unknown_task_keys`, `provider_unsupported`, `job_not_found`, `job_not_terminal`, `no_failed_runs`, `trial_not_found`, `harness_version_not_found`, `insufficient_credits` (402 — the account is out of credits; add some and retry), `job_too_large` (400 — the trial matrix exceeds `limits['job']['maxTrials']`; the message states the count it would have created), `rate_limited` (retry after the `Retry-After` header), `invalid_api_key`, and `invalid_input` (which is also what the per-agent and per-`runs_per_task` ceilings refuse with).
+Codes you will actually branch on: `dataset_not_found` (also what another account's private dataset reads as), `dataset_version_not_found`, `dataset_name_taken` (409 — the name belongs to someone else), `import_too_large` (413), `no_active_version`, `version_not_ready`, `version_not_activatable`, `unknown_task_names`, `no_tasks` (the selectors filtered every task away), `provider_unsupported`, `job_not_found`, `job_not_terminal`, `no_failed_trials`, `trial_not_found`, `agent_version_not_found`, `insufficient_credits` (402 — add credits and retry), `job_too_large` (400 — the trial matrix exceeds the published ceiling; the message states the count it would have created), `rate_limited` (retry after `retry_after_sec`), `invalid_api_key`, and `invalid_input` (which is also what the per-arm and per-attempt ceilings refuse with).
 
-[Regrades](#regrade) add three: `regrade_source_ineligible` (409 — the source trial recorded no verifier inputs; the message names why), `no_regradable_runs` (409 — a whole-job regrade found nothing eligible), and `regrade_not_found`.
+[Regrades](#regrade) add `regrade_source_ineligible` (409 — the source trial recorded no verifier inputs; the message names why) and `no_regradable_trials` (409 — a whole-job regrade found nothing eligible). [Stopping](#stopping-work) adds `invalid_ids` (400 — a stop batch that is empty or over the 100-id cap).
 
-[Custom harnesses](#bring-your-own-harness) add their own: `custom_harness_not_found` (also what another owner's name reads as), `custom_harness_name_taken`, `custom_harness_name_reserved` (the name collides with a built-in harness), `custom_harness_source_required` (neither an install script nor a tarball), `custom_harness_source_conflict` (both), `custom_harness_invalid_env` (declared env tries to override a run-contract key), `custom_harness_invalid_name`, `custom_harness_too_large`, and `custom_harness_limit_reached` (the per-account registration ceiling).
+[Registered agents](#bring-your-own-agent) add their own: `agent_not_found` (also what another owner's name reads as), `agent_name_taken`, `agent_name_reserved` (the name collides with a built-in), `agent_source_required` (neither an install script nor a tarball), `agent_source_conflict` (both), `agent_invalid_env` (declared env tries to override a run-contract key), `agent_invalid_name`, `agent_too_large`, and `agent_limit_reached` (the per-account ceiling).
+
+[Datasets](#bring-your-own-dataset) add `dataset_not_owned`, `dataset_in_use` (409 — jobs reference it; `details` names a sample), `package_not_retained`, `package_missing` (410), and `upstream_not_watchable` (the auto-import toggle on a dataset with no moving ref).
 
 Three more come from the shapes above: `idempotency_key_reused` (409 — the key already stands for a different request), `invalid_multipart` (400 — an upload that is not `multipart/form-data`, or is malformed), and `invalid_cursor` (400 — a malformed `cursor` on a paged read).

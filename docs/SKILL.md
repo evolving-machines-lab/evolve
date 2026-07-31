@@ -1,6 +1,6 @@
 ---
 name: evolve
-description: "Evolve SDK development for TypeScript and Python. Use when building applications with Evolve to run AI agents (Claude, Codex, Gemini, Qwen, Kimi, OpenCode, Droid) in secure sandboxes. Triggers: (1) Creating Evolve applications, (2) Configuring agents with skills, Integrations, MCP servers, (3) Using Swarm abstractions (map, filter, reduce, bestOf/best_of, verify), (4) Building Pipelines, (5) Structured output with schemas, (6) Session management, streaming, observability, (7) Checkpointing, storage & StorageClient, (8) Cost tracking (per-run and per-session spend), (9) Historical sessions & trace download via sessions() client, (10) Hosted evals via benchmarks()/customHarnesses()/jobs() clients and the evolve-evals CLI, including bring-your-own harnesses, (11) Benchmark imports (git or local directory), regrades, and sandbox create options (image, resources, network policy)."
+description: "Evolve SDK development for TypeScript and Python. Use when building applications with Evolve to run AI agents (Claude, Codex, Gemini, Qwen, Kimi, OpenCode, Droid) in secure sandboxes. Triggers: (1) Creating Evolve applications, (2) Configuring agents with skills, Integrations, MCP servers, (3) Using Swarm abstractions (map, filter, reduce, bestOf/best_of, verify), (4) Building Pipelines, (5) Structured output with schemas, (6) Session management, streaming, observability, (7) Checkpointing, storage & StorageClient, (8) Cost tracking (per-run and per-session spend), (9) Historical sessions & trace download via sessions() client, (10) Hosted evals via datasets()/agents()/jobs()/trials() clients and the evolve-evals CLI, including bring-your-own agents, (11) Dataset publishing (git or local directory), regrades, and sandbox create options (image, resources, network policy)."
 ---
 
 # Evolve SDK
@@ -49,7 +49,7 @@ Read on demand when the user's task requires them:
 |-------------|-----------|--------|
 | Building a UI, handling real-time events | [04-streaming.md](references/typescript/04-streaming.md) | [04-streaming.md](references/python/04-streaming.md) |
 | Parallel agents (map/filter/reduce/bestOf/verify), Pipeline chaining | [05-swarm-pipeline.md](references/typescript/05-swarm-pipeline.md) | [05-swarm-pipeline.md](references/python/05-swarm-pipeline.md) |
-| Hosted benchmark jobs (benchmarks()/customHarnesses()/jobs(), watch, export, evolve-evals CLI) | [06-hosted-evals.md](references/typescript/06-hosted-evals.md) | [06-hosted-evals.md](references/python/06-hosted-evals.md) |
+| Hosted eval jobs (datasets()/agents()/jobs()/trials(), watch, download, evolve-evals CLI) | [06-hosted-evals.md](references/typescript/06-hosted-evals.md) | [06-hosted-evals.md](references/python/06-hosted-evals.md) |
 
 ## Topic Index
 
@@ -120,29 +120,32 @@ Read on demand when the user's task requires them:
 
 | Topic | TypeScript | Python |
 |-------|-----------|--------|
-| hosted() — all three clients behind one config | [TS](references/typescript/06-hosted-evals.md) | [PY](references/python/06-hosted-evals.md) |
-| Run a job (catalog → run, idempotency) | [TS](references/typescript/06-hosted-evals.md#run-a-job) | [PY](references/python/06-hosted-evals.md#run-a-job) |
-| Spend model (per-trial cap, worst case, credits, BYOK) | [TS](references/typescript/06-hosted-evals.md#run-a-job) | [PY](references/python/06-hosted-evals.md#run-a-job) |
-| Reasoning effort (per-agent, part of the system identity, per-harness support) | [TS](references/typescript/06-hosted-evals.md#run-a-job) | [PY](references/python/06-hosted-evals.md#run-a-job) |
-| Paging envelope (items / nextCursor / hasMore, limit + cursor) | [TS](references/typescript/06-hosted-evals.md#run-a-job) | [PY](references/python/06-hosted-evals.md#run-a-job) |
+| The four nouns; datasets()/agents()/jobs()/trials()/auth(); hosted() | [TS](references/typescript/06-hosted-evals.md) | [PY](references/python/06-hosted-evals.md) |
+| Start a job (datasets as a list, selectors, idempotency) | [TS](references/typescript/06-hosted-evals.md#start-a-job) | [PY](references/python/06-hosted-evals.md#start-a-job) |
+| Spend model (per-trial cap, worst case, credits, BYOK) | [TS](references/typescript/06-hosted-evals.md#money) | [PY](references/python/06-hosted-evals.md#money) |
+| Agent arms (version pins, reasoning_effort as arm identity) | [TS](references/typescript/06-hosted-evals.md#agent-arms) | [PY](references/python/06-hosted-evals.md#agent-arms) |
 | Watch it live (SSE stream with resume, JobEvent payloads) | [TS](references/typescript/06-hosted-evals.md#watch-it-live) | [PY](references/python/06-hosted-evals.md#watch-it-live) |
-| Read the results (trials, spend, trace) | [TS](references/typescript/06-hosted-evals.md#read-the-results) | [PY](references/python/06-hosted-evals.md#read-the-results) |
-| Live per-trial spend (lagging lower bound + its age, trial.spend event) | [TS](references/typescript/06-hosted-evals.md#read-the-results) | [PY](references/python/06-hosted-evals.md#read-the-results) |
-| Cancel / rerun failures | [TS](references/typescript/06-hosted-evals.md#cancel--rerun-failures) | [PY](references/python/06-hosted-evals.md#cancel--rerun-failures) |
-| Regrade (verifier-only re-run, reward deltas) | [TS](references/typescript/06-hosted-evals.md#regrade) | [PY](references/python/06-hosted-evals.md#regrade) |
+| Live cost + live tokens (lower bound + its age, trial.spend event) | [TS](references/typescript/06-hosted-evals.md#live-cost-and-live-tokens) | [PY](references/python/06-hosted-evals.md#live-cost-and-live-tokens) |
+| Read the results (search, trials, tasks rollup, trace) | [TS](references/typescript/06-hosted-evals.md#read-the-results) | [PY](references/python/06-hosted-evals.md#read-the-results) |
+| Token counts + timing pairs on trials | [TS](references/typescript/06-hosted-evals.md#one-trial-in-depth) | [PY](references/python/06-hosted-evals.md#one-trial-in-depth) |
+| Trial artifacts (the six-name vocabulary, artifact()) | [TS](references/typescript/06-hosted-evals.md#trial-artifacts--the-raw-record) | [PY](references/python/06-hosted-evals.md#trial-artifacts--the-raw-record) |
+| Stop verbs (job cancel, trial stop, job stop --dataset) | [TS](references/typescript/06-hosted-evals.md#stopping-work) | [PY](references/python/06-hosted-evals.md#stopping-work) |
+| Resume (new linked job over failed trials) | [TS](references/typescript/06-hosted-evals.md#resume) | [PY](references/python/06-hosted-evals.md#resume) |
+| Regrade (verifier-only re-run — the response IS a job) | [TS](references/typescript/06-hosted-evals.md#regrade) | [PY](references/python/06-hosted-evals.md#regrade) |
 | compare() (aggregates + task matrix) | [TS](references/typescript/06-hosted-evals.md#compare) | [PY](references/python/06-hosted-evals.md#compare) |
-| export() (archive, Harbor bundle) | [TS](references/typescript/06-hosted-evals.md#export) | [PY](references/python/06-hosted-evals.md#export) |
-| evolve-evals CLI | [TS](references/typescript/06-hosted-evals.md#cli) | [PY](references/python/06-hosted-evals.md#cli) |
+| download() (the results archive) | [TS](references/typescript/06-hosted-evals.md#download-the-archive) | [PY](references/python/06-hosted-evals.md#download-the-archive) |
+| evolve-evals CLI (noun-verb grammar, short flags, -c config) | [TS](references/typescript/06-hosted-evals.md#cli) | [PY](references/python/06-hosted-evals.md#cli) |
+| Auth (auth status today; auth login with its release) | [TS](references/typescript/06-hosted-evals.md#signing-in) | [PY](references/python/06-hosted-evals.md#signing-in) |
 | Capability document (meta(), GET /api/meta — public, ETag'd) | [TS](references/typescript/06-hosted-evals.md#what-the-platform-supports) | [PY](references/python/06-hosted-evals.md#what-the-platform-supports) |
 | Errors (code, param, details, retryAfterSec, requestId) | [TS](references/typescript/06-hosted-evals.md#errors) | [PY](references/python/06-hosted-evals.md#errors) |
 | Task format & declarations (network, verifier, sizing) | [TS](references/typescript/06-hosted-evals.md#what-runs) | [PY](references/python/06-hosted-evals.md#what-runs) |
 | Sandbox providers (E2B/Daytona/Modal, per-task verdicts) | [TS](references/typescript/06-hosted-evals.md#where-it-runs) | [PY](references/python/06-hosted-evals.md#where-it-runs) |
-| Bring your own benchmark (import → activation → READY) | [TS](references/typescript/06-hosted-evals.md#bring-your-own-benchmark) | [PY](references/python/06-hosted-evals.md#bring-your-own-benchmark) |
-| Listing imports (listImports/list_imports) | [TS](references/typescript/06-hosted-evals.md#already-in-harbor-format) | [PY](references/python/06-hosted-evals.md#already-in-harbor-format) |
-| Deleting a benchmark (reclaim a name) | [TS](references/typescript/06-hosted-evals.md#deleting-one) | [PY](references/python/06-hosted-evals.md#deleting-one) |
-| Upstream version awareness (upstream, moved) | [TS](references/typescript/06-hosted-evals.md#when-upstream-moves) | [PY](references/python/06-hosted-evals.md#when-upstream-moves) |
-| Bring your own harness (customHarnesses()/custom_harnesses(), upsert, run contract) | [TS](references/typescript/06-hosted-evals.md#bring-your-own-harness) | [PY](references/python/06-hosted-evals.md#bring-your-own-harness) |
-| Statuses (job, trial, import, regrade, benchmark version) | [TS](references/typescript/06-hosted-evals.md#statuses) | [PY](references/python/06-hosted-evals.md#statuses) |
+| Bring your own dataset (publish → gate → READY → activate) | [TS](references/typescript/06-hosted-evals.md#bring-your-own-dataset) | [PY](references/python/06-hosted-evals.md#bring-your-own-dataset) |
+| Listing imports (listImports/list_imports) | [TS](references/typescript/06-hosted-evals.md#publishing) | [PY](references/python/06-hosted-evals.md#publishing) |
+| Deleting a dataset (reclaim a name) | [TS](references/typescript/06-hosted-evals.md#deleting-one) | [PY](references/python/06-hosted-evals.md#deleting-one) |
+| Upstream version awareness (upstream, moved, auto_import) | [TS](references/typescript/06-hosted-evals.md#when-upstream-moves) | [PY](references/python/06-hosted-evals.md#when-upstream-moves) |
+| Bring your own agent (agents(), upsert, run contract) | [TS](references/typescript/06-hosted-evals.md#bring-your-own-agent) | [PY](references/python/06-hosted-evals.md#bring-your-own-agent) |
+| Statuses (job, trial, import, dataset version) | [TS](references/typescript/06-hosted-evals.md#statuses) | [PY](references/python/06-hosted-evals.md#statuses) |
 | Types | [TS](references/typescript/06-hosted-evals.md#types) | [PY](references/python/06-hosted-evals.md#types) |
 | Error codes (the full vocabulary) | [TS](references/typescript/06-hosted-evals.md#error-codes) | [PY](references/python/06-hosted-evals.md#error-codes) |
 

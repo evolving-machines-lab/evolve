@@ -115,7 +115,7 @@ When using `EVOLVE_API_KEY`:
 - **Tracing:** Automatic tracing and agent analytics at [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) for observability and replay — no extra setup needed. Use `withSessionTagPrefix()` to label sessions for easy filtering.
 - **Browser Automation:** Call `.withBrowser()` for the default and recommended managed browser path with dashboard live view and replay.
 - **Checkpointing:** Snapshot sandbox state to Evolve-managed storage with `.withStorage()` — no S3 credentials needed. See [Storage & Checkpointing](./03-runtime.md#storage--checkpointing).
-- **Hosted Evals:** Score agents against a benchmark on managed infrastructure with `jobs()` and `benchmarks()`, or the `evolve-evals` CLI. See [Hosted Evals](./06-hosted-evals.md).
+- **Hosted Evals:** Score agents against datasets of tasks on managed infrastructure with `jobs()` and `datasets()`, or the `evolve-evals` CLI. See [Hosted Evals](./06-hosted-evals.md).
 
 ---
 
@@ -466,4 +466,4 @@ const evolve = new Evolve()
 - [Runtime](./03-runtime.md) covers everything after `run()` — files in and out, sessions, checkpointing, cost.
 - [Streaming](./04-streaming.md) is the event surface a UI subscribes to.
 - [Swarm & Pipeline](./05-swarm-pipeline.md) runs many agents in parallel and chains the results.
-- [Hosted Evals](./06-hosted-evals.md) is the other half of the SDK, and the part that is easiest to miss. Instead of driving one agent yourself, you hand Evolve a benchmark and a list of agents and read back scored trials — `jobs()` and `benchmarks()`, or `npx evolve-evals`, with no `Evolve` instance involved. Start with `benchmarks().list()`: what comes back is whatever the platform has published to your account. If that list is empty, you have not hit a wall — the same chapter's [Bring your own benchmark](./06-hosted-evals.md#bring-your-own-benchmark) section imports a corpus of your own.
+- [Hosted Evals](./06-hosted-evals.md) is the other half of the SDK, and the part that is easiest to miss. Instead of driving one agent yourself, you hand Evolve datasets and a list of agents and read back scored trials — `jobs()` and `datasets()`, or `npx evolve-evals`, with no `Evolve` instance involved. Start with `datasets().list()`: what comes back is whatever the platform has published to your account. If that list is empty, you have not hit a wall — the same chapter's [Bring your own dataset](./06-hosted-evals.md#bring-your-own-dataset) section publishes a corpus of your own.

@@ -97,27 +97,32 @@ await evolve.run(prompt='Hello world')
 
 | Topic | Link |
 |-------|------|
-| `hosted()` — all three clients behind one config | [Hosted Evals](./06-hosted-evals.md) |
-| Run a job (catalog → `run()`, idempotency) | [Hosted Evals → Run a Job](./06-hosted-evals.md#run-a-job) |
-| Spend model (`max_trial_spend_usd`, `worst_case_spend_usd`, credits, BYOK) | [Hosted Evals → Run a Job](./06-hosted-evals.md#run-a-job) |
-| Paging (`items` / `next_cursor` / `has_more`, `limit=` / `cursor=`) | [Hosted Evals → Run a Job](./06-hosted-evals.md#run-a-job) |
+| The four nouns; `datasets()` / `agents()` / `jobs()` / `trials()` / `auth()`; `hosted()` | [Hosted Evals](./06-hosted-evals.md) |
+| Start a job (`start()`, datasets as a list, selectors, idempotency) | [Hosted Evals → Start a Job](./06-hosted-evals.md#start-a-job) |
+| Spend model (`max_trial_spend_usd`, `worst_case_spend_usd`, credits, BYOK) | [Hosted Evals → Money](./06-hosted-evals.md#money) |
+| Agent arms (version pins, `reasoning_effort` as arm identity) | [Hosted Evals → Agent Arms](./06-hosted-evals.md#agent-arms) |
 | `watch()` (SSE stream with resume, `JobEvent` payloads) | [Hosted Evals → Watch It Live](./06-hosted-evals.md#watch-it-live) |
-| Results (`get`, `list`, `trials`, spend, trace) | [Hosted Evals → Read the Results](./06-hosted-evals.md#read-the-results) |
-| `cancel()` / `rerun_failed()` | [Hosted Evals → Cancel / Rerun Failures](./06-hosted-evals.md#cancel--rerun-failures) |
-| Regrade (`regrade()`, `regrade_trial()`, `get_regrade()`, `list_regrades()`) | [Hosted Evals → Regrade](./06-hosted-evals.md#regrade) |
+| Live cost + live tokens (`live_spent_usd`, the 5s/30s cadences) | [Hosted Evals → Live Cost and Live Tokens](./06-hosted-evals.md#live-cost-and-live-tokens) |
+| Results (`get`, `list(search=...)`, `trials`, `tasks` rollup, trace) | [Hosted Evals → Read the Results](./06-hosted-evals.md#read-the-results) |
+| Token counts + timing pairs on trials | [Hosted Evals → One Trial in Depth](./06-hosted-evals.md#one-trial-in-depth) |
+| Trial artifacts (the six-name vocabulary, `artifact()`) | [Hosted Evals → Trial Artifacts](./06-hosted-evals.md#trial-artifacts--the-raw-record) |
+| Stop verbs (`cancel()`, `trials().stop()`, `job stop --dataset`) | [Hosted Evals → Stopping Work](./06-hosted-evals.md#stopping-work) |
+| `resume()` (new linked job over failed trials) | [Hosted Evals → Resume](./06-hosted-evals.md#resume) |
+| Regrade (`regrade()` — the response IS a job) | [Hosted Evals → Regrade](./06-hosted-evals.md#regrade) |
 | `compare()` (aggregates + task matrix) | [Hosted Evals → Compare](./06-hosted-evals.md#compare) |
-| `export()` (research archive, Harbor bundle) | [Hosted Evals → Export](./06-hosted-evals.md#export) |
+| `download()` (the results archive) | [Hosted Evals → Download the Archive](./06-hosted-evals.md#download-the-archive) |
 | CLI (via the TypeScript `evolve-evals` binary) | [Hosted Evals → CLI](./06-hosted-evals.md#cli) |
+| Auth (`auth().status()` today; `auth login` with its release) | [Hosted Evals → Signing In](./06-hosted-evals.md#signing-in) |
 | `meta()` / `GET /api/meta` — the public capability document | [Hosted Evals → What the Platform Supports](./06-hosted-evals.md#what-the-platform-supports) |
 | Errors (`code`, `param`, `details`, `retry_after_sec`, `request_id`) | [Hosted Evals → Errors](./06-hosted-evals.md#errors) |
 | Task format & declarations (network, verifier, sizing) | [Hosted Evals → What Runs](./06-hosted-evals.md#what-runs) |
 | Sandbox providers (`sandbox_provider`, per-task verdicts) | [Hosted Evals → Where It Runs](./06-hosted-evals.md#where-it-runs) |
-| Bring your own benchmark (import → activation → `READY`) | [Hosted Evals → Bring Your Own Benchmark](./06-hosted-evals.md#bring-your-own-benchmark) |
-| `list_imports()` (find an import you lost the id for) | [Hosted Evals → Already in Harbor Format](./06-hosted-evals.md#already-in-harbor-format) |
-| `benchmarks().delete()` (reclaim a name) | [Hosted Evals → Deleting One](./06-hosted-evals.md#deleting-one) |
-| Upstream version awareness (`upstream`, `moved`) | [Hosted Evals → When Upstream Moves](./06-hosted-evals.md#when-upstream-moves) |
-| Bring your own harness (`custom_harnesses()`, `upsert()`, run contract) | [Hosted Evals → Bring Your Own Harness](./06-hosted-evals.md#bring-your-own-harness) |
-| Statuses (job, trial, import, regrade, benchmark version) | [Hosted Evals → Statuses](./06-hosted-evals.md#statuses) |
+| Bring your own dataset (publish → gate → `READY` → activate) | [Hosted Evals → Bring Your Own Dataset](./06-hosted-evals.md#bring-your-own-dataset) |
+| `list_imports()` (find an import you lost the id for) | [Hosted Evals → Publishing](./06-hosted-evals.md#publishing) |
+| `datasets().delete()` (reclaim a name) | [Hosted Evals → Deleting One](./06-hosted-evals.md#deleting-one) |
+| Upstream version awareness (`upstream`, `moved`, `auto_import`) | [Hosted Evals → When Upstream Moves](./06-hosted-evals.md#when-upstream-moves) |
+| Bring your own agent (`agents()`, `upsert()`, run contract) | [Hosted Evals → Bring Your Own Agent](./06-hosted-evals.md#bring-your-own-agent) |
+| Statuses (job, trial, import, dataset version) | [Hosted Evals → Statuses](./06-hosted-evals.md#statuses) |
 | Types | [Hosted Evals → Types](./06-hosted-evals.md#types) |
 | Error codes (the full vocabulary) | [Hosted Evals → Error Codes](./06-hosted-evals.md#error-codes) |
 
