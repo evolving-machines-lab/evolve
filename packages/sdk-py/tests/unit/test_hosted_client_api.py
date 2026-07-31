@@ -1130,6 +1130,8 @@ class TestJobs:
         url = fake.requests[0].full_url
         assert 'limit=1' in url
         assert 'status=SCORED%2CSCORING_ERROR' in url
+        # No dataset filter asked for, none sent.
+        assert 'dataset=' not in url
         trial = page.items[0]
         assert trial.task_name == 'abs-module-cache-flags'
         # The dataset each trial's task came from rides on the trial itself.
@@ -1154,6 +1156,23 @@ class TestJobs:
         assert trial.sandbox_id == 'im8f0wgqwehvng70evvro'
         assert trial.verifier_sandbox_id == 'iv2k1xbqwehvng70evvrp'
         assert trial.session_ref == 'sess-9'
+
+
+    @pytest.mark.asyncio
+    async def test_trials_dataset_filter(self):
+        """``dataset=`` narrows to one dataset's trials — exact match on source."""
+        fake = FakeUrlopen([
+            ('/api/jobs/job-1/trials', {
+                'items': [wire_trial()],
+                'nextCursor': None,
+                'hasMore': False,
+            }),
+        ])
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            await jobs_factory(CONFIG).trials('job-1', dataset='deep-swe', limit=1)
+
+        url = fake.requests[0].full_url
+        assert 'dataset=deep-swe' in url
 
     @pytest.mark.asyncio
     async def test_running_trial_surfaces_phase_and_live_spend(self):

@@ -1012,11 +1012,107 @@ async function testJobTrialsAndTasks() {
     assert(tasksIO.out[1].includes("abs-module-cache-flags"), "renders the rollup row");
     assert(tasksIO.out[1].includes("SCORED 2"), "renders the status tally");
 
+    const datasetIO = captureIO();
+    const datasetCode = await runCli(
+      ["job", "trials", "eval-1", "--dataset", "deep-swe", ...AUTH],
+      datasetIO.io
+    );
+    assertEqual(datasetCode, 0, "job trials --dataset exits 0");
+    const datasetCall = fetchCalls[fetchCalls.length - 1];
+    assert(datasetCall.url.includes("dataset=deep-swe"), "--dataset rides the query");
+
     const emptyStatus = captureIO();
     assertEqual(
       await runCli(["job", "trials", "eval-1", "--status", " , ", ...AUTH], emptyStatus.io),
       2,
       "an empty --status list is a usage error"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * job stop --dataset: PURE SUGAR — the job body, the trial list's dataset
+ * filter, and the trial-stop door, composed client-side. Zero server surface.
+ */
+async function testJobStopDatasetSugar() {
+  console.log("\n--- runCli: job stop --dataset batches one dataset's live trials to trial-stop ---");
+  installMockFetch();
+  try {
+    // Most-specific patterns first: the bare job pattern would also match /trials.
+    setMockResponse("/api/jobs/eval-1/trials", {
+      status: 200,
+      body: {
+        items: [
+          trialFixture({ id: "run-1", status: "RUNNING" }),
+          trialFixture({ id: "run-2", status: "QUEUED" }),
+        ],
+        nextCursor: null,
+        hasMore: false,
+      },
+    });
+    setMockResponse("/api/trials/stop", {
+      status: 200,
+      body: {
+        stopped: [trialFixture({ id: "run-1", status: "INDETERMINATE" })],
+        already_terminal: ["run-2"],
+        not_found: [],
+      },
+    });
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: wireJob({
+        datasets: [
+          { name: "deep-swe", version: "1.1" },
+          { name: "frontier-swe", version: "2.0" },
+        ],
+      }),
+    });
+
+    const { io, out } = captureIO();
+    const code = await runCli(["job", "stop", "eval-1", "--dataset", "deep-swe", ...AUTH], io);
+    assertEqual(code, 0, "exit 0 — the report is the outcome");
+    const trialsCall = fetchCalls.find((c) => c.url.includes("/api/jobs/eval-1/trials"));
+    assert(trialsCall !== undefined, "fetches the job's trials");
+    assert(trialsCall!.url.includes("dataset=deep-swe"), "narrowed to the named dataset");
+    assert(
+      trialsCall!.url.includes("status=QUEUED%2CRUNNING%2CSCORING"),
+      "narrowed to LIVE statuses only"
+    );
+    const stopCall = fetchCalls.find((c) => c.url.endsWith("/api/trials/stop"));
+    assert(stopCall !== undefined, "batches to the trial-stop door");
+    assertEqual(
+      JSON.parse(stopCall!.init?.body as string),
+      { trial_ids: ["run-1", "run-2"] },
+      "posts exactly the dataset's live trials"
+    );
+    assert(out.some((l) => l.includes("stopped run-1")), "reports the stopped trial");
+    assert(out.some((l) => l.includes("already terminal run-2")), "reports the already-terminal id");
+    assert(
+      out.some((l) => l.includes("1 stopped, 1 already terminal, 0 not found (deep-swe)")),
+      "closes with the counts line"
+    );
+
+    // A dataset the job does not span is a refusal naming the real list.
+    const refused = captureIO();
+    const refusedCode = await runCli(
+      ["job", "stop", "eval-1", "--dataset", "nope", ...AUTH],
+      refused.io
+    );
+    assertEqual(refusedCode, 1, "unknown dataset is a refusal, not a silent no-op");
+    assert(
+      refused.err.some((l) => l.includes("deep-swe, frontier-swe")),
+      "the refusal lists the job's datasets"
+    );
+
+    // --dataset is required: the whole-job path is job cancel, and this
+    // command must never quietly become it.
+    const missing = captureIO();
+    assertEqual(
+      await runCli(["job", "stop", "eval-1", ...AUTH], missing.io),
+      2,
+      "missing --dataset is a usage error"
     );
   } finally {
     restoreFetch();
@@ -1777,6 +1873,7 @@ async function main() {
   await testJobListOutputModes();
   await testJobShowMultiId();
   await testJobTrialsAndTasks();
+  await testJobStopDatasetSugar();
   await testJobResume();
   await testJobRegrade();
   await testTrialRegrade();

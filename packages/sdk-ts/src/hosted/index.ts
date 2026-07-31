@@ -1465,6 +1465,7 @@ export function jobs(config?: HostedClientConfig): JobsClient {
   ): Promise<TrialPage> {
     const query = pageQuery(options, {
       status: options?.status?.length ? options.status.join(",") : undefined,
+      dataset: options?.dataset,
     });
     const res = await request(cfg, `/api/jobs/${encodeURIComponent(id)}/trials${query}`);
     return mapPage((await res.json()) as Record<string, unknown>, mapTrial);
@@ -1618,9 +1619,9 @@ export function jobs(config?: HostedClientConfig): JobsClient {
 
     trials(id: string, options?: ListTrialsOptions): TrialList {
       // Await for one page; for-await to walk every trial across cursors.
-      // The status filter rides along on every page fetch.
+      // The status and dataset filters ride along on every page fetch.
       return makePaginated(
-        (opts) => trialsPage(id, { ...opts, status: options?.status }),
+        (opts) => trialsPage(id, { ...opts, status: options?.status, dataset: options?.dataset }),
         options
       );
     },

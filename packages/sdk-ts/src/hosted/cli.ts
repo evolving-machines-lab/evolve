@@ -214,6 +214,7 @@ const GROUPS: Record<string, GroupSpec> = {
         flags: {
           ...LIST_FLAGS,
           status: { kind: "string", value: "<s1,s2,...>", help: "Filter by trial status (e.g. INFRASTRUCTURE_ERROR)" },
+          dataset: { kind: "string", value: "<name>", help: "Filter to one dataset's trials" },
         },
         minPositionals: 1,
         maxPositionals: 1,
@@ -243,6 +244,16 @@ const GROUPS: Record<string, GroupSpec> = {
         maxPositionals: 1,
         positionalUsage: "<id>",
         example: "evolve-evals job cancel cme12ab34",
+      },
+      stop: {
+        summary: "Stop one dataset's live trials without cancelling the job",
+        flags: {
+          dataset: { kind: "string", value: "<name>", help: "The dataset whose live trials to stop (required)" },
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<id>",
+        example: "evolve-evals job stop cme12ab34 --dataset deep-swe",
       },
       resume: {
         summary: "New linked job over a terminal job's failed trials",
@@ -1638,8 +1649,10 @@ async function cmdJobTrials(inv: Invocation, io: CliIO): Promise<number> {
   if (columnsHelpRequested(inv, io, TRIAL_COLUMNS)) return 0;
   const client = jobs(clientConfig(inv));
   const status = parseStatusFilter(inv);
+  const dataset = inv.flags.dataset as string | undefined;
   const page = await client.trials(inv.positionals[0], {
     ...(status !== undefined ? { status } : {}),
+    ...(dataset !== undefined ? { dataset } : {}),
     ...pageOptions(inv),
   });
   if (inv.flags.json === true) {
@@ -1738,6 +1751,63 @@ async function cmdJobCancel(inv: Invocation, io: CliIO): Promise<number> {
   } else {
     for (const line of jobLines(e)) io.out(line);
   }
+  return 0;
+}
+
+/**
+ * PURE SUGAR over surfaces that already exist — the job body's datasets[],
+ * the trial list's dataset filter, and the trial-stop door. Stops ONE
+ * dataset's live trials and leaves the job (and every other dataset) running;
+ * cancelling the whole job is `job cancel`.
+ */
+async function cmdJobStop(inv: Invocation, io: CliIO): Promise<number> {
+  const dataset = inv.flags.dataset as string | undefined;
+  if (!dataset) {
+    throw new CliUsageError(
+      "job stop needs --dataset <name> (to stop the whole job, use: evolve-evals job cancel <id>)"
+    );
+  }
+  const client = jobs(clientConfig(inv));
+  const job = await client.get(inv.positionals[0]);
+  const names = job.datasets.map((d) => d.name);
+  if (!names.includes(dataset)) {
+    // A refusal, not an empty no-op: stopping a dataset the job never spanned
+    // is a typo, and silence would read as "nothing was running".
+    throw new Error(
+      `job ${job.id} does not run dataset ${dataset}; its datasets: ${names.join(", ")}`
+    );
+  }
+  // The dataset's live trials, across every cursor page; terminal trials are
+  // already outside the selection, so the batch only names stoppable work.
+  const liveIds: string[] = [];
+  for await (const trial of client.trials(job.id, {
+    dataset,
+    status: ["QUEUED", "RUNNING", "SCORING"],
+  })) {
+    liveIds.push(trial.id);
+  }
+  if (liveIds.length === 0) {
+    if (inv.flags.json === true) {
+      io.out(JSON.stringify({ stopped: [], already_terminal: [], not_found: [] }));
+    } else {
+      io.out(`No live trials in ${dataset}.`);
+    }
+    return 0;
+  }
+  const result = await trials(clientConfig(inv)).stop(liveIds);
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(result));
+    return 0;
+  }
+  for (const run of result.stopped) {
+    io.out(`stopped ${run.id} (${run.task_name}) ${run.status}`);
+  }
+  for (const id of result.already_terminal) io.out(`already terminal ${id}`);
+  for (const id of result.not_found) io.out(`not found ${id}`);
+  io.out(
+    `${result.stopped.length} stopped, ${result.already_terminal.length} already terminal, ` +
+      `${result.not_found.length} not found (${dataset})`
+  );
   return 0;
 }
 
@@ -2216,6 +2286,7 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "job tasks": cmdJobTasks,
   "job compare": cmdJobCompare,
   "job cancel": cmdJobCancel,
+  "job stop": cmdJobStop,
   "job resume": cmdJobResume,
   "job regrade": cmdJobRegrade,
   "job download": cmdJobDownload,

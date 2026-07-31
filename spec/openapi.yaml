@@ -108,15 +108,20 @@ paths:
         `GET /api/jobs/{jobId}/events` or poll `GET /api/jobs/{jobId}`.
 
         Datasets are a LIST with per-dataset glob filters (`task_names`,
-        `exclude_task_names`, `n_tasks`). Every agent must name a model; the
-        server applies no model default.
+        `exclude_task_names`, `n_tasks`); each selector filters only its own
+        dataset, and the job's trials are the union across the list. The same
+        dataset name twice is refused (`invalid_input`). Every agent must name
+        a model; the server applies no model default.
 
         Send `Idempotency-Key` to make retries safe: the same key with the
         same resolved request replays the original job (200,
         `idempotent_replay: true`); the same key with a different request is
         refused with `idempotency_key_reused` (409). Dataset references are
         fingerprinted RESOLVED — a bare name and the currently active version
-        fingerprint alike while that version is active.
+        fingerprint alike while that version is active. The dataset list is
+        fingerprinted IN ORDER: `datasets` echoes the request order back, so
+        the same selectors reordered are a different request and a shared key
+        across the two orders is refused rather than silently replayed.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -570,6 +575,14 @@ paths:
           in: query
           description: Filter to one task's trials.
           x-wave: 2
+          schema:
+            type: string
+        - name: dataset
+          in: query
+          description: >
+            Filter to one dataset's trials — exact match on the trial's
+            `source`. A name the job does not span is an ordinary empty
+            selection.
           schema:
             type: string
         - name: failed_only
