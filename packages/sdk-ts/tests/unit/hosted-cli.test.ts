@@ -1119,6 +1119,64 @@ async function testJobStopDatasetSugar() {
   }
 }
 
+/**
+ * The trial-stop door caps one request at 100 ids (400 above it), and a
+ * dataset slice can hold thousands of live trials — the exact jobs the
+ * command exists for. The batch must be paged under the cap and the
+ * per-page reports merged.
+ */
+async function testJobStopDatasetChunking() {
+  console.log("\n--- runCli: job stop --dataset pages the stop batch under the door's 100-id cap ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs/eval-1/trials", {
+      status: 200,
+      body: {
+        items: Array.from({ length: 150 }, (_, i) =>
+          trialFixture({ id: `run-${i}`, status: "RUNNING" })
+        ),
+        nextCursor: null,
+        hasMore: false,
+      },
+    });
+    // The mock answers every stop page with the same one-of-each report, so
+    // the merged counts prove BOTH pages were read, not just the last.
+    setMockResponse("/api/trials/stop", {
+      status: 200,
+      body: {
+        stopped: [trialFixture({ id: "run-0", status: "INDETERMINATE" })],
+        already_terminal: ["run-1"],
+        not_found: [],
+      },
+    });
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: wireJob({ datasets: [{ name: "deep-swe", version: "1.1" }] }),
+    });
+
+    const { io, out } = captureIO();
+    const code = await runCli(["job", "stop", "eval-1", "--dataset", "deep-swe", ...AUTH], io);
+    assertEqual(code, 0, "exit 0 across pages");
+    const stopCalls = fetchCalls.filter((c) => c.url.endsWith("/api/trials/stop"));
+    assertEqual(stopCalls.length, 2, "150 live ids become two stop pages");
+    const firstIds = JSON.parse(stopCalls[0].init?.body as string).trial_ids as string[];
+    const secondIds = JSON.parse(stopCalls[1].init?.body as string).trial_ids as string[];
+    assertEqual(firstIds.length, 100, "first page carries exactly the door cap");
+    assertEqual(secondIds.length, 50, "second page carries the remainder");
+    assertEqual(
+      [...firstIds, ...secondIds],
+      Array.from({ length: 150 }, (_, i) => `run-${i}`),
+      "pages partition the live ids in order, none dropped or repeated"
+    );
+    assert(
+      out.some((l) => l.includes("2 stopped, 2 already terminal, 0 not found (deep-swe)")),
+      "the counts line merges every page's report"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
 // =============================================================================
 // JOB DERIVATIONS — resume, regrade, compare, cancel, download
 // =============================================================================
@@ -1874,6 +1932,7 @@ async function main() {
   await testJobShowMultiId();
   await testJobTrialsAndTasks();
   await testJobStopDatasetSugar();
+  await testJobStopDatasetChunking();
   await testJobResume();
   await testJobRegrade();
   await testTrialRegrade();

@@ -35,6 +35,7 @@ import type {
   JobEvent,
   JobTaskRollup,
   PublishDatasetInput,
+  StopResponse,
   Task,
   TraceEvent,
   Trial,
@@ -1794,7 +1795,17 @@ async function cmdJobStop(inv: Invocation, io: CliIO): Promise<number> {
     }
     return 0;
   }
-  const result = await trials(clientConfig(inv)).stop(liveIds);
+  // The trial-stop door caps one request at 100 ids and 400s above it, while a
+  // dataset slice can hold thousands of live trials — page the batch under the
+  // cap and merge the reports into the one outcome the caller reads.
+  const trialClient = trials(clientConfig(inv));
+  const result: StopResponse = { stopped: [], already_terminal: [], not_found: [] };
+  for (let i = 0; i < liveIds.length; i += 100) {
+    const page = await trialClient.stop(liveIds.slice(i, i + 100));
+    result.stopped.push(...page.stopped);
+    result.already_terminal.push(...page.already_terminal);
+    result.not_found.push(...page.not_found);
+  }
   if (inv.flags.json === true) {
     io.out(JSON.stringify(result));
     return 0;
