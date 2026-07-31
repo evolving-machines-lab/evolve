@@ -2,15 +2,16 @@
 /**
  * Unit Test: evolve-evals CLI (src/hosted/cli.ts)
  *
- * The CLI is in its SDK-RENAME SHIM state: the old command grammar bridged
- * onto the renamed SDK surface (datasets/agents/jobs/trials) and the renamed
- * wire. This suite pins that bridge: command parsing (flags, repeatable
- * --agent, csv --tasks, numbers, required flags, usage errors), the
- * --benchmark → datasets-selector translation, one mocked end-to-end
- * `run --watch` (POST /api/jobs -> SSE -> terminal status, request bodies,
- * rendered lines, exit code), `import` / `import status` against the publish
- * routes, regrade-returns-a-Job, the globally addressable trial/trace
- * commands, and `custom-harnesses` against the agents routes.
+ * The noun-verb grammar: group resolution (singular canonical, plural and
+ * `ls` hidden aliases, `run` = `job start`), short flags, repeatables,
+ * the -c config loader (JSON + the YAML subset) with flag-over-file merging,
+ * --print-config, per-command help with a worked example, --version, the
+ * shared list output precedence (--json / -q / TSV / TTY table, --columns,
+ * --no-trunc, --no-headers), and one mocked end-to-end pass over every verb:
+ * job start/--watch/list/show/trials/tasks/compare/cancel/resume/regrade/
+ * download, trial show/download/regrade/stop, dataset
+ * list/show/publish/download/activate, agent list/show/add/remove, auth
+ * status. Exit codes: 0/1/2 pinned throughout.
  *
  * Uses mock fetch to test without real network calls.
  *
@@ -128,19 +129,22 @@ function restoreFetch() {
 // =============================================================================
 
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Readable } from "node:stream";
 
 import {
-  buildCustomHarnessInput,
+  buildAgentInput,
   buildJobInput,
-  buildImportInput,
+  buildPublishInput,
   CliUsageError,
   eventLine,
   importStatusLine,
-  parseJobAgent,
   parseArgs,
+  parseEnvPairs,
+  parseYamlSubset,
   runCli,
   trialDetailLines,
 } from "../../src/hosted/cli.ts";
@@ -149,453 +153,394 @@ import type { Trial } from "../../src/hosted/types.ts";
 
 const BASE = "http://localhost:3000";
 
-function captureIO(): { io: CliIO; out: string[]; err: string[] } {
+function captureIO(tty = false): { io: CliIO; out: string[]; err: string[] } {
   const out: string[] = [];
   const err: string[] = [];
-  return { io: { out: (l) => out.push(l), err: (l) => err.push(l) }, out, err };
+  return { io: { out: (l) => out.push(l), err: (l) => err.push(l), tty }, out, err };
 }
 
+const AUTH = ["--api-key", "test-key", "--base-url", BASE];
+
 // =============================================================================
-// PARSING TESTS
+// PARSING — grammar resolution
 // =============================================================================
 
-function testEffortFlag() {
-  console.log("\n--- buildJobInput: --effort stamps EVERY agent, verbatim ---");
-  const inv = parseArgs([
-    "run",
-    "--benchmark", "deep-swe@1.1",
-    "--agent", "codex:gpt-5.5",
-    "--agent", "gemini:gemini-3.5-flash-lite",
-    "--effort", "low",
-  ]);
-  const input = buildJobInput(inv);
+function testGrammarResolution() {
+  console.log("\n--- parseArgs: noun-verb resolution and aliases ---");
+  assertEqual(parseArgs(["job", "list"]).command, "job list", "noun verb resolves");
+  assertEqual(parseArgs(["jobs", "list"]).command, "job list", "plural noun is a hidden alias");
+  assertEqual(parseArgs(["job", "ls"]).command, "job list", "`ls` is a hidden alias of list");
+  assertEqual(parseArgs(["run"]).command, "job start", "`run` is the top-level alias of job start");
+  assertEqual(parseArgs([]).command, "help", "bare invocation is help, not an error");
+  assertEqual(parseArgs(["help"]).command, "help", "help command");
+  assertEqual(parseArgs(["--version"]).command, "version", "--version resolves");
+  assertEqual(parseArgs(["-v"]).command, "version", "-v resolves");
   assertEqual(
-    input.agents,
-    [
-      { name: "codex", model_name: "gpt-5.5", reasoning_effort: "low" },
-      // gemini gets the value TOO: the server's per-agent refusal is the
-      // single source of truth, and the CLI silently unstamping some agents
-      // would submit a sweep the flag no longer describes.
-      { name: "gemini", model_name: "gemini-3.5-flash-lite", reasoning_effort: "low" },
-    ],
-    "--effort applied to every agent, refusal left to the server"
+    parseArgs(["job"]),
+    { command: "help", positionals: ["job"], flags: {} },
+    "a bare group shows the group help (no_args_is_help)"
   );
-
-  const bare = buildJobInput(parseArgs(["run", "--benchmark", "b@1", "--agent", "codex:m"]));
-  assertEqual(bare.agents, [{ name: "codex", model_name: "m" }], "no --effort, no field — the server resolves its default");
+  assertEqual(
+    parseArgs(["job", "start", "-h"]),
+    { command: "help", positionals: ["job", "start"], flags: {} },
+    "-h on a command resolves to that command's help"
+  );
+  assertThrowsUsage(() => parseArgs(["frobnicate"]), "Unknown command", "unknown group");
+  assertThrowsUsage(
+    () => parseArgs(["job", "frobnicate"]),
+    "supported:",
+    "unknown verb names the supported ones"
+  );
+  assertThrowsUsage(() => parseArgs(["job", "--json"]), "requires a command", "group with only flags");
 }
 
-function testParseRunFull() {
-  console.log("\n--- parseArgs + buildJobInput: full run command ---");
+function testShortFlags() {
+  console.log("\n--- parseArgs: short flags and the -l dual use ---");
   const inv = parseArgs([
-    "run",
-    "--benchmark", "deep-swe@1.1",
-    "--agent", "codex:gpt-5.5",
-    "--agent", "claude:sonnet:2.1.0",
-    "--tasks", "task-a, task-b",
-    "--runs", "2",
-    "--concurrency", "4",
-    "--max-trial-spend", "25",
-    "--provider", "daytona",
-    "--watch",
-    "--json",
+    "job", "start",
+    "-d", "deep-swe@1.1",
+    "-a", "codex",
+    "-m", "gpt-5.5",
+    "-k", "2",
+    "-n", "8",
+    "-e", "daytona",
+    "-i", "cache-*",
+    "-x", "flaky-*",
+    "-l", "5",
+    "-q",
+    "-y",
   ]);
-  assertEqual(inv.command, "run", "command is run");
-  assertEqual(inv.flags.watch, true, "--watch parsed as boolean");
-  assertEqual(inv.flags.json, true, "--json parsed as boolean");
-  assertEqual(inv.flags.agent, ["codex:gpt-5.5", "claude:sonnet:2.1.0"], "--agent is repeatable");
+  assertEqual(inv.command, "job start", "command resolved");
+  assertEqual(inv.flags.dataset, ["deep-swe@1.1"], "-d is --dataset (repeatable)");
+  assertEqual(inv.flags.agent, "codex", "-a is --agent");
+  assertEqual(inv.flags.model, ["gpt-5.5"], "-m is --model (repeatable)");
+  assertEqual(inv.flags["n-attempts"], 2, "-k is --n-attempts");
+  assertEqual(inv.flags["n-concurrent"], 8, "-n is --n-concurrent");
+  assertEqual(inv.flags.env, "daytona", "-e is --env, the sandbox provider");
+  assertEqual(inv.flags["include-task-name"], ["cache-*"], "-i is --include-task-name");
+  assertEqual(inv.flags["exclude-task-name"], ["flaky-*"], "-x is --exclude-task-name");
+  assertEqual(inv.flags["n-tasks"], 5, "-l is --n-tasks ON job start");
+  assertEqual(inv.flags.quiet, true, "-q parses");
+  assertEqual(inv.flags.yes, true, "-y is accepted (and does nothing — no prompts exist)");
 
+  const list = parseArgs(["job", "list", "-l", "20"]);
+  assertEqual(list.flags.limit, 20, "-l is --limit ON list commands");
+
+  const ae = parseArgs([
+    "job", "start", "-d", "b", "-a", "codex", "-m", "m",
+    "--ae", "A=1", "--ae", "B=2", "--ve", "C=3",
+  ]);
+  assertEqual(ae.flags["agent-env"], ["A=1", "B=2"], "--ae is the alias of --agent-env, repeatable");
+  assertEqual(ae.flags["verifier-env"], ["C=3"], "--ve is the alias of --verifier-env");
+
+  assertEqual(
+    parseArgs(["job", "start", "-d=deep-swe", "-a=codex", "-m=m"]).flags.dataset,
+    ["deep-swe"],
+    "-d=value inline form works"
+  );
+  assertThrowsUsage(() => parseArgs(["job", "list", "-z"]), "Unknown option", "unknown short flag");
+  assertThrowsUsage(() => parseArgs(["job", "list", "--frob", "x"]), "Unknown option", "unknown long flag");
+  assertThrowsUsage(() => parseArgs(["job", "list", "--cursor"]), "requires a value", "flag missing its value");
+  assertThrowsUsage(
+    () => parseArgs(["job", "start", "-k", "lots", "-d", "b", "-a", "a", "-m", "m"]),
+    "expects a number",
+    "non-numeric number flag"
+  );
+  assertThrowsUsage(() => parseArgs(["job", "show"]), "<id>", "job show without id");
+  assertThrowsUsage(() => parseArgs(["job", "cancel", "a", "b"]), "unexpected argument", "extra positional");
+  assertThrowsUsage(() => parseArgs(["job", "compare", "only-one"]), "<id> <id>", "compare needs at least 2 ids");
+}
+
+// =============================================================================
+// buildJobInput — flags, arms, config merge
+// =============================================================================
+
+function testBuildJobInputFlags() {
+  console.log("\n--- buildJobInput: -d/-a/-m/-i/-x/-l/--effort/--ae/--ve ---");
+  const inv = parseArgs([
+    "job", "start",
+    "-d", "deep-swe@1.1",
+    "-d", "frontier-swe",
+    "-i", "cache-*",
+    "-x", "flaky-*",
+    "-l", "5",
+    "-a", "codex@2.0",
+    "-m", "gpt-5.5",
+    "-m", "gpt-5.5-mini",
+    "--effort", "low",
+    "-k", "2",
+    "-n", "8",
+    "--max-trial-spend", "25",
+    "-e", "daytona",
+    "--ae", "A=1",
+    "--ve", "B=2",
+    "--job-name", "sweep-7",
+  ]);
   const input = buildJobInput(inv);
   assertEqual(
     input,
     {
+      job_name: "sweep-7",
       datasets: [
-        { name: "deep-swe", version: "1.1", task_names: ["task-a", "task-b"] },
+        { name: "deep-swe", version: "1.1", task_names: ["cache-*"], exclude_task_names: ["flaky-*"], n_tasks: 5 },
+        { name: "frontier-swe", task_names: ["cache-*"], exclude_task_names: ["flaky-*"], n_tasks: 5 },
       ],
       agents: [
-        { name: "codex", model_name: "gpt-5.5" },
-        { name: "claude", model_name: "sonnet", version: "2.1.0" },
+        // --effort is stamped on EVERY arm: the server owns the per-agent
+        // refusal, and the CLI never edits the list to dodge one.
+        { name: "codex", model_name: "gpt-5.5", version: "2.0", reasoning_effort: "low" },
+        { name: "codex", model_name: "gpt-5.5-mini", version: "2.0", reasoning_effort: "low" },
       ],
       n_attempts: 2,
-      n_concurrent_trials: 4,
+      n_concurrent_trials: 8,
       max_trial_spend_usd: 25,
       sandbox_provider: "daytona",
+      agent_env: { A: "1" },
+      verifier_env: { B: "2" },
     },
-    "builds the job-creation body (--benchmark → one dataset selector, csv tasks → task_names)"
+    "full body: -d repeatable, filters stamped on EVERY selector, one arm per -m, effort on every arm"
   );
   assertEqual(
     Object.keys(input),
     [
+      "job_name",
       "datasets",
       "agents",
       "n_attempts",
       "n_concurrent_trials",
       "max_trial_spend_usd",
       "sandbox_provider",
+      "agent_env",
+      "verifier_env",
     ],
     "body keys follow the contract field order"
   );
-}
 
-function testParseRunMinimal() {
-  console.log("\n--- buildJobInput: minimal run omits optional fields ---");
-  const inv = parseArgs([
-    "run",
-    "--benchmark=deep-swe@1.1",
-    "--agent=codex:gpt-5.5",
-    "--max-trial-spend=25",
-  ]);
-  const input = buildJobInput(inv);
+  const minimal = buildJobInput(parseArgs(["job", "start", "-d", "deep-swe", "-a", "codex", "-m", "m"]));
   assertEqual(
-    input,
-    {
-      datasets: [{ name: "deep-swe", version: "1.1" }],
-      agents: [{ name: "codex", model_name: "gpt-5.5" }],
-      max_trial_spend_usd: 25,
-    },
-    "--flag=value syntax works; optional fields absent"
+    minimal,
+    { datasets: [{ name: "deep-swe" }], agents: [{ name: "codex", model_name: "m" }] },
+    "minimal body: bare name selector, no optional keys"
   );
-  assert(!("task_names" in input.datasets[0]), "no task_names key when --tasks omitted");
-  assert(!("sandbox_provider" in input), "no provider key when --provider omitted");
-}
+  assert(!("max_trial_spend_usd" in minimal), "no cap key when --max-trial-spend omitted (the server's default is the ask)");
+  assert(!("agent_env" in minimal), "no env key when --ae omitted");
 
-function testParseRunNoSpendCap() {
-  console.log("\n--- parseArgs + buildJobInput: --max-trial-spend is optional ---");
-  // Not in the run command's required list: the server applies its own default
-  // ($200 per trial, operator-tunable) and echoes the resolved cap back.
-  const inv = parseArgs(["run", "--benchmark", "deep-swe", "--agent", "codex:gpt-5.5"]);
-  const input = buildJobInput(inv);
-  assertEqual(
-    input,
-    {
-      datasets: [{ name: "deep-swe" }],
-      agents: [{ name: "codex", model_name: "gpt-5.5" }],
-    },
-    "run parses without --max-trial-spend; a bare name selector carries no version"
-  );
-  // ABSENT, never a null/undefined key: an explicit null would defeat the
-  // server-side default the omission is asking for.
-  assert(
-    !("max_trial_spend_usd" in input),
-    "no cap key on the body when --max-trial-spend is omitted"
-  );
-}
-
-function testParseJobAgent() {
-  console.log("\n--- parseJobAgent: agent:model[:version] ---");
-  assertEqual(
-    parseJobAgent("codex:gpt-5.5"),
-    { name: "codex", model_name: "gpt-5.5" },
-    "two-part spec"
-  );
-  assertEqual(
-    parseJobAgent("claude:sonnet:2.1.0"),
-    { name: "claude", model_name: "sonnet", version: "2.1.0" },
-    "three-part spec carries the version pin"
-  );
-  assertEqual(
-    parseJobAgent("claude:sonnet:2.1.0:beta"),
-    { name: "claude", model_name: "sonnet", version: "2.1.0:beta" },
-    "extra colons stay in the version"
-  );
-  assertThrowsUsage(() => parseJobAgent("codex"), "agent:model", "bare agent rejected");
-  assertThrowsUsage(() => parseJobAgent("codex:"), "agent:model", "empty model rejected");
-  assertThrowsUsage(() => parseJobAgent(":gpt-5.5"), "agent:model", "empty agent rejected");
-}
-
-function testParseErrors() {
-  console.log("\n--- parseArgs: usage errors ---");
-  assertThrowsUsage(() => parseArgs([]), "No command", "empty argv");
-  assertThrowsUsage(() => parseArgs(["frobnicate"]), "Unknown command", "unknown command");
   assertThrowsUsage(
-    () => parseArgs(["run", "--benchmark", "b", "--max-trial-spend", "25"]),
+    () => buildJobInput(parseArgs(["job", "start", "-a", "codex", "-m", "m"])),
+    "--dataset",
+    "missing -d"
+  );
+  assertThrowsUsage(
+    () => buildJobInput(parseArgs(["job", "start", "-d", "b", "-a", "codex"])),
+    "--model",
+    "-a without -m (the server applies no model default)"
+  );
+  assertThrowsUsage(
+    () => buildJobInput(parseArgs(["job", "start", "-d", "b", "-m", "m"])),
     "--agent",
-    "run without --agent"
+    "-m without -a"
   );
   assertThrowsUsage(
-    () => parseArgs(["run", "--agent", "c:m", "--max-trial-spend", "25"]),
-    "--benchmark",
-    "run without --benchmark"
+    () => buildJobInput(parseArgs(["job", "start", "-d", "b@", "-a", "a", "-m", "m"])),
+    "name@version",
+    "malformed dataset ref"
   );
-  assertThrowsUsage(
-    () => parseArgs(["run", "--benchmark", "b", "--agent", "c:m", "--max-trial-spend", "lots"]),
-    "expects a number",
-    "non-numeric --max-trial-spend"
-  );
-  assertThrowsUsage(
-    () => parseArgs(["list", "--frob", "x"]),
-    "Unknown option",
-    "unknown flag"
-  );
-  assertThrowsUsage(() => parseArgs(["get"]), "<id>", "get without id");
-  assertThrowsUsage(() => parseArgs(["get", "a", "b"]), "unexpected argument", "get with extra positional");
-  assertThrowsUsage(() => parseArgs(["list", "--cursor"]), "requires a value", "flag missing its value");
+  assertThrowsUsage(() => parseEnvPairs(["NOEQUALS"], "--agent-env"), "KEY=VALUE", "malformed env pair");
 }
 
-function testParseOtherCommands() {
-  console.log("\n--- parseArgs: other commands ---");
-  assertEqual(
-    parseArgs(["trials", "eval-1", "--limit", "10", "--cursor", "run-5"]),
-    { command: "trials", positionals: ["eval-1"], flags: { limit: 10, cursor: "run-5" } },
-    "trials with pagination"
-  );
-  assertEqual(
-    parseArgs(["export", "eval-1", "--to", "/tmp/x"]),
-    { command: "export", positionals: ["eval-1"], flags: { to: "/tmp/x" } },
-    "export with --to (the standard results layout is the only layout — no --format)"
-  );
-  assertThrowsUsage(
-    () => parseArgs(["export", "eval-1", "--format", "anything"]),
-    "Unknown option",
-    "the retired --format flag is refused"
-  );
-  assertEqual(
-    parseArgs(["benchmarks", "get", "deep-swe@1.1"]),
-    { command: "benchmarks", positionals: ["get", "deep-swe@1.1"], flags: {} },
-    "benchmarks get subcommand"
-  );
-  assertEqual(parseArgs(["--help"]).command, "help", "--help maps to help");
-  assertEqual(
-    parseArgs(["trials", "eval-1", "--status", "INFRASTRUCTURE_ERROR,SCORING_ERROR"]),
-    { command: "trials", positionals: ["eval-1"], flags: { status: "INFRASTRUCTURE_ERROR,SCORING_ERROR" } },
-    "trials with a --status filter"
-  );
-  // A trial id is globally addressable now: one positional, no job id.
-  assertEqual(
-    parseArgs(["trial", "run-9"]),
-    { command: "trial", positionals: ["run-9"], flags: {} },
-    "trial detail command takes the trial id alone"
-  );
-  assertEqual(
-    parseArgs(["trace", "run-9", "--cursor", "5", "--limit", "100"]),
-    { command: "trace", positionals: ["run-9"], flags: { cursor: "5", limit: 100 } },
-    "trace command with cursor/limit — one pagination vocabulary everywhere"
-  );
-  assertEqual(
-    parseArgs(["trace", "run-9", "--stream", "trace-stdout"]),
-    { command: "trace", positionals: ["run-9"], flags: { stream: "trace-stdout" } },
-    "trace with --stream — the raw-artifact selector reaches the handler"
-  );
-  assertEqual(
-    parseArgs(["trace", "run-9", "--save", "/tmp/out"]),
-    { command: "trace", positionals: ["run-9"], flags: { save: "/tmp/out" } },
-    "trace with --save — the target directory reaches the handler"
-  );
-  assertEqual(
-    parseArgs(["compare", "eval-1", "eval-2", "eval-3"]),
-    { command: "compare", positionals: ["eval-1", "eval-2", "eval-3"], flags: {} },
-    "compare with 3 ids"
-  );
-  assertThrowsUsage(() => parseArgs(["compare", "eval-1"]), "<id> <id>", "compare needs at least 2 ids");
-  assertThrowsUsage(() => parseArgs(["trace"]), "<trial-id>", "trace needs the trial id");
-  assertEqual(
-    parseArgs(["regrade", "eval-1"]),
-    { command: "regrade", positionals: ["eval-1"], flags: {} },
-    "regrade whole job"
-  );
-  assertEqual(
-    parseArgs(["regrade", "eval-1", "run-9"]),
-    { command: "regrade", positionals: ["eval-1", "run-9"], flags: {} },
-    "regrade one trial (optional trial-id positional)"
-  );
-  assertEqual(
-    parseArgs(["regrade", "eval-1", "--status", "SCORED,SCORING_ERROR", "--task", "abc"]),
-    { command: "regrade", positionals: ["eval-1"], flags: { status: "SCORED,SCORING_ERROR", task: "abc" } },
-    "regrade with --status + --task filter"
-  );
-  assertEqual(
-    parseArgs(["regrade-job", "job-1"]),
-    { command: "regrade-job", positionals: ["job-1"], flags: {} },
-    "regrade-job read (a regrade IS a job)"
-  );
-  assertThrowsUsage(() => parseArgs(["regrade"]), "<id>", "regrade needs a job id");
-  assertThrowsUsage(() => parseArgs(["regrade-job"]), "<job-id>", "regrade-job needs a job id");
+function testBuildJobInputYesIsInert() {
+  console.log("\n--- buildJobInput: -y changes nothing (reserved, no prompts) ---");
+  const withYes = buildJobInput(parseArgs(["job", "start", "-d", "b", "-a", "a", "-m", "m", "-y"]));
+  const without = buildJobInput(parseArgs(["job", "start", "-d", "b", "-a", "a", "-m", "m"]));
+  assertEqual(withYes, without, "-y leaves the body untouched");
 }
 
-function testParseImport() {
-  console.log("\n--- parseArgs + buildImportInput: import command ---");
-  const inv = parseArgs([
-    "import",
-    "--git", "https://github.com/acme/my-bench.git",
-    "--ref", "main",
-    "--name", "my-bench",
-    "--version", "1.0",
-    "--watch",
-    "--json",
-  ]);
-  assertEqual(inv.command, "import", "command is import");
-  assertEqual(inv.flags.watch, true, "--watch parsed as boolean");
-  assertEqual(
-    buildImportInput(inv),
-    {
-      source: { git_url: "https://github.com/acme/my-bench.git", git_ref: "main" },
-      name: "my-bench",
-      version: "1.0",
-    },
-    "builds the git publish input"
-  );
+async function testConfigFileMerge() {
+  console.log("\n--- buildJobInput: -c config file + flag-over-file merge ---");
+  const dir = await mkdtemp(join(tmpdir(), "evolve-cli-config-"));
+  try {
+    const jsonPath = join(dir, "job.json");
+    await writeFile(
+      jsonPath,
+      JSON.stringify({
+        job_name: "from-file",
+        datasets: [{ name: "deep-swe", version: "1.0", task_names: ["old-*"] }],
+        agents: [{ name: "claude", model_name: "sonnet" }],
+        n_attempts: 3,
+        sandbox_provider: "modal",
+        agent_env: { FILE: "yes" },
+      })
+    );
 
+    const fileOnly = buildJobInput(parseArgs(["job", "start", "-c", jsonPath]));
+    assertEqual(
+      fileOnly,
+      {
+        job_name: "from-file",
+        datasets: [{ name: "deep-swe", version: "1.0", task_names: ["old-*"] }],
+        agents: [{ name: "claude", model_name: "sonnet" }],
+        n_attempts: 3,
+        sandbox_provider: "modal",
+        agent_env: { FILE: "yes" },
+      },
+      "a config file alone builds the whole body"
+    );
+
+    const merged = buildJobInput(
+      parseArgs(["job", "start", "-c", jsonPath, "-a", "codex", "-m", "gpt-5.5", "-i", "new-*", "-k", "1"])
+    );
+    assertEqual(merged.agents, [{ name: "codex", model_name: "gpt-5.5" }], "-a/-m replace the file's agents");
+    assertEqual(
+      merged.datasets,
+      [{ name: "deep-swe", version: "1.0", task_names: ["new-*"] }],
+      "-i overrides the file's per-selector include filter"
+    );
+    assertEqual(merged.n_attempts, 1, "an explicit flag beats the file field");
+    assertEqual(merged.sandbox_provider, "modal", "an unset flag keeps the file field");
+
+    const yamlPath = join(dir, "job.yaml");
+    await writeFile(
+      yamlPath,
+      [
+        "# a job config in the spec vocabulary",
+        "job_name: yaml-job",
+        "datasets:",
+        "  - name: deep-swe",
+        '    version: "1.1"',
+        '    task_names: ["cache-*", "abs-*"]',
+        "  - name: frontier-swe",
+        "agents:",
+        "  - name: codex",
+        "    model_name: gpt-5.5",
+        "    reasoning_effort: low",
+        "n_attempts: 2",
+        "n_concurrent_trials: 8",
+        "max_trial_spend_usd: 25.5",
+        "sandbox_provider: e2b",
+      ].join("\n")
+    );
+    const fromYaml = buildJobInput(parseArgs(["job", "start", "-c", yamlPath]));
+    assertEqual(
+      fromYaml,
+      {
+        job_name: "yaml-job",
+        datasets: [
+          { name: "deep-swe", version: "1.1", task_names: ["cache-*", "abs-*"] },
+          { name: "frontier-swe" },
+        ],
+        agents: [{ name: "codex", model_name: "gpt-5.5", reasoning_effort: "low" }],
+        n_attempts: 2,
+        n_concurrent_trials: 8,
+        max_trial_spend_usd: 25.5,
+        sandbox_provider: "e2b",
+      },
+      "a YAML config builds the same body as JSON"
+    );
+
+    const badPath = join(dir, "bad.yaml");
+    await writeFile(badPath, 'datasets: [{"name": "deep-swe"}]\nfrobnicate: 1\n');
+    assertThrowsUsage(
+      () => buildJobInput(parseArgs(["job", "start", "-c", badPath])),
+      'unknown key "frobnicate"',
+      "an unknown config key is refused by name"
+    );
+    assertThrowsUsage(
+      () => buildJobInput(parseArgs(["job", "start", "-c", join(dir, "missing.yaml")])),
+      "cannot read",
+      "an unreadable config file is a usage error"
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+function testYamlSubset() {
+  console.log("\n--- parseYamlSubset: the deliberate subset ---");
   assertEqual(
-    buildImportInput(
-      parseArgs(["import", "--dir", "/path/to/corpus", "--name", "my-bench", "--version", "2.0"])
+    parseYamlSubset(
+      ["a: 1", "b: true", "c: null", "d: 'single''quoted'", 'e: "double"', "f: bare string", "g: [1, 2]"].join("\n"),
+      "t.yaml"
     ),
-    {
-      source: { directory: "/path/to/corpus" },
-      name: "my-bench",
-      version: "2.0",
-    },
-    "builds the directory publish input"
+    { a: 1, b: true, c: null, d: "single'quoted", e: "double", f: "bare string", g: [1, 2] },
+    "scalars, quotes, and JSON flow lists"
   );
-
-  assertThrowsUsage(
-    () =>
-      buildImportInput(
-        parseArgs([
-          "import", "--dir", "/c", "--git", "g", "--ref", "main", "--name", "b", "--version", "1",
-        ])
-      ),
-    "EITHER --dir OR",
-    "--dir and --git/--ref together are rejected"
-  );
-
   assertEqual(
-    parseArgs(["import", "status", "imp-1"]),
-    { command: "import", positionals: ["status", "imp-1"], flags: {} },
-    "import status subcommand"
+    parseYamlSubset(["list:", "  - one", '  - "two"', "  - 3"].join("\n"), "t.yaml"),
+    { list: ["one", "two", 3] },
+    "block sequences of scalars"
   );
-
-  assertThrowsUsage(
-    () => buildImportInput(parseArgs(["import", "--ref", "main", "--name", "b"])),
-    "--git",
-    "import without --git"
+  assertEqual(
+    parseYamlSubset(["outer:", "  inner:", "    k: v"].join("\n"), "t.yaml"),
+    { outer: { inner: { k: "v" } } },
+    "nested block maps"
   );
-  assertThrowsUsage(
-    () => buildImportInput(parseArgs(["import", "--git", "g", "--name", "b"])),
-    "--ref",
-    "import without --ref"
-  );
-  assertThrowsUsage(
-    () => buildImportInput(parseArgs(["import", "--git", "g", "--ref", "main"])),
-    "--name",
-    "import without --name"
-  );
-  assertThrowsUsage(
-    () => buildImportInput(parseArgs(["import", "--git", "g", "--ref", "main", "--name", "b"])),
-    "--version",
-    "import without --version"
-  );
+  assertEqual(parseYamlSubset("# only comments\n\n", "t.yaml"), {}, "an empty document is an empty object");
+  assertThrowsUsage(() => parseYamlSubset("a: &anchor 1", "t.yaml"), "anchors", "anchors refused loudly");
+  assertThrowsUsage(() => parseYamlSubset("a: |", "t.yaml"), "multi-line", "block scalars refused loudly");
+  assertThrowsUsage(() => parseYamlSubset("---\na: 1", "t.yaml"), "multi-document", "documents refused loudly");
+  assertThrowsUsage(() => parseYamlSubset("\ta: 1", "t.yaml"), "tabs", "tab indentation refused");
+  assertThrowsUsage(() => parseYamlSubset("a: [1, 2", "t.yaml"), "JSON", "broken flow list refused");
 }
 
-function testParseCustomHarnesses() {
-  console.log("\n--- parseArgs + buildCustomHarnessInput: custom-harnesses command ---");
-  assertEqual(
-    parseArgs(["custom-harnesses"]),
-    { command: "custom-harnesses", positionals: [], flags: {} },
-    "bare custom-harnesses lists"
-  );
-  assertEqual(
-    parseArgs(["custom-harnesses", "get", "acme-cli"]),
-    { command: "custom-harnesses", positionals: ["get", "acme-cli"], flags: {} },
-    "custom-harnesses get subcommand"
-  );
-  assertEqual(
-    parseArgs(["custom-harnesses", "remove", "acme-cli"]),
-    { command: "custom-harnesses", positionals: ["remove", "acme-cli"], flags: {} },
-    "custom-harnesses remove subcommand"
-  );
-
-  // --install-script names a FILE; the stub stands in for reading it.
-  const readScript = (path: string) => `# from ${path}\ncurl -fsSL https://acme.dev/install.sh | sh\n`;
-  assertEqual(
-    buildCustomHarnessInput(
-      parseArgs([
-        "custom-harnesses", "add",
-        "--name", "acme-cli",
-        "--install-script", "./install.sh",
-        "--run", "acme-cli --headless",
-        "--env", "ACME_PROFILE=bench",
-        "--env", "ACME_REGION=us",
-      ]),
-      readScript
-    ),
-    {
-      name: "acme-cli",
-      install_script: "# from ./install.sh\ncurl -fsSL https://acme.dev/install.sh | sh\n",
-      run_command: "acme-cli --headless",
-      env: { ACME_PROFILE: "bench", ACME_REGION: "us" },
-    },
-    "builds the install-script agent input (script contents, repeatable --env)"
-  );
-
-  assertEqual(
-    buildCustomHarnessInput(
-      parseArgs([
-        "custom-harnesses", "add",
-        "--name", "acme-cli",
-        "--dir", "/path/to/harness",
-        "--run", "acme-cli --headless",
-      ]),
-      readScript
-    ),
-    {
-      name: "acme-cli",
-      directory: "/path/to/harness",
-      run_command: "acme-cli --headless",
-    },
-    "builds the directory agent input (no env key when --env omitted)"
-  );
-
-  assertThrowsUsage(
-    () =>
-      buildCustomHarnessInput(
-        parseArgs([
-          "custom-harnesses", "add",
-          "--name", "a", "--dir", "/d", "--install-script", "./i.sh", "--run", "r",
-        ]),
-        readScript
-      ),
-    "EITHER --dir OR",
-    "--dir and --install-script together are rejected"
-  );
-  assertThrowsUsage(
-    () =>
-      buildCustomHarnessInput(
-        parseArgs(["custom-harnesses", "add", "--name", "a", "--run", "r"]),
-        readScript
-      ),
-    "--install-script",
-    "custom-harnesses add without a source"
-  );
-  assertThrowsUsage(
-    () =>
-      buildCustomHarnessInput(
-        parseArgs(["custom-harnesses", "add", "--dir", "/d", "--run", "r"]),
-        readScript
-      ),
-    "--name",
-    "custom-harnesses add without --name"
-  );
-  assertThrowsUsage(
-    () =>
-      buildCustomHarnessInput(
-        parseArgs(["custom-harnesses", "add", "--name", "a", "--dir", "/d"]),
-        readScript
-      ),
-    "--run",
-    "custom-harnesses add without --run"
-  );
-  assertThrowsUsage(
-    () =>
-      buildCustomHarnessInput(
-        parseArgs([
-          "custom-harnesses", "add", "--name", "a", "--dir", "/d", "--run", "r", "--env", "NOPE",
-        ]),
-        readScript
-      ),
-    "KEY=VALUE",
-    "--env without an = is rejected"
-  );
+async function testPrintConfig() {
+  console.log("\n--- runCli: --print-config prints the resolved body, no network ---");
+  installMockFetch();
+  try {
+    const { io, out } = captureIO();
+    const code = await runCli(
+      ["job", "start", "-d", "deep-swe@1.1", "-a", "codex", "-m", "gpt-5.5", "--print-config", ...AUTH],
+      io
+    );
+    assertEqual(code, 0, "exit 0");
+    assertEqual(fetchCalls.length, 0, "nothing was sent");
+    assertEqual(
+      JSON.parse(out.join("\n")),
+      { datasets: [{ name: "deep-swe", version: "1.1" }], agents: [{ name: "codex", model_name: "gpt-5.5" }] },
+      "prints the resolved JobCreate body"
+    );
+  } finally {
+    restoreFetch();
+  }
 }
+
+// =============================================================================
+// HELP + VERSION
+// =============================================================================
+
+async function testHelpAndVersion() {
+  console.log("\n--- runCli: help forms and --version ---");
+  const root = captureIO();
+  assertEqual(await runCli([], root.io), 0, "bare invocation exits 0");
+  const rootText = root.out.join("\n");
+  assert(rootText.includes("Usage: evolve-evals"), "root help prints usage");
+  assert(rootText.includes("job") && rootText.includes("dataset"), "root help names the groups");
+
+  const group = captureIO();
+  assertEqual(await runCli(["job"], group.io), 0, "bare group exits 0");
+  assert(group.out.join("\n").includes("start"), "group help lists its verbs");
+
+  const cmd = captureIO();
+  assertEqual(await runCli(["job", "start", "--help"], cmd.io), 0, "command --help exits 0");
+  const cmdText = cmd.out.join("\n");
+  assert(cmdText.includes("-d, --dataset"), "command help shows the short + long flags");
+  assert(cmdText.includes("Example:"), "command help carries a worked example");
+  assert(cmdText.includes("evolve-evals job start -d "), "the example is a runnable line");
+
+  const trialCmd = captureIO();
+  await runCli(["help", "trial", "download"], trialCmd.io);
+  assert(trialCmd.out.join("\n").includes("--stream"), "help <group> <verb> resolves the command help");
+
+  const version = captureIO();
+  assertEqual(await runCli(["--version"], version.io), 0, "--version exits 0");
+  const pkg = JSON.parse(
+    readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "package.json"), "utf-8")
+  );
+  assertEqual(version.out, [pkg.version], "--version prints the package version");
+}
+
+// =============================================================================
+// RENDERERS
+// =============================================================================
 
 function testImportStatusLine() {
   console.log("\n--- importStatusLine: compact status lines ---");
@@ -603,8 +548,8 @@ function testImportStatusLine() {
   const imported = importStatusLine({ ...job, status: "COMPLETED", failure: null, task_count: 12 });
   assert(imported.includes("COMPLETED"), "includes the status");
   assert(imported.includes("tasks=12"), "includes the task count");
-  const failed = importStatusLine({ ...job, status: "FAILED", failure: { code: "import_failed", message: "bad tasks.json", failures: [{ task_name: "t1", error: "boom" }] } });
-  assert(failed.includes("FAILED") && failed.includes("bad tasks.json") && failed.includes("1 task failure"), "FAILED line carries message + failure count");
+  const failedLine = importStatusLine({ ...job, status: "FAILED", failure: { code: "import_failed", message: "bad tasks.json", failures: [{ task_name: "t1", error: "boom" }] } });
+  assert(failedLine.includes("FAILED") && failedLine.includes("bad tasks.json") && failedLine.includes("1 task failure"), "FAILED line carries message + failure count");
 }
 
 function testEventLine() {
@@ -630,10 +575,6 @@ function testEventLine() {
   assert(spend.includes("run-1"), "spend line includes trial_id");
   assert(spend.includes("live_spent_usd=0.0421"), "spend line carries the live figure");
 }
-
-// =============================================================================
-// trialDetailLines: live spend shown while RUNNING, gone once settled
-// =============================================================================
 
 function trialFixture(overrides: Partial<Trial>): Trial {
   return {
@@ -742,15 +683,15 @@ function wireJob(overrides: Record<string, unknown> = {}): Record<string, unknow
   };
 }
 
-// =============================================================================
-// END-TO-END: run --watch (mocked)
-// =============================================================================
-
 function sseText(events: { seq: number; type: string; data: unknown }[]): string {
   return events
     .map((e) => `id: ${e.seq}\nevent: ${e.type}\ndata: ${JSON.stringify(e.data)}\n\n`)
     .join("");
 }
+
+// =============================================================================
+// END-TO-END: job start --watch (mocked)
+// =============================================================================
 
 async function testRunWatchEndToEnd() {
   console.log("\n--- runCli: end-to-end run --watch against mocked API ---");
@@ -783,14 +724,14 @@ async function testRunWatchEndToEnd() {
     const code = await runCli(
       [
         "run",
-        "--benchmark", "deep-swe@1.1",
-        "--agent", "codex:gpt-5.5",
-        "--runs", "1",
-        "--concurrency", "4",
+        "-d", "deep-swe@1.1",
+        "-a", "codex",
+        "-m", "gpt-5.5",
+        "-k", "1",
+        "-n", "4",
         "--max-trial-spend", "25",
         "--watch",
-        "--api-key", "test-key",
-        "--base-url", BASE,
+        ...AUTH,
       ],
       io
     );
@@ -835,14 +776,17 @@ async function testRunWatchEndToEnd() {
   }
 }
 
-async function testRunWatchJsonNdjson() {
-  console.log("\n--- runCli: run --watch --json emits NDJSON ---");
+async function testRunWatchJsonAndQuiet() {
+  console.log("\n--- runCli: --watch --json emits NDJSON; -q silences the event log ---");
   installMockFetch();
   try {
     setMockResponse("/api/jobs/eval-1/events", {
       status: 200,
       body: null,
-      streamBody: sseText([{ seq: 0, type: "job.completed", data: { job_id: "eval-1" } }]),
+      streamBody: sseText([
+        { seq: 0, type: "trial.settled", data: { trial_id: "run-1", status: "SCORED" } },
+        { seq: 1, type: "job.completed", data: { job_id: "eval-1" } },
+      ]),
     });
     setMockResponse("/api/jobs/eval-1", {
       status: 200,
@@ -850,135 +794,51 @@ async function testRunWatchJsonNdjson() {
     });
     setMockResponse("/api/jobs", { status: 202, body: wireJob() });
 
-    const { io, out } = captureIO();
+    const ndjson = captureIO();
     const code = await runCli(
-      ["run", "--benchmark", "deep-swe@1.1", "--agent", "codex:gpt-5.5", "--max-trial-spend", "25",
-       "--watch", "--json", "--api-key", "test-key", "--base-url", BASE],
-      io
+      ["run", "-d", "deep-swe@1.1", "-a", "codex", "-m", "gpt-5.5", "--watch", "--json", ...AUTH],
+      ndjson.io
     );
-
     assertEqual(code, 0, "exit code 0");
-    const parsed = out.map((l) => JSON.parse(l));
+    const parsed = ndjson.out.map((l) => JSON.parse(l));
     assertEqual(parsed[0].kind, "job.created", "first NDJSON line is the created job");
     assert(parsed.some((p) => p.kind === "event" && p.type === "job.completed"), "events are NDJSON lines");
     const final = parsed[parsed.length - 1];
     assertEqual(final.kind, "job.final", "last NDJSON line is the final job");
     assertEqual(final.job.status, "COMPLETED", "final job status present");
+
+    const quiet = captureIO();
+    await runCli(
+      ["run", "-d", "deep-swe@1.1", "-a", "codex", "-m", "gpt-5.5", "--watch", "-q", ...AUTH],
+      quiet.io
+    );
+    assert(!quiet.out.some((l) => l.includes("trial.settled")), "-q suppresses per-event lines");
+    assert(quiet.out.some((l) => l.includes("COMPLETED")), "-q still prints the final block");
   } finally {
     restoreFetch();
   }
 }
 
-async function testImportWatchEndToEnd() {
-  console.log("\n--- runCli: end-to-end import --watch against mocked API ---");
+async function testWatchFailedExitCode() {
+  console.log("\n--- runCli: --watch exits 1 on FAILED (the honest exit-code contract) ---");
   installMockFetch();
   try {
-    // Insertion order matters: most-specific patterns first.
-    setMockResponse("/api/datasets/imports/imp-1", {
+    setMockResponse("/api/jobs/eval-1/events", {
       status: 200,
-      body: { id: "imp-1", status: "COMPLETED", name: "my-bench", version: "1.0", task_count: 12, failure: null, warnings: [] },
+      body: null,
+      streamBody: sseText([{ seq: 0, type: "job.failed", data: { job_id: "eval-1" } }]),
     });
-    setMockResponse("/api/datasets/publish", {
-      status: 202,
-      body: { id: "imp-1", status: "QUEUED", name: "my-bench", version: "1.0", failure: null, warnings: [] },
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: wireJob({ status: "FAILED", failure: { code: "job_failed", message: "boom" } }),
     });
-
-    const { io, out, err } = captureIO();
+    setMockResponse("/api/jobs", { status: 202, body: wireJob() });
+    const { io } = captureIO();
     const code = await runCli(
-      [
-        "import",
-        "--git", "https://github.com/acme/my-bench.git",
-        "--ref", "main",
-        "--name", "my-bench",
-        "--version", "1.0",
-        "--watch",
-        "--api-key", "test-key",
-        "--base-url", BASE,
-      ],
+      ["run", "-d", "deep-swe@1.1", "-a", "codex", "-m", "gpt-5.5", "--watch", ...AUTH],
       io
     );
-
-    assertEqual(code, 0, "exit code 0 on COMPLETED");
-    assertEqual(err, [], "nothing on stderr");
-
-    // The create request
-    const createCall = fetchCalls.find((c) => c.url === `${BASE}/api/datasets/publish`);
-    assert(createCall !== undefined, "POSTs /api/datasets/publish");
-    assertEqual(createCall?.init?.method, "POST", "create uses POST");
-    // ONE body grammar: multipart/form-data with named parts, so nothing rides
-    // the query string on either upload route.
-    const form = createCall?.init?.body as FormData;
-    assert(form instanceof FormData, "create body is multipart/form-data");
-    assertEqual(form.get("git_url"), "https://github.com/acme/my-bench.git", "git_url part");
-    assertEqual(form.get("git_ref"), "main", "git_ref part");
-    assertEqual(form.get("name"), "my-bench", "name part");
-    assertEqual(form.get("version"), "1.0", "version part");
-
-    // The watch poll
-    const pollCall = fetchCalls.find((c) => c.url === `${BASE}/api/datasets/imports/imp-1`);
-    assert(pollCall !== undefined, "polls GET /api/datasets/imports/<id>");
-
-    // Rendered output
-    assert(out[0].includes("imp-1") && out[0].includes("my-bench") && out[0].includes("watching"), "prints the created header");
-    assert(out.some((l) => l.includes("COMPLETED") && l.includes("tasks=12")), "renders the COMPLETED status line");
-  } finally {
-    restoreFetch();
-  }
-}
-
-async function testImportWatchFailedAndStatus() {
-  console.log("\n--- runCli: import --watch FAILED exits 1; import status --json ---");
-  installMockFetch();
-  try {
-    setMockResponse("/api/datasets/imports/imp-2", {
-      status: 200,
-      body: { id: "imp-2", status: "FAILED", name: "b", version: "1.0", failure: { code: "import_failed", message: "bad tasks.json" }, warnings: [] },
-    });
-    setMockResponse("/api/datasets/publish", {
-      status: 202,
-      body: { id: "imp-2", status: "QUEUED", name: "b", version: "1.0", failure: null, warnings: [] },
-    });
-
-    const failed = captureIO();
-    const codeFailed = await runCli(
-      ["import", "--git", "g", "--ref", "main", "--name", "b", "--version", "1.0", "--watch",
-       "--api-key", "test-key", "--base-url", BASE],
-      failed.io
-    );
-    assertEqual(codeFailed, 1, "exit code 1 on FAILED");
-    assert(failed.out.some((l) => l.includes("bad tasks.json")), "final summary carries the error");
-
-    const status = captureIO();
-    const codeStatus = await runCli(
-      ["import", "status", "imp-2", "--json", "--api-key", "test-key", "--base-url", BASE],
-      status.io
-    );
-    assertEqual(codeStatus, 0, "import status exits 0");
-    assertEqual(
-      JSON.parse(status.out[0]),
-      {
-        id: "imp-2",
-        status: "FAILED",
-        name: "b",
-        version: "1.0",
-        failure: { code: "import_failed", message: "bad tasks.json" },
-        warnings: [],
-      },
-      "import status --json emits the self-describing job"
-    );
-
-    const noNetwork = fetchCalls.length;
-    const badSub = captureIO();
-    const codeBadSub = await runCli(["import", "frobnicate", "--api-key", "k", "--base-url", BASE], badSub.io);
-    assertEqual(codeBadSub, 2, "unknown import subcommand exits 2");
-    const noId = captureIO();
-    const codeNoId = await runCli(["import", "status", "--api-key", "k", "--base-url", BASE], noId.io);
-    assertEqual(codeNoId, 2, "import status without <id> exits 2");
-    const noGit = captureIO();
-    const codeNoGit = await runCli(["import", "--ref", "main", "--name", "b", "--api-key", "k", "--base-url", BASE], noGit.io);
-    assertEqual(codeNoGit, 2, "import without --git exits 2");
-    assert(noGit.err[0].includes("--git"), "stderr names the missing flag");
-    assertEqual(fetchCalls.length, noNetwork, "no network call on import usage errors");
+    assertEqual(code, 1, "FAILED job exits 1");
   } finally {
     restoreFetch();
   }
@@ -989,20 +849,18 @@ async function testUsageErrorExitCode() {
   installMockFetch();
   try {
     const bad = captureIO();
-    const codeBad = await runCli(["run", "--benchmark", "b"], bad.io);
+    const codeBad = await runCli(["job", "start", "-d", "b"], bad.io);
     assertEqual(codeBad, 2, "missing required flags exit 2");
     assert(bad.err[0].includes("--agent"), "stderr names the missing flag");
     assertEqual(fetchCalls.length, 0, "no network call on usage error");
+    assert(bad.err[1].includes("job start --help"), "the hint points at the command's own help");
 
     setMockResponse("/api/jobs/eval-x", {
       status: 404,
       body: { error: { code: "job_not_found", message: "Job not found: eval-x" } },
     });
     const notFound = captureIO();
-    const codeApi = await runCli(
-      ["get", "eval-x", "--api-key", "test-key", "--base-url", BASE],
-      notFound.io
-    );
+    const codeApi = await runCli(["job", "show", "eval-x", ...AUTH], notFound.io);
     assertEqual(codeApi, 1, "API error exits 1");
     assert(
       notFound.err[0].includes("Job not found: eval-x"),
@@ -1015,7 +873,158 @@ async function testUsageErrorExitCode() {
 }
 
 // =============================================================================
-// REGRADE — the response is a JOB
+// LISTS — shared output precedence
+// =============================================================================
+
+async function testJobListOutputModes() {
+  console.log("\n--- runCli: job list — TSV, TTY table, -q, --columns, --search ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs", {
+      status: 200,
+      body: {
+        items: [wireJob(), wireJob({ id: "eval-2", status: "COMPLETED" })],
+        nextCursor: "cur-1",
+        hasMore: true,
+      },
+    });
+
+    const piped = captureIO(false);
+    assertEqual(await runCli(["job", "list", ...AUTH], piped.io), 0, "list exits 0");
+    assert(piped.out[0].includes("ID\tSTATUS"), "non-TTY output is TSV with a header");
+    assert(piped.out[1].startsWith("eval-1\t"), "rows are tab-separated");
+    assert(!piped.out.some((l) => l.includes("More:")), "no next-page hint in piped output");
+
+    const noHeaders = captureIO(false);
+    await runCli(["job", "list", "--no-headers", ...AUTH], noHeaders.io);
+    assert(noHeaders.out[0].startsWith("eval-1\t"), "--no-headers drops the header row");
+
+    const tty = captureIO(true);
+    await runCli(["job", "list", ...AUTH], tty.io);
+    assert(tty.out[0].includes("ID") && !tty.out[0].includes("\t"), "TTY output is an aligned table");
+    assert(tty.out.some((l) => l.includes("More: evolve-evals job list --cursor cur-1")), "TTY shows the next-page hint");
+
+    const quiet = captureIO();
+    await runCli(["job", "list", "-q", ...AUTH], quiet.io);
+    assertEqual(quiet.out, ["eval-1", "eval-2"], "-q prints only ids, one per line");
+
+    const cols = captureIO(false);
+    await runCli(["job", "list", "--columns", "status,id", ...AUTH], cols.io);
+    assertEqual(cols.out[0], "STATUS\tID", "--columns selects AND orders");
+    assertEqual(cols.out[1], "QUEUED\teval-1", "cells follow the chosen order");
+
+    const before = fetchCalls.length;
+    const colsHelp = captureIO();
+    assertEqual(await runCli(["job", "list", "--columns", "help", ...AUTH], colsHelp.io), 0, "--columns help exits 0");
+    assert(colsHelp.out.includes("id") && colsHelp.out.includes("started"), "--columns help lists the keys");
+    assertEqual(fetchCalls.length, before, "--columns help makes no request");
+
+    const badCol = captureIO();
+    assertEqual(await runCli(["job", "list", "--columns", "frob", ...AUTH], badCol.io), 2, "unknown column exits 2");
+    assert(badCol.err[0].includes("available:"), "unknown column names the valid keys");
+
+    const searched = captureIO();
+    await runCli(["job", "list", "--search", "deep", ...AUTH], searched.io);
+    const searchCall = fetchCalls[fetchCalls.length - 1];
+    assert(searchCall.url.includes("search=deep"), "--search rides the query string");
+
+    const json = captureIO();
+    await runCli(["job", "list", "--json", ...AUTH], json.io);
+    const page = JSON.parse(json.out[0]);
+    assertEqual(page.nextCursor, "cur-1", "--json carries the whole page envelope");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testJobShowMultiId() {
+  console.log("\n--- runCli: job show takes N ids (combined view) ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs/eval-1", { status: 200, body: wireJob() });
+    setMockResponse("/api/jobs/eval-2", { status: 200, body: wireJob({ id: "eval-2" }) });
+
+    const single = captureIO();
+    await runCli(["job", "show", "eval-1", "--json", ...AUTH], single.io);
+    assert(!Array.isArray(JSON.parse(single.out[0])), "--json with one id is the job object");
+
+    const multi = captureIO();
+    const code = await runCli(["job", "show", "eval-1", "eval-2", "--json", ...AUTH], multi.io);
+    assertEqual(code, 0, "exit 0");
+    const bodies = JSON.parse(multi.out[0]);
+    assert(Array.isArray(bodies) && bodies.length === 2, "--json with N ids is an array");
+    assertEqual(bodies.map((b: { id: string }) => b.id), ["eval-1", "eval-2"], "bodies in the caller's order");
+
+    const rendered = captureIO();
+    await runCli(["job", "show", "eval-1", "eval-2", ...AUTH], rendered.io);
+    const text = rendered.out.join("\n");
+    assert(text.includes("eval-1") && text.includes("eval-2"), "rendered view shows both jobs");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testJobTrialsAndTasks() {
+  console.log("\n--- runCli: job trials + job tasks ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs/eval-1/trials", {
+      status: 200,
+      body: {
+        items: [trialFixture({ status: "SCORED", reward: 1, agent_result: { cost_usd: 0.5 } })],
+        nextCursor: null,
+        hasMore: false,
+      },
+    });
+    setMockResponse("/api/jobs/eval-1/tasks", {
+      status: 200,
+      body: {
+        items: [
+          {
+            task_name: "abs-module-cache-flags",
+            source: "deep-swe",
+            trials: { total: 2, byStatus: { ...ZERO_TRIAL_STATUSES, SCORED: 2 } },
+            mean_reward: 0.5,
+            cost_usd: 1.25,
+          },
+        ],
+        nextCursor: null,
+        hasMore: false,
+      },
+    });
+
+    const trialsIO = captureIO();
+    const trialsCode = await runCli(
+      ["job", "trials", "eval-1", "--status", "SCORED,SCORING_ERROR", ...AUTH],
+      trialsIO.io
+    );
+    assertEqual(trialsCode, 0, "job trials exits 0");
+    const trialsCall = fetchCalls.find((c) => c.url.includes("/api/jobs/eval-1/trials"));
+    assert(trialsCall !== undefined, "hits the job trials route");
+    assert(trialsCall!.url.includes("status=SCORED%2CSCORING_ERROR"), "--status rides the query");
+    assert(trialsIO.out[0].includes("TASK\tAGENT"), "trial rows are TSV when piped");
+
+    const tasksIO = captureIO();
+    const tasksCode = await runCli(["job", "tasks", "eval-1", ...AUTH], tasksIO.io);
+    assertEqual(tasksCode, 0, "job tasks exits 0");
+    const tasksCall = fetchCalls.find((c) => c.url.includes("/api/jobs/eval-1/tasks"));
+    assert(tasksCall !== undefined, "hits the per-task rollup route");
+    assert(tasksIO.out[1].includes("abs-module-cache-flags"), "renders the rollup row");
+    assert(tasksIO.out[1].includes("SCORED 2"), "renders the status tally");
+
+    const emptyStatus = captureIO();
+    assertEqual(
+      await runCli(["job", "trials", "eval-1", "--status", " , ", ...AUTH], emptyStatus.io),
+      2,
+      "an empty --status list is a usage error"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+// =============================================================================
+// JOB DERIVATIONS — resume, regrade, compare, cancel, download
 // =============================================================================
 
 const CLI_REGRADE_JOB = wireJob({
@@ -1029,16 +1038,46 @@ const CLI_REGRADE_JOB = wireJob({
   finished_at: "2026-07-24T00:05:00Z",
 });
 
-async function testRegradeCliCreate() {
-  console.log("\n--- runCli: regrade <id> --task posts the filter and renders the job ---");
+async function testJobResume() {
+  console.log("\n--- runCli: job resume -f posts filter_error_types ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs/eval-1/resume", {
+      status: 202,
+      body: wireJob({ id: "resume-1", source_jobs: [{ action: "resume", type: "hub", job_id: "eval-1" }] }),
+    });
+    const { io, out } = captureIO();
+    const code = await runCli(
+      ["job", "resume", "eval-1", "-f", "InfrastructureError", "-f", "ScoringError", ...AUTH],
+      io
+    );
+    assertEqual(code, 0, "exit 0");
+    const call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.endsWith("/api/jobs/eval-1/resume"), "hits the resume route");
+    assertEqual(
+      JSON.parse(call.init?.body as string),
+      { filter_error_types: ["InfrastructureError", "ScoringError"] },
+      "-f is repeatable and lands as filter_error_types"
+    );
+    assert(out.some((l) => l.includes("resume of") && l.includes("eval-1")), "renders the resume provenance");
+    assert(out.some((l) => l.includes("job show resume-1")), "prints the follow hint in the new grammar");
+
+    const bare = captureIO();
+    await runCli(["job", "resume", "eval-1", ...AUTH], bare.io);
+    const bareCall = fetchCalls[fetchCalls.length - 1];
+    assertEqual(JSON.parse(bareCall.init?.body as string), {}, "no -f sends an empty body (server default set)");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testJobRegrade() {
+  console.log("\n--- runCli: job regrade posts the filter and renders the job ---");
   installMockFetch();
   try {
     setMockResponse("/api/jobs/eval-1/regrade", { status: 202, body: CLI_REGRADE_JOB });
     const { io, out, err } = captureIO();
-    const code = await runCli(
-      ["regrade", "eval-1", "--task", "demo-task", "--api-key", "test-key", "--base-url", BASE],
-      io
-    );
+    const code = await runCli(["job", "regrade", "eval-1", "--task", "demo-task", ...AUTH], io);
     assertEqual(code, 0, "exit 0");
     assertEqual(err, [], "nothing on stderr");
     const call = fetchCalls[fetchCalls.length - 1];
@@ -1047,22 +1086,19 @@ async function testRegradeCliCreate() {
     assertEqual(JSON.parse(call.init?.body as string), { task_name: "demo-task" }, "sends the task_name filter");
     assert(out.some((l) => l.includes("regrade-1")), "renders the regrade JOB id");
     assert(out.some((l) => l.includes("regrade of") && l.includes("eval-1")), "renders the source-job provenance");
-    assert(out.some((l) => l.includes("get regrade-1")), "prints the follow-up read hint — a regrade is read with get");
+    assert(out.some((l) => l.includes("job show regrade-1")), "a regrade is read with job show");
   } finally {
     restoreFetch();
   }
 }
 
-async function testRegradeCliPerTrial() {
-  console.log("\n--- runCli: regrade <id> <trial-id> hits the global trial route ---");
+async function testTrialRegrade() {
+  console.log("\n--- runCli: trial regrade hits the global trial route ---");
   installMockFetch();
   try {
     setMockResponse("/api/trials/run-1/regrade", { status: 202, body: CLI_REGRADE_JOB });
     const { io, out } = captureIO();
-    const code = await runCli(
-      ["regrade", "eval-1", "run-1", "--api-key", "test-key", "--base-url", BASE],
-      io
-    );
+    const code = await runCli(["trial", "regrade", "run-1", ...AUTH], io);
     assertEqual(code, 0, "exit 0");
     const call = fetchCalls[fetchCalls.length - 1];
     assert(call.url.endsWith("/api/trials/run-1/regrade"), "the trial id alone addresses the regrade");
@@ -1072,66 +1108,140 @@ async function testRegradeCliPerTrial() {
   }
 }
 
-async function testRegradeCliRead() {
-  console.log("\n--- runCli: regrade-job <id> reads the regrade as a plain job ---");
+async function testCompareCancelDownload() {
+  console.log("\n--- runCli: job compare / cancel / download ---");
   installMockFetch();
+  const tmpDir = join(tmpdir(), `cli-job-dl-${Date.now()}`);
   try {
-    setMockResponse("/api/jobs/regrade-1", { status: 200, body: CLI_REGRADE_JOB });
-    const { io, out } = captureIO();
-    const code = await runCli(["regrade-job", "regrade-1", "--api-key", "test-key", "--base-url", BASE], io);
-    assertEqual(code, 0, "exit 0");
-    const call = fetchCalls[fetchCalls.length - 1];
-    assert(call.url.endsWith("/api/jobs/regrade-1"), "a regrade IS a job — read from /api/jobs");
-    const text = out.join("\n");
-    assert(text.includes("regrade of") && text.includes("eval-1"), "renders the provenance row");
-    assert(text.includes("SCORED 1"), "renders the trial histogram");
-  } finally {
-    restoreFetch();
-  }
-}
-
-async function testRegradeCliPerRunRejectsFilter() {
-  console.log("\n--- runCli: regrade <id> <trial-id> --status is a usage error ---");
-  const { io, err } = captureIO();
-  const code = await runCli(
-    ["regrade", "eval-1", "run-1", "--status", "SCORED", "--api-key", "k", "--base-url", BASE],
-    io
-  );
-  assertEqual(code, 2, "usage error exit 2");
-  assert(err.some((l) => l.includes("whole-job regrade")), "explains filters are for whole-job regrade");
-}
-
-// =============================================================================
-// TRACE — globally addressable
-// =============================================================================
-
-async function testTraceStreamCli() {
-  console.log("\n--- runCli: trace --stream prints one raw artifact ---");
-  installMockFetch();
-  try {
-    setMockResponse("/api/trials/run-1/trace?stream=trace-stdout", {
+    setMockResponse("/api/jobs/eval-1/cancel", { status: 202, body: wireJob({ status: "CANCELLING" }) });
+    setMockResponse("/api/jobs/eval-1/download", {
       status: 200,
-      body: { log: "raw harness stdout" },
+      body: null,
+      bodyBytes: Buffer.from("results bytes"),
+      headers: { "Content-Disposition": 'attachment; filename="job-eval-1-results.tar.gz"' },
     });
-    const { io, out, err } = captureIO();
-    const code = await runCli(
-      ["trace", "run-1", "--stream", "trace-stdout", "--api-key", "test-key", "--base-url", BASE],
-      io
-    );
+    setMockResponse("/api/jobs/compare", {
+      status: 200,
+      body: {
+        jobs: [
+          { id: "eval-1", datasets: [{ name: "deep-swe", version: "1.1" }], status: "COMPLETED", mean_reward: 0.5, coverage: { scored: 2, total: 2 }, cost_usd: 1, agents: [], started_at: "2026-07-22T00:00:00Z" },
+          { id: "eval-2", datasets: [{ name: "deep-swe", version: "1.1" }], status: "COMPLETED", mean_reward: 1, coverage: { scored: 2, total: 2 }, cost_usd: 2, agents: [], started_at: "2026-07-22T00:00:00Z" },
+        ],
+        taskMatrix: [],
+      },
+    });
+
+    const compare = captureIO();
+    assertEqual(await runCli(["job", "compare", "eval-1", "eval-2", ...AUTH], compare.io), 0, "compare exits 0");
+    assert(fetchCalls[fetchCalls.length - 1].url.includes("/api/jobs/compare?ids=eval-1,eval-2"), "compare rides ?ids=");
+    assert(compare.out.join("\n").includes("MEAN REWARD"), "renders the aggregate table");
+
+    const cancel = captureIO();
+    assertEqual(await runCli(["job", "cancel", "eval-1", ...AUTH], cancel.io), 0, "cancel exits 0");
+    assertEqual(fetchCalls[fetchCalls.length - 1].init?.method, "POST", "cancel uses POST");
+
+    const download = captureIO();
+    assertEqual(await runCli(["job", "download", "eval-1", "-o", tmpDir, ...AUTH], download.io), 0, "download exits 0");
+    assert(fetchCalls[fetchCalls.length - 1].url.endsWith("/api/jobs/eval-1/download"), "hits the download route");
+    const written = await readFile(join(tmpDir, "job-eval-1-results.tar.gz"));
+    assertEqual(written.toString(), "results bytes", "-o saves the archive bytes");
+    assert(download.out.some((l) => l.includes("job-eval-1-results.tar.gz")), "prints the saved path");
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    restoreFetch();
+  }
+}
+
+// =============================================================================
+// TRIAL — show, download (--stream + save), stop
+// =============================================================================
+
+async function testTrialShow() {
+  console.log("\n--- runCli: trial show is globally addressable ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/trials/run-1", {
+      status: 200,
+      body: trialFixture({ status: "SCORED", reward: 1, agent_result: { cost_usd: 0.31 } }),
+    });
+    const { io, out } = captureIO();
+    const code = await runCli(["trial", "show", "run-1", ...AUTH], io);
     assertEqual(code, 0, "exit 0");
-    assertEqual(err, [], "nothing on stderr");
-    const call = fetchCalls[fetchCalls.length - 1];
-    assert(call.url.includes("/api/trials/run-1/trace?stream=trace-stdout"), "hits the global ?stream= route");
-    assertEqual(out, ["raw harness stdout"], "prints the raw log verbatim");
+    assert(fetchCalls[fetchCalls.length - 1].url.endsWith("/api/trials/run-1"), "one positional, the trial id");
+    assert(out.join("\n").includes("abs-module-cache-flags"), "renders the detail");
   } finally {
     restoreFetch();
   }
 }
 
-async function testTraceSaveCli() {
-  console.log("\n--- runCli: trace --save writes trace-parsed.jsonl + raw artifacts ---");
+async function testTrialDownloadStream() {
+  console.log("\n--- runCli: trial download --stream — the six-name artifact vocabulary ---");
   installMockFetch();
-  const tmpDir = await mkdtemp(join(tmpdir(), "evolve-evals-trace-"));
+  try {
+    setMockResponse("/trace?stream=trace-stdout", { status: 200, body: { log: "raw harness stdout" } });
+    setMockResponse("/trace?stream=trajectory", { status: 200, body: { log: '{"steps":[]}' } });
+    setMockResponse("/trace?limit=100&cursor=5", {
+      status: 200,
+      body: { items: [{ seq: 6, type: "agent.message", data: {} }], nextCursor: null, hasMore: false },
+    });
+
+    const stdout = captureIO();
+    const code = await runCli(["trial", "download", "run-1", "--stream", "trace-stdout", ...AUTH], stdout.io);
+    assertEqual(code, 0, "exit 0");
+    assert(
+      fetchCalls[fetchCalls.length - 1].url.includes("/api/trials/run-1/trace?stream=trace-stdout"),
+      "hits the global ?stream= route"
+    );
+    assertEqual(stdout.out, ["raw harness stdout"], "prints the raw log verbatim");
+
+    // The trajectory NAME is accepted now; the server may still refuse it
+    // until its wave — here the mock serves it and the CLI passes it through.
+    const trajectory = captureIO();
+    assertEqual(
+      await runCli(["trial", "download", "run-1", "--stream", "trajectory", ...AUTH], trajectory.io),
+      0,
+      "--stream trajectory is a valid selector"
+    );
+    assertEqual(trajectory.out, ['{"steps":[]}'], "prints the trajectory verbatim");
+
+    const parsed = captureIO();
+    assertEqual(
+      await runCli(
+        ["trial", "download", "run-1", "--stream", "trace-parsed", "--cursor", "5", "--limit", "100", ...AUTH],
+        parsed.io
+      ),
+      0,
+      "--stream trace-parsed pages the parsed events"
+    );
+    const parsedCall = fetchCalls[fetchCalls.length - 1];
+    assert(parsedCall.url.includes("limit=100") && parsedCall.url.includes("cursor=5"), "cursor/limit ride the query");
+    assert(parsed.out[0].includes("agent.message"), "renders the event line");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testTrialDownloadTrajectoryRefused() {
+  console.log("\n--- runCli: --stream trajectory surfaces the server's refusal honestly ---");
+  installMockFetch();
+  try {
+    setMockResponse("/trace?stream=trajectory", {
+      status: 404,
+      body: { error: { code: "not_found", message: "Unknown stream: trajectory" } },
+    });
+    const { io, err } = captureIO();
+    const code = await runCli(["trial", "download", "run-1", "--stream", "trajectory", ...AUTH], io);
+    assertEqual(code, 1, "a server refusal is exit 1, not a silent success");
+    assert(err[0].includes("Unknown stream"), "the server's sentence reaches stderr");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testTrialDownloadSave() {
+  console.log("\n--- runCli: trial download saves under <dir>/<trial-id>/; --overwrite gates ---");
+  installMockFetch();
+  const tmpDir = await mkdtemp(join(tmpdir(), "evolve-evals-trial-dl-"));
   try {
     // Stream selectors first: the mock matches by substring, and a plain
     // "/trace" pattern would swallow "/trace?stream=…" if it were checked first.
@@ -1147,75 +1257,326 @@ async function testTraceSaveCli() {
       body: { items: [{ seq: 0, type: "agent.message", data: {} }], nextCursor: null, hasMore: false },
     });
     const { io, out, err } = captureIO();
-    const code = await runCli(
-      ["trace", "run-1", "--save", tmpDir, "--api-key", "test-key", "--base-url", BASE],
-      io
-    );
+    const code = await runCli(["trial", "download", "run-1", "-o", tmpDir, ...AUTH], io);
     assertEqual(code, 0, "exit 0");
     assertEqual(err, [], "nothing on stderr");
-    const parsed = await readFile(join(tmpDir, "trace-parsed.jsonl"), "utf-8");
+    const target = join(tmpDir, "run-1");
+    const parsed = await readFile(join(target, "trace-parsed.jsonl"), "utf-8");
     assert(parsed.includes('"seq":0'), "parsed events land in trace-parsed.jsonl");
-    const verifier = await readFile(join(tmpDir, "verifier.log"), "utf-8");
+    const verifier = await readFile(join(target, "verifier.log"), "utf-8");
     assertEqual(verifier, "verifier says 1.0", "each stored raw log lands under its own name");
-    const home = await readFile(join(tmpDir, "agent-home", "root", ".claude", "history.jsonl"), "utf-8");
+    const home = await readFile(join(target, "agent-home", "root", ".claude", "history.jsonl"), "utf-8");
     assertEqual(home, "{}", "agent-home/ preserves the sandbox folder tree");
     // Null logs were never stored — absence is a normal answer, no empty files.
     let missingThrew = false;
     try {
-      await readFile(join(tmpDir, "trace-stdout.log"), "utf-8");
+      await readFile(join(target, "trace-stdout.log"), "utf-8");
     } catch {
       missingThrew = true;
     }
     assert(missingThrew, "an unstored artifact writes no file");
     assert(out.some((l) => l.includes("trace-parsed.jsonl")), "reports the parsed trace file");
+
+    // The directory now exists: a second save without --overwrite must refuse
+    // instead of silently mixing two downloads.
+    const refused = captureIO();
+    const refusedCode = await runCli(["trial", "download", "run-1", "-o", tmpDir, ...AUTH], refused.io);
+    assertEqual(refusedCode, 1, "an existing target refuses without --overwrite");
+    assert(refused.err[0].includes("--overwrite"), "the refusal names the flag that unlocks it");
+
+    const overwrite = captureIO();
+    assertEqual(
+      await runCli(["trial", "download", "run-1", "-o", tmpDir, "--overwrite", ...AUTH], overwrite.io),
+      0,
+      "--overwrite replaces the existing download"
+    );
   } finally {
     await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
     restoreFetch();
   }
 }
 
-async function testTraceUsageErrors() {
-  console.log("\n--- runCli: trace flag misuse is a usage error (exit 2, not 1) ---");
-  // Every case throws before any request is made, so no mock fetch is needed.
+async function testTrialDownloadUsageErrors() {
+  console.log("\n--- runCli: trial download flag misuse is a usage error (exit 2, not 1) ---");
   {
     const { io, err } = captureIO();
-    const code = await runCli(
-      ["trace", "run-1", "--stream", "bogus", "--api-key", "k", "--base-url", BASE],
-      io
-    );
+    const code = await runCli(["trial", "download", "run-1", "--stream", "bogus", ...AUTH], io);
     assertEqual(code, 2, "invalid --stream value exits 2 like every other usage error");
-    assert(err.some((l) => l.includes('--stream must be "verifier"')), "names the valid selectors");
+    assert(err.some((l) => l.includes("trace-parsed") && l.includes("trajectory")), "names all six selectors");
   }
   {
     const { io, err } = captureIO();
     const code = await runCli(
-      ["trace", "run-1", "--stream", "verifier", "--save", "/tmp/x", "--api-key", "k", "--base-url", BASE],
+      ["trial", "download", "run-1", "--stream", "verifier", "-o", "/tmp/x", ...AUTH],
       io
     );
-    assertEqual(code, 2, "--stream + --save refused, exit 2");
-    assert(err.some((l) => l.includes("EITHER --stream OR --save")), "explains the exclusive modes");
+    assertEqual(code, 2, "--stream + -o refused, exit 2");
+    assert(err.some((l) => l.includes("EITHER --stream OR -o")), "explains the exclusive modes");
   }
   {
     const { io, err } = captureIO();
     const code = await runCli(
-      ["trace", "run-1", "--stream", "verifier", "--cursor", "5", "--api-key", "k", "--base-url", BASE],
+      ["trial", "download", "run-1", "--stream", "verifier", "--cursor", "5", ...AUTH],
       io
     );
-    assertEqual(code, 2, "--cursor under --stream refused, exit 2");
-    assert(err.some((l) => l.includes("page the parsed events")), "explains cursor/limit scope");
+    assertEqual(code, 2, "--cursor outside trace-parsed refused, exit 2");
+    assert(err.some((l) => l.includes("trace-parsed")), "explains cursor/limit scope");
   }
   {
     const { io } = captureIO();
-    const code = await runCli(
-      ["trace", "run-1", "--save", "/tmp/x", "--limit", "10", "--api-key", "k", "--base-url", BASE],
-      io
+    const code = await runCli(["trial", "download", "run-1", "--limit", "10", ...AUTH], io);
+    assertEqual(code, 2, "--limit in save mode refused, exit 2");
+  }
+}
+
+async function testTrialStop() {
+  console.log("\n--- runCli: trial stop posts the id list and reports each outcome ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/trials/stop", {
+      status: 200,
+      body: {
+        stopped: [trialFixture({ status: "INDETERMINATE" })],
+        already_terminal: ["run-2"],
+        not_found: ["run-3"],
+      },
+    });
+    const { io, out } = captureIO();
+    const code = await runCli(["trial", "stop", "run-1", "run-2", "run-3", ...AUTH], io);
+    assertEqual(code, 0, "exit 0 — the report is the outcome");
+    const call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.endsWith("/api/trials/stop"), "hits the stop route");
+    assertEqual(
+      JSON.parse(call.init?.body as string),
+      { trial_ids: ["run-1", "run-2", "run-3"] },
+      "posts every requested id"
     );
-    assertEqual(code, 2, "--limit under --save refused, exit 2");
+    assert(out.some((l) => l.includes("stopped run-1")), "reports the stopped trial");
+    assert(out.some((l) => l.includes("already terminal run-2")), "reports the already-terminal id");
+    assert(out.some((l) => l.includes("not found run-3")), "reports the unknown id (existence never leaked)");
+  } finally {
+    restoreFetch();
   }
 }
 
 // =============================================================================
-// CUSTOM HARNESSES (bridged onto the agents routes)
+// DATASET — list, show, publish, download, activate
+// =============================================================================
+
+async function testDatasetListAndShow() {
+  console.log("\n--- runCli: dataset list + show ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/datasets/deep-swe", {
+      status: 200,
+      body: {
+        name: "deep-swe",
+        title: "Deep SWE",
+        description: null,
+        active_version: { version: "1.1", state: "READY", created_at: "2026-07-01T00:00:00Z", task_count: 12 },
+        versions: [{ version: "1.1", state: "READY", created_at: "2026-07-01T00:00:00Z", task_count: 12 }],
+        selected_version: { version: "1.1", state: "READY", created_at: "2026-07-01T00:00:00Z", task_count: 12 },
+        tasks: {
+          items: [
+            { task_name: "t1", agent_timeout_sec: 600, verifier_timeout_sec: 120, providers: { e2b: { ok: true }, modal: { ok: false, reason: "needs docker" } } },
+          ],
+          nextCursor: "task-cur",
+          hasMore: true,
+        },
+        upstream: null,
+        created_at: "2026-07-01T00:00:00Z",
+        updated_at: "2026-07-01T00:00:00Z",
+      },
+    });
+    setMockResponse("/api/datasets", {
+      status: 200,
+      body: {
+        items: [
+          {
+            name: "deep-swe",
+            title: "Deep SWE",
+            description: null,
+            active_version: { version: "1.1", state: "READY", created_at: "2026-07-01T00:00:00Z", task_count: 12 },
+            upstream: { ref: "main", current_commit: "aaa", latest_commit: "bbb", moved: true, behind_by: 2, checked_at: null, error: null, auto_import: false },
+          },
+        ],
+        nextCursor: null,
+        hasMore: false,
+      },
+    });
+
+    const list = captureIO();
+    assertEqual(await runCli(["dataset", "list", ...AUTH], list.io), 0, "list exits 0");
+    assert(list.out[0].includes("NAME\tACTIVE"), "TSV header when piped");
+    assert(list.out[1].startsWith("deep-swe\t1.1"), "lists the dataset row");
+    assert(
+      list.out.some((l) => l.includes("upstream main moved") && l.includes("dataset publish")),
+      "the upstream notice names the publish command in the new grammar"
+    );
+
+    const quiet = captureIO();
+    await runCli(["dataset", "list", "-q", ...AUTH], quiet.io);
+    assertEqual(quiet.out, ["deep-swe"], "-q prints names only — the notice stays out of piped output");
+
+    const show = captureIO();
+    assertEqual(await runCli(["dataset", "show", "deep-swe@1.1", ...AUTH], show.io), 0, "show exits 0");
+    const showCall = fetchCalls[fetchCalls.length - 1];
+    assert(showCall.url.includes("/api/datasets/deep-swe") && showCall.url.includes("version=1.1"), "ref version becomes ?version=");
+    const text = show.out.join("\n");
+    assert(text.includes("VERSION") && text.includes("READY"), "renders the version table");
+    assert(text.includes("dataset show deep-swe --cursor task-cur"), "the task paging hint speaks the new grammar");
+    assert(text.includes("modal: needs docker"), "provider limitations are named once");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testDatasetPublishWatch() {
+  console.log("\n--- runCli: dataset publish --watch, git source ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/datasets/imports/imp-1", {
+      status: 200,
+      body: { id: "imp-1", status: "COMPLETED", name: "my-bench", version: "1.0", task_count: 12, failure: null, warnings: [] },
+    });
+    setMockResponse("/api/datasets/publish", {
+      status: 202,
+      body: { id: "imp-1", status: "QUEUED", name: "my-bench", version: "1.0", failure: null, warnings: [] },
+    });
+
+    const { io, out, err } = captureIO();
+    const code = await runCli(
+      [
+        "dataset", "publish",
+        "--git", "https://github.com/acme/my-bench.git",
+        "--ref", "main",
+        "--name", "my-bench",
+        "--version", "1.0",
+        "--watch",
+        ...AUTH,
+      ],
+      io
+    );
+    assertEqual(code, 0, "exit code 0 on COMPLETED");
+    assertEqual(err, [], "nothing on stderr");
+
+    const createCall = fetchCalls.find((c) => c.url === `${BASE}/api/datasets/publish`);
+    assert(createCall !== undefined, "POSTs /api/datasets/publish");
+    const form = createCall?.init?.body as FormData;
+    assert(form instanceof FormData, "create body is multipart/form-data");
+    assertEqual(form.get("git_url"), "https://github.com/acme/my-bench.git", "git_url part");
+    assertEqual(form.get("git_ref"), "main", "git_ref part");
+    assertEqual(form.get("name"), "my-bench", "name part");
+    assertEqual(form.get("version"), "1.0", "version part");
+    assert(out.some((l) => l.includes("COMPLETED") && l.includes("tasks=12")), "renders the COMPLETED status line");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testDatasetPublishFailedAndErrors() {
+  console.log("\n--- runCli: dataset publish FAILED exits 1; flag misuse exits 2 ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/datasets/imports/imp-2", {
+      status: 200,
+      body: { id: "imp-2", status: "FAILED", name: "b", version: "1.0", failure: { code: "import_failed", message: "bad tasks.json" }, warnings: [] },
+    });
+    setMockResponse("/api/datasets/publish", {
+      status: 202,
+      body: { id: "imp-2", status: "QUEUED", name: "b", version: "1.0", failure: null, warnings: [] },
+    });
+
+    const failedIO = captureIO();
+    const codeFailed = await runCli(
+      ["dataset", "publish", "--git", "g", "--ref", "main", "--name", "b", "--version", "1.0", "--watch", ...AUTH],
+      failedIO.io
+    );
+    assertEqual(codeFailed, 1, "exit code 1 on FAILED");
+    assert(failedIO.out.some((l) => l.includes("bad tasks.json")), "final summary carries the error");
+
+    const noWatch = captureIO();
+    await runCli(
+      ["dataset", "publish", "--git", "g", "--ref", "main", "--name", "b", "--version", "1.0", ...AUTH],
+      noWatch.io
+    );
+    assert(
+      noWatch.out.some((l) => l.includes("dataset show b")),
+      "without --watch the follow hint points at dataset show (version state lives there)"
+    );
+
+    const noNetwork = fetchCalls.length;
+    const noGit = captureIO();
+    const codeNoGit = await runCli(["dataset", "publish", "--ref", "main", "--name", "b", ...AUTH], noGit.io);
+    assertEqual(codeNoGit, 2, "publish without --git exits 2");
+    assert(noGit.err[0].includes("--git"), "stderr names the missing flag");
+    const both = captureIO();
+    const codeBoth = await runCli(
+      ["dataset", "publish", "--git", "g", "--ref", "r", "--dir", "/tmp", "--name", "b", "--version", "1", ...AUTH],
+      both.io
+    );
+    assertEqual(codeBoth, 2, "--dir + --git refused");
+    assertEqual(fetchCalls.length, noNetwork, "no network call on publish usage errors");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testDatasetDownloadAndActivate() {
+  console.log("\n--- runCli: dataset download + activate ---");
+  installMockFetch();
+  const tmpDir = join(tmpdir(), `cli-ds-dl-${Date.now()}`);
+  try {
+    const pkg = Buffer.from("corpus bytes");
+    setMockResponse("/api/datasets/acme/versions/1.1/activate", {
+      status: 200,
+      body: {
+        name: "acme",
+        title: null,
+        description: null,
+        active_version: { version: "1.1", state: "READY", created_at: "2026-07-01T00:00:00Z", task_count: 3 },
+        versions: [{ version: "1.1", state: "READY", created_at: "2026-07-01T00:00:00Z", task_count: 3 }],
+        selected_version: null,
+        tasks: { items: [], nextCursor: null, hasMore: false },
+        upstream: null,
+        created_at: "2026-07-01T00:00:00Z",
+        updated_at: "2026-07-01T00:00:00Z",
+      },
+    });
+    setMockResponse("/api/datasets/acme/download", {
+      status: 200,
+      body: null,
+      bodyBytes: pkg,
+      headers: { "Content-Disposition": 'attachment; filename="acme@1.1-corpus.tar.gz"' },
+    });
+
+    const saved = captureIO();
+    const code = await runCli(["dataset", "download", "acme@1.1", "-o", tmpDir, ...AUTH], saved.io);
+    assertEqual(code, 0, "download exits 0");
+    const downloadCall = fetchCalls[fetchCalls.length - 1];
+    assert(downloadCall.url.includes("/api/datasets/acme/download"), "the positional is a dataset ref");
+    assert(downloadCall.url.includes("version=1.1"), "ref version becomes ?version=");
+    const written = await readFile(join(tmpDir, "acme@1.1-corpus.tar.gz"));
+    assertEqual(written.equals(pkg), true, "file bytes match the package");
+
+    const activate = captureIO();
+    const activateCode = await runCli(["dataset", "activate", "acme", "1.1", ...AUTH], activate.io);
+    assertEqual(activateCode, 0, "activate exits 0");
+    const activateCall = fetchCalls[fetchCalls.length - 1];
+    assert(activateCall.url.endsWith("/api/datasets/acme/versions/1.1/activate"), "hits the activate route");
+    assertEqual(activateCall.init?.method, "POST", "activate uses POST");
+    assert(activate.out.join("\n").includes("1.1"), "renders the new active version");
+
+    const missing = captureIO();
+    assertEqual(await runCli(["dataset", "activate", "acme", ...AUTH], missing.io), 2, "activate needs name AND version");
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    restoreFetch();
+  }
+}
+
+// =============================================================================
+// AGENT — list, show, add, remove
 // =============================================================================
 
 const CLI_AGENT = {
@@ -1227,10 +1588,10 @@ const CLI_AGENT = {
   updated_at: "2026-07-24T00:00:00Z",
 };
 
-async function testCustomHarnessesCliAdd() {
-  console.log("\n--- runCli: custom-harnesses add posts the install script and renders the agent ---");
+async function testAgentAdd() {
+  console.log("\n--- runCli: agent add posts the install script and renders the agent ---");
   installMockFetch();
-  const dir = await mkdtemp(join(tmpdir(), "evolve-harness-cli-"));
+  const dir = await mkdtemp(join(tmpdir(), "evolve-agent-cli-"));
   const scriptPath = join(dir, "install.sh");
   try {
     await writeFile(scriptPath, "curl -fsSL https://acme.dev/install.sh | sh\n");
@@ -1238,12 +1599,11 @@ async function testCustomHarnessesCliAdd() {
     const { io, out, err } = captureIO();
     const code = await runCli(
       [
-        "custom-harnesses", "add",
-        "--name", "acme-cli",
+        "agent", "add", "acme-cli",
         "--install-script", scriptPath,
         "--run", "acme-cli --headless",
-        "--env", "ACME_PROFILE=bench",
-        "--api-key", "test-key", "--base-url", BASE,
+        "--ae", "ACME_PROFILE=bench",
+        ...AUTH,
       ],
       io
     );
@@ -1254,171 +1614,186 @@ async function testCustomHarnessesCliAdd() {
     assertEqual(call.init?.method, "POST", "uses POST");
     const form = call.init?.body as FormData;
     assert(form instanceof FormData, "body is multipart/form-data");
-    assertEqual(form.get("name"), "acme-cli", "name part");
+    assertEqual(form.get("name"), "acme-cli", "the positional becomes the name part");
     assertEqual(
       form.get("install_script"),
       "curl -fsSL https://acme.dev/install.sh | sh\n",
       "--install-script uploads the FILE CONTENTS, not the path"
     );
     assertEqual(form.get("run_command"), "acme-cli --headless", "run_command part");
-    assertEqual(form.get("env"), JSON.stringify({ ACME_PROFILE: "bench" }), "env is a JSON part");
+    assertEqual(form.get("env"), JSON.stringify({ ACME_PROFILE: "bench" }), "--ae env is a JSON part");
     const text = out.join("\n");
     assert(text.includes("acme-cli"), "renders the agent name");
     assert(text.includes("install_script"), "renders the source");
     assert(text.includes("ACME_PROFILE"), "renders the declared env key");
     assert(!text.includes("=bench"), "does not echo declared env values into the terminal");
-    assert(text.includes("--agent acme-cli:"), "prints the follow-up run hint");
+    assert(text.includes("-a acme-cli -m"), "prints the follow-up run hint in the new grammar");
+
+    const noSource = captureIO();
+    assertEqual(
+      await runCli(["agent", "add", "x", "--run", "x", ...AUTH], noSource.io),
+      2,
+      "add without a source exits 2"
+    );
+    const bothSources = captureIO();
+    assertEqual(
+      await runCli(
+        ["agent", "add", "x", "--run", "x", "--dir", dir, "--install-script", scriptPath, ...AUTH],
+        bothSources.io
+      ),
+      2,
+      "--dir + --install-script refused"
+    );
   } finally {
     restoreFetch();
     await rm(dir, { recursive: true, force: true });
   }
 }
 
-async function testCustomHarnessesCliListAndRemove() {
-  console.log("\n--- runCli: custom-harnesses list + remove ---");
+async function testAgentListShowRemove() {
+  console.log("\n--- runCli: agent list / show / remove ---");
   installMockFetch();
   try {
-    setMockResponse("/api/agents/acme-cli", { status: 204, body: null });
+    setMockResponse("/api/agents/acme-cli", { status: 200, body: CLI_AGENT });
     setMockResponse("/api/agents", {
       status: 200,
       body: { items: [CLI_AGENT], nextCursor: null, hasMore: false },
     });
 
-    const listIO = captureIO();
-    const listCode = await runCli(
-      ["custom-harnesses", "--api-key", "test-key", "--base-url", BASE],
-      listIO.io
-    );
-    assertEqual(listCode, 0, "list exits 0");
-    const listText = listIO.out.join("\n");
-    assert(listText.includes("NAME") && listText.includes("SOURCE"), "renders the list header");
-    assert(listText.includes("acme-cli"), "lists the agent");
+    const list = captureIO();
+    assertEqual(await runCli(["agent", "list", ...AUTH], list.io), 0, "list exits 0");
+    assert(list.out[0].includes("NAME\tSOURCE"), "TSV header when piped");
+    assert(list.out[1].startsWith("acme-cli\t"), "lists the agent row");
 
-    const removeIO = captureIO();
-    const removeCode = await runCli(
-      ["custom-harnesses", "remove", "acme-cli", "--api-key", "test-key", "--base-url", BASE],
-      removeIO.io
-    );
-    assertEqual(removeCode, 0, "remove exits 0");
+    const show = captureIO();
+    assertEqual(await runCli(["agent", "show", "acme-cli", ...AUTH], show.io), 0, "show exits 0");
+    assert(show.out.join("\n").includes("acme-cli --headless"), "renders the run command");
+
+    setMockResponse("/api/agents/acme-cli", { status: 204, body: null });
+    const remove = captureIO();
+    assertEqual(await runCli(["agent", "remove", "acme-cli", ...AUTH], remove.io), 0, "remove exits 0");
     const call = fetchCalls[fetchCalls.length - 1];
     assert(call.url.endsWith("/api/agents/acme-cli"), "remove targets the detail route");
     assertEqual(call.init?.method, "DELETE", "remove uses DELETE");
-    assert(removeIO.out.some((l) => l.includes("Deleted custom harness acme-cli")), "confirms the delete");
+    assert(remove.out.some((l) => l.includes("Deleted agent acme-cli")), "confirms the delete");
   } finally {
     restoreFetch();
   }
 }
 
-async function testCustomHarnessesCliUnknownSubcommand() {
-  console.log("\n--- runCli: custom-harnesses <unknown> is a usage error ---");
-  const { io, err } = captureIO();
-  const code = await runCli(
-    ["custom-harnesses", "frobnicate", "--api-key", "k", "--base-url", BASE],
-    io
-  );
-  assertEqual(code, 2, "usage error exit 2");
-  assert(err.some((l) => l.includes("add, get, remove")), "names the supported subcommands");
-}
-
 // =============================================================================
-// DOWNLOAD — the corpus package, by dataset ref
+// AUTH
 // =============================================================================
 
-async function testDownloadCli() {
-  console.log("\n--- runCli: download saves the corpus package; --json prints the path ---");
+async function testAuthStatus() {
+  console.log("\n--- runCli: auth status identifies the caller ---");
   installMockFetch();
-  const tmpDir = join(tmpdir(), `cli-download-${Date.now()}`);
   try {
-    const pkg = Buffer.from("corpus bytes");
-    setMockResponse("/api/datasets/acme/download", {
+    setMockResponse("/api/auth/status", {
       status: 200,
-      body: null,
-      bodyBytes: pkg,
-      headers: { "Content-Disposition": 'attachment; filename="acme@1.1-corpus.tar.gz"' },
+      body: {
+        user_id: "user-1",
+        email: "founder@example.com",
+        key: { id: "key-1", label: "laptop", created_at: "2026-07-01T00:00:00Z", last_used_at: null },
+      },
     });
+    const { io, out } = captureIO();
+    const code = await runCli(["auth", "status", ...AUTH], io);
+    assertEqual(code, 0, "exit 0");
+    assert(fetchCalls[fetchCalls.length - 1].url.endsWith("/api/auth/status"), "hits the auth route");
+    const text = out.join("\n");
+    assert(text.includes("user-1") && text.includes("key-1") && text.includes("laptop"), "renders identity + key");
 
-    const saved = captureIO();
-    const code = await runCli(
-      ["download", "acme@1.1", "--to", tmpDir, "--api-key", "test-key", "--base-url", BASE],
-      saved.io
-    );
-    assertEqual(code, 0, "download exits 0");
-    const downloadCall = fetchCalls[fetchCalls.length - 1];
-    assert(downloadCall.url.includes("/api/datasets/acme/download"), "the positional is a dataset ref");
-    assert(downloadCall.url.includes("version=1.1"), "ref version becomes ?version=");
-    assert(
-      saved.out.some((l) => l.includes("acme@1.1-corpus.tar.gz")),
-      "prints the saved path"
-    );
-    const written = await readFile(join(tmpDir, "acme@1.1-corpus.tar.gz"));
-    assertEqual(written.equals(pkg), true, "file bytes match the package");
-
-    const asJson = captureIO();
-    const jsonCode = await runCli(
-      ["download", "acme@1.1", "--to", tmpDir, "--json", "--api-key", "test-key", "--base-url", BASE],
-      asJson.io
-    );
-    assertEqual(jsonCode, 0, "download --json exits 0");
-    assert(
-      typeof JSON.parse(asJson.out[0]).path === "string",
-      "--json emits { path }"
-    );
-
-    // A dataset nobody owns is not-found, exactly like a bad name — the CLI
-    // reports it rather than pretending the file was written.
-    setMockResponse("/api/datasets/not-mine/download", {
-      status: 404,
-      body: { error: { code: "dataset_not_found", message: "Dataset not found: not-mine" } },
-    });
-    const denied = captureIO();
-    const deniedCode = await runCli(
-      ["download", "not-mine", "--to", tmpDir, "--api-key", "test-key", "--base-url", BASE],
-      denied.io
-    );
-    assertEqual(deniedCode, 1, "a package the caller does not own exits 1");
-    assert(denied.err.some((l) => l.includes("Dataset not found")), "the refusal reaches stderr");
-
-    const noId = captureIO();
-    const noIdCode = await runCli(["download", "--api-key", "k", "--base-url", BASE], noId.io);
-    assertEqual(noIdCode, 2, "download without a ref is a usage error");
+    const json = captureIO();
+    await runCli(["auth", "status", "--json", ...AUTH], json.io);
+    assertEqual(JSON.parse(json.out[0]).user_id, "user-1", "--json carries the typed body");
   } finally {
-    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
     restoreFetch();
   }
 }
+
+// =============================================================================
+// buildPublishInput / buildAgentInput direct coverage
+// =============================================================================
+
+function testBuildInputsDirect() {
+  console.log("\n--- buildPublishInput / buildAgentInput ---");
+  const git = buildPublishInput(
+    parseArgs(["dataset", "publish", "--git", "g", "--ref", "r", "--name", "n", "--version", "1"])
+  );
+  assertEqual(
+    git,
+    { source: { git_url: "g", git_ref: "r" }, name: "n", version: "1" },
+    "git publish input"
+  );
+  const dirInput = buildPublishInput(
+    parseArgs(["dataset", "publish", "--dir", "/tmp/corpus", "--name", "n", "--version", "1"])
+  );
+  assertEqual(
+    dirInput,
+    { source: { directory: "/tmp/corpus" }, name: "n", version: "1" },
+    "directory publish input"
+  );
+
+  const agent = buildAgentInput(
+    parseArgs(["agent", "add", "acme", "--install-script", "/x.sh", "--run", "acme", "--ae", "A=1"]),
+    () => "SCRIPT"
+  );
+  assertEqual(
+    agent,
+    { name: "acme", install_script: "SCRIPT", run_command: "acme", env: { A: "1" } },
+    "agent input carries the script contents and env"
+  );
+  assertThrowsUsage(
+    () => buildAgentInput(parseArgs(["agent", "add", "acme", "--install-script", "/x.sh"]), () => ""),
+    "--run",
+    "missing --run"
+  );
+}
+
+// =============================================================================
+// MAIN
+// =============================================================================
 
 async function main() {
   console.log("evolve-evals CLI Unit Tests\n");
 
-  testParseRunFull();
-
-  testEffortFlag();
-  testParseRunMinimal();
-  testParseRunNoSpendCap();
-  testParseJobAgent();
-  testParseErrors();
-  testParseOtherCommands();
-  testParseImport();
-  testParseCustomHarnesses();
+  testGrammarResolution();
+  testShortFlags();
+  testBuildJobInputFlags();
+  testBuildJobInputYesIsInert();
+  await testConfigFileMerge();
+  testYamlSubset();
+  await testPrintConfig();
+  await testHelpAndVersion();
   testImportStatusLine();
   testEventLine();
   testTrialDetailLiveSpend();
+  testBuildInputsDirect();
   await testRunWatchEndToEnd();
-  await testRunWatchJsonNdjson();
-  await testImportWatchEndToEnd();
-  await testImportWatchFailedAndStatus();
+  await testRunWatchJsonAndQuiet();
+  await testWatchFailedExitCode();
   await testUsageErrorExitCode();
-  await testRegradeCliCreate();
-  await testRegradeCliPerTrial();
-  await testRegradeCliRead();
-  await testRegradeCliPerRunRejectsFilter();
-  await testTraceStreamCli();
-  await testTraceSaveCli();
-  await testTraceUsageErrors();
-  await testCustomHarnessesCliAdd();
-  await testCustomHarnessesCliListAndRemove();
-  await testCustomHarnessesCliUnknownSubcommand();
-  await testDownloadCli();
+  await testJobListOutputModes();
+  await testJobShowMultiId();
+  await testJobTrialsAndTasks();
+  await testJobResume();
+  await testJobRegrade();
+  await testTrialRegrade();
+  await testCompareCancelDownload();
+  await testTrialShow();
+  await testTrialDownloadStream();
+  await testTrialDownloadTrajectoryRefused();
+  await testTrialDownloadSave();
+  await testTrialDownloadUsageErrors();
+  await testTrialStop();
+  await testDatasetListAndShow();
+  await testDatasetPublishWatch();
+  await testDatasetPublishFailedAndErrors();
+  await testDatasetDownloadAndActivate();
+  await testAgentAdd();
+  await testAgentListShowRemove();
+  await testAuthStatus();
 
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

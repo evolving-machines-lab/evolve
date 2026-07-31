@@ -18,6 +18,8 @@ import type {
   AgentUpsertInput,
   AgentsClient,
   AttemptPhase,
+  AuthClient,
+  AuthStatus,
   CompareCell,
   CompareCoverage,
   CompareJobAggregate,
@@ -50,11 +52,14 @@ import type {
   JobPage,
   JobStats,
   JobStatus,
+  JobTaskRollup,
+  JobTaskRollupList,
   JobWatch,
   JobsClient,
   ListAgentsOptions,
   ListDatasetsOptions,
   ListImportsOptions,
+  ListJobTasksOptions,
   ListJobsOptions,
   ListTrialsOptions,
   Page,
@@ -103,7 +108,10 @@ export type {
   AgentSourceInput,
   AgentUpsertInput,
   AgentsClient,
+  ApiKey,
   AttemptPhase,
+  AuthClient,
+  AuthStatus,
   Awaitable,
   CapabilityDocument,
   CompareCell,
@@ -142,11 +150,15 @@ export type {
   JobPage,
   JobStats,
   JobStatus,
+  JobTaskRollup,
+  JobTaskRollupList,
+  JobTaskRollupPage,
   JobWatch,
   JobsClient,
   ListAgentsOptions,
   ListDatasetsOptions,
   ListImportsOptions,
+  ListJobTasksOptions,
   ListJobsOptions,
   ListTrialsOptions,
   ModelInfo,
@@ -1046,17 +1058,8 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
     };
   }
 
-  async function getDataset(
-    ref: string,
-    options?: GetDatasetOptions
-  ): Promise<Dataset> {
-    const parsed = parseDatasetRef(ref);
-    const query = pageQuery(options, { version: parsed.version });
-    const res = await request(
-      cfg,
-      `/api/datasets/${encodeURIComponent(parsed.name)}${query}`
-    );
-    const raw = (await res.json()) as Record<string, unknown>;
+  /** The full detail Dataset shape: get() and activate() echo it. */
+  function mapDatasetDetail(raw: Record<string, unknown>): Dataset {
     return {
       name: raw.name as string,
       title: (raw.title as string | null) ?? null,
@@ -1076,6 +1079,19 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
     };
   }
 
+  async function getDataset(
+    ref: string,
+    options?: GetDatasetOptions
+  ): Promise<Dataset> {
+    const parsed = parseDatasetRef(ref);
+    const query = pageQuery(options, { version: parsed.version });
+    const res = await request(
+      cfg,
+      `/api/datasets/${encodeURIComponent(parsed.name)}${query}`
+    );
+    return mapDatasetDetail((await res.json()) as Record<string, unknown>);
+  }
+
   /** The summary Dataset shape: list rows and the update() echo share it. */
   function mapDatasetSummary(raw: Record<string, unknown>): Dataset {
     return {
@@ -1090,14 +1106,18 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
   }
 
   async function listPage(options?: ListDatasetsOptions): Promise<DatasetPage> {
-    const res = await request(cfg, `/api/datasets${pageQuery(options)}`);
+    const res = await request(
+      cfg,
+      `/api/datasets${pageQuery(options, { search: options?.search })}`
+    );
     return mapPage((await res.json()) as Record<string, unknown>, mapDatasetSummary);
   }
 
   return {
     list(options?: ListDatasetsOptions): DatasetList {
-      // Await for one page; for-await to walk the catalog across cursor pages.
-      return makePaginated(listPage, options);
+      // Await for one page; for-await to walk the catalog across cursor
+      // pages. The search filter rides along on every page fetch.
+      return makePaginated((opts) => listPage({ ...opts, search: options?.search }), options);
     },
 
     get: getDataset,
@@ -1229,6 +1249,17 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
         const res = await request(cfg, `/api/datasets/imports${suffix}`);
         return mapPage((await res.json()) as Record<string, unknown>, mapDatasetImport);
       }, options);
+    },
+
+    async activate(name: string, version: string): Promise<Dataset> {
+      // Wave-gated: until the server's wave lands the route answers
+      // not-found, and that refusal is reported as the API error it is.
+      const res = await request(
+        cfg,
+        `/api/datasets/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/activate`,
+        { method: "POST" }
+      );
+      return mapDatasetDetail((await res.json()) as Record<string, unknown>);
     },
 
     async update(name: string, patch: DatasetPatch): Promise<Dataset> {
@@ -1406,8 +1437,25 @@ export function jobs(config?: HostedClientConfig): JobsClient {
   }
 
   async function listPage(options?: ListJobsOptions): Promise<JobPage> {
-    const res = await request(cfg, `/api/jobs${pageQuery(options)}`);
+    const res = await request(
+      cfg,
+      `/api/jobs${pageQuery(options, { search: options?.search })}`
+    );
     return mapPage((await res.json()) as Record<string, unknown>, mapJob);
+  }
+
+  function mapJobTaskRollup(raw: Record<string, unknown>): JobTaskRollup {
+    const trials = (raw.trials ?? {}) as Record<string, unknown>;
+    return {
+      task_name: raw.task_name as string,
+      source: raw.source as string,
+      trials: {
+        total: (trials.total as number) ?? 0,
+        byStatus: (trials.byStatus as TrialCounts) ?? ({} as TrialCounts),
+      },
+      mean_reward: (raw.mean_reward as number | null) ?? null,
+      cost_usd: (raw.cost_usd as number | null) ?? null,
+    };
   }
 
   async function trialsPage(
@@ -1562,8 +1610,9 @@ export function jobs(config?: HostedClientConfig): JobsClient {
 
     list(options?: ListJobsOptions): JobList {
       // Await for one page (honoring options); for-await to walk every
-      // job across cursor pages.
-      return makePaginated(listPage, options);
+      // job across cursor pages. The search filter rides along on every
+      // page fetch — makePaginated forwards only limit/cursor.
+      return makePaginated((opts) => listPage({ ...opts, search: options?.search }), options);
     },
 
     trials(id: string, options?: ListTrialsOptions): TrialList {
@@ -1573,6 +1622,17 @@ export function jobs(config?: HostedClientConfig): JobsClient {
         (opts) => trialsPage(id, { ...opts, status: options?.status }),
         options
       );
+    },
+
+    tasks(id: string, options?: ListJobTasksOptions): JobTaskRollupList {
+      // Await for one page; for-await to walk every rollup across cursors.
+      return makePaginated(async (opts) => {
+        const res = await request(
+          cfg,
+          `/api/jobs/${encodeURIComponent(id)}/tasks${pageQuery(opts)}`
+        );
+        return mapPage((await res.json()) as Record<string, unknown>, mapJobTaskRollup);
+      }, options);
     },
 
     watch(id: string, options?: WatchJobOptions): JobWatch {
@@ -1695,7 +1755,7 @@ export function trials(config?: HostedClientConfig): TrialsClient {
    */
   async function getArtifact(
     trialId: string,
-    stream: "verifier" | "trace-stdout" | "trace-stderr"
+    stream: "verifier" | "trace-stdout" | "trace-stderr" | "trajectory"
   ): Promise<string | null>;
   async function getArtifact(
     trialId: string,
@@ -1703,7 +1763,7 @@ export function trials(config?: HostedClientConfig): TrialsClient {
   ): Promise<Record<string, string> | null>;
   async function getArtifact(
     trialId: string,
-    stream: "verifier" | "trace-stdout" | "trace-stderr" | "agent-home"
+    stream: "verifier" | "trace-stdout" | "trace-stderr" | "trajectory" | "agent-home"
   ): Promise<string | Record<string, string> | null> {
     const res = await request(
       cfg,
@@ -1759,6 +1819,39 @@ export function trials(config?: HostedClientConfig): TrialsClient {
         stopped: ((body.stopped as Record<string, unknown>[]) ?? []).map(mapTrial),
         already_terminal: (body.already_terminal as string[]) ?? [],
         not_found: (body.not_found as string[]) ?? [],
+      };
+    },
+  };
+}
+
+// =============================================================================
+// AUTH CLIENT
+// =============================================================================
+
+/**
+ * Create an AuthClient for caller identity. Wave-gated: until the server's
+ * wave lands, /api/auth/status answers not-found and status() reports it as
+ * the API error it is.
+ *
+ * Requires EVOLVE_API_KEY (or { apiKey } in config).
+ */
+export function auth(config?: HostedClientConfig): AuthClient {
+  const cfg = resolveConfig("auth", config);
+
+  return {
+    async status(): Promise<AuthStatus> {
+      const res = await request(cfg, "/api/auth/status");
+      const raw = (await res.json()) as Record<string, unknown>;
+      const key = (raw.key ?? {}) as Record<string, unknown>;
+      return {
+        user_id: raw.user_id as string,
+        email: (raw.email as string | null) ?? null,
+        key: {
+          id: key.id as string,
+          label: (key.label as string | null) ?? null,
+          created_at: key.created_at as string,
+          last_used_at: (key.last_used_at as string | null) ?? null,
+        },
       };
     },
   };

@@ -337,6 +337,7 @@ export {
 
 export {
   agents,
+  auth,
   datasets,
   jobs,
   trials,
@@ -364,6 +365,13 @@ export {
   type AgentsClient,
   type JobsClient,
   type TrialsClient,
+  type AuthClient,
+  type AuthStatus,
+  type ApiKey,
+  type JobTaskRollup,
+  type JobTaskRollupPage,
+  type JobTaskRollupList,
+  type ListJobTasksOptions,
   type Dataset,
   type ActiveDataset,
   type DatasetVersion,

@@ -225,6 +225,14 @@ export interface JobCreate {
   max_trial_spend_usd?: number;
   /** Sandbox provider to run on (optional; server default: `e2b`). */
   sandbox_provider?: EvalSandboxProvider;
+  /**
+   * Env injected into every agent run — a pass-through slot: the client sends
+   * it verbatim and the server owns acceptance (refused until its wave lands,
+   * never silently dropped).
+   */
+  agent_env?: Record<string, string>;
+  /** Env injected into every verifier run — same pass-through contract. */
+  verifier_env?: Record<string, string>;
 }
 
 /** Body of POST /api/jobs/{jobId}/resume. */
@@ -717,6 +725,33 @@ export type JobPage = Page<Job>;
  */
 export interface JobList extends Awaitable<JobPage>, AsyncIterable<Job> {}
 
+/**
+ * One task's rollup within a job: its trial tally, mean reward over SCORED
+ * trials, and measured cost. Sits between the job body and the trial list so
+ * a caller need not fetch every trial to see which tasks are dragging.
+ */
+export interface JobTaskRollup {
+  task_name: string;
+  /** The dataset the task came from. */
+  source: string;
+  trials: TrialStatusTally;
+  /** Mean over SCORED trials only; null when none. Zero is a reward. */
+  mean_reward: number | null;
+  /** Measured spend across the task's settled trials. */
+  cost_usd: number | null;
+}
+
+/** Cursor page of per-task rollups */
+export type JobTaskRollupPage = Page<JobTaskRollup>;
+
+/**
+ * The handle returned by jobs().tasks(). Both a promise for one page and an
+ * async iterable across cursor pages, like every other list handle.
+ */
+export interface JobTaskRollupList
+  extends Awaitable<JobTaskRollupPage>,
+    AsyncIterable<JobTaskRollup> {}
+
 /** Cursor page of trials */
 export type TrialPage = Page<Trial>;
 
@@ -1078,7 +1113,16 @@ export interface StartJobOptions {
 }
 
 /** Options for jobs().list() (default page 50, max 200) */
-export interface ListJobsOptions extends PageOptions {}
+export interface ListJobsOptions extends PageOptions {
+  /**
+   * Free-text filter over job name and dataset names. Sent verbatim; the
+   * server owns availability (ignored or refused until its wave lands).
+   */
+  search?: string;
+}
+
+/** Options for jobs().tasks() (default page 50, max 200) */
+export interface ListJobTasksOptions extends PageOptions {}
 
 /** Options for jobs().trials() (default page 50, max 200) */
 export interface ListTrialsOptions extends PageOptions {
@@ -1087,7 +1131,10 @@ export interface ListTrialsOptions extends PageOptions {
 }
 
 /** Options for datasets().list() (default page 50, max 200) */
-export interface ListDatasetsOptions extends PageOptions {}
+export interface ListDatasetsOptions extends PageOptions {
+  /** Free-text filter over name and description — same pass-through contract as jobs. */
+  search?: string;
+}
 
 /** Options for agents().list() (default page 50, max 200) */
 export interface ListAgentsOptions extends PageOptions {}
@@ -1233,6 +1280,14 @@ export interface DatasetsClient {
    */
   update(name: string, patch: DatasetPatch): Promise<Dataset>;
   /**
+   * Activate a READY version you own: bare-name job references resolve to it
+   * from then on. Refused with `version_not_ready` while the import still
+   * runs and `version_not_activatable` for a version that can never be
+   * activated (for example, no reference solutions were archived). The route
+   * is wave-gated — the server may still answer not-found until its wave.
+   */
+  activate(name: string, version: string): Promise<Dataset>;
+  /**
    * Delete a dataset you own, with every version, task, and archived
    * solution. Refused (dataset_in_use) while any job still references it — a
    * dataset is never deleted out from under a job that measured against it,
@@ -1294,6 +1349,12 @@ export interface JobsClient {
    * walk every trial across cursor pages transparently.
    */
   trials(id: string, options?: ListTrialsOptions): TrialList;
+  /**
+   * Per-task rollup of a job (cursor-paged): one row per distinct task with
+   * its trial tally, mean reward, and cost. The route is wave-gated — the
+   * server may still answer not-found until its wave lands.
+   */
+  tasks(id: string, options?: ListJobTasksOptions): JobTaskRollupList;
   /**
    * Watch a job's event stream (SSE). Replays from the beginning,
    * resumes with Last-Event-ID on reconnect (exponential backoff), and
@@ -1366,11 +1427,13 @@ export interface TrialsClient {
    * "verifier" | "trace-stdout" | "trace-stderr" answer the log text;
    * "agent-home" answers the CLI's whole home folder (subagent transcripts
    * included), keyed by sandbox path. Null = never stored
-   * (a normal answer, not an error).
+   * (a normal answer, not an error). "trajectory" is in the vocabulary ahead
+   * of its server wave — until that wave lands the route answers not-found,
+   * reported honestly as the API error it is.
    */
   artifact(
     trialId: string,
-    stream: "verifier" | "trace-stdout" | "trace-stderr"
+    stream: "verifier" | "trace-stdout" | "trace-stderr" | "trajectory"
   ): Promise<string | null>;
   artifact(trialId: string, stream: "agent-home"): Promise<Record<string, string> | null>;
   /**
@@ -1389,6 +1452,30 @@ export interface TrialsClient {
    * already-terminal trials are reported as such and left untouched.
    */
   stop(trialIds: string[]): Promise<StopResponse>;
+}
+
+/** A key descriptor. The secret is never returned. */
+export interface ApiKey {
+  id: string;
+  label: string | null;
+  created_at: string;
+  last_used_at: string | null;
+}
+
+/** Who the caller is and the key they used. */
+export interface AuthStatus {
+  user_id: string;
+  email: string | null;
+  key: ApiKey;
+}
+
+/**
+ * Client for caller identity. The route is wave-gated — the server may still
+ * answer not-found until its wave lands.
+ */
+export interface AuthClient {
+  /** Identify the caller and the API key in use. */
+  status(): Promise<AuthStatus>;
 }
 
 // =============================================================================
