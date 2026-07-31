@@ -56,10 +56,10 @@ info:
       unbounded: one GET must not become an unbounded server-side fan-out.
 
     ## Wave sequencing
-    Operations, parameters, enum members, and error codes marked `x-wave: 2`
-    (per-task rollup, dataset version activation, the auth surface,
-    server-side list filters, and the `trajectory` artifact selector) ship in
-    the second build wave. Everything unmarked is wave 1.
+    Anything marked `x-wave: 2` belongs to the second build wave: today the
+    `trajectory` artifact selector (not yet served) and the API-key
+    management pair (served, not yet in the SDKs). Everything unmarked is
+    live end to end.
 
     ## Deliberately absent (wave 3, not yet specified)
     The rename map's additive rows are new capabilities, not renames, and are
@@ -91,7 +91,7 @@ tags:
   - name: meta
     description: Public capability document.
   - name: auth
-    description: Key and identity surface (wave 2 stubs).
+    description: Key and identity surface.
 
 paths:
   # ===========================================================================
@@ -174,14 +174,13 @@ paths:
       tags: [jobs]
       operationId: listJobs
       summary: List jobs
-      description: Newest first. Filters marked wave 2 are server-side.
+      description: Newest first. Every filter is server-side.
       parameters:
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Cursor'
         - name: status
           in: query
           description: Filter by job status (repeatable).
-          x-wave: 2
           schema:
             type: array
             items:
@@ -190,7 +189,6 @@ paths:
         - name: agent
           in: query
           description: Filter by agent name (repeatable).
-          x-wave: 2
           schema:
             type: array
             items:
@@ -199,7 +197,6 @@ paths:
         - name: model
           in: query
           description: Filter by model name (repeatable).
-          x-wave: 2
           schema:
             type: array
             items:
@@ -208,7 +205,6 @@ paths:
         - name: sandbox_provider
           in: query
           description: Filter by sandbox provider (repeatable).
-          x-wave: 2
           schema:
             type: array
             items:
@@ -217,7 +213,6 @@ paths:
         - name: dataset
           in: query
           description: Filter to jobs that ran a given dataset name.
-          x-wave: 2
           schema:
             type: string
         - name: is_regrade
@@ -226,13 +221,11 @@ paths:
             true returns only regrade jobs; false only non-regrade jobs.
             Replaces the retired standalone regrade listing — a regrade IS a
             job.
-          x-wave: 2
           schema:
             type: boolean
         - name: search
           in: query
           description: Free-text filter over job name and dataset names.
-          x-wave: 2
           schema:
             type: string
       responses:
@@ -575,7 +568,6 @@ paths:
         - name: task_name
           in: query
           description: Filter to one task's trials.
-          x-wave: 2
           schema:
             type: string
         - name: dataset
@@ -589,7 +581,6 @@ paths:
         - name: failed_only
           in: query
           description: Only trials in a failure status.
-          x-wave: 2
           schema:
             type: boolean
       responses:
@@ -615,7 +606,6 @@ paths:
       tags: [jobs]
       operationId: listJobTasks
       summary: Per-task rollup of a job
-      x-wave: 2
       description: |
         One row per distinct task: its trial-status histogram, mean reward
         over SCORED trials, and measured cost. Sits between the job body and
@@ -863,7 +853,6 @@ paths:
         - name: search
           in: query
           description: Free-text filter over name and description.
-          x-wave: 2
           schema:
             type: string
       responses:
@@ -1048,7 +1037,6 @@ paths:
       tags: [datasets]
       operationId: activateDatasetVersion
       summary: Activate a dataset version
-      x-wave: 2
       description: |
         Promotes a READY (or VALIDATING-complete) version to the dataset's
         active version, making bare-name job references resolve to it. Closes
@@ -1401,7 +1389,7 @@ paths:
           $ref: '#/components/responses/InternalError'
 
   # ===========================================================================
-  # Auth (wave 2 stubs)
+  # Auth
   # ===========================================================================
 
   /api/auth/status:
@@ -1409,10 +1397,9 @@ paths:
       tags: [auth]
       operationId: getAuthStatus
       summary: Who am I
-      x-wave: 2
       description: >
-        Stub — shape reserved for wave 2. Identifies the caller and the API
-        key used, so `auth status` in clients has a server answer.
+        Identifies the caller and the API key used, so `auth status` in
+        clients has a server answer.
       responses:
         '200':
           description: The caller's identity.
@@ -1433,7 +1420,7 @@ paths:
       operationId: listApiKeys
       summary: List the caller's API keys
       x-wave: 2
-      description: Stub — shape reserved for wave 2. Secrets are never returned.
+      description: Secrets are never returned.
       parameters:
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Cursor'
@@ -1457,7 +1444,7 @@ paths:
       operationId: revokeApiKey
       summary: Revoke an API key
       x-wave: 2
-      description: Stub — shape reserved for wave 2. Revocation is immediate.
+      description: Revocation is immediate.
       parameters:
         - name: keyId
           in: path
@@ -1621,7 +1608,7 @@ components:
       description: |
         The closed error-code union (52 members). Published at runtime by
         `GET /api/meta` (`error_codes`); no route ever answers with a code
-        outside this list. Codes marked wave 2 accompany wave-2 operations.
+        outside this list.
       enum:
         # Auth + throttling
         - missing_authorization
@@ -1649,7 +1636,7 @@ components:
         - upstream_not_watchable
         - no_active_version
         - version_not_ready
-        - version_not_activatable   # x-wave: 2 — activation verb
+        - version_not_activatable
         - unknown_task_names
         - no_tasks
         # Registered agents
@@ -3674,12 +3661,12 @@ components:
             type: string
 
     # -------------------------------------------------------------------------
-    # Auth (wave 2 stubs)
+    # Auth
     # -------------------------------------------------------------------------
 
     AuthStatus:
       type: object
-      description: Wave-2 stub — shape reserved.
+      description: The caller's identity and the key this request authenticated with.
       required: [user_id, key]
       properties:
         user_id:
