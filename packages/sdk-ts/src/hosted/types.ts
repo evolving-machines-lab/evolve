@@ -1128,6 +1128,8 @@ export interface ListJobTasksOptions extends PageOptions {}
 export interface ListTrialsOptions extends PageOptions {
   /** Only trials in these statuses (e.g. the failures behind a resume decision) */
   status?: TrialStatus[];
+  /** Only one dataset's trials — exact match on the trial's `source`. */
+  dataset?: string;
 }
 
 /** Options for datasets().list() (default page 50, max 200) */

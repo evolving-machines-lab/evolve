@@ -2517,21 +2517,24 @@ class JobsClient:
         id: str,
         *,
         status: Optional[List[str]] = None,
+        dataset: Optional[str] = None,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
     ) -> _PaginatedList:
         """List a job's trials (cursor-paged).
 
         ``status`` filters to the given statuses (e.g. the failures behind a
-        resume decision). ``await`` the result for one page (honoring
-        ``limit``/``cursor``), or ``async for`` it to walk every trial
-        across cursor pages.
+        resume decision); ``dataset`` narrows to one dataset's trials (exact
+        match on the trial's ``source``). ``await`` the result for one page
+        (honoring ``limit``/``cursor``), or ``async for`` it to walk every
+        trial across cursor pages.
         """
         async def fetch_page(page_limit, page_cursor) -> TrialPage:
             query = _page_query(
                 page_limit,
                 page_cursor,
                 status=','.join(status) if status else None,
+                dataset=dataset,
             )
             raw = await self._http.request_json(
                 f'/api/jobs/{urllib.parse.quote(id)}/trials{query}'
