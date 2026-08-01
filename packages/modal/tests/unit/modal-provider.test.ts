@@ -892,7 +892,7 @@ async function testFilesWriteBatchSmallSingleChunk(): Promise<void> {
 // =============================================================================
 
 async function testImageMapUsesVersionedTag(): Promise<void> {
-  console.log("\n[10a] IMAGE_MAP - the default image name resolves to the immutable versioned tag");
+  console.log("\n[10a] IMAGE_MAP - versioned default plus untouched legacy name (Daytona's rule)");
 
   // Modal caches images by REFERENCE: a re-pushed :latest is never re-pulled,
   // so only a per-release tag makes updates reach users. The version itself is
@@ -900,9 +900,36 @@ async function testImageMapUsesVersionedTag(): Promise<void> {
   // packages/daytona/tests/unit/daytona-image-version.test.ts.
   assert(/^v\d+$/.test(EVOLVE_IMAGE_VERSION), `version "${EVOLVE_IMAGE_VERSION}" is a vN tag`);
   assertEqual(
-    _testImageMap["evolve-all"],
+    _testImageMap[`evolve-all-${EVOLVE_IMAGE_VERSION}`],
     `evolvingmachines/evolve-all:${EVOLVE_IMAGE_VERSION}`,
-    "'evolve-all' resolves to the versioned Docker Hub tag"
+    "the versioned image name resolves to the immutable versioned tag"
+  );
+  assertEqual(
+    _testImageMap["evolve-all"],
+    "evolvingmachines/evolve-all",
+    "the legacy 'evolve-all' name still resolves to what it always did"
+  );
+}
+
+async function testDefaultImageNameIsVersioned(): Promise<void> {
+  console.log("\n[10b] createModalProvider() - the default image name carries the release version");
+
+  const provider = createModalProvider({ tokenId: "ak-test", tokenSecret: "as-test" });
+  assertEqual(
+    (provider as unknown as { imageName: string }).imageName,
+    `evolve-all-${EVOLVE_IMAGE_VERSION}`,
+    "a provider with no imageName defaults to the versioned name"
+  );
+
+  const pinned = createModalProvider({
+    tokenId: "ak-test",
+    tokenSecret: "as-test",
+    imageName: "evolve-all",
+  });
+  assertEqual(
+    (pinned as unknown as { imageName: string }).imageName,
+    "evolve-all",
+    "an explicit imageName passes through untouched"
   );
 }
 
@@ -969,6 +996,7 @@ const tests = [
   testFilesWriteBatchSmallSingleChunk,
   // [10] versioned image pipeline
   testImageMapUsesVersionedTag,
+  testDefaultImageNameIsVersioned,
 ];
 
 (async () => {

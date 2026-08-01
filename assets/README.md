@@ -70,10 +70,14 @@ the copies together:
    cd assets && ./build.sh docker
    ```
 
-3. Nothing else to run for users: Modal resolves `evolve-all` to the new
-   `:vN` reference on their next create, and Daytona auto-builds the new
-   `evolve-all-vN` snapshot on first use. Callers who pinned a name
-   explicitly (for example `evolve-all`) keep exactly what they pinned.
+3. Nothing else to run for users: both providers default to the versioned
+   name (`evolve-all-vN` is Modal's default image name and Daytona's default
+   snapshot name), so Modal pulls the new tag on its next create and Daytona
+   auto-builds the new snapshot on first use. Callers who pinned a name
+   explicitly (for example `evolve-all`) keep exactly what they pinned, on
+   both providers. Managed Daytona is separate: it names the platform's
+   stable `evolve-all` snapshot, and which release backs that name is the
+   platform's decision, not this pipeline's.
 
 4. Rebuild the E2B template (E2B is not versioned — its public template is
    rebuilt in place):

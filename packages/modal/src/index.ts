@@ -51,14 +51,20 @@ import { pack } from "tar-stream";
  *
  * WHY a version at all: Modal caches an image by its REFERENCE string. A
  * mutable :latest is pulled once per account and never again, so a pushed
- * update reached nobody. Bumping this constant changes the reference the
- * "evolve-all" name resolves to, which is what makes Modal pull the release.
+ * update reached nobody. Bumping this constant changes the default image
+ * name (evolve-all-vN) and the immutable tag it resolves to, which is what
+ * makes Modal pull the release.
  */
 export const EVOLVE_IMAGE_VERSION = "v1";
 
 /** Map generic image names to Docker images */
 const IMAGE_MAP: Record<string, string> = {
-  "evolve-all": `evolvingmachines/evolve-all:${EVOLVE_IMAGE_VERSION}`,
+  // The versioned default: the immutable tag this release pushes.
+  [`evolve-all-${EVOLVE_IMAGE_VERSION}`]: `evolvingmachines/evolve-all:${EVOLVE_IMAGE_VERSION}`,
+  // The legacy unversioned name. A caller who pins "evolve-all" explicitly
+  // keeps resolving exactly what they always did — the mutable Docker Hub
+  // name (same rule as Daytona's legacy snapshot name).
+  "evolve-all": "evolvingmachines/evolve-all",
 };
 
 /**
@@ -737,7 +743,7 @@ export interface ModalConfig {
   tokenSecret?: string;
   /** Modal API endpoint. Default: https://api.modal.com:443 */
   endpoint?: string;
-  /** Docker image name (default: 'evolve-all'). Resolved through IMAGE_MAP or used as-is for custom images. */
+  /** Docker image name (default: 'evolve-all-<EVOLVE_IMAGE_VERSION>'). Resolved through IMAGE_MAP or used as-is for custom images; explicit names pass through untouched. */
   imageName?: string;
   /**
    * Name of a Modal Secret holding registry credentials for private images.
@@ -1226,7 +1232,10 @@ export class ModalProvider implements SandboxProvider {
     this.client = new ModalClient({ tokenId: config.tokenId, tokenSecret: config.tokenSecret });
     this.appName = config.appName ?? "evolve-sandbox";
     this.defaultTimeoutMs = config.defaultTimeoutMs ?? 3600000;
-    this.imageName = config.imageName ?? "evolve-all";
+    // Versioned default so a release actually reaches users (see the law
+    // comment on EVOLVE_IMAGE_VERSION). An explicit imageName passes through
+    // untouched — pinning "evolve-all" keeps meaning "evolve-all".
+    this.imageName = config.imageName ?? `evolve-all-${EVOLVE_IMAGE_VERSION}`;
     this.imageSecretName = config.imageSecretName;
   }
 

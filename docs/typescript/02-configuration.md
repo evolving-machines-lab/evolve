@@ -79,10 +79,13 @@ never builds one, so a `resources` request that an existing snapshot cannot hono
 rather than silently ignored.
 
 Managed Modal — `managedSandbox("modal")` — runs commands and file operations through the
-Dashboard's Modal door. Two Modal traits carry over: command output arrives when the command
-completes rather than streaming live, and there is no pause — persist progress with Evolve
-checkpoints instead. Sizing, network policy, and the sandbox user are the platform's; a create
-that asks for them is refused rather than silently ignored.
+Dashboard's Modal door. Command output streams live, chunk by chunk, and each command's
+duration is bounded by the door: 60 minutes by default, 120 minutes at most — a longer
+`timeoutMs` is refused with an error naming the bound, never silently shortened. Two Modal
+traits carry over: there is no pause — persist progress with Evolve checkpoints instead — and
+a running command cannot be interrupted. Sizing, network policy, and the sandbox user are the
+platform's; a create that asks for them is refused rather than silently ignored. File writes
+ride the door one JSON body at a time, capped at 1 MiB per request.
 
 ---
 
@@ -152,7 +155,7 @@ const sandbox = createDaytonaProvider({
     apiUrl: "https://app.daytona.io/api", // (optional) Default: https://app.daytona.io/api
     target: "us",                          // (optional) Target region. Default: "us"
     defaultTimeoutMs: 3600000,             // (optional) Default: 3600000 (1 hour) - converted to minutes for auto-stop
-    snapshotName: "evolve-all",            // (optional) Default: the current release snapshot (e.g. "evolve-all-v1"); explicit names pass through untouched. Custom snapshots via build.sh daytona
+    snapshotName: "evolve-all-v1",         // (optional) Default: the current release snapshot ("evolve-all-v1"); explicit names pass through untouched. Custom snapshots via build.sh daytona
 });
 ```
 

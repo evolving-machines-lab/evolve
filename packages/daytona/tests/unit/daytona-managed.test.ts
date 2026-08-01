@@ -306,6 +306,32 @@ async function testManagedCreateRefusesResources(): Promise<void> {
   );
 }
 
+async function testManagedCreateNamesThePlatformSnapshot(): Promise<void> {
+  console.log("\n[3d] Managed create defaults to the PLATFORM's stable snapshot name");
+  // Managed mode never builds: the platform owns which release backs
+  // "evolve-all" and its warm keeper keeps that exact name active, so the
+  // versioned evolve-all-vN default is DIRECT mode's alone.
+  const provider = createDaytonaProvider({
+    apiKey: "sk-evolve",
+    apiUrl: "https://dash.test/api/managed/daytona",
+    managedToolboxUrl: "https://dash.test/api/managed/daytona/toolbox",
+  });
+  const created: Array<{ snapshot?: string }> = [];
+  (provider as unknown as { client: unknown }).client = {
+    create: async (params: { snapshot?: string }) => {
+      created.push(params);
+      return { id: "dtn_1" };
+    },
+  };
+
+  await provider.create({});
+
+  assert(
+    created[0]?.snapshot === "evolve-all",
+    `a managed create with no image names the platform snapshot (got ${created[0]?.snapshot})`,
+  );
+}
+
 const tests = [
   testDemuxSplitsStreams,
   testDemuxHandlesMarkerAcrossChunks,
@@ -317,6 +343,7 @@ const tests = [
   testManagedProviderAnswersDiscoveryLocally,
   testDirectProviderStillDiscoversUpstream,
   testManagedCreateRefusesResources,
+  testManagedCreateNamesThePlatformSnapshot,
 ];
 
 (async () => {

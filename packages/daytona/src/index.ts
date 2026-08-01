@@ -313,7 +313,18 @@ async function activateSnapshot(
       );
     }
     await new Promise((r) => setTimeout(r, pollMs));
-    current = await client.snapshot.get(name);
+    // The poll get wears the same typed error as the activate call: a raw
+    // network failure here would escape create()'s typed-refusal checks and
+    // fall into the build path — name-conflict on the existing snapshot, then
+    // the slow direct pull that masks the real incident.
+    try {
+      current = await client.snapshot.get(name);
+    } catch (err) {
+      throw new DaytonaSnapshotActivationError(
+        name,
+        `the activation poll failed (${err instanceof Error ? err.message : String(err)})`,
+      );
+    }
   }
 
   console.log(`[daytona] Snapshot "${name}" reactivated.`);
@@ -883,7 +894,7 @@ export interface DaytonaConfig {
   target?: string;
   /** Default timeout in ms */
   defaultTimeoutMs?: number;
-  /** Daytona snapshot name (default: 'evolve-all-<EVOLVE_IMAGE_VERSION>'). Explicit names pass through untouched. Create custom snapshots via `cd assets && ./build.sh daytona` */
+  /** Daytona snapshot name (default: 'evolve-all-<EVOLVE_IMAGE_VERSION>' direct, the platform's stable 'evolve-all' managed). Explicit names pass through untouched. Create custom snapshots via `cd assets && ./build.sh daytona` */
   snapshotName?: string;
   /**
    * Evolve-managed toolbox base URL. Setting it puts the provider in MANAGED
@@ -1581,10 +1592,17 @@ export class DaytonaProvider implements SandboxProvider {
       this.managedStream = { toolboxUrl: config.managedToolboxUrl, apiKey: config.apiKey };
     }
     this.defaultTimeoutMs = config.defaultTimeoutMs ?? 3600000;
-    // Versioned default so a release actually reaches users (see the law
-    // comment on EVOLVE_IMAGE_VERSION). An explicit snapshotName passes
-    // through untouched — pinning "evolve-all" keeps meaning "evolve-all".
-    this.snapshotName = config.snapshotName ?? `evolve-all-${EVOLVE_IMAGE_VERSION}`;
+    // Two defaults, one per mode. DIRECT mode defaults to the versioned
+    // snapshot so a release actually reaches users (see the law comment on
+    // EVOLVE_IMAGE_VERSION) — the ensure logic below builds it on first use.
+    // MANAGED mode names the PLATFORM's stable "evolve-all" snapshot: managed
+    // creates never build, the platform owns which release backs that name,
+    // and its warm keeper keeps exactly that name active. An explicit
+    // snapshotName passes through untouched in both modes — pinning
+    // "evolve-all" keeps meaning "evolve-all".
+    this.snapshotName =
+      config.snapshotName ??
+      (config.managedToolboxUrl ? "evolve-all" : `evolve-all-${EVOLVE_IMAGE_VERSION}`);
   }
 
   async create(options: SandboxCreateOptions): Promise<SandboxInstance> {

@@ -7,11 +7,13 @@
  * platform-held Modal credentials behind it. This class is that API's client,
  * mapping the SDK's SandboxProvider contract 1:1 onto the door's routes.
  *
- * THE WIRE, stated here because the Dashboard's twin routes are built against
- * this exact contract. Every request carries `Authorization: Bearer <Evolve
- * API key>`; every error body is JSON `{ error }`. Base = /api/managed/modal.
+ * THE WIRE, restating the door's own contract (app/api/managed/modal in the
+ * Dashboard — the door rules, this transport follows). Every request carries
+ * `Authorization: Bearer <Evolve API key>`; every request body is ONE JSON
+ * object capped at 1 MiB of wire bytes; every error body is JSON `{ error }`.
+ * Base = /api/managed/modal.
  *
- * Control plane (the door's original five operations):
+ * Control plane:
  *   create   POST   {base}/sandboxes                JSON {image?, timeoutMs?,
  *            workingDirectory?, envs?, metadata?} → 201 {sandboxId, image,
  *            metadata, startedAt}
@@ -20,27 +22,37 @@
  *            metadata, startedAt}
  *   kill     DELETE {base}/sandboxes/{id}         → 204
  *   exec     POST   {base}/sandboxes/{id}/exec      JSON {command, cwd?,
- *            envs?, timeoutMs?} → 200 {exitCode, stdout, stderr}
+ *            envs?, timeoutMs?} → 200 NDJSON stream: one {stream: "stdout" |
+ *            "stderr", data} record per output chunk as the command produces
+ *            it, then one terminal record — {exitCode} on completion, or
+ *            {error} if the upstream run failed after the stream had begun.
+ *            The door bounds each command's duration (60 min default, 120 min
+ *            ceiling) and REJECTS a longer timeoutMs with a 400 naming the
+ *            bound — never a silent clamp.
  *
- * File plane (the twin routes) — the wire shapes are E2B's envd file surface
- * verbatim, so the two managed file planes speak one language:
- *   read     GET  {base}/sandboxes/{id}/files?path=<abs> → 200 raw bytes
- *   write    POST {base}/sandboxes/{id}/files?path=<abs>
- *            multipart/form-data, ONE part, field name "file"; the part body
- *            is written to the `path` query → 200 JSON [{name, type, path}]
- *   batch    POST {base}/sandboxes/{id}/files   (no `path` query)
- *            multipart/form-data, one part PER FILE, field name "file", part
- *            FILENAME = absolute destination path → 200 JSON [{...}, ...]
- *   makeDir  POST {base}/sandboxes/{id}/filesystem.Filesystem/MakeDir
- *            JSON {"path": <abs>} → 200 JSON {}  (mkdir -p semantics)
+ * File plane — POST-only, path IN the JSON body (never a query string, so
+ * file paths stay out of access logs), base64 as the binary carrier:
+ *   read       POST {base}/sandboxes/{id}/files/read       {path}
+ *              → 200 {content, encoding: "utf8" | "base64"} — the door says
+ *              which carrier it chose; base64 rebuilds the exact bytes
+ *   write      POST {base}/sandboxes/{id}/files/write      {path, content,
+ *              encoding?: "base64"} → 204
+ *   writeBatch POST {base}/sandboxes/{id}/files/writeBatch {files: [{path,
+ *              content, encoding?}]} → 204
+ *   makeDir    POST {base}/sandboxes/{id}/files/makeDir    {path} → 204
+ *              (mkdir -p semantics)
+ * The door's 1 MiB body cap is the write bound; the transport refuses a
+ * larger write HERE, with a typed error, before a byte is sent.
  * No username travels on the file plane: the door executes every operation as
  * its provider's default sandbox user, exactly as its exec operation does.
  *
  * DEGRADATIONS, named rather than papered over:
- *  - exec is buffered, not streamed: onStdout/onStderr fire once, with the
- *    whole output, when the command completes. spawn() is the same exec fired
- *    without awaiting, so wait() resolves on HTTP completion and the door's
- *    exec time cap bounds every command.
+ *  - spawn() is the same exec fired without awaiting: the door has no
+ *    background-process verb, so wait() resolves when the exec stream ends
+ *    and the door's command-duration ceiling bounds every command.
+ *  - interrupt() cannot stop a running command: spawn's handle.kill() answers
+ *    false, because neither Modal nor the door has kill-by-pid for a live
+ *    exec (the direct Modal provider degrades identically).
  *  - getHost() and pause() throw: the door serves no tunnels, and Modal has
  *    no pause anywhere (the direct provider throws the same way).
  */
@@ -62,21 +74,27 @@ import type {
   SandboxSpawnOptions,
 } from "../types";
 
-/** Same table the providers use to decide read()'s return shape. */
-const BINARY_EXTENSIONS = new Set([
-  ".xlsx", ".xls", ".docx", ".doc", ".pptx", ".ppt",
-  ".pdf", ".zip", ".tar", ".gz", ".7z", ".rar",
-  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".bmp",
-  ".mp3", ".wav", ".ogg", ".flac", ".aac",
-  ".mp4", ".avi", ".mov", ".mkv", ".webm",
-  ".woff", ".woff2", ".ttf", ".otf", ".eot",
-  ".exe", ".dll", ".so", ".dylib",
-  ".sqlite", ".db", ".pickle", ".pkl", ".parquet",
-]);
+/** The door's request-body cap: 1 MiB of wire bytes, JSON included. */
+const MANAGED_MODAL_MAX_BODY_BYTES = 1024 * 1024;
 
-function isBinaryFile(path: string): boolean {
-  const ext = path.substring(path.lastIndexOf(".")).toLowerCase();
-  return BINARY_EXTENSIONS.has(ext);
+/**
+ * Typed refusal for a file write the door would answer 413. Thrown BEFORE the
+ * request is sent — provider law: reject what the door cannot carry, never
+ * ship a payload whose refusal the caller only meets as a transport error.
+ */
+export class ManagedModalWriteLimitError extends Error {
+  /** Serialized request size that broke the bound, in bytes. */
+  readonly bytes: number;
+
+  constructor(operation: string, bytes: number) {
+    super(
+      `Managed Modal ${operation} body is ${bytes} bytes; the managed door caps every ` +
+        `request at ${MANAGED_MODAL_MAX_BODY_BYTES} bytes (1 MiB) of wire bytes, base64 ` +
+        "inflation included. Split the payload into smaller writes.",
+    );
+    this.name = "ManagedModalWriteLimitError";
+    this.bytes = bytes;
+  }
 }
 
 function toUint8(content: string | Buffer | ArrayBuffer | Uint8Array): Uint8Array {
@@ -129,6 +147,14 @@ class ManagedModalDoor {
   }
 }
 
+/** One NDJSON record on the exec stream — an output chunk or the terminal verdict. */
+interface ManagedModalExecRecord {
+  stream?: string;
+  data?: string;
+  exitCode?: number;
+  error?: string;
+}
+
 class ManagedModalCommands implements SandboxCommands {
   constructor(private readonly door: ManagedModalDoor, private readonly sandboxId: string) {}
 
@@ -143,16 +169,70 @@ class ManagedModalCommands implements SandboxCommands {
         ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
       }),
     );
-    const result = (await response.json()) as SandboxCommandResult;
-    // Buffered delivery: the door's exec answers once, with everything.
-    if (result.stdout) options?.onStdout?.(result.stdout);
-    if (result.stderr) options?.onStderr?.(result.stderr);
-    return { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr };
+
+    // Streamed delivery: the door flushes an NDJSON record per output chunk
+    // the moment the command produces it — those flowing bytes are also what
+    // keeps a long exec's HTTP connection alive — then one terminal record.
+    let stdout = "";
+    let stderr = "";
+    let terminal: ManagedModalExecRecord | undefined;
+    const consume = (line: string) => {
+      if (!line.trim()) return;
+      let record: ManagedModalExecRecord;
+      try {
+        record = JSON.parse(line) as ManagedModalExecRecord;
+      } catch {
+        throw new Error(`Managed Modal exec stream carried a garbled record: ${line}`);
+      }
+      if (record.stream === "stdout" && typeof record.data === "string") {
+        stdout += record.data;
+        options?.onStdout?.(record.data);
+      } else if (record.stream === "stderr" && typeof record.data === "string") {
+        stderr += record.data;
+        options?.onStderr?.(record.data);
+      } else {
+        terminal = record;
+      }
+    };
+
+    if (response.body) {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffered = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffered += decoder.decode(value, { stream: true });
+        let newline: number;
+        while ((newline = buffered.indexOf("\n")) !== -1) {
+          consume(buffered.slice(0, newline));
+          buffered = buffered.slice(newline + 1);
+        }
+      }
+      buffered += decoder.decode();
+      consume(buffered);
+    } else {
+      for (const line of (await response.text()).split("\n")) consume(line);
+    }
+
+    // The status was committed at 200 when the stream opened, so an upstream
+    // failure after that can only arrive as the terminal record — and a
+    // stream that ends with NO terminal record is a connection that died
+    // mid-run, which must never be mistaken for a completed command.
+    if (terminal?.error !== undefined) {
+      throw new Error(`Managed Modal exec failed: ${terminal.error}`);
+    }
+    if (typeof terminal?.exitCode !== "number") {
+      throw new Error(
+        "Managed Modal exec stream ended without a terminal record — the connection died mid-run.",
+      );
+    }
+    return { exitCode: terminal.exitCode, stdout, stderr };
   }
 
   async spawn(command: string, options?: SandboxSpawnOptions): Promise<SandboxCommandHandle> {
     // The same exec, fired now and awaited in wait() — there is no background
-    // process verb on the door, so the HTTP call IS the process handle.
+    // process verb on the door, so the exec stream IS the process handle.
     const pending = this.run(command, options);
     // A rejection nobody has awaited yet must not crash the process; wait()
     // re-surfaces it to whoever asks.
@@ -194,49 +274,67 @@ class ManagedModalCommands implements SandboxCommands {
 class ManagedModalFiles implements SandboxFiles {
   constructor(private readonly door: ManagedModalDoor, private readonly sandboxId: string) {}
 
-  private filesPath(query?: string): string {
-    return `/sandboxes/${encodeURIComponent(this.sandboxId)}/files${query ?? ""}`;
+  private filesPath(operation: string): string {
+    return `/sandboxes/${encodeURIComponent(this.sandboxId)}/files/${operation}`;
+  }
+
+  /** Strings ride as-is (utf8, the door's default); bytes ride base64. */
+  private encodeContent(
+    data: string | Buffer | ArrayBuffer | Uint8Array,
+  ): { content: string; encoding?: "base64" } {
+    if (typeof data === "string") return { content: data };
+    return { content: Buffer.from(toUint8(data)).toString("base64"), encoding: "base64" };
+  }
+
+  /** door.json plus the pre-send refusal of anything the door would 413. */
+  private boundedJson(operation: string, body: unknown): RequestInit {
+    const init = this.door.json(body);
+    const bytes = Buffer.byteLength(init.body as string, "utf8");
+    if (bytes > MANAGED_MODAL_MAX_BODY_BYTES) {
+      throw new ManagedModalWriteLimitError(operation, bytes);
+    }
+    return init;
   }
 
   async read(path: string): Promise<string | Uint8Array> {
     const response = await this.door.request(
       "file read",
-      this.filesPath(`?path=${encodeURIComponent(path)}`),
-      { method: "GET" },
+      this.filesPath("read"),
+      this.door.json({ path }),
     );
-    if (isBinaryFile(path)) return new Uint8Array(await response.arrayBuffer());
-    return response.text();
+    const payload = (await response.json()) as { content?: string; encoding?: string };
+    // The door decides text-vs-binary (it holds the provider) and reports
+    // which carrier it chose; the transport just rebuilds the exact bytes.
+    if (payload.encoding === "base64") {
+      return new Uint8Array(Buffer.from(payload.content ?? "", "base64"));
+    }
+    return payload.content ?? "";
   }
 
   async write(path: string, content: string | Buffer | ArrayBuffer | Uint8Array): Promise<void> {
-    // The envd single-file shape: destination in the query, one anonymous part.
-    const form = new FormData();
-    form.append("file", new Blob([toUint8(content) as BlobPart]));
-    await this.door.request("file write", this.filesPath(`?path=${encodeURIComponent(path)}`), {
-      method: "POST",
-      body: form,
-    });
+    await this.door.request(
+      "file write",
+      this.filesPath("write"),
+      this.boundedJson("file write", { path, ...this.encodeContent(content) }),
+    );
   }
 
   async writeBatch(
     files: Array<{ path: string; data: string | Buffer | ArrayBuffer | Uint8Array }>,
   ): Promise<void> {
     if (files.length === 0) return;
-    // The envd batch shape: no query, each part's FILENAME is its destination.
-    const form = new FormData();
-    for (const file of files) {
-      form.append("file", new Blob([toUint8(file.data) as BlobPart]), file.path);
-    }
-    await this.door.request("file writeBatch", this.filesPath(), { method: "POST", body: form });
+    await this.door.request(
+      "file writeBatch",
+      this.filesPath("writeBatch"),
+      this.boundedJson("file writeBatch", {
+        files: files.map((file) => ({ path: file.path, ...this.encodeContent(file.data) })),
+      }),
+    );
   }
 
   async makeDir(path: string): Promise<void> {
-    // The envd RPC shape, mkdir -p semantics on the door side.
-    await this.door.request(
-      "makeDir",
-      `/sandboxes/${encodeURIComponent(this.sandboxId)}/filesystem.Filesystem/MakeDir`,
-      this.door.json({ path }),
-    );
+    // mkdir -p semantics on the door side — the provider's own contract.
+    await this.door.request("makeDir", this.filesPath("makeDir"), this.door.json({ path }));
   }
 }
 

@@ -893,6 +893,34 @@ async function testActivateSnapshotSurfacesActivateFailure(): Promise<void> {
   assert(String(error).includes("upstream 500"), "the original cause survives in the message");
 }
 
+async function testActivateSnapshotPollFailureIsTyped(): Promise<void> {
+  console.log("\n[6l] activateSnapshot() - a failed POLL get wears the same typed error as activate");
+
+  // A raw error escaping the poll loop would not match either typed-refusal
+  // check in create()'s catch and would enter the build path — name-conflict
+  // on the existing snapshot, then the masked slow direct pull.
+  const client = {
+    snapshot: {
+      get: async () => {
+        throw new Error("socket hang up");
+      },
+      activate: async () => ({ state: "pulling" }),
+    },
+  };
+
+  let error: unknown;
+  try {
+    await silenceLogs(() =>
+      _testActivateSnapshot(client, "evolve-all", { state: "inactive" }, { timeoutMs: 5_000, pollMs: 1 })
+    );
+  } catch (e) {
+    error = e;
+  }
+  assert(error instanceof DaytonaSnapshotActivationError, "a poll-time get failure throws the typed error");
+  assert(String(error).includes("evolve-all"), "the error names the snapshot");
+  assert(String(error).includes("socket hang up"), "the original cause survives in the message");
+}
+
 // =============================================================================
 // [7] DaytonaCommands — mock-based session exec wiring
 // =============================================================================
@@ -1082,6 +1110,7 @@ const tests = [
   testActivateSnapshotPollsUntilActive,
   testActivateSnapshotTimesOutLoudly,
   testActivateSnapshotSurfacesActivateFailure,
+  testActivateSnapshotPollFailureIsTyped,
   // [7] DaytonaCommands
   testCommandsRunAsRootUsesSudoWrapper,
   testCommandsRunDefaultUserNoWrapper,

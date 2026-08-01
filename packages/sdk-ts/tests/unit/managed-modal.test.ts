@@ -3,12 +3,13 @@
  * Unit Test: Managed Modal transport — the door's HTTP client
  *
  * Every assertion here is a wire-shape assertion, because the Dashboard's
- * twin routes are built against exactly this contract:
- *   - control plane: the door's five JSON operations
- *     (create/list/get/kill/exec)
- *   - file plane: E2B's envd file surface verbatim (GET/POST /files,
- *     multipart field "file", batch filenames = destination paths,
- *     filesystem.Filesystem/MakeDir)
+ * door rules this wire and the transport follows it:
+ *   - control plane: the door's JSON operations (create/list/get/kill) plus
+ *     exec as an NDJSON stream — chunk records as the command produces them,
+ *     one terminal record carrying the exit code (or the upstream error)
+ *   - file plane: POST-only /files/{read|write|writeBatch|makeDir}, path in
+ *     the JSON body, base64 as the binary carrier, and the door's 1 MiB
+ *     write bound refused with a typed error BEFORE anything is sent
  *   - provider law: options the door cannot carry are refused before any
  *     request, never silently dropped
  *
@@ -16,7 +17,11 @@
  *   npx tsx tests/unit/managed-modal.test.ts
  */
 
-import { ManagedModalProvider, _testManagedModalSandbox } from "../../src/utils/managed-modal";
+import {
+  ManagedModalProvider,
+  ManagedModalWriteLimitError,
+  _testManagedModalSandbox,
+} from "../../src/utils/managed-modal";
 import { isEvolveManagedSandboxProvider, resolveManagedSandbox } from "../../src/utils/sandbox";
 import { getManagedProviderUrl } from "../../src/constants";
 
@@ -90,6 +95,14 @@ function json(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
     headers: { "content-type": "application/json" },
+  });
+}
+
+/** A complete exec answer as the door streams it: chunk records, then the terminal. */
+function ndjson(records: unknown[]): Response {
+  return new Response(records.map((record) => JSON.stringify(record) + "\n").join(""), {
+    status: 200,
+    headers: { "content-type": "application/x-ndjson" },
   });
 }
 
@@ -203,13 +216,13 @@ async function testCreateRefusesWhatTheDoorCannotCarry(): Promise<void> {
 }
 
 // =============================================================================
-// [3] File plane — the envd wire shapes, verbatim
+// [3] File plane — the door's JSON quartet, verbatim
 // =============================================================================
 
 async function testFileWriteWire(): Promise<void> {
-  console.log("\n[3a] files.write() - POST /files?path=<dest>, multipart, one part named 'file'");
+  console.log("\n[3a] files.write() - POST /files/write, path in the body, utf8 rides as-is");
 
-  const { requests, restore } = withMockDoor(() => json([{ name: "a.txt", type: "file", path: "/workspace/a.txt" }]));
+  const { requests, restore } = withMockDoor(() => new Response(null, { status: 204 }));
   try {
     const sandbox = sandboxUnderTest();
     await sandbox.files.write("/workspace/a.txt", "hello");
@@ -217,44 +230,76 @@ async function testFileWriteWire(): Promise<void> {
     const write = requests[requests.length - 1];
     assertEqual(
       write.url,
-      `${BASE}/sandboxes/modal-sb-1/files?path=${encodeURIComponent("/workspace/a.txt")}`,
-      "the destination rides the path query, envd-style"
+      `${BASE}/sandboxes/modal-sb-1/files/write`,
+      "write rides the door's files/write operation — no path in the URL"
     );
     assertEqual(write.method, "POST", "write is a POST");
-    assert(write.body instanceof FormData, "the body is multipart form data");
-    const part = (write.body as FormData).get("file");
-    assert(part instanceof Blob, "the payload is one part under the field name 'file'");
-    assertEqual(await (part as Blob).text(), "hello", "the part body carries the file bytes");
+    assertEqual(write.headers["content-type"], "application/json", "write is a JSON call");
+    assertEqual(
+      JSON.parse(String(write.body)),
+      { path: "/workspace/a.txt", content: "hello" },
+      "a string writes as {path, content} with the door's utf8 default"
+    );
+  } finally {
+    restore();
+  }
+}
+
+async function testFileWriteBinaryRidesBase64(): Promise<void> {
+  console.log("\n[3b] files.write() - bytes ride base64, non-UTF8 bytes survive exactly");
+
+  const { requests, restore } = withMockDoor(() => new Response(null, { status: 204 }));
+  try {
+    const sandbox = sandboxUnderTest();
+    // 0xff/0xfe are invalid UTF-8 lead bytes: any utf8 round trip would mangle
+    // them, so this payload proves base64 is really the carrier.
+    const bytes = new Uint8Array([0xff, 0xfe, 0x00, 0x89, 0x50]);
+    await sandbox.files.write("/workspace/blob.bin", bytes);
+
+    const body = JSON.parse(String(requests[requests.length - 1].body)) as {
+      path: string;
+      content: string;
+      encoding: string;
+    };
+    assertEqual(body.path, "/workspace/blob.bin", "the destination rides the body");
+    assertEqual(body.encoding, "base64", "bytes declare the base64 carrier");
+    assertEqual(
+      Array.from(Buffer.from(body.content, "base64")),
+      [0xff, 0xfe, 0x00, 0x89, 0x50],
+      "the base64 decodes back to the exact input bytes"
+    );
   } finally {
     restore();
   }
 }
 
 async function testFileWriteBatchWire(): Promise<void> {
-  console.log("\n[3b] files.writeBatch() - POST /files, one part per file, FILENAME = destination path");
+  console.log("\n[3c] files.writeBatch() - POST /files/writeBatch, one JSON body, per-entry encoding");
 
-  const { requests, restore } = withMockDoor(() => json([]));
+  const { requests, restore } = withMockDoor(() => new Response(null, { status: 204 }));
   try {
     const sandbox = sandboxUnderTest();
     await sandbox.files.writeBatch([
       { path: "/workspace/a.txt", data: "aaa" },
-      { path: "/workspace/nested/b.bin", data: new Uint8Array([1, 2, 3]) },
+      { path: "/workspace/nested/b.bin", data: new Uint8Array([1, 2, 254]) },
     ]);
 
     const write = requests[requests.length - 1];
-    assertEqual(write.url, `${BASE}/sandboxes/modal-sb-1/files`, "batch writes carry NO path query");
-    const parts = (write.body as FormData).getAll("file") as File[];
-    assertEqual(parts.length, 2, "one multipart part per file");
+    assertEqual(write.url, `${BASE}/sandboxes/modal-sb-1/files/writeBatch`, "batch rides files/writeBatch");
+    const body = JSON.parse(String(write.body)) as {
+      files: Array<{ path: string; content: string; encoding?: string }>;
+    };
+    assertEqual(body.files.length, 2, "one wire entry per file");
     assertEqual(
-      parts.map((part) => part.name),
-      ["/workspace/a.txt", "/workspace/nested/b.bin"],
-      "each part's filename is its absolute destination path"
+      body.files[0],
+      { path: "/workspace/a.txt", content: "aaa" },
+      "text entries carry utf8 content with no encoding marker"
     );
-    assertEqual(await parts[0].text(), "aaa", "text bytes survive");
+    assertEqual(body.files[1].encoding, "base64", "binary entries declare base64");
     assertEqual(
-      Array.from(new Uint8Array(await parts[1].arrayBuffer())),
-      [1, 2, 3],
-      "binary bytes survive"
+      Array.from(Buffer.from(body.files[1].content, "base64")),
+      [1, 2, 254],
+      "binary bytes survive the batch entry exactly"
     );
   } finally {
     restore();
@@ -262,9 +307,9 @@ async function testFileWriteBatchWire(): Promise<void> {
 }
 
 async function testFileWriteBatchEmptyIsFree(): Promise<void> {
-  console.log("\n[3c] files.writeBatch([]) - a no-op, no request");
+  console.log("\n[3d] files.writeBatch([]) - a no-op, no request");
 
-  const { requests, restore } = withMockDoor(() => json([]));
+  const { requests, restore } = withMockDoor(() => new Response(null, { status: 204 }));
   try {
     const sandbox = sandboxUnderTest();
     const before = requests.length;
@@ -276,37 +321,43 @@ async function testFileWriteBatchEmptyIsFree(): Promise<void> {
 }
 
 async function testFileReadWire(): Promise<void> {
-  console.log("\n[3d] files.read() - GET /files?path=<src>, raw bytes back; text/binary by extension");
+  console.log("\n[3e] files.read() - POST /files/read; the door's encoding field decides the shape");
 
-  const { requests, restore } = withMockDoor((request) =>
-    request.url.includes(".png")
-      ? new Response(new Uint8Array([137, 80]).buffer, { status: 200 })
-      : new Response("file text", { status: 200 }),
-  );
+  const nonUtf8 = [0x89, 0x50, 0xff, 0x00];
+  const { requests, restore } = withMockDoor((request) => {
+    const { path } = JSON.parse(String(request.body)) as { path: string };
+    // The door, not a client-side extension table, decides the carrier — so
+    // this responder answers base64 for a .md path on purpose.
+    return path.endsWith(".md")
+      ? json({ content: Buffer.from(nonUtf8).toString("base64"), encoding: "base64" })
+      : json({ content: "file text", encoding: "utf8" });
+  });
   try {
     const sandbox = sandboxUnderTest();
 
-    const text = await sandbox.files.read("/workspace/notes.md");
-    assertEqual(text, "file text", "a text extension reads back as a string");
+    const text = await sandbox.files.read("/workspace/notes.txt");
+    assertEqual(text, "file text", "a utf8 answer reads back as a string");
+    const call = requests[requests.length - 1];
+    assertEqual(call.url, `${BASE}/sandboxes/modal-sb-1/files/read`, "read rides files/read");
+    assertEqual(call.method, "POST", "read is a POST — file paths stay out of URLs and access logs");
     assertEqual(
-      requests[requests.length - 1].url,
-      `${BASE}/sandboxes/modal-sb-1/files?path=${encodeURIComponent("/workspace/notes.md")}`,
-      "read hits GET /files with the encoded path"
+      JSON.parse(String(call.body)),
+      { path: "/workspace/notes.txt" },
+      "the path rides the JSON body"
     );
-    assertEqual(requests[requests.length - 1].method, "GET", "read is a GET");
 
-    const bytes = await sandbox.files.read("/workspace/logo.png");
-    assert(bytes instanceof Uint8Array, "a binary extension reads back as Uint8Array");
-    assertEqual(Array.from(bytes as Uint8Array), [137, 80], "the raw bytes are untouched");
+    const bytes = await sandbox.files.read("/workspace/notes.md");
+    assert(bytes instanceof Uint8Array, "a base64 answer reads back as Uint8Array, whatever the extension");
+    assertEqual(Array.from(bytes as Uint8Array), nonUtf8, "non-UTF8 bytes rebuild exactly");
   } finally {
     restore();
   }
 }
 
 async function testMakeDirWire(): Promise<void> {
-  console.log("\n[3e] files.makeDir() - POST /filesystem.Filesystem/MakeDir with {path}");
+  console.log("\n[3f] files.makeDir() - POST /files/makeDir with {path}");
 
-  const { requests, restore } = withMockDoor(() => json({}));
+  const { requests, restore } = withMockDoor(() => new Response(null, { status: 204 }));
   try {
     const sandbox = sandboxUnderTest();
     await sandbox.files.makeDir("/workspace/out");
@@ -314,8 +365,8 @@ async function testMakeDirWire(): Promise<void> {
     const call = requests[requests.length - 1];
     assertEqual(
       call.url,
-      `${BASE}/sandboxes/modal-sb-1/filesystem.Filesystem/MakeDir`,
-      "makeDir rides the envd RPC path"
+      `${BASE}/sandboxes/modal-sb-1/files/makeDir`,
+      "makeDir rides the door's files/makeDir operation"
     );
     assertEqual(JSON.parse(String(call.body)), { path: "/workspace/out" }, "the body is {path}");
     assertEqual(call.headers["content-type"], "application/json", "makeDir is a JSON call");
@@ -324,15 +375,59 @@ async function testMakeDirWire(): Promise<void> {
   }
 }
 
+async function testWriteBoundRefusedBeforeSending(): Promise<void> {
+  console.log("\n[3g] files.write()/writeBatch() - the door's 1 MiB bound is a typed pre-send refusal");
+
+  const { requests, restore } = withMockDoor(() => new Response(null, { status: 204 }));
+  try {
+    const sandbox = sandboxUnderTest();
+
+    let error: unknown;
+    try {
+      await sandbox.files.write("/workspace/big.txt", "x".repeat(1024 * 1024));
+    } catch (err) {
+      error = err;
+    }
+    assert(error instanceof ManagedModalWriteLimitError, "an over-bound write throws the typed error");
+    assert(String(error).includes("1 MiB"), "the error names the bound");
+    assertEqual(requests.length, 0, "and nothing was sent — the refusal fires before the wire");
+
+    let batchError: unknown;
+    try {
+      await sandbox.files.writeBatch([
+        { path: "/a", data: "x".repeat(600 * 1024) },
+        { path: "/b", data: "x".repeat(600 * 1024) },
+      ]);
+    } catch (err) {
+      batchError = err;
+    }
+    assert(
+      batchError instanceof ManagedModalWriteLimitError,
+      "a batch whose ONE body breaks the bound is refused the same way"
+    );
+    assertEqual(requests.length, 0, "the batch refusal also fires before the wire");
+
+    await sandbox.files.write("/workspace/ok.txt", "x".repeat(1024));
+    assertEqual(requests.length, 1, "an in-bound write goes through untouched");
+  } finally {
+    restore();
+  }
+}
+
 // =============================================================================
-// [4] Commands — exec, spawn, list, kill
+// [4] Commands — exec streaming, spawn, list, kill
 // =============================================================================
 
 async function testRunWire(): Promise<void> {
-  console.log("\n[4a] commands.run() - POST /exec with the door's body; buffered callbacks fire once");
+  console.log("\n[4a] commands.run() - POST /exec; NDJSON chunks accumulate and fire callbacks in order");
 
   const { requests, restore } = withMockDoor(() =>
-    json({ exitCode: 0, stdout: "out!", stderr: "err!" }),
+    ndjson([
+      { stream: "stdout", data: "out " },
+      { stream: "stderr", data: "err!" },
+      { stream: "stdout", data: "more" },
+      { exitCode: 0 },
+    ]),
   );
   try {
     const sandbox = sandboxUnderTest();
@@ -353,18 +448,148 @@ async function testRunWire(): Promise<void> {
       { command: "echo hi", cwd: "/workspace", envs: { A: "1" }, timeoutMs: 30_000 },
       "the exec body carries command + cwd + envs + timeoutMs"
     );
-    assertEqual(result, { exitCode: 0, stdout: "out!", stderr: "err!" }, "the result maps 1:1");
-    assertEqual(stdout, ["out!"], "onStdout fires once, with the whole output (buffered exec)");
-    assertEqual(stderr, ["err!"], "onStderr fires once, with the whole output");
+    assertEqual(
+      result,
+      { exitCode: 0, stdout: "out more", stderr: "err!" },
+      "the terminal record carries the exit code; output is the accumulated chunks"
+    );
+    assertEqual(stdout, ["out ", "more"], "onStdout fires once per chunk, in stream order");
+    assertEqual(stderr, ["err!"], "onStderr fires per chunk on its own stream");
+  } finally {
+    restore();
+  }
+}
+
+async function testRunStreamsChunkByChunk(): Promise<void> {
+  console.log("\n[4b] commands.run() - chunks are delivered as they FLOW, before the command completes");
+
+  let push!: (record: unknown) => void;
+  let close!: () => void;
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      push = (record) => controller.enqueue(encoder.encode(JSON.stringify(record) + "\n"));
+      close = () => controller.close();
+    },
+  });
+  const { restore } = withMockDoor(() => new Response(stream, { status: 200 }));
+  try {
+    const sandbox = sandboxUnderTest();
+    let firstChunkSeen!: () => void;
+    const firstChunk = new Promise<void>((resolve) => (firstChunkSeen = resolve));
+    let settled = false;
+
+    const pending = sandbox.commands
+      .run("long-task", { onStdout: () => firstChunkSeen() })
+      .finally(() => (settled = true));
+
+    // The command is still running (no terminal record yet) when the first
+    // chunk record lands — the callback must fire NOW, not at completion.
+    push({ stream: "stdout", data: "early" });
+    await firstChunk;
+    assertEqual(settled, false, "the first chunk arrived while run() was still in flight");
+
+    push({ exitCode: 3 });
+    close();
+    const result = await pending;
+    assertEqual(result.exitCode, 3, "the run then settles with the terminal exit code");
+    assertEqual(result.stdout, "early", "with the streamed chunk accumulated");
+  } finally {
+    restore();
+  }
+}
+
+async function testRunSplitRecordsReassemble(): Promise<void> {
+  console.log("\n[4c] commands.run() - a record split across network chunks reassembles exactly");
+
+  const encoder = new TextEncoder();
+  const whole = JSON.stringify({ stream: "stdout", data: "split" }) + "\n" + JSON.stringify({ exitCode: 0 }) + "\n";
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      // Cut mid-record: the transport must buffer to the newline, never parse a half line.
+      controller.enqueue(encoder.encode(whole.slice(0, 11)));
+      controller.enqueue(encoder.encode(whole.slice(11)));
+      controller.close();
+    },
+  });
+  const { restore } = withMockDoor(() => new Response(stream, { status: 200 }));
+  try {
+    const result = await sandboxUnderTest().commands.run("echo split");
+    assertEqual(result, { exitCode: 0, stdout: "split", stderr: "" }, "split records parse whole");
+  } finally {
+    restore();
+  }
+}
+
+async function testRunTerminalErrorAndTruncation(): Promise<void> {
+  console.log("\n[4d] commands.run() - a terminal {error} throws; a stream that dies without one throws");
+
+  const errored = withMockDoor(() =>
+    ndjson([{ stream: "stdout", data: "partial" }, { error: "sandbox terminated mid-run" }]),
+  );
+  try {
+    let message = "";
+    try {
+      await sandboxUnderTest().commands.run("doomed");
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    assert(
+      message.includes("sandbox terminated mid-run"),
+      "an upstream failure after the stream began surfaces with its cause"
+    );
+  } finally {
+    errored.restore();
+  }
+
+  const truncated = withMockDoor(() => ndjson([{ stream: "stdout", data: "partial" }]));
+  try {
+    let message = "";
+    try {
+      await sandboxUnderTest().commands.run("cut-off");
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    assert(
+      message.includes("without a terminal record"),
+      "a stream that ends with no terminal record is a dead connection, never a completed command"
+    );
+  } finally {
+    truncated.restore();
+  }
+}
+
+async function testRunOverCeilingRejectionSurfaces(): Promise<void> {
+  console.log("\n[4e] commands.run() - the door's timeout-ceiling rejection arrives as a clear error");
+
+  // The door REJECTS a timeoutMs above its 120 min ceiling (provider law:
+  // never a silent clamp); the transport's job is to hand the caller that
+  // refusal verbatim, bound and all.
+  const { restore } = withMockDoor(() =>
+    json({ error: "Managed Modal exec timeoutMs must be at most 7200000 ms (120 minutes)" }, 400),
+  );
+  try {
+    let message = "";
+    try {
+      await sandboxUnderTest().commands.run("sleep 999999", { timeoutMs: 10 * 60 * 60 * 1000 });
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    assert(
+      message.includes("(400)") && message.includes("7200000"),
+      "the rejection surfaces with the door's status and the named bound"
+    );
   } finally {
     restore();
   }
 }
 
 async function testSpawnIsTheSameExec(): Promise<void> {
-  console.log("\n[4b] commands.spawn() - the exec fired immediately; wait() is the HTTP completion");
+  console.log("\n[4f] commands.spawn() - the exec fired immediately; wait() is the stream's completion");
 
-  const { requests, restore } = withMockDoor(() => json({ exitCode: 7, stdout: "done", stderr: "" }));
+  const { requests, restore } = withMockDoor(() =>
+    ndjson([{ stream: "stdout", data: "done" }, { exitCode: 7 }]),
+  );
   try {
     const sandbox = sandboxUnderTest();
     const before = requests.length;
@@ -380,13 +605,16 @@ async function testSpawnIsTheSameExec(): Promise<void> {
 }
 
 async function testProcessListAndKill(): Promise<void> {
-  console.log("\n[4c] commands.list()/kill() - ride the exec operation with the direct provider's commands");
+  console.log("\n[4g] commands.list()/kill() - ride the exec operation with the direct provider's commands");
 
   const { requests, restore } = withMockDoor((request) => {
     const body = JSON.parse(String(request.body)) as { command: string };
     if (body.command.startsWith("ps"))
-      return json({ exitCode: 0, stdout: "PID COMMAND ARGS\n42 node server.js\n", stderr: "" });
-    return json({ exitCode: 0, stdout: "", stderr: "" });
+      return ndjson([
+        { stream: "stdout", data: "PID COMMAND ARGS\n42 node server.js\n" },
+        { exitCode: 0 },
+      ]);
+    return ndjson([{ exitCode: 0 }]);
   });
   try {
     const sandbox = sandboxUnderTest();
@@ -588,11 +816,17 @@ const tests = [
   testCreateOmitsUnsetFields,
   testCreateRefusesWhatTheDoorCannotCarry,
   testFileWriteWire,
+  testFileWriteBinaryRidesBase64,
   testFileWriteBatchWire,
   testFileWriteBatchEmptyIsFree,
   testFileReadWire,
   testMakeDirWire,
+  testWriteBoundRefusedBeforeSending,
   testRunWire,
+  testRunStreamsChunkByChunk,
+  testRunSplitRecordsReassemble,
+  testRunTerminalErrorAndTruncation,
+  testRunOverCeilingRejectionSurfaces,
   testSpawnIsTheSameExec,
   testProcessListAndKill,
   testSandboxKillWire,
