@@ -16,6 +16,8 @@
  *      before any network call; user option no longer rejected)
  *   7. ModalCommands — exec args carry the su wrapper / root passthrough
  *   8. ModalFiles — chown to sandbox user, skipped for root
+ *   8x. ModalFiles.read() — text-vs-binary decided by content (NUL sniff +
+ *      strict UTF-8), never by extension; byte-exact on both branches
  *
  * Usage:
  *   npx tsx tests/unit/modal-provider.test.ts
@@ -613,19 +615,26 @@ interface ExecCall {
   params: Record<string, unknown> | undefined;
 }
 
-function createMockModalSandbox(opts?: { stdout?: string; stderr?: string; exitCode?: number }) {
+function createMockModalSandbox(opts?: {
+  stdout?: string;
+  stderr?: string;
+  exitCode?: number;
+  stdoutBytes?: Uint8Array;
+}) {
   const execCalls: ExecCall[] = [];
   const stdinWrites: Buffer[] = [];
   const stdoutText = opts?.stdout ?? "";
   const stderrText = opts?.stderr ?? "";
   const exitCode = opts?.exitCode ?? 0;
 
-  const makeStream = (text: string) => ({
+  const makeStream = (text: string, bytes?: Uint8Array) => ({
     async *[Symbol.asyncIterator]() {
       if (text) yield text;
     },
-    readText: async () => text,
-    readBytes: async () => new TextEncoder().encode(text),
+    // Like the real SDK, readText is a lossy UTF-8 decode of whatever bytes
+    // the stream carries — invalid sequences become U+FFFD, never an error.
+    readText: async () => (bytes ? new TextDecoder().decode(bytes) : text),
+    readBytes: async () => bytes ?? new TextEncoder().encode(text),
   });
 
   const sandbox = {
@@ -633,7 +642,7 @@ function createMockModalSandbox(opts?: { stdout?: string; stderr?: string; exitC
     exec: async (args: string[], params?: Record<string, unknown>) => {
       execCalls.push({ args, params });
       return {
-        stdout: makeStream(stdoutText),
+        stdout: makeStream(stdoutText, opts?.stdoutBytes),
         stderr: makeStream(stderrText),
         wait: async () => exitCode,
         stdin: {
@@ -771,6 +780,54 @@ async function testFilesWriteRootNoChown(): Promise<void> {
 
   const chownCalls = execCalls.filter((c) => c.args[0] === "chown");
   assertEqual(chownCalls.length, 0, "Zero chown calls for root");
+}
+
+// =============================================================================
+// [8x] ModalFiles.read() — text-vs-binary decided by content, byte-exact
+// =============================================================================
+
+async function testFilesReadBinaryByContentNotExtension(): Promise<void> {
+  console.log("\n[8e] ModalFiles.read() - binary is decided by CONTENT; a .bin payload survives byte-exact");
+
+  // The E2E-proven mangle: these bytes are not valid UTF-8 (0xff/0xfe leads,
+  // a NUL) and .bin sat in no extension table, so the old extension-steered
+  // read sent them through a lossy text decode and returned U+FFFD soup.
+  const bytes = Uint8Array.from([0x00, 0xff, 0xfe, 0x80, 0x9c, 0xc3, 0x28, 0x01]);
+  const { sandbox } = createMockModalSandbox({ stdoutBytes: bytes });
+  const files = new ModalFiles(sandbox as any, "root");
+
+  const result = await files.read("/workspace/blob.bin");
+  assert(result instanceof Uint8Array, "non-UTF8 content reads back as bytes, whatever the name");
+  assertEqual(Array.from(result as Uint8Array), Array.from(bytes), "every byte survives exactly");
+
+  // NUL is the binary tell even when the bytes happen to decode as UTF-8
+  // (the platform's agent-home sniff, git's own heuristic).
+  const nulled = Uint8Array.from([0x68, 0x00, 0x69]);
+  const { sandbox: nulBox } = createMockModalSandbox({ stdoutBytes: nulled });
+  const nulRead = await new ModalFiles(nulBox as any, "root").read("/workspace/data.txt");
+  assert(nulRead instanceof Uint8Array, "a NUL byte marks binary even inside valid UTF-8");
+}
+
+async function testFilesReadTextByContentNotExtension(): Promise<void> {
+  console.log("\n[8f] ModalFiles.read() - valid UTF-8 is a string, even under a binary-looking name");
+
+  const text = "héllo → wörld\n";
+  const { sandbox } = createMockModalSandbox({ stdoutBytes: new TextEncoder().encode(text) });
+  const files = new ModalFiles(sandbox as any, "root");
+
+  const result = await files.read("/workspace/report.png");
+  assertEqual(result, text, "the extension plays no part — valid UTF-8 reads back as a string");
+
+  // ignoreBOM: a BOM is content, not framing. The default decoder would eat
+  // it and the string would no longer re-encode to the file's exact bytes.
+  const bom = Uint8Array.from([0xef, 0xbb, 0xbf, 0x68, 0x69]);
+  const { sandbox: bomBox } = createMockModalSandbox({ stdoutBytes: bom });
+  const bomRead = await new ModalFiles(bomBox as any, "root").read("/workspace/bom.txt");
+  assertEqual(
+    Array.from(new TextEncoder().encode(bomRead as string)),
+    Array.from(bom),
+    "a leading BOM survives the decode, so the string rebuilds the identical bytes"
+  );
 }
 
 // =============================================================================
@@ -988,6 +1045,9 @@ const tests = [
   testFilesMakeDirRootSkipsChown,
   testFilesWriteChownsToUser,
   testFilesWriteRootNoChown,
+  // [8x] ModalFiles read fidelity (content-sniffed, byte-exact)
+  testFilesReadBinaryByContentNotExtension,
+  testFilesReadTextByContentNotExtension,
   // [9] ModalFiles stdin chunking (100MiB gRPC cap)
   testFilesWriteSmallSingleChunk,
   testFilesWriteChunksOverCap,

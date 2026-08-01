@@ -92,22 +92,6 @@ const DEFAULT_SANDBOX_USER = "user";
 const TAG_IMAGE = "evolve.image";
 const TAG_STARTED_AT = "evolve.startedAt";
 
-const BINARY_EXTENSIONS = new Set([
-  ".xlsx", ".xls", ".docx", ".doc", ".pptx", ".ppt",
-  ".pdf", ".zip", ".tar", ".gz", ".7z", ".rar",
-  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".bmp",
-  ".mp3", ".wav", ".ogg", ".flac", ".aac",
-  ".mp4", ".avi", ".mov", ".mkv", ".webm",
-  ".woff", ".woff2", ".ttf", ".otf", ".eot",
-  ".exe", ".dll", ".so", ".dylib",
-  ".sqlite", ".db", ".pickle", ".pkl", ".parquet",
-]);
-
-function isBinaryFile(path: string): boolean {
-  const ext = path.substring(path.lastIndexOf(".")).toLowerCase();
-  return BINARY_EXTENSIONS.has(ext);
-}
-
 /**
  * Typed error for Modal's hard 24h sandbox lifetime cap.
  * Long-running sessions must persist progress with Evolve checkpoints and
@@ -944,24 +928,30 @@ export class ModalFiles implements SandboxFiles {
   }
 
   async read(path: string): Promise<string | Uint8Array> {
-    if (isBinaryFile(path)) {
-      // Binary: use cat with binary mode - no base64 overhead
-      const p = await this.sandbox.exec(["cat", path], { timeoutMs: 300000, mode: "binary" });
-      const exitCode = await p.wait();
-      if (exitCode !== 0) {
-        const stderr = await p.stderr.readText();
-        throw new Error(`Failed to read file ${path}: ${stderr || `exit code ${exitCode}`}`);
-      }
-      return await p.stdout.readBytes();
-    }
-    // Text: read directly via exec
-    const p = await this.sandbox.exec(["cat", path], { timeoutMs: 300000 });
+    // Always read raw bytes and decide text-vs-binary from CONTENT, never
+    // from the file's name: the SandboxFiles contract is "read returns
+    // string | Uint8Array", and an extension table cannot keep that honest —
+    // binary bytes under an unlisted extension (.bin) would ride a lossy
+    // text decode and come back U+FFFD-mangled. A NUL byte marks binary (the
+    // platform's agent-home sniff, git's own heuristic); everything else must
+    // survive a STRICT UTF-8 decode (fatal, BOM preserved) to come back as a
+    // string. Both answers are therefore byte-exact: a returned string
+    // re-encodes to the identical bytes, a returned Uint8Array IS the bytes.
+    const p = await this.sandbox.exec(["cat", path], { timeoutMs: 300000, mode: "binary" });
     const exitCode = await p.wait();
     if (exitCode !== 0) {
       const stderr = await p.stderr.readText();
       throw new Error(`Failed to read file ${path}: ${stderr || `exit code ${exitCode}`}`);
     }
-    return await p.stdout.readText();
+    const bytes = await p.stdout.readBytes();
+    if (!bytes.includes(0)) {
+      try {
+        return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+      } catch {
+        // Not valid UTF-8 — binary after all.
+      }
+    }
+    return bytes;
   }
 
   async write(path: string, content: string | Buffer | ArrayBuffer | Uint8Array): Promise<void> {

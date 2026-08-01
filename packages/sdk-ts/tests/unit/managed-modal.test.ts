@@ -661,6 +661,40 @@ async function testSandboxKillWire(): Promise<void> {
   }
 }
 
+async function testIsRunningFollowsTheDoorsGet(): Promise<void> {
+  console.log("\n[5a2] isRunning() - the door's get answers it: 200 = running, the dead 404 = false");
+
+  const alive = withMockDoor(() => json({ sandboxId: "modal-sb-1" }));
+  try {
+    assertEqual(await sandboxUnderTest().isRunning(), true, "a 200 get is a running sandbox");
+  } finally {
+    alive.restore();
+  }
+
+  // Modal itself keeps describing terminated sandboxes, so the door consults
+  // its own ownership record and answers the dead 404 after kill — this is
+  // the answer that must flip isRunning to false.
+  const dead = withMockDoor(() => json({ error: "Sandbox not found" }, 404));
+  try {
+    assertEqual(await sandboxUnderTest().isRunning(), false, "the door's 404 flips isRunning to false");
+  } finally {
+    dead.restore();
+  }
+
+  const broken = withMockDoor(() => json({ error: "boom" }, 502));
+  try {
+    let threw = false;
+    try {
+      await sandboxUnderTest().isRunning();
+    } catch {
+      threw = true;
+    }
+    assert(threw, "a door failure throws — never a fabricated liveness answer");
+  } finally {
+    broken.restore();
+  }
+}
+
 async function testConnectChecksExistence(): Promise<void> {
   console.log("\n[5b] connect() - the get operation is the existence check");
 
@@ -830,6 +864,7 @@ const tests = [
   testSpawnIsTheSameExec,
   testProcessListAndKill,
   testSandboxKillWire,
+  testIsRunningFollowsTheDoorsGet,
   testConnectChecksExistence,
   testProviderListWire,
   testListAllHonestCompleteness,

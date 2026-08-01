@@ -19,7 +19,10 @@
  *            metadata, startedAt}
  *   list     GET    {base}/sandboxes              → 200 {sandboxes: [...]}
  *   get      GET    {base}/sandboxes/{id}         → 200 {sandboxId, image,
- *            metadata, startedAt}
+ *            metadata, startedAt}; a stopped or killed sandbox is 404 — Modal
+ *            itself keeps describing terminated boxes, so the door answers
+ *            from its own ownership record, and that 404 is what flips
+ *            isRunning() to false
  *   kill     DELETE {base}/sandboxes/{id}         → 204
  *   exec     POST   {base}/sandboxes/{id}/exec      JSON {command, cwd?,
  *            envs?, timeoutMs?} → 200 NDJSON stream: one {stream: "stdout" |
@@ -34,7 +37,9 @@
  * file paths stay out of access logs), base64 as the binary carrier:
  *   read       POST {base}/sandboxes/{id}/files/read       {path}
  *              → 200 {content, encoding: "utf8" | "base64"} — the door says
- *              which carrier it chose; base64 rebuilds the exact bytes
+ *              which carrier it chose (decided from the bytes themselves,
+ *              never the file's extension); either way the caller rebuilds
+ *              the exact bytes
  *   write      POST {base}/sandboxes/{id}/files/write      {path, content,
  *              encoding?: "base64"} → 204
  *   writeBatch POST {base}/sandboxes/{id}/files/writeBatch {files: [{path,
@@ -303,8 +308,9 @@ class ManagedModalFiles implements SandboxFiles {
       this.door.json({ path }),
     );
     const payload = (await response.json()) as { content?: string; encoding?: string };
-    // The door decides text-vs-binary (it holds the provider) and reports
-    // which carrier it chose; the transport just rebuilds the exact bytes.
+    // The door decides text-vs-binary (it holds the provider, which sniffs
+    // the CONTENT — never the extension) and reports which carrier it chose;
+    // the transport just rebuilds the exact bytes.
     if (payload.encoding === "base64") {
       return new Uint8Array(Buffer.from(payload.content ?? "", "base64"));
     }
