@@ -243,9 +243,7 @@ class ManagedProvider:
     environment variable — so a program says what it runs on.
 
     Args:
-        provider: 'e2b' (default) or 'daytona'. 'modal' is not available yet:
-            the managed Modal API serves create/list/get/kill/exec and has no
-            filesystem operations, which an agent session requires.
+        provider: 'e2b' (default), 'daytona', or 'modal'.
         api_key: Evolve API key (defaults to the EVOLVE_API_KEY env var)
 
     Example:
@@ -308,7 +306,9 @@ class DaytonaProvider:
         api_url: API URL (defaults to https://app.daytona.io/api)
         target: Target region (defaults to 'us')
         timeout_ms: Sandbox timeout in milliseconds (default: 3600000 = 1 hour)
-        snapshot_name: Daytona snapshot name (default: 'evolve-all'). Custom snapshots via ``cd assets && ./build.sh daytona``
+        snapshot_name: Daytona snapshot name (default: the current release
+            snapshot, e.g. 'evolve-all-v1'; explicit names pass through
+            untouched). Custom snapshots via ``cd assets && ./build.sh daytona``
     """
     api_key: Optional[str] = None
     api_url: Optional[str] = None

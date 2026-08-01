@@ -618,17 +618,14 @@ async function runTests(): Promise<void> {
   }
 
   {
-    // Stated, not half-built: the managed Modal door has no filesystem verbs,
-    // and an agent session writes files before it runs anything.
-    let message = "";
-    try {
-      await managedSandbox("modal");
-    } catch (err) {
-      message = (err as Error).message;
-    }
-    assert(
-      message.includes("filesystem operations"),
-      "managed modal refuses with the reason, rather than returning a half-provider"
+    // Modal cannot ride an apiUrl swap (gRPC control plane), so managed modal
+    // is the door's own HTTP client — see managed-modal.test.ts for its wire.
+    const modal = await managedSandbox("modal");
+    assertEqual(modal.providerType, "modal", "managed modal resolves a modal provider");
+    assertEqual(
+      getManagedProviderUrl("modal"),
+      `${getDashboardUrl()}/api/managed/modal`,
+      "managed modal control plane is the Dashboard door"
     );
   }
 

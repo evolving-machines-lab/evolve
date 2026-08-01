@@ -19,6 +19,7 @@
  */
 
 import {
+  _testActivateSnapshot,
   _testWrapCommand,
   _testMapNetworkPolicy,
   _testImageRegistryHost,
@@ -30,6 +31,7 @@ import {
   DaytonaResourcesError,
   DaytonaIdleTimeoutError,
   DaytonaImagePullError,
+  DaytonaSnapshotActivationError,
   DaytonaCommands,
   createDaytonaProvider,
 } from "../../src/index.ts";
@@ -690,6 +692,208 @@ async function testCreateRejectsResourcesOnCachedSnapshot(): Promise<void> {
 }
 
 // =============================================================================
+// [6.5] Snapshot self-heal — exists-but-inactive is reactivated, never rebuilt
+// =============================================================================
+
+/** Capture console.log so the heal-path logging never pollutes test output. */
+async function silenceLogs<T>(fn: () => Promise<T>): Promise<T> {
+  const original = console.log;
+  console.log = () => {};
+  try {
+    return await fn();
+  } finally {
+    console.log = original;
+  }
+}
+
+async function testCreateHealsInactiveSnapshot(): Promise<void> {
+  console.log("\n[6e] DaytonaProvider.create() - inactive snapshot: activate, then create from it");
+
+  // Daytona deactivates snapshots after 2 weeks unused. Before the heal, this
+  // case fell into the build path, whose snapshot.create fails on the existing
+  // name and degrades to a slow direct pull — the 2026-07-31 prod incident.
+  const provider = createDaytonaProvider({ apiKey: "test-key" });
+  let activateCalls = 0;
+  let snapshotCreateCalls = 0;
+  let createParams: { snapshot?: string } | undefined;
+  (provider as unknown as { client: unknown }).client = {
+    snapshot: {
+      get: async () => ({ state: "inactive", name: "eval-env-cafe" }),
+      activate: async () => {
+        activateCalls++;
+        return { state: "active" };
+      },
+      create: async () => {
+        snapshotCreateCalls++;
+        throw new Error("MARKER_SNAPSHOT_BUILD_TRIGGERED");
+      },
+    },
+    create: async (params: { snapshot?: string }) => {
+      createParams = params;
+      return { id: "sb-healed" };
+    },
+  };
+
+  const instance = await silenceLogs(() => provider.create({ image: "eval-env-cafe" }));
+  assertEqual(instance.sandboxId, "sb-healed", "create proceeds from the reactivated snapshot");
+  assertEqual(activateCalls, 1, "the inactive snapshot is activated exactly once");
+  assertEqual(createParams?.snapshot, "eval-env-cafe", "the sandbox is created FROM the snapshot, not the raw image");
+  assertEqual(snapshotCreateCalls, 0, "the build path is never entered for an existing snapshot");
+}
+
+async function testCreateActiveSnapshotUntouchedByActivation(): Promise<void> {
+  console.log("\n[6f] DaytonaProvider.create() - active snapshot: activate is never called");
+
+  const provider = createDaytonaProvider({ apiKey: "test-key" });
+  let activateCalls = 0;
+  (provider as unknown as { client: unknown }).client = {
+    snapshot: {
+      get: async () => ({ state: "active" }),
+      activate: async () => {
+        activateCalls++;
+        return { state: "active" };
+      },
+    },
+    create: async () => ({ id: "sb-fast" }),
+  };
+
+  const instance = await silenceLogs(() => provider.create({ image: "eval-env-cafe" }));
+  assertEqual(instance.sandboxId, "sb-fast", "the fast path is unchanged");
+  assertEqual(activateCalls, 0, "an already-active snapshot is never touched");
+}
+
+async function testCreateRefusesResourcesBeforeActivation(): Promise<void> {
+  console.log("\n[6g] DaytonaProvider.create() - resources + inactive snapshot: refusal fires before activation");
+
+  // An existing snapshot pins its sizing whatever its state — no reactivation
+  // work is spent on a create that will be refused anyway.
+  const provider = createDaytonaProvider({ apiKey: "test-key" });
+  let activateCalls = 0;
+  (provider as unknown as { client: unknown }).client = {
+    snapshot: {
+      get: async () => ({ state: "inactive" }),
+      activate: async () => {
+        activateCalls++;
+        return { state: "active" };
+      },
+    },
+    create: async () => ({ id: "sb-never" }),
+  };
+
+  let error: unknown;
+  try {
+    await silenceLogs(() => provider.create({ image: "eval-env-cafe", resources: { cpu: 2 } }));
+  } catch (e) {
+    error = e;
+  }
+  assert(error instanceof DaytonaResourcesError, "resources + inactive snapshot throws DaytonaResourcesError");
+  assertEqual(activateCalls, 0, "no activation is attempted for a doomed create");
+}
+
+async function testActivationFailureIsFinal(): Promise<void> {
+  console.log("\n[6h] DaytonaProvider.create() - a snapshot that will not activate is a final verdict");
+
+  // Terminal failure state during activation: the typed error propagates and
+  // the build path is NOT entered — rebuilding under the same name can only
+  // name-conflict and then mask the incident behind a slow direct pull.
+  const provider = createDaytonaProvider({ apiKey: "test-key" });
+  let snapshotCreateCalls = 0;
+  let sandboxCreateCalls = 0;
+  (provider as unknown as { client: unknown }).client = {
+    snapshot: {
+      get: async () => ({ state: "inactive" }),
+      activate: async () => ({ state: "error" }),
+      create: async () => {
+        snapshotCreateCalls++;
+        return {};
+      },
+    },
+    create: async () => {
+      sandboxCreateCalls++;
+      return { id: "sb-never" };
+    },
+  };
+
+  let error: unknown;
+  try {
+    await silenceLogs(() => provider.create({ image: "eval-env-cafe" }));
+  } catch (e) {
+    error = e;
+  }
+  assert(error instanceof DaytonaSnapshotActivationError, "activation failure throws DaytonaSnapshotActivationError");
+  assert(String(error).includes("eval-env-cafe"), "the error names the snapshot");
+  assertEqual(snapshotCreateCalls, 0, "the build path is not entered");
+  assertEqual(sandboxCreateCalls, 0, "no sandbox create is attempted");
+}
+
+async function testActivateSnapshotPollsUntilActive(): Promise<void> {
+  console.log("\n[6i] activateSnapshot() - transitional states are polled through to active");
+
+  const states = ["pulling", "pulling", "active"];
+  let gets = 0;
+  const client = {
+    snapshot: {
+      get: async () => ({ state: states[gets++] ?? "active" }),
+      activate: async () => ({ state: "pulling" }),
+    },
+  };
+
+  const result = await silenceLogs(() =>
+    _testActivateSnapshot(client, "evolve-all", { state: "inactive" }, { timeoutMs: 5_000, pollMs: 1 })
+  );
+  assertEqual(result.state, "active", "polling ends on the active state");
+  assertEqual(gets, 3, "each poll asks the API again rather than trusting the activate response");
+}
+
+async function testActivateSnapshotTimesOutLoudly(): Promise<void> {
+  console.log("\n[6j] activateSnapshot() - a bounded wait, ended by a clear timeout error");
+
+  const client = {
+    snapshot: {
+      get: async () => ({ state: "pulling" }),
+      activate: async () => ({ state: "pulling" }),
+    },
+  };
+
+  let error: unknown;
+  try {
+    await silenceLogs(() =>
+      _testActivateSnapshot(client, "evolve-all", { state: "inactive" }, { timeoutMs: 0, pollMs: 1 })
+    );
+  } catch (e) {
+    error = e;
+  }
+  assert(error instanceof DaytonaSnapshotActivationError, "the timeout throws the typed activation error");
+  assert(String(error).includes("evolve-all"), "the error names the snapshot");
+  assert(String(error).includes("0ms"), "the error states the bound that was exceeded");
+  assert(String(error).includes("pulling"), "the error reports the last observed state");
+}
+
+async function testActivateSnapshotSurfacesActivateFailure(): Promise<void> {
+  console.log("\n[6k] activateSnapshot() - a failed activate call is surfaced with its cause");
+
+  const client = {
+    snapshot: {
+      get: async () => ({ state: "inactive" }),
+      activate: async () => {
+        throw new Error("upstream 500");
+      },
+    },
+  };
+
+  let error: unknown;
+  try {
+    await silenceLogs(() =>
+      _testActivateSnapshot(client, "evolve-all", { state: "inactive" }, { timeoutMs: 1_000, pollMs: 1 })
+    );
+  } catch (e) {
+    error = e;
+  }
+  assert(error instanceof DaytonaSnapshotActivationError, "an activate failure throws the typed error");
+  assert(String(error).includes("upstream 500"), "the original cause survives in the message");
+}
+
+// =============================================================================
 // [7] DaytonaCommands — mock-based session exec wiring
 // =============================================================================
 
@@ -870,6 +1074,14 @@ const tests = [
   testCreateNoLongerRejectsUserAndNetwork,
   testCreateRejectsResourcesOnCachedSnapshot,
   testCreateRejectsIdleTimeout,
+  // [6.5] snapshot self-heal
+  testCreateHealsInactiveSnapshot,
+  testCreateActiveSnapshotUntouchedByActivation,
+  testCreateRefusesResourcesBeforeActivation,
+  testActivationFailureIsFinal,
+  testActivateSnapshotPollsUntilActive,
+  testActivateSnapshotTimesOutLoudly,
+  testActivateSnapshotSurfacesActivateFailure,
   // [7] DaytonaCommands
   testCommandsRunAsRootUsesSudoWrapper,
   testCommandsRunDefaultUserNoWrapper,

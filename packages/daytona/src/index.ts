@@ -47,8 +47,31 @@ import { resolve4 } from "node:dns/promises";
 // CONSTANTS
 // ============================================================
 
+/**
+ * The Evolve image release this package defaults to.
+ *
+ * LAW — one version, three copies, bumped together in one commit:
+ *   assets/docker/image-version.ts   (canonical; what ./build.sh docker pushes)
+ *   packages/modal/src/index.ts      (EVOLVE_IMAGE_VERSION → IMAGE_MAP tag)
+ *   packages/daytona/src/index.ts    (this one → snapshot name + IMAGE_MAP tag)
+ * The published packages ship standalone and cannot import the canonical file,
+ * so the copies are held together by the coherence test in
+ * packages/daytona/tests/unit/daytona-image-version.test.ts.
+ *
+ * WHY a version at all: Daytona and Modal cache the image by NAME. A mutable
+ * :latest is pulled once and never again, so a pushed update reached nobody.
+ * Bumping this constant changes the default snapshot name, and the ensure
+ * logic in create() builds the new snapshot from the new tag on first use.
+ */
+export const EVOLVE_IMAGE_VERSION = "v1";
+
 /** Map generic image names to Daytona Docker images */
 const IMAGE_MAP: Record<string, string> = {
+  // The versioned default: what a fresh `evolve-all-vN` snapshot is built from.
+  [`evolve-all-${EVOLVE_IMAGE_VERSION}`]: `evolvingmachines/evolve-all:${EVOLVE_IMAGE_VERSION}`,
+  // The legacy unversioned name. A caller who pins "evolve-all" explicitly
+  // keeps resolving exactly what they always did — their existing snapshot,
+  // or a build from the mutable :latest tag.
   "evolve-all": "evolvingmachines/evolve-all",
 };
 
@@ -64,6 +87,18 @@ const IMAGE_MAP: Record<string, string> = {
 export const DAYTONA_AUTO_DELETE_GRACE_MINUTES = 10;
 
 export const DAYTONA_MAX_NETWORK_ALLOWLIST = 10;
+
+/**
+ * How long a reactivated snapshot may take to come back before create() gives
+ * up. Daytona deactivates any snapshot unused for two weeks (official docs:
+ * "Snapshots automatically become inactive after 2 weeks of not being used"),
+ * so exists-but-inactive is the steady state of every image that shipped more
+ * than a fortnight before its next user — reactivation is a pull, not a build,
+ * and one that outlives this bound is a provider incident worth a loud error.
+ */
+export const DAYTONA_SNAPSHOT_ACTIVATE_TIMEOUT_MS = 180_000;
+
+const DAYTONA_SNAPSHOT_ACTIVATE_POLL_MS = 2_000;
 
 /**
  * Sandboxes requested per list page. Held at the value every provider in this
@@ -206,6 +241,83 @@ export class DaytonaIdleTimeoutError extends Error {
     );
     this.name = "DaytonaIdleTimeoutError";
   }
+}
+
+/**
+ * Typed error for a snapshot that exists but could not be brought back to
+ * `active`. This is a final verdict, not a build trigger: the snapshot IS
+ * there, so rebuilding under the same name can only fail on the name conflict
+ * and then mask the real problem behind a slow direct image pull.
+ */
+export class DaytonaSnapshotActivationError extends Error {
+  /** The snapshot that would not activate. */
+  readonly snapshot: string;
+
+  constructor(snapshot: string, detail: string) {
+    super(
+      `Daytona snapshot "${snapshot}" exists but could not be activated: ${detail}. ` +
+        "Daytona deactivates snapshots unused for 2 weeks; activation normally completes in " +
+        "seconds. Retry, or activate it manually in the Daytona dashboard (Snapshots page)."
+    );
+    this.name = "DaytonaSnapshotActivationError";
+    this.snapshot = snapshot;
+  }
+}
+
+/**
+ * The slice of the Daytona client the reactivation path touches — structural,
+ * so the unit tests can drive it with a plain mock.
+ */
+interface SnapshotActivationClient {
+  snapshot: {
+    get(name: string): Promise<{ state?: string }>;
+    activate(snapshot: unknown): Promise<{ state?: string }>;
+  };
+}
+
+/**
+ * Bring an exists-but-inactive snapshot back to `active`, or say loudly why
+ * not. Activation is asynchronous on Daytona's side — the activate call may
+ * answer with a transitional state (`pulling`) — so the result is polled until
+ * it lands on `active`, a terminal failure state, or the deadline.
+ */
+async function activateSnapshot(
+  client: SnapshotActivationClient,
+  name: string,
+  snapshot: { state?: string },
+  timing?: { timeoutMs?: number; pollMs?: number },
+): Promise<{ state?: string }> {
+  const timeoutMs = timing?.timeoutMs ?? DAYTONA_SNAPSHOT_ACTIVATE_TIMEOUT_MS;
+  const pollMs = timing?.pollMs ?? DAYTONA_SNAPSHOT_ACTIVATE_POLL_MS;
+
+  console.log(`[daytona] Snapshot "${name}" is inactive (unused for 2+ weeks) — reactivating...`);
+  let current: { state?: string };
+  try {
+    current = await client.snapshot.activate(snapshot);
+  } catch (err) {
+    throw new DaytonaSnapshotActivationError(
+      name,
+      `the activate call failed (${err instanceof Error ? err.message : String(err)})`,
+    );
+  }
+
+  const deadline = Date.now() + timeoutMs;
+  while (current?.state !== "active") {
+    if (current?.state === "error" || current?.state === "build_failed") {
+      throw new DaytonaSnapshotActivationError(name, `it entered state "${current.state}"`);
+    }
+    if (Date.now() >= deadline) {
+      throw new DaytonaSnapshotActivationError(
+        name,
+        `still "${current?.state ?? "unknown"}" after ${timeoutMs}ms`,
+      );
+    }
+    await new Promise((r) => setTimeout(r, pollMs));
+    current = await client.snapshot.get(name);
+  }
+
+  console.log(`[daytona] Snapshot "${name}" reactivated.`);
+  return current;
 }
 
 // ============================================================
@@ -771,7 +883,7 @@ export interface DaytonaConfig {
   target?: string;
   /** Default timeout in ms */
   defaultTimeoutMs?: number;
-  /** Daytona snapshot name (default: 'evolve-all'). Create custom snapshots via `cd assets && ./build.sh daytona` */
+  /** Daytona snapshot name (default: 'evolve-all-<EVOLVE_IMAGE_VERSION>'). Explicit names pass through untouched. Create custom snapshots via `cd assets && ./build.sh daytona` */
   snapshotName?: string;
   /**
    * Evolve-managed toolbox base URL. Setting it puts the provider in MANAGED
@@ -1469,7 +1581,10 @@ export class DaytonaProvider implements SandboxProvider {
       this.managedStream = { toolboxUrl: config.managedToolboxUrl, apiKey: config.apiKey };
     }
     this.defaultTimeoutMs = config.defaultTimeoutMs ?? 3600000;
-    this.snapshotName = config.snapshotName ?? "evolve-all";
+    // Versioned default so a release actually reaches users (see the law
+    // comment on EVOLVE_IMAGE_VERSION). An explicit snapshotName passes
+    // through untouched — pinning "evolve-all" keeps meaning "evolve-all".
+    this.snapshotName = config.snapshotName ?? `evolve-all-${EVOLVE_IMAGE_VERSION}`;
   }
 
   async create(options: SandboxCreateOptions): Promise<SandboxInstance> {
@@ -1570,8 +1685,20 @@ export class DaytonaProvider implements SandboxProvider {
     // Try to use existing snapshot first (fast path for returning users or ./build.sh daytona)
     try {
       const snapshot = await this.client.snapshot.get(imageName);
-      if (snapshot && snapshot.state === "active") {
+      let snapshotState: string | undefined = snapshot?.state;
+      // An existing snapshot pins its sizing whatever its state, so the sizing
+      // refusal fires before any reactivation work is spent on a doomed create.
+      if (snapshot && (snapshotState === "active" || snapshotState === "inactive")) {
         if (wantsResources) throw new DaytonaResourcesError(imageName);
+      }
+      // Exists-but-inactive is HEALED, never treated as absent. Daytona
+      // deactivates snapshots after 2 weeks unused; sending this case to the
+      // build path made snapshot.create fail on the existing name and fall
+      // back to a slow direct pull — the 2026-07-31 evolve-all prod incident.
+      if (snapshot && snapshotState === "inactive") {
+        snapshotState = (await activateSnapshot(this.client, imageName, snapshot)).state;
+      }
+      if (snapshot && snapshotState === "active") {
         console.log(`[daytona] Using cached snapshot: ${imageName}`);
         sandbox = await this.client.create(
           {
@@ -1584,8 +1711,11 @@ export class DaytonaProvider implements SandboxProvider {
         throw new Error("Snapshot not active");
       }
     } catch (fastPathErr) {
-      // The typed sizing refusal is a final verdict, not a build trigger.
+      // The typed refusals are final verdicts, not build triggers: sizing
+      // cannot be enforced on an existing snapshot, and a snapshot that exists
+      // but would not activate can only name-conflict with a rebuild.
       if (fastPathErr instanceof DaytonaResourcesError) throw fastPathErr;
+      if (fastPathErr instanceof DaytonaSnapshotActivationError) throw fastPathErr;
       // Snapshot doesn't exist — create a named one from the Docker image, then use it.
       // Private registry images (ECR etc.) require credentials pre-registered in the
       // Daytona dashboard (Registries) — there is no per-call image pull secret.
@@ -1938,6 +2068,8 @@ export const _testMapNetworkPolicy = mapNetworkPolicy;
 export const _testImageRegistryHost = imageRegistryHost;
 export const _testToSandboxInfo = toSandboxInfo;
 export const _testDaytonaStateToEvolveState = daytonaStateToEvolveState;
+export const _testActivateSnapshot = activateSnapshot;
+export const _testImageMap = IMAGE_MAP;
 export const _testCreateLogDemuxer = createLogDemuxer;
 export const _testFollowManagedSessionLogs = followManagedSessionLogs;
 export const _testReadCommandStreams = readCommandStreams;

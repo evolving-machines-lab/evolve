@@ -49,17 +49,38 @@ After this, Daytona sandbox creation will be instant.
 
 ## For Maintainers Only
 
-Rebuild the shared Docker image (Modal + Daytona use this):
+### Shipping a new image release
 
-```bash
-cd assets && ./build.sh docker
-```
+Modal caches images by reference and Daytona caches snapshots by name, so a
+re-pushed `:latest` never reaches them. Each release therefore carries an
+immutable version tag, held in one constant per file with a law comment tying
+the copies together:
 
-Rebuild the E2B template:
+1. Bump `EVOLVE_IMAGE_VERSION` (e.g. `v1` → `v2`) in all three places — the
+   coherence test in `packages/daytona/tests/unit/daytona-image-version.test.ts`
+   fails until they agree:
+   - `assets/docker/image-version.ts` (canonical)
+   - `packages/modal/src/index.ts`
+   - `packages/daytona/src/index.ts`
 
-```bash
-cd assets && ./build.sh e2b
-```
+2. Build and push — this pushes `evolvingmachines/evolve-all:vN` **and**
+   `:latest`:
+
+   ```bash
+   cd assets && ./build.sh docker
+   ```
+
+3. Nothing else to run for users: Modal resolves `evolve-all` to the new
+   `:vN` reference on their next create, and Daytona auto-builds the new
+   `evolve-all-vN` snapshot on first use. Callers who pinned a name
+   explicitly (for example `evolve-all`) keep exactly what they pinned.
+
+4. Rebuild the E2B template (E2B is not versioned — its public template is
+   rebuilt in place):
+
+   ```bash
+   cd assets && ./build.sh e2b
+   ```
 
 ---
 
@@ -76,7 +97,8 @@ assets/
 
 ## Image Contents
 
-All providers use `evolvingmachines/evolve-all:latest`:
+All providers use `evolvingmachines/evolve-all:<vN>` (see
+`assets/docker/image-version.ts`; also pushed as `:latest`):
 
 - Claude Code, Codex, Gemini CLI, Qwen Code
 - ACP adapters for Claude and Codex

@@ -53,7 +53,7 @@ Only use explicit provider creation (below) if you need custom settings like tim
 
 With `EVOLVE_API_KEY` and no provider key, the platform runs the sandbox for you: Evolve
 authenticates your key, creates the box on its own account, and records who owns it. You never
-hold an E2B or Daytona credential, and you are never billed by them directly.
+hold an E2B, Daytona, or Modal credential, and you are never billed by them directly.
 
 That is already what auto-resolution does when only `EVOLVE_API_KEY` is set — it gives you a
 managed **E2B** sandbox. To run on a different provider, say which one:
@@ -78,9 +78,11 @@ output. Images come from the snapshots the platform publishes: a managed create 
 never builds one, so a `resources` request that an existing snapshot cannot honor is refused
 rather than silently ignored.
 
-Managed Modal is not available yet. Its managed API serves create, list, get, kill and exec and
-has no filesystem operations, and an agent session writes files into its sandbox before it runs
-anything. Pass Modal tokens for direct mode instead.
+Managed Modal — `managedSandbox("modal")` — runs commands and file operations through the
+Dashboard's Modal door. Two Modal traits carry over: command output arrives when the command
+completes rather than streaming live, and there is no pause — persist progress with Evolve
+checkpoints instead. Sizing, network policy, and the sandbox user are the platform's; a create
+that asks for them is refused rather than silently ignored.
 
 ---
 
@@ -150,7 +152,7 @@ const sandbox = createDaytonaProvider({
     apiUrl: "https://app.daytona.io/api", // (optional) Default: https://app.daytona.io/api
     target: "us",                          // (optional) Target region. Default: "us"
     defaultTimeoutMs: 3600000,             // (optional) Default: 3600000 (1 hour) - converted to minutes for auto-stop
-    snapshotName: "evolve-all",            // (optional) Default: "evolve-all". Custom snapshots via build.sh daytona
+    snapshotName: "evolve-all",            // (optional) Default: the current release snapshot (e.g. "evolve-all-v1"); explicit names pass through untouched. Custom snapshots via build.sh daytona
 });
 ```
 

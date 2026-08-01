@@ -38,9 +38,27 @@ import { pack } from "tar-stream";
 // MODULE-LEVEL CONSTANTS & HELPERS
 // ============================================================
 
+/**
+ * The Evolve image release this package defaults to.
+ *
+ * LAW — one version, three copies, bumped together in one commit:
+ *   assets/docker/image-version.ts   (canonical; what ./build.sh docker pushes)
+ *   packages/modal/src/index.ts      (this one → IMAGE_MAP tag)
+ *   packages/daytona/src/index.ts    (EVOLVE_IMAGE_VERSION → snapshot name + IMAGE_MAP tag)
+ * The published packages ship standalone and cannot import the canonical file,
+ * so the copies are held together by the coherence test in
+ * packages/daytona/tests/unit/daytona-image-version.test.ts.
+ *
+ * WHY a version at all: Modal caches an image by its REFERENCE string. A
+ * mutable :latest is pulled once per account and never again, so a pushed
+ * update reached nobody. Bumping this constant changes the reference the
+ * "evolve-all" name resolves to, which is what makes Modal pull the release.
+ */
+export const EVOLVE_IMAGE_VERSION = "v1";
+
 /** Map generic image names to Docker images */
 const IMAGE_MAP: Record<string, string> = {
-  "evolve-all": "evolvingmachines/evolve-all",
+  "evolve-all": `evolvingmachines/evolve-all:${EVOLVE_IMAGE_VERSION}`,
 };
 
 /**
@@ -1527,6 +1545,7 @@ export function createModalProvider(config: ModalConfig = {}): SandboxProvider {
 // ============================================================
 
 export const _testWrapCommand = wrapCommand;
+export const _testImageMap = IMAGE_MAP;
 export const _testMapNetworkPolicy = mapNetworkPolicy;
 export const _testMapResources = mapResources;
 export const _testResolveImageRegistry = resolveImageRegistry;

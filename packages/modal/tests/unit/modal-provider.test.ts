@@ -23,12 +23,14 @@
 
 import {
   _testWrapCommand,
+  _testImageMap,
   _testMapNetworkPolicy,
   _testResolveImageRegistry,
   _testBuildSandboxInfo,
   _testValidateTimeout,
   _testMapIdleTimeout,
   _testMapResources,
+  EVOLVE_IMAGE_VERSION,
   MODAL_MAX_LIFETIME_MS,
   MODAL_STDIN_CHUNK_BYTES,
   ModalIdleTimeoutError,
@@ -886,6 +888,25 @@ async function testFilesWriteBatchSmallSingleChunk(): Promise<void> {
 }
 
 // =============================================================================
+// [10] Versioned image pipeline
+// =============================================================================
+
+async function testImageMapUsesVersionedTag(): Promise<void> {
+  console.log("\n[10a] IMAGE_MAP - the default image name resolves to the immutable versioned tag");
+
+  // Modal caches images by REFERENCE: a re-pushed :latest is never re-pulled,
+  // so only a per-release tag makes updates reach users. The version itself is
+  // held coherent with assets/ and packages/daytona by the coherence test in
+  // packages/daytona/tests/unit/daytona-image-version.test.ts.
+  assert(/^v\d+$/.test(EVOLVE_IMAGE_VERSION), `version "${EVOLVE_IMAGE_VERSION}" is a vN tag`);
+  assertEqual(
+    _testImageMap["evolve-all"],
+    `evolvingmachines/evolve-all:${EVOLVE_IMAGE_VERSION}`,
+    "'evolve-all' resolves to the versioned Docker Hub tag"
+  );
+}
+
+// =============================================================================
 // RUNNER
 // =============================================================================
 
@@ -946,6 +967,8 @@ const tests = [
   testFilesWriteChunksReassembleExactly,
   testFilesWriteBatchChunksOverCap,
   testFilesWriteBatchSmallSingleChunk,
+  // [10] versioned image pipeline
+  testImageMapUsesVersionedTag,
 ];
 
 (async () => {

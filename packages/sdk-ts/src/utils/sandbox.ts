@@ -106,17 +106,13 @@ export async function resolveManagedSandbox(
   }
 
   if (provider === "modal") {
-    // Stated rather than half-built. The managed Modal door serves exactly
-    // create / list / get / kill / exec — there is no filesystem surface on
-    // it, and an Evolve agent session writes files into its sandbox before it
-    // runs anything (prompts, skills, the artifact collector). A provider that
-    // could create a box and never put a file in it would look like it worked
-    // right up until the first real run.
-    throw new Error(
-      "Managed Modal sandboxes are not available yet: the managed Modal API serves " +
-        "create/list/get/kill/exec and has no filesystem operations, which an agent " +
-        "session requires. Use managedSandbox(\"e2b\") or managedSandbox(\"daytona\"), " +
-        "or pass Modal tokens for direct mode.",
+    // Modal's control plane is gRPC and cannot be reverse-proxied, so managed
+    // Modal is not a provider package pointed at a different URL — it is the
+    // door's own HTTP client (see utils/managed-modal.ts for the wire, which
+    // the Dashboard's twin routes are built against).
+    const { ManagedModalProvider } = await import("./managed-modal");
+    return markEvolveManagedSandbox(
+      new ManagedModalProvider({ apiKey, baseUrl: getManagedProviderUrl("modal") }),
     );
   }
 
