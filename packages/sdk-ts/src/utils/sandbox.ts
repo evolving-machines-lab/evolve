@@ -106,10 +106,13 @@ export async function resolveManagedSandbox(
   }
 
   if (provider === "modal") {
-    // Modal's control plane is gRPC and cannot be reverse-proxied, so managed
-    // Modal is not a provider package pointed at a different URL — it is the
-    // door's own HTTP client (see utils/managed-modal.ts for the wire, which
-    // the Dashboard's twin routes are built against).
+    // Modal's control plane is gRPC/protobuf (nice-grpc against api.modal.com;
+    // the client honors MODAL_SERVER_URL, so the URL itself CAN move) — but a
+    // door at that URL would have to serve Modal's private protobuf schema,
+    // method by method, forever tracking it. Rejected on cost, not mechanics:
+    // managed Modal is instead the door's own HTTP client (see
+    // utils/managed-modal.ts for the wire, which the Dashboard's twin routes
+    // are built against).
     const { ManagedModalProvider } = await import("./managed-modal");
     return markEvolveManagedSandbox(
       new ManagedModalProvider({ apiKey, baseUrl: getManagedProviderUrl("modal") }),
