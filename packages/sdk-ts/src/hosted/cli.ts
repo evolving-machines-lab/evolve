@@ -17,7 +17,7 @@
 
 import { existsSync, readFileSync, realpathSync } from "fs";
 import { fileURLToPath, pathToFileURL } from "url";
-import { parseDocument } from "yaml";
+import { type Tags, parseDocument } from "yaml";
 import {
   EVAL_SANDBOX_PROVIDERS,
   EvolveApiError,
@@ -752,33 +752,48 @@ export function parseArgs(argv: string[]): Invocation {
 // =============================================================================
 
 /**
+ * The 1.1 spec's bare `y`/`n` booleans are dropped, because PyYAML never
+ * adopted them — `n: 3` keeps its key. The 1.1 schema carries one bool tag per
+ * boolean, and each one is named by the boolean it identifies, never by the
+ * text of its regex: a tag's `test` and its `resolve` are one pair, and reading
+ * only the `test` cannot tell which value the tag will produce.
+ */
+function withoutBareYesNoBooleans(tags: Tags): Tags {
+  return tags.map((tag) =>
+    typeof tag === "object" && tag.tag === "tag:yaml.org,2002:bool" && tag.test
+      ? {
+          ...tag,
+          test: tag.identify?.(true)
+            ? /^(?:[Yy]es|YES|[Tt]rue|TRUE|[Oo]n|ON)$/
+            : /^(?:[Nn]o|NO|[Ff]alse|FALSE|[Oo]ff|OFF)$/,
+        }
+      : tag
+  );
+}
+
+/**
  * -c reads real YAML through the standard `yaml` package — the hand-rolled
  * subset reader is retired. PyYAML's reading is the contract, so the schema is
  * YAML 1.1 (`yes`/`on` are booleans, `012` is octal, a flow mapping is a whole
  * sequence item) with one carve-out: the 1.1 spec's bare `y`/`n` booleans,
- * which PyYAML never adopted — `n: 3` keeps its key. Three refusals sit on top
- * of the library: a second document, an unresolvable tag (both PyYAML refusals
- * too), and a duplicate key — PyYAML silently keeps the last value, and that
- * silence is exactly the corruption a config file cannot afford. Every refusal
- * names its `source` and carries `:line` wherever the parser places the
- * problem — the library's alias-bomb guard fires at resolution, after parsing,
- * and has no position to give. An empty or comment-only file is an empty
- * object.
+ * which PyYAML never adopted — `n: 3` keeps its key. The schema is PINNED, not
+ * merely defaulted: PyYAML's resolver has no mode but 1.1 and reads a file the
+ * same way whatever its `%YAML` directive says, while this library lets an
+ * explicit `%YAML 1.2` swap in the 1.2 core schema. One file, one reading.
+ * Three refusals sit on top of the library: a second document, an unresolvable
+ * tag (both PyYAML refusals too), and a duplicate key — PyYAML silently keeps
+ * the last value, and that silence is exactly the corruption a config file
+ * cannot afford. Every refusal names its `source` and carries `:line` wherever
+ * the parser places the problem — the library's alias-bomb guard fires at
+ * resolution, after parsing, and has no position to give. An empty or
+ * comment-only file is an empty object.
  */
 export function parseYamlConfig(text: string, source: string): unknown {
   const doc = parseDocument(text, {
     version: "1.1",
-    customTags: (tags) =>
-      tags.map((tag) =>
-        typeof tag === "object" && tag.tag === "tag:yaml.org,2002:bool" && tag.test
-          ? {
-              ...tag,
-              test: tag.test.source.includes("[Tt]rue")
-                ? /^(?:[Yy]es|YES|[Tt]rue|TRUE|[Oo]n|ON)$/
-                : /^(?:[Nn]o|NO|[Ff]alse|FALSE|[Oo]ff|OFF)$/,
-            }
-          : tag
-      ),
+    schema: "yaml-1.1",
+    resolveKnownTags: false,
+    customTags: withoutBareYesNoBooleans,
   });
   // Warnings refuse too: the library downgrades an unresolvable tag to a
   // warning and parses on, where PyYAML (and this CLI, always) refuses.
@@ -794,7 +809,12 @@ export function parseYamlConfig(text: string, source: string): unknown {
   // Aliases resolve in `toJS`, not in the parse, so the library's own
   // resource-exhaustion guard throws PAST the check above. Unwrapped it left
   // this reader as a bare exit 1 naming no file, where every other config
-  // refusal is a usage exit 2 naming its source.
+  // refusal is a usage exit 2 naming its source. `toJS` also narrates on its
+  // own account — a collection-valued key emits a Node warning about JS object
+  // restrictions — and this CLI speaks its own refusals and nothing else. The
+  // level is dropped HERE and not in the parse options, because a silent parse
+  // also drops the library's second-document error, which is a refusal.
+  doc.options.logLevel = "silent";
   try {
     return doc.toJS() ?? {};
   } catch (error) {

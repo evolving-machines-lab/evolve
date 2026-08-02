@@ -438,6 +438,38 @@ async function testConfigFileMerge() {
       "a YAML config builds the same body as JSON"
     );
 
+    // A `%YAML` directive is a reading instruction, not a schema swap: PyYAML
+    // reads a file the same way whatever the directive says. An inverted
+    // boolean here passes every gate this reader has — checkWireValue takes
+    // booleans — so the BODY is what has to be pinned, not a refusal.
+    const directivePath = join(dir, "directive.yaml");
+    await writeFile(
+      directivePath,
+      ["%YAML 1.2", "---", "datasets: [{name: swe-bench}]", "agents: [{name: claude, model_name: opus, thinking: yes}]"].join(
+        "\n"
+      )
+    );
+    assertEqual(
+      buildJobInput(parseArgs(["job", "start", "-c", directivePath])),
+      {
+        datasets: [{ name: "swe-bench" }],
+        agents: [{ name: "claude", model_name: "opus", thinking: true }],
+      },
+      "a %YAML 1.2 directive ships thinking: true, not the inverted false"
+    );
+    const directiveEnvPath = join(dir, "directive-env.yaml");
+    await writeFile(
+      directiveEnvPath,
+      ["%YAML 1.2", "---", "datasets: [{name: swe-bench}]", "agents: [{name: claude}]", "agent_env:", "  STRICT: false"].join(
+        "\n"
+      )
+    );
+    assertThrowsUsage(
+      () => buildJobInput(parseArgs(["job", "start", "-c", directiveEnvPath])),
+      "agent_env.STRICT",
+      "under the directive, false is still a boolean — the env-string law fires instead of shipping the string \"false\""
+    );
+
     const badPath = join(dir, "bad.yaml");
     await writeFile(badPath, 'datasets: [{"name": "deep-swe"}]\nfrobnicate: 1\n');
     assertThrowsUsage(
@@ -800,6 +832,39 @@ function testYamlConfig() {
     "t.yaml:2",
     "a duplicate key refuses with its line instead of silently keeping the last value"
   );
+
+  // PyYAML's resolver has ONE mode, so a `%YAML` directive changes nothing
+  // about how values read. The library lets the directive pick the schema, and
+  // the 1.2 core schema's single bool tag carries a `resolve` of
+  // `str[0] === "t"` — under it `yes` had resolved to FALSE and `false` had
+  // stopped being a boolean at all, silently, at exit 0. Every reading below
+  // is PyYAML 6.0.3's on the identical text.
+  const withDirective = (directive: string) =>
+    parseYamlConfig([directive, "---", "thinking: yes", "strict: false", "oct: 012", "n: 3"].join("\n"), "t.yaml");
+  const directiveFree = { thinking: true, strict: false, oct: 10, n: 3 };
+  assertEqual(withDirective("%YAML 1.2"), directiveFree, "a %YAML 1.2 directive does not invert yes or unmake false");
+  assertEqual(withDirective("%YAML 1.1"), directiveFree, "an explicit %YAML 1.1 directive reads the same");
+  assertEqual(
+    parseYamlConfig("%YAML 1.2\n---\nvals: [y, n, yes, no, on, off]", "t.yaml"),
+    { vals: ["y", "n", true, false, true, false] },
+    "the bare y/n carve-out survives the directive too"
+  );
+
+  // The library speaks to stdio on its own account — a collection-valued key
+  // makes it emit a Node warning about JS object keys before this reader gets
+  // to refuse the key. The CLI owes its caller its own refusals and no
+  // library-internal chatter, so the library's log level is silent.
+  const realEmitWarning = process.emitWarning;
+  const emitted: unknown[] = [];
+  process.emitWarning = ((warning: unknown) => {
+    emitted.push(warning);
+  }) as typeof process.emitWarning;
+  try {
+    parseYamlConfig("? [a, b]\n: 1", "t.yaml");
+  } finally {
+    process.emitWarning = realEmitWarning;
+  }
+  assertEqual(emitted, [], "a collection-valued key leaks no library warning onto the CLI's stdio");
 }
 
 async function testPrintConfig() {
