@@ -599,6 +599,84 @@ async function testConfigFileMerge() {
       "an unsigned exponent is a string to PyYAML, so a money field refuses it instead of spending 1000"
     );
 
+    // The same law on the integer side: PyYAML will not read a zero-padded
+    // number, so a build number `08` and a maintenance window `08:00` stay the
+    // text they are. The 1.1 spec's wider patterns the library carries made
+    // them 8 and 480, and a version pin shipped as a JSON number at exit 0.
+    const paddedPath = join(dir, "padded.yaml");
+    await writeFile(
+      paddedPath,
+      [
+        "job_name: 08",
+        "agent_env: {BUILD: 08, WINDOW: 08:00}",
+        "datasets: [{name: deep-swe, version: 08}]",
+        "agents: [{name: claude, model_name: 09}]",
+      ].join("\n")
+    );
+    assertEqual(
+      buildJobInput(parseArgs(["job", "start", "-c", paddedPath])),
+      {
+        job_name: "08",
+        datasets: [{ name: "deep-swe", version: "08" }],
+        agents: [{ name: "claude", model_name: "09" }],
+        agent_env: { BUILD: "08", WINDOW: "08:00" },
+      },
+      "a zero-padded number stays the text it is — no 8, no 480, no number under a string field"
+    );
+
+    // A dataset or agent pin is a STRING on the wire, and `1.10` is the float
+    // 1.1 in PyYAML too — which is exactly why this reader has to catch it:
+    // 1.10 and 1.1 name DIFFERENT dataset versions, so an unquoted pin either
+    // runs the wrong corpus at real spend or refuses after the round trip
+    // --print-config promised to save. The top-level law reaches inside the
+    // selectors, where it used to stop at the element being an object at all.
+    const selectorCases: Array<[string, string, string]> = [
+      ["ds-version", "datasets: [{name: deep-swe, version: 1.10}]\nagents: [{name: claude}]", "datasets[0].version"],
+      ["ds-name", "datasets: [{name: on}]\nagents: [{name: claude}]", "datasets[0].name"],
+      ["ds-tasks", "datasets: [{name: deep-swe, n_tasks: two}]\nagents: [{name: claude}]", "datasets[0].n_tasks"],
+      ["ds-globs", "datasets: [{name: deep-swe, task_names: [1.10]}]\nagents: [{name: claude}]", "datasets[0].task_names[0]"],
+      ["ds-glob-scalar", "datasets: [{name: deep-swe, exclude_task_names: slow}]\nagents: [{name: claude}]", "must be a list of strings"],
+      ["ag-version", "datasets: [{name: deep-swe}]\nagents: [{name: claude, version: 2.0}]", "agents[0].version"],
+      ["ag-model", "datasets: [{name: deep-swe}]\nagents: [{name: claude, model_name: 4.5}]", "agents[0].model_name"],
+      ["ag-effort", "datasets: [{name: deep-swe}]\nagents: [{name: claude, model_name: opus, reasoning_effort: on}]", "agents[0].reasoning_effort"],
+    ];
+    for (const [name, body, needle] of selectorCases) {
+      const casePath = join(dir, `selector-${name}.yaml`);
+      await writeFile(casePath, `${body}\n`);
+      assertThrowsUsage(
+        () => buildJobInput(parseArgs(["job", "start", "-c", casePath])),
+        needle,
+        `a selector field typed by the file's own text refuses at the keyboard (${name})`
+      );
+    }
+    const pinIO = captureIO();
+    assertEqual(
+      await runCli(["job", "start", "-c", join(dir, "selector-ds-version.yaml"), "--print-config", ...AUTH], pinIO.io),
+      2,
+      "--print-config exits 2 over a numeric version pin, where it printed 1.1 at exit 0"
+    );
+    assert(
+      pinIO.err.some((l) => l.includes('quote it (version: "...")')),
+      "and the refusal carries the remedy, because quoting is the whole fix"
+    );
+
+    // Quoting is that remedy, and the pin survives it intact.
+    const pinnedPath = join(dir, "pinned.yaml");
+    await writeFile(
+      pinnedPath,
+      'datasets: [{name: deep-swe, version: "1.10", n_tasks: 5, task_names: ["a*"]}]\nagents: [{name: claude, model_name: opus, version: "2.0"}]\n'
+    );
+    const pinnedIO = captureIO();
+    assertEqual(
+      await runCli(["job", "start", "-c", pinnedPath, "--print-config", ...AUTH], pinnedIO.io),
+      0,
+      "a quoted pin resolves at exit 0"
+    );
+    assert(
+      pinnedIO.out.join("\n").includes('"version": "1.10"'),
+      "and --print-config prints 1.10, not the 1.1 that named another corpus"
+    );
+
     // --print-config is the dry run a paid remote run deserves, so the exit
     // code is the promise: the date-named job printed a rewritten body at
     // exit 0, where every config refusal is a usage exit 2.
@@ -930,6 +1008,69 @@ function testYamlConfig() {
     parseYamlConfig("%YAML 1.2\n---\ntag: e3\nspend: 1.5e+3", "t.yaml"),
     { tag: "e3", spend: 1500 },
     "the float carve-out survives the directive too"
+  );
+
+  // PyYAML's integer patterns are narrower than the 1.1 spec's in the same
+  // place twice — a LEADING ZERO. A decimal integer is `0` or starts 1-9, and
+  // a sexagesimal one starts 1-9, so a zero-padded build number `08` and a
+  // clock-shaped `08:00` are text. Under the spec's, which the library carries,
+  // they were the numbers 8 and 480. The octal, binary and hex tags already
+  // carry PyYAML's patterns, and the sexagesimal FLOAT `0:0.5` reads from a
+  // leading zero in PyYAML too, so those stay put. Every reading below was
+  // taken from PyYAML 6.0.3 on the identical text.
+  const intShapes: Array<[string, unknown]> = [
+    ["08", "08"],
+    ["09", "09"],
+    ["0888", "0888"],
+    ["+08", "+08"],
+    ["-09", "-09"],
+    ["0b12", "0b12"],
+    ["0o17", "0o17"],
+    ["0:0", "0:0"],
+    ["00:30", "00:30"],
+    ["0:5:0", "0:5:0"],
+    ["-0:30", "-0:30"],
+    ["08:00", "08:00"],
+    ["09:30:00", "09:30:00"],
+    ["1:60", "1:60"],
+    ["0", 0],
+    ["+0", 0],
+    ["-0", 0],
+    ["00", 0],
+    ["00000", 0],
+    ["0_0", 0],
+    ["007", 7],
+    ["010", 8],
+    ["012", 10],
+    ["0644", 420],
+    ["0b1", 1],
+    ["0x1f", 31],
+    ["19", 19],
+    ["+19", 19],
+    ["-19", -19],
+    ["1_0", 10],
+    ["1_000", 1000],
+    ["2026", 2026],
+    ["1:00", 60],
+    ["9:00", 540],
+    ["12:30", 750],
+    ["1:2:3", 3723],
+    ["10:00:00", 36000],
+    ["0:0.5", 0.5],
+    ["00:30.5", 30.5],
+    ["0.0", 0],
+  ];
+  for (const [text, expected] of intShapes) {
+    assertEqual(
+      parseYamlConfig(`a: ${text}`, "t.yaml"),
+      { a: expected },
+      `\`${text}\` reads as ${JSON.stringify(expected)}, as PyYAML reads it`
+    );
+  }
+  assertEqual(
+    parseYamlConfig("%YAML 1.2\n---\nbuild: 08\nstart: 0:0\noct: 012\nclock: 12:30", "t.yaml"),
+    { build: "08", start: "0:0", oct: 10, clock: 750 },
+    "the integer carve-out survives the directive too"
   );
 
   // PyYAML's resolver has ONE mode, so a `%YAML` directive changes nothing

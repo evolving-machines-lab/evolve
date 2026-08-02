@@ -799,13 +799,43 @@ function withPyYamlFloatShapes(tags: Tags): Tags {
 }
 
 /**
+ * PyYAML's integer patterns are narrower than the 1.1 spec's the library
+ * carries, in the same place twice: a LEADING ZERO. A decimal integer is `0`
+ * or a digit string starting `1`-`9`, so `08` and `-09` are the text they are
+ * — but the library reads any digit string, so a zero-padded `08` became the
+ * number 8. A sexagesimal integer starts `1`-`9` too, so `0:0` and `08:00` are
+ * text, where the library made them 0 and 480. The octal, binary and hex tags
+ * already carry PyYAML's own patterns, and the sexagesimal FLOAT `0:0.5` reads
+ * from a leading zero in PyYAML as well — those stay untouched.
+ */
+const PYYAML_INT = /^[-+]?(?:0|[1-9][0-9_]*)$/;
+const PYYAML_INT_SEXAGESIMAL = /^[-+]?[1-9][0-9_]*(?::[0-5]?[0-9])+$/;
+
+/**
+ * Five tags answer to `tag:yaml.org,2002:int` — binary, octal, decimal, hex
+ * and the sexagesimal `1:00` — and only the decimal and the sexagesimal read
+ * wider than PyYAML. Each is named by a value its own test accepts, never by
+ * the text of that test, because a `test` and its `resolve` are one pair and
+ * the regex alone cannot say which value the tag will produce.
+ */
+function withPyYamlIntShapes(tags: Tags): Tags {
+  return tags.map((tag) => {
+    if (typeof tag !== "object" || tag.tag !== "tag:yaml.org,2002:int" || !tag.test) return tag;
+    if (tag.test.test("1:00")) return { ...tag, test: PYYAML_INT_SEXAGESIMAL };
+    if (tag.test.test("19")) return { ...tag, test: PYYAML_INT };
+    return tag;
+  });
+}
+
+/**
  * -c reads real YAML through the standard `yaml` package — the hand-rolled
  * subset reader is retired. PyYAML's reading is the contract, so the schema is
  * YAML 1.1 (`yes`/`on` are booleans, `012` is octal, a flow mapping is a whole
  * sequence item) with two carve-outs: the 1.1 spec's bare `y`/`n` booleans,
- * which PyYAML never adopted — `n: 3` keeps its key — and the 1.1 spec's float
- * shapes PyYAML never adopted either, which need a dot and a signed exponent,
- * so `e3` and `1e3` stay the strings a caller wrote. The schema is PINNED, not
+ * which PyYAML never adopted — `n: 3` keeps its key — and the 1.1 spec's
+ * number shapes PyYAML never adopted either, where a float needs a dot and a
+ * signed exponent and an integer may not be zero-padded, so `e3`, `1e3`, `08`
+ * and `0:0` stay the strings a caller wrote. The schema is PINNED, not
  * merely defaulted: PyYAML's resolver has no mode but 1.1 and reads a file the
  * same way whatever its `%YAML` directive says, while this library lets an
  * explicit `%YAML 1.2` swap in the 1.2 core schema. One file, one reading.
@@ -822,7 +852,8 @@ export function parseYamlConfig(text: string, source: string): unknown {
     version: "1.1",
     schema: "yaml-1.1",
     resolveKnownTags: false,
-    customTags: (tags) => withPyYamlFloatShapes(withoutBareYesNoBooleans(tags)),
+    customTags: (tags) =>
+      withPyYamlIntShapes(withPyYamlFloatShapes(withoutBareYesNoBooleans(tags))),
   });
   // Warnings refuse too: the library downgrades an unresolvable tag to a
   // warning and parses on, where PyYAML (and this CLI, always) refuses.
@@ -873,6 +904,31 @@ const JOB_CONFIG_SCALARS: Record<string, "string" | "number"> = {
   max_trial_spend_usd: "number",
 };
 
+/**
+ * The spec type of every field a selector entry carries (DatasetSelector and
+ * AgentArmInput). `strings` is a list of them. Selector fields ride the same
+ * wire as the top-level scalars and are decided by the same file's own text,
+ * so they answer to the same law at the same keyboard — `version: 1.10` is the
+ * float 1.1 in PyYAML too, and 1.10 and 1.1 name DIFFERENT dataset versions.
+ */
+type SelectorFieldType = "string" | "number" | "strings";
+
+const SELECTOR_FIELDS: Record<"datasets" | "agents", Record<string, SelectorFieldType>> = {
+  datasets: {
+    name: "string",
+    version: "string",
+    n_tasks: "number",
+    task_names: "strings",
+    exclude_task_names: "strings",
+  },
+  agents: {
+    name: "string",
+    model_name: "string",
+    version: "string",
+    reasoning_effort: "string",
+  },
+};
+
 /** Name a config value by what it is, for a refusal the reader can act on. */
 function describeConfigValue(value: unknown): string {
   if (value === null) return "null";
@@ -920,6 +976,25 @@ function checkWireValue(value: unknown, where: string, source: string): void {
   );
 }
 
+/**
+ * One law for every field whose type the file's own text decides, wherever it
+ * sits. A string field is always fixable by quoting, so the refusal shows the
+ * quoted form; a number field has no such remedy, so it names the type only.
+ */
+function checkFieldType(
+  value: unknown,
+  kind: "string" | "number",
+  where: string,
+  path: string,
+  quoted: string
+): void {
+  if (typeof value === kind) return;
+  throw new CliUsageError(
+    `--config: ${where} in ${path} must be a ${kind}, not ${describeConfigValue(value)}` +
+      (kind === "string" ? ` — quote it (${quoted})` : "")
+  );
+}
+
 function loadJobConfig(path: string, read: (path: string) => string): Partial<JobCreate> {
   let text: string;
   try {
@@ -956,11 +1031,7 @@ function loadJobConfig(path: string, read: (path: string) => string): Partial<Jo
   for (const [key, kind] of Object.entries(JOB_CONFIG_SCALARS)) {
     const item = record[key];
     if (item === undefined) continue;
-    if (typeof item !== kind) {
-      throw new CliUsageError(
-        `--config: "${key}" in ${path} must be a ${kind}, not ${describeConfigValue(item)}`
-      );
-    }
+    checkFieldType(item, kind, `"${key}"`, path, `${key}: "..."`);
   }
   // agent_env/verifier_env are KEY: VALUE strings on the wire, and YAML types
   // a bare value for you — `DEBUG: yes` is a boolean, not the string "yes".
@@ -971,19 +1042,17 @@ function loadJobConfig(path: string, read: (path: string) => string): Partial<Jo
       throw new CliUsageError(`--config: "${key}" in ${path} must be a map of KEY: "value" pairs`);
     }
     for (const [name, item] of Object.entries(env)) {
-      if (typeof item !== "string") {
-        throw new CliUsageError(
-          `--config: ${key}.${name} in ${path} must be a string, not ${describeConfigValue(item)} ` +
-            `— quote it (${name}: "...")`
-        );
-      }
+      checkFieldType(item, "string", `${key}.${name}`, path, `${name}: "..."`);
     }
   }
   // datasets/agents are lists of selector objects and buildJobInput spreads
   // every element into a fresh one. Spreading a string spreads its CHARACTERS,
   // so `datasets: [swe-bench]` reached --print-config as a character-indexed
   // object at exit 0 and the wire as a server-side refusal. The element type is
-  // this reader's to name, at the keyboard, before any round trip.
+  // this reader's to name, at the keyboard, before any round trip — and so are
+  // the types INSIDE it: `version: 1.10` is the float 1.1 in PyYAML too, which
+  // is exactly why the reader has to catch it, because 1.10 and 1.1 are
+  // different dataset versions and the wire takes a string for both.
   for (const key of ["datasets", "agents"] as const) {
     const list = record[key];
     if (list === undefined) continue;
@@ -991,10 +1060,28 @@ function loadJobConfig(path: string, read: (path: string) => string): Partial<Jo
       throw new CliUsageError(`--config: "${key}" in ${path} must be a list of objects`);
     }
     list.forEach((item, index) => {
-      if (isPlainObject(item)) return;
-      throw new CliUsageError(
-        `--config: ${key}[${index}] in ${path} must be an object like {name: ${key === "agents" ? "claude" : "swe-bench"}}, not ${describeConfigValue(item)}`
-      );
+      if (!isPlainObject(item)) {
+        throw new CliUsageError(
+          `--config: ${key}[${index}] in ${path} must be an object like {name: ${key === "agents" ? "claude" : "swe-bench"}}, not ${describeConfigValue(item)}`
+        );
+      }
+      for (const [field, kind] of Object.entries(SELECTOR_FIELDS[key])) {
+        const value = item[field];
+        if (value === undefined) continue;
+        const where = `${key}[${index}].${field}`;
+        if (kind !== "strings") {
+          checkFieldType(value, kind, where, path, `${field}: "..."`);
+          continue;
+        }
+        if (!Array.isArray(value)) {
+          throw new CliUsageError(
+            `--config: ${where} in ${path} must be a list of strings, not ${describeConfigValue(value)}`
+          );
+        }
+        value.forEach((glob, at) =>
+          checkFieldType(glob, "string", `${where}[${at}]`, path, `${field}: ["..."]`)
+        );
+      }
     });
   }
   return value as Partial<JobCreate>;
