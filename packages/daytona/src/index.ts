@@ -48,26 +48,29 @@ import { resolve4 } from "node:dns/promises";
 // ============================================================
 
 /**
- * The Evolve image release this package defaults to.
+ * The Evolve image release this package defaults to — DERIVED, never
+ * hand-written: `c-<12hex>`, the sha256 of the image's build inputs (the
+ * Dockerfile plus everything the build copies in, see
+ * assets/docker/image-digest.ts). `npm run generate:image-version` (repo
+ * root) rewrites ./image-version.ts here and its two generated siblings
+ * (assets/docker/image-version.ts, packages/modal/src/image-version.ts);
+ * the published packages ship standalone, so each carries the value as a
+ * checked-in constant. The coherence test in
+ * packages/daytona/tests/unit/daytona-image-version.test.ts recomputes the
+ * digest and fails the suite whenever a checked-in copy is stale.
  *
- * LAW — one version, three copies, bumped together in one commit:
- *   assets/docker/image-version.ts   (canonical; what ./build.sh docker pushes)
- *   packages/modal/src/index.ts      (EVOLVE_IMAGE_VERSION → IMAGE_MAP tag)
- *   packages/daytona/src/index.ts    (this one → snapshot name + IMAGE_MAP tag)
- * The published packages ship standalone and cannot import the canonical file,
- * so the copies are held together by the coherence test in
- * packages/daytona/tests/unit/daytona-image-version.test.ts.
- *
- * WHY a version at all: Daytona and Modal cache the image by NAME. A mutable
- * :latest is pulled once and never again, so a pushed update reached nobody.
- * Bumping this constant changes the default snapshot name, and the ensure
- * logic in create() builds the new snapshot from the new tag on first use.
+ * WHY a per-release tag at all: Daytona and Modal cache the image by NAME. A
+ * mutable :latest is pulled once and never again, so a pushed update reached
+ * nobody. A content change moves the derived tag, which moves the default
+ * snapshot name, and the ensure logic in create() builds the new snapshot
+ * from the new tag on first use.
  */
-export const EVOLVE_IMAGE_VERSION = "v1";
+import { EVOLVE_IMAGE_VERSION } from "./image-version";
+export { EVOLVE_IMAGE_VERSION };
 
 /** Map generic image names to Daytona Docker images */
 const IMAGE_MAP: Record<string, string> = {
-  // The versioned default: what a fresh `evolve-all-vN` snapshot is built from.
+  // The derived default: what a fresh `evolve-all-c-<12hex>` snapshot is built from.
   [`evolve-all-${EVOLVE_IMAGE_VERSION}`]: `evolvingmachines/evolve-all:${EVOLVE_IMAGE_VERSION}`,
   // The legacy unversioned name. A caller who pins "evolve-all" explicitly
   // keeps resolving exactly what they always did — their existing snapshot,

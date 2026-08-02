@@ -952,10 +952,11 @@ async function testImageMapUsesVersionedTag(): Promise<void> {
   console.log("\n[10a] IMAGE_MAP - versioned default plus untouched legacy name (Daytona's rule)");
 
   // Modal caches images by REFERENCE: a re-pushed :latest is never re-pulled,
-  // so only a per-release tag makes updates reach users. The version itself is
+  // so only a per-release tag makes updates reach users. The version is
+  // DERIVED from the image build inputs (c-<12hex>, never hand-written) and
   // held coherent with assets/ and packages/daytona by the coherence test in
   // packages/daytona/tests/unit/daytona-image-version.test.ts.
-  assert(/^v\d+$/.test(EVOLVE_IMAGE_VERSION), `version "${EVOLVE_IMAGE_VERSION}" is a vN tag`);
+  assert(/^c-[0-9a-f]{12}$/.test(EVOLVE_IMAGE_VERSION), `version "${EVOLVE_IMAGE_VERSION}" is a c-<12hex> content tag`);
   assertEqual(
     _testImageMap[`evolve-all-${EVOLVE_IMAGE_VERSION}`],
     `evolvingmachines/evolve-all:${EVOLVE_IMAGE_VERSION}`,

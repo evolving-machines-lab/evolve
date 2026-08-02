@@ -18,7 +18,8 @@ npx tsx build.ts
 
 ## Image
 
-- **Name:** `evolvingmachines/evolve-all:latest`
+- **Name:** `evolvingmachines/evolve-all:c-<12hex>` (+ `:latest`) — the tag is
+  derived from the build inputs, never hand-written (see `image-digest.ts`)
 - **Base:** `e2bdev/code-interpreter:latest`
 
 ## Contents

@@ -310,7 +310,7 @@ async function testManagedCreateNamesThePlatformSnapshot(): Promise<void> {
   console.log("\n[3d] Managed create defaults to the PLATFORM's stable snapshot name");
   // Managed mode never builds: the platform owns which release backs
   // "evolve-all" and its warm keeper keeps that exact name active, so the
-  // versioned evolve-all-vN default is DIRECT mode's alone.
+  // derived evolve-all-c-<12hex> default is DIRECT mode's alone.
   const provider = createDaytonaProvider({
     apiKey: "sk-evolve",
     apiUrl: "https://dash.test/api/managed/daytona",

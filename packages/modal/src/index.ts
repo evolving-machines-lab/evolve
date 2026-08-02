@@ -39,27 +39,29 @@ import { pack } from "tar-stream";
 // ============================================================
 
 /**
- * The Evolve image release this package defaults to.
+ * The Evolve image release this package defaults to — DERIVED, never
+ * hand-written: `c-<12hex>`, the sha256 of the image's build inputs (the
+ * Dockerfile plus everything the build copies in, see
+ * assets/docker/image-digest.ts). `npm run generate:image-version` (repo
+ * root) rewrites ./image-version.ts here and its two generated siblings
+ * (assets/docker/image-version.ts, packages/daytona/src/image-version.ts);
+ * the published packages ship standalone, so each carries the value as a
+ * checked-in constant. The coherence test in
+ * packages/daytona/tests/unit/daytona-image-version.test.ts recomputes the
+ * digest and fails the suite whenever a checked-in copy is stale.
  *
- * LAW — one version, three copies, bumped together in one commit:
- *   assets/docker/image-version.ts   (canonical; what ./build.sh docker pushes)
- *   packages/modal/src/index.ts      (this one → IMAGE_MAP tag)
- *   packages/daytona/src/index.ts    (EVOLVE_IMAGE_VERSION → snapshot name + IMAGE_MAP tag)
- * The published packages ship standalone and cannot import the canonical file,
- * so the copies are held together by the coherence test in
- * packages/daytona/tests/unit/daytona-image-version.test.ts.
- *
- * WHY a version at all: Modal caches an image by its REFERENCE string. A
- * mutable :latest is pulled once per account and never again, so a pushed
- * update reached nobody. Bumping this constant changes the default image
- * name (evolve-all-vN) and the immutable tag it resolves to, which is what
- * makes Modal pull the release.
+ * WHY a per-release tag at all: Modal caches an image by its REFERENCE
+ * string. A mutable :latest is pulled once per account and never again, so a
+ * pushed update reached nobody. A content change moves the derived tag,
+ * which moves the default image name (evolve-all-c-<12hex>) and makes Modal
+ * pull the release.
  */
-export const EVOLVE_IMAGE_VERSION = "v1";
+import { EVOLVE_IMAGE_VERSION } from "./image-version";
+export { EVOLVE_IMAGE_VERSION };
 
 /** Map generic image names to Docker images */
 const IMAGE_MAP: Record<string, string> = {
-  // The versioned default: the immutable tag this release pushes.
+  // The derived default: the immutable content-addressed tag this release pushes.
   [`evolve-all-${EVOLVE_IMAGE_VERSION}`]: `evolvingmachines/evolve-all:${EVOLVE_IMAGE_VERSION}`,
   // The legacy unversioned name. A caller who pins "evolve-all" explicitly
   // keeps resolving exactly what they always did — the mutable Docker Hub

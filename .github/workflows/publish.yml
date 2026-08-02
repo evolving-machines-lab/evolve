@@ -74,6 +74,18 @@ jobs:
           echo "Use 'dev' release type for non-main branches"
           exit 1
 
+      # The image version is DERIVED from the build inputs under assets/docker/
+      # (c-<12hex>, see assets/docker/image-digest.ts) — nobody hand-writes it.
+      # Regenerate and refuse to publish if the checked-in constants are stale:
+      # the packages about to ship would name a tag that doesn't match the repo.
+      - name: Verify image-version constants are derived and fresh
+        run: |
+          npm run generate:image-version
+          if ! git diff --exit-code -- assets/docker/image-version.ts packages/modal/src/image-version.ts packages/daytona/src/image-version.ts; then
+            echo "::error::Image-version constants are stale — run 'npm run generate:image-version' and commit the result"
+            exit 1
+          fi
+
       # =======================================================================
       # VERSION CALCULATION
       # =======================================================================
@@ -216,6 +228,22 @@ jobs:
 
       - name: Build all packages
         run: npm run build
+
+      # =======================================================================
+      # DOCKER IMAGE (tag derived from build inputs; must exist on Docker Hub
+      # before the packages that default to it go live)
+      # =======================================================================
+
+      - name: Log in to Docker Hub
+        if: inputs.dry_run != true
+        run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login --username "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      # Idempotent: build.ts skips the build when evolve-all:c-<12hex> is
+      # already on Docker Hub (same content → same tag) and only realigns
+      # :latest; a changed Dockerfile derives a new tag and builds + pushes it.
+      - name: Build and push evolve-all image
+        if: inputs.dry_run != true
+        run: npx tsx assets/docker/build.ts
 
       # =======================================================================
       # PUBLISH

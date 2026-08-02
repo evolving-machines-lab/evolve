@@ -155,7 +155,7 @@ const sandbox = createDaytonaProvider({
     apiUrl: "https://app.daytona.io/api", // (optional) Default: https://app.daytona.io/api
     target: "us",                          // (optional) Target region. Default: "us"
     defaultTimeoutMs: 3600000,             // (optional) Default: 3600000 (1 hour) - converted to minutes for auto-stop
-    snapshotName: "evolve-all-v1",         // (optional) Default: the current release snapshot ("evolve-all-v1"); explicit names pass through untouched. Custom snapshots via build.sh daytona
+    snapshotName: "my-snapshot",           // (optional) Default: the current release snapshot ("evolve-all-c-<12hex>", tag derived from the image build inputs); explicit names pass through untouched. Custom snapshots via build.sh daytona
 });
 ```
 

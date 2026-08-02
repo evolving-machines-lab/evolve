@@ -53,34 +53,45 @@ After this, Daytona sandbox creation will be instant.
 
 Modal caches images by reference and Daytona caches snapshots by name, so a
 re-pushed `:latest` never reaches them. Each release therefore carries an
-immutable version tag, held in one constant per file with a law comment tying
-the copies together:
+immutable tag — and the tag is DERIVED, never hand-written: `c-<12hex>`, the
+sha256 of the image's build inputs (the Dockerfile plus everything the build
+copies in — see `docker/image-digest.ts` for the exact input set). Same
+content derives the same tag, so releases are idempotent; any content change
+derives a new tag automatically. Nobody bumps a version:
 
-1. Bump `EVOLVE_IMAGE_VERSION` (e.g. `v1` → `v2`) in all three places — the
-   coherence test in `packages/daytona/tests/unit/daytona-image-version.test.ts`
-   fails until they agree:
-   - `assets/docker/image-version.ts` (canonical)
-   - `packages/modal/src/index.ts`
-   - `packages/daytona/src/index.ts`
+1. Edit `docker/Dockerfile` (or any file the build copies in) and run
+   `npm run generate:image-version` from the repo root (it also runs first in
+   `npm run build`). It rewrites the three generated constants files — commit
+   them with your change:
+   - `assets/docker/image-version.ts` (canonical; every asset builder imports it)
+   - `packages/modal/src/image-version.ts`
+   - `packages/daytona/src/image-version.ts`
 
-2. Build and push — this pushes `evolvingmachines/evolve-all:vN` **and**
-   `:latest`:
+   The coherence test in
+   `packages/daytona/tests/unit/daytona-image-version.test.ts` recomputes the
+   digest, so a Dockerfile change without regeneration fails the suite —
+   there is no way to ship a stale constant.
+
+2. Publish. `.github/workflows/publish.yml` verifies the constants are fresh,
+   then builds and pushes `evolvingmachines/evolve-all:c-<12hex>` **and**
+   `:latest` — skipping the build when the derived tag already exists on
+   Docker Hub. The same thing runs by hand with:
 
    ```bash
    cd assets && ./build.sh docker
    ```
 
-3. Nothing else to run for users: both providers default to the versioned
-   name (`evolve-all-vN` is Modal's default image name and Daytona's default
-   snapshot name), so Modal pulls the new tag on its next create and Daytona
-   auto-builds the new snapshot on first use. Callers who pinned a name
-   explicitly (for example `evolve-all`) keep exactly what they pinned, on
-   both providers. Managed Daytona is separate: it names the platform's
+3. Nothing else to run for users: both providers default to the derived name
+   (`evolve-all-c-<12hex>` is Modal's default image name and Daytona's
+   default snapshot name), so Modal pulls the new tag on its next create and
+   Daytona auto-builds the new snapshot on first use. Callers who pinned a
+   name explicitly (for example `evolve-all`) keep exactly what they pinned,
+   on both providers. Managed Daytona is separate: it names the platform's
    stable `evolve-all` snapshot, and which release backs that name is the
    platform's decision, not this pipeline's.
 
-4. Rebuild the E2B template (E2B is not versioned — its public template is
-   rebuilt in place):
+4. Rebuild the E2B template (E2B is not part of this law — its public
+   template is rebuilt in place):
 
    ```bash
    cd assets && ./build.sh e2b
@@ -101,8 +112,8 @@ assets/
 
 ## Image Contents
 
-All providers use `evolvingmachines/evolve-all:<vN>` (see
-`assets/docker/image-version.ts`; also pushed as `:latest`):
+All providers use `evolvingmachines/evolve-all:c-<12hex>` (derived from the
+build inputs — see `assets/docker/image-version.ts`; also pushed as `:latest`):
 
 - Claude Code, Codex, Gemini CLI, Qwen Code
 - ACP adapters for Claude and Codex

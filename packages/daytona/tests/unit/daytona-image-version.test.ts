@@ -1,26 +1,35 @@
 #!/usr/bin/env tsx
 /**
- * Unit Test: Versioned image pipeline — Daytona side, plus the cross-file
- * version coherence law.
+ * Unit Test: Versioned image pipeline — Daytona side, plus the derived-version
+ * coherence law.
  *
  * Modal caches images by reference and Daytona caches snapshots by name, so a
- * re-pushed mutable :latest never reaches either. The fix is one version per
- * release, restated in three files because the published packages ship
- * standalone. This suite is what holds the copies together: it fails whenever
- * the three EVOLVE_IMAGE_VERSION constants disagree.
+ * re-pushed mutable :latest never reaches either. The fix is one immutable
+ * tag per release — and the tag is DERIVED, never hand-written: c-<12hex>,
+ * the sha256 of the image build inputs under assets/docker/, regenerated into
+ * three checked-in constants because the published packages ship standalone.
+ * This suite is the forcing function that replaced the human bump: it
+ * recomputes the digest and fails whenever a checked-in constant is stale
+ * (regenerate-and-match), and proves any input change moves the tag
+ * (tamper-and-fail).
  *
  * Usage:
  *   npx tsx tests/unit/daytona-image-version.test.ts
  */
 
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { appendFileSync, cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   EVOLVE_IMAGE_VERSION,
   _testImageMap,
   createDaytonaProvider,
 } from "../../src/index.ts";
+import {
+  EVOLVE_IMAGE_VERSION_PATTERN,
+  deriveImageVersion,
+} from "../../../../assets/docker/image-digest.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "../../../..");
@@ -130,27 +139,62 @@ async function testImageMapCarriesBothNames(): Promise<void> {
   );
 }
 
-async function testVersionCoherenceAcrossTheThreeFiles(): Promise<void> {
-  console.log("\n[4] LAW: one version, three copies, moved together");
+async function testVersionIsDerivedNotHandWritten(): Promise<void> {
+  console.log("\n[4] LAW: the version is DERIVED — checked-in constants match the build inputs");
 
-  assert(/^v\d+$/.test(EVOLVE_IMAGE_VERSION), `version "${EVOLVE_IMAGE_VERSION}" is a vN tag`);
+  assert(
+    EVOLVE_IMAGE_VERSION_PATTERN.test(EVOLVE_IMAGE_VERSION),
+    `version "${EVOLVE_IMAGE_VERSION}" is a c-<12hex> content tag`
+  );
+
+  const derived = deriveImageVersion(resolve(REPO_ROOT, "assets/docker"));
+  assertEqual(
+    EVOLVE_IMAGE_VERSION,
+    derived,
+    "packages/daytona's checked-in constant equals the freshly derived digest (regenerate-and-match)"
+  );
   assertEqual(
     versionConstantIn("assets/docker/image-version.ts"),
-    EVOLVE_IMAGE_VERSION,
-    "assets/docker/image-version.ts (canonical) matches packages/daytona"
+    derived,
+    "assets/docker/image-version.ts carries the derived digest"
   );
   assertEqual(
-    versionConstantIn("packages/modal/src/index.ts"),
-    EVOLVE_IMAGE_VERSION,
-    "packages/modal/src/index.ts matches packages/daytona"
+    versionConstantIn("packages/modal/src/image-version.ts"),
+    derived,
+    "packages/modal/src/image-version.ts carries the derived digest"
   );
+}
+
+async function testAnyInputChangeMovesTheTag(): Promise<void> {
+  console.log("\n[5] LAW: any build-input change moves the tag (tamper-and-fail)");
+
+  const tampered = mkdtempSync(join(tmpdir(), "evolve-image-inputs-"));
+  try {
+    cpSync(resolve(REPO_ROOT, "assets/docker"), tampered, { recursive: true });
+
+    appendFileSync(join(tampered, "Dockerfile"), "\n# tampered\n");
+    const afterDockerfileEdit = deriveImageVersion(tampered);
+    assert(
+      afterDockerfileEdit !== EVOLVE_IMAGE_VERSION,
+      "an edited Dockerfile derives a DIFFERENT tag — un-regenerated constants would fail [4]"
+    );
+
+    writeFileSync(join(tampered, "startup.sh"), "#!/bin/sh\n");
+    assert(
+      deriveImageVersion(tampered) !== afterDockerfileEdit,
+      "a new file in the build context moves the tag too (future COPY inputs are covered)"
+    );
+  } finally {
+    rmSync(tampered, { recursive: true, force: true });
+  }
 }
 
 const tests = [
   testDefaultSnapshotNameIsVersioned,
   testExplicitNamesPassThroughUntouched,
   testImageMapCarriesBothNames,
-  testVersionCoherenceAcrossTheThreeFiles,
+  testVersionIsDerivedNotHandWritten,
+  testAnyInputChangeMovesTheTag,
 ];
 
 (async () => {
