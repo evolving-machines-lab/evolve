@@ -1242,6 +1242,25 @@ export class DaytonaCommands implements SandboxCommands {
           // The wire says "still running" with a NULL exit code, not an absent
           // one — `!== undefined` handed that null back as this run's status.
           if (cmd.exitCode !== undefined && cmd.exitCode !== null) {
+            // Nothing arrived on the follow. A command that finished before the
+            // stream connected is indistinguishable from one that printed
+            // nothing, and nothing documents the follow endpoint as replaying
+            // what it already buffered — so read the settled log the way the
+            // blocking path does rather than report a silent run. Both streams
+            // must be empty to take it: a partial follow already reached the
+            // callbacks and re-emitting would double the caller's output.
+            if (!stdout && !stderr) {
+              try {
+                const logs = await this.sandbox.process.getSessionCommandLogs(sessionId, cmdId);
+                const settled = readCommandStreams(logs as any);
+                stdout = settled.stdout;
+                stderr = settled.stderr;
+                if (stdout) options?.onStdout?.(stdout);
+                if (stderr) options?.onStderr?.(stderr);
+              } catch {
+                // Ignore log fetch errors — the exit code is still the truth.
+              }
+            }
             return { exitCode: cmd.exitCode, stdout, stderr };
           }
           if (attempt >= 20) {

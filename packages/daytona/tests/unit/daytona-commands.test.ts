@@ -190,6 +190,8 @@ interface MockProcessApi {
    * is the wire's "still running". Empty = always answer execResponse's code.
    */
   sessionCommandExitCodes: Array<number | null>;
+  /** A follow that yields nothing — the command finished before it connected. */
+  silentFollow: boolean;
   /** Track calls to getSessionCommandLogs */
   logFetchCalls: Array<{ sessionId: string; cmdId: string; hasCallbacks: boolean }>;
 }
@@ -201,6 +203,7 @@ function createMockProcessApi(): MockProcessApi {
     execResponse: { cmdId: "cmd-001", exitCode: 0, stdout: "hello", stderr: "" },
     logResponse: null,
     sessionCommandExitCodes: [],
+    silentFollow: false,
     logFetchCalls: [],
   };
   return api;
@@ -240,8 +243,10 @@ function createMockDaytonaSandbox(processApi: MockProcessApi) {
         if (session) session.logFetches++;
 
         // If streaming callbacks provided, call them
-        if (onStdout) onStdout("streamed-stdout");
-        if (onStderr) onStderr("streamed-stderr");
+        if (!processApi.silentFollow) {
+          if (onStdout) onStdout("streamed-stdout");
+          if (onStderr) onStderr("streamed-stderr");
+        }
 
         // Return log response for non-streaming fallback
         return processApi.logResponse || { stdout: "", stderr: "" };
@@ -488,6 +493,50 @@ async function testStreamingRunNeverFabricatesAStatus(): Promise<void> {
   running.sessionCommandExitCodes = [null, 3];
   const result = await createCommands(running).run("echo hi", { onStdout: () => {} });
   assertEqual(result.exitCode, 3, "a null exit code is 'still running' — the poll waits for the real one");
+}
+
+/**
+ * A command that finishes before the follow connects yields an empty stream,
+ * and nothing documents the follow endpoint as replaying what it already
+ * buffered. The blocking path always had the non-follow log read as its
+ * fallback; the streaming path dropped it, so a fast command came back with a
+ * correct exit code and no output at all.
+ */
+async function testStreamingRunFallsBackWhenFollowYieldsNothing(): Promise<void> {
+  console.log("\n[2h] DaytonaCommands.run() - a silent follow falls back to the settled log");
+
+  const silent = createMockProcessApi();
+  silent.silentFollow = true;
+  silent.execResponse = { cmdId: "cmd-008", exitCode: 0, stdout: "", stderr: "" };
+  silent.logResponse = { stdout: "fast-output", stderr: "fast-err" };
+  const seen: string[] = [];
+  const errSeen: string[] = [];
+  const result = await createCommands(silent).run("echo hi", {
+    onStdout: (c) => seen.push(c),
+    onStderr: (c) => errSeen.push(c),
+  });
+  assertEqual(result.stdout, "fast-output", "the settled log supplies stdout the follow never delivered");
+  assertEqual(result.stderr, "fast-err", "and stderr with it");
+  assertEqual(seen.join(""), "fast-output", "the recovered output still reaches the caller's callback");
+  assertEqual(errSeen.join(""), "fast-err", "on the stream it belongs to");
+  assertEqual(
+    silent.logFetchCalls.filter((c) => !c.hasCallbacks).length,
+    1,
+    "exactly one non-follow log read — the fallback, not a second follow"
+  );
+
+  // A follow that DID deliver is never re-read: re-emitting would double the
+  // caller's output, so both streams must be empty to take the fallback.
+  const streamed = createMockProcessApi();
+  streamed.execResponse = { cmdId: "cmd-009", exitCode: 0, stdout: "", stderr: "" };
+  streamed.logResponse = { stdout: "must-not-appear", stderr: "" };
+  const streamedResult = await createCommands(streamed).run("echo hi", { onStdout: () => {} });
+  assertEqual(streamedResult.stdout, "streamed-stdout", "a follow that delivered keeps its own bytes");
+  assertEqual(
+    streamed.logFetchCalls.filter((c) => !c.hasCallbacks).length,
+    0,
+    "and no fallback read is issued at all"
+  );
 }
 
 async function testRunSessionCleanup(): Promise<void> {
@@ -781,6 +830,7 @@ const tests = [
   testRunStreamingPath,
   testRunStreamsLiveNotAfterExit,
   testStreamingRunNeverFabricatesAStatus,
+  testStreamingRunFallsBackWhenFollowYieldsNothing,
   testRunSessionCleanup,
   testRunOutputField,
   // [3] spawn with envs

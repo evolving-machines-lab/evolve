@@ -770,6 +770,23 @@ export function parseYamlSubset(text: string, source: string): unknown {
   };
 
   /**
+   * Does the quote at `i` DELIMIT a scalar, or is it an ordinary character?
+   * YAML reads a quote as a delimiter only where a scalar may begin: the start
+   * of the line, or straight after a `: ` / `- ` separator (both need the
+   * space — `a:'b'` is the plain scalar `a:'b'`) or a flow `,` `[` `{`.
+   * Everywhere else it is content. Treating every quote as a delimiter made
+   * the apostrophe in `name: brando's run` open a string that never closed,
+   * and the whole line — trailing comment included — survived unstripped.
+   */
+  const delimitsScalar = (line: string, i: number): boolean => {
+    let j = i - 1;
+    while (j >= 0 && (line[j] === " " || line[j] === "\t")) j--;
+    if (j < 0) return true;
+    if (line[j] === "," || line[j] === "[" || line[j] === "{") return true;
+    return (line[j] === ":" || line[j] === "-") && j < i - 1;
+  };
+
+  /**
    * Cut a trailing comment off one line: a `#` outside quotes that sits at the
    * start or after whitespace (YAML's own rule — `url: http://x#frag` keeps
    * its `#`). Runs BEFORE any scalar is read, so a comment cannot be folded
@@ -786,7 +803,7 @@ export function parseYamlSubset(text: string, source: string): unknown {
           if (quote === "'" && line[i + 1] === "'") i++;
           else quote = null;
         }
-      } else if (ch === '"' || ch === "'") {
+      } else if ((ch === '"' || ch === "'") && delimitsScalar(line, i)) {
         quote = ch;
       } else if (ch === "#" && (i === 0 || line[i - 1] === " " || line[i - 1] === "\t")) {
         return line.slice(0, i).trimEnd();
@@ -893,6 +910,13 @@ export function parseYamlSubset(text: string, source: string): unknown {
         skipSpaces();
         if (input[pos] === ",") {
           pos++;
+          skipSpaces();
+          // A comma before the closer is a trailing comma, valid YAML — not
+          // the empty entry the bare-scalar reader would otherwise refuse.
+          if (input[pos] === "}") {
+            pos++;
+            return map;
+          }
           continue;
         }
         if (input[pos] === "}") {
@@ -917,6 +941,12 @@ export function parseYamlSubset(text: string, source: string): unknown {
         if (pos >= input.length) refuse(no, "unterminated flow sequence — missing ]");
         if (input[pos] === ",") {
           pos++;
+          skipSpaces();
+          // Same trailing-comma law as the flow mapping: `[a, b,]` is valid.
+          if (input[pos] === "]") {
+            pos++;
+            return items;
+          }
           continue;
         }
         if (input[pos] === "]") {
@@ -1032,7 +1062,7 @@ export function parseYamlSubset(text: string, source: string): unknown {
       const ch = text[i];
       if (quote) {
         if (ch === quote) quote = null;
-      } else if (ch === '"' || ch === "'") {
+      } else if ((ch === '"' || ch === "'") && delimitsScalar(text, i)) {
         quote = ch;
       } else if (ch === ":" && (i === text.length - 1 || text[i + 1] === " ")) {
         return i;

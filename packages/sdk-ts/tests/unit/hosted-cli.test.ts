@@ -510,6 +510,46 @@ function testYamlSubset() {
     "a # inside quotes is content; the one outside still strips"
   );
 
+  // A quote only DELIMITS where a scalar begins. Every expectation below was
+  // taken from PyYAML on the same input: a quote mid-word is a letter, and
+  // reading it as an opening delimiter left the whole line — comment included —
+  // unstripped, which is the same silent corruption A1 closed.
+  assertEqual(
+    parseYamlSubset("job_name: brando's run # the comment", "t.yaml"),
+    { job_name: "brando's run" },
+    "an apostrophe inside a bare value does not open a string — the comment still strips"
+  );
+  assertEqual(
+    parseYamlSubset("desc: it's fine # trailing", "t.yaml"),
+    { desc: "it's fine" },
+    "the same holds for an apostrophe in the middle of a word"
+  );
+  assertEqual(
+    parseYamlSubset('name: 5" wide # comment', "t.yaml"),
+    { name: '5" wide' },
+    "a double quote mid-value is content too"
+  );
+  assertEqual(
+    parseYamlSubset(["datasets:", "  - name: brando's run  # picked"].join("\n"), "t.yaml"),
+    { datasets: [{ name: "brando's run" }] },
+    "the law reaches inside block sequences"
+  );
+  assertEqual(
+    parseYamlSubset("it's: value", "t.yaml"),
+    { "it's": "value" },
+    "an apostrophe in a KEY leaves the key colon findable (PyYAML reads it the same way)"
+  );
+  assertEqual(
+    parseYamlSubset(["'quoted key': v", '"dq key": w'].join("\n"), "t.yaml"),
+    { "quoted key": "v", "dq key": "w" },
+    "a quote that DOES begin a scalar still delimits — quoted keys unchanged"
+  );
+  assertEqual(
+    parseYamlSubset("env: { A: 'x # y', B: don't }", "t.yaml"),
+    { env: { A: "x # y", B: "don't" } },
+    "inside flow, a quote after ', ' delimits while one mid-word does not"
+  );
+
   console.log("\n--- parseYamlSubset: YAML flow collections, unquoted scalars included (A1) ---");
   assertEqual(
     parseYamlSubset("agent_env:    { CAMPAIGN_MARKER: prod-aug01 }", "t.yaml"),
@@ -531,6 +571,12 @@ function testYamlSubset() {
     { json: { a: [1, 2], b: { c: null } } },
     "strict JSON still parses unchanged"
   );
+  assertEqual(
+    parseYamlSubset("a: [1, 2,]\nenv: { A: 1, B: 2, }", "t.yaml"),
+    { a: [1, 2], env: { A: 1, B: 2 } },
+    "a trailing comma closes the collection — valid YAML, not the empty entry it was refused as"
+  );
+  assertThrowsUsage(() => parseYamlSubset("a: [1, , 2]", "t.yaml"), "empty value", "a comma with nothing between still refuses");
   assertThrowsUsage(() => parseYamlSubset("a: 1\nenv: { A: 1", "t.yaml"), "t.yaml:2", "an unclosed flow mapping refuses with its line number");
   assertThrowsUsage(() => parseYamlSubset("env: { A 1 }", "t.yaml"), '":"', "a flow mapping without a colon refuses loudly");
   assertThrowsUsage(() => parseYamlSubset("env: { A: 1 } trailing", "t.yaml"), "after flow", "content after a closed flow collection refuses loudly");
