@@ -1014,7 +1014,14 @@ export function parseYamlSubset(text: string, source: string): unknown {
           const nested = parseBlock(i + 1, lines[i + 1].indent);
           items.push(nested.value);
           i = nested.next;
-        } else if (findKeyColon(rest) === -1) {
+        } else if (rest[0] === "{" || rest[0] === "[" || findKeyColon(rest) === -1) {
+          // A flow collection is a WHOLE item, decided before any colon hunt:
+          // `- {name: claude, model: opus}` carries a key colon inside its
+          // braces, so testing findKeyColon first split it there and pushed
+          // `{"{name": "claude, model: opus}"}` — a garbage key, silently, on
+          // valid YAML that the sibling forms (`a: [{k: v}]`, `- [a, b]`) both
+          // read correctly. parseScalar routes both bracket forms to parseFlow,
+          // which refuses malformation with the line number.
           items.push(parseScalar(rest, line.no));
           i++;
         } else {

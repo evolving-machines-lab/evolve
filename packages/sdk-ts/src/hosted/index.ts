@@ -291,7 +291,10 @@ function readRetryAfterSec(text: string, res: Response): number | undefined {
   try {
     const body = JSON.parse(text) as { error?: { retryAfterSec?: unknown } };
     const fromBody = body?.error?.retryAfterSec;
-    if (typeof fromBody === "number") return fromBody;
+    // Finite or absent, in the BODY too: `JSON.parse('1e400')` is Infinity, and
+    // a caller sleeping Infinity is parked forever with no bound and no output.
+    // A delay that cannot be waited is no reading at all.
+    if (typeof fromBody === "number" && Number.isFinite(fromBody)) return fromBody;
   } catch {
     // Unparseable body: the header is the only reading left.
   }

@@ -580,6 +580,40 @@ function testYamlSubset() {
   assertThrowsUsage(() => parseYamlSubset("a: 1\nenv: { A: 1", "t.yaml"), "t.yaml:2", "an unclosed flow mapping refuses with its line number");
   assertThrowsUsage(() => parseYamlSubset("env: { A 1 }", "t.yaml"), '":"', "a flow mapping without a colon refuses loudly");
   assertThrowsUsage(() => parseYamlSubset("env: { A: 1 } trailing", "t.yaml"), "after flow", "content after a closed flow collection refuses loudly");
+
+  // A flow collection is a WHOLE sequence item. Every expectation below is
+  // PyYAML's reading of the same input: the item's inner colon belongs to the
+  // flow mapping, and reading it as the item's key colon split the braces into
+  // `{"{name": "claude, model: opus"}` — the one remaining shape that corrupted
+  // silently while `a: [{k: v}]` and `- [a, b]` both read correctly.
+  assertEqual(
+    parseYamlSubset(["agents:", "  - {name: claude, model: opus}"].join("\n"), "t.yaml"),
+    { agents: [{ name: "claude", model: "opus" }] },
+    "a flow mapping as a sequence item keeps its inner colons (PyYAML's reading)"
+  );
+  assertEqual(
+    parseYamlSubset(
+      ["agents:", "  - {name: claude, model_name: opus}", "  - name: codex", "    model_name: gpt-5.5"].join("\n"),
+      "t.yaml"
+    ),
+    { agents: [{ name: "claude", model_name: "opus" }, { name: "codex", model_name: "gpt-5.5" }] },
+    "a flow item and a block item sit side by side in one sequence"
+  );
+  assertEqual(
+    parseYamlSubset(["datasets:", "  - {name: deep-swe, task_names: [a, b]}   # picked"].join("\n"), "t.yaml"),
+    { datasets: [{ name: "deep-swe", task_names: ["a", "b"] }] },
+    "nesting and the trailing-comment law both hold inside a flow sequence item"
+  );
+  assertThrowsUsage(
+    () => parseYamlSubset(["a:", "  - {b: 1"].join("\n"), "t.yaml"),
+    "t.yaml:2",
+    "an unclosed flow item refuses with its line number instead of parsing to a garbage key"
+  );
+  assertThrowsUsage(
+    () => parseYamlSubset(["a:", "  - {b: 1} trailing"].join("\n"), "t.yaml"),
+    "after flow",
+    "content after a closed flow item refuses loudly, as PyYAML refuses it"
+  );
 }
 
 async function testPrintConfig() {

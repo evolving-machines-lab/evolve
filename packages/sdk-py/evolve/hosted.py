@@ -23,6 +23,7 @@ import gzip
 import hashlib
 import io
 import json
+import math
 import os
 import re
 import secrets
@@ -1563,9 +1564,25 @@ def _parse_error_body(text: str, fallback: str) -> Dict[str, Any]:
         'message': error['message'] if isinstance(error.get('message'), str) else fallback,
         'param': error['param'] if isinstance(error.get('param'), str) else None,
         'details': error['details'] if isinstance(error.get('details'), dict) else None,
-        'retry_after_sec': retry_after if isinstance(retry_after, (int, float)) else None,
+        'retry_after_sec': _finite_delay(retry_after),
         'request_id': error['requestId'] if isinstance(error.get('requestId'), str) else None,
     }
+
+
+def _finite_delay(value: Any) -> Optional[float]:
+    """A delay is a reading only when it is a FINITE number; else it is absent.
+
+    An infinite or NaN delay is not a long wait, it is a hang: every caller of
+    this value sleeps it (``max(delay, poll_interval)``), so ``inf`` parks the
+    watch loop forever with no bound and no output. TypeScript refuses the same
+    reading through ``Number.isFinite``, and one law stated two ways is two
+    laws — Python must refuse it in both mirrors, header and envelope alike
+    (``json.loads`` accepts the bare ``Infinity``/``NaN`` literals that
+    ``JSON.parse`` throws on, so the body path admits what TypeScript cannot).
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if math.isfinite(value) else None
 
 
 def _header_retry_after_sec(headers: Any) -> Optional[float]:
@@ -1574,10 +1591,12 @@ def _header_retry_after_sec(headers: Any) -> Optional[float]:
     The header is the SECOND reading everywhere: the envelope's
     ``retryAfterSec`` wins, because a body always survives a proxy that eats
     headers. Both the request path and the event stream read it through here.
+    ``float()`` accepts ``"Infinity"`` and ``"nan"``, so the finite check is
+    what makes an unreadable header absent rather than an unbounded sleep.
     """
     raw = headers.get('Retry-After') if headers else None
     try:
-        return float(raw) if raw else None
+        return _finite_delay(float(raw)) if raw else None
     except ValueError:
         return None
 
