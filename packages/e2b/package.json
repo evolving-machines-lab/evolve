@@ -33,7 +33,7 @@
     "build": "tsup --minify",
     "dev": "tsup --watch",
     "type-check": "tsc --noEmit",
-    "test:unit": "tsx tests/unit/e2b-list-pagination.test.ts"
+    "test:unit": "tsx tests/unit/e2b-list-pagination.test.ts && tsx tests/unit/e2b-files-read.test.ts"
   },
   "dependencies": {
     "@e2b/code-interpreter": "^2.0.1"

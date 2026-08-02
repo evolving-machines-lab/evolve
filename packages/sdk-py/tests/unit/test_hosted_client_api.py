@@ -36,6 +36,7 @@ import gzip
 import hashlib
 import json
 import os
+import time
 import typing
 import urllib.parse as urllib_parse
 from typing import Dict
@@ -596,6 +597,69 @@ class TestDatasets:
         assert done.task_count == 113
         assert len(fake.requests) == 3
         assert statuses == ['QUEUED', 'RUNNING', 'COMPLETED']
+
+    @pytest.mark.asyncio
+    async def test_watch_import_survives_a_rate_limit(self):
+        """A 429/503 mid-watch is a DELAY, not an outcome.
+
+        The import keeps running server-side, so dying at the rate limit lost
+        a watch over a wait. The loop sleeps the server's own delay — from the
+        envelope on the 429, from the header on the 503 — and polls on.
+        """
+        import io
+        import urllib.error
+
+        job = {'id': 'imp-1', 'name': 'my-set', 'version': '1.2'}
+        calls = {'count': 0}
+
+        def rate_limited_then_done(request, timeout=None):
+            calls['count'] += 1
+            if calls['count'] == 1:
+                raise urllib.error.HTTPError(
+                    request.full_url, 429, 'Too Many Requests', {},
+                    io.BytesIO(json.dumps({'error': {
+                        'code': 'rate_limited',
+                        'message': 'slow down',
+                        'retryAfterSec': 0.05,
+                    }}).encode('utf-8')),
+                )
+            if calls['count'] == 2:
+                raise urllib.error.HTTPError(
+                    request.full_url, 503, 'Service Unavailable',
+                    {'Retry-After': '0.05'},
+                    io.BytesIO(b'upstream restarting'),
+                )
+            return FakeResponse({**job, 'status': 'COMPLETED', 'task_count': 113})
+
+        started = time.monotonic()
+        with patch('evolve.hosted.urllib.request.urlopen', rate_limited_then_done):
+            done = await datasets_factory(CONFIG).watch_import(
+                'imp-1', poll_interval_s=0.001
+            )
+        elapsed = time.monotonic() - started
+
+        assert calls['count'] == 3
+        assert done.status == 'COMPLETED'
+        assert done.task_count == 113
+        # Both delays were slept, not the 1ms poll interval.
+        assert elapsed >= 0.08
+
+        # Every other failure still ends the watch — survival is scoped to the
+        # two statuses that MEAN "wait", never to a refusal.
+        def not_found(request, timeout=None):
+            raise urllib.error.HTTPError(
+                request.full_url, 404, 'Not Found', {},
+                io.BytesIO(json.dumps({'error': {
+                    'code': 'dataset_not_found', 'message': 'no such import',
+                }}).encode('utf-8')),
+            )
+
+        with patch('evolve.hosted.urllib.request.urlopen', not_found):
+            with pytest.raises(EvolveAPIError) as exc:
+                await datasets_factory(CONFIG).watch_import(
+                    'imp-2', poll_interval_s=0.001
+                )
+        assert exc.value.status == 404
 
     @pytest.mark.asyncio
     async def test_publish_requires_complete_git_source(self):
@@ -1184,7 +1248,7 @@ class TestJobs:
         assert trial.reward == 1
         # The full rewards map beside the convenience primary reward.
         assert trial.verifier_result.rewards == {'reward': 1, 'f2p': 1.0}
-        # Spend lives on agent_result; spend_source says measured vs assumed.
+        # Spend lives on agent_result; spend_source names its lane.
         assert trial.agent_result.cost_usd == 0.93
         assert trial.agent_result.n_input_tokens == 1234
         assert trial.spend_source == 'measured'
@@ -1535,6 +1599,58 @@ class TestJobs:
         assert second_connect.get_header('Last-event-id') == '1'
         assert [e.seq for e in events] == [0, 1, 2]
         assert final.status == 'COMPLETED'
+
+    @pytest.mark.asyncio
+    async def test_watch_sleeps_the_servers_retry_after_before_reconnecting(self):
+        """The reconnect delay is the SERVER's when the server states one.
+
+        Read by the one law — envelope first, ``Retry-After`` header second —
+        so a rate-limited stream is not hammered back at the local backoff
+        guess a millisecond later.
+        """
+        import io
+        import urllib.error
+
+        async def follow(status, reason, headers, body):
+            connects = {'count': 0}
+
+            def urlopen(request, timeout=None):
+                if '/events' in request.full_url:
+                    connects['count'] += 1
+                    if connects['count'] == 1:
+                        raise urllib.error.HTTPError(
+                            request.full_url, status, reason, headers, io.BytesIO(body),
+                        )
+                    return FakeSseResponse(sse_text([
+                        {'seq': 0, 'type': 'job.completed', 'data': {}},
+                    ]).encode('utf-8'))
+                return FakeResponse({**JOB_SUMMARY, 'status': 'COMPLETED'})
+
+            started = time.monotonic()
+            with patch('evolve.hosted.urllib.request.urlopen', urlopen):
+                final = await jobs_factory(CONFIG).watch(
+                    'job-1', reconnect_delay_s=0.001
+                )
+            return connects['count'], time.monotonic() - started, final.status
+
+        connects, elapsed, status = await follow(
+            429, 'Too Many Requests', {},
+            json.dumps({'error': {
+                'code': 'rate_limited', 'message': 'slow down', 'retryAfterSec': 0.08,
+            }}).encode('utf-8'),
+        )
+        assert connects == 2
+        assert status == 'COMPLETED'
+        assert elapsed >= 0.06
+
+        # The same law from the OTHER half of the wire: an unparseable body,
+        # the delay in the header.
+        connects, elapsed, status = await follow(
+            503, 'Service Unavailable', {'Retry-After': '0.08'}, b'upstream restarting',
+        )
+        assert connects == 2
+        assert status == 'COMPLETED'
+        assert elapsed >= 0.06
 
     @pytest.mark.asyncio
     async def test_watch_finishes_on_terminal_status_without_terminal_event(self):

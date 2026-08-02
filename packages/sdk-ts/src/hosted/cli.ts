@@ -17,8 +17,10 @@
 
 import { existsSync, readFileSync, realpathSync } from "fs";
 import { fileURLToPath, pathToFileURL } from "url";
+import { type Tags, parseDocument } from "yaml";
 import {
   EVAL_SANDBOX_PROVIDERS,
+  EvolveApiError,
   TRIAL_ARTIFACT_STREAMS,
   TRIAL_STATUSES,
   agents,
@@ -750,159 +752,134 @@ export function parseArgs(argv: string[]): Invocation {
 // =============================================================================
 
 /**
- * The YAML this CLI reads is a deliberate subset, enough for a job config and
- * nothing more: block maps, block sequences, quoted/bare scalars, JSON flow
- * collections, and full-line comments. Anchors, aliases, tags, multi-line
- * scalars, and multi-document files are refused loudly rather than parsed
- * wrong — a config that needs them can be written as JSON.
+ * The 1.1 spec's bare `y`/`n` booleans are dropped, because PyYAML never
+ * adopted them — `n: 3` keeps its key. The 1.1 schema carries one bool tag per
+ * boolean, and each one is named by the boolean it identifies, never by the
+ * text of its regex: a tag's `test` and its `resolve` are one pair, and reading
+ * only the `test` cannot tell which value the tag will produce.
  */
-export function parseYamlSubset(text: string, source: string): unknown {
-  interface Line {
-    indent: number;
-    text: string;
-    no: number;
-  }
-  const refuse = (no: number, what: string): never => {
-    throw new CliUsageError(`${source}:${no}: ${what}`);
-  };
+function withoutBareYesNoBooleans(tags: Tags): Tags {
+  return tags.map((tag) =>
+    typeof tag === "object" && tag.tag === "tag:yaml.org,2002:bool" && tag.test
+      ? {
+          ...tag,
+          test: tag.identify?.(true)
+            ? /^(?:[Yy]es|YES|[Tt]rue|TRUE|[Oo]n|ON)$/
+            : /^(?:[Nn]o|NO|[Ff]alse|FALSE|[Oo]ff|OFF)$/,
+        }
+      : tag
+  );
+}
 
-  const lines: Line[] = [];
-  text.split("\n").forEach((raw, index) => {
-    const no = index + 1;
-    if (raw.trim() === "" || raw.trim().startsWith("#")) return;
-    if (raw.trim() === "---" || raw.trim() === "...") {
-      refuse(no, "multi-document YAML is not supported here — one config per file");
-    }
-    const indent = raw.length - raw.trimStart().length;
-    if (raw.slice(0, indent).includes("\t")) {
-      refuse(no, "tabs in indentation — use spaces");
-    }
-    lines.push({ indent, text: raw.trim(), no });
+/**
+ * PyYAML's float pattern is narrower than the 1.1 spec's the library carries:
+ * it requires a dot, and it requires a SIGN on the exponent. Under the spec's,
+ * `e3` is a float whose `parseFloat` is NaN and `1e3` is the number 1000, where
+ * PyYAML reads both as the text they are — so a build tag `e3` was refused as
+ * `.nan`, naming a value nobody wrote, and a `1e3` dataset name printed and
+ * shipped as a JSON number where the wire takes a string, at exit 0.
+ */
+const PYYAML_FLOAT = /^(?:[-+]?[0-9][0-9_]*\.[0-9_]*|\.[0-9][0-9_]*)$/;
+const PYYAML_FLOAT_EXP = /^(?:[-+]?[0-9][0-9_]*\.[0-9_]*|\.[0-9][0-9_]*)[eE][-+][0-9]+$/;
+
+/**
+ * Four tags answer to `tag:yaml.org,2002:float` — plain, exponent, `.inf`/`.nan`,
+ * and the sexagesimal `12:30.5` — and only the first two read wider than PyYAML.
+ * Each is named by a value its own test accepts, never by the text of that test,
+ * because a `test` and its `resolve` are one pair and the regex alone cannot say
+ * which value the tag will produce.
+ */
+function withPyYamlFloatShapes(tags: Tags): Tags {
+  return tags.map((tag) => {
+    if (typeof tag !== "object" || tag.tag !== "tag:yaml.org,2002:float" || !tag.test) return tag;
+    if (tag.test.test("1.5e+3")) return { ...tag, test: PYYAML_FLOAT_EXP };
+    if (tag.test.test("1.5")) return { ...tag, test: PYYAML_FLOAT };
+    return tag;
   });
+}
 
-  function parseScalar(value: string, no: number): unknown {
-    if (value.startsWith("&") || value.startsWith("*") || value.startsWith("!")) {
-      refuse(no, `YAML ${value[0] === "!" ? "tags" : "anchors/aliases"} are not supported here`);
-    }
-    if (value === "|" || value === ">") {
-      refuse(no, "multi-line scalars are not supported here — use JSON");
-    }
-    if (value.startsWith("[") || value.startsWith("{")) {
-      try {
-        return JSON.parse(value);
-      } catch {
-        refuse(no, "flow collections must be valid JSON");
-      }
-    }
-    if (value.startsWith('"')) {
-      try {
-        return JSON.parse(value);
-      } catch {
-        refuse(no, "unterminated double-quoted string");
-      }
-    }
-    if (value.startsWith("'")) {
-      if (!value.endsWith("'") || value.length < 2) {
-        refuse(no, "unterminated single-quoted string");
-      }
-      return value.slice(1, -1).replace(/''/g, "'");
-    }
-    if (value === "null" || value === "~") return null;
-    if (value === "true") return true;
-    if (value === "false") return false;
-    if (/^-?\d+(\.\d+)?$/.test(value)) return Number(value);
-    return value;
+/**
+ * PyYAML's integer patterns are narrower than the 1.1 spec's the library
+ * carries, in the same place twice: a LEADING ZERO. A decimal integer is `0`
+ * or a digit string starting `1`-`9`, so `08` and `-09` are the text they are
+ * — but the library reads any digit string, so a zero-padded `08` became the
+ * number 8. A sexagesimal integer starts `1`-`9` too, so `0:0` and `08:00` are
+ * text, where the library made them 0 and 480. The octal, binary and hex tags
+ * already carry PyYAML's own patterns, and the sexagesimal FLOAT `0:0.5` reads
+ * from a leading zero in PyYAML as well — those stay untouched.
+ */
+const PYYAML_INT = /^[-+]?(?:0|[1-9][0-9_]*)$/;
+const PYYAML_INT_SEXAGESIMAL = /^[-+]?[1-9][0-9_]*(?::[0-5]?[0-9])+$/;
+
+/**
+ * Five tags answer to `tag:yaml.org,2002:int` — binary, octal, decimal, hex
+ * and the sexagesimal `1:00` — and only the decimal and the sexagesimal read
+ * wider than PyYAML. Each is named by a value its own test accepts, never by
+ * the text of that test, because a `test` and its `resolve` are one pair and
+ * the regex alone cannot say which value the tag will produce.
+ */
+function withPyYamlIntShapes(tags: Tags): Tags {
+  return tags.map((tag) => {
+    if (typeof tag !== "object" || tag.tag !== "tag:yaml.org,2002:int" || !tag.test) return tag;
+    if (tag.test.test("1:00")) return { ...tag, test: PYYAML_INT_SEXAGESIMAL };
+    if (tag.test.test("19")) return { ...tag, test: PYYAML_INT };
+    return tag;
+  });
+}
+
+/**
+ * -c reads real YAML through the standard `yaml` package — the hand-rolled
+ * subset reader is retired. PyYAML's reading is the contract, so the schema is
+ * YAML 1.1 (`yes`/`on` are booleans, `012` is octal, a flow mapping is a whole
+ * sequence item) with two carve-outs: the 1.1 spec's bare `y`/`n` booleans,
+ * which PyYAML never adopted — `n: 3` keeps its key — and the 1.1 spec's
+ * number shapes PyYAML never adopted either, where a float needs a dot and a
+ * signed exponent and an integer may not be zero-padded, so `e3`, `1e3`, `08`
+ * and `0:0` stay the strings a caller wrote. The schema is PINNED, not
+ * merely defaulted: PyYAML's resolver has no mode but 1.1 and reads a file the
+ * same way whatever its `%YAML` directive says, while this library lets an
+ * explicit `%YAML 1.2` swap in the 1.2 core schema. One file, one reading.
+ * Three refusals sit on top of the library: a second document, an unresolvable
+ * tag (both PyYAML refusals too), and a duplicate key — PyYAML silently keeps
+ * the last value, and that silence is exactly the corruption a config file
+ * cannot afford. Every refusal names its `source` and carries `:line` wherever
+ * the parser places the problem — the library's alias-bomb guard fires at
+ * resolution, after parsing, and has no position to give. An empty or
+ * comment-only file is an empty object.
+ */
+export function parseYamlConfig(text: string, source: string): unknown {
+  const doc = parseDocument(text, {
+    version: "1.1",
+    schema: "yaml-1.1",
+    resolveKnownTags: false,
+    customTags: (tags) =>
+      withPyYamlIntShapes(withPyYamlFloatShapes(withoutBareYesNoBooleans(tags))),
+  });
+  // Warnings refuse too: the library downgrades an unresolvable tag to a
+  // warning and parses on, where PyYAML (and this CLI, always) refuses.
+  const problem = doc.errors[0] ?? doc.warnings[0];
+  if (problem) {
+    const line = problem.linePos?.[0]?.line ?? 1;
+    const what =
+      problem.code === "MULTIPLE_DOCS"
+        ? "multi-document YAML is not supported here — one config per file"
+        : problem.message.replace(/ at line \d+, column \d+:[\s\S]*$/, "");
+    throw new CliUsageError(`${source}:${line}: ${what}`);
   }
-
-  /** Parse the block starting at `start`, all lines with indent >= `indent`. */
-  function parseBlock(start: number, indent: number): { value: unknown; next: number } {
-    const first = lines[start];
-    if (first.text.startsWith("- ") || first.text === "-") {
-      const items: unknown[] = [];
-      let i = start;
-      while (i < lines.length && lines[i].indent >= indent) {
-        const line = lines[i];
-        if (line.indent > indent || (!line.text.startsWith("- ") && line.text !== "-")) {
-          refuse(line.no, "inconsistent indentation in sequence");
-        }
-        const rest = line.text === "-" ? "" : line.text.slice(2);
-        if (rest === "") {
-          if (i + 1 >= lines.length || lines[i + 1].indent <= indent) {
-            refuse(line.no, "empty sequence item");
-          }
-          const nested = parseBlock(i + 1, lines[i + 1].indent);
-          items.push(nested.value);
-          i = nested.next;
-        } else if (findKeyColon(rest) === -1) {
-          items.push(parseScalar(rest, line.no));
-          i++;
-        } else {
-          // Inline item: re-enter the parser with the rest of the line placed
-          // at the item's column, so `- key: value` opens a map whose further
-          // keys sit below at that column.
-          const virtual: Line = { indent: line.indent + 2, text: rest, no: line.no };
-          lines.splice(i, 1, virtual);
-          const nested = parseBlock(i, virtual.indent);
-          items.push(nested.value);
-          i = nested.next;
-        }
-      }
-      return { value: items, next: i };
-    }
-
-    const map: Record<string, unknown> = {};
-    let i = start;
-    while (i < lines.length && lines[i].indent >= indent) {
-      const line = lines[i];
-      if (line.indent > indent) refuse(line.no, "inconsistent indentation in map");
-      const colon = findKeyColon(line.text);
-      if (colon === -1) refuse(line.no, `expected "key: value", got "${line.text}"`);
-      const key = stripKeyQuotes(line.text.slice(0, colon).trim());
-      const rest = line.text.slice(colon + 1).trim();
-      if (rest !== "") {
-        map[key] = parseScalar(rest, line.no);
-        i++;
-      } else if (i + 1 < lines.length && lines[i + 1].indent > indent) {
-        const nested = parseBlock(i + 1, lines[i + 1].indent);
-        map[key] = nested.value;
-        i = nested.next;
-      } else {
-        map[key] = null;
-        i++;
-      }
-    }
-    return { value: map, next: i };
+  // Aliases resolve in `toJS`, not in the parse, so the library's own
+  // resource-exhaustion guard throws PAST the check above. Unwrapped it left
+  // this reader as a bare exit 1 naming no file, where every other config
+  // refusal is a usage exit 2 naming its source. `toJS` also narrates on its
+  // own account — a collection-valued key emits a Node warning about JS object
+  // restrictions — and this CLI speaks its own refusals and nothing else. The
+  // level is dropped HERE and not in the parse options, because a silent parse
+  // also drops the library's second-document error, which is a refusal.
+  doc.options.logLevel = "silent";
+  try {
+    return doc.toJS() ?? {};
+  } catch (error) {
+    throw new CliUsageError(`${source}: ${(error as Error).message}`);
   }
-
-  /** The colon ending the key: the first `:` at end-of-text or followed by a space, outside quotes. */
-  function findKeyColon(text: string): number {
-    let quote: string | null = null;
-    for (let i = 0; i < text.length; i++) {
-      const ch = text[i];
-      if (quote) {
-        if (ch === quote) quote = null;
-      } else if (ch === '"' || ch === "'") {
-        quote = ch;
-      } else if (ch === ":" && (i === text.length - 1 || text[i + 1] === " ")) {
-        return i;
-      }
-    }
-    return -1;
-  }
-
-  function stripKeyQuotes(key: string): string {
-    if (key.length >= 2 && ((key[0] === '"' && key.endsWith('"')) || (key[0] === "'" && key.endsWith("'")))) {
-      return key.slice(1, -1);
-    }
-    return key;
-  }
-
-  if (lines.length === 0) return {};
-  const { value, next } = parseBlock(0, lines[0].indent);
-  if (next < lines.length) {
-    refuse(lines[next].no, "content outside the root block — check indentation");
-  }
-  return value;
 }
 
 /** The closed key vocabulary a -c config file may use (the spec's JobCreate). */
@@ -917,6 +894,133 @@ const JOB_CONFIG_KEYS = new Set([
   "agent_env",
   "verifier_env",
 ]);
+
+/** The scalar spec type of every -c key that carries one (the spec's JobCreate). */
+const JOB_CONFIG_SCALARS: Record<string, "string" | "number"> = {
+  job_name: "string",
+  sandbox_provider: "string",
+  n_attempts: "number",
+  n_concurrent_trials: "number",
+  max_trial_spend_usd: "number",
+};
+
+/**
+ * The spec type of every field a selector entry carries (DatasetSelector and
+ * AgentArmInput). `strings` is a list of them. Selector fields ride the same
+ * wire as the top-level scalars and are decided by the same file's own text,
+ * so they answer to the same law at the same keyboard — `version: 1.10` is the
+ * float 1.1 in PyYAML too, and 1.10 and 1.1 name DIFFERENT dataset versions.
+ */
+type SelectorFieldType = "string" | "number" | "strings";
+
+const SELECTOR_FIELDS: Record<"datasets" | "agents", Record<string, SelectorFieldType>> = {
+  datasets: {
+    name: "string",
+    version: "string",
+    n_tasks: "number",
+    task_names: "strings",
+    exclude_task_names: "strings",
+  },
+  agents: {
+    name: "string",
+    model_name: "string",
+    version: "string",
+    reasoning_effort: "string",
+  },
+};
+
+/** Name a config value by what it is, for a refusal the reader can act on. */
+function describeConfigValue(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "a list";
+  if (typeof value === "object") return `a ${value.constructor?.name ?? "object"}`;
+  return `a ${typeof value}`;
+}
+
+/** A mapping the wire can carry as an object — not a Date, a Set, a Buffer. */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value) as unknown;
+  return proto === Object.prototype || proto === null;
+}
+
+/**
+ * YAML 1.1 resolves more than a JSON body can carry, and `JSON.stringify` does
+ * not refuse the surplus — it REWRITES it: `2026-08-02` is a Date and leaves as
+ * an ISO string, `.inf`/`.nan` leave as `null`, `!!binary` as a `{"type":
+ * "Buffer"}` object, `!!set` as `{}`. `job_name` is typed loosely enough in the
+ * spec that the server ACCEPTS the rewrite, so that one lands as the job's name
+ * with nothing anywhere saying so. Every value is checked at every depth,
+ * because selector fields ride the same wire.
+ *
+ * An alias may also point back at a collection that CONTAINS it — `agent_env:
+ * &a` over `X: *a` is two lines of valid YAML and the library hands back an
+ * object holding itself. The library's own alias guard counts resources and
+ * one alias exhausts nothing, so it does not fire; `JSON.stringify` would
+ * refuse the cycle, but this walk reaches it first and used to descend until
+ * the stack ran out — a bare exit 1 reading `Maximum call stack size
+ * exceeded`, naming no file and no key, the very shape the alias bomb was
+ * moved off. `ancestors` carries the containers open on the path from the
+ * root, so a value that reappears BENEATH itself is a cycle and refuses by
+ * name, while the same anchor used twice side by side is a plain repeat and
+ * still passes — hence the delete on the way back up.
+ */
+function checkWireValue(
+  value: unknown,
+  where: string,
+  source: string,
+  ancestors: WeakSet<object> = new WeakSet()
+): void {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return;
+  if (typeof value === "number") {
+    if (Number.isFinite(value)) return;
+    throw new CliUsageError(
+      `--config: ${where} in ${source} is ${Number.isNaN(value) ? ".nan" : "infinite"} — ` +
+        `a JSON body carries finite numbers only`
+    );
+  }
+  if (Array.isArray(value) || isPlainObject(value)) {
+    if (ancestors.has(value)) {
+      throw new CliUsageError(
+        `--config: ${where} in ${source} is an alias of a value that contains it — ` +
+          `a JSON body cannot carry a cycle`
+      );
+    }
+    ancestors.add(value);
+    if (Array.isArray(value)) {
+      value.forEach((item, index) => checkWireValue(item, `${where}[${index}]`, source, ancestors));
+    } else {
+      for (const [key, item] of Object.entries(value)) {
+        checkWireValue(item, `${where}.${key}`, source, ancestors);
+      }
+    }
+    ancestors.delete(value);
+    return;
+  }
+  throw new CliUsageError(
+    `--config: ${where} in ${source} resolved to ${describeConfigValue(value)}, which a JSON body ` +
+      `cannot carry — quote the value to keep it text`
+  );
+}
+
+/**
+ * One law for every field whose type the file's own text decides, wherever it
+ * sits. A string field is always fixable by quoting, so the refusal shows the
+ * quoted form; a number field has no such remedy, so it names the type only.
+ */
+function checkFieldType(
+  value: unknown,
+  kind: "string" | "number",
+  where: string,
+  path: string,
+  quoted: string
+): void {
+  if (typeof value === kind) return;
+  throw new CliUsageError(
+    `--config: ${where} in ${path} must be a ${kind}, not ${describeConfigValue(value)}` +
+      (kind === "string" ? ` — quote it (${quoted})` : "")
+  );
+}
 
 function loadJobConfig(path: string, read: (path: string) => string): Partial<JobCreate> {
   let text: string;
@@ -933,17 +1037,79 @@ function loadJobConfig(path: string, read: (path: string) => string): Partial<Jo
       throw new CliUsageError(`--config: ${path} is not valid JSON: ${(error as Error).message}`);
     }
   } else {
-    value = parseYamlSubset(text, path);
+    value = parseYamlConfig(text, path);
   }
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new CliUsageError(`--config: ${path} must contain a JSON/YAML object`);
   }
-  for (const key of Object.keys(value)) {
+  const record = value as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
     if (!JOB_CONFIG_KEYS.has(key)) {
       throw new CliUsageError(
         `--config: unknown key "${key}" in ${path} (allowed: ${[...JOB_CONFIG_KEYS].join(", ")})`
       );
     }
+  }
+  for (const [key, item] of Object.entries(record)) checkWireValue(item, key, path);
+  // The file's own text decides these types, so this reader owns them — what
+  // it does not own is what only the server knows (ranges, lengths, whether a
+  // name exists). `job_name: yes` is a boolean and `n_attempts: two` a string
+  // in every YAML reading there is, and both reached --print-config at exit 0.
+  for (const [key, kind] of Object.entries(JOB_CONFIG_SCALARS)) {
+    const item = record[key];
+    if (item === undefined) continue;
+    checkFieldType(item, kind, `"${key}"`, path, `${key}: "..."`);
+  }
+  // agent_env/verifier_env are KEY: VALUE strings on the wire, and YAML types
+  // a bare value for you — `DEBUG: yes` is a boolean, not the string "yes".
+  for (const key of ["agent_env", "verifier_env"] as const) {
+    const env = record[key];
+    if (env === undefined) continue;
+    if (!isPlainObject(env)) {
+      throw new CliUsageError(`--config: "${key}" in ${path} must be a map of KEY: "value" pairs`);
+    }
+    for (const [name, item] of Object.entries(env)) {
+      checkFieldType(item, "string", `${key}.${name}`, path, `${name}: "..."`);
+    }
+  }
+  // datasets/agents are lists of selector objects and buildJobInput spreads
+  // every element into a fresh one. Spreading a string spreads its CHARACTERS,
+  // so `datasets: [swe-bench]` reached --print-config as a character-indexed
+  // object at exit 0 and the wire as a server-side refusal. The element type is
+  // this reader's to name, at the keyboard, before any round trip — and so are
+  // the types INSIDE it: `version: 1.10` is the float 1.1 in PyYAML too, which
+  // is exactly why the reader has to catch it, because 1.10 and 1.1 are
+  // different dataset versions and the wire takes a string for both.
+  for (const key of ["datasets", "agents"] as const) {
+    const list = record[key];
+    if (list === undefined) continue;
+    if (!Array.isArray(list)) {
+      throw new CliUsageError(`--config: "${key}" in ${path} must be a list of objects`);
+    }
+    list.forEach((item, index) => {
+      if (!isPlainObject(item)) {
+        throw new CliUsageError(
+          `--config: ${key}[${index}] in ${path} must be an object like {name: ${key === "agents" ? "claude" : "swe-bench"}}, not ${describeConfigValue(item)}`
+        );
+      }
+      for (const [field, kind] of Object.entries(SELECTOR_FIELDS[key])) {
+        const value = item[field];
+        if (value === undefined) continue;
+        const where = `${key}[${index}].${field}`;
+        if (kind !== "strings") {
+          checkFieldType(value, kind, where, path, `${field}: "..."`);
+          continue;
+        }
+        if (!Array.isArray(value)) {
+          throw new CliUsageError(
+            `--config: ${where} in ${path} must be a list of strings, not ${describeConfigValue(value)}`
+          );
+        }
+        value.forEach((glob, at) =>
+          checkFieldType(glob, "string", `${where}[${at}]`, path, `${field}: ["..."]`)
+        );
+      }
+    });
   }
   return value as Partial<JobCreate>;
 }
@@ -1547,6 +1713,77 @@ function clientConfig(inv: Invocation): HostedClientConfig {
   return config;
 }
 
+const FULL_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const JOB_ID_PREFIX_RE = /^[0-9a-f][0-9a-f-]{7,34}$/i;
+const JOB_ID_PREFIX_MIN = 8;
+
+/**
+ * ONE walk of the caller's job list per invocation, not one per id.
+ * `job compare <a> <b> <c>` resolves three prefixes and used to paginate the
+ * whole list three times to answer a question one walk answers; the promise
+ * is cached, so the ids are also read once when the resolutions overlap.
+ * Per INVOCATION, never process-wide: a long-lived host importing runCli must
+ * not answer a later command from an older list.
+ */
+const JOB_ID_INDEX = new WeakMap<Invocation, Promise<string[]>>();
+
+function jobIdIndex(inv: Invocation): Promise<string[]> {
+  const cached = JOB_ID_INDEX.get(inv);
+  if (cached) return cached;
+  const walk = (async () => {
+    const client = jobs(clientConfig(inv));
+    const ids: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await client.list({ limit: 100, ...(cursor ? { cursor } : {}) });
+      for (const job of page.items) ids.push(job.id);
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+    return ids;
+  })();
+  JOB_ID_INDEX.set(inv, walk);
+  return walk;
+}
+
+/**
+ * ONE prefix law for every job-id verb: a full uuid passes through untouched;
+ * an id-shaped prefix of at least 8 characters is resolved against the
+ * caller's own job list (every page) to the one job it names — zero or
+ * several matches refuse loudly. The wire always carries the full id, so no
+ * verb depends on server-side prefix leniency and no verb lacks it. (It used
+ * to be per-verb luck: show/cancel accepted prefixes, regrade/trials 404'd.)
+ * Anything not id-shaped passes through for the server to refuse by name.
+ * Trial ids are NOT prefix-resolved — there is no bounded list to resolve
+ * them against; trial verbs take full ids.
+ */
+async function resolveJobId(inv: Invocation, ref: string): Promise<string> {
+  if (ref === undefined || FULL_UUID_RE.test(ref)) return ref;
+  if (/^[0-9a-f][0-9a-f-]*$/i.test(ref) && ref.length < JOB_ID_PREFIX_MIN) {
+    throw new CliUsageError(
+      `"${ref}" is too short to name a job — id prefixes need at least ${JOB_ID_PREFIX_MIN} characters`
+    );
+  }
+  if (!JOB_ID_PREFIX_RE.test(ref)) return ref;
+  const prefix = ref.toLowerCase();
+  // A SET of ids, not a list: the cursor window shifts while paging (jobs are
+  // created newest-first), so one job can be read on two pages — counting it
+  // twice refused an unambiguous prefix as "ambiguous — it matches 2 jobs"
+  // naming the same id twice. Ambiguity is about distinct jobs.
+  const matches = new Set<string>();
+  for (const id of await jobIdIndex(inv)) {
+    if (id.startsWith(prefix)) matches.add(id);
+  }
+  const ids = [...matches];
+  if (ids.length === 1) return ids[0];
+  if (ids.length === 0) {
+    throw new CliUsageError(`no job id starts with "${ref}"`);
+  }
+  throw new CliUsageError(
+    `"${ref}" is ambiguous — it matches ${ids.length} jobs: ` +
+      `${ids.slice(0, 5).join(", ")}${ids.length > 5 ? ", …" : ""}`
+  );
+}
+
 /** The one { limit, cursor } pair every paged command accepts. */
 function pageOptions(inv: Invocation): { limit?: number; cursor?: string } {
   return {
@@ -1655,7 +1892,7 @@ async function cmdJobShow(inv: Invocation, io: CliIO): Promise<number> {
   // ONE document: the job object for one id, an array for several.
   const bodies: Job[] = [];
   for (const id of inv.positionals) {
-    bodies.push(await client.get(id));
+    bodies.push(await client.get(await resolveJobId(inv, id)));
   }
   if (inv.flags.json === true) {
     io.out(JSON.stringify(bodies.length === 1 ? bodies[0] : bodies));
@@ -1673,7 +1910,7 @@ async function cmdJobTrials(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
   const status = parseStatusFilter(inv);
   const dataset = inv.flags.dataset as string | undefined;
-  const page = await client.trials(inv.positionals[0], {
+  const page = await client.trials(await resolveJobId(inv, inv.positionals[0]), {
     ...(status !== undefined ? { status } : {}),
     ...(dataset !== undefined ? { dataset } : {}),
     ...pageOptions(inv),
@@ -1699,7 +1936,7 @@ async function cmdJobTrials(inv: Invocation, io: CliIO): Promise<number> {
 async function cmdJobTasks(inv: Invocation, io: CliIO): Promise<number> {
   if (columnsHelpRequested(inv, io, TASK_ROLLUP_COLUMNS)) return 0;
   const client = jobs(clientConfig(inv));
-  const page = await client.tasks(inv.positionals[0], pageOptions(inv));
+  const page = await client.tasks(await resolveJobId(inv, inv.positionals[0]), pageOptions(inv));
   if (inv.flags.json === true) {
     io.out(JSON.stringify(page));
     return 0;
@@ -1757,7 +1994,9 @@ function comparisonLines(comparison: CompareResponse): string[] {
 
 async function cmdJobCompare(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
-  const comparison = await client.compare(inv.positionals);
+  const ids: string[] = [];
+  for (const ref of inv.positionals) ids.push(await resolveJobId(inv, ref));
+  const comparison = await client.compare(ids);
   if (inv.flags.json === true) {
     io.out(JSON.stringify(comparison));
   } else {
@@ -1768,7 +2007,7 @@ async function cmdJobCompare(inv: Invocation, io: CliIO): Promise<number> {
 
 async function cmdJobCancel(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
-  const e = await client.cancel(inv.positionals[0]);
+  const e = await client.cancel(await resolveJobId(inv, inv.positionals[0]));
   if (inv.flags.json === true) {
     io.out(JSON.stringify(e));
   } else {
@@ -1791,7 +2030,7 @@ async function cmdJobStop(inv: Invocation, io: CliIO): Promise<number> {
     );
   }
   const client = jobs(clientConfig(inv));
-  const job = await client.get(inv.positionals[0]);
+  const job = await client.get(await resolveJobId(inv, inv.positionals[0]));
   const names = job.datasets.map((d) => d.name);
   if (!names.includes(dataset)) {
     // A refusal, not an empty no-op: stopping a dataset the job never spanned
@@ -1800,37 +2039,74 @@ async function cmdJobStop(inv: Invocation, io: CliIO): Promise<number> {
       `job ${job.id} does not run dataset ${dataset}; its datasets: ${names.join(", ")}`
     );
   }
-  // The dataset's live trials, across every cursor page; terminal trials are
-  // already outside the selection, so the batch only names stoppable work.
-  const liveIds: string[] = [];
-  for await (const trial of client.trials(job.id, {
-    dataset,
-    status: ["QUEUED", "RUNNING", "SCORING"],
-  })) {
-    liveIds.push(trial.id);
+  // EVERY trial of the dataset, across every cursor page — deliberately not
+  // pre-filtered to live ones. The stop door files each id under stopped /
+  // already_terminal / not_found itself, and it is that classification the
+  // caller reads: a pre-filter made an all-terminal dataset print the same
+  // empty report as one with no trials at all (campaign D6). With the whole
+  // slice named, an empty report honestly means "this dataset has no trials".
+  const trialIds: string[] = [];
+  for await (const trial of client.trials(job.id, { dataset })) {
+    trialIds.push(trial.id);
   }
-  if (liveIds.length === 0) {
+  if (trialIds.length === 0) {
     if (inv.flags.json === true) {
       io.out(JSON.stringify({ stopped: [], already_terminal: [], not_found: [] }));
     } else {
-      io.out(`No live trials in ${dataset}.`);
+      io.out(`No trials in ${dataset}.`);
     }
     return 0;
   }
   // The trial-stop door caps one request at 100 ids and 400s above it, while a
-  // dataset slice can hold thousands of live trials — page the batch under the
+  // dataset slice can hold thousands of trials — page the batch under the
   // cap and merge the reports into the one outcome the caller reads.
   const trialClient = trials(clientConfig(inv));
   const result: StopResponse = { stopped: [], already_terminal: [], not_found: [] };
-  for (let i = 0; i < liveIds.length; i += 100) {
-    const page = await trialClient.stop(liveIds.slice(i, i + 100));
-    result.stopped.push(...page.stopped);
-    result.already_terminal.push(...page.already_terminal);
-    result.not_found.push(...page.not_found);
+  let reported = 0;
+  try {
+    for (let i = 0; i < trialIds.length; i += 100) {
+      const batch = trialIds.slice(i, i + 100);
+      const page = await trialClient.stop(batch);
+      reported += batch.length;
+      result.stopped.push(...page.stopped);
+      result.already_terminal.push(...page.already_terminal);
+      result.not_found.push(...page.not_found);
+    }
+  } catch (error) {
+    // STOP IS DESTRUCTIVE AND ALREADY APPLIED. Every trial in `result` is dead
+    // server-side and this report is the only place its id exists, so a batch
+    // that fails mid-loop — a 429 on the third request of fifty — may not take
+    // the settled half down with it: the caller saw an empty stdout and one
+    // rate-limit line while 200 trials had already been killed. Print what
+    // landed, state the half that has no report, then let the failure
+    // propagate to its own exit code.
+    emitStopReport(result, dataset, trialIds.length, reported, inv, io);
+    throw error;
   }
+  emitStopReport(result, dataset, trialIds.length, reported, inv, io);
+  return 0;
+}
+
+/**
+ * The one dataset-stop report, printed whether the batch finished or died in
+ * the middle of it. `unreported` counts the ids whose outcome never came back
+ * — not "not stopped": a request can settle server-side and lose its answer,
+ * which is exactly why the count is stated instead of guessed at. Rerunning
+ * the command finishes the rest and returns the already-dead under
+ * `already_terminal`.
+ */
+function emitStopReport(
+  result: StopResponse,
+  dataset: string,
+  total: number,
+  reported: number,
+  inv: Invocation,
+  io: CliIO
+): void {
+  const unreported = total - reported;
   if (inv.flags.json === true) {
-    io.out(JSON.stringify(result));
-    return 0;
+    io.out(JSON.stringify(unreported > 0 ? { ...result, partial: true, unreported } : result));
+    return;
   }
   for (const run of result.stopped) {
     io.out(`stopped ${run.id} (${run.task_name}) ${run.status}`);
@@ -1841,14 +2117,24 @@ async function cmdJobStop(inv: Invocation, io: CliIO): Promise<number> {
     `${result.stopped.length} stopped, ${result.already_terminal.length} already terminal, ` +
       `${result.not_found.length} not found (${dataset})`
   );
-  return 0;
+  if (unreported > 0) {
+    // Name the batch the failure landed on — the first 100 (or fewer) of the
+    // unreported slice — so the caller knows WHERE it died, not just how much.
+    // "No answer came back", never "failed": that request may well have
+    // settled server-side, which is the whole reason this line exists.
+    io.out(
+      `PARTIAL: ${unreported} of ${total} trials have no report — ` +
+        `no answer came back for trials ${reported + 1}-${Math.min(reported + 100, total)}; ` +
+        `rerun the same command to finish the rest.`
+    );
+  }
 }
 
 async function cmdJobResume(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
   const filter = inv.flags["filter-error-type"] as string[] | undefined;
   const e = await client.resume(
-    inv.positionals[0],
+    await resolveJobId(inv, inv.positionals[0]),
     filter !== undefined ? { filter_error_types: filter } : undefined
   );
   if (inv.flags.json === true) {
@@ -1867,7 +2153,7 @@ async function cmdJobRegrade(inv: Invocation, io: CliIO): Promise<number> {
   const statuses = parseStatusFilter(inv);
   if (statuses !== undefined) req.statuses = statuses;
   if (inv.flags.task !== undefined) req.task_name = String(inv.flags.task);
-  const job = await client.regrade(inv.positionals[0], req);
+  const job = await client.regrade(await resolveJobId(inv, inv.positionals[0]), req);
   if (inv.flags.json === true) {
     io.out(JSON.stringify(job));
   } else {
@@ -1880,7 +2166,7 @@ async function cmdJobRegrade(inv: Invocation, io: CliIO): Promise<number> {
 
 async function cmdJobDownload(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
-  const filePath = await client.download(inv.positionals[0], {
+  const filePath = await client.download(await resolveJobId(inv, inv.positionals[0]), {
     to: (inv.flags["output-dir"] as string | undefined) ?? process.cwd(),
   });
   if (inv.flags.json === true) {
@@ -2372,6 +2658,13 @@ export async function runCli(argv: string[], io: CliIO = defaultIO): Promise<num
       io.err(`Error: ${error.message}`);
       io.err(`Run "evolve-evals ${inv.command} --help" for usage.`);
       return 2;
+    }
+    if (error instanceof EvolveApiError && error.status === 429) {
+      // A rate limit is a delay, not a mystery: name it and honor the
+      // server's Retry-After instead of echoing the raw message.
+      const wait = error.retryAfterSec !== undefined ? `retry in ${error.retryAfterSec}s` : "retry shortly";
+      io.err(`Error: rate limited by the server — ${wait}.`);
+      return 1;
     }
     io.err(`Error: ${(error as Error).message}`);
     return 1;

@@ -30,17 +30,6 @@ function isTimeoutError(err: unknown): boolean {
 // MODULE-LEVEL CONSTANTS & HELPERS
 // ============================================================
 
-const BINARY_EXTENSIONS = new Set([
-  ".xlsx", ".xls", ".docx", ".doc", ".pptx", ".ppt",
-  ".pdf", ".zip", ".tar", ".gz", ".7z", ".rar",
-  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".bmp",
-  ".mp3", ".wav", ".ogg", ".flac", ".aac",
-  ".mp4", ".avi", ".mov", ".mkv", ".webm",
-  ".woff", ".woff2", ".ttf", ".otf", ".eot",
-  ".exe", ".dll", ".so", ".dylib",
-  ".sqlite", ".db", ".pickle", ".pkl", ".parquet",
-]);
-
 /**
  * Largest page E2B will serve. Not a taste choice — a larger `limit` is refused
  * outright: `400 validation error: parameter "limit" in query has an error:
@@ -70,11 +59,6 @@ function toArrayBuffer(input: string | Buffer | ArrayBuffer | Uint8Array): strin
     return new Uint8Array(input).buffer;
   }
   throw new Error(`Unsupported data type for file upload: ${typeof input}. Expected string, Buffer, ArrayBuffer, or Uint8Array.`);
-}
-
-function isBinaryFile(path: string): boolean {
-  const ext = path.substring(path.lastIndexOf(".")).toLowerCase();
-  return BINARY_EXTENSIONS.has(ext);
 }
 
 /**
@@ -582,11 +566,25 @@ export class E2BFiles implements SandboxFiles {
   constructor(private sandbox: E2BSandbox, private defaultUser?: string) {}
 
   async read(path: string): Promise<string | Uint8Array> {
-    // Increase timeout for large files (default 60s is too short for multi-MB downloads)
-    if (isBinaryFile(path)) {
-      return this.sandbox.files.read(path, { format: "bytes", requestTimeoutMs: 300000, user: this.defaultUser });
+    // Always read raw bytes and decide text-vs-binary from CONTENT, never
+    // from the file's name: the SandboxFiles contract is "read returns
+    // string | Uint8Array", and an extension table cannot keep that honest —
+    // binary bytes under an unlisted extension (.bin) would ride a lossy
+    // text decode and come back U+FFFD-mangled. A NUL byte marks binary (the
+    // platform's agent-home sniff, git's own heuristic); everything else must
+    // survive a STRICT UTF-8 decode (fatal, BOM preserved) to come back as a
+    // string. Both answers are therefore byte-exact: a returned string
+    // re-encodes to the identical bytes, a returned Uint8Array IS the bytes.
+    // Long timeout: default 60s is too short for multi-MB downloads.
+    const bytes = await this.sandbox.files.read(path, { format: "bytes", requestTimeoutMs: 300000, user: this.defaultUser });
+    if (!bytes.includes(0)) {
+      try {
+        return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+      } catch {
+        // Not valid UTF-8 — binary after all.
+      }
     }
-    return this.sandbox.files.read(path, { format: "text", requestTimeoutMs: 300000, user: this.defaultUser });
+    return bytes;
   }
 
   async write(path: string, content: string | Buffer | ArrayBuffer | Uint8Array): Promise<void> {

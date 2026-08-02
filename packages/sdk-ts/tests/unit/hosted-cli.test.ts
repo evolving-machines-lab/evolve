@@ -4,7 +4,8 @@
  *
  * The noun-verb grammar: group resolution (singular canonical, plural and
  * `ls` hidden aliases, `run` = `job start`), short flags, repeatables,
- * the -c config loader (JSON + the YAML subset) with flag-over-file merging,
+ * the -c config loader (JSON + real YAML via the yaml package, PyYAML's
+ * readings pinned differentially) with flag-over-file merging,
  * --print-config, per-command help with a worked example, --version, the
  * shared list output precedence (--json / -q / TSV / TTY table, --columns,
  * --no-trunc, --no-headers), and one mocked end-to-end pass over every verb:
@@ -144,7 +145,7 @@ import {
   importStatusLine,
   parseArgs,
   parseEnvPairs,
-  parseYamlSubset,
+  parseYamlConfig,
   runCli,
   trialDetailLines,
 } from "../../src/hosted/cli.ts";
@@ -437,6 +438,38 @@ async function testConfigFileMerge() {
       "a YAML config builds the same body as JSON"
     );
 
+    // A `%YAML` directive is a reading instruction, not a schema swap: PyYAML
+    // reads a file the same way whatever the directive says. An inverted
+    // boolean here passes every gate this reader has — checkWireValue takes
+    // booleans — so the BODY is what has to be pinned, not a refusal.
+    const directivePath = join(dir, "directive.yaml");
+    await writeFile(
+      directivePath,
+      ["%YAML 1.2", "---", "datasets: [{name: swe-bench}]", "agents: [{name: claude, model_name: opus, thinking: yes}]"].join(
+        "\n"
+      )
+    );
+    assertEqual(
+      buildJobInput(parseArgs(["job", "start", "-c", directivePath])),
+      {
+        datasets: [{ name: "swe-bench" }],
+        agents: [{ name: "claude", model_name: "opus", thinking: true }],
+      },
+      "a %YAML 1.2 directive ships thinking: true, not the inverted false"
+    );
+    const directiveEnvPath = join(dir, "directive-env.yaml");
+    await writeFile(
+      directiveEnvPath,
+      ["%YAML 1.2", "---", "datasets: [{name: swe-bench}]", "agents: [{name: claude}]", "agent_env:", "  STRICT: false"].join(
+        "\n"
+      )
+    );
+    assertThrowsUsage(
+      () => buildJobInput(parseArgs(["job", "start", "-c", directiveEnvPath])),
+      "agent_env.STRICT",
+      "under the directive, false is still a boolean — the env-string law fires instead of shipping the string \"false\""
+    );
+
     const badPath = join(dir, "bad.yaml");
     await writeFile(badPath, 'datasets: [{"name": "deep-swe"}]\nfrobnicate: 1\n');
     assertThrowsUsage(
@@ -449,37 +482,688 @@ async function testConfigFileMerge() {
       "cannot read",
       "an unreadable config file is a usage error"
     );
+
+    // A dataset/agent element is an OBJECT. buildJobInput spreads every one
+    // into a fresh selector, and spreading a string spreads its characters —
+    // `datasets: [swe-bench]` built the character-indexed body
+    // `[{"0":"s","1":"w",...}]` and rode to the wire at exit 0. Both the YAML
+    // and the JSON spelling reach the same spread, so both are pinned.
+    const bareNamePath = join(dir, "bare-name.yaml");
+    await writeFile(bareNamePath, "datasets: [swe-bench]\nagents: [{name: claude, model_name: opus}]\n");
+    assertThrowsUsage(
+      () => buildJobInput(parseArgs(["job", "start", "-c", bareNamePath])),
+      "datasets[0]",
+      "a bare dataset name in the config refuses by name instead of spreading to characters"
+    );
+    const bareAgentPath = join(dir, "bare-agent.json");
+    await writeFile(bareAgentPath, JSON.stringify({ datasets: [{ name: "deep-swe" }], agents: ["claude"] }));
+    assertThrowsUsage(
+      () => buildJobInput(parseArgs(["job", "start", "-c", bareAgentPath])),
+      "agents[0]",
+      "a bare agent name refuses in JSON too — the spread is the same one"
+    );
+    const scalarListPath = join(dir, "scalar-list.yaml");
+    await writeFile(scalarListPath, "datasets: deep-swe\nagents: [{name: claude, model_name: opus}]\n");
+    assertThrowsUsage(
+      () => buildJobInput(parseArgs(["job", "start", "-c", scalarListPath])),
+      "must be a list of objects",
+      'a scalar "datasets" is named for what it is, not reported as a missing -d'
+    );
+
+    // A real YAML reader resolves types the hand-written subset never could,
+    // and JSON.stringify REWRITES the surplus instead of refusing it: a Date
+    // leaves as an ISO string, .inf/.nan as null, !!binary as a Buffer object.
+    // job_name is a plain string with maxLength 200 in the spec, so the server
+    // ACCEPTS the rewritten date — the one bad value that passes every gate and
+    // still lands, under a name the caller never wrote.
+    const wireCases: Array<[string, string, string]> = [
+      ["date-name", "job_name: 2026-08-02", "resolved to a Date"],
+      ["binary-name", "job_name: !!binary aGVsbG8=", "resolved to a Buffer"],
+      ["inf-spend", "max_trial_spend_usd: .inf", "is infinite"],
+      ["nan-spend", "max_trial_spend_usd: .nan", "is .nan"],
+      ["set-env", "agent_env: !!set {a: null}", "resolved to a Set"],
+      ["date-env", "agent_env: {WHEN: 2026-08-02}", "agent_env.WHEN"],
+      ["bool-name", "job_name: yes", '"job_name" in'],
+      ["text-spend", "max_trial_spend_usd: abc", '"max_trial_spend_usd" in'],
+      ["bool-env", "verifier_env: {DEBUG: on}", "verifier_env.DEBUG"],
+    ];
+    for (const [name, line, needle] of wireCases) {
+      const casePath = join(dir, `${name}.yaml`);
+      await writeFile(casePath, `${line}\ndatasets: [{name: deep-swe}]\nagents: [{name: claude}]\n`);
+      assertThrowsUsage(
+        () => buildJobInput(parseArgs(["job", "start", "-c", casePath])),
+        needle,
+        `\`${line}\` refuses at the keyboard instead of riding the wire rewritten`
+      );
+    }
+
+    // Quoting is the fix every one of those refusals points at, and it works.
+    const quotedPath = join(dir, "quoted.yaml");
+    await writeFile(
+      quotedPath,
+      ['job_name: "2026-08-02"', 'agent_env: {WHEN: "2026-08-02", DEBUG: "on"}', "max_trial_spend_usd: 25", "datasets: [{name: deep-swe}]", "agents: [{name: claude}]"].join("\n")
+    );
+    const quoted = buildJobInput(parseArgs(["job", "start", "-c", quotedPath]));
+    assertEqual(quoted.job_name, "2026-08-02", "a quoted date is the literal string the caller wrote");
+    assertEqual(
+      quoted.agent_env,
+      { WHEN: "2026-08-02", DEBUG: "on" },
+      "quoted env values pass through as the strings the wire takes"
+    );
+
+    // Ordinary text that only LOOKS numeric: PyYAML's float pattern needs a dot
+    // and a signed exponent, so `e3` and `1e3` are the strings a caller wrote.
+    // Under the 1.1 spec's wider pattern the library carries, `e3` resolved to
+    // NaN and was refused as `.nan` — a value nobody typed, with no remedy
+    // offered — and a `1e3` dataset name shipped as a JSON number at exit 0.
+    const exponentPath = join(dir, "exponent.yaml");
+    await writeFile(
+      exponentPath,
+      [
+        "job_name: 1e3",
+        "agent_env: {BUILD_TAG: e3, RELEASE: 1e3}",
+        "datasets: [{name: 1e3}]",
+        "agents: [{name: claude, model_name: E3}]",
+      ].join("\n")
+    );
+    assertEqual(
+      buildJobInput(parseArgs(["job", "start", "-c", exponentPath])),
+      {
+        job_name: "1e3",
+        datasets: [{ name: "1e3" }],
+        agents: [{ name: "claude", model_name: "E3" }],
+        agent_env: { BUILD_TAG: "e3", RELEASE: "1e3" },
+      },
+      "e3 and 1e3 stay the text they are — no NaN refusal, no JSON number under a name field"
+    );
+    const exponentIO = captureIO();
+    assertEqual(
+      await runCli(["job", "start", "-c", exponentPath, "--print-config", ...AUTH], exponentIO.io),
+      0,
+      "and the body resolves at exit 0"
+    );
+    assert(
+      exponentIO.out.join("\n").includes('"name": "1e3"'),
+      "--print-config prints the dataset name QUOTED, where the wire number rode through unnoticed"
+    );
+    // The same law read the other way: PyYAML makes `1e3` a string, so a field
+    // the file's own text must decide as a number is refused, not coerced.
+    const exponentSpendPath = join(dir, "exponent-spend.yaml");
+    await writeFile(
+      exponentSpendPath,
+      "max_trial_spend_usd: 1e3\ndatasets: [{name: deep-swe}]\nagents: [{name: claude}]\n"
+    );
+    assertThrowsUsage(
+      () => buildJobInput(parseArgs(["job", "start", "-c", exponentSpendPath])),
+      '"max_trial_spend_usd" in',
+      "an unsigned exponent is a string to PyYAML, so a money field refuses it instead of spending 1000"
+    );
+
+    // The same law on the integer side: PyYAML will not read a zero-padded
+    // number, so a build number `08` and a maintenance window `08:00` stay the
+    // text they are. The 1.1 spec's wider patterns the library carries made
+    // them 8 and 480, and a version pin shipped as a JSON number at exit 0.
+    const paddedPath = join(dir, "padded.yaml");
+    await writeFile(
+      paddedPath,
+      [
+        "job_name: 08",
+        "agent_env: {BUILD: 08, WINDOW: 08:00}",
+        "datasets: [{name: deep-swe, version: 08}]",
+        "agents: [{name: claude, model_name: 09}]",
+      ].join("\n")
+    );
+    assertEqual(
+      buildJobInput(parseArgs(["job", "start", "-c", paddedPath])),
+      {
+        job_name: "08",
+        datasets: [{ name: "deep-swe", version: "08" }],
+        agents: [{ name: "claude", model_name: "09" }],
+        agent_env: { BUILD: "08", WINDOW: "08:00" },
+      },
+      "a zero-padded number stays the text it is — no 8, no 480, no number under a string field"
+    );
+
+    // A dataset or agent pin is a STRING on the wire, and `1.10` is the float
+    // 1.1 in PyYAML too — which is exactly why this reader has to catch it:
+    // 1.10 and 1.1 name DIFFERENT dataset versions, so an unquoted pin either
+    // runs the wrong corpus at real spend or refuses after the round trip
+    // --print-config promised to save. The top-level law reaches inside the
+    // selectors, where it used to stop at the element being an object at all.
+    const selectorCases: Array<[string, string, string]> = [
+      ["ds-version", "datasets: [{name: deep-swe, version: 1.10}]\nagents: [{name: claude}]", "datasets[0].version"],
+      ["ds-name", "datasets: [{name: on}]\nagents: [{name: claude}]", "datasets[0].name"],
+      ["ds-tasks", "datasets: [{name: deep-swe, n_tasks: two}]\nagents: [{name: claude}]", "datasets[0].n_tasks"],
+      ["ds-globs", "datasets: [{name: deep-swe, task_names: [1.10]}]\nagents: [{name: claude}]", "datasets[0].task_names[0]"],
+      ["ds-glob-scalar", "datasets: [{name: deep-swe, exclude_task_names: slow}]\nagents: [{name: claude}]", "must be a list of strings"],
+      ["ag-version", "datasets: [{name: deep-swe}]\nagents: [{name: claude, version: 2.0}]", "agents[0].version"],
+      ["ag-model", "datasets: [{name: deep-swe}]\nagents: [{name: claude, model_name: 4.5}]", "agents[0].model_name"],
+      ["ag-effort", "datasets: [{name: deep-swe}]\nagents: [{name: claude, model_name: opus, reasoning_effort: on}]", "agents[0].reasoning_effort"],
+    ];
+    for (const [name, body, needle] of selectorCases) {
+      const casePath = join(dir, `selector-${name}.yaml`);
+      await writeFile(casePath, `${body}\n`);
+      assertThrowsUsage(
+        () => buildJobInput(parseArgs(["job", "start", "-c", casePath])),
+        needle,
+        `a selector field typed by the file's own text refuses at the keyboard (${name})`
+      );
+    }
+    const pinIO = captureIO();
+    assertEqual(
+      await runCli(["job", "start", "-c", join(dir, "selector-ds-version.yaml"), "--print-config", ...AUTH], pinIO.io),
+      2,
+      "--print-config exits 2 over a numeric version pin, where it printed 1.1 at exit 0"
+    );
+    assert(
+      pinIO.err.some((l) => l.includes('quote it (version: "...")')),
+      "and the refusal carries the remedy, because quoting is the whole fix"
+    );
+
+    // Quoting is that remedy, and the pin survives it intact.
+    const pinnedPath = join(dir, "pinned.yaml");
+    await writeFile(
+      pinnedPath,
+      'datasets: [{name: deep-swe, version: "1.10", n_tasks: 5, task_names: ["a*"]}]\nagents: [{name: claude, model_name: opus, version: "2.0"}]\n'
+    );
+    const pinnedIO = captureIO();
+    assertEqual(
+      await runCli(["job", "start", "-c", pinnedPath, "--print-config", ...AUTH], pinnedIO.io),
+      0,
+      "a quoted pin resolves at exit 0"
+    );
+    assert(
+      pinnedIO.out.join("\n").includes('"version": "1.10"'),
+      "and --print-config prints 1.10, not the 1.1 that named another corpus"
+    );
+
+    // --print-config is the dry run a paid remote run deserves, so the exit
+    // code is the promise: the date-named job printed a rewritten body at
+    // exit 0, where every config refusal is a usage exit 2.
+    const printIO = captureIO();
+    assertEqual(
+      await runCli(["job", "start", "-c", join(dir, "date-name.yaml"), "--print-config", ...AUTH], printIO.io),
+      2,
+      "--print-config exits 2 over a body it would have rewritten, never 0"
+    );
+    assert(
+      printIO.out.length === 0 && printIO.err.some((l) => l.includes("resolved to a Date")),
+      "and prints the refusal, not a config body"
+    );
+
+    // The library's alias-bomb guard throws from toJS(), past the parse's own
+    // error list — unwrapped it was a bare exit 1 naming no file.
+    const bombPath = join(dir, "alias-bomb.yaml");
+    const rows = ["a1: &a1 [x, x, x, x, x, x, x, x, x]"];
+    for (let i = 2; i <= 5; i++) {
+      rows.push(`a${i}: &a${i} [${Array(9).fill(`*a${i - 1}`).join(", ")}]`);
+    }
+    rows.push("job_name: *a5", "datasets: [{name: deep-swe}]", "agents: [{name: claude}]");
+    await writeFile(bombPath, rows.join("\n"));
+    assertThrowsUsage(
+      () => buildJobInput(parseArgs(["job", "start", "-c", bombPath])),
+      bombPath,
+      "a recursive-alias config refuses as a usage error naming its source"
+    );
+    assertEqual(
+      await runCli(["job", "start", "-c", bombPath, "--print-config", ...AUTH], captureIO().io),
+      2,
+      "and exits 2 like every other config refusal, not 1"
+    );
+
+    // One alias exhausts nothing, so the library's guard lets a SELF-referential
+    // anchor through as an object holding itself, and the wire-value walk
+    // descended it until the stack ran out — the same nameless exit 1 the bomb
+    // above was moved off, in two lines of valid YAML.
+    const cyclePath = join(dir, "cycle.yaml");
+    await writeFile(cyclePath, "agent_env: &a\n  X: *a\ndatasets: [{name: deep-swe}]\nagents: [{name: claude}]\n");
+    assertThrowsUsage(
+      () => buildJobInput(parseArgs(["job", "start", "-c", cyclePath])),
+      "agent_env.X in " + cyclePath,
+      "a self-referential anchor refuses by key and file, not as a stack overflow"
+    );
+    const cycleIO = captureIO();
+    assertEqual(
+      await runCli(["job", "start", "-c", cyclePath, "--print-config", ...AUTH], cycleIO.io),
+      2,
+      "and exits 2, not the 1 a bare RangeError left"
+    );
+    assert(
+      cycleIO.err.some((l) => l.includes("cannot carry a cycle")),
+      "and says what a JSON body cannot carry"
+    );
+
+    // A cycle hides equally well under a list, and the root document itself can
+    // be the anchor — both terminate on the same ancestor check.
+    const listCyclePath = join(dir, "cycle-list.yaml");
+    await writeFile(listCyclePath, "datasets: &d\n  - name: deep-swe\n    task_names: *d\nagents: [{name: claude}]\n");
+    assertThrowsUsage(
+      () => buildJobInput(parseArgs(["job", "start", "-c", listCyclePath])),
+      "cannot carry a cycle",
+      "a cycle through a selector list refuses too"
+    );
+    const rootCyclePath = join(dir, "cycle-root.yaml");
+    await writeFile(rootCyclePath, "&root\njob_name: *root\n");
+    assertThrowsUsage(
+      () => buildJobInput(parseArgs(["job", "start", "-c", rootCyclePath])),
+      "cannot carry a cycle",
+      "and a document anchored on itself refuses instead of recursing"
+    );
+
+    // The guard is the ancestor path, not every value ever seen: one anchor
+    // read twice side by side is a plain repeat and rides the wire as two
+    // copies, which is what PyYAML and JSON both do with it.
+    const sharedPath = join(dir, "shared-anchor.yaml");
+    await writeFile(
+      sharedPath,
+      "datasets: [{name: deep-swe, task_names: &t [\"a*\"]}, {name: swe-bench, task_names: *t}]\nagents: [{name: claude}]\n"
+    );
+    const sharedIO = captureIO();
+    assertEqual(
+      await runCli(["job", "start", "-c", sharedPath, "--print-config", ...AUTH], sharedIO.io),
+      0,
+      "a shared anchor is not a cycle and still resolves at exit 0"
+    );
+    assertEqual(
+      sharedIO.out.join("\n").match(/"a\*"/g)?.length,
+      2,
+      "and both entries carry the anchor's value"
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
 }
 
-function testYamlSubset() {
-  console.log("\n--- parseYamlSubset: the deliberate subset ---");
+function testYamlConfig() {
+  console.log("\n--- parseYamlConfig: real YAML through the yaml package ---");
   assertEqual(
-    parseYamlSubset(
+    parseYamlConfig(
       ["a: 1", "b: true", "c: null", "d: 'single''quoted'", 'e: "double"', "f: bare string", "g: [1, 2]"].join("\n"),
       "t.yaml"
     ),
     { a: 1, b: true, c: null, d: "single'quoted", e: "double", f: "bare string", g: [1, 2] },
-    "scalars, quotes, and JSON flow lists"
+    "scalars, quotes, and flow lists"
   );
   assertEqual(
-    parseYamlSubset(["list:", "  - one", '  - "two"', "  - 3"].join("\n"), "t.yaml"),
+    parseYamlConfig(["list:", "  - one", '  - "two"', "  - 3"].join("\n"), "t.yaml"),
     { list: ["one", "two", 3] },
     "block sequences of scalars"
   );
   assertEqual(
-    parseYamlSubset(["outer:", "  inner:", "    k: v"].join("\n"), "t.yaml"),
+    parseYamlConfig(["outer:", "  inner:", "    k: v"].join("\n"), "t.yaml"),
     { outer: { inner: { k: "v" } } },
     "nested block maps"
   );
-  assertEqual(parseYamlSubset("# only comments\n\n", "t.yaml"), {}, "an empty document is an empty object");
-  assertThrowsUsage(() => parseYamlSubset("a: &anchor 1", "t.yaml"), "anchors", "anchors refused loudly");
-  assertThrowsUsage(() => parseYamlSubset("a: |", "t.yaml"), "multi-line", "block scalars refused loudly");
-  assertThrowsUsage(() => parseYamlSubset("---\na: 1", "t.yaml"), "multi-document", "documents refused loudly");
-  assertThrowsUsage(() => parseYamlSubset("\ta: 1", "t.yaml"), "tabs", "tab indentation refused");
-  assertThrowsUsage(() => parseYamlSubset("a: [1, 2", "t.yaml"), "JSON", "broken flow list refused");
+  assertEqual(parseYamlConfig("# only comments\n\n", "t.yaml"), {}, "an empty document is an empty object");
+
+  // The subset reader refused what it could not parse; the library parses it.
+  // Every expectation below is PyYAML's reading of the same input.
+  assertEqual(parseYamlConfig("a: &anchor 1", "t.yaml"), { a: 1 }, "anchors resolve instead of refusing");
+  assertEqual(
+    parseYamlConfig(["base: &b claude", "name: *b"].join("\n"), "t.yaml"),
+    { base: "claude", name: "claude" },
+    "an alias reads back its anchor's value"
+  );
+  assertEqual(parseYamlConfig("a: |", "t.yaml"), { a: "" }, "an empty block scalar is the empty string");
+  assertEqual(
+    parseYamlConfig(["a: |", "  line1", "  line2", ""].join("\n"), "t.yaml"),
+    { a: "line1\nline2\n" },
+    "a literal block scalar keeps its newlines"
+  );
+  assertEqual(
+    parseYamlConfig("---\na: 1", "t.yaml"),
+    { a: 1 },
+    "a --- directive-end marker opens the one document, it is not a second one"
+  );
+  assertThrowsUsage(
+    () => parseYamlConfig("a: 1\n---\nb: 2", "t.yaml"),
+    "multi-document",
+    "a SECOND document refuses loudly, as PyYAML's single-document load refuses it"
+  );
+  assertThrowsUsage(
+    () => parseYamlConfig("a: !foo 1", "t.yaml"),
+    "Unresolved tag",
+    "an unresolvable tag refuses — the library's warning is promoted to the refusal PyYAML gives"
+  );
+  assertThrowsUsage(() => parseYamlConfig("\ta: 1", "t.yaml"), "Tabs", "tab indentation refused");
+  assertThrowsUsage(() => parseYamlConfig("a: [1, 2", "t.yaml"), "t.yaml:1", "broken flow list refused with its line number");
+
+  // Campaign A1's law, now the library's: a comment never lands inside a
+  // value. Every expectation was taken from PyYAML on the same input.
+  console.log("\n--- parseYamlConfig: trailing comments never land in values (A1) ---");
+  assertEqual(
+    parseYamlConfig('version: "1.3"          # pinned', "t.yaml"),
+    { version: "1.3" },
+    "a trailing comment after a double-quoted scalar is dropped, not an error"
+  );
+  assertEqual(
+    parseYamlConfig("name: e2e-prod-check    # bare name -> active version resolution", "t.yaml"),
+    { name: "e2e-prod-check" },
+    "a trailing comment after a BARE scalar is dropped — never folded into the value"
+  );
+  assertEqual(
+    parseYamlConfig(["datasets:", "  - name: claude            # alias-only probe"].join("\n"), "t.yaml"),
+    { datasets: [{ name: "claude" }] },
+    "the same law holds inside block sequences"
+  );
+  assertEqual(
+    parseYamlConfig("url: http://x#frag", "t.yaml"),
+    { url: "http://x#frag" },
+    "a # without whitespace before it is content, not a comment (YAML's own rule)"
+  );
+  assertEqual(
+    parseYamlConfig('note: "a # b"   # real comment', "t.yaml"),
+    { note: "a # b" },
+    "a # inside quotes is content; the one outside still strips"
+  );
+
+  // A quote mid-word is a letter, not a delimiter — the apostrophe corpus.
+  assertEqual(
+    parseYamlConfig("job_name: brando's run # the comment", "t.yaml"),
+    { job_name: "brando's run" },
+    "an apostrophe inside a bare value does not open a string — the comment still strips"
+  );
+  assertEqual(
+    parseYamlConfig("desc: it's fine # trailing", "t.yaml"),
+    { desc: "it's fine" },
+    "the same holds for an apostrophe in the middle of a word"
+  );
+  assertEqual(
+    parseYamlConfig('name: 5" wide # comment', "t.yaml"),
+    { name: '5" wide' },
+    "a double quote mid-value is content too"
+  );
+  assertEqual(
+    parseYamlConfig(["datasets:", "  - name: brando's run  # picked"].join("\n"), "t.yaml"),
+    { datasets: [{ name: "brando's run" }] },
+    "the law reaches inside block sequences"
+  );
+  assertEqual(
+    parseYamlConfig("it's: value", "t.yaml"),
+    { "it's": "value" },
+    "an apostrophe in a KEY leaves the key colon findable (PyYAML reads it the same way)"
+  );
+  assertEqual(
+    parseYamlConfig(["'quoted key': v", '"dq key": w'].join("\n"), "t.yaml"),
+    { "quoted key": "v", "dq key": "w" },
+    "a quote that DOES begin a scalar still delimits — quoted keys unchanged"
+  );
+  assertEqual(
+    parseYamlConfig("env: { A: 'x # y', B: don't }", "t.yaml"),
+    { env: { A: "x # y", B: "don't" } },
+    "inside flow, a quote after ', ' delimits while one mid-word does not"
+  );
+
+  console.log("\n--- parseYamlConfig: flow collections, unquoted scalars included (A1) ---");
+  assertEqual(
+    parseYamlConfig("agent_env:    { CAMPAIGN_MARKER: prod-aug01 }", "t.yaml"),
+    { agent_env: { CAMPAIGN_MARKER: "prod-aug01" } },
+    "a flow mapping with unquoted key and value parses"
+  );
+  assertEqual(
+    parseYamlConfig("mix: { n: 3, flag: true, name: 'x', list: [a, 1] }", "t.yaml"),
+    { mix: { n: 3, flag: true, name: "x", list: ["a", 1] } },
+    "typed scalars, quotes, and nesting inside flow — and n stays the key n"
+  );
+  assertEqual(
+    parseYamlConfig("tag: { MARKER: prod:tag }", "t.yaml"),
+    { tag: { MARKER: "prod:tag" } },
+    "a colon inside a flow value stays in the value"
+  );
+  assertEqual(
+    parseYamlConfig('json: {"a": [1, 2], "b": {"c": null}}', "t.yaml"),
+    { json: { a: [1, 2], b: { c: null } } },
+    "strict JSON still parses unchanged"
+  );
+  assertEqual(
+    parseYamlConfig("a: [1, 2,]\nenv: { A: 1, B: 2, }", "t.yaml"),
+    { a: [1, 2], env: { A: 1, B: 2 } },
+    "a trailing comma closes the collection — valid YAML"
+  );
+  assertEqual(
+    parseYamlConfig("env: { A 1 }", "t.yaml"),
+    { env: { "A 1": null } },
+    "a colon-less flow entry is a key with a null value — PyYAML's reading, not a refusal"
+  );
+  assertThrowsUsage(() => parseYamlConfig("a: [1, , 2]", "t.yaml"), "Unexpected ,", "a comma with nothing between still refuses");
+  assertThrowsUsage(() => parseYamlConfig("a: 1\nenv: { A: 1", "t.yaml"), "t.yaml:2", "an unclosed flow mapping refuses with its line number");
+  assertThrowsUsage(() => parseYamlConfig("env: { A: 1 } trailing", "t.yaml"), "Unexpected scalar", "content after a closed flow collection refuses loudly");
+
+  // A flow collection is a WHOLE sequence item — the shape that silently
+  // corrupted under the hand parser. PyYAML's reading throughout.
+  assertEqual(
+    parseYamlConfig(["agents:", "  - {name: claude, model: opus}"].join("\n"), "t.yaml"),
+    { agents: [{ name: "claude", model: "opus" }] },
+    "a flow mapping as a sequence item keeps its inner colons (PyYAML's reading)"
+  );
+  assertEqual(
+    parseYamlConfig(
+      ["agents:", "  - {name: claude, model_name: opus}", "  - name: codex", "    model_name: gpt-5.5"].join("\n"),
+      "t.yaml"
+    ),
+    { agents: [{ name: "claude", model_name: "opus" }, { name: "codex", model_name: "gpt-5.5" }] },
+    "a flow item and a block item sit side by side in one sequence"
+  );
+  assertEqual(
+    parseYamlConfig(["datasets:", "  - {name: deep-swe, task_names: [a, b]}   # picked"].join("\n"), "t.yaml"),
+    { datasets: [{ name: "deep-swe", task_names: ["a", "b"] }] },
+    "nesting and the trailing-comment law both hold inside a flow sequence item"
+  );
+  assertThrowsUsage(
+    () => parseYamlConfig(["a:", "  - {b: 1"].join("\n"), "t.yaml"),
+    "t.yaml:2",
+    "an unclosed flow item refuses with its line number instead of parsing to a garbage key"
+  );
+  assertThrowsUsage(
+    () => parseYamlConfig(["a:", "  - {b: 1} trailing"].join("\n"), "t.yaml"),
+    "Unexpected scalar",
+    "content after a closed flow item refuses loudly, as PyYAML refuses it"
+  );
+
+  // A colon followed by a space opens a mapping pair inside flow — the
+  // unbraced shapes the subset reader refused now parse to PyYAML's readings.
+  assertEqual(
+    parseYamlConfig("datasets: [name: swe-bench]", "t.yaml"),
+    { datasets: [{ name: "swe-bench" }] },
+    "an unbraced single-pair mapping in a flow sequence is a one-key object (PyYAML's reading)"
+  );
+  assertEqual(
+    parseYamlConfig("agents: [name: claude, model_name: opus]", "t.yaml"),
+    { agents: [{ name: "claude" }, { model_name: "opus" }] },
+    "comma-separated bare pairs are SEPARATE one-key objects — loadJobConfig refuses the missing model downstream"
+  );
+  assertEqual(
+    parseYamlConfig("a: [x:]", "t.yaml"),
+    { a: [{ x: null }] },
+    "a colon before the closer opens a pair with a null value — PyYAML reads [{x: null}]"
+  );
+  assertThrowsUsage(
+    () => parseYamlConfig("a: {b: c: d}", "t.yaml"),
+    "not allowed within flow",
+    "a second colon in a flow mapping value refuses, as PyYAML refuses it"
+  );
+  assertThrowsUsage(
+    () => parseYamlConfig("a: [#c]", "t.yaml"),
+    "Comments must be separated",
+    "a # glued to flow content refuses — PyYAML reads the rest as a comment and finds no content"
+  );
+  assertEqual(
+    parseYamlConfig("tag: { MARKER: prod:tag, url: [http://x.co/a] }", "t.yaml"),
+    { tag: { MARKER: "prod:tag", url: ["http://x.co/a"] } },
+    "a glued colon stays a letter — prod:tag and a URL survive"
+  );
+
+  // The schema is PyYAML's: YAML 1.1 resolution minus the bare y/n booleans
+  // PyYAML never adopted, plus a duplicate-key refusal where PyYAML silently
+  // keeps the last value.
+  console.log("\n--- parseYamlConfig: PyYAML's 1.1 schema, differentially pinned ---");
+  assertEqual(
+    parseYamlConfig("a: yes\nb: no\nc: on\nd: off", "t.yaml"),
+    { a: true, b: false, c: true, d: false },
+    "yes/no/on/off are booleans, as PyYAML reads them (1.2 would keep them strings)"
+  );
+  assertEqual(
+    parseYamlConfig("vals: [y, n]\ny: 2", "t.yaml"),
+    { vals: ["y", "n"], y: 2 },
+    "bare y/n stay strings and keys — the 1.1 spec booleans PyYAML never adopted"
+  );
+  assertEqual(
+    parseYamlConfig("a: 012", "t.yaml"),
+    { a: 10 },
+    "a leading zero is octal in the 1.1 schema, as PyYAML reads it (1.2 would read 12)"
+  );
+  assertThrowsUsage(
+    () => parseYamlConfig("a: b\na: c", "t.yaml"),
+    "t.yaml:2",
+    "a duplicate key refuses with its line instead of silently keeping the last value"
+  );
+
+  // PyYAML's float pattern needs a dot AND a signed exponent; the 1.1 spec's,
+  // which the library carries, needs neither. Under the spec's, `e3` was a
+  // float whose parseFloat is NaN — an ordinary build tag refused as `.nan`,
+  // naming a value nobody wrote — and `1e3` was the number 1000. Every reading
+  // below was taken from PyYAML 6.0.3 on the identical text.
+  const floatShapes: Array<[string, unknown]> = [
+    ["e3", "e3"],
+    ["E3", "E3"],
+    ["e10", "e10"],
+    ["-e3", "-e3"],
+    [".", "."],
+    ["+.", "+."],
+    ["-.", "-."],
+    ["._", "._"],
+    ["1e3", "1e3"],
+    ["1E3", "1E3"],
+    ["1.0e3", "1.0e3"],
+    ["-1e3", "-1e3"],
+    ["5e-3", "5e-3"],
+    ["1.5e3", "1.5e3"],
+    [".5e3", ".5e3"],
+    ["1e+3", "1e+3"],
+    ["-.5", "-.5"],
+    ["+.5", "+.5"],
+    ["-.5e+3", "-.5e+3"],
+    [".5", 0.5],
+    ["1.", 1],
+    ["-1.", -1],
+    ["1.5", 1.5],
+    ["1.5e+3", 1500],
+    ["1.e+3", 1000],
+    ["+1.5e+3", 1500],
+    [".5e+3", 500],
+    ["1.0E+3", 1000],
+    ["1_0.0", 10],
+    ["12:30.5", 750.5],
+    ["12:30", 750],
+  ];
+  for (const [text, expected] of floatShapes) {
+    assertEqual(
+      parseYamlConfig(`a: ${text}`, "t.yaml"),
+      { a: expected },
+      `\`${text}\` reads as ${JSON.stringify(expected)}, as PyYAML reads it`
+    );
+  }
+  assertEqual(
+    parseYamlConfig("%YAML 1.2\n---\ntag: e3\nspend: 1.5e+3", "t.yaml"),
+    { tag: "e3", spend: 1500 },
+    "the float carve-out survives the directive too"
+  );
+
+  // PyYAML's integer patterns are narrower than the 1.1 spec's in the same
+  // place twice — a LEADING ZERO. A decimal integer is `0` or starts 1-9, and
+  // a sexagesimal one starts 1-9, so a zero-padded build number `08` and a
+  // clock-shaped `08:00` are text. Under the spec's, which the library carries,
+  // they were the numbers 8 and 480. The octal, binary and hex tags already
+  // carry PyYAML's patterns, and the sexagesimal FLOAT `0:0.5` reads from a
+  // leading zero in PyYAML too, so those stay put. Every reading below was
+  // taken from PyYAML 6.0.3 on the identical text.
+  const intShapes: Array<[string, unknown]> = [
+    ["08", "08"],
+    ["09", "09"],
+    ["0888", "0888"],
+    ["+08", "+08"],
+    ["-09", "-09"],
+    ["0b12", "0b12"],
+    ["0o17", "0o17"],
+    ["0:0", "0:0"],
+    ["00:30", "00:30"],
+    ["0:5:0", "0:5:0"],
+    ["-0:30", "-0:30"],
+    ["08:00", "08:00"],
+    ["09:30:00", "09:30:00"],
+    ["1:60", "1:60"],
+    ["0", 0],
+    ["+0", 0],
+    ["-0", 0],
+    ["00", 0],
+    ["00000", 0],
+    ["0_0", 0],
+    ["007", 7],
+    ["010", 8],
+    ["012", 10],
+    ["0644", 420],
+    ["0b1", 1],
+    ["0x1f", 31],
+    ["19", 19],
+    ["+19", 19],
+    ["-19", -19],
+    ["1_0", 10],
+    ["1_000", 1000],
+    ["2026", 2026],
+    ["1:00", 60],
+    ["9:00", 540],
+    ["12:30", 750],
+    ["1:2:3", 3723],
+    ["10:00:00", 36000],
+    ["0:0.5", 0.5],
+    ["00:30.5", 30.5],
+    ["0.0", 0],
+  ];
+  for (const [text, expected] of intShapes) {
+    assertEqual(
+      parseYamlConfig(`a: ${text}`, "t.yaml"),
+      { a: expected },
+      `\`${text}\` reads as ${JSON.stringify(expected)}, as PyYAML reads it`
+    );
+  }
+  assertEqual(
+    parseYamlConfig("%YAML 1.2\n---\nbuild: 08\nstart: 0:0\noct: 012\nclock: 12:30", "t.yaml"),
+    { build: "08", start: "0:0", oct: 10, clock: 750 },
+    "the integer carve-out survives the directive too"
+  );
+
+  // PyYAML's resolver has ONE mode, so a `%YAML` directive changes nothing
+  // about how values read. The library lets the directive pick the schema, and
+  // the 1.2 core schema's single bool tag carries a `resolve` of
+  // `str[0] === "t"` — under it `yes` had resolved to FALSE and `false` had
+  // stopped being a boolean at all, silently, at exit 0. Every reading below
+  // is PyYAML 6.0.3's on the identical text.
+  const withDirective = (directive: string) =>
+    parseYamlConfig([directive, "---", "thinking: yes", "strict: false", "oct: 012", "n: 3"].join("\n"), "t.yaml");
+  const directiveFree = { thinking: true, strict: false, oct: 10, n: 3 };
+  assertEqual(withDirective("%YAML 1.2"), directiveFree, "a %YAML 1.2 directive does not invert yes or unmake false");
+  assertEqual(withDirective("%YAML 1.1"), directiveFree, "an explicit %YAML 1.1 directive reads the same");
+  assertEqual(
+    parseYamlConfig("%YAML 1.2\n---\nvals: [y, n, yes, no, on, off]", "t.yaml"),
+    { vals: ["y", "n", true, false, true, false] },
+    "the bare y/n carve-out survives the directive too"
+  );
+
+  // The library speaks to stdio on its own account — a collection-valued key
+  // makes it emit a Node warning about JS object keys before this reader gets
+  // to refuse the key. The CLI owes its caller its own refusals and no
+  // library-internal chatter, so the library's log level is silent.
+  const realEmitWarning = process.emitWarning;
+  const emitted: unknown[] = [];
+  process.emitWarning = ((warning: unknown) => {
+    emitted.push(warning);
+  }) as typeof process.emitWarning;
+  try {
+    parseYamlConfig("? [a, b]\n: 1", "t.yaml");
+  } finally {
+    process.emitWarning = realEmitWarning;
+  }
+  assertEqual(emitted, [], "a collection-valued key leaks no library warning onto the CLI's stdio");
 }
 
 async function testPrintConfig() {
@@ -498,6 +1182,23 @@ async function testPrintConfig() {
       { datasets: [{ name: "deep-swe", version: "1.1" }], agents: [{ name: "codex", model_name: "gpt-5.5" }] },
       "prints the resolved JobCreate body"
     );
+
+    // --print-config is the dry-run a paid remote run deserves, so it owes an
+    // honest exit code: a config it cannot resolve exits 2 with the reason on
+    // stderr, never 0 over a character-indexed body the server would refuse.
+    const dir = await mkdtemp(join(tmpdir(), "evolve-cli-print-"));
+    try {
+      const bare = join(dir, "bare.yaml");
+      await writeFile(bare, "job_name: nightly\ndatasets: [swe-bench]\nagents: [{name: claude, model_name: opus}]\n");
+      const bad = captureIO();
+      const badCode = await runCli(["job", "start", "-c", bare, "--print-config", ...AUTH], bad.io);
+      assertEqual(badCode, 2, "a bare dataset name exits 2, not 0");
+      assertEqual(bad.out.join("\n"), "", "nothing was printed as a body");
+      assert(bad.err.join("\n").includes("datasets[0]"), "stderr names the offending element");
+      assertEqual(fetchCalls.length, 0, "still nothing was sent");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   } finally {
     restoreFetch();
   }
@@ -1073,7 +1774,7 @@ async function testJobTrialsAndTasks() {
  * filter, and the trial-stop door, composed client-side. Zero server surface.
  */
 async function testJobStopDatasetSugar() {
-  console.log("\n--- runCli: job stop --dataset batches one dataset's live trials to trial-stop ---");
+  console.log("\n--- runCli: job stop --dataset batches the dataset's trials to trial-stop ---");
   installMockFetch();
   try {
     // Most-specific patterns first: the bare job pattern would also match /trials.
@@ -1113,15 +1814,15 @@ async function testJobStopDatasetSugar() {
     assert(trialsCall !== undefined, "fetches the job's trials");
     assert(trialsCall!.url.includes("dataset=deep-swe"), "narrowed to the named dataset");
     assert(
-      trialsCall!.url.includes("status=QUEUED%2CRUNNING%2CSCORING"),
-      "narrowed to LIVE statuses only"
+      !trialsCall!.url.includes("status="),
+      "NOT pre-filtered by status — the stop door classifies each id itself (D6)"
     );
     const stopCall = fetchCalls.find((c) => c.url.endsWith("/api/trials/stop"));
     assert(stopCall !== undefined, "batches to the trial-stop door");
     assertEqual(
       JSON.parse(stopCall!.init?.body as string),
       { trial_ids: ["run-1", "run-2"] },
-      "posts exactly the dataset's live trials"
+      "posts exactly the dataset's trials"
     );
     assert(out.some((l) => l.includes("stopped run-1")), "reports the stopped trial");
     assert(out.some((l) => l.includes("already terminal run-2")), "reports the already-terminal id");
@@ -1207,6 +1908,375 @@ async function testJobStopDatasetChunking() {
     assert(
       out.some((l) => l.includes("2 stopped, 2 already terminal, 0 not found (deep-swe)")),
       "the counts line merges every page's report"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * Campaign D6: the sugar used to pre-filter to live trials, so a dataset whose
+ * trials had ALL settled printed the same empty report as a dataset with no
+ * trials at all — "the matrix's expected already_terminal report never
+ * surfaces through the sugar". Every trial now rides to the door, whose
+ * report is the honest answer.
+ */
+async function testJobStopAllTerminalIsHonest() {
+  console.log("\n--- runCli: job stop --dataset reports already_terminal, never a silent empty (D6) ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs/eval-1/trials", {
+      status: 200,
+      body: {
+        items: [
+          trialFixture({ id: "run-1", status: "SCORED" }),
+          trialFixture({ id: "run-2", status: "SCORED" }),
+        ],
+        nextCursor: null,
+        hasMore: false,
+      },
+    });
+    setMockResponse("/api/trials/stop", {
+      status: 200,
+      body: { stopped: [], already_terminal: ["run-1", "run-2"], not_found: [] },
+    });
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: wireJob({ datasets: [{ name: "deep-swe", version: "1.1" }] }),
+    });
+
+    const { io, out } = captureIO();
+    const code = await runCli(
+      ["job", "stop", "eval-1", "--dataset", "deep-swe", "--json", ...AUTH],
+      io
+    );
+    assertEqual(code, 0, "exit 0 — the report is the outcome");
+    // The pin for the fix itself: a status pre-filter would have selected
+    // nothing here and printed the empty report. The trials request must carry
+    // the dataset and NOTHING else, so every settled trial rides to the door.
+    const trialsCall = fetchCalls.find((c) => c.url.includes("/api/jobs/eval-1/trials"));
+    assert(trialsCall !== undefined, "fetches the job's trials");
+    assert(trialsCall!.url.includes("dataset=deep-swe"), "narrowed to the named dataset");
+    assert(
+      !trialsCall!.url.includes("status="),
+      "NOT pre-filtered by status — the SCORED trials reach the stop door (D6)"
+    );
+    assertEqual(
+      JSON.parse(out[out.length - 1]),
+      { stopped: [], already_terminal: ["run-1", "run-2"], not_found: [] },
+      "an all-terminal dataset reports its ids under already_terminal"
+    );
+
+    // The empty report is now reserved for the one case it is true of: a
+    // dataset with no trials at all — and the human line says so.
+    const empty = captureIO();
+    setMockResponse("/api/jobs/eval-1/trials", {
+      status: 200,
+      body: { items: [], nextCursor: null, hasMore: false },
+    });
+    const emptyCode = await runCli(
+      ["job", "stop", "eval-1", "--dataset", "deep-swe", ...AUTH],
+      empty.io
+    );
+    assertEqual(emptyCode, 0, "exit 0 on a trial-less dataset");
+    assert(
+      empty.out.some((l) => l.includes("No trials in deep-swe")),
+      "the human report names the zero-trial case explicitly"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * A stop that dies mid-batch may not take the settled half with it. Stopping
+ * is destructive and already applied server-side, and the merged report is
+ * the ONLY place those trial ids exist: a 429 on the third of three pages
+ * used to discard the two that landed, printing nothing but the rate-limit
+ * line while 200 trials were already dead. D6 (naming every trial, not just
+ * the live ones) is what makes a big dataset issue enough requests to meet
+ * the limit at all, so the two ship together.
+ */
+async function testJobStopReportsThePartialItAlreadySettled() {
+  console.log("\n--- runCli: job stop --dataset prints the settled half before the failure ---");
+  installMockFetch();
+  try {
+    const trialIds = Array.from({ length: 250 }, (_, i) => `run-${i}`);
+    let stopCalls = 0;
+    (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+      const urlStr = url.toString();
+      fetchCalls.push({ url: urlStr, init });
+      if (urlStr.includes("/api/trials/stop")) {
+        stopCalls++;
+        const ids = JSON.parse(init?.body as string).trial_ids as string[];
+        // The third page is the one the limit closes on.
+        if (stopCalls === 3) {
+          return buildMockResponse({
+            status: 429,
+            headers: { "retry-after": "30" },
+            body: { error: { code: "rate_limited", message: "Rate limit exceeded" } },
+          });
+        }
+        return buildMockResponse({
+          status: 200,
+          body: {
+            stopped: ids.map((id) => trialFixture({ id, status: "INDETERMINATE" })),
+            already_terminal: [],
+            not_found: [],
+          },
+        });
+      }
+      if (urlStr.includes("/api/jobs/eval-1/trials")) {
+        return buildMockResponse({
+          status: 200,
+          body: {
+            items: trialIds.map((id) => trialFixture({ id, status: "RUNNING" })),
+            nextCursor: null,
+            hasMore: false,
+          },
+        });
+      }
+      return buildMockResponse({
+        status: 200,
+        body: wireJob({ datasets: [{ name: "deep-swe", version: "1.1" }] }),
+      });
+    };
+
+    const { io, out, err } = captureIO();
+    const code = await runCli(["job", "stop", "eval-1", "--dataset", "deep-swe", ...AUTH], io);
+    assertEqual(code, 1, "the rate limit is still a failure — exit 1");
+    assert(
+      err.some((l) => l.includes("rate limited by the server — retry in 30s")),
+      "and it still prints as one clean rate-limit line"
+    );
+    assert(
+      out.some((l) => l.includes("200 stopped, 0 already terminal, 0 not found (deep-swe)")),
+      "the 200 trials that were actually killed are on the record"
+    );
+    assert(
+      out.some((l) => l.includes("PARTIAL: 50 of 250 trials have no report")),
+      "the half with no answer is stated as unreported, not silently dropped"
+    );
+    assert(
+      out.some((l) => l.includes("no answer came back for trials 201-250")),
+      "and the unanswered batch is named by position, in the report's own words — not called failed"
+    );
+
+    // --json carries the same truth machine-readably: the merged report plus
+    // the two fields that say it is not the whole slice.
+    const asJson = captureIO();
+    stopCalls = 0;
+    assertEqual(
+      await runCli(["job", "stop", "eval-1", "--dataset", "deep-swe", "--json", ...AUTH], asJson.io),
+      1,
+      "--json is exit 1 on the same failure"
+    );
+    const printed = asJson.out[asJson.out.length - 1];
+    assert(printed !== undefined, "--json prints its report before the failure, never nothing");
+    const report = printed ? JSON.parse(printed) : { stopped: [] };
+    assertEqual(report.stopped.length, 200, "--json reports every trial the door confirmed dead");
+    assertEqual(report.partial, true, "marked partial");
+    assertEqual(report.unreported, 50, "with the count that never came back");
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * ONE prefix law: every job-id verb accepts a unique >=8-char id prefix,
+ * resolved client-side against the caller's job list — the wire always
+ * carries the full id. It used to be per-verb luck (show/cancel accepted,
+ * regrade/trials 404'd).
+ */
+async function testJobIdPrefixLaw() {
+  console.log("\n--- runCli: job-id prefixes resolve uniformly across verbs ---");
+  const fullId = "aabbccdd-1111-2222-3333-444455556666";
+  const otherId = "aabbccdd-9999-8888-7777-666655554444";
+  installMockFetch();
+  try {
+    // Most-specific pattern first: the bare /api/jobs pattern serves the list
+    // the prefix resolution walks.
+    setMockResponse(`/api/jobs/${fullId}/regrade`, {
+      status: 202,
+      body: wireJob({ id: "regrade-1", source_jobs: [{ action: "regrade", type: "hub", job_id: fullId }] }),
+    });
+    setMockResponse("/api/jobs", {
+      status: 200,
+      body: { items: [wireJob({ id: fullId }), wireJob({ id: otherId })], nextCursor: null, hasMore: false },
+    });
+
+    // A unique 12-char prefix reaches regrade — the verb that used to 404.
+    const { io } = captureIO();
+    const code = await runCli(["job", "regrade", "aabbccdd-111", ...AUTH], io);
+    assertEqual(code, 0, "a unique prefix resolves and the verb runs");
+    const regradeCall = fetchCalls.find((c) => c.url.includes("/regrade"));
+    assert(
+      regradeCall !== undefined && regradeCall.url.includes(fullId),
+      "the wire carries the FULL id, never the prefix"
+    );
+
+    // An ambiguous prefix refuses loudly, naming the candidates.
+    const ambiguous = captureIO();
+    const ambiguousCode = await runCli(["job", "cancel", "aabbccdd", ...AUTH], ambiguous.io);
+    assertEqual(ambiguousCode, 2, "an ambiguous prefix is a usage error");
+    assert(
+      ambiguous.err.some((l) => l.includes("matches 2 jobs")),
+      "the refusal counts the candidates"
+    );
+
+    // A too-short id-shaped ref refuses by the law's own floor, no network.
+    const short = captureIO();
+    const before = fetchCalls.length;
+    const shortCode = await runCli(["job", "show", "aabbc", ...AUTH], short.io);
+    assertEqual(shortCode, 2, "a too-short prefix is a usage error");
+    assert(
+      short.err.some((l) => l.includes("at least 8 characters")),
+      "the refusal states the 8-character floor"
+    );
+    assertEqual(fetchCalls.length, before, "the short-prefix refusal makes no request");
+
+    // A prefix matching nothing refuses as unknown.
+    const unknown = captureIO();
+    const unknownCode = await runCli(["job", "show", "ffffffff-0000", ...AUTH], unknown.io);
+    assertEqual(unknownCode, 2, "an unknown prefix refuses");
+    assert(
+      unknown.err.some((l) => l.includes('no job id starts with "ffffffff-0000"')),
+      "the refusal names the prefix"
+    );
+
+    // Ambiguity is about DISTINCT jobs. The cursor window shifts while paging
+    // (jobs are created newest-first), so one job can be read on two pages —
+    // counting it twice refused an unambiguous prefix, naming the same id twice.
+    installMockFetch();
+    let listCalls = 0;
+    (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+      const urlStr = url.toString();
+      fetchCalls.push({ url: urlStr, init });
+      if (urlStr.includes("/cancel")) {
+        return buildMockResponse({
+          status: 200,
+          body: wireJob({ id: fullId, status: "CANCELLED" }),
+        });
+      }
+      listCalls++;
+      return buildMockResponse({
+        status: 200,
+        body: {
+          items: [wireJob({ id: fullId })],
+          nextCursor: listCalls === 1 ? "page-2" : null,
+          hasMore: listCalls === 1,
+        },
+      });
+    };
+    const repeated = captureIO();
+    assertEqual(
+      await runCli(["job", "cancel", "aabbccdd-111", ...AUTH], repeated.io),
+      0,
+      "the same job read on two pages is ONE match, not an ambiguous pair"
+    );
+    assertEqual(listCalls, 2, "every page is still walked before deciding");
+    const cancelCall = fetchCalls.find((c) => c.url.includes("/cancel"));
+    assert(
+      cancelCall !== undefined && cancelCall.url.includes(fullId),
+      "the resolved full id reaches the verb"
+    );
+
+    // ONE walk per invocation, not one per id. `job compare a b` resolves two
+    // prefixes against the SAME pages — it used to paginate the whole list
+    // once for each argument.
+    installMockFetch();
+    let pageReads = 0;
+    (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+      const urlStr = url.toString();
+      fetchCalls.push({ url: urlStr, init });
+      if (urlStr.includes("/api/jobs/compare")) {
+        return buildMockResponse({
+          status: 200,
+          body: {
+            jobs: [fullId, otherId].map((id) => ({
+              id,
+              datasets: [{ name: "deep-swe", version: "1.1" }],
+              status: "COMPLETED",
+              mean_reward: 0.5,
+              coverage: { scored: 2, total: 2 },
+              cost_usd: 1,
+              agents: [],
+              started_at: "2026-07-22T00:00:00Z",
+            })),
+            taskMatrix: [],
+          },
+        });
+      }
+      pageReads++;
+      return buildMockResponse({
+        status: 200,
+        body: {
+          items: [wireJob({ id: pageReads === 1 ? fullId : otherId })],
+          nextCursor: pageReads === 1 ? "page-2" : null,
+          hasMore: pageReads === 1,
+        },
+      });
+    };
+    const compare = captureIO();
+    assertEqual(
+      await runCli(["job", "compare", "aabbccdd-111", "aabbccdd-999", ...AUTH], compare.io),
+      0,
+      "two prefixes both resolve"
+    );
+    assertEqual(pageReads, 2, "the job list is walked ONCE for both ids, not once per id");
+    const compareCall = fetchCalls.find((c) => c.url.includes("/api/jobs/compare"));
+    assert(
+      compareCall !== undefined && compareCall.url.includes(`ids=${fullId},${otherId}`),
+      "and the wire carries both FULL ids"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+/** A 429 is a delay, not a mystery: one clean line carrying the server's Retry-After. */
+async function testRateLimitSurfacesCleanly() {
+  console.log("\n--- runCli: a 429 surfaces as one clean rate-limit line with Retry-After ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs/eval-1", {
+      status: 429,
+      headers: { "retry-after": "17" },
+      body: { error: { code: "rate_limited", message: "Rate limit exceeded" } },
+    });
+    const { io, err } = captureIO();
+    const code = await runCli(["job", "show", "eval-1", ...AUTH], io);
+    assertEqual(code, 1, "a rate limit is a runtime failure, exit 1");
+    assert(
+      err.some((l) => l.includes("rate limited by the server — retry in 17s")),
+      "the message names the limit and honors Retry-After"
+    );
+    assert(
+      !err.some((l) => l === "Error: Rate limit exceeded"),
+      "the raw server message no longer prints bare"
+    );
+
+    // No delay anywhere — no envelope retryAfterSec, no header. An absent
+    // reading is NOT zero: "retry in 0s" tells the operator to hammer the
+    // door the limit just closed. This is the branch the header-present case
+    // above cannot reach.
+    setMockResponse("/api/jobs/eval-2", {
+      status: 429,
+      body: { error: { code: "rate_limited", message: "Rate limit exceeded" } },
+    });
+    const silent = captureIO();
+    assertEqual(
+      await runCli(["job", "show", "eval-2", ...AUTH], silent.io),
+      1,
+      "a rate limit with no delay stated is still exit 1"
+    );
+    assert(
+      silent.err.some((l) => l.includes("rate limited by the server — retry shortly")),
+      "a missing Retry-After reads as 'retry shortly', never 'retry in 0s'"
+    );
+    assert(
+      !silent.err.some((l) => l.includes("retry in 0s")),
+      "no fabricated zero delay"
     );
   } finally {
     restoreFetch();
@@ -1958,7 +3028,7 @@ async function main() {
   testBuildJobInputFlags();
   testBuildJobInputYesIsInert();
   await testConfigFileMerge();
-  testYamlSubset();
+  testYamlConfig();
   await testPrintConfig();
   await testHelpAndVersion();
   testImportStatusLine();
@@ -1974,6 +3044,10 @@ async function main() {
   await testJobTrialsAndTasks();
   await testJobStopDatasetSugar();
   await testJobStopDatasetChunking();
+  await testJobStopAllTerminalIsHonest();
+  await testJobStopReportsThePartialItAlreadySettled();
+  await testJobIdPrefixLaw();
+  await testRateLimitSurfacesCleanly();
   await testJobResume();
   await testJobRegrade();
   await testTrialRegrade();

@@ -23,6 +23,7 @@ import gzip
 import hashlib
 import io
 import json
+import math
 import os
 import re
 import secrets
@@ -280,9 +281,14 @@ TrialStatus = Literal[
     'SCORING_ERROR', 'INFRASTRUCTURE_ERROR', 'INDETERMINATE', 'CANCELLED',
 ]
 EvalSandboxProvider = Literal['e2b', 'daytona', 'modal']
-#: Whether a settled trial's cost was measured from the gateway or is the cap
-#: charged conservatively.
-SpendSource = Literal['measured', 'assumed']
+#: Which lane a settled trial's cost came from. Only ``'measured'`` is final.
+#: ``'measured_provisional'`` is a real gateway reading taken inside its
+#: asynchronous spend flush — an honest floor a deferred pass later confirms or
+#: raises into ``'measured'``. ``'assumed_cap'`` means nobody measured this
+#: trial: the figure it carries is zero, a placeholder and never the cap (the
+#: platform under-bills rather than publish an invented number), replaced when
+#: a real reading lands.
+SpendSource = Literal['measured', 'measured_provisional', 'assumed_cap']
 #: Where a trial's verifier executed: inside the agent's environment, or a
 #: separate one.
 VerifierEnvironmentMode = Literal['shared', 'separate']
@@ -681,7 +687,7 @@ class AgentResult:
     """What the agent phase produced and consumed.
 
     ``n_input_tokens`` includes cache tokens. ``cost_usd`` is the settled spend
-    (see ``spend_source`` on the trial for whether it was measured or assumed);
+    (see ``spend_source`` on the trial for which lane it came from);
     None until the trial has executed, and None never means $0. ``metadata``
     carries open per-run detail (bundle digest, network mode, harness-reported
     usage).
@@ -754,8 +760,8 @@ class Trial:
     verifier: Optional[TimingInfo]
     #: Multi-step placeholder; None today.
     step_results: Optional[List[Dict[str, Any]]]
-    #: Whether ``agent_result.cost_usd`` was measured or is the cap charged
-    #: conservatively.
+    #: Which lane ``agent_result.cost_usd`` came from — see SpendSource; only
+    #: ``'measured'`` is final.
     spend_source: Optional[SpendSource]
     # A mid-run LOWER BOUND on spend, never the trial's cost. Only ever climbs
     # while the trial runs, and is CLEARED when the trial settles, on the same
@@ -1558,9 +1564,41 @@ def _parse_error_body(text: str, fallback: str) -> Dict[str, Any]:
         'message': error['message'] if isinstance(error.get('message'), str) else fallback,
         'param': error['param'] if isinstance(error.get('param'), str) else None,
         'details': error['details'] if isinstance(error.get('details'), dict) else None,
-        'retry_after_sec': retry_after if isinstance(retry_after, (int, float)) else None,
+        'retry_after_sec': _finite_delay(retry_after),
         'request_id': error['requestId'] if isinstance(error.get('requestId'), str) else None,
     }
+
+
+def _finite_delay(value: Any) -> Optional[float]:
+    """A delay is a reading only when it is a FINITE number; else it is absent.
+
+    An infinite or NaN delay is not a long wait, it is a hang: every caller of
+    this value sleeps it (``max(delay, poll_interval)``), so ``inf`` parks the
+    watch loop forever with no bound and no output. TypeScript refuses the same
+    reading through ``Number.isFinite``, and one law stated two ways is two
+    laws — Python must refuse it in both mirrors, header and envelope alike
+    (``json.loads`` accepts the bare ``Infinity``/``NaN`` literals that
+    ``JSON.parse`` throws on, so the body path admits what TypeScript cannot).
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if math.isfinite(value) else None
+
+
+def _header_retry_after_sec(headers: Any) -> Optional[float]:
+    """The ``Retry-After`` header as seconds, or None when absent/unreadable.
+
+    The header is the SECOND reading everywhere: the envelope's
+    ``retryAfterSec`` wins, because a body always survives a proxy that eats
+    headers. Both the request path and the event stream read it through here.
+    ``float()`` accepts ``"Infinity"`` and ``"nan"``, so the finite check is
+    what makes an unreadable header absent rather than an unbounded sleep.
+    """
+    raw = headers.get('Retry-After') if headers else None
+    try:
+        return _finite_delay(float(raw)) if raw else None
+    except ValueError:
+        return None
 
 
 def _raise_api_error(exc: urllib.error.HTTPError) -> NoReturn:
@@ -1570,18 +1608,19 @@ def _raise_api_error(exc: urllib.error.HTTPError) -> NoReturn:
     # and retry delay.
     headers = getattr(exc, 'headers', None)
     header_request_id = headers.get('X-Request-Id') if headers else None
-    header_retry_after = headers.get('Retry-After') if headers else None
-    try:
-        header_retry_sec = float(header_retry_after) if header_retry_after else None
-    except ValueError:
-        header_retry_sec = None
+    header_retry_sec = _header_retry_after_sec(headers)
+    # Body-first means the body WINS, including a 0: `or` falls through every
+    # falsy reading, so an envelope stating 0 silently became the header's
+    # delay and the two SDKs stopped describing one law (TypeScript's
+    # readRetryAfterSec keeps the 0). Absent is the only fallback trigger.
+    body_retry_sec = parsed.get('retry_after_sec')
     raise EvolveAPIError(
         exc.code,
         parsed['code'],
         parsed['message'],
         param=parsed.get('param'),
         details=parsed.get('details'),
-        retry_after_sec=parsed.get('retry_after_sec') or header_retry_sec,
+        retry_after_sec=body_retry_sec if body_retry_sec is not None else header_retry_sec,
         request_id=parsed.get('request_id') or header_request_id,
     ) from exc
 
@@ -2156,13 +2195,29 @@ class DatasetsClient:
         Terminal statuses: "COMPLETED" or "FAILED" (``failure`` populated).
         ``on_status`` fires on every observed status change, including the
         first status seen.
+
+        A rate limit or transient outage mid-watch is a delay, not an outcome:
+        a 429/503 sleeps the server's ``retry_after_sec`` and keeps watching
+        rather than dying while the import is still running.
         """
         if poll_interval_s <= 0:
             raise ValueError('poll_interval_s must be positive')
         deadline = time.monotonic() + timeout_s if timeout_s is not None else None
         last_status: Optional[str] = None
         while True:
-            dataset_import = await self.get_import(id)
+            try:
+                dataset_import = await self.get_import(id)
+            except EvolveAPIError as error:
+                if error.status not in (429, 503):
+                    raise
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f'watch_import({id!r}) timed out after {timeout_s}s'
+                    ) from error
+                await asyncio.sleep(
+                    max(error.retry_after_sec or 0.0, poll_interval_s)
+                )
+                continue
             if dataset_import.status != last_status:
                 last_status = dataset_import.status
                 if on_status is not None:
@@ -2752,8 +2807,14 @@ class JobsClient:
             detail = exc.read().decode('utf-8', errors='replace')
             # The whole parsed envelope, not just (code, message): an error that
             # arrives over the event stream should be exactly as actionable as
-            # one that arrives from a request, param and details included.
-            put(('http_error', exc.code, _parse_error_body(detail, str(exc.reason))))
+            # one that arrives from a request, param and details included —
+            # header-carried Retry-After included, on the same body-first law.
+            parsed = _parse_error_body(detail, str(exc.reason))
+            if parsed.get('retry_after_sec') is None:
+                parsed['retry_after_sec'] = _header_retry_after_sec(
+                    getattr(exc, 'headers', None)
+                )
+            put(('http_error', exc.code, parsed))
             return
         except Exception as exc:
             put(('error', exc))
@@ -2799,6 +2860,7 @@ class JobsClient:
             )
             received_event = False
             reconnect = False
+            retry_after: Optional[float] = None
             try:
                 while True:
                     left = remaining()
@@ -2821,6 +2883,10 @@ class JobsClient:
                     elif kind == 'http_error':
                         status, parsed = item[1], item[2]
                         if status == 429 or status >= 500:
+                            # The server's own delay outranks the local backoff
+                            # guess — discarding it retried a rate limit far
+                            # sooner than the door asked for.
+                            retry_after = parsed.get('retry_after_sec')
                             reconnect = True
                             break
                         raise EvolveAPIError(
@@ -2861,7 +2927,8 @@ class JobsClient:
 
             if received_event:
                 delay = reconnect_delay_s
-            await asyncio.sleep(min(delay, remaining() or delay))
+            wait = max(retry_after, delay) if retry_after else delay
+            await asyncio.sleep(min(wait, remaining() or wait))
             delay = min(delay * 2, max_reconnect_delay_s)
 
     def watch(

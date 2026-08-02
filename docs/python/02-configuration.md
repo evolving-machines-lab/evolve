@@ -74,6 +74,20 @@ await evolve.run(prompt='Hello')
 The provider is an argument rather than an environment variable on purpose: which provider your
 program runs on is part of the program.
 
+Beyond the provider name, `ManagedProvider` carries the Evolve key (when it should not come
+from `EVOLVE_API_KEY`) plus sandbox-shape defaults applied to every sandbox it creates.
+Every default rides the same validated path as a create-time option — a provider or managed
+door that cannot enforce a value refuses it loudly, never silently ignores it:
+
+```python
+sandbox = ManagedProvider(
+    provider='daytona',
+    api_key='sk-...',              # (optional) Default: EVOLVE_API_KEY
+    timeout_ms=7_200_000,          # (optional) Lifetime cap for every create
+    resources={'cpu': 2},          # (optional) Sizing; refused where not enforceable
+)
+```
+
 Managed Daytona carries both of Daytona's planes through the Dashboard — creating and listing
 sandboxes, and every command and file operation the agent performs, including streamed command
 output. Images come from the snapshots the platform publishes: a managed create names one and
@@ -87,7 +101,10 @@ duration is bounded by the door: 60 minutes by default, 120 minutes at most — 
 traits carry over: there is no pause — persist progress with Evolve checkpoints instead — and
 a running command cannot be interrupted. Sizing, network policy, and the sandbox user are the
 platform's; a create that asks for them is refused rather than silently ignored. File writes
-ride the door one JSON body at a time, capped at 1 MiB per request.
+ride the door one JSON body at a time, capped at 1 MiB per request — and the cap is on WIRE
+bytes, base64 inflation included, so the largest binary payload one write can carry is about
+768 KiB (text rides as-is and gets the full 1 MiB). An over-cap write is refused with a typed
+error before anything is sent; split the payload into smaller writes.
 
 ---
 

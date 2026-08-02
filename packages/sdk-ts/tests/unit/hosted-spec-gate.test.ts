@@ -29,6 +29,12 @@
  *      EVAL_SANDBOX_PROVIDERS — the runtime lists the CLI validates flags
  *      against — equal the contract's own enums byte-exactly.
  *
+ *   5. SPEND VOCABULARY. The published `SpendSource` union equals the
+ *      contract's own enum. It is type-only (nothing validates a spend lane
+ *      at runtime, so a runtime copy would be dead weight), so it is read out
+ *      of the source the package ships — the axis that was missing while the
+ *      platform stamped three lanes and the type still offered two.
+ *
  * The spec is parsed line-by-line against its own committed formatting. That
  * is a deliberate trade: the file is hand-written, its indentation is part of
  * its style, and a parse that finds nothing fails loudly (non-vacuity checks
@@ -295,6 +301,33 @@ assert(
   JSON.stringify([...EVAL_SANDBOX_PROVIDERS]) === JSON.stringify(specProviders)
     ? `EVAL_SANDBOX_PROVIDERS is the spec's SandboxProvider enum, byte-exactly (${specProviders.join(", ")})`
     : `providers drifted: SDK [${EVAL_SANDBOX_PROVIDERS.join(", ")}] vs spec [${specProviders.join(", ")}]`
+);
+
+// -----------------------------------------------------------------------------
+// 5. SPEND VOCABULARY — the money-reading path. `SpendSource` is a type-only
+// union, and a type cannot be read at run time, so the union is parsed out of
+// the source this package publishes and held to the contract member for
+// member. A caller branching on a lane the platform stamps must compile.
+// -----------------------------------------------------------------------------
+
+const TYPES_SOURCE = readFileSync(join(PACKAGE_ROOT, "src", "hosted", "types.ts"), "utf8");
+const declaredSpendSources = (/export type SpendSource =([^;]+);/.exec(TYPES_SOURCE)?.[1] ?? "")
+  .split("|")
+  .map((member) => member.trim().replace(/^"|"$/g, ""))
+  .filter((member) => member.length > 0);
+const specSpendSources = inlineEnum("SpendSource");
+
+assert(specSpendSources.length >= 3, `the spec's SpendSource enum parsed (${specSpendSources.length} lanes)`);
+assert(
+  declaredSpendSources.length >= 3,
+  `the published SpendSource union parsed from types.ts (${declaredSpendSources.length} lanes)`
+);
+
+assert(
+  JSON.stringify(declaredSpendSources) === JSON.stringify(specSpendSources),
+  JSON.stringify(declaredSpendSources) === JSON.stringify(specSpendSources)
+    ? `SpendSource is the spec's enum, byte-exactly (${specSpendSources.join(", ")})`
+    : `spend lanes drifted: SDK [${declaredSpendSources.join(", ")}] vs spec [${specSpendSources.join(", ")}]`
 );
 
 console.log(`\n═══ ${passed} passed, ${failed} failed ═══\n`);

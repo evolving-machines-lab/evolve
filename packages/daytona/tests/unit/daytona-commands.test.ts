@@ -185,6 +185,15 @@ interface MockProcessApi {
   };
   /** Override response for getSessionCommandLogs (log fallback) */
   logResponse: Record<string, unknown> | null;
+  /**
+   * Successive getSessionCommand exit codes, consumed one per poll. A `null`
+   * is the wire's "still running". Empty = always answer execResponse's code.
+   */
+  sessionCommandExitCodes: Array<number | null>;
+  /** A follow that yields nothing — the command finished before it connected. */
+  silentFollow: boolean;
+  /** A follow that never ends: the socket the command already outlived. */
+  followHangs: boolean;
   /** Track calls to getSessionCommandLogs */
   logFetchCalls: Array<{ sessionId: string; cmdId: string; hasCallbacks: boolean }>;
 }
@@ -195,6 +204,9 @@ function createMockProcessApi(): MockProcessApi {
     lastSessionCommand: null,
     execResponse: { cmdId: "cmd-001", exitCode: 0, stdout: "hello", stderr: "" },
     logResponse: null,
+    sessionCommandExitCodes: [],
+    silentFollow: false,
+    followHangs: false,
     logFetchCalls: [],
   };
   return api;
@@ -233,9 +245,16 @@ function createMockDaytonaSandbox(processApi: MockProcessApi) {
         const session = processApi.sessions.get(sessionId);
         if (session) session.logFetches++;
 
+        // A follow the command outlives: it never delivers and never ends.
+        if (hasCallbacks && processApi.followHangs) {
+          return new Promise<Record<string, unknown>>(() => {});
+        }
+
         // If streaming callbacks provided, call them
-        if (onStdout) onStdout("streamed-stdout");
-        if (onStderr) onStderr("streamed-stderr");
+        if (!processApi.silentFollow) {
+          if (onStdout) onStdout("streamed-stdout");
+          if (onStderr) onStderr("streamed-stderr");
+        }
 
         // Return log response for non-streaming fallback
         return processApi.logResponse || { stdout: "", stderr: "" };
@@ -245,6 +264,9 @@ function createMockDaytonaSandbox(processApi: MockProcessApi) {
         if (session) session.deleted = true;
       },
       getSessionCommand: async (_sessionId: string, _cmdId: string) => {
+        if (processApi.sessionCommandExitCodes.length > 0) {
+          return { exitCode: processApi.sessionCommandExitCodes.shift() };
+        }
         return { exitCode: processApi.execResponse.exitCode };
       },
       listSessions: async () => [],
@@ -416,6 +438,180 @@ async function testRunStreamingPath(): Promise<void> {
   assert(stderrChunks.length > 0, "Stderr callback was called");
   assert(processApi.logFetchCalls.length >= 1, "Log streaming was triggered");
   assertEqual(processApi.logFetchCalls[0].hasCallbacks, true, "Log fetch had streaming callbacks");
+}
+
+/**
+ * Campaign J5: run() with callbacks used a BLOCKING execute and only followed
+ * the logs after it returned, so every byte landed in one burst after the
+ * command finished (e2b/modal stream within ~2s). A streaming run must
+ * execute async and follow live, and the streamed chunks are the result.
+ */
+async function testRunStreamsLiveNotAfterExit(): Promise<void> {
+  console.log("\n[2f] DaytonaCommands.run() - streaming executes ASYNC and follows live (J5)");
+
+  const processApi = createMockProcessApi();
+  processApi.execResponse = { cmdId: "cmd-006", exitCode: 7, stdout: "inline-not-used", stderr: "" };
+  const commands = createCommands(processApi);
+
+  const chunks: string[] = [];
+  const result = await commands.run("echo hi", { onStdout: (c) => chunks.push(c) });
+
+  assertEqual(
+    processApi.lastSessionCommand?.runAsync,
+    true,
+    "a streaming run executes runAsync — the blocking execute held all output to exit"
+  );
+  assertEqual(chunks.join(""), "streamed-stdout", "chunks reach the callback from the live follow");
+  assertEqual(
+    result.stdout,
+    "streamed-stdout",
+    "the streamed chunks ARE the result, not the inline snapshot"
+  );
+  assertEqual(result.exitCode, 7, "exit code read off the session command after the stream closes");
+}
+
+/**
+ * The streaming path may never invent a status. Both routes to a fabricated
+ * one are refused: an async execute that returns no command id (nothing to
+ * follow, nowhere for an exit code to appear) used to fall through to the
+ * blocking tail's `resp.exitCode ?? 0` — a clean success for a command still
+ * running — and a NULL exit code (the wire's "still running") used to be
+ * handed back as the run's own status.
+ */
+async function testStreamingRunNeverFabricatesAStatus(): Promise<void> {
+  console.log("\n[2g] DaytonaCommands.run() - the streaming path never invents an exit code");
+
+  const noId = createMockProcessApi();
+  noId.execResponse = { exitCode: undefined, stdout: "", stderr: "" };
+  let refused = false;
+  try {
+    await createCommands(noId).run("echo hi", { onStdout: () => {} });
+  } catch {
+    refused = true;
+  }
+  assert(refused, "an async execute with no command id refuses instead of reporting exit 0");
+  assert(
+    noId.sessions.get(noId.lastSessionCommand!.sessionId)?.deleted === true,
+    "and the ephemeral session is still cleaned up"
+  );
+
+  const running = createMockProcessApi();
+  running.execResponse = { cmdId: "cmd-007", exitCode: undefined, stdout: "", stderr: "" };
+  // Still running on the first poll, settled on the second.
+  running.sessionCommandExitCodes = [null, 3];
+  const result = await createCommands(running).run("echo hi", { onStdout: () => {} });
+  assertEqual(result.exitCode, 3, "a null exit code is 'still running' — the poll waits for the real one");
+}
+
+/**
+ * A command that finishes before the follow connects yields an empty stream,
+ * and nothing documents the follow endpoint as replaying what it already
+ * buffered. The blocking path always had the non-follow log read as its
+ * fallback; the streaming path dropped it, so a fast command came back with a
+ * correct exit code and no output at all.
+ */
+async function testStreamingRunFallsBackWhenFollowYieldsNothing(): Promise<void> {
+  console.log("\n[2h] DaytonaCommands.run() - a silent follow falls back to the settled log");
+
+  const silent = createMockProcessApi();
+  silent.silentFollow = true;
+  silent.execResponse = { cmdId: "cmd-008", exitCode: 0, stdout: "", stderr: "" };
+  silent.logResponse = { stdout: "fast-output", stderr: "fast-err" };
+  const seen: string[] = [];
+  const errSeen: string[] = [];
+  const result = await createCommands(silent).run("echo hi", {
+    onStdout: (c) => seen.push(c),
+    onStderr: (c) => errSeen.push(c),
+  });
+  assertEqual(result.stdout, "fast-output", "the settled log supplies stdout the follow never delivered");
+  assertEqual(result.stderr, "fast-err", "and stderr with it");
+  assertEqual(seen.join(""), "fast-output", "the recovered output still reaches the caller's callback");
+  assertEqual(errSeen.join(""), "fast-err", "on the stream it belongs to");
+  assertEqual(
+    silent.logFetchCalls.filter((c) => !c.hasCallbacks).length,
+    1,
+    "exactly one non-follow log read — the fallback, not a second follow"
+  );
+
+  // A follow that DID deliver is never re-read: re-emitting would double the
+  // caller's output, so both streams must be empty to take the fallback.
+  const streamed = createMockProcessApi();
+  streamed.execResponse = { cmdId: "cmd-009", exitCode: 0, stdout: "", stderr: "" };
+  streamed.logResponse = { stdout: "must-not-appear", stderr: "" };
+  const streamedResult = await createCommands(streamed).run("echo hi", { onStdout: () => {} });
+  assertEqual(streamedResult.stdout, "streamed-stdout", "a follow that delivered keeps its own bytes");
+  assertEqual(
+    streamed.logFetchCalls.filter((c) => !c.hasCallbacks).length,
+    0,
+    "and no fallback read is issued at all"
+  );
+}
+
+/**
+ * The follow is a stream, not a clock. Awaiting it FIRST and only then polling
+ * for an exit code — 20 attempts at 500ms — gave the streaming path two
+ * failure modes the blocking path never had: a stalled socket (nothing acks a
+ * chunked body) hung run() forever when no timeoutMs bounded it, and a follow
+ * that closed a moment early threw "no exit code" on a command that had
+ * already succeeded. The command's record decides; the follow is drained, not
+ * waited on.
+ */
+async function testStreamedRunIsBoundedByTheCommandNotTheFollow(): Promise<void> {
+  console.log("\n[2i] DaytonaCommands.run() - a stalled follow no longer outlives its command");
+
+  // Timings shrunk so the test measures the SHAPE, not the production clocks.
+  class FastCommands extends DaytonaCommands {
+    protected override streamTimings = {
+      pollMinMs: 1,
+      pollMaxMs: 2,
+      drainMs: 20,
+      killGraceMs: 5,
+      settleMs: 500,
+    };
+  }
+  const fast = (api: MockProcessApi) =>
+    new FastCommands(createMockDaytonaSandbox(api) as never);
+
+  const stalled = createMockProcessApi();
+  stalled.followHangs = true;
+  stalled.execResponse = { cmdId: "cmd-010", exitCode: undefined, stdout: "", stderr: "" };
+  stalled.sessionCommandExitCodes = [null, null, 4];
+  stalled.logResponse = { stdout: "recovered", stderr: "" };
+  const hung = Symbol("hung");
+  const raced = await Promise.race([
+    fast(stalled).run("echo hi", { onStdout: () => {} }),
+    new Promise((resolve) => setTimeout(() => resolve(hung), 5_000)),
+  ]);
+  assert(raced !== hung, "run() returns while the follow socket is still open");
+  assertEqual((raced as { exitCode: number }).exitCode, 4, "the command's own record supplies the exit code");
+  assertEqual(
+    (raced as { stdout: string }).stdout,
+    "recovered",
+    "and the settled log still supplies the output the stall never delivered"
+  );
+
+  // A command that takes longer to settle than twenty polls is not a failure.
+  // The old attempt cap threw on exactly this: a run that had SUCCEEDED.
+  const slow = createMockProcessApi();
+  slow.execResponse = { cmdId: "cmd-011", exitCode: undefined, stdout: "", stderr: "" };
+  slow.sessionCommandExitCodes = [...Array(40).fill(null), 0];
+  const slowResult = await fast(slow).run("echo hi", { onStdout: () => {} });
+  assertEqual(slowResult.exitCode, 0, "40 polls later the real exit code is still read, never a throw");
+
+  // A caller's timeoutMs is the ceiling: a command that never settles fails by
+  // that clock instead of waiting on the follow forever.
+  const never = createMockProcessApi();
+  never.followHangs = true;
+  never.execResponse = { cmdId: "cmd-012", exitCode: undefined, stdout: "", stderr: "" };
+  never.sessionCommandExitCodes = Array(10_000).fill(null);
+  let message = "";
+  try {
+    await fast(never).run("sleep 999", { onStdout: () => {}, timeoutMs: 10 });
+  } catch (error) {
+    message = (error as Error).message;
+  }
+  assert(message.includes("no exit code"), "an unbounded follow past the caller's deadline throws");
+  assert(message.includes("10ms"), "and the refusal names the wall clock it blew, not an attempt count");
 }
 
 async function testRunSessionCleanup(): Promise<void> {
@@ -707,6 +903,10 @@ const tests = [
   testRunEmptyStdoutFallback,
   testRunInlineStdoutNoFallback,
   testRunStreamingPath,
+  testRunStreamsLiveNotAfterExit,
+  testStreamingRunNeverFabricatesAStatus,
+  testStreamingRunFallsBackWhenFollowYieldsNothing,
+  testStreamedRunIsBoundedByTheCommandNotTheFollow,
   testRunSessionCleanup,
   testRunOutputField,
   // [3] spawn with envs

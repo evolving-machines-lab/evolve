@@ -104,6 +104,31 @@ export const DAYTONA_SNAPSHOT_ACTIVATE_TIMEOUT_MS = 180_000;
 const DAYTONA_SNAPSHOT_ACTIVATE_POLL_MS = 2_000;
 
 /**
+ * Clocks of a STREAMED run (see awaitStreamedExit). The poll that reads the
+ * command's exit code backs off from pollMin to pollMax. A follow whose
+ * command has already ended is cut once it has been SILENT for drainMs —
+ * silence, never elapsed time, so a stream still delivering is never
+ * truncated. killGrace is what the caller's timeoutMs is widened by before a
+ * streamed run gives up, because withInBoxTimeout kills with `timeout -k 10`:
+ * the box may legitimately take ten seconds past the deadline to record a
+ * status. And a follow that has CLOSED means the command ended, so its record
+ * must catch up within settleMs — the only backstop a caller who passed no
+ * timeoutMs has, which is why it is generous rather than tight.
+ */
+export const DAYTONA_STREAM_TIMINGS = {
+  pollMinMs: 250,
+  pollMaxMs: 2_000,
+  drainMs: 1_000,
+  killGraceMs: 15_000,
+  settleMs: 60_000,
+};
+
+export type DaytonaStreamTimings = typeof DAYTONA_STREAM_TIMINGS;
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
+
+/**
  * Sandboxes requested per list page. Held at the value every provider in this
  * lineup accepts, so one number is valid everywhere a fleet is enumerated.
  */
@@ -116,22 +141,6 @@ export const DAYTONA_LIST_PAGE_SIZE = 100;
  * a whole one.
  */
 export const DAYTONA_MAX_LIST_PAGES = 100;
-
-const BINARY_EXTENSIONS = new Set([
-  ".xlsx", ".xls", ".docx", ".doc", ".pptx", ".ppt",
-  ".pdf", ".zip", ".tar", ".gz", ".7z", ".rar",
-  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".bmp",
-  ".mp3", ".wav", ".ogg", ".flac", ".aac",
-  ".mp4", ".avi", ".mov", ".mkv", ".webm",
-  ".woff", ".woff2", ".ttf", ".otf", ".eot",
-  ".exe", ".dll", ".so", ".dylib",
-  ".sqlite", ".db", ".pickle", ".pkl", ".parquet",
-]);
-
-function isBinaryFile(path: string): boolean {
-  const ext = path.substring(path.lastIndexOf(".")).toLowerCase();
-  return BINARY_EXTENSIONS.has(ext);
-}
 
 function getParentDir(path: string): string {
   const lastSlash = path.lastIndexOf("/");
@@ -315,7 +324,7 @@ async function activateSnapshot(
         `still "${current?.state ?? "unknown"}" after ${timeoutMs}ms`,
       );
     }
-    await new Promise((r) => setTimeout(r, pollMs));
+    await sleep(pollMs);
     // The poll get wears the same typed error as the activate call: a raw
     // network failure here would escape create()'s typed-refusal checks and
     // fall into the build path — name-conflict on the existing snapshot, then
@@ -1090,17 +1099,22 @@ async function followManagedSessionLogs(
   commandId: string,
   onStdout: (chunk: string) => void,
   onStderr: (chunk: string) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const url =
     `${context.toolboxUrl.replace(/\/+$/, "")}/${encodeURIComponent(sandboxId)}` +
     `/process/session/${encodeURIComponent(sessionId)}` +
     `/command/${encodeURIComponent(commandId)}/logs?follow=true`;
 
+  // The signal is what lets a caller stop reading a body nothing will ever
+  // end: a chunked follow has no close from this side, and a pending
+  // reader.read() holds the event loop open for as long as the socket does.
   const response = await fetch(url, {
     headers: {
       Authorization: `Bearer ${context.apiKey}`,
       accept: "application/octet-stream",
     },
+    ...(signal ? { signal } : {}),
   });
 
   if (!response.ok) {
@@ -1157,6 +1171,9 @@ function readCommandStreams(source: {
 }
 
 export class DaytonaCommands implements SandboxCommands {
+  /** The streamed-run clocks, shrinkable by a subclass so a test need not wait them out. */
+  protected streamTimings: DaytonaStreamTimings = DAYTONA_STREAM_TIMINGS;
+
   constructor(
     private sandbox: DaytonaSandbox,
     private user?: string,
@@ -1168,12 +1185,17 @@ export class DaytonaCommands implements SandboxCommands {
    * SDK's own follow, which is a websocket; managed mode uses the HTTP
    * chunked follow, because a Dashboard route handler cannot terminate a
    * websocket upgrade (see followManagedSessionLogs).
+   *
+   * Only the managed follow takes the abandon signal — the SDK's websocket
+   * follow exposes none, so a direct-mode stall is stopped from waiting on
+   * but not closed; the ephemeral session's delete is what ends it.
    */
   private followLogs(
     sessionId: string,
     commandId: string,
     onStdout: (chunk: string) => void,
     onStderr: (chunk: string) => void,
+    signal?: AbortSignal,
   ): Promise<void> {
     if (this.managedStream) {
       return followManagedSessionLogs(
@@ -1183,6 +1205,7 @@ export class DaytonaCommands implements SandboxCommands {
         commandId,
         onStdout,
         onStderr,
+        signal,
       );
     }
     return this.sandbox.process.getSessionCommandLogs(
@@ -1203,33 +1226,105 @@ export class DaytonaCommands implements SandboxCommands {
     await this.sandbox.process.createSession(sessionId);
 
     try {
-      // The third argument stays the wait bound — this call still blocks until
-      // the command finishes — and withInBoxTimeout is what survives this
-      // process dying while it waits (see the wrapper's header). Both are the
-      // caller's own timeout, so whichever fires first, nothing outlives it.
+      // A streaming caller needs output WHILE the command runs, and a
+      // blocking execute holds every byte until exit — the campaign measured
+      // a 10s command whose whole output landed in one burst after
+      // completion (J5) while e2b/modal streamed within ~2s. So with
+      // callbacks the command runs ASYNC and the live follow (direct = the
+      // SDK's websocket, managed = the HTTP chunked follow) delivers chunks
+      // as they are produced. Without callbacks the blocking execute stays:
+      // one round trip, exit code inline.
+      const streaming = Boolean(options?.onStdout || options?.onStderr);
+      // The third argument stays the wait bound of a blocking execute, and
+      // withInBoxTimeout is what survives this process dying while it waits
+      // (see the wrapper's header). Both are the caller's own timeout, so
+      // whichever fires first, nothing outlives it.
       const resp = await this.sandbox.process.executeSessionCommand(sessionId, {
         command: withInBoxTimeout(
           wrapCommand(command, options?.cwd, options?.envs, this.user),
           timeoutSec
         ),
-        runAsync: false,
+        runAsync: streaming,
       }, timeoutSec);
 
       const cmdId = resp.cmdId;
 
-      // Streaming: pipe logs to callbacks
-      if (cmdId && (options?.onStdout || options?.onStderr)) {
-        await this.followLogs(
-          sessionId,
-          cmdId,
-          options.onStdout || (() => {}),
-          options.onStderr || (() => {})
-        );
+      // An async execute with no command id is unfollowable: there is nothing
+      // to stream and no place the exit code will ever appear. Falling through
+      // to the blocking tail would report `resp.exitCode ?? 0` — a fabricated
+      // success for a command still running. Refuse instead.
+      if (streaming && !cmdId) {
+        throw new Error("Daytona returned no command id for an async command — cannot stream it or read its exit code");
       }
 
-      // Try inline output first; if empty and we have cmdId, fetch logs explicitly
+      if (streaming && cmdId) {
+        // The streamed chunks ARE the result: they reach the callbacks live
+        // and accumulate into the returned stdout/stderr. The follow runs
+        // ALONGSIDE the exit poll rather than before it (awaitStreamedExit
+        // states why), and `live` is what keeps a follow abandoned mid-chunk
+        // from delivering into a result the caller already has.
+        let stdout = "";
+        let stderr = "";
+        let live = true;
+        let lastChunkAt = Date.now();
+        const abandon = new AbortController();
+        const follow = this.followLogs(
+          sessionId,
+          cmdId,
+          (chunk) => {
+            if (!live) return;
+            lastChunkAt = Date.now();
+            stdout += chunk;
+            options?.onStdout?.(chunk);
+          },
+          (chunk) => {
+            if (!live) return;
+            lastChunkAt = Date.now();
+            stderr += chunk;
+            options?.onStderr?.(chunk);
+          },
+          abandon.signal,
+        );
+        let exitCode: number;
+        try {
+          exitCode = await this.awaitStreamedExit(
+            sessionId,
+            cmdId,
+            follow,
+            () => lastChunkAt,
+            options?.timeoutMs
+          );
+        } finally {
+          live = false;
+          abandon.abort();
+        }
+        // Nothing arrived on the follow. A command that finished before the
+        // stream connected is indistinguishable from one that printed
+        // nothing, and nothing documents the follow endpoint as replaying
+        // what it already buffered — so read the settled log the way the
+        // blocking path does rather than report a silent run. Both streams
+        // must be empty to take it: a partial follow already reached the
+        // callbacks and re-emitting would double the caller's output.
+        if (!stdout && !stderr) {
+          try {
+            const logs = await this.sandbox.process.getSessionCommandLogs(sessionId, cmdId);
+            const settled = readCommandStreams(logs as any);
+            stdout = settled.stdout;
+            stderr = settled.stderr;
+            if (stdout) options?.onStdout?.(stdout);
+            if (stderr) options?.onStderr?.(stderr);
+          } catch {
+            // Ignore log fetch errors — the exit code is still the truth.
+          }
+        }
+        return { exitCode, stdout, stderr };
+      }
+
+      // Only the blocking path reaches here — a streaming caller with a cmdId
+      // already returned above. Try inline output first; if empty and we have
+      // cmdId, fetch logs explicitly.
       let { stdout, stderr } = readCommandStreams(resp);
-      if (!stdout && !stderr && cmdId && !options?.onStdout) {
+      if (!stdout && !stderr && cmdId) {
         try {
           const logs = await this.sandbox.process.getSessionCommandLogs(sessionId, cmdId);
           const fromLogs = readCommandStreams(logs as any);
@@ -1251,6 +1346,88 @@ export class DaytonaCommands implements SandboxCommands {
       } catch {
         // Ignore cleanup errors
       }
+    }
+  }
+
+  /**
+   * WHAT SAYS A STREAMED RUN IS OVER: the command's record, never the follow.
+   *
+   * A chunked follow can stall open long after its command exited — nothing
+   * acks a response body — and awaiting it first, then polling for an exit
+   * code 20 times at 500ms, gave a streaming run() two failure modes the
+   * blocking path never had: a stalled socket hung run() forever (with no
+   * timeoutMs, nothing in the box or out of it bounds the wait), and a follow
+   * that closed a moment early threw "no exit code" on a command that had
+   * already succeeded.
+   *
+   * So the poll and the follow run TOGETHER. The poll decides when the run
+   * ended; the follow then gets as long as it keeps delivering and is cut
+   * only once it has been SILENT for the drain window, so a live stream is
+   * never truncated and a dead one is never waited on. Two ceilings bound the
+   * wait: the caller's timeoutMs widened by the in-box kill grace, and — for
+   * the caller who passed none — the settle bound measured from the moment
+   * the follow closed, because a closed stream means the command ended and a
+   * record that never catches up is a provider incident, not a long run.
+   * A run with no timeoutMs whose command is genuinely still streaming is
+   * still waited on indefinitely: that is what asking for no bound means.
+   */
+  private async awaitStreamedExit(
+    sessionId: string,
+    cmdId: string,
+    follow: Promise<void>,
+    lastChunkAt: () => number,
+    timeoutMs?: number,
+  ): Promise<number> {
+    const clocks = this.streamTimings;
+    let followClosedAt: number | undefined;
+    let followError: unknown;
+    const followSettled = follow.then(
+      () => {
+        followClosedAt = Date.now();
+      },
+      (error) => {
+        followClosedAt = Date.now();
+        followError = error;
+      },
+    );
+    const hardDeadline =
+      timeoutMs !== undefined && timeoutMs > 0
+        ? Date.now() + timeoutMs + clocks.killGraceMs
+        : undefined;
+    let pollMs = clocks.pollMinMs;
+    for (;;) {
+      // A follow that FAILED is a broken stream and the caller's callbacks saw
+      // an incomplete run: it throws here exactly as it did when run() awaited
+      // the follow directly.
+      if (followError !== undefined) throw followError;
+      const cmd = await this.sandbox.process.getSessionCommand(sessionId, cmdId);
+      // The wire says "still running" with a NULL exit code, not an absent
+      // one — `!== undefined` handed that null back as this run's status.
+      if (cmd.exitCode !== undefined && cmd.exitCode !== null) {
+        for (;;) {
+          if (followClosedAt !== undefined) break;
+          const idleMs = Date.now() - lastChunkAt();
+          if (idleMs >= clocks.drainMs) break;
+          await Promise.race([followSettled, sleep(clocks.drainMs - idleMs)]);
+        }
+        return cmd.exitCode;
+      }
+      const settleDeadline =
+        followClosedAt !== undefined ? followClosedAt + clocks.settleMs : undefined;
+      const deadline =
+        hardDeadline !== undefined && settleDeadline !== undefined
+          ? Math.min(hardDeadline, settleDeadline)
+          : (hardDeadline ?? settleDeadline);
+      if (deadline !== undefined && Date.now() >= deadline) {
+        throw new Error(
+          `Daytona reported no exit code for command ${cmdId} after ` +
+            (followClosedAt !== undefined
+              ? "its log stream closed"
+              : `${timeoutMs}ms`)
+        );
+      }
+      await sleep(pollMs);
+      pollMs = Math.min(pollMs * 2, clocks.pollMaxMs);
     }
   }
 
@@ -1373,7 +1550,7 @@ export class DaytonaCommands implements SandboxCommands {
             }
             throw error;
           }
-          await new Promise(r => setTimeout(r, 500));
+          await sleep(500);
         }
       },
       kill: async () => {
@@ -1417,12 +1594,25 @@ export class DaytonaFiles implements SandboxFiles {
   constructor(private sandbox: DaytonaSandbox) {}
 
   async read(path: string): Promise<string | Uint8Array> {
-    // Evidence: Daytona SDK downloadFile(remotePath) returns Buffer
-    const buffer = await this.sandbox.fs.downloadFile(path);
-    if (isBinaryFile(path)) {
-      return new Uint8Array(buffer);
+    // Evidence: Daytona SDK downloadFile(remotePath) returns Buffer.
+    // Text-vs-binary is decided from CONTENT, never from the file's name:
+    // the SandboxFiles contract is "read returns string | Uint8Array", and
+    // an extension table cannot keep that honest — binary bytes under an
+    // unlisted extension (.bin) would ride a lossy text decode and come back
+    // U+FFFD-mangled. A NUL byte marks binary (the platform's agent-home
+    // sniff, git's own heuristic); everything else must survive a STRICT
+    // UTF-8 decode (fatal, BOM preserved) to come back as a string. Both
+    // answers are therefore byte-exact: a returned string re-encodes to the
+    // identical bytes, a returned Uint8Array IS the bytes.
+    const bytes = new Uint8Array(await this.sandbox.fs.downloadFile(path));
+    if (!bytes.includes(0)) {
+      try {
+        return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+      } catch {
+        // Not valid UTF-8 — binary after all.
+      }
     }
-    return buffer.toString("utf-8");
+    return bytes;
   }
 
   async write(path: string, content: string | Buffer | ArrayBuffer | Uint8Array): Promise<void> {

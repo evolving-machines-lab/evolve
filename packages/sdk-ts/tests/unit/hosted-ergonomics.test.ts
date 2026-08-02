@@ -74,7 +74,10 @@ function installMockFetch() {
           statusText: resp.status < 300 ? "OK" : "Error",
           headers: new Headers(resp.headers || {}),
           json: async () => resp.body,
-          text: async () => JSON.stringify(resp.body),
+          // A STRING body is the raw wire, passed through verbatim: re-encoding
+          // it would hide the bodies only a raw string can carry — a non-JSON
+          // payload, or a number literal JSON.stringify cannot round-trip.
+          text: async () => (typeof resp.body === "string" ? resp.body : JSON.stringify(resp.body)),
         } as unknown as Response;
       }
     }
@@ -195,6 +198,39 @@ async function main() {
     const err = (await datasets().list().catch((e: unknown) => e)) as EvolveApiError;
     assertEqual(err.retryAfterSec, 12, "retryAfterSec falls back to the Retry-After header");
     assertEqual(err.requestId, "req_hdr", "requestId falls back to the X-Request-Id header");
+  }
+
+  {
+    // A delay that cannot be waited is no reading at all, in the BODY as well
+    // as the header: JSON.parse("1e400") is Infinity, and every caller sleeps
+    // this value — an unbounded sleep is a hang, not a long wait. Python reads
+    // the same two readings through the same finite check.
+    installMockFetch();
+    mockResponses.set("/api/datasets", {
+      status: 429,
+      body: '{"error":{"code":"rate_limited","message":"slow down","retryAfterSec":1e400}}',
+      headers: { "Retry-After": "5" },
+    });
+    const err = (await datasets().list().catch((e: unknown) => e)) as EvolveApiError;
+    assertEqual(err.retryAfterSec, 5, "a non-finite envelope delay falls back to the header");
+
+    installMockFetch();
+    mockResponses.set("/api/datasets", {
+      status: 429,
+      body: { error: { code: "rate_limited", message: "slow down" } },
+      headers: { "Retry-After": "Infinity" },
+    });
+    const infHeader = (await datasets().list().catch((e: unknown) => e)) as EvolveApiError;
+    assertEqual(infHeader.retryAfterSec, undefined, "a non-finite Retry-After header reads as absent");
+
+    installMockFetch();
+    mockResponses.set("/api/datasets", {
+      status: 429,
+      body: { error: { code: "rate_limited", message: "slow down", retryAfterSec: true } },
+      headers: {},
+    });
+    const boolBody = (await datasets().list().catch((e: unknown) => e)) as EvolveApiError;
+    assertEqual(boolBody.retryAfterSec, undefined, "a boolean envelope delay is not a number");
   }
 
   {

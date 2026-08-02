@@ -548,6 +548,66 @@ async function testWatchImportPollsToTerminal() {
   }
 }
 
+/**
+ * A rate limit mid-watch is a DELAY, not an outcome: the import keeps running
+ * server-side, so dying at the 429 lost a watch over a wait. The loop sleeps
+ * the server's own delay — from the envelope on the 429, from the header on
+ * the 503 — and polls on. Anything else still ends the watch.
+ */
+async function testWatchImportSurvivesRateLimit() {
+  console.log("\n--- datasets().watchImport() sleeps a 429/503 and keeps watching ---");
+  installMockFetch();
+  try {
+    const job = { id: "imp-1", name: "deep-swe", version: "1.2", warnings: [] };
+    const replies: MockResponse[] = [
+      {
+        status: 429,
+        body: { error: { code: "rate_limited", message: "slow down", retryAfterSec: 0.05 } },
+      },
+      {
+        status: 503,
+        body: { error: { code: "unavailable", message: "restarting" } },
+        headers: { "retry-after": "0.05" },
+      },
+      { status: 200, body: { ...job, status: "COMPLETED", failure: null, task_count: 113 } },
+    ];
+    let calls = 0;
+    (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+      fetchCalls.push({ url: url.toString(), init });
+      return buildMockResponse(replies[Math.min(calls++, replies.length - 1)]);
+    };
+
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    const startedAt = Date.now();
+    const final = await d.watchImport("imp-1", { pollIntervalMs: 1 });
+    const elapsedMs = Date.now() - startedAt;
+
+    assertEqual(calls, 3, "the 429 and the 503 are survived, not surfaced");
+    assertEqual(final.status, "COMPLETED", "resolves with the terminal import the 429 would have hidden");
+    assert(
+      elapsedMs >= 80,
+      `slept both 50ms Retry-After delays, not the 1ms poll interval (waited ${elapsedMs}ms)`
+    );
+
+    // Every other failure still ends the watch — the survival is scoped to the
+    // two statuses that MEAN "wait", never to a refusal.
+    installMockFetch();
+    setMockResponse("/api/datasets/imports/imp-2", {
+      status: 404,
+      body: { error: { code: "dataset_not_found", message: "no such import" } },
+    });
+    let threw = false;
+    try {
+      await d.watchImport("imp-2", { pollIntervalMs: 1 });
+    } catch (error) {
+      threw = error instanceof EvolveApiError && error.status === 404;
+    }
+    assert(threw, "a 404 still ends the watch with the typed error");
+  } finally {
+    restoreFetch();
+  }
+}
+
 // =============================================================================
 // REGISTERED AGENTS TESTS
 // =============================================================================
@@ -1278,7 +1338,7 @@ async function testTrials() {
               occurred_at: "2026-07-22T00:01:00.000Z",
             },
             agent_result: null,
-            spend_source: "assumed",
+            spend_source: "assumed_cap",
             sandbox_id: null,
             verifier_sandbox_id: null,
             verifier_environment_mode: null,
@@ -1332,7 +1392,9 @@ async function testTrials() {
     assertEqual(page.items[1].attempt_phase, "boot", "attempt_phase says WHICH step the trial died in");
     assertEqual(page.items[0].attempt_phase, null, "attempt_phase null when not mid-phase");
     assertEqual(page.items[1].sandbox_id, null, "a trial that never booted a box has null sandbox_id");
-    assertEqual(page.items[1].spend_source, "assumed", "assumed spend source maps");
+    // The three lanes the platform actually stamps — a trial that never ran
+    // carries assumed_cap, whose figure is $0 and never the cap.
+    assertEqual(page.items[1].spend_source, "assumed_cap", "the assumed_cap lane maps");
 
     // Status filter: comma-joined ?status= for the failures behind a resume decision
     await e.trials("eval-1", { status: ["INFRASTRUCTURE_ERROR", "SCORING_ERROR"] });
@@ -1869,6 +1931,65 @@ async function testWatchRetriesOn5xx() {
 
     assertEqual(eventsCalls, 2, "retried after the 503");
     assertEqual(finalJob.status, "COMPLETED", "resolves after the retry");
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * The follow's retry delay is the SERVER's when the server states one, read by
+ * the one law: envelope first (a cross-origin browser fetch cannot always see
+ * the header), header second. The local backoff is only the guess used when
+ * neither carries a number.
+ */
+async function testWatchHonorsRetryAfterOnReconnect() {
+  console.log("\n--- watch() sleeps the server's Retry-After before reconnecting ---");
+  try {
+    let connects = 0;
+    const follow = async (rateLimited: MockResponse) => {
+      installMockFetch();
+      connects = 0;
+      (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+        const urlStr = url.toString();
+        fetchCalls.push({ url: urlStr, init });
+        if (urlStr.includes("/events")) {
+          connects++;
+          if (connects === 1) return buildMockResponse(rateLimited);
+          return buildMockResponse({
+            status: 200,
+            body: null,
+            streamBody: sseText([{ seq: 0, type: "job.completed", data: { job_id: "eval-1" } }]),
+          });
+        }
+        return buildMockResponse({ status: 200, body: { ...JOB_SUMMARY, status: "COMPLETED" } });
+      };
+      const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+      const startedAt = Date.now();
+      const finalJob = await e.watch("eval-1", { reconnectDelayMs: 1 });
+      return { connects, elapsedMs: Date.now() - startedAt, status: finalJob.status };
+    };
+
+    const fromBody = await follow({
+      status: 429,
+      body: { error: { code: "rate_limited", message: "slow down", retryAfterSec: 0.08 } },
+    });
+    assertEqual(fromBody.connects, 2, "reconnected after the 429");
+    assertEqual(fromBody.status, "COMPLETED", "resolves once the follow reconnects");
+    assert(
+      fromBody.elapsedMs >= 60,
+      `waited the envelope's 80ms, not the 1ms local backoff (waited ${fromBody.elapsedMs}ms)`
+    );
+
+    const fromHeader = await follow({
+      status: 503,
+      body: { error: { code: "unavailable", message: "restarting" } },
+      headers: { "retry-after": "0.08" },
+    });
+    assertEqual(fromHeader.connects, 2, "reconnected after the 503");
+    assert(
+      fromHeader.elapsedMs >= 60,
+      `waited the header's 80ms when the envelope carried none (waited ${fromHeader.elapsedMs}ms)`
+    );
   } finally {
     restoreFetch();
   }
@@ -3005,6 +3126,7 @@ async function main() {
   await testPublishDirectorySource();
   await testGetImport();
   await testWatchImportPollsToTerminal();
+  await testWatchImportSurvivesRateLimit();
   await testAgentCreateInstallScript();
   await testAgentCreateTarball();
   await testAgentCreateRequiresOneSource();
@@ -3049,6 +3171,7 @@ async function main() {
   await testWatchResumesWithLastEventId();
   await testWatchFallsBackToStatusOnQuietClose();
   await testWatchRetriesOn5xx();
+  await testWatchHonorsRetryAfterOnReconnect();
   await testWatchThrowsOnNonRetryableError();
   await testWatchAbort();
   await testTrialGet();

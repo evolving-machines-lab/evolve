@@ -113,10 +113,16 @@ export const EVAL_SANDBOX_PROVIDERS = ["e2b", "daytona", "modal"] as const;
 export type EvalSandboxProvider = (typeof EVAL_SANDBOX_PROVIDERS)[number];
 
 /**
- * Whether a settled trial's `agent_result.cost_usd` was measured from the
- * gateway or is the cap charged conservatively.
+ * Which lane a settled trial's `agent_result.cost_usd` came from. Only
+ * `"measured"` is final. `"measured_provisional"` is a real gateway reading
+ * taken inside its asynchronous spend flush — an honest floor a deferred pass
+ * later confirms or raises into `"measured"`. `"assumed_cap"` means nobody
+ * measured this trial: the figure it carries is zero, a placeholder and never
+ * the cap (the platform under-bills rather than publish an invented number),
+ * replaced when a real reading lands. Read anything but `"measured"` as not
+ * yet final.
  */
-export type SpendSource = "measured" | "assumed";
+export type SpendSource = "measured" | "measured_provisional" | "assumed_cap";
 
 /** Where a trial's verifier executed: inside the agent's environment, or a separate one */
 export type VerifierEnvironmentMode = "shared" | "separate";
@@ -412,7 +418,8 @@ export interface AgentInfo {
 /**
  * What the agent phase produced and consumed. `n_input_tokens` includes cache
  * tokens. `cost_usd` is the settled spend (see `spend_source` on the trial for
- * whether it was measured or assumed). `metadata` carries open per-run detail:
+ * which lane it came from, and whether it is final). `metadata` carries open
+ * per-run detail:
  * the harness bundle digest and runtime, the network mode the trial ran under
  * and where that decision came from, and any harness-reported usage detail.
  */
@@ -500,7 +507,7 @@ export interface Trial {
   verifier: TimingInfo | null;
   /** Multi-step placeholder; null today. */
   step_results: StepResult[] | null;
-  /** Whether `agent_result.cost_usd` was measured or is the cap charged conservatively. */
+  /** Which lane `agent_result.cost_usd` came from — see SpendSource; only "measured" is final. */
   spend_source: SpendSource | null;
   /**
    * A mid-run LOWER BOUND on spend, never the trial's cost. Only ever climbs

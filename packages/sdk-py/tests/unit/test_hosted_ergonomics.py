@@ -145,6 +145,93 @@ class TestErrorEnvelope:
         assert caught.value.request_id == 'req_hdr'
 
     @pytest.mark.asyncio
+    async def test_a_body_delay_of_zero_still_beats_the_header(self):
+        """Body-first means the body WINS, and 0 is a reading, not an absence.
+
+        `or` falls through every falsy value, so an envelope stating 0 took the
+        header's delay instead — TypeScript's readRetryAfterSec keeps the 0, and
+        one law stated two ways in two SDKs is two laws.
+        """
+
+        def fake(request, timeout=None):
+            raise http_error(
+                429,
+                {'error': {'code': 'rate_limited', 'message': 'slow down', 'retryAfterSec': 0}},
+                {'Retry-After': '30'},
+            )
+
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            with pytest.raises(EvolveAPIError) as caught:
+                await datasets_factory(CONFIG).list()
+
+        assert caught.value.retry_after_sec == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('raw', ['Infinity', '-Infinity', 'nan'])
+    async def test_a_non_finite_header_reads_as_absent(self, raw):
+        """A delay that cannot be waited is no reading at all.
+
+        ``float('Infinity')`` succeeds and raises no ValueError, so the header
+        rode through to every sleeper: ``watch_import`` and the event-stream
+        reconnect both do ``sleep(max(delay, poll_interval))``, which parks
+        forever with no bound and no output. TypeScript refuses the identical
+        header through ``Number.isFinite`` — one law, both mirrors.
+        """
+
+        def fake(request, timeout=None):
+            raise http_error(
+                429,
+                {'error': {'code': 'rate_limited', 'message': 'slow down'}},
+                {'Retry-After': raw},
+            )
+
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            with pytest.raises(EvolveAPIError) as caught:
+                await datasets_factory(CONFIG).list()
+
+        assert caught.value.retry_after_sec is None
+
+    @pytest.mark.asyncio
+    async def test_a_non_finite_body_delay_falls_back_to_the_header(self):
+        """The body wins only when it is finite — ``json.loads`` admits ``Infinity``.
+
+        Python's parser reads the bare ``Infinity`` literal that JavaScript's
+        ``JSON.parse`` throws on, so the envelope is the mirror's OWN way in for
+        an unwaitable delay. Refusing it leaves the header as the reading.
+        """
+
+        def fake(request, timeout=None):
+            raise http_error(
+                429,
+                {'error': {'code': 'rate_limited', 'message': 'slow down', 'retryAfterSec': float('inf')}},
+                {'Retry-After': '5'},
+            )
+
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            with pytest.raises(EvolveAPIError) as caught:
+                await datasets_factory(CONFIG).list()
+
+        assert caught.value.retry_after_sec == 5
+
+    @pytest.mark.asyncio
+    async def test_a_boolean_body_delay_is_not_a_number(self):
+        """``isinstance(True, int)`` is True in Python; ``typeof true`` is not
+        "number" in TypeScript. The mirrors agree: a bool is not a delay."""
+
+        def fake(request, timeout=None):
+            raise http_error(
+                429,
+                {'error': {'code': 'rate_limited', 'message': 'slow down', 'retryAfterSec': True}},
+                {},
+            )
+
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            with pytest.raises(EvolveAPIError) as caught:
+                await datasets_factory(CONFIG).list()
+
+        assert caught.value.retry_after_sec is None
+
+    @pytest.mark.asyncio
     async def test_unparseable_body_still_yields_a_typed_error(self):
         import io
         import urllib.error

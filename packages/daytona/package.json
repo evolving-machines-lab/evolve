@@ -33,7 +33,7 @@
     "build": "tsup --minify",
     "dev": "tsup --watch",
     "type-check": "tsc --noEmit",
-    "test:unit": "tsx tests/unit/daytona-commands.test.ts && tsx tests/unit/daytona-provider.test.ts && tsx tests/unit/daytona-managed.test.ts && tsx tests/unit/daytona-list-pagination.test.ts && tsx tests/unit/daytona-image-version.test.ts"
+    "test:unit": "tsx tests/unit/daytona-commands.test.ts && tsx tests/unit/daytona-provider.test.ts && tsx tests/unit/daytona-managed.test.ts && tsx tests/unit/daytona-list-pagination.test.ts && tsx tests/unit/daytona-image-version.test.ts && tsx tests/unit/daytona-files-read.test.ts"
   },
   "dependencies": {
     "@daytonaio/sdk": "^0.134.0"
