@@ -477,6 +477,81 @@ async function testConfigFileMerge() {
       "must be a list of objects",
       'a scalar "datasets" is named for what it is, not reported as a missing -d'
     );
+
+    // A real YAML reader resolves types the hand-written subset never could,
+    // and JSON.stringify REWRITES the surplus instead of refusing it: a Date
+    // leaves as an ISO string, .inf/.nan as null, !!binary as a Buffer object.
+    // job_name is a plain string with maxLength 200 in the spec, so the server
+    // ACCEPTS the rewritten date — the one bad value that passes every gate and
+    // still lands, under a name the caller never wrote.
+    const wireCases: Array<[string, string, string]> = [
+      ["date-name", "job_name: 2026-08-02", "resolved to a Date"],
+      ["binary-name", "job_name: !!binary aGVsbG8=", "resolved to a Buffer"],
+      ["inf-spend", "max_trial_spend_usd: .inf", "is infinite"],
+      ["nan-spend", "max_trial_spend_usd: .nan", "is .nan"],
+      ["set-env", "agent_env: !!set {a: null}", "resolved to a Set"],
+      ["date-env", "agent_env: {WHEN: 2026-08-02}", "agent_env.WHEN"],
+      ["bool-name", "job_name: yes", '"job_name" in'],
+      ["text-spend", "max_trial_spend_usd: abc", '"max_trial_spend_usd" in'],
+      ["bool-env", "verifier_env: {DEBUG: on}", "verifier_env.DEBUG"],
+    ];
+    for (const [name, line, needle] of wireCases) {
+      const casePath = join(dir, `${name}.yaml`);
+      await writeFile(casePath, `${line}\ndatasets: [{name: deep-swe}]\nagents: [{name: claude}]\n`);
+      assertThrowsUsage(
+        () => buildJobInput(parseArgs(["job", "start", "-c", casePath])),
+        needle,
+        `\`${line}\` refuses at the keyboard instead of riding the wire rewritten`
+      );
+    }
+
+    // Quoting is the fix every one of those refusals points at, and it works.
+    const quotedPath = join(dir, "quoted.yaml");
+    await writeFile(
+      quotedPath,
+      ['job_name: "2026-08-02"', 'agent_env: {WHEN: "2026-08-02", DEBUG: "on"}', "max_trial_spend_usd: 25", "datasets: [{name: deep-swe}]", "agents: [{name: claude}]"].join("\n")
+    );
+    const quoted = buildJobInput(parseArgs(["job", "start", "-c", quotedPath]));
+    assertEqual(quoted.job_name, "2026-08-02", "a quoted date is the literal string the caller wrote");
+    assertEqual(
+      quoted.agent_env,
+      { WHEN: "2026-08-02", DEBUG: "on" },
+      "quoted env values pass through as the strings the wire takes"
+    );
+
+    // --print-config is the dry run a paid remote run deserves, so the exit
+    // code is the promise: the date-named job printed a rewritten body at
+    // exit 0, where every config refusal is a usage exit 2.
+    const printIO = captureIO();
+    assertEqual(
+      await runCli(["job", "start", "-c", join(dir, "date-name.yaml"), "--print-config", ...AUTH], printIO.io),
+      2,
+      "--print-config exits 2 over a body it would have rewritten, never 0"
+    );
+    assert(
+      printIO.out.length === 0 && printIO.err.some((l) => l.includes("resolved to a Date")),
+      "and prints the refusal, not a config body"
+    );
+
+    // The library's alias-bomb guard throws from toJS(), past the parse's own
+    // error list — unwrapped it was a bare exit 1 naming no file.
+    const bombPath = join(dir, "alias-bomb.yaml");
+    const rows = ["a1: &a1 [x, x, x, x, x, x, x, x, x]"];
+    for (let i = 2; i <= 5; i++) {
+      rows.push(`a${i}: &a${i} [${Array(9).fill(`*a${i - 1}`).join(", ")}]`);
+    }
+    rows.push("job_name: *a5", "datasets: [{name: deep-swe}]", "agents: [{name: claude}]");
+    await writeFile(bombPath, rows.join("\n"));
+    assertThrowsUsage(
+      () => buildJobInput(parseArgs(["job", "start", "-c", bombPath])),
+      bombPath,
+      "a recursive-alias config refuses as a usage error naming its source"
+    );
+    assertEqual(
+      await runCli(["job", "start", "-c", bombPath, "--print-config", ...AUTH], captureIO().io),
+      2,
+      "and exits 2 like every other config refusal, not 1"
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -1619,8 +1694,8 @@ async function testJobStopReportsThePartialItAlreadySettled() {
       "the half with no answer is stated as unreported, not silently dropped"
     );
     assert(
-      out.some((l) => l.includes("the stop request for trials 201-250 failed")),
-      "and the failed batch is named by position, not left to arithmetic"
+      out.some((l) => l.includes("no answer came back for trials 201-250")),
+      "and the unanswered batch is named by position, in the report's own words — not called failed"
     );
 
     // --json carries the same truth machine-readably: the merged report plus

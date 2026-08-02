@@ -760,7 +760,10 @@ export function parseArgs(argv: string[]): Invocation {
  * of the library: a second document, an unresolvable tag (both PyYAML refusals
  * too), and a duplicate key — PyYAML silently keeps the last value, and that
  * silence is exactly the corruption a config file cannot afford. Every refusal
- * carries `source:line`; an empty or comment-only file is an empty object.
+ * names its `source` and carries `:line` wherever the parser places the
+ * problem — the library's alias-bomb guard fires at resolution, after parsing,
+ * and has no position to give. An empty or comment-only file is an empty
+ * object.
  */
 export function parseYamlConfig(text: string, source: string): unknown {
   const doc = parseDocument(text, {
@@ -788,7 +791,15 @@ export function parseYamlConfig(text: string, source: string): unknown {
         : problem.message.replace(/ at line \d+, column \d+:[\s\S]*$/, "");
     throw new CliUsageError(`${source}:${line}: ${what}`);
   }
-  return doc.toJS() ?? {};
+  // Aliases resolve in `toJS`, not in the parse, so the library's own
+  // resource-exhaustion guard throws PAST the check above. Unwrapped it left
+  // this reader as a bare exit 1 naming no file, where every other config
+  // refusal is a usage exit 2 naming its source.
+  try {
+    return doc.toJS() ?? {};
+  } catch (error) {
+    throw new CliUsageError(`${source}: ${(error as Error).message}`);
+  }
 }
 
 /** The closed key vocabulary a -c config file may use (the spec's JobCreate). */
@@ -803,6 +814,62 @@ const JOB_CONFIG_KEYS = new Set([
   "agent_env",
   "verifier_env",
 ]);
+
+/** The scalar spec type of every -c key that carries one (the spec's JobCreate). */
+const JOB_CONFIG_SCALARS: Record<string, "string" | "number"> = {
+  job_name: "string",
+  sandbox_provider: "string",
+  n_attempts: "number",
+  n_concurrent_trials: "number",
+  max_trial_spend_usd: "number",
+};
+
+/** Name a config value by what it is, for a refusal the reader can act on. */
+function describeConfigValue(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "a list";
+  if (typeof value === "object") return `a ${value.constructor?.name ?? "object"}`;
+  return `a ${typeof value}`;
+}
+
+/** A mapping the wire can carry as an object — not a Date, a Set, a Buffer. */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value) as unknown;
+  return proto === Object.prototype || proto === null;
+}
+
+/**
+ * YAML 1.1 resolves more than a JSON body can carry, and `JSON.stringify` does
+ * not refuse the surplus — it REWRITES it: `2026-08-02` is a Date and leaves as
+ * an ISO string, `.inf`/`.nan` leave as `null`, `!!binary` as a `{"type":
+ * "Buffer"}` object, `!!set` as `{}`. `job_name` is typed loosely enough in the
+ * spec that the server ACCEPTS the rewrite, so that one lands as the job's name
+ * with nothing anywhere saying so. Every value is checked at every depth,
+ * because selector fields ride the same wire.
+ */
+function checkWireValue(value: unknown, where: string, source: string): void {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return;
+  if (typeof value === "number") {
+    if (Number.isFinite(value)) return;
+    throw new CliUsageError(
+      `--config: ${where} in ${source} is ${Number.isNaN(value) ? ".nan" : "infinite"} — ` +
+        `a JSON body carries finite numbers only`
+    );
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => checkWireValue(item, `${where}[${index}]`, source));
+    return;
+  }
+  if (isPlainObject(value)) {
+    for (const [key, item] of Object.entries(value)) checkWireValue(item, `${where}.${key}`, source);
+    return;
+  }
+  throw new CliUsageError(
+    `--config: ${where} in ${source} resolved to ${describeConfigValue(value)}, which a JSON body ` +
+      `cannot carry — quote the value to keep it text`
+  );
+}
 
 function loadJobConfig(path: string, read: (path: string) => string): Partial<JobCreate> {
   let text: string;
@@ -824,11 +891,43 @@ function loadJobConfig(path: string, read: (path: string) => string): Partial<Jo
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new CliUsageError(`--config: ${path} must contain a JSON/YAML object`);
   }
-  for (const key of Object.keys(value)) {
+  const record = value as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
     if (!JOB_CONFIG_KEYS.has(key)) {
       throw new CliUsageError(
         `--config: unknown key "${key}" in ${path} (allowed: ${[...JOB_CONFIG_KEYS].join(", ")})`
       );
+    }
+  }
+  for (const [key, item] of Object.entries(record)) checkWireValue(item, key, path);
+  // The file's own text decides these types, so this reader owns them — what
+  // it does not own is what only the server knows (ranges, lengths, whether a
+  // name exists). `job_name: yes` is a boolean and `n_attempts: two` a string
+  // in every YAML reading there is, and both reached --print-config at exit 0.
+  for (const [key, kind] of Object.entries(JOB_CONFIG_SCALARS)) {
+    const item = record[key];
+    if (item === undefined) continue;
+    if (typeof item !== kind) {
+      throw new CliUsageError(
+        `--config: "${key}" in ${path} must be a ${kind}, not ${describeConfigValue(item)}`
+      );
+    }
+  }
+  // agent_env/verifier_env are KEY: VALUE strings on the wire, and YAML types
+  // a bare value for you — `DEBUG: yes` is a boolean, not the string "yes".
+  for (const key of ["agent_env", "verifier_env"] as const) {
+    const env = record[key];
+    if (env === undefined) continue;
+    if (!isPlainObject(env)) {
+      throw new CliUsageError(`--config: "${key}" in ${path} must be a map of KEY: "value" pairs`);
+    }
+    for (const [name, item] of Object.entries(env)) {
+      if (typeof item !== "string") {
+        throw new CliUsageError(
+          `--config: ${key}.${name} in ${path} must be a string, not ${describeConfigValue(item)} ` +
+            `— quote it (${name}: "...")`
+        );
+      }
     }
   }
   // datasets/agents are lists of selector objects and buildJobInput spreads
@@ -837,16 +936,15 @@ function loadJobConfig(path: string, read: (path: string) => string): Partial<Jo
   // object at exit 0 and the wire as a server-side refusal. The element type is
   // this reader's to name, at the keyboard, before any round trip.
   for (const key of ["datasets", "agents"] as const) {
-    const list = (value as Record<string, unknown>)[key];
+    const list = record[key];
     if (list === undefined) continue;
     if (!Array.isArray(list)) {
       throw new CliUsageError(`--config: "${key}" in ${path} must be a list of objects`);
     }
     list.forEach((item, index) => {
-      if (item !== null && typeof item === "object" && !Array.isArray(item)) return;
-      const kind = item === null ? "null" : Array.isArray(item) ? "a list" : `a ${typeof item}`;
+      if (isPlainObject(item)) return;
       throw new CliUsageError(
-        `--config: ${key}[${index}] in ${path} must be an object like {name: ${key === "agents" ? "claude" : "swe-bench"}}, not ${kind}`
+        `--config: ${key}[${index}] in ${path} must be an object like {name: ${key === "agents" ? "claude" : "swe-bench"}}, not ${describeConfigValue(item)}`
       );
     });
   }
@@ -1859,9 +1957,11 @@ function emitStopReport(
   if (unreported > 0) {
     // Name the batch the failure landed on — the first 100 (or fewer) of the
     // unreported slice — so the caller knows WHERE it died, not just how much.
+    // "No answer came back", never "failed": that request may well have
+    // settled server-side, which is the whole reason this line exists.
     io.out(
       `PARTIAL: ${unreported} of ${total} trials have no report — ` +
-        `the stop request for trials ${reported + 1}-${Math.min(reported + 100, total)} failed; ` +
+        `no answer came back for trials ${reported + 1}-${Math.min(reported + 100, total)}; ` +
         `rerun the same command to finish the rest.`
     );
   }
