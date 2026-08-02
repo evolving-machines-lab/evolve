@@ -528,7 +528,21 @@ async function testHelpAndVersion() {
 
   const trialCmd = captureIO();
   await runCli(["help", "trial", "download"], trialCmd.io);
-  assert(trialCmd.out.join("\n").includes("--stream"), "help <group> <verb> resolves the command help");
+  const trialCmdText = trialCmd.out.join("\n");
+  assert(trialCmdText.includes("--stream"), "help <group> <verb> resolves the command help");
+  assert(
+    trialCmdText.includes("trajectory (not served yet)"),
+    "--stream help admits trajectory is ahead of its server wave"
+  );
+
+  const resumeCmd = captureIO();
+  await runCli(["job", "resume", "--help"], resumeCmd.io);
+  const resumeText = resumeCmd.out.join("\n");
+  assert(resumeText.includes("failed or stopped trials"), "resume summary owns the stopped trials it picks up");
+  assert(
+    resumeText.includes("plus stopped trials"),
+    "the -f default names stopped trials as part of the standard set"
+  );
 
   const version = captureIO();
   assertEqual(await runCli(["--version"], version.io), 0, "--version exits 0");
@@ -1401,14 +1415,19 @@ async function testTrialDownloadTrajectoryRefused() {
   console.log("\n--- runCli: --stream trajectory surfaces the server's refusal honestly ---");
   installMockFetch();
   try {
+    // The graceful not-yet answer the spec promises until trajectory's wave
+    // lands. The CLI's whole job is a clean relay: the server's own sentence,
+    // one line, nothing invented and nothing on stdout.
+    const sentence = "trajectory is not served yet; it arrives with a later wave";
     setMockResponse("/trace?stream=trajectory", {
       status: 404,
-      body: { error: { code: "not_found", message: "Unknown stream: trajectory" } },
+      body: { error: { code: "not_found", message: sentence } },
     });
-    const { io, err } = captureIO();
+    const { io, out, err } = captureIO();
     const code = await runCli(["trial", "download", "run-1", "--stream", "trajectory", ...AUTH], io);
     assertEqual(code, 1, "a server refusal is exit 1, not a silent success");
-    assert(err[0].includes("Unknown stream"), "the server's sentence reaches stderr");
+    assertEqual(err, [`Error: ${sentence}`], "the server's sentence reaches stderr verbatim, one line");
+    assertEqual(out, [], "a refusal prints nothing on stdout");
   } finally {
     restoreFetch();
   }

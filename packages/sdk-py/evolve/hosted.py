@@ -2941,14 +2941,16 @@ class JobsClient:
         filter_error_types: Optional[List[str]] = None,
         idempotency_key: Optional[str] = None,
     ) -> Job:
-        """Resume a terminal job: a NEW linked job over its failed trials.
+        """Resume a terminal job: a NEW linked job over its failed and
+        stopped trials.
 
         ``source_jobs`` on the new job records ``action="resume"``; the source
         is never mutated. ``filter_error_types`` selects which failures to
         resume by their ``exception_info.exception_type``; omitted, the server
         default set applies (ScoringError, InfrastructureError,
-        IncompleteTrialError, plus still-QUEUED trials of a cancelled source).
-        Supports Idempotency-Key.
+        IncompleteTrialError, plus stopped trials — settled CANCELLED,
+        exception type CancelledError — and still-QUEUED trials of a
+        cancelled source). Supports Idempotency-Key.
         """
         body: Dict[str, Any] = {}
         if filter_error_types is not None:

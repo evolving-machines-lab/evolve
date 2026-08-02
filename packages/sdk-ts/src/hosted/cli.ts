@@ -266,7 +266,7 @@ const GROUPS: Record<string, GroupSpec> = {
         example: "evolve-evals job stop cme12ab34 --dataset deep-swe",
       },
       resume: {
-        summary: "New linked job over a terminal job's failed trials",
+        summary: "New linked job over a terminal job's failed or stopped trials",
         flags: {
           "filter-error-type": {
             kind: "repeat",
@@ -274,7 +274,7 @@ const GROUPS: Record<string, GroupSpec> = {
             value: "<type>",
             help:
               "Failure types to resume, matched on exception_info.exception_type " +
-              "(repeatable; default: the server's standard set)",
+              "(repeatable; default: the standard failure set plus stopped trials)",
           },
         },
         minPositionals: 1,
@@ -331,7 +331,7 @@ const GROUPS: Record<string, GroupSpec> = {
             value: "<artifact>",
             help:
               "Print ONE artifact to stdout instead of saving: trace-parsed | verifier | " +
-              "trace-stdout | trace-stderr | trajectory | agent-home",
+              "trace-stdout | trace-stderr | trajectory (not served yet) | agent-home",
           },
           cursor: { kind: "string", value: "<seq>", help: "With --stream trace-parsed: resume after this seq" },
           limit: { kind: "number", value: "<n>", help: "With --stream trace-parsed: max events per page" },

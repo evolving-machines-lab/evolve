@@ -67,7 +67,7 @@ job = await evals.start(
     ],
     agents=[
         {'name': 'codex', 'model_name': 'gpt-5.5'},
-        {'name': 'claude', 'model_name': 'claude-fable-5'},
+        {'name': 'claude', 'model_name': 'fable'},
     ],
     n_attempts=1,               # (optional) attempts per task × agent arm, default 1
     n_concurrent_trials=4,      # (optional) parallel trials, default 4, ceiling 16
@@ -107,7 +107,7 @@ A job expands to `tasks × agents × n_attempts` trials, each in its own sandbox
 
 ### Agent arms
 
-An agent arm is `name` plus `model_name` plus two optional identity fields. `name` is a built-in (`claude`, `codex`, `gemini`, `qwen`, `kimi`, `opencode`, `droid`) or an agent you registered yourself ([Bring your own agent](#bring-your-own-agent)); `model_name` is always required — the server applies no model default. Valid pairs are the same as everywhere in the SDK — see [Getting Started → Harness and Model Pairing](./01-getting-started.md#harness-and-model-pairing).
+An agent arm is `name` plus `model_name` plus two optional identity fields. `name` is a built-in (`claude`, `codex`, `gemini`, `qwen`, `kimi`, `opencode`, `droid`) or an agent you registered yourself ([Bring your own agent](#bring-your-own-agent)); `model_name` is always required — the server applies no model default. Model names are the SDK's own, harness by harness: the `claude` harness takes the short aliases exactly as the model table lists them — `haiku`, `opus`, `sonnet`, `fable` — and every other harness takes its canonical names from that same table (`gpt-5.5` for `codex`, `claude-fable-5` for `droid`, the `openrouter/…` ids for `opencode`). The table and the pairing rules live in [Getting Started → Agent Reference](./01-getting-started.md#agent-reference).
 
 Pin an agent version when you need the comparison to hold still across weeks:
 
@@ -327,7 +327,7 @@ print(report.already_terminal)          # were already done; untouched
 print(report.not_found)                 # not yours or not real — never distinguished
 ```
 
-`stop()` kills each trial's sandbox and settles the trial with its spend read from the gateway. Every requested id appears in exactly one of the three lists. Ids belonging to someone else land in `not_found` — existence is never leaked — and already-terminal trials are reported as such and left untouched, so the call is idempotent. One request takes up to 100 ids.
+`stop()` kills each trial's sandbox and settles the trial with its spend read from the gateway. Every requested id appears in exactly one of the three lists. Ids belonging to someone else land in `not_found` — existence is never leaked — and already-terminal trials are reported as such and left untouched, so the call is idempotent. One request takes up to 100 ids. A stopped trial rejoins the run by default on [`resume()`](#resume) once its job is terminal.
 
 The CLI adds one convenience on top: `evolve-evals job stop <id> --dataset <name>` stops one dataset's live trials and leaves the job — and every other dataset — running. It is pure sugar over surfaces that already exist (the job's `datasets`, the trial list's `dataset` filter, and the stop door), pages its batch under the 100-id cap, and merges the reports into one outcome. Stopping a dataset the job never spanned is a refusal, not an empty no-op — silence would read as "nothing was running".
 
@@ -335,14 +335,14 @@ The CLI adds one convenience on top: `evolve-evals job stop <id> --dataset <name
 
 ## Resume
 
-`resume()` takes a terminal job and creates a **new linked job** holding fresh trials for the source's failed work. The source is never mutated — it stays separately citable, and the new job's `source_jobs` records where it came from:
+`resume()` takes a terminal job and creates a **new linked job** holding fresh trials for the source's failed and stopped work. The source is never mutated — it stays separately citable, and the new job's `source_jobs` records where it came from:
 
 ```python
 follow_up = await evals.resume(job.id, idempotency_key='resume-1')
 print(follow_up.source_jobs)   # [SourceJob(action='resume', type='hub', job_id=job.id)]
 ```
 
-By default the platform resumes its standard failure set — `ScoringError`, `InfrastructureError`, `IncompleteTrialError`, plus still-queued trials of a cancelled source. Narrow it by exception type when you mean something more surgical:
+By default the platform resumes its standard failure set — `ScoringError`, `InfrastructureError`, `IncompleteTrialError` — plus stopped trials and the still-queued trials of a cancelled source. A stopped trial settles `CANCELLED` with exception type `CancelledError`, so a stop is never a dead end: `resume()` picks the stopped work back up without being asked. Narrow the set by exception type when you mean something more surgical:
 
 ```python
 await evals.resume(job.id, filter_error_types=['InfrastructureError'])
@@ -456,7 +456,7 @@ agents:
   - name: codex
     model_name: gpt-5.5
   - name: claude
-    model_name: claude-fable-5
+    model_name: fable
 n_attempts: 2
 max_trial_spend_usd: 25
 ```

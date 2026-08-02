@@ -257,7 +257,8 @@ export interface ResumeRequest {
    * Which failures to resume, matched against
    * `exception_info.exception_type`. Omitted, the default set is
    * ["ScoringError", "InfrastructureError", "IncompleteTrialError"] plus
-   * still-QUEUED trials of a cancelled source.
+   * stopped trials (settled CANCELLED, exception type "CancelledError")
+   * and still-QUEUED trials of a cancelled source.
    */
   filter_error_types?: string[];
 }
@@ -1392,10 +1393,11 @@ export interface JobsClient {
   cancel(id: string): Promise<Job>;
   /**
    * Resume a terminal job: a NEW linked job holding fresh trials for the
-   * source's failed work (`source_jobs` records `action: "resume"`); the
-   * source is never mutated. `request.filter_error_types` selects which
-   * failures to resume by `exception_info.exception_type`. Supports
-   * Idempotency-Key.
+   * source's failed and stopped work (`source_jobs` records
+   * `action: "resume"`); the source is never mutated.
+   * `request.filter_error_types` selects which failures to resume by
+   * `exception_info.exception_type`; omitted, the default set includes
+   * stopped trials. Supports Idempotency-Key.
    */
   resume(id: string, request?: ResumeRequest, options?: StartJobOptions): Promise<Job>;
   /**

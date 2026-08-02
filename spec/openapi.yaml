@@ -431,18 +431,19 @@ paths:
     post:
       tags: [jobs]
       operationId: resumeJob
-      summary: Resume a job (new linked job over its failed trials)
+      summary: Resume a job (new linked job over its failed and stopped trials)
       description: |
         Creates a NEW job holding fresh trials for the source job's failed
-        work, linked back via `source_jobs` (`action: "resume"`). The source
-        job is never mutated — the original run stays immutable and separately
-        citable.
+        and stopped work, linked back via `source_jobs` (`action: "resume"`).
+        The source job is never mutated — the original run stays immutable and
+        separately citable.
 
         `filter_error_types` selects which failures to resume by their
         `exception_info.exception_type`; omitted, the default set is
         `["ScoringError", "InfrastructureError", "IncompleteTrialError"]`
-        plus any still-QUEUED trials of a cancelled source. The source job
-        must be terminal.
+        plus stopped trials (settled CANCELLED, exception type
+        `CancelledError`) and any still-QUEUED trials of a cancelled source.
+        The source job must be terminal.
 
         Supports `Idempotency-Key` with a fingerprint namespaced to this
         route, so a create key can never replay a resume.
@@ -1971,7 +1972,8 @@ components:
             Which failures to resume, matched against
             `exception_info.exception_type`. Omitted, the default set is
             `["ScoringError", "InfrastructureError", "IncompleteTrialError"]`
-            plus still-QUEUED trials of a cancelled source.
+            plus stopped trials (settled CANCELLED, exception type
+            `CancelledError`) and still-QUEUED trials of a cancelled source.
           items:
             type: string
 
