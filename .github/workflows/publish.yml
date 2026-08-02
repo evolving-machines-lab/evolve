@@ -234,15 +234,33 @@ jobs:
       # before the packages that default to it go live)
       # =======================================================================
 
-      - name: Log in to Docker Hub
+      # The image push is skipped — loudly, never silently — when the Docker
+      # Hub secrets are absent (they are optional repo config; images can also
+      # be pushed by an operator via assets/docker/build.ts). The packages that
+      # default to the derived tag MUST NOT go live before that tag exists, so
+      # the skip prints the exact command the operator owes.
+      - name: Check Docker Hub credentials
+        id: dockerhub
         if: inputs.dry_run != true
+        env:
+          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          if [ -n "$DH_USER" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::DOCKERHUB_USERNAME/DOCKERHUB_TOKEN not configured — image push SKIPPED. Push the derived tag before release: npx tsx assets/docker/build.ts"
+          fi
+
+      - name: Log in to Docker Hub
+        if: inputs.dry_run != true && steps.dockerhub.outputs.present == 'true'
         run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login --username "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
       # Idempotent: build.ts skips the build when evolve-all:c-<12hex> is
       # already on Docker Hub (same content → same tag) and only realigns
       # :latest; a changed Dockerfile derives a new tag and builds + pushes it.
       - name: Build and push evolve-all image
-        if: inputs.dry_run != true
+        if: inputs.dry_run != true && steps.dockerhub.outputs.present == 'true'
         run: npx tsx assets/docker/build.ts
 
       # =======================================================================
