@@ -213,7 +213,8 @@ export interface AgentArm {
 /**
  * Provenance of a derived job. `action: "regrade"` = verifier-only re-run of
  * the source; `action: "resume"` (platform extension) = new job over the
- * source's failed trials. `type` is always "hub" on this hosted surface.
+ * source's failed and stopped trials. `type` is always "hub" on this hosted
+ * surface.
  */
 export interface SourceJob {
   action: "regrade" | "resume";

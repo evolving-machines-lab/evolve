@@ -106,7 +106,7 @@ await evolve.run({ prompt: "Hello world" });
 | Token counts + timing pairs on trials | [Hosted Evals → One Trial in Depth](./06-hosted-evals.md#one-trial-in-depth) |
 | Trial artifacts (the six-name vocabulary, `artifact()`) | [Hosted Evals → Trial Artifacts](./06-hosted-evals.md#trial-artifacts--the-raw-record) |
 | Stop verbs (`cancel()`, `trials().stop()`, `job stop --dataset`) | [Hosted Evals → Stopping Work](./06-hosted-evals.md#stopping-work) |
-| `resume()` (new linked job over failed trials) | [Hosted Evals → Resume](./06-hosted-evals.md#resume) |
+| `resume()` (new linked job over failed and stopped trials) | [Hosted Evals → Resume](./06-hosted-evals.md#resume) |
 | Regrade (`regrade()` — the response IS a job) | [Hosted Evals → Regrade](./06-hosted-evals.md#regrade) |
 | `compare()` (aggregates + task matrix) | [Hosted Evals → Compare](./06-hosted-evals.md#compare) |
 | `download()` (the results archive) | [Hosted Evals → Download the Archive](./06-hosted-evals.md#download-the-archive) |

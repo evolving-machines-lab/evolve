@@ -1890,8 +1890,8 @@ components:
       description: >
         Provenance of a derived job. `action: regrade` = verifier-only re-run
         of the source; `action: resume` (platform extension) = new job over
-        the source's failed trials. `type` is always `hub` on this hosted
-        surface.
+        the source's failed and stopped trials. `type` is always `hub` on
+        this hosted surface.
       required: [action, type, job_id]
       properties:
         action:

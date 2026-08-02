@@ -563,8 +563,8 @@ class SourceJob:
     """Provenance of a derived job.
 
     ``action='regrade'`` = verifier-only re-run of the source;
-    ``action='resume'`` = new job over the source's failed trials. ``type`` is
-    always ``'hub'`` on this hosted surface.
+    ``action='resume'`` = new job over the source's failed and stopped
+    trials. ``type`` is always ``'hub'`` on this hosted surface.
     """
     action: str
     type: str

@@ -130,7 +130,7 @@ Read on demand when the user's task requires them:
 | Token counts + timing pairs on trials | [TS](references/typescript/06-hosted-evals.md#one-trial-in-depth) | [PY](references/python/06-hosted-evals.md#one-trial-in-depth) |
 | Trial artifacts (the six-name vocabulary, artifact()) | [TS](references/typescript/06-hosted-evals.md#trial-artifacts--the-raw-record) | [PY](references/python/06-hosted-evals.md#trial-artifacts--the-raw-record) |
 | Stop verbs (job cancel, trial stop, job stop --dataset) | [TS](references/typescript/06-hosted-evals.md#stopping-work) | [PY](references/python/06-hosted-evals.md#stopping-work) |
-| Resume (new linked job over failed trials) | [TS](references/typescript/06-hosted-evals.md#resume) | [PY](references/python/06-hosted-evals.md#resume) |
+| Resume (new linked job over failed and stopped trials) | [TS](references/typescript/06-hosted-evals.md#resume) | [PY](references/python/06-hosted-evals.md#resume) |
 | Regrade (verifier-only re-run — the response IS a job) | [TS](references/typescript/06-hosted-evals.md#regrade) | [PY](references/python/06-hosted-evals.md#regrade) |
 | compare() (aggregates + task matrix) | [TS](references/typescript/06-hosted-evals.md#compare) | [PY](references/python/06-hosted-evals.md#compare) |
 | download() (the results archive) | [TS](references/typescript/06-hosted-evals.md#download-the-archive) | [PY](references/python/06-hosted-evals.md#download-the-archive) |
