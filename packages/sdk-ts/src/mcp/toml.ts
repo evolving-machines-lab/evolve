@@ -3,8 +3,14 @@
  *
  * Handles MCP config for Codex agent which uses TOML format.
  * Uses registry for paths - no hardcoded values.
+ *
+ * Every writer here follows one pattern: parse the existing document into an
+ * object, mutate the object, re-serialize with smol-toml. Nothing inspects the
+ * raw text, so a commented-out section never masks a real one and a value
+ * containing newlines or quotes cannot break the file.
  */
 
+import { parse, stringify } from "smol-toml";
 import type { SandboxInstance, McpServerConfig } from "../types";
 import { getMcpSettingsDir, getMcpSettingsPath, expandPath } from "../registry";
 import { validateMcpServer, isNotFoundError } from "./validation";
@@ -14,35 +20,127 @@ import {
 } from "../constants";
 
 // =============================================================================
-// TOML SERIALIZATION
+// TOML DOCUMENT HELPERS
 // =============================================================================
 
-/**
- * Serialize a value to TOML format
- */
-function serializeTomlValue(value: unknown): string {
-  if (typeof value === "string") {
-    // Escape backslashes and double quotes
-    return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map((v) => serializeTomlValue(v)).join(", ")}]`;
-  }
-  if (typeof value === "object" && value !== null) {
-    const pairs = Object.entries(value).map(
-      ([k, v]) => `${k} = ${serializeTomlValue(v)}`
+type TomlTable = Record<string, unknown>;
+
+/** Narrow to a TOML table (plain object), rejecting arrays and scalars. */
+function asTable(value: unknown): TomlTable | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as TomlTable)
+    : undefined;
+}
+
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return (
+      Array.isArray(a) &&
+      Array.isArray(b) &&
+      a.length === b.length &&
+      a.every((item, i) => deepEqual(item, b[i]))
     );
-    return `{ ${pairs.join(", ")} }`;
   }
-  if (typeof value === "boolean") {
-    return value ? "true" : "false";
+  const left = asTable(a);
+  const right = asTable(b);
+  if (!left || !right) return false;
+  const keys = Object.keys(left);
+  return (
+    keys.length === Object.keys(right).length &&
+    keys.every((key) => key in right && deepEqual(left[key], right[key]))
+  );
+}
+
+/** Read and parse a TOML file; an absent or empty file is an empty document. */
+async function readTomlDocument(
+  sandbox: SandboxInstance,
+  path: string,
+): Promise<TomlTable> {
+  let raw = "";
+  try {
+    const existing = await sandbox.files.read(path);
+    if (typeof existing === "string") {
+      raw = existing;
+    }
+  } catch (error) {
+    if (!isNotFoundError(error)) {
+      throw error; // Re-throw unexpected errors (permissions, encoding, etc.)
+    }
+    return {}; // File doesn't exist yet - expected on first run
   }
-  return String(value);
+
+  if (!raw.trim()) return {};
+  try {
+    return parse(raw) as TomlTable;
+  } catch (error) {
+    throw new Error(`Failed to parse TOML at ${path}: ${(error as Error).message}`);
+  }
+}
+
+async function writeTomlDocument(
+  sandbox: SandboxInstance,
+  path: string,
+  doc: TomlTable,
+): Promise<void> {
+  await sandbox.files.write(path, stringify(doc).trimEnd() + "\n");
 }
 
 // =============================================================================
 // CODEX MCP CONFIG
 // =============================================================================
+
+function buildCodexServerTable(name: string, config: McpServerConfig): TomlTable {
+  const table: TomlTable = {};
+
+  const transportType = config.type ?? (config.command ? "stdio" : "http");
+  const isStreamable = transportType === "http" || transportType === "sse" || Boolean(config.url);
+
+  if (isStreamable) {
+    // HTTP/SSE transport
+    if (!config.url) {
+      throw new Error(`MCP server "${name}" is missing url for ${transportType} transport`);
+    }
+    table.url = config.url;
+
+    // Bearer token from env var
+    if (config.bearerTokenEnvVar) {
+      table.bearer_token_env_var = config.bearerTokenEnvVar;
+    }
+
+    // HTTP headers (prefer httpHeaders, fallback to headers)
+    const httpHeaders = config.httpHeaders ?? config.headers;
+    if (httpHeaders && Object.keys(httpHeaders).length > 0) {
+      table.http_headers = httpHeaders;
+    }
+
+    // Environment-based HTTP headers
+    if (config.envHttpHeaders && Object.keys(config.envHttpHeaders).length > 0) {
+      table.env_http_headers = config.envHttpHeaders;
+    }
+  } else {
+    // STDIO transport
+    table.command = config.command!;
+    if (config.args && config.args.length > 0) {
+      table.args = config.args;
+    }
+    if (config.cwd) {
+      table.cwd = config.cwd;
+    }
+  }
+
+  // Common env vars (key=value)
+  if (config.env && Object.keys(config.env).length > 0) {
+    table.env = config.env;
+  }
+
+  // Environment variable names to pass through
+  if (config.envVars && config.envVars.length > 0) {
+    table.env_vars = config.envVars;
+  }
+
+  return table;
+}
 
 /**
  * Write MCP config for Codex agent
@@ -67,100 +165,25 @@ export async function writeCodexMcpConfig(
   await sandbox.files.makeDir(settingsDir);
 
   // Read existing config to preserve other settings
-  let existingToml = "";
-  try {
-    const existing = await sandbox.files.read(settingsPath);
-    if (typeof existing === "string") {
-      existingToml = existing;
-    }
-  } catch (error) {
-    if (!isNotFoundError(error)) {
-      throw error; // Re-throw unexpected errors (permissions, encoding, etc.)
-    }
-    // File doesn't exist yet - expected on first run
+  const doc = await readTomlDocument(sandbox, settingsPath);
+
+  // Enable the improved RMCP client unless the user set it themselves
+  if (doc.experimental_use_rmcp_client === undefined) {
+    doc.experimental_use_rmcp_client = true;
   }
 
-  // Build config sections
-  const globalConfigLines: string[] = [];
-  const mcpTomlLines: string[] = [];
+  const mcpServers = asTable(doc.mcp_servers) ?? {};
+  doc.mcp_servers = mcpServers;
 
-  // Add experimental_use_rmcp_client flag if not present
-  if (!existingToml.includes("experimental_use_rmcp_client")) {
-    globalConfigLines.push("# Enable improved RMCP client (recommended)");
-    globalConfigLines.push("experimental_use_rmcp_client = true");
-  }
-
-  // Add [mcp_servers] section header if not present
-  if (!existingToml.includes("[mcp_servers]")) {
-    mcpTomlLines.push("[mcp_servers]", "");
-  }
-
-  // Generate server sections
   for (const [name, config] of Object.entries(servers)) {
-    // Skip if server already exists
-    if (existingToml.includes(`[mcp_servers.${name}]`)) {
+    // A server the user already configured stays exactly as they wrote it
+    if (mcpServers[name] !== undefined) {
       continue;
     }
-
-    mcpTomlLines.push(`[mcp_servers.${name}]`);
-
-    const transportType = config.type ?? (config.command ? "stdio" : "http");
-    const isStreamable = transportType === "http" || transportType === "sse" || Boolean(config.url);
-
-    if (isStreamable) {
-      // HTTP/SSE transport
-      if (!config.url) {
-        throw new Error(`MCP server "${name}" is missing url for ${transportType} transport`);
-      }
-      mcpTomlLines.push(`url = ${serializeTomlValue(config.url)}`);
-
-      // Bearer token from env var
-      if (config.bearerTokenEnvVar) {
-        mcpTomlLines.push(`bearer_token_env_var = ${serializeTomlValue(config.bearerTokenEnvVar)}`);
-      }
-
-      // HTTP headers (prefer httpHeaders, fallback to headers)
-      const httpHeaders = config.httpHeaders ?? config.headers;
-      if (httpHeaders && Object.keys(httpHeaders).length > 0) {
-        mcpTomlLines.push(`http_headers = ${serializeTomlValue(httpHeaders)}`);
-      }
-
-      // Environment-based HTTP headers
-      if (config.envHttpHeaders && Object.keys(config.envHttpHeaders).length > 0) {
-        mcpTomlLines.push(`env_http_headers = ${serializeTomlValue(config.envHttpHeaders)}`);
-      }
-    } else {
-      // STDIO transport
-      mcpTomlLines.push(`command = ${serializeTomlValue(config.command!)}`);
-      if (config.args && config.args.length > 0) {
-        mcpTomlLines.push(`args = ${serializeTomlValue(config.args)}`);
-      }
-      if (config.cwd) {
-        mcpTomlLines.push(`cwd = ${serializeTomlValue(config.cwd)}`);
-      }
-    }
-
-    // Common env vars (key=value)
-    if (config.env && Object.keys(config.env).length > 0) {
-      mcpTomlLines.push(`env = ${serializeTomlValue(config.env)}`);
-    }
-
-    // Environment variable names to pass through
-    if (config.envVars && config.envVars.length > 0) {
-      mcpTomlLines.push(`env_vars = ${serializeTomlValue(config.envVars)}`);
-    }
-
-    mcpTomlLines.push(""); // Empty line between servers
+    mcpServers[name] = buildCodexServerTable(name, config);
   }
 
-  // Combine all segments
-  const segments = [
-    existingToml.trim(),
-    globalConfigLines.join("\n"),
-    mcpTomlLines.join("\n"),
-  ].filter((segment) => segment.length > 0);
-
-  await sandbox.files.write(settingsPath, segments.join("\n\n") + "\n");
+  await writeTomlDocument(sandbox, settingsPath, doc);
 }
 
 // =============================================================================
@@ -190,25 +213,8 @@ export async function writeCodexSpendProvider(
 
   await sandbox.files.makeDir(settingsDir);
 
-  let existingToml = "";
-  try {
-    const existing = await sandbox.files.read(settingsPath);
-    if (typeof existing === "string") {
-      existingToml = existing;
-    }
-  } catch (error) {
-    if (!isNotFoundError(error)) throw error;
-  }
+  const doc = await readTomlDocument(sandbox, settingsPath);
 
-  // Split into root-level portion (before first [section]) and the rest.
-  // TOML keys before any section header are root-level; keys after belong to that section.
-  const firstSectionIdx = existingToml.search(/^\[/m);
-  const rootPortion = firstSectionIdx >= 0 ? existingToml.slice(0, firstSectionIdx) : existingToml;
-  const restPortion = firstSectionIdx >= 0 ? existingToml.slice(firstSectionIdx) : "";
-
-  // hasRootKey checks only the root portion so a profile-scoped model_provider doesn't match.
-  const hasProviderSection = existingToml.includes("[model_providers.evolve-gateway]");
-  const hasRootKey = /^model_provider\s*=\s*"evolve-gateway"/m.test(rootPortion);
   const providerHeaders = {
     ...(spendTrackingEnvs
       ? {
@@ -218,63 +224,35 @@ export async function writeCodexSpendProvider(
       : {}),
     ...envHttpHeaders,
   };
-  const desiredProviderSection = [
-    "[model_providers.evolve-gateway]",
-    `name = "Evolve Gateway"`,
-    `base_url = ${serializeTomlValue(baseUrl)}`,
-    `env_key = "OPENAI_API_KEY"`,
+  const desiredProvider: TomlTable = {
+    name: "Evolve Gateway",
+    base_url: baseUrl,
+    env_key: "OPENAI_API_KEY",
     // Codex >=0.145 removed wire_api="chat"; "responses" is the only supported
     // value and the default — pinned explicitly so a future default change
     // cannot silently break gateway routing.
-    `wire_api = "responses"`,
+    wire_api: "responses",
     ...(Object.keys(providerHeaders).length > 0
-      ? [`env_http_headers = ${serializeTomlValue(providerHeaders)}`]
-      : []),
-  ].join("\n");
+      ? { env_http_headers: providerHeaders }
+      : {}),
+  };
+
+  const providers = asTable(doc.model_providers) ?? {};
+
+  // model_provider is read as a root key, so a profile-scoped one under
+  // [profiles.*] never satisfies this check.
   if (
-    hasProviderSection &&
-    hasRootKey &&
-    existingToml.includes(desiredProviderSection)
+    doc.model_provider === "evolve-gateway" &&
+    deepEqual(providers["evolve-gateway"], desiredProvider)
   ) {
     return;
   }
 
-  // Strip any existing model_provider root key to avoid duplicate TOML keys.
-  const cleanedRoot = rootPortion.replace(/^model_provider\s*=\s*.*$/m, "").replace(/\n{3,}/g, "\n\n");
+  doc.model_provider = "evolve-gateway";
+  providers["evolve-gateway"] = desiredProvider;
+  doc.model_providers = providers;
 
-  existingToml = (cleanedRoot + restPortion)
-    .replace(
-      /\n?\[model_providers\.evolve-gateway\][\s\S]*?(?=\n\[|\s*$)/,
-      "",
-    )
-    .replace(/^\n+/, "");
-
-  // model_provider must be a root-level TOML key (before any [section] headers).
-  // The [model_providers.evolve-gateway] table goes at the end.
-  const rootKey = `model_provider = "evolve-gateway"`;
-  const providerSection = desiredProviderSection;
-
-  let content: string;
-  if (!existingToml.trim()) {
-    content = providerSection ? `${rootKey}\n\n${providerSection}\n` : `${rootKey}\n`;
-  } else {
-    // Insert root key before the first [section] header so it stays root-level
-    const firstSection = existingToml.search(/^\[/m);
-    if (firstSection > 0) {
-      content = existingToml.slice(0, firstSection) + rootKey + "\n\n" + existingToml.slice(firstSection).trimEnd();
-    } else if (firstSection === 0) {
-      content = rootKey + "\n\n" + existingToml.trimEnd();
-    } else {
-      // No section headers — just append
-      content = existingToml.trimEnd() + "\n\n" + rootKey;
-    }
-    if (providerSection) {
-      content = content.trimEnd() + "\n\n" + providerSection;
-    }
-    content += "\n";
-  }
-
-  await sandbox.files.write(settingsPath, content);
+  await writeTomlDocument(sandbox, settingsPath, doc);
 }
 
 // =============================================================================
@@ -314,36 +292,34 @@ export async function writeKimiSpendConfig(
 
   await sandbox.files.makeDir(configDir);
 
-  // Write from scratch — no reading, no parsing, no merging.
-  const contentLines = [
-    `default_model = ${serializeTomlValue(config.modelName)}`,
-    `default_thinking = ${serializeTomlValue(connection.defaultThinking)}`,
-    `default_permission_mode = "auto"`,
-    "",
-    `[thinking]`,
-    `mode = ${serializeTomlValue(connection.defaultThinking ? "on" : "off")}`,
-  ];
+  // Built from scratch — no reading, no parsing, no merging.
+  const doc: TomlTable = {
+    default_model: config.modelName,
+    default_thinking: connection.defaultThinking,
+    default_permission_mode: "auto",
+    thinking: {
+      mode: connection.defaultThinking ? "on" : "off",
+      ...(connection.defaultThinking && connection.thinkingEffort
+        ? { effort: connection.thinkingEffort }
+        : {}),
+    },
+    providers: {
+      [config.providerName]: {
+        type: "kimi",
+        base_url: connection.baseUrl,
+        api_key: connection.apiKey,
+        custom_headers: headers,
+      },
+    },
+    models: {
+      [config.modelName]: {
+        provider: config.providerName,
+        model: connection.model,
+        max_context_size: config.maxContextSize,
+        capabilities: ["image_in", "thinking"],
+      },
+    },
+  };
 
-  if (connection.defaultThinking && connection.thinkingEffort) {
-    contentLines.push(`effort = ${serializeTomlValue(connection.thinkingEffort)}`);
-  }
-
-  contentLines.push(
-    "",
-    `[providers.${config.providerName}]`,
-    `type = "kimi"`,
-    `base_url = ${serializeTomlValue(connection.baseUrl)}`,
-    `api_key = ${serializeTomlValue(connection.apiKey)}`,
-    `custom_headers = ${serializeTomlValue(headers)}`,
-    "",
-    `[models.${config.modelName}]`,
-    `provider = ${serializeTomlValue(config.providerName)}`,
-    `model = ${serializeTomlValue(connection.model)}`,
-    `max_context_size = ${config.maxContextSize}`,
-    `capabilities = ${serializeTomlValue(["image_in", "thinking"])}`,
-  );
-
-  const content = contentLines.join("\n") + "\n";
-
-  await sandbox.files.write(configPath, content);
+  await writeTomlDocument(sandbox, configPath, doc);
 }

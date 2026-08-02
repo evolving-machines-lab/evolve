@@ -947,7 +947,7 @@ async function testKimiWriteSpendConfigFresh(): Promise<void> {
   assert(content.includes('provider = "evolve-gateway"'), "model points to provider");
   assert(content.includes('model = "moonshot/kimi-k2.5"'), "model resolves to gateway route");
   assert(content.includes("max_context_size = 262144"), "model has max_context_size");
-  assert(content.includes('capabilities = ["image_in", "thinking"]'), "model has Kimi Code capabilities");
+  assert(/capabilities = \[\s*"image_in",\s*"thinking"\s*\]/.test(content), "model has Kimi Code capabilities");
 }
 
 async function testKimiWriteSpendConfigPerRunOverwrite(): Promise<void> {
