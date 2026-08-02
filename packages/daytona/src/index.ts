@@ -117,22 +117,6 @@ export const DAYTONA_LIST_PAGE_SIZE = 100;
  */
 export const DAYTONA_MAX_LIST_PAGES = 100;
 
-const BINARY_EXTENSIONS = new Set([
-  ".xlsx", ".xls", ".docx", ".doc", ".pptx", ".ppt",
-  ".pdf", ".zip", ".tar", ".gz", ".7z", ".rar",
-  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".bmp",
-  ".mp3", ".wav", ".ogg", ".flac", ".aac",
-  ".mp4", ".avi", ".mov", ".mkv", ".webm",
-  ".woff", ".woff2", ".ttf", ".otf", ".eot",
-  ".exe", ".dll", ".so", ".dylib",
-  ".sqlite", ".db", ".pickle", ".pkl", ".parquet",
-]);
-
-function isBinaryFile(path: string): boolean {
-  const ext = path.substring(path.lastIndexOf(".")).toLowerCase();
-  return BINARY_EXTENSIONS.has(ext);
-}
-
 function getParentDir(path: string): string {
   const lastSlash = path.lastIndexOf("/");
   return lastSlash > 0 ? path.substring(0, lastSlash) : "/";
@@ -1417,12 +1401,25 @@ export class DaytonaFiles implements SandboxFiles {
   constructor(private sandbox: DaytonaSandbox) {}
 
   async read(path: string): Promise<string | Uint8Array> {
-    // Evidence: Daytona SDK downloadFile(remotePath) returns Buffer
-    const buffer = await this.sandbox.fs.downloadFile(path);
-    if (isBinaryFile(path)) {
-      return new Uint8Array(buffer);
+    // Evidence: Daytona SDK downloadFile(remotePath) returns Buffer.
+    // Text-vs-binary is decided from CONTENT, never from the file's name:
+    // the SandboxFiles contract is "read returns string | Uint8Array", and
+    // an extension table cannot keep that honest — binary bytes under an
+    // unlisted extension (.bin) would ride a lossy text decode and come back
+    // U+FFFD-mangled. A NUL byte marks binary (the platform's agent-home
+    // sniff, git's own heuristic); everything else must survive a STRICT
+    // UTF-8 decode (fatal, BOM preserved) to come back as a string. Both
+    // answers are therefore byte-exact: a returned string re-encodes to the
+    // identical bytes, a returned Uint8Array IS the bytes.
+    const bytes = new Uint8Array(await this.sandbox.fs.downloadFile(path));
+    if (!bytes.includes(0)) {
+      try {
+        return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+      } catch {
+        // Not valid UTF-8 — binary after all.
+      }
     }
-    return buffer.toString("utf-8");
+    return bytes;
   }
 
   async write(path: string, content: string | Buffer | ArrayBuffer | Uint8Array): Promise<void> {
