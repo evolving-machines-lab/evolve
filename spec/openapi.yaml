@@ -310,9 +310,11 @@ paths:
       summary: Cancel a job
       description: |
         Requests cancellation: QUEUED/RUNNING moves to CANCELLING (compare-and-
-        set with retries), queued trials are cancelled outright, in-flight
-        trials wind down before the job settles CANCELLED. Idempotent — calling
-        it on a job already CANCELLING or terminal returns the current body.
+        set with retries), queued trials are cancelled outright, and in-flight
+        trials are STOPPED — sandboxes killed, spend read honestly — through
+        the same per-trial machinery as `POST /api/trials/stop` before the job
+        settles CANCELLED. Idempotent — calling it on a job already CANCELLING
+        or terminal returns the current body.
       parameters:
         - $ref: '#/components/parameters/JobId'
       responses:
@@ -851,7 +853,12 @@ paths:
       summary: List datasets
       description: >
         The catalog: public datasets plus the caller's own private ones.
-        Another user's private dataset is invisible, never 403.
+        Another user's private dataset is invisible, never 403. A dataset
+        whose every version is FAILED is not listed either — no partial
+        corpus ever exists, and that includes the catalog view. The name
+        still answers `GET /api/datasets/{name}` (and DELETE), and the
+        failed import stays readable at its import id, so nothing about the
+        failure is hidden; re-publishing the same name simply retries it.
       parameters:
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Cursor'
@@ -1046,9 +1053,18 @@ paths:
         Promotes a READY (or VALIDATING-complete) version to the dataset's
         active version, making bare-name job references resolve to it. Closes
         the gap where a caller could publish a dataset but not make it
-        runnable. Refused with `version_not_activatable` when the version can
-        never be activated (for example, no reference solutions were
-        archived — see the import's `warnings`).
+        runnable.
+
+        The proof it requires is the activation gate, and after a hosted
+        import the worker schedules that gate automatically: gold solution
+        scores exactly 1.0 through the real execution path, a do-nothing
+        agent does not. While the gate is scheduled or running the verb
+        answers 202 `gate_running` (a healthy in-progress state, not an
+        error); once it lands, activation either promotes (200) or explains
+        (409 `version_not_ready`, with the gate's failure detail in
+        `details.gate_failure`). Refused with `version_not_activatable` when
+        the version can never be activated (for example, no reference
+        solutions were archived — see the import's `warnings`).
       parameters:
         - $ref: '#/components/parameters/DatasetName'
         - name: version
@@ -1063,6 +1079,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Dataset'
+        '202':
+          description: >
+            Not yet — the activation gate is scheduled or running for this
+            version. Nothing is wrong and nothing is asked of the caller:
+            poll the dataset (each version carries `gate`) and activate
+            again once the gate completes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GateRunning'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1102,6 +1128,13 @@ paths:
         Content-Length (413). The name `imports` is reserved (it is a literal
         path segment under `/api/datasets`) and is refused like any other
         invalid name.
+
+        Once the import COMPLETES, the worker automatically schedules the
+        activation gate (the version's `gate` field tracks it: PENDING ->
+        RUNNING -> PASSED/FAILED); when it PASSES, call the activate verb to
+        promote the version. A version with no archived reference solutions
+        gets no gate — its import `warnings` say so, and activation is
+        refused `version_not_activatable`.
       requestBody:
         required: true
         content:
@@ -1215,6 +1248,15 @@ paths:
         builder sandbox with internet and ZERO secrets; must leave executables
         in `$PREFIX/bin`) or an uploaded gzipped tarball (`archive`).
         Multipart only — nothing travels in the query string.
+
+        Registration validates SHAPE only and never executes the install
+        script: the bundle is built by the first trial that names the agent,
+        and a failing build settles that trial as an infrastructure error
+        with the builder's stdout/stderr stored on it (readable through the
+        trial's `trace-stdout` / `trace-stderr` streams). Line endings in
+        `install_script` and `run_command` are normalized CRLF -> LF on
+        receipt — multipart transports rewrite text-field newlines to CRLF,
+        which is never meaningful in shell text.
       requestBody:
         required: true
         content:
@@ -1752,13 +1794,15 @@ components:
     SpendSource:
       type: string
       description: >
-        Which lane a settled trial's `agent_result.cost_usd` came from, and
-        only `measured` is final. `measured_provisional` is a real gateway
-        reading taken inside its asynchronous spend flush — an honest floor a
-        deferred pass later confirms or raises into `measured`. `assumed_cap`
-        means nobody measured this trial: the figure it carries is zero, a
-        placeholder and never the cap (the platform under-bills rather than
-        publish an invented number), replaced when a real reading lands.
+        Which lane a settled trial's `agent_result.cost_usd` is in. `measured`
+        is final. The other two are PRE-CONFIRMATION lanes a freshly settled
+        trial commonly holds for a few minutes, served verbatim because the
+        lane is the only signal that the figure is still provisional:
+        `measured_provisional` is an honest floor read inside the gateway's
+        async spend flush (it can only be raised), and `assumed_cap` means
+        nothing was measured yet — it holds a zero placeholder, never an
+        invented figure. A deferred pass confirms or raises both from the
+        gateway's spend logs.
       enum: [measured, measured_provisional, assumed_cap]
 
     VerifierEnvironmentMode:
@@ -1919,7 +1963,13 @@ components:
         job_name:
           type: string
           maxLength: 200
-          description: User-facing label; server-generated when omitted.
+          description: >
+            User-facing label; server-generated when omitted. A LABEL, not an
+            identity: names are not unique, and two jobs may carry the same
+            one (Harbor's job name is a local directory and resumes in place;
+            a hosted registry keeps `id` as the only identity). Reuse a name
+            freely across runs; to prevent accidental double submission use
+            Idempotency-Key, which replays by request, not by name.
         datasets:
           type: array
           minItems: 1
@@ -3044,7 +3094,7 @@ components:
     DatasetVersion:
       type: object
       description: One immutable version of a dataset — one shape on every surface.
-      required: [version, state, created_at, task_count]
+      required: [version, state, created_at, task_count, gate]
       properties:
         version:
           type: string
@@ -3056,6 +3106,121 @@ components:
         task_count:
           type: integer
           minimum: 0
+        gate:
+          oneOf:
+            - $ref: '#/components/schemas/ActivationGate'
+            - type: 'null'
+          description: >
+            The activation gate's schedule state for this version. Null when
+            no gate was ever scheduled — a version imported before the gate
+            scheduler existed, a platform-seeded one, or one whose import
+            archived no reference solutions (see the import's `warnings`).
+
+    ActivationGateStatus:
+      type: string
+      description: |
+        Where the automatic activation gate stands for a version. The gate is
+        the oracle-conformance run the worker schedules once a hosted import
+        completes: the version's held-out reference (gold) solution must
+        score exactly 1.0 through the real execution path, and a do-nothing
+        agent must not. PENDING = scheduled, waiting for a worker; RUNNING =
+        proving tasks now (per-task verdicts land on the task list as they
+        finish); PASSED = every task is activation-eligible, activate to
+        promote; FAILED = at least one task is not — `failure` names them.
+      enum: [PENDING, RUNNING, PASSED, FAILED]
+
+    ActivationGate:
+      type: object
+      description: >
+        A version's activation-gate schedule state. Watch `status` move
+        PENDING -> RUNNING -> PASSED/FAILED after a publish; the state that
+        used to read as "VALIDATING forever" is this object saying where the
+        proof stands.
+      required: [status, attempts, failure]
+      properties:
+        status:
+          $ref: '#/components/schemas/ActivationGateStatus'
+        attempts:
+          type: integer
+          minimum: 0
+          description: >
+            Times a worker has taken this gate. A run lost to a dead worker
+            is re-queued and RESUMES (verdicts already landed are kept),
+            bounded before the gate fails with `gate_lease_lost`.
+        failure:
+          oneOf:
+            - $ref: '#/components/schemas/ActivationGateFailure'
+            - type: 'null'
+          description: Why the gate FAILED; null unless status is FAILED.
+
+    ActivationGateFailure:
+      type: object
+      description: >
+        The gate's structured failure. `failed_tasks` names each ineligible
+        task with the gate's own reasons (a gold solution that never scored
+        1.0, a no-op that did, a solution that could not be resolved), so
+        nothing has to be parsed back out of the message.
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: '`gate_failed`, or `gate_lease_lost` after repeated worker loss.'
+        message:
+          type: string
+        failed_tasks:
+          type: array
+          description: >
+            The ineligible tasks (first 25; when truncated,
+            `failed_task_count` carries the true total).
+          items:
+            type: object
+            required: [task_name, outcome, reasons]
+            properties:
+              task_name:
+                type: string
+              outcome:
+                type: string
+                description: FAIL, or ERROR (inconclusive — no usable score).
+              reasons:
+                type: array
+                items:
+                  type: string
+        failed_task_count:
+          type: integer
+          minimum: 0
+
+    GateRunning:
+      type: object
+      description: |
+        The 202 body of the activation verb while the gate is still proving
+        the version. Deliberately NOT the error envelope: an in-progress
+        gate is a healthy state, and `error` on this surface always means
+        "this request failed".
+      required: [code, message, gate]
+      properties:
+        code:
+          type: string
+          enum: [gate_running]
+        message:
+          type: string
+        gate:
+          type: object
+          description: Gate progress at the moment of the call.
+          required: [status, tasks, unverified, ineligible]
+          properties:
+            status:
+              $ref: '#/components/schemas/ActivationGateStatus'
+            tasks:
+              type: integer
+              minimum: 0
+            unverified:
+              type: integer
+              minimum: 0
+              description: Tasks the gate has not yet produced a verdict for.
+            ineligible:
+              type: integer
+              minimum: 0
+              description: Tasks whose verdict so far is not activation-eligible.
 
     TaskProviderVerdict:
       type: object
@@ -3077,7 +3242,7 @@ components:
       description: >
         Public task fields only — instructions, environments, and tests never
         leave the server.
-      required: [task_name, agent_timeout_sec, verifier_timeout_sec, providers]
+      required: [task_name, agent_timeout_sec, verifier_timeout_sec, providers, gate]
       properties:
         task_name:
           type: string
@@ -3090,6 +3255,40 @@ components:
           description: Verdict per sandbox provider.
           additionalProperties:
             $ref: '#/components/schemas/TaskProviderVerdict'
+        gate:
+          oneOf:
+            - $ref: '#/components/schemas/TaskGate'
+            - type: 'null'
+          description: >
+            This task's activation-gate verdict; null until the gate has run
+            it. The per-task half of the version's `gate` — while the gate is
+            RUNNING, verdicts appear here as they land.
+
+    TaskGate:
+      type: object
+      description: >
+        One task's activation-gate verdict — the public subset. The full
+        stored verdict carries oracle diagnostics that stay internal, like
+        the environment specs beside it.
+      required: [outcome, flaky, reasons, ran_at]
+      properties:
+        outcome:
+          type: string
+          description: >
+            PASS; FLAKY (gold passed only on a retry — still eligible under
+            the operator default); FAIL (definitive: gold never scored 1.0,
+            or a do-nothing agent did); ERROR (inconclusive — no usable
+            score, e.g. no archived solution to run).
+        flaky:
+          type: boolean
+        reasons:
+          type: array
+          items:
+            type: string
+          description: Human-readable; empty on PASS.
+        ran_at:
+          type: [string, 'null']
+          format: date-time
 
     TaskPage:
       type: object
