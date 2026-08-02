@@ -1,104 +1,113 @@
 /**
- * Deterministic USTAR + gzip writer for the directory publish path
- * (datasets().publish({ source: { directory } })).
+ * Deterministic tar + gzip writer for the directory publish path
+ * (datasets().publish({ source: { directory } }) and the agent directory
+ * upload).
  *
  * "Deterministic" means the SAME directory content always produces the SAME
- * bytes — so the tarball sha256 the server records as the import's source
- * identity is reproducible: entries are sorted by path, headers are normalized
- * (mtime 0, uid/gid 0, empty uname/gname, fixed mode), and gzip carries no
- * timestamp. Hidden entries (".git", ".DS_Store", ".venv") and symlinks are
- * skipped — a corpus is plain files, and the server rejects symlinks anyway.
+ * bytes — the tarball sha256 the server records as the import's source
+ * identity has to be reproducible. Three rules buy that: entries are emitted
+ * in sorted path order, every header field that could carry machine state is
+ * pinned (mtime 0, uid/gid 0, empty uname/gname), and gzip embeds no
+ * timestamp.
  *
- * Dependency-free on purpose (the published SDK stays lean): a minimal USTAR
- * writer, which node-tar on the server extracts under its own path hardening.
+ * The one header field NOT flattened is the executable bit: a corpus ships
+ * verifier and solution scripts, and a script that arrives without +x cannot
+ * run. The bit is read from the file and normalized to exactly two values —
+ * 0o755 or 0o644 — so a developer's umask still cannot move the digest.
+ *
+ * What is skipped: symlinks (the server rejects every non-file/dir entry) and
+ * three junk names — ".git", ".DS_Store", ".venv". Every OTHER dotfile is
+ * PACKED. `.gitignore`, `.dockerignore`, `.env.example` and `.config/` are
+ * corpus content, and dropping them published a corpus that did not match the
+ * directory on disk.
+ *
+ * Entries stream from disk through `tar-stream` (already this repo's tar
+ * writer, see packages/modal), so the corpus is never resident in memory as a
+ * whole — only the compressed output is collected, since the upload takes one
+ * body.
  */
-import { gzipSync } from "node:zlib";
-import { lstatSync, readFileSync, readdirSync } from "node:fs";
+import { createGzip } from "node:zlib";
+import { createReadStream } from "node:fs";
+import { lstat, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { pipeline } from "node:stream/promises";
+import { pack } from "tar-stream";
 
-const BLOCK = 512;
+/**
+ * Names never packed, matched at any depth: version-control metadata, a macOS
+ * Finder artifact, and the conventional Python virtualenv. All three are
+ * machine state rather than corpus, and `.git` alone would blow the server's
+ * entry cap. Nothing else is filtered — see the module header.
+ */
+const SKIP = new Set([".git", ".DS_Store", ".venv"]);
 
-/** Recursively collect regular files as posix paths relative to `root`, sorted. */
-function listFiles(root: string): { rel: string; abs: string }[] {
-  const out: { rel: string; abs: string }[] = [];
-  const walk = (relDir: string): void => {
-    const absDir = relDir === "" ? root : join(root, relDir);
-    const entries = readdirSync(absDir, { withFileTypes: true }).sort((a, b) =>
-      a.name < b.name ? -1 : a.name > b.name ? 1 : 0
-    );
-    for (const entry of entries) {
-      if (entry.name.startsWith(".")) continue; // skip hidden (.git/.DS_Store/.venv)
-      const rel = relDir === "" ? entry.name : `${relDir}/${entry.name}`;
-      const abs = join(absDir, entry.name);
-      const stat = lstatSync(abs);
-      if (stat.isSymbolicLink()) continue; // never follow or emit symlinks
-      if (stat.isDirectory()) walk(rel);
-      else if (stat.isFile()) out.push({ rel, abs });
-    }
-  };
-  walk("");
-  return out.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
+/** One packed file: its archive path, its source path, its normalized mode. */
+interface Entry {
+  rel: string;
+  abs: string;
+  mode: number;
+  size: number;
 }
 
-/** One 512-byte USTAR file header (regular file, normalized for determinism). */
-function fileHeader(path: string, size: number): Buffer {
-  let name = path;
-  let prefix = "";
-  if (Buffer.byteLength(name, "utf8") > 100) {
-    // USTAR long names split at a "/": prefix <= 155 bytes, name <= 100 bytes.
-    // Prefer the LATEST valid split so the most path stays in `name`.
-    let split = -1;
-    for (let i = name.indexOf("/"); i !== -1; i = name.indexOf("/", i + 1)) {
-      const p = name.slice(0, i);
-      const n = name.slice(i + 1);
-      if (n.length > 0 && Buffer.byteLength(n, "utf8") <= 100 && Buffer.byteLength(p, "utf8") <= 155) {
-        split = i;
+/** Recursively collect regular files as posix paths relative to `root`, sorted. */
+async function listFiles(root: string): Promise<Entry[]> {
+  const out: Entry[] = [];
+  const walk = async (relDir: string): Promise<void> => {
+    const absDir = relDir === "" ? root : join(root, relDir);
+    const entries = await readdir(absDir, { withFileTypes: true });
+    entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    for (const entry of entries) {
+      if (SKIP.has(entry.name)) continue;
+      const rel = relDir === "" ? entry.name : `${relDir}/${entry.name}`;
+      const abs = join(absDir, entry.name);
+      const stat = await lstat(abs);
+      if (stat.isSymbolicLink()) continue; // never follow or emit symlinks
+      if (stat.isDirectory()) await walk(rel);
+      // Two modes only: executable-by-anyone becomes 0o755, everything else
+      // 0o644, so the developer's umask never reaches the archive.
+      else if (stat.isFile()) {
+        out.push({ rel, abs, mode: stat.mode & 0o111 ? 0o755 : 0o644, size: stat.size });
       }
     }
-    if (split === -1) {
-      throw new Error(`path too long to store in a USTAR tar (max 255 bytes, split at "/"): ${path}`);
-    }
-    prefix = name.slice(0, split);
-    name = name.slice(split + 1);
-  }
-
-  const b = Buffer.alloc(BLOCK);
-  b.write(name, 0, 100, "utf8"); // name (100)
-  b.write("0000644\0", 100, "ascii"); // mode (8) — 0644
-  b.write("0000000\0", 108, "ascii"); // uid (8) — 0
-  b.write("0000000\0", 116, "ascii"); // gid (8) — 0
-  b.write(size.toString(8).padStart(11, "0") + "\0", 124, "ascii"); // size (12)
-  b.write("00000000000\0", 136, "ascii"); // mtime (12) — 0
-  b.write("        ", 148, "ascii"); // chksum (8) — spaces while summing
-  b.write("0", 156, "ascii"); // typeflag (1) — regular file
-  b.write("ustar\0", 257, "ascii"); // magic (6)
-  b.write("00", 263, "ascii"); // version (2)
-  // uname/gname/devmajor/devminor stay zero (deterministic).
-  if (prefix) b.write(prefix, 345, 155, "utf8"); // prefix (155)
-
-  let sum = 0;
-  for (let i = 0; i < BLOCK; i++) sum += b[i];
-  // Checksum: 6 octal digits, a NUL, then a space (the canonical USTAR form).
-  b.write(sum.toString(8).padStart(6, "0") + "\0 ", 148, "ascii");
-  return b;
+  };
+  await walk("");
+  return out.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
 }
 
 /**
  * Deterministically tar + gzip a corpus directory into a single gzipped-tar
  * buffer, ready to upload to POST /api/datasets/publish.
  */
-export function tarGzipDirectory(root: string): Buffer {
-  const files = listFiles(root);
-  const parts: Buffer[] = [];
-  for (const { rel, abs } of files) {
-    const content = readFileSync(abs);
-    parts.push(fileHeader(rel, content.length));
-    parts.push(content);
-    const pad = (BLOCK - (content.length % BLOCK)) % BLOCK;
-    if (pad > 0) parts.push(Buffer.alloc(pad));
-  }
-  parts.push(Buffer.alloc(BLOCK * 2)); // two zero blocks = end of archive
-  // mtime is not part of a raw tar; gzipSync embeds no timestamp, so the whole
-  // .tar.gz is a pure function of the directory content.
-  return gzipSync(Buffer.concat(parts), { level: 9 });
+export async function tarGzipDirectory(root: string): Promise<Buffer> {
+  const files = await listFiles(root);
+  const tar = pack();
+  const gzip = createGzip({ level: 9 });
+
+  const chunks: Buffer[] = [];
+  const collect = (async () => {
+    for await (const chunk of gzip) chunks.push(Buffer.from(chunk));
+  })();
+
+  // Feed the pack while gzip drains it: a file crosses one read buffer at a
+  // time and is never held whole.
+  const feed = (async () => {
+    for (const { rel, abs, mode, size } of files) {
+      const entry = tar.entry({
+        name: rel,
+        size,
+        mode,
+        mtime: new Date(0),
+        uid: 0,
+        gid: 0,
+        uname: "",
+        gname: "",
+        type: "file",
+      });
+      await pipeline(createReadStream(abs), entry);
+    }
+    tar.finalize();
+  })();
+
+  await Promise.all([pipeline(tar, gzip), feed, collect]);
+  return Buffer.concat(chunks);
 }
