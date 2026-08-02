@@ -4,7 +4,8 @@
  *
  * The noun-verb grammar: group resolution (singular canonical, plural and
  * `ls` hidden aliases, `run` = `job start`), short flags, repeatables,
- * the -c config loader (JSON + the YAML subset) with flag-over-file merging,
+ * the -c config loader (JSON + real YAML via the yaml package, PyYAML's
+ * readings pinned differentially) with flag-over-file merging,
  * --print-config, per-command help with a worked example, --version, the
  * shared list output precedence (--json / -q / TSV / TTY table, --columns,
  * --no-trunc, --no-headers), and one mocked end-to-end pass over every verb:
@@ -144,7 +145,7 @@ import {
   importStatusLine,
   parseArgs,
   parseEnvPairs,
-  parseYamlSubset,
+  parseYamlConfig,
   runCli,
   trialDetailLines,
 } from "../../src/hosted/cli.ts";
@@ -449,150 +450,202 @@ async function testConfigFileMerge() {
       "cannot read",
       "an unreadable config file is a usage error"
     );
+
+    // A dataset/agent element is an OBJECT. buildJobInput spreads every one
+    // into a fresh selector, and spreading a string spreads its characters —
+    // `datasets: [swe-bench]` built the character-indexed body
+    // `[{"0":"s","1":"w",...}]` and rode to the wire at exit 0. Both the YAML
+    // and the JSON spelling reach the same spread, so both are pinned.
+    const bareNamePath = join(dir, "bare-name.yaml");
+    await writeFile(bareNamePath, "datasets: [swe-bench]\nagents: [{name: claude, model_name: opus}]\n");
+    assertThrowsUsage(
+      () => buildJobInput(parseArgs(["job", "start", "-c", bareNamePath])),
+      "datasets[0]",
+      "a bare dataset name in the config refuses by name instead of spreading to characters"
+    );
+    const bareAgentPath = join(dir, "bare-agent.json");
+    await writeFile(bareAgentPath, JSON.stringify({ datasets: [{ name: "deep-swe" }], agents: ["claude"] }));
+    assertThrowsUsage(
+      () => buildJobInput(parseArgs(["job", "start", "-c", bareAgentPath])),
+      "agents[0]",
+      "a bare agent name refuses in JSON too — the spread is the same one"
+    );
+    const scalarListPath = join(dir, "scalar-list.yaml");
+    await writeFile(scalarListPath, "datasets: deep-swe\nagents: [{name: claude, model_name: opus}]\n");
+    assertThrowsUsage(
+      () => buildJobInput(parseArgs(["job", "start", "-c", scalarListPath])),
+      "must be a list of objects",
+      'a scalar "datasets" is named for what it is, not reported as a missing -d'
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
 }
 
-function testYamlSubset() {
-  console.log("\n--- parseYamlSubset: the deliberate subset ---");
+function testYamlConfig() {
+  console.log("\n--- parseYamlConfig: real YAML through the yaml package ---");
   assertEqual(
-    parseYamlSubset(
+    parseYamlConfig(
       ["a: 1", "b: true", "c: null", "d: 'single''quoted'", 'e: "double"', "f: bare string", "g: [1, 2]"].join("\n"),
       "t.yaml"
     ),
     { a: 1, b: true, c: null, d: "single'quoted", e: "double", f: "bare string", g: [1, 2] },
-    "scalars, quotes, and JSON flow lists"
+    "scalars, quotes, and flow lists"
   );
   assertEqual(
-    parseYamlSubset(["list:", "  - one", '  - "two"', "  - 3"].join("\n"), "t.yaml"),
+    parseYamlConfig(["list:", "  - one", '  - "two"', "  - 3"].join("\n"), "t.yaml"),
     { list: ["one", "two", 3] },
     "block sequences of scalars"
   );
   assertEqual(
-    parseYamlSubset(["outer:", "  inner:", "    k: v"].join("\n"), "t.yaml"),
+    parseYamlConfig(["outer:", "  inner:", "    k: v"].join("\n"), "t.yaml"),
     { outer: { inner: { k: "v" } } },
     "nested block maps"
   );
-  assertEqual(parseYamlSubset("# only comments\n\n", "t.yaml"), {}, "an empty document is an empty object");
-  assertThrowsUsage(() => parseYamlSubset("a: &anchor 1", "t.yaml"), "anchors", "anchors refused loudly");
-  assertThrowsUsage(() => parseYamlSubset("a: |", "t.yaml"), "multi-line", "block scalars refused loudly");
-  assertThrowsUsage(() => parseYamlSubset("---\na: 1", "t.yaml"), "multi-document", "documents refused loudly");
-  assertThrowsUsage(() => parseYamlSubset("\ta: 1", "t.yaml"), "tabs", "tab indentation refused");
-  assertThrowsUsage(() => parseYamlSubset("a: [1, 2", "t.yaml"), "t.yaml:1", "broken flow list refused with its line number");
+  assertEqual(parseYamlConfig("# only comments\n\n", "t.yaml"), {}, "an empty document is an empty object");
 
-  // Campaign A1: the three parser defects, pinned. The law: a comment never
-  // lands inside a value, and malformed input refuses with a line number.
-  console.log("\n--- parseYamlSubset: trailing comments never land in values (A1) ---");
+  // The subset reader refused what it could not parse; the library parses it.
+  // Every expectation below is PyYAML's reading of the same input.
+  assertEqual(parseYamlConfig("a: &anchor 1", "t.yaml"), { a: 1 }, "anchors resolve instead of refusing");
   assertEqual(
-    parseYamlSubset('version: "1.3"          # pinned', "t.yaml"),
+    parseYamlConfig(["base: &b claude", "name: *b"].join("\n"), "t.yaml"),
+    { base: "claude", name: "claude" },
+    "an alias reads back its anchor's value"
+  );
+  assertEqual(parseYamlConfig("a: |", "t.yaml"), { a: "" }, "an empty block scalar is the empty string");
+  assertEqual(
+    parseYamlConfig(["a: |", "  line1", "  line2", ""].join("\n"), "t.yaml"),
+    { a: "line1\nline2\n" },
+    "a literal block scalar keeps its newlines"
+  );
+  assertEqual(
+    parseYamlConfig("---\na: 1", "t.yaml"),
+    { a: 1 },
+    "a --- directive-end marker opens the one document, it is not a second one"
+  );
+  assertThrowsUsage(
+    () => parseYamlConfig("a: 1\n---\nb: 2", "t.yaml"),
+    "multi-document",
+    "a SECOND document refuses loudly, as PyYAML's single-document load refuses it"
+  );
+  assertThrowsUsage(
+    () => parseYamlConfig("a: !foo 1", "t.yaml"),
+    "Unresolved tag",
+    "an unresolvable tag refuses — the library's warning is promoted to the refusal PyYAML gives"
+  );
+  assertThrowsUsage(() => parseYamlConfig("\ta: 1", "t.yaml"), "Tabs", "tab indentation refused");
+  assertThrowsUsage(() => parseYamlConfig("a: [1, 2", "t.yaml"), "t.yaml:1", "broken flow list refused with its line number");
+
+  // Campaign A1's law, now the library's: a comment never lands inside a
+  // value. Every expectation was taken from PyYAML on the same input.
+  console.log("\n--- parseYamlConfig: trailing comments never land in values (A1) ---");
+  assertEqual(
+    parseYamlConfig('version: "1.3"          # pinned', "t.yaml"),
     { version: "1.3" },
     "a trailing comment after a double-quoted scalar is dropped, not an error"
   );
   assertEqual(
-    parseYamlSubset("name: e2e-prod-check    # bare name -> active version resolution", "t.yaml"),
+    parseYamlConfig("name: e2e-prod-check    # bare name -> active version resolution", "t.yaml"),
     { name: "e2e-prod-check" },
     "a trailing comment after a BARE scalar is dropped — never folded into the value"
   );
   assertEqual(
-    parseYamlSubset(["datasets:", "  - name: claude            # alias-only probe"].join("\n"), "t.yaml"),
+    parseYamlConfig(["datasets:", "  - name: claude            # alias-only probe"].join("\n"), "t.yaml"),
     { datasets: [{ name: "claude" }] },
     "the same law holds inside block sequences"
   );
   assertEqual(
-    parseYamlSubset("url: http://x#frag", "t.yaml"),
+    parseYamlConfig("url: http://x#frag", "t.yaml"),
     { url: "http://x#frag" },
     "a # without whitespace before it is content, not a comment (YAML's own rule)"
   );
   assertEqual(
-    parseYamlSubset('note: "a # b"   # real comment', "t.yaml"),
+    parseYamlConfig('note: "a # b"   # real comment', "t.yaml"),
     { note: "a # b" },
     "a # inside quotes is content; the one outside still strips"
   );
 
-  // A quote only DELIMITS where a scalar begins. Every expectation below was
-  // taken from PyYAML on the same input: a quote mid-word is a letter, and
-  // reading it as an opening delimiter left the whole line — comment included —
-  // unstripped, which is the same silent corruption A1 closed.
+  // A quote mid-word is a letter, not a delimiter — the apostrophe corpus.
   assertEqual(
-    parseYamlSubset("job_name: brando's run # the comment", "t.yaml"),
+    parseYamlConfig("job_name: brando's run # the comment", "t.yaml"),
     { job_name: "brando's run" },
     "an apostrophe inside a bare value does not open a string — the comment still strips"
   );
   assertEqual(
-    parseYamlSubset("desc: it's fine # trailing", "t.yaml"),
+    parseYamlConfig("desc: it's fine # trailing", "t.yaml"),
     { desc: "it's fine" },
     "the same holds for an apostrophe in the middle of a word"
   );
   assertEqual(
-    parseYamlSubset('name: 5" wide # comment', "t.yaml"),
+    parseYamlConfig('name: 5" wide # comment', "t.yaml"),
     { name: '5" wide' },
     "a double quote mid-value is content too"
   );
   assertEqual(
-    parseYamlSubset(["datasets:", "  - name: brando's run  # picked"].join("\n"), "t.yaml"),
+    parseYamlConfig(["datasets:", "  - name: brando's run  # picked"].join("\n"), "t.yaml"),
     { datasets: [{ name: "brando's run" }] },
     "the law reaches inside block sequences"
   );
   assertEqual(
-    parseYamlSubset("it's: value", "t.yaml"),
+    parseYamlConfig("it's: value", "t.yaml"),
     { "it's": "value" },
     "an apostrophe in a KEY leaves the key colon findable (PyYAML reads it the same way)"
   );
   assertEqual(
-    parseYamlSubset(["'quoted key': v", '"dq key": w'].join("\n"), "t.yaml"),
+    parseYamlConfig(["'quoted key': v", '"dq key": w'].join("\n"), "t.yaml"),
     { "quoted key": "v", "dq key": "w" },
     "a quote that DOES begin a scalar still delimits — quoted keys unchanged"
   );
   assertEqual(
-    parseYamlSubset("env: { A: 'x # y', B: don't }", "t.yaml"),
+    parseYamlConfig("env: { A: 'x # y', B: don't }", "t.yaml"),
     { env: { A: "x # y", B: "don't" } },
     "inside flow, a quote after ', ' delimits while one mid-word does not"
   );
 
-  console.log("\n--- parseYamlSubset: YAML flow collections, unquoted scalars included (A1) ---");
+  console.log("\n--- parseYamlConfig: flow collections, unquoted scalars included (A1) ---");
   assertEqual(
-    parseYamlSubset("agent_env:    { CAMPAIGN_MARKER: prod-aug01 }", "t.yaml"),
+    parseYamlConfig("agent_env:    { CAMPAIGN_MARKER: prod-aug01 }", "t.yaml"),
     { agent_env: { CAMPAIGN_MARKER: "prod-aug01" } },
-    "a flow mapping with unquoted key and value parses (was refused as non-JSON)"
+    "a flow mapping with unquoted key and value parses"
   );
   assertEqual(
-    parseYamlSubset("mix: { n: 3, flag: true, name: 'x', list: [a, 1] }", "t.yaml"),
+    parseYamlConfig("mix: { n: 3, flag: true, name: 'x', list: [a, 1] }", "t.yaml"),
     { mix: { n: 3, flag: true, name: "x", list: ["a", 1] } },
-    "typed scalars, quotes, and nesting inside flow"
+    "typed scalars, quotes, and nesting inside flow — and n stays the key n"
   );
   assertEqual(
-    parseYamlSubset("tag: { MARKER: prod:tag }", "t.yaml"),
+    parseYamlConfig("tag: { MARKER: prod:tag }", "t.yaml"),
     { tag: { MARKER: "prod:tag" } },
     "a colon inside a flow value stays in the value"
   );
   assertEqual(
-    parseYamlSubset('json: {"a": [1, 2], "b": {"c": null}}', "t.yaml"),
+    parseYamlConfig('json: {"a": [1, 2], "b": {"c": null}}', "t.yaml"),
     { json: { a: [1, 2], b: { c: null } } },
     "strict JSON still parses unchanged"
   );
   assertEqual(
-    parseYamlSubset("a: [1, 2,]\nenv: { A: 1, B: 2, }", "t.yaml"),
+    parseYamlConfig("a: [1, 2,]\nenv: { A: 1, B: 2, }", "t.yaml"),
     { a: [1, 2], env: { A: 1, B: 2 } },
-    "a trailing comma closes the collection — valid YAML, not the empty entry it was refused as"
+    "a trailing comma closes the collection — valid YAML"
   );
-  assertThrowsUsage(() => parseYamlSubset("a: [1, , 2]", "t.yaml"), "empty value", "a comma with nothing between still refuses");
-  assertThrowsUsage(() => parseYamlSubset("a: 1\nenv: { A: 1", "t.yaml"), "t.yaml:2", "an unclosed flow mapping refuses with its line number");
-  assertThrowsUsage(() => parseYamlSubset("env: { A 1 }", "t.yaml"), '":"', "a flow mapping without a colon refuses loudly");
-  assertThrowsUsage(() => parseYamlSubset("env: { A: 1 } trailing", "t.yaml"), "after flow", "content after a closed flow collection refuses loudly");
-
-  // A flow collection is a WHOLE sequence item. Every expectation below is
-  // PyYAML's reading of the same input: the item's inner colon belongs to the
-  // flow mapping, and reading it as the item's key colon split the braces into
-  // `{"{name": "claude, model: opus"}` — the one remaining shape that corrupted
-  // silently while `a: [{k: v}]` and `- [a, b]` both read correctly.
   assertEqual(
-    parseYamlSubset(["agents:", "  - {name: claude, model: opus}"].join("\n"), "t.yaml"),
+    parseYamlConfig("env: { A 1 }", "t.yaml"),
+    { env: { "A 1": null } },
+    "a colon-less flow entry is a key with a null value — PyYAML's reading, not a refusal"
+  );
+  assertThrowsUsage(() => parseYamlConfig("a: [1, , 2]", "t.yaml"), "Unexpected ,", "a comma with nothing between still refuses");
+  assertThrowsUsage(() => parseYamlConfig("a: 1\nenv: { A: 1", "t.yaml"), "t.yaml:2", "an unclosed flow mapping refuses with its line number");
+  assertThrowsUsage(() => parseYamlConfig("env: { A: 1 } trailing", "t.yaml"), "Unexpected scalar", "content after a closed flow collection refuses loudly");
+
+  // A flow collection is a WHOLE sequence item — the shape that silently
+  // corrupted under the hand parser. PyYAML's reading throughout.
+  assertEqual(
+    parseYamlConfig(["agents:", "  - {name: claude, model: opus}"].join("\n"), "t.yaml"),
     { agents: [{ name: "claude", model: "opus" }] },
     "a flow mapping as a sequence item keeps its inner colons (PyYAML's reading)"
   );
   assertEqual(
-    parseYamlSubset(
+    parseYamlConfig(
       ["agents:", "  - {name: claude, model_name: opus}", "  - name: codex", "    model_name: gpt-5.5"].join("\n"),
       "t.yaml"
     ),
@@ -600,19 +653,77 @@ function testYamlSubset() {
     "a flow item and a block item sit side by side in one sequence"
   );
   assertEqual(
-    parseYamlSubset(["datasets:", "  - {name: deep-swe, task_names: [a, b]}   # picked"].join("\n"), "t.yaml"),
+    parseYamlConfig(["datasets:", "  - {name: deep-swe, task_names: [a, b]}   # picked"].join("\n"), "t.yaml"),
     { datasets: [{ name: "deep-swe", task_names: ["a", "b"] }] },
     "nesting and the trailing-comment law both hold inside a flow sequence item"
   );
   assertThrowsUsage(
-    () => parseYamlSubset(["a:", "  - {b: 1"].join("\n"), "t.yaml"),
+    () => parseYamlConfig(["a:", "  - {b: 1"].join("\n"), "t.yaml"),
     "t.yaml:2",
     "an unclosed flow item refuses with its line number instead of parsing to a garbage key"
   );
   assertThrowsUsage(
-    () => parseYamlSubset(["a:", "  - {b: 1} trailing"].join("\n"), "t.yaml"),
-    "after flow",
+    () => parseYamlConfig(["a:", "  - {b: 1} trailing"].join("\n"), "t.yaml"),
+    "Unexpected scalar",
     "content after a closed flow item refuses loudly, as PyYAML refuses it"
+  );
+
+  // A colon followed by a space opens a mapping pair inside flow — the
+  // unbraced shapes the subset reader refused now parse to PyYAML's readings.
+  assertEqual(
+    parseYamlConfig("datasets: [name: swe-bench]", "t.yaml"),
+    { datasets: [{ name: "swe-bench" }] },
+    "an unbraced single-pair mapping in a flow sequence is a one-key object (PyYAML's reading)"
+  );
+  assertEqual(
+    parseYamlConfig("agents: [name: claude, model_name: opus]", "t.yaml"),
+    { agents: [{ name: "claude" }, { model_name: "opus" }] },
+    "comma-separated bare pairs are SEPARATE one-key objects — loadJobConfig refuses the missing model downstream"
+  );
+  assertEqual(
+    parseYamlConfig("a: [x:]", "t.yaml"),
+    { a: [{ x: null }] },
+    "a colon before the closer opens a pair with a null value — PyYAML reads [{x: null}]"
+  );
+  assertThrowsUsage(
+    () => parseYamlConfig("a: {b: c: d}", "t.yaml"),
+    "not allowed within flow",
+    "a second colon in a flow mapping value refuses, as PyYAML refuses it"
+  );
+  assertThrowsUsage(
+    () => parseYamlConfig("a: [#c]", "t.yaml"),
+    "Comments must be separated",
+    "a # glued to flow content refuses — PyYAML reads the rest as a comment and finds no content"
+  );
+  assertEqual(
+    parseYamlConfig("tag: { MARKER: prod:tag, url: [http://x.co/a] }", "t.yaml"),
+    { tag: { MARKER: "prod:tag", url: ["http://x.co/a"] } },
+    "a glued colon stays a letter — prod:tag and a URL survive"
+  );
+
+  // The schema is PyYAML's: YAML 1.1 resolution minus the bare y/n booleans
+  // PyYAML never adopted, plus a duplicate-key refusal where PyYAML silently
+  // keeps the last value.
+  console.log("\n--- parseYamlConfig: PyYAML's 1.1 schema, differentially pinned ---");
+  assertEqual(
+    parseYamlConfig("a: yes\nb: no\nc: on\nd: off", "t.yaml"),
+    { a: true, b: false, c: true, d: false },
+    "yes/no/on/off are booleans, as PyYAML reads them (1.2 would keep them strings)"
+  );
+  assertEqual(
+    parseYamlConfig("vals: [y, n]\ny: 2", "t.yaml"),
+    { vals: ["y", "n"], y: 2 },
+    "bare y/n stay strings and keys — the 1.1 spec booleans PyYAML never adopted"
+  );
+  assertEqual(
+    parseYamlConfig("a: 012", "t.yaml"),
+    { a: 10 },
+    "a leading zero is octal in the 1.1 schema, as PyYAML reads it (1.2 would read 12)"
+  );
+  assertThrowsUsage(
+    () => parseYamlConfig("a: b\na: c", "t.yaml"),
+    "t.yaml:2",
+    "a duplicate key refuses with its line instead of silently keeping the last value"
   );
 }
 
@@ -632,6 +743,23 @@ async function testPrintConfig() {
       { datasets: [{ name: "deep-swe", version: "1.1" }], agents: [{ name: "codex", model_name: "gpt-5.5" }] },
       "prints the resolved JobCreate body"
     );
+
+    // --print-config is the dry-run a paid remote run deserves, so it owes an
+    // honest exit code: a config it cannot resolve exits 2 with the reason on
+    // stderr, never 0 over a character-indexed body the server would refuse.
+    const dir = await mkdtemp(join(tmpdir(), "evolve-cli-print-"));
+    try {
+      const bare = join(dir, "bare.yaml");
+      await writeFile(bare, "job_name: nightly\ndatasets: [swe-bench]\nagents: [{name: claude, model_name: opus}]\n");
+      const bad = captureIO();
+      const badCode = await runCli(["job", "start", "-c", bare, "--print-config", ...AUTH], bad.io);
+      assertEqual(badCode, 2, "a bare dataset name exits 2, not 0");
+      assertEqual(bad.out.join("\n"), "", "nothing was printed as a body");
+      assert(bad.err.join("\n").includes("datasets[0]"), "stderr names the offending element");
+      assertEqual(fetchCalls.length, 0, "still nothing was sent");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   } finally {
     restoreFetch();
   }
@@ -2457,7 +2585,7 @@ async function main() {
   testBuildJobInputFlags();
   testBuildJobInputYesIsInert();
   await testConfigFileMerge();
-  testYamlSubset();
+  testYamlConfig();
   await testPrintConfig();
   await testHelpAndVersion();
   testImportStatusLine();

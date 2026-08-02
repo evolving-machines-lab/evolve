@@ -17,6 +17,7 @@
 
 import { existsSync, readFileSync, realpathSync } from "fs";
 import { fileURLToPath, pathToFileURL } from "url";
+import { parseDocument } from "yaml";
 import {
   EVAL_SANDBOX_PROVIDERS,
   EvolveApiError,
@@ -751,346 +752,43 @@ export function parseArgs(argv: string[]): Invocation {
 // =============================================================================
 
 /**
- * The YAML this CLI reads is a deliberate subset, enough for a job config and
- * nothing more: block maps, block sequences, quoted/bare scalars, flow
- * collections on one line, and comments (full-line or trailing). Anchors,
- * aliases, tags, multi-line scalars, and multi-document files are refused
- * loudly rather than parsed wrong — a config that needs them can be written
- * as JSON. The subset's one hard law: malformed input refuses with a
- * line-numbered error, and a comment NEVER lands inside a value.
+ * -c reads real YAML through the standard `yaml` package — the hand-rolled
+ * subset reader is retired. PyYAML's reading is the contract, so the schema is
+ * YAML 1.1 (`yes`/`on` are booleans, `012` is octal, a flow mapping is a whole
+ * sequence item) with one carve-out: the 1.1 spec's bare `y`/`n` booleans,
+ * which PyYAML never adopted — `n: 3` keeps its key. Three refusals sit on top
+ * of the library: a second document, an unresolvable tag (both PyYAML refusals
+ * too), and a duplicate key — PyYAML silently keeps the last value, and that
+ * silence is exactly the corruption a config file cannot afford. Every refusal
+ * carries `source:line`; an empty or comment-only file is an empty object.
  */
-export function parseYamlSubset(text: string, source: string): unknown {
-  interface Line {
-    indent: number;
-    text: string;
-    no: number;
-  }
-  const refuse = (no: number, what: string): never => {
-    throw new CliUsageError(`${source}:${no}: ${what}`);
-  };
-
-  /**
-   * Does the quote at `i` DELIMIT a scalar, or is it an ordinary character?
-   * YAML reads a quote as a delimiter only where a scalar may begin: the start
-   * of the line, or straight after a `: ` / `- ` separator (both need the
-   * space — `a:'b'` is the plain scalar `a:'b'`) or a flow `,` `[` `{`.
-   * Everywhere else it is content. Treating every quote as a delimiter made
-   * the apostrophe in `name: brando's run` open a string that never closed,
-   * and the whole line — trailing comment included — survived unstripped.
-   */
-  const delimitsScalar = (line: string, i: number): boolean => {
-    let j = i - 1;
-    while (j >= 0 && (line[j] === " " || line[j] === "\t")) j--;
-    if (j < 0) return true;
-    if (line[j] === "," || line[j] === "[" || line[j] === "{") return true;
-    return (line[j] === ":" || line[j] === "-") && j < i - 1;
-  };
-
-  /**
-   * Cut a trailing comment off one line: a `#` outside quotes that sits at the
-   * start or after whitespace (YAML's own rule — `url: http://x#frag` keeps
-   * its `#`). Runs BEFORE any scalar is read, so a comment cannot be folded
-   * into a value. A line whose quote never closes is passed through whole for
-   * the scalar parser to refuse with its line number.
-   */
-  const stripTrailingComment = (line: string): string => {
-    let quote: string | null = null;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (quote) {
-        if (quote === '"' && ch === "\\") i++;
-        else if (ch === quote) {
-          if (quote === "'" && line[i + 1] === "'") i++;
-          else quote = null;
-        }
-      } else if ((ch === '"' || ch === "'") && delimitsScalar(line, i)) {
-        quote = ch;
-      } else if (ch === "#" && (i === 0 || line[i - 1] === " " || line[i - 1] === "\t")) {
-        return line.slice(0, i).trimEnd();
-      }
-    }
-    return line;
-  };
-
-  const lines: Line[] = [];
-  text.split("\n").forEach((raw, index) => {
-    const no = index + 1;
-    if (raw.trim() === "" || raw.trim().startsWith("#")) return;
-    if (raw.trim() === "---" || raw.trim() === "...") {
-      refuse(no, "multi-document YAML is not supported here — one config per file");
-    }
-    const indent = raw.length - raw.trimStart().length;
-    if (raw.slice(0, indent).includes("\t")) {
-      refuse(no, "tabs in indentation — use spaces");
-    }
-    const stripped = stripTrailingComment(raw.trim());
-    if (stripped === "") return;
-    lines.push({ indent, text: stripped, no });
+export function parseYamlConfig(text: string, source: string): unknown {
+  const doc = parseDocument(text, {
+    version: "1.1",
+    customTags: (tags) =>
+      tags.map((tag) =>
+        typeof tag === "object" && tag.tag === "tag:yaml.org,2002:bool" && tag.test
+          ? {
+              ...tag,
+              test: tag.test.source.includes("[Tt]rue")
+                ? /^(?:[Yy]es|YES|[Tt]rue|TRUE|[Oo]n|ON)$/
+                : /^(?:[Nn]o|NO|[Ff]alse|FALSE|[Oo]ff|OFF)$/,
+            }
+          : tag
+      ),
   });
-
-  /**
-   * One-line YAML flow collection (`{k: v}` / `[a, b]`), unquoted keys and
-   * scalars included — the JSON-only reading refused plain YAML like
-   * `{ MARKER: prod }`. Still a subset: the collection must close on its own
-   * line, and every malformation refuses with the line number.
-   */
-  function parseFlow(input: string, no: number): unknown {
-    let pos = 0;
-    const skipSpaces = (): void => {
-      while (pos < input.length && (input[pos] === " " || input[pos] === "\t")) pos++;
-    };
-
-    const parseQuoted = (): string => {
-      const open = input[pos];
-      let end = pos + 1;
-      while (end < input.length) {
-        if (open === '"' && input[end] === "\\") end += 2;
-        else if (input[end] === open) {
-          if (open === "'" && input[end + 1] === "'") end += 2;
-          else break;
-        } else end++;
-      }
-      if (end >= input.length) {
-        refuse(no, `unterminated ${open === '"' ? "double" : "single"}-quoted string in flow collection`);
-      }
-      const lexeme = input.slice(pos, end + 1);
-      pos = end + 1;
-      if (open === "'") return lexeme.slice(1, -1).replace(/''/g, "'");
-      try {
-        return JSON.parse(lexeme) as string;
-      } catch {
-        return refuse(no, "invalid double-quoted string in flow collection") as never;
-      }
-    };
-
-    const parseBare = (stops: string): unknown => {
-      const start = pos;
-      while (pos < input.length && !stops.includes(input[pos])) pos++;
-      const raw = input.slice(start, pos).trim();
-      if (raw === "") refuse(no, "empty value in flow collection");
-      if (raw.startsWith("&") || raw.startsWith("*") || raw.startsWith("!")) {
-        refuse(no, `YAML ${raw[0] === "!" ? "tags" : "anchors/aliases"} are not supported here`);
-      }
-      if (raw === "null" || raw === "~") return null;
-      if (raw === "true") return true;
-      if (raw === "false") return false;
-      if (/^-?\d+(\.\d+)?$/.test(raw)) return Number(raw);
-      return raw;
-    };
-
-    const parseValue = (stops: string): unknown => {
-      skipSpaces();
-      if (pos >= input.length) refuse(no, "unterminated flow collection");
-      const ch = input[pos];
-      if (ch === "{") return parseMap();
-      if (ch === "[") return parseSeq();
-      if (ch === '"' || ch === "'") return parseQuoted();
-      return parseBare(stops);
-    };
-
-    const parseMap = (): Record<string, unknown> => {
-      pos++; // {
-      const map: Record<string, unknown> = {};
-      skipSpaces();
-      if (input[pos] === "}") {
-        pos++;
-        return map;
-      }
-      for (;;) {
-        skipSpaces();
-        if (pos >= input.length) refuse(no, "unterminated flow mapping — missing }");
-        if (input[pos] === "{" || input[pos] === "[") {
-          refuse(no, "flow mapping keys must be scalars");
-        }
-        const key = input[pos] === '"' || input[pos] === "'" ? parseQuoted() : String(parseBare(":,}]"));
-        skipSpaces();
-        if (input[pos] !== ":") refuse(no, 'expected ":" in flow mapping');
-        pos++;
-        map[String(key)] = parseValue(",}]");
-        skipSpaces();
-        if (input[pos] === ",") {
-          pos++;
-          skipSpaces();
-          // A comma before the closer is a trailing comma, valid YAML — not
-          // the empty entry the bare-scalar reader would otherwise refuse.
-          if (input[pos] === "}") {
-            pos++;
-            return map;
-          }
-          continue;
-        }
-        if (input[pos] === "}") {
-          pos++;
-          return map;
-        }
-        refuse(no, 'expected "," or "}" in flow mapping');
-      }
-    };
-
-    const parseSeq = (): unknown[] => {
-      pos++; // [
-      const items: unknown[] = [];
-      skipSpaces();
-      if (input[pos] === "]") {
-        pos++;
-        return items;
-      }
-      for (;;) {
-        items.push(parseValue(",]}"));
-        skipSpaces();
-        if (pos >= input.length) refuse(no, "unterminated flow sequence — missing ]");
-        if (input[pos] === ",") {
-          pos++;
-          skipSpaces();
-          // Same trailing-comma law as the flow mapping: `[a, b,]` is valid.
-          if (input[pos] === "]") {
-            pos++;
-            return items;
-          }
-          continue;
-        }
-        if (input[pos] === "]") {
-          pos++;
-          return items;
-        }
-        refuse(no, 'expected "," or "]" in flow sequence');
-      }
-    };
-
-    const value = input[0] === "{" ? parseMap() : parseSeq();
-    skipSpaces();
-    if (pos < input.length) {
-      refuse(no, "unexpected content after flow collection");
-    }
-    return value;
+  // Warnings refuse too: the library downgrades an unresolvable tag to a
+  // warning and parses on, where PyYAML (and this CLI, always) refuses.
+  const problem = doc.errors[0] ?? doc.warnings[0];
+  if (problem) {
+    const line = problem.linePos?.[0]?.line ?? 1;
+    const what =
+      problem.code === "MULTIPLE_DOCS"
+        ? "multi-document YAML is not supported here — one config per file"
+        : problem.message.replace(/ at line \d+, column \d+:[\s\S]*$/, "");
+    throw new CliUsageError(`${source}:${line}: ${what}`);
   }
-
-  function parseScalar(value: string, no: number): unknown {
-    if (value.startsWith("&") || value.startsWith("*") || value.startsWith("!")) {
-      refuse(no, `YAML ${value[0] === "!" ? "tags" : "anchors/aliases"} are not supported here`);
-    }
-    if (value === "|" || value === ">") {
-      refuse(no, "multi-line scalars are not supported here — use JSON");
-    }
-    if (value.startsWith("[") || value.startsWith("{")) {
-      return parseFlow(value, no);
-    }
-    if (value.startsWith('"')) {
-      try {
-        return JSON.parse(value);
-      } catch {
-        refuse(no, "unterminated double-quoted string");
-      }
-    }
-    if (value.startsWith("'")) {
-      if (!value.endsWith("'") || value.length < 2) {
-        refuse(no, "unterminated single-quoted string");
-      }
-      return value.slice(1, -1).replace(/''/g, "'");
-    }
-    if (value === "null" || value === "~") return null;
-    if (value === "true") return true;
-    if (value === "false") return false;
-    if (/^-?\d+(\.\d+)?$/.test(value)) return Number(value);
-    return value;
-  }
-
-  /** Parse the block starting at `start`, all lines with indent >= `indent`. */
-  function parseBlock(start: number, indent: number): { value: unknown; next: number } {
-    const first = lines[start];
-    if (first.text.startsWith("- ") || first.text === "-") {
-      const items: unknown[] = [];
-      let i = start;
-      while (i < lines.length && lines[i].indent >= indent) {
-        const line = lines[i];
-        if (line.indent > indent || (!line.text.startsWith("- ") && line.text !== "-")) {
-          refuse(line.no, "inconsistent indentation in sequence");
-        }
-        const rest = line.text === "-" ? "" : line.text.slice(2);
-        if (rest === "") {
-          if (i + 1 >= lines.length || lines[i + 1].indent <= indent) {
-            refuse(line.no, "empty sequence item");
-          }
-          const nested = parseBlock(i + 1, lines[i + 1].indent);
-          items.push(nested.value);
-          i = nested.next;
-        } else if (rest[0] === "{" || rest[0] === "[" || findKeyColon(rest) === -1) {
-          // A flow collection is a WHOLE item, decided before any colon hunt:
-          // `- {name: claude, model: opus}` carries a key colon inside its
-          // braces, so testing findKeyColon first split it there and pushed
-          // `{"{name": "claude, model: opus}"}` — a garbage key, silently, on
-          // valid YAML that the sibling forms (`a: [{k: v}]`, `- [a, b]`) both
-          // read correctly. parseScalar routes both bracket forms to parseFlow,
-          // which refuses malformation with the line number.
-          items.push(parseScalar(rest, line.no));
-          i++;
-        } else {
-          // Inline item: re-enter the parser with the rest of the line placed
-          // at the item's column, so `- key: value` opens a map whose further
-          // keys sit below at that column.
-          const virtual: Line = { indent: line.indent + 2, text: rest, no: line.no };
-          lines.splice(i, 1, virtual);
-          const nested = parseBlock(i, virtual.indent);
-          items.push(nested.value);
-          i = nested.next;
-        }
-      }
-      return { value: items, next: i };
-    }
-
-    const map: Record<string, unknown> = {};
-    let i = start;
-    while (i < lines.length && lines[i].indent >= indent) {
-      const line = lines[i];
-      if (line.indent > indent) refuse(line.no, "inconsistent indentation in map");
-      const colon = findKeyColon(line.text);
-      if (colon === -1) refuse(line.no, `expected "key: value", got "${line.text}"`);
-      const key = stripKeyQuotes(line.text.slice(0, colon).trim());
-      const rest = line.text.slice(colon + 1).trim();
-      if (rest !== "") {
-        map[key] = parseScalar(rest, line.no);
-        i++;
-      } else if (i + 1 < lines.length && lines[i + 1].indent > indent) {
-        const nested = parseBlock(i + 1, lines[i + 1].indent);
-        map[key] = nested.value;
-        i = nested.next;
-      } else {
-        map[key] = null;
-        i++;
-      }
-    }
-    return { value: map, next: i };
-  }
-
-  /** The colon ending the key: the first `:` at end-of-text or followed by a space, outside quotes. */
-  function findKeyColon(text: string): number {
-    let quote: string | null = null;
-    for (let i = 0; i < text.length; i++) {
-      const ch = text[i];
-      if (quote) {
-        if (ch === quote) quote = null;
-      } else if ((ch === '"' || ch === "'") && delimitsScalar(text, i)) {
-        quote = ch;
-      } else if (ch === ":" && (i === text.length - 1 || text[i + 1] === " ")) {
-        return i;
-      }
-    }
-    return -1;
-  }
-
-  function stripKeyQuotes(key: string): string {
-    if (key.length >= 2 && ((key[0] === '"' && key.endsWith('"')) || (key[0] === "'" && key.endsWith("'")))) {
-      return key.slice(1, -1);
-    }
-    return key;
-  }
-
-  if (lines.length === 0) return {};
-  const { value, next } = parseBlock(0, lines[0].indent);
-  if (next < lines.length) {
-    refuse(lines[next].no, "content outside the root block — check indentation");
-  }
-  return value;
+  return doc.toJS() ?? {};
 }
 
 /** The closed key vocabulary a -c config file may use (the spec's JobCreate). */
@@ -1121,7 +819,7 @@ function loadJobConfig(path: string, read: (path: string) => string): Partial<Jo
       throw new CliUsageError(`--config: ${path} is not valid JSON: ${(error as Error).message}`);
     }
   } else {
-    value = parseYamlSubset(text, path);
+    value = parseYamlConfig(text, path);
   }
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new CliUsageError(`--config: ${path} must contain a JSON/YAML object`);
@@ -1132,6 +830,25 @@ function loadJobConfig(path: string, read: (path: string) => string): Partial<Jo
         `--config: unknown key "${key}" in ${path} (allowed: ${[...JOB_CONFIG_KEYS].join(", ")})`
       );
     }
+  }
+  // datasets/agents are lists of selector objects and buildJobInput spreads
+  // every element into a fresh one. Spreading a string spreads its CHARACTERS,
+  // so `datasets: [swe-bench]` reached --print-config as a character-indexed
+  // object at exit 0 and the wire as a server-side refusal. The element type is
+  // this reader's to name, at the keyboard, before any round trip.
+  for (const key of ["datasets", "agents"] as const) {
+    const list = (value as Record<string, unknown>)[key];
+    if (list === undefined) continue;
+    if (!Array.isArray(list)) {
+      throw new CliUsageError(`--config: "${key}" in ${path} must be a list of objects`);
+    }
+    list.forEach((item, index) => {
+      if (item !== null && typeof item === "object" && !Array.isArray(item)) return;
+      const kind = item === null ? "null" : Array.isArray(item) ? "a list" : `a ${typeof item}`;
+      throw new CliUsageError(
+        `--config: ${key}[${index}] in ${path} must be an object like {name: ${key === "agents" ? "claude" : "swe-bench"}}, not ${kind}`
+      );
+    });
   }
   return value as Partial<JobCreate>;
 }
