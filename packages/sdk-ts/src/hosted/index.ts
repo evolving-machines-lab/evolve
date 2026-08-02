@@ -1187,7 +1187,7 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
       // — where no type was ever checked.
       if (src?.directory) {
         const { tarGzipDirectory } = await import("./tar");
-        const gzipped = tarGzipDirectory(src.directory);
+        const gzipped = await tarGzipDirectory(src.directory);
         const res = await request(cfg, "/api/datasets/publish", {
           method: "POST",
           body: uploadForm(
@@ -1442,7 +1442,7 @@ async function agentUploadBody(
   };
   if (hasDirectory) {
     const { tarGzipDirectory } = await import("./tar");
-    const gzipped = tarGzipDirectory(input.directory as string);
+    const gzipped = await tarGzipDirectory(input.directory as string);
     return uploadForm(fields, { bytes: gzipped, filename: "source.tar.gz" });
   }
   return uploadForm(fields);
