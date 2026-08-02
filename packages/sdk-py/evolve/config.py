@@ -307,8 +307,9 @@ class DaytonaProvider:
         target: Target region (defaults to 'us')
         timeout_ms: Sandbox timeout in milliseconds (default: 3600000 = 1 hour)
         snapshot_name: Daytona snapshot name (default: the current release
-            snapshot, e.g. 'evolve-all-v1'; explicit names pass through
-            untouched). Custom snapshots via ``cd assets && ./build.sh daytona``
+            snapshot, 'evolve-all-c-<12hex>' with the tag derived from the
+            image build inputs; explicit names pass through untouched).
+            Custom snapshots via ``cd assets && ./build.sh daytona``
     """
     api_key: Optional[str] = None
     api_url: Optional[str] = None
