@@ -1857,9 +1857,12 @@ function emitStopReport(
       `${result.not_found.length} not found (${dataset})`
   );
   if (unreported > 0) {
+    // Name the batch the failure landed on — the first 100 (or fewer) of the
+    // unreported slice — so the caller knows WHERE it died, not just how much.
     io.out(
       `PARTIAL: ${unreported} of ${total} trials have no report — ` +
-        `rerun the same command to finish them.`
+        `the stop request for trials ${reported + 1}-${Math.min(reported + 100, total)} failed; ` +
+        `rerun the same command to finish the rest.`
     );
   }
 }

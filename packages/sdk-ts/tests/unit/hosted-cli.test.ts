@@ -1618,6 +1618,10 @@ async function testJobStopReportsThePartialItAlreadySettled() {
       out.some((l) => l.includes("PARTIAL: 50 of 250 trials have no report")),
       "the half with no answer is stated as unreported, not silently dropped"
     );
+    assert(
+      out.some((l) => l.includes("the stop request for trials 201-250 failed")),
+      "and the failed batch is named by position, not left to arithmetic"
+    );
 
     // --json carries the same truth machine-readably: the merged report plus
     // the two fields that say it is not the whole slice.
