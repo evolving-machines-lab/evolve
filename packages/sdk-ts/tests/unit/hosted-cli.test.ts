@@ -479,7 +479,61 @@ function testYamlSubset() {
   assertThrowsUsage(() => parseYamlSubset("a: |", "t.yaml"), "multi-line", "block scalars refused loudly");
   assertThrowsUsage(() => parseYamlSubset("---\na: 1", "t.yaml"), "multi-document", "documents refused loudly");
   assertThrowsUsage(() => parseYamlSubset("\ta: 1", "t.yaml"), "tabs", "tab indentation refused");
-  assertThrowsUsage(() => parseYamlSubset("a: [1, 2", "t.yaml"), "JSON", "broken flow list refused");
+  assertThrowsUsage(() => parseYamlSubset("a: [1, 2", "t.yaml"), "t.yaml:1", "broken flow list refused with its line number");
+
+  // Campaign A1: the three parser defects, pinned. The law: a comment never
+  // lands inside a value, and malformed input refuses with a line number.
+  console.log("\n--- parseYamlSubset: trailing comments never land in values (A1) ---");
+  assertEqual(
+    parseYamlSubset('version: "1.3"          # pinned', "t.yaml"),
+    { version: "1.3" },
+    "a trailing comment after a double-quoted scalar is dropped, not an error"
+  );
+  assertEqual(
+    parseYamlSubset("name: e2e-prod-check    # bare name -> active version resolution", "t.yaml"),
+    { name: "e2e-prod-check" },
+    "a trailing comment after a BARE scalar is dropped — never folded into the value"
+  );
+  assertEqual(
+    parseYamlSubset(["datasets:", "  - name: claude            # alias-only probe"].join("\n"), "t.yaml"),
+    { datasets: [{ name: "claude" }] },
+    "the same law holds inside block sequences"
+  );
+  assertEqual(
+    parseYamlSubset("url: http://x#frag", "t.yaml"),
+    { url: "http://x#frag" },
+    "a # without whitespace before it is content, not a comment (YAML's own rule)"
+  );
+  assertEqual(
+    parseYamlSubset('note: "a # b"   # real comment', "t.yaml"),
+    { note: "a # b" },
+    "a # inside quotes is content; the one outside still strips"
+  );
+
+  console.log("\n--- parseYamlSubset: YAML flow collections, unquoted scalars included (A1) ---");
+  assertEqual(
+    parseYamlSubset("agent_env:    { CAMPAIGN_MARKER: prod-aug01 }", "t.yaml"),
+    { agent_env: { CAMPAIGN_MARKER: "prod-aug01" } },
+    "a flow mapping with unquoted key and value parses (was refused as non-JSON)"
+  );
+  assertEqual(
+    parseYamlSubset("mix: { n: 3, flag: true, name: 'x', list: [a, 1] }", "t.yaml"),
+    { mix: { n: 3, flag: true, name: "x", list: ["a", 1] } },
+    "typed scalars, quotes, and nesting inside flow"
+  );
+  assertEqual(
+    parseYamlSubset("tag: { MARKER: prod:tag }", "t.yaml"),
+    { tag: { MARKER: "prod:tag" } },
+    "a colon inside a flow value stays in the value"
+  );
+  assertEqual(
+    parseYamlSubset('json: {"a": [1, 2], "b": {"c": null}}', "t.yaml"),
+    { json: { a: [1, 2], b: { c: null } } },
+    "strict JSON still parses unchanged"
+  );
+  assertThrowsUsage(() => parseYamlSubset("a: 1\nenv: { A: 1", "t.yaml"), "t.yaml:2", "an unclosed flow mapping refuses with its line number");
+  assertThrowsUsage(() => parseYamlSubset("env: { A 1 }", "t.yaml"), '":"', "a flow mapping without a colon refuses loudly");
+  assertThrowsUsage(() => parseYamlSubset("env: { A: 1 } trailing", "t.yaml"), "after flow", "content after a closed flow collection refuses loudly");
 }
 
 async function testPrintConfig() {

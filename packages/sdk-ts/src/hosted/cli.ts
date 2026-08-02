@@ -751,10 +751,12 @@ export function parseArgs(argv: string[]): Invocation {
 
 /**
  * The YAML this CLI reads is a deliberate subset, enough for a job config and
- * nothing more: block maps, block sequences, quoted/bare scalars, JSON flow
- * collections, and full-line comments. Anchors, aliases, tags, multi-line
- * scalars, and multi-document files are refused loudly rather than parsed
- * wrong — a config that needs them can be written as JSON.
+ * nothing more: block maps, block sequences, quoted/bare scalars, flow
+ * collections on one line, and comments (full-line or trailing). Anchors,
+ * aliases, tags, multi-line scalars, and multi-document files are refused
+ * loudly rather than parsed wrong — a config that needs them can be written
+ * as JSON. The subset's one hard law: malformed input refuses with a
+ * line-numbered error, and a comment NEVER lands inside a value.
  */
 export function parseYamlSubset(text: string, source: string): unknown {
   interface Line {
@@ -764,6 +766,32 @@ export function parseYamlSubset(text: string, source: string): unknown {
   }
   const refuse = (no: number, what: string): never => {
     throw new CliUsageError(`${source}:${no}: ${what}`);
+  };
+
+  /**
+   * Cut a trailing comment off one line: a `#` outside quotes that sits at the
+   * start or after whitespace (YAML's own rule — `url: http://x#frag` keeps
+   * its `#`). Runs BEFORE any scalar is read, so a comment cannot be folded
+   * into a value. A line whose quote never closes is passed through whole for
+   * the scalar parser to refuse with its line number.
+   */
+  const stripTrailingComment = (line: string): string => {
+    let quote: string | null = null;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (quote) {
+        if (quote === '"' && ch === "\\") i++;
+        else if (ch === quote) {
+          if (quote === "'" && line[i + 1] === "'") i++;
+          else quote = null;
+        }
+      } else if (ch === '"' || ch === "'") {
+        quote = ch;
+      } else if (ch === "#" && (i === 0 || line[i - 1] === " " || line[i - 1] === "\t")) {
+        return line.slice(0, i).trimEnd();
+      }
+    }
+    return line;
   };
 
   const lines: Line[] = [];
@@ -777,8 +805,134 @@ export function parseYamlSubset(text: string, source: string): unknown {
     if (raw.slice(0, indent).includes("\t")) {
       refuse(no, "tabs in indentation — use spaces");
     }
-    lines.push({ indent, text: raw.trim(), no });
+    const stripped = stripTrailingComment(raw.trim());
+    if (stripped === "") return;
+    lines.push({ indent, text: stripped, no });
   });
+
+  /**
+   * One-line YAML flow collection (`{k: v}` / `[a, b]`), unquoted keys and
+   * scalars included — the JSON-only reading refused plain YAML like
+   * `{ MARKER: prod }`. Still a subset: the collection must close on its own
+   * line, and every malformation refuses with the line number.
+   */
+  function parseFlow(input: string, no: number): unknown {
+    let pos = 0;
+    const skipSpaces = (): void => {
+      while (pos < input.length && (input[pos] === " " || input[pos] === "\t")) pos++;
+    };
+
+    const parseQuoted = (): string => {
+      const open = input[pos];
+      let end = pos + 1;
+      while (end < input.length) {
+        if (open === '"' && input[end] === "\\") end += 2;
+        else if (input[end] === open) {
+          if (open === "'" && input[end + 1] === "'") end += 2;
+          else break;
+        } else end++;
+      }
+      if (end >= input.length) {
+        refuse(no, `unterminated ${open === '"' ? "double" : "single"}-quoted string in flow collection`);
+      }
+      const lexeme = input.slice(pos, end + 1);
+      pos = end + 1;
+      if (open === "'") return lexeme.slice(1, -1).replace(/''/g, "'");
+      try {
+        return JSON.parse(lexeme) as string;
+      } catch {
+        return refuse(no, "invalid double-quoted string in flow collection") as never;
+      }
+    };
+
+    const parseBare = (stops: string): unknown => {
+      const start = pos;
+      while (pos < input.length && !stops.includes(input[pos])) pos++;
+      const raw = input.slice(start, pos).trim();
+      if (raw === "") refuse(no, "empty value in flow collection");
+      if (raw.startsWith("&") || raw.startsWith("*") || raw.startsWith("!")) {
+        refuse(no, `YAML ${raw[0] === "!" ? "tags" : "anchors/aliases"} are not supported here`);
+      }
+      if (raw === "null" || raw === "~") return null;
+      if (raw === "true") return true;
+      if (raw === "false") return false;
+      if (/^-?\d+(\.\d+)?$/.test(raw)) return Number(raw);
+      return raw;
+    };
+
+    const parseValue = (stops: string): unknown => {
+      skipSpaces();
+      if (pos >= input.length) refuse(no, "unterminated flow collection");
+      const ch = input[pos];
+      if (ch === "{") return parseMap();
+      if (ch === "[") return parseSeq();
+      if (ch === '"' || ch === "'") return parseQuoted();
+      return parseBare(stops);
+    };
+
+    const parseMap = (): Record<string, unknown> => {
+      pos++; // {
+      const map: Record<string, unknown> = {};
+      skipSpaces();
+      if (input[pos] === "}") {
+        pos++;
+        return map;
+      }
+      for (;;) {
+        skipSpaces();
+        if (pos >= input.length) refuse(no, "unterminated flow mapping — missing }");
+        if (input[pos] === "{" || input[pos] === "[") {
+          refuse(no, "flow mapping keys must be scalars");
+        }
+        const key = input[pos] === '"' || input[pos] === "'" ? parseQuoted() : String(parseBare(":,}]"));
+        skipSpaces();
+        if (input[pos] !== ":") refuse(no, 'expected ":" in flow mapping');
+        pos++;
+        map[String(key)] = parseValue(",}]");
+        skipSpaces();
+        if (input[pos] === ",") {
+          pos++;
+          continue;
+        }
+        if (input[pos] === "}") {
+          pos++;
+          return map;
+        }
+        refuse(no, 'expected "," or "}" in flow mapping');
+      }
+    };
+
+    const parseSeq = (): unknown[] => {
+      pos++; // [
+      const items: unknown[] = [];
+      skipSpaces();
+      if (input[pos] === "]") {
+        pos++;
+        return items;
+      }
+      for (;;) {
+        items.push(parseValue(",]}"));
+        skipSpaces();
+        if (pos >= input.length) refuse(no, "unterminated flow sequence — missing ]");
+        if (input[pos] === ",") {
+          pos++;
+          continue;
+        }
+        if (input[pos] === "]") {
+          pos++;
+          return items;
+        }
+        refuse(no, 'expected "," or "]" in flow sequence');
+      }
+    };
+
+    const value = input[0] === "{" ? parseMap() : parseSeq();
+    skipSpaces();
+    if (pos < input.length) {
+      refuse(no, "unexpected content after flow collection");
+    }
+    return value;
+  }
 
   function parseScalar(value: string, no: number): unknown {
     if (value.startsWith("&") || value.startsWith("*") || value.startsWith("!")) {
@@ -788,11 +942,7 @@ export function parseYamlSubset(text: string, source: string): unknown {
       refuse(no, "multi-line scalars are not supported here — use JSON");
     }
     if (value.startsWith("[") || value.startsWith("{")) {
-      try {
-        return JSON.parse(value);
-      } catch {
-        refuse(no, "flow collections must be valid JSON");
-      }
+      return parseFlow(value, no);
     }
     if (value.startsWith('"')) {
       try {
