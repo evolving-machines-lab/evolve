@@ -19,7 +19,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 from evolve import Evolve
-from evolve.config import AgentConfig, E2BProvider
+from evolve.config import AgentConfig, E2BProvider, ManagedProvider
 from evolve.bridge import BridgeManager
 
 
@@ -524,6 +524,32 @@ class TestE2BSandboxEnvResolution:
         # Python just builds the config object asserted below
         provider = E2BProvider()
         assert provider.type == 'e2b'
+
+
+class TestManagedProviderOptions:
+    """ManagedProvider carries the options bag the TS managedSandbox() takes:
+    api_key plus create defaults (timeout_ms, resources). The bridge passes
+    the whole bag through, and the TS side folds the defaults under every
+    create on the same validated path as per-create options."""
+
+    def test_defaults_carry_nothing_but_the_provider(self):
+        provider = ManagedProvider()
+        assert provider.type == 'managed'
+        assert provider.config == {'provider': 'e2b'}
+
+    def test_options_bag_reaches_the_bridge_config(self):
+        provider = ManagedProvider(
+            provider='daytona',
+            api_key='sk-evolve',
+            timeout_ms=7_200_000,
+            resources={'cpu': 2},
+        )
+        assert provider.config == {
+            'provider': 'daytona',
+            'apiKey': 'sk-evolve',
+            'timeoutMs': 7_200_000,
+            'resources': {'cpu': 2},
+        }
 
 
 class MockBridgeManager:

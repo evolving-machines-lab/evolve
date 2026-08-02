@@ -5,7 +5,7 @@
  * Supports E2B, Daytona, and Modal providers.
  */
 
-import type { SandboxProvider } from "../types";
+import type { SandboxCreateOptions, SandboxProvider } from "../types";
 import {
   ENV_DAYTONA_API_KEY,
   ENV_E2B_API_KEY,
@@ -55,6 +55,48 @@ function isMissingModule(error: Error): boolean {
 }
 
 /**
+ * Sandbox-shape defaults a managed provider applies to every sandbox it
+ * creates. Per-create options (`.withSandboxCreateOptions()`) still win, and
+ * the values ride the same validated path as any create: providers and doors
+ * reject what they cannot enforce, never silently ignore it.
+ */
+export interface ManagedSandboxCreateDefaults {
+  /** Lifetime cap (ms) for every sandbox this provider creates. */
+  timeoutMs?: number;
+  /** Compute sizing (cpu cores, memory/disk GiB) for every create. */
+  resources?: SandboxCreateOptions["resources"];
+}
+
+/** Options bag for `managedSandbox()`: the Evolve key plus create defaults. */
+export interface ManagedSandboxOptions extends ManagedSandboxCreateDefaults {
+  /** Evolve API key. Default: the EVOLVE_API_KEY environment variable. */
+  apiKey?: string;
+}
+
+/**
+ * Fold the managed-level defaults under every create. The provider's own
+ * validation still runs on the merged options, so a default the backing
+ * provider cannot enforce (`resources` through a platform-sized door) is
+ * refused at create time exactly as if the caller had passed it there.
+ */
+function withCreateDefaults(
+  provider: SandboxProvider,
+  defaults?: ManagedSandboxCreateDefaults,
+): SandboxProvider {
+  if (!defaults || (defaults.timeoutMs === undefined && defaults.resources === undefined)) {
+    return provider;
+  }
+  const createDirect = provider.create.bind(provider);
+  provider.create = (options: SandboxCreateOptions = {}) =>
+    createDirect({
+      ...(defaults.timeoutMs !== undefined ? { timeoutMs: defaults.timeoutMs } : {}),
+      ...(defaults.resources !== undefined ? { resources: defaults.resources } : {}),
+      ...options,
+    });
+  return provider;
+}
+
+/**
  * Resolve a sandbox provider that runs on the platform's credentials.
  *
  * The caller holds one Evolve API key and no provider credential. Which
@@ -65,6 +107,7 @@ function isMissingModule(error: Error): boolean {
 export async function resolveManagedSandbox(
   evolveKey?: string,
   provider: ManagedSandboxProviderName = "e2b",
+  defaults?: ManagedSandboxCreateDefaults,
 ): Promise<SandboxProvider> {
   const apiKey = evolveKey || process.env[ENV_EVOLVE_API_KEY];
   if (!apiKey) {
@@ -86,12 +129,15 @@ export async function resolveManagedSandbox(
       // credential for. The Evolve key travels as the Daytona apiKey because
       // that is the header the Daytona client puts it in and the header both
       // managed doors read.
-      return markEvolveManagedSandbox(
-        createDaytonaProvider({
-          apiKey,
-          apiUrl: getManagedProviderUrl("daytona"),
-          managedToolboxUrl: getManagedDaytonaToolboxUrl(),
-        }),
+      return withCreateDefaults(
+        markEvolveManagedSandbox(
+          createDaytonaProvider({
+            apiKey,
+            apiUrl: getManagedProviderUrl("daytona"),
+            managedToolboxUrl: getManagedDaytonaToolboxUrl(),
+          }),
+        ),
+        defaults,
       );
     } catch (e) {
       const error = e as Error;
@@ -114,15 +160,21 @@ export async function resolveManagedSandbox(
     // utils/managed-modal.ts for the wire, which the Dashboard's twin routes
     // are built against).
     const { ManagedModalProvider } = await import("./managed-modal");
-    return markEvolveManagedSandbox(
-      new ManagedModalProvider({ apiKey, baseUrl: getManagedProviderUrl("modal") }),
+    return withCreateDefaults(
+      markEvolveManagedSandbox(
+        new ManagedModalProvider({ apiKey, baseUrl: getManagedProviderUrl("modal") }),
+      ),
+      defaults,
     );
   }
 
   try {
     const { createE2BProvider } = await import("@evolvingmachines/e2b");
-    return markEvolveManagedSandbox(
-      createE2BProvider({ apiKey: toManagedE2BKey(apiKey), apiUrl: getE2BGatewayUrl() }),
+    return withCreateDefaults(
+      markEvolveManagedSandbox(
+        createE2BProvider({ apiKey: toManagedE2BKey(apiKey), apiUrl: getE2BGatewayUrl() }),
+      ),
+      defaults,
     );
   } catch (e) {
     const error = e as Error;
@@ -142,17 +194,21 @@ export async function resolveManagedSandbox(
  * ```ts
  * const kit = new Evolve()
  *   .withAgent({ agentType: "claude" })
- *   .withSandbox(await managedSandbox("daytona"));
+ *   .withSandbox(await managedSandbox("daytona", { timeoutMs: 7_200_000 }));
  * ```
  *
  * Requires an Evolve API key and no provider credential of any kind. Omit the
- * provider to take the platform default (E2B).
+ * provider to take the platform default (E2B). The options bag carries the
+ * Evolve key plus sandbox-shape defaults (`timeoutMs`, `resources`) applied to
+ * every create; a bare string is still accepted as the key alone.
  */
 export function managedSandbox(
   provider: ManagedSandboxProviderName = "e2b",
-  evolveKey?: string,
+  options?: string | ManagedSandboxOptions,
 ): Promise<SandboxProvider> {
-  return resolveManagedSandbox(evolveKey, provider);
+  const bag = typeof options === "string" ? { apiKey: options } : options ?? {};
+  const { apiKey, ...defaults } = bag;
+  return resolveManagedSandbox(apiKey, provider, defaults);
 }
 
 /**

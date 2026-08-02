@@ -176,6 +176,7 @@ export type {
 // Managed sandboxes — the platform runs the box, the caller holds only an
 // Evolve API key. Which provider backs it is an argument, never an env var.
 export { managedSandbox } from "./utils/sandbox";
+export type { ManagedSandboxOptions, ManagedSandboxCreateDefaults } from "./utils/sandbox";
 export {
   MANAGED_SANDBOX_PROVIDERS,
   type ManagedSandboxProviderName,

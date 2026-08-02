@@ -215,6 +215,50 @@ async function testCreateRefusesWhatTheDoorCannotCarry(): Promise<void> {
   }
 }
 
+async function testManagedCreateDefaults(): Promise<void> {
+  console.log("\n[2d] managedSandbox options - create defaults fold under every create, per-create wins");
+
+  const managed = await resolveManagedSandbox("sk-evolve-key", "modal", { timeoutMs: 120_000 });
+  const { requests, restore } = withMockDoor(() =>
+    json({ sandboxId: "modal-sb-1", image: "evolve-all", metadata: {}, startedAt: "t0" }, 201),
+  );
+  try {
+    await managed.create({});
+    assertEqual(
+      (JSON.parse(String(requests[0].body)) as { timeoutMs?: number }).timeoutMs,
+      120_000,
+      "a create without its own timeoutMs carries the managed default"
+    );
+    await managed.create({ timeoutMs: 45_000 });
+    assertEqual(
+      (JSON.parse(String(requests[1].body)) as { timeoutMs?: number }).timeoutMs,
+      45_000,
+      "a per-create timeoutMs beats the managed default"
+    );
+  } finally {
+    restore();
+  }
+
+  // The defaults ride the SAME validated path as caller options: a default the
+  // door cannot enforce is refused at create, never silently dropped.
+  const sized = await resolveManagedSandbox("sk-evolve-key", "modal", { resources: { cpu: 2 } });
+  const { requests: refused, restore: restoreRefused } = withMockDoor(() =>
+    json({ sandboxId: "never" }, 201),
+  );
+  try {
+    let message = "";
+    try {
+      await sized.create({});
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    assert(message.includes("managed door"), "a resources default is refused with the door's reason");
+    assertEqual(refused.length, 0, "the refusal fires before any HTTP request");
+  } finally {
+    restoreRefused();
+  }
+}
+
 // =============================================================================
 // [3] File plane — the door's JSON quartet, verbatim
 // =============================================================================
@@ -849,6 +893,7 @@ const tests = [
   testCreateWire,
   testCreateOmitsUnsetFields,
   testCreateRefusesWhatTheDoorCannotCarry,
+  testManagedCreateDefaults,
   testFileWriteWire,
   testFileWriteBinaryRidesBase64,
   testFileWriteBatchWire,

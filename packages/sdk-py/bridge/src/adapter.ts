@@ -147,11 +147,16 @@ export class EvolveAdapter {
       case 'modal':
         return createModalProvider(config.config as any);
       case 'managed':
-        // ManagedProvider carries only which provider to ask for; the SDK owns
-        // every URL and credential decision, so Python and TypeScript resolve a
-        // managed sandbox through the same function rather than through two
-        // copies of the same rules.
-        return managedSandbox(config.config.provider, config.config.apiKey);
+        // ManagedProvider carries which provider to ask for plus the options
+        // bag (apiKey, timeoutMs, resources); the SDK owns every URL and
+        // credential decision, so Python and TypeScript resolve a managed
+        // sandbox through the same function rather than through two copies of
+        // the same rules.
+        return managedSandbox(config.config.provider, {
+          ...(config.config.apiKey !== undefined ? { apiKey: config.config.apiKey } : {}),
+          ...(config.config.timeoutMs !== undefined ? { timeoutMs: config.config.timeoutMs } : {}),
+          ...(config.config.resources !== undefined ? { resources: config.config.resources } : {}),
+        });
       default:
         throw new Error(`Unsupported sandbox provider: ${config.type}`);
     }

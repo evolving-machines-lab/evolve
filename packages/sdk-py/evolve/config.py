@@ -245,12 +245,20 @@ class ManagedProvider:
     Args:
         provider: 'e2b' (default), 'daytona', or 'modal'.
         api_key: Evolve API key (defaults to the EVOLVE_API_KEY env var)
+        timeout_ms: Lifetime cap (ms) applied to every sandbox this provider
+            creates; per-create options still win.
+        resources: Compute sizing applied to every create, as a dict with
+            'cpu' (cores), 'memory' and 'disk' (GiB) keys. Providers and the
+            managed doors reject entries they cannot enforce — never
+            silently ignored.
 
     Example:
-        >>> evolve = Evolve(sandbox=ManagedProvider(provider='daytona'))
+        >>> evolve = Evolve(sandbox=ManagedProvider(provider='daytona', timeout_ms=7_200_000))
     """
     provider: Literal['e2b', 'daytona', 'modal'] = 'e2b'
     api_key: Optional[str] = None
+    timeout_ms: Optional[int] = None
+    resources: Optional[dict] = None
 
     @property
     def type(self) -> Literal['managed']:
@@ -263,6 +271,10 @@ class ManagedProvider:
         result: dict = {'provider': self.provider}
         if self.api_key:
             result['apiKey'] = self.api_key
+        if self.timeout_ms is not None:
+            result['timeoutMs'] = self.timeout_ms
+        if self.resources is not None:
+            result['resources'] = self.resources
         return result
 
 
