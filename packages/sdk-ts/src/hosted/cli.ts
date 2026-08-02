@@ -19,6 +19,7 @@ import { existsSync, readFileSync, realpathSync } from "fs";
 import { fileURLToPath, pathToFileURL } from "url";
 import {
   EVAL_SANDBOX_PROVIDERS,
+  EvolveApiError,
   TRIAL_ARTIFACT_STREAMS,
   TRIAL_STATUSES,
   agents,
@@ -1697,6 +1698,50 @@ function clientConfig(inv: Invocation): HostedClientConfig {
   return config;
 }
 
+const FULL_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const JOB_ID_PREFIX_RE = /^[0-9a-f][0-9a-f-]{7,34}$/i;
+const JOB_ID_PREFIX_MIN = 8;
+
+/**
+ * ONE prefix law for every job-id verb: a full uuid passes through untouched;
+ * an id-shaped prefix of at least 8 characters is resolved against the
+ * caller's own job list (every page) to the one job it names — zero or
+ * several matches refuse loudly. The wire always carries the full id, so no
+ * verb depends on server-side prefix leniency and no verb lacks it. (It used
+ * to be per-verb luck: show/cancel accepted prefixes, regrade/trials 404'd.)
+ * Anything not id-shaped passes through for the server to refuse by name.
+ * Trial ids are NOT prefix-resolved — there is no bounded list to resolve
+ * them against; trial verbs take full ids.
+ */
+async function resolveJobId(inv: Invocation, ref: string): Promise<string> {
+  if (ref === undefined || FULL_UUID_RE.test(ref)) return ref;
+  if (/^[0-9a-f][0-9a-f-]*$/i.test(ref) && ref.length < JOB_ID_PREFIX_MIN) {
+    throw new CliUsageError(
+      `"${ref}" is too short to name a job — id prefixes need at least ${JOB_ID_PREFIX_MIN} characters`
+    );
+  }
+  if (!JOB_ID_PREFIX_RE.test(ref)) return ref;
+  const client = jobs(clientConfig(inv));
+  const prefix = ref.toLowerCase();
+  const matches: string[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await client.list({ limit: 100, ...(cursor ? { cursor } : {}) });
+    for (const job of page.items) {
+      if (job.id.startsWith(prefix)) matches.push(job.id);
+    }
+    cursor = page.nextCursor ?? undefined;
+  } while (cursor);
+  if (matches.length === 1) return matches[0];
+  if (matches.length === 0) {
+    throw new CliUsageError(`no job id starts with "${ref}"`);
+  }
+  throw new CliUsageError(
+    `"${ref}" is ambiguous — it matches ${matches.length} jobs: ` +
+      `${matches.slice(0, 5).join(", ")}${matches.length > 5 ? ", …" : ""}`
+  );
+}
+
 /** The one { limit, cursor } pair every paged command accepts. */
 function pageOptions(inv: Invocation): { limit?: number; cursor?: string } {
   return {
@@ -1805,7 +1850,7 @@ async function cmdJobShow(inv: Invocation, io: CliIO): Promise<number> {
   // ONE document: the job object for one id, an array for several.
   const bodies: Job[] = [];
   for (const id of inv.positionals) {
-    bodies.push(await client.get(id));
+    bodies.push(await client.get(await resolveJobId(inv, id)));
   }
   if (inv.flags.json === true) {
     io.out(JSON.stringify(bodies.length === 1 ? bodies[0] : bodies));
@@ -1823,7 +1868,7 @@ async function cmdJobTrials(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
   const status = parseStatusFilter(inv);
   const dataset = inv.flags.dataset as string | undefined;
-  const page = await client.trials(inv.positionals[0], {
+  const page = await client.trials(await resolveJobId(inv, inv.positionals[0]), {
     ...(status !== undefined ? { status } : {}),
     ...(dataset !== undefined ? { dataset } : {}),
     ...pageOptions(inv),
@@ -1849,7 +1894,7 @@ async function cmdJobTrials(inv: Invocation, io: CliIO): Promise<number> {
 async function cmdJobTasks(inv: Invocation, io: CliIO): Promise<number> {
   if (columnsHelpRequested(inv, io, TASK_ROLLUP_COLUMNS)) return 0;
   const client = jobs(clientConfig(inv));
-  const page = await client.tasks(inv.positionals[0], pageOptions(inv));
+  const page = await client.tasks(await resolveJobId(inv, inv.positionals[0]), pageOptions(inv));
   if (inv.flags.json === true) {
     io.out(JSON.stringify(page));
     return 0;
@@ -1907,7 +1952,9 @@ function comparisonLines(comparison: CompareResponse): string[] {
 
 async function cmdJobCompare(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
-  const comparison = await client.compare(inv.positionals);
+  const ids: string[] = [];
+  for (const ref of inv.positionals) ids.push(await resolveJobId(inv, ref));
+  const comparison = await client.compare(ids);
   if (inv.flags.json === true) {
     io.out(JSON.stringify(comparison));
   } else {
@@ -1918,7 +1965,7 @@ async function cmdJobCompare(inv: Invocation, io: CliIO): Promise<number> {
 
 async function cmdJobCancel(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
-  const e = await client.cancel(inv.positionals[0]);
+  const e = await client.cancel(await resolveJobId(inv, inv.positionals[0]));
   if (inv.flags.json === true) {
     io.out(JSON.stringify(e));
   } else {
@@ -1941,7 +1988,7 @@ async function cmdJobStop(inv: Invocation, io: CliIO): Promise<number> {
     );
   }
   const client = jobs(clientConfig(inv));
-  const job = await client.get(inv.positionals[0]);
+  const job = await client.get(await resolveJobId(inv, inv.positionals[0]));
   const names = job.datasets.map((d) => d.name);
   if (!names.includes(dataset)) {
     // A refusal, not an empty no-op: stopping a dataset the job never spanned
@@ -1950,30 +1997,31 @@ async function cmdJobStop(inv: Invocation, io: CliIO): Promise<number> {
       `job ${job.id} does not run dataset ${dataset}; its datasets: ${names.join(", ")}`
     );
   }
-  // The dataset's live trials, across every cursor page; terminal trials are
-  // already outside the selection, so the batch only names stoppable work.
-  const liveIds: string[] = [];
-  for await (const trial of client.trials(job.id, {
-    dataset,
-    status: ["QUEUED", "RUNNING", "SCORING"],
-  })) {
-    liveIds.push(trial.id);
+  // EVERY trial of the dataset, across every cursor page — deliberately not
+  // pre-filtered to live ones. The stop door files each id under stopped /
+  // already_terminal / not_found itself, and it is that classification the
+  // caller reads: a pre-filter made an all-terminal dataset print the same
+  // empty report as one with no trials at all (campaign D6). With the whole
+  // slice named, an empty report honestly means "this dataset has no trials".
+  const trialIds: string[] = [];
+  for await (const trial of client.trials(job.id, { dataset })) {
+    trialIds.push(trial.id);
   }
-  if (liveIds.length === 0) {
+  if (trialIds.length === 0) {
     if (inv.flags.json === true) {
       io.out(JSON.stringify({ stopped: [], already_terminal: [], not_found: [] }));
     } else {
-      io.out(`No live trials in ${dataset}.`);
+      io.out(`No trials in ${dataset}.`);
     }
     return 0;
   }
   // The trial-stop door caps one request at 100 ids and 400s above it, while a
-  // dataset slice can hold thousands of live trials — page the batch under the
+  // dataset slice can hold thousands of trials — page the batch under the
   // cap and merge the reports into the one outcome the caller reads.
   const trialClient = trials(clientConfig(inv));
   const result: StopResponse = { stopped: [], already_terminal: [], not_found: [] };
-  for (let i = 0; i < liveIds.length; i += 100) {
-    const page = await trialClient.stop(liveIds.slice(i, i + 100));
+  for (let i = 0; i < trialIds.length; i += 100) {
+    const page = await trialClient.stop(trialIds.slice(i, i + 100));
     result.stopped.push(...page.stopped);
     result.already_terminal.push(...page.already_terminal);
     result.not_found.push(...page.not_found);
@@ -1998,7 +2046,7 @@ async function cmdJobResume(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
   const filter = inv.flags["filter-error-type"] as string[] | undefined;
   const e = await client.resume(
-    inv.positionals[0],
+    await resolveJobId(inv, inv.positionals[0]),
     filter !== undefined ? { filter_error_types: filter } : undefined
   );
   if (inv.flags.json === true) {
@@ -2017,7 +2065,7 @@ async function cmdJobRegrade(inv: Invocation, io: CliIO): Promise<number> {
   const statuses = parseStatusFilter(inv);
   if (statuses !== undefined) req.statuses = statuses;
   if (inv.flags.task !== undefined) req.task_name = String(inv.flags.task);
-  const job = await client.regrade(inv.positionals[0], req);
+  const job = await client.regrade(await resolveJobId(inv, inv.positionals[0]), req);
   if (inv.flags.json === true) {
     io.out(JSON.stringify(job));
   } else {
@@ -2030,7 +2078,7 @@ async function cmdJobRegrade(inv: Invocation, io: CliIO): Promise<number> {
 
 async function cmdJobDownload(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
-  const filePath = await client.download(inv.positionals[0], {
+  const filePath = await client.download(await resolveJobId(inv, inv.positionals[0]), {
     to: (inv.flags["output-dir"] as string | undefined) ?? process.cwd(),
   });
   if (inv.flags.json === true) {
@@ -2522,6 +2570,13 @@ export async function runCli(argv: string[], io: CliIO = defaultIO): Promise<num
       io.err(`Error: ${error.message}`);
       io.err(`Run "evolve-evals ${inv.command} --help" for usage.`);
       return 2;
+    }
+    if (error instanceof EvolveApiError && error.status === 429) {
+      // A rate limit is a delay, not a mystery: name it and honor the
+      // server's Retry-After instead of echoing the raw message.
+      const wait = error.retryAfterSec !== undefined ? `retry in ${error.retryAfterSec}s` : "retry shortly";
+      io.err(`Error: rate limited by the server — ${wait}.`);
+      return 1;
     }
     io.err(`Error: ${(error as Error).message}`);
     return 1;

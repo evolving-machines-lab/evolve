@@ -1127,7 +1127,7 @@ async function testJobTrialsAndTasks() {
  * filter, and the trial-stop door, composed client-side. Zero server surface.
  */
 async function testJobStopDatasetSugar() {
-  console.log("\n--- runCli: job stop --dataset batches one dataset's live trials to trial-stop ---");
+  console.log("\n--- runCli: job stop --dataset batches the dataset's trials to trial-stop ---");
   installMockFetch();
   try {
     // Most-specific patterns first: the bare job pattern would also match /trials.
@@ -1167,15 +1167,15 @@ async function testJobStopDatasetSugar() {
     assert(trialsCall !== undefined, "fetches the job's trials");
     assert(trialsCall!.url.includes("dataset=deep-swe"), "narrowed to the named dataset");
     assert(
-      trialsCall!.url.includes("status=QUEUED%2CRUNNING%2CSCORING"),
-      "narrowed to LIVE statuses only"
+      !trialsCall!.url.includes("status="),
+      "NOT pre-filtered by status — the stop door classifies each id itself (D6)"
     );
     const stopCall = fetchCalls.find((c) => c.url.endsWith("/api/trials/stop"));
     assert(stopCall !== undefined, "batches to the trial-stop door");
     assertEqual(
       JSON.parse(stopCall!.init?.body as string),
       { trial_ids: ["run-1", "run-2"] },
-      "posts exactly the dataset's live trials"
+      "posts exactly the dataset's trials"
     );
     assert(out.some((l) => l.includes("stopped run-1")), "reports the stopped trial");
     assert(out.some((l) => l.includes("already terminal run-2")), "reports the already-terminal id");
@@ -1261,6 +1261,162 @@ async function testJobStopDatasetChunking() {
     assert(
       out.some((l) => l.includes("2 stopped, 2 already terminal, 0 not found (deep-swe)")),
       "the counts line merges every page's report"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * Campaign D6: the sugar used to pre-filter to live trials, so a dataset whose
+ * trials had ALL settled printed the same empty report as a dataset with no
+ * trials at all — "the matrix's expected already_terminal report never
+ * surfaces through the sugar". Every trial now rides to the door, whose
+ * report is the honest answer.
+ */
+async function testJobStopAllTerminalIsHonest() {
+  console.log("\n--- runCli: job stop --dataset reports already_terminal, never a silent empty (D6) ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs/eval-1/trials", {
+      status: 200,
+      body: {
+        items: [
+          trialFixture({ id: "run-1", status: "SCORED" }),
+          trialFixture({ id: "run-2", status: "SCORED" }),
+        ],
+        nextCursor: null,
+        hasMore: false,
+      },
+    });
+    setMockResponse("/api/trials/stop", {
+      status: 200,
+      body: { stopped: [], already_terminal: ["run-1", "run-2"], not_found: [] },
+    });
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: wireJob({ datasets: [{ name: "deep-swe", version: "1.1" }] }),
+    });
+
+    const { io, out } = captureIO();
+    const code = await runCli(
+      ["job", "stop", "eval-1", "--dataset", "deep-swe", "--json", ...AUTH],
+      io
+    );
+    assertEqual(code, 0, "exit 0 — the report is the outcome");
+    assertEqual(
+      JSON.parse(out[out.length - 1]),
+      { stopped: [], already_terminal: ["run-1", "run-2"], not_found: [] },
+      "an all-terminal dataset reports its ids under already_terminal"
+    );
+
+    // The empty report is now reserved for the one case it is true of: a
+    // dataset with no trials at all — and the human line says so.
+    const empty = captureIO();
+    setMockResponse("/api/jobs/eval-1/trials", {
+      status: 200,
+      body: { items: [], nextCursor: null, hasMore: false },
+    });
+    const emptyCode = await runCli(
+      ["job", "stop", "eval-1", "--dataset", "deep-swe", ...AUTH],
+      empty.io
+    );
+    assertEqual(emptyCode, 0, "exit 0 on a trial-less dataset");
+    assert(
+      empty.out.some((l) => l.includes("No trials in deep-swe")),
+      "the human report names the zero-trial case explicitly"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * ONE prefix law: every job-id verb accepts a unique >=8-char id prefix,
+ * resolved client-side against the caller's job list — the wire always
+ * carries the full id. It used to be per-verb luck (show/cancel accepted,
+ * regrade/trials 404'd).
+ */
+async function testJobIdPrefixLaw() {
+  console.log("\n--- runCli: job-id prefixes resolve uniformly across verbs ---");
+  const fullId = "aabbccdd-1111-2222-3333-444455556666";
+  const otherId = "aabbccdd-9999-8888-7777-666655554444";
+  installMockFetch();
+  try {
+    // Most-specific pattern first: the bare /api/jobs pattern serves the list
+    // the prefix resolution walks.
+    setMockResponse(`/api/jobs/${fullId}/regrade`, {
+      status: 202,
+      body: wireJob({ id: "regrade-1", source_jobs: [{ action: "regrade", type: "hub", job_id: fullId }] }),
+    });
+    setMockResponse("/api/jobs", {
+      status: 200,
+      body: { items: [wireJob({ id: fullId }), wireJob({ id: otherId })], nextCursor: null, hasMore: false },
+    });
+
+    // A unique 12-char prefix reaches regrade — the verb that used to 404.
+    const { io } = captureIO();
+    const code = await runCli(["job", "regrade", "aabbccdd-111", ...AUTH], io);
+    assertEqual(code, 0, "a unique prefix resolves and the verb runs");
+    const regradeCall = fetchCalls.find((c) => c.url.includes("/regrade"));
+    assert(
+      regradeCall !== undefined && regradeCall.url.includes(fullId),
+      "the wire carries the FULL id, never the prefix"
+    );
+
+    // An ambiguous prefix refuses loudly, naming the candidates.
+    const ambiguous = captureIO();
+    const ambiguousCode = await runCli(["job", "cancel", "aabbccdd", ...AUTH], ambiguous.io);
+    assertEqual(ambiguousCode, 2, "an ambiguous prefix is a usage error");
+    assert(
+      ambiguous.err.some((l) => l.includes("matches 2 jobs")),
+      "the refusal counts the candidates"
+    );
+
+    // A too-short id-shaped ref refuses by the law's own floor, no network.
+    const short = captureIO();
+    const before = fetchCalls.length;
+    const shortCode = await runCli(["job", "show", "aabbc", ...AUTH], short.io);
+    assertEqual(shortCode, 2, "a too-short prefix is a usage error");
+    assert(
+      short.err.some((l) => l.includes("at least 8 characters")),
+      "the refusal states the 8-character floor"
+    );
+    assertEqual(fetchCalls.length, before, "the short-prefix refusal makes no request");
+
+    // A prefix matching nothing refuses as unknown.
+    const unknown = captureIO();
+    const unknownCode = await runCli(["job", "show", "ffffffff-0000", ...AUTH], unknown.io);
+    assertEqual(unknownCode, 2, "an unknown prefix refuses");
+    assert(
+      unknown.err.some((l) => l.includes('no job id starts with "ffffffff-0000"')),
+      "the refusal names the prefix"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+/** A 429 is a delay, not a mystery: one clean line carrying the server's Retry-After. */
+async function testRateLimitSurfacesCleanly() {
+  console.log("\n--- runCli: a 429 surfaces as one clean rate-limit line with Retry-After ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs/eval-1", {
+      status: 429,
+      headers: { "retry-after": "17" },
+      body: { error: { code: "rate_limited", message: "Rate limit exceeded" } },
+    });
+    const { io, err } = captureIO();
+    const code = await runCli(["job", "show", "eval-1", ...AUTH], io);
+    assertEqual(code, 1, "a rate limit is a runtime failure, exit 1");
+    assert(
+      err.some((l) => l.includes("rate limited by the server — retry in 17s")),
+      "the message names the limit and honors Retry-After"
+    );
+    assert(
+      !err.some((l) => l === "Error: Rate limit exceeded"),
+      "the raw server message no longer prints bare"
     );
   } finally {
     restoreFetch();
@@ -2028,6 +2184,9 @@ async function main() {
   await testJobTrialsAndTasks();
   await testJobStopDatasetSugar();
   await testJobStopDatasetChunking();
+  await testJobStopAllTerminalIsHonest();
+  await testJobIdPrefixLaw();
+  await testRateLimitSurfacesCleanly();
   await testJobResume();
   await testJobRegrade();
   await testTrialRegrade();

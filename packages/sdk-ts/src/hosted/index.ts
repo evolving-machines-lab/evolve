@@ -1205,7 +1205,25 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
       let lastStatus: string | null = null;
       for (;;) {
         throwIfAborted(options?.signal);
-        const current = await getImport(id);
+        let current: DatasetImport;
+        try {
+          current = await getImport(id);
+        } catch (error) {
+          // A rate limit or hiccup mid-watch is a delay, not an outcome: honor
+          // the server's Retry-After and keep watching. Dying here turned a
+          // 429 into a failed watch while the import kept running.
+          if (
+            error instanceof EvolveApiError &&
+            (error.status === 429 || error.status === 503)
+          ) {
+            await sleep(
+              Math.max((error.retryAfterSec ?? 0) * 1000, pollIntervalMs),
+              options?.signal
+            );
+            continue;
+          }
+          throw error;
+        }
         if (current.status !== lastStatus) {
           lastStatus = current.status;
           options?.onStatus?.(current);
@@ -1523,7 +1541,13 @@ export function jobs(config?: HostedClientConfig): JobsClient {
       if (!res.ok) {
         if (res.status === 429 || res.status >= 500) {
           await res.text().catch(() => "");
-          await sleep(delayMs, signal);
+          // A Retry-After from the server outranks the local backoff guess.
+          const retryAfterSec = Number(res.headers?.get?.("retry-after"));
+          const waitMs =
+            Number.isFinite(retryAfterSec) && retryAfterSec > 0
+              ? Math.max(retryAfterSec * 1000, delayMs)
+              : delayMs;
+          await sleep(waitMs, signal);
           delayMs = Math.min(delayMs * 2, maxDelayMs);
           continue;
         }
