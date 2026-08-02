@@ -710,6 +710,65 @@ async function testConfigFileMerge() {
       2,
       "and exits 2 like every other config refusal, not 1"
     );
+
+    // One alias exhausts nothing, so the library's guard lets a SELF-referential
+    // anchor through as an object holding itself, and the wire-value walk
+    // descended it until the stack ran out — the same nameless exit 1 the bomb
+    // above was moved off, in two lines of valid YAML.
+    const cyclePath = join(dir, "cycle.yaml");
+    await writeFile(cyclePath, "agent_env: &a\n  X: *a\ndatasets: [{name: deep-swe}]\nagents: [{name: claude}]\n");
+    assertThrowsUsage(
+      () => buildJobInput(parseArgs(["job", "start", "-c", cyclePath])),
+      "agent_env.X in " + cyclePath,
+      "a self-referential anchor refuses by key and file, not as a stack overflow"
+    );
+    const cycleIO = captureIO();
+    assertEqual(
+      await runCli(["job", "start", "-c", cyclePath, "--print-config", ...AUTH], cycleIO.io),
+      2,
+      "and exits 2, not the 1 a bare RangeError left"
+    );
+    assert(
+      cycleIO.err.some((l) => l.includes("cannot carry a cycle")),
+      "and says what a JSON body cannot carry"
+    );
+
+    // A cycle hides equally well under a list, and the root document itself can
+    // be the anchor — both terminate on the same ancestor check.
+    const listCyclePath = join(dir, "cycle-list.yaml");
+    await writeFile(listCyclePath, "datasets: &d\n  - name: deep-swe\n    task_names: *d\nagents: [{name: claude}]\n");
+    assertThrowsUsage(
+      () => buildJobInput(parseArgs(["job", "start", "-c", listCyclePath])),
+      "cannot carry a cycle",
+      "a cycle through a selector list refuses too"
+    );
+    const rootCyclePath = join(dir, "cycle-root.yaml");
+    await writeFile(rootCyclePath, "&root\njob_name: *root\n");
+    assertThrowsUsage(
+      () => buildJobInput(parseArgs(["job", "start", "-c", rootCyclePath])),
+      "cannot carry a cycle",
+      "and a document anchored on itself refuses instead of recursing"
+    );
+
+    // The guard is the ancestor path, not every value ever seen: one anchor
+    // read twice side by side is a plain repeat and rides the wire as two
+    // copies, which is what PyYAML and JSON both do with it.
+    const sharedPath = join(dir, "shared-anchor.yaml");
+    await writeFile(
+      sharedPath,
+      "datasets: [{name: deep-swe, task_names: &t [\"a*\"]}, {name: swe-bench, task_names: *t}]\nagents: [{name: claude}]\n"
+    );
+    const sharedIO = captureIO();
+    assertEqual(
+      await runCli(["job", "start", "-c", sharedPath, "--print-config", ...AUTH], sharedIO.io),
+      0,
+      "a shared anchor is not a cycle and still resolves at exit 0"
+    );
+    assertEqual(
+      sharedIO.out.join("\n").match(/"a\*"/g)?.length,
+      2,
+      "and both entries carry the anchor's value"
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

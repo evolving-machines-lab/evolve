@@ -952,8 +952,25 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * spec that the server ACCEPTS the rewrite, so that one lands as the job's name
  * with nothing anywhere saying so. Every value is checked at every depth,
  * because selector fields ride the same wire.
+ *
+ * An alias may also point back at a collection that CONTAINS it — `agent_env:
+ * &a` over `X: *a` is two lines of valid YAML and the library hands back an
+ * object holding itself. The library's own alias guard counts resources and
+ * one alias exhausts nothing, so it does not fire; `JSON.stringify` would
+ * refuse the cycle, but this walk reaches it first and used to descend until
+ * the stack ran out — a bare exit 1 reading `Maximum call stack size
+ * exceeded`, naming no file and no key, the very shape the alias bomb was
+ * moved off. `ancestors` carries the containers open on the path from the
+ * root, so a value that reappears BENEATH itself is a cycle and refuses by
+ * name, while the same anchor used twice side by side is a plain repeat and
+ * still passes — hence the delete on the way back up.
  */
-function checkWireValue(value: unknown, where: string, source: string): void {
+function checkWireValue(
+  value: unknown,
+  where: string,
+  source: string,
+  ancestors: WeakSet<object> = new WeakSet()
+): void {
   if (value === null || typeof value === "string" || typeof value === "boolean") return;
   if (typeof value === "number") {
     if (Number.isFinite(value)) return;
@@ -962,12 +979,22 @@ function checkWireValue(value: unknown, where: string, source: string): void {
         `a JSON body carries finite numbers only`
     );
   }
-  if (Array.isArray(value)) {
-    value.forEach((item, index) => checkWireValue(item, `${where}[${index}]`, source));
-    return;
-  }
-  if (isPlainObject(value)) {
-    for (const [key, item] of Object.entries(value)) checkWireValue(item, `${where}.${key}`, source);
+  if (Array.isArray(value) || isPlainObject(value)) {
+    if (ancestors.has(value)) {
+      throw new CliUsageError(
+        `--config: ${where} in ${source} is an alias of a value that contains it — ` +
+          `a JSON body cannot carry a cycle`
+      );
+    }
+    ancestors.add(value);
+    if (Array.isArray(value)) {
+      value.forEach((item, index) => checkWireValue(item, `${where}[${index}]`, source, ancestors));
+    } else {
+      for (const [key, item] of Object.entries(value)) {
+        checkWireValue(item, `${where}.${key}`, source, ancestors);
+      }
+    }
+    ancestors.delete(value);
     return;
   }
   throw new CliUsageError(
