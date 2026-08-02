@@ -1563,6 +1563,20 @@ def _parse_error_body(text: str, fallback: str) -> Dict[str, Any]:
     }
 
 
+def _header_retry_after_sec(headers: Any) -> Optional[float]:
+    """The ``Retry-After`` header as seconds, or None when absent/unreadable.
+
+    The header is the SECOND reading everywhere: the envelope's
+    ``retryAfterSec`` wins, because a body always survives a proxy that eats
+    headers. Both the request path and the event stream read it through here.
+    """
+    raw = headers.get('Retry-After') if headers else None
+    try:
+        return float(raw) if raw else None
+    except ValueError:
+        return None
+
+
 def _raise_api_error(exc: urllib.error.HTTPError) -> NoReturn:
     detail = exc.read().decode('utf-8', errors='replace')
     parsed = _parse_error_body(detail, str(exc.reason))
@@ -1570,11 +1584,7 @@ def _raise_api_error(exc: urllib.error.HTTPError) -> NoReturn:
     # and retry delay.
     headers = getattr(exc, 'headers', None)
     header_request_id = headers.get('X-Request-Id') if headers else None
-    header_retry_after = headers.get('Retry-After') if headers else None
-    try:
-        header_retry_sec = float(header_retry_after) if header_retry_after else None
-    except ValueError:
-        header_retry_sec = None
+    header_retry_sec = _header_retry_after_sec(headers)
     raise EvolveAPIError(
         exc.code,
         parsed['code'],
@@ -2156,13 +2166,29 @@ class DatasetsClient:
         Terminal statuses: "COMPLETED" or "FAILED" (``failure`` populated).
         ``on_status`` fires on every observed status change, including the
         first status seen.
+
+        A rate limit or transient outage mid-watch is a delay, not an outcome:
+        a 429/503 sleeps the server's ``retry_after_sec`` and keeps watching
+        rather than dying while the import is still running.
         """
         if poll_interval_s <= 0:
             raise ValueError('poll_interval_s must be positive')
         deadline = time.monotonic() + timeout_s if timeout_s is not None else None
         last_status: Optional[str] = None
         while True:
-            dataset_import = await self.get_import(id)
+            try:
+                dataset_import = await self.get_import(id)
+            except EvolveAPIError as error:
+                if error.status not in (429, 503):
+                    raise
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f'watch_import({id!r}) timed out after {timeout_s}s'
+                    ) from error
+                await asyncio.sleep(
+                    max(error.retry_after_sec or 0.0, poll_interval_s)
+                )
+                continue
             if dataset_import.status != last_status:
                 last_status = dataset_import.status
                 if on_status is not None:
@@ -2752,8 +2778,14 @@ class JobsClient:
             detail = exc.read().decode('utf-8', errors='replace')
             # The whole parsed envelope, not just (code, message): an error that
             # arrives over the event stream should be exactly as actionable as
-            # one that arrives from a request, param and details included.
-            put(('http_error', exc.code, _parse_error_body(detail, str(exc.reason))))
+            # one that arrives from a request, param and details included —
+            # header-carried Retry-After included, on the same body-first law.
+            parsed = _parse_error_body(detail, str(exc.reason))
+            if parsed.get('retry_after_sec') is None:
+                parsed['retry_after_sec'] = _header_retry_after_sec(
+                    getattr(exc, 'headers', None)
+                )
+            put(('http_error', exc.code, parsed))
             return
         except Exception as exc:
             put(('error', exc))
@@ -2799,6 +2831,7 @@ class JobsClient:
             )
             received_event = False
             reconnect = False
+            retry_after: Optional[float] = None
             try:
                 while True:
                     left = remaining()
@@ -2821,6 +2854,10 @@ class JobsClient:
                     elif kind == 'http_error':
                         status, parsed = item[1], item[2]
                         if status == 429 or status >= 500:
+                            # The server's own delay outranks the local backoff
+                            # guess — discarding it retried a rate limit far
+                            # sooner than the door asked for.
+                            retry_after = parsed.get('retry_after_sec')
                             reconnect = True
                             break
                         raise EvolveAPIError(
@@ -2861,7 +2898,8 @@ class JobsClient:
 
             if received_event:
                 delay = reconnect_delay_s
-            await asyncio.sleep(min(delay, remaining() or delay))
+            wait = max(retry_after, delay) if retry_after else delay
+            await asyncio.sleep(min(wait, remaining() or wait))
             delay = min(delay * 2, max_reconnect_delay_s)
 
     def watch(

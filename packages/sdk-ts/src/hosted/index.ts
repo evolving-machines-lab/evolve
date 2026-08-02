@@ -280,16 +280,32 @@ export class EvolveApiError extends Error {
   }
 }
 
+/**
+ * The ONE Retry-After reading: the envelope's `retryAfterSec` first and the
+ * `Retry-After` header second, because a cross-origin browser fetch cannot
+ * always see the header. Every retry path reads the delay through here — the
+ * typed error AND the SSE follow's own backoff — so the same 429 delays the
+ * same amount whichever half of the wire carries the number.
+ */
+function readRetryAfterSec(text: string, res: Response): number | undefined {
+  try {
+    const body = JSON.parse(text) as { error?: { retryAfterSec?: unknown } };
+    const fromBody = body?.error?.retryAfterSec;
+    if (typeof fromBody === "number") return fromBody;
+  } catch {
+    // Unparseable body: the header is the only reading left.
+  }
+  const fromHeader = Number(res.headers?.get?.("retry-after"));
+  return Number.isFinite(fromHeader) ? fromHeader : undefined;
+}
+
 /** Map a non-ok Response to the typed EvolveApiError and throw it. */
 async function throwApiError(res: Response): Promise<never> {
   const text = await res.text().catch(() => "");
-  // Header fallbacks, read before the body so an unparseable body still yields
-  // a usable requestId and retry delay.
+  // Header fallback, read before the body so an unparseable body still yields a
+  // usable requestId. The retry delay follows its own law (body first).
   const headerRequestId = res.headers?.get?.("x-request-id") ?? undefined;
-  const headerRetryAfter = Number(res.headers?.get?.("retry-after"));
-  const retryAfterFromHeader = Number.isFinite(headerRetryAfter)
-    ? headerRetryAfter
-    : undefined;
+  const retryAfterSec = readRetryAfterSec(text, res);
 
   try {
     const body = JSON.parse(text) as {
@@ -312,10 +328,7 @@ async function throwApiError(res: Response): Promise<never> {
           body.error.details && typeof body.error.details === "object"
             ? (body.error.details as Record<string, unknown>)
             : undefined,
-        retryAfterSec:
-          typeof body.error.retryAfterSec === "number"
-            ? body.error.retryAfterSec
-            : retryAfterFromHeader,
+        retryAfterSec,
         requestId:
           typeof body.error.requestId === "string" ? body.error.requestId : headerRequestId,
       });
@@ -325,7 +338,7 @@ async function throwApiError(res: Response): Promise<never> {
     // Fall through: unparseable body.
   }
   throw new EvolveApiError(res.status, "unknown_error", text || res.statusText, {
-    retryAfterSec: retryAfterFromHeader,
+    retryAfterSec,
     requestId: headerRequestId,
   });
 }
@@ -1540,13 +1553,13 @@ export function jobs(config?: HostedClientConfig): JobsClient {
 
       if (!res.ok) {
         if (res.status === 429 || res.status >= 500) {
-          await res.text().catch(() => "");
-          // A Retry-After from the server outranks the local backoff guess.
-          const retryAfterSec = Number(res.headers?.get?.("retry-after"));
+          const text = await res.text().catch(() => "");
+          // A Retry-After from the server outranks the local backoff guess, and
+          // it is read by the ONE law — body first, header second — so a 429
+          // that carries the delay only in its envelope is honored here too.
+          const retryAfterSec = readRetryAfterSec(text, res) ?? 0;
           const waitMs =
-            Number.isFinite(retryAfterSec) && retryAfterSec > 0
-              ? Math.max(retryAfterSec * 1000, delayMs)
-              : delayMs;
+            retryAfterSec > 0 ? Math.max(retryAfterSec * 1000, delayMs) : delayMs;
           await sleep(waitMs, signal);
           delayMs = Math.min(delayMs * 2, maxDelayMs);
           continue;

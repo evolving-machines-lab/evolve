@@ -1723,22 +1723,27 @@ async function resolveJobId(inv: Invocation, ref: string): Promise<string> {
   if (!JOB_ID_PREFIX_RE.test(ref)) return ref;
   const client = jobs(clientConfig(inv));
   const prefix = ref.toLowerCase();
-  const matches: string[] = [];
+  // A SET of ids, not a list: the cursor window shifts while paging (jobs are
+  // created newest-first), so one job can be read on two pages — counting it
+  // twice refused an unambiguous prefix as "ambiguous — it matches 2 jobs"
+  // naming the same id twice. Ambiguity is about distinct jobs.
+  const matches = new Set<string>();
   let cursor: string | undefined;
   do {
     const page = await client.list({ limit: 100, ...(cursor ? { cursor } : {}) });
     for (const job of page.items) {
-      if (job.id.startsWith(prefix)) matches.push(job.id);
+      if (job.id.startsWith(prefix)) matches.add(job.id);
     }
     cursor = page.nextCursor ?? undefined;
   } while (cursor);
-  if (matches.length === 1) return matches[0];
-  if (matches.length === 0) {
+  const ids = [...matches];
+  if (ids.length === 1) return ids[0];
+  if (ids.length === 0) {
     throw new CliUsageError(`no job id starts with "${ref}"`);
   }
   throw new CliUsageError(
-    `"${ref}" is ambiguous — it matches ${matches.length} jobs: ` +
-      `${matches.slice(0, 5).join(", ")}${matches.length > 5 ? ", …" : ""}`
+    `"${ref}" is ambiguous — it matches ${ids.length} jobs: ` +
+      `${ids.slice(0, 5).join(", ")}${ids.length > 5 ? ", …" : ""}`
   );
 }
 

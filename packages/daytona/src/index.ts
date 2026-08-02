@@ -1243,9 +1243,11 @@ export class DaytonaCommands implements SandboxCommands {
         }
       }
 
-      // Try inline output first; if empty and we have cmdId, fetch logs explicitly
+      // Only the blocking path reaches here — a streaming caller with a cmdId
+      // already returned above. Try inline output first; if empty and we have
+      // cmdId, fetch logs explicitly.
       let { stdout, stderr } = readCommandStreams(resp);
-      if (!stdout && !stderr && cmdId && !options?.onStdout) {
+      if (!stdout && !stderr && cmdId) {
         try {
           const logs = await this.sandbox.process.getSessionCommandLogs(sessionId, cmdId);
           const fromLogs = readCommandStreams(logs as any);

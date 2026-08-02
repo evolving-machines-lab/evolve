@@ -1304,6 +1304,16 @@ async function testJobStopAllTerminalIsHonest() {
       io
     );
     assertEqual(code, 0, "exit 0 — the report is the outcome");
+    // The pin for the fix itself: a status pre-filter would have selected
+    // nothing here and printed the empty report. The trials request must carry
+    // the dataset and NOTHING else, so every settled trial rides to the door.
+    const trialsCall = fetchCalls.find((c) => c.url.includes("/api/jobs/eval-1/trials"));
+    assert(trialsCall !== undefined, "fetches the job's trials");
+    assert(trialsCall!.url.includes("dataset=deep-swe"), "narrowed to the named dataset");
+    assert(
+      !trialsCall!.url.includes("status="),
+      "NOT pre-filtered by status — the SCORED trials reach the stop door (D6)"
+    );
     assertEqual(
       JSON.parse(out[out.length - 1]),
       { stopped: [], already_terminal: ["run-1", "run-2"], not_found: [] },
@@ -1391,6 +1401,43 @@ async function testJobIdPrefixLaw() {
     assert(
       unknown.err.some((l) => l.includes('no job id starts with "ffffffff-0000"')),
       "the refusal names the prefix"
+    );
+
+    // Ambiguity is about DISTINCT jobs. The cursor window shifts while paging
+    // (jobs are created newest-first), so one job can be read on two pages —
+    // counting it twice refused an unambiguous prefix, naming the same id twice.
+    installMockFetch();
+    let listCalls = 0;
+    (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+      const urlStr = url.toString();
+      fetchCalls.push({ url: urlStr, init });
+      if (urlStr.includes("/cancel")) {
+        return buildMockResponse({
+          status: 200,
+          body: wireJob({ id: fullId, status: "CANCELLED" }),
+        });
+      }
+      listCalls++;
+      return buildMockResponse({
+        status: 200,
+        body: {
+          items: [wireJob({ id: fullId })],
+          nextCursor: listCalls === 1 ? "page-2" : null,
+          hasMore: listCalls === 1,
+        },
+      });
+    };
+    const repeated = captureIO();
+    assertEqual(
+      await runCli(["job", "cancel", "aabbccdd-111", ...AUTH], repeated.io),
+      0,
+      "the same job read on two pages is ONE match, not an ambiguous pair"
+    );
+    assertEqual(listCalls, 2, "every page is still walked before deciding");
+    const cancelCall = fetchCalls.find((c) => c.url.includes("/cancel"));
+    assert(
+      cancelCall !== undefined && cancelCall.url.includes(fullId),
+      "the resolved full id reaches the verb"
     );
   } finally {
     restoreFetch();
