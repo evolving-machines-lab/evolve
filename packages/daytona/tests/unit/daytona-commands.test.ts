@@ -192,6 +192,8 @@ interface MockProcessApi {
   sessionCommandExitCodes: Array<number | null>;
   /** A follow that yields nothing — the command finished before it connected. */
   silentFollow: boolean;
+  /** A follow that never ends: the socket the command already outlived. */
+  followHangs: boolean;
   /** Track calls to getSessionCommandLogs */
   logFetchCalls: Array<{ sessionId: string; cmdId: string; hasCallbacks: boolean }>;
 }
@@ -204,6 +206,7 @@ function createMockProcessApi(): MockProcessApi {
     logResponse: null,
     sessionCommandExitCodes: [],
     silentFollow: false,
+    followHangs: false,
     logFetchCalls: [],
   };
   return api;
@@ -241,6 +244,11 @@ function createMockDaytonaSandbox(processApi: MockProcessApi) {
         processApi.logFetchCalls.push({ sessionId, cmdId, hasCallbacks });
         const session = processApi.sessions.get(sessionId);
         if (session) session.logFetches++;
+
+        // A follow the command outlives: it never delivers and never ends.
+        if (hasCallbacks && processApi.followHangs) {
+          return new Promise<Record<string, unknown>>(() => {});
+        }
 
         // If streaming callbacks provided, call them
         if (!processApi.silentFollow) {
@@ -539,6 +547,73 @@ async function testStreamingRunFallsBackWhenFollowYieldsNothing(): Promise<void>
   );
 }
 
+/**
+ * The follow is a stream, not a clock. Awaiting it FIRST and only then polling
+ * for an exit code — 20 attempts at 500ms — gave the streaming path two
+ * failure modes the blocking path never had: a stalled socket (nothing acks a
+ * chunked body) hung run() forever when no timeoutMs bounded it, and a follow
+ * that closed a moment early threw "no exit code" on a command that had
+ * already succeeded. The command's record decides; the follow is drained, not
+ * waited on.
+ */
+async function testStreamedRunIsBoundedByTheCommandNotTheFollow(): Promise<void> {
+  console.log("\n[2i] DaytonaCommands.run() - a stalled follow no longer outlives its command");
+
+  // Timings shrunk so the test measures the SHAPE, not the production clocks.
+  class FastCommands extends DaytonaCommands {
+    protected override streamTimings = {
+      pollMinMs: 1,
+      pollMaxMs: 2,
+      drainMs: 20,
+      killGraceMs: 5,
+      settleMs: 500,
+    };
+  }
+  const fast = (api: MockProcessApi) =>
+    new FastCommands(createMockDaytonaSandbox(api) as never);
+
+  const stalled = createMockProcessApi();
+  stalled.followHangs = true;
+  stalled.execResponse = { cmdId: "cmd-010", exitCode: undefined, stdout: "", stderr: "" };
+  stalled.sessionCommandExitCodes = [null, null, 4];
+  stalled.logResponse = { stdout: "recovered", stderr: "" };
+  const hung = Symbol("hung");
+  const raced = await Promise.race([
+    fast(stalled).run("echo hi", { onStdout: () => {} }),
+    new Promise((resolve) => setTimeout(() => resolve(hung), 5_000)),
+  ]);
+  assert(raced !== hung, "run() returns while the follow socket is still open");
+  assertEqual((raced as { exitCode: number }).exitCode, 4, "the command's own record supplies the exit code");
+  assertEqual(
+    (raced as { stdout: string }).stdout,
+    "recovered",
+    "and the settled log still supplies the output the stall never delivered"
+  );
+
+  // A command that takes longer to settle than twenty polls is not a failure.
+  // The old attempt cap threw on exactly this: a run that had SUCCEEDED.
+  const slow = createMockProcessApi();
+  slow.execResponse = { cmdId: "cmd-011", exitCode: undefined, stdout: "", stderr: "" };
+  slow.sessionCommandExitCodes = [...Array(40).fill(null), 0];
+  const slowResult = await fast(slow).run("echo hi", { onStdout: () => {} });
+  assertEqual(slowResult.exitCode, 0, "40 polls later the real exit code is still read, never a throw");
+
+  // A caller's timeoutMs is the ceiling: a command that never settles fails by
+  // that clock instead of waiting on the follow forever.
+  const never = createMockProcessApi();
+  never.followHangs = true;
+  never.execResponse = { cmdId: "cmd-012", exitCode: undefined, stdout: "", stderr: "" };
+  never.sessionCommandExitCodes = Array(10_000).fill(null);
+  let message = "";
+  try {
+    await fast(never).run("sleep 999", { onStdout: () => {}, timeoutMs: 10 });
+  } catch (error) {
+    message = (error as Error).message;
+  }
+  assert(message.includes("no exit code"), "an unbounded follow past the caller's deadline throws");
+  assert(message.includes("10ms"), "and the refusal names the wall clock it blew, not an attempt count");
+}
+
 async function testRunSessionCleanup(): Promise<void> {
   console.log("\n[2e] DaytonaCommands.run() - session is always cleaned up (finally block)");
 
@@ -831,6 +906,7 @@ const tests = [
   testRunStreamsLiveNotAfterExit,
   testStreamingRunNeverFabricatesAStatus,
   testStreamingRunFallsBackWhenFollowYieldsNothing,
+  testStreamedRunIsBoundedByTheCommandNotTheFollow,
   testRunSessionCleanup,
   testRunOutputField,
   // [3] spawn with envs

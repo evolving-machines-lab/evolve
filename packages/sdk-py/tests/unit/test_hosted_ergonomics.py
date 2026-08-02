@@ -145,6 +145,28 @@ class TestErrorEnvelope:
         assert caught.value.request_id == 'req_hdr'
 
     @pytest.mark.asyncio
+    async def test_a_body_delay_of_zero_still_beats_the_header(self):
+        """Body-first means the body WINS, and 0 is a reading, not an absence.
+
+        `or` falls through every falsy value, so an envelope stating 0 took the
+        header's delay instead — TypeScript's readRetryAfterSec keeps the 0, and
+        one law stated two ways in two SDKs is two laws.
+        """
+
+        def fake(request, timeout=None):
+            raise http_error(
+                429,
+                {'error': {'code': 'rate_limited', 'message': 'slow down', 'retryAfterSec': 0}},
+                {'Retry-After': '30'},
+            )
+
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            with pytest.raises(EvolveAPIError) as caught:
+                await datasets_factory(CONFIG).list()
+
+        assert caught.value.retry_after_sec == 0
+
+    @pytest.mark.asyncio
     async def test_unparseable_body_still_yields_a_typed_error(self):
         import io
         import urllib.error

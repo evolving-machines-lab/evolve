@@ -1590,13 +1590,18 @@ def _raise_api_error(exc: urllib.error.HTTPError) -> NoReturn:
     headers = getattr(exc, 'headers', None)
     header_request_id = headers.get('X-Request-Id') if headers else None
     header_retry_sec = _header_retry_after_sec(headers)
+    # Body-first means the body WINS, including a 0: `or` falls through every
+    # falsy reading, so an envelope stating 0 silently became the header's
+    # delay and the two SDKs stopped describing one law (TypeScript's
+    # readRetryAfterSec keeps the 0). Absent is the only fallback trigger.
+    body_retry_sec = parsed.get('retry_after_sec')
     raise EvolveAPIError(
         exc.code,
         parsed['code'],
         parsed['message'],
         param=parsed.get('param'),
         details=parsed.get('details'),
-        retry_after_sec=parsed.get('retry_after_sec') or header_retry_sec,
+        retry_after_sec=body_retry_sec if body_retry_sec is not None else header_retry_sec,
         request_id=parsed.get('request_id') or header_request_id,
     ) from exc
 

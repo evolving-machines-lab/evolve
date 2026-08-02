@@ -1733,6 +1733,34 @@ const JOB_ID_PREFIX_RE = /^[0-9a-f][0-9a-f-]{7,34}$/i;
 const JOB_ID_PREFIX_MIN = 8;
 
 /**
+ * ONE walk of the caller's job list per invocation, not one per id.
+ * `job compare <a> <b> <c>` resolves three prefixes and used to paginate the
+ * whole list three times to answer a question one walk answers; the promise
+ * is cached, so the ids are also read once when the resolutions overlap.
+ * Per INVOCATION, never process-wide: a long-lived host importing runCli must
+ * not answer a later command from an older list.
+ */
+const JOB_ID_INDEX = new WeakMap<Invocation, Promise<string[]>>();
+
+function jobIdIndex(inv: Invocation): Promise<string[]> {
+  const cached = JOB_ID_INDEX.get(inv);
+  if (cached) return cached;
+  const walk = (async () => {
+    const client = jobs(clientConfig(inv));
+    const ids: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await client.list({ limit: 100, ...(cursor ? { cursor } : {}) });
+      for (const job of page.items) ids.push(job.id);
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+    return ids;
+  })();
+  JOB_ID_INDEX.set(inv, walk);
+  return walk;
+}
+
+/**
  * ONE prefix law for every job-id verb: a full uuid passes through untouched;
  * an id-shaped prefix of at least 8 characters is resolved against the
  * caller's own job list (every page) to the one job it names — zero or
@@ -1751,21 +1779,15 @@ async function resolveJobId(inv: Invocation, ref: string): Promise<string> {
     );
   }
   if (!JOB_ID_PREFIX_RE.test(ref)) return ref;
-  const client = jobs(clientConfig(inv));
   const prefix = ref.toLowerCase();
   // A SET of ids, not a list: the cursor window shifts while paging (jobs are
   // created newest-first), so one job can be read on two pages — counting it
   // twice refused an unambiguous prefix as "ambiguous — it matches 2 jobs"
   // naming the same id twice. Ambiguity is about distinct jobs.
   const matches = new Set<string>();
-  let cursor: string | undefined;
-  do {
-    const page = await client.list({ limit: 100, ...(cursor ? { cursor } : {}) });
-    for (const job of page.items) {
-      if (job.id.startsWith(prefix)) matches.add(job.id);
-    }
-    cursor = page.nextCursor ?? undefined;
-  } while (cursor);
+  for (const id of await jobIdIndex(inv)) {
+    if (id.startsWith(prefix)) matches.add(id);
+  }
   const ids = [...matches];
   if (ids.length === 1) return ids[0];
   if (ids.length === 0) {
@@ -2055,15 +2077,51 @@ async function cmdJobStop(inv: Invocation, io: CliIO): Promise<number> {
   // cap and merge the reports into the one outcome the caller reads.
   const trialClient = trials(clientConfig(inv));
   const result: StopResponse = { stopped: [], already_terminal: [], not_found: [] };
-  for (let i = 0; i < trialIds.length; i += 100) {
-    const page = await trialClient.stop(trialIds.slice(i, i + 100));
-    result.stopped.push(...page.stopped);
-    result.already_terminal.push(...page.already_terminal);
-    result.not_found.push(...page.not_found);
+  let reported = 0;
+  try {
+    for (let i = 0; i < trialIds.length; i += 100) {
+      const batch = trialIds.slice(i, i + 100);
+      const page = await trialClient.stop(batch);
+      reported += batch.length;
+      result.stopped.push(...page.stopped);
+      result.already_terminal.push(...page.already_terminal);
+      result.not_found.push(...page.not_found);
+    }
+  } catch (error) {
+    // STOP IS DESTRUCTIVE AND ALREADY APPLIED. Every trial in `result` is dead
+    // server-side and this report is the only place its id exists, so a batch
+    // that fails mid-loop — a 429 on the third request of fifty — may not take
+    // the settled half down with it: the caller saw an empty stdout and one
+    // rate-limit line while 200 trials had already been killed. Print what
+    // landed, state the half that has no report, then let the failure
+    // propagate to its own exit code.
+    emitStopReport(result, dataset, trialIds.length, reported, inv, io);
+    throw error;
   }
+  emitStopReport(result, dataset, trialIds.length, reported, inv, io);
+  return 0;
+}
+
+/**
+ * The one dataset-stop report, printed whether the batch finished or died in
+ * the middle of it. `unreported` counts the ids whose outcome never came back
+ * — not "not stopped": a request can settle server-side and lose its answer,
+ * which is exactly why the count is stated instead of guessed at. Rerunning
+ * the command finishes the rest and returns the already-dead under
+ * `already_terminal`.
+ */
+function emitStopReport(
+  result: StopResponse,
+  dataset: string,
+  total: number,
+  reported: number,
+  inv: Invocation,
+  io: CliIO
+): void {
+  const unreported = total - reported;
   if (inv.flags.json === true) {
-    io.out(JSON.stringify(result));
-    return 0;
+    io.out(JSON.stringify(unreported > 0 ? { ...result, partial: true, unreported } : result));
+    return;
   }
   for (const run of result.stopped) {
     io.out(`stopped ${run.id} (${run.task_name}) ${run.status}`);
@@ -2074,7 +2132,12 @@ async function cmdJobStop(inv: Invocation, io: CliIO): Promise<number> {
     `${result.stopped.length} stopped, ${result.already_terminal.length} already terminal, ` +
       `${result.not_found.length} not found (${dataset})`
   );
-  return 0;
+  if (unreported > 0) {
+    io.out(
+      `PARTIAL: ${unreported} of ${total} trials have no report — ` +
+        `rerun the same command to finish them.`
+    );
+  }
 }
 
 async function cmdJobResume(inv: Invocation, io: CliIO): Promise<number> {

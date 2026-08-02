@@ -1388,6 +1388,96 @@ async function testJobStopAllTerminalIsHonest() {
 }
 
 /**
+ * A stop that dies mid-batch may not take the settled half with it. Stopping
+ * is destructive and already applied server-side, and the merged report is
+ * the ONLY place those trial ids exist: a 429 on the third of three pages
+ * used to discard the two that landed, printing nothing but the rate-limit
+ * line while 200 trials were already dead. D6 (naming every trial, not just
+ * the live ones) is what makes a big dataset issue enough requests to meet
+ * the limit at all, so the two ship together.
+ */
+async function testJobStopReportsThePartialItAlreadySettled() {
+  console.log("\n--- runCli: job stop --dataset prints the settled half before the failure ---");
+  installMockFetch();
+  try {
+    const trialIds = Array.from({ length: 250 }, (_, i) => `run-${i}`);
+    let stopCalls = 0;
+    (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+      const urlStr = url.toString();
+      fetchCalls.push({ url: urlStr, init });
+      if (urlStr.includes("/api/trials/stop")) {
+        stopCalls++;
+        const ids = JSON.parse(init?.body as string).trial_ids as string[];
+        // The third page is the one the limit closes on.
+        if (stopCalls === 3) {
+          return buildMockResponse({
+            status: 429,
+            headers: { "retry-after": "30" },
+            body: { error: { code: "rate_limited", message: "Rate limit exceeded" } },
+          });
+        }
+        return buildMockResponse({
+          status: 200,
+          body: {
+            stopped: ids.map((id) => trialFixture({ id, status: "INDETERMINATE" })),
+            already_terminal: [],
+            not_found: [],
+          },
+        });
+      }
+      if (urlStr.includes("/api/jobs/eval-1/trials")) {
+        return buildMockResponse({
+          status: 200,
+          body: {
+            items: trialIds.map((id) => trialFixture({ id, status: "RUNNING" })),
+            nextCursor: null,
+            hasMore: false,
+          },
+        });
+      }
+      return buildMockResponse({
+        status: 200,
+        body: wireJob({ datasets: [{ name: "deep-swe", version: "1.1" }] }),
+      });
+    };
+
+    const { io, out, err } = captureIO();
+    const code = await runCli(["job", "stop", "eval-1", "--dataset", "deep-swe", ...AUTH], io);
+    assertEqual(code, 1, "the rate limit is still a failure — exit 1");
+    assert(
+      err.some((l) => l.includes("rate limited by the server — retry in 30s")),
+      "and it still prints as one clean rate-limit line"
+    );
+    assert(
+      out.some((l) => l.includes("200 stopped, 0 already terminal, 0 not found (deep-swe)")),
+      "the 200 trials that were actually killed are on the record"
+    );
+    assert(
+      out.some((l) => l.includes("PARTIAL: 50 of 250 trials have no report")),
+      "the half with no answer is stated as unreported, not silently dropped"
+    );
+
+    // --json carries the same truth machine-readably: the merged report plus
+    // the two fields that say it is not the whole slice.
+    const asJson = captureIO();
+    stopCalls = 0;
+    assertEqual(
+      await runCli(["job", "stop", "eval-1", "--dataset", "deep-swe", "--json", ...AUTH], asJson.io),
+      1,
+      "--json is exit 1 on the same failure"
+    );
+    const printed = asJson.out[asJson.out.length - 1];
+    assert(printed !== undefined, "--json prints its report before the failure, never nothing");
+    const report = printed ? JSON.parse(printed) : { stopped: [] };
+    assertEqual(report.stopped.length, 200, "--json reports every trial the door confirmed dead");
+    assertEqual(report.partial, true, "marked partial");
+    assertEqual(report.unreported, 50, "with the count that never came back");
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
  * ONE prefix law: every job-id verb accepts a unique >=8-char id prefix,
  * resolved client-side against the caller's job list — the wire always
  * carries the full id. It used to be per-verb luck (show/cancel accepted,
@@ -1484,6 +1574,55 @@ async function testJobIdPrefixLaw() {
     assert(
       cancelCall !== undefined && cancelCall.url.includes(fullId),
       "the resolved full id reaches the verb"
+    );
+
+    // ONE walk per invocation, not one per id. `job compare a b` resolves two
+    // prefixes against the SAME pages — it used to paginate the whole list
+    // once for each argument.
+    installMockFetch();
+    let pageReads = 0;
+    (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+      const urlStr = url.toString();
+      fetchCalls.push({ url: urlStr, init });
+      if (urlStr.includes("/api/jobs/compare")) {
+        return buildMockResponse({
+          status: 200,
+          body: {
+            jobs: [fullId, otherId].map((id) => ({
+              id,
+              datasets: [{ name: "deep-swe", version: "1.1" }],
+              status: "COMPLETED",
+              mean_reward: 0.5,
+              coverage: { scored: 2, total: 2 },
+              cost_usd: 1,
+              agents: [],
+              started_at: "2026-07-22T00:00:00Z",
+            })),
+            taskMatrix: [],
+          },
+        });
+      }
+      pageReads++;
+      return buildMockResponse({
+        status: 200,
+        body: {
+          items: [wireJob({ id: pageReads === 1 ? fullId : otherId })],
+          nextCursor: pageReads === 1 ? "page-2" : null,
+          hasMore: pageReads === 1,
+        },
+      });
+    };
+    const compare = captureIO();
+    assertEqual(
+      await runCli(["job", "compare", "aabbccdd-111", "aabbccdd-999", ...AUTH], compare.io),
+      0,
+      "two prefixes both resolve"
+    );
+    assertEqual(pageReads, 2, "the job list is walked ONCE for both ids, not once per id");
+    const compareCall = fetchCalls.find((c) => c.url.includes("/api/jobs/compare"));
+    assert(
+      compareCall !== undefined && compareCall.url.includes(`ids=${fullId},${otherId}`),
+      "and the wire carries both FULL ids"
     );
   } finally {
     restoreFetch();
@@ -2301,6 +2440,7 @@ async function main() {
   await testJobStopDatasetSugar();
   await testJobStopDatasetChunking();
   await testJobStopAllTerminalIsHonest();
+  await testJobStopReportsThePartialItAlreadySettled();
   await testJobIdPrefixLaw();
   await testRateLimitSurfacesCleanly();
   await testJobResume();
