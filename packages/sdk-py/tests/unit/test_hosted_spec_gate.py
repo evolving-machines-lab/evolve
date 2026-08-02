@@ -23,6 +23,10 @@ Three axes, same law as the TypeScript gate:
    ``EvalSandboxProvider`` Literals equal the contract's own enums — the
    closed sets clients branch and filter on.
 
+5. SPEND VOCABULARY. The ``SpendSource`` Literal equals the contract's own
+   enum — the money-reading path, where a lane the platform stamps and the
+   type does not offer is a caller reading a provisional floor as unknown.
+
 The spec is parsed line-by-line against its own committed formatting; every
 parse asserts non-vacuity so an empty parse fails loudly instead of passing.
 """
@@ -39,6 +43,7 @@ from evolve import (
     EvalSandboxProvider,
     JobStatus,
     JobsClient,
+    SpendSource,
     TrialStatus,
     TrialsClient,
     meta,
@@ -219,3 +224,10 @@ def test_status_and_provider_literals_match_the_spec_enums():
     providers = _spec_inline_enum('SandboxProvider')
     assert len(providers) >= 3, 'the SandboxProvider parse found too few — spec moved?'
     assert list(typing.get_args(EvalSandboxProvider)) == providers
+
+
+def test_spend_source_literal_matches_the_spec_enum():
+    """The money-reading vocabulary, held to the contract like any other."""
+    lanes = _spec_inline_enum('SpendSource')
+    assert len(lanes) >= 3, 'the SpendSource parse found too few — spec moved?'
+    assert list(typing.get_args(SpendSource)) == lanes

@@ -1752,9 +1752,14 @@ components:
     SpendSource:
       type: string
       description: >
-        Whether a settled trial's `agent_result.cost_usd` was measured from
-        the gateway or is the cap charged conservatively.
-      enum: [measured, assumed]
+        Which lane a settled trial's `agent_result.cost_usd` came from, and
+        only `measured` is final. `measured_provisional` is a real gateway
+        reading taken inside its asynchronous spend flush — an honest floor a
+        deferred pass later confirms or raises into `measured`. `assumed_cap`
+        means nobody measured this trial: the figure it carries is zero, a
+        placeholder and never the cap (the platform under-bills rather than
+        publish an invented number), replaced when a real reading lands.
+      enum: [measured, measured_provisional, assumed_cap]
 
     VerifierEnvironmentMode:
       type: string
@@ -2275,7 +2280,8 @@ components:
       description: |
         What the agent phase produced and consumed. `n_input_tokens` includes
         cache tokens. `cost_usd` is the settled spend (see `spend_source` on
-        the trial for whether it was measured or assumed). `metadata` carries
+        the trial for which lane it came from, and whether it is final).
+        `metadata` carries
         open per-run detail: the harness bundle digest and runtime, the
         network mode the trial ran under and where that decision came from,
         and any harness-reported usage detail.

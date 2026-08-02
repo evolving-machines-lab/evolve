@@ -1338,7 +1338,7 @@ async function testTrials() {
               occurred_at: "2026-07-22T00:01:00.000Z",
             },
             agent_result: null,
-            spend_source: "assumed",
+            spend_source: "assumed_cap",
             sandbox_id: null,
             verifier_sandbox_id: null,
             verifier_environment_mode: null,
@@ -1392,7 +1392,9 @@ async function testTrials() {
     assertEqual(page.items[1].attempt_phase, "boot", "attempt_phase says WHICH step the trial died in");
     assertEqual(page.items[0].attempt_phase, null, "attempt_phase null when not mid-phase");
     assertEqual(page.items[1].sandbox_id, null, "a trial that never booted a box has null sandbox_id");
-    assertEqual(page.items[1].spend_source, "assumed", "assumed spend source maps");
+    // The three lanes the platform actually stamps — a trial that never ran
+    // carries assumed_cap, whose figure is $0 and never the cap.
+    assertEqual(page.items[1].spend_source, "assumed_cap", "the assumed_cap lane maps");
 
     // Status filter: comma-joined ?status= for the failures behind a resume decision
     await e.trials("eval-1", { status: ["INFRASTRUCTURE_ERROR", "SCORING_ERROR"] });

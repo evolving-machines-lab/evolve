@@ -280,9 +280,14 @@ TrialStatus = Literal[
     'SCORING_ERROR', 'INFRASTRUCTURE_ERROR', 'INDETERMINATE', 'CANCELLED',
 ]
 EvalSandboxProvider = Literal['e2b', 'daytona', 'modal']
-#: Whether a settled trial's cost was measured from the gateway or is the cap
-#: charged conservatively.
-SpendSource = Literal['measured', 'assumed']
+#: Which lane a settled trial's cost came from. Only ``'measured'`` is final.
+#: ``'measured_provisional'`` is a real gateway reading taken inside its
+#: asynchronous spend flush — an honest floor a deferred pass later confirms or
+#: raises into ``'measured'``. ``'assumed_cap'`` means nobody measured this
+#: trial: the figure it carries is zero, a placeholder and never the cap (the
+#: platform under-bills rather than publish an invented number), replaced when
+#: a real reading lands.
+SpendSource = Literal['measured', 'measured_provisional', 'assumed_cap']
 #: Where a trial's verifier executed: inside the agent's environment, or a
 #: separate one.
 VerifierEnvironmentMode = Literal['shared', 'separate']
@@ -681,7 +686,7 @@ class AgentResult:
     """What the agent phase produced and consumed.
 
     ``n_input_tokens`` includes cache tokens. ``cost_usd`` is the settled spend
-    (see ``spend_source`` on the trial for whether it was measured or assumed);
+    (see ``spend_source`` on the trial for which lane it came from);
     None until the trial has executed, and None never means $0. ``metadata``
     carries open per-run detail (bundle digest, network mode, harness-reported
     usage).
@@ -754,8 +759,8 @@ class Trial:
     verifier: Optional[TimingInfo]
     #: Multi-step placeholder; None today.
     step_results: Optional[List[Dict[str, Any]]]
-    #: Whether ``agent_result.cost_usd`` was measured or is the cap charged
-    #: conservatively.
+    #: Which lane ``agent_result.cost_usd`` came from — see SpendSource; only
+    #: ``'measured'`` is final.
     spend_source: Optional[SpendSource]
     # A mid-run LOWER BOUND on spend, never the trial's cost. Only ever climbs
     # while the trial runs, and is CLEARED when the trial settles, on the same

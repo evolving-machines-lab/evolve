@@ -1210,6 +1210,14 @@ export class DaytonaCommands implements SandboxCommands {
 
       const cmdId = resp.cmdId;
 
+      // An async execute with no command id is unfollowable: there is nothing
+      // to stream and no place the exit code will ever appear. Falling through
+      // to the blocking tail would report `resp.exitCode ?? 0` — a fabricated
+      // success for a command still running. Refuse instead.
+      if (streaming && !cmdId) {
+        throw new Error("Daytona returned no command id for an async command — cannot stream it or read its exit code");
+      }
+
       if (streaming && cmdId) {
         // The streamed chunks ARE the result: they reach the callbacks live
         // and accumulate into the returned stdout/stderr. The follow stream
@@ -1231,7 +1239,9 @@ export class DaytonaCommands implements SandboxCommands {
         );
         for (let attempt = 0; ; attempt++) {
           const cmd = await this.sandbox.process.getSessionCommand(sessionId, cmdId);
-          if (cmd.exitCode !== undefined) {
+          // The wire says "still running" with a NULL exit code, not an absent
+          // one — `!== undefined` handed that null back as this run's status.
+          if (cmd.exitCode !== undefined && cmd.exitCode !== null) {
             return { exitCode: cmd.exitCode, stdout, stderr };
           }
           if (attempt >= 20) {

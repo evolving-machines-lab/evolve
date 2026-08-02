@@ -185,6 +185,11 @@ interface MockProcessApi {
   };
   /** Override response for getSessionCommandLogs (log fallback) */
   logResponse: Record<string, unknown> | null;
+  /**
+   * Successive getSessionCommand exit codes, consumed one per poll. A `null`
+   * is the wire's "still running". Empty = always answer execResponse's code.
+   */
+  sessionCommandExitCodes: Array<number | null>;
   /** Track calls to getSessionCommandLogs */
   logFetchCalls: Array<{ sessionId: string; cmdId: string; hasCallbacks: boolean }>;
 }
@@ -195,6 +200,7 @@ function createMockProcessApi(): MockProcessApi {
     lastSessionCommand: null,
     execResponse: { cmdId: "cmd-001", exitCode: 0, stdout: "hello", stderr: "" },
     logResponse: null,
+    sessionCommandExitCodes: [],
     logFetchCalls: [],
   };
   return api;
@@ -245,6 +251,9 @@ function createMockDaytonaSandbox(processApi: MockProcessApi) {
         if (session) session.deleted = true;
       },
       getSessionCommand: async (_sessionId: string, _cmdId: string) => {
+        if (processApi.sessionCommandExitCodes.length > 0) {
+          return { exitCode: processApi.sessionCommandExitCodes.shift() };
+        }
         return { exitCode: processApi.execResponse.exitCode };
       },
       listSessions: async () => [],
@@ -446,6 +455,39 @@ async function testRunStreamsLiveNotAfterExit(): Promise<void> {
     "the streamed chunks ARE the result, not the inline snapshot"
   );
   assertEqual(result.exitCode, 7, "exit code read off the session command after the stream closes");
+}
+
+/**
+ * The streaming path may never invent a status. Both routes to a fabricated
+ * one are refused: an async execute that returns no command id (nothing to
+ * follow, nowhere for an exit code to appear) used to fall through to the
+ * blocking tail's `resp.exitCode ?? 0` — a clean success for a command still
+ * running — and a NULL exit code (the wire's "still running") used to be
+ * handed back as the run's own status.
+ */
+async function testStreamingRunNeverFabricatesAStatus(): Promise<void> {
+  console.log("\n[2g] DaytonaCommands.run() - the streaming path never invents an exit code");
+
+  const noId = createMockProcessApi();
+  noId.execResponse = { exitCode: undefined, stdout: "", stderr: "" };
+  let refused = false;
+  try {
+    await createCommands(noId).run("echo hi", { onStdout: () => {} });
+  } catch {
+    refused = true;
+  }
+  assert(refused, "an async execute with no command id refuses instead of reporting exit 0");
+  assert(
+    noId.sessions.get(noId.lastSessionCommand!.sessionId)?.deleted === true,
+    "and the ephemeral session is still cleaned up"
+  );
+
+  const running = createMockProcessApi();
+  running.execResponse = { cmdId: "cmd-007", exitCode: undefined, stdout: "", stderr: "" };
+  // Still running on the first poll, settled on the second.
+  running.sessionCommandExitCodes = [null, 3];
+  const result = await createCommands(running).run("echo hi", { onStdout: () => {} });
+  assertEqual(result.exitCode, 3, "a null exit code is 'still running' — the poll waits for the real one");
 }
 
 async function testRunSessionCleanup(): Promise<void> {
@@ -738,6 +780,7 @@ const tests = [
   testRunInlineStdoutNoFallback,
   testRunStreamingPath,
   testRunStreamsLiveNotAfterExit,
+  testStreamingRunNeverFabricatesAStatus,
   testRunSessionCleanup,
   testRunOutputField,
   // [3] spawn with envs

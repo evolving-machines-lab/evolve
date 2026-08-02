@@ -114,11 +114,26 @@ async function testTextByContentNotExtension(): Promise<void> {
   );
 }
 
+async function testInvalidUtf8WithoutNul(): Promise<void> {
+  console.log("\n[3] invalid UTF-8 carrying NO NUL is bytes — only the strict decode can say so");
+
+  // Latin-1 "café": 0xe9 opens a multi-byte sequence that never completes, and
+  // there is no NUL for the sniff to catch. The `fatal: true` decode is the
+  // ONLY thing standing between this file and U+FFFD soup — a lenient decode
+  // returns a string that no longer re-encodes to these bytes.
+  const latin1 = Uint8Array.from([0x63, 0x61, 0x66, 0xe9]);
+  const { sandbox } = sandboxOf(latin1);
+  const result = await new E2BFiles(sandbox as any).read("/workspace/notes.txt");
+
+  assert(result instanceof Uint8Array, "a NUL-free non-UTF-8 payload reads back as bytes, not a mangled string");
+  assertEqual(Array.from(result as Uint8Array), Array.from(latin1), "every byte survives exactly");
+}
+
 // =============================================================================
 // RUNNER
 // =============================================================================
 
-const tests = [testBinaryByContentNotExtension, testTextByContentNotExtension];
+const tests = [testBinaryByContentNotExtension, testTextByContentNotExtension, testInvalidUtf8WithoutNul];
 
 (async () => {
   console.log("=== E2BFiles.read(): content-sniffed, byte-exact Tests ===");

@@ -1085,7 +1085,7 @@ JobStatus = Literal['QUEUED', 'RUNNING', 'CANCELLING', 'COMPLETED', 'CANCELLED',
 TrialStatus = Literal['QUEUED', 'RUNNING', 'SCORING', 'SCORED',
                       'SCORING_ERROR', 'INFRASTRUCTURE_ERROR', 'INDETERMINATE', 'CANCELLED']
 EvalSandboxProvider = Literal['e2b', 'daytona', 'modal']
-SpendSource = Literal['measured', 'assumed']
+SpendSource = Literal['measured', 'measured_provisional', 'assumed_cap']
 VerifierEnvironmentMode = Literal['shared', 'separate']
 AttemptPhase = Literal['prepare', 'build', 'boot', 'install', 'agent', 'verify', 'persist']
 

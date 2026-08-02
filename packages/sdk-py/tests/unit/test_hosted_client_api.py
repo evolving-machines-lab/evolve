@@ -1248,7 +1248,7 @@ class TestJobs:
         assert trial.reward == 1
         # The full rewards map beside the convenience primary reward.
         assert trial.verifier_result.rewards == {'reward': 1, 'f2p': 1.0}
-        # Spend lives on agent_result; spend_source says measured vs assumed.
+        # Spend lives on agent_result; spend_source names its lane.
         assert trial.agent_result.cost_usd == 0.93
         assert trial.agent_result.n_input_tokens == 1234
         assert trial.spend_source == 'measured'

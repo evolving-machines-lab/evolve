@@ -295,7 +295,13 @@ function readRetryAfterSec(text: string, res: Response): number | undefined {
   } catch {
     // Unparseable body: the header is the only reading left.
   }
-  const fromHeader = Number(res.headers?.get?.("retry-after"));
+  // An ABSENT header is no reading at all, never zero: `Number(null)` is 0 and
+  // 0 is finite, so a bare Number() told the caller to retry instantly — the
+  // one thing a rate limit forbids. Empty is absent, and the HTTP-date form
+  // (which we do not parse) is unreadable — both leave "retry shortly".
+  const rawHeader = res.headers?.get?.("retry-after");
+  if (typeof rawHeader !== "string" || rawHeader.trim() === "") return undefined;
+  const fromHeader = Number(rawHeader);
   return Number.isFinite(fromHeader) ? fromHeader : undefined;
 }
 

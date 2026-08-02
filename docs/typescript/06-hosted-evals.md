@@ -1107,7 +1107,7 @@ type TrialStatus =
     | "QUEUED" | "RUNNING" | "SCORING" | "SCORED"
     | "SCORING_ERROR" | "INFRASTRUCTURE_ERROR" | "INDETERMINATE" | "CANCELLED";
 type EvalSandboxProvider = "e2b" | "daytona" | "modal";
-type SpendSource = "measured" | "assumed";
+type SpendSource = "measured" | "measured_provisional" | "assumed_cap";
 type VerifierEnvironmentMode = "shared" | "separate";
 type AttemptPhase = "prepare" | "build" | "boot" | "install" | "agent" | "verify" | "persist";
 

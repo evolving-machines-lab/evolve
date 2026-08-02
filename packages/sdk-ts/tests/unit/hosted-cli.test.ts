@@ -1465,6 +1465,29 @@ async function testRateLimitSurfacesCleanly() {
       !err.some((l) => l === "Error: Rate limit exceeded"),
       "the raw server message no longer prints bare"
     );
+
+    // No delay anywhere — no envelope retryAfterSec, no header. An absent
+    // reading is NOT zero: "retry in 0s" tells the operator to hammer the
+    // door the limit just closed. This is the branch the header-present case
+    // above cannot reach.
+    setMockResponse("/api/jobs/eval-2", {
+      status: 429,
+      body: { error: { code: "rate_limited", message: "Rate limit exceeded" } },
+    });
+    const silent = captureIO();
+    assertEqual(
+      await runCli(["job", "show", "eval-2", ...AUTH], silent.io),
+      1,
+      "a rate limit with no delay stated is still exit 1"
+    );
+    assert(
+      silent.err.some((l) => l.includes("rate limited by the server — retry shortly")),
+      "a missing Retry-After reads as 'retry shortly', never 'retry in 0s'"
+    );
+    assert(
+      !silent.err.some((l) => l.includes("retry in 0s")),
+      "no fabricated zero delay"
+    );
   } finally {
     restoreFetch();
   }
