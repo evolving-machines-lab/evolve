@@ -1874,11 +1874,24 @@ class TestTrials:
 
         assert '/api/trials/run-1/trace?stream=trajectory' in fake.requests[0].full_url
         assert log == '{"steps":[]}'
-        # The Literal carries all five selectors, agent-home last.
+        # The Literal carries all six selectors in the contract's own order —
+        # trace-parsed first, agent-home last.
         hints = typing.get_type_hints(client.artifact)
         assert typing.get_args(hints['stream']) == (
-            'verifier', 'trace-stdout', 'trace-stderr', 'trajectory', 'agent-home',
+            'trace-parsed', 'verifier', 'trace-stdout', 'trace-stderr', 'trajectory', 'agent-home',
         )
+
+    @pytest.mark.asyncio
+    async def test_artifact_refuses_trace_parsed_with_guidance(self):
+        """'trace-parsed' is in the vocabulary but is not a raw artifact — the
+        parsed event trace rides trace()/trace_events(), and artifact() refuses
+        the selector with that guidance before any request leaves."""
+        fake = FakeUrlopen([])
+        client = trials_factory(CONFIG)
+        with patch('evolve.hosted.urllib.request.urlopen', fake):
+            with pytest.raises(ValueError, match=r'trace_events'):
+                await client.artifact('run-1', 'trace-parsed')
+        assert fake.requests == []
 
     @pytest.mark.asyncio
     async def test_trace_events_drains_pages(self):

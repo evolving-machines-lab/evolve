@@ -1763,7 +1763,7 @@ export function trials(config?: HostedClientConfig): TrialsClient {
    */
   async function getArtifact(
     trialId: string,
-    stream: Exclude<TrialArtifactStream, "agent-home">
+    stream: Exclude<TrialArtifactStream, "trace-parsed" | "agent-home">
   ): Promise<string | null>;
   async function getArtifact(
     trialId: string,
@@ -1771,7 +1771,7 @@ export function trials(config?: HostedClientConfig): TrialsClient {
   ): Promise<Record<string, string> | null>;
   async function getArtifact(
     trialId: string,
-    stream: TrialArtifactStream
+    stream: Exclude<TrialArtifactStream, "trace-parsed">
   ): Promise<string | Record<string, string> | null> {
     const res = await request(
       cfg,

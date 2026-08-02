@@ -671,8 +671,9 @@ paths:
       operationId: getTrialTrace
       summary: Trial trace and artifacts
       description: |
-        Without `stream`: one page of parsed trace events, paged by `cursor`
-        (a sequence number) and `limit` (default 200, max 1000).
+        Without `stream` (or with `stream=trace-parsed`, the same answer by
+        its vocabulary name): one page of parsed trace events, paged by
+        `cursor` (a sequence number) and `limit` (default 200, max 1000).
 
         With `stream`: raw artifacts instead of parsed events —
         - `verifier`, `trace-stdout`, `trace-stderr`, `trajectory` (wave 2):
@@ -709,6 +710,7 @@ paths:
           schema:
             type: string
             enum:
+              - trace-parsed # the parsed event trace — same answer as omitting
               - verifier
               - trace-stdout
               - trace-stderr

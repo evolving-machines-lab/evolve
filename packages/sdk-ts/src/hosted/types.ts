@@ -1433,12 +1433,15 @@ export interface JobsClient {
 }
 
 /**
- * The trace route's `?stream=` selectors, in the contract's own order — the
- * raw-artifact vocabulary. A runtime value (not only a type) so a drift gate
- * can hold it to the spec's enum, and the CLI can build its `--stream`
- * validation from the same list instead of a second copy.
+ * The trace route's `?stream=` selectors, in the contract's own order —
+ * `trace-parsed` (the parsed event trace, the same answer as omitting
+ * `stream`) followed by the raw-artifact vocabulary. A runtime value (not
+ * only a type) so a drift gate can hold it to the spec's enum, and the CLI
+ * can build its `--stream` validation from the same list instead of a
+ * second copy.
  */
 export const TRIAL_ARTIFACT_STREAMS = [
+  "trace-parsed",
   "verifier",
   "trace-stdout",
   "trace-stderr",
@@ -1446,7 +1449,7 @@ export const TRIAL_ARTIFACT_STREAMS = [
   "agent-home",
 ] as const;
 
-/** One raw-artifact selector on the trace route. */
+/** One `?stream=` selector on the trace route. */
 export type TrialArtifactStream = (typeof TRIAL_ARTIFACT_STREAMS)[number];
 
 /** Client for globally addressable trials — no job id in any signature */
@@ -1472,11 +1475,12 @@ export interface TrialsClient {
    * included), keyed by sandbox path. Null = never stored
    * (a normal answer, not an error). "trajectory" is in the vocabulary ahead
    * of its server wave — until that wave lands the route answers not-found,
-   * reported honestly as the API error it is.
+   * reported honestly as the API error it is. "trace-parsed" is not an
+   * artifact — the parsed event trace rides trace()/traceEvents().
    */
   artifact(
     trialId: string,
-    stream: Exclude<TrialArtifactStream, "agent-home">
+    stream: Exclude<TrialArtifactStream, "trace-parsed" | "agent-home">
   ): Promise<string | null>;
   artifact(trialId: string, stream: "agent-home"): Promise<Record<string, string> | null>;
   /**

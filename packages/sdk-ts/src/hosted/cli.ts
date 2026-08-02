@@ -1903,11 +1903,11 @@ async function cmdTrialShow(inv: Invocation, io: CliIO): Promise<number> {
 }
 
 /**
- * The six artifact names `--stream` accepts — the parsed trace plus the
- * contract's raw selectors, from the SDK's own list so there is no second
- * copy of the vocabulary to keep in step.
+ * The six artifact names `--stream` accepts — the contract's own `?stream=`
+ * enum (the parsed trace first, then the raw selectors), from the SDK's own
+ * list so there is no second copy of the vocabulary to keep in step.
  */
-const STREAM_ARTIFACTS = ["trace-parsed", ...TRIAL_ARTIFACT_STREAMS] as const;
+const STREAM_ARTIFACTS = TRIAL_ARTIFACT_STREAMS;
 type StreamArtifact = (typeof STREAM_ARTIFACTS)[number];
 
 async function cmdTrialDownload(inv: Invocation, io: CliIO): Promise<number> {

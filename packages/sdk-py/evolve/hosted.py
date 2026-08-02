@@ -3129,7 +3129,7 @@ class TrialsClient:
     async def artifact(
         self,
         trial_id: str,
-        stream: Literal['verifier', 'trace-stdout', 'trace-stderr', 'trajectory', 'agent-home'],
+        stream: Literal['trace-parsed', 'verifier', 'trace-stdout', 'trace-stderr', 'trajectory', 'agent-home'],
     ) -> Optional[Union[str, Dict[str, str]]]:
         """One raw trace artifact for a trial, by the trace route's ``?stream=``
         selector.
@@ -3141,8 +3141,15 @@ class TrialsClient:
         QUEUED/CANCELLED trial, a harness that wrote nothing, or a purged
         trace. ``"trajectory"`` is in the vocabulary ahead of its server wave —
         until that wave lands the route answers not-found, reported honestly as
-        the API error it is.
+        the API error it is. ``"trace-parsed"`` is in the vocabulary but is not
+        a raw artifact — the parsed event trace rides ``trace()`` /
+        ``trace_events()``, and passing it here is refused with that guidance.
         """
+        if stream == 'trace-parsed':
+            raise ValueError(
+                "'trace-parsed' is the parsed event trace — use trace() / trace_events(), "
+                'not artifact()'
+            )
         raw = await self._http.request_json(
             f'/api/trials/{urllib.parse.quote(trial_id)}/trace?stream={stream}'
         )
