@@ -551,6 +551,54 @@ async function testConfigFileMerge() {
       "quoted env values pass through as the strings the wire takes"
     );
 
+    // Ordinary text that only LOOKS numeric: PyYAML's float pattern needs a dot
+    // and a signed exponent, so `e3` and `1e3` are the strings a caller wrote.
+    // Under the 1.1 spec's wider pattern the library carries, `e3` resolved to
+    // NaN and was refused as `.nan` — a value nobody typed, with no remedy
+    // offered — and a `1e3` dataset name shipped as a JSON number at exit 0.
+    const exponentPath = join(dir, "exponent.yaml");
+    await writeFile(
+      exponentPath,
+      [
+        "job_name: 1e3",
+        "agent_env: {BUILD_TAG: e3, RELEASE: 1e3}",
+        "datasets: [{name: 1e3}]",
+        "agents: [{name: claude, model_name: E3}]",
+      ].join("\n")
+    );
+    assertEqual(
+      buildJobInput(parseArgs(["job", "start", "-c", exponentPath])),
+      {
+        job_name: "1e3",
+        datasets: [{ name: "1e3" }],
+        agents: [{ name: "claude", model_name: "E3" }],
+        agent_env: { BUILD_TAG: "e3", RELEASE: "1e3" },
+      },
+      "e3 and 1e3 stay the text they are — no NaN refusal, no JSON number under a name field"
+    );
+    const exponentIO = captureIO();
+    assertEqual(
+      await runCli(["job", "start", "-c", exponentPath, "--print-config", ...AUTH], exponentIO.io),
+      0,
+      "and the body resolves at exit 0"
+    );
+    assert(
+      exponentIO.out.join("\n").includes('"name": "1e3"'),
+      "--print-config prints the dataset name QUOTED, where the wire number rode through unnoticed"
+    );
+    // The same law read the other way: PyYAML makes `1e3` a string, so a field
+    // the file's own text must decide as a number is refused, not coerced.
+    const exponentSpendPath = join(dir, "exponent-spend.yaml");
+    await writeFile(
+      exponentSpendPath,
+      "max_trial_spend_usd: 1e3\ndatasets: [{name: deep-swe}]\nagents: [{name: claude}]\n"
+    );
+    assertThrowsUsage(
+      () => buildJobInput(parseArgs(["job", "start", "-c", exponentSpendPath])),
+      '"max_trial_spend_usd" in',
+      "an unsigned exponent is a string to PyYAML, so a money field refuses it instead of spending 1000"
+    );
+
     // --print-config is the dry run a paid remote run deserves, so the exit
     // code is the promise: the date-named job printed a rewritten body at
     // exit 0, where every config refusal is a usage exit 2.
@@ -831,6 +879,57 @@ function testYamlConfig() {
     () => parseYamlConfig("a: b\na: c", "t.yaml"),
     "t.yaml:2",
     "a duplicate key refuses with its line instead of silently keeping the last value"
+  );
+
+  // PyYAML's float pattern needs a dot AND a signed exponent; the 1.1 spec's,
+  // which the library carries, needs neither. Under the spec's, `e3` was a
+  // float whose parseFloat is NaN — an ordinary build tag refused as `.nan`,
+  // naming a value nobody wrote — and `1e3` was the number 1000. Every reading
+  // below was taken from PyYAML 6.0.3 on the identical text.
+  const floatShapes: Array<[string, unknown]> = [
+    ["e3", "e3"],
+    ["E3", "E3"],
+    ["e10", "e10"],
+    ["-e3", "-e3"],
+    [".", "."],
+    ["+.", "+."],
+    ["-.", "-."],
+    ["._", "._"],
+    ["1e3", "1e3"],
+    ["1E3", "1E3"],
+    ["1.0e3", "1.0e3"],
+    ["-1e3", "-1e3"],
+    ["5e-3", "5e-3"],
+    ["1.5e3", "1.5e3"],
+    [".5e3", ".5e3"],
+    ["1e+3", "1e+3"],
+    ["-.5", "-.5"],
+    ["+.5", "+.5"],
+    ["-.5e+3", "-.5e+3"],
+    [".5", 0.5],
+    ["1.", 1],
+    ["-1.", -1],
+    ["1.5", 1.5],
+    ["1.5e+3", 1500],
+    ["1.e+3", 1000],
+    ["+1.5e+3", 1500],
+    [".5e+3", 500],
+    ["1.0E+3", 1000],
+    ["1_0.0", 10],
+    ["12:30.5", 750.5],
+    ["12:30", 750],
+  ];
+  for (const [text, expected] of floatShapes) {
+    assertEqual(
+      parseYamlConfig(`a: ${text}`, "t.yaml"),
+      { a: expected },
+      `\`${text}\` reads as ${JSON.stringify(expected)}, as PyYAML reads it`
+    );
+  }
+  assertEqual(
+    parseYamlConfig("%YAML 1.2\n---\ntag: e3\nspend: 1.5e+3", "t.yaml"),
+    { tag: "e3", spend: 1500 },
+    "the float carve-out survives the directive too"
   );
 
   // PyYAML's resolver has ONE mode, so a `%YAML` directive changes nothing

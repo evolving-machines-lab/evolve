@@ -772,11 +772,40 @@ function withoutBareYesNoBooleans(tags: Tags): Tags {
 }
 
 /**
+ * PyYAML's float pattern is narrower than the 1.1 spec's the library carries:
+ * it requires a dot, and it requires a SIGN on the exponent. Under the spec's,
+ * `e3` is a float whose `parseFloat` is NaN and `1e3` is the number 1000, where
+ * PyYAML reads both as the text they are — so a build tag `e3` was refused as
+ * `.nan`, naming a value nobody wrote, and a `1e3` dataset name printed and
+ * shipped as a JSON number where the wire takes a string, at exit 0.
+ */
+const PYYAML_FLOAT = /^(?:[-+]?[0-9][0-9_]*\.[0-9_]*|\.[0-9][0-9_]*)$/;
+const PYYAML_FLOAT_EXP = /^(?:[-+]?[0-9][0-9_]*\.[0-9_]*|\.[0-9][0-9_]*)[eE][-+][0-9]+$/;
+
+/**
+ * Four tags answer to `tag:yaml.org,2002:float` — plain, exponent, `.inf`/`.nan`,
+ * and the sexagesimal `12:30.5` — and only the first two read wider than PyYAML.
+ * Each is named by a value its own test accepts, never by the text of that test,
+ * because a `test` and its `resolve` are one pair and the regex alone cannot say
+ * which value the tag will produce.
+ */
+function withPyYamlFloatShapes(tags: Tags): Tags {
+  return tags.map((tag) => {
+    if (typeof tag !== "object" || tag.tag !== "tag:yaml.org,2002:float" || !tag.test) return tag;
+    if (tag.test.test("1.5e+3")) return { ...tag, test: PYYAML_FLOAT_EXP };
+    if (tag.test.test("1.5")) return { ...tag, test: PYYAML_FLOAT };
+    return tag;
+  });
+}
+
+/**
  * -c reads real YAML through the standard `yaml` package — the hand-rolled
  * subset reader is retired. PyYAML's reading is the contract, so the schema is
  * YAML 1.1 (`yes`/`on` are booleans, `012` is octal, a flow mapping is a whole
- * sequence item) with one carve-out: the 1.1 spec's bare `y`/`n` booleans,
- * which PyYAML never adopted — `n: 3` keeps its key. The schema is PINNED, not
+ * sequence item) with two carve-outs: the 1.1 spec's bare `y`/`n` booleans,
+ * which PyYAML never adopted — `n: 3` keeps its key — and the 1.1 spec's float
+ * shapes PyYAML never adopted either, which need a dot and a signed exponent,
+ * so `e3` and `1e3` stay the strings a caller wrote. The schema is PINNED, not
  * merely defaulted: PyYAML's resolver has no mode but 1.1 and reads a file the
  * same way whatever its `%YAML` directive says, while this library lets an
  * explicit `%YAML 1.2` swap in the 1.2 core schema. One file, one reading.
@@ -793,7 +822,7 @@ export function parseYamlConfig(text: string, source: string): unknown {
     version: "1.1",
     schema: "yaml-1.1",
     resolveKnownTags: false,
-    customTags: withoutBareYesNoBooleans,
+    customTags: (tags) => withPyYamlFloatShapes(withoutBareYesNoBooleans(tags)),
   });
   // Warnings refuse too: the library downgrades an unresolvable tag to a
   // warning and parses on, where PyYAML (and this CLI, always) refuses.
