@@ -418,6 +418,36 @@ async function testRunStreamingPath(): Promise<void> {
   assertEqual(processApi.logFetchCalls[0].hasCallbacks, true, "Log fetch had streaming callbacks");
 }
 
+/**
+ * Campaign J5: run() with callbacks used a BLOCKING execute and only followed
+ * the logs after it returned, so every byte landed in one burst after the
+ * command finished (e2b/modal stream within ~2s). A streaming run must
+ * execute async and follow live, and the streamed chunks are the result.
+ */
+async function testRunStreamsLiveNotAfterExit(): Promise<void> {
+  console.log("\n[2f] DaytonaCommands.run() - streaming executes ASYNC and follows live (J5)");
+
+  const processApi = createMockProcessApi();
+  processApi.execResponse = { cmdId: "cmd-006", exitCode: 7, stdout: "inline-not-used", stderr: "" };
+  const commands = createCommands(processApi);
+
+  const chunks: string[] = [];
+  const result = await commands.run("echo hi", { onStdout: (c) => chunks.push(c) });
+
+  assertEqual(
+    processApi.lastSessionCommand?.runAsync,
+    true,
+    "a streaming run executes runAsync — the blocking execute held all output to exit"
+  );
+  assertEqual(chunks.join(""), "streamed-stdout", "chunks reach the callback from the live follow");
+  assertEqual(
+    result.stdout,
+    "streamed-stdout",
+    "the streamed chunks ARE the result, not the inline snapshot"
+  );
+  assertEqual(result.exitCode, 7, "exit code read off the session command after the stream closes");
+}
+
 async function testRunSessionCleanup(): Promise<void> {
   console.log("\n[2e] DaytonaCommands.run() - session is always cleaned up (finally block)");
 
@@ -707,6 +737,7 @@ const tests = [
   testRunEmptyStdoutFallback,
   testRunInlineStdoutNoFallback,
   testRunStreamingPath,
+  testRunStreamsLiveNotAfterExit,
   testRunSessionCleanup,
   testRunOutputField,
   // [3] spawn with envs

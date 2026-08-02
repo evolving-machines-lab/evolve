@@ -1187,28 +1187,60 @@ export class DaytonaCommands implements SandboxCommands {
     await this.sandbox.process.createSession(sessionId);
 
     try {
-      // The third argument stays the wait bound — this call still blocks until
-      // the command finishes — and withInBoxTimeout is what survives this
-      // process dying while it waits (see the wrapper's header). Both are the
-      // caller's own timeout, so whichever fires first, nothing outlives it.
+      // A streaming caller needs output WHILE the command runs, and a
+      // blocking execute holds every byte until exit — the campaign measured
+      // a 10s command whose whole output landed in one burst after
+      // completion (J5) while e2b/modal streamed within ~2s. So with
+      // callbacks the command runs ASYNC and the live follow (direct = the
+      // SDK's websocket, managed = the HTTP chunked follow) delivers chunks
+      // as they are produced. Without callbacks the blocking execute stays:
+      // one round trip, exit code inline.
+      const streaming = Boolean(options?.onStdout || options?.onStderr);
+      // The third argument stays the wait bound of a blocking execute, and
+      // withInBoxTimeout is what survives this process dying while it waits
+      // (see the wrapper's header). Both are the caller's own timeout, so
+      // whichever fires first, nothing outlives it.
       const resp = await this.sandbox.process.executeSessionCommand(sessionId, {
         command: withInBoxTimeout(
           wrapCommand(command, options?.cwd, options?.envs, this.user),
           timeoutSec
         ),
-        runAsync: false,
+        runAsync: streaming,
       }, timeoutSec);
 
       const cmdId = resp.cmdId;
 
-      // Streaming: pipe logs to callbacks
-      if (cmdId && (options?.onStdout || options?.onStderr)) {
+      if (streaming && cmdId) {
+        // The streamed chunks ARE the result: they reach the callbacks live
+        // and accumulate into the returned stdout/stderr. The follow stream
+        // closes when the command ends (the in-box timeout bounds a runaway),
+        // and the exit code lands on the session command right after.
+        let stdout = "";
+        let stderr = "";
         await this.followLogs(
           sessionId,
           cmdId,
-          options.onStdout || (() => {}),
-          options.onStderr || (() => {})
+          (chunk) => {
+            stdout += chunk;
+            options?.onStdout?.(chunk);
+          },
+          (chunk) => {
+            stderr += chunk;
+            options?.onStderr?.(chunk);
+          },
         );
+        for (let attempt = 0; ; attempt++) {
+          const cmd = await this.sandbox.process.getSessionCommand(sessionId, cmdId);
+          if (cmd.exitCode !== undefined) {
+            return { exitCode: cmd.exitCode, stdout, stderr };
+          }
+          if (attempt >= 20) {
+            throw new Error(
+              `Daytona reported no exit code for command ${cmdId} after its log stream closed`
+            );
+          }
+          await new Promise((r) => setTimeout(r, 500));
+        }
       }
 
       // Try inline output first; if empty and we have cmdId, fetch logs explicitly
