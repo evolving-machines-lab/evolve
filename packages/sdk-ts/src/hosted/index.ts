@@ -728,12 +728,27 @@ interface SseFrame {
 /**
  * Incremental server-sent-events parser. Frames are separated by a blank line;
  * comment lines (":") are ignored (the server uses them as heartbeats).
+ *
+ * The SSE grammar ends a line on CRLF, LF, or a LONE CR, so all three
+ * normalize to LF before the frame split — a CR-terminated stream used to sit
+ * in the buffer forever, never producing a frame. A CR that ends a chunk is
+ * held back until the next push: normalized eagerly it would read a CRLF pair
+ * split across chunks as two terminators, minting a frame boundary nobody sent.
  */
 function createSseParser(onFrame: (frame: SseFrame) => void): { push(chunk: string): void } {
   let buffer = "";
+  let pendingCr = false;
   return {
     push(chunk: string) {
-      buffer += chunk.replace(/\r\n/g, "\n");
+      if (pendingCr) {
+        chunk = "\r" + chunk;
+        pendingCr = false;
+      }
+      if (chunk.endsWith("\r")) {
+        chunk = chunk.slice(0, -1);
+        pendingCr = true;
+      }
+      buffer += chunk.replace(/\r\n|\r/g, "\n");
       let boundary: number;
       while ((boundary = buffer.indexOf("\n\n")) !== -1) {
         const rawFrame = buffer.slice(0, boundary);

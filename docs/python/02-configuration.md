@@ -528,7 +528,7 @@ Dashboard setup:
 3. Add a browser login with `Account label`, `Website`, `Email`, and `Password`.
 4. Use `Website` for the domain, such as `github.com`; use `Account label` as one word with no spaces, such as `qa-admin`, `work`, or `personal`, to distinguish multiple saved accounts for the same website. It is not the website username or email.
 
-Passwords are encrypted before upload. The dashboard and SDK list only login metadata: account label, website, email, and last-used time.
+Passwords are encrypted client-side with RSA-OAEP-SHA256 against the dashboard's published public key before upload — the SDK verifies it is handed a genuine `rsaEncryption` key before encrypting, and a plaintext password never leaves the machine. The dashboard and SDK list only login metadata: account label, website, email, and last-used time.
 
 Expose saved logins to a run:
 

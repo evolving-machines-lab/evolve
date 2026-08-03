@@ -40,6 +40,7 @@ from typing import (
     Awaitable,
     Callable,
     Dict,
+    Iterator,
     List,
     Literal,
     NoReturn,
@@ -48,6 +49,7 @@ from typing import (
     get_args,
 )
 
+from . import _http
 from .config import HostedClientConfig
 
 DEFAULT_BASE_URL = 'https://dashboard.evolvingmachines.ai'
@@ -1695,7 +1697,7 @@ class _HostedHttp:
             method=method,
         )
         try:
-            with urllib.request.urlopen(request, timeout=UPLOAD_TIMEOUT_SEC) as response:
+            with _http.urlopen(request, timeout=UPLOAD_TIMEOUT_SEC) as response:
                 payload = response.read()
         except urllib.error.HTTPError as exc:
             _raise_api_error(exc)
@@ -1731,7 +1733,7 @@ class _HostedHttp:
             method=method,
         )
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            with _http.urlopen(request, timeout=timeout) as response:
                 payload = response.read()
                 if raw:
                     return payload, dict(response.headers.items())
@@ -1748,7 +1750,7 @@ class _HostedHttp:
             headers={'Authorization': f'Bearer {self.api_key()}'},
         )
         try:
-            with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT_SEC) as response:
+            with _http.urlopen(request, timeout=DOWNLOAD_TIMEOUT_SEC) as response:
                 os.makedirs(to_dir, exist_ok=True)
                 disposition = response.headers.get('Content-Disposition', '') or ''
                 match = re.search(r'filename="([^"]+)"', disposition)
@@ -2541,6 +2543,27 @@ def _parse_sse_data(text: str) -> Dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {'value': parsed}
 
 
+def _iter_sse_lines(response: Any) -> 'Iterator[str]':
+    """Yield SSE lines honoring all three terminators the grammar names.
+
+    The grammar ends a line on CRLF, LF, or a LONE CR. Iterating the response
+    directly splits on LF only, so a CR-terminated stream arrived as one
+    endless "line" and no event ever surfaced. Each LF-delimited read is
+    therefore re-split on the CRs inside it: the trailing LF — and the CR
+    paired with it, because CRLF is ONE terminator — is stripped first, so a
+    plain blank line stays one blank line, then every interior CR ends a line
+    of its own. A CR can never be orphaned across reads: the response yields
+    up to and including each LF, so a CRLF pair always arrives together.
+    """
+    for raw_line in response:
+        text = raw_line.decode('utf-8', errors='replace')
+        if text.endswith('\n'):
+            text = text[:-1]
+            if text.endswith('\r'):
+                text = text[:-1]
+        yield from text.split('\r')
+
+
 # =============================================================================
 # JOBS CLIENT
 # =============================================================================
@@ -2770,13 +2793,20 @@ class JobsClient:
             headers=headers,
         )
         try:
-            with urllib.request.urlopen(request, timeout=SSE_SOCKET_TIMEOUT_SEC) as response:
+            with _http.urlopen(request, timeout=SSE_SOCKET_TIMEOUT_SEC) as response:
                 connection.response = response
                 event_id: Optional[str] = None
                 event_type: Optional[str] = None
                 data_lines: List[str] = []
-                for raw_line in response:
-                    line = raw_line.decode('utf-8', errors='replace').rstrip('\r\n')
+                # The SSE grammar names three line terminators: CRLF, LF, and a
+                # LONE CR. Iterating the response splits on LF only, so a
+                # CR-terminated stream arrived as one endless "line" and no
+                # event ever surfaced. Each LF-delimited read is therefore
+                # re-split on the CRs inside it: the trailing LF (and the CR
+                # paired with it — CRLF is ONE terminator) is stripped first, so
+                # a plain blank line stays one blank line, then every interior
+                # CR ends a line of its own.
+                for line in _iter_sse_lines(response):
                     if line == '':
                         if event_id is not None or event_type is not None or data_lines:
                             try:
@@ -3407,7 +3437,7 @@ async def meta(config: Optional[HostedClientConfig] = None) -> CapabilityDocumen
             f'{base_url}/api/meta', headers={'Accept': 'application/json'}
         )
         try:
-            with urllib.request.urlopen(request, timeout=META_TIMEOUT_SEC) as response:
+            with _http.urlopen(request, timeout=META_TIMEOUT_SEC) as response:
                 return json.loads(response.read().decode('utf-8'))
         except urllib.error.HTTPError as exc:
             _raise_api_error(exc)

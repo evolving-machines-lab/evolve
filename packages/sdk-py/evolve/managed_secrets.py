@@ -1,13 +1,11 @@
 """Standalone managed secrets client."""
 
 import asyncio
-import json
 import os
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from . import _http
 from .config import ManagedSecretsClientConfig
 
 
@@ -59,24 +57,12 @@ class ManagedSecretsClient:
         return [_metadata_from_dict(item) for item in result.get('secrets', [])]
 
     async def _request_json(self, path: str) -> Dict[str, Any]:
-        return await asyncio.to_thread(self._request_json_sync, path)
-
-    def _request_json_sync(self, path: str) -> Dict[str, Any]:
-        request = urllib.request.Request(
+        return await asyncio.to_thread(
+            _http.request_json,
             f'{_dashboard_base_url(self.config)}{path}',
-            headers={
-                'Authorization': f'Bearer {_resolve_api_key(self.config)}',
-                'Accept': 'application/json',
-            },
-            method='GET',
+            api_key=_resolve_api_key(self.config),
+            error_prefix='Managed secrets',
         )
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                payload = response.read().decode('utf-8')
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode('utf-8', errors='replace')
-            raise RuntimeError(f'Managed secrets request failed ({exc.code}): {detail}') from exc
-        return json.loads(payload) if payload else {}
 
 
 def _dashboard_base_url(config: ManagedSecretsClientConfig) -> str:

@@ -32,6 +32,25 @@ function asTable(value: unknown): TomlTable | undefined {
     : undefined;
 }
 
+/**
+ * The user's existing key as a table, or an empty one when the key is absent.
+ * A key that EXISTS but is not a table refuses loudly: `?? {}` silently
+ * replaced whatever the user wrote (e.g. `mcp_servers = "oops"`) and the next
+ * write erased it from their file.
+ */
+function requireTable(doc: TomlTable, key: string, path: string): TomlTable {
+  const value = doc[key];
+  if (value === undefined) return {};
+  const table = asTable(value);
+  if (!table) {
+    const found = Array.isArray(value) ? "an array" : `a ${typeof value}`;
+    throw new Error(
+      `Refusing to rewrite "${key}" in ${path}: expected a TOML table, found ${found}`
+    );
+  }
+  return table;
+}
+
 function deepEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (Array.isArray(a) || Array.isArray(b)) {
@@ -172,7 +191,7 @@ export async function writeCodexMcpConfig(
     doc.experimental_use_rmcp_client = true;
   }
 
-  const mcpServers = asTable(doc.mcp_servers) ?? {};
+  const mcpServers = requireTable(doc, "mcp_servers", settingsPath);
   doc.mcp_servers = mcpServers;
 
   for (const [name, config] of Object.entries(servers)) {
@@ -237,7 +256,7 @@ export async function writeCodexSpendProvider(
       : {}),
   };
 
-  const providers = asTable(doc.model_providers) ?? {};
+  const providers = requireTable(doc, "model_providers", settingsPath);
 
   // model_provider is read as a root key, so a profile-scoped one under
   // [profiles.*] never satisfies this check.

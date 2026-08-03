@@ -17,7 +17,7 @@
 
 import { existsSync, readFileSync, realpathSync } from "fs";
 import { fileURLToPath, pathToFileURL } from "url";
-import { type Tags, parseDocument } from "yaml";
+import { LineCounter, type Tags, parse as parseYaml, parseDocument } from "yaml";
 import {
   EVAL_SANDBOX_PROVIDERS,
   EvolveApiError,
@@ -621,6 +621,20 @@ function resolveFlag(
   return undefined;
 }
 
+/** True when the token spells a flag this command (or the globals) defines. */
+function isFlagToken(spec: CommandSpec, token: string): boolean {
+  if (token === "--help" || token === "-h") return true;
+  if (token.startsWith("--")) {
+    const name = token.slice(2).split("=")[0];
+    return resolveFlag(spec, { long: name }) !== undefined;
+  }
+  if (token.startsWith("-") && token.length > 1) {
+    const name = token.slice(1).split("=")[0];
+    return resolveFlag(spec, { short: name }) !== undefined;
+  }
+  return false;
+}
+
 function parseCommandArgs(
   command: string,
   spec: CommandSpec,
@@ -674,8 +688,15 @@ function parseCommandArgs(
     let value = inlineValue;
     if (value === undefined) {
       const next = argv[i + 1];
-      if (next === undefined || (next.startsWith("-") && next.length > 1 && isNaN(Number(next)))) {
-        throw new CliUsageError(`Option --${name} requires a value`);
+      // A value may START with '-': a glob like -*, a negative number, a bare
+      // "-". The next token is refused only when it IS a flag this command
+      // knows (or -h/--help) — consuming that silently would swallow the
+      // caller's next option, and any other dash token is the value it looks
+      // like. When the value genuinely collides with a real flag, --name=value
+      // states the intent.
+      if (next === undefined || isFlagToken(spec, next)) {
+        const remedy = next !== undefined ? ` (use --${name}=${next} if that is the value)` : "";
+        throw new CliUsageError(`Option --${name} requires a value${remedy}`);
       }
       value = next;
       i++;
@@ -848,10 +869,28 @@ function withPyYamlIntShapes(tags: Tags): Tags {
  * comment-only file is an empty object.
  */
 export function parseYamlConfig(text: string, source: string): unknown {
+  return parseYamlConfigLocated(text, source).value;
+}
+
+/** A path into the parsed config: object keys and list indices, root first. */
+type ConfigPath = (string | number)[];
+
+/**
+ * `parseYamlConfig` plus a `locate` that answers "what line does this path
+ * start on", so a schema refusal can point at the file the way a parse
+ * refusal already does. JSON configs have no locator — JSON.parse keeps no
+ * positions — and every message treats the line as optional for that reason.
+ */
+export function parseYamlConfigLocated(
+  text: string,
+  source: string
+): { value: unknown; locate: (path: ConfigPath) => number | undefined } {
+  const lineCounter = new LineCounter();
   const doc = parseDocument(text, {
     version: "1.1",
     schema: "yaml-1.1",
     resolveKnownTags: false,
+    lineCounter,
     customTags: (tags) =>
       withPyYamlIntShapes(withPyYamlFloatShapes(withoutBareYesNoBooleans(tags))),
   });
@@ -875,59 +914,296 @@ export function parseYamlConfig(text: string, source: string): unknown {
   // level is dropped HERE and not in the parse options, because a silent parse
   // also drops the library's second-document error, which is a refusal.
   doc.options.logLevel = "silent";
+  let value: unknown;
   try {
-    return doc.toJS() ?? {};
+    value = doc.toJS() ?? {};
   } catch (error) {
     throw new CliUsageError(`${source}: ${(error as Error).message}`);
   }
+  const locate = (path: ConfigPath): number | undefined => {
+    const node = doc.getIn(path, true) as { range?: [number, number, number] } | undefined;
+    const offset = node?.range?.[0];
+    return offset === undefined ? undefined : lineCounter.linePos(offset).line;
+  };
+  return { value, locate };
 }
 
-/** The closed key vocabulary a -c config file may use (the spec's JobCreate). */
-const JOB_CONFIG_KEYS = new Set([
-  "job_name",
-  "datasets",
-  "agents",
-  "n_attempts",
-  "n_concurrent_trials",
-  "max_trial_spend_usd",
-  "sandbox_provider",
-  "agent_env",
-  "verifier_env",
-]);
-
-/** The scalar spec type of every -c key that carries one (the spec's JobCreate). */
-const JOB_CONFIG_SCALARS: Record<string, "string" | "number"> = {
-  job_name: "string",
-  sandbox_provider: "string",
-  n_attempts: "number",
-  n_concurrent_trials: "number",
-  max_trial_spend_usd: "number",
-};
+// -----------------------------------------------------------------------------
+// SPEC-DERIVED CONFIG SCHEMA (-c validates against spec/openapi.yaml itself)
+// -----------------------------------------------------------------------------
 
 /**
- * The spec type of every field a selector entry carries (DatasetSelector and
- * AgentArmInput). `strings` is a list of them. Selector fields ride the same
- * wire as the top-level scalars and are decided by the same file's own text,
- * so they answer to the same law at the same keyboard — `version: 1.10` is the
- * float 1.1 in PyYAML too, and 1.10 and 1.1 name DIFFERENT dataset versions.
+ * The -c vocabulary is DERIVED from spec/openapi.yaml — the same file the
+ * package ships and the drift gates read. The JobCreate schema, and everything
+ * it references (DatasetSelector, AgentArmInput, SandboxProvider), IS the
+ * closed key vocabulary, the per-field types, and the value constraints — so a
+ * field the spec grows is accepted here with zero CLI edits, and one it drops
+ * is refused the same day. Only the YAML-side value laws stay hand-written
+ * (checkWireValue): what a JSON body can carry at all is not the spec's
+ * subject.
+ *
+ * The published package carries the spec two directories above dist/hosted/;
+ * a source checkout reads the repo-root copy the staged one is built from.
  */
-type SelectorFieldType = "string" | "number" | "strings";
+const SPEC_RELATIVE_CANDIDATES = ["../../spec/openapi.yaml", "../../../../spec/openapi.yaml"];
 
-const SELECTOR_FIELDS: Record<"datasets" | "agents", Record<string, SelectorFieldType>> = {
-  datasets: {
-    name: "string",
-    version: "string",
-    n_tasks: "number",
-    task_names: "strings",
-    exclude_task_names: "strings",
-  },
-  agents: {
-    name: "string",
-    model_name: "string",
-    version: "string",
-    reasoning_effort: "string",
-  },
-};
+type SpecSchema = Record<string, unknown>;
+
+interface JobSpecShapes {
+  root: SpecSchema;
+  components: Record<string, SpecSchema>;
+}
+
+let jobSpecShapes: JobSpecShapes | undefined;
+
+function loadJobSpecShapes(): JobSpecShapes {
+  if (jobSpecShapes) return jobSpecShapes;
+  const tried: string[] = [];
+  for (const relative of SPEC_RELATIVE_CANDIDATES) {
+    const specPath = fileURLToPath(new URL(relative, import.meta.url));
+    tried.push(specPath);
+    if (!existsSync(specPath)) continue;
+    const spec = parseYaml(readFileSync(specPath, "utf-8")) as {
+      components?: { schemas?: Record<string, SpecSchema> };
+    };
+    const components = spec?.components?.schemas;
+    const root = components?.JobCreate;
+    // Non-vacuous on purpose: a spec that parses but carries no JobCreate
+    // would otherwise validate nothing and accept everything.
+    if (!components || !root || typeof root !== "object") {
+      throw new Error(`${specPath} carries no components.schemas.JobCreate — the contract this CLI validates -c against`);
+    }
+    jobSpecShapes = { root, components };
+    return jobSpecShapes;
+  }
+  throw new Error(
+    `spec/openapi.yaml not found (tried: ${tried.join(", ")}) — the package ships it; reinstall the SDK`
+  );
+}
+
+/** A schema node's `type`, normalized to a list ("string" and ["string","null"] alike). */
+function schemaTypes(schema: SpecSchema): string[] {
+  const type = schema.type;
+  if (typeof type === "string") return [type];
+  if (Array.isArray(type)) return type.filter((t): t is string => typeof t === "string");
+  return [];
+}
+
+/** Follow a local $ref, returning the resolved schema and its component name. */
+function resolveSchema(
+  schema: SpecSchema,
+  components: Record<string, SpecSchema>,
+  specName: string
+): { schema: SpecSchema; specName: string } {
+  const ref = schema.$ref;
+  if (typeof ref !== "string") return { schema, specName };
+  const name = ref.replace("#/components/schemas/", "");
+  const target = components[name];
+  if (!target) throw new Error(`spec/openapi.yaml: unresolvable $ref "${ref}"`);
+  return resolveSchema(target, components, name);
+}
+
+/** Render a config path the way every refusal names it: datasets[0].version. */
+function renderConfigPath(path: ConfigPath): string {
+  // A bare top-level key keeps its historical quoted spelling ("job_name").
+  if (path.length === 1 && typeof path[0] === "string") return `"${path[0]}"`;
+  return path
+    .map((seg, i) => (typeof seg === "number" ? `[${seg}]` : i === 0 ? seg : `.${seg}`))
+    .join("");
+}
+
+interface SchemaContext {
+  source: string;
+  locate?: (path: ConfigPath) => number | undefined;
+  components: Record<string, SpecSchema>;
+}
+
+/** "<where> in <file>[:line]" — the position every schema refusal opens with. */
+function describeSite(path: ConfigPath, ctx: SchemaContext): string {
+  const line = ctx.locate?.(path);
+  const site = `${ctx.source}${line !== undefined ? `:${line}` : ""}`;
+  return path.length === 0 ? site : `${renderConfigPath(path)} in ${site}`;
+}
+
+function schemaRefusal(path: ConfigPath, ctx: SchemaContext, what: string, specName: string): never {
+  throw new CliUsageError(`--config: ${describeSite(path, ctx)} ${what} [spec: ${specName}]`);
+}
+
+/** The last object key on the path, for the quoting remedy a string refusal shows. */
+function lastKey(path: ConfigPath): string {
+  for (let i = path.length - 1; i >= 0; i--) {
+    if (typeof path[i] === "string") return path[i] as string;
+  }
+  return "value";
+}
+
+/** Name a list schema by what its items are, so the refusal reads as a remedy. */
+function describeListSchema(items: SpecSchema | undefined, ctx: SchemaContext): string {
+  if (!items) return "a list";
+  const resolved = resolveSchema(items, ctx.components, "");
+  const types = schemaTypes(resolved.schema);
+  if (types.includes("string")) return "a list of strings";
+  if (types.includes("object")) return "a list of objects";
+  return "a list";
+}
+
+/**
+ * Validate one config value against one spec schema, refusing with the config
+ * path, the file (and line, when the YAML reader can place it), and the spec
+ * shape that ruled. `topLevel` suppresses ONLY the root object's `required`:
+ * a -c file is a partial the flags may complete (-d, -a/-m), and buildJobInput
+ * enforces presence after the merge. Nested required keys hold — no flag
+ * completes a selector entry.
+ */
+function checkAgainstSchema(
+  value: unknown,
+  rawSchema: SpecSchema,
+  path: ConfigPath,
+  specName: string,
+  ctx: SchemaContext,
+  topLevel = false
+): void {
+  const { schema, specName: name } = resolveSchema(rawSchema, ctx.components, specName);
+  const types = schemaTypes(schema);
+  const propertyName = (prop: string) => (name ? `${name}.${prop}` : prop);
+
+  if (value === null) {
+    if (types.includes("null")) return;
+    schemaRefusal(path, ctx, `must be a ${types[0] ?? "value"}, not null`, name);
+  }
+
+  if (types.includes("object")) {
+    const additional = isPlainObject(schema.additionalProperties)
+      ? (schema.additionalProperties as SpecSchema)
+      : undefined;
+    if (!isPlainObject(value)) {
+      // An env-style map (typed values, no fixed keys) refuses in its own
+      // vocabulary — the remedy is KEY: "value" lines, not "an object".
+      const what =
+        additional && !schema.properties
+          ? `must be a map of KEY: "value" pairs, not ${describeConfigValue(value)}`
+          : `must be an object like {${firstRequiredKey(schema)}: "..."}, not ${describeConfigValue(value)}`;
+      schemaRefusal(path, ctx, what, name);
+    }
+    const properties = isPlainObject(schema.properties)
+      ? (schema.properties as Record<string, SpecSchema>)
+      : undefined;
+    if (properties) {
+      if (!topLevel && Array.isArray(schema.required)) {
+        for (const required of schema.required) {
+          if (typeof required === "string" && value[required] === undefined) {
+            schemaRefusal(path, ctx, `is missing the required key "${required}"`, name);
+          }
+        }
+      }
+      for (const key of Object.keys(value)) {
+        if (properties[key] === undefined && !additional) {
+          throw new CliUsageError(
+            `--config: unknown key "${key}" in ${describeSite([...path, key], ctx)} ` +
+              `(allowed: ${Object.keys(properties).join(", ")}) [spec: ${name}]`
+          );
+        }
+      }
+      for (const [key, propSchema] of Object.entries(properties)) {
+        const item = value[key];
+        if (item === undefined) continue;
+        checkAgainstSchema(item, propSchema, [...path, key], propertyName(key), ctx);
+      }
+    }
+    if (additional) {
+      for (const [key, item] of Object.entries(value)) {
+        if (properties?.[key] !== undefined) continue;
+        checkAgainstSchema(item, additional, [...path, key], name, ctx);
+      }
+    }
+    return;
+  }
+
+  if (types.includes("array")) {
+    const items = isPlainObject(schema.items) ? (schema.items as SpecSchema) : undefined;
+    if (!Array.isArray(value)) {
+      schemaRefusal(
+        path,
+        ctx,
+        `must be ${describeListSchema(items, ctx)}, not ${describeConfigValue(value)}`,
+        name
+      );
+    }
+    if (typeof schema.minItems === "number" && value.length < schema.minItems) {
+      schemaRefusal(path, ctx, `needs at least ${schema.minItems} ${schema.minItems === 1 ? "entry" : "entries"}`, name);
+    }
+    if (typeof schema.maxItems === "number" && value.length > schema.maxItems) {
+      schemaRefusal(path, ctx, `takes at most ${schema.maxItems} entries`, name);
+    }
+    if (items) {
+      value.forEach((item, index) => checkAgainstSchema(item, items, [...path, index], name, ctx));
+    }
+    return;
+  }
+
+  if (Array.isArray(schema.enum)) {
+    if (!schema.enum.includes(value)) {
+      schemaRefusal(path, ctx, `must be one of: ${schema.enum.join(", ")}`, name);
+    }
+    return;
+  }
+
+  if (types.includes("string")) {
+    if (typeof value !== "string") {
+      schemaRefusal(
+        path,
+        ctx,
+        `must be a string, not ${describeConfigValue(value)} — quote it (${lastKey(path)}: "...")`,
+        name
+      );
+    }
+    if (typeof schema.maxLength === "number" && value.length > schema.maxLength) {
+      schemaRefusal(path, ctx, `must be at most ${schema.maxLength} characters (got ${value.length})`, name);
+    }
+    return;
+  }
+
+  if (types.includes("integer") || types.includes("number")) {
+    const wantsInteger = types.includes("integer");
+    if (typeof value !== "number" || (wantsInteger && !Number.isInteger(value))) {
+      schemaRefusal(
+        path,
+        ctx,
+        `must be ${wantsInteger ? "an integer" : "a number"}, not ${describeConfigValue(value)}`,
+        name
+      );
+    }
+    if (typeof schema.minimum === "number" && value < schema.minimum) {
+      schemaRefusal(path, ctx, `must be at least ${schema.minimum}`, name);
+    }
+    if (typeof schema.maximum === "number" && value > schema.maximum) {
+      schemaRefusal(path, ctx, `must be at most ${schema.maximum}`, name);
+    }
+    return;
+  }
+
+  if (types.includes("boolean") && typeof value !== "boolean") {
+    schemaRefusal(path, ctx, `must be a boolean, not ${describeConfigValue(value)}`, name);
+  }
+}
+
+/** The first required key of an object schema, for the {key: "..."} example a refusal shows. */
+function firstRequiredKey(schema: SpecSchema): string {
+  const required = Array.isArray(schema.required) ? schema.required[0] : undefined;
+  if (typeof required === "string") return required;
+  const properties = isPlainObject(schema.properties) ? Object.keys(schema.properties) : [];
+  return properties[0] ?? "name";
+}
+
+/** Validate a parsed -c file against the spec's own JobCreate shape. */
+function validateJobConfigAgainstSpec(
+  record: Record<string, unknown>,
+  source: string,
+  locate?: (path: ConfigPath) => number | undefined
+): void {
+  const { root, components } = loadJobSpecShapes();
+  checkAgainstSchema(record, root, [], "JobCreate", { source, locate, components }, true);
+}
 
 /** Name a config value by what it is, for a refusal the reader can act on. */
 function describeConfigValue(value: unknown): string {
@@ -1003,25 +1279,6 @@ function checkWireValue(
   );
 }
 
-/**
- * One law for every field whose type the file's own text decides, wherever it
- * sits. A string field is always fixable by quoting, so the refusal shows the
- * quoted form; a number field has no such remedy, so it names the type only.
- */
-function checkFieldType(
-  value: unknown,
-  kind: "string" | "number",
-  where: string,
-  path: string,
-  quoted: string
-): void {
-  if (typeof value === kind) return;
-  throw new CliUsageError(
-    `--config: ${where} in ${path} must be a ${kind}, not ${describeConfigValue(value)}` +
-      (kind === "string" ? ` — quote it (${quoted})` : "")
-  );
-}
-
 function loadJobConfig(path: string, read: (path: string) => string): Partial<JobCreate> {
   let text: string;
   try {
@@ -1030,6 +1287,7 @@ function loadJobConfig(path: string, read: (path: string) => string): Partial<Jo
     throw new CliUsageError(`--config: cannot read ${path}: ${(error as Error).message}`);
   }
   let value: unknown;
+  let locate: ((path: ConfigPath) => number | undefined) | undefined;
   if (path.endsWith(".json")) {
     try {
       value = JSON.parse(text);
@@ -1037,80 +1295,22 @@ function loadJobConfig(path: string, read: (path: string) => string): Partial<Jo
       throw new CliUsageError(`--config: ${path} is not valid JSON: ${(error as Error).message}`);
     }
   } else {
-    value = parseYamlConfig(text, path);
+    ({ value, locate } = parseYamlConfigLocated(text, path));
   }
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new CliUsageError(`--config: ${path} must contain a JSON/YAML object`);
   }
   const record = value as Record<string, unknown>;
-  for (const key of Object.keys(record)) {
-    if (!JOB_CONFIG_KEYS.has(key)) {
-      throw new CliUsageError(
-        `--config: unknown key "${key}" in ${path} (allowed: ${[...JOB_CONFIG_KEYS].join(", ")})`
-      );
-    }
-  }
+  // The wire law first (cycles, Dates, .inf — what a JSON body can carry at
+  // all), then the contract's own shapes: keys, types, ranges and vocabularies
+  // all read out of spec/openapi.yaml. The file's own text decides its types,
+  // so this reader owns them at the keyboard — `job_name: yes` is a boolean
+  // and `version: 1.10` the float 1.1 in every YAML reading there is, and
+  // both used to reach --print-config at exit 0 (1.10 and 1.1 name DIFFERENT
+  // dataset versions). What only the server knows — whether a name exists —
+  // stays the server's.
   for (const [key, item] of Object.entries(record)) checkWireValue(item, key, path);
-  // The file's own text decides these types, so this reader owns them — what
-  // it does not own is what only the server knows (ranges, lengths, whether a
-  // name exists). `job_name: yes` is a boolean and `n_attempts: two` a string
-  // in every YAML reading there is, and both reached --print-config at exit 0.
-  for (const [key, kind] of Object.entries(JOB_CONFIG_SCALARS)) {
-    const item = record[key];
-    if (item === undefined) continue;
-    checkFieldType(item, kind, `"${key}"`, path, `${key}: "..."`);
-  }
-  // agent_env/verifier_env are KEY: VALUE strings on the wire, and YAML types
-  // a bare value for you — `DEBUG: yes` is a boolean, not the string "yes".
-  for (const key of ["agent_env", "verifier_env"] as const) {
-    const env = record[key];
-    if (env === undefined) continue;
-    if (!isPlainObject(env)) {
-      throw new CliUsageError(`--config: "${key}" in ${path} must be a map of KEY: "value" pairs`);
-    }
-    for (const [name, item] of Object.entries(env)) {
-      checkFieldType(item, "string", `${key}.${name}`, path, `${name}: "..."`);
-    }
-  }
-  // datasets/agents are lists of selector objects and buildJobInput spreads
-  // every element into a fresh one. Spreading a string spreads its CHARACTERS,
-  // so `datasets: [swe-bench]` reached --print-config as a character-indexed
-  // object at exit 0 and the wire as a server-side refusal. The element type is
-  // this reader's to name, at the keyboard, before any round trip — and so are
-  // the types INSIDE it: `version: 1.10` is the float 1.1 in PyYAML too, which
-  // is exactly why the reader has to catch it, because 1.10 and 1.1 are
-  // different dataset versions and the wire takes a string for both.
-  for (const key of ["datasets", "agents"] as const) {
-    const list = record[key];
-    if (list === undefined) continue;
-    if (!Array.isArray(list)) {
-      throw new CliUsageError(`--config: "${key}" in ${path} must be a list of objects`);
-    }
-    list.forEach((item, index) => {
-      if (!isPlainObject(item)) {
-        throw new CliUsageError(
-          `--config: ${key}[${index}] in ${path} must be an object like {name: ${key === "agents" ? "claude" : "swe-bench"}}, not ${describeConfigValue(item)}`
-        );
-      }
-      for (const [field, kind] of Object.entries(SELECTOR_FIELDS[key])) {
-        const value = item[field];
-        if (value === undefined) continue;
-        const where = `${key}[${index}].${field}`;
-        if (kind !== "strings") {
-          checkFieldType(value, kind, where, path, `${field}: "..."`);
-          continue;
-        }
-        if (!Array.isArray(value)) {
-          throw new CliUsageError(
-            `--config: ${where} in ${path} must be a list of strings, not ${describeConfigValue(value)}`
-          );
-        }
-        value.forEach((glob, at) =>
-          checkFieldType(glob, "string", `${where}[${at}]`, path, `${field}: ["..."]`)
-        );
-      }
-    });
-  }
+  validateJobConfigAgainstSpec(record, path, locate);
   return value as Partial<JobCreate>;
 }
 

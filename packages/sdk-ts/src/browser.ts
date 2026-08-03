@@ -1,3 +1,4 @@
+import { stringify as stringifyToml } from "smol-toml";
 import type { ActionbookBrowserConfig, AgentBrowserConfig, BrowserConfig, ManagedBrowserProvider, SkillName } from "./types";
 import { DEFAULT_DASHBOARD_URL } from "./constants";
 
@@ -105,8 +106,14 @@ export function getManagedBrowserSandboxSetup(
       envs: {},
       files: [
         {
+          // Serialized by smol-toml like every other TOML the SDK writes — a
+          // hand-built template cannot be trusted to escape a CDP URL.
           path: ACTIONBOOK_CONFIG_PATH,
-          data: `version = 1\n\n[browser]\nmode = "cloud"\ncdp_endpoint = ${JSON.stringify(session.cdpUrl)}\n`,
+          data:
+            stringifyToml({
+              version: 1,
+              browser: { mode: "cloud", cdp_endpoint: session.cdpUrl },
+            }).trimEnd() + "\n",
         },
       ],
       directories: [ACTIONBOOK_CONFIG_DIR],

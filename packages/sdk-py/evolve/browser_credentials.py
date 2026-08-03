@@ -3,15 +3,13 @@
 import asyncio
 import base64
 import hashlib
-import json
 import os
 import secrets
-import urllib.error
 import urllib.parse
-import urllib.request
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
+from . import _http
 from .config import BrowserCredentialsClientConfig
 
 
@@ -149,36 +147,14 @@ class BrowserCredentialsClient:
         method: str = 'GET',
         body: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        return await asyncio.to_thread(self._request_json_sync, path, method, body)
-
-    def _request_json_sync(
-        self,
-        path: str,
-        method: str,
-        body: Optional[Dict[str, Any]],
-    ) -> Dict[str, Any]:
-        data = json.dumps(body).encode('utf-8') if body is not None else None
-        headers = {
-            'Authorization': f'Bearer {_resolve_api_key(self.config)}',
-            'Accept': 'application/json',
-        }
-        if data is not None:
-            headers['Content-Type'] = 'application/json'
-        request = urllib.request.Request(
+        return await asyncio.to_thread(
+            _http.request_json,
             f'{_dashboard_base_url(self.config)}{path}',
-            data=data,
-            headers=headers,
+            api_key=_resolve_api_key(self.config),
+            error_prefix='Browser credentials',
             method=method,
+            body=body,
         )
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                payload = response.read().decode('utf-8')
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode('utf-8', errors='replace')
-            raise RuntimeError(f'Browser credentials request failed ({exc.code}): {detail}') from exc
-        if not payload:
-            return {}
-        return json.loads(payload)
 
 
 def _dashboard_base_url(config: BrowserCredentialsClientConfig) -> str:
@@ -218,6 +194,13 @@ def _read_der_tlv(data: bytes, offset: int, expected_tag: int) -> Tuple[bytes, i
     return data[value_start:value_end], value_end
 
 
+# DER encoding of OID 1.2.840.113549.1.1.1 (rsaEncryption), the only
+# SubjectPublicKeyInfo algorithm this encryptor may read: the BIT STRING that
+# follows is parsed as an RSAPublicKey, and under any other algorithm those
+# bytes mean something else entirely.
+_RSA_ENCRYPTION_OID = b'\x2a\x86\x48\x86\xf7\x0d\x01\x01\x01'
+
+
 def _parse_rsa_public_key(pem: str) -> Tuple[int, int, int]:
     body = ''.join(
         line.strip()
@@ -228,7 +211,10 @@ def _parse_rsa_public_key(pem: str) -> Tuple[int, int, int]:
     spki, offset = _read_der_tlv(der, 0, 0x30)
     if offset != len(der):
         raise ValueError('Unexpected trailing public key data')
-    _, offset = _read_der_tlv(spki, 0, 0x30)
+    algorithm, offset = _read_der_tlv(spki, 0, 0x30)
+    oid, _ = _read_der_tlv(algorithm, 0, 0x06)
+    if oid != _RSA_ENCRYPTION_OID:
+        raise ValueError('Public key algorithm is not rsaEncryption')
     bit_string, offset = _read_der_tlv(spki, offset, 0x03)
     if offset != len(spki) or not bit_string or bit_string[0] != 0:
         raise ValueError('Invalid RSA public key')
@@ -255,6 +241,10 @@ def _mgf1(seed: bytes, length: int) -> bytes:
 
 
 def _xor_bytes(left: bytes, right: bytes) -> bytes:
+    # zip() silently truncates to the shorter operand, and a truncated XOR in
+    # OAEP is a malformed encoding, not an error anyone sees — refuse instead.
+    if len(left) != len(right):
+        raise ValueError('XOR operands must be the same length')
     return bytes(a ^ b for a, b in zip(left, right))
 
 

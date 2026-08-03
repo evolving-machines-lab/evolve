@@ -115,7 +115,7 @@ class TestErrorEnvelope:
         def fake(request, timeout=None):
             raise http_error(400, error_body)
 
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             with pytest.raises(EvolveAPIError) as caught:
                 await datasets_factory(CONFIG).list()
 
@@ -137,7 +137,7 @@ class TestErrorEnvelope:
                 {'Retry-After': '12', 'X-Request-Id': 'req_hdr'},
             )
 
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             with pytest.raises(EvolveAPIError) as caught:
                 await datasets_factory(CONFIG).list()
 
@@ -160,7 +160,7 @@ class TestErrorEnvelope:
                 {'Retry-After': '30'},
             )
 
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             with pytest.raises(EvolveAPIError) as caught:
                 await datasets_factory(CONFIG).list()
 
@@ -185,7 +185,7 @@ class TestErrorEnvelope:
                 {'Retry-After': raw},
             )
 
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             with pytest.raises(EvolveAPIError) as caught:
                 await datasets_factory(CONFIG).list()
 
@@ -207,7 +207,7 @@ class TestErrorEnvelope:
                 {'Retry-After': '5'},
             )
 
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             with pytest.raises(EvolveAPIError) as caught:
                 await datasets_factory(CONFIG).list()
 
@@ -225,7 +225,7 @@ class TestErrorEnvelope:
                 {},
             )
 
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             with pytest.raises(EvolveAPIError) as caught:
                 await datasets_factory(CONFIG).list()
 
@@ -241,7 +241,7 @@ class TestErrorEnvelope:
                 'https://api.test/x', 502, 'Bad Gateway', {}, io.BytesIO(b'<html>nope</html>')
             )
 
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             with pytest.raises(EvolveAPIError) as caught:
                 await datasets_factory(CONFIG).list()
 
@@ -297,7 +297,7 @@ class TestMissingVerbs:
     async def test_list_imports_passes_its_filters(self):
         """Lose the 202's id and an import used to be unwatchable forever."""
         fake = FakeUrlopen([('/api/datasets/imports', EMPTY_PAGE)])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             await datasets_factory(CONFIG).list_imports(
                 status='FAILED', dataset='deep-swe', limit=10
             )
@@ -311,7 +311,7 @@ class TestMissingVerbs:
     @pytest.mark.asyncio
     async def test_dataset_delete_sends_delete(self):
         fake = FakeUrlopen([('/api/datasets/typo', {})])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             await datasets_factory(CONFIG).delete('typo')
 
         assert fake.requests[0].get_method() == 'DELETE'
@@ -329,7 +329,7 @@ class TestMissingVerbs:
             'updated_at': '',
         }
         fake = FakeUrlopen([('/api/agents/my-agent', agent)])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             await agents_factory(CONFIG).upsert(
                 'my-agent',
                 run_command='my-agent --headless',
@@ -390,7 +390,7 @@ class TestFrontDoor:
     async def test_config_is_passed_once(self):
         fake = FakeUrlopen([('/api/datasets', EMPTY_PAGE)])
         client = hosted(CONFIG)
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             await client.datasets.list()
 
         assert fake.requests[0].full_url.startswith('https://api.test')
@@ -446,7 +446,7 @@ class TestFrontDoor:
         }
         fake = FakeUrlopen([('/api/meta', document)])
 
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             result = await meta_fn(HostedClientConfig(base_url='https://api.test'))
 
         assert isinstance(result, CapabilityDocument)
@@ -510,7 +510,7 @@ class TestUpstream:
             'updated_at': '',
         }
         fake = FakeUrlopen([('/api/datasets/deep-swe', detail)])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             dataset = await datasets_factory(CONFIG).get('deep-swe')
 
         assert isinstance(dataset.upstream, UpstreamStatus)
@@ -532,7 +532,7 @@ class TestUpstream:
             'updated_at': '',
         }
         fake = FakeUrlopen([('/api/datasets/old', detail)])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             dataset = await datasets_factory(CONFIG).get('old')
 
         assert dataset.upstream is None

@@ -277,7 +277,7 @@ class TestDatasets:
                 'hasMore': False,
             }),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             catalog = await datasets_factory(CONFIG).list()
 
         # The one page envelope, the same on every collection.
@@ -324,7 +324,7 @@ class TestDatasets:
                 'updated_at': '2026-07-21',
             }),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             detail = await datasets_factory(CONFIG).get('deep-swe@1.1')
 
         assert 'version=1.1' in fake.requests[0].full_url
@@ -377,7 +377,7 @@ class TestDatasets:
                 'updated_at': '2026-07-21',
             }),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             active = await datasets_factory(CONFIG).get_active('deep-swe')
 
         # Bare name — resolves the active version's task list (no ?version=)
@@ -404,7 +404,7 @@ class TestDatasets:
                 'updated_at': '2026-07-21',
             }),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             with pytest.raises(NoActiveVersionError, match='no active version') as exc_info:
                 await datasets_factory(CONFIG).get_active('draft-set')
         assert exc_info.value.dataset == 'draft-set'
@@ -429,7 +429,7 @@ class TestDatasets:
                 },
             }),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             updated = await datasets_factory(CONFIG).update(
                 'deep-swe', upstream_auto_import=True
             )
@@ -447,7 +447,7 @@ class TestDatasets:
                 'id': 'imp-1', 'status': 'QUEUED', 'name': 'my-set', 'version': '1.2',
             }),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             job = await datasets_factory(CONFIG).publish(
                 git_url='https://github.com/org/bench.git',
                 git_ref='v1.2.0',
@@ -490,7 +490,7 @@ class TestDatasets:
                 'id': 'imp-9', 'status': 'QUEUED', 'name': 'my-set', 'version': '0.1',
             }),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             job = await datasets_factory(CONFIG).publish(
                 directory=str(tmp_path),
                 name='my-set',
@@ -530,7 +530,7 @@ class TestDatasets:
                 'warnings': [{'code': 'no_solutions_archived', 'message': 'no reference solutions were archived'}],
             }),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             job = await datasets_factory(CONFIG).get_import('imp-1')
 
         assert job.id == 'imp-1'
@@ -561,7 +561,7 @@ class TestDatasets:
                 'task_count': 0,
             }),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             job = await datasets_factory(CONFIG).get_import('imp-2')
 
         assert job.status == 'FAILED'
@@ -586,7 +586,7 @@ class TestDatasets:
 
         fake = SequenceUrlopen([])
         statuses = []
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             done = await datasets_factory(CONFIG).watch_import(
                 'imp-1',
                 on_status=lambda j: statuses.append(j.status),
@@ -632,7 +632,7 @@ class TestDatasets:
             return FakeResponse({**job, 'status': 'COMPLETED', 'task_count': 113})
 
         started = time.monotonic()
-        with patch('evolve.hosted.urllib.request.urlopen', rate_limited_then_done):
+        with patch('evolve._http.urlopen', rate_limited_then_done):
             done = await datasets_factory(CONFIG).watch_import(
                 'imp-1', poll_interval_s=0.001
             )
@@ -654,7 +654,7 @@ class TestDatasets:
                 }}).encode('utf-8')),
             )
 
-        with patch('evolve.hosted.urllib.request.urlopen', not_found):
+        with patch('evolve._http.urlopen', not_found):
             with pytest.raises(EvolveAPIError) as exc:
                 await datasets_factory(CONFIG).watch_import(
                     'imp-2', poll_interval_s=0.001
@@ -675,7 +675,7 @@ class TestDatasets:
         fake = FakeUrlopen([
             ('/api/datasets', {'items': [], 'nextCursor': None, 'hasMore': False}),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             await datasets_factory(CONFIG).list(search='deep swe', limit=5)
 
         url = fake.requests[0].full_url
@@ -701,7 +701,7 @@ class TestDatasets:
                 'updated_at': '2026-07-30',
             }),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             dataset = await datasets_factory(CONFIG).activate('my-swe', '1.0')
 
         assert fake.requests[0].get_method() == 'POST'
@@ -726,7 +726,7 @@ class TestAgents:
     @pytest.mark.asyncio
     async def test_create_posts_the_install_script_as_named_parts(self):
         fake = FakeUrlopen([('/api/agents', REGISTERED_AGENT)])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             agent = await agents_factory(CONFIG).create(
                 name='acme-cli',
                 install_script='curl -fsSL https://acme.dev/install.sh | sh',
@@ -765,7 +765,7 @@ class TestAgents:
         fake = FakeUrlopen([
             ('/api/agents', {**REGISTERED_AGENT, 'source': 'tarball'}),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             agent = await agents_factory(CONFIG).create(
                 name='acme-cli',
                 directory=str(tmp_path),
@@ -817,19 +817,19 @@ class TestAgents:
         # get() must resolve the detail route, so answer it before the list route.
         get_fake = FakeUrlopen([('/api/agents/acme-cli', REGISTERED_AGENT)])
 
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             listed = await agents_factory(CONFIG).list()
         assert [agent.name for agent in listed.items] == ['acme-cli']
         assert listed.items[0].source == 'install_script'
         assert listed.next_cursor is None
         assert listed.has_more is False
 
-        with patch('evolve.hosted.urllib.request.urlopen', get_fake):
+        with patch('evolve._http.urlopen', get_fake):
             one = await agents_factory(CONFIG).get('acme-cli')
         assert get_fake.requests[0].full_url.endswith('/api/agents/acme-cli')
         assert one.run_command == 'acme-cli --headless'
 
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             deleted = await agents_factory(CONFIG).delete('acme-cli')
         assert fake.requests[-1].get_method() == 'DELETE'
         assert deleted is None  # 204 No Content
@@ -848,7 +848,7 @@ class TestAgents:
                 }}).encode('utf-8')),
             )
 
-        with patch('evolve.hosted.urllib.request.urlopen', raise_http_error):
+        with patch('evolve._http.urlopen', raise_http_error):
             with pytest.raises(EvolveAPIError) as exc:
                 await agents_factory(CONFIG).get('someone-elses')
         assert exc.value.status == 404
@@ -869,7 +869,7 @@ class TestAgents:
                 }}).encode('utf-8')),
             )
 
-        with patch('evolve.hosted.urllib.request.urlopen', raise_http_error):
+        with patch('evolve._http.urlopen', raise_http_error):
             with pytest.raises(EvolveAPIError) as exc:
                 await agents_factory(CONFIG).create(
                     name='acme-cli', install_script='true', run_command='acme-cli'
@@ -882,7 +882,7 @@ class TestJobs:
     @pytest.mark.asyncio
     async def test_start_posts_contract_body_in_field_order(self):
         fake = FakeUrlopen([('/api/jobs', JOB_SUMMARY)])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             job = await jobs_factory(CONFIG).start(
                 datasets=[DatasetSelector(name='deep-swe', version='1.1', task_names=['abs-module-cache-flags'])],
                 agents=[AgentArm(name='codex', model_name='gpt-5.5')],
@@ -922,7 +922,7 @@ class TestJobs:
     @pytest.mark.asyncio
     async def test_start_accepts_snake_case_dicts(self):
         fake = FakeUrlopen([('/api/jobs', JOB_SUMMARY)])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             await jobs_factory(CONFIG).start(
                 datasets=[{'name': 'deep-swe'}],
                 agents=[{'name': 'codex', 'model_name': 'gpt-5.5', 'version': '0.29.0'}],
@@ -956,7 +956,7 @@ class TestJobs:
                 }}).encode('utf-8')),
             )
 
-        with patch('evolve.hosted.urllib.request.urlopen', raise_http_error):
+        with patch('evolve._http.urlopen', raise_http_error):
             with pytest.raises(EvolveAPIError) as exc:
                 await jobs_factory(CONFIG).start(
                     datasets=[{'name': 'deep-swe'}],
@@ -982,7 +982,7 @@ class TestJobs:
                 }}).encode('utf-8')),
             )
 
-        with patch('evolve.hosted.urllib.request.urlopen', raise_http_error):
+        with patch('evolve._http.urlopen', raise_http_error):
             with pytest.raises(EvolveAPIError) as exc:
                 await jobs_factory(CONFIG).start(
                     datasets=[{'name': 'deep-swe'}],
@@ -1005,7 +1005,7 @@ class TestJobs:
                 }}).encode('utf-8')),
             )
 
-        with patch('evolve.hosted.urllib.request.urlopen', raise_http_error):
+        with patch('evolve._http.urlopen', raise_http_error):
             with pytest.raises(EvolveAPIError) as exc:
                 await jobs_factory(CONFIG).start(
                     datasets=[{'name': 'deep-swe'}],
@@ -1023,7 +1023,7 @@ class TestJobs:
     @pytest.mark.asyncio
     async def test_unpinned_arm_sends_no_version(self):
         fake = FakeUrlopen([('/api/jobs', JOB_SUMMARY)])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             await jobs_factory(CONFIG).start(
                 datasets=[{'name': 'deep-swe'}],
                 agents=[AgentArm(name='codex', model_name='gpt-5.5')],
@@ -1046,7 +1046,7 @@ class TestJobs:
                 'updated_at': '2026-07-22T00:05:00.000Z',
             }),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             job = await jobs_factory(CONFIG).get('job-1')
 
         assert job.status == 'RUNNING'
@@ -1075,7 +1075,7 @@ class TestJobs:
                 'hasMore': True,
             }),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             page = await jobs_factory(CONFIG).list(limit=100, cursor='job-5')
 
         url = fake.requests[0].full_url
@@ -1101,7 +1101,7 @@ class TestJobs:
             ('/api/jobs/job-1', JOB_SUMMARY),
             ('/api/jobs', {'items': [JOB_SUMMARY], 'nextCursor': None, 'hasMore': False}),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             client = jobs_factory(CONFIG)
             got = await client.get('job-1')
             listed = (await client.list()).items[0]
@@ -1148,7 +1148,7 @@ class TestJobs:
         fake = FakeUrlopen([
             ('/api/jobs', {'items': [failed], 'nextCursor': None, 'hasMore': False}),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             row = (await jobs_factory(CONFIG).list()).items[0]
 
         assert row.failure == JobFailure(code='job_execution_failed', message='dispatch exploded')
@@ -1178,7 +1178,7 @@ class TestJobs:
 
         fake = PagedUrlopen([])
         ids = []
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             async for job in jobs_factory(CONFIG).list():
                 ids.append(job.id)
 
@@ -1209,13 +1209,13 @@ class TestJobs:
 
         fake = PagedUrlopen([])
         trial_ids = []
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             async for trial in jobs_factory(CONFIG).trials('job-1'):
                 trial_ids.append(trial.id)
 
         assert trial_ids == ['run-1', 'run-2', 'run-3']
         # Await form still returns a single page.
-        with patch('evolve.hosted.urllib.request.urlopen', PagedUrlopen([])) as _:
+        with patch('evolve._http.urlopen', PagedUrlopen([])) as _:
             single = await jobs_factory(CONFIG).trials('job-1', limit=2)
         assert len(single.items) == 2
         assert single.next_cursor == 'run-2'
@@ -1230,7 +1230,7 @@ class TestJobs:
                 'hasMore': False,
             }),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             page = await jobs_factory(CONFIG).trials(
                 'job-1', status=['SCORED', 'SCORING_ERROR'], limit=1
             )
@@ -1276,7 +1276,7 @@ class TestJobs:
                 'hasMore': False,
             }),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             await jobs_factory(CONFIG).trials('job-1', dataset='deep-swe', limit=1)
 
         url = fake.requests[0].full_url
@@ -1303,7 +1303,7 @@ class TestJobs:
                 'hasMore': False,
             }),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             page = await jobs_factory(CONFIG).trials('job-1')
 
         trial = page.items[0]
@@ -1325,7 +1325,7 @@ class TestJobs:
                 'source_jobs': [{'action': 'resume', 'type': 'hub', 'job_id': 'job-1'}],
             }),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             client = jobs_factory(CONFIG)
             cancelled = await client.cancel('job-1')
             resumed = await client.resume(
@@ -1355,7 +1355,7 @@ class TestJobs:
             'is_regrade': True,
         }
         fake = FakeUrlopen([('/job-1/regrade', regrade_job)])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             job = await jobs_factory(CONFIG).regrade(
                 'job-1', statuses=['SCORED'], task_name='demo-task'
             )
@@ -1382,7 +1382,7 @@ class TestJobs:
                 }}).encode('utf-8')),
             )
 
-        with patch('evolve.hosted.urllib.request.urlopen', raise_http_error):
+        with patch('evolve._http.urlopen', raise_http_error):
             with pytest.raises(EvolveAPIError) as exc:
                 await trials_factory(CONFIG).regrade('run-1')
         assert exc.value.status == 409
@@ -1397,7 +1397,7 @@ class TestJobs:
             'x-package-sha256': hashlib.sha256(archive).hexdigest(),
         }
         fake = FakeUrlopen([('/download', archive, headers)])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             client = jobs_factory(CONFIG)
             payload = await client.download('job-1')
             path = await client.download('job-1', to=str(tmp_path))
@@ -1415,7 +1415,7 @@ class TestJobs:
         archive = gzip.compress(b'{}')
         headers = {'x-package-sha256': 'f' * 64}  # not the bytes above
         with patch(
-            'evolve.hosted.urllib.request.urlopen',
+            'evolve._http.urlopen',
             FakeUrlopen([('/download', archive, headers)]),
         ):
             with pytest.raises(EvolveDigestMismatchError):
@@ -1426,7 +1426,7 @@ class TestJobs:
         archive = gzip.compress(b'{}')
         headers = {'Content-Length': str(len(archive) + 1000)}
         with patch(
-            'evolve.hosted.urllib.request.urlopen',
+            'evolve._http.urlopen',
             FakeUrlopen([('/download', archive, headers)]),
         ):
             with pytest.raises(EvolveIncompleteDownloadError):
@@ -1481,7 +1481,7 @@ class TestJobs:
                 ],
             }),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             comparison = await jobs_factory(CONFIG).compare(['job-1', 'job-2'])
 
         assert 'ids=job-1,job-2' in fake.requests[0].full_url
@@ -1524,7 +1524,7 @@ class TestJobs:
 
         fake = WatchUrlopen([])
         events = []
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             final = await jobs_factory(CONFIG).watch(
                 'job-1', on_event=lambda e: events.append(e)
             )
@@ -1545,6 +1545,35 @@ class TestJobs:
         assert stream_request.get_header('Last-event-id') is None
 
     @pytest.mark.asyncio
+    async def test_watch_parses_cr_and_crlf_line_terminators(self):
+        """The SSE grammar ends a line on CRLF, LF, or a LONE CR — a
+        CR-terminated stream used to arrive as one endless line and no event
+        ever surfaced."""
+        stream = (
+            'id: 0\revent: job.created\rdata: {"trial_count": 1}\r\r'
+            'id: 1\r\nevent: job.completed\r\ndata: {"scored": 1}\r\n\r\n'
+        )
+
+        class WatchUrlopen(FakeUrlopen):
+            def __call__(self, request, timeout=None):
+                self.requests.append(request)
+                if '/events' in request.full_url:
+                    return FakeSseResponse(stream.encode('utf-8'))
+                return FakeResponse({**JOB_SUMMARY, 'status': 'COMPLETED'})
+
+        fake = WatchUrlopen([])
+        events = []
+        with patch('evolve._http.urlopen', fake):
+            final = await jobs_factory(CONFIG).watch(
+                'job-1', on_event=lambda e: events.append(e)
+            )
+
+        assert [(e.seq, e.type) for e in events] == [(0, 'job.created'), (1, 'job.completed')]
+        assert events[0].data == {'trial_count': 1}
+        assert events[1].data == {'scored': 1}
+        assert final.status == 'COMPLETED'
+
+    @pytest.mark.asyncio
     async def test_watch_yields_events_when_iterated(self):
         """The dual-use handle: async-for yields each event, no second verb."""
         stream = sse_text([
@@ -1561,7 +1590,7 @@ class TestJobs:
 
         fake = WatchUrlopen([])
         seqs = []
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             async for event in jobs_factory(CONFIG).watch('job-1'):
                 seqs.append(event.seq)
 
@@ -1589,7 +1618,7 @@ class TestJobs:
 
         fake = ReconnectUrlopen([])
         events = []
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             final = await jobs_factory(CONFIG).watch(
                 'job-1', on_event=lambda e: events.append(e), reconnect_delay_s=0.001
             )
@@ -1627,7 +1656,7 @@ class TestJobs:
                 return FakeResponse({**JOB_SUMMARY, 'status': 'COMPLETED'})
 
             started = time.monotonic()
-            with patch('evolve.hosted.urllib.request.urlopen', urlopen):
+            with patch('evolve._http.urlopen', urlopen):
                 final = await jobs_factory(CONFIG).watch(
                     'job-1', reconnect_delay_s=0.001
                 )
@@ -1667,7 +1696,7 @@ class TestJobs:
                 return FakeResponse({**JOB_SUMMARY, 'status': 'CANCELLED'})
 
         fake = QuietCloseUrlopen([])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             final = await jobs_factory(CONFIG).watch('job-1', reconnect_delay_s=0.001)
 
         assert final.status == 'CANCELLED'
@@ -1684,7 +1713,7 @@ class TestJobs:
                 return FakeResponse({**JOB_SUMMARY, 'status': 'RUNNING'})
 
         fake = NeverTerminalUrlopen([])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             with pytest.raises(TimeoutError):
                 await jobs_factory(CONFIG).watch(
                     'job-1', reconnect_delay_s=0.001, timeout_s=0.05
@@ -1703,7 +1732,7 @@ class TestJobs:
                 }).encode('utf-8')),
             )
 
-        with patch('evolve.hosted.urllib.request.urlopen', raise_http_error):
+        with patch('evolve._http.urlopen', raise_http_error):
             with pytest.raises(EvolveAPIError) as exc_info:
                 await jobs_factory(CONFIG).watch('job-x')
         assert exc_info.value.status == 404
@@ -1717,7 +1746,7 @@ class TestJobs:
         fake = FakeUrlopen([
             ('/api/jobs', {**JOB_SUMMARY, 'max_trial_spend_usd': 2, 'worst_case_spend_usd': 10}),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             job = await jobs_factory(CONFIG).start(
                 datasets=[{'name': 'deep-swe', 'version': '1.1'}],
                 agents=[AgentArm(name='codex', model_name='gpt-5.5')],
@@ -1739,7 +1768,7 @@ class TestJobs:
         fake = FakeUrlopen([
             ('/api/jobs', {**JOB_SUMMARY, 'max_trial_spend_usd': 200, 'worst_case_spend_usd': 1000}),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             job = await jobs_factory(CONFIG).start(
                 datasets=[{'name': 'deep-swe', 'version': '1.1'}],
                 agents=[AgentArm(name='codex', model_name='gpt-5.5')],
@@ -1761,7 +1790,7 @@ class TestJobs:
         fake = FakeUrlopen([
             ('/api/jobs', {**JOB_SUMMARY, 'sandbox_provider': 'daytona'}),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             job = await jobs_factory(CONFIG).start(
                 datasets=[{'name': 'deep-swe', 'version': '1.1'}],
                 agents=[AgentArm(name='codex', model_name='gpt-5.5')],
@@ -1776,7 +1805,7 @@ class TestJobs:
     @pytest.mark.asyncio
     async def test_start_posts_job_name(self):
         fake = FakeUrlopen([('/api/jobs', JOB_SUMMARY)])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             job = await jobs_factory(CONFIG).start(
                 datasets=[{'name': 'deep-swe'}],
                 agents=[AgentArm(name='codex', model_name='gpt-5.5')],
@@ -1804,7 +1833,7 @@ class TestJobs:
                 }).encode('utf-8')),
             )
 
-        with patch('evolve.hosted.urllib.request.urlopen', raise_http_error):
+        with patch('evolve._http.urlopen', raise_http_error):
             with pytest.raises(EvolveAPIError) as exc_info:
                 await jobs_factory(CONFIG).download('job-1')
         error = exc_info.value
@@ -1824,7 +1853,7 @@ class TestJobs:
                 io.BytesIO(b'Bad Gateway'),
             )
 
-        with patch('evolve.hosted.urllib.request.urlopen', raise_http_error):
+        with patch('evolve._http.urlopen', raise_http_error):
             with pytest.raises(EvolveAPIError) as exc_info:
                 await jobs_factory(CONFIG).get('job-1')
         assert exc_info.value.status == 502
@@ -1834,7 +1863,7 @@ class TestJobs:
     async def test_start_posts_env_pass_through_slots(self):
         """agent_env / verifier_env travel verbatim; the server owns acceptance."""
         fake = FakeUrlopen([('/api/jobs', JOB_SUMMARY)])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             await jobs_factory(CONFIG).start(
                 datasets=[{'name': 'deep-swe'}],
                 agents=[{'name': 'codex', 'model_name': 'gpt-5.5'}],
@@ -1851,7 +1880,7 @@ class TestJobs:
         fake = FakeUrlopen([
             ('/api/jobs', {'items': [], 'nextCursor': None, 'hasMore': False}),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             await jobs_factory(CONFIG).list(search='deep', limit=10)
 
         url = fake.requests[0].full_url
@@ -1885,7 +1914,7 @@ class TestJobs:
                 'hasMore': True,
             }),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             page = await jobs_factory(CONFIG).tasks('job-1', limit=2)
 
         url = fake.requests[0].full_url
@@ -1919,7 +1948,7 @@ class TestTrials:
                 verifier_environment_mode='shared',
             )),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             trial = await trials_factory(CONFIG).get('run-1')
 
         assert fake.requests[0].full_url.endswith('/api/trials/run-1')
@@ -1943,7 +1972,7 @@ class TestTrials:
                 'hasMore': True,
             }),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             page = await trials_factory(CONFIG).trace('run-1', cursor='2', limit=500)
 
         url = fake.requests[0].full_url
@@ -1962,7 +1991,7 @@ class TestTrials:
             ('stream=verifier', {'log': None}),
         ])
         client = trials_factory(CONFIG)
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             log = await client.artifact('run-1', 'trace-stdout')
             home = await client.artifact('run-1', 'agent-home')
             grader = await client.artifact('run-1', 'verifier')
@@ -1985,7 +2014,7 @@ class TestTrials:
         refuses it as the API error it is."""
         fake = FakeUrlopen([('stream=trajectory', {'log': '{"steps":[]}'})])
         client = trials_factory(CONFIG)
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             log = await client.artifact('run-1', 'trajectory')
 
         assert '/api/trials/run-1/trace?stream=trajectory' in fake.requests[0].full_url
@@ -2004,7 +2033,7 @@ class TestTrials:
         the selector with that guidance before any request leaves."""
         fake = FakeUrlopen([])
         client = trials_factory(CONFIG)
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             with pytest.raises(ValueError, match=r'trace_events'):
                 await client.artifact('run-1', 'trace-parsed')
         assert fake.requests == []
@@ -2032,7 +2061,7 @@ class TestTrials:
 
         fake = PagedUrlopen([])
         seqs = []
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             async for event in trials_factory(CONFIG).trace_events('run-1'):
                 seqs.append(event.seq)
 
@@ -2052,7 +2081,7 @@ class TestTrials:
             'is_regrade': True,
         }
         fake = FakeUrlopen([('/api/trials/run-1/regrade', regrade_job)])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             job = await trials_factory(CONFIG).regrade('run-1')
 
         assert fake.requests[0].get_method() == 'POST'
@@ -2069,7 +2098,7 @@ class TestTrials:
                 'not_found': ['run-3'],
             }),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             outcome = await trials_factory(CONFIG).stop(['run-1', 'run-2', 'run-3'])
 
         assert fake.requests[0].get_method() == 'POST'
@@ -2098,7 +2127,7 @@ class TestDatasetDownload:
                 },
             ),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             client = datasets_factory(CONFIG)
             payload = await client.download('acme@1.1')
             path = await client.download('acme@1.1', to=str(tmp_path))
@@ -2127,7 +2156,7 @@ class TestDatasetDownload:
                 },
             ),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             path = await datasets_factory(CONFIG).download('acme', to=str(tmp_path))
 
         assert os.path.basename(path) == 'acme-corpus.tar.gz'
@@ -2149,7 +2178,7 @@ class TestDatasetDownload:
             'x-package-sha256': hashlib.sha256(package).hexdigest(),
         }
         with patch(
-            'evolve.hosted.urllib.request.urlopen',
+            'evolve._http.urlopen',
             FakeUrlopen([('/download', package, headers)]),
         ):
             client = datasets_factory(CONFIG)
@@ -2173,14 +2202,14 @@ class TestDatasetDownload:
             'x-package-sha256': 'f' * 64,  # not the bytes above
         }
         with patch(
-            'evolve.hosted.urllib.request.urlopen',
+            'evolve._http.urlopen',
             FakeUrlopen([('/download', package, headers)]),
         ):
             with pytest.raises(EvolveDigestMismatchError):
                 await datasets_factory(CONFIG).download('acme')
 
         with patch(
-            'evolve.hosted.urllib.request.urlopen',
+            'evolve._http.urlopen',
             FakeUrlopen([('/download', package, headers)]),
         ):
             with pytest.raises(EvolveDigestMismatchError):
@@ -2204,14 +2233,14 @@ class TestDatasetDownload:
             'x-package-sha256': hashlib.sha256(package).hexdigest(),
         }
         with patch(
-            'evolve.hosted.urllib.request.urlopen',
+            'evolve._http.urlopen',
             FakeUrlopen([('/download', package, headers)]),
         ):
             with pytest.raises(EvolveIncompleteDownloadError):
                 await datasets_factory(CONFIG).download('acme')
 
         with patch(
-            'evolve.hosted.urllib.request.urlopen',
+            'evolve._http.urlopen',
             FakeUrlopen([('/download', package, headers)]),
         ):
             with pytest.raises(EvolveIncompleteDownloadError):
@@ -2230,7 +2259,7 @@ class TestDatasetDownload:
             'x-package-sha256': hashlib.sha256(package).hexdigest(),
         }
         with patch(
-            'evolve.hosted.urllib.request.urlopen',
+            'evolve._http.urlopen',
             FakeUrlopen([('/download', package, headers)]),
         ):
             path = await datasets_factory(CONFIG).download('acme', to=str(inner))
@@ -2254,7 +2283,7 @@ class TestDatasetDownload:
                 }}).encode('utf-8')),
             )
 
-        with patch('evolve.hosted.urllib.request.urlopen', raise_http_error):
+        with patch('evolve._http.urlopen', raise_http_error):
             with pytest.raises(EvolveAPIError) as exc:
                 await datasets_factory(CONFIG).download('acme@0.9')
         assert exc.value.status == 404
@@ -2276,7 +2305,7 @@ class TestAuth:
                 },
             }),
         ])
-        with patch('evolve.hosted.urllib.request.urlopen', fake):
+        with patch('evolve._http.urlopen', fake):
             status = await auth_factory(CONFIG).status()
 
         assert fake.requests[0].full_url.endswith('/api/auth/status')
@@ -2303,7 +2332,7 @@ class TestAuth:
                 }}).encode('utf-8')),
             )
 
-        with patch('evolve.hosted.urllib.request.urlopen', raise_http_error):
+        with patch('evolve._http.urlopen', raise_http_error):
             with pytest.raises(EvolveAPIError) as exc:
                 await auth_factory(CONFIG).status()
         assert exc.value.status == 404

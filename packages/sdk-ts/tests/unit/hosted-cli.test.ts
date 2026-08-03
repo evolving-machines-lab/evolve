@@ -242,6 +242,31 @@ function testShortFlags() {
   assertThrowsUsage(() => parseArgs(["job", "list", "-z"]), "Unknown option", "unknown short flag");
   assertThrowsUsage(() => parseArgs(["job", "list", "--frob", "x"]), "Unknown option", "unknown long flag");
   assertThrowsUsage(() => parseArgs(["job", "list", "--cursor"]), "requires a value", "flag missing its value");
+
+  // A value may START with '-'. Only a token that IS a flag of the command is
+  // refused — consuming it silently would swallow the caller's next option —
+  // and the refusal offers the --name=value spelling for the collision case.
+  assertEqual(
+    parseArgs(["job", "start", "-d", "b", "-a", "a", "-m", "m", "-x", "-*"]).flags["exclude-task-name"],
+    ["-*"],
+    "a glob starting with '-' is a value, not a missing-value error"
+  );
+  assertEqual(
+    parseArgs(["job", "list", "--cursor", "-abc123"]).flags.cursor,
+    "-abc123",
+    "a cursor starting with '-' is a value when it spells no known flag"
+  );
+  assertEqual(parseArgs(["job", "list", "-l", "-5"]).flags.limit, -5, "a negative number stays a value");
+  assertThrowsUsage(
+    () => parseArgs(["job", "list", "--cursor", "--json"]),
+    "requires a value",
+    "a KNOWN flag after a value flag still refuses"
+  );
+  assertThrowsUsage(
+    () => parseArgs(["job", "list", "--cursor", "--json"]),
+    "--cursor=--json",
+    "and the refusal shows the = spelling that states the intent"
+  );
   assertThrowsUsage(
     () => parseArgs(["job", "start", "-k", "lots", "-d", "b", "-a", "a", "-m", "m"]),
     "expects a number",
@@ -439,28 +464,26 @@ async function testConfigFileMerge() {
     );
 
     // A `%YAML` directive is a reading instruction, not a schema swap: PyYAML
-    // reads a file the same way whatever the directive says. An inverted
-    // boolean here passes every gate this reader has — checkWireValue takes
-    // booleans — so the BODY is what has to be pinned, not a refusal.
+    // reads a file the same way whatever the directive says, and this reader
+    // is pinned to that one reading. Under a real 1.2 core schema `on` would
+    // be the string "on" and sail through as a job name — here it stays the
+    // boolean the 1.1 schema makes it, and the spec's string law refuses it.
     const directivePath = join(dir, "directive.yaml");
     await writeFile(
       directivePath,
-      ["%YAML 1.2", "---", "datasets: [{name: swe-bench}]", "agents: [{name: claude, model_name: opus, thinking: yes}]"].join(
+      ["%YAML 1.2", "---", "job_name: on", "datasets: [{name: swe-bench}]", "agents: [{name: claude, model_name: opus}]"].join(
         "\n"
       )
     );
-    assertEqual(
-      buildJobInput(parseArgs(["job", "start", "-c", directivePath])),
-      {
-        datasets: [{ name: "swe-bench" }],
-        agents: [{ name: "claude", model_name: "opus", thinking: true }],
-      },
-      "a %YAML 1.2 directive ships thinking: true, not the inverted false"
+    assertThrowsUsage(
+      () => buildJobInput(parseArgs(["job", "start", "-c", directivePath])),
+      '"job_name" in',
+      "a %YAML 1.2 directive does not swap the reading — on is still a boolean and refuses"
     );
     const directiveEnvPath = join(dir, "directive-env.yaml");
     await writeFile(
       directiveEnvPath,
-      ["%YAML 1.2", "---", "datasets: [{name: swe-bench}]", "agents: [{name: claude}]", "agent_env:", "  STRICT: false"].join(
+      ["%YAML 1.2", "---", "datasets: [{name: swe-bench}]", "agents: [{name: claude, model_name: opus}]", "agent_env:", "  STRICT: false"].join(
         "\n"
       )
     );
@@ -529,7 +552,7 @@ async function testConfigFileMerge() {
     ];
     for (const [name, line, needle] of wireCases) {
       const casePath = join(dir, `${name}.yaml`);
-      await writeFile(casePath, `${line}\ndatasets: [{name: deep-swe}]\nagents: [{name: claude}]\n`);
+      await writeFile(casePath, `${line}\ndatasets: [{name: deep-swe}]\nagents: [{name: claude, model_name: opus}]\n`);
       assertThrowsUsage(
         () => buildJobInput(parseArgs(["job", "start", "-c", casePath])),
         needle,
@@ -541,7 +564,7 @@ async function testConfigFileMerge() {
     const quotedPath = join(dir, "quoted.yaml");
     await writeFile(
       quotedPath,
-      ['job_name: "2026-08-02"', 'agent_env: {WHEN: "2026-08-02", DEBUG: "on"}', "max_trial_spend_usd: 25", "datasets: [{name: deep-swe}]", "agents: [{name: claude}]"].join("\n")
+      ['job_name: "2026-08-02"', 'agent_env: {WHEN: "2026-08-02", DEBUG: "on"}', "max_trial_spend_usd: 25", "datasets: [{name: deep-swe}]", "agents: [{name: claude, model_name: opus}]"].join("\n")
     );
     const quoted = buildJobInput(parseArgs(["job", "start", "-c", quotedPath]));
     assertEqual(quoted.job_name, "2026-08-02", "a quoted date is the literal string the caller wrote");
@@ -591,7 +614,7 @@ async function testConfigFileMerge() {
     const exponentSpendPath = join(dir, "exponent-spend.yaml");
     await writeFile(
       exponentSpendPath,
-      "max_trial_spend_usd: 1e3\ndatasets: [{name: deep-swe}]\nagents: [{name: claude}]\n"
+      "max_trial_spend_usd: 1e3\ndatasets: [{name: deep-swe}]\nagents: [{name: claude, model_name: opus}]\n"
     );
     assertThrowsUsage(
       () => buildJobInput(parseArgs(["job", "start", "-c", exponentSpendPath])),
@@ -631,12 +654,12 @@ async function testConfigFileMerge() {
     // --print-config promised to save. The top-level law reaches inside the
     // selectors, where it used to stop at the element being an object at all.
     const selectorCases: Array<[string, string, string]> = [
-      ["ds-version", "datasets: [{name: deep-swe, version: 1.10}]\nagents: [{name: claude}]", "datasets[0].version"],
-      ["ds-name", "datasets: [{name: on}]\nagents: [{name: claude}]", "datasets[0].name"],
-      ["ds-tasks", "datasets: [{name: deep-swe, n_tasks: two}]\nagents: [{name: claude}]", "datasets[0].n_tasks"],
-      ["ds-globs", "datasets: [{name: deep-swe, task_names: [1.10]}]\nagents: [{name: claude}]", "datasets[0].task_names[0]"],
-      ["ds-glob-scalar", "datasets: [{name: deep-swe, exclude_task_names: slow}]\nagents: [{name: claude}]", "must be a list of strings"],
-      ["ag-version", "datasets: [{name: deep-swe}]\nagents: [{name: claude, version: 2.0}]", "agents[0].version"],
+      ["ds-version", "datasets: [{name: deep-swe, version: 1.10}]\nagents: [{name: claude, model_name: opus}]", "datasets[0].version"],
+      ["ds-name", "datasets: [{name: on}]\nagents: [{name: claude, model_name: opus}]", "datasets[0].name"],
+      ["ds-tasks", "datasets: [{name: deep-swe, n_tasks: two}]\nagents: [{name: claude, model_name: opus}]", "datasets[0].n_tasks"],
+      ["ds-globs", "datasets: [{name: deep-swe, task_names: [1.10]}]\nagents: [{name: claude, model_name: opus}]", "datasets[0].task_names[0]"],
+      ["ds-glob-scalar", "datasets: [{name: deep-swe, exclude_task_names: slow}]\nagents: [{name: claude, model_name: opus}]", "must be a list of strings"],
+      ["ag-version", "datasets: [{name: deep-swe}]\nagents: [{name: claude, model_name: opus, version: 2.0}]", "agents[0].version"],
       ["ag-model", "datasets: [{name: deep-swe}]\nagents: [{name: claude, model_name: 4.5}]", "agents[0].model_name"],
       ["ag-effort", "datasets: [{name: deep-swe}]\nagents: [{name: claude, model_name: opus, reasoning_effort: on}]", "agents[0].reasoning_effort"],
     ];
@@ -658,6 +681,100 @@ async function testConfigFileMerge() {
     assert(
       pinIO.err.some((l) => l.includes('quote it (version: "...")')),
       "and the refusal carries the remedy, because quoting is the whole fix"
+    );
+
+    // The vocabulary, the types, the ranges and the enums above all read out
+    // of spec/openapi.yaml itself (JobCreate and the shapes it references) —
+    // no hand-kept field list. These pin the constraints only the spec knows:
+    // a schema refusal names the config path, the file AND LINE, and the spec
+    // shape that ruled, so the fix is findable from the message alone.
+    const specCases: Array<[string, string, string[]]> = [
+      [
+        "unknown-arm-key",
+        "datasets: [{name: deep-swe}]\nagents: [{name: claude, model_name: opus, thinking: true}]",
+        ['unknown key "thinking"', "agents[0]", "[spec: AgentArmInput]"],
+      ],
+      [
+        "armless-model",
+        "datasets: [{name: deep-swe}]\nagents: [{name: claude}]",
+        ['missing the required key "model_name"', "[spec: AgentArmInput]"],
+      ],
+      [
+        "nameless-selector",
+        "datasets: [{version: \"1.0\"}]\nagents: [{name: claude, model_name: opus}]",
+        ['missing the required key "name"', "[spec: DatasetSelector]"],
+      ],
+      [
+        "bad-provider",
+        "sandbox_provider: gcp\ndatasets: [{name: deep-swe}]\nagents: [{name: claude, model_name: opus}]",
+        ["must be one of: e2b, daytona, modal"],
+      ],
+      [
+        "fractional-attempts",
+        "n_attempts: 1.5\ndatasets: [{name: deep-swe}]\nagents: [{name: claude, model_name: opus}]",
+        ["must be an integer", "[spec: JobCreate.n_attempts]"],
+      ],
+      [
+        "over-concurrency",
+        "n_concurrent_trials: 64\ndatasets: [{name: deep-swe}]\nagents: [{name: claude, model_name: opus}]",
+        ["must be at most 16"],
+      ],
+      [
+        "zero-tasks",
+        "datasets: [{name: deep-swe, n_tasks: 0}]\nagents: [{name: claude, model_name: opus}]",
+        ["datasets[0].n_tasks", "must be at least 1"],
+      ],
+      [
+        "negative-spend",
+        "max_trial_spend_usd: -1\ndatasets: [{name: deep-swe}]\nagents: [{name: claude, model_name: opus}]",
+        ["must be at least 0"],
+      ],
+      [
+        "long-name",
+        `job_name: "${"x".repeat(201)}"\ndatasets: [{name: deep-swe}]\nagents: [{name: claude, model_name: opus}]`,
+        ["must be at most 200 characters"],
+      ],
+      [
+        "nine-arms",
+        "datasets: [{name: deep-swe}]\nagents:\n" +
+          Array.from({ length: 9 }, (_, i) => `  - {name: a${i}, model_name: m}`).join("\n"),
+        ["takes at most 8 entries", "[spec: JobCreate.agents]"],
+      ],
+    ];
+    for (const [name, body, needles] of specCases) {
+      const casePath = join(dir, `spec-${name}.yaml`);
+      await writeFile(casePath, `${body}\n`);
+      for (const needle of needles) {
+        assertThrowsUsage(
+          () => buildJobInput(parseArgs(["job", "start", "-c", casePath])),
+          needle,
+          `spec-derived refusal (${name}) carries ${JSON.stringify(needle)}`
+        );
+      }
+    }
+
+    // The YAML reader knows where every value sits, so the refusal names the
+    // line — the second line here — while the same body as JSON, which keeps
+    // no positions, refuses without one.
+    const linePath = join(dir, "line.yaml");
+    await writeFile(
+      linePath,
+      "datasets: [{name: deep-swe}]\nn_attempts: 1.5\nagents: [{name: claude, model_name: opus}]\n"
+    );
+    assertThrowsUsage(
+      () => buildJobInput(parseArgs(["job", "start", "-c", linePath])),
+      `${linePath}:2`,
+      "a YAML schema refusal points at the offending line"
+    );
+    const lineJsonPath = join(dir, "line.json");
+    await writeFile(
+      lineJsonPath,
+      JSON.stringify({ datasets: [{ name: "deep-swe" }], agents: [{ name: "claude", model_name: "opus" }], n_attempts: 1.5 })
+    );
+    assertThrowsUsage(
+      () => buildJobInput(parseArgs(["job", "start", "-c", lineJsonPath])),
+      `${lineJsonPath} must be an integer`,
+      "the JSON spelling refuses the same law, without a line"
     );
 
     // Quoting is that remedy, and the pin survives it intact.
@@ -698,7 +815,7 @@ async function testConfigFileMerge() {
     for (let i = 2; i <= 5; i++) {
       rows.push(`a${i}: &a${i} [${Array(9).fill(`*a${i - 1}`).join(", ")}]`);
     }
-    rows.push("job_name: *a5", "datasets: [{name: deep-swe}]", "agents: [{name: claude}]");
+    rows.push("job_name: *a5", "datasets: [{name: deep-swe}]", "agents: [{name: claude, model_name: opus}]");
     await writeFile(bombPath, rows.join("\n"));
     assertThrowsUsage(
       () => buildJobInput(parseArgs(["job", "start", "-c", bombPath])),
@@ -716,7 +833,7 @@ async function testConfigFileMerge() {
     // descended it until the stack ran out — the same nameless exit 1 the bomb
     // above was moved off, in two lines of valid YAML.
     const cyclePath = join(dir, "cycle.yaml");
-    await writeFile(cyclePath, "agent_env: &a\n  X: *a\ndatasets: [{name: deep-swe}]\nagents: [{name: claude}]\n");
+    await writeFile(cyclePath, "agent_env: &a\n  X: *a\ndatasets: [{name: deep-swe}]\nagents: [{name: claude, model_name: opus}]\n");
     assertThrowsUsage(
       () => buildJobInput(parseArgs(["job", "start", "-c", cyclePath])),
       "agent_env.X in " + cyclePath,
@@ -736,7 +853,7 @@ async function testConfigFileMerge() {
     // A cycle hides equally well under a list, and the root document itself can
     // be the anchor — both terminate on the same ancestor check.
     const listCyclePath = join(dir, "cycle-list.yaml");
-    await writeFile(listCyclePath, "datasets: &d\n  - name: deep-swe\n    task_names: *d\nagents: [{name: claude}]\n");
+    await writeFile(listCyclePath, "datasets: &d\n  - name: deep-swe\n    task_names: *d\nagents: [{name: claude, model_name: opus}]\n");
     assertThrowsUsage(
       () => buildJobInput(parseArgs(["job", "start", "-c", listCyclePath])),
       "cannot carry a cycle",
@@ -756,7 +873,7 @@ async function testConfigFileMerge() {
     const sharedPath = join(dir, "shared-anchor.yaml");
     await writeFile(
       sharedPath,
-      "datasets: [{name: deep-swe, task_names: &t [\"a*\"]}, {name: swe-bench, task_names: *t}]\nagents: [{name: claude}]\n"
+      "datasets: [{name: deep-swe, task_names: &t [\"a*\"]}, {name: swe-bench, task_names: *t}]\nagents: [{name: claude, model_name: opus}]\n"
     );
     const sharedIO = captureIO();
     assertEqual(

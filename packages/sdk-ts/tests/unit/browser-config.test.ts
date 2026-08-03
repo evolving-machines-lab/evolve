@@ -323,6 +323,42 @@ async function testManagedActionbookConfigUsesProxyOnly(): Promise<void> {
   assert(!config?.includes("_managedTransport"), "Actionbook config does not expose transport selector");
 }
 
+async function testActionbookConfigIsSerializedToml(): Promise<void> {
+  console.log("\n[13b] Actionbook config.toml is serialized TOML, not a template — hostile URLs round-trip");
+
+  const kit = new Evolve()
+    .withAgent({ type: "claude", apiKey: "evolve-key" })
+    .withSandbox(fakeSandboxProvider)
+    .withBrowser({ provider: "actionbook", remote: true });
+  await (kit as any).initializeAgent();
+  const agent = ((kit as any).agent as any);
+  // A CDP URL carrying a quote and a backslash breaks a hand-built template
+  // (the quote ends the TOML string early); a serializer escapes both.
+  const hostile = 'wss://dashboard.test/cdp?token=a"b\\c';
+  agent.managedBrowserSession = {
+    id: "browser_123",
+    cdpUrl: hostile,
+    liveUrl: "https://dashboard.test/live",
+  };
+  installAnthropicRuntimeToken(agent);
+
+  const writes = new Map<string, string>();
+  const sandbox = {
+    files: {
+      makeDir: async () => {},
+      write: async (path: string, data: string) => { writes.set(path, data); },
+    },
+  };
+  await agent.setupManagedBrowser(sandbox);
+  const config = writes.get("/home/user/.actionbook/config.toml");
+  assert(config !== undefined, "Actionbook config written");
+  const { parse } = await import("smol-toml");
+  const doc = parse(config as string) as { version?: number; browser?: { mode?: string; cdp_endpoint?: string } };
+  assertEqual(doc.version, 1, "version key survives the serializer");
+  assertEqual(doc.browser?.mode, "cloud", "cloud mode survives the serializer");
+  assertEqual(doc.browser?.cdp_endpoint, hostile, "a quote-carrying CDP URL round-trips as parseable TOML");
+}
+
 async function testManagedAgentBrowserConfigUsesProxyOnly(): Promise<void> {
   console.log("\n[14] managed agent-browser config: sandbox sees only Evolve proxy endpoint");
 
@@ -489,6 +525,7 @@ async function main(): Promise<void> {
   await testActionbookObjectRemoteDefaultsFalse();
   await testManagedActionbookRequiresGatewayMode();
   await testManagedActionbookConfigUsesProxyOnly();
+  await testActionbookConfigIsSerializedToml();
   await testManagedAgentBrowserConfigUsesProxyOnly();
   await testBrowserCredentialsRequireManagedAgentBrowser();
   await testBrowserCredentialsRejectDirectMode();

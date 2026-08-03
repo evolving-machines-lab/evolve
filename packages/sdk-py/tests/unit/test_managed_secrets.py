@@ -65,7 +65,7 @@ async def test_managed_secrets_client_lists_metadata(monkeypatch):
             }).encode()
 
     opener = Mock(return_value=FakeResponse())
-    monkeypatch.setattr('urllib.request.urlopen', opener)
+    monkeypatch.setattr('evolve._http.urlopen', opener)
 
     client = managed_secrets(ManagedSecretsClientConfig(api_key='ev_key', dashboard_url='https://dashboard.test'))
     result = await client.list()

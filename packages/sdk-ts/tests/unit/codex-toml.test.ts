@@ -205,11 +205,20 @@ async function testSpendProviderIsIdempotent(): Promise<void> {
 }
 
 async function testSpendProviderReplacesCommentedProvider(): Promise<void> {
-  console.log("\n[7] a commented-out provider section is not mistaken for a real one");
+  console.log("\n[7] a commented-out provider section does not mask the real (stale) one");
 
+  // BOTH forms at once: a commented-out section the parser must ignore AND a
+  // real section carrying a stale gateway. The write must replace the real
+  // one — a substring scan that stopped at the commented text left the stale
+  // URL in force.
   const existing = [
     "# [model_providers.evolve-gateway]",
-    '# base_url = "https://stale.example.com"',
+    '# base_url = "https://commented.example.com"',
+    "",
+    "[model_providers.evolve-gateway]",
+    'name = "Evolve Gateway"',
+    'base_url = "https://stale.example.com"',
+    'env_key = "OPENAI_API_KEY"',
     "",
     "[mcp_servers.docs]",
     'url = "https://docs.example.com"',
@@ -219,12 +228,39 @@ async function testSpendProviderReplacesCommentedProvider(): Promise<void> {
   await writeCodexSpendProvider(sandbox, "https://gateway.example.com", spendEnvs);
 
   const config = doc(CODEX_CONFIG);
-  assertEqual(config.model_providers["evolve-gateway"].base_url, "https://gateway.example.com", "real provider written");
+  assertEqual(config.model_providers["evolve-gateway"].base_url, "https://gateway.example.com", "stale real provider replaced");
+  assertEqual(config.model_providers["evolve-gateway"].wire_api, "responses", "replacement is the full desired provider");
   assertEqual(config.mcp_servers.docs.url, "https://docs.example.com", "MCP server preserved");
 
   const content = raw(CODEX_CONFIG);
+  assert(!content.includes("stale.example.com"), "no stale base_url survives anywhere in the file");
   const rootKeyIdx = content.indexOf('model_provider = "evolve-gateway"');
   assert(rootKeyIdx >= 0 && rootKeyIdx < content.search(/^\[/m), "root key stays above every section header");
+}
+
+async function testNonTableKeyRefusesLoudly(): Promise<void> {
+  console.log("\n[7b] a scalar where a table belongs refuses instead of being erased");
+
+  const scalarServers = createFakeSandbox({ [CODEX_CONFIG]: 'mcp_servers = "oops"\n' });
+  let message = "";
+  try {
+    await writeCodexMcpConfig(scalarServers.sandbox, { docs: { url: "https://docs.example.com" } });
+  } catch (error) {
+    message = (error as Error).message;
+  }
+  assert(message.includes('"mcp_servers"'), "names the offending key");
+  assert(message.includes("found a string"), "names the type it found");
+  assert(message.includes(CODEX_CONFIG), "names the file");
+  assertEqual(scalarServers.raw(CODEX_CONFIG), 'mcp_servers = "oops"\n', "the user's file is left untouched");
+
+  const arrayProviders = createFakeSandbox({ [CODEX_CONFIG]: "model_providers = [1, 2]\n" });
+  let providerMessage = "";
+  try {
+    await writeCodexSpendProvider(arrayProviders.sandbox, "https://gateway.example.com", spendEnvs);
+  } catch (error) {
+    providerMessage = (error as Error).message;
+  }
+  assert(providerMessage.includes('"model_providers"') && providerMessage.includes("found an array"), "provider table refusal is typed too");
 }
 
 async function testSpendProviderWithoutTrackingEnvs(): Promise<void> {
@@ -316,6 +352,7 @@ async function main(): Promise<void> {
   await testSpendProviderCoexistsWithMcpServers();
   await testSpendProviderIsIdempotent();
   await testSpendProviderReplacesCommentedProvider();
+  await testNonTableKeyRefusesLoudly();
   await testSpendProviderWithoutTrackingEnvs();
   await testKimiConfigRoundTrips();
   await testKimiConfigWithoutThinking();

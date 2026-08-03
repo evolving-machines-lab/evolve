@@ -58,6 +58,8 @@ interface MockResponse {
   headers?: Record<string, string>;
   /** If set, response.body will be a ReadableStream of this string */
   streamBody?: string;
+  /** If set, response.body streams these chunks one read at a time (wins over streamBody) */
+  streamChunks?: string[];
   /** If set, arrayBuffer() resolves with these bytes */
   bodyBytes?: Buffer;
 }
@@ -70,9 +72,11 @@ function setMockResponse(urlPattern: string, response: MockResponse) {
 
 function buildMockResponse(resp: MockResponse): Response {
   let body: ReadableStream | null = null;
-  const streamSource = resp.streamBody != null
-    ? Buffer.from(resp.streamBody, "utf-8")
-    : resp.bodyBytes;
+  const streamSource = resp.streamChunks != null
+    ? resp.streamChunks.map((chunk) => Buffer.from(chunk, "utf-8"))
+    : resp.streamBody != null
+      ? Buffer.from(resp.streamBody, "utf-8")
+      : resp.bodyBytes;
   if (streamSource != null) {
     const nodeStream = Readable.from(streamSource);
     body = Readable.toWeb(nodeStream) as ReadableStream;
@@ -1822,6 +1826,42 @@ async function testWatchStreamsToTerminal() {
   }
 }
 
+async function testWatchHandlesEveryLineTerminator() {
+  console.log("\n--- watch() parses CR and CRLF line terminators, split across chunks ---");
+  installMockFetch();
+  try {
+    // The SSE grammar ends a line on CRLF, LF, or a LONE CR. This stream uses
+    // all three, and splits one CRLF pair across two chunks — held-back CR
+    // handling must read it as ONE terminator, not mint an extra frame.
+    setMockResponse("/api/jobs/eval-1/events", {
+      status: 200,
+      body: null,
+      streamChunks: [
+        'id: 0\revent: job.created\rdata: {"trial_count": 1}\r\r',
+        'id: 1\r\nevent: trial.settled\r',
+        '\ndata: {"trial_id": "run-1"}\r\n\r\n',
+        'id: 2\nevent: job.completed\ndata: {"job_id": "eval-1"}\n\n',
+      ],
+    });
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: { ...JOB_SUMMARY, status: "COMPLETED" },
+    });
+
+    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+    const events: JobEvent[] = [];
+    const finalJob = await e.watch("eval-1", { onEvent: (ev) => events.push(ev) });
+
+    assertEqual(events.length, 3, "3 events, no frame lost and none invented");
+    assertEqual(events[0], { seq: 0, type: "job.created", data: { trial_count: 1 } }, "CR-terminated frame parsed");
+    assertEqual(events[1], { seq: 1, type: "trial.settled", data: { trial_id: "run-1" } }, "chunk-split CRLF is one terminator");
+    assertEqual(events[2].type, "job.completed", "LF frames still parse");
+    assertEqual(finalJob.status, "COMPLETED", "resolves with the final job");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testWatchResumesWithLastEventId() {
   console.log("\n--- watch() reconnects with Last-Event-ID after a dropped stream ---");
   installMockFetch();
@@ -3165,6 +3205,7 @@ async function main() {
   await testDownloadPackageConcurrent();
   await testDownloadPackageNotRetained();
   await testWatchStreamsToTerminal();
+  await testWatchHandlesEveryLineTerminator();
   await testWatchAsIterator();
   await testWatchIteratorEarlyBreak();
   await testWatchIteratorAbort();

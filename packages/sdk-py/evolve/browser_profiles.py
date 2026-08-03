@@ -1,14 +1,11 @@
 """Standalone browser profiles client."""
 
 import asyncio
-import json
 import os
-import urllib.error
-import urllib.parse
-import urllib.request
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from . import _http
 from .config import BrowserProfilesClientConfig
 
 
@@ -77,36 +74,14 @@ class BrowserProfilesClient:
         method: str = 'GET',
         body: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        return await asyncio.to_thread(self._request_json_sync, path, method, body)
-
-    def _request_json_sync(
-        self,
-        path: str,
-        method: str,
-        body: Optional[Dict[str, Any]],
-    ) -> Dict[str, Any]:
-        data = json.dumps(body).encode('utf-8') if body is not None else None
-        headers = {
-            'Authorization': f'Bearer {_resolve_api_key(self.config)}',
-            'Accept': 'application/json',
-        }
-        if data is not None:
-            headers['Content-Type'] = 'application/json'
-        request = urllib.request.Request(
+        return await asyncio.to_thread(
+            _http.request_json,
             f'{_dashboard_base_url(self.config)}{path}',
-            data=data,
-            headers=headers,
+            api_key=_resolve_api_key(self.config),
+            error_prefix='Browser profiles',
             method=method,
+            body=body,
         )
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                payload = response.read().decode('utf-8')
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode('utf-8', errors='replace')
-            raise RuntimeError(f'Browser profiles request failed ({exc.code}): {detail}') from exc
-        if not payload:
-            return {}
-        return json.loads(payload)
 
 
 def _dashboard_base_url(config: BrowserProfilesClientConfig) -> str:
