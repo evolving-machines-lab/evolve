@@ -237,12 +237,19 @@ function testSentinelStripping(): void {
     _testStripEndOfOutputSentinel(`out${TOKEN}`, TOKEN) === "out",
     "a build that returns the token unterminated sheds it too",
   );
-  // `ps` prints this very command line, sentinel and all. Output that merely
-  // CONTAINS the token is the caller's own bytes.
+  // `ps` prints this very command line, sentinel and all — and there the token
+  // is followed by the rest of the line, never by its end.
   const psLike = `root 42 sh -c cmd; printf '%s' '${TOKEN}'\n`;
   assert(
     _testStripEndOfOutputSentinel(psLike, TOKEN) === psLike,
-    "a token in the middle of the output is left alone",
+    "a token the caller printed is left alone",
+  );
+  // An unframed log hands both streams back as one, so stderr's sentinel sits
+  // in the middle of it. What is left is each stream's own bytes, back to back
+  // — the newlines in between were the transport's, not the command's.
+  assert(
+    _testStripEndOfOutputSentinel(`ERRX${TOKEN}\nOUTX${TOKEN}\n`, TOKEN) === "ERRXOUTX",
+    "both sentinels of a merged, unframed log are shed",
   );
   assert(
     _testStripEndOfOutputSentinel("plain output\n", TOKEN) === "plain output\n",
@@ -291,13 +298,25 @@ function testSentinelFilterOnALiveStream(): void {
     `a sentinel split across chunks is still shed (got ${JSON.stringify(split.seen.join(""))})`,
   );
 
-  // Mid-stream: `ps` output carrying this run's own command line.
+  // Mid-stream: `ps` output carrying this run's own command line. The token is
+  // followed by the rest of the line there, never by its end, which is what
+  // separates a printed token from a sentinel.
   const middle = collect();
   middle.filter.push(`before ${TOKEN} after\n`);
   middle.filter.flush();
   assert(
     middle.seen.join("") === `before ${TOKEN} after\n`,
     "a token the caller printed is delivered, not swallowed",
+  );
+
+  // An UNFRAMED follow (measured: this daemon build streams both streams as
+  // one, markers and all absent) puts stderr's sentinel in the MIDDLE.
+  const unframed = collect();
+  unframed.filter.push(`ERRX${TOKEN}\nOUTX${TOKEN}\n`);
+  unframed.filter.flush();
+  assert(
+    unframed.seen.join("") === "ERRXOUTX",
+    `both sentinels are shed, wherever they sit (got ${JSON.stringify(unframed.seen.join(""))})`,
   );
 
   // A stream cut mid-token keeps what arrived rather than losing it.

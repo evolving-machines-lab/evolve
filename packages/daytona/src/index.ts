@@ -474,11 +474,22 @@ function withEndOfOutputSentinel(command: string, token: string): string {
   );
 }
 
-/** Shed the sentinel, and the terminator the transport put after it, from a settled stream. */
+/**
+ * Shed the sentinel, and the terminator the transport put after it, from a
+ * settled stream.
+ *
+ * A sentinel is the token AND the newline behind it, never the token alone.
+ * That is what separates it from a token the caller printed: `ps` shows this
+ * very command line, and there the token is followed by the rest of the line,
+ * not by its end. Both stdout's and stderr's sentinels are shed wherever they
+ * sit, because a daemon build that returns UNFRAMED logs (measured — see
+ * readCommandStreams) hands both streams back as one, leaving stderr's in the
+ * middle. A token with nothing behind it is shed only at the very end, where
+ * it can only be a sentinel whose terminator never arrived.
+ */
 function stripEndOfOutputSentinel(text: string, token: string): string {
-  if (text.endsWith(`${token}\n`)) return text.slice(0, -(token.length + 1));
-  if (text.endsWith(token)) return text.slice(0, -token.length);
-  return text;
+  const shed = text.split(`${token}\n`).join("");
+  return shed.endsWith(token) ? shed.slice(0, -token.length) : shed;
 }
 
 /** A settled log read with both streams' sentinels shed. */
@@ -494,12 +505,11 @@ function settledStreams(logs: unknown, token: string): { stdout: string; stderr:
  * Shed the sentinel from a stream still arriving, without holding back output
  * that is merely on its way.
  *
- * Only what could still GROW INTO the sentinel is held: the longest tail of
- * what has arrived that is a prefix of `<token>\n`. Everything else goes
- * straight through, so a chunk that cannot be the start of it is never
- * delayed. A token that appears anywhere ELSE in the output belongs to the
- * caller — `ps` prints this very command line, sentinel and all — so a stream
- * loses it only by ENDING with it.
+ * Same rule as the settled read, applied to bytes that are still coming: whole
+ * sentinels go wherever they appear, and only what could still GROW INTO one —
+ * the longest tail that is a prefix of `<token>\n` — waits for the rest. Output
+ * that cannot be the start of a sentinel is never delayed, which is what keeps
+ * a live stream live.
  */
 function createSentinelFilter(token: string, emit: (chunk: string) => void) {
   const sentinel = `${token}\n`;
@@ -515,6 +525,10 @@ function createSentinelFilter(token: string, emit: (chunk: string) => void) {
   return {
     push(chunk: string) {
       pending += chunk;
+      for (let at = pending.indexOf(sentinel); at !== -1; at = pending.indexOf(sentinel)) {
+        if (at > 0) emit(pending.slice(0, at));
+        pending = pending.slice(at + sentinel.length);
+      }
       const keep = heldBack(pending);
       if (keep === pending.length) return;
       emit(pending.slice(0, pending.length - keep));
@@ -522,7 +536,7 @@ function createSentinelFilter(token: string, emit: (chunk: string) => void) {
     },
     /** The stream is over: what was held is the sentinel, or it was output after all. */
     flush() {
-      const tail = pending === sentinel || pending === token ? "" : pending;
+      const tail = pending === token ? "" : pending;
       pending = "";
       if (tail) emit(tail);
     },
