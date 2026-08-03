@@ -11,6 +11,7 @@ export {
   resolveAgentConfig,
   assertExternalGatewayExclusive,
   validateAgentConfig,
+  validateObservabilityMeta,
   validateRunOptions,
 } from "./config";
 export {

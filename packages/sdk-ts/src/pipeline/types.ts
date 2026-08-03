@@ -104,13 +104,13 @@ export interface ReduceConfig<T> extends BaseStepConfig {
 // INTERNAL
 // =============================================================================
 
-/** @internal Step representation */
+/** Step representation — reaches the public surface through Pipeline's constructor */
 export type Step =
   | { type: "map"; config: MapConfig<unknown> }
   | { type: "filter"; config: FilterConfig<unknown> }
   | { type: "reduce"; config: ReduceConfig<unknown> };
 
-/** @internal Step type literal */
+/** Step type literal — reaches the public surface as StepResult.type */
 export type StepType = "map" | "filter" | "reduce";
 
 // =============================================================================

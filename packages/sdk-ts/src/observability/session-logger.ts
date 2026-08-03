@@ -20,6 +20,7 @@ import {
   DASHBOARD_FLUSH_INTERVAL_MS,
   DASHBOARD_MAX_RETRIES,
   DASHBOARD_RETRY_DELAY_MS,
+  RESERVED_OBSERVABILITY_KEYS,
   getDashboardUrl,
 } from "../constants";
 import {
@@ -73,6 +74,8 @@ export class SessionLogger {
   // State
   private isClosed = false;
   private metaWritten = false;
+  // Reserved metadata keys already reported, so a bad key warns once per session
+  private readonly warnedKeys = new Set<string>();
 
   // Local file: sequential write queue
   private localQueue: Promise<void> = Promise.resolve();
@@ -257,7 +260,7 @@ export class SessionLogger {
         sandbox_id: this.sandboxId,
         timestamp: this.timestamp,
         // Spread observability fields (filtering out undefined)
-        ...this.filterUndefined(this.observability),
+        ...this.annotations(),
       },
     };
 
@@ -329,7 +332,7 @@ export class SessionLogger {
       sandboxId: this.sandboxId,
       timestamp: this.timestamp,
       // Observability context (hierarchy, grouping)
-      ...this.filterUndefined(this.observability),
+      ...this.annotations(),
       // Payload
       events,
     };
@@ -404,13 +407,33 @@ export class SessionLogger {
     return new Promise((r) => setTimeout(r, ms));
   }
 
-  /** Filter out undefined values from an object */
-  private filterUndefined(
-    obj?: Record<string, unknown>,
-  ): Record<string, unknown> {
-    if (!obj) return {};
-    return Object.fromEntries(
-      Object.entries(obj).filter(([, v]) => v !== undefined),
-    );
+  /**
+   * The observability fields that are safe to spread into an envelope.
+   *
+   * Undefined values are dropped so they cannot blank a real field on the
+   * wire. Identity names are dropped because both envelopes spread metadata
+   * after their identity, so a key called `tag` would not annotate this
+   * session — it would rename it, and the run would arrive as two half-filled
+   * dashboard rows. The front door already rejects reserved keys, so anything
+   * caught here came in by another path and is worth saying out loud.
+   */
+  private annotations(): Record<string, unknown> {
+    if (!this.observability) return {};
+
+    const safe: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(this.observability)) {
+      if (value === undefined) continue;
+      if ((RESERVED_OBSERVABILITY_KEYS as readonly string[]).includes(key)) {
+        if (!this.warnedKeys.has(key)) {
+          this.warnedKeys.add(key);
+          console.warn(
+            `[SessionLogger] observability key "${key}" is reserved for session identity — ignoring it.`,
+          );
+        }
+        continue;
+      }
+      safe[key] = value;
+    }
+    return safe;
   }
 }

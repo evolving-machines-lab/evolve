@@ -314,7 +314,7 @@ export type ItemInput = FileMap | SwarmResult<unknown>;
 export type PromptFn = (files: FileMap, index: number) => string;
 export type Prompt = string | PromptFn;
 
-/** @internal Pipeline context for observability (set by Pipeline, not user) */
+/** Pipeline context for observability (set by Pipeline, not user) — exported from the package root */
 export interface PipelineContext {
   pipelineRunId: string;
   pipelineStepIndex: number;

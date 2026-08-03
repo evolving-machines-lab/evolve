@@ -71,6 +71,7 @@ import {
   isEvolveManagedSandboxProvider,
   isZodSchema,
   validateAgentConfig,
+  validateObservabilityMeta,
   validateRunOptions,
 } from "./utils";
 import { SessionLogger } from "./observability";
@@ -360,6 +361,7 @@ export class Agent {
     // hand-built Agent alike — so a field the caller filled in wrong is named
     // at construction rather than thrown from a shell-quoting helper later.
     validateAgentConfig(agentConfig);
+    validateObservabilityMeta(options.observability);
     if (options.managedSecrets) {
       if (agentConfig.isDirectMode) {
         throw new Error("managed secrets are available only in gateway mode with EVOLVE_API_KEY");

@@ -233,6 +233,31 @@ export const RUN_TAG_PREFIX = "run:";
 export const SESSION_LOGS_DIR = ".evolve-sdk/observability/sessions";
 
 /**
+ * The names the session ingest payload spends on identity, so observability
+ * metadata may not use them.
+ *
+ * The dashboard keys a session row on (tag, userId) and reads the rest of these
+ * off the same envelope. Observability metadata is spread into that envelope
+ * after the identity fields, so a metadata key named `tag` does not annotate
+ * the session — it renames it, and the run splits in two: the renamed row
+ * collects the events and the model while gateway spend, attributed from the
+ * real session tag, stays behind on the original row. One sandbox, two rows,
+ * neither complete.
+ *
+ * @internal
+ */
+export const RESERVED_OBSERVABILITY_KEYS = [
+  "tag",
+  "provider",
+  "agent",
+  "model",
+  "sandboxId",
+  "timestamp",
+  "event",
+  "events",
+] as const;
+
+/**
  * Max events per dashboard sync batch
  * @internal
  */

@@ -4,7 +4,7 @@
 
 import * as fs from "fs";
 import type { AgentConfig, AgentType, ResolvedAgentConfig, RunOptions } from "../types";
-import { DEFAULT_AGENT_TYPE, ENV_EVOLVE_API_KEY } from "../constants";
+import { DEFAULT_AGENT_TYPE, ENV_EVOLVE_API_KEY, RESERVED_OBSERVABILITY_KEYS } from "../constants";
 import { AGENT_REGISTRY, getAgentConfig, isValidAgentType } from "../registry";
 
 /**
@@ -80,6 +80,32 @@ export function validateRunOptions(options?: RunOptions): void {
       "prompt",
       `run() requires a non-empty "prompt" string, received ${describe(options?.prompt)}.`,
     );
+  }
+}
+
+/**
+ * Check observability metadata for names the session envelope already owns.
+ *
+ * Metadata annotates a session; it may not rename one. The names in
+ * RESERVED_OBSERVABILITY_KEYS carry the session's identity to the dashboard,
+ * and metadata is spread over them, so `{ tag: "nightly" }` silently forks the
+ * run into two half-filled rows instead of labelling it. The caller wanted a
+ * label, so say which key is not available rather than accepting the value and
+ * splitting their billing.
+ */
+export function validateObservabilityMeta(meta?: Record<string, unknown>): void {
+  if (!meta) return;
+
+  for (const key of RESERVED_OBSERVABILITY_KEYS) {
+    if (key in meta) {
+      throw new EvolveConfigError(
+        `observability.${key}`,
+        `Evolve observability metadata: "${key}" is reserved for session identity ` +
+        `and would split this run across two dashboard sessions. ` +
+        `Reserved keys: ${RESERVED_OBSERVABILITY_KEYS.join(", ")}. ` +
+        `Use a different key, or set the session tag with .withSessionTagPrefix().`,
+      );
+    }
   }
 }
 

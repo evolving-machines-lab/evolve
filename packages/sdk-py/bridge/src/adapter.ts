@@ -220,7 +220,11 @@ export class EvolveAdapter {
       kit.withSkills(params.skills);
     }
     if (params.observability) {
-      kit.withObservability(params.observability);
+      // Internal method: the bridge carries Swarm's trace grouping across the
+      // language boundary, so it is not on the published Evolve type.
+      (kit as Evolve & {
+        withObservability: (meta: Record<string, unknown>) => Evolve;
+      }).withObservability(params.observability);
     }
     if (params.storage !== undefined) {
       kit.withStorage(params.storage ? {
