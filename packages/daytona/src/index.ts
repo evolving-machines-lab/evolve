@@ -1285,6 +1285,17 @@ export class DaytonaCommands implements SandboxCommands {
           },
           abandon.signal,
         );
+        // A follow that DIED (before this side abandoned it) delivered only a
+        // prefix of the run's output; the settled-log reconcile below is what
+        // makes the run whole again. The abandon itself is not a death.
+        let abandoned = false;
+        let followFailure: unknown;
+        const followSettled = follow.then(
+          () => undefined,
+          (error) => {
+            if (!abandoned) followFailure = error;
+          },
+        );
         let exitCode: number;
         try {
           exitCode = await this.awaitStreamedExit(
@@ -1295,17 +1306,51 @@ export class DaytonaCommands implements SandboxCommands {
             options?.timeoutMs
           );
         } finally {
-          live = false;
+          abandoned = true;
           abandon.abort();
+          // THE FOLLOW MUST SETTLE BEFORE `live` DROPS. The demuxer always
+          // holds back the last MAX_PREFIX_LEN-1 bytes against a marker split
+          // across chunks, and emits them only in its flush — which runs as
+          // the follow winds down. Cutting `live` first discarded that flush,
+          // so every run whose follow outlived its command (the chunked
+          // follow's normal state) lost the final bytes of its output —
+          // measured as a marker ending "-OK" coming back "-O", exit 0.
+          // Bounded, because the direct-mode websocket takes no abort signal
+          // and a stalled one must not hold the result hostage.
+          await Promise.race([followSettled, sleep(this.streamTimings.drainMs)]);
+          live = false;
         }
-        // Nothing arrived on the follow. A command that finished before the
-        // stream connected is indistinguishable from one that printed
-        // nothing, and nothing documents the follow endpoint as replaying
-        // what it already buffered — so read the settled log the way the
-        // blocking path does rather than report a silent run. Both streams
-        // must be empty to take it: a partial follow already reached the
-        // callbacks and re-emitting would double the caller's output.
-        if (!stdout && !stderr) {
+        if (followFailure !== undefined) {
+          // The follow socket died mid-stream. The settled log is the whole
+          // record, so when what streamed is a prefix of it the missing
+          // suffix is appended and emitted — never re-emitting what the
+          // caller already saw. If the settled log cannot be read or does not
+          // extend what streamed, the broken stream is the story: throwing it
+          // beats silently returning truncated output as a success.
+          let settled: { stdout: string; stderr: string };
+          try {
+            const logs = await this.sandbox.process.getSessionCommandLogs(sessionId, cmdId);
+            settled = readCommandStreams(logs as any);
+          } catch {
+            throw followFailure;
+          }
+          if (!settled.stdout.startsWith(stdout) || !settled.stderr.startsWith(stderr)) {
+            throw followFailure;
+          }
+          const stdoutTail = settled.stdout.slice(stdout.length);
+          const stderrTail = settled.stderr.slice(stderr.length);
+          stdout = settled.stdout;
+          stderr = settled.stderr;
+          if (stdoutTail) options?.onStdout?.(stdoutTail);
+          if (stderrTail) options?.onStderr?.(stderrTail);
+        } else if (!stdout && !stderr) {
+          // Nothing arrived on the follow. A command that finished before the
+          // stream connected is indistinguishable from one that printed
+          // nothing, and nothing documents the follow endpoint as replaying
+          // what it already buffered — so read the settled log the way the
+          // blocking path does rather than report a silent run. Both streams
+          // must be empty to take it: a partial follow already reached the
+          // callbacks and re-emitting would double the caller's output.
           try {
             const logs = await this.sandbox.process.getSessionCommandLogs(sessionId, cmdId);
             const settled = readCommandStreams(logs as any);
@@ -1396,10 +1441,10 @@ export class DaytonaCommands implements SandboxCommands {
         : undefined;
     let pollMs = clocks.pollMinMs;
     for (;;) {
-      // A follow that FAILED is a broken stream and the caller's callbacks saw
-      // an incomplete run: it throws here exactly as it did when run() awaited
-      // the follow directly.
-      if (followError !== undefined) throw followError;
+      // A follow that FAILED no longer aborts the wait: the command's record
+      // still decides, and run() recovers what the broken stream withheld
+      // from the settled log. The failure is kept so a record that never
+      // settles is reported by its real cause rather than a bare deadline.
       const cmd = await this.sandbox.process.getSessionCommand(sessionId, cmdId);
       // The wire says "still running" with a NULL exit code, not an absent
       // one — `!== undefined` handed that null back as this run's status.
@@ -1419,6 +1464,7 @@ export class DaytonaCommands implements SandboxCommands {
           ? Math.min(hardDeadline, settleDeadline)
           : (hardDeadline ?? settleDeadline);
       if (deadline !== undefined && Date.now() >= deadline) {
+        if (followError !== undefined) throw followError;
         throw new Error(
           `Daytona reported no exit code for command ${cmdId} after ` +
             (followClosedAt !== undefined

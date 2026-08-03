@@ -22,6 +22,7 @@ import {
   _testFollowManagedSessionLogs,
   _testReadCommandStreams,
   createDaytonaProvider,
+  DaytonaCommands,
   DaytonaResourcesError,
 } from "../../src/index.ts";
 
@@ -254,6 +255,179 @@ async function testFollowSurfacesUpstreamFailure(): Promise<void> {
 }
 
 // =============================================================================
+// [2x] The streamed run over a managed follow — end to end through run()
+// =============================================================================
+
+/** run() with the production clocks shrunk so a test measures shape, not time. */
+class FastCommands extends DaytonaCommands {
+  protected override streamTimings = {
+    pollMinMs: 1,
+    pollMaxMs: 2,
+    drainMs: 20,
+    killGraceMs: 5,
+    settleMs: 500,
+  };
+}
+
+/** The slice of the sandbox a managed streamed run touches. */
+function createStreamSandbox(overrides?: {
+  settledLogs?: { stdout: string; stderr: string };
+  failSettledLogs?: boolean;
+}) {
+  const logReads: number[] = [];
+  const sandbox = {
+    id: "dtn_1",
+    process: {
+      createSession: async () => {},
+      executeSessionCommand: async () => ({ cmdId: "cmd_1" }),
+      getSessionCommand: async () => ({ exitCode: 0 }),
+      getSessionCommandLogs: async () => {
+        logReads.push(Date.now());
+        if (overrides?.failSettledLogs) throw new Error("logs unavailable");
+        return overrides?.settledLogs ?? { stdout: "", stderr: "" };
+      },
+      deleteSession: async () => {},
+    },
+  };
+  return { sandbox, logReads };
+}
+
+function createManagedCommands(sandbox: unknown): DaytonaCommands {
+  return new FastCommands(
+    sandbox as never,
+    undefined,
+    { toolboxUrl: "https://dash.test/toolbox", apiKey: "sk-evolve" } as never,
+  );
+}
+
+/**
+ * GRAND-RETEST FINDING: on all seven daytona agent cells a marker ending
+ * "-OK" came back ending "-O", exit 0 — silent corruption of the output's
+ * final bytes. The demuxer always holds back the last MAX_PREFIX_LEN-1 bytes
+ * against a marker split across chunks and emits them only in its flush; the
+ * flush runs as the follow winds down, and run() cut `live` BEFORE abandoning
+ * the follow — so whenever the chunked follow outlived its command (its
+ * normal state: nothing closes it from the far side), the tail was discarded.
+ */
+async function testStreamedRunIsByteExactWhenFollowOutlivesCommand(): Promise<void> {
+  console.log("\n[2c] run() - streamed stdout is byte-exact though the follow never closes");
+  const realFetch = globalThis.fetch;
+  // A marker with NO trailing newline: the last bytes of real payload are
+  // exactly the bytes the demuxer holds back, so any flush loss is visible.
+  const payload = "GRAND-RETEST-MARKER-OK";
+  globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+    const signal = (init as { signal?: AbortSignal } | undefined)?.signal;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(bytes(STDOUT_MARK, payload));
+        // Never closes — only the caller's abandon ends it.
+        signal?.addEventListener("abort", () => {
+          try {
+            controller.error(new DOMException("aborted", "AbortError"));
+          } catch {
+            /* already errored */
+          }
+        });
+      },
+    });
+    return new Response(stream, { status: 200 });
+  }) as typeof fetch;
+
+  const { sandbox, logReads } = createStreamSandbox();
+  const seen: string[] = [];
+  let result: { exitCode: number; stdout: string; stderr: string };
+  try {
+    result = await createManagedCommands(sandbox).run("echo -n marker", {
+      onStdout: (chunk) => seen.push(chunk),
+    });
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+
+  assert(result.exitCode === 0, "the command's record supplies exit 0");
+  assert(
+    result.stdout === payload,
+    `streamed stdout round-trips byte-exact (got ${JSON.stringify(result.stdout)})`,
+  );
+  assert(
+    seen.join("") === payload,
+    `the caller's callback saw every byte exactly once (got ${JSON.stringify(seen.join(""))})`,
+  );
+  assert(logReads.length === 0, "no settled-log fallback was needed — the stream itself was whole");
+}
+
+/**
+ * The reviewer-flagged fallback: a follow whose SOCKET DIES mid-stream
+ * delivered only a prefix. The settled (non-follow) log read is the whole
+ * record — the missing suffix is appended and emitted once, never doubling
+ * what the caller already saw, and the run does not fail on a stream error
+ * the record can make whole.
+ */
+async function testDeadFollowFallsBackToSettledLog(): Promise<void> {
+  console.log("\n[2d] run() - a follow socket that dies falls back to the settled log");
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(bytes(STDOUT_MARK, "partial-"));
+        controller.error(new Error("socket died"));
+      },
+    });
+    return new Response(stream, { status: 200 });
+  }) as typeof fetch;
+
+  const { sandbox, logReads } = createStreamSandbox({
+    settledLogs: { stdout: "partial-then-tail", stderr: "warned" },
+  });
+  const seenOut: string[] = [];
+  const seenErr: string[] = [];
+  let result: { exitCode: number; stdout: string; stderr: string };
+  try {
+    result = await createManagedCommands(sandbox).run("echo hi", {
+      onStdout: (chunk) => seenOut.push(chunk),
+      onStderr: (chunk) => seenErr.push(chunk),
+    });
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+
+  assert(result.exitCode === 0, "the run succeeds by its record despite the dead socket");
+  assert(
+    result.stdout === "partial-then-tail",
+    `the settled log completes stdout (got ${JSON.stringify(result.stdout)})`,
+  );
+  assert(result.stderr === "warned", "and supplies the stderr the follow never reached");
+  assert(
+    seenOut.join("") === "partial-then-tail",
+    `the callback saw prefix + suffix exactly once (got ${JSON.stringify(seenOut.join(""))})`,
+  );
+  assert(seenErr.join("") === "warned", "stderr reached its own callback");
+  assert(logReads.length === 1, "exactly one settled-log read — a fallback, not a second follow");
+
+  // When the settled log cannot be read either, the broken stream is the
+  // story: truncated output must never come back as a clean success.
+  globalThis.fetch = (async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(bytes(STDOUT_MARK, "partial-"));
+        controller.error(new Error("socket died"));
+      },
+    });
+    return new Response(stream, { status: 200 });
+  }) as typeof fetch;
+  const broken = createStreamSandbox({ failSettledLogs: true });
+  let threw = false;
+  try {
+    await createManagedCommands(broken.sandbox).run("echo hi", { onStdout: () => {} });
+  } catch {
+    threw = true;
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert(threw, "an unrecoverable dead follow raises instead of returning truncated output");
+}
+
+// =============================================================================
 // [3] Managed provider wiring
 // =============================================================================
 
@@ -340,6 +514,8 @@ const tests = [
   testReadCommandStreams,
   testFollowUsesHttpChunks,
   testFollowSurfacesUpstreamFailure,
+  testStreamedRunIsByteExactWhenFollowOutlivesCommand,
+  testDeadFollowFallsBackToSettledLog,
   testManagedProviderAnswersDiscoveryLocally,
   testDirectProviderStillDiscoversUpstream,
   testManagedCreateRefusesResources,
