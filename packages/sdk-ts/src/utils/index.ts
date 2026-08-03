@@ -6,7 +6,13 @@
 
 export { isZodSchema, zodSchemaToJson, jsonSchemaToString } from "./schema";
 export { readLocalDir, saveLocalDir } from "./files";
-export { resolveAgentConfig, assertExternalGatewayExclusive } from "./config";
+export {
+  EvolveConfigError,
+  resolveAgentConfig,
+  assertExternalGatewayExclusive,
+  validateAgentConfig,
+  validateRunOptions,
+} from "./config";
 export {
   isEvolveManagedSandboxProvider,
   resolveDefaultSandbox,

@@ -858,6 +858,8 @@ Common errors and how to handle them:
 |-------|-------|-----|
 | `No API key configured` | No `EVOLVE_API_KEY` or provider key in env | Set `EVOLVE_API_KEY` or pass `api_key`/`provider_api_key` to `AgentConfig` |
 | `No sandbox provider configured` | No sandbox provider key in env | Set `E2B_API_KEY`, `MODAL_TOKEN_ID`+`SECRET`, or `DAYTONA_API_KEY` |
+| `Evolve agent config: "model" is empty` | `AgentConfig(model='')` — an empty string is not a model id | Pass a model id, or drop `model` to take the agent's default |
+| `run() requires a non-empty "prompt" string` | `run()` called with an empty prompt | Pass a non-empty `prompt` |
 | `Operation already active` | Calling `run()` while another run is in progress | `await evolve.interrupt()` first, or wait for the active operation |
 | `Cannot use 'from_checkpoint' with existing session` | `run(from_checkpoint=...)` with `sandbox_id=` | Checkpoint restore requires a fresh sandbox — remove `sandbox_id=` |
 | `No checkpoints found` | `run(from_checkpoint='latest')` with no prior checkpoints | Create a checkpoint first, or use `list_checkpoints()` to verify |

@@ -41,6 +41,7 @@ import {
   resolveAgentConfig,
   resolveDefaultSandbox,
   resolveManagedSandbox,
+  validateAgentConfig,
 } from "./utils";
 import { integrationHelpers } from "./integrations";
 import { getGatewayMcpServers, DEFAULT_DASHBOARD_URL, ENV_EVOLVE_API_KEY } from "./constants";
@@ -115,7 +116,10 @@ export class Evolve extends EventEmitter {
   withAgent(config?: AgentConfig): this {
     if (config) {
       // Fail fast at configuration time: externalGateway is a standalone
-      // credential mode and cannot be combined with gateway or direct mode.
+      // credential mode and cannot be combined with gateway or direct mode,
+      // and a field filled in wrong is named here rather than deep inside the
+      // command builder.
+      validateAgentConfig(config);
       assertExternalGatewayExclusive(config);
       this.config.agent = config;
       this._cachedGatewayOverrides = null;

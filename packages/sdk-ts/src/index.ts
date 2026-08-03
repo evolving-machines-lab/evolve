@@ -279,6 +279,8 @@ export {
   saveLocalDir,
   // Retry utilities
   executeWithRetry,
+  // Front-door configuration validation
+  EvolveConfigError,
 } from "./utils";
 
 // =============================================================================

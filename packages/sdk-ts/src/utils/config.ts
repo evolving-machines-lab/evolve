@@ -3,9 +3,85 @@
  */
 
 import * as fs from "fs";
-import type { AgentConfig, AgentType, ResolvedAgentConfig } from "../types";
+import type { AgentConfig, AgentType, ResolvedAgentConfig, RunOptions } from "../types";
 import { DEFAULT_AGENT_TYPE, ENV_EVOLVE_API_KEY } from "../constants";
-import { getAgentConfig } from "../registry";
+import { AGENT_REGISTRY, getAgentConfig, isValidAgentType } from "../registry";
+
+/**
+ * A configuration field the caller got wrong, reported by name.
+ *
+ * Without a check at the door the mistake travels: an empty model or a missing
+ * prompt reaches the command builder and comes back as
+ * `Cannot read properties of undefined (reading 'replace')` thrown by a
+ * shell-quoting helper, which names nothing the caller wrote and points at a
+ * file they have never opened.
+ */
+export class EvolveConfigError extends Error {
+  /** The configuration field at fault, e.g. "model" or "prompt". */
+  readonly field: string;
+
+  constructor(field: string, message: string) {
+    super(message);
+    this.name = "EvolveConfigError";
+    this.field = field;
+  }
+}
+
+/** A usable string value: present, a string, and not just whitespace. */
+function isFilled(value: unknown): value is string {
+  return typeof value === "string" && value.trim() !== "";
+}
+
+/** How a bad value reads back to the caller, quoted so "" is visible. */
+function describe(value: unknown): string {
+  return value === null || value === undefined ? String(value) : JSON.stringify(value);
+}
+
+/**
+ * Check an agent config's required fields before anything builds a command.
+ *
+ * Omitting a field is allowed wherever the SDK has a default — `model` left out
+ * means "use the agent's default model". Setting a field to an unusable value
+ * is not: it is a mistake the caller wants named, not silently replaced by the
+ * default. Takes both the config the caller writes and the resolved one, since
+ * .withAgent() and `new Agent()` are both doors into the same command builder.
+ */
+export function validateAgentConfig(config?: AgentConfig | ResolvedAgentConfig): void {
+  if (!config) return;
+
+  if (config.type !== undefined && !isValidAgentType(config.type as string)) {
+    throw new EvolveConfigError(
+      "type",
+      `Evolve agent config: unknown agent type ${describe(config.type)}. ` +
+      `Valid types: ${Object.keys(AGENT_REGISTRY).join(", ")}.`,
+    );
+  }
+
+  const type = (config.type ?? DEFAULT_AGENT_TYPE) as AgentType;
+  if (config.model !== undefined && !isFilled(config.model)) {
+    throw new EvolveConfigError(
+      "model",
+      `Evolve agent config: "model" is empty (${describe(config.model)}). ` +
+      `Pass a model id such as "${getAgentConfig(type).defaultModel}", ` +
+      `or omit model entirely to use ${type}'s default.`,
+    );
+  }
+}
+
+/**
+ * Check a run's required fields before anything builds a command.
+ *
+ * The prompt is the one field a run cannot default: it becomes the agent's
+ * argv, and an absent one used to reach the shell-quoting helper.
+ */
+export function validateRunOptions(options?: RunOptions): void {
+  if (!options || !isFilled(options.prompt)) {
+    throw new EvolveConfigError(
+      "prompt",
+      `run() requires a non-empty "prompt" string, received ${describe(options?.prompt)}.`,
+    );
+  }
+}
 
 /**
  * externalGateway is a standalone credential mode: it must not be combined

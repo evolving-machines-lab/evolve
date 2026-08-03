@@ -67,7 +67,12 @@ import {
   resolveHomeDir,
 } from "./constants";
 import { buildWorkerSystemPrompt } from "./prompts";
-import { isEvolveManagedSandboxProvider, isZodSchema } from "./utils";
+import {
+  isEvolveManagedSandboxProvider,
+  isZodSchema,
+  validateAgentConfig,
+  validateRunOptions,
+} from "./utils";
 import { SessionLogger } from "./observability";
 import { setupIntegrations } from "./integrations";
 import {
@@ -351,6 +356,10 @@ export class Agent {
   private readonly compiledValidator?: ValidateFunction;
 
   constructor(agentConfig: ResolvedAgentConfig, options: AgentOptions = {}) {
+    // Every run reaches the command builder through here — Evolve, Swarm, and a
+    // hand-built Agent alike — so a field the caller filled in wrong is named
+    // at construction rather than thrown from a shell-quoting helper later.
+    validateAgentConfig(agentConfig);
     if (options.managedSecrets) {
       if (agentConfig.isDirectMode) {
         throw new Error("managed secrets are available only in gateway mode with EVOLVE_API_KEY");
@@ -2008,6 +2017,10 @@ export class Agent {
         "Agent credentials are sealed; this Evolve instance cannot run the agent again",
       );
     }
+    // Before any sandbox work or command building: a prompt is the one field a
+    // run cannot default, and an absent one used to surface as a TypeError from
+    // the shell-quoting helper.
+    validateRunOptions(options);
     const {
       prompt,
       timeoutMs = DEFAULT_TIMEOUT_MS,
