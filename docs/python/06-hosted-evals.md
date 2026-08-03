@@ -686,6 +686,13 @@ local_publish = await catalog.publish(
     version='1.0',
 )
 
+# Everything in the directory is packed, dotfiles included ('.gitignore',
+# '.dockerignore', '.env.example', '.config/'), and an executable script stays
+# executable. Only '.git', '.DS_Store' and '.venv' are left out, and symlinks
+# are never packed. The same directory always produces the same bytes, so the
+# tarball's sha256 — the version's source identity on the server — is
+# reproducible.
+
 # Block until COMPLETED or FAILED
 done = await catalog.watch_import(
     publish_job.id,

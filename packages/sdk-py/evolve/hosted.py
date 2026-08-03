@@ -21,12 +21,12 @@ the message plus the stable machine-readable ``code``.
 import asyncio
 import gzip
 import hashlib
-import io
 import json
 import math
 import os
 import re
 import secrets
+import stat
 import tarfile
 import time
 import urllib.error
@@ -1911,39 +1911,106 @@ def _agent_upload_body(
     return _multipart_body(fields, archive)
 
 
+#: Names never packed, matched at any depth: version-control metadata, a macOS
+#: Finder artifact, and the conventional Python virtualenv. All three are
+#: machine state rather than corpus, and ".git" alone would blow the server's
+#: entry cap. Nothing else is filtered — kept identical to the TypeScript
+#: packer's SKIP set (packages/sdk-ts/src/hosted/tar.ts) so both SDKs publish
+#: the same corpus from the same directory.
+_TAR_SKIP_NAMES = frozenset({'.git', '.DS_Store', '.venv'})
+
+
+class _ChunkSink:
+    """A write-only file object that keeps the gzip output as a list of chunks.
+
+    Standing in for ``io.BytesIO`` so the archive is never held twice: BytesIO
+    grows by reallocating and ``getvalue()`` copies the whole thing again,
+    while a chunk list is joined exactly once at the end.
+    """
+
+    def __init__(self) -> None:
+        self.chunks: List[bytes] = []
+
+    def write(self, data: bytes) -> int:
+        self.chunks.append(bytes(data))
+        return len(data)
+
+    def flush(self) -> None:
+        return None
+
+
+def _list_corpus_files(root: str) -> 'List[tuple[str, str, int]]':
+    """Regular files under ``root`` as (posix relative path, absolute path, mode), sorted.
+
+    Dotfiles are corpus content and are PACKED — ``.gitignore``,
+    ``.dockerignore``, ``.env.example`` and ``.config/`` belong to the task, and
+    dropping them published a corpus that did not match the directory on disk.
+    Only the three names in ``_TAR_SKIP_NAMES`` are filtered. Symlinks are never
+    followed or emitted: the server rejects every non-file entry.
+    """
+    out: 'List[tuple[str, str, int]]' = []
+
+    def walk(rel_dir: str) -> None:
+        abs_dir = root if rel_dir == '' else os.path.join(root, rel_dir)
+        with os.scandir(abs_dir) as entries:
+            names = sorted(entry.name for entry in entries)
+        for name in names:
+            if name in _TAR_SKIP_NAMES:
+                continue
+            rel = name if rel_dir == '' else f'{rel_dir}/{name}'
+            abs_path = os.path.join(abs_dir, name)
+            st = os.lstat(abs_path)
+            if stat.S_ISLNK(st.st_mode):
+                continue
+            if stat.S_ISDIR(st.st_mode):
+                walk(rel)
+            elif stat.S_ISREG(st.st_mode):
+                # Two modes only: executable-by-anyone becomes 0o755,
+                # everything else 0o644, so the developer's umask never
+                # reaches the archive while a verifier script still arrives
+                # runnable.
+                out.append((rel, abs_path, 0o755 if st.st_mode & 0o111 else 0o644))
+
+    walk('')
+    out.sort(key=lambda entry: entry[0])
+    return out
+
+
 def _tar_gzip_directory(directory: str) -> bytes:
     """Deterministically tar + gzip a corpus directory for the directory publish.
 
     Same content -> same bytes (so the tarball sha256 the server records as the
     import's source identity is reproducible): entries sorted by path, headers
-    normalized (mtime 0, uid/gid 0, empty uname/gname, mode 0644), gzip carries
-    no timestamp. Hidden entries (".git"/".DS_Store"/".venv") and symlinks are
-    skipped — a corpus is plain files and the server rejects symlinks anyway.
+    normalized (mtime 0, uid/gid 0, empty uname/gname), and gzip carrying no
+    timestamp. The one field NOT flattened is the executable bit, normalized to
+    0o755 / 0o644 — a verifier or solution script that arrives without +x
+    cannot run.
+
+    Contents match the TypeScript packer: every dotfile except ".git",
+    ".DS_Store" and ".venv" is packed, and symlinks are skipped. The bytes do
+    not match it, because the two languages' gzip implementations differ; the
+    contract is that each SDK is reproducible on its own.
+
+    Files stream off disk through the tar writer a read buffer at a time, and
+    only the compressed output is collected, since the upload takes one body.
     """
     root = os.path.abspath(directory)
     if not os.path.isdir(root):
         raise ValueError(f'directory not found: {directory}')
-    files = []
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = sorted(d for d in dirnames if not d.startswith('.'))
-        for name in sorted(filenames):
-            if name.startswith('.'):
-                continue
-            abs_path = os.path.join(dirpath, name)
-            if os.path.islink(abs_path):
-                continue
-            rel = os.path.relpath(abs_path, root).replace(os.sep, '/')
-            files.append((rel, abs_path))
-    files.sort(key=lambda t: t[0])
+    files = _list_corpus_files(root)
 
-    buf = io.BytesIO()
-    with gzip.GzipFile(fileobj=buf, mode='wb', mtime=0, compresslevel=9) as gz:
-        with tarfile.open(fileobj=gz, mode='w', format=tarfile.USTAR_FORMAT) as tar:
-            for rel, abs_path in files:
+    sink = _ChunkSink()
+    with gzip.GzipFile(fileobj=sink, mode='wb', mtime=0, compresslevel=9) as gz:
+        # PAX rather than USTAR: a corpus path longer than the 100-byte USTAR
+        # name field is a hard error there, and the TypeScript packer accepts
+        # it. PAX emits an extended header only for the entries that need one,
+        # so ordinary names keep the same layout.
+        with tarfile.open(fileobj=gz, mode='w', format=tarfile.PAX_FORMAT) as tar:
+            for rel, abs_path, mode in files:
                 info = tarfile.TarInfo(name=rel)
                 info.size = os.path.getsize(abs_path)
                 info.mtime = 0
-                info.mode = 0o644
+                info.mode = mode
                 info.uid = 0
                 info.gid = 0
                 info.uname = ''
@@ -1951,7 +2018,7 @@ def _tar_gzip_directory(directory: str) -> bytes:
                 info.type = tarfile.REGTYPE
                 with open(abs_path, 'rb') as handle:
                     tar.addfile(info, handle)
-    return buf.getvalue()
+    return b''.join(sink.chunks)
 
 
 # =============================================================================
