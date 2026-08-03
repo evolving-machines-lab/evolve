@@ -447,21 +447,49 @@ function withInBoxTimeout(wrapped: string, timeoutSec?: number): string {
  * byte, so this is not the streaming path's doing.
  *
  * A command that marks its own end restores the difference. The shell prints a
- * per-run token after the command, on both streams, with no newline of its
- * own; the transport then terminates whatever the last line turned out to be,
- * and the token is the only thing left to remove:
+ * per-run token after the command, with no newline of its own; the transport
+ * then terminates whatever the last line turned out to be, and the token is
+ * the only thing left to remove:
  *
  *   printf: `...OK` + token   -> record  `...OK<token>\n`        -> `...OK`
  *   echo:   `...OK\n` + token -> records `...OK\n` `<token>\n`   -> `...OK\n`
  *
  * One suffix removal serves both. A command that never reaches the token —
- * killed by the in-box timeout, ending in a comment, calling exec — leaves
- * none to remove, and its output comes back exactly as it did before.
+ * killed by the in-box timeout, or calling exit or exec itself — leaves none
+ * to remove, and its output comes back exactly as it did before.
+ *
+ * STDOUT ONLY, and that is a choice. A token on stderr too would make stderr
+ * byte-exact as well, but a daemon build that returns UNFRAMED logs (measured
+ * — see readCommandStreams) hands both streams back as ONE, and the second
+ * token then sits in the middle of that stream rather than at its end. Shedding
+ * a token from the middle means deleting bytes a command may have printed
+ * itself. With one token, printed last, the only place a sentinel can ever be
+ * is the very end — so nothing in the middle of any stream is ever touched,
+ * and stderr keeps the transport's terminator exactly as it did before.
+ *
+ * WHAT THIS STILL CANNOT TELL APART: a command whose stdout ENDS with this
+ * run's own token. Only self-reference can do that (printing the wrapped
+ * command back, tracing the final printf), the token is random per run, and
+ * the cost is bounded to those bytes.
  */
 function endOfOutputToken(): string {
   return `EVOLVE-EOS-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/**
+ * NOTHING IS APPENDED TO THE CALLER'S LAST LINE. The command goes inside a
+ * brace group whose closing brace opens a line of its own, so what follows is
+ * never read as a continuation of whatever the command ended with. Appending
+ * `; ...` directly broke three shapes, all measured:
+ *
+ *   a command ending in a NEWLINE (every multi-line template literal) —
+ *     `\n; __evolve_eos=$?` is a syntax error, exit 2
+ *   a command ending in `&` — `& ;` is a syntax error and the command NEVER RAN
+ *   a HEREDOC whose terminator is the command's last line — the appended text
+ *     became part of the heredoc BODY: no error, exit 0, corrupt payload. That
+ *     is the shape of the managed-secret proxy readiness probe (agent.ts), and
+ *     it turned a healthy proxy into "failed to start".
+ */
 function withEndOfOutputSentinel(command: string, token: string): string {
   if (!command.trim()) return command;
   // `(exit $rc)` rather than `exit $rc`: an exit evaluated by the SESSION
@@ -469,8 +497,7 @@ function withEndOfOutputSentinel(command: string, token: string): string {
   // finished (see withInBoxTimeout). A subshell sets $? for the record without
   // touching the shell that has to keep reading.
   return (
-    `${command}; __evolve_eos=$?; printf '%s' '${token}'; printf '%s' '${token}' >&2; ` +
-    `(exit $__evolve_eos)`
+    `{ ${command}\n}; __evolve_eos=$?; printf '%s' '${token}'; (exit $__evolve_eos)`
   );
 }
 
@@ -478,26 +505,29 @@ function withEndOfOutputSentinel(command: string, token: string): string {
  * Shed the sentinel, and the terminator the transport put after it, from a
  * settled stream.
  *
- * A sentinel is the token AND the newline behind it, never the token alone.
- * That is what separates it from a token the caller printed: `ps` shows this
- * very command line, and there the token is followed by the rest of the line,
- * not by its end. Both stdout's and stderr's sentinels are shed wherever they
- * sit, because a daemon build that returns UNFRAMED logs (measured — see
- * readCommandStreams) hands both streams back as one, leaving stderr's in the
- * middle. A token with nothing behind it is shed only at the very end, where
- * it can only be a sentinel whose terminator never arrived.
+ * ONLY AT THE END, because that is the only place the sentinel can be: it is
+ * the last thing the command prints. A token anywhere else in the output is
+ * the caller's own bytes — `ps` shows this very command line, and `sh -x`
+ * traces the printf that writes it — and deleting those would be corruption,
+ * silent and impossible to debug.
  */
 function stripEndOfOutputSentinel(text: string, token: string): string {
-  const shed = text.split(`${token}\n`).join("");
-  return shed.endsWith(token) ? shed.slice(0, -token.length) : shed;
+  if (text.endsWith(`${token}\n`)) return text.slice(0, -(token.length + 1));
+  if (text.endsWith(token)) return text.slice(0, -token.length);
+  return text;
 }
 
-/** A settled log read with both streams' sentinels shed. */
+/**
+ * A settled log read with the sentinel shed — from STDOUT only, because that is
+ * the only stream the command prints one to. Shedding anything from stderr
+ * could only ever delete bytes the command itself wrote (`sh -x` traces the
+ * printf that writes the token, and that trace goes to stderr).
+ */
 function settledStreams(logs: unknown, token: string): { stdout: string; stderr: string } {
   const settled = readCommandStreams(logs as never);
   return {
     stdout: stripEndOfOutputSentinel(settled.stdout, token),
-    stderr: stripEndOfOutputSentinel(settled.stderr, token),
+    stderr: settled.stderr,
   };
 }
 
@@ -505,11 +535,11 @@ function settledStreams(logs: unknown, token: string): { stdout: string; stderr:
  * Shed the sentinel from a stream still arriving, without holding back output
  * that is merely on its way.
  *
- * Same rule as the settled read, applied to bytes that are still coming: whole
- * sentinels go wherever they appear, and only what could still GROW INTO one —
- * the longest tail that is a prefix of `<token>\n` — waits for the rest. Output
- * that cannot be the start of a sentinel is never delayed, which is what keeps
- * a live stream live.
+ * Same rule as the settled read — only the end of the stream can be the
+ * sentinel — applied to bytes still coming: what could still GROW INTO it (the
+ * longest tail that is a prefix of `<token>\n`) waits for the rest, and
+ * everything else goes straight through, so a chunk that cannot be the start
+ * of a sentinel is never delayed. Nothing mid-stream is ever dropped.
  */
 function createSentinelFilter(token: string, emit: (chunk: string) => void) {
   const sentinel = `${token}\n`;
@@ -525,10 +555,6 @@ function createSentinelFilter(token: string, emit: (chunk: string) => void) {
   return {
     push(chunk: string) {
       pending += chunk;
-      for (let at = pending.indexOf(sentinel); at !== -1; at = pending.indexOf(sentinel)) {
-        if (at > 0) emit(pending.slice(0, at));
-        pending = pending.slice(at + sentinel.length);
-      }
       const keep = heldBack(pending);
       if (keep === pending.length) return;
       emit(pending.slice(0, pending.length - keep));
@@ -536,7 +562,7 @@ function createSentinelFilter(token: string, emit: (chunk: string) => void) {
     },
     /** The stream is over: what was held is the sentinel, or it was output after all. */
     flush() {
-      const tail = pending === token ? "" : pending;
+      const tail = pending === sentinel || pending === token ? "" : pending;
       pending = "";
       if (tail) emit(tail);
     },
@@ -1393,14 +1419,11 @@ export class DaytonaCommands implements SandboxCommands {
         let lastChunkAt = Date.now();
         // The sentinel is filtered out of what the caller sees and what the
         // run returns; a held-back byte is still a byte that arrived, so the
-        // silence clock is stamped before the filter, not after it.
+        // silence clock is stamped before the filter, not after it. STDOUT
+        // only — stderr carries no sentinel and so passes through untouched.
         const stdoutFilter = createSentinelFilter(eosToken, (chunk) => {
           stdout += chunk;
           options?.onStdout?.(chunk);
-        });
-        const stderrFilter = createSentinelFilter(eosToken, (chunk) => {
-          stderr += chunk;
-          options?.onStderr?.(chunk);
         });
         const abandon = new AbortController();
         const follow = this.followLogs(
@@ -1414,7 +1437,8 @@ export class DaytonaCommands implements SandboxCommands {
           (chunk) => {
             if (!live) return;
             lastChunkAt = Date.now();
-            stderrFilter.push(chunk);
+            stderr += chunk;
+            options?.onStderr?.(chunk);
           },
           abandon.signal,
         );
@@ -1458,10 +1482,7 @@ export class DaytonaCommands implements SandboxCommands {
           // token fragment held, and a fragment is exactly what cannot be told
           // from output without the rest of it. The settled log below knows,
           // so the held bytes are dropped here and come back from there.
-          if (followFailure === undefined) {
-            stdoutFilter.flush();
-            stderrFilter.flush();
-          }
+          if (followFailure === undefined) stdoutFilter.flush();
         }
         if (followFailure !== undefined) {
           // The follow socket died mid-stream. The settled log is the whole
@@ -1646,18 +1667,14 @@ export class DaytonaCommands implements SandboxCommands {
 
     if (cmdId && (options?.onStdout || options?.onStderr)) {
       const stdoutFilter = createSentinelFilter(eosToken, options.onStdout || (() => {}));
-      const stderrFilter = createSentinelFilter(eosToken, options.onStderr || (() => {}));
       this.followLogs(
         sessionId,
         cmdId,
         (chunk) => stdoutFilter.push(chunk),
-        (chunk) => stderrFilter.push(chunk)
+        options.onStderr || (() => {})
       ).catch(() => {
         // Ignore streaming errors for background processes
-      }).finally(() => {
-        stdoutFilter.flush();
-        stderrFilter.flush();
-      });
+      }).finally(() => stdoutFilter.flush());
     }
 
     const sandbox = this.sandbox;
@@ -2483,6 +2500,7 @@ export const _testActivateSnapshot = activateSnapshot;
 export const _testImageMap = IMAGE_MAP;
 export const _testWithEndOfOutputSentinel = withEndOfOutputSentinel;
 export const _testStripEndOfOutputSentinel = stripEndOfOutputSentinel;
+export const _testSettledStreams = settledStreams;
 export const _testCreateSentinelFilter = createSentinelFilter;
 export const _testCreateLogDemuxer = createLogDemuxer;
 export const _testFollowManagedSessionLogs = followManagedSessionLogs;

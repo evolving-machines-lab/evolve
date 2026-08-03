@@ -22,6 +22,7 @@ import {
   _testCreateSentinelFilter,
   _testFollowManagedSessionLogs,
   _testReadCommandStreams,
+  _testSettledStreams,
   _testStripEndOfOutputSentinel,
   _testWithEndOfOutputSentinel,
   createDaytonaProvider,
@@ -200,10 +201,17 @@ function testSentinelCommandShape(): void {
   console.log("\n[1f] The command tells the box to mark its own end of output");
   const wrapped = _testWithEndOfOutputSentinel("echo hi", TOKEN);
 
-  assert(wrapped.startsWith("echo hi;"), `the caller's command runs first (got ${wrapped})`);
+  // NOTHING is appended to the caller's last line: the command sits in a brace
+  // group whose closing brace opens a line of its own, so a command ending in a
+  // newline, an `&`, a comment or a heredoc terminator still composes (the
+  // shell semantics are run for real in the commands suite, [4l] and [4m]).
   assert(
-    wrapped.includes(`printf '%s' '${TOKEN}'; printf '%s' '${TOKEN}' >&2`),
-    "the token is printed to BOTH streams, with no newline of its own",
+    wrapped.startsWith("{ echo hi\n};"),
+    `the caller's command runs inside a brace group it cannot escape (got ${JSON.stringify(wrapped)})`,
+  );
+  assert(
+    wrapped.includes(`printf '%s' '${TOKEN}'`) && !wrapped.includes(">&2"),
+    "the token is printed to STDOUT only, with no newline of its own",
   );
   // An `exit` evaluated by the session shell ends the session, and Daytona
   // then never records the command as finished — the subshell sets $? for the
@@ -244,16 +252,36 @@ function testSentinelStripping(): void {
     _testStripEndOfOutputSentinel(psLike, TOKEN) === psLike,
     "a token the caller printed is left alone",
   );
-  // An unframed log hands both streams back as one, so stderr's sentinel sits
-  // in the middle of it. What is left is each stream's own bytes, back to back
-  // — the newlines in between were the transport's, not the command's.
+  // An unframed log hands both streams back as one. There is still exactly one
+  // sentinel in it — the command prints only stdout's — and it is still at the
+  // end, because it is the last thing the command writes.
   assert(
-    _testStripEndOfOutputSentinel(`ERRX${TOKEN}\nOUTX${TOKEN}\n`, TOKEN) === "ERRXOUTX",
-    "both sentinels of a merged, unframed log are shed",
+    _testStripEndOfOutputSentinel(`ERRX\nOUTX${TOKEN}\n`, TOKEN) === "ERRX\nOUTX",
+    "a merged, unframed log sheds its one sentinel and keeps the rest",
+  );
+  // THE BYTES THAT MUST SURVIVE: a command that prints this run's own token
+  // mid-stream — `sh -x` traces the very printf that writes it — keeps them.
+  const traced = `+ printf %s ${TOKEN}\nreal output\n`;
+  assert(
+    _testStripEndOfOutputSentinel(traced, TOKEN) === traced,
+    "a token ending a line in the MIDDLE of the output is never deleted",
   );
   assert(
     _testStripEndOfOutputSentinel("plain output\n", TOKEN) === "plain output\n",
     "output with no sentinel at all is untouched",
+  );
+  // stderr is never shed at all — the command prints no sentinel to it — so a
+  // stderr stream that ENDS with the token (`sh -x` tracing the printf that
+  // writes it) keeps those bytes. settledStreams is what enforces that.
+  const tracedStderr = `+ printf %s ${TOKEN}\n`;
+  assert(
+    _testSettledStreams({ stdout: `out${TOKEN}\n`, stderr: tracedStderr }, TOKEN).stderr ===
+      tracedStderr,
+    "a settled read sheds stdout's sentinel and leaves stderr alone",
+  );
+  assert(
+    _testSettledStreams({ stdout: `out${TOKEN}\n`, stderr: tracedStderr }, TOKEN).stdout === "out",
+    "and stdout still sheds its own",
   );
 }
 
@@ -310,13 +338,25 @@ function testSentinelFilterOnALiveStream(): void {
   );
 
   // An UNFRAMED follow (measured: this daemon build streams both streams as
-  // one, markers and all absent) puts stderr's sentinel in the MIDDLE.
+  // one, markers and all absent) still ends with the one sentinel.
   const unframed = collect();
-  unframed.filter.push(`ERRX${TOKEN}\nOUTX${TOKEN}\n`);
+  unframed.filter.push(`ERRX\nOUTX${TOKEN}\n`);
   unframed.filter.flush();
   assert(
-    unframed.seen.join("") === "ERRXOUTX",
-    `both sentinels are shed, wherever they sit (got ${JSON.stringify(unframed.seen.join(""))})`,
+    unframed.seen.join("") === "ERRX\nOUTX",
+    `a merged stream sheds its sentinel and keeps the rest (got ${JSON.stringify(unframed.seen.join(""))})`,
+  );
+
+  // A token ending a line mid-stream — `sh -x` tracing our own printf — is the
+  // caller's bytes, and a live filter that deleted them would corrupt output
+  // silently.
+  const traced = collect();
+  traced.filter.push(`+ printf %s ${TOKEN}\n`);
+  traced.filter.push("real output\n");
+  traced.filter.flush();
+  assert(
+    traced.seen.join("") === `+ printf %s ${TOKEN}\nreal output\n`,
+    `a mid-stream token line is delivered whole (got ${JSON.stringify(traced.seen.join(""))})`,
   );
 
   // A stream cut mid-token keeps what arrived rather than losing it.
@@ -662,7 +702,7 @@ async function testStreamedRunKeepsAnUnterminatedLineUnterminated(): Promise<voi
   const restoreFetch = stubFollowOnce(sent, (token) =>
     bytes(
       logRecords(STDOUT_MARK, BYTE_MARKER, token),
-      logRecords(STDERR_MARK, "", token),
+      logRecords(STDERR_MARK, "", null),
     ),
   );
 
@@ -682,7 +722,10 @@ async function testStreamedRunKeepsAnUnterminatedLineUnterminated(): Promise<voi
     result.stdout === BYTE_MARKER && byteLength(result.stdout) === 25,
     `stdout is the 25 bytes the box printed (got ${byteLength(result.stdout)}: ${JSON.stringify(result.stdout)})`,
   );
-  assert(result.stderr === "", `stderr stays empty (got ${JSON.stringify(result.stderr)})`);
+  assert(
+    result.stderr === "",
+    `stderr, which carries no sentinel, stays empty (got ${JSON.stringify(result.stderr)})`,
+  );
   assert(
     seen.join("") === BYTE_MARKER,
     `the caller's callback saw the same bytes, sentinel and all shed (got ${JSON.stringify(seen.join(""))})`,
@@ -701,7 +744,7 @@ async function testStreamedRunKeepsARealTrailingNewline(): Promise<void> {
   const restoreFetch = stubFollowOnce(sent, (token) =>
     bytes(
       logRecords(STDOUT_MARK, `${BYTE_MARKER}\n`, token),
-      logRecords(STDERR_MARK, "", token),
+      logRecords(STDERR_MARK, "", null),
     ),
   );
 
@@ -742,7 +785,7 @@ async function testDeadFollowReconcileShedsTheSentinel(): Promise<void> {
   const { sandbox } = createStreamSandbox({
     settledLogs: (token) => ({
       stdout: loggedStream("partial-then-tail", token),
-      stderr: loggedStream("warned\n", token),
+      stderr: loggedStream("warned\n", null),
     }),
   });
   const seenOut: string[] = [];
@@ -775,7 +818,7 @@ async function testDeadFollowReconcileShedsTheSentinel(): Promise<void> {
 async function testFollowCutMidSentinelLeaksNothing(): Promise<void> {
   console.log("\n[2h] run() - a follow cut in the MIDDLE of the sentinel leaks no fragment");
   const { sandbox, sent } = createStreamSandbox({
-    settledLogs: (token) => ({ stdout: loggedStream("abc", token), stderr: loggedStream("", token) }),
+    settledLogs: (token) => ({ stdout: loggedStream("abc", token), stderr: loggedStream("", null) }),
   });
   const realFetch = globalThis.fetch;
   globalThis.fetch = (async () => {

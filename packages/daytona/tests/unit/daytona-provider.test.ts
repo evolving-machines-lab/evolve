@@ -80,10 +80,7 @@ function decodeSudoPayload(wrapped: string): string {
 function withSentinel(command: string, sentAs: string): string {
   const token = /EVOLVE-EOS-[a-z0-9-]+/.exec(sentAs)?.[0];
   if (!token) throw new Error(`no end-of-output sentinel in: ${sentAs}`);
-  return (
-    `${command}; __evolve_eos=$?; printf '%s' '${token}'; printf '%s' '${token}' >&2; ` +
-    `(exit $__evolve_eos)`
-  );
+  return `{ ${command}\n}; __evolve_eos=$?; printf '%s' '${token}'; (exit $__evolve_eos)`;
 }
 
 /** Run fn with console.warn captured (silenced), returning the warnings. */
@@ -993,7 +990,7 @@ async function testCommandsRunAsRootUsesSudoWrapper(): Promise<void> {
   const rootPayload = decodeSudoPayload(execCalls[0].command);
   assertEqual(
     rootPayload,
-    withSentinel("export A='1'; cd '/workspace' && echo hi", rootPayload),
+    `export A='1'; cd '/workspace' && ${withSentinel("echo hi", rootPayload)}`,
     "Payload carries envs + cwd + command, and the sentinel runs as root with them"
   );
   assertEqual(result, { exitCode: 0, stdout: "hi", stderr: "" }, "Result comes back from the session");
@@ -1024,7 +1021,7 @@ async function testCommandsSpawnRootWrapper(): Promise<void> {
   const spawnPayload = decodeSudoPayload(execCalls[0].command);
   assertEqual(
     spawnPayload,
-    withSentinel("export B='2'; sleep 1 && echo bg", spawnPayload),
+    `export B='2'; ${withSentinel("sleep 1 && echo bg", spawnPayload)}`,
     "spawn payload carries envs + command + sentinel through the sudo wrapper"
   );
   assert(typeof handle.processId === "string" && handle.processId.length > 0, "spawn returns a process handle");
