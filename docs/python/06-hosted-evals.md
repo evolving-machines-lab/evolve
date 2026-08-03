@@ -733,15 +733,15 @@ What happens next:
 - **All-or-nothing parse.** Every task is parsed before anything lands; one bad task fails the whole publish, with each failure named in `failure.failures`. No partial corpus ever exists.
 - **Strict by design.** Every task-config field is either honored or the publish is refused with the field and reason named — a task never silently runs on weaker semantics than it declares. Notably not yet supported: multi-step tasks and GPU tasks.
 - **Environments are prepared at import.** Dockerfile-defined environments are built once; multi-container service images are resolved and pinned so runs are reproducible.
-- **The activation gate certifies every task** before the version can activate:
+- **The activation gate certifies every task** before the version goes live:
   - **gold** — the task's reference solution (`solution/`) is pushed through the real agent-side + verifier path and must score exactly `1.0`. Proof the task is solvable as written.
   - **no-op** — an empty submission goes straight to the verifier and must *not* score `1.0`. A task a do-nothing agent passes measures nothing.
 
-`COMPLETED` is the import's terminal success: the corpus landed as a dataset version, visible in the catalog (`catalog.get('my-swe@1.0')`) in state `VALIDATING`. The gate then runs, and a version that passes it in full reaches `READY` — the one state that accepts jobs. `evals.start()` against any other state is rejected with a `409 version_not_ready` naming it.
+`COMPLETED` is the import's terminal success: the corpus landed as a dataset version, visible in the catalog (`catalog.get('my-swe@1.0')`) in state `VALIDATING`. The gate then runs, and a version that passes it in full reaches `READY` — the one state that accepts jobs — and becomes the dataset's active version in the same step. A publish is therefore finished when its gate passes: nothing else to call, and `{'name': 'my-swe'}` in a job already resolves to what you just published. A version that fails its gate changes nothing — the dataset keeps serving whatever it served before. `evals.start()` against any other state is rejected with a `409 version_not_ready` naming it.
 
 ### Activating
 
-A `READY` version does not serve bare-name references until it is the dataset's **active** version. Activation is one call, on a version you own:
+What you publish is activated for you, so the reason to call this yourself is to point a dataset's bare name at a **different** version — back to an older one, or on to a version you published but did not keep as the default. It is one call, on a version you own:
 
 ```python
 await catalog.activate('my-swe', '1.0')
@@ -751,7 +751,7 @@ await catalog.activate('my-swe', '1.0')
 npx evolve-evals dataset activate my-swe 1.0
 ```
 
-From then on `{'name': 'my-swe'}` in a job resolves to that version. Activating is refused with `version_not_ready` while the import and gate still run, and with `version_not_activatable` for a version that can never activate (no reference solutions were archived — the import's `warnings` told you at publish time).
+From then on `{'name': 'my-swe'}` in a job resolves to that version, and asking for the version that is already active succeeds without changing anything. Activating is refused with `version_not_ready` while the import and gate still run, and with `version_not_activatable` for a version that can never activate (no reference solutions were archived — the import's `warnings` told you at publish time).
 
 ### Getting your corpus back
 
@@ -1077,7 +1077,7 @@ A terminal import stays readable. A successful import used to start answering `4
 DRAFT → IMPORTING → BUILDING → VALIDATING → READY
 ```
 
-with `FAILED` and `ARCHIVED` as off-ramps: a failed parse or environment build lands `FAILED` before `VALIDATING` is ever reached, and `ARCHIVED` shelves a version that has been moved past. An import lands a version at `VALIDATING`; the activation gate (gold + no-op, above) then certifies it — `READY` is the only state that accepts jobs, and [`activate()`](#activating) makes a READY version the one bare names resolve to.
+with `FAILED` and `ARCHIVED` as off-ramps: a failed parse or environment build lands `FAILED` before `VALIDATING` is ever reached, and `ARCHIVED` shelves a version that has been moved past. An import lands a version at `VALIDATING`; the activation gate (gold + no-op, above) then certifies it and promotes what it certifies — a version that passes reaches `READY`, the only state that accepts jobs, and becomes the one bare names resolve to, with nothing left to call. [`activate()`](#activating) is how you later point that name at a different `READY` version. The one exception is a platform-curated dataset, which has no owner: its versions are certified the same way but sit at `VALIDATING` with a passing gate until an operator promotes them, since its default is not any account's to move.
 
 All four vocabularies, with their terminal members marked, are published under `statuses` in the [capability document](#what-the-platform-supports) — render from there, not from these tables.
 
