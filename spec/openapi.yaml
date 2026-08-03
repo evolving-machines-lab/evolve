@@ -2069,21 +2069,29 @@ components:
       type: object
       description: |
         Per-(agent, model, dataset) statistics. The evals key format is
-        `{agent}__{model}__{dataset}`, with the platform extension of a fourth
-        `__{effort}` segment when a declared reasoning effort is part of the
-        arm identity.
+        `{agent}__{model}__{dataset}` — the dataset ref is always the LAST
+        `__` segment, which is where Harbor-compatible readers recover it —
+        with the platform extension of an `__{effort}` segment inserted
+        BEFORE the dataset when a declared reasoning effort is part of the
+        arm identity: `{agent}__{model}__{effort}__{dataset}`.
       properties:
         n_trials:
           type: integer
           minimum: 0
+          description: Trials that produced a rewards map — rewarded, not merely settled.
         n_errors:
           type: integer
           minimum: 0
+          description: >
+            Trials carrying `exception_info` — indeterminate and cancelled
+            included.
         metrics:
           type: array
           description: >
-            Metric results (a mean-reward entry per arm today); open objects
-            so new metric types need no wire change.
+            Metric results (a mean entry per arm today: the primary reward
+            averaged over EVERY trial of the group, unrewarded trials
+            counting 0); open objects so new metric types need no wire
+            change.
           items:
             type: object
             additionalProperties: true
@@ -2116,15 +2124,25 @@ components:
       type: object
       description: |
         Aggregate statistics of a job. Progress counters, token totals, and
-        measured cost. `cost_usd` is what the trials actually spent so far —
-        reporting, never a gate (enforcement is the per-trial cap).
+        measured cost. The `n_*` counters are CUMULATIVE, Harbor-style:
+        errored trials are a subset of completed, cancelled a subset of
+        errored — a cancelled trial counts in all three. The disjoint
+        per-status breakdown rides `Job.trials.byStatus`.
+        `cost_usd` is what the trials actually spent so far — reporting,
+        never a gate (enforcement is the per-trial cap).
       properties:
         n_completed_trials:
           type: integer
           minimum: 0
+          description: >
+            Cumulative: every trial that produced a result — errored and
+            cancelled included, never the scored subset alone.
         n_errored_trials:
           type: integer
           minimum: 0
+          description: >
+            Cumulative: every completed trial carrying `exception_info`,
+            cancelled included. A subset of `n_completed_trials`.
         n_running_trials:
           type: integer
           minimum: 0
@@ -2134,12 +2152,15 @@ components:
         n_cancelled_trials:
           type: integer
           minimum: 0
+          description: A subset of `n_errored_trials`.
         n_retries:
           type: integer
           minimum: 0
         evals:
           type: object
-          description: 'Keyed `{agent}__{model}__{dataset}` (+ optional effort segment).'
+          description: >
+            Keyed `{agent}__{model}__{dataset}` — dataset ref last, with the
+            optional effort segment inserted before it.
           additionalProperties:
             $ref: '#/components/schemas/AgentDatasetStats'
         n_input_tokens:

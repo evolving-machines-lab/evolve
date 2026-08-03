@@ -286,14 +286,21 @@ export interface RegradeRequest {
 
 /**
  * Per-(agent, model, dataset) statistics. The evals key format is
- * `{agent}__{model}__{dataset}`, with the platform extension of a fourth
- * `__{effort}` segment when a declared reasoning effort is part of the arm
- * identity.
+ * `{agent}__{model}__{dataset}` — the dataset ref is always the LAST `__`
+ * segment, which is where Harbor-compatible readers recover it — with the
+ * platform extension of an `__{effort}` segment inserted BEFORE the dataset
+ * when a declared reasoning effort is part of the arm identity:
+ * `{agent}__{model}__{effort}__{dataset}`.
  */
 export interface AgentDatasetStats {
+  /** Trials that produced a rewards map — rewarded, not merely settled. */
   n_trials?: number;
+  /** Trials carrying `exception_info` — indeterminate and cancelled included. */
   n_errors?: number;
-  /** Metric results (a mean-reward entry per arm today); open objects. */
+  /**
+   * Metric results (a mean entry per arm today: the primary reward averaged
+   * over EVERY trial of the group, unrewarded trials counting 0); open objects.
+   */
   metrics?: Record<string, unknown>[];
   /**
    * pass@k slot — keys are k as strings, values in [0,1]. Present and empty
@@ -309,17 +316,23 @@ export interface AgentDatasetStats {
 
 /**
  * Aggregate statistics of a job. Progress counters, token totals, and measured
- * cost. `cost_usd` is what the trials actually spent so far — reporting, never
- * a gate (enforcement is the per-trial cap).
+ * cost. The `n_*` counters are CUMULATIVE, Harbor-style: errored trials are a
+ * subset of completed, cancelled a subset of errored — a cancelled trial
+ * counts in all three. The disjoint per-status breakdown rides
+ * `Job.trials.byStatus`. `cost_usd` is what the trials actually spent so far —
+ * reporting, never a gate (enforcement is the per-trial cap).
  */
 export interface JobStats {
+  /** Cumulative: every trial that produced a result — errored and cancelled included. */
   n_completed_trials?: number;
+  /** Cumulative: every completed trial carrying `exception_info`, cancelled included. */
   n_errored_trials?: number;
   n_running_trials?: number;
   n_pending_trials?: number;
+  /** A subset of `n_errored_trials`. */
   n_cancelled_trials?: number;
   n_retries?: number;
-  /** Keyed `{agent}__{model}__{dataset}` (+ optional effort segment). */
+  /** Keyed `{agent}__{model}__{dataset}` — dataset ref last, optional effort segment before it. */
   evals?: Record<string, AgentDatasetStats>;
   /** Total input tokens (cache included); null until recorded. */
   n_input_tokens?: number | null;

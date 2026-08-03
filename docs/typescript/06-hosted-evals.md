@@ -215,7 +215,7 @@ for await (const item of evals.list({ search: "nightly" })) {
 }
 ```
 
-`list({ search })` is a server-side free-text filter over the job name and its dataset names. `stats` is the aggregate block: progress counters, token totals (`n_input_tokens` includes cache tokens; `n_cache_tokens` and `n_output_tokens` beside it), measured `cost_usd`, and `evals` — per-(agent, model, dataset) statistics keyed `agent__model__dataset__effort`. The effort segment is always there: a declared effort stamps itself, an omitted one stamps the agent's default (`__high`, `__max`, …) — see [Agent arms](#agent-arms). A failed job says why on `failure`, as `{ code, message }` — the same grammar an API error uses, under a different key so that `if (body.error) throw` stays correct on a healthy read. In practice you will not see it fire: `FAILED` is a [reserved job status](#statuses) that nothing sets today; read `trials.byStatus` for where a job actually went wrong.
+`list({ search })` is a server-side free-text filter over the job name and its dataset names. `stats` is the aggregate block: progress counters (cumulative, Harbor-style: errored trials are a subset of completed, cancelled a subset of errored — the disjoint breakdown is `trials.byStatus`), token totals (`n_input_tokens` includes cache tokens; `n_cache_tokens` and `n_output_tokens` beside it), measured `cost_usd`, and `evals` — per-(agent, model, dataset) statistics keyed `agent__model__effort__dataset` — the dataset ref is always the LAST `__` segment, which is where Harbor-compatible readers recover it. The effort segment is always there, inserted before the dataset: a declared effort stamps itself, an omitted one stamps the agent's default (`__high`, `__max`, …) — see [Agent arms](#agent-arms). A failed job says why on `failure`, as `{ code, message }` — the same grammar an API error uses, under a different key so that `if (body.error) throw` stays correct on a healthy read. In practice you will not see it fire: `FAILED` is a [reserved job status](#statuses) that nothing sets today; read `trials.byStatus` for where a job actually went wrong.
 
 ### Trials
 
@@ -906,7 +906,7 @@ git diff --binary "$(git rev-list --max-parents=0 HEAD)" HEAD > /logs/artifacts/
 
 Before the script runs, the platform commits any work the agent left uncommitted — the baseline→HEAD diff captures the agent's edits whether or not the agent ever ran `git commit`.
 
-`tests/test.sh` — the verifier entrypoint. The reward file is the verdict, never the exit code: write a number in `[0, 1]` to `reward.txt`, or `reward.json` with `{"reward": ...}` plus named sub-scores:
+`tests/test.sh` — the verifier entrypoint. The reward file is the verdict, never the exit code: write a number in `[0, 1]` to `reward.txt`, or `reward.json` with the score under `"reward"` plus named sub-scores. When `reward.json` has no `"reward"` key but exactly one numeric value, that value is the score — the primary-reward convention:
 
 ```bash
 #!/bin/bash
@@ -1186,13 +1186,15 @@ interface Job {                          // ONE shape from every call
 }
 
 interface JobStats {
+    // Cumulative, Harbor-style: errored is a subset of completed, cancelled a
+    // subset of errored; the disjoint breakdown rides trials.byStatus.
     n_completed_trials?: number;
     n_errored_trials?: number;
     n_running_trials?: number;
     n_pending_trials?: number;
     n_cancelled_trials?: number;
     n_retries?: number;
-    evals?: Record<string, AgentDatasetStats>;   // keyed agent__model__dataset(__effort)
+    evals?: Record<string, AgentDatasetStats>;   // keyed agent__model(__effort)__dataset — dataset last
     n_input_tokens?: number | null;      // cache included; null until recorded
     n_cache_tokens?: number | null;
     n_output_tokens?: number | null;
