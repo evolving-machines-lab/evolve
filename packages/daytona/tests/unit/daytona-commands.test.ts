@@ -14,12 +14,17 @@
  *   npx tsx tests/unit/daytona-commands.test.ts
  */
 
-import { execSync } from "node:child_process";
-import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { execSync, spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { DaytonaCommands, _testWithInBoxTimeout, _testWrapCommand } from "../../src/index.ts";
+import {
+  DaytonaCommands,
+  _testWithEndOfOutputSentinel,
+  _testWithInBoxTimeout,
+  _testWrapCommand,
+} from "../../src/index.ts";
 
 // =============================================================================
 // TEST HELPERS
@@ -46,6 +51,42 @@ function assertEqual(actual: unknown, expected: unknown, message: string): void 
     failed++;
     console.log(`  \u2717 ${message} (expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)})`);
   }
+}
+
+/**
+ * The per-run end-of-output token a command was told to print. Daytona's
+ * session log terminates the last line itself, so every command carries one to
+ * say where its output really ended (see the src header).
+ */
+function sentinelToken(command: string): string {
+  const token = sentinelTokenOrNull(command);
+  if (!token) throw new Error(`no end-of-output sentinel in: ${command}`);
+  return token;
+}
+
+function sentinelTokenOrNull(command: string): string | null {
+  const match = /EVOLVE-EOS-[a-z0-9-]+/.exec(command);
+  return match ? match[0] : null;
+}
+
+/**
+ * One stream as Daytona's session log holds it, measured on a live sandbox
+ * 2026-08-03: the command's bytes, the sentinel it was told to print, and a
+ * terminator on the last line if it had none. Hand it no token and it is
+ * exactly what prod returned on 2026-08-02 — 25 bytes logged as 26.
+ */
+function loggedStream(output: string, token: string | null): string {
+  const written = token === null ? output : `${output}${token}`;
+  return written === "" || written.endsWith("\n") ? written : `${written}\n`;
+}
+
+/**
+ * What the box is asked to run: the caller's command inside a brace group whose
+ * closing brace opens a line of its own, then the sentinel. Nothing is appended
+ * to the caller's last line — see [4l]/[4m] for the shapes that breaks.
+ */
+function withSentinel(command: string, token: string): string {
+  return `{ ${command}\n}; __evolve_eos=$?; printf '%s' '${token}'; (exit $__evolve_eos)`;
 }
 
 // =============================================================================
@@ -183,6 +224,11 @@ interface MockProcessApi {
     output?: string;
     stderr?: string;
   };
+  /**
+   * A response built from the command as sent — what the box echoes back can
+   * only carry the sentinel it was actually told to print.
+   */
+  execResponseFor: ((command: string) => MockProcessApi["execResponse"]) | null;
   /** Override response for getSessionCommandLogs (log fallback) */
   logResponse: Record<string, unknown> | null;
   /**
@@ -203,6 +249,7 @@ function createMockProcessApi(): MockProcessApi {
     sessions: new Map(),
     lastSessionCommand: null,
     execResponse: { cmdId: "cmd-001", exitCode: 0, stdout: "hello", stderr: "" },
+    execResponseFor: null,
     logResponse: null,
     sessionCommandExitCodes: [],
     silentFollow: false,
@@ -232,7 +279,7 @@ function createMockDaytonaSandbox(processApi: MockProcessApi) {
         const session = processApi.sessions.get(sessionId);
         if (session) session.commands.push(params);
         processApi.lastSessionCommand = { sessionId, ...params, timeoutSec };
-        return { ...processApi.execResponse };
+        return { ...(processApi.execResponseFor?.(params.command) ?? processApi.execResponse) };
       },
       getSessionCommandLogs: async (
         sessionId: string,
@@ -763,6 +810,148 @@ function decodePayload(command: string): string {
   return Buffer.from(match[1], "base64").toString("utf8");
 }
 
+/**
+ * THE PROD FINDING THIS PINS (probe 2026-08-02, managed daytona sandbox):
+ * `run("printf '%s' 'PM-PROBE-DAYTONA-BYTES-OK'")` returned 26 bytes for a
+ * 25-byte marker. Daytona's session log stores one record per LINE and
+ * terminates the last one itself, so the log of `printf` (no newline) and the
+ * log of `echo` (one newline) are the same bytes — measured 2026-08-03 on a
+ * live sandbox. The end-of-output sentinel is what tells them apart, and the
+ * blocking path reads the same log the streamed one does.
+ */
+async function testBlockingRunKeepsAnUnterminatedLineUnterminated(): Promise<void> {
+  console.log("\n[4j] run() - blocking: no trailing newline printed, none returned");
+
+  const marker = "PM-PROBE-DAYTONA-BYTES-OK";
+  const processApi = createMockProcessApi();
+  processApi.execResponseFor = (command) => {
+    const token = sentinelTokenOrNull(command);
+    return {
+      cmdId: "cmd-eos-1",
+      exitCode: 0,
+      stdout: loggedStream(marker, token),
+      stderr: loggedStream("", null),
+    };
+  };
+  const commands = createCommands(processApi);
+
+  const result = await commands.run(`printf '%s' '${marker}'`);
+
+  assertEqual(result.stdout, marker, "Stdout is exactly the bytes the command printed");
+  assertEqual(new TextEncoder().encode(result.stdout).length, 25, "25 bytes in the box, 25 bytes out");
+  assertEqual(result.stderr, "", "A command that wrote no stderr still reports none");
+}
+
+async function testBlockingRunKeepsARealTrailingNewline(): Promise<void> {
+  console.log("\n[4k] run() - blocking: a printed trailing newline survives");
+
+  const marker = "PM-PROBE-DAYTONA-BYTES-OK";
+  const processApi = createMockProcessApi();
+  processApi.execResponseFor = (command) => {
+    const token = sentinelTokenOrNull(command);
+    return {
+      cmdId: "cmd-eos-2",
+      exitCode: 0,
+      stdout: loggedStream(`${marker}\n`, token),
+      stderr: loggedStream("", null),
+    };
+  };
+  const commands = createCommands(processApi);
+
+  const result = await commands.run(`echo '${marker}'`);
+
+  assertEqual(result.stdout, `${marker}\n`, "Stdout keeps the newline the command printed");
+  assertEqual(new TextEncoder().encode(result.stdout).length, 26, "26 bytes in the box, 26 bytes out");
+}
+
+/**
+ * ACTUALLY RUN the sentinel-wrapped command in a real shell, because the whole
+ * property under test is shell composition: what the shell does with the text
+ * that follows the caller's command depends on how that command ENDED, and no
+ * assertion over the command string can decide it.
+ */
+function runSentinelled(command: string, token: string): {
+  code: number;
+  stdout: string;
+  stderr: string;
+} {
+  const wrapped = _testWithEndOfOutputSentinel(command, token);
+  const result = spawnSync("/bin/sh", ["-c", wrapped], { encoding: "utf8" });
+  return { code: result.status ?? -1, stdout: result.stdout, stderr: result.stderr };
+}
+
+/**
+ * THE SHAPES A RAW APPEND BREAKS. Appending `; __evolve_eos=$?; ...` to the
+ * caller's last line made the shell read it as a continuation of that line:
+ * a command ending in a newline or in `&` became a syntax error (exit 2, and
+ * the `&` one never ran at all), and a heredoc swallowed the whole sentinel
+ * into its BODY — exit 0, no error, corrupt payload. The brace group is what
+ * gives the sentinel a line of its own.
+ */
+async function testSentinelSurvivesEveryCommandShape(): Promise<void> {
+  console.log("\n[4l] The sentinel composes with commands that end in anything");
+
+  const token = "EVOLVE-EOS-shape-test";
+
+  const plain = runSentinelled("echo hi", token);
+  assertEqual(plain.stdout, `hi\n${token}`, "plain command: output then the sentinel");
+  assertEqual(plain.code, 0, "plain command: status preserved");
+
+  // Every multi-line template literal in the codebase ends this way.
+  const trailingNewline = runSentinelled("echo hi\n", token);
+  assertEqual(trailingNewline.stdout, `hi\n${token}`, "command ending in a NEWLINE still runs");
+  assertEqual(trailingNewline.code, 0, "command ending in a newline: no syntax error");
+  assertEqual(trailingNewline.stderr, "", "and nothing leaks to stderr");
+
+  // `&` ends a command; a `;` after it is a syntax error, and the command that
+  // never ran was the caller's own.
+  const background = runSentinelled("sleep 0.2 &", token);
+  assertEqual(background.code, 0, "command ending in `&` runs and exits 0");
+  assertEqual(background.stderr, "", "no syntax error on stderr");
+  assert(background.stdout.endsWith(token), "the sentinel still lands after it");
+
+  // The comment used to swallow the sentinel; inside the group it ends at the
+  // newline that closes the group, so the sentinel survives.
+  const comment = runSentinelled("echo hi # a note", token);
+  assertEqual(comment.stdout, `hi\n${token}`, "command ending in a COMMENT keeps its sentinel");
+
+  const failing = runSentinelled("echo x; exit 7", token);
+  assertEqual(failing.code, 7, "a command that exits nonzero still reports its own status");
+}
+
+/**
+ * THE REAL CALL SITE THIS BROKE: the managed-secret proxy readiness probe in
+ * packages/sdk-ts/src/agent.ts is a heredoc whose terminator `PY` is the final
+ * characters of the string. With the sentinel appended to that line, the
+ * terminator never matched, python received the sentinel as SOURCE, died with a
+ * SyntaxError — and managed secrets reported "proxy failed to start" against a
+ * proxy that was healthy.
+ */
+async function testSentinelSurvivesHeredocTerminatedAtEndOfString(): Promise<void> {
+  console.log("\n[4m] A heredoc whose terminator is the command's last line is not swallowed");
+
+  const token = "EVOLVE-EOS-heredoc-test";
+
+  // The agent.ts shape, verbatim in structure: `<<'PY' ... PY` with NO trailing
+  // newline, and a body whose exit status is the probe's answer.
+  const probe = runSentinelled(
+    `python3 - <<'PY'\nimport sys\nprint("PROXY-READY")\nsys.exit(0)\nPY`,
+    token,
+  );
+  assertEqual(probe.code, 0, "the probe exits 0, as it does without any sentinel");
+  assertEqual(probe.stdout, `PROXY-READY\n${token}`, "python ran its body, not the sentinel");
+  assertEqual(probe.stderr, "", "no SyntaxError — the sentinel never reached python");
+
+  // The silent-corruption half: a heredoc that WRITES A FILE must not have the
+  // sentinel written into it.
+  const path = join(tmpdir(), `evolve-heredoc-${Date.now()}.txt`);
+  const write = runSentinelled(`cat > ${path} <<'EOF'\nline1\nline2\nEOF`, token);
+  const written = readFileSync(path, "utf8");
+  rmSync(path, { force: true });
+  assertEqual(write.code, 0, "the heredoc write succeeds");
+  assertEqual(written, "line1\nline2\n", "the file holds the caller's bytes and nothing else");
+}
+
 async function testRunPlantsInBoxTimeout(): Promise<void> {
   console.log("\n[4a] run() - plants coreutils `timeout` inside the box");
 
@@ -774,10 +963,11 @@ async function testRunPlantsInBoxTimeout(): Promise<void> {
   const sent = processApi.lastSessionCommand!;
   assert(sent.command.startsWith("sh -c '"), "Runs in a CHILD shell, not the session shell");
   assert(sent.command.includes("timeout -k 10 30 bash "), "coreutils timeout carries the caller's seconds");
+  const payload = decodePayload(sent.command);
   assertEqual(
-    decodePayload(sent.command),
-    "cd '/workspace' && sleep 999",
-    "The timed payload is exactly the wrapped command"
+    payload,
+    `cd '/workspace' && ${withSentinel("sleep 999", sentinelToken(payload))}`,
+    "The timed payload is the cwd wrapper around the caller's command and its sentinel"
   );
 }
 
@@ -803,7 +993,11 @@ async function testRunWithoutTimeoutIsUnchanged(): Promise<void> {
   await commands.run("echo hi", { cwd: "/app" });
 
   const sent = processApi.lastSessionCommand!;
-  assertEqual(sent.command, "cd '/app' && echo hi", "Command is passed through untouched");
+  assertEqual(
+    sent.command,
+    `cd '/app' && ${withSentinel("echo hi", sentinelToken(sent.command))}`,
+    "Command is passed through untouched, with only its end-of-output sentinel added"
+  );
   assertEqual(sent.timeoutSec, undefined, "No wait bound either");
 }
 
@@ -912,7 +1106,11 @@ const tests = [
   // [3] spawn with envs
   testSpawnWithEnvs,
   testSpawnWithoutEnvs,
-  // [4] the in-box kill on run()
+  // [4] the in-box kill on run(), and the end-of-output sentinel it carries
+  testBlockingRunKeepsAnUnterminatedLineUnterminated,
+  testBlockingRunKeepsARealTrailingNewline,
+  testSentinelSurvivesEveryCommandShape,
+  testSentinelSurvivesHeredocTerminatedAtEndOfString,
   testRunPlantsInBoxTimeout,
   testRunKeepsBlockingSemantics,
   testRunWithoutTimeoutIsUnchanged,
