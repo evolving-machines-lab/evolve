@@ -489,6 +489,28 @@ function endOfOutputToken(): string {
  *     became part of the heredoc BODY: no error, exit 0, corrupt payload. That
  *     is the shape of the managed-secret proxy readiness probe (agent.ts), and
  *     it turned a healthy proxy into "failed to start".
+ *
+ * The group needs two guards of its own, both measured against /bin/sh,
+ * /bin/bash and /bin/dash:
+ *
+ *   a leading `:` so the body is never EMPTY. A comment-only command
+ *     (`# nothing`) otherwise leaves `{ # nothing\n}` — "syntax error near
+ *     unexpected token `}'", exit 2, where the caller's own shell would have
+ *     done nothing and exited 0. It runs BEFORE the command, so the status the
+ *     group reports is still the command's own.
+ *   a BLANK LINE before the closing brace, to be eaten by a command that ends
+ *     in a dangling backslash. That backslash continues onto whatever line
+ *     comes next; the blank line is what it consumes instead of the `}`, and
+ *     `echo HI \` then runs as the caller's shell would run it — exit 0, "HI",
+ *     with the exit code of a failing one (`false \` -> 1) still its own.
+ *
+ * WHAT STILL FAILS, LOUDLY: an UNTERMINATED heredoc (`cat <<'EOF'` with no
+ * EOF line). Its body swallows everything that follows, including the closing
+ * brace, so the command is a syntax error — exit 2, no output, the shell's own
+ * message on stderr. No text can fix that from out here: anything added lands
+ * inside the heredoc. A shell run of the same input without a wrapper prints
+ * the body and exits 0, so this is the one shape the sentinel changes, and it
+ * changes it to a loud failure rather than a quiet wrong answer.
  */
 function withEndOfOutputSentinel(command: string, token: string): string {
   if (!command.trim()) return command;
@@ -497,7 +519,7 @@ function withEndOfOutputSentinel(command: string, token: string): string {
   // finished (see withInBoxTimeout). A subshell sets $? for the record without
   // touching the shell that has to keep reading.
   return (
-    `{ ${command}\n}; __evolve_eos=$?; printf '%s' '${token}'; (exit $__evolve_eos)`
+    `{ :\n${command}\n\n}; __evolve_eos=$?; printf '%s' '${token}'; (exit $__evolve_eos)`
   );
 }
 
