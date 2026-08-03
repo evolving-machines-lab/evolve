@@ -206,8 +206,8 @@ function testSentinelCommandShape(): void {
   // newline, an `&`, a comment or a heredoc terminator still composes (the
   // shell semantics are run for real in the commands suite, [4l] and [4m]).
   assert(
-    wrapped.startsWith("{ echo hi\n};"),
-    `the caller's command runs inside a brace group it cannot escape (got ${JSON.stringify(wrapped)})`,
+    wrapped.startsWith("{ :\necho hi\n\n};"),
+    `the caller's command runs inside a guarded brace group (got ${JSON.stringify(wrapped)})`,
   );
   assert(
     wrapped.includes(`printf '%s' '${TOKEN}'`) && !wrapped.includes(">&2"),

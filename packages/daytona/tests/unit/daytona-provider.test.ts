@@ -80,7 +80,7 @@ function decodeSudoPayload(wrapped: string): string {
 function withSentinel(command: string, sentAs: string): string {
   const token = /EVOLVE-EOS-[a-z0-9-]+/.exec(sentAs)?.[0];
   if (!token) throw new Error(`no end-of-output sentinel in: ${sentAs}`);
-  return `{ ${command}\n}; __evolve_eos=$?; printf '%s' '${token}'; (exit $__evolve_eos)`;
+  return `{ :\n${command}\n\n}; __evolve_eos=$?; printf '%s' '${token}'; (exit $__evolve_eos)`;
 }
 
 /** Run fn with console.warn captured (silenced), returning the warnings. */

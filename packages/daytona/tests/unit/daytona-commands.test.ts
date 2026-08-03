@@ -86,7 +86,7 @@ function loggedStream(output: string, token: string | null): string {
  * to the caller's last line — see [4l]/[4m] for the shapes that breaks.
  */
 function withSentinel(command: string, token: string): string {
-  return `{ ${command}\n}; __evolve_eos=$?; printf '%s' '${token}'; (exit $__evolve_eos)`;
+  return `{ :\n${command}\n\n}; __evolve_eos=$?; printf '%s' '${token}'; (exit $__evolve_eos)`;
 }
 
 // =============================================================================
@@ -917,6 +917,50 @@ async function testSentinelSurvivesEveryCommandShape(): Promise<void> {
 
   const failing = runSentinelled("echo x; exit 7", token);
   assertEqual(failing.code, 7, "a command that exits nonzero still reports its own status");
+
+  // A DANGLING BACKSLASH continues onto whatever line comes next. Without a
+  // blank line for it to eat, it swallowed the closing brace — `echo HI }`,
+  // then an unterminated group: exit 2 where the caller's own shell prints
+  // "HI" and exits 0.
+  const dangling = runSentinelled("echo HI \\", token);
+  assertEqual(dangling.code, 0, "a command ending in a dangling backslash still exits 0");
+  assertEqual(dangling.stdout, `HI\n${token}`, "it prints what a bare shell prints, sentinel after");
+  assertEqual(dangling.stderr, "", "and raises no syntax error");
+
+  // The guard must not swallow the STATUS either: the blank line is eaten by
+  // the continuation, so the failing command is still the group's last word.
+  const danglingFails = runSentinelled("false \\", token);
+  assertEqual(danglingFails.code, 1, "a FAILING dangling-backslash command keeps its own status");
+
+  // A COMMENT-ONLY command leaves the brace group with an empty body —
+  // "syntax error near unexpected token `}'", exit 2, where the caller's own
+  // shell does nothing and exits 0. The leading `:` is what keeps it valid.
+  const commentOnly = runSentinelled("# nothing", token);
+  assertEqual(commentOnly.code, 0, "a comment-only command is a no-op, not a syntax error");
+  assertEqual(commentOnly.stdout, token, "it prints nothing of its own, and the sentinel still lands");
+  assertEqual(commentOnly.stderr, "", "no syntax error");
+}
+
+/**
+ * THE ONE SHAPE THE SENTINEL CHANGES, pinned so it stays LOUD. An unterminated
+ * heredoc swallows everything after it — including the closing brace — and no
+ * text can fix that from outside, because anything added lands in the heredoc
+ * body. A bare shell prints the body and exits 0; wrapped, it is a syntax
+ * error. That is a visible failure with an empty stdout, never a quiet wrong
+ * answer, which is the only acceptable way to lose.
+ */
+async function testUnterminatedHeredocFailsLoudly(): Promise<void> {
+  console.log("\n[4n] An unterminated heredoc fails loudly rather than answering wrongly");
+
+  const token = "EVOLVE-EOS-unterminated";
+  const result = runSentinelled("cat <<'NOEND'\nbody", token);
+
+  assert(result.code !== 0, `it fails (got exit ${result.code})`);
+  assertEqual(result.stdout, "", "nothing is printed that could be mistaken for the command's output");
+  assert(
+    result.stderr.includes("syntax error"),
+    `the shell says why, on stderr (got ${JSON.stringify(result.stderr)})`,
+  );
 }
 
 /**
@@ -1111,6 +1155,7 @@ const tests = [
   testBlockingRunKeepsARealTrailingNewline,
   testSentinelSurvivesEveryCommandShape,
   testSentinelSurvivesHeredocTerminatedAtEndOfString,
+  testUnterminatedHeredocFailsLoudly,
   testRunPlantsInBoxTimeout,
   testRunKeepsBlockingSemantics,
   testRunWithoutTimeoutIsUnchanged,
