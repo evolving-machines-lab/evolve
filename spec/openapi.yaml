@@ -114,6 +114,9 @@ paths:
         dataset name twice is refused (`invalid_input`). Every agent must name
         a model; the server applies no model default.
 
+        The response is the job body plus `job_id`, an additive alias of `id`
+        that only this verb answers with — see JobCreated.
+
         Send `Idempotency-Key` to make retries safe: the same key with the
         same resolved request replays the original job (200,
         `idempotent_replay: true`); the same key with a different request is
@@ -137,13 +140,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Job'
+                $ref: '#/components/schemas/JobCreated'
         '200':
           description: Idempotent replay of an existing identical request.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Job'
+                $ref: '#/components/schemas/JobCreated'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -2169,7 +2172,8 @@ components:
       description: |
         THE job body — the same shape from create, get, list items, cancel,
         resume, and regrade responses; no field appears on some responses and
-        not others.
+        not others. The create verb answers with JobCreated, which is this
+        shape plus one aliased id and nothing else.
       required:
         - id
         - job_name
@@ -2274,6 +2278,31 @@ components:
           type: [string, 'null']
           format: date-time
           description: Null while the job is live.
+
+    JobCreated:
+      description: |
+        The CREATE verb's body: the whole Job shape plus `job_id`, an additive
+        alias of `id`.
+
+        The alias exists for one reason and lives in one place. Harbor's
+        hosted submit reads the new job's id under the key `job_id` and aborts
+        the submit outright when that key is absent, so the verb an
+        unmodified Harbor CLI starts a run with answers to both names. Every
+        other job response — get, list, cancel, resume, regrade — carries `id`
+        alone, so no reader has to learn a second spelling to follow a job.
+
+        Both of this verb's success bodies carry it: a create and the
+        idempotent replay of that same create (their submit sends an
+        `Idempotency-Key` on every attempt, so a retry lands on the replay).
+      required: [job_id]
+      allOf:
+        - $ref: '#/components/schemas/Job'
+        - type: object
+          properties:
+            job_id:
+              type: string
+              format: uuid
+              description: Alias of `id`, identical value. Create responses only.
 
     JobPage:
       type: object

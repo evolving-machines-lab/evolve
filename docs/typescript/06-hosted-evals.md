@@ -842,7 +842,7 @@ my-swe/
     └── greeting-fix/
         ├── task.toml
         ├── instruction.md
-        ├── pre_artifacts.sh        # collects the agent's work after the run
+        ├── pre_artifacts.sh        # optional — collects the agent's work after the run
         ├── environment/
         │   ├── Dockerfile          # built at import — or pin docker_image in task.toml
         │   └── greet.py
@@ -895,7 +895,7 @@ RUN git init -q && git add -A \
 print("Helo, world!")
 ```
 
-`pre_artifacts.sh` — runs in the agent sandbox after the agent finishes; captures the work as a patch:
+`pre_artifacts.sh` — optional, and runs in the agent sandbox after the agent finishes; captures the work as a patch:
 
 ```bash
 #!/bin/bash
@@ -928,7 +928,8 @@ sed -i 's/Helo/Hello/' /app/greet.py
 
 That's the whole format. The rules that matter when converting:
 
-- `task.toml`, `instruction.md`, `pre_artifacts.sh`, and `tests/test.sh` are required — a task without `tests/test.sh` fails its import by name. `tests/grader.py`, `tests/config.json`, and `tests/test.patch` have named roles, and any other file under `tests/` is carried onto the verifier beside them — a helper like `tests/test_pool.py` lands next to `test.sh` and is runnable from it. A `tests/Dockerfile` is accepted only while it stays trivial (`FROM`, `COPY`, `WORKDIR`, `LABEL`, and permission-only `RUN chmod` lines) — the verifier uploads the test files onto the task image instead of building this Dockerfile, so anything richer is refused.
+- `task.toml`, `instruction.md`, and `tests/test.sh` are required — a task without `tests/test.sh` fails its import by name. `pre_artifacts.sh` is optional: write one when you want to decide exactly what the agent's work looks like on its way out of the sandbox (the one above turns it into a patch), and when it is absent the platform supplies a minimal collect step and the `artifacts` manifest carries the work instead. `tests/grader.py`, `tests/config.json`, and `tests/test.patch` have named roles, and any other file under `tests/` is carried onto the verifier beside them — a helper like `tests/test_pool.py` lands next to `test.sh` and is runnable from it.
+- `tests/Dockerfile` is built for real whenever the verifier can own its own image: a `separate` verifier on a task that builds from `environment/Dockerfile` — no pinned `docker_image`, no compose — gets a verifier image built from `tests/`, so grader dependencies installed there are genuinely present. Everywhere else the verifier reuses the task image and the test files are uploaded onto it. The Dockerfile is not built on that path, so it is accepted only while it stays trivial (`FROM`, `COPY`, `WORKDIR`, `LABEL`, and permission-only `RUN chmod` lines) — a richer recipe's dependencies would be silently missing, so it is refused by name.
 - The environment is `environment/Dockerfile` (built at import), a pinned `docker_image` (the registry must be approved for imports, and the tag pinned — never `:latest`), or `environment/docker-compose.yaml` for multi-container tasks (the agent runs in the `main` service).
 - Timeouts are optional: agent defaults to 3600 s, verifier to 600 s, both published as `limits.job.default_agent_timeout_sec` and `default_verifier_timeout_sec`. A declared `timeout_sec` always wins — the corpus is the authority on how long its own task needs, and the fallback never shortens one.
 - `solution/` (`solve.sh`, or a `solution.patch` to apply) is what the gate certifies with — without it the version cannot reach `READY`.
