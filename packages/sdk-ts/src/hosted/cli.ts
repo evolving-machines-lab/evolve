@@ -2556,6 +2556,12 @@ function datasetDetailLines(b: Dataset): string[] {
       if (v.gate?.status === "FAILED") {
         const reason = v.gate.message ?? v.gate.code ?? "no reason reported";
         lines.push(`version ${v.version} activation gate FAILED: ${reason}`);
+        // The cause, task by task: the gate's own reasons, indented under the
+        // verdict — nobody should need --json to learn WHY a publish died.
+        for (const t of v.gate.failed_tasks) {
+          const why = t.reasons.length > 0 ? t.reasons.join("; ") : (t.outcome ?? "no reason reported");
+          lines.push(`  ${t.task_name}: ${why}`);
+        }
       }
     }
   }
@@ -2839,6 +2845,26 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "auth status": cmdAuthStatus,
 };
 
+/**
+ * The body of the --json error object. An API refusal reuses the server's own
+ * envelope keys verbatim (code, message, param, details, retryAfterSec,
+ * request_id — present only when the server sent them); a local failure is a
+ * bare {message}, honestly code-less rather than wearing an invented one.
+ */
+function jsonErrorBody(error: unknown): Record<string, unknown> {
+  if (error instanceof EvolveApiError) {
+    return {
+      code: error.code,
+      message: error.message,
+      ...(error.param !== undefined ? { param: error.param } : {}),
+      ...(error.details !== undefined ? { details: error.details } : {}),
+      ...(error.retryAfterSec !== undefined ? { retryAfterSec: error.retryAfterSec } : {}),
+      ...(error.requestId !== undefined ? { request_id: error.requestId } : {}),
+    };
+  }
+  return { message: error instanceof Error ? error.message : String(error) };
+}
+
 export async function runCli(argv: string[], io: CliIO = defaultIO): Promise<number> {
   let inv: Invocation;
   try {
@@ -2875,6 +2901,14 @@ export async function runCli(argv: string[], io: CliIO = defaultIO): Promise<num
       io.err(`Error: ${error.message}`);
       io.err(`Run "evolve-evals ${inv.command} --help" for usage.`);
       return 2;
+    }
+    // --json promised a machine-readable stdout, and a refusal is part of that
+    // story: one {error: {...}} object carrying the server's own envelope
+    // fields (or a bare message for a local failure), so a script never has to
+    // scrape stderr prose. The human stderr line and the exit code do not
+    // change — stderr is for eyes, stdout is for parsers.
+    if (inv.flags.json === true) {
+      io.out(JSON.stringify({ error: jsonErrorBody(error) }));
     }
     if (error instanceof EvolveApiError && error.status === 429) {
       // A rate limit is a delay, not a mystery: name it and honor the

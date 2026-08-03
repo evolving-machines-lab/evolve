@@ -837,6 +837,26 @@ export interface DatasetVersionGate {
   attempts: number;
   code: string | null;
   message: string | null;
+  /**
+   * The tasks the gate found ineligible, each with the gate's own reasons —
+   * so the cause of a FAILED gate never has to be parsed back out of the
+   * message. The server sends the first 25. Empty while the gate is healthy,
+   * and empty on servers that predate the field: absence is "nothing to
+   * report", never a crash.
+   */
+  failed_tasks: DatasetVersionGateFailedTask[];
+}
+
+/**
+ * One task the activation gate found ineligible. `outcome` is the gate's
+ * verdict word (FAIL, or ERROR when the run produced no usable score; null
+ * when the server omits it) and `reasons` are the gate's own sentences for
+ * this task — empty when the server names none.
+ */
+export interface DatasetVersionGateFailedTask {
+  task_name: string;
+  outcome: string | null;
+  reasons: string[];
 }
 
 /** One immutable version of a dataset — one shape on every surface */

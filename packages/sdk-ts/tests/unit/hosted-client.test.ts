@@ -323,7 +323,12 @@ async function testDatasetGateMapping() {
               failure: {
                 code: "gate_failed",
                 message: "1 of 1 task(s) failed the activation gate (1 not eligible, 0 unverified)",
-                failed_tasks: [{ task_name: "starter-task", outcome: "ERROR", reasons: ["gold run produced no usable score"] }],
+                failed_tasks: [
+                  { task_name: "starter-task", outcome: "ERROR", reasons: ["gold run produced no usable score", 7, "last status: INDETERMINATE"] },
+                  { outcome: "FAIL" }, // no task name — dropped, never a crash
+                  "junk", // not even an object — dropped
+                  { task_name: "bare-task" }, // name only — outcome null, reasons empty
+                ],
               },
             },
           },
@@ -360,13 +365,21 @@ async function testDatasetGateMapping() {
         attempts: 1,
         code: "gate_failed",
         message: "1 of 1 task(s) failed the activation gate (1 not eligible, 0 unverified)",
+        failed_tasks: [
+          {
+            task_name: "starter-task",
+            outcome: "ERROR",
+            reasons: ["gold run produced no usable score", "last status: INDETERMINATE"],
+          },
+          { task_name: "bare-task", outcome: null, reasons: [] },
+        ],
       },
-      "nested failure form maps to {status, attempts, code, message}"
+      "nested failure form maps to {status, attempts, code, message, failed_tasks}; nameless/garbage entries dropped, non-string reasons filtered"
     );
     assertEqual(
       running.gate,
-      { status: "RUNNING", attempts: 1, code: null, message: null },
-      "flat form maps unchanged; healthy gate carries null code/message"
+      { status: "RUNNING", attempts: 1, code: null, message: null, failed_tasks: [] },
+      "flat form maps unchanged; healthy gate carries null code/message and no failed tasks"
     );
     assertEqual(none.gate, null, "a version without a gate field maps to gate null (older server: no crash)");
     assertEqual(garbage.gate, null, "an unreadable gate value maps to null, never a throw");

@@ -302,6 +302,20 @@ AttemptPhase = Literal[
 
 
 @dataclass
+class DatasetVersionGateFailedTask:
+    """One task the activation gate found ineligible.
+
+    ``outcome`` is the gate's verdict word (``FAIL``, or ``ERROR`` when the
+    run produced no usable score; ``None`` when the server omits it) and
+    ``reasons`` are the gate's own sentences for this task — empty when the
+    server names none.
+    """
+    task_name: str
+    outcome: Optional[str] = None
+    reasons: List[str] = field(default_factory=list)
+
+
+@dataclass
 class DatasetVersionGate:
     """The activation gate's progress for one dataset version.
 
@@ -309,11 +323,16 @@ class DatasetVersionGate:
     ``PASSED``/``FAILED`` as wire values). ``code`` and ``message`` are set on
     failure — one machine word and one human sentence — and are ``None`` while
     the gate is healthy. ``attempts`` counts gate runs so far.
+    ``failed_tasks`` names each ineligible task with the gate's own reasons
+    (the server sends the first 25); it is empty while the gate is healthy and
+    empty on servers that predate the field — absence is "nothing to report",
+    never a crash.
     """
     status: str
     attempts: int
     code: Optional[str] = None
     message: Optional[str] = None
+    failed_tasks: List[DatasetVersionGateFailedTask] = field(default_factory=list)
 
 
 @dataclass
@@ -1197,12 +1216,39 @@ def _map_version_gate(data: Any) -> Optional[DatasetVersionGate]:
         data.get('message') if isinstance(data.get('message'), str) else failure.get('message')
     )
     attempts = data.get('attempts')
+    raw_failed = data.get('failed_tasks')
+    if not isinstance(raw_failed, list):
+        raw_failed = failure.get('failed_tasks')
     return DatasetVersionGate(
         status=data['status'],
         attempts=attempts if isinstance(attempts, int) and not isinstance(attempts, bool) else 0,
         code=code if isinstance(code, str) else None,
         message=message if isinstance(message, str) else None,
+        failed_tasks=_map_gate_failed_tasks(raw_failed),
     )
+
+
+def _map_gate_failed_tasks(data: Any) -> List[DatasetVersionGateFailedTask]:
+    """The per-task cause list behind a FAILED gate, with the gate's tolerance.
+
+    Absent or unreadable input is an empty list, an entry without a task name
+    is dropped, and non-string reasons are filtered — an older or misbehaving
+    server must never crash the client here.
+    """
+    if not isinstance(data, list):
+        return []
+    tasks: List[DatasetVersionGateFailedTask] = []
+    for item in data:
+        if not isinstance(item, dict) or not isinstance(item.get('task_name'), str):
+            continue
+        outcome = item.get('outcome')
+        reasons = item.get('reasons')
+        tasks.append(DatasetVersionGateFailedTask(
+            task_name=item['task_name'],
+            outcome=outcome if isinstance(outcome, str) else None,
+            reasons=[r for r in reasons if isinstance(r, str)] if isinstance(reasons, list) else [],
+        ))
+    return tasks
 
 
 def _map_dataset_version(data: Dict[str, Any]) -> DatasetVersion:

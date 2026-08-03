@@ -48,6 +48,7 @@ from evolve import (
     AgentArm,
     DatasetSelector,
     DatasetVersionGate,
+    DatasetVersionGateFailedTask,
     EvolveAPIError,
     EvolveDigestMismatchError,
     EvolveIncompleteDownloadError,
@@ -370,7 +371,16 @@ class TestDatasets:
                             'failure': {
                                 'code': 'gate_failed',
                                 'message': '1 of 1 task(s) failed the activation gate',
-                                'failed_tasks': [{'task_name': 'starter-task'}],
+                                'failed_tasks': [
+                                    {
+                                        'task_name': 'starter-task',
+                                        'outcome': 'ERROR',
+                                        'reasons': ['gold run produced no usable score', 7, 'last status: INDETERMINATE'],
+                                    },
+                                    {'outcome': 'FAIL'},  # no task name — dropped, never a crash
+                                    'junk',  # not even a dict — dropped
+                                    {'task_name': 'bare-task'},  # name only — outcome None, reasons empty
+                                ],
                             },
                         },
                     },
@@ -402,10 +412,20 @@ class TestDatasets:
         assert failed.gate == DatasetVersionGate(
             status='FAILED', attempts=1, code='gate_failed',
             message='1 of 1 task(s) failed the activation gate',
+            # The per-task causes ride along: nameless/garbage entries are
+            # dropped, non-string reasons filtered — never a crash.
+            failed_tasks=[
+                DatasetVersionGateFailedTask(
+                    task_name='starter-task', outcome='ERROR',
+                    reasons=['gold run produced no usable score', 'last status: INDETERMINATE'],
+                ),
+                DatasetVersionGateFailedTask(task_name='bare-task', outcome=None, reasons=[]),
+            ],
         )
-        # Flat form maps unchanged; a healthy gate carries None code/message.
+        # Flat form maps unchanged; a healthy gate carries None code/message
+        # and an empty failed-task list.
         assert running.gate == DatasetVersionGate(
-            status='RUNNING', attempts=1, code=None, message=None
+            status='RUNNING', attempts=1, code=None, message=None, failed_tasks=[]
         )
         assert garbage.gate is None
 

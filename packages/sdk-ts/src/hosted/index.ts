@@ -36,6 +36,7 @@ import type {
   DatasetRef,
   DatasetVersion,
   DatasetVersionGate,
+  DatasetVersionGateFailedTask,
   DatasetVersionState,
   DatasetsClient,
   DownloadDatasetOptions,
@@ -141,6 +142,7 @@ export type {
   DatasetSource,
   DatasetVersion,
   DatasetVersionGate,
+  DatasetVersionGateFailedTask,
   DatasetVersionState,
   DatasetsClient,
   DownloadDatasetOptions,
@@ -460,8 +462,8 @@ function mapAgentArm(raw: Record<string, unknown>): AgentArm {
 /**
  * Map a version's activation-gate field, tolerating every server generation:
  * an older server that has no `gate` field at all, the current server's
- * nested form ({status, attempts, failure: {code, message}}), and the flat
- * form ({status, attempts, code, message}). Anything unreadable becomes null
+ * nested form ({status, attempts, failure: {code, message, failed_tasks}}),
+ * and the flat form ({status, attempts, code, message}). Anything unreadable becomes null
  * — a missing gate is "nothing to report", never a crash and never "passed".
  */
 function mapVersionGate(raw: unknown): DatasetVersionGate | null {
@@ -479,7 +481,34 @@ function mapVersionGate(raw: unknown): DatasetVersionGate | null {
     attempts: typeof value.attempts === "number" ? value.attempts : 0,
     code: typeof code === "string" ? code : null,
     message: typeof message === "string" ? message : null,
+    failed_tasks: mapGateFailedTasks(
+      Array.isArray(value.failed_tasks) ? value.failed_tasks : failure.failed_tasks
+    ),
   };
+}
+
+/**
+ * The per-task cause list behind a FAILED gate. Same tolerance as the gate
+ * itself: absent or unreadable input is an empty list, an entry without a
+ * task name is dropped, and non-string reasons are filtered — an older or
+ * misbehaving server must never crash the CLI here.
+ */
+function mapGateFailedTasks(raw: unknown): DatasetVersionGateFailedTask[] {
+  if (!Array.isArray(raw)) return [];
+  const tasks: DatasetVersionGateFailedTask[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const entry = item as Record<string, unknown>;
+    if (typeof entry.task_name !== "string") continue;
+    tasks.push({
+      task_name: entry.task_name,
+      outcome: typeof entry.outcome === "string" ? entry.outcome : null,
+      reasons: Array.isArray(entry.reasons)
+        ? entry.reasons.filter((r): r is string => typeof r === "string")
+        : [],
+    });
+  }
+  return tasks;
 }
 
 function mapDatasetVersion(raw: Record<string, unknown>): DatasetVersion {

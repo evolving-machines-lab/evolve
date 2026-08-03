@@ -1714,6 +1714,65 @@ async function testUsageErrorExitCode() {
   }
 }
 
+async function testJsonErrorObject() {
+  console.log("\n--- runCli: --json puts a refusal on stdout as a JSON error object ---");
+  installMockFetch();
+  try {
+    const sentence = "dataset rq-init@1.0 is not READY (state: FAILED)";
+    setMockResponse("/api/jobs", {
+      status: 409,
+      headers: { "x-request-id": "req_0123456789abcdef0123456789abcdef" },
+      body: { error: { code: "version_not_ready", message: sentence, param: "datasets[0]" } },
+    });
+    const startArgs = ["job", "start", "-d", "rq-init", "-a", "codex", "-m", "gpt-5.5"];
+
+    // Human mode: unchanged — the sentence on stderr, nothing on stdout.
+    const human = captureIO();
+    assertEqual(await runCli([...startArgs, ...AUTH], human.io), 1, "a refused job start is exit 1");
+    assertEqual(human.out, [], "human mode prints nothing on stdout");
+    assertEqual(human.err, [`Error: ${sentence}`], "human mode keeps the plain stderr line");
+
+    // --json: the same refusal, same exit code, but stdout stays parseable —
+    // one JSON object reusing the server's envelope fields.
+    const json = captureIO();
+    assertEqual(await runCli([...startArgs, "--json", ...AUTH], json.io), 1, "--json keeps exit 1");
+    assertEqual(json.out.length, 1, "--json stdout is exactly one line");
+    assertEqual(
+      JSON.parse(json.out[0]),
+      {
+        error: {
+          code: "version_not_ready",
+          message: sentence,
+          param: "datasets[0]",
+          request_id: "req_0123456789abcdef0123456789abcdef",
+        },
+      },
+      "the refusal is {error: {...}} carrying the server's own envelope fields"
+    );
+    assert(json.err.some((l) => l === `Error: ${sentence}`), "the human line stays on stderr for eyes");
+
+    // A local failure (no server envelope) is still a parseable object:
+    // a message, and honestly no code rather than an invented one. Fresh
+    // mocks — the broad "/api/jobs" refusal above must not swallow the get.
+    installMockFetch();
+    setMockResponse("/api/jobs/eval-1", { status: 200, body: wireJob() });
+    const local = captureIO();
+    assertEqual(
+      await runCli(["job", "stop", "eval-1", "--dataset", "nope", "--json", ...AUTH], local.io),
+      1,
+      "a local refusal keeps exit 1"
+    );
+    const parsed = JSON.parse(local.out[local.out.length - 1]);
+    assert(parsed.error.code === undefined, "a local failure carries no invented code");
+    assert(
+      parsed.error.message.includes("does not run dataset nope"),
+      "and its message is the same sentence human mode prints"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
 // =============================================================================
 // LISTS — shared output precedence
 // =============================================================================
@@ -2188,7 +2247,14 @@ async function testJobStopReportsThePartialItAlreadySettled() {
       1,
       "--json is exit 1 on the same failure"
     );
-    const printed = asJson.out[asJson.out.length - 1];
+    // The failure itself now ALSO lands on stdout as the closing {error: ...}
+    // object — the report line comes right before it.
+    const closing = asJson.out[asJson.out.length - 1];
+    assert(
+      closing !== undefined && JSON.parse(closing).error?.code === "rate_limited",
+      "--json closes the stream with the failure as a JSON error object"
+    );
+    const printed = asJson.out[asJson.out.length - 2];
     assert(printed !== undefined, "--json prints its report before the failure, never nothing");
     const report = printed ? JSON.parse(printed) : { stopped: [] };
     assertEqual(report.stopped.length, 200, "--json reports every trial the door confirmed dead");
@@ -2819,6 +2885,8 @@ async function testDatasetShowGate() {
   installMockFetch();
   try {
     const gateMessage = "1 of 1 task(s) failed the activation gate (1 not eligible, 0 unverified)";
+    const goldReason =
+      "gold run produced no usable score in 3 attempt(s) - last status: INDETERMINATE (the verifier produced neither reward.json nor reward.txt)";
     setMockResponse("/api/datasets/r1-init", {
       status: 200,
       body: {
@@ -2832,7 +2900,18 @@ async function testDatasetShowGate() {
             state: "FAILED",
             created_at: "2026-08-03T19:15:55.930Z",
             task_count: 1,
-            gate: { status: "FAILED", attempts: 1, failure: { code: "gate_failed", message: gateMessage } },
+            gate: {
+              status: "FAILED",
+              attempts: 1,
+              failure: {
+                code: "gate_failed",
+                message: gateMessage,
+                failed_tasks: [
+                  { task_name: "starter-task", outcome: "ERROR", reasons: [goldReason, "second reason"] },
+                  { task_name: "quiet-task", outcome: "FAIL", reasons: [] },
+                ],
+              },
+            },
           },
           {
             version: "0.9",
@@ -2860,6 +2939,14 @@ async function testDatasetShowGate() {
       text.includes(`version 1.0 activation gate FAILED: ${gateMessage}`),
       "a failed gate is unmissable: one line naming the version and the server's reason"
     );
+    assert(
+      text.includes(`  starter-task: ${goldReason}; second reason`),
+      "the cause follows the verdict: one indented line per failed task, every reason joined"
+    );
+    assert(
+      text.includes("  quiet-task: FAIL"),
+      "a task the server names without reasons still gets its line — the outcome word stands in"
+    );
 
     const json = captureIO();
     assertEqual(await runCli(["dataset", "show", "r1-init", "--json", ...AUTH], json.io), 0, "show --json exits 0");
@@ -2867,13 +2954,22 @@ async function testDatasetShowGate() {
     assertEqual(body.versions[0].state, "FAILED", "--json carries the version state");
     assertEqual(
       body.versions[0].gate,
-      { status: "FAILED", attempts: 1, code: "gate_failed", message: gateMessage },
-      "--json carries the gate: status, attempts, code, message"
+      {
+        status: "FAILED",
+        attempts: 1,
+        code: "gate_failed",
+        message: gateMessage,
+        failed_tasks: [
+          { task_name: "starter-task", outcome: "ERROR", reasons: [goldReason, "second reason"] },
+          { task_name: "quiet-task", outcome: "FAIL", reasons: [] },
+        ],
+      },
+      "--json carries the gate: status, attempts, code, message, and the full failed_tasks array"
     );
     assertEqual(
       body.versions[1].gate,
-      { status: "RUNNING", attempts: 1, code: null, message: null },
-      "--json carries a healthy gate with null code/message"
+      { status: "RUNNING", attempts: 1, code: null, message: null, failed_tasks: [] },
+      "--json carries a healthy gate with null code/message and no failed tasks"
     );
   } finally {
     restoreFetch();
@@ -3223,6 +3319,7 @@ async function main() {
   await testRunWatchJsonAndQuiet();
   await testWatchFailedExitCode();
   await testUsageErrorExitCode();
+  await testJsonErrorObject();
   await testJobListOutputModes();
   await testJobShowMultiId();
   await testJobTrialsAndTasks();
