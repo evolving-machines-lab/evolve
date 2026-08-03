@@ -252,6 +252,7 @@ export const RESERVED_OBSERVABILITY_KEYS = [
   "agent",
   "model",
   "sandboxId",
+  "sandbox_id", // local JSONL _meta envelope uses snake_case — same identity, same shield
   "timestamp",
   "event",
   "events",
