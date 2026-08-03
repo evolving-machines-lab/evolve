@@ -1051,13 +1051,17 @@ paths:
       summary: Activate a dataset version
       description: |
         Promotes a READY (or VALIDATING-complete) version to the dataset's
-        active version, making bare-name job references resolve to it. Closes
-        the gap where a caller could publish a dataset but not make it
-        runnable.
+        active version, making bare-name job references resolve to it.
 
-        The proof it requires is the activation gate, and after a hosted
-        import the worker schedules that gate automatically: gold solution
-        scores exactly 1.0 through the real execution path, a do-nothing
+        You usually do not need this. A version you publish is activated for
+        you the moment its activation gate passes — VALIDATING becomes READY
+        and the dataset's default points at it, with no call. What this verb
+        is for is choosing a DIFFERENT default: rolling back to an older
+        READY version, or re-pointing at one auto-activation moved past.
+
+        The proof it requires is the same activation gate, which the worker
+        schedules automatically after a hosted import: the gold solution
+        scores exactly 1.0 through the real execution path, and a do-nothing
         agent does not. While the gate is scheduled or running the verb
         answers 202 `gate_running` (a healthy in-progress state, not an
         error); once it lands, activation either promotes (200) or explains
@@ -1065,6 +1069,9 @@ paths:
         `details.gate_failure`). Refused with `version_not_activatable` when
         the version can never be activated (for example, no reference
         solutions were archived — see the import's `warnings`).
+
+        Idempotent: activating the version that is already active rewrites
+        the same pointer and answers 200.
       parameters:
         - $ref: '#/components/parameters/DatasetName'
         - name: version
@@ -1083,8 +1090,9 @@ paths:
           description: >
             Not yet — the activation gate is scheduled or running for this
             version. Nothing is wrong and nothing is asked of the caller:
-            poll the dataset (each version carries `gate`) and activate
-            again once the gate completes.
+            poll the dataset (each version carries `gate`). A gate that
+            PASSES activates the version itself, so there is normally
+            nothing left to call.
           content:
             application/json:
               schema:
@@ -1131,10 +1139,12 @@ paths:
 
         Once the import COMPLETES, the worker automatically schedules the
         activation gate (the version's `gate` field tracks it: PENDING ->
-        RUNNING -> PASSED/FAILED); when it PASSES, call the activate verb to
-        promote the version. A version with no archived reference solutions
-        gets no gate — its import `warnings` say so, and activation is
-        refused `version_not_activatable`.
+        RUNNING -> PASSED/FAILED). When it PASSES, the version becomes READY
+        and the dataset's active version on its own — publish, poll until
+        `gate.status` is PASSED, and run the dataset by bare name. A version
+        with no archived reference solutions gets no gate — its import
+        `warnings` say so, and activation is refused
+        `version_not_activatable`.
       requestBody:
         required: true
         content:
@@ -3088,7 +3098,15 @@ components:
 
     DatasetVersionState:
       type: string
-      description: 'Terminal: READY, FAILED, ARCHIVED.'
+      description: |
+        Terminal: READY, FAILED, ARCHIVED.
+
+        A hosted publish walks IMPORTING -> BUILDING -> VALIDATING on its own,
+        and VALIDATING -> READY happens on its own too: the activation gate
+        promotes the version it proves, and points the dataset's default at
+        it. The activate verb is not part of that path — it exists to move
+        the default to a different version (an older READY one, or a newer
+        one), never to finish a publish.
       enum: [DRAFT, IMPORTING, BUILDING, VALIDATING, READY, FAILED, ARCHIVED]
 
     DatasetVersion:
@@ -3125,8 +3143,10 @@ components:
         score exactly 1.0 through the real execution path, and a do-nothing
         agent must not. PENDING = scheduled, waiting for a worker; RUNNING =
         proving tasks now (per-task verdicts land on the task list as they
-        finish); PASSED = every task is activation-eligible, activate to
-        promote; FAILED = at least one task is not — `failure` names them.
+        finish); PASSED = every task is activation-eligible, and the version
+        was promoted to READY and made the dataset's active version by the
+        gate itself; FAILED = at least one task is not — `failure` names them
+        and the dataset's active version is left alone.
       enum: [PENDING, RUNNING, PASSED, FAILED]
 
     ActivationGate:
@@ -3429,8 +3449,8 @@ components:
       type: string
       description: >
         Same four words a job uses, deliberately. Terminal: COMPLETED (the
-        corpus landed as a dataset version; runnable once activated) and
-        FAILED.
+        corpus landed as a dataset version; runnable once its activation gate
+        passes, which also activates it) and FAILED.
       enum: [QUEUED, RUNNING, COMPLETED, FAILED]
 
     DatasetImportFailure:
