@@ -428,6 +428,107 @@ function withInBoxTimeout(wrapped: string, timeoutSec?: number): string {
   return `sh -c '${inner}'`;
 }
 
+/**
+ * WHY EVERY COMMAND ANNOUNCES WHERE ITS OUTPUT ENDS.
+ *
+ * Daytona's session log is LINE-oriented: the daemon buffers each stream until
+ * a newline and stores one record per line, `<3-byte marker><line>\n`.
+ * MEASURED 2026-08-03 against a live sandbox (daytonaio/sandbox:0.8.0), the
+ * same 25-byte marker printed with and without a trailing newline:
+ *
+ *   printf '%s' 'PM-PROBE-DAYTONA-BYTES-OK'  log: 01 01 01 <25 bytes> 0a
+ *   echo 'PM-PROBE-DAYTONA-BYTES-OK'         log: 01 01 01 <25 bytes> 0a
+ *
+ * Byte-identical, though `wc -c` inside the box says 25 for the first and 26
+ * for the second. So the log ADDS the terminator the first command never
+ * printed, and no rule reading the log alone can tell an output that ended in
+ * a newline from one the transport ended: keeping the byte corrupts `printf`,
+ * stripping it corrupts `echo`. The chunked follow carries the same added
+ * byte, so this is not the streaming path's doing.
+ *
+ * A command that marks its own end restores the difference. The shell prints a
+ * per-run token after the command, on both streams, with no newline of its
+ * own; the transport then terminates whatever the last line turned out to be,
+ * and the token is the only thing left to remove:
+ *
+ *   printf: `...OK` + token   -> record  `...OK<token>\n`        -> `...OK`
+ *   echo:   `...OK\n` + token -> records `...OK\n` `<token>\n`   -> `...OK\n`
+ *
+ * One suffix removal serves both. A command that never reaches the token —
+ * killed by the in-box timeout, ending in a comment, calling exec — leaves
+ * none to remove, and its output comes back exactly as it did before.
+ */
+function endOfOutputToken(): string {
+  return `EVOLVE-EOS-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function withEndOfOutputSentinel(command: string, token: string): string {
+  if (!command.trim()) return command;
+  // `(exit $rc)` rather than `exit $rc`: an exit evaluated by the SESSION
+  // shell ends the session, after which Daytona never records the command as
+  // finished (see withInBoxTimeout). A subshell sets $? for the record without
+  // touching the shell that has to keep reading.
+  return (
+    `${command}; __evolve_eos=$?; printf '%s' '${token}'; printf '%s' '${token}' >&2; ` +
+    `(exit $__evolve_eos)`
+  );
+}
+
+/** Shed the sentinel, and the terminator the transport put after it, from a settled stream. */
+function stripEndOfOutputSentinel(text: string, token: string): string {
+  if (text.endsWith(`${token}\n`)) return text.slice(0, -(token.length + 1));
+  if (text.endsWith(token)) return text.slice(0, -token.length);
+  return text;
+}
+
+/** A settled log read with both streams' sentinels shed. */
+function settledStreams(logs: unknown, token: string): { stdout: string; stderr: string } {
+  const settled = readCommandStreams(logs as never);
+  return {
+    stdout: stripEndOfOutputSentinel(settled.stdout, token),
+    stderr: stripEndOfOutputSentinel(settled.stderr, token),
+  };
+}
+
+/**
+ * Shed the sentinel from a stream still arriving, without holding back output
+ * that is merely on its way.
+ *
+ * Only what could still GROW INTO the sentinel is held: the longest tail of
+ * what has arrived that is a prefix of `<token>\n`. Everything else goes
+ * straight through, so a chunk that cannot be the start of it is never
+ * delayed. A token that appears anywhere ELSE in the output belongs to the
+ * caller — `ps` prints this very command line, sentinel and all — so a stream
+ * loses it only by ENDING with it.
+ */
+function createSentinelFilter(token: string, emit: (chunk: string) => void) {
+  const sentinel = `${token}\n`;
+  let pending = "";
+
+  const heldBack = (text: string): number => {
+    for (let len = Math.min(text.length, sentinel.length); len > 0; len--) {
+      if (sentinel.startsWith(text.slice(text.length - len))) return len;
+    }
+    return 0;
+  };
+
+  return {
+    push(chunk: string) {
+      pending += chunk;
+      const keep = heldBack(pending);
+      if (keep === pending.length) return;
+      emit(pending.slice(0, pending.length - keep));
+      pending = pending.slice(pending.length - keep);
+    },
+    /** The stream is over: what was held is the sentinel, or it was output after all. */
+    flush() {
+      const tail = pending === sentinel || pending === token ? "" : pending;
+      pending = "";
+      if (tail) emit(tail);
+    },
+  };
+}
+
 function wrapCommand(
   command: string,
   cwd?: string,
@@ -1235,13 +1336,22 @@ export class DaytonaCommands implements SandboxCommands {
       // as they are produced. Without callbacks the blocking execute stays:
       // one round trip, exit code inline.
       const streaming = Boolean(options?.onStdout || options?.onStderr);
+      // What the box prints to say its output ended, so the log's line
+      // terminator can be told from the command's own last byte (see
+      // withEndOfOutputSentinel).
+      const eosToken = endOfOutputToken();
       // The third argument stays the wait bound of a blocking execute, and
       // withInBoxTimeout is what survives this process dying while it waits
       // (see the wrapper's header). Both are the caller's own timeout, so
       // whichever fires first, nothing outlives it.
       const resp = await this.sandbox.process.executeSessionCommand(sessionId, {
         command: withInBoxTimeout(
-          wrapCommand(command, options?.cwd, options?.envs, this.user),
+          wrapCommand(
+            withEndOfOutputSentinel(command, eosToken),
+            options?.cwd,
+            options?.envs,
+            this.user
+          ),
           timeoutSec
         ),
         runAsync: streaming,
@@ -1267,6 +1377,17 @@ export class DaytonaCommands implements SandboxCommands {
         let stderr = "";
         let live = true;
         let lastChunkAt = Date.now();
+        // The sentinel is filtered out of what the caller sees and what the
+        // run returns; a held-back byte is still a byte that arrived, so the
+        // silence clock is stamped before the filter, not after it.
+        const stdoutFilter = createSentinelFilter(eosToken, (chunk) => {
+          stdout += chunk;
+          options?.onStdout?.(chunk);
+        });
+        const stderrFilter = createSentinelFilter(eosToken, (chunk) => {
+          stderr += chunk;
+          options?.onStderr?.(chunk);
+        });
         const abandon = new AbortController();
         const follow = this.followLogs(
           sessionId,
@@ -1274,14 +1395,12 @@ export class DaytonaCommands implements SandboxCommands {
           (chunk) => {
             if (!live) return;
             lastChunkAt = Date.now();
-            stdout += chunk;
-            options?.onStdout?.(chunk);
+            stdoutFilter.push(chunk);
           },
           (chunk) => {
             if (!live) return;
             lastChunkAt = Date.now();
-            stderr += chunk;
-            options?.onStderr?.(chunk);
+            stderrFilter.push(chunk);
           },
           abandon.signal,
         );
@@ -1319,6 +1438,16 @@ export class DaytonaCommands implements SandboxCommands {
           // and a stalled one must not hold the result hostage.
           await Promise.race([followSettled, sleep(this.streamTimings.drainMs)]);
           live = false;
+          // Nothing more will arrive, so what the filters still hold is either
+          // the sentinel (shed) or the run's last bytes (delivered). A follow
+          // that DIED is the exception: a socket cut mid-sentinel leaves a
+          // token fragment held, and a fragment is exactly what cannot be told
+          // from output without the rest of it. The settled log below knows,
+          // so the held bytes are dropped here and come back from there.
+          if (followFailure === undefined) {
+            stdoutFilter.flush();
+            stderrFilter.flush();
+          }
         }
         if (followFailure !== undefined) {
           // The follow socket died mid-stream. The settled log is the whole
@@ -1330,7 +1459,7 @@ export class DaytonaCommands implements SandboxCommands {
           let settled: { stdout: string; stderr: string };
           try {
             const logs = await this.sandbox.process.getSessionCommandLogs(sessionId, cmdId);
-            settled = readCommandStreams(logs as any);
+            settled = settledStreams(logs, eosToken);
           } catch {
             throw followFailure;
           }
@@ -1353,7 +1482,7 @@ export class DaytonaCommands implements SandboxCommands {
           // callbacks and re-emitting would double the caller's output.
           try {
             const logs = await this.sandbox.process.getSessionCommandLogs(sessionId, cmdId);
-            const settled = readCommandStreams(logs as any);
+            const settled = settledStreams(logs, eosToken);
             stdout = settled.stdout;
             stderr = settled.stderr;
             if (stdout) options?.onStdout?.(stdout);
@@ -1368,11 +1497,11 @@ export class DaytonaCommands implements SandboxCommands {
       // Only the blocking path reaches here — a streaming caller with a cmdId
       // already returned above. Try inline output first; if empty and we have
       // cmdId, fetch logs explicitly.
-      let { stdout, stderr } = readCommandStreams(resp);
+      let { stdout, stderr } = settledStreams(resp, eosToken);
       if (!stdout && !stderr && cmdId) {
         try {
           const logs = await this.sandbox.process.getSessionCommandLogs(sessionId, cmdId);
-          const fromLogs = readCommandStreams(logs as any);
+          const fromLogs = settledStreams(logs, eosToken);
           stdout = fromLogs.stdout;
           stderr = fromLogs.stderr || stderr;
         } catch {
@@ -1485,9 +1614,15 @@ export class DaytonaCommands implements SandboxCommands {
     const startedAt = Date.now();
     const timeoutMs = options?.timeoutMs;
 
+    const eosToken = endOfOutputToken();
     const resp = await this.sandbox.process.executeSessionCommand(sessionId, {
       command: withInBoxTimeout(
-        wrapCommand(command, options?.cwd, options?.envs, this.user),
+        wrapCommand(
+          withEndOfOutputSentinel(command, eosToken),
+          options?.cwd,
+          options?.envs,
+          this.user
+        ),
         timeoutSec
       ),
       runAsync: true,
@@ -1496,13 +1631,18 @@ export class DaytonaCommands implements SandboxCommands {
     const cmdId = resp.cmdId;
 
     if (cmdId && (options?.onStdout || options?.onStderr)) {
+      const stdoutFilter = createSentinelFilter(eosToken, options.onStdout || (() => {}));
+      const stderrFilter = createSentinelFilter(eosToken, options.onStderr || (() => {}));
       this.followLogs(
         sessionId,
         cmdId,
-        options.onStdout || (() => {}),
-        options.onStderr || (() => {})
+        (chunk) => stdoutFilter.push(chunk),
+        (chunk) => stderrFilter.push(chunk)
       ).catch(() => {
         // Ignore streaming errors for background processes
+      }).finally(() => {
+        stdoutFilter.flush();
+        stderrFilter.flush();
       });
     }
 
@@ -1537,7 +1677,7 @@ export class DaytonaCommands implements SandboxCommands {
                 const logs = await sandbox.process.getSessionCommandLogs(sessionId, cmdId);
                 return {
                   exitCode: cmd.exitCode,
-                  ...readCommandStreams(logs as any),
+                  ...settledStreams(logs, eosToken),
                 };
               } catch {
                 return {
@@ -2327,6 +2467,9 @@ export const _testToSandboxInfo = toSandboxInfo;
 export const _testDaytonaStateToEvolveState = daytonaStateToEvolveState;
 export const _testActivateSnapshot = activateSnapshot;
 export const _testImageMap = IMAGE_MAP;
+export const _testWithEndOfOutputSentinel = withEndOfOutputSentinel;
+export const _testStripEndOfOutputSentinel = stripEndOfOutputSentinel;
+export const _testCreateSentinelFilter = createSentinelFilter;
 export const _testCreateLogDemuxer = createLogDemuxer;
 export const _testFollowManagedSessionLogs = followManagedSessionLogs;
 export const _testReadCommandStreams = readCommandStreams;

@@ -48,6 +48,41 @@ function assertEqual(actual: unknown, expected: unknown, message: string): void 
   }
 }
 
+/**
+ * The per-run end-of-output token a command was told to print. Daytona's
+ * session log terminates the last line itself, so every command carries one to
+ * say where its output really ended (see the src header).
+ */
+function sentinelToken(command: string): string {
+  const token = sentinelTokenOrNull(command);
+  if (!token) throw new Error(`no end-of-output sentinel in: ${command}`);
+  return token;
+}
+
+function sentinelTokenOrNull(command: string): string | null {
+  const match = /EVOLVE-EOS-[a-z0-9-]+/.exec(command);
+  return match ? match[0] : null;
+}
+
+/**
+ * One stream as Daytona's session log holds it, measured on a live sandbox
+ * 2026-08-03: the command's bytes, the sentinel it was told to print, and a
+ * terminator on the last line if it had none. Hand it no token and it is
+ * exactly what prod returned on 2026-08-02 — 25 bytes logged as 26.
+ */
+function loggedStream(output: string, token: string | null): string {
+  const written = token === null ? output : `${output}${token}`;
+  return written === "" || written.endsWith("\n") ? written : `${written}\n`;
+}
+
+/** What the box is asked to run: the caller's command, then its sentinel. */
+function withSentinel(command: string, token: string): string {
+  return (
+    `${command}; __evolve_eos=$?; printf '%s' '${token}'; printf '%s' '${token}' >&2; ` +
+    `(exit $__evolve_eos)`
+  );
+}
+
 // =============================================================================
 // [1] wrapCommand() — Pure Function Tests
 // =============================================================================
@@ -183,6 +218,11 @@ interface MockProcessApi {
     output?: string;
     stderr?: string;
   };
+  /**
+   * A response built from the command as sent — what the box echoes back can
+   * only carry the sentinel it was actually told to print.
+   */
+  execResponseFor: ((command: string) => MockProcessApi["execResponse"]) | null;
   /** Override response for getSessionCommandLogs (log fallback) */
   logResponse: Record<string, unknown> | null;
   /**
@@ -203,6 +243,7 @@ function createMockProcessApi(): MockProcessApi {
     sessions: new Map(),
     lastSessionCommand: null,
     execResponse: { cmdId: "cmd-001", exitCode: 0, stdout: "hello", stderr: "" },
+    execResponseFor: null,
     logResponse: null,
     sessionCommandExitCodes: [],
     silentFollow: false,
@@ -232,7 +273,7 @@ function createMockDaytonaSandbox(processApi: MockProcessApi) {
         const session = processApi.sessions.get(sessionId);
         if (session) session.commands.push(params);
         processApi.lastSessionCommand = { sessionId, ...params, timeoutSec };
-        return { ...processApi.execResponse };
+        return { ...(processApi.execResponseFor?.(params.command) ?? processApi.execResponse) };
       },
       getSessionCommandLogs: async (
         sessionId: string,
@@ -763,6 +804,60 @@ function decodePayload(command: string): string {
   return Buffer.from(match[1], "base64").toString("utf8");
 }
 
+/**
+ * THE PROD FINDING THIS PINS (probe 2026-08-02, managed daytona sandbox):
+ * `run("printf '%s' 'PM-PROBE-DAYTONA-BYTES-OK'")` returned 26 bytes for a
+ * 25-byte marker. Daytona's session log stores one record per LINE and
+ * terminates the last one itself, so the log of `printf` (no newline) and the
+ * log of `echo` (one newline) are the same bytes — measured 2026-08-03 on a
+ * live sandbox. The end-of-output sentinel is what tells them apart, and the
+ * blocking path reads the same log the streamed one does.
+ */
+async function testBlockingRunKeepsAnUnterminatedLineUnterminated(): Promise<void> {
+  console.log("\n[4j] run() - blocking: no trailing newline printed, none returned");
+
+  const marker = "PM-PROBE-DAYTONA-BYTES-OK";
+  const processApi = createMockProcessApi();
+  processApi.execResponseFor = (command) => {
+    const token = sentinelTokenOrNull(command);
+    return {
+      cmdId: "cmd-eos-1",
+      exitCode: 0,
+      stdout: loggedStream(marker, token),
+      stderr: loggedStream("", token),
+    };
+  };
+  const commands = createCommands(processApi);
+
+  const result = await commands.run(`printf '%s' '${marker}'`);
+
+  assertEqual(result.stdout, marker, "Stdout is exactly the bytes the command printed");
+  assertEqual(new TextEncoder().encode(result.stdout).length, 25, "25 bytes in the box, 25 bytes out");
+  assertEqual(result.stderr, "", "The stderr sentinel leaves stderr empty, not one newline long");
+}
+
+async function testBlockingRunKeepsARealTrailingNewline(): Promise<void> {
+  console.log("\n[4k] run() - blocking: a printed trailing newline survives");
+
+  const marker = "PM-PROBE-DAYTONA-BYTES-OK";
+  const processApi = createMockProcessApi();
+  processApi.execResponseFor = (command) => {
+    const token = sentinelTokenOrNull(command);
+    return {
+      cmdId: "cmd-eos-2",
+      exitCode: 0,
+      stdout: loggedStream(`${marker}\n`, token),
+      stderr: loggedStream("", token),
+    };
+  };
+  const commands = createCommands(processApi);
+
+  const result = await commands.run(`echo '${marker}'`);
+
+  assertEqual(result.stdout, `${marker}\n`, "Stdout keeps the newline the command printed");
+  assertEqual(new TextEncoder().encode(result.stdout).length, 26, "26 bytes in the box, 26 bytes out");
+}
+
 async function testRunPlantsInBoxTimeout(): Promise<void> {
   console.log("\n[4a] run() - plants coreutils `timeout` inside the box");
 
@@ -774,10 +869,11 @@ async function testRunPlantsInBoxTimeout(): Promise<void> {
   const sent = processApi.lastSessionCommand!;
   assert(sent.command.startsWith("sh -c '"), "Runs in a CHILD shell, not the session shell");
   assert(sent.command.includes("timeout -k 10 30 bash "), "coreutils timeout carries the caller's seconds");
+  const payload = decodePayload(sent.command);
   assertEqual(
-    decodePayload(sent.command),
-    "cd '/workspace' && sleep 999",
-    "The timed payload is exactly the wrapped command"
+    payload,
+    withSentinel("cd '/workspace' && sleep 999", sentinelToken(payload)),
+    "The timed payload is exactly the wrapped command, plus its end-of-output sentinel"
   );
 }
 
@@ -803,7 +899,11 @@ async function testRunWithoutTimeoutIsUnchanged(): Promise<void> {
   await commands.run("echo hi", { cwd: "/app" });
 
   const sent = processApi.lastSessionCommand!;
-  assertEqual(sent.command, "cd '/app' && echo hi", "Command is passed through untouched");
+  assertEqual(
+    sent.command,
+    withSentinel("cd '/app' && echo hi", sentinelToken(sent.command)),
+    "Command is passed through untouched, with only its end-of-output sentinel added"
+  );
   assertEqual(sent.timeoutSec, undefined, "No wait bound either");
 }
 
@@ -912,7 +1012,9 @@ const tests = [
   // [3] spawn with envs
   testSpawnWithEnvs,
   testSpawnWithoutEnvs,
-  // [4] the in-box kill on run()
+  // [4] the in-box kill on run(), and the end-of-output sentinel it carries
+  testBlockingRunKeepsAnUnterminatedLineUnterminated,
+  testBlockingRunKeepsARealTrailingNewline,
   testRunPlantsInBoxTimeout,
   testRunKeepsBlockingSemantics,
   testRunWithoutTimeoutIsUnchanged,

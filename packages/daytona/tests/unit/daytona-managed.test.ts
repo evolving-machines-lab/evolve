@@ -19,8 +19,11 @@
 
 import {
   _testCreateLogDemuxer,
+  _testCreateSentinelFilter,
   _testFollowManagedSessionLogs,
   _testReadCommandStreams,
+  _testStripEndOfOutputSentinel,
+  _testWithEndOfOutputSentinel,
   createDaytonaProvider,
   DaytonaCommands,
   DaytonaResourcesError,
@@ -181,6 +184,133 @@ function testReadCommandStreams(): void {
 }
 
 // =============================================================================
+// [1f-1h] The end-of-output sentinel
+//
+// MEASURED 2026-08-03 on a live daytona sandbox (daytonaio/sandbox:0.8.0):
+// `printf '%s' 'PM-PROBE-DAYTONA-BYTES-OK'` and `echo` of the same 25 bytes
+// land in the session log as the SAME bytes — 01 01 01 <25 bytes> 0a — while
+// `wc -c` in the box says 25 and 26. The log is line-oriented and terminates
+// the last line itself, so nothing read from it alone can tell the two apart.
+// The sentinel is what the box prints to mark where its output really ended.
+// =============================================================================
+
+const TOKEN = "EVOLVE-EOS-mfkq2s-a1b2c3";
+
+function testSentinelCommandShape(): void {
+  console.log("\n[1f] The command tells the box to mark its own end of output");
+  const wrapped = _testWithEndOfOutputSentinel("echo hi", TOKEN);
+
+  assert(wrapped.startsWith("echo hi;"), `the caller's command runs first (got ${wrapped})`);
+  assert(
+    wrapped.includes(`printf '%s' '${TOKEN}'; printf '%s' '${TOKEN}' >&2`),
+    "the token is printed to BOTH streams, with no newline of its own",
+  );
+  // An `exit` evaluated by the session shell ends the session, and Daytona
+  // then never records the command as finished — the subshell sets $? for the
+  // record without touching the shell that has to keep reading.
+  assert(wrapped.includes("__evolve_eos=$?"), "the command's status is captured before the token");
+  assert(
+    wrapped.trimEnd().endsWith("(exit $__evolve_eos)") && !/(^|[^(])exit \$__evolve_eos/.test(wrapped),
+    `the status is restored in a SUBSHELL, never with a bare exit (got ${wrapped})`,
+  );
+  assert(
+    _testWithEndOfOutputSentinel("   ", TOKEN) === "   ",
+    "an empty command gets no sentinel — there is no output to bound",
+  );
+}
+
+function testSentinelStripping(): void {
+  console.log("\n[1g] A settled stream sheds the sentinel and the terminator after it");
+
+  assert(
+    _testStripEndOfOutputSentinel(`PM-PROBE-DAYTONA-BYTES-OK${TOKEN}\n`, TOKEN) ===
+      "PM-PROBE-DAYTONA-BYTES-OK",
+    "a command that printed no newline gets none back",
+  );
+  assert(
+    _testStripEndOfOutputSentinel(`PM-PROBE-DAYTONA-BYTES-OK\n${TOKEN}\n`, TOKEN) ===
+      "PM-PROBE-DAYTONA-BYTES-OK\n",
+    "a command that printed one keeps exactly one",
+  );
+  assert(_testStripEndOfOutputSentinel(`${TOKEN}\n`, TOKEN) === "", "a silent command stays silent");
+  assert(
+    _testStripEndOfOutputSentinel(`out${TOKEN}`, TOKEN) === "out",
+    "a build that returns the token unterminated sheds it too",
+  );
+  // `ps` prints this very command line, sentinel and all. Output that merely
+  // CONTAINS the token is the caller's own bytes.
+  const psLike = `root 42 sh -c cmd; printf '%s' '${TOKEN}'\n`;
+  assert(
+    _testStripEndOfOutputSentinel(psLike, TOKEN) === psLike,
+    "a token in the middle of the output is left alone",
+  );
+  assert(
+    _testStripEndOfOutputSentinel("plain output\n", TOKEN) === "plain output\n",
+    "output with no sentinel at all is untouched",
+  );
+}
+
+function testSentinelFilterOnALiveStream(): void {
+  console.log("\n[1h] A stream still arriving sheds the sentinel without holding output back");
+
+  const collect = () => {
+    const seen: string[] = [];
+    return { seen, filter: _testCreateSentinelFilter(TOKEN, (chunk) => seen.push(chunk)) };
+  };
+
+  // No newline of its own: the transport's terminator is all that follows.
+  const printf = collect();
+  printf.filter.push(`PM-PROBE-DAYTONA-BYTES-OK${TOKEN}\n`);
+  printf.filter.flush();
+  assert(
+    printf.seen.join("") === "PM-PROBE-DAYTONA-BYTES-OK",
+    `printf round-trips byte-exact (got ${JSON.stringify(printf.seen.join(""))})`,
+  );
+
+  // Its own newline: the token arrives as its own line, and the real one stays.
+  const echo = collect();
+  echo.filter.push("PM-PROBE-DAYTONA-BYTES-OK\n");
+  echo.filter.push(`${TOKEN}\n`);
+  echo.filter.flush();
+  assert(
+    echo.seen.join("") === "PM-PROBE-DAYTONA-BYTES-OK\n",
+    `echo keeps its single newline (got ${JSON.stringify(echo.seen.join(""))})`,
+  );
+  assert(
+    echo.seen[0] === "PM-PROBE-DAYTONA-BYTES-OK\n",
+    "and it was delivered LIVE — a line that cannot be the sentinel is never delayed",
+  );
+
+  // The token split one byte at a time is still the token.
+  const split = collect();
+  split.filter.push("tail");
+  for (const char of `${TOKEN}\n`) split.filter.push(char);
+  split.filter.flush();
+  assert(
+    split.seen.join("") === "tail",
+    `a sentinel split across chunks is still shed (got ${JSON.stringify(split.seen.join(""))})`,
+  );
+
+  // Mid-stream: `ps` output carrying this run's own command line.
+  const middle = collect();
+  middle.filter.push(`before ${TOKEN} after\n`);
+  middle.filter.flush();
+  assert(
+    middle.seen.join("") === `before ${TOKEN} after\n`,
+    "a token the caller printed is delivered, not swallowed",
+  );
+
+  // A stream cut mid-token keeps what arrived rather than losing it.
+  const cut = collect();
+  cut.filter.push(`kept${TOKEN.slice(0, 6)}`);
+  cut.filter.flush();
+  assert(
+    cut.seen.join("") === `kept${TOKEN.slice(0, 6)}`,
+    "a half-arrived token is output, not a sentinel",
+  );
+}
+
+// =============================================================================
 // [2] Streaming follow over HTTP
 // =============================================================================
 
@@ -271,25 +401,98 @@ class FastCommands extends DaytonaCommands {
 
 /** The slice of the sandbox a managed streamed run touches. */
 function createStreamSandbox(overrides?: {
-  settledLogs?: { stdout: string; stderr: string };
+  settledLogs?:
+    | { stdout: string; stderr: string }
+    | ((token: string | null) => { stdout: string; stderr: string });
   failSettledLogs?: boolean;
 }) {
   const logReads: number[] = [];
+  /** What the box was told to run — the per-run sentinel token comes from here. */
+  const sent: string[] = [];
   const sandbox = {
     id: "dtn_1",
     process: {
       createSession: async () => {},
-      executeSessionCommand: async () => ({ cmdId: "cmd_1" }),
+      executeSessionCommand: async (_sessionId: string, params: { command: string }) => {
+        sent.push(params.command);
+        return { cmdId: "cmd_1" };
+      },
       getSessionCommand: async () => ({ exitCode: 0 }),
       getSessionCommandLogs: async () => {
         logReads.push(Date.now());
         if (overrides?.failSettledLogs) throw new Error("logs unavailable");
-        return overrides?.settledLogs ?? { stdout: "", stderr: "" };
+        const settled = overrides?.settledLogs ?? { stdout: "", stderr: "" };
+        return typeof settled === "function" ? settled(tokenOf(sent)) : settled;
       },
       deleteSession: async () => {},
     },
   };
-  return { sandbox, logReads };
+  return { sandbox, logReads, sent };
+}
+
+/** The end-of-output token this run told the box to print, if it told it anything. */
+function tokenOf(sent: string[]): string | null {
+  const match = /EVOLVE-EOS-[a-z0-9-]+/.exec(sent[sent.length - 1] ?? "");
+  return match ? match[0] : null;
+}
+
+/**
+ * The log records Daytona's daemon writes for ONE stream, as measured on a
+ * live sandbox 2026-08-03: one record per line — `<marker><line>\n` — and a
+ * final line the command left unterminated gets terminated anyway.
+ *
+ * The mock ends here rather than at the fix: hand it no token and it produces
+ * exactly what prod produced on 2026-08-02, a 25-byte marker logged as 26.
+ */
+function logRecords(mark: Uint8Array, output: string, token: string | null): Uint8Array {
+  const written = token === null ? output : `${output}${token}`;
+  if (written === "") return bytes();
+  const lines = written.split("\n");
+  const unterminated = lines.pop() ?? "";
+  const records = lines.map((line) => bytes(mark, `${line}\n`));
+  if (unterminated) records.push(bytes(mark, `${unterminated}\n`));
+  return bytes(...records);
+}
+
+/** The same records as a settled log READ returns them: demuxed, per stream. */
+function loggedStream(output: string, token: string | null): string {
+  const written = token === null ? output : `${output}${token}`;
+  return written === "" || written.endsWith("\n") ? written : `${written}\n`;
+}
+
+/**
+ * A managed follow that delivers `record(token)` and then STAYS OPEN — the
+ * chunked follow's normal state, and the one where the run's last bytes are
+ * still in the demuxer and the sentinel filter when the command's record says
+ * the run is over.
+ */
+function stubFollowOnce(sent: string[], record: (token: string | null) => Uint8Array): () => void {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+    const signal = (init as { signal?: AbortSignal } | undefined)?.signal;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(record(tokenOf(sent)));
+        signal?.addEventListener("abort", () => {
+          try {
+            controller.error(new DOMException("aborted", "AbortError"));
+          } catch {
+            /* already errored */
+          }
+        });
+      },
+    });
+    return new Response(stream, { status: 200 });
+  }) as typeof fetch;
+  return () => {
+    globalThis.fetch = realFetch;
+  };
+}
+
+const BYTE_MARKER = "PM-PROBE-DAYTONA-BYTES-OK";
+
+function byteLength(text: string): number {
+  return new TextEncoder().encode(text).length;
 }
 
 function createManagedCommands(sandbox: unknown): DaytonaCommands {
@@ -427,6 +630,165 @@ async function testDeadFollowFallsBackToSettledLog(): Promise<void> {
   assert(threw, "an unrecoverable dead follow raises instead of returning truncated output");
 }
 
+/**
+ * THE PROD FINDING THIS PINS (probe 2026-08-02, managed daytona sandbox):
+ * `commands.run("printf '%s' 'PM-PROBE-DAYTONA-BYTES-OK'")` came back 26 bytes
+ * for a 25-byte marker — the log's own line terminator, returned as if the
+ * command had printed it. `wc -c` in the box said 25, and e2b returns 25 for
+ * the same command.
+ */
+async function testStreamedRunKeepsAnUnterminatedLineUnterminated(): Promise<void> {
+  console.log("\n[2e] run() - a command that printed no trailing newline gets none back");
+  const { sandbox, logReads, sent } = createStreamSandbox();
+  const restoreFetch = stubFollowOnce(sent, (token) =>
+    bytes(
+      logRecords(STDOUT_MARK, BYTE_MARKER, token),
+      logRecords(STDERR_MARK, "", token),
+    ),
+  );
+
+  const seen: string[] = [];
+  let result: { exitCode: number; stdout: string; stderr: string };
+  try {
+    result = await createManagedCommands(sandbox).run(
+      `printf '%s' '${BYTE_MARKER}'`,
+      { onStdout: (chunk) => seen.push(chunk) },
+    );
+  } finally {
+    restoreFetch();
+  }
+
+  assert(result.exitCode === 0, "the command's record supplies exit 0");
+  assert(
+    result.stdout === BYTE_MARKER && byteLength(result.stdout) === 25,
+    `stdout is the 25 bytes the box printed (got ${byteLength(result.stdout)}: ${JSON.stringify(result.stdout)})`,
+  );
+  assert(result.stderr === "", `stderr stays empty (got ${JSON.stringify(result.stderr)})`);
+  assert(
+    seen.join("") === BYTE_MARKER,
+    `the caller's callback saw the same bytes, sentinel and all shed (got ${JSON.stringify(seen.join(""))})`,
+  );
+  assert(logReads.length === 0, "no settled-log read was needed — the stream itself was whole");
+}
+
+/**
+ * The other half of the bar, and the one that fails against the tempting
+ * fix: strip a trailing newline unconditionally and `echo` loses the newline
+ * it really printed. The sentinel is what makes the two cases separable.
+ */
+async function testStreamedRunKeepsARealTrailingNewline(): Promise<void> {
+  console.log("\n[2f] run() - a command that printed a trailing newline keeps exactly one");
+  const { sandbox, sent } = createStreamSandbox();
+  const restoreFetch = stubFollowOnce(sent, (token) =>
+    bytes(
+      logRecords(STDOUT_MARK, `${BYTE_MARKER}\n`, token),
+      logRecords(STDERR_MARK, "", token),
+    ),
+  );
+
+  const seen: string[] = [];
+  let result: { exitCode: number; stdout: string; stderr: string };
+  try {
+    result = await createManagedCommands(sandbox).run(`echo '${BYTE_MARKER}'`, {
+      onStdout: (chunk) => seen.push(chunk),
+    });
+  } finally {
+    restoreFetch();
+  }
+
+  assert(
+    result.stdout === `${BYTE_MARKER}\n` && byteLength(result.stdout) === 26,
+    `stdout keeps its single newline (got ${byteLength(result.stdout)}: ${JSON.stringify(result.stdout)})`,
+  );
+  assert(result.stderr === "", `stderr stays empty (got ${JSON.stringify(result.stderr)})`);
+  assert(
+    seen.join("") === `${BYTE_MARKER}\n`,
+    `the callback saw the newline too (got ${JSON.stringify(seen.join(""))})`,
+  );
+}
+
+async function testDeadFollowReconcileShedsTheSentinel(): Promise<void> {
+  console.log("\n[2g] run() - the settled log used to repair a dead follow sheds its sentinel too");
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(bytes(STDOUT_MARK, "partial-"));
+        controller.error(new Error("socket died"));
+      },
+    });
+    return new Response(stream, { status: 200 });
+  }) as typeof fetch;
+
+  const { sandbox } = createStreamSandbox({
+    settledLogs: (token) => ({
+      stdout: loggedStream("partial-then-tail", token),
+      stderr: loggedStream("warned\n", token),
+    }),
+  });
+  const seenOut: string[] = [];
+  const seenErr: string[] = [];
+  let result: { exitCode: number; stdout: string; stderr: string };
+  try {
+    result = await createManagedCommands(sandbox).run("echo hi", {
+      onStdout: (chunk) => seenOut.push(chunk),
+      onStderr: (chunk) => seenErr.push(chunk),
+    });
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+
+  assert(
+    result.stdout === "partial-then-tail",
+    `the repaired stdout carries no sentinel (got ${JSON.stringify(result.stdout)})`,
+  );
+  assert(
+    result.stderr === "warned\n",
+    `and stderr keeps its own newline (got ${JSON.stringify(result.stderr)})`,
+  );
+  assert(
+    seenOut.join("") === "partial-then-tail",
+    `the callback saw prefix + suffix exactly once, sentinel shed (got ${JSON.stringify(seenOut.join(""))})`,
+  );
+  assert(seenErr.join("") === "warned\n", "stderr reached its own callback intact");
+}
+
+async function testFollowCutMidSentinelLeaksNothing(): Promise<void> {
+  console.log("\n[2h] run() - a follow cut in the MIDDLE of the sentinel leaks no fragment");
+  const { sandbox, sent } = createStreamSandbox({
+    settledLogs: (token) => ({ stdout: loggedStream("abc", token), stderr: loggedStream("", token) }),
+  });
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        // Four bytes into the token, the socket dies. Those bytes could be the
+        // start of the sentinel or the caller's own output; only the settled
+        // log knows, so nothing may be handed to the caller on a guess.
+        controller.enqueue(bytes(STDOUT_MARK, `abc${tokenOf(sent)!.slice(0, 4)}`));
+        controller.error(new Error("socket died"));
+      },
+    });
+    return new Response(stream, { status: 200 });
+  }) as typeof fetch;
+
+  const seen: string[] = [];
+  let result: { exitCode: number; stdout: string; stderr: string };
+  try {
+    result = await createManagedCommands(sandbox).run("printf '%s' abc", {
+      onStdout: (chunk) => seen.push(chunk),
+    });
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+
+  assert(result.stdout === "abc", `stdout is the command's own bytes (got ${JSON.stringify(result.stdout)})`);
+  assert(
+    seen.join("") === "abc",
+    `and the callback saw no token fragment (got ${JSON.stringify(seen.join(""))})`,
+  );
+}
+
 // =============================================================================
 // [3] Managed provider wiring
 // =============================================================================
@@ -512,10 +874,17 @@ const tests = [
   testDemuxHandlesSplitUtf8,
   testDemuxKeepsUnframedBytes,
   testReadCommandStreams,
+  testSentinelCommandShape,
+  testSentinelStripping,
+  testSentinelFilterOnALiveStream,
   testFollowUsesHttpChunks,
   testFollowSurfacesUpstreamFailure,
   testStreamedRunIsByteExactWhenFollowOutlivesCommand,
   testDeadFollowFallsBackToSettledLog,
+  testStreamedRunKeepsAnUnterminatedLineUnterminated,
+  testStreamedRunKeepsARealTrailingNewline,
+  testDeadFollowReconcileShedsTheSentinel,
+  testFollowCutMidSentinelLeaksNothing,
   testManagedProviderAnswersDiscoveryLocally,
   testDirectProviderStillDiscoversUpstream,
   testManagedCreateRefusesResources,

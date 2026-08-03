@@ -72,6 +72,20 @@ function decodeSudoPayload(wrapped: string): string {
   return Buffer.from(match[1], "base64").toString("utf-8");
 }
 
+/**
+ * What the box is asked to run: the caller's command, then the end-of-output
+ * sentinel every command carries so the log's line terminator can be told from
+ * the command's own last byte (see the src header).
+ */
+function withSentinel(command: string, sentAs: string): string {
+  const token = /EVOLVE-EOS-[a-z0-9-]+/.exec(sentAs)?.[0];
+  if (!token) throw new Error(`no end-of-output sentinel in: ${sentAs}`);
+  return (
+    `${command}; __evolve_eos=$?; printf '%s' '${token}'; printf '%s' '${token}' >&2; ` +
+    `(exit $__evolve_eos)`
+  );
+}
+
 /** Run fn with console.warn captured (silenced), returning the warnings. */
 async function captureWarnings<T>(fn: () => Promise<T>): Promise<{ result: T; warnings: string[] }> {
   const warnings: string[] = [];
@@ -976,10 +990,11 @@ async function testCommandsRunAsRootUsesSudoWrapper(): Promise<void> {
 
   assertEqual(execCalls.length, 1, "Exactly one session exec call");
   assert(execCalls[0].command.endsWith("| sudo -n bash"), "Session command pipes through sudo -n bash");
+  const rootPayload = decodeSudoPayload(execCalls[0].command);
   assertEqual(
-    decodeSudoPayload(execCalls[0].command),
-    "export A='1'; cd '/workspace' && echo hi",
-    "Payload carries envs + cwd + command"
+    rootPayload,
+    withSentinel("export A='1'; cd '/workspace' && echo hi", rootPayload),
+    "Payload carries envs + cwd + command, and the sentinel runs as root with them"
   );
   assertEqual(result, { exitCode: 0, stdout: "hi", stderr: "" }, "Result comes back from the session");
 }
@@ -991,7 +1006,11 @@ async function testCommandsRunDefaultUserNoWrapper(): Promise<void> {
   const commands = new DaytonaCommands(sandbox as any);
 
   await commands.run("whoami");
-  assertEqual(execCalls[0].command, "whoami", "No sudo wrapper without a root user");
+  assertEqual(
+    execCalls[0].command,
+    withSentinel("whoami", execCalls[0].command),
+    "No sudo wrapper without a root user — only the end-of-output sentinel"
+  );
 }
 
 async function testCommandsSpawnRootWrapper(): Promise<void> {
@@ -1002,10 +1021,11 @@ async function testCommandsSpawnRootWrapper(): Promise<void> {
 
   const handle = await commands.spawn("sleep 1 && echo bg", { envs: { B: "2" } });
   assertEqual(execCalls[0].runAsync, true, "spawn executes async");
+  const spawnPayload = decodeSudoPayload(execCalls[0].command);
   assertEqual(
-    decodeSudoPayload(execCalls[0].command),
-    "export B='2'; sleep 1 && echo bg",
-    "spawn payload carries envs + command through the sudo wrapper"
+    spawnPayload,
+    withSentinel("export B='2'; sleep 1 && echo bg", spawnPayload),
+    "spawn payload carries envs + command + sentinel through the sudo wrapper"
   );
   assert(typeof handle.processId === "string" && handle.processId.length > 0, "spawn returns a process handle");
 }
