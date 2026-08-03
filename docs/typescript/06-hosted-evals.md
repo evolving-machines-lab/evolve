@@ -1098,7 +1098,7 @@ A terminal import stays readable. A successful import used to start answering `4
 DRAFT → IMPORTING → BUILDING → VALIDATING → READY
 ```
 
-with `FAILED` and `ARCHIVED` as off-ramps: a failed parse or environment build lands `FAILED` before `VALIDATING` is ever reached, and `ARCHIVED` shelves a version that has been moved past. An import lands a version at `VALIDATING`; the activation gate (gold + no-op, above) then certifies it and promotes what it certifies — a version that passes reaches `READY`, the only state that accepts jobs, and becomes the one bare names resolve to, with nothing left to call. [`activate()`](#activating) is how you later point that name at a different `READY` version.
+with `FAILED` and `ARCHIVED` as off-ramps: a failed parse or environment build lands `FAILED` before `VALIDATING` is ever reached, and `ARCHIVED` shelves a version that has been moved past. An import lands a version at `VALIDATING`; the activation gate (gold + no-op, above) then certifies it and promotes what it certifies — a version that passes reaches `READY`, the only state that accepts jobs, and becomes the one bare names resolve to, with nothing left to call. [`activate()`](#activating) is how you later point that name at a different `READY` version. The one exception is a platform-curated dataset, which has no owner: its versions are certified the same way but sit at `VALIDATING` with a passing gate until an operator promotes them, since its default is not any account's to move.
 
 All four vocabularies, with their terminal members marked, are published under `statuses` in the [capability document](#what-the-platform-supports) — render from there, not from these tables.
 

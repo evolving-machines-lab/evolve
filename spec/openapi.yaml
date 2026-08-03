@@ -3145,8 +3145,10 @@ components:
         proving tasks now (per-task verdicts land on the task list as they
         finish); PASSED = every task is activation-eligible, and the version
         was promoted to READY and made the dataset's active version by the
-        gate itself; FAILED = at least one task is not — `failure` names them
-        and the dataset's active version is left alone.
+        gate itself — except on a platform-curated dataset, whose default is
+        an operator setting, so its versions sit PASSED until an operator
+        promotes them; FAILED = at least one task is not — `failure` names
+        them and the dataset's active version is left alone.
       enum: [PENDING, RUNNING, PASSED, FAILED]
 
     ActivationGate:
