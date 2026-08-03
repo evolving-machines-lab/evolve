@@ -119,16 +119,20 @@ export const RETRY_FEEDBACK_PROMPT: string = RETRY_FEEDBACK_MD;
 
 /**
  * Apply template variables to a prompt
+ *
+ * ONE pass over the template: substituted values are emitted verbatim and
+ * never rescanned, so a value that itself contains `{{...}}` (user prompts,
+ * verifier feedback, criteria) is not re-expanded by a later variable — and
+ * `$`-replacement patterns in values stay literal (a function replacement's
+ * return value is never $-interpreted).
  */
 export function applyTemplate(
   template: string,
   variables: Record<string, string>
 ): string {
-  let result = template;
-  for (const [key, value] of Object.entries(variables)) {
-    result = result.replace(new RegExp(`\\{\\{${key}\\}\\}`, "g"), value);
-  }
-  return result;
+  return template.replace(/\{\{(\w+)\}\}/g, (match, key: string) =>
+    Object.prototype.hasOwnProperty.call(variables, key) ? variables[key] : match
+  );
 }
 
 /**

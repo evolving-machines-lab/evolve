@@ -57,10 +57,19 @@ export function readLocalDir(localPath: string, recursive = false): FileMap {
  * const output = await agent.getOutputFiles(true);
  * saveLocalDir('./output', output.files);
  * // Creates: ./output/file.txt, ./output/subdir/nested.txt, etc.
+ *
+ * @throws If an entry's path escapes the target directory. The names come
+ * from sandbox output, so a hostile `../` or absolute entry must not write
+ * outside the directory the caller chose.
  */
 export function saveLocalDir(localPath: string, files: FileMap): void {
+  const base = path.resolve(localPath);
+  const prefix = base.endsWith(path.sep) ? base : base + path.sep;
   for (const [name, content] of Object.entries(files)) {
-    const filePath = path.join(localPath, name);
+    const filePath = path.resolve(base, name);
+    if (!filePath.startsWith(prefix)) {
+      throw new Error(`Unsafe file path escapes target directory: ${name}`);
+    }
     const dir = path.dirname(filePath);
 
     // Create parent directories if needed

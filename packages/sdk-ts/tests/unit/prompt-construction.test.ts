@@ -379,6 +379,22 @@ const validationTests: ValidationTest[] = [
     },
   },
   {
+    name: "applyTemplate expands in ONE pass (values with {{...}} are not re-expanded)",
+    test: () => {
+      const result = applyTemplate("X={{a}} Y={{b}}", {
+        a: "user wrote {{b}} literally",
+        b: "BEE",
+      });
+      return result === "X=user wrote {{b}} literally Y=BEE";
+    },
+  },
+  {
+    name: "applyTemplate keeps $-replacement patterns in values literal",
+    test: () => {
+      return applyTemplate("V={{a}}", { a: "$& $' $1" }) === "V=$& $' $1";
+    },
+  },
+  {
     name: "zodSchemaToJson produces valid JSON",
     test: () => {
       const json = zodSchemaToJson(AnalysisSchema);

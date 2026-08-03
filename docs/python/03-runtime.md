@@ -154,6 +154,8 @@ print(output.error)                        # None (or validation error message)
 
 Files created before the last `run()` or `execute_command()` are filtered out.
 
+`save_local_dir()` confines every entry to the target directory: a name whose resolved path escapes it (`../`, absolute) raises `ValueError` instead of writing outside the directory you chose — file names come from sandbox output and are not trusted.
+
 ### Session Controls
 
 ```python
