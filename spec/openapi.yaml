@@ -40,8 +40,13 @@ info:
       Measured spend travels as `cost_usd` (job: `stats.cost_usd`; trial:
       `agent_result.cost_usd`).
     - **Typed error catalog.** A closed 52-code union; every error response is
-      one envelope: `{code, message, param, details, retryAfterSec, requestId}`
-      (envelope keys frozen verbatim).
+      one envelope: `{code, message, param, details, retryAfterSec,
+      request_id, requestId}` (envelope keys frozen verbatim; `requestId` is
+      the legacy spelling of `request_id`, identical value).
+    - **Request correlation.** Every response — success and error — carries an
+      `X-Request-Id` header: the value of a client-sent `X-Request-Id`
+      (printable ASCII, at most 128 chars) echoed back, else a server-minted
+      `req_<32 hex>`. Error envelopes repeat it as `request_id`.
     - **Two frozen camelCase field keys.** `trials.byStatus` (the trial-status
       tally on job bodies) and `taskMatrix` (on the compare response) keep
       their exact historical spellings, same as the pagination and error
@@ -1764,9 +1769,16 @@ components:
             retryAfterSec:
               type: [integer, 'null']
               description: Present on retryable refusals; mirrors the Retry-After header.
+            request_id:
+              type: string
+              description: |
+                The per-request correlation id — identical to the response's
+                `X-Request-Id` header (every response on this surface carries
+                one; a client-sent `X-Request-Id` is echoed, otherwise the
+                server mints `req_<32 hex>`). Quote it in support requests.
             requestId:
               type: string
-              description: Correlates with server logs; quote it in support requests.
+              description: Legacy spelling of `request_id`, identical value.
 
     # -------------------------------------------------------------------------
     # Shared enums and small shapes
@@ -3157,6 +3169,13 @@ components:
         it. The activate verb is not part of that path — it exists to move
         the default to a different version (an older READY one, or a newer
         one), never to finish a publish.
+
+        FAILED is reached two ways, both terminal and both explained by the
+        version's `gate`/import failure detail: the import itself failed, or
+        the activation gate reached a terminal FAILED verdict — the version
+        then moves VALIDATING -> FAILED (it never sits VALIDATING forever),
+        with `gate.failure` naming the failing tasks and their causes.
+        Re-publishing the same name@version starts the walk over.
       enum: [DRAFT, IMPORTING, BUILDING, VALIDATING, READY, FAILED, ARCHIVED]
 
     DatasetVersion:
