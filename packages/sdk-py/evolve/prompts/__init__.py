@@ -4,6 +4,7 @@ Prompts are stored as markdown files for easy editing.
 They are loaded at import time using importlib.resources.
 """
 
+import re
 from importlib import resources
 from typing import Dict, Union
 
@@ -29,6 +30,10 @@ def apply_template(template: str, variables: Dict[str, str]) -> str:
 
     Replaces {{variable}} with the corresponding value from variables dict.
 
+    ONE pass over the template: substituted values are emitted verbatim and
+    never rescanned, so a value that itself contains ``{{...}}`` (user prompts,
+    verifier feedback, criteria) is not re-expanded by a later variable.
+
     Args:
         template: Template string with {{variable}} placeholders
         variables: Dict mapping variable names to values
@@ -36,10 +41,11 @@ def apply_template(template: str, variables: Dict[str, str]) -> str:
     Returns:
         Template with placeholders replaced
     """
-    result = template
-    for key, value in variables.items():
-        result = result.replace(f"{{{{{key}}}}}", value)
-    return result
+    return re.sub(
+        r'\{\{(\w+)\}\}',
+        lambda match: variables.get(match.group(1), match.group(0)),
+        template,
+    )
 
 
 def build_file_tree(files: Dict[str, Union[str, bytes]]) -> str:

@@ -173,9 +173,18 @@ def save_local_dir(local_path: str, files: Dict[str, Union[str, bytes]]) -> None
         >>> output = await agent.get_output_files(recursive=True)
         >>> save_local_dir('./output', output.files)
         # Creates: ./output/file.txt, ./output/subdir/nested.txt, etc.
+
+    Raises:
+        ValueError: If an entry's path escapes the target directory. The names
+            come from sandbox output, so a hostile ``../`` or absolute entry
+            must not write outside the directory the caller chose.
     """
+    base = os.path.abspath(local_path)
+    prefix = base if base.endswith(os.sep) else base + os.sep
     for name, content in files.items():
-        file_path = os.path.join(local_path, name)
+        file_path = os.path.abspath(os.path.join(base, name))
+        if not file_path.startswith(prefix):
+            raise ValueError(f'unsafe file path escapes target directory: {name!r}')
         parent = os.path.dirname(file_path)
 
         # Create parent directories if needed

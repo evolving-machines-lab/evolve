@@ -148,6 +148,8 @@ console.log(output.error);                // undefined (or validation error mess
 
 Files created before the last `run()` or `executeCommand()` are filtered out.
 
+`saveLocalDir()` confines every entry to the target directory: a name whose resolved path escapes it (`../`, absolute) throws instead of writing outside the directory you chose — file names come from sandbox output and are not trusted.
+
 ### Session Controls
 
 ```ts
