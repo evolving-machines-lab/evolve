@@ -425,6 +425,8 @@ const stream = await evals.download(job.id, { stream: true });  // raw response 
 
 The Buffer and `{ to }` shapes are verified against the response's length and, when the server states one, its digest; `{ stream: true }` hands you the raw bytes to verify yourself.
 
+The archive unpacks to Harbor's job layout — a job-level `config.json` and `result.json`, plus one directory per trial with its own `result.json` and logs. The counters inside the job-level `result.json` are the same cumulative, Harbor-style numbers the live API reports on `stats`: errored trials are a subset of completed, cancelled a subset of errored. The bundle and a live read of the same terminal job never disagree.
+
 ---
 
 ## CLI
@@ -590,7 +592,7 @@ try {
 - **`message`** is the human sentence, and it may be shortened. **`details`** never is. When a refusal says "and 8 more", all of them are in `details` — that is the rule, and it is why `details` exists.
 - **`param`** names the input that was wrong — a body path (`agents[0].name`), a query parameter (`limit`), or a multipart part — so a form can highlight one field instead of showing a banner. It is filled when the server can name one field; today the `invalid_input` family typically arrives without it, so treat `param` as an enhancement to act on when present, never a field to rely on — the `message` and `details` carry the refusal either way.
 - **`retryAfterSec`** is set on `429` and `503`, read from the body first and the `Retry-After` header second (a cross-origin browser fetch cannot always see the header).
-- **`requestId`** identifies the failure server-side. Quote it in a support thread.
+- **`requestId`** identifies the failure server-side. Quote it in a support thread. Every API response — success or failure — carries the same identifier in its `x-request-id` header, and an error body repeats it as `request_id`; `requestId` on the thrown error is that value, so the id in your logs matches the id in the server's.
 
 ---
 
@@ -758,7 +760,12 @@ What happens next:
   - **gold** — the task's reference solution (`solution/`) is pushed through the real agent-side + verifier path and must score exactly `1.0`. Proof the task is solvable as written.
   - **no-op** — an empty submission goes straight to the verifier and must *not* score `1.0`. A task a do-nothing agent passes measures nothing.
 
-`COMPLETED` is the import's terminal success: the corpus landed as a dataset version, visible in the catalog (`catalog.get("my-swe@1.0")`) in state `VALIDATING`. The gate then runs, and a version that passes it in full reaches `READY` — the one state that accepts jobs — and becomes the dataset's active version in the same step. A publish is therefore finished when its gate passes: nothing else to call, and `{ name: "my-swe" }` in a job already resolves to what you just published. A version that fails its gate changes nothing — the dataset keeps serving whatever it served before. `evals.start()` against any other state is rejected with a `409 version_not_ready` naming it.
+`COMPLETED` is the import's terminal success: the corpus landed as a dataset version, visible in the catalog (`catalog.get("my-swe@1.0")`) in state `VALIDATING`. The gate then runs, and a version that passes it in full reaches `READY` — the one state that accepts jobs — and becomes the dataset's active version in the same step. A publish is therefore finished when its gate passes: nothing else to call, and `{ name: "my-swe" }` in a job already resolves to what you just published. A version that fails its gate terminally lands in state `FAILED`, with the reason attached: every version row carries a `gate` field — `{ status, attempts, code, message }` — and `evolve-evals dataset show` prints a failed gate as its own line (`version 1.0 activation gate FAILED: <the server's reason>`), so a dead publish is never mistaken for one still validating. The failure changes nothing else — the dataset keeps serving whatever it served before. `evals.start()` against any other state is rejected with a `409 version_not_ready` naming it.
+
+Two gate rules worth knowing before your first publish:
+
+- **The gold run must write a reward file.** The gate scores the reference solution through the real verifier, and the verifier's verdict is exactly Harbor's contract: `tests/test.sh` writes `/logs/verifier/reward.json` — one flat JSON object of named numeric scores (the singular flat dict form; no nesting, no strings) — or `/logs/verifier/reward.txt` holding one number. `reward.json` wins when both exist; neither file is a verifier error, and a gold run that produces no usable score fails the gate.
+- **Harbor's starter template gate-fails by design.** The `harbor task init` scaffold imports cleanly, but its stub `tests/test.sh` is comments only and writes no reward file — so its gold run produces no score and the gate fails with a message saying exactly that. Fill in the tests (make them write the reward file) and republish; the stub is a scaffold to complete, not a runnable task.
 
 ### Activating
 
@@ -930,7 +937,7 @@ That's the whole format. The rules that matter when converting:
 
 - `task.toml`, `instruction.md`, and `tests/test.sh` are required — a task without `tests/test.sh` fails its import by name. `pre_artifacts.sh` is optional: write one when you want to decide exactly what the agent's work looks like on its way out of the sandbox (the one above turns it into a patch), and when it is absent the platform supplies a minimal collect step and the `artifacts` manifest carries the work instead. `tests/grader.py`, `tests/config.json`, and `tests/test.patch` have named roles, and any other file under `tests/` is carried onto the verifier beside them — a helper like `tests/test_pool.py` lands next to `test.sh` and is runnable from it.
 - `tests/Dockerfile` is built for real whenever the verifier can own its own image: a `separate` verifier on a task that builds from `environment/Dockerfile` — no pinned `docker_image`, no compose — gets a verifier image built from `tests/`, so grader dependencies installed there are genuinely present. Everywhere else the verifier reuses the task image and the test files are uploaded onto it. The Dockerfile is not built on that path, so it is accepted only while it stays trivial (`FROM`, `COPY`, `WORKDIR`, `LABEL`, and permission-only `RUN chmod` lines) — a richer recipe's dependencies would be silently missing, so it is refused by name.
-- The environment is `environment/Dockerfile` (built at import), a pinned `docker_image` (the registry must be approved for imports, and the tag pinned — never `:latest`), or `environment/docker-compose.yaml` for multi-container tasks (the agent runs in the `main` service).
+- The environment is `environment/Dockerfile` (built at import), a pinned `docker_image`, or `environment/docker-compose.yaml` for multi-container tasks (the agent runs in the `main` service). Any valid public image reference works for `docker_image` — Docker Hub, GHCR, ECR Public, or any other registry a pull can reach without credentials — with the tag pinned, never `:latest`. A reference that does not parse as an image reference is refused at import with the reference named; a reference that parses but cannot be pulled surfaces as an infrastructure error naming the pull, never as a task that quietly scores zero.
 - Timeouts are optional: agent defaults to 3600 s, verifier to 600 s, both published as `limits.job.default_agent_timeout_sec` and `default_verifier_timeout_sec`. A declared `timeout_sec` always wins — the corpus is the authority on how long its own task needs, and the fallback never shortens one.
 - `solution/` (`solve.sh`, or a `solution.patch` to apply) is what the gate certifies with — without it the version cannot reach `READY`.
 
@@ -1099,7 +1106,7 @@ A terminal import stays readable. A successful import used to start answering `4
 DRAFT → IMPORTING → BUILDING → VALIDATING → READY
 ```
 
-with `FAILED` and `ARCHIVED` as off-ramps: a failed parse or environment build lands `FAILED` before `VALIDATING` is ever reached, and `ARCHIVED` shelves a version that has been moved past. An import lands a version at `VALIDATING`; the activation gate (gold + no-op, above) then certifies it and promotes what it certifies — a version that passes reaches `READY`, the only state that accepts jobs, and becomes the one bare names resolve to, with nothing left to call. [`activate()`](#activating) is how you later point that name at a different `READY` version. The one exception is a platform-curated dataset, which has no owner: its versions are certified the same way but sit at `VALIDATING` with a passing gate until an operator promotes them, since its default is not any account's to move.
+with `FAILED` and `ARCHIVED` as off-ramps: a failed parse or environment build lands `FAILED` before `VALIDATING` is ever reached, a terminal activation-gate failure lands `FAILED` from `VALIDATING` (with the gate's reason on the version's `gate` field, printed by `dataset show`), and `ARCHIVED` shelves a version that has been moved past. An import lands a version at `VALIDATING`; the activation gate (gold + no-op, above) then certifies it and promotes what it certifies — a version that passes reaches `READY`, the only state that accepts jobs, and becomes the one bare names resolve to, with nothing left to call. [`activate()`](#activating) is how you later point that name at a different `READY` version. The one exception is a platform-curated dataset, which has no owner: its versions are certified the same way but sit at `VALIDATING` with a passing gate until an operator promotes them, since its default is not any account's to move.
 
 All four vocabularies, with their terminal members marked, are published under `statuses` in the [capability document](#what-the-platform-supports) — render from there, not from these tables.
 
@@ -1317,6 +1324,14 @@ interface DatasetVersion {
     state: DatasetVersionState;          // the lifecycle above
     created_at: string;
     task_count: number;
+    gate: DatasetVersionGate | null;     // null = no gate scheduled (or an older server)
+}
+
+interface DatasetVersionGate {           // the activation gate's progress
+    status: string;                      // PENDING | RUNNING | PASSED | FAILED
+    attempts: number;
+    code: string | null;                 // set on failure, e.g. "gate_failed"
+    message: string | null;              // the human reason, set on failure
 }
 
 interface Task {                         // public fields only

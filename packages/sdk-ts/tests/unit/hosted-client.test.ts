@@ -218,8 +218,8 @@ async function testDatasetsList() {
     assertEqual(catalog.items[0].title, "DeepSWE", "maps title");
     assertEqual(
       catalog.items[0].active_version,
-      { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113 },
-      "maps active_version object (one shape: version/state/created_at/task_count)"
+      { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113, gate: null },
+      "maps active_version object (one shape: version/state/created_at/task_count/gate)"
     );
     assertEqual(catalog.items[1].active_version, null, "null active_version preserved");
 
@@ -277,8 +277,8 @@ async function testDatasetsGet() {
     assertEqual(detail.versions?.length, 2, "maps versions");
     assertEqual(
       detail.selected_version,
-      { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113 },
-      "selected_version is a full version object (never a bare label)"
+      { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113, gate: null },
+      "selected_version is a full version object (never a bare label; gate null when the server sends none)"
     );
     // A nested collection is the same envelope as a top-level one.
     assertEqual(detail.tasks?.hasMore, true, "tasks are paged like every collection");
@@ -294,6 +294,82 @@ async function testDatasetsGet() {
     await d.get("deep-swe");
     url = fetchCalls[fetchCalls.length - 1].url;
     assert(!url.includes("version="), "bare name omits version param");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testDatasetGateMapping() {
+  console.log("\n--- datasets().get() maps the activation gate (both wire forms, older servers) ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/datasets/r1-init", {
+      status: 200,
+      body: {
+        name: "r1-init",
+        title: null,
+        description: null,
+        active_version: null,
+        versions: [
+          // The server's nested form: failure carries code + message.
+          {
+            version: "1.0",
+            state: "FAILED",
+            created_at: "2026-08-03T19:15:55.930Z",
+            task_count: 1,
+            gate: {
+              status: "FAILED",
+              attempts: 1,
+              failure: {
+                code: "gate_failed",
+                message: "1 of 1 task(s) failed the activation gate (1 not eligible, 0 unverified)",
+                failed_tasks: [{ task_name: "starter-task", outcome: "ERROR", reasons: ["gold run produced no usable score"] }],
+              },
+            },
+          },
+          // The flat form: code + message directly on the gate.
+          {
+            version: "0.9",
+            state: "VALIDATING",
+            created_at: "2026-08-01T00:00:00.000Z",
+            task_count: 1,
+            gate: { status: "RUNNING", attempts: 1, code: null, message: null },
+          },
+          // No gate scheduled (or an older server): field absent.
+          { version: "0.8", state: "READY", created_at: "2026-07-01T00:00:00.000Z", task_count: 1 },
+          // Garbage gate value: never a crash, always null.
+          { version: "0.7", state: "READY", created_at: "2026-06-01T00:00:00.000Z", task_count: 1, gate: "oops" },
+        ],
+        selected_version: null,
+        tasks: { items: [], nextCursor: null, hasMore: false },
+        upstream: null,
+        created_at: "2026-08-03T19:15:55.921Z",
+        updated_at: "2026-08-03T19:15:55.921Z",
+      },
+    });
+
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    const detail = await d.get("r1-init");
+    const [failed, running, none, garbage] = detail.versions ?? [];
+
+    assertEqual(failed.state, "FAILED", "terminal gate failure surfaces as version state FAILED");
+    assertEqual(
+      failed.gate,
+      {
+        status: "FAILED",
+        attempts: 1,
+        code: "gate_failed",
+        message: "1 of 1 task(s) failed the activation gate (1 not eligible, 0 unverified)",
+      },
+      "nested failure form maps to {status, attempts, code, message}"
+    );
+    assertEqual(
+      running.gate,
+      { status: "RUNNING", attempts: 1, code: null, message: null },
+      "flat form maps unchanged; healthy gate carries null code/message"
+    );
+    assertEqual(none.gate, null, "a version without a gate field maps to gate null (older server: no crash)");
+    assertEqual(garbage.gate, null, "an unreadable gate value maps to null, never a throw");
   } finally {
     restoreFetch();
   }
@@ -3158,6 +3234,7 @@ async function main() {
   await testFactoriesRequireApiKey();
   await testDatasetsList();
   await testDatasetsGet();
+  await testDatasetGateMapping();
   await testGetActive();
   await testGetActiveNoActiveVersion();
   await testDatasetUpdate();

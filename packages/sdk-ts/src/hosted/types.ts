@@ -824,12 +824,33 @@ export type DatasetVersionState =
   | "FAILED"
   | "ARCHIVED";
 
+/**
+ * The activation gate's progress for one dataset version — the gold-run check
+ * a version must pass before it can be activated. `status` is the gate's own
+ * lifecycle (PENDING → RUNNING → PASSED/FAILED as wire values; render unknown
+ * values as-is). `code` and `message` are populated on failure and explain it
+ * in one machine word and one human sentence; both are null while the gate is
+ * healthy. `attempts` counts gate runs so far.
+ */
+export interface DatasetVersionGate {
+  status: string;
+  attempts: number;
+  code: string | null;
+  message: string | null;
+}
+
 /** One immutable version of a dataset — one shape on every surface */
 export interface DatasetVersion {
   version: string;
   state: DatasetVersionState;
   created_at: string;
   task_count: number;
+  /**
+   * Activation-gate progress. Null when no gate was scheduled for this
+   * version, and also null when the server predates the gate field — so a
+   * missing gate never means "passed", only "nothing to report".
+   */
+  gate: DatasetVersionGate | null;
 }
 
 /**

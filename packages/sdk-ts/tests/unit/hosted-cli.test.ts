@@ -2808,6 +2808,73 @@ async function testDatasetListAndShow() {
     assert(text.includes("VERSION") && text.includes("READY"), "renders the version table");
     assert(text.includes("dataset show deep-swe --cursor task-cur"), "the task paging hint speaks the new grammar");
     assert(text.includes("modal: needs docker"), "provider limitations are named once");
+    assert(!text.includes("GATE"), "no GATE column when the server reports no gate (older server)");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testDatasetShowGate() {
+  console.log("\n--- runCli: dataset show surfaces the activation gate ---");
+  installMockFetch();
+  try {
+    const gateMessage = "1 of 1 task(s) failed the activation gate (1 not eligible, 0 unverified)";
+    setMockResponse("/api/datasets/r1-init", {
+      status: 200,
+      body: {
+        name: "r1-init",
+        title: null,
+        description: null,
+        active_version: null,
+        versions: [
+          {
+            version: "1.0",
+            state: "FAILED",
+            created_at: "2026-08-03T19:15:55.930Z",
+            task_count: 1,
+            gate: { status: "FAILED", attempts: 1, failure: { code: "gate_failed", message: gateMessage } },
+          },
+          {
+            version: "0.9",
+            state: "VALIDATING",
+            created_at: "2026-08-01T00:00:00.000Z",
+            task_count: 1,
+            gate: { status: "RUNNING", attempts: 1 },
+          },
+        ],
+        selected_version: null,
+        tasks: { items: [], nextCursor: null, hasMore: false },
+        upstream: null,
+        created_at: "2026-08-03T19:15:55.921Z",
+        updated_at: "2026-08-03T19:15:55.921Z",
+      },
+    });
+
+    const show = captureIO();
+    assertEqual(await runCli(["dataset", "show", "r1-init", ...AUTH], show.io), 0, "show exits 0");
+    const text = show.out.join("\n");
+    assert(text.includes("FAILED"), "the version state FAILED is visible");
+    assert(text.includes("GATE"), "the versions table grows a GATE column when the server reports gate progress");
+    assert(text.includes("RUNNING"), "a healthy in-progress gate shows its status");
+    assert(
+      text.includes(`version 1.0 activation gate FAILED: ${gateMessage}`),
+      "a failed gate is unmissable: one line naming the version and the server's reason"
+    );
+
+    const json = captureIO();
+    assertEqual(await runCli(["dataset", "show", "r1-init", "--json", ...AUTH], json.io), 0, "show --json exits 0");
+    const body = JSON.parse(json.out.join("\n"));
+    assertEqual(body.versions[0].state, "FAILED", "--json carries the version state");
+    assertEqual(
+      body.versions[0].gate,
+      { status: "FAILED", attempts: 1, code: "gate_failed", message: gateMessage },
+      "--json carries the gate: status, attempts, code, message"
+    );
+    assertEqual(
+      body.versions[1].gate,
+      { status: "RUNNING", attempts: 1, code: null, message: null },
+      "--json carries a healthy gate with null code/message"
+    );
   } finally {
     restoreFetch();
   }
@@ -3176,6 +3243,7 @@ async function main() {
   await testTrialDownloadUsageErrors();
   await testTrialStop();
   await testDatasetListAndShow();
+  await testDatasetShowGate();
   await testDatasetPublishWatch();
   await testDatasetPublishFailedAndErrors();
   await testDatasetDownloadAndActivate();

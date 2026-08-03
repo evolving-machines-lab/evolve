@@ -302,12 +302,31 @@ AttemptPhase = Literal[
 
 
 @dataclass
+class DatasetVersionGate:
+    """The activation gate's progress for one dataset version.
+
+    ``status`` is the gate's own lifecycle (``PENDING`` → ``RUNNING`` →
+    ``PASSED``/``FAILED`` as wire values). ``code`` and ``message`` are set on
+    failure — one machine word and one human sentence — and are ``None`` while
+    the gate is healthy. ``attempts`` counts gate runs so far.
+    """
+    status: str
+    attempts: int
+    code: Optional[str] = None
+    message: Optional[str] = None
+
+
+@dataclass
 class DatasetVersion:
     """One immutable version of a dataset — one shape on every surface."""
     version: str
     state: str
     created_at: str
     task_count: int
+    #: Activation-gate progress. ``None`` when no gate was scheduled for this
+    #: version, and also ``None`` when the server predates the gate field — a
+    #: missing gate never means "passed", only "nothing to report".
+    gate: Optional[DatasetVersionGate] = None
 
 
 @dataclass
@@ -1160,12 +1179,39 @@ def _map_capability_document(raw: Dict[str, Any]) -> CapabilityDocument:
     )
 
 
+def _map_version_gate(data: Any) -> Optional[DatasetVersionGate]:
+    """Map a version's activation-gate field, tolerating every server generation.
+
+    An older server has no ``gate`` field at all; the current server sends the
+    nested form (``{status, attempts, failure: {code, message}}``); the flat
+    form carries ``code``/``message`` directly. Anything unreadable becomes
+    ``None`` — a missing gate is "nothing to report", never a crash and never
+    "passed".
+    """
+    if not isinstance(data, dict) or not isinstance(data.get('status'), str):
+        return None
+    failure = data.get('failure')
+    failure = failure if isinstance(failure, dict) else {}
+    code = data.get('code') if isinstance(data.get('code'), str) else failure.get('code')
+    message = (
+        data.get('message') if isinstance(data.get('message'), str) else failure.get('message')
+    )
+    attempts = data.get('attempts')
+    return DatasetVersionGate(
+        status=data['status'],
+        attempts=attempts if isinstance(attempts, int) and not isinstance(attempts, bool) else 0,
+        code=code if isinstance(code, str) else None,
+        message=message if isinstance(message, str) else None,
+    )
+
+
 def _map_dataset_version(data: Dict[str, Any]) -> DatasetVersion:
     return DatasetVersion(
         version=data['version'],
         state=data.get('state', ''),
         created_at=data.get('created_at', ''),
         task_count=int(data.get('task_count', 0)),
+        gate=_map_version_gate(data.get('gate')),
     )
 
 

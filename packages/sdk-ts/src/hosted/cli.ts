@@ -2536,11 +2536,28 @@ function datasetDetailLines(b: Dataset): string[] {
   ]);
   if (b.versions && b.versions.length > 0) {
     lines.push("");
-    const rows = [["VERSION", "STATE", "TASKS", "CREATED"]];
+    // The GATE column appears only when the server reports gate progress —
+    // an older server without the field keeps the four-column table.
+    const anyGate = b.versions.some((v) => v.gate != null);
+    const rows = [["VERSION", "STATE", "TASKS", "CREATED", ...(anyGate ? ["GATE"] : [])]];
     for (const v of b.versions) {
-      rows.push([v.version, v.state, String(v.task_count), v.created_at ?? "-"]);
+      rows.push([
+        v.version,
+        v.state,
+        String(v.task_count),
+        v.created_at ?? "-",
+        ...(anyGate ? [v.gate?.status ?? "-"] : []),
+      ]);
     }
     lines.push(...table(rows));
+    // A failed gate is terminal and must be unmissable: the version cannot be
+    // activated or run until it is republished, so say why, right here.
+    for (const v of b.versions) {
+      if (v.gate?.status === "FAILED") {
+        const reason = v.gate.message ?? v.gate.code ?? "no reason reported";
+        lines.push(`version ${v.version} activation gate FAILED: ${reason}`);
+      }
+    }
   }
   if (b.tasks && b.tasks.items.length > 0) {
     lines.push("", `Tasks (version ${b.selected_version?.version ?? "?"}):`);

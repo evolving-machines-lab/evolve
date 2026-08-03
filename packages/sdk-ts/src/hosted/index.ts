@@ -35,6 +35,7 @@ import type {
   DatasetPatch,
   DatasetRef,
   DatasetVersion,
+  DatasetVersionGate,
   DatasetVersionState,
   DatasetsClient,
   DownloadDatasetOptions,
@@ -139,6 +140,7 @@ export type {
   DatasetSelector,
   DatasetSource,
   DatasetVersion,
+  DatasetVersionGate,
   DatasetVersionState,
   DatasetsClient,
   DownloadDatasetOptions,
@@ -455,12 +457,38 @@ function mapAgentArm(raw: Record<string, unknown>): AgentArm {
   };
 }
 
+/**
+ * Map a version's activation-gate field, tolerating every server generation:
+ * an older server that has no `gate` field at all, the current server's
+ * nested form ({status, attempts, failure: {code, message}}), and the flat
+ * form ({status, attempts, code, message}). Anything unreadable becomes null
+ * — a missing gate is "nothing to report", never a crash and never "passed".
+ */
+function mapVersionGate(raw: unknown): DatasetVersionGate | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const value = raw as Record<string, unknown>;
+  if (typeof value.status !== "string") return null;
+  const failure =
+    value.failure && typeof value.failure === "object" && !Array.isArray(value.failure)
+      ? (value.failure as Record<string, unknown>)
+      : {};
+  const code = typeof value.code === "string" ? value.code : failure.code;
+  const message = typeof value.message === "string" ? value.message : failure.message;
+  return {
+    status: value.status,
+    attempts: typeof value.attempts === "number" ? value.attempts : 0,
+    code: typeof code === "string" ? code : null,
+    message: typeof message === "string" ? message : null,
+  };
+}
+
 function mapDatasetVersion(raw: Record<string, unknown>): DatasetVersion {
   return {
     version: raw.version as string,
     state: raw.state as DatasetVersionState,
     created_at: raw.created_at as string,
     task_count: (raw.task_count as number) ?? 0,
+    gate: mapVersionGate(raw.gate),
   };
 }
 

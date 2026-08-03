@@ -47,6 +47,7 @@ import pytest
 from evolve import (
     AgentArm,
     DatasetSelector,
+    DatasetVersionGate,
     EvolveAPIError,
     EvolveDigestMismatchError,
     EvolveIncompleteDownloadError,
@@ -336,6 +337,9 @@ class TestDatasets:
         # selected_version is a full version object — the tasks' provenance
         assert detail.selected_version.version == '1.1'
         assert detail.selected_version.created_at == '2026-07-21'
+        # No gate field from the server (older server / none scheduled) → None,
+        # never a crash and never "passed".
+        assert detail.selected_version.gate is None
         # A nested collection is the same envelope as a top-level one.
         assert detail.tasks.has_more is True
         assert detail.tasks.next_cursor == 'task-1'
@@ -347,6 +351,63 @@ class TestDatasets:
         assert task.providers['modal'] == TaskProviderVerdict(
             ok=False, reason='multi-container tasks are not supported on modal'
         )
+
+    @pytest.mark.asyncio
+    async def test_get_maps_activation_gate_both_wire_forms(self):
+        fake = FakeUrlopen([
+            ('/api/datasets/r1-init', {
+                'name': 'r1-init',
+                'title': None,
+                'description': None,
+                'active_version': None,
+                'versions': [
+                    # The server's nested form: failure carries code + message.
+                    {
+                        'version': '1.0', 'state': 'FAILED',
+                        'created_at': '2026-08-03', 'task_count': 1,
+                        'gate': {
+                            'status': 'FAILED', 'attempts': 1,
+                            'failure': {
+                                'code': 'gate_failed',
+                                'message': '1 of 1 task(s) failed the activation gate',
+                                'failed_tasks': [{'task_name': 'starter-task'}],
+                            },
+                        },
+                    },
+                    # The flat form: code + message directly on the gate.
+                    {
+                        'version': '0.9', 'state': 'VALIDATING',
+                        'created_at': '2026-08-01', 'task_count': 1,
+                        'gate': {'status': 'RUNNING', 'attempts': 1, 'code': None, 'message': None},
+                    },
+                    # Garbage gate value: never a crash, always None.
+                    {
+                        'version': '0.8', 'state': 'READY',
+                        'created_at': '2026-07-01', 'task_count': 1,
+                        'gate': 'oops',
+                    },
+                ],
+                'selected_version': None,
+                'tasks': {'items': [], 'nextCursor': None, 'hasMore': False},
+                'created_at': '2026-08-03',
+                'updated_at': '2026-08-03',
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            detail = await datasets_factory(CONFIG).get('r1-init')
+
+        failed, running, garbage = detail.versions
+        # Terminal gate failure: the version state says FAILED and the gate says why.
+        assert failed.state == 'FAILED'
+        assert failed.gate == DatasetVersionGate(
+            status='FAILED', attempts=1, code='gate_failed',
+            message='1 of 1 task(s) failed the activation gate',
+        )
+        # Flat form maps unchanged; a healthy gate carries None code/message.
+        assert running.gate == DatasetVersionGate(
+            status='RUNNING', attempts=1, code=None, message=None
+        )
+        assert garbage.gate is None
 
     @pytest.mark.asyncio
     async def test_get_active_resolves_runnable_shape(self):
