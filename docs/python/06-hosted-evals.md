@@ -149,6 +149,26 @@ Omitting it resolves the latest at dispatch; either way the version that actuall
 
 `reasoning_effort` is the other identity field, and it belongs to the comparison rather than to the run. The accepted values are published as `limits['job']['reasoning_efforts']` in the [capability document](#what-the-platform-supports). An omitted effort resolves to the **agent's own default** — not the document's platform-wide `default_reasoning_effort` — and that resolved value is stamped as arm identity: trials echo it on `agent_info.reasoning_effort`, and the job's `evals` keys carry it as the `__effort` segment even though the job never declared one (a claude arm with no effort settles under `…__high`, a kimi arm under `…__max`). Effort changes the score, so a client comparing two jobs must read the stamped value, never assume what an omitted one meant. Effort is part of an arm's identity alongside the agent, the model, and the version pin: the same agent and model at `low` and at `high` are two distinct systems — they de-duplicate separately, they each consume an arm slot, and every trial echoes the effort back on `agent_info.reasoning_effort`. An effort the agent cannot apply is refused at creation with a `400 invalid_input` rather than accepted and quietly dropped — recording `high` against a CLI that never received the flag would put a claim in the record that did not happen. Each capability entry publishes `effort_support`, so a picker can grey the control out instead of discovering the refusal after a POST.
 
+### Skills
+
+An arm can carry skills — folders of instructions the harness discovers natively, the same `SKILL.md` format the SDK's `skills=` option mounts locally. `skills` is a list of reference strings on the arm, and like effort it is **part of the arm's identity**: the same agent and model with different skills are two arms.
+
+```python
+agents=[AgentArm(
+    name='claude',
+    model_name='fable',
+    skills=[
+        'skills.sh/vercel-labs/agent-skills/frontend-design',  # one named skill from a skills.sh-listed repo
+        'anthropics/skills@main',                              # a GitHub repo, pinned to a branch, tag, or commit
+        'upload:6f6f1f36-…',                                   # a skill uploaded to the platform
+    ],
+)],
+```
+
+Git references are **pinned at job creation** — each one resolved once to its exact commit and stored in pinned spelling — so a moving branch can never make two trials of one job run different skill content. A raw filesystem path is refused by the server (a hosted job cannot read your disk): upload the folder first and reference `upload:<id>`. The `skills()` client does that — `upload(directory)` packs and stores the folder content-addressed under its folder name (re-uploading identical content under the same name answers the existing record), `list()`, `get(id)` (including the SKILL.md text) and `delete(id)` manage the catalog, and a delete is refused with `skill_in_use` while a running job references the upload.
+
+Every run records what actually mounted: once the arm's first trial resolves its skills, the job's arms carry `skill_locks` — one `SkillLock` per skill with its name, pinned source, content digest, and for git-backed skills the repo URL and exact commit. The trial detail page shows the same pins. A skill that cannot be fetched at run time is an infrastructure error on the trial, never a score.
+
 ### Idempotency
 
 Retries are safe — pass an idempotency key and a retry returns the original job instead of creating a duplicate:
@@ -541,7 +561,7 @@ evolve run \
     --watch                      # stream events until the job finishes
 ```
 
-`-i/--include-task-name` and `-x/--exclude-task-name` filter task names by glob and `-l/--n-tasks` caps each dataset's count after filters — all three are stamped onto every dataset selector, so a glob that matches nothing in one dataset simply filters nothing there. `--effort <value>` sets the reasoning effort on **every** arm, verbatim; an agent that cannot honor it is refused by the server rather than silently skipped, so a mixed sweep that needs per-arm efforts belongs in the SDK. `--agent-env` / `--verifier-env` take `KEY=VALUE`, repeatable. `-r/--max-retries` caps [automatic infrastructure-error retries](#automatic-retries) per trial (0 turns them off), and the repeatable `--retry-include`/`--retry-exclude` refine which exception names retry; with `-c/--config`, the file's `retry` object is the base and each flag overrides its own field — Harbor's merge rule. `--job-name` labels the run. A flag's value may itself begin with `-` — a glob like `-x '-*'`, a negative number, a bare `-` — and is taken as the value; only a token that spells another flag of the same command is refused, and that refusal shows the `--flag=value` form that states the intent.
+`-i/--include-task-name` and `-x/--exclude-task-name` filter task names by glob and `-l/--n-tasks` caps each dataset's count after filters — all three are stamped onto every dataset selector, so a glob that matches nothing in one dataset simply filters nothing there. `--effort <value>` sets the reasoning effort on **every** arm, verbatim; an agent that cannot honor it is refused by the server rather than silently skipped, so a mixed sweep that needs per-arm efforts belongs in the SDK. `--skill <ref>` (repeatable) mounts skills on **every** arm the same way — `skills.sh/<owner>/<repo>[/<skill>]`, `org/repo[@ref]`, an https git URL, `upload:<id>`, or a local folder, which the CLI uploads to the platform first and swaps for its `upload:<id>` handle (`--print-config` still shows the path you typed). `--agent-env` / `--verifier-env` take `KEY=VALUE`, repeatable. `-r/--max-retries` caps [automatic infrastructure-error retries](#automatic-retries) per trial (0 turns them off), and the repeatable `--retry-include`/`--retry-exclude` refine which exception names retry; with `-c/--config`, the file's `retry` object is the base and each flag overrides its own field — Harbor's merge rule. `--job-name` labels the run. A flag's value may itself begin with `-` — a glob like `-x '-*'`, a negative number, a bare `-` — and is taken as the value; only a token that spells another flag of the same command is refused, and that refusal shows the `--flag=value` form that states the intent.
 
 `--ak key=value` (repeatable, alias `--agent-kwarg`) is Harbor's agent-kwarg channel, stamped on **every** arm like `--effort`. The key the platform delivers is `config`: `--ak 'config=./settings.json'` reads the local file (JSON, or TOML for a Codex config) and sends its parsed content inline — the server never reads a client path — and `--ak 'config={"permissions":{"deny":["WebSearch"]}}'` passes the document straight. In the sandbox it becomes the harness's native settings file (Claude: a settings JSON layered in via `--settings`; Codex: the base `~/.codex/config.toml`), with your document as the base and the platform's routing, MCP, model and effort stamps on top — so a config can tune permissions or tool behavior, never where model traffic goes. Acceptance is typed, never silent: an unrecognized kwarg key refuses `agent_kwarg_unsupported`, `config` on an agent without native-config support (only `claude` and `codex` have it — each capability entry publishes `supports_config`) refuses `agent_config_unsupported`, and a config key touching billing, base URLs, provider routing, or env injection refuses `agent_config_key_refused` naming the keys. The accepted config is part of the arm's identity: the same agent and model with two configs are two arms, and job bodies echo `kwargs` on each arm.
 
@@ -1276,6 +1296,16 @@ class AgentArm:                     # one agent arm of a job
     model_name: str                 # always required; no server default
     version: Optional[str]          # pin; omitted = resolve latest
     reasoning_effort: Optional[str] # PART OF THE ARM'S IDENTITY
+    skills: List[str]               # skill references — identity too; git refs pinned at create
+    skill_locks: Optional[List[SkillLock]]  # what actually mounted; server-stamped, echo-only
+
+@dataclass
+class SkillLock:                    # provenance of one mounted skill
+    name: str
+    source: str                     # the pinned reference the content came from
+    digest: str                     # "sha256:<hex>" over the folder
+    git_url: Optional[str]
+    git_commit_id: Optional[str]
 
 # Pages: every collection answers items / next_cursor / has_more; the list
 # handles are dual-use (await one page, or async-for every row).

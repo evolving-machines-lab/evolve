@@ -23,7 +23,6 @@ import type {
   StreamCallbacks,
   JsonSchema,
   SchemaValidationOptions,
-  SkillName,
   McpServerConfig,
   AgentRuntimeState,
   SandboxLifecycleState,
@@ -55,6 +54,7 @@ import {
 } from "./mcp";
 import { stringify as stringifyToml } from "smol-toml";
 import { createAgentParser, type AgentParser } from "./parsers";
+import { mountSkills, resolveSkills, type ResolvedSkill, type SkillRef } from "./skills";
 import type { OutputEvent } from "./parsers/types";
 import {
   DEFAULT_TIMEOUT_MS,
@@ -345,8 +345,10 @@ export class Agent {
   private managedSecretProxy?: SandboxCommandHandle;
   private credentialsSealed = false;
 
-  // Skills storage
-  private readonly skills?: SkillName[];
+  // Skills storage: real references (skills.sh / git / local folders),
+  // resolved and mounted by the one resolver in skills.ts at setup time.
+  private readonly skills?: SkillRef[];
+  private resolvedSkillsList?: ResolvedSkill[];
 
   // Storage / Checkpointing
   private readonly storage?: ResolvedStorageConfig;
@@ -1929,25 +1931,34 @@ export class Agent {
   }
 
   /**
-   * Setup skills for the agent
+   * Setup skills for the agent.
    *
-   * Copies selected skills from source (~/.evolve/skills/) to CLI-specific directory.
-   * All CLIs use the same pattern: skills are auto-discovered from their target directory.
+   * References (skills.sh/<owner>/<repo>[/<skill>], org/repo[@ref], https git
+   * URLs, local folders) go through the one resolver in skills.ts — fetched
+   * pinned, cached by content, then mounted into the CLI-specific skills
+   * directory where the harness auto-discovers them. The resolved provenance
+   * (name, source, exact commit, content digest) is kept on the instance so
+   * callers — the hosted eval worker included — can record what actually ran.
    */
   private async setupSkills(sandbox: SandboxInstance): Promise<void> {
     if (!this.skills?.length) return;
 
     const { skillsConfig } = this.registry;
-    const sourceDir = expandPath(skillsConfig.sourceDir, this.homeDir);
     const targetDir = expandPath(skillsConfig.targetDir, this.homeDir);
 
-    await sandbox.files.makeDir(targetDir);
+    const resolved = await resolveSkills(this.skills);
+    this.resolvedSkillsList = resolved;
+    await mountSkills(sandbox, resolved, targetDir);
+  }
 
-    // Copy selected skills from source to target directory
-    for (const skill of this.skills) {
-      const copyCmd = `cp -r ${sourceDir}/${skill} ${targetDir}/ 2>/dev/null || true`;
-      await sandbox.commands.run(copyCmd, { timeoutMs: 30000 });
-    }
+  /**
+   * Provenance of the skills mounted into this session's sandbox: one entry
+   * per skill with its source reference, exact git commit (when git-backed)
+   * and Harbor-recipe content digest. Empty until setup has run, and empty
+   * for sessions configured without skills.
+   */
+  resolvedSkills(): ResolvedSkill[] {
+    return this.resolvedSkillsList ?? [];
   }
 
   /**

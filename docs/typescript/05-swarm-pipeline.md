@@ -8,7 +8,7 @@ import { z } from "zod";  // Or use plain JSON Schema objects instead
 
 const swarm = new Swarm({
     agent: { type: "claude" },   // Default agent for all operations
-    skills: ["pdf"],                 // Default skills
+    skills: ["anthropics/skills"],   // Default skills (skills.sh / git / local references)
     integrations: {                  // Default Integrations config for all workers
         userId: "root",
         apps: ["github", "linear"],
@@ -278,8 +278,8 @@ const result = await swarm.bestOf({
         judgeAgent: claudeAgent,
         mcpServers: {...},        // (optional) MCP servers for candidates
         judgeMcpServers: {...},   // (optional) MCP servers for judge
-        skills: ["pdf"],          // (optional) Skills for candidates
-        judgeSkills: ["pdf"],     // (optional) Skills for judge
+        skills: ["anthropics/skills"], // (optional) Skills for candidates
+        judgeSkills: ["anthropics/skills"], // (optional) Skills for judge
         integrations: {...},          // (optional) Integrations config for candidates
         judgeIntegrations: {...},     // (optional) Integrations config for judge
     },
@@ -319,7 +319,7 @@ swarm.map<T>({
     verify?: VerifyConfig,              // LLM-as-judge quality check with retry loop
     retry?: RetryConfig,                // Auto-retry on error with backoff
     mcpServers?: Record<string, McpServerConfig>,
-    skills?: string[],                  // e.g. ["pdf"]
+    skills?: string[],                  // e.g. ["anthropics/skills"]
     integrations?: IntegrationsSetup,           // managed integrations config
     timeoutMs?: number,
 }): Promise<SwarmResultList<T>>
@@ -451,7 +451,7 @@ swarm.filter<T>({
     verify?: VerifyConfig,              // LLM-as-judge quality check with retry loop
     retry?: RetryConfig,                // Auto-retry on error with backoff
     mcpServers?: Record<string, McpServerConfig>,
-    skills?: string[],                  // e.g. ["pdf"]
+    skills?: string[],                  // e.g. ["anthropics/skills"]
     integrations?: IntegrationsSetup,           // managed integrations config
     timeoutMs?: number,
 }): Promise<SwarmResultList<T>>
@@ -515,7 +515,7 @@ swarm.reduce<T>({
     verify?: VerifyConfig,              // LLM-as-judge quality check with retry loop
     retry?: RetryConfig,                // Auto-retry on error with backoff
     mcpServers?: Record<string, McpServerConfig>,
-    skills?: string[],                  // e.g. ["pdf"]
+    skills?: string[],                  // e.g. ["anthropics/skills"]
     integrations?: IntegrationsSetup,           // managed integrations config
     timeoutMs?: number,
 }): Promise<ReduceResult<T>>
@@ -574,7 +574,7 @@ const results = await swarm.map({
         criteria: "Analysis must include specific data points and cite sources",
         maxAttempts: 3,              // Default: 3
         // verifierAgent: { type: "claude", model: "opus" },  // Override verifier agent
-        // verifierSkills: ["pdf"],   // Skills for verifier
+        // verifierSkills: ["anthropics/skills"], // Skills for verifier
         onWorkerComplete: (idx, attempt, status) => {
             console.log(`Item ${idx}, attempt ${attempt}: ${status}`);
         },

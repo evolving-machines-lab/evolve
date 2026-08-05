@@ -58,6 +58,7 @@ import {
   datasets,
   jobs,
   meta,
+  skills,
   trials,
 } from "../../src/hosted/index";
 
@@ -149,6 +150,7 @@ const surfaces: Record<string, unknown> = {
   trials: trials(cfg),
   datasets: datasets(cfg),
   agents: agents(cfg),
+  skills: skills(cfg),
   auth: auth(cfg),
   meta,
 };
@@ -189,6 +191,11 @@ const OPERATION_TO_METHOD: Record<string, string | null> = {
   getAgent: "agents.get",
   upsertAgent: "agents.upsert",
   deleteAgent: "agents.delete",
+  // Skills (platform uploads referenced as upload:<id> in agents[].skills)
+  uploadSkill: "skills.upload",
+  listSkills: "skills.list",
+  getSkill: "skills.get",
+  deleteSkill: "skills.delete",
   // Meta + auth
   getMeta: "meta",
   getAuthStatus: "auth.status",

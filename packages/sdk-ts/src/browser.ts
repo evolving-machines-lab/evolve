@@ -1,21 +1,12 @@
 import { stringify as stringifyToml } from "smol-toml";
-import type { ActionbookBrowserConfig, AgentBrowserConfig, BrowserConfig, ManagedBrowserProvider, SkillName } from "./types";
+import type { ActionbookBrowserConfig, AgentBrowserConfig, BrowserConfig, ManagedBrowserProvider } from "./types";
 import { DEFAULT_DASHBOARD_URL } from "./constants";
 
-export const ACTIONBOOK_BROWSER_SKILLS: SkillName[] = [
-  "actionbook",
-  "active-research",
-  "extract",
-];
-
-export const AGENT_BROWSER_SKILLS: SkillName[] = [
-  "agent-browser",
-];
-
-const BROWSER_SKILLS: Record<ManagedBrowserProvider, SkillName[]> = {
-  actionbook: ACTIONBOOK_BROWSER_SKILLS,
-  "agent-browser": AGENT_BROWSER_SKILLS,
-};
+// NOTE: the old baked-in browser skill catalog ("actionbook", "agent-browser",
+// "active-research", "extract") is gone with the repo skills/ catalog. Browser
+// TRANSPORT (CDP wiring, config files, prompts) is unaffected; agents that
+// want instruction skills for their browser tooling name them explicitly via
+// .withSkills() with real references (skills.sh / git / local folder).
 
 const AGENT_BROWSER_CONFIG_DIR = "/home/user/.agent-browser";
 const AGENT_BROWSER_CONFIG_PATH = `${AGENT_BROWSER_CONFIG_DIR}/config.json`;
@@ -91,10 +82,6 @@ export function normalizeBrowserConfig(browser: BrowserConfig): NormalizedBrowse
     };
   }
   throw new Error("Unsupported browser configuration");
-}
-
-export function mergeBrowserSkills(provider: ManagedBrowserProvider, skills?: SkillName[]): SkillName[] {
-  return Array.from(new Set([...(skills ?? []), ...BROWSER_SKILLS[provider]]));
 }
 
 export function getManagedBrowserSandboxSetup(

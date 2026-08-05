@@ -63,6 +63,7 @@ import type {
   ListImportsOptions,
   ListJobTasksOptions,
   ListJobsOptions,
+  ListSkillsOptions,
   ListTrialsOptions,
   Page,
   PageOptions,
@@ -71,6 +72,11 @@ import type {
   ResumeRequest,
   RetryConfig,
   RetryRequest,
+  SkillLock,
+  SkillUpload,
+  SkillUploadList,
+  SkillUploadPage,
+  SkillsClient,
   SourceJob,
   SpendSource,
   StartJobOptions,
@@ -175,6 +181,7 @@ export type {
   ListImportsOptions,
   ListJobTasksOptions,
   ListJobsOptions,
+  ListSkillsOptions,
   ListTrialsOptions,
   ManagedProviderCapability,
   ModelInfo,
@@ -189,6 +196,11 @@ export type {
   RetryConfig,
   RetryConfigInput,
   RetryRequest,
+  SkillLock,
+  SkillUpload,
+  SkillUploadList,
+  SkillUploadPage,
+  SkillsClient,
   SourceJob,
   SpendSource,
   StartJobOptions,
@@ -462,6 +474,28 @@ function mapDatasetRef(raw: Record<string, unknown>): DatasetRef {
 function mapAgentArm(raw: Record<string, unknown>): AgentArm {
   // Map only the public arm fields.
   const kwargs = raw.kwargs;
+  // Older servers carry no skills fields:
+  // absent or garbage reads as "no skills" ([] / null), never a crash.
+  const skills = Array.isArray(raw.skills)
+    ? (raw.skills as unknown[]).filter((s): s is string => typeof s === "string")
+    : [];
+  const rawLocks = Array.isArray(raw.skill_locks) ? (raw.skill_locks as unknown[]) : null;
+  const skillLocks = rawLocks
+    ? rawLocks.flatMap((entry): SkillLock[] => {
+        if (!entry || typeof entry !== "object") return [];
+        const lock = entry as Record<string, unknown>;
+        if (typeof lock.name !== "string" || typeof lock.digest !== "string") return [];
+        return [
+          {
+            name: lock.name,
+            source: typeof lock.source === "string" ? lock.source : "",
+            digest: lock.digest,
+            git_url: typeof lock.git_url === "string" ? lock.git_url : null,
+            git_commit_id: typeof lock.git_commit_id === "string" ? lock.git_commit_id : null,
+          },
+        ];
+      })
+    : null;
   return {
     name: raw.name as string,
     model_name: raw.model_name as string,
@@ -475,6 +509,8 @@ function mapAgentArm(raw: Record<string, unknown>): AgentArm {
         : null,
     // Same law for the preset: absent on older servers = none declared.
     preset: typeof raw.preset === "string" ? raw.preset : null,
+    skills,
+    skill_locks: skillLocks,
   };
 }
 
@@ -1665,6 +1701,89 @@ async function agentUploadBody(
 }
 
 // =============================================================================
+// SKILLS CLIENT
+// =============================================================================
+
+function mapSkillUpload(raw: Record<string, unknown>): SkillUpload {
+  return {
+    id: raw.id as string,
+    name: raw.name as string,
+    digest: raw.digest as string,
+    size_bytes: (raw.size_bytes as number) ?? 0,
+    description: (raw.description as string | null) ?? null,
+    ref: (raw.ref as string) ?? `upload:${raw.id as string}`,
+    created_at: raw.created_at as string,
+  };
+}
+
+/**
+ * Create a SkillsClient for platform-stored skills.
+ *
+ * An uploaded skill is an immutable folder (content-digested with Harbor's
+ * recipe) that jobs reference as `upload:<id>` in `agents[].skills`, next to
+ * skills.sh and git references. Requires EVOLVE_API_KEY (or { apiKey }).
+ *
+ * @example
+ * ```ts
+ * import { skills, jobs } from "@evolvingmachines/sdk";
+ *
+ * const [uploaded] = await skills().upload("./my-skill");
+ * await jobs().start({
+ *   datasets: [{ name: "deep-swe" }],
+ *   agents: [{ name: "claude", model_name: "claude-opus-4-1", skills: [uploaded.ref] }],
+ * });
+ * ```
+ */
+export function skills(config?: HostedClientConfig): SkillsClient {
+  const cfg = resolveConfig("skills", config);
+
+  return {
+    async upload(directory: string): Promise<SkillUpload[]> {
+      if (typeof directory !== "string" || !directory.trim()) {
+        throw new Error("skills().upload() requires a local skill directory path");
+      }
+      const { tarGzipDirectory } = await import("./tar");
+      const { basename, resolve } = await import("node:path");
+      // The archive packs the folder's CONTENT (SKILL.md at the archive
+      // root); the folder's own name travels beside it, so a single-skill
+      // upload is recorded — and later mounted — under its folder name.
+      const folderName = basename(resolve(directory));
+      const gzipped = await tarGzipDirectory(directory);
+      const res = await request(cfg, "/api/skills", {
+        method: "POST",
+        body: uploadForm(
+          { name: folderName || undefined },
+          { bytes: gzipped, filename: "skill.tar.gz" },
+        ),
+      });
+      const body = (await res.json()) as Record<string, unknown>;
+      const items = Array.isArray(body.skills) ? (body.skills as Record<string, unknown>[]) : [body];
+      return items.map(mapSkillUpload);
+    },
+
+    list(options?: ListSkillsOptions): SkillUploadList {
+      return makePaginated(async (opts) => {
+        const res = await request(cfg, `/api/skills${pageQuery(opts)}`);
+        return mapPage((await res.json()) as Record<string, unknown>, mapSkillUpload);
+      }, options);
+    },
+
+    async get(id: string): Promise<SkillUpload & { skill_md: string | null }> {
+      const res = await request(cfg, `/api/skills/${encodeURIComponent(id)}`);
+      const raw = (await res.json()) as Record<string, unknown>;
+      return {
+        ...mapSkillUpload(raw),
+        skill_md: (raw.skill_md as string | null) ?? null,
+      };
+    },
+
+    async delete(id: string): Promise<void> {
+      await request(cfg, `/api/skills/${encodeURIComponent(id)}`, { method: "DELETE" });
+    },
+  };
+}
+
+// =============================================================================
 // JOBS CLIENT
 // =============================================================================
 
@@ -2218,6 +2337,8 @@ export interface HostedEvolve {
   readonly agents: AgentsClient;
   /** Jobs: start, watch, compare, resume, retry, regrade, download. */
   readonly jobs: JobsClient;
+  /** Platform-stored skills, referenced as `upload:<id>` in agents[].skills. */
+  readonly skills: SkillsClient;
   /** Globally addressable trials: get, trace, artifact, regrade, stop. */
   readonly trials: TrialsClient;
   /**
@@ -2255,6 +2376,7 @@ export function hosted(config?: HostedClientConfig): HostedEvolve {
   let agentsClient: AgentsClient | undefined;
   let jobsClient: JobsClient | undefined;
   let trialsClient: TrialsClient | undefined;
+  let skillsClient: SkillsClient | undefined;
 
   return {
     get datasets(): DatasetsClient {
@@ -2268,6 +2390,9 @@ export function hosted(config?: HostedClientConfig): HostedEvolve {
     },
     get trials(): TrialsClient {
       return (trialsClient ??= trials(config));
+    },
+    get skills(): SkillsClient {
+      return (skillsClient ??= skills(config));
     },
     meta(): Promise<CapabilityDocument> {
       return meta(config);

@@ -189,6 +189,33 @@ export {
 // Agent type constants
 export { AGENT_TYPES } from "./types";
 
+// The one skills resolver: reference grammar, pinning, content cache, digest
+// and sandbox mounting — used by the managed-agents runtime and the hosted
+// eval worker alike. See src/skills.ts.
+export {
+  parseSkillRef,
+  pinSkillRef,
+  resolveSkills,
+  resolveSkillSha,
+  computeSkillDigest,
+  mountSkills,
+  skillCloneUrl,
+  skillDisplayUrl,
+  SkillRefError,
+  SkillResolveError,
+  SKILL_FILE_NAME,
+  MAX_SKILL_FILES,
+  MAX_SKILL_BYTES,
+} from "./skills";
+export type {
+  SkillRef,
+  ParsedSkillRef,
+  PinnedSkillRef,
+  ResolvedSkill,
+  SkillResolveOptions,
+  SkillMountTarget,
+} from "./skills";
+
 // =============================================================================
 // PARSERS
 // =============================================================================
@@ -344,6 +371,7 @@ export {
   datasets,
   jobs,
   trials,
+  skills,
   hosted,
   meta,
   EVAL_SANDBOX_PROVIDERS,
@@ -390,6 +418,12 @@ export {
   type TaskProviderVerdict,
   type AgentArm,
   type AgentArmInput,
+  type SkillLock,
+  type SkillUpload,
+  type SkillUploadPage,
+  type SkillUploadList,
+  type SkillsClient,
+  type ListSkillsOptions,
   type JobCreate,
   type Job,
   type JobFailure,

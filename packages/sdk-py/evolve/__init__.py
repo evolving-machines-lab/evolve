@@ -90,6 +90,10 @@ from .hosted import (
     PassAtKGroup,
     PassAtKPoint,
     ProviderCapability,
+    SkillLock,
+    SkillUpload,
+    SkillUploadPage,
+    SkillsClient,
     SourceJob,
     SpendSource,
     StatusVocabulary,
@@ -317,6 +321,16 @@ def trials(config: Optional[HostedClientConfig] = None) -> TrialsClient:
     return TrialsClient(config)
 
 
+def skills(config: Optional[HostedClientConfig] = None) -> SkillsClient:
+    """Create a standalone hosted-evals skills client (platform uploads).
+
+    An uploaded skill is an immutable folder referenced as ``upload:<id>`` in
+    job ``agents[].skills``, next to skills.sh and git references. Uses
+    EVOLVE_API_KEY unless HostedClientConfig(api_key=...) is provided.
+    """
+    return SkillsClient(config)
+
+
 def auth(config: Optional[HostedClientConfig] = None) -> AuthClient:
     """Create a standalone hosted-evals auth client (caller identity).
 
@@ -479,6 +493,10 @@ __all__ = [
     'PassAtKPoint',
     'pass_at_k',
     'SourceJob',
+    'SkillLock',
+    'SkillUpload',
+    'SkillUploadPage',
+    'SkillsClient',
     'TrialTally',
     'JobEvent',
     'CompareResponse',
@@ -511,6 +529,7 @@ __all__ = [
     'agents',
     'jobs',
     'trials',
+    'skills',
     'auth',
     'hosted',
     'meta',

@@ -136,6 +136,13 @@ HostedErrorCode = Literal[
     'agent_invalid_env',
     'agent_too_large',
     'agent_limit_reached',
+    'skill_not_found',
+    'skill_ref_invalid',
+    'skill_unresolvable',
+    'skill_invalid',
+    'skill_in_use',
+    'skill_too_large',
+    'skill_limit_reached',
     'agent_version_not_found',
     'agent_kwarg_unsupported',
     'agent_config_unsupported',
@@ -635,6 +642,21 @@ class DatasetSelector:
 
 
 @dataclass
+class SkillLock:
+    """Provenance of one skill an arm's runs actually mounted.
+
+    Harbor's AgentSkillLock vocabulary: name, pinned source reference, content
+    digest (Harbor's recipe over the skill folder), and for git-backed skills
+    the repo URL and exact commit.
+    """
+    name: str
+    source: str
+    digest: str
+    git_url: Optional[str] = None
+    git_commit_id: Optional[str] = None
+
+
+@dataclass
 class AgentArm:
     """One agent arm of a job: an agent (built-in or registered) plus a model.
 
@@ -684,6 +706,18 @@ class AgentArm:
     reasoning_effort: Optional[str] = None
     kwargs: Optional[Dict[str, Any]] = None
     preset: Optional[str] = None
+    #: Skill references mounted into every run of this arm — Harbor's
+    #: trial-config shape: a list of source strings. Accepted forms:
+    #: ``skills.sh/<owner>/<repo>[/<skill>]``, ``org/repo[@ref]``, an https
+    #: git URL, or ``upload:<id>`` naming an uploaded skill (see
+    #: :class:`SkillsClient`). Git references are pinned to their exact commit
+    #: at job creation and echoed back in pinned spelling; part of the arm's
+    #: identity. Raw filesystem paths are refused by the server — upload the
+    #: folder first.
+    skills: List[str] = field(default_factory=list)
+    #: What actually mounted (one lock per skill), stamped when the arm's
+    #: first trial resolves its skills; None until then. Echo-only.
+    skill_locks: Optional[List[SkillLock]] = None
 
     def _to_wire(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {'name': self.name, 'model_name': self.model_name}
@@ -695,6 +729,9 @@ class AgentArm:
             result['kwargs'] = self.kwargs
         if self.preset is not None:
             result['preset'] = self.preset
+        if self.skills:
+            result['skills'] = list(self.skills)
+        # skill_locks are provenance the SERVER stamps; never sent.
         return result
 
 
@@ -1316,6 +1353,32 @@ class AgentPage:
     has_more: bool
 
 
+@dataclass
+class SkillUpload:
+    """One skill uploaded to the platform.
+
+    Immutable content: the digest is the identity (Harbor's skill-digest
+    recipe over the folder), and jobs reference it as ``upload:<id>`` in
+    ``agents[].skills`` — that exact string is :attr:`ref`.
+    ``skill_md`` carries the manifest text on :meth:`SkillsClient.get` only.
+    """
+    id: str
+    name: str
+    digest: str
+    size_bytes: int
+    description: Optional[str]
+    ref: str
+    created_at: str
+    skill_md: Optional[str] = None
+
+
+@dataclass
+class SkillUploadPage:
+    items: List[SkillUpload]
+    next_cursor: Optional[str]
+    has_more: bool
+
+
 # =============================================================================
 # MAPPERS
 # =============================================================================
@@ -1327,6 +1390,28 @@ def _map_dataset_ref(data: Dict[str, Any]) -> DatasetRef:
 def _map_agent_arm(data: Dict[str, Any]) -> AgentArm:
     # Map only the public arm fields.
     kwargs = data.get('kwargs')
+    # Older servers carry no skills fields:
+    # absent or garbage reads as "no skills" ([] / None), never a crash.
+    raw_skills = data.get('skills')
+    skills = [s for s in raw_skills if isinstance(s, str)] if isinstance(raw_skills, list) else []
+    raw_locks = data.get('skill_locks')
+    skill_locks: Optional[List[SkillLock]] = None
+    if isinstance(raw_locks, list):
+        skill_locks = []
+        for entry in raw_locks:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get('name')
+            digest = entry.get('digest')
+            if not isinstance(name, str) or not isinstance(digest, str):
+                continue
+            skill_locks.append(SkillLock(
+                name=name,
+                source=entry.get('source') if isinstance(entry.get('source'), str) else '',
+                digest=digest,
+                git_url=entry.get('git_url') if isinstance(entry.get('git_url'), str) else None,
+                git_commit_id=entry.get('git_commit_id') if isinstance(entry.get('git_commit_id'), str) else None,
+            ))
     return AgentArm(
         name=data.get('name', ''),
         model_name=data.get('model_name', ''),
@@ -1337,6 +1422,8 @@ def _map_agent_arm(data: Dict[str, Any]) -> AgentArm:
         kwargs=kwargs if isinstance(kwargs, dict) else None,
         # Same law for the preset: absent on older servers = none declared.
         preset=data.get('preset') if isinstance(data.get('preset'), str) else None,
+        skills=skills,
+        skill_locks=skill_locks,
     )
 
 
@@ -1914,6 +2001,19 @@ def _map_agent(data: Dict[str, Any]) -> Agent:
         env=data.get('env') or {},
         created_at=data.get('created_at', ''),
         updated_at=data.get('updated_at', ''),
+    )
+
+
+def _map_skill_upload(data: Dict[str, Any]) -> SkillUpload:
+    return SkillUpload(
+        id=data.get('id', ''),
+        name=data.get('name', ''),
+        digest=data.get('digest', ''),
+        size_bytes=data.get('size_bytes', 0) if isinstance(data.get('size_bytes'), int) else 0,
+        description=data.get('description') if isinstance(data.get('description'), str) else None,
+        ref=data.get('ref') if isinstance(data.get('ref'), str) else f"upload:{data.get('id', '')}",
+        created_at=data.get('created_at', ''),
+        skill_md=data.get('skill_md') if isinstance(data.get('skill_md'), str) else None,
     )
 
 
@@ -3031,6 +3131,118 @@ class AgentsClient:
 
 
 # =============================================================================
+# SKILLS CLIENT
+# =============================================================================
+
+class SkillsClient:
+    """Client for platform-stored skills.
+
+    An uploaded skill is an immutable folder (content-digested with Harbor's
+    recipe) that jobs reference as ``upload:<id>`` in ``agents[].skills``,
+    next to skills.sh and git references. Created via the standalone
+    ``skills()`` factory; requires ``EVOLVE_API_KEY`` unless
+    ``HostedClientConfig(api_key=...)`` is given.
+
+    Example::
+
+        from evolve import skills, jobs, AgentArm
+
+        async with skills() as skills_client:
+            uploaded = await skills_client.upload('./my-skill')
+
+        async with jobs() as jobs_client:
+            await jobs_client.start(
+                datasets=[{'name': 'deep-swe'}],
+                agents=[AgentArm(
+                    name='claude',
+                    model_name='claude-opus-4-1',
+                    skills=[uploaded[0].ref],
+                )],
+            )
+    """
+
+    def __init__(self, config: Optional[HostedClientConfig] = None):
+        self._http = _HostedHttp('skills', config)
+
+    async def __aenter__(self) -> 'SkillsClient':
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        await self.close()
+
+    async def close(self) -> None:
+        return None
+
+    async def upload(self, directory: str) -> List[SkillUpload]:
+        """Upload a local skill folder and return its records.
+
+        The folder must contain ``SKILL.md``, or be a root whose immediate
+        child directories each contain ``SKILL.md`` (Harbor's discovery law; a
+        root uploads each child as its own skill and the list holds one record
+        per skill). Content-addressed: re-uploading identical content under
+        the same name answers the existing record instead of duplicating it.
+        """
+        if not isinstance(directory, str) or not directory.strip():
+            raise ValueError('skills().upload() requires a local skill directory path')
+        gzipped = await asyncio.to_thread(_tar_gzip_directory, directory)
+        # The archive packs the folder's CONTENT (SKILL.md at the archive
+        # root); the folder's own name travels beside it, so a single-skill
+        # upload is recorded — and later mounted — under its folder name.
+        folder_name = os.path.basename(os.path.abspath(directory))
+        fields = {'name': folder_name} if folder_name else {}
+        body, content_type = _multipart_body(fields, ('skill.tar.gz', gzipped))
+        raw = await self._http.request_upload(
+            '/api/skills', body, {'Content-Type': content_type}
+        )
+        items = raw.get('skills')
+        if not isinstance(items, list):
+            items = [raw]
+        return [_map_skill_upload(item) for item in items if isinstance(item, dict)]
+
+    def list(
+        self,
+        *,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    ) -> _PaginatedList:
+        """List the caller's uploaded skills (cursor-paged).
+
+        ``await`` the result for one page, or ``async for`` it to walk them all.
+        """
+        async def fetch_page(page_limit, page_cursor) -> SkillUploadPage:
+            raw = await self._http.request_json(
+                f'/api/skills{_page_query(page_limit, page_cursor)}'
+            )
+            items, next_cursor, has_more = _page_parts(raw)
+            return SkillUploadPage(
+                items=[_map_skill_upload(item) for item in items],
+                next_cursor=next_cursor,
+                has_more=has_more,
+            )
+
+        return _PaginatedList(
+            fetch_page, lambda page: page.items, limit=limit, cursor=cursor
+        )
+
+    async def get(self, skill_id: str) -> SkillUpload:
+        """Get one uploaded skill by id, including its SKILL.md text."""
+        raw = await self._http.request_json(
+            f'/api/skills/{urllib.parse.quote(skill_id)}'
+        )
+        return _map_skill_upload(raw)
+
+    async def delete(self, skill_id: str) -> None:
+        """Delete an uploaded skill.
+
+        Refused (``skill_in_use``) while a non-terminal job references it;
+        finished jobs keep their recorded locks either way.
+        """
+        await self._http.request_json(
+            f'/api/skills/{urllib.parse.quote(skill_id)}', method='DELETE'
+        )
+
+
+# =============================================================================
 # SSE WATCH SUPPORT
 # =============================================================================
 
@@ -3979,6 +4191,7 @@ class HostedEvolve:
         self._agents: Optional[AgentsClient] = None
         self._jobs: Optional[JobsClient] = None
         self._trials: Optional[TrialsClient] = None
+        self._skills: Optional[SkillsClient] = None
 
     @property
     def datasets(self) -> DatasetsClient:
@@ -4007,6 +4220,13 @@ class HostedEvolve:
         if self._trials is None:
             self._trials = TrialsClient(self._config)
         return self._trials
+
+    @property
+    def skills(self) -> SkillsClient:
+        """Platform-stored skills, referenced as ``upload:<id>`` in agents[].skills."""
+        if self._skills is None:
+            self._skills = SkillsClient(self._config)
+        return self._skills
 
     async def meta(self) -> CapabilityDocument:
         """The capability document. Public: no API key required.

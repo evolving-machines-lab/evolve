@@ -3,7 +3,7 @@ import { Template } from 'e2b'
 // =============================================================================
 // Evolve E2B Template
 // =============================================================================
-// Single template with all AI coding CLIs and skills pre-installed.
+// Single template with all AI coding CLIs pre-installed.
 //
 // Includes:
 //   - Claude Code (@anthropic-ai/claude-code)
@@ -82,8 +82,10 @@ export const template = Template()
   .setUser('user')
   .setWorkdir('/home/user')
 
-  // Create skills directories for all CLIs
-  .runCmd('mkdir -p ~/.evolve/skills ~/.claude/skills ~/.codex/skills ~/.gemini/skills ~/.qwen/skills ~/.kimi-code/skills ~/.agents/skills ~/.factory/skills')
+  // Create skills directories for all CLIs. No baked catalog: skills are
+  // resolved at run time by the SDK resolver (packages/sdk-ts/src/skills.ts)
+  // from real references and mounted into these directories.
+  .runCmd('mkdir -p ~/.claude/skills ~/.codex/skills ~/.gemini/skills ~/.qwen/skills ~/.kimi-code/skills ~/.agents/skills ~/.factory/skills')
 
   // ---------------------------------------------------------------------------
   // Factory Droid CLI
@@ -94,12 +96,6 @@ export const template = Template()
   .setUser('root')
   .runCmd('ln -sf /home/user/.local/bin/droid /usr/local/bin/droid && chown -R user:user /home/user/.factory /home/user/.local')
   .setUser('user')
-
-  // ---------------------------------------------------------------------------
-  // Skills
-  // ---------------------------------------------------------------------------
-  // Clone skills from evolve repo (sparse checkout for skills/ only)
-  .runCmd('git clone --depth 1 --filter=blob:none --sparse https://github.com/evolving-machines-lab/evolve.git /tmp/evolve && cd /tmp/evolve && git sparse-checkout set skills && mv skills/* ~/.evolve/skills/ && rm -rf /tmp/evolve')
 
   // ---------------------------------------------------------------------------
   // Gemini Extensions (Nano Banana for image generation)

@@ -13,7 +13,7 @@ swarm = Swarm(SwarmConfig(
     concurrency=4,                   # Max parallel sandboxes (default: 4)
     timeout_ms=3_600_000,            # Default timeout per worker (default: 1 hour)
     tag='my-pipeline',               # Tag prefix for observability
-    skills=['pdf'],                  # Default skills
+    skills=['anthropics/skills'],    # Default skills (skills.sh / git / local references)
     integrations=IntegrationsSetup(          # Default Integrations config for all workers
         user_id='root',
         apps=['gmail', 'notion'],
@@ -287,8 +287,8 @@ result = await swarm.best_of(
         judge_agent=claude_agent,
         mcp_servers={...},           # (optional) MCP servers for candidates
         judge_mcp_servers={...},     # (optional) MCP servers for judge
-        skills=['pdf'],              # (optional) Skills for candidates
-        judge_skills=['pdf'],        # (optional) Skills for judge
+        skills=['anthropics/skills'], # (optional) Skills for candidates
+        judge_skills=['anthropics/skills'], # (optional) Skills for judge
         integrations=IntegrationsSetup(...), # (optional) Integrations config for candidates
         judge_integrations=IntegrationsSetup(...),  # (optional) Integrations config for judge
     ),
@@ -328,7 +328,7 @@ await swarm.map(
     verify=VerifyConfig,                    # LLM-as-judge quality check with retry loop
     retry=RetryConfig,                      # Auto-retry on error with backoff
     mcp_servers=dict[str, McpServerConfig], # Optional
-    skills=list[str],                       # Optional - e.g. ['pdf']
+    skills=list[str],                       # Optional - e.g. ['anthropics/skills']
     integrations=IntegrationsSetup,                 # managed integrations config
     timeout_ms=int,                         # Optional
 ) -> SwarmResultList
@@ -454,7 +454,7 @@ await swarm.filter(
     verify=VerifyConfig,                    # LLM-as-judge quality check with retry loop
     retry=RetryConfig,                      # Auto-retry on error with backoff
     mcp_servers=dict[str, McpServerConfig], # Optional
-    skills=list[str],                       # Optional - e.g. ['pdf']
+    skills=list[str],                       # Optional - e.g. ['anthropics/skills']
     integrations=IntegrationsSetup,                 # managed integrations config
     timeout_ms=int,                         # Optional
 ) -> SwarmResultList
@@ -517,7 +517,7 @@ await swarm.reduce(
     verify=VerifyConfig,                    # LLM-as-judge quality check with retry loop
     retry=RetryConfig,                      # Auto-retry on error with backoff
     mcp_servers=dict[str, McpServerConfig], # Optional
-    skills=list[str],                       # Optional - e.g. ['pdf']
+    skills=list[str],                       # Optional - e.g. ['anthropics/skills']
     integrations=IntegrationsSetup,                 # managed integrations config
     timeout_ms=int,                         # Optional
 ) -> ReduceResult
@@ -574,7 +574,7 @@ results = await swarm.map(
         criteria='Analysis must include specific data points and cite sources',
         max_attempts=3,              # Default: 3
         # verifier_agent=AgentConfig(type='claude', model='opus'),  # Override verifier
-        # verifier_skills=['pdf'],   # Skills for verifier
+        # verifier_skills=['anthropics/skills'], # Skills for verifier
         on_worker_complete=lambda idx, attempt, status: print(f'Item {idx}, attempt {attempt}: {status}'),
         on_verifier_complete=lambda idx, attempt, passed, feedback: print(f'Verify item {idx}: {"PASS" if passed else feedback}'),
     ),

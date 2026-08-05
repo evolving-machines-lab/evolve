@@ -110,8 +110,7 @@ RUN REAL_ACTIONBOOK="$(command -v actionbook)" \
 # ---------------------------------------------------------------------------
 # User setup
 # ---------------------------------------------------------------------------
-RUN mkdir -p /home/user/.evolve/skills \
-             /home/user/.claude/skills \
+RUN mkdir -p /home/user/.claude/skills \
              /home/user/.codex/skills \
              /home/user/.gemini/skills \
              /home/user/.qwen/skills \
@@ -142,14 +141,9 @@ RUN ln -sf /home/user/.local/bin/droid /usr/local/bin/droid \
 USER user
 
 # ---------------------------------------------------------------------------
-# Skills (clone from evolve repo - sparse checkout for skills/ only)
-# ---------------------------------------------------------------------------
-RUN git clone --depth 1 --filter=blob:none --sparse https://github.com/evolving-machines-lab/evolve.git /tmp/evolve \
-    && cd /tmp/evolve \
-    && git sparse-checkout set skills \
-    && mv skills/* /home/user/.evolve/skills/ \
-    && rm -rf /tmp/evolve
-
+# Skills: no baked catalog. Skills are resolved at run time by the SDK's
+# resolver (packages/sdk-ts/src/skills.ts) from real references and mounted
+# into the per-CLI skills directories created above.
 # ---------------------------------------------------------------------------
 # Gemini Extensions (Nano Banana for image generation)
 # ---------------------------------------------------------------------------

@@ -158,6 +158,16 @@ async function main() {
   rmSync(LOGS_DIR, { recursive: true, force: true });
   mkdirSync(LOGS_DIR, { recursive: true });
 
+  // A local skill fixture: .withSkills takes real references (skills.sh /
+  // git / local folders) — no built-in catalog. A tiny local folder keeps
+  // this test offline for skill content while still exercising the mount.
+  const SKILL_FIXTURE_DIR = resolve(LOGS_DIR, "fixture-skill");
+  mkdirSync(SKILL_FIXTURE_DIR, { recursive: true });
+  writeFileSync(
+    resolve(SKILL_FIXTURE_DIR, "SKILL.md"),
+    "---\nname: fixture-skill\ndescription: integration fixture\n---\n\nA tiny skill used to verify skills mount across checkpoint restore.\n",
+  );
+
   log(`Starting storage restore fidelity test (${STORAGE_MODE} mode)...\n`);
   const start = Date.now();
 
@@ -178,7 +188,7 @@ async function main() {
       .withAgent(agentConfig)
       .withSandbox(provider)
       .withStorage(getStorageConfig())
-      .withSkills(["pdf"])
+      .withSkills([SKILL_FIXTURE_DIR])
       .withWorkspaceMode("swe");
 
     log("  Running prompt (create identity file + memorize passphrase)...");
@@ -212,7 +222,7 @@ async function main() {
       .withAgent(agentConfig)
       .withSandbox(provider)
       .withStorage(getStorageConfig())
-      .withSkills(["pdf"])
+      .withSkills([SKILL_FIXTURE_DIR])
       .withWorkspaceMode("swe");
 
     log(`  Restoring from checkpoint ${checkpoint1.id}...`);

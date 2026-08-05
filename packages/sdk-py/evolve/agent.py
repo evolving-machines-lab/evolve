@@ -86,7 +86,11 @@ class Evolve:
             context: Files to upload to context/ folder on first run - { "filename.txt": "content" }
             files: Files to upload to working directory on first run - { "scripts/run.sh": "content" }
             mcp_servers: MCP server configurations
-            skills: Skills to enable (e.g., ['pdf', 'dev-browser'])
+            skills: Skill references to mount into the sandbox — real references,
+                     no built-in catalog: 'skills.sh/<owner>/<repo>[/<skill>]',
+                     'org/repo[@ref]', an https git URL, or a local folder path
+                     containing SKILL.md. Resolved pinned + content-cached by the
+                     SDK's one resolver and mounted where the harness discovers them.
             secrets: Environment variables for sandbox
             managed_secrets: Dashboard-stored managed secrets exposed as opaque env vars
             sandbox_id: Existing sandbox ID to reconnect to

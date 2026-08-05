@@ -238,6 +238,37 @@ export interface AgentArmInput {
    * Enforcement is harness configuration, exactly as Harbor delivers it.
    */
   preset?: string | null;
+  /**
+   * Skill references mounted into every run of this arm — Harbor's
+   * trial-config shape: a list of source strings (models/trial/config.py:81).
+   * Accepted forms: `skills.sh/<owner>/<repo>[/<skill>]`, `org/repo[@ref]`,
+   * an https git URL (optionally `/tree/<ref>/<subdir>`), or `upload:<id>`
+   * naming a skill uploaded to the platform. Local filesystem paths are a
+   * CLIENT-side convenience only — the CLI uploads the folder first and sends
+   * the `upload:<id>` handle; the server refuses raw paths.
+   *
+   * Git references are PINNED at job creation (the exact commit resolved
+   * once, recorded, and used by every trial), so a moving branch can never
+   * make two trials of one job run different skill content. Part of the
+   * arm's identity: the same agent and model with different skills are two
+   * arms.
+   */
+  skills?: string[] | null;
+}
+
+/**
+ * Provenance of one skill an arm's runs actually mounted — Harbor's
+ * AgentSkillLock vocabulary (models/job/lock.py:141): name, source reference,
+ * content digest, and for git-backed skills the repo URL and exact commit.
+ */
+export interface SkillLock {
+  name: string;
+  /** The pinned reference the content came from. */
+  source: string;
+  /** Content digest, Harbor's recipe: "sha256:<hex>". */
+  digest: string;
+  git_url: string | null;
+  git_commit_id: string | null;
 }
 
 /** One agent arm as echoed on job bodies (requested pin; null = took the latest). */
@@ -250,6 +281,14 @@ export interface AgentArm {
   kwargs: Record<string, unknown> | null;
   /** The arm's named settings preset; null when none was declared. */
   preset: string | null;
+  /** The arm's skill references, pinned spelling. Empty = no skills. */
+  skills: string[];
+  /**
+   * What actually mounted, one lock per skill — stamped when the arm's first
+   * trial resolves its skills; null until then (and stays null on a job whose
+   * trials never ran).
+   */
+  skill_locks: SkillLock[] | null;
 }
 
 /**
@@ -1777,6 +1816,50 @@ export interface AgentsClient {
   upsert(name: string, input: AgentUpsertInput): Promise<Agent>;
 }
 
+/**
+ * One skill uploaded to the platform. Immutable content: the digest is the
+ * identity (Harbor's skill digest recipe over the folder), and jobs reference
+ * it as `upload:<id>` in `agents[].skills`.
+ */
+export interface SkillUpload {
+  id: string;
+  /** Folder name = the name the harness sees when mounted. */
+  name: string;
+  /** Content digest, "sha256:<hex>" — Harbor's recipe. */
+  digest: string;
+  size_bytes: number;
+  /** First heading / description line lifted from SKILL.md, or null. */
+  description: string | null;
+  /** The `upload:<id>` reference to put in `agents[].skills`. */
+  ref: string;
+  created_at: string;
+}
+
+export type SkillUploadPage = Page<SkillUpload>;
+export interface SkillUploadList extends Awaitable<SkillUploadPage>, AsyncIterable<SkillUpload> {}
+export interface ListSkillsOptions extends PageOptions {}
+
+/** Client for platform-stored skills (uploads referenced as `upload:<id>`). */
+export interface SkillsClient {
+  /**
+   * Upload a local skill folder (must contain SKILL.md, or be a root whose
+   * child directories each contain SKILL.md — Harbor's discovery law; a root
+   * uploads each child as its own skill and resolves to the full list).
+   * Re-uploading identical content under the same name answers the existing
+   * record — uploads are content-addressed, never duplicated.
+   */
+  upload(directory: string): Promise<SkillUpload[]>;
+  /** List the caller's uploaded skills (cursor-paged). */
+  list(options?: ListSkillsOptions): SkillUploadList;
+  /** Get one uploaded skill by id, including its SKILL.md text. */
+  get(id: string): Promise<SkillUpload & { skill_md: string | null }>;
+  /**
+   * Delete an uploaded skill. Refused while a non-terminal job references it;
+   * finished jobs keep their recorded locks either way.
+   */
+  delete(id: string): Promise<void>;
+}
+
 /** Client for hosted jobs */
 export interface JobsClient {
   /**
@@ -2039,6 +2122,13 @@ export const HOSTED_ERROR_CODES = [
   "agent_invalid_env",
   "agent_too_large",
   "agent_limit_reached",
+  "skill_not_found",
+  "skill_ref_invalid",
+  "skill_unresolvable",
+  "skill_invalid",
+  "skill_in_use",
+  "skill_too_large",
+  "skill_limit_reached",
   "agent_version_not_found",
   "agent_kwarg_unsupported",
   "agent_config_unsupported",

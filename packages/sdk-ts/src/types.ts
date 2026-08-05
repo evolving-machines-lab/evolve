@@ -385,8 +385,14 @@ export const AGENT_TYPES = {
 /** Workspace mode determines folder structure and system prompt */
 export type WorkspaceMode = "knowledge" | "swe" | "task";
 
-/** Available skills that can be enabled */
-export type SkillName = "pdf" | "dev-browser" | (string & {});
+/**
+ * A skill reference. Real references only — there is no built-in catalog:
+ * `skills.sh/<owner>/<repo>[/<skill>]`, `org/repo[@ref]`, an https git URL
+ * (optionally `/tree/<ref>/<subdir>`), or a local folder path. The historical
+ * name is kept as the alias every skills-carrying surface already imports;
+ * the grammar and resolution live in skills.ts.
+ */
+export type SkillName = string;
 
 /** Browser automation providers that can be enabled explicitly */
 export type BrowserProvider = "browser-use" | "actionbook" | "agent-browser";
@@ -478,9 +484,7 @@ export type AgentPluginConfig =
 
 /** Skills configuration for an agent */
 export interface SkillsConfig {
-  /** Source directory where skills are staged */
-  sourceDir: string;
-  /** Target directory where skills are copied for this CLI */
+  /** Directory the CLI auto-discovers skills from; resolved skills are mounted here */
   targetDir: string;
 }
 
@@ -773,7 +777,10 @@ export interface AgentOptions {
   };
   /** Plugins/extensions to install in the sandbox user profile before first run */
   plugins?: AgentPluginConfig[];
-  /** Skills to enable (e.g., ["pdf", "dev-browser"]) */
+  /**
+   * Skill references to mount: `skills.sh/<owner>/<repo>[/<skill>]`,
+   * `org/repo[@ref]`, an https git URL, or a local folder path.
+   */
   skills?: SkillName[];
 
   /**

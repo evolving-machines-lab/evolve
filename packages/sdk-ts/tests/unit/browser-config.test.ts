@@ -155,37 +155,36 @@ async function testBrowserUseRemoteObjectRejected(): Promise<void> {
 }
 
 async function testActionbookStringAddsSkillsOnly(): Promise<void> {
-  console.log("\n[6] withBrowser(\"actionbook\"): adds Actionbook skills without managed transport");
+  console.log("\n[6] withBrowser(\"actionbook\"): no implicit skills, no managed transport");
 
+  // The baked browser-skill catalog is gone: withBrowser configures TRANSPORT
+  // only, and instruction skills are named explicitly via .withSkills() with
+  // real references. The user's own list passes through untouched.
   const kit = new Evolve()
     .withAgent({ type: "claude", apiKey: "evolve-key" })
     .withSandbox(fakeSandboxProvider)
-    .withSkills(["pdf"])
+    .withSkills(["skills.sh/o/r/pdf"])
     .withBrowser("actionbook");
 
   const options = await getInitializedAgentOptions(kit);
-  assert(options.skills.includes("pdf"), "existing skill preserved");
-  assert(options.skills.includes("actionbook"), "actionbook skill added");
-  assert(options.skills.includes("active-research"), "active-research skill added");
-  assert(options.skills.includes("extract"), "extract skill added");
-  assert(!options.skills.includes("agent-browser"), "agent-browser not bundled with Actionbook");
+  assert(options.skills.includes("skills.sh/o/r/pdf"), "existing skill preserved");
+  assert(options.skills.length === 1, "no implicit skills merged by withBrowser");
   assert(!options.managedBrowser, "string actionbook does not create managed browser transport");
   assert(!options.browserPrompt, "string actionbook does not add managed browser prompt");
 }
 
 async function testAgentBrowserStringAddsSkillsOnly(): Promise<void> {
-  console.log("\n[7] withBrowser(\"agent-browser\"): adds agent-browser skill without managed transport");
+  console.log("\n[7] withBrowser(\"agent-browser\"): no implicit skills, no managed transport");
 
   const kit = new Evolve()
     .withAgent({ type: "claude", apiKey: "evolve-key" })
     .withSandbox(fakeSandboxProvider)
-    .withSkills(["pdf"])
+    .withSkills(["skills.sh/o/r/pdf"])
     .withBrowser("agent-browser");
 
   const options = await getInitializedAgentOptions(kit);
-  assert(options.skills.includes("pdf"), "existing skill preserved");
-  assert(options.skills.includes("agent-browser"), "agent-browser skill added");
-  assert(!options.skills.includes("actionbook"), "actionbook not bundled with agent-browser");
+  assert(options.skills.includes("skills.sh/o/r/pdf"), "existing skill preserved");
+  assert(options.skills.length === 1, "no implicit skills merged by withBrowser");
   assert(!options.managedBrowser, "string agent-browser does not create managed browser transport");
   assert(!options.browserPrompt, "string agent-browser does not add managed browser prompt");
 }
@@ -202,8 +201,7 @@ async function testManagedAgentBrowserDefault(): Promise<void> {
       .withBrowser();
 
     const options = await getInitializedAgentOptions(kit);
-    assert(options.skills.includes("agent-browser"), "default browser adds agent-browser skill");
-    assert(!options.skills.includes("actionbook"), "default browser does not add actionbook skill");
+    assert(options.skills === undefined, "default browser adds no implicit skills");
     assertEqual(options.managedBrowser.provider, "agent-browser", "managed browser tracks agent-browser provider");
     assertEqual(options.managedBrowser.apiKey, "evolve-key", "managed browser uses Evolve API key");
     assertEqual(options.managedBrowser.dashboardUrl, "https://dashboard.test", "managed browser uses dashboard URL");
@@ -228,7 +226,7 @@ async function testBrowserProfileDefaultsManagedAgentBrowser(): Promise<void> {
   const options = await getInitializedAgentOptions(kit);
   assertEqual(options.managedBrowser.provider, "agent-browser", "browser profile uses managed agent-browser by default");
   assertEqual(options.managedBrowser.profile, "ramp-qa", "browser profile name is preserved");
-  assert(options.skills.includes("agent-browser"), "browser profile path adds agent-browser skill");
+  assert(options.skills === undefined, "browser profile path adds no implicit skills");
 }
 
 async function testBrowserProfileRequiresManagedRemote(): Promise<void> {
@@ -259,7 +257,7 @@ async function testActionbookObjectRemoteDefaultsFalse(): Promise<void> {
     .withBrowser({ provider: "actionbook" });
 
   const options = await getInitializedAgentOptions(kit);
-  assert(options.skills.includes("actionbook"), "actionbook skill added");
+  assert(options.skills === undefined, "object config adds no implicit skills");
   assert(!options.managedBrowser, "object config without remote does not create managed browser transport");
   assert(!options.browserPrompt, "object config without remote does not add managed browser prompt");
 }
@@ -369,7 +367,7 @@ async function testManagedAgentBrowserConfigUsesProxyOnly(): Promise<void> {
   await (kit as any).initializeAgent();
   const agent = ((kit as any).agent as any);
   const options = agent.options;
-  assert(options.skills.includes("agent-browser"), "managed agent-browser adds agent-browser skill");
+  assert(options.skills === undefined, "managed agent-browser adds no implicit skills");
   assertEqual(options.managedBrowser.provider, "agent-browser", "managed browser tracks agent-browser provider");
   assert(
     options.browserPrompt.includes("agent-browser CDP connection is already configured"),
