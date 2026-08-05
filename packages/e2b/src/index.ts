@@ -209,9 +209,10 @@ export interface SandboxCreateOptions {
    * sandboxes at TEMPLATE BUILD time only (Template.build cpuCount/memoryMB;
    * disk is plan-fixed) — create-time sizing cannot be enforced, so any value
    * here is REJECTED with E2BResourcesError rather than silently ignored.
-   * Bake sizing into the template the `image` names instead.
+   * Bake sizing into the template the `image` names instead. `gpu`/`gpuTypes`
+   * are rejected the same way: e2b offers no GPU allocation at any tier.
    */
-  resources?: { cpu?: number; memory?: number; disk?: number };
+  resources?: { cpu?: number; memory?: number; disk?: number; gpu?: number; gpuTypes?: string[] };
   network?: {
     outbound: "open" | "blocked";
     allowedDestinations?: string[];
@@ -819,6 +820,19 @@ export class E2BProvider implements SandboxProvider {
       // nothing about what the box is doing moves it. There is no inactivity
       // knob to map this onto.
       throw new E2BIdleTimeoutError();
+    }
+    if (
+      options.resources?.gpu !== undefined ||
+      options.resources?.gpuTypes !== undefined
+    ) {
+      // Not "no create-time knob" — NO knob at all: e2b offers no GPU
+      // allocation at any tier (neither Template.build nor Sandbox.create
+      // takes one). Distinct message so callers don't go hunting for a
+      // template-build GPU option that does not exist.
+      throw new E2BResourcesError(
+        "E2B offers no GPU allocation at any tier — a `resources.gpu` request cannot be " +
+          "enforced. Run GPU workloads on a provider that reserves GPUs (modal)."
+      );
     }
     if (
       options.resources &&

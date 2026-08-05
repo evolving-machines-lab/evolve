@@ -753,6 +753,20 @@ The rest are decided when the sandbox is actually created, so they surface as a 
 - **Daytona serves IP-based allowlists only.** Its network filter takes IPv4 addresses and CIDRs, capped at 10 entries — a cap that also has to fit the address the agent uses to reach its model, so a task's own list gets slightly fewer. A task whose `allowlist` names a hostname, or needs more than the cap, fails on Daytona when its sandbox is created. Run it on e2b or Modal, which serve hostname allowlists. Daytona serves `no-network` and `public` normally.
 - **Modal caps every sandbox at 24 hours.** A task whose timeout exceeds the cap fails fast when its sandbox is created — never truncated mid-run.
 
+### GPU tasks
+
+A task can declare GPUs the same way it declares CPUs — `gpus` and `gpu_types` in its `task.toml` `[environment]` section, the standard task-format fields. The catalog shows the requirement on every task (`task.gpus`, `task.gpu_types`; `gpu_types` `null` means any type is acceptable), and the platform pays for GPU compute at launch — a GPU trial draws your credits for its model calls exactly like any other, never for the GPU itself.
+
+Modal is the provider that reserves GPUs today, so a GPU task **runs on Modal no matter which provider the job picked** — e2b offers no GPU machines at any tier, and this Daytona tier provisions none (the platform re-checks Daytona's live quota on a timer, so a raised tier turns Daytona GPU on without a release). That re-route is a recorded fact, not a silent one, in three places:
+
+- The task's `providers` verdict says it up front: `{ ok: true, degrades_to: "modal", reason }` on a provider that would hand the trial to Modal. `ok` keeps its meaning — a job stamped there still runs the task.
+- The trial says where it actually ran: `trial.sandbox_provider` is the outcome, and `trial.sandbox_provider_degrade` carries `{ from, to, reason }` when it differs from the job's request. Every other trial answers `null` there.
+- The [capability document](#what-the-platform-supports) publishes each provider's `gpus` block (supported, per-container ceiling, where it degrades and why) and the platform-wide `gpu_concurrency_cap`.
+
+Because GPU compute is platform-paid, the fleet runs a **GPU concurrency cap**: at most `gpu_concurrency_cap` GPU trials in flight at once, across all jobs. A queued GPU trial past the cap simply waits for a slot — it is never refused for waiting. A GPU count no provider can allocate (above Modal's per-container ceiling) is refused at import with the numbers, so such a task never reaches a job at all.
+
+**What the GPU time was worth.** Every settled GPU trial states its compute as an estimate: the measured sandbox lifetime (observed boot to observed kill) multiplied by a versioned rate card — the provider's own published list price per GPU-second, with the pricing page and the date it was read recorded on the figure. It arrives as `trial.gpu_cost` and, summed per job, as `stats.gpu_cost_usd`, and it is deliberately a **separate labeled figure**: it is never added into `agent_result.cost_usd` or `stats.cost_usd`, which are metered model spend. When no honest number exists the platform says so instead of guessing — `gpu_cost.unpriced_reason` names why (a run whose worker died has no measured lifetime; a task that accepts *any* GPU type has no single list price) and `estimate_usd` stays null. A GPU trial that provably never booted a sandbox reports a real `estimate_usd: 0`. Non-GPU trials carry no `gpu_cost` at all — CPU sandbox time is not priced today. The CLI shows the same pair: `evolve trial show` prints a `gpu compute (est.)` row with the full audit sentence, and `evolve job show` prints the job's summed estimate beside — never inside — its `spent` row.
+
 ---
 
 ## Bring your own dataset
@@ -1324,6 +1338,7 @@ interface JobStats {
     n_cache_tokens?: number | null;
     n_output_tokens?: number | null;
     cost_usd?: number | null;            // measured spend across settled trials
+    gpu_cost_usd?: number | null;        // summed GPU compute ESTIMATE — separate, never inside cost_usd
 }
 
 interface TimingInfo {                   // a phase wall-clock: a PAIR, never a duration
@@ -1376,6 +1391,7 @@ interface Trial {                        // list rows and detail, one shape
     live_spend_at: string | null;
     max_trial_spend_usd: number | null;  // the cap THIS trial's key carried
     sandbox_provider: EvalSandboxProvider | null;
+    gpu_cost?: TrialGpuCost | null;      // GPU compute ESTIMATE; null on non-GPU trials, never in cost_usd
     sandbox_id: string | null;           // agent box id; null when none booted
     verifier_sandbox_id: string | null;  // null in shared mode or before verify
     verifier_environment_mode: VerifierEnvironmentMode | null;
@@ -1393,6 +1409,20 @@ interface TrialRetry {                   // one retired attempt — the receipts
     cost_usd: number | null;             // REAL spend the job total includes
     started_at: string | null;
     settled_at: string | null;           // when its failure settled (and the retry was scheduled)
+}
+
+interface TrialGpuCost {                 // GPU trials only; exactly one of the first two is set
+    estimate_usd: number | null;         // measured lifetime x rate; a provable never-booted run is a real 0
+    unpriced_reason: string | null;      // why no number exists — never a guess
+    provider: EvalSandboxProvider;
+    gpu_type: string | null;             // the rate card's billing name; null when 'any'/unknown
+    declared_gpu_type: string;           // the task's own spelling
+    gpu_count: number;
+    duration_sec: number | null;         // measured sandbox lifetime
+    rate_usd_per_gpu_sec: number | null; // the applied list price
+    rate_card: { version: number; source: string | null; source_date: string | null };
+    measured_from: string | null;        // observed sandbox birth
+    measured_to: string | null;          // observed sandbox end
 }
 
 interface StopResponse {                 // trials().stop() — every id in exactly one list

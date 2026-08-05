@@ -227,6 +227,7 @@ def wire_trial(**overrides):
         'live_spend_at': None,
         'max_trial_spend_usd': 2,
         'sandbox_provider': 'daytona',
+        'sandbox_provider_degrade': None,
         'sandbox_id': 'im8f0wgqwehvng70evvro',
         'verifier_sandbox_id': 'iv2k1xbqwehvng70evvrp',
         'verifier_environment_mode': 'separate',
@@ -320,8 +321,10 @@ class TestDatasets:
                             'task_name': 'abs-module-cache-flags',
                             'agent_timeout_sec': 5400,
                             'verifier_timeout_sec': 1800,
+                            'gpus': 1,
+                            'gpu_types': ['H100'],
                             'providers': {
-                                'e2b': {'ok': True},
+                                'e2b': {'ok': True, 'degrades_to': 'modal', 'reason': 'e2b offers no GPU allocation'},
                                 'daytona': {'ok': True},
                                 'modal': {'ok': False, 'reason': 'multi-container tasks are not supported on modal'},
                             },
@@ -369,8 +372,15 @@ class TestDatasets:
         task = detail.tasks.items[0]
         assert task.task_name == 'abs-module-cache-flags'
         assert task.agent_timeout_sec == 5400
-        # Per-provider capability verdicts — visible before any money is spent
-        assert task.providers['e2b'] == TaskProviderVerdict(ok=True)
+        # The task's declared GPU requirement, Harbor's own vocabulary.
+        assert task.gpus == 1
+        assert task.gpu_types == ['H100']
+        # Per-provider capability verdicts — visible before any money is spent.
+        # A GPU degrade arrives as ok WITH degrades_to + this provider's reason.
+        assert task.providers['e2b'] == TaskProviderVerdict(
+            ok=True, degrades_to='modal', reason='e2b offers no GPU allocation'
+        )
+        assert task.providers['daytona'] == TaskProviderVerdict(ok=True)
         assert task.providers['modal'] == TaskProviderVerdict(
             ok=False, reason='multi-container tasks are not supported on modal'
         )
@@ -1494,6 +1504,8 @@ class TestJobs:
         assert trial.agent_execution.finished_at == '2026-07-22T00:04:03.000Z'
         # First-class run facts on list rows — same shape as the detail route
         assert trial.sandbox_provider == 'daytona'
+        # Not a GPU-degraded trial; the field is honestly None, never absent-crash.
+        assert trial.sandbox_provider_degrade is None
         assert trial.verifier_environment_mode == 'separate'
         assert trial.agent_info.version == 'codex-cli 0.145.0'
         assert trial.agent_info.model_info.name == 'gpt-5.5'
@@ -1502,6 +1514,48 @@ class TestJobs:
         assert trial.verifier_sandbox_id == 'iv2k1xbqwehvng70evvrp'
         assert trial.session_ref == 'sess-9'
 
+
+    @pytest.mark.asyncio
+    async def test_trial_gpu_cost_mapping(self):
+        """GPU COST (Wave-3 lane 5): ``gpu_cost`` maps through as the wire's
+        own dict on GPU trials, None on every other trial and on a malformed
+        object — and it is a SEPARATE figure, never folded into
+        ``agent_result.cost_usd``."""
+        record = {
+            'estimate_usd': 3.9492,
+            'unpriced_reason': None,
+            'provider': 'modal',
+            'gpu_type': 'H100',
+            'declared_gpu_type': 'h100',
+            'gpu_count': 1,
+            'duration_sec': 3600,
+            'rate_usd_per_gpu_sec': 0.001097,
+            'rate_card': {'version': 1, 'source': 'modal.com/pricing', 'source_date': '2026-08-05'},
+            'measured_from': '2026-07-22T00:00:10.000Z',
+            'measured_to': '2026-07-22T01:00:10.000Z',
+        }
+        fake = FakeUrlopen([
+            ('/api/jobs/job-1/trials', {
+                'items': [
+                    wire_trial(gpu_cost=record),
+                    wire_trial(id='trial-cpu'),
+                    wire_trial(id='trial-bad', gpu_cost='not-a-dict'),
+                ],
+                'nextCursor': None,
+                'hasMore': False,
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            page = await jobs_factory(CONFIG).trials('job-1')
+
+        gpu, cpu, bad = page.items
+        assert gpu.gpu_cost == record
+        # SEPARATE by law: the model spend keeps its own number beside it.
+        assert gpu.agent_result.cost_usd == 0.93
+        # A non-GPU trial (field absent on the wire) reads None, never a crash…
+        assert cpu.gpu_cost is None
+        # …and so does a malformed value (defensive, like the degrade record).
+        assert bad.gpu_cost is None
 
     @pytest.mark.asyncio
     async def test_trials_dataset_filter(self):

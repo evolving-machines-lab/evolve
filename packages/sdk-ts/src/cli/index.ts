@@ -1921,6 +1921,11 @@ function jobLines(e: Job): string[] {
   ]);
   rows.push(["provider", e.sandbox_provider]);
   rows.push(["spent", fmtUsd(e.stats.cost_usd)]);
+  // GPU compute is a SEPARATE labeled estimate (lane 5) — never summed into
+  // the spent row above, and absent entirely for a job with no GPU trials.
+  if (e.stats.gpu_cost_usd != null) {
+    rows.push(["gpu compute (est.)", `$${e.stats.gpu_cost_usd.toFixed(4)}`]);
+  }
   // Only the statuses actually present: the response names all of them (so a
   // client never hardcodes the enum), but a row of eight zeros helps nobody.
   const histogram = Object.entries(e.trials.byStatus)
@@ -1975,6 +1980,14 @@ const TRIAL_COLUMNS: ListColumn<Trial>[] = [
   { key: "status", header: "STATUS", cell: (r) => r.status },
   { key: "reward", header: "REWARD", cell: (r) => (r.reward !== null ? String(r.reward) : "-") },
   { key: "spent", header: "SPENT", cell: (r) => fmtUsd(r.agent_result?.cost_usd) },
+  {
+    // GPU compute estimate — its own column, never folded into SPENT (lane-5
+    // law). Opt-in via --columns; "-" for non-GPU trials and unpriced ones.
+    key: "gpu",
+    header: "GPU (EST)",
+    cell: (r) =>
+      r.gpu_cost?.estimate_usd != null ? `$${r.gpu_cost.estimate_usd.toFixed(4)}` : "-",
+  },
   { key: "id", header: "TRIAL ID", cell: (r) => r.id },
 ];
 const TRIAL_DEFAULT_COLUMNS = ["task", "agent", "attempt", "status", "reward", "spent", "id"];
@@ -2057,6 +2070,33 @@ export function trialDetailLines(run: Trial): string[] {
   }
   if (run.attempt_phase) rows.push(["phase", run.attempt_phase]);
   if (run.sandbox_provider) rows.push(["provider", run.sandbox_provider]);
+  // The GPU degrade, when one happened: where the job asked to run vs where
+  // the boxes actually ran, with the refusing provider's own reason.
+  if (run.sandbox_provider_degrade) {
+    const d = run.sandbox_provider_degrade;
+    rows.push(["provider degrade", `${d.from} → ${d.to}: ${d.reason}`]);
+  }
+  // GPU compute (lane 5): a SEPARATE labeled estimate, never folded into the
+  // spent row above. Priced = the full audit sentence (what x how long x whose
+  // rate card); unpriced = the server's own reason, verbatim — a number is
+  // never invented client-side.
+  if (run.gpu_cost) {
+    const g = run.gpu_cost;
+    if (g.estimate_usd != null) {
+      const type = g.gpu_type ?? g.declared_gpu_type;
+      const duration =
+        g.duration_sec != null ? `${Math.round(g.duration_sec)}s` : "unmeasured";
+      const card = `rate card v${g.rate_card.version}${
+        g.rate_card.source ? `, ${g.rate_card.source} ${g.rate_card.source_date ?? ""}`.trimEnd() : ""
+      }`;
+      rows.push([
+        "gpu compute (est.)",
+        `$${g.estimate_usd.toFixed(4)} — ${type} x${g.gpu_count}, ${duration} on ${g.provider} (${card})`,
+      ]);
+    } else {
+      rows.push(["gpu compute (est.)", `not priced — ${g.unpriced_reason ?? "no reason recorded"}`]);
+    }
+  }
   if (run.sandbox_id) rows.push(["sandbox", run.sandbox_id]);
   if (run.verifier_environment_mode) rows.push(["verifier", run.verifier_environment_mode]);
   if (run.verifier_sandbox_id) rows.push(["verifier sandbox", run.verifier_sandbox_id]);
@@ -2105,11 +2145,26 @@ function agentLines(agent: Agent): string[] {
 
 const PROVIDER_ORDER: EvalSandboxProvider[] = ["e2b", "daytona", "modal"];
 
-/** Compact per-provider verdicts, e.g. "e2b ok · daytona ok · modal NO". */
+/**
+ * Compact per-provider verdicts, e.g. "e2b ok · daytona ok · modal NO".
+ * A GPU degrade renders as "e2b →modal": the job runs there, on modal.
+ */
 function fmtProviders(providers: Task["providers"]): string {
   return PROVIDER_ORDER.filter((provider) => providers?.[provider] !== undefined)
-    .map((provider) => `${provider} ${providers[provider].ok ? "ok" : "NO"}`)
+    .map((provider) => {
+      const verdict = providers[provider];
+      if (!verdict.ok) return `${provider} NO`;
+      return verdict.degrades_to ? `${provider} →${verdict.degrades_to}` : `${provider} ok`;
+    })
     .join(" · ");
+}
+
+/** "1x any GPU" / "2x H100|A100" — the task's declared GPU requirement. */
+function fmtGpu(t: Task): string | null {
+  const gpus = t.gpus ?? 0;
+  if (gpus <= 0) return null;
+  const types = t.gpu_types && t.gpu_types.length > 0 ? t.gpu_types.join("|") : "any GPU";
+  return `${gpus}x ${types}`;
 }
 
 function fmtReward(reward: number | null): string {
@@ -2904,22 +2959,40 @@ function datasetDetailLines(b: Dataset): string[] {
   }
   if (b.tasks && b.tasks.items.length > 0) {
     lines.push("", `Tasks (version ${b.selected_version?.version ?? "?"}):`);
-    const rows = [["TASK", "AGENT TIMEOUT", "VERIFIER TIMEOUT", "PROVIDERS"]];
+    // The GPU column appears only when some listed task declares GPUs — a
+    // CPU-only dataset (the overwhelmingly common case) keeps its exact table.
+    const anyGpu = b.tasks.items.some((t) => (t.gpus ?? 0) > 0);
+    const rows = [["TASK", "AGENT TIMEOUT", "VERIFIER TIMEOUT", ...(anyGpu ? ["GPU"] : []), "PROVIDERS"]];
     for (const t of b.tasks.items) {
-      rows.push([t.task_name, `${t.agent_timeout_sec}s`, `${t.verifier_timeout_sec}s`, fmtProviders(t.providers)]);
+      rows.push([
+        t.task_name,
+        `${t.agent_timeout_sec}s`,
+        `${t.verifier_timeout_sec}s`,
+        ...(anyGpu ? [fmtGpu(t) ?? "-"] : []),
+        fmtProviders(t.providers),
+      ]);
     }
     lines.push(...table(rows));
     if (b.tasks.nextCursor) {
       lines.push(`More tasks: evolve dataset show ${b.name} --cursor ${b.tasks.nextCursor}`);
     }
     // Name each refusal once below the table; the runner refuses with the
-    // same reason at run time.
+    // same reason at run time. A GPU degrade is named the same way — it is
+    // not a refusal, so the line says where the task actually runs.
     const refusals = new Map<string, string>();
     for (const t of b.tasks.items) {
       for (const provider of PROVIDER_ORDER) {
         const verdict = t.providers?.[provider];
-        if (verdict && !verdict.ok && !refusals.has(`${provider}:${verdict.reason}`)) {
-          refusals.set(`${provider}:${verdict.reason}`, `${provider}: ${verdict.reason}`);
+        if (!verdict) continue;
+        if (!verdict.ok) {
+          if (!refusals.has(`${provider}:${verdict.reason}`)) {
+            refusals.set(`${provider}:${verdict.reason}`, `${provider}: ${verdict.reason}`);
+          }
+        } else if (verdict.degrades_to && verdict.reason) {
+          const key = `${provider}:degrade:${verdict.reason}`;
+          if (!refusals.has(key)) {
+            refusals.set(key, `${provider}: runs on ${verdict.degrades_to} — ${verdict.reason}`);
+          }
         }
       }
     }

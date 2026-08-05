@@ -1615,6 +1615,69 @@ function testTrialDetailLiveSpend() {
   assert(!noReading.includes("spent (live)"), "no reading yet means no live row, never $0");
 }
 
+/**
+ * GPU COST (Wave-3 lane 5): the trial detail renders the compute estimate as
+ * its own labeled row — the audit sentence for a priced trial, the server's
+ * own reason for an unpriced one, and NOTHING for a non-GPU trial. Never
+ * folded into the spent row.
+ */
+function testTrialDetailGpuCost() {
+  console.log("\n--- trialDetailLines: GPU compute estimate (lane 5) ---");
+  const priced = trialDetailLines(
+    trialFixture({
+      status: "SCORED",
+      reward: 1,
+      agent_result: { cost_usd: 0.31 },
+      spend_source: "measured",
+      gpu_cost: {
+        estimate_usd: 3.9492,
+        unpriced_reason: null,
+        provider: "modal",
+        gpu_type: "H100",
+        declared_gpu_type: "h100",
+        gpu_count: 1,
+        duration_sec: 3600,
+        rate_usd_per_gpu_sec: 0.001097,
+        rate_card: { version: 1, source: "modal.com/pricing", source_date: "2026-08-05" },
+        measured_from: "2026-07-29T00:00:10.000Z",
+        measured_to: "2026-07-29T01:00:10.000Z",
+      },
+    }),
+  ).join("\n");
+  assert(priced.includes("gpu compute (est.)"), "the estimate row is labeled as an estimate");
+  assert(
+    priced.includes("$3.9492 — H100 x1, 3600s on modal (rate card v1, modal.com/pricing 2026-08-05)"),
+    "the priced row carries the full audit sentence: figure, type x count, duration, provider, card",
+  );
+  assert(priced.includes("$0.31"), "the model spend row keeps its own figure beside it");
+  assert(!priced.includes("$4.26"), "the two figures are never summed into one");
+
+  const unpriced = trialDetailLines(
+    trialFixture({
+      gpu_cost: {
+        estimate_usd: null,
+        unpriced_reason: "the worker died mid-run",
+        provider: "modal",
+        gpu_type: "H100",
+        declared_gpu_type: "h100",
+        gpu_count: 1,
+        duration_sec: null,
+        rate_usd_per_gpu_sec: null,
+        rate_card: { version: 1, source: null, source_date: null },
+        measured_from: null,
+        measured_to: null,
+      },
+    }),
+  ).join("\n");
+  assert(
+    unpriced.includes("not priced — the worker died mid-run"),
+    "an unpriced trial states the server's reason verbatim, never an invented number",
+  );
+
+  const cpu = trialDetailLines(trialFixture({})).join("\n");
+  assert(!cpu.includes("gpu compute"), "a non-GPU trial shows no GPU row at all");
+}
+
 // =============================================================================
 // WIRE FIXTURES
 // =============================================================================
@@ -2003,6 +2066,42 @@ async function testJobShowMultiId() {
     await runCli(["job", "show", "eval-1", "eval-2", ...AUTH], rendered.io);
     const text = rendered.out.join("\n");
     assert(text.includes("eval-1") && text.includes("eval-2"), "rendered view shows both jobs");
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * GPU COST on the job card (lane 5): stats.gpu_cost_usd renders as its own
+ * labeled row beside — never inside — the spent row, and a job without one
+ * (no GPU trials, or an older server) shows no row at all.
+ */
+async function testJobShowGpuCost() {
+  console.log("\n--- runCli: job show renders the GPU compute estimate separately ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: wireJob({ stats: { cost_usd: 1.5, gpu_cost_usd: 0.25 } }),
+    });
+    const withGpu = captureIO();
+    assertEqual(await runCli(["job", "show", "eval-1", ...AUTH], withGpu.io), 0, "exit 0");
+    const text = withGpu.out.join("\n");
+    assert(text.includes("gpu compute (est.)"), "the GPU estimate row is labeled");
+    assert(text.includes("$0.2500"), "the summed estimate renders at 4 decimals");
+    assert(text.includes("$1.50"), "the spent row keeps the model-spend figure untouched");
+    assert(!text.includes("$1.75"), "the two figures are never summed into one");
+
+    setMockResponse("/api/jobs/eval-2", {
+      status: 200,
+      body: wireJob({ id: "eval-2", stats: { cost_usd: 1.5 } }),
+    });
+    const without = captureIO();
+    await runCli(["job", "show", "eval-2", ...AUTH], without.io);
+    assert(
+      !without.out.join("\n").includes("gpu compute"),
+      "a job with no GPU estimate shows no row — absent, not $0",
+    );
   } finally {
     restoreFetch();
   }
@@ -2839,6 +2938,83 @@ async function testTrialShow() {
     assertEqual(code, 0, "exit 0");
     assert(fetchCalls[fetchCalls.length - 1].url.endsWith("/api/trials/run-1"), "one positional, the trial id");
     assert(out.join("\n").includes("abs-module-cache-flags"), "renders the detail");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testGpuSurfaces() {
+  console.log("\n--- runCli: GPU tasks — requirement column, degrade verdicts, trial degrade row ---");
+  installMockFetch();
+  try {
+    // Dataset with one GPU task: the GPU column appears (it stays absent for
+    // CPU-only datasets — testDatasetListAndShow pins that), e2b renders the
+    // degrade arrow, and the limitation line says where the task actually runs.
+    setMockResponse("/api/datasets/gpu-bench", {
+      status: 200,
+      body: {
+        name: "gpu-bench",
+        title: "GPU bench",
+        description: null,
+        active_version: { version: "1.0", state: "READY", created_at: "2026-08-01T00:00:00Z", task_count: 1 },
+        versions: [{ version: "1.0", state: "READY", created_at: "2026-08-01T00:00:00Z", task_count: 1 }],
+        selected_version: { version: "1.0", state: "READY", created_at: "2026-08-01T00:00:00Z", task_count: 1 },
+        tasks: {
+          items: [
+            {
+              task_name: "train-lora",
+              agent_timeout_sec: 600,
+              verifier_timeout_sec: 120,
+              gpus: 2,
+              gpu_types: ["H100"],
+              providers: {
+                e2b: { ok: true, degrades_to: "modal", reason: "e2b offers no GPU allocation" },
+                daytona: { ok: true, degrades_to: "modal", reason: "this Daytona account cannot provision GPU sandboxes" },
+                modal: { ok: true },
+              },
+            },
+          ],
+          nextCursor: null,
+          hasMore: false,
+        },
+        upstream: null,
+        created_at: "2026-08-01T00:00:00Z",
+        updated_at: "2026-08-01T00:00:00Z",
+      },
+    });
+    const show = captureIO();
+    assertEqual(await runCli(["dataset", "show", "gpu-bench", ...AUTH], show.io), 0, "show exits 0");
+    const text = show.out.join("\n");
+    assert(text.includes("GPU"), "the GPU column appears when a task declares GPUs");
+    assert(text.includes("2x H100"), "the requirement renders count and types");
+    assert(text.includes("e2b →modal"), "a degrade verdict renders as an arrow, not a refusal");
+    assert(
+      text.includes("e2b: runs on modal — e2b offers no GPU allocation"),
+      "the limitation line names where the task actually runs and why"
+    );
+
+    // Trial detail: the degrade is a labeled row with from/to and the reason.
+    setMockResponse("/api/trials/run-9", {
+      status: 200,
+      body: trialFixture({
+        status: "SCORED",
+        reward: 1,
+        sandbox_provider: "modal",
+        sandbox_provider_degrade: {
+          from: "e2b",
+          to: "modal",
+          reason: "e2b offers no GPU allocation",
+        },
+      }),
+    });
+    const trial = captureIO();
+    assertEqual(await runCli(["trial", "show", "run-9", ...AUTH], trial.io), 0, "trial show exits 0");
+    const trialText = trial.out.join("\n");
+    assert(trialText.includes("provider degrade"), "the degrade row is labeled");
+    assert(
+      trialText.includes("e2b → modal: e2b offers no GPU allocation"),
+      "the row states from, to, and the refusing provider's reason"
+    );
   } finally {
     restoreFetch();
   }
@@ -3702,6 +3878,7 @@ async function main() {
   testImportStatusLine();
   testEventLine();
   testTrialDetailLiveSpend();
+  testTrialDetailGpuCost();
   testBuildInputsDirect();
   await testRunWatchEndToEnd();
   await testRunWatchJsonAndQuiet();
@@ -3710,6 +3887,7 @@ async function main() {
   await testJsonErrorObject();
   await testJobListOutputModes();
   await testJobShowMultiId();
+  await testJobShowGpuCost();
   await testJobTrialsAndTasks();
   await testJobStopDatasetSugar();
   await testJobStopDatasetChunking();
@@ -3724,6 +3902,7 @@ async function main() {
   await testTrialRegrade();
   await testCompareCancelDownload();
   await testTrialShow();
+  await testGpuSurfaces();
   await testTrialDownloadStream();
   await testTrialDownloadTrajectoryRefused();
   await testTrialDownloadSave();

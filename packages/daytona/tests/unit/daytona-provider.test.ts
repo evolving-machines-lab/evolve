@@ -28,6 +28,7 @@ import {
   DAYTONA_MAX_NETWORK_ALLOWLIST,
   DAYTONA_AUTO_DELETE_GRACE_MINUTES,
   DaytonaNetworkPolicyError,
+  DaytonaGpuTypeError,
   DaytonaResourcesError,
   DaytonaIdleTimeoutError,
   DaytonaImagePullError,
@@ -584,6 +585,34 @@ async function testCreateValidatesBeforeNetwork(): Promise<void> {
   );
 }
 
+async function testCreateRejectsGpuTypesOffline(): Promise<void> {
+  console.log("\n[6a2] DaytonaProvider.create() - GPU TYPE constraint typed-rejected offline");
+
+  const provider = createDaytonaProvider({ apiKey: "test-key" });
+
+  // @daytonaio/sdk 0.134.0 has no gpu_type field anywhere: honoring
+  // `resources.gpuTypes` is impossible, and silently dropping it would turn
+  // "give me an H100" into "give me some GPU". Typed refusal, before any API
+  // call — same provider law as disk on modal.
+  let gpuTypeError: unknown;
+  try {
+    await provider.create({
+      image: "evolve-all",
+      resources: { gpu: 1, gpuTypes: ["H100"] },
+    });
+  } catch (e) {
+    gpuTypeError = e;
+  }
+  assert(
+    gpuTypeError instanceof DaytonaGpuTypeError,
+    "create() throws DaytonaGpuTypeError for a gpuTypes constraint"
+  );
+  assert(
+    String(gpuTypeError).includes("modal"),
+    "the message points at the provider that CAN reserve typed GPUs"
+  );
+}
+
 async function testCreateNoLongerRejectsUserAndNetwork(): Promise<void> {
   console.log("\n[6b] DaytonaProvider.create() - user and network options are enforced, not rejected");
 
@@ -1116,6 +1145,7 @@ const tests = [
   testStateMapping,
   // [6] provider create validation
   testCreateValidatesBeforeNetwork,
+  testCreateRejectsGpuTypesOffline,
   testCreateNoLongerRejectsUserAndNetwork,
   testCreateRejectsResourcesOnCachedSnapshot,
   testCreateRejectsIdleTimeout,

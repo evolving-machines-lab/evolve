@@ -236,9 +236,23 @@ const DEFAULT_MEMORY_MIB = 4096;
  * UP so the sandbox never gets less memory than requested. `disk` throws
  * ModalResourcesError — the SDK cannot express it.
  */
+/**
+ * Structural twin of SandboxCreateOptions["resources"] — spelled locally
+ * (rather than indexed off the SDK type) so this package can build against
+ * an SDK whose published type predates the GPU fields; the provider-parity
+ * conformance file still pins the two to each other.
+ */
+type ModalCreateResources = {
+  cpu?: number;
+  memory?: number;
+  disk?: number;
+  gpu?: number;
+  gpuTypes?: string[];
+};
+
 function mapResources(
-  resources?: SandboxCreateOptions["resources"]
-): { cpu: number; memoryMiB: number } {
+  resources?: ModalCreateResources
+): { cpu: number; memoryMiB: number; gpu?: string } {
   if (resources?.disk !== undefined) {
     throw new ModalResourcesError(
       `Modal's JS SDK has no create-time disk-size parameter, so a ${resources.disk} GiB ` +
@@ -246,12 +260,30 @@ function mapResources(
         "default disk quota) or run on a provider that sizes disk."
     );
   }
+  // GPU reservation: Modal takes a "<TYPE>:<count>" string (SandboxCreateParams
+  // .gpu, e.g. "A100", "T4:2", "A100-80GB:4"; the SDK uppercases the type).
+  // Type 'any' when the caller names none; the FIRST named type when several —
+  // Modal reserves one type per sandbox. The type string passes through
+  // verbatim: Modal rejects an unknown type at create with its own typed
+  // error, never a silent CPU box. gpuTypes without a positive gpu count is a
+  // contradiction worth refusing rather than guessing a count for.
+  if ((resources?.gpu === undefined || resources.gpu <= 0) && resources?.gpuTypes?.length) {
+    throw new ModalResourcesError(
+      "resources.gpuTypes was set without a positive resources.gpu count — declare how many " +
+        "GPUs to reserve, or drop gpuTypes."
+    );
+  }
+  const gpu =
+    resources?.gpu !== undefined && resources.gpu > 0
+      ? `${resources.gpuTypes?.length ? resources.gpuTypes[0] : "any"}:${resources.gpu}`
+      : undefined;
   return {
     cpu: resources?.cpu ?? DEFAULT_CPU_CORES,
     memoryMiB:
       resources?.memory !== undefined
         ? Math.ceil(resources.memory * 1024)
         : DEFAULT_MEMORY_MIB,
+    ...(gpu !== undefined ? { gpu } : {}),
   };
 }
 
@@ -534,8 +566,13 @@ export interface SandboxCreateOptions {
    * 4 cores / 4 GiB). `disk` is REJECTED with ModalResourcesError: the Modal
    * JS SDK exposes no disk-size parameter, so a specific disk size cannot be
    * enforced (containers get Modal's default disk quota).
+   *
+   * `gpu` + `gpuTypes` become Modal's "<TYPE>:<count>" GPU reservation
+   * ('any' when no types are named; the FIRST type when several — Modal
+   * reserves one type per sandbox; the type passes through verbatim and an
+   * unknown one gets Modal's own typed rejection at create).
    */
-  resources?: { cpu?: number; memory?: number; disk?: number };
+  resources?: ModalCreateResources;
   /**
    * Provider-neutral outbound network policy, enforced by Modal's network
    * stack. "blocked" with no allowedDestinations drops all egress; with
@@ -1312,6 +1349,9 @@ export class ModalProvider implements SandboxProvider {
     const sandbox = await this.client.sandboxes.create(app, builtImage, {
       cpu: sizing.cpu,
       memoryMiB: sizing.memoryMiB,
+      // GPU reservation string ("<TYPE>:<count>"), when the caller asked for
+      // one — see mapResources.
+      ...(sizing.gpu !== undefined ? { gpu: sizing.gpu } : {}),
       timeoutMs,
       ...idleParams,
       workdir: options.workingDirectory,

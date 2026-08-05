@@ -38,7 +38,10 @@ info:
       `worst_case_spend_usd` (stated, never left to the caller to multiply),
       and the live lower-bound pair `live_spent_usd` / `live_spend_at`.
       Measured spend travels as `cost_usd` (job: `stats.cost_usd`; trial:
-      `agent_result.cost_usd`).
+      `agent_result.cost_usd`). GPU trials additionally carry a compute
+      ESTIMATE — measured sandbox lifetime x a versioned, source-dated rate
+      card — as a SEPARATE labeled figure (trial: `gpu_cost`; job:
+      `stats.gpu_cost_usd`), never merged into any `cost_usd`.
     - **Typed error catalog.** A closed 52-code union; every error response is
       one envelope: `{code, message, param, details, retryAfterSec,
       request_id, requestId}` (envelope keys frozen verbatim; `requestId` is
@@ -2573,6 +2576,15 @@ components:
         cost_usd:
           type: [number, 'null']
           description: Measured spend across settled trials; null before any settled.
+        gpu_cost_usd:
+          type: [number, 'null']
+          description: >
+            Sum of the job's per-trial GPU compute ESTIMATES (each trial's
+            `gpu_cost.estimate_usd`) — a SEPARATE labeled figure, never
+            merged into `cost_usd`, which is metered model spend. Null when
+            no trial of the job carries an estimate (no GPU trials, or none
+            priced); a real $0 (a GPU trial that provably never booted a
+            sandbox) keeps the sum non-null.
 
     JobFailure:
       type: object
@@ -2994,6 +3006,91 @@ components:
           oneOf:
             - $ref: '#/components/schemas/SandboxProvider'
             - type: 'null'
+        sandbox_provider_degrade:
+          type: [object, 'null']
+          required: [from, to, reason]
+          description: >
+            Present when this trial's task declared GPUs the job's stamped
+            provider could not allocate, so the trial ran on modal instead:
+            `from` is the job's request, `to` where the boxes actually ran,
+            `reason` the refusing provider's own sentence. Null on every
+            other trial.
+          properties:
+            from:
+              $ref: '#/components/schemas/SandboxProvider'
+            to:
+              $ref: '#/components/schemas/SandboxProvider'
+            reason:
+              type: string
+        gpu_cost:
+          type: [object, 'null']
+          required: [estimate_usd, unpriced_reason, provider, gpu_type, declared_gpu_type,
+                     gpu_count, duration_sec, rate_usd_per_gpu_sec, rate_card,
+                     measured_from, measured_to]
+          description: |
+            GPU COMPUTE ESTIMATE — present on settled GPU trials only, null on
+            every other trial (CPU sandbox cost tracking is a separate,
+            not-yet-offered feature). The estimate is the trial's MEASURED
+            agent-sandbox lifetime multiplied by a versioned, source-dated
+            rate card row (the provider's public list price per GPU-second,
+            times `gpu_count`). It is an estimate of platform-paid compute, a
+            SEPARATE labeled figure by law: it is never merged into
+            `agent_result.cost_usd` (metered model spend) or any other
+            `cost_usd`. Exactly one of `estimate_usd` / `unpriced_reason` is
+            set — when the lifetime could not be measured (a reaped run) or
+            no single list price applies (GPU type `any`), the reason is
+            stated and no number is invented. A GPU trial that provably never
+            booted a sandbox carries a real `estimate_usd: 0`.
+          properties:
+            estimate_usd:
+              type: [number, 'null']
+              description: The estimate, USD, micro-dollar resolution. Null exactly when `unpriced_reason` is set.
+            unpriced_reason:
+              type: [string, 'null']
+              description: Why no estimate exists. Null exactly when `estimate_usd` is set.
+            provider:
+              $ref: '#/components/schemas/SandboxProvider'
+            gpu_type:
+              type: [string, 'null']
+              description: >
+                The rate card's billing name the rate was looked up under
+                (e.g. `H100`, `A100-80GB`); null when the declared type never
+                resolved to one (`any`, or an unknown spelling).
+            declared_gpu_type:
+              type: string
+              description: The task's own declared spelling (first named `gpu_types` entry, or `any`).
+            gpu_count:
+              type: integer
+              minimum: 1
+            duration_sec:
+              type: [number, 'null']
+              description: Measured sandbox lifetime, fractional seconds; null when unmeasured.
+            rate_usd_per_gpu_sec:
+              type: [number, 'null']
+              description: The applied list price per GPU per second; null when no rate applied.
+            rate_card:
+              type: object
+              required: [version, source, source_date]
+              description: >
+                Which card priced this trial: the platform's rate-card
+                version, the provider pricing page the rate was read from,
+                and the date it was read — so a stored estimate stays
+                auditable after the card changes.
+              properties:
+                version:
+                  type: integer
+                source:
+                  type: [string, 'null']
+                source_date:
+                  type: [string, 'null']
+            measured_from:
+              type: [string, 'null']
+              format: date-time
+              description: Observed sandbox birth; null when unmeasured.
+            measured_to:
+              type: [string, 'null']
+              format: date-time
+              description: Observed sandbox end; null when unmeasured.
         sandbox_id:
           type: [string, 'null']
           description: Provider id of the box the agent executed in; null when none booted.
@@ -3845,24 +3942,35 @@ components:
     TaskProviderVerdict:
       type: object
       description: >
-        One provider's verdict for a task: runnable there, or refused with
-        the limitation named. Advisory for planning — creating a job whose
+        One provider's verdict for a task: runnable there, refused with the
+        limitation named, or — GPU tasks only — runnable via a recorded
+        DEGRADE to modal. Advisory for planning — creating a job whose
         tasks include one refused on the chosen provider is rejected with the
         same reason, so nothing is ever spent on a trial that cannot execute.
       required: [ok]
       properties:
         ok:
           type: boolean
+        degrades_to:
+          type: string
+          enum: [modal]
+          description: >
+            Present (with ok true) when this provider cannot allocate the
+            task's declared GPUs itself: a job stamped here still runs the
+            task, on modal, and the trial records the same degrade as
+            `sandbox_provider_degrade`.
         reason:
           type: string
-          description: Present when ok is false.
+          description: >
+            Present when ok is false, and alongside `degrades_to` — this
+            provider's own sentence for why it cannot serve the task itself.
 
     Task:
       type: object
       description: >
         Public task fields only — instructions, environments, and tests never
         leave the server.
-      required: [task_name, agent_timeout_sec, verifier_timeout_sec, providers, gate]
+      required: [task_name, agent_timeout_sec, verifier_timeout_sec, gpus, gpu_types, providers, gate]
       properties:
         task_name:
           type: string
@@ -3870,6 +3978,20 @@ components:
           type: number
         verifier_timeout_sec:
           type: number
+        gpus:
+          type: integer
+          minimum: 0
+          description: >
+            GPUs the task declares (task.toml [environment] gpus, Harbor's
+            field honored verbatim). 0 = a CPU task, which is every task
+            that declares nothing.
+        gpu_types:
+          type: [array, 'null']
+          items:
+            type: string
+          description: >
+            Acceptable GPU types (e.g. ["H100", "A100"]), Harbor semantics:
+            null means ANY type is acceptable. Always null when gpus is 0.
         providers:
           type: object
           description: Verdict per sandbox provider.
@@ -4291,7 +4413,7 @@ components:
 
     ProviderCapability:
       type: object
-      required: [name, default, sizing, refuses]
+      required: [name, default, sizing, gpus, refuses]
       properties:
         name:
           type: string
@@ -4310,6 +4432,30 @@ components:
             storage:
               type: string
               enum: [sized, fixed]
+        gpus:
+          type: object
+          required: [supported, max_gpus]
+          description: >
+            GPU capability of this provider for eval boxes right now. When
+            `supported` is false, `degrades_to` names where a GPU job stamped
+            here actually runs and `reason` is the same sentence the trial
+            records; daytona's answer comes from a live org-quota probe that
+            fails closed, and `source` says whether it was measured
+            ('live-quota') or is the conservative fallback.
+          properties:
+            supported:
+              type: boolean
+            max_gpus:
+              type: integer
+              description: Per-container allocation ceiling; import refuses tasks above it.
+            degrades_to:
+              type: string
+              enum: [modal]
+            reason:
+              type: string
+            source:
+              type: string
+              enum: [live-quota, fallback, provider-constant]
         refuses:
           type: array
           items:
@@ -4368,6 +4514,7 @@ components:
         - agents
         - agent_registration
         - sandbox_providers
+        - gpu_concurrency_cap
         - managed_providers
         - platform_constraints
         - network_modes
@@ -4415,6 +4562,14 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ProviderCapability'
+        gpu_concurrency_cap:
+          type: integer
+          description: |
+            Fleet-wide cap on concurrently in-flight trials of GPU-declaring
+            tasks (platform-paid GPU compute). Queued GPU trials past the cap
+            simply wait for a slot — published so a client can explain the
+            wait. Per-provider GPU capability lives on each
+            `sandbox_providers` entry (`gpus`).
         managed_providers:
           type: array
           description: |
