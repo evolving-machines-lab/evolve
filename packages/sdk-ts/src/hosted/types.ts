@@ -859,12 +859,46 @@ export interface DatasetVersionGateFailedTask {
   reasons: string[];
 }
 
+/** One dataset.toml author: a name, and an email when the manifest gives one. */
+export interface DatasetManifestAuthor {
+  name: string;
+  email: string | null;
+}
+
+/**
+ * The metadata half of the Harbor dataset.toml manifest a version imported
+ * under. The full manifest additionally pins per-task/per-file content
+ * digests — verified server-side at import (a mismatch FAILS the import,
+ * `manifest_digest_mismatch`) and readable in the retained package; the wire
+ * carries identity + metadata.
+ */
+export interface DatasetManifestMetadata {
+  /** The manifest's own dataset name, Harbor `org/name` format. */
+  name: string;
+  /** The manifest's `[dataset].version`; null when it declares none. */
+  version: string | null;
+  description: string;
+  authors: DatasetManifestAuthor[];
+  keywords: string[];
+  /**
+   * How many `[[tasks]]` refs the manifest listed (duplicates included,
+   * Harbor's task_count). Null on rows stored before the count was recorded.
+   */
+  task_count: number | null;
+}
+
 /** One immutable version of a dataset — one shape on every surface */
 export interface DatasetVersion {
   version: string;
   state: DatasetVersionState;
   created_at: string;
   task_count: number;
+  /**
+   * The dataset.toml identity/metadata this version imported under. Null when
+   * the corpus carried no manifest, and on servers that predate the field —
+   * absence is "nothing to report", never a crash.
+   */
+  manifest: DatasetManifestMetadata | null;
   /**
    * Activation-gate progress. Null when no gate was scheduled for this
    * version, and also null when the server predates the gate field — so a
@@ -1021,10 +1055,19 @@ export type DatasetSource =
 /** Input for datasets().publish() */
 export interface PublishDatasetInput {
   source: DatasetSource;
-  /** Catalog dataset name the version lands under (created or extended) */
-  name: string;
-  /** Version label for the new immutable version */
-  version: string;
+  /**
+   * Catalog dataset name the version lands under (created or extended).
+   * Optional when a `directory` source carries a dataset.toml manifest — the
+   * server derives the name from the manifest (the short segment of its
+   * `org/name`). Always required for a git source, whose manifest is only
+   * readable after the server clones it.
+   */
+  name?: string;
+  /**
+   * Version label for the new immutable version. Optional when a `directory`
+   * source's dataset.toml declares `[dataset].version`; required otherwise.
+   */
+  version?: string;
 }
 
 /**

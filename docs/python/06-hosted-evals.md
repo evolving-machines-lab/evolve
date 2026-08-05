@@ -730,6 +730,30 @@ npx evolve-evals dataset publish --dir ./my-swe --name my-swe --version 1.0 --wa
 
 Every lane resolves to the same thing — a task-layout directory — and is held to the same rules. The corpus root is a directory whose `tasks/` subdirectory holds one directory per task, or the tasks directory itself. Provenance is recorded per lane: the resolved commit for a git publish, the sha256 of the exact uploaded bytes for a directory. On the wire a publish is `multipart/form-data` — the SDK produces it for you — and uploads past the compressed-size cap are refused with a `413 import_too_large`. The metadata parts come first, so a name owned by someone else is refused with the `409` before the upload is received rather than after. A git source must be an `https://` url: the import runs on a worker with no ssh client, so `ssh://` and `git@` remotes are refused at validation rather than failing inside the job — for a private repository, put a token in the https url.
 
+### The dataset manifest (dataset.toml)
+
+A corpus that carries Harbor's dataset manifest — a `dataset.toml` beside the task directories or at the corpus root — imports what the **manifest** says, not what happens to be on disk:
+
+- **The manifest drives selection.** Only the tasks it names under `[[tasks]]` are imported; a task directory it does not list is left out, and a task it names that the checkout does not contain fails the publish (`manifest_task_missing`) — a dataset must never silently import smaller under the same name.
+- **Every pinned digest is verified.** Each `[[tasks]]` entry pins a `sha256:` content digest, and the platform recomputes it with Harbor's exact per-task content-hash recipe (same file set, same ordering, same `.gitignore` filtering). A mismatch fails the publish (`manifest_digest_mismatch`) naming every divergent task with the pinned and the computed digest — the corpus is not the one the manifest's author published, and nothing unpinned ever lands. `[[files]]` digests are held to the same rule.
+- **Metadata lands with it.** The `[dataset]` description reaches the catalog row, and every version carries the manifest identity it imported under — `version.manifest` is a `DatasetManifestMetadata` (`name`, `version`, `description`, `authors`, `keywords`, `task_count`; `None` when the corpus had no manifest). `evolve-evals dataset show` prints it under the dataset header.
+- **A `metric.py` custom metric is refused** (`custom_metric_not_supported`): custom metric scripts are not supported yet, and importing a dataset while ignoring the script that defines its scoring would report numbers its author never declared.
+
+The manifest also makes `name` and `version` optional for a **directory** publish — the platform derives the name from the manifest's `org/name` (the segment after the `/`) and the version from `[dataset].version`, and explicit values always win:
+
+```python
+# dataset.toml carries [dataset] name = "acme/my-swe", version = "1.0"
+from_manifest = await catalog.publish(directory='./my-swe')
+from_manifest.name      # 'my-swe' — derived from the manifest
+from_manifest.version   # '1.0'
+```
+
+```bash
+npx evolve-evals dataset publish --dir ./my-swe --watch   # name/version from dataset.toml
+```
+
+A **git** publish still requires both: the repository is only cloned server-side after the publish is accepted, long after the 202 has promised a name.
+
 What happens next:
 
 - **All-or-nothing parse.** Every task is parsed before anything lands; one bad task fails the whole publish, with each failure named in `failure.failures`. No partial corpus ever exists.

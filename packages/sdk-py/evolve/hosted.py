@@ -34,6 +34,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import (
     Any,
     AsyncIterator,
@@ -336,12 +337,43 @@ class DatasetVersionGate:
 
 
 @dataclass
+class DatasetManifestAuthor:
+    """One dataset.toml author: a name, and an email when the manifest gives one."""
+    name: str
+    email: Optional[str] = None
+
+
+@dataclass
+class DatasetManifestMetadata:
+    """The metadata half of the Harbor dataset.toml a version imported under.
+
+    The full manifest additionally pins per-task/per-file content digests —
+    verified server-side at import (a mismatch FAILS the import,
+    ``manifest_digest_mismatch``) and readable in the retained package; the
+    wire carries identity + metadata. ``name`` is the manifest's own dataset
+    name in Harbor ``org/name`` format; ``task_count`` counts the manifest's
+    ``[[tasks]]`` refs (duplicates included) and is ``None`` on rows stored
+    before the count was recorded.
+    """
+    name: str
+    version: Optional[str] = None
+    description: str = ''
+    authors: List[DatasetManifestAuthor] = field(default_factory=list)
+    keywords: List[str] = field(default_factory=list)
+    task_count: Optional[int] = None
+
+
+@dataclass
 class DatasetVersion:
     """One immutable version of a dataset — one shape on every surface."""
     version: str
     state: str
     created_at: str
     task_count: int
+    #: The dataset.toml identity/metadata this version imported under.
+    #: ``None`` when the corpus carried no manifest, and on servers that
+    #: predate the field — absence is "nothing to report", never a crash.
+    manifest: Optional[DatasetManifestMetadata] = None
     #: Activation-gate progress. ``None`` when no gate was scheduled for this
     #: version, and also ``None`` when the server predates the gate field — a
     #: missing gate never means "passed", only "nothing to report".
@@ -1251,12 +1283,49 @@ def _map_gate_failed_tasks(data: Any) -> List[DatasetVersionGateFailedTask]:
     return tasks
 
 
+def _map_version_manifest(data: Any) -> Optional[DatasetManifestMetadata]:
+    """The dataset.toml metadata a version imported under, defensively.
+
+    An older server (no field) or garbage reads as ``None``; a present
+    manifest gets its lists normalized so a caller iterates without guarding.
+    """
+    if not isinstance(data, dict) or not isinstance(data.get('name'), str):
+        return None
+    raw_authors = data.get('authors')
+    authors: List[DatasetManifestAuthor] = []
+    if isinstance(raw_authors, list):
+        for item in raw_authors:
+            if isinstance(item, dict) and isinstance(item.get('name'), str):
+                email = item.get('email')
+                authors.append(DatasetManifestAuthor(
+                    name=item['name'],
+                    email=email if isinstance(email, str) else None,
+                ))
+    keywords = data.get('keywords')
+    version = data.get('version')
+    description = data.get('description')
+    task_count = data.get('task_count')
+    return DatasetManifestMetadata(
+        name=data['name'],
+        version=version if isinstance(version, str) else None,
+        description=description if isinstance(description, str) else '',
+        authors=authors,
+        keywords=[k for k in keywords if isinstance(k, str)] if isinstance(keywords, list) else [],
+        task_count=(
+            task_count
+            if isinstance(task_count, int) and not isinstance(task_count, bool)
+            else None
+        ),
+    )
+
+
 def _map_dataset_version(data: Dict[str, Any]) -> DatasetVersion:
     return DatasetVersion(
         version=data['version'],
         state=data.get('state', ''),
         created_at=data.get('created_at', ''),
         task_count=int(data.get('task_count', 0)),
+        manifest=_map_version_manifest(data.get('manifest')),
         gate=_map_version_gate(data.get('gate')),
     )
 
@@ -2295,8 +2364,8 @@ class DatasetsClient:
         git_url: Optional[str] = None,
         git_ref: Optional[str] = None,
         directory: Optional[str] = None,
-        name: str,
-        version: str,
+        name: Optional[str] = None,
+        version: Optional[str] = None,
     ) -> DatasetImport:
         """Publish a dataset version (asynchronous server-side import).
 
@@ -2306,6 +2375,13 @@ class DatasetsClient:
         :meth:`get_import` / :meth:`watch_import`. ``version`` labels the new
         immutable version.
 
+        ``name`` and ``version`` may be omitted for a ``directory`` whose
+        corpus carries a Harbor ``dataset.toml`` manifest — the server derives
+        the name from the manifest (the short segment of its ``org/name``) and
+        the version from ``[dataset].version``. A git source always requires
+        both: its manifest is only readable after the server clones it, long
+        after the publish has been accepted under a name.
+
         ``git_url`` must be https — the import runs on a worker with no ssh
         client, so ssh:// and git@ remotes are refused at validation. For a
         private repository, put a token in the https url.
@@ -2313,12 +2389,36 @@ class DatasetsClient:
         # ONE body grammar: multipart/form-data, metadata in named parts. The
         # corpus is the ``archive`` part; a git source is git_url + git_ref.
         if directory is not None:
+            if name is None or version is None:
+                # The only client-side check is the cheap one that saves a
+                # wasted upload: without the flags AND without a manifest,
+                # the server would refuse after receiving the whole corpus.
+                root = Path(directory)
+                has_manifest = (
+                    (root / 'dataset.toml').is_file()
+                    or (root / 'tasks' / 'dataset.toml').is_file()
+                )
+                if not has_manifest:
+                    missing = 'name' if name is None else 'version'
+                    raise ValueError(
+                        f'publish() needs {missing}=... — pass it explicitly, or add a '
+                        'dataset.toml manifest to the corpus directory (the server then '
+                        'derives name and version from it)'
+                    )
             gzipped = await asyncio.to_thread(_tar_gzip_directory, directory)
+            fields = {'name': name, 'version': version}
             body, content_type = _multipart_body(
-                {'name': name, 'version': version},
+                {k: v for k, v in fields.items() if v is not None},
                 ('corpus.tar.gz', gzipped),
             )
         elif git_url and git_ref:
+            if name is None or version is None:
+                raise ValueError(
+                    'publish() requires name=... and version=... for a git source — a '
+                    'dataset.toml manifest can only supply them for a directory source, '
+                    'because a git repository is cloned server-side after the publish '
+                    'is accepted'
+                )
             body, content_type = _multipart_body({
                 'name': name,
                 'version': version,
@@ -2329,7 +2429,8 @@ class DatasetsClient:
             raise ValueError(
                 'publish() requires either a git source (git_url=..., git_ref=...) '
                 'or a local corpus directory (directory=...), plus name=... '
-                'and version=...'
+                'and version=... (both optional for a directory whose corpus '
+                'carries a dataset.toml manifest)'
             )
         raw = await self._http.request_upload(
             '/api/datasets/publish', body, {'Content-Type': content_type}

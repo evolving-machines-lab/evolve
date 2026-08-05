@@ -3279,6 +3279,27 @@ function testBuildInputsDirect() {
     { source: { directory: "/tmp/corpus" }, name: "n", version: "1" },
     "directory publish input"
   );
+  // --name/--version are OPTIONAL with --dir: a corpus carrying a dataset.toml
+  // manifest supplies them server-side. The CLI passes the omission through —
+  // the SDK (which can see the directory) refuses when no manifest exists.
+  const manifestDir = buildPublishInput(parseArgs(["dataset", "publish", "--dir", "/tmp/corpus"]));
+  assertEqual(
+    manifestDir,
+    { source: { directory: "/tmp/corpus" } },
+    "directory publish without --name/--version carries neither (manifest supplies them)"
+  );
+  // A git source cannot lean on the manifest — the repo is cloned server-side
+  // after the 202 — so the old requirement stands, with the reason.
+  assertThrowsUsage(
+    () => buildPublishInput(parseArgs(["dataset", "publish", "--git", "g", "--ref", "r", "--version", "1"])),
+    "--name",
+    "git publish without --name still refuses"
+  );
+  assertThrowsUsage(
+    () => buildPublishInput(parseArgs(["dataset", "publish", "--git", "g", "--ref", "r", "--name", "n"])),
+    "--version",
+    "git publish without --version still refuses"
+  );
 
   const agent = buildAgentInput(
     parseArgs(["agent", "add", "acme", "--install-script", "/x.sh", "--run", "acme", "--ae", "A=1"]),

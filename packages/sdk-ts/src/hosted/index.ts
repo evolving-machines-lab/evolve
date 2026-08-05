@@ -511,12 +511,43 @@ function mapGateFailedTasks(raw: unknown): DatasetVersionGateFailedTask[] {
   return tasks;
 }
 
+/**
+ * The dataset.toml metadata a version imported under. Defensive like every
+ * mapper here: an older server (no field) or garbage reads as null, and a
+ * present manifest gets its arrays normalized so a caller can iterate without
+ * guarding — absence is "nothing to report", never a crash.
+ */
+function mapVersionManifest(raw: unknown): DatasetVersion["manifest"] {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const blob = raw as Record<string, unknown>;
+  if (typeof blob.name !== "string") return null;
+  const authors = Array.isArray(blob.authors)
+    ? blob.authors.flatMap((a) => {
+        if (!a || typeof a !== "object" || Array.isArray(a)) return [];
+        const row = a as Record<string, unknown>;
+        if (typeof row.name !== "string") return [];
+        return [{ name: row.name, email: typeof row.email === "string" ? row.email : null }];
+      })
+    : [];
+  return {
+    name: blob.name,
+    version: typeof blob.version === "string" ? blob.version : null,
+    description: typeof blob.description === "string" ? blob.description : "",
+    authors,
+    keywords: Array.isArray(blob.keywords)
+      ? blob.keywords.filter((k): k is string => typeof k === "string")
+      : [],
+    task_count: typeof blob.task_count === "number" ? blob.task_count : null,
+  };
+}
+
 function mapDatasetVersion(raw: Record<string, unknown>): DatasetVersion {
   return {
     version: raw.version as string,
     state: raw.state as DatasetVersionState,
     created_at: raw.created_at as string,
     task_count: (raw.task_count as number) ?? 0,
+    manifest: mapVersionManifest(raw.manifest),
     gate: mapVersionGate(raw.gate),
   };
 }
@@ -1258,6 +1289,26 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
       // arrived through a JSON.parse — a config file, an HTTP body, a CLI flag
       // — where no type was ever checked.
       if (src?.directory) {
+        // name/version may be omitted when the corpus carries a dataset.toml
+        // manifest — the SERVER derives them from it (the manifest is also
+        // what drives selection and digest verification there). The only
+        // client-side check is the cheap one that saves a wasted upload: if
+        // neither the flags nor a manifest file exist, say so before tarring
+        // and shipping the corpus.
+        if (input.name === undefined || input.version === undefined) {
+          const { existsSync } = await import("node:fs");
+          const { join } = await import("node:path");
+          const hasManifest =
+            existsSync(join(src.directory, "dataset.toml")) ||
+            existsSync(join(src.directory, "tasks", "dataset.toml"));
+          if (!hasManifest) {
+            throw new Error(
+              `datasets().publish() needs ${input.name === undefined ? "a name" : "a version"} — ` +
+                "pass it explicitly, or add a dataset.toml manifest to the corpus directory " +
+                "(the server then derives name and version from it)"
+            );
+          }
+        }
         const { tarGzipDirectory } = await import("./tar");
         const gzipped = await tarGzipDirectory(src.directory);
         const res = await request(cfg, "/api/datasets/publish", {
@@ -1275,6 +1326,16 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
       // for an untyped one, the server refuses it with a named param, which is
       // a better error than this function's generic sentence.
       if (src && "git_url" in src && src.git_url) {
+        // A git source cannot lean on its manifest: the server only reads it
+        // after the clone, long after the 202 has promised a name. Refuse
+        // here with the reason instead of a round trip to the same refusal.
+        if (input.name === undefined || input.version === undefined) {
+          throw new Error(
+            "datasets().publish() requires name and version for a git source — a dataset.toml " +
+              "manifest can only supply them for a directory source, because a git repository " +
+              "is cloned server-side after the publish is accepted"
+          );
+        }
         const res = await request(cfg, "/api/datasets/publish", {
           method: "POST",
           body: uploadForm({
@@ -1288,7 +1349,8 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
       }
       throw new Error(
         "datasets().publish() requires either a git source ({ source: { git_url, git_ref } }) " +
-          "or a local corpus directory ({ source: { directory } }), plus name and version"
+          "or a local corpus directory ({ source: { directory } }), plus name and version " +
+          "(both optional for a directory whose corpus carries a dataset.toml manifest)"
       );
     },
 
