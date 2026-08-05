@@ -296,9 +296,15 @@ const GROUPS: Record<string, GroupSpec> = {
         example: "evolve-evals job regrade cme12ab34 --task tricky-task",
       },
       download: {
-        summary: "Download the job's results (.tar.gz, standard job-directory layout)",
+        summary: "Download the job's results, unpacked as the standard job-directory tree",
         flags: {
-          "output-dir": { kind: "string", short: "o", value: "<dir>", help: "Directory to save into (default: current dir)" },
+          "output-dir": {
+            kind: "string",
+            short: "o",
+            value: "<dir>",
+            help: "Directory to unpack into (default: current dir); the tree lands in <dir>/job-<id>/",
+          },
+          overwrite: { kind: "boolean", help: "Replace an existing <dir>/job-<id>/" },
         },
         minPositionals: 1,
         maxPositionals: 1,
@@ -2365,17 +2371,52 @@ async function cmdJobRegrade(inv: Invocation, io: CliIO): Promise<number> {
   return 0;
 }
 
+// `job download` UNPACKS: the SDK's jobs().download() hands over the archive
+// itself (Buffer / file / stream — the caller decides what to do with the
+// bytes), but the CLI's contract is the job-directory TREE on disk. The
+// archive lands in a scratch directory (so the download's truncation + digest
+// checks still run against a real file), extracts to <output-dir>/job-<id>/,
+// and the scratch copy never survives — the tree IS the result, not a
+// .tar.gz the user still has to unpack by hand.
 async function cmdJobDownload(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
-  const filePath = await client.download(await resolveJobId(inv, inv.positionals[0]), {
-    to: (inv.flags["output-dir"] as string | undefined) ?? process.cwd(),
-  });
-  if (inv.flags.json === true) {
-    io.out(JSON.stringify({ path: filePath }));
-  } else {
-    io.out(`Saved ${filePath}`);
+  const id = await resolveJobId(inv, inv.positionals[0]);
+  const { join } = await import("node:path");
+  const outputDir = (inv.flags["output-dir"] as string | undefined) ?? process.cwd();
+  const root = `job-${id}`;
+  const targetDir = join(outputDir, root);
+  if (existsSync(targetDir) && inv.flags.overwrite !== true) {
+    throw new Error(`${targetDir} already exists (pass --overwrite to replace it)`);
   }
-  return 0;
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { extractTarGz } = await import("./tar");
+  const scratch = await mkdtemp(join(tmpdir(), "evolve-job-download-"));
+  try {
+    const archivePath = await client.download(id, { to: scratch });
+    // --overwrite replaces the tree only once the archive has fully arrived
+    // and verified — a failed download never costs the previous copy.
+    if (inv.flags.overwrite === true) {
+      await rm(targetDir, { recursive: true, force: true });
+    }
+    let files: string[];
+    try {
+      files = await extractTarGz(archivePath, outputDir, root);
+    } catch (error) {
+      // A half-extracted tree that looks like a job directory and is not one
+      // is worse than no tree at all.
+      await rm(targetDir, { recursive: true, force: true }).catch(() => {});
+      throw error;
+    }
+    if (inv.flags.json === true) {
+      io.out(JSON.stringify({ path: targetDir, files: files.length }));
+    } else {
+      io.out(`Saved ${targetDir} (${files.length} files)`);
+    }
+    return 0;
+  } finally {
+    await rm(scratch, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 async function cmdTrialShow(inv: Invocation, io: CliIO): Promise<number> {

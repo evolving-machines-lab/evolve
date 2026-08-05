@@ -494,7 +494,7 @@ npx evolve-evals job cancel <id>
 npx evolve-evals job stop <id> --dataset deep-swe    # one dataset's live trials
 npx evolve-evals job resume <id> -f InfrastructureError
 npx evolve-evals job regrade <id> --task task-001
-npx evolve-evals job download <id> -o results/
+npx evolve-evals job download <id> -o results/   # unpacks the job tree to results/job-<id>/
 
 npx evolve-evals trial show <trial-id>
 npx evolve-evals trial download <trial-id> --stream trace-stdout

@@ -129,12 +129,15 @@ function restoreFetch() {
 // IMPORT (after mock setup)
 // =============================================================================
 
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { createGzip } from "node:zlib";
+import { pack } from "tar-stream";
 
 import {
   buildAgentInput,
@@ -2555,17 +2558,55 @@ async function testTrialRegrade() {
   }
 }
 
+/**
+ * Build a .tar.gz fixture the way the server's archive builder does — real
+ * tar entries through tar-stream — including deliberately hostile shapes
+ * (`..` climbs, entries outside the root, symlinks) the extractor must
+ * refuse.
+ */
+async function gzipTarArchive(
+  entries: { name: string; content?: string; type?: "file" | "directory" | "symlink"; linkname?: string }[]
+): Promise<Buffer> {
+  const tar = pack();
+  for (const e of entries) {
+    if (e.type === "directory") {
+      tar.entry({ name: e.name, type: "directory" });
+    } else if (e.type === "symlink") {
+      tar.entry({ name: e.name, type: "symlink", linkname: e.linkname ?? "/etc/passwd" });
+    } else {
+      tar.entry({ name: e.name, type: "file" }, e.content ?? "");
+    }
+  }
+  tar.finalize();
+  const gzip = createGzip();
+  const chunks: Buffer[] = [];
+  const drained = (async () => {
+    for await (const chunk of gzip) chunks.push(Buffer.from(chunk));
+  })();
+  await Promise.all([pipeline(tar, gzip), drained]);
+  return Buffer.concat(chunks);
+}
+
 async function testCompareCancelDownload() {
   console.log("\n--- runCli: job compare / cancel / download ---");
   installMockFetch();
   const tmpDir = join(tmpdir(), `cli-job-dl-${Date.now()}`);
   try {
     setMockResponse("/api/jobs/eval-1/cancel", { status: 202, body: wireJob({ status: "CANCELLING" }) });
+    // A REAL archive in the server's shape: everything rooted at job-<id>/,
+    // ATIF at Harbor's own agent/trajectory.json path.
+    const archive = await gzipTarArchive([
+      { name: "job-eval-1/config.json", content: '{"job_name":"job-eval-1"}' },
+      { name: "job-eval-1/result.json", content: '{"stats":{}}' },
+      { name: "job-eval-1/t0__task", type: "directory" },
+      { name: "job-eval-1/t0__task/agent/trajectory.json", content: '{"schema_version":"ATIF-v1.7"}' },
+      { name: "job-eval-1/t0__task/verifier/reward.json", content: '{"reward":1}' },
+    ]);
     setMockResponse("/api/jobs/eval-1/download", {
       status: 200,
       body: null,
-      bodyBytes: Buffer.from("results bytes"),
-      headers: { "Content-Disposition": 'attachment; filename="job-eval-1-results.tar.gz"' },
+      bodyBytes: archive,
+      headers: { "Content-Disposition": 'attachment; filename="job-eval-1.tar.gz"' },
     });
     setMockResponse("/api/jobs/compare", {
       status: 200,
@@ -2590,9 +2631,117 @@ async function testCompareCancelDownload() {
     const download = captureIO();
     assertEqual(await runCli(["job", "download", "eval-1", "-o", tmpDir, ...AUTH], download.io), 0, "download exits 0");
     assert(fetchCalls[fetchCalls.length - 1].url.endsWith("/api/jobs/eval-1/download"), "hits the download route");
-    const written = await readFile(join(tmpDir, "job-eval-1-results.tar.gz"));
-    assertEqual(written.toString(), "results bytes", "-o saves the archive bytes");
-    assert(download.out.some((l) => l.includes("job-eval-1-results.tar.gz")), "prints the saved path");
+    const treeDir = join(tmpDir, "job-eval-1");
+    assertEqual(
+      (await readFile(join(treeDir, "config.json"))).toString(),
+      '{"job_name":"job-eval-1"}',
+      "-o unpacks the tree: config.json on disk"
+    );
+    assertEqual(
+      (await readFile(join(treeDir, "t0__task", "agent", "trajectory.json"))).toString(),
+      '{"schema_version":"ATIF-v1.7"}',
+      "ATIF lands at Harbor's own agent/trajectory.json path"
+    );
+    assertEqual(
+      (await readFile(join(treeDir, "t0__task", "verifier", "reward.json"))).toString(),
+      '{"reward":1}',
+      "verifier rewards land under verifier/"
+    );
+    const leftovers = (await readdir(tmpDir)).filter((name) => name.endsWith(".tar.gz"));
+    assertEqual(leftovers, [], "no .tar.gz survives — the tree IS the result");
+    assert(
+      download.out.some((l) => l.includes(treeDir) && l.includes("4 files")),
+      "prints the tree path and the file count"
+    );
+
+    // --json reports the tree, not an archive path.
+    const jsonDownload = captureIO();
+    assertEqual(
+      await runCli(["job", "download", "eval-1", "-o", tmpDir, "--overwrite", "--json", ...AUTH], jsonDownload.io),
+      0,
+      "--overwrite --json re-download exits 0"
+    );
+    assertEqual(JSON.parse(jsonDownload.out[0]), { path: treeDir, files: 4 }, "--json = { path, files }");
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    restoreFetch();
+  }
+}
+
+async function testJobDownloadUnpackGuards() {
+  console.log("\n--- runCli: job download unpack guards ---");
+  installMockFetch();
+  const tmpDir = await mkdtemp(join(tmpdir(), "cli-job-dl-guards-"));
+  try {
+    // An existing tree is never silently replaced.
+    setMockResponse(
+      "/api/jobs/eval-1/download",
+      { status: 200, body: null, bodyBytes: await gzipTarArchive([{ name: "job-eval-1/config.json", content: "{}" }]) }
+    );
+    await mkdir(join(tmpDir, "job-eval-1"), { recursive: true });
+    await writeFile(join(tmpDir, "job-eval-1", "stale.txt"), "old");
+    const refused = captureIO();
+    assertEqual(await runCli(["job", "download", "eval-1", "-o", tmpDir, ...AUTH], refused.io), 1, "existing job-<id>/ refused");
+    assert(refused.err.some((l) => l.includes("--overwrite")), "refusal names --overwrite as the remedy");
+    assertEqual((await readFile(join(tmpDir, "job-eval-1", "stale.txt"))).toString(), "old", "the existing tree is untouched");
+
+    // --overwrite replaces the tree.
+    const replaced = captureIO();
+    assertEqual(await runCli(["job", "download", "eval-1", "-o", tmpDir, "--overwrite", ...AUTH], replaced.io), 0, "--overwrite exits 0");
+    assert(!existsSync(join(tmpDir, "job-eval-1", "stale.txt")), "--overwrite replaces the old tree, not merges into it");
+    assert(existsSync(join(tmpDir, "job-eval-1", "config.json")), "the fresh tree is on disk");
+
+    // A `..` climb aborts the extraction and the partial tree never survives.
+    setMockResponse("/api/jobs/eval-2/download", {
+      status: 200,
+      body: null,
+      bodyBytes: await gzipTarArchive([
+        { name: "job-eval-2/config.json", content: "{}" },
+        { name: "job-eval-2/../../evil.txt", content: "boom" },
+      ]),
+    });
+    const climb = captureIO();
+    assertEqual(await runCli(["job", "download", "eval-2", "-o", tmpDir, ...AUTH], climb.io), 1, "a .. climb fails the command");
+    assert(climb.err.some((l) => l.includes("refusing to extract")), "the refusal names the entry");
+    assert(!existsSync(join(dirname(tmpDir), "evil.txt")), "nothing lands outside the output dir");
+    assert(!existsSync(join(tmpDir, "job-eval-2")), "the partial tree is removed on failure");
+
+    // An entry outside job-<id>/ is refused even without a climb.
+    setMockResponse("/api/jobs/eval-3/download", {
+      status: 200,
+      body: null,
+      bodyBytes: await gzipTarArchive([{ name: "other-place/config.json", content: "{}" }]),
+    });
+    const outside = captureIO();
+    assertEqual(await runCli(["job", "download", "eval-3", "-o", tmpDir, ...AUTH], outside.io), 1, "an entry outside job-<id>/ fails");
+    assert(outside.err.some((l) => l.includes("outside job-eval-3/")), "the refusal names the expected root");
+    assert(!existsSync(join(tmpDir, "other-place")), "the stray entry is never written");
+
+    // A backslash name is refused: an ordinary character on posix, a path
+    // separator on Windows — refusing beats extracting something ambiguous.
+    setMockResponse("/api/jobs/eval-5/download", {
+      status: 200,
+      body: null,
+      bodyBytes: await gzipTarArchive([{ name: "job-eval-5/..\\..\\evil.txt", content: "boom" }]),
+    });
+    const backslash = captureIO();
+    assertEqual(await runCli(["job", "download", "eval-5", "-o", tmpDir, ...AUTH], backslash.io), 1, "a backslash name fails the command");
+    assert(backslash.err.some((l) => l.includes("refusing to extract")), "the backslash refusal names the entry");
+    assert(!existsSync(join(tmpDir, "job-eval-5")), "the backslash archive leaves no tree behind");
+
+    // A symlink in the stream is an error, never a created foothold.
+    setMockResponse("/api/jobs/eval-4/download", {
+      status: 200,
+      body: null,
+      bodyBytes: await gzipTarArchive([
+        { name: "job-eval-4/config.json", content: "{}" },
+        { name: "job-eval-4/link", type: "symlink", linkname: "/etc/passwd" },
+      ]),
+    });
+    const link = captureIO();
+    assertEqual(await runCli(["job", "download", "eval-4", "-o", tmpDir, ...AUTH], link.io), 1, "a symlink entry fails the command");
+    assert(link.err.some((l) => l.includes("unsupported entry type")), "the refusal names the entry type");
+    assert(!existsSync(join(tmpDir, "job-eval-4")), "the symlink archive leaves no tree behind");
   } finally {
     await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
     restoreFetch();
@@ -3345,6 +3494,7 @@ async function main() {
   await testJobRegrade();
   await testTrialRegrade();
   await testCompareCancelDownload();
+  await testJobDownloadUnpackGuards();
   await testTrialShow();
   await testTrialDownloadStream();
   await testTrialDownloadTrajectoryRefused();
