@@ -139,6 +139,7 @@ HostedErrorCode = Literal[
     'agent_kwarg_unsupported',
     'agent_config_unsupported',
     'agent_config_key_refused',
+    'agent_preset_unsupported',
     'job_too_large',
     'provider_unsupported',
     'job_not_found',
@@ -476,6 +477,10 @@ class AgentCapability:
     #: agent-settings support (Harbor's SUPPORTS_CONFIG). Declaring a config
     #: for an agent without it is refused ``agent_config_unsupported``.
     supports_config: bool = False
+    #: The named settings presets this agent can guarantee ('no-internet',
+    #: 'pinned-context'). Declaring ``agents[].preset`` outside this list is
+    #: refused ``agent_preset_unsupported``. Empty on older servers.
+    presets: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -609,12 +614,22 @@ class AgentArm:
     ``agent_config_key_refused``. Pass a dict, not a path — the server never
     reads a client path (the CLI's ``--ak config=<path>`` resolves the file
     client-side the same way).
+
+    ``preset`` names a platform-authored settings bundle delivered through
+    the same channel and stamped ON TOP of the user document:
+    ``'no-internet'`` (vendor server-side web tools off — Claude settings
+    deny WebSearch/WebFetch, Codex ``-c web_search=disabled``) or
+    ``'pinned-context'`` (one fixed effective context window). Part of the
+    arm's identity. A preset the agent cannot guarantee (see
+    :attr:`AgentCapability.presets`) is refused ``agent_preset_unsupported``,
+    never half-applied.
     """
     name: str
     model_name: str
     version: Optional[str] = None
     reasoning_effort: Optional[str] = None
     kwargs: Optional[Dict[str, Any]] = None
+    preset: Optional[str] = None
 
     def _to_wire(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {'name': self.name, 'model_name': self.model_name}
@@ -624,6 +639,8 @@ class AgentArm:
             result['reasoning_effort'] = self.reasoning_effort
         if self.kwargs is not None:
             result['kwargs'] = self.kwargs
+        if self.preset is not None:
+            result['preset'] = self.preset
         return result
 
 
@@ -1151,6 +1168,8 @@ def _map_agent_arm(data: Dict[str, Any]) -> AgentArm:
         # Absent on older servers = none declared; anything non-dict is
         # unreadable and reads as none rather than crashing a list call.
         kwargs=kwargs if isinstance(kwargs, dict) else None,
+        # Same law for the preset: absent on older servers = none declared.
+        preset=data.get('preset') if isinstance(data.get('preset'), str) else None,
     )
 
 
@@ -1187,6 +1206,8 @@ def _map_capability_document(raw: Dict[str, Any]) -> CapabilityDocument:
                 version_pinnable=item.get('version_pinnable') is True,
                 latest_version=item.get('latest_version'),
                 supports_config=item.get('supports_config') is True,
+                presets=[p for p in item.get('presets', []) if isinstance(p, str)]
+                if isinstance(item.get('presets'), list) else [],
             )
             for item in raw.get('agents', [])
         ],

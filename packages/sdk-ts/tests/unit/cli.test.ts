@@ -3454,6 +3454,30 @@ function testAgentKwargs() {
   );
   const plain = buildJobInput(parseArgs(["job", "start", "-d", "d", "-a", "claude", "-m", "opus"]), read);
   assert(!("kwargs" in plain.agents[0]), "no kwargs key when --ak omitted");
+
+  // --preset: the plain-words door, stamped on EVERY arm, verbatim — the
+  // server owns the vocabulary and the per-agent guarantee refusal.
+  const presetInv = parseArgs([
+    "job", "start", "-d", "d", "-a", "codex", "-m", "gpt-5.6-sol", "-m", "gpt-5.5",
+    "--preset", "no-internet",
+  ]);
+  const presetInput = buildJobInput(presetInv, read);
+  assertEqual(
+    presetInput.agents,
+    [
+      { name: "codex", model_name: "gpt-5.6-sol", preset: "no-internet" },
+      { name: "codex", model_name: "gpt-5.5", preset: "no-internet" },
+    ],
+    "--preset stamped on every arm"
+  );
+  assert(!("preset" in plain.agents[0]), "no preset key when --preset omitted");
+  // Verbatim pass-through: an unknown name is the SERVER's typed refusal
+  // (invalid_input naming the vocabulary), never a second client-side table.
+  const verbatim = buildJobInput(
+    parseArgs(["job", "start", "-d", "d", "-a", "codex", "-m", "gpt-5.5", "--preset", "sealed"]),
+    read
+  );
+  assertEqual(verbatim.agents[0].preset, "sealed", "--preset value rides verbatim; the server rules");
 }
 
 // =============================================================================

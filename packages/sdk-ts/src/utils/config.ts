@@ -4,7 +4,8 @@
 
 import * as fs from "fs";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
-import type { AgentConfig, AgentType, ResolvedAgentConfig, RunOptions } from "../types";
+import type { AgentConfig, AgentPreset, AgentType, ResolvedAgentConfig, RunOptions } from "../types";
+import { AGENT_PRESETS } from "../types";
 import { DEFAULT_AGENT_TYPE, ENV_EVOLVE_API_KEY, RESERVED_OBSERVABILITY_KEYS } from "../constants";
 import { AGENT_REGISTRY, getAgentConfig, isValidAgentType } from "../registry";
 
@@ -95,6 +96,76 @@ export function validateAgentConfig(config?: AgentConfig | ResolvedAgentConfig):
       );
     }
   }
+
+  if (config.preset !== undefined) {
+    validateAgentPreset(type, config.preset);
+  }
+}
+
+/**
+ * Refuse a preset the harness cannot GUARANTEE, by name — an unknown preset
+ * and a known preset on a harness without delivery knowledge for it are both
+ * typed refusals here, never a run that silently lacks its guarantee.
+ */
+export function validateAgentPreset(type: AgentType, preset: unknown): asserts preset is AgentPreset {
+  if (!(AGENT_PRESETS as readonly string[]).includes(preset as string)) {
+    throw new EvolveConfigError(
+      "preset",
+      `Evolve agent config: unknown preset ${describe(preset)}. ` +
+      `Valid presets: ${AGENT_PRESETS.join(", ")}.`,
+    );
+  }
+  const supported = agentPresetTypes(preset as AgentPreset);
+  if (!supported.includes(type)) {
+    throw new EvolveConfigError(
+      "preset",
+      `Evolve agent config: agent "${type}" cannot guarantee preset "${preset}". ` +
+      `Agents that can: ${supported.join(", ")}.`,
+    );
+  }
+}
+
+/** The presets an agent type can guarantee, registry order. */
+export function agentPresets(type: AgentType): AgentPreset[] {
+  const presets = AGENT_REGISTRY[type]?.presets;
+  return presets ? (Object.keys(presets) as AgentPreset[]) : [];
+}
+
+/** The agent types that can guarantee one preset, registry order. */
+export function agentPresetTypes(preset: AgentPreset): AgentType[] {
+  return (Object.keys(AGENT_REGISTRY) as AgentType[]).filter((type) =>
+    agentPresets(type).includes(preset),
+  );
+}
+
+/**
+ * Merge a preset's configStamp ON TOP of a base settings document: plain
+ * objects recurse, arrays union (base order kept, stamp entries appended when
+ * missing — a user's own `permissions.deny` survives beside the preset's),
+ * anything else the stamp overwrites. Pure — inputs are not mutated.
+ */
+export function stampNativeConfig(
+  base: Record<string, unknown>,
+  stamp: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...base };
+  for (const [key, stampValue] of Object.entries(stamp)) {
+    const baseValue = merged[key];
+    if (isPlainRecord(baseValue) && isPlainRecord(stampValue)) {
+      merged[key] = stampNativeConfig(baseValue, stampValue);
+    } else if (Array.isArray(baseValue) && Array.isArray(stampValue)) {
+      const union = [...baseValue];
+      for (const item of stampValue) {
+        if (!union.some((existing) => canonicalJson(existing) === canonicalJson(item))) {
+          union.push(item);
+        }
+      }
+      merged[key] = union;
+    } else {
+      merged[key] = stampValue;
+    }
+  }
+  return merged;
 }
 
 /** A JSON-object-shaped value: a plain record, not an array/null/scalar. */
@@ -300,11 +371,18 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
   const type = (config?.type ?? DEFAULT_AGENT_TYPE) as AgentType;
   const registry = getAgentConfig(type);
 
-  // Native config is credential-mode independent: normalized once here (file
-  // paths read NOW, at run resolution — Harbor reads at agent __init__) and
-  // attached to whichever mode branch returns below.
+  // Native config and preset are credential-mode independent: normalized and
+  // validated once here (file paths read NOW, at run resolution — Harbor
+  // reads at agent __init__; an unguaranteeable preset refuses NOW, before a
+  // sandbox exists) and attached to whichever mode branch returns below.
   const nativeConfig = loadNativeAgentConfig(type, config?.config);
-  const nativeConfigProp = nativeConfig !== undefined ? { config: nativeConfig } : {};
+  if (config?.preset !== undefined) {
+    validateAgentPreset(type, config.preset);
+  }
+  const nativeConfigProp = {
+    ...(nativeConfig !== undefined ? { config: nativeConfig } : {}),
+    ...(config?.preset !== undefined ? { preset: config.preset } : {}),
+  };
 
   // ─────────────────────────────────────────────────────────────────────────
   // EXPLICIT CONFIG (user passed values directly - always respect these)

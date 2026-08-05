@@ -29,7 +29,7 @@ import json
 from pathlib import Path
 from typing import get_args
 
-from evolve.config import AgentType, ReasoningEffort
+from evolve.config import AgentPreset, AgentType, ReasoningEffort
 
 ARTIFACT_PATH = (
     Path(__file__).resolve().parents[3] / 'sdk-ts' / 'harness-capabilities.json'
@@ -69,6 +69,21 @@ def test_reasoning_effort_literal_covers_every_advertised_effort():
     assert not missing, (
         f'ReasoningEffort Literal is missing advertised efforts: {missing} — '
         'update ReasoningEffort in evolve/config.py to match the TypeScript registry'
+    )
+
+
+def test_agent_preset_literal_covers_every_advertised_preset():
+    # Same law for presets: every preset the artifact advertises must be a
+    # value an AgentConfig.preset can carry, or the Python SDK could not name
+    # a preset the platform guarantees.
+    literal_values = set(get_args(AgentPreset))
+    advertised = set()
+    for harness in _artifact()['harnesses'].values():
+        advertised.update(harness['presets'])
+    missing = sorted(advertised - literal_values)
+    assert not missing, (
+        f'AgentPreset Literal is missing advertised presets: {missing} — '
+        'update AgentPreset in evolve/config.py to match the TypeScript registry'
     )
 
 

@@ -75,6 +75,8 @@ export interface InitializeParams {
   max_context_size?: number;
   /** Native agent settings: a local file path or an inline settings object. */
   agent_config?: string | Record<string, unknown>;
+  /** Named agent-settings preset ('no-internet' | 'pinned-context'). */
+  agent_preset?: string;
   // Sandbox provider (optional - TS SDK resolves from EVOLVE_API_KEY env var)
   sandbox_provider?: {
     type: 'e2b' | 'daytona' | 'modal';

@@ -489,6 +489,18 @@ export type ReasoningEffort =
   | "thinking"
   | "no-thinking";
 
+/**
+ * The named agent-settings presets the platform ships. Exactly two at launch
+ * (owner ruling): `no-internet` (vendor server-side web tools off) and
+ * `pinned-context` (fixed context window). A preset is a platform-authored
+ * settings bundle stamped ON TOP of any user config document — see
+ * `AgentConfig.preset` for the per-harness delivery.
+ */
+export const AGENT_PRESETS = ["no-internet", "pinned-context"] as const;
+
+/** One of the platform's named agent-settings presets. */
+export type AgentPreset = (typeof AGENT_PRESETS)[number];
+
 /** MCP Server Configuration */
 export interface McpServerConfig {
   // STDIO transport (most common)
@@ -635,6 +647,29 @@ export interface AgentConfig {
    */
   config?: string | Record<string, unknown>;
   /**
+   * Named agent-settings preset — a platform-authored bundle of native
+   * settings delivered through the same channel as `config`, stamped ON TOP
+   * of the user document (a preset is a platform stamp, so a user config can
+   * never undo it):
+   *
+   *   - `"no-internet"`: turns off the vendor's server-side web tools —
+   *     Claude gets `permissions.deny: ["WebSearch", "WebFetch"]` in its
+   *     settings document, Codex gets `-c web_search=disabled` (the exact
+   *     flag Harbor's codex agent exposes, their codex.py:70-76). Sandbox
+   *     sealing cannot stop server-side search: it rides inside the one
+   *     allowed model call, so the harness must be told not to ask for it.
+   *   - `"pinned-context"`: pins the effective context window to one fixed
+   *     size (PINNED_CONTEXT_WINDOW_TOKENS) so vendor-side window tuning
+   *     never confounds a comparison — Claude gets `autoCompactWindow` (its
+   *     settings key for exactly this; unset, "Claude Code uses a window
+   *     tuned for your model"), Codex gets `-c model_context_window`.
+   *
+   * Only harnesses whose registry entry carries delivery knowledge for the
+   * preset accept it (claude, codex); any other combination refuses loudly
+   * at the door — a preset that cannot be guaranteed is never half-applied.
+   */
+  preset?: AgentPreset;
+  /**
    * Context/completion ceiling for CLIs that must be told one (Kimi Code reads
    * it as `max_context_size` and sends it as the request's `max_tokens`).
    *
@@ -668,6 +703,12 @@ export interface ResolvedAgentConfig {
    * parsed by now, so delivery code only ever sees the document object.
    */
   config?: Record<string, unknown>;
+  /**
+   * Named agent-settings preset, validated against the harness's registry
+   * delivery knowledge by now — an unsupported combination was refused at the
+   * door and never reaches delivery code.
+   */
+  preset?: AgentPreset;
 }
 
 /** Options for Agent constructor */

@@ -463,6 +463,8 @@ function mapAgentArm(raw: Record<string, unknown>): AgentArm {
       kwargs && typeof kwargs === "object" && !Array.isArray(kwargs)
         ? (kwargs as Record<string, unknown>)
         : null,
+    // Same law for the preset: absent on older servers = none declared.
+    preset: typeof raw.preset === "string" ? raw.preset : null,
   };
 }
 

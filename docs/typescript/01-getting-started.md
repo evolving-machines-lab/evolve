@@ -330,6 +330,13 @@ const evolve = new Evolve()
     });
 ```
 
+Instead of hand-writing such a config, `preset` names a bundle Evolve ships and guarantees. `preset: "no-internet"` turns off the vendor's server-side web tools — Claude gets that exact `permissions.deny` stamp, Codex gets `-c web_search=disabled` on its command line (Codex's default is `"cached"`, an OpenAI-maintained web index, so only the explicit flag removes the tool). `preset: "pinned-context"` pins one fixed effective context window (200000 tokens) — Claude via `autoCompactWindow`, Codex via `-c model_context_window` — so vendor-side window tuning never changes what a run had to work with. A preset is stamped **on top** of any `config` you also pass, and a preset stamp always wins where the two disagree: your document cannot undo the guarantee. Only `claude` and `codex` can guarantee the presets today; naming one on any other agent type throws at `.withAgent()` rather than running without its guarantee.
+
+```typescript
+const evolve = new Evolve()
+    .withAgent({ type: "codex", preset: "no-internet" });
+```
+
 For Claude Fable 5, use `model: "fable"`. For OpenCode via OpenRouter, use `model: "openrouter/anthropic/claude-fable-5"`. For Claude 1M context window, use `model: "sonnet[1m]"` or `model: "opus[1m]"`.
 
 #### Harness and Model Pairing

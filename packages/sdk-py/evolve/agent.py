@@ -152,6 +152,7 @@ class Evolve:
                 'reasoning_effort': self.config.reasoning_effort if self.config else None,
                 'max_context_size': self.config.max_context_size if self.config else None,
                 'agent_config': self.config.config if self.config else None,
+                'agent_preset': self.config.preset if self.config else None,
                 # Sandbox (optional - TS SDK auto-resolves from EVOLVE_API_KEY/E2B_API_KEY/DAYTONA_API_KEY)
                 'sandbox_provider': {'type': self.sandbox.type, 'config': self.sandbox.config} if self.sandbox else None,
                 'sandbox_create_options': self.sandbox_create_options,

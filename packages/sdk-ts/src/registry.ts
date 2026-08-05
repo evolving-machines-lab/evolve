@@ -5,7 +5,7 @@
  * All differences between agents are data, not code.
  */
 
-import type { AgentType, ReasoningEffort, SkillsConfig } from "./types";
+import type { AgentPreset, AgentType, ReasoningEffort, SkillsConfig } from "./types";
 import { DEFAULT_HOME_DIR } from "./constants";
 
 // =============================================================================
@@ -44,6 +44,17 @@ export const REASONING_EFFORTS = [
  * excluded because a binary CLI cannot express a gradation — accepting 'high'
  * would record a claim the CLI never received.
  */
+/**
+ * The context window every `pinned-context` arm is pinned to, in tokens. One
+ * platform number on purpose: the preset exists so arms are COMPARABLE, and
+ * two harnesses pinned to two sizes would not be. 200000 tokens = the
+ * standard Claude window, inside Claude's documented `autoCompactWindow`
+ * range (100000..1000000) and below every supported model's real ceiling, so
+ * the pin always binds by early compaction instead of overpromising tokens a
+ * model cannot hold.
+ */
+export const PINNED_CONTEXT_WINDOW_TOKENS = 200000;
+
 export const BINARY_EFFORT_VALUES = [
   "off",
   "minimal",
@@ -119,6 +130,14 @@ export interface BuildCommandOptions {
    * 'base-file' harnesses read their config path natively and ignore this.
    */
   nativeConfigPath?: string;
+  /**
+   * The active preset's extra command flags (registry presets[..].commandFlags),
+   * already leading-space formatted. Only harnesses whose preset delivery
+   * rides the command line (Codex `-c`) receive a non-empty value; they must
+   * splice it into their command so it ranks ABOVE the config file, which is
+   * what makes the preset a guarantee rather than a default.
+   */
+  presetFlags?: string;
   isDirectMode?: boolean;
   /**
    * External gateway mode (caller-minted credential + base URL). Direct-mode
@@ -210,6 +229,43 @@ export interface AgentRegistryEntry {
      */
     delivery: "settings-flag" | "base-file";
   };
+
+  /**
+   * The named presets this harness can GUARANTEE, with their delivery. A
+   * preset is a platform-authored settings bundle: `configStamp` keys are
+   * deep-merged ON TOP of the user's native config document (arrays union,
+   * scalars overwrite — a user config can never undo a preset), and
+   * `commandFlags` ride the command line, which the harness ranks above its
+   * config file. Absent preset name = the combination cannot be guaranteed
+   * and is a typed refusal at the door, never a partial application.
+   *
+   *   no-internet    — vendor server-side web tools off. Claude: settings
+   *                    `permissions.deny` for WebSearch/WebFetch (deny rules
+   *                    outrank every allow, from any settings source). Codex:
+   *                    `-c web_search=disabled` — the exact flag Harbor's
+   *                    codex agent exposes (codex.py:70-76; enum
+   *                    disabled/cached/live, and note codex's DEFAULT is
+   *                    "cached", an OpenAI-maintained web index, so only the
+   *                    explicit `disabled` removes the tool).
+   *   pinned-context — one fixed effective context window
+   *                    (PINNED_CONTEXT_WINDOW_TOKENS) so vendor-side window
+   *                    tuning never confounds an arm comparison. Claude:
+   *                    `autoCompactWindow` (+ `autoCompactEnabled`, so a user
+   *                    config cannot turn the boundary off) — unset, "Claude
+   *                    Code uses a window tuned for your model" (settings
+   *                    docs). Codex: `-c model_context_window`.
+   */
+  presets?: Partial<
+    Record<
+      AgentPreset,
+      {
+        /** Settings keys stamped ON TOP of the user's native config document. */
+        configStamp?: Record<string, unknown>;
+        /** Extra command flags, leading-space formatted, ranked above the config file. */
+        commandFlags?: string;
+      }
+    >
+  >;
 
   /** Build the CLI command for this agent */
   buildCommand: (opts: BuildCommandOptions) => string;
@@ -376,6 +432,23 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       path: "~/.claude/evolve-user-settings.json",
       delivery: "settings-flag",
     },
+    // Preset delivery rides the SAME settings document: the stamp is merged
+    // on top of the user's config (or becomes the whole document when there
+    // is none) and delivered via --settings. Deny rules outrank every allow
+    // from any settings source, so the no-internet deny is a guarantee, not
+    // a default; the pinned window carries autoCompactEnabled too, so a user
+    // config cannot switch the boundary off.
+    presets: {
+      "no-internet": {
+        configStamp: { permissions: { deny: ["WebSearch", "WebFetch"] } },
+      },
+      "pinned-context": {
+        configStamp: {
+          autoCompactEnabled: true,
+          autoCompactWindow: PINNED_CONTEXT_WINDOW_TOKENS,
+        },
+      },
+    },
     skillsConfig: {
       sourceDir: "~/.evolve/skills",
       targetDir: "~/.claude/skills",
@@ -437,6 +510,18 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       path: "~/.codex/config.toml",
       delivery: "base-file",
     },
+    // Preset delivery rides -c command flags, which codex ranks above the
+    // config.toml the user document becomes — so even a user config declaring
+    // web_search="live" runs sealed. web_search takes Harbor's exact enum
+    // (their codex.py:70-76: disabled/cached/live); codex's DEFAULT is
+    // "cached" (an OpenAI-maintained web index), which is why no-internet
+    // must stamp the explicit `disabled` rather than merely omit the flag.
+    presets: {
+      "no-internet": { commandFlags: " -c web_search=disabled" },
+      "pinned-context": {
+        commandFlags: ` -c model_context_window=${PINNED_CONTEXT_WINDOW_TOKENS}`,
+      },
+    },
     skillsConfig: {
       sourceDir: "~/.evolve/skills",
       targetDir: "~/.codex/skills",
@@ -446,10 +531,12 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       runTagEnv: "EVOLVE_LITELLM_TAGS",
     },
     setupCommand: `printf '%s\\n' "$OPENAI_API_KEY" | codex login --with-api-key`,
-    buildCommand: ({ prompt, model, isResume, reasoningEffort }) => {
+    buildCommand: ({ prompt, model, isResume, reasoningEffort, presetFlags }) => {
       const effortFlag = reasoningEffort ? ` -c model_reasoning_effort="${reasoningEffort}"` : "";
       const resumeFlag = isResume ? " resume --last" : "";
-      return `printf '%s' "${prompt}" | codex exec --model ${model}${effortFlag} --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check --json${resumeFlag}`;
+      // Preset -c flags sit beside the effort's: the command line is what
+      // codex ranks above config.toml, making the preset a guarantee.
+      return `printf '%s' "${prompt}" | codex exec --model ${model}${effortFlag}${presetFlags ?? ""} --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check --json${resumeFlag}`;
     },
   },
 

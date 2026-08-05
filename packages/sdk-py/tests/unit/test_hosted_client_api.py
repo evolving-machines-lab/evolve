@@ -1029,6 +1029,33 @@ class TestJobs:
         assert garbage.kwargs is None
 
     @pytest.mark.asyncio
+    async def test_agent_preset_rides_the_wire_and_maps_back(self):
+        # The preset channel: the named bundle is part of the arm and goes out
+        # verbatim; the echoed arm maps preset back, and an older server that
+        # omits the field reads as None, never a crash.
+        fake = FakeUrlopen([('/api/jobs', JOB_SUMMARY)])
+        with patch('evolve._http.urlopen', fake):
+            await jobs_factory(CONFIG).start(
+                datasets=[DatasetSelector(name='deep-swe')],
+                agents=[AgentArm(name='codex', model_name='gpt-5.6-sol', preset='no-internet')],
+            )
+        body = json.loads(fake.requests[0].data.decode('utf-8'))
+        assert body['agents'] == [
+            {'name': 'codex', 'model_name': 'gpt-5.6-sol', 'preset': 'no-internet'}
+        ]
+
+        from evolve.hosted import _map_agent_arm
+        echoed = _map_agent_arm({
+            'name': 'codex', 'model_name': 'gpt-5.6-sol', 'version': None,
+            'reasoning_effort': None, 'kwargs': None, 'preset': 'no-internet',
+        })
+        assert echoed.preset == 'no-internet'
+        legacy = _map_agent_arm({'name': 'codex', 'model_name': 'gpt-5.6-sol'})
+        assert legacy.preset is None
+        garbage = _map_agent_arm({'name': 'codex', 'model_name': 'gpt-5.6-sol', 'preset': 7})
+        assert garbage.preset is None
+
+    @pytest.mark.asyncio
     async def test_start_accepts_snake_case_dicts(self):
         fake = FakeUrlopen([('/api/jobs', JOB_SUMMARY)])
         with patch('evolve._http.urlopen', fake):

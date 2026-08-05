@@ -10,7 +10,11 @@ export {
   EvolveConfigError,
   resolveAgentConfig,
   assertExternalGatewayExclusive,
+  agentPresets,
+  agentPresetTypes,
+  stampNativeConfig,
   validateAgentConfig,
+  validateAgentPreset,
   validateObservabilityMeta,
   validateRunOptions,
 } from "./config";

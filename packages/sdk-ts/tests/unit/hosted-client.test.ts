@@ -1298,7 +1298,7 @@ async function testGetJobDetail() {
     );
     assertEqual(
       job.agents,
-      [{ name: "codex", model_name: "gpt-5.5", version: null, reasoning_effort: null, kwargs: null }],
+      [{ name: "codex", model_name: "gpt-5.5", version: null, reasoning_effort: null, kwargs: null, preset: null }],
       "agents is the public arm shape (wire sends nothing internal)"
     );
     const system = job.agents?.[0] as Record<string, unknown>;
@@ -2623,7 +2623,7 @@ async function testCompare() {
     assertEqual(comparison.jobs[1].mean_reward, 0, "zero mean_reward preserved (never nulled)");
     assertEqual(
       comparison.jobs[0].agents,
-      [{ name: "codex", model_name: "gpt-5.5", version: null, reasoning_effort: null, kwargs: null }],
+      [{ name: "codex", model_name: "gpt-5.5", version: null, reasoning_effort: null, kwargs: null, preset: null }],
       "agents is the public arm shape (wire sends nothing internal)"
     );
     const system = comparison.jobs[0].agents[0] as Record<string, unknown>;

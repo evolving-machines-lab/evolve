@@ -40,6 +40,7 @@
     "agent_kwarg_unsupported",
     "agent_config_unsupported",
     "agent_config_key_refused",
+    "agent_preset_unsupported",
     "job_too_large",
     "provider_unsupported",
     "job_not_found",

@@ -77,6 +77,13 @@ export type HarnessCapabilitiesArtifact = {
        * create door refuses `agents[].kwargs.config` for a false entry.
        */
       supportsConfig: boolean;
+      /**
+       * The named agent-settings presets this harness can GUARANTEE
+       * (registry `presets` delivery knowledge: no-internet, pinned-context).
+       * The server's create door refuses `agents[].preset` for a name not
+       * listed here — a preset is a guarantee or a refusal, never a default.
+       */
+      presets: string[];
     }
   >;
 };
@@ -102,6 +109,9 @@ export function buildHarnessCapabilitiesArtifact(): HarnessCapabilitiesArtifact 
       // default is only the fallback for entries that pin nothing.
       defaultEffort: entry.defaultReasoningEffort ?? vocabulary.defaultEffort,
       supportsConfig: entry.nativeConfig !== undefined,
+      // Sorted like the harness names: the artifact's bytes must not depend
+      // on registry object-literal key order.
+      presets: Object.keys(entry.presets ?? {}).sort(),
     };
   }
   return {

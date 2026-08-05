@@ -64,7 +64,11 @@
         "thinking"
       ],
       "defaultEffort": "high",
-      "supportsConfig": true
+      "supportsConfig": true,
+      "presets": [
+        "no-internet",
+        "pinned-context"
+      ]
     },
     "codex": {
       "defaultModel": "gpt-5.6-sol",
@@ -107,7 +111,11 @@
         "thinking"
       ],
       "defaultEffort": "high",
-      "supportsConfig": true
+      "supportsConfig": true,
+      "presets": [
+        "no-internet",
+        "pinned-context"
+      ]
     },
     "droid": {
       "defaultModel": "claude-opus-5",
@@ -180,7 +188,8 @@
         "thinking"
       ],
       "defaultEffort": "high",
-      "supportsConfig": false
+      "supportsConfig": false,
+      "presets": []
     },
     "gemini": {
       "defaultModel": "gemini-3.6-flash",
@@ -204,7 +213,8 @@
       "effortSupport": "none",
       "efforts": [],
       "defaultEffort": null,
-      "supportsConfig": false
+      "supportsConfig": false,
+      "presets": []
     },
     "kimi": {
       "defaultModel": "kimi-k3",
@@ -244,7 +254,8 @@
         "thinking"
       ],
       "defaultEffort": "max",
-      "supportsConfig": false
+      "supportsConfig": false,
+      "presets": []
     },
     "opencode": {
       "defaultModel": "openrouter/anthropic/claude-opus-5",
@@ -317,7 +328,8 @@
         "thinking"
       ],
       "defaultEffort": "high",
-      "supportsConfig": false
+      "supportsConfig": false,
+      "presets": []
     },
     "qwen": {
       "defaultModel": "qwen3.7-max",
@@ -346,7 +358,8 @@
         "thinking"
       ],
       "defaultEffort": "thinking",
-      "supportsConfig": false
+      "supportsConfig": false,
+      "presets": []
     }
   }
 }

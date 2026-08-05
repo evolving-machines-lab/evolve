@@ -71,6 +71,7 @@ import { buildWorkerSystemPrompt } from "./prompts";
 import {
   isEvolveManagedSandboxProvider,
   isZodSchema,
+  stampNativeConfig,
   validateAgentConfig,
   validateObservabilityMeta,
   validateRunOptions,
@@ -1874,7 +1875,7 @@ export class Agent {
    * processes have no business reading (Harbor does the same, base.py:889-912).
    */
   private async writeNativeAgentConfig(sandbox: SandboxInstance): Promise<void> {
-    const document = this.agentConfig.config;
+    const document = this.effectiveNativeConfigDocument();
     if (!document) return;
     const native = this.registry.nativeConfig;
     if (!native) {
@@ -1894,10 +1895,34 @@ export class Agent {
     await sandbox.commands.run(`chmod 600 ${path}`, { timeoutMs: 30000 });
   }
 
+  /**
+   * The native settings document to deliver: the user's config is the BASE
+   * and the active preset's configStamp is merged ON TOP (arrays union,
+   * scalars overwrite) — a preset is a platform stamp the user document can
+   * never undo. A preset alone IS a document: the guarantee cannot depend on
+   * whether the user also brought settings. Undefined when neither exists.
+   */
+  private effectiveNativeConfigDocument(): Record<string, unknown> | undefined {
+    const userDocument = this.agentConfig.config;
+    const preset = this.agentConfig.preset;
+    const stamp = preset ? this.registry.presets?.[preset]?.configStamp : undefined;
+    if (!stamp) return userDocument;
+    return stampNativeConfig(userDocument ?? {}, stamp);
+  }
+
+  /**
+   * The active preset's command flags (Codex `-c`), for harnesses whose
+   * preset delivery must outrank the config file.
+   */
+  private presetCommandFlags(): string | undefined {
+    const preset = this.agentConfig.preset;
+    return preset ? this.registry.presets?.[preset]?.commandFlags : undefined;
+  }
+
   /** Sandbox path of the per-run settings document, for 'settings-flag' delivery. */
   private nativeConfigFlagPath(): string | undefined {
     const native = this.registry.nativeConfig;
-    if (!native || native.delivery !== "settings-flag" || !this.agentConfig.config) {
+    if (!native || native.delivery !== "settings-flag" || !this.effectiveNativeConfigDocument()) {
       return undefined;
     }
     return expandPath(native.path, this.homeDir);
@@ -2002,6 +2027,7 @@ export class Agent {
         this.agentConfig.type === "droid" ? this.droidSessionId : undefined,
       reasoningEffort: this.reasoningEffort(),
       nativeConfigPath: this.nativeConfigFlagPath(),
+      presetFlags: this.presetCommandFlags(),
       isDirectMode: this.agentConfig.isDirectMode,
       isExternalGateway: Boolean(this.agentConfig.externalGateway),
       skills: this.skills,

@@ -161,6 +161,14 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
       "Reasoning effort for EVERY arm (values: GET /api/meta). Applied verbatim — " +
       "an agent that cannot honor it is refused by the server, never silently skipped",
   },
+  preset: {
+    kind: "string",
+    value: "<name>",
+    help:
+      "Named settings preset for EVERY arm: no-internet (vendor server-side web tools " +
+      "off) or pinned-context (fixed context window). Applied verbatim — an agent that " +
+      "cannot guarantee it is refused by the server, never silently skipped",
+  },
   ak: {
     kind: "repeat",
     aliases: ["agent-kwarg"],
@@ -1560,6 +1568,13 @@ export function buildJobInput(
     // reads a client path — and the server owns every refusal.
     const kwargs = parseAgentKwargs(f.ak as string[], read);
     arms = arms.map((arm) => ({ ...arm, kwargs: { ...(arm.kwargs ?? {}), ...kwargs } }));
+  }
+  if (f.preset !== undefined) {
+    // --preset is stamped on EVERY arm, verbatim, like --effort: the server
+    // owns the preset vocabulary and the per-agent guarantee refusal
+    // (agent_preset_unsupported) — a client-side check would just be a second
+    // copy of the server's table that could drift from what is enforced.
+    arms = arms.map((arm) => ({ ...arm, preset: f.preset as string }));
   }
 
   const agentEnv =

@@ -1723,6 +1723,7 @@ components:
         - agent_kwarg_unsupported
         - agent_config_unsupported
         - agent_config_key_refused
+        - agent_preset_unsupported
         - job_too_large
         - provider_unsupported
         - job_not_found
@@ -1970,11 +1971,31 @@ components:
             config:
               type: object
               description: Inline settings document for the harness's native format.
+        preset:
+          type: string
+          enum: [no-internet, pinned-context]
+          description: >
+            Named settings preset for this arm — a platform-authored bundle
+            delivered through the same channel as `kwargs.config` and stamped
+            ON TOP of the user document, so a user config can never undo it.
+            `no-internet` turns off the vendor's server-side web tools
+            (Claude settings deny WebSearch/WebFetch; Codex
+            `-c web_search=disabled`) — and the platform gateway additionally
+            strips/refuses web-tool declarations on the run's one allowed
+            model route, the internet path sandbox sealing cannot close.
+            `pinned-context` pins one fixed effective context window
+            (200000 tokens) so vendor-side window tuning never confounds a
+            comparison. Part of arm identity: the same agent and model with
+            and without a preset are two arms. Acceptance is typed, never
+            silent — an unknown name is `invalid_input`, and a preset for an
+            agent whose /api/meta entry does not list it under `presets` is
+            `agent_preset_unsupported`: a preset the platform cannot
+            guarantee is refused outright, never half-applied.
 
     AgentArm:
       type: object
       description: One agent arm as echoed on job bodies.
-      required: [name, model_name, version, reasoning_effort, kwargs]
+      required: [name, model_name, version, reasoning_effort, kwargs, preset]
       properties:
         name:
           type: string
@@ -1989,6 +2010,9 @@ components:
         kwargs:
           type: [object, 'null']
           description: The arm's agent kwargs as accepted; null when none were declared.
+        preset:
+          type: [string, 'null']
+          description: The arm's named settings preset; null when none was declared.
 
     SourceJob:
       type: object
@@ -3750,6 +3774,14 @@ components:
             Whether `agents[].kwargs.config` reaches this agent — native
             agent-settings support (Harbor's SUPPORTS_CONFIG). Declaring a
             config for an agent without it is `agent_config_unsupported`.
+        presets:
+          type: array
+          items:
+            type: string
+          description: >
+            The named settings presets this agent can guarantee
+            (`no-internet`, `pinned-context`). Declaring `agents[].preset`
+            outside this list is `agent_preset_unsupported`.
         latest_version:
           type: [string, 'null']
 

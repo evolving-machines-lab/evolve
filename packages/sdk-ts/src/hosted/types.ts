@@ -222,6 +222,24 @@ export interface AgentArmInput {
    * `agent_config_key_refused`.
    */
   kwargs?: Record<string, unknown> | null;
+  /**
+   * Named agent-settings preset for this arm: `no-internet` (vendor
+   * server-side web tools off — Claude settings deny WebSearch/WebFetch,
+   * Codex `-c web_search=disabled`) or `pinned-context` (one fixed effective
+   * context window). A platform-authored bundle delivered through the same
+   * channel as `kwargs.config`, stamped ON TOP of the user document — normal
+   * users tick a box and never learn what `--ak` is. Part of the arm's
+   * identity: the same agent+model with and without a preset are two arms.
+   *
+   * Acceptance is typed, never silent: an unknown preset name is
+   * `invalid_input`, and a known preset on an agent whose /api/meta entry
+   * does not list it under `presets` is `agent_preset_unsupported` — a
+   * preset the platform cannot guarantee is refused, never half-applied.
+   * (The no-internet guarantee is enforced twice: harness settings here,
+   * plus the gateway stripping web-tool declarations on the run's one
+   * allowed model route.)
+   */
+  preset?: string | null;
 }
 
 /** One agent arm as echoed on job bodies (requested pin; null = took the latest). */
@@ -232,6 +250,8 @@ export interface AgentArm {
   reasoning_effort: string | null;
   /** The arm's agent kwargs as accepted; null when none were declared. */
   kwargs: Record<string, unknown> | null;
+  /** The arm's named settings preset; null when none was declared. */
+  preset: string | null;
 }
 
 /**
@@ -1662,6 +1682,7 @@ export const HOSTED_ERROR_CODES = [
   "agent_kwarg_unsupported",
   "agent_config_unsupported",
   "agent_config_key_refused",
+  "agent_preset_unsupported",
   "job_too_large",
   "provider_unsupported",
   "job_not_found",
@@ -1714,6 +1735,13 @@ export interface AgentCapability {
    * an agent without it is refused `agent_config_unsupported`.
    */
   supports_config?: boolean;
+  /**
+   * The named settings presets this agent can guarantee (`no-internet`,
+   * `pinned-context`). Declaring `agents[].preset` outside this list is
+   * refused `agent_preset_unsupported`. Absent on older servers = none
+   * advertised.
+   */
+  presets?: string[];
   /**
    * Newest published version, for a "your pin is out of date" badge. Null
    * means "not known right now", never "up to date".

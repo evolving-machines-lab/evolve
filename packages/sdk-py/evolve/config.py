@@ -10,6 +10,10 @@ BrowserProvider = Literal['browser-use', 'actionbook', 'agent-browser']
 BrowserConfig = Union[BrowserProvider, Dict[str, Any]]
 AgentPluginConfig = Dict[str, Any]
 ReasoningEffort = Literal['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'thinking', 'no-thinking']
+#: The platform's named agent-settings presets - exactly two at launch:
+#: 'no-internet' (vendor server-side web tools off) and 'pinned-context'
+#: (one fixed effective context window). See AgentConfig.preset.
+AgentPreset = Literal['no-internet', 'pinned-context']
 ValidationMode = Literal['strict', 'loose']
 
 
@@ -213,6 +217,14 @@ class AgentConfig:
     #: platform routing/MCP/model/effort are stamped on top. Only claude and
     #: codex support it; any other agent type refuses loudly.
     config: Optional[Union[str, Dict[str, Any]]] = None
+    #: Named agent-settings preset, delivered through the same channel as
+    #: ``config`` and stamped ON TOP of it: ``"no-internet"`` turns off the
+    #: vendor's server-side web tools (Claude settings deny WebSearch/WebFetch;
+    #: Codex ``-c web_search=disabled``), ``"pinned-context"`` pins one fixed
+    #: effective context window. Only claude and codex can guarantee them; any
+    #: other combination refuses loudly - never a run silently missing its
+    #: guarantee.
+    preset: Optional[AgentPreset] = None
 
 
 @runtime_checkable
