@@ -291,7 +291,7 @@ Beside the parsed trace, every trial archives its raw record, and one six-name v
 | `trace-parsed` | The parsed event timeline — what `trace()` / `trace_events()` page |
 | `trace-stdout` | The agent process's stdout, byte for byte |
 | `trace-stderr` | The agent process's stderr, byte for byte |
-| `trajectory` | The normalized-trajectory slot — in the vocabulary ahead of its server wave |
+| `trajectory` | The normalized trajectory — an ATIF v1.7 document built from the parsed trace |
 | `agent-home` | The CLI's whole home folder, collected after the run |
 | `verifier` | Everything the scoring step printed |
 
@@ -306,9 +306,9 @@ home = await t.artifact(trial_id, 'agent-home')       # dict[path, text] | None
 
 `trace-stdout` and `trace-stderr` are the referee whenever the parsed trace looks wrong. `agent-home` is the agent CLI's entire home folder (`/root/.claude`, `/root/.codex`, …) collected whole after the run, subagent transcripts included by construction, keyed by sandbox path. `None` is a normal answer, never an error: the trial never stored that artifact (it was cancelled early, the agent wrote nothing, or the trace was purged).
 
-`trajectory` is different: it is in the vocabulary **ahead of its server wave**. Until that wave lands, the route answers not-found for it, and the SDK and CLI report that as the API error it is — no silent empty answer. The name is published now so a client written today parses the slot the day it first fills.
+`trajectory` is the normalized view of the same run: one **ATIF v1.7** document (Harbor's Agent Trajectory Interchange Format — the strict interchange schema its trainer and analysis tooling read), built server-side from the stored parsed trace. The instruction opens it as the first `user` step, each agent turn carries its message, reasoning, tool calls and their observed results, and `final_metrics` states the trial's token totals and measured cost. It answers on the same `{log}` envelope as the raw logs — the string is the JSON document — and None keeps the same meaning: nothing was stored (or the id is a regrade result, whose agent half belongs to its immutable source trial).
 
-The CLI speaks the same six words. `evolve-evals trial download <trial-id> --stream <name>` prints one artifact to stdout; without `--stream`, everything the trial recorded is saved under `<dir>/<trial-id>/` — `trace-parsed.jsonl`, `verifier.log`, `trace-stdout.log`, `trace-stderr.log`, and `agent-home/` with the folder tree preserved (`trajectory` joins the saved set when its wave lands). The two modes are exclusive, and `--cursor`/`--limit` page only `--stream trace-parsed` — the CLI refuses any other mix as a usage error instead of letting one flag silently win.
+The CLI speaks the same six words. `evolve-evals trial download <trial-id> --stream <name>` prints one artifact to stdout; without `--stream`, everything the trial recorded is saved under `<dir>/<trial-id>/` — `trace-parsed.jsonl`, `trajectory.json`, `verifier.log`, `trace-stdout.log`, `trace-stderr.log`, and `agent-home/` with the folder tree preserved. The two modes are exclusive, and `--cursor`/`--limit` page only `--stream trace-parsed` — the CLI refuses any other mix as a usage error instead of letting one flag silently win.
 
 This archive belongs to hosted evals: trials are scoring evidence. A managed agent session keeps its parsed transcript download; its raw stream lives in the SDK's local session log and its home folder inside your own sandbox.
 
@@ -413,7 +413,7 @@ path = await evals.download(job.id, to='./results')  # save; returns file path
 
 Both shapes are verified — the bytes against the response's length and, when the server states one, its digest; the to-disk shape hashes while streaming and promotes the file only after the check. There is deliberately no stream shape here where the TypeScript SDK has one: the HTTP layer is urllib inside a worker thread, so a chunk iterator would hand out unverified bytes one thread hop at a time, while `to=` already streams to disk in constant memory. Pipe from the file.
 
-The archive unpacks to Harbor's job layout — a job-level `config.json` and `result.json`, plus one directory per trial with its own `result.json` and logs. The counters inside the job-level `result.json` are the same cumulative, Harbor-style numbers the live API reports on `stats`: errored trials are a subset of completed, cancelled a subset of errored. The bundle and a live read of the same terminal job never disagree.
+The archive unpacks to Harbor's job layout — a job-level `config.json` and `result.json`, plus one directory per trial holding its `config.json`, `result.json`, the normalized ATIF trajectory at `agent/trajectory.json`, the raw streams at `agent/stdout.log` / `agent/stderr.log`, the verifier's console at `verifier/test-stdout.txt`, its rewards at `verifier/reward.json`, and `exception.txt` when the trial carries one — an artifact the trial never stored is an absent file, never an empty placeholder. The counters inside the job-level `result.json` are the same cumulative, Harbor-style numbers the live API reports on `stats` (errored trials are a subset of completed, cancelled a subset of errored), and each evals group also states `pass_at_k` — Harbor's estimator over the group's per-task attempts, `{}` when the group's rewards are not binary. The archive and a live read of the same terminal job never disagree.
 
 ---
 

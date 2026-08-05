@@ -296,7 +296,7 @@ const GROUPS: Record<string, GroupSpec> = {
         example: "evolve-evals job regrade cme12ab34 --task tricky-task",
       },
       download: {
-        summary: "Download the results archive (gzipped)",
+        summary: "Download the job's results (.tar.gz, standard job-directory layout)",
         flags: {
           "output-dir": { kind: "string", short: "o", value: "<dir>", help: "Directory to save into (default: current dir)" },
         },
@@ -333,7 +333,7 @@ const GROUPS: Record<string, GroupSpec> = {
             value: "<artifact>",
             help:
               "Print ONE artifact to stdout instead of saving: trace-parsed | verifier | " +
-              "trace-stdout | trace-stderr | trajectory (not served yet) | agent-home",
+              "trace-stdout | trace-stderr | trajectory (ATIF) | agent-home",
           },
           cursor: { kind: "string", value: "<seq>", help: "With --stream trace-parsed: resume after this seq" },
           limit: { kind: "number", value: "<n>", help: "With --stream trace-parsed: max events per page" },
@@ -2444,9 +2444,10 @@ async function cmdTrialDownload(inv: Invocation, io: CliIO): Promise<number> {
       }
       return 0;
     }
-    // Log-shaped selectors, "trajectory" included — that slot may be refused
-    // by a server whose wave has not landed yet, and the refusal surfaces as
-    // the API error it is.
+    // Log-shaped selectors, "trajectory" included — the normalized ATIF
+    // document rides the same {log} envelope as the raw logs (an older server
+    // that predates the slot refuses it, and the refusal surfaces as the API
+    // error it is).
     const log = await client.artifact(trialId, stream as Exclude<StreamArtifact, "trace-parsed" | "agent-home">);
     if (log === null) {
       io.out(json ? JSON.stringify({ log: null }) : `No ${stream} log was stored for this trial.`);
@@ -2457,8 +2458,9 @@ async function cmdTrialDownload(inv: Invocation, io: CliIO): Promise<number> {
   }
 
   // Save mode: everything the trial recorded lands under <output-dir>/<trial-id>/.
-  // The parsed events as trace-parsed.jsonl; each raw log under its own name;
-  // the agent's home folder under agent-home/ with its sandbox paths preserved.
+  // The parsed events as trace-parsed.jsonl; the normalized ATIF document as
+  // trajectory.json; each raw log under its own name; the agent's home folder
+  // under agent-home/ with its sandbox paths preserved.
   const { mkdir, writeFile } = await import("node:fs/promises");
   const { join, dirname } = await import("node:path");
   const targetDir = join((inv.flags["output-dir"] as string | undefined) ?? "trials", trialId);
@@ -2477,6 +2479,13 @@ async function cmdTrialDownload(inv: Invocation, io: CliIO): Promise<number> {
   }
   await writeFile(join(targetDir, "trace-parsed.jsonl"), lines.join("\n") + (lines.length ? "\n" : ""));
   report(`trace-parsed.jsonl (${lines.length} events)`);
+  // The normalized ATIF document saves under Harbor's own filename; the raw
+  // logs keep their selector names.
+  const trajectory = await client.artifact(trialId, "trajectory");
+  if (trajectory !== null) {
+    await writeFile(join(targetDir, "trajectory.json"), trajectory);
+    report(`trajectory.json (${Buffer.byteLength(trajectory, "utf8")} bytes)`);
+  }
   for (const which of ["verifier", "trace-stdout", "trace-stderr"] as const) {
     const log = await client.artifact(trialId, which);
     if (log === null) continue;

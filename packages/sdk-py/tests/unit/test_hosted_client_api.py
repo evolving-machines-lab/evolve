@@ -2090,9 +2090,9 @@ class TestTrials:
 
     @pytest.mark.asyncio
     async def test_artifact_trajectory_selector(self):
-        """The trajectory NAME is in the vocabulary ahead of its server wave;
-        it is a log-shaped selector, and a server whose wave has not landed
-        refuses it as the API error it is."""
+        """The trajectory selector is log-shaped: the served ATIF document
+        rides the same {log} envelope as the raw logs, and the client passes
+        the JSON text through verbatim."""
         fake = FakeUrlopen([('stream=trajectory', {'log': '{"steps":[]}'})])
         client = trials_factory(CONFIG)
         with patch('evolve._http.urlopen', fake):

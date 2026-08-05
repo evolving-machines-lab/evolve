@@ -1477,12 +1477,17 @@ export interface JobsClient {
    */
   compare(ids: string[]): Promise<CompareResponse>;
   /**
-   * Download a terminal job's results archive (gzipped, standard results
-   * layout, deterministic bytes). Default: Buffer — verified against the
-   * response's Content-Length and, when the server states one, its digest.
-   * { to } saves to a directory (temp-then-rename, same verification) and
-   * returns the file path. { stream: true } returns the raw response stream,
-   * the one shape the caller must verify themselves.
+   * Download a terminal job's results as one .tar.gz in the standard
+   * job-directory layout (deterministic bytes): extracts to `job-<id>/` with
+   * config.json, result.json (stats incl. pass_at_k), and per trial its
+   * config.json, result.json, agent/trajectory.json (the normalized ATIF
+   * trajectory), agent/{stdout,stderr}.log, verifier/test-stdout.txt,
+   * verifier/reward.json and exception.txt — absent artifacts are absent
+   * files. Default: Buffer — verified against the response's Content-Length
+   * and, when the server states one, its digest. { to } saves to a directory
+   * (temp-then-rename, same verification) and returns the file path.
+   * { stream: true } returns the raw response stream, the one shape the
+   * caller must verify themselves.
    */
   download(id: string): Promise<Buffer>;
   download(id: string, options: { to: string }): Promise<string>;
@@ -1532,11 +1537,11 @@ export interface TrialsClient {
   /**
    * One RAW trace artifact, by the trace route's ?stream= selector.
    * "verifier" | "trace-stdout" | "trace-stderr" answer the log text;
+   * "trajectory" answers the normalized trajectory — Harbor's ATIF v1.7
+   * document as JSON text, built server-side from the stored parsed trace;
    * "agent-home" answers the CLI's whole home folder (subagent transcripts
    * included), keyed by sandbox path. Null = never stored
-   * (a normal answer, not an error). "trajectory" is in the vocabulary ahead
-   * of its server wave — until that wave lands the route answers not-found,
-   * reported honestly as the API error it is. "trace-parsed" is not an
+   * (a normal answer, not an error). "trace-parsed" is not an
    * artifact — the parsed event trace rides trace()/traceEvents().
    */
   artifact(

@@ -3252,8 +3252,15 @@ class JobsClient:
         *,
         to: Optional[str] = None,
     ):
-        """Download a terminal job's results archive (gzipped, standard
-        results layout, deterministic bytes).
+        """Download a terminal job's results as one ``.tar.gz`` in the
+        standard job-directory layout (deterministic bytes).
+
+        The archive extracts to ``job-<id>/`` with ``config.json``,
+        ``result.json`` (stats incl. ``pass_at_k``), and per trial its
+        ``config.json``, ``result.json``, ``agent/trajectory.json`` (the
+        normalized ATIF trajectory), ``agent/{stdout,stderr}.log``,
+        ``verifier/test-stdout.txt``, ``verifier/reward.json`` and
+        ``exception.txt`` — absent artifacts are absent files.
 
         Returns the archive bytes — verified against the response's
         Content-Length and, when the server states one, its digest — or, when
@@ -3391,13 +3398,13 @@ class TrialsClient:
         selector.
 
         ``"verifier"`` / ``"trace-stdout"`` / ``"trace-stderr"`` answer the log
-        text; ``"agent-home"`` (the CLI's whole home folder, subagent
+        text; ``"trajectory"`` answers the normalized trajectory — Harbor's
+        ATIF v1.7 document as JSON text, built server-side from the stored
+        parsed trace; ``"agent-home"`` (the CLI's whole home folder, subagent
         transcripts included by construction) answers a dict of sandbox path to
         text. None = never stored (normal answer, not an error): a
         QUEUED/CANCELLED trial, a harness that wrote nothing, or a purged
-        trace. ``"trajectory"`` is in the vocabulary ahead of its server wave —
-        until that wave lands the route answers not-found, reported honestly as
-        the API error it is. ``"trace-parsed"`` is in the vocabulary but is not
+        trace. ``"trace-parsed"`` is in the vocabulary but is not
         a raw artifact — the parsed event trace rides ``trace()`` /
         ``trace_events()``, and passing it here is refused with that guidance.
         """

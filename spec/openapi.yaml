@@ -62,9 +62,10 @@ info:
 
     ## Wave sequencing
     Anything marked `x-wave: 2` belongs to the second build wave: today the
-    `trajectory` artifact selector (not yet served) and the API-key
-    management pair (served, not yet in the SDKs). Everything unmarked is
-    live end to end.
+    API-key management pair (served, not yet in the SDKs). The `trajectory`
+    artifact selector, published ahead of its wave, is SERVED since Wave 3 —
+    the normalized ATIF v1.7 trajectory. Everything unmarked is live end to
+    end.
 
     ## Deliberately absent (wave 3, not yet specified)
     The rename map's additive rows are new capabilities, not renames, and are
@@ -406,10 +407,29 @@ paths:
       operationId: downloadJob
       summary: Download a job's results archive
       description: |
-        A gzipped archive of the job in the standard results layout
-        (`config.json`, `result.json`, per-trial `config.json`/`result.json`).
-        Only terminal jobs are downloadable. The archive is deterministic:
-        sorted keys at every depth, no generation timestamp, zero gzip mtime.
+        One `.tar.gz` in the standard job-directory layout, extracting to
+        `job-<id>/`:
+
+            job-<id>/
+            ├── config.json              job configuration
+            ├── result.json              job result; each `stats.evals` group
+            │                            also carries `pass_at_k`
+            └── <trial_name>/
+                ├── config.json
+                ├── result.json
+                ├── exception.txt        when the trial carries an exception
+                ├── agent/
+                │   ├── trajectory.json  the normalized ATIF v1.7 trajectory
+                │   ├── stdout.log       the harness process's raw streams,
+                │   └── stderr.log       when stored
+                └── verifier/
+                    ├── test-stdout.txt  the stored verifier log
+                    └── reward.json      the rewards the verifier produced
+
+        An artifact the trial never stored is an absent file, never an empty
+        placeholder. Only terminal jobs are downloadable. The archive is
+        deterministic: sorted keys at every depth, no generation timestamp,
+        fixed tar mtimes, zero gzip mtime — re-downloads are byte-identical.
         Task environment identity only — instructions, verifier commands, and
         test files never leave the server.
       parameters:
@@ -686,11 +706,18 @@ paths:
         `cursor` (a sequence number) and `limit` (default 200, max 1000).
 
         With `stream`: raw artifacts instead of parsed events —
-        - `verifier`, `trace-stdout`, `trace-stderr`, `trajectory` (wave 2):
-          the log text as JSON (`{"log": string | null}`; null means this
-          trial never stored that log — a normal answer, never an error).
-          With `format=log` a present log is delivered as a `text/plain`
-          attachment; an absent one still answers the JSON `{"log": null}`.
+        - `verifier`, `trace-stdout`, `trace-stderr`, `trajectory`:
+          the artifact text as JSON (`{"log": string | null}`; null means this
+          trial never stored it — a normal answer, never an error).
+          `trajectory` is the normalized ATIF v1.7 trajectory (Harbor's
+          Agent Trajectory Interchange Format), built server-side from the
+          stored parsed trace; the string is the JSON document, and null
+          also answers a regrade id, whose agent half belongs to its
+          immutable source trial.
+          With `format=log` a present artifact is delivered as an attachment
+          — `text/plain` named `<trialId>_<stream>.log` for the raw logs,
+          `application/json` named `<trialId>_trajectory.json` for the
+          trajectory; an absent one still answers the JSON `{"log": null}`.
         - `agent-home`: the agent home tree as JSON
           (`{"files": {"<sandbox-path>": "<text>", ...} | null}`; null means
           nothing was collected). With `format=tgz` a present tree is
@@ -714,9 +741,7 @@ paths:
         - name: stream
           in: query
           description: >
-            Raw artifact selector. `trajectory` is in the vocabulary ahead of
-            its server wave: until that wave lands the route answers
-            not-found for it, reported as the API error it is.
+            Raw artifact selector.
           schema:
             type: string
             enum:
@@ -724,13 +749,14 @@ paths:
               - verifier
               - trace-stdout
               - trace-stderr
-              - trajectory   # x-wave: 2 — normalized-trajectory artifact slot
+              - trajectory   # the normalized ATIF v1.7 trajectory
               - agent-home
         - name: format
           in: query
           description: >
-            `log` (text/plain, log selectors only) or `tgz` (gzipped tarball,
-            agent-home only).
+            `log` (attachment form of the log-family selectors — text/plain
+            for the raw logs, application/json for `trajectory`) or `tgz`
+            (gzipped tarball, agent-home only).
           schema:
             type: string
             enum: [log, tgz]

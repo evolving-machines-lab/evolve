@@ -1349,8 +1349,8 @@ async function testHelpAndVersion() {
   const trialCmdText = trialCmd.out.join("\n");
   assert(trialCmdText.includes("--stream"), "help <group> <verb> resolves the command help");
   assert(
-    trialCmdText.includes("trajectory (not served yet)"),
-    "--stream help admits trajectory is ahead of its server wave"
+    trialCmdText.includes("trajectory (ATIF)"),
+    "--stream help names the served trajectory artifact"
   );
 
   const resumeCmd = captureIO();
@@ -2637,8 +2637,8 @@ async function testTrialDownloadStream() {
     );
     assertEqual(stdout.out, ["raw harness stdout"], "prints the raw log verbatim");
 
-    // The trajectory NAME is accepted now; the server may still refuse it
-    // until its wave — here the mock serves it and the CLI passes it through.
+    // The normalized ATIF document rides the same {log} envelope as the raw
+    // logs — the CLI passes the served JSON text through verbatim.
     const trajectory = captureIO();
     assertEqual(
       await runCli(["trial", "download", "run-1", "--stream", "trajectory", ...AUTH], trajectory.io),
@@ -2668,8 +2668,8 @@ async function testTrialDownloadTrajectoryRefused() {
   console.log("\n--- runCli: --stream trajectory surfaces the server's refusal honestly ---");
   installMockFetch();
   try {
-    // The graceful not-yet answer the spec promises until trajectory's wave
-    // lands. The CLI's whole job is a clean relay: the server's own sentence,
+    // An OLDER server that predates the trajectory wave refuses the selector.
+    // The CLI's whole job is a clean relay: the server's own sentence,
     // one line, nothing invented and nothing on stdout.
     const sentence = "trajectory is not served yet; it arrives with a later wave";
     setMockResponse("/trace?stream=trajectory", {
@@ -2693,6 +2693,7 @@ async function testTrialDownloadSave() {
   try {
     // Stream selectors first: the mock matches by substring, and a plain
     // "/trace" pattern would swallow "/trace?stream=…" if it were checked first.
+    setMockResponse("/trace?stream=trajectory", { status: 200, body: { log: '{"schema_version":"ATIF-v1.7"}' } });
     setMockResponse("/trace?stream=verifier", { status: 200, body: { log: "verifier says 1.0" } });
     setMockResponse("/trace?stream=trace-stdout", { status: 200, body: { log: null } });
     setMockResponse("/trace?stream=trace-stderr", { status: 200, body: { log: null } });
@@ -2713,6 +2714,8 @@ async function testTrialDownloadSave() {
     assert(parsed.includes('"seq":0'), "parsed events land in trace-parsed.jsonl");
     const verifier = await readFile(join(target, "verifier.log"), "utf-8");
     assertEqual(verifier, "verifier says 1.0", "each stored raw log lands under its own name");
+    const savedTrajectory = await readFile(join(target, "trajectory.json"), "utf-8");
+    assertEqual(savedTrajectory, '{"schema_version":"ATIF-v1.7"}', "the ATIF document saves as trajectory.json");
     const home = await readFile(join(target, "agent-home", "root", ".claude", "history.jsonl"), "utf-8");
     assertEqual(home, "{}", "agent-home/ preserves the sandbox folder tree");
     // Null logs were never stored — absence is a normal answer, no empty files.
