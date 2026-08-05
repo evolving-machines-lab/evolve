@@ -58,6 +58,7 @@ import type {
   JobTaskRollupList,
   JobWatch,
   JobsClient,
+  JudgeResult,
   ListAgentsOptions,
   ListDatasetsOptions,
   ListImportsOptions,
@@ -166,6 +167,7 @@ export type {
   JobTaskRollupPage,
   JobWatch,
   JobsClient,
+  JudgeResult,
   ListAgentsOptions,
   ListDatasetsOptions,
   ListImportsOptions,
@@ -640,12 +642,16 @@ function mapTrial(raw: Record<string, unknown>): Trial {
     verifier_result: (raw.verifier_result as VerifierResult | null) ?? null,
     exception_info: (raw.exception_info as ExceptionInfo | null) ?? null,
     agent_result: (raw.agent_result as AgentResult | null) ?? null,
+    // The judge share of the bill, itemized (absent on older servers and on
+    // every non-judge trial — null either way, and null never means $0).
+    judge_result: (raw.judge_result as JudgeResult | null) ?? null,
     environment_setup: mapTimingInfo(raw.environment_setup),
     agent_setup: mapTimingInfo(raw.agent_setup),
     agent_execution: mapTimingInfo(raw.agent_execution),
     verifier: mapTimingInfo(raw.verifier),
     step_results: (raw.step_results as StepResult[] | null) ?? null,
     spend_source: (raw.spend_source as SpendSource | null) ?? null,
+    judge_spend_source: (raw.judge_spend_source as SpendSource | null) ?? null,
     // Mid-run lower bound, kept beside the settled pair and never folded into
     // it: it lags the gateway and is CLEARED when the trial settles.
     live_spent_usd: (raw.live_spent_usd as number | null) ?? null,

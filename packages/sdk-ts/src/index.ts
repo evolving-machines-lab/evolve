@@ -393,6 +393,7 @@ export {
   type Job,
   type JobFailure,
   type JobStats,
+  type JudgeResult,
   type AgentDatasetStats,
   type JobStatus,
   type EvalSandboxProvider,

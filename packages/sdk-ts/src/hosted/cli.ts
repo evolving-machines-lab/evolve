@@ -1666,6 +1666,12 @@ function jobLines(e: Job): string[] {
   rows.push(["worst case", fmtUsd(e.worst_case_spend_usd)]);
   rows.push(["provider", e.sandbox_provider]);
   rows.push(["spent", fmtUsd(e.stats.cost_usd)]);
+  // The judge share of the bill, itemized only when one exists: `spent` above
+  // is the WHOLE bill (agent + judge), and a job with no judge tasks holds a
+  // judge share of 0 — a row saying "$0.00 of judging" would be noise.
+  if (e.stats.judge_cost_usd != null && e.stats.judge_cost_usd > 0) {
+    rows.push(["spent (judge)", fmtUsd(e.stats.judge_cost_usd)]);
+  }
   // Only the statuses actually present: the response names all of them (so a
   // client never hardcodes the enum), but a row of eight zeros helps nobody.
   const histogram = Object.entries(e.trials.byStatus)
@@ -1780,6 +1786,12 @@ export function trialDetailLines(run: Trial): string[] {
     ]);
   }
   rows.push(["spent", fmtUsd(run.agent_result?.cost_usd)]);
+  // THE JUDGE'S SHARE, itemized beside the agent's when this task's verifier
+  // ran an LLM judge on its own gateway key (judge_result present). The agent
+  // figure above stays the agent's alone; the trial's whole bill is the sum.
+  if (run.judge_result) {
+    rows.push(["spent (judge)", fmtUsd(run.judge_result.cost_usd)]);
+  }
   // WHILE THE TRIAL RUNS, show the live sample beside the (still empty) settled
   // figure. It is a lagging lower bound, and the row says so with "at least";
   // once the trial settles, agent_result.cost_usd is the truth and this row

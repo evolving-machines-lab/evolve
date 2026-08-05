@@ -741,6 +741,26 @@ class AgentResult:
 
 
 @dataclass
+class JudgeResult:
+    """What the verifier phase's LLM judge consumed — the judge half of a
+    trial's model bill.
+
+    A judge-enabled task's verifier holds a DISTINCT short-lived gateway key
+    (judge models only, minted at verify start, revoked after scoring), and
+    these figures are that key's spend and tokens as the platform measured
+    them at the gateway — never anything the verifier reported about itself.
+    ``cost_usd`` is the judge share alone; ``agent_result.cost_usd`` stays the
+    agent's, and the trial's whole bill is the sum. See ``judge_spend_source``
+    on the trial for which lane the figure is in.
+    """
+    n_input_tokens: Optional[int] = None
+    n_cache_tokens: Optional[int] = None
+    n_output_tokens: Optional[int] = None
+    #: None until measured; None never means $0.
+    cost_usd: Optional[float] = None
+
+
+@dataclass
 class VerifierResult:
     """The verifier's rewards map.
 
@@ -830,6 +850,15 @@ class Trial:
     session_ref: Optional[str]
     started_at: Optional[str]
     finished_at: Optional[str]
+    # Declared last (dataclass default-ordering), read beside agent_result:
+    #: The judge share of the trial's bill, itemized (see JudgeResult). None
+    #: when no judge ever ran — the task requested no judge credential, or the
+    #: trial never reached its verify phase. None never means "$0 of judging".
+    judge_result: Optional[JudgeResult] = None
+    #: Which lane ``judge_result.cost_usd`` is in — the same three-lane
+    #: vocabulary as ``spend_source``, same rules. None exactly when
+    #: ``judge_result`` is None: no judge ever ran.
+    judge_spend_source: Optional[SpendSource] = None
 
 
 @dataclass
@@ -1476,6 +1505,17 @@ def _map_agent_result(data: Any) -> Optional[AgentResult]:
     )
 
 
+def _map_judge_result(data: Any) -> Optional[JudgeResult]:
+    if not isinstance(data, dict):
+        return None
+    return JudgeResult(
+        n_input_tokens=data.get('n_input_tokens'),
+        n_cache_tokens=data.get('n_cache_tokens'),
+        n_output_tokens=data.get('n_output_tokens'),
+        cost_usd=data.get('cost_usd'),
+    )
+
+
 def _map_verifier_result(data: Any) -> Optional[VerifierResult]:
     if not isinstance(data, dict):
         return None
@@ -1506,6 +1546,10 @@ def _map_trial(data: Dict[str, Any]) -> Trial:
         verifier_result=_map_verifier_result(data.get('verifier_result')),
         exception_info=_map_exception_info(data.get('exception_info')),
         agent_result=_map_agent_result(data.get('agent_result')),
+        # The judge share of the bill, itemized (Wave-3 lane 12); absent on
+        # older servers and on every non-judge trial — None either way.
+        judge_result=_map_judge_result(data.get('judge_result')),
+        judge_spend_source=data.get('judge_spend_source'),
         environment_setup=_map_timing(data.get('environment_setup')),
         agent_setup=_map_timing(data.get('agent_setup')),
         agent_execution=_map_timing(data.get('agent_execution')),

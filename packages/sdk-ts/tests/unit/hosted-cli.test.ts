@@ -1472,6 +1472,33 @@ function testTrialDetailLiveSpend() {
   assert(!noReading.includes("spent (live)"), "no reading yet means no live row, never $0");
 }
 
+function testTrialDetailJudgeSplit() {
+  console.log("\n--- trialDetailLines: the judge share, itemized (Wave-3 lane 12) ---");
+  const judged = trialDetailLines(
+    trialFixture({
+      status: "SCORED",
+      reward: 1,
+      agent_result: { cost_usd: 0.31 },
+      spend_source: "measured",
+      judge_result: { cost_usd: 0.04 },
+      judge_spend_source: "measured",
+    }),
+  ).join("\n");
+  assert(judged.includes("spent (judge)"), "a judge trial shows the judge row");
+  assert(judged.includes("$0.04"), "the judge row carries the judge figure");
+  assert(judged.includes("$0.31"), "the agent figure stays the agent's alone");
+
+  const plain = trialDetailLines(
+    trialFixture({
+      status: "SCORED",
+      reward: 1,
+      agent_result: { cost_usd: 0.31 },
+      spend_source: "measured",
+    }),
+  ).join("\n");
+  assert(!plain.includes("spent (judge)"), "no judge ever ran means no judge row, never $0");
+}
+
 // =============================================================================
 // WIRE FIXTURES
 // =============================================================================
@@ -1860,6 +1887,35 @@ async function testJobShowMultiId() {
     await runCli(["job", "show", "eval-1", "eval-2", ...AUTH], rendered.io);
     const text = rendered.out.join("\n");
     assert(text.includes("eval-1") && text.includes("eval-2"), "rendered view shows both jobs");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testJobShowJudgeSplit() {
+  console.log("\n--- runCli: job show itemizes the judge share (Wave-3 lane 12) ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: wireJob({ stats: { cost_usd: 1.54, judge_cost_usd: 0.04 } }),
+    });
+    const judged = captureIO();
+    await runCli(["job", "show", "eval-1", ...AUTH], judged.io);
+    const judgedText = judged.out.join("\n");
+    assert(judgedText.includes("spent (judge)"), "a judged job shows the judge row");
+    assert(judgedText.includes("$0.04"), "the judge row carries the judge share");
+
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: wireJob({ stats: { cost_usd: 1.5, judge_cost_usd: 0 } }),
+    });
+    const plain = captureIO();
+    await runCli(["job", "show", "eval-1", ...AUTH], plain.io);
+    assert(
+      !plain.out.join("\n").includes("spent (judge)"),
+      "a zero judge share is noise, not a row",
+    );
   } finally {
     restoreFetch();
   }
@@ -3314,6 +3370,7 @@ async function main() {
   testImportStatusLine();
   testEventLine();
   testTrialDetailLiveSpend();
+  testTrialDetailJudgeSplit();
   testBuildInputsDirect();
   await testRunWatchEndToEnd();
   await testRunWatchJsonAndQuiet();
@@ -3322,6 +3379,7 @@ async function main() {
   await testJsonErrorObject();
   await testJobListOutputModes();
   await testJobShowMultiId();
+  await testJobShowJudgeSplit();
   await testJobTrialsAndTasks();
   await testJobStopDatasetSugar();
   await testJobStopDatasetChunking();

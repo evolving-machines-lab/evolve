@@ -38,7 +38,11 @@ info:
       `worst_case_spend_usd` (stated, never left to the caller to multiply),
       and the live lower-bound pair `live_spent_usd` / `live_spend_at`.
       Measured spend travels as `cost_usd` (job: `stats.cost_usd`; trial:
-      `agent_result.cost_usd`).
+      `agent_result.cost_usd`). A judge-enabled task's verifier holds its
+      own short-lived gateway key, and that key's spend is itemized apart:
+      trial `judge_result.cost_usd` / `judge_spend_source`, job
+      `stats.judge_cost_usd` (a share of `stats.cost_usd`, which is the
+      whole bill).
     - **Typed error catalog.** A closed 52-code union; every error response is
       one envelope: `{code, message, param, details, retryAfterSec,
       request_id, requestId}` (envelope keys frozen verbatim; `requestId` is
@@ -2184,7 +2188,16 @@ components:
           type: [integer, 'null']
         cost_usd:
           type: [number, 'null']
-          description: Measured spend across settled trials; null before any settled.
+          description: >
+            Measured spend across settled trials — the WHOLE model bill,
+            agent and judge together; null before any settled.
+        judge_cost_usd:
+          type: [number, 'null']
+          description: >
+            The judge share of `cost_usd`, itemized: what the trials'
+            verifier-phase judge keys spent. 0 for a job with no
+            judge-enabled tasks; null before anything settled, like
+            `cost_usd`.
 
     JobFailure:
       type: object
@@ -2427,6 +2440,29 @@ components:
           type: [object, 'null']
           additionalProperties: true
 
+    JudgeResult:
+      type: object
+      description: |
+        What the verifier phase's LLM judge consumed — the judge half of a
+        trial's model bill. A judge-enabled task's verifier holds a DISTINCT
+        short-lived gateway key (judge models only, minted at verify start,
+        revoked after scoring), and these figures are that key's spend and
+        tokens as the platform measured them at the gateway — never anything
+        the verifier reported about itself. `cost_usd` is the judge share
+        alone; `agent_result.cost_usd` stays the agent's, and the trial's
+        whole bill is the sum. See `judge_spend_source` on the trial for
+        which lane the figure is in.
+      properties:
+        n_input_tokens:
+          type: [integer, 'null']
+        n_cache_tokens:
+          type: [integer, 'null']
+        n_output_tokens:
+          type: [integer, 'null']
+        cost_usd:
+          type: [number, 'null']
+          description: Null until measured; null never means $0.
+
     VerifierResult:
       type: object
       description: |
@@ -2552,6 +2588,14 @@ components:
           oneOf:
             - $ref: '#/components/schemas/AgentResult'
             - type: 'null'
+        judge_result:
+          oneOf:
+            - $ref: '#/components/schemas/JudgeResult'
+            - type: 'null'
+          description: >
+            The judge share of the trial's bill, itemized. Null when no judge
+            ever ran — the task requested no judge credential, or the trial
+            never reached its verify phase. Null never means "$0 of judging".
         environment_setup:
           oneOf:
             - $ref: '#/components/schemas/TimingInfo'
@@ -2577,6 +2621,14 @@ components:
           oneOf:
             - $ref: '#/components/schemas/SpendSource'
             - type: 'null'
+        judge_spend_source:
+          oneOf:
+            - $ref: '#/components/schemas/SpendSource'
+            - type: 'null'
+          description: >
+            Which lane `judge_result.cost_usd` is in — the same three-lane
+            vocabulary as `spend_source`, same rules. Null exactly when
+            `judge_result` is null: no judge ever ran.
         live_spent_usd:
           type: [number, 'null']
           description: |

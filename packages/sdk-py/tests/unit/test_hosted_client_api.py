@@ -1345,6 +1345,38 @@ class TestJobs:
         assert trial.sandbox_id == 'im8f0wgqwehvng70evvro'
         assert trial.verifier_sandbox_id == 'iv2k1xbqwehvng70evvrp'
         assert trial.session_ref == 'sess-9'
+        # No judge ever ran: the judge pair is honestly None, never $0.
+        assert trial.judge_result is None
+        assert trial.judge_spend_source is None
+
+    @pytest.mark.asyncio
+    async def test_trial_judge_split_mapping(self):
+        """Wave-3 lane 12: the judge share is itemized apart from the agent's —
+        measured at the gateway off the judge key, with its own spend lane."""
+        fake = FakeUrlopen([
+            ('/api/jobs/job-1/trials', {
+                'items': [wire_trial(
+                    judge_result={
+                        'n_input_tokens': 1200,
+                        'n_cache_tokens': 0,
+                        'n_output_tokens': 88,
+                        'cost_usd': 0.0315,
+                    },
+                    judge_spend_source='measured',
+                )],
+                'nextCursor': None,
+                'hasMore': False,
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            page = await jobs_factory(CONFIG).trials('job-1')
+
+        trial = page.items[0]
+        assert trial.judge_result.cost_usd == 0.0315
+        assert trial.judge_result.n_input_tokens == 1200
+        assert trial.judge_spend_source == 'measured'
+        # The agent figure stays the agent's alone — the split is the point.
+        assert trial.agent_result.cost_usd == 0.93
 
 
     @pytest.mark.asyncio
