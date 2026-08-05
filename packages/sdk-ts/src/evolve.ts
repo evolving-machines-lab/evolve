@@ -48,7 +48,7 @@ import { getGatewayMcpServers, DEFAULT_DASHBOARD_URL, ENV_EVOLVE_API_KEY } from 
 import { resolveStorageConfig, createBoundStorageClient } from "./storage";
 import type { CheckpointInfo, StorageClient } from "./types";
 import { BROWSER_ACTIONBOOK_PROMPT, BROWSER_AGENT_BROWSER_PROMPT } from "./prompts";
-import { mergeBrowserSkills, normalizeBrowserConfig } from "./browser";
+import { normalizeBrowserConfig } from "./browser";
 import { browserCredentials as createBrowserCredentialsClient } from "./browser-credentials";
 import { browserProfiles as createBrowserProfilesClient } from "./browser-profiles";
 import {
@@ -277,13 +277,21 @@ export class Evolve extends EventEmitter {
   }
 
   /**
-   * Enable skills for the agent
+   * Enable skills for the agent.
    *
-   * Skills are specialized capabilities that extend the agent's functionality.
-   * Available skills: "pdf", "dev-browser"
+   * Takes real skill references — there is no built-in catalog:
+   * - `skills.sh/<owner>/<repo>` — every skill in a skills.sh-listed repo
+   * - `skills.sh/<owner>/<repo>/<skill>` — one named skill from that repo
+   * - `org/repo` or `org/repo@ref` — a GitHub repo (Harbor's shorthand)
+   * - an https git URL, optionally `/tree/<ref>/<subdir>`
+   * - a local folder path (`./skills/my-skill`) containing SKILL.md
+   *
+   * References are resolved by the SDK's one resolver (skills.ts): pinned to
+   * an exact commit, fetched only as selected, cached by content, and mounted
+   * into the harness's native skills directory where it auto-discovers them.
    *
    * @example
-   * kit.withSkills(["pdf", "dev-browser"])
+   * kit.withSkills(["skills.sh/vercel-labs/agent-skills/frontend-design", "./my-skill"])
    */
   withSkills(skills: SkillName[]): this {
     this.config.skills = skills;
@@ -431,7 +439,7 @@ export class Evolve extends EventEmitter {
     let browserMcpServers: Record<string, McpServerConfig> = {};
     let browserPrompt: string | undefined;
     let managedBrowser: AgentOptions["managedBrowser"] | undefined;
-    let skills = this.config.skills;
+    const skills = this.config.skills;
 
     let normalizedBrowser: ReturnType<typeof normalizeBrowserConfig> | undefined;
 
@@ -449,7 +457,9 @@ export class Evolve extends EventEmitter {
       }
 
       if (browser.provider === "actionbook" || browser.provider === "agent-browser") {
-        skills = mergeBrowserSkills(browser.provider, skills);
+        // No implicit skills: the baked catalog these merges pointed at is
+        // gone. Browser transport works without them; instruction skills are
+        // named explicitly through .withSkills() with real references.
         if (browser.managed) {
           if (agentConfig.isDirectMode) {
             throw new Error(
@@ -674,6 +684,15 @@ export class Evolve extends EventEmitter {
   /** Whether sealCredentials() has completed for the active sandbox. */
   isSealed(): boolean {
     return this.agent?.isSealed() ?? false;
+  }
+
+  /**
+   * Provenance of the skills mounted into this session's sandbox: name,
+   * source reference, exact git commit (for git-backed skills) and content
+   * digest. Empty before the first run and for sessions without skills.
+   */
+  resolvedSkills(): import("./skills").ResolvedSkill[] {
+    return this.agent?.resolvedSkills() ?? [];
   }
 
   /** Collect files or directories from the working directory after credentials are sealed. */

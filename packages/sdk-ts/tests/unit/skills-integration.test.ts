@@ -161,26 +161,26 @@ async function testEvolveWithSkills(): Promise<void> {
   console.log("\n[1] Evolve.withSkills(): Sets skills on config");
 
   const kit = new Evolve({ type: "claude", apiKey: "mock-key" });
-  const result = kit.withSkills(["pdf", "dev-browser"]);
+  const result = kit.withSkills(["org/skill-a", "org/skill-c"]);
 
   // Check fluent return
   assert(result === kit, "withSkills() returns this for chaining");
 
   // Check config
   const config = (kit as any).config;
-  assertArrayEquals(config.skills, ["pdf", "dev-browser"], "skills set on config");
+  assertArrayEquals(config.skills, ["org/skill-a", "org/skill-c"], "skills set on config");
 }
 
 async function testEvolveWithSkillsChaining(): Promise<void> {
   console.log("\n[2] Evolve.withSkills(): Chains with other methods");
 
   const kit = new Evolve({ type: "claude", apiKey: "mock-key" })
-    .withSkills(["pdf"])
+    .withSkills(["org/skill-a"])
     .withMcpServers({ test: { type: "sse", url: "http://test" } })
     .withSystemPrompt("Test prompt");
 
   const config = (kit as any).config;
-  assertArrayEquals(config.skills, ["pdf"], "skills preserved after chaining");
+  assertArrayEquals(config.skills, ["org/skill-a"], "skills preserved after chaining");
   assert(config.mcpServers !== undefined, "mcpServers set after chaining");
   assert(config.systemPrompt === "Test prompt", "systemPrompt set after chaining");
 }
@@ -192,13 +192,13 @@ async function testEvolveWithSkillsChaining(): Promise<void> {
 async function testSwarmDefaultSkills(): Promise<void> {
   console.log("\n[3] Swarm: Default skills passed to execute()");
 
-  const { swarm, tracker } = createMockSwarm(["pdf", "docx"]);
+  const { swarm, tracker } = createMockSwarm(["org/skill-a", "org/skill-b"]);
   const items: FileMap[] = [{ "a.txt": "a" }];
 
   await swarm.map({ items, prompt: "Process" });
 
   assert(tracker.calls.length === 1, "1 execute call");
-  assertArrayEquals(tracker.calls[0]?.skills, ["pdf", "docx"], "skills passed to execute");
+  assertArrayEquals(tracker.calls[0]?.skills, ["org/skill-a", "org/skill-b"], "skills passed to execute");
 }
 
 async function testSwarmNoDefaultSkills(): Promise<void> {
@@ -220,7 +220,7 @@ async function testSwarmNoDefaultSkills(): Promise<void> {
 async function testMapSkillsOverride(): Promise<void> {
   console.log("\n[5] map(): Per-operation skills override swarm default");
 
-  const { swarm, tracker } = createMockSwarm(["pdf"]); // Default: pdf
+  const { swarm, tracker } = createMockSwarm(["org/skill-a"]); // Default: skill-a
   const items: FileMap[] = [{ "a.txt": "a" }];
 
   await swarm.map({ items, prompt: "Process", skills: ["xlsx", "pptx"] }); // Override
@@ -231,7 +231,7 @@ async function testMapSkillsOverride(): Promise<void> {
 async function testFilterSkillsOverride(): Promise<void> {
   console.log("\n[6] filter(): Per-operation skills override swarm default");
 
-  const { swarm, tracker } = createMockSwarm(["pdf"]);
+  const { swarm, tracker } = createMockSwarm(["org/skill-a"]);
   const items: FileMap[] = [{ "a.txt": "a" }];
   const schema = z.object({ score: z.number() });
 
@@ -240,16 +240,16 @@ async function testFilterSkillsOverride(): Promise<void> {
     prompt: "Evaluate",
     schema,
     condition: () => true,
-    skills: ["dev-browser"],
+    skills: ["org/skill-c"],
   });
 
-  assertArrayEquals(tracker.calls[0]?.skills, ["dev-browser"], "filter skills override default");
+  assertArrayEquals(tracker.calls[0]?.skills, ["org/skill-c"], "filter skills override default");
 }
 
 async function testReduceSkillsOverride(): Promise<void> {
   console.log("\n[7] reduce(): Per-operation skills override swarm default");
 
-  const { swarm, tracker } = createMockSwarm(["pdf", "docx"]);
+  const { swarm, tracker } = createMockSwarm(["org/skill-a", "org/skill-b"]);
   const items: FileMap[] = [{ "a.txt": "a" }, { "b.txt": "b" }];
 
   await swarm.reduce({ items, prompt: "Synthesize", skills: ["xlsx"] });
@@ -264,7 +264,7 @@ async function testReduceSkillsOverride(): Promise<void> {
 async function testBestOfCandidateSkills(): Promise<void> {
   console.log("\n[8] bestOf(): Candidates use config.skills (falls back to swarm default)");
 
-  const { swarm, tracker } = createMockSwarm(["pdf"]); // Swarm default
+  const { swarm, tracker } = createMockSwarm(["org/skill-a"]); // Swarm default
   const item: FileMap = { "a.txt": "a" };
 
   await swarm.bestOf({
@@ -286,7 +286,7 @@ async function testBestOfCandidateSkills(): Promise<void> {
 async function testBestOfCandidateSkillsFallback(): Promise<void> {
   console.log("\n[9] bestOf(): Candidates fall back to swarm default when config.skills undefined");
 
-  const { swarm, tracker } = createMockSwarm(["pdf", "docx"]); // Swarm default
+  const { swarm, tracker } = createMockSwarm(["org/skill-a", "org/skill-b"]); // Swarm default
   const item: FileMap = { "a.txt": "a" };
 
   await swarm.bestOf({
@@ -300,13 +300,13 @@ async function testBestOfCandidateSkillsFallback(): Promise<void> {
   });
 
   const candidateCalls = tracker.calls.filter((c) => c.role === "candidate");
-  assertArrayEquals(candidateCalls[0]?.skills, ["pdf", "docx"], "candidates use swarm default");
+  assertArrayEquals(candidateCalls[0]?.skills, ["org/skill-a", "org/skill-b"], "candidates use swarm default");
 }
 
 async function testBestOfJudgeSkills(): Promise<void> {
   console.log("\n[10] bestOf(): Judge uses config.judgeSkills");
 
-  const { swarm, tracker } = createMockSwarm(["pdf"]);
+  const { swarm, tracker } = createMockSwarm(["org/skill-a"]);
   const item: FileMap = { "a.txt": "a" };
 
   await swarm.bestOf({
@@ -316,19 +316,19 @@ async function testBestOfJudgeSkills(): Promise<void> {
       n: 2,
       judgeCriteria: "Best",
       skills: ["xlsx"],
-      judgeSkills: ["dev-browser"], // Judge-specific override
+      judgeSkills: ["org/skill-c"], // Judge-specific override
     },
   });
 
   const judgeCalls = tracker.calls.filter((c) => c.role === "judge");
   assert(judgeCalls.length === 1, "1 judge call");
-  assertArrayEquals(judgeCalls[0]?.skills, ["dev-browser"], "judge uses judgeSkills");
+  assertArrayEquals(judgeCalls[0]?.skills, ["org/skill-c"], "judge uses judgeSkills");
 }
 
 async function testBestOfJudgeSkillsFallback(): Promise<void> {
   console.log("\n[11] bestOf(): Judge falls back to config.skills, then swarm default");
 
-  const { swarm, tracker } = createMockSwarm(["pdf"]);
+  const { swarm, tracker } = createMockSwarm(["org/skill-a"]);
   const item: FileMap = { "a.txt": "a" };
 
   // Test 1: Judge falls back to config.skills
@@ -358,7 +358,7 @@ async function testBestOfJudgeSkillsFallback(): Promise<void> {
   });
 
   judgeCalls = tracker.calls.filter((c) => c.role === "judge");
-  assertArrayEquals(judgeCalls[0]?.skills, ["pdf"], "judge falls back to swarm default");
+  assertArrayEquals(judgeCalls[0]?.skills, ["org/skill-a"], "judge falls back to swarm default");
 }
 
 // =============================================================================
@@ -368,13 +368,13 @@ async function testBestOfJudgeSkillsFallback(): Promise<void> {
 async function testMapWithBestOfSkills(): Promise<void> {
   console.log("\n[12] map(bestOf): Skills resolution in map+bestOf combo");
 
-  const { swarm, tracker } = createMockSwarm(["pdf"]);
+  const { swarm, tracker } = createMockSwarm(["org/skill-a"]);
   const items: FileMap[] = [{ "a.txt": "a" }];
 
   await swarm.map({
     items,
     prompt: "Process",
-    skills: ["docx"], // Operation-level override
+    skills: ["org/skill-b"], // Operation-level override
     bestOf: {
       n: 2,
       judgeCriteria: "Best",
@@ -393,14 +393,14 @@ async function testMapWithBestOfSkills(): Promise<void> {
 async function testMapWithBestOfSkillsFallback(): Promise<void> {
   console.log("\n[13] map(bestOf): Fallback chain: bestOf.skills → params.skills → swarm default");
 
-  const { swarm, tracker } = createMockSwarm(["pdf"]);
+  const { swarm, tracker } = createMockSwarm(["org/skill-a"]);
   const items: FileMap[] = [{ "a.txt": "a" }];
 
   // Test: bestOf.skills undefined → use params.skills
   await swarm.map({
     items,
     prompt: "Process",
-    skills: ["docx"], // params.skills
+    skills: ["org/skill-b"], // params.skills
     bestOf: {
       n: 2,
       judgeCriteria: "Best",
@@ -409,7 +409,7 @@ async function testMapWithBestOfSkillsFallback(): Promise<void> {
   });
 
   let candidateCalls = tracker.calls.filter((c) => c.role === "candidate");
-  assertArrayEquals(candidateCalls[0]?.skills, ["docx"], "candidates fall back to params.skills");
+  assertArrayEquals(candidateCalls[0]?.skills, ["org/skill-b"], "candidates fall back to params.skills");
 
   // Test: Both undefined → use swarm default
   tracker.calls.length = 0;
@@ -424,7 +424,7 @@ async function testMapWithBestOfSkillsFallback(): Promise<void> {
   });
 
   candidateCalls = tracker.calls.filter((c) => c.role === "candidate");
-  assertArrayEquals(candidateCalls[0]?.skills, ["pdf"], "candidates fall back to swarm default");
+  assertArrayEquals(candidateCalls[0]?.skills, ["org/skill-a"], "candidates fall back to swarm default");
 }
 
 // =============================================================================
@@ -434,37 +434,37 @@ async function testMapWithBestOfSkillsFallback(): Promise<void> {
 async function testVerifyVerifierSkills(): Promise<void> {
   console.log("\n[14] verify: verifierSkills override for verifier");
 
-  const { swarm, tracker } = createMockSwarm(["pdf"]);
+  const { swarm, tracker } = createMockSwarm(["org/skill-a"]);
   const items: FileMap[] = [{ "a.txt": "a" }];
 
   await swarm.map({
     items,
     prompt: "Process",
-    skills: ["docx"],
+    skills: ["org/skill-b"],
     verify: {
       criteria: "Valid",
       maxAttempts: 1,
-      verifierSkills: ["dev-browser"], // Verifier-specific
+      verifierSkills: ["org/skill-c"], // Verifier-specific
     },
   });
 
   const workerCalls = tracker.calls.filter((c) => c.role === "worker");
   const verifierCalls = tracker.calls.filter((c) => c.role === "verifier");
 
-  assertArrayEquals(workerCalls[0]?.skills, ["docx"], "worker uses params.skills");
-  assertArrayEquals(verifierCalls[0]?.skills, ["dev-browser"], "verifier uses verifierSkills");
+  assertArrayEquals(workerCalls[0]?.skills, ["org/skill-b"], "worker uses params.skills");
+  assertArrayEquals(verifierCalls[0]?.skills, ["org/skill-c"], "verifier uses verifierSkills");
 }
 
 async function testVerifyVerifierSkillsFallback(): Promise<void> {
   console.log("\n[15] verify: verifierSkills falls back to params.skills");
 
-  const { swarm, tracker } = createMockSwarm(["pdf"]);
+  const { swarm, tracker } = createMockSwarm(["org/skill-a"]);
   const items: FileMap[] = [{ "a.txt": "a" }];
 
   await swarm.map({
     items,
     prompt: "Process",
-    skills: ["docx"],
+    skills: ["org/skill-b"],
     verify: {
       criteria: "Valid",
       maxAttempts: 1,
@@ -473,7 +473,7 @@ async function testVerifyVerifierSkillsFallback(): Promise<void> {
   });
 
   const verifierCalls = tracker.calls.filter((c) => c.role === "verifier");
-  assertArrayEquals(verifierCalls[0]?.skills, ["docx"], "verifier falls back to params.skills");
+  assertArrayEquals(verifierCalls[0]?.skills, ["org/skill-b"], "verifier falls back to params.skills");
 }
 
 // =============================================================================
@@ -483,7 +483,7 @@ async function testVerifyVerifierSkillsFallback(): Promise<void> {
 async function testPipelineStepSkills(): Promise<void> {
   console.log("\n[16] Pipeline: Step skills passed to Swarm operations");
 
-  const { swarm, tracker } = createMockSwarm(["pdf"]);
+  const { swarm, tracker } = createMockSwarm(["org/skill-a"]);
   const pipeline = new Pipeline(swarm)
     .map({ prompt: "Step 1", skills: ["xlsx"] });
 
@@ -496,25 +496,25 @@ async function testPipelineStepSkills(): Promise<void> {
 async function testPipelineStepSkillsFallback(): Promise<void> {
   console.log("\n[17] Pipeline: Step without skills uses swarm default");
 
-  const { swarm, tracker } = createMockSwarm(["pdf", "docx"]);
+  const { swarm, tracker } = createMockSwarm(["org/skill-a", "org/skill-b"]);
   const pipeline = new Pipeline(swarm)
     .map({ prompt: "Step 1" }); // No skills
 
   const items: FileMap[] = [{ "a.txt": "a" }];
   await pipeline.run(items);
 
-  assertArrayEquals(tracker.calls[0]?.skills, ["pdf", "docx"], "pipeline step falls back to swarm default");
+  assertArrayEquals(tracker.calls[0]?.skills, ["org/skill-a", "org/skill-b"], "pipeline step falls back to swarm default");
 }
 
 async function testPipelineMultiStepDifferentSkills(): Promise<void> {
   console.log("\n[18] Pipeline: Each step can have different skills");
 
-  const { swarm, tracker } = createMockSwarm(["pdf"]);
+  const { swarm, tracker } = createMockSwarm(["org/skill-a"]);
   const schema = z.object({ score: z.number() });
 
   const pipeline = new Pipeline(swarm)
     .map({ prompt: "Step 1", skills: ["xlsx"] })
-    .filter({ prompt: "Step 2", schema, condition: () => true, skills: ["docx"] })
+    .filter({ prompt: "Step 2", schema, condition: () => true, skills: ["org/skill-b"] })
     .reduce({ prompt: "Step 3", skills: ["pptx"] });
 
   const items: FileMap[] = [{ "a.txt": "a" }];
@@ -526,18 +526,18 @@ async function testPipelineMultiStepDifferentSkills(): Promise<void> {
   const reduceCalls = tracker.calls.filter((c) => c.tagPrefix.includes("reduce"));
 
   assertArrayEquals(mapCalls[0]?.skills, ["xlsx"], "map step has xlsx");
-  assertArrayEquals(filterCalls[0]?.skills, ["docx"], "filter step has docx");
+  assertArrayEquals(filterCalls[0]?.skills, ["org/skill-b"], "filter step has skill-b");
   assertArrayEquals(reduceCalls[0]?.skills, ["pptx"], "reduce step has pptx");
 }
 
 async function testPipelineWithBestOfSkills(): Promise<void> {
   console.log("\n[19] Pipeline: Map step with bestOf skills");
 
-  const { swarm, tracker } = createMockSwarm(["pdf"]);
+  const { swarm, tracker } = createMockSwarm(["org/skill-a"]);
   const pipeline = new Pipeline(swarm)
     .map({
       prompt: "Process",
-      skills: ["docx"],
+      skills: ["org/skill-b"],
       bestOf: {
         n: 2,
         judgeCriteria: "Best",
@@ -559,15 +559,15 @@ async function testPipelineWithBestOfSkills(): Promise<void> {
 async function testPipelineWithVerifySkills(): Promise<void> {
   console.log("\n[20] Pipeline: Map step with verify skills");
 
-  const { swarm, tracker } = createMockSwarm(["pdf"]);
+  const { swarm, tracker } = createMockSwarm(["org/skill-a"]);
   const pipeline = new Pipeline(swarm)
     .map({
       prompt: "Process",
-      skills: ["docx"],
+      skills: ["org/skill-b"],
       verify: {
         criteria: "Valid",
         maxAttempts: 1,
-        verifierSkills: ["dev-browser"],
+        verifierSkills: ["org/skill-c"],
       },
     });
 
@@ -577,8 +577,8 @@ async function testPipelineWithVerifySkills(): Promise<void> {
   const workerCalls = tracker.calls.filter((c) => c.role === "worker");
   const verifierCalls = tracker.calls.filter((c) => c.role === "verifier");
 
-  assertArrayEquals(workerCalls[0]?.skills, ["docx"], "pipeline verify worker uses step skills");
-  assertArrayEquals(verifierCalls[0]?.skills, ["dev-browser"], "pipeline verify verifier uses verifierSkills");
+  assertArrayEquals(workerCalls[0]?.skills, ["org/skill-b"], "pipeline verify worker uses step skills");
+  assertArrayEquals(verifierCalls[0]?.skills, ["org/skill-c"], "pipeline verify verifier uses verifierSkills");
 }
 
 // =============================================================================
@@ -588,7 +588,7 @@ async function testPipelineWithVerifySkills(): Promise<void> {
 async function testEmptySkillsArray(): Promise<void> {
   console.log("\n[21] Empty skills array: Passed through (not treated as undefined)");
 
-  const { swarm, tracker } = createMockSwarm(["pdf"]);
+  const { swarm, tracker } = createMockSwarm(["org/skill-a"]);
   const items: FileMap[] = [{ "a.txt": "a" }];
 
   await swarm.map({ items, prompt: "Process", skills: [] }); // Empty array override
@@ -604,17 +604,17 @@ async function testEmptySkillsArray(): Promise<void> {
 async function testAllOperationsWithSkills(): Promise<void> {
   console.log("\n[22] All operations: Skills work consistently across map/filter/reduce");
 
-  const { swarm, tracker } = createMockSwarm(["pdf"]);
+  const { swarm, tracker } = createMockSwarm(["org/skill-a"]);
   const items: FileMap[] = [{ "a.txt": "a" }];
   const schema = z.object({ score: z.number() });
 
   // Run all operations with different skills
   await swarm.map({ items, prompt: "Map", skills: ["xlsx"] });
-  await swarm.filter({ items, prompt: "Filter", schema, condition: () => true, skills: ["docx"] });
+  await swarm.filter({ items, prompt: "Filter", schema, condition: () => true, skills: ["org/skill-b"] });
   await swarm.reduce({ items, prompt: "Reduce", skills: ["pptx"] });
 
   assertArrayEquals(tracker.calls[0]?.skills, ["xlsx"], "map uses xlsx");
-  assertArrayEquals(tracker.calls[1]?.skills, ["docx"], "filter uses docx");
+  assertArrayEquals(tracker.calls[1]?.skills, ["org/skill-b"], "filter uses skill-b");
   assertArrayEquals(tracker.calls[2]?.skills, ["pptx"], "reduce uses pptx");
 }
 

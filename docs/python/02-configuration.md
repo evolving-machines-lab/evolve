@@ -298,8 +298,8 @@ evolve = Evolve(
         'sparse': ['.agents/plugins'],
     },
 
-    # (optional) Skills for the agent
-    skills=['pdf', 'docx', 'pptx'],
+    # (optional) Skills for the agent — skills.sh / git / local references
+    skills=['anthropics/skills', './my-skill'],
 
     # (optional) Managed integrations (gateway mode only)
     integrations=IntegrationsSetup(user_id='root', apps=['gmail', 'notion']),
@@ -623,74 +623,32 @@ If `config=AgentConfig(...)` is omitted, plugins target the default agent (`clau
 
 ## Agent Skills
 
-Skills extend agent capabilities with specialized tools and workflows. See [agentskills.io](https://agentskills.io/home) for the open standard.
-
-```bash
-# .env
-EVOLVE_API_KEY=sk-...
-```
+Skills are folders of instructions and helper files — a `SKILL.md` manifest plus anything it needs — that the agent's harness discovers natively. The `skills` option takes real references; there is no built-in catalog:
 
 ```python
 from evolve import Evolve
 
 evolve = Evolve(
-    skills=['pptx'],
+    skills=[
+        'skills.sh/vercel-labs/agent-skills/frontend-design',     # one named skill from a skills.sh-listed repo
+        'anthropics/skills',                                      # every skill a GitHub repo publishes
+        'anthropics/skills@main',                                 # pinned to a branch, tag, or commit
+        'https://github.com/org/repo/tree/main/skills/my-skill',  # any https git URL, down to a subfolder
+        './my-skill',                                             # a local folder containing SKILL.md
+    ],
 )
 
 await evolve.run(prompt='Create a slide deck summarizing the uploaded notes.')
 ```
 
-### Documents
-| Skill | Description | Source |
-|-------|-------------|--------|
-| `pdf` | Read, extract, and analyze PDF documents | [skills/pdf](https://github.com/evolving-machines-lab/evolve/tree/main/skills/pdf) |
-| `docx` | Create and edit Word documents | [skills/docx](https://github.com/evolving-machines-lab/evolve/tree/main/skills/docx) |
-| `pptx` | Create and edit PowerPoint presentations | [skills/pptx](https://github.com/evolving-machines-lab/evolve/tree/main/skills/pptx) |
-| `xlsx` | Create and edit Excel spreadsheets | [skills/xlsx](https://github.com/evolving-machines-lab/evolve/tree/main/skills/xlsx) |
+Browse [skills.sh](https://skills.sh) for published skills. The SKILL.md format is the open standard described at [agentskills.io](https://agentskills.io/home).
 
-### Research & Analysis
-| Skill | Description | Source |
-|-------|-------------|--------|
-| `content-research-writer` | Research and write content | [skills/content-research-writer](https://github.com/evolving-machines-lab/evolve/tree/main/skills/content-research-writer) |
-| `lead-research-assistant` | Research and qualify leads | [skills/lead-research-assistant](https://github.com/evolving-machines-lab/evolve/tree/main/skills/lead-research-assistant) |
-| `meeting-insights-analyzer` | Analyze meeting insights | [skills/meeting-insights-analyzer](https://github.com/evolving-machines-lab/evolve/tree/main/skills/meeting-insights-analyzer) |
-| `developer-growth-analysis` | Analyze developer growth metrics | [skills/developer-growth-analysis](https://github.com/evolving-machines-lab/evolve/tree/main/skills/developer-growth-analysis) |
-| `competitive-ads-extractor` | Extract and analyze competitor ads | [skills/competitive-ads-extractor](https://github.com/evolving-machines-lab/evolve/tree/main/skills/competitive-ads-extractor) |
+How references resolve:
 
-### Design & Media
-| Skill | Description | Source |
-|-------|-------------|--------|
-| `canvas-design` | Canvas and design creation | [skills/canvas-design](https://github.com/evolving-machines-lab/evolve/tree/main/skills/canvas-design) |
-| `image-enhancer` | Enhance and process images | [skills/image-enhancer](https://github.com/evolving-machines-lab/evolve/tree/main/skills/image-enhancer) |
-| `theme-factory` | Create themes and styles | [skills/theme-factory](https://github.com/evolving-machines-lab/evolve/tree/main/skills/theme-factory) |
-| `video-downloader` | Download videos from URLs | [skills/video-downloader](https://github.com/evolving-machines-lab/evolve/tree/main/skills/video-downloader) |
-| `slack-gif-creator` | Create GIFs for Slack | [skills/slack-gif-creator](https://github.com/evolving-machines-lab/evolve/tree/main/skills/slack-gif-creator) |
-
-### Business & Productivity
-| Skill | Description | Source |
-|-------|-------------|--------|
-| `file-organizer` | Organize files and directories | [skills/file-organizer](https://github.com/evolving-machines-lab/evolve/tree/main/skills/file-organizer) |
-| `invoice-organizer` | Organize and process invoices | [skills/invoice-organizer](https://github.com/evolving-machines-lab/evolve/tree/main/skills/invoice-organizer) |
-| `brand-guidelines` | Brand asset and guidelines management | [skills/brand-guidelines](https://github.com/evolving-machines-lab/evolve/tree/main/skills/brand-guidelines) |
-| `internal-comms` | Internal communications tools | [skills/internal-comms](https://github.com/evolving-machines-lab/evolve/tree/main/skills/internal-comms) |
-| `tailored-resume-generator` | Generate tailored resumes | [skills/tailored-resume-generator](https://github.com/evolving-machines-lab/evolve/tree/main/skills/tailored-resume-generator) |
-| `domain-name-brainstormer` | Brainstorm domain names | [skills/domain-name-brainstormer](https://github.com/evolving-machines-lab/evolve/tree/main/skills/domain-name-brainstormer) |
-
-### Development
-| Skill | Description | Source |
-|-------|-------------|--------|
-| `mcp-builder` | Build MCP servers | [skills/mcp-builder](https://github.com/evolving-machines-lab/evolve/tree/main/skills/mcp-builder) |
-| `skill-creator` | Create new skills | [skills/skill-creator](https://github.com/evolving-machines-lab/evolve/tree/main/skills/skill-creator) |
-| `skill-share` | Share skills with others | [skills/skill-share](https://github.com/evolving-machines-lab/evolve/tree/main/skills/skill-share) |
-| `changelog-generator` | Generate changelogs from commits | [skills/changelog-generator](https://github.com/evolving-machines-lab/evolve/tree/main/skills/changelog-generator) |
-| `artifacts-builder` | Build artifacts and deliverables | [skills/artifacts-builder](https://github.com/evolving-machines-lab/evolve/tree/main/skills/artifacts-builder) |
-
-### Other
-| Skill | Description | Source |
-|-------|-------------|--------|
-| `raffle-winner-picker` | Pick raffle winners randomly | [skills/raffle-winner-picker](https://github.com/evolving-machines-lab/evolve/tree/main/skills/raffle-winner-picker) |
-
----
+- Git references are pinned to their exact commit, fetched as a sparse checkout of only the skill content, and cached by commit under `~/.cache/evolve/skills` — the same reference always mounts the same bytes.
+- A whole-repo reference discovers skills in the ecosystem's standard places: a `SKILL.md` at the repo root, `skills/`, `skills/.curated/`, `skills/.experimental/`, `skills/.system/`, and `.claude/skills/`.
+- A local path, or an explicit `/tree/<ref>/<subdir>` URL, must be one skill folder containing `SKILL.md` — or a root whose immediate child directories each contain one. A child without `SKILL.md` is a loud refusal naming the child.
+- Duplicate skill names resolve last-wins, and each skill mounts into the harness's native skills directory (for example `~/.claude/skills/<name>`), where the agent discovers it on its own.
 
 ## Managed Secrets
 

@@ -37,7 +37,7 @@ from evolve import Evolve, IntegrationsSetup
 evolve = Evolve(
     system_prompt='You are Manus Evolve, a powerful AI agent. You can execute code, browse the web, manage files, and solve complex tasks.',
     browser={'provider': 'agent-browser', 'remote': True},  # optional: remote managed browser automation in Gateway mode
-    skills=['pdf', 'docx', 'pptx'],
+    skills=['anthropics/skills', './my-skill'],  # skills.sh / git / local references
     integrations=IntegrationsSetup(user_id='root', apps=['gmail', 'notion']),  # optional; managed integrations in Gateway mode
 )
 

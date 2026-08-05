@@ -27,6 +27,7 @@ import {
   auth,
   datasets,
   jobs,
+  skills,
   trials,
 } from "./index";
 import type {
@@ -154,6 +155,15 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
     help:
       "Reasoning effort for EVERY arm (values: GET /api/meta). Applied verbatim — " +
       "an agent that cannot honor it is refused by the server, never silently skipped",
+  },
+  skill: {
+    kind: "repeat",
+    aliases: ["skills"],
+    value: "<ref|path>",
+    help:
+      "Skill for EVERY agent arm (repeatable): skills.sh/<owner>/<repo>[/<skill>], " +
+      "org/repo[@ref], an https git URL, upload:<id>, or a local folder " +
+      "(uploaded to the platform first, then referenced)",
   },
   "agent-env": {
     kind: "repeat",
@@ -1404,6 +1414,13 @@ export function buildJobInput(
     // longer describes.
     arms = arms.map((arm) => ({ ...arm, reasoning_effort: f.effort as string }));
   }
+  if (f.skill !== undefined) {
+    // --skill is stamped on EVERY arm, like --effort: one flag grammar, one
+    // sweep. Local folder entries stay verbatim here — cmdJobStart uploads
+    // them and swaps in the upload:<id> handles before the body is sent, so
+    // --print-config shows the path you typed, not a side effect.
+    arms = arms.map((arm) => ({ ...arm, skills: [...(f.skill as string[])] }));
+  }
 
   const agentEnv =
     f["agent-env"] !== undefined
@@ -1656,6 +1673,20 @@ function jobLines(e: Job): string[] {
     ["datasets", fmtDatasets(e.datasets)],
   ];
   rows.push(["agents", e.agents.map(fmtAgent).join(", ")]);
+  // Skills, per arm: the requested (pinned) references, then — once the arm's
+  // first trial has resolved them — the locks: exactly what mounted, at which
+  // commit or content digest. Reproducibility is a thing you can read.
+  for (const arm of e.agents) {
+    if (arm.skills.length > 0) {
+      rows.push(["skills", `${fmtAgent(arm)}: ${arm.skills.join(", ")}`]);
+    }
+    for (const lock of arm.skill_locks ?? []) {
+      rows.push([
+        "skill lock",
+        `${lock.name} @ ${lock.git_commit_id ? lock.git_commit_id.slice(0, 12) : lock.digest.slice(0, 19)}`,
+      ]);
+    }
+  }
   rows.push([
     "size",
     `${e.counts.agents} agent(s) x ${e.counts.tasks} task(s) = ${e.n_total_trials} trial(s)`,
@@ -2016,6 +2047,56 @@ function statusExitCode(e: Job): number {
   return e.status === "COMPLETED" ? 0 : e.status === "FAILED" || e.status === "CANCELLED" ? 1 : 0;
 }
 
+/** A --skill value the server would refuse verbatim: a local folder path. */
+function isLocalSkillPath(value: string): boolean {
+  return (
+    value.startsWith("./") ||
+    value.startsWith("../") ||
+    value.startsWith("/") ||
+    value.startsWith("~")
+  );
+}
+
+/**
+ * Upload every local-folder skill entry and swap in its `upload:<id>` handle.
+ * One upload per distinct path even when several arms carry it; a folder that
+ * is a root of skills becomes one handle per contained skill, in name order.
+ */
+async function resolveLocalSkillUploads(
+  input: JobCreate,
+  inv: Invocation,
+  io: CliIO
+): Promise<JobCreate> {
+  const localPaths = new Set<string>();
+  for (const arm of input.agents) {
+    for (const ref of arm.skills ?? []) {
+      if (isLocalSkillPath(ref)) localPaths.add(ref);
+    }
+  }
+  if (localPaths.size === 0) return input;
+
+  const client = skills(clientConfig(inv));
+  const uploadedRefs = new Map<string, string[]>();
+  for (const path of localPaths) {
+    const uploaded = await client.upload(path);
+    uploadedRefs.set(path, uploaded.map((u) => u.ref));
+    if (inv.flags.json !== true) {
+      for (const u of uploaded) {
+        io.err(`Uploaded skill ${u.name} (${u.ref}, ${u.digest.slice(0, 19)}…)`);
+      }
+    }
+  }
+  return {
+    ...input,
+    agents: input.agents.map((arm) => ({
+      ...arm,
+      ...(arm.skills !== undefined && arm.skills !== null
+        ? { skills: arm.skills.flatMap((ref) => uploadedRefs.get(ref) ?? [ref]) }
+        : {}),
+    })),
+  };
+}
+
 async function cmdJobStart(inv: Invocation, io: CliIO): Promise<number> {
   const input = buildJobInput(inv);
   if (inv.flags["print-config"] === true) {
@@ -2028,7 +2109,7 @@ async function cmdJobStart(inv: Invocation, io: CliIO): Promise<number> {
   const quiet = inv.flags.quiet === true;
   const client = jobs(clientConfig(inv));
 
-  const created = await client.start(input);
+  const created = await client.start(await resolveLocalSkillUploads(input, inv, io));
   if (!watch) {
     if (json) {
       io.out(JSON.stringify(created));

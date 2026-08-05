@@ -336,7 +336,6 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       projectConfig: true,
     },
     skillsConfig: {
-      sourceDir: "~/.evolve/skills",
       targetDir: "~/.claude/skills",
     },
     buildCommand: ({ prompt, model, isResume, reasoningEffort }) => {
@@ -386,7 +385,6 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       format: "toml",
     },
     skillsConfig: {
-      sourceDir: "~/.evolve/skills",
       targetDir: "~/.codex/skills",
     },
     spendTrackingEnvs: {
@@ -422,7 +420,6 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       format: "json",
     },
     skillsConfig: {
-      sourceDir: "~/.evolve/skills",
       targetDir: "~/.gemini/skills",
     },
     // Source-verified: GEMINI_CLI_CUSTOM_HEADERS is read in contentGenerator.ts and parsed
@@ -457,7 +454,6 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       format: "json",
     },
     skillsConfig: {
-      sourceDir: "~/.evolve/skills",
       targetDir: "~/.qwen/skills",
     },
     // Source-verified: Qwen reads customHeaders from settings.json model.generationConfig,
@@ -508,7 +504,6 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       format: "json",
     },
     skillsConfig: {
-      sourceDir: "~/.evolve/skills",
       targetDir: "~/.kimi-code/skills",
     },
     defaultBaseUrl: "https://api.moonshot.ai/v1",
@@ -577,7 +572,6 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       format: "json",
     },
     skillsConfig: {
-      sourceDir: "~/.evolve/skills",
       targetDir: "~/.agents/skills",
     },
     // OpenCode uses XDG Base Directory spec — state is split across multiple dirs
@@ -633,7 +627,6 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       format: "json",
     },
     skillsConfig: {
-      sourceDir: "~/.evolve/skills",
       targetDir: "~/.factory/skills",
     },
     skipApiKeyEnvInGateway: true,

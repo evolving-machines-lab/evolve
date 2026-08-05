@@ -93,6 +93,8 @@ tags:
     description: Catalog, publish (async import), package download, activation.
   - name: agents
     description: Bring-your-own agents (private to their owner).
+  - name: skills
+    description: Uploaded skills, referenced as upload:<id> in agents[].skills.
   - name: meta
     description: Public capability document.
   - name: auth
@@ -1416,6 +1418,161 @@ paths:
           $ref: '#/components/responses/InternalError'
 
   # ===========================================================================
+  # Skills
+  # ===========================================================================
+
+  /api/skills:
+    post:
+      tags: [skills]
+      operationId: uploadSkill
+      summary: Upload a skill folder
+      description: |
+        Uploads one gzipped tarball (`archive`) of a skill folder — a
+        directory containing `SKILL.md`, or a root whose immediate child
+        directories each contain `SKILL.md` (Harbor's discovery law; a root
+        creates one record per contained skill). Content-addressed: the
+        digest is Harbor's skill-digest recipe over the folder, and
+        re-uploading identical content under the same name answers the
+        existing record instead of duplicating it. The `ref` on each record
+        (`upload:<id>`) is what jobs put in `agents[].skills`. Multipart
+        only — nothing travels in the query string.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [archive]
+              properties:
+                archive:
+                  type: string
+                  format: binary
+                  description: Gzipped tarball of the skill folder.
+      responses:
+        '201':
+          description: The uploaded skill records (one per contained skill).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [skills]
+                properties:
+                  skills:
+                    type: array
+                    minItems: 1
+                    items:
+                      $ref: '#/components/schemas/SkillUpload'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: '`skill_limit_reached` — delete some uploads to add more.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: Upload over the size cap (`skill_too_large`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    get:
+      tags: [skills]
+      operationId: listSkills
+      summary: List the caller's uploaded skills
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: One page of uploaded skills.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SkillUploadPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/skills/{id}:
+    get:
+      tags: [skills]
+      operationId: getSkill
+      summary: Get one uploaded skill, including its SKILL.md text
+      description: >
+        Private to its owner — another user's skill id reads
+        `skill_not_found`, never a permission error.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The skill, with its manifest text.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SkillUpload'
+                  - type: object
+                    required: [skill_md]
+                    properties:
+                      skill_md:
+                        type: [string, 'null']
+                        description: SKILL.md text (null if unreadable).
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [skills]
+      operationId: deleteSkill
+      summary: Delete an uploaded skill
+      description: >
+        Refused (`skill_in_use`, 409) while a non-terminal job references
+        `upload:<id>`; finished jobs keep their recorded locks either way.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: '`skill_in_use` — a non-terminal job references it.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ===========================================================================
   # Meta
   # ===========================================================================
 
@@ -1718,6 +1875,14 @@ components:
         - agent_invalid_env
         - agent_too_large
         - agent_limit_reached
+        # Skills
+        - skill_not_found
+        - skill_ref_invalid
+        - skill_unresolvable
+        - skill_invalid
+        - skill_in_use
+        - skill_too_large
+        - skill_limit_reached
         # Jobs + trials
         - agent_version_not_found
         - job_too_large
@@ -1944,11 +2109,50 @@ components:
             Platform extension — declared effort, part of arm identity.
             Accepted values published by /api/meta; omitted, the runner
             default applies.
+        skills:
+          type: array
+          maxItems: 16
+          items:
+            type: string
+            minLength: 1
+            maxLength: 500
+          description: >
+            Skill references mounted into every run of this arm — Harbor's
+            trial-config shape: a list of source strings. Accepted forms:
+            `skills.sh/<owner>/<repo>[/<skill>]`, `org/repo[@ref]`, an https
+            git URL (optionally `/tree/<ref>/<subdir>`), or `upload:<id>`
+            naming an uploaded skill. Raw filesystem paths are refused —
+            clients upload local folders first (the CLI does this for
+            `--skill ./folder`). Git references are pinned to their exact
+            commit at creation; part of the arm's identity, so the same
+            agent and model with different skills are two arms.
+
+    SkillLock:
+      type: object
+      description: >
+        Provenance of one skill an arm's runs actually mounted — Harbor's
+        AgentSkillLock vocabulary: name, pinned source reference, content
+        digest (Harbor's recipe over the skill folder), and for git-backed
+        skills the repo URL and exact commit.
+      required: [name, source, digest, git_url, git_commit_id]
+      properties:
+        name:
+          type: string
+        source:
+          type: string
+          description: The pinned reference the content came from.
+        digest:
+          type: string
+          description: "Content digest: sha256:<hex>."
+        git_url:
+          type: [string, 'null']
+        git_commit_id:
+          type: [string, 'null']
 
     AgentArm:
       type: object
       description: One agent arm as echoed on job bodies.
-      required: [name, model_name, version, reasoning_effort]
+      required: [name, model_name, version, reasoning_effort, skills, skill_locks]
       properties:
         name:
           type: string
@@ -1960,6 +2164,23 @@ components:
         reasoning_effort:
           type: [string, 'null']
           description: Declared effort; null when the run took the runner default.
+        skills:
+          type: array
+          items:
+            type: string
+          description: >
+            The arm's skill references in pinned spelling (git refs carry the
+            exact commit resolved at creation). Empty = no skills.
+        skill_locks:
+          oneOf:
+            - type: array
+              items:
+                $ref: '#/components/schemas/SkillLock'
+            - type: 'null'
+          description: >
+            What actually mounted, one lock per skill — stamped when the
+            arm's first trial resolves its skills; null until then (and on a
+            job whose trials never ran).
 
     SourceJob:
       type: object
@@ -3681,6 +3902,52 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Agent'
+        nextCursor:
+          type: [string, 'null']
+        hasMore:
+          type: boolean
+
+    # -------------------------------------------------------------------------
+    # Skills
+    # -------------------------------------------------------------------------
+
+    SkillUpload:
+      type: object
+      description: >
+        One skill uploaded to the platform. Immutable content: the digest is
+        the identity (Harbor's skill-digest recipe over the folder), and jobs
+        reference it as `upload:<id>` in `agents[].skills`.
+      required: [id, name, digest, size_bytes, description, ref, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          description: Folder name — the name the harness sees when mounted.
+        digest:
+          type: string
+          description: "Content digest: sha256:<hex> — Harbor's recipe."
+        size_bytes:
+          type: integer
+        description:
+          type: [string, 'null']
+          description: First heading / description line lifted from SKILL.md.
+        ref:
+          type: string
+          description: The `upload:<id>` reference to put in `agents[].skills`.
+        created_at:
+          type: string
+          format: date-time
+
+    SkillUploadPage:
+      type: object
+      required: [items, nextCursor, hasMore]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SkillUpload'
         nextCursor:
           type: [string, 'null']
         hasMore:

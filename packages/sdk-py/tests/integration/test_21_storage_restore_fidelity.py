@@ -62,6 +62,17 @@ async def test_storage_restore_fidelity():
     log_section(f'Storage restore fidelity ({STORAGE_MODE} mode)')
 
     provider = create_sandbox_provider(PROVIDER_NAME)
+
+    # A local skill fixture: skills= takes real references (skills.sh / git /
+    # local folders) -- no built-in catalog. A tiny local folder keeps this
+    # test offline for skill content while still exercising the mount.
+    import tempfile
+    skill_fixture_root = tempfile.mkdtemp(prefix='fixture-skill-')
+    skill_fixture_dir = os.path.join(skill_fixture_root, 'fixture-skill')
+    os.makedirs(skill_fixture_dir, exist_ok=True)
+    with open(os.path.join(skill_fixture_dir, 'SKILL.md'), 'w') as f:
+        f.write('---\nname: fixture-skill\ndescription: integration fixture\n---\n\n'
+                'A tiny skill used to verify skills mount across checkpoint restore.\n')
     storage_config = get_storage_config()
 
     log_info(f'Using provider: {PROVIDER_NAME}, storage: {STORAGE_MODE}')
@@ -75,7 +86,7 @@ async def test_storage_restore_fidelity():
         config=agent_config,
         sandbox=provider,
         storage=storage_config,
-        skills=['pdf'],
+        skills=[skill_fixture_dir],
         workspace_mode='swe',
     ) as evolve1:
         run1 = await evolve1.run(
@@ -105,7 +116,7 @@ async def test_storage_restore_fidelity():
         config=agent_config,
         sandbox=provider,
         storage=storage_config,
-        skills=['pdf'],
+        skills=[skill_fixture_dir],
         workspace_mode='swe',
     )
 

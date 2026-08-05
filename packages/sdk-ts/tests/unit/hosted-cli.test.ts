@@ -374,6 +374,37 @@ function testBuildJobInputFlags() {
   assertThrowsUsage(() => parseEnvPairs(["NOEQUALS"], "--agent-env"), "KEY=VALUE", "malformed env pair");
 }
 
+function testBuildJobInputSkills() {
+  console.log("\n--- buildJobInput: --skill stamps every arm, local paths stay verbatim ---");
+  const input = buildJobInput(parseArgs([
+    "job", "start",
+    "-d", "deep-swe",
+    "-a", "codex",
+    "-m", "gpt-5.5",
+    "-m", "gpt-5.5-mini",
+    "--skill", "skills.sh/o/r/frontend-design",
+    "--skill", "./my-skill",
+  ]));
+  assertEqual(
+    input.agents,
+    [
+      // --skill is stamped on EVERY arm, like --effort: one flag grammar,
+      // one sweep. The local folder stays verbatim in the built body —
+      // cmdJobStart uploads it and swaps the upload:<id> handle at send
+      // time, so --print-config shows the path the caller typed.
+      { name: "codex", model_name: "gpt-5.5", skills: ["skills.sh/o/r/frontend-design", "./my-skill"] },
+      { name: "codex", model_name: "gpt-5.5-mini", skills: ["skills.sh/o/r/frontend-design", "./my-skill"] },
+    ],
+    "--skill repeatable, stamped on every arm in caller order"
+  );
+
+  const without = buildJobInput(parseArgs(["job", "start", "-d", "b", "-a", "a", "-m", "m"]));
+  assert(
+    without.agents.every((arm) => !("skills" in arm)),
+    "no skills key when --skill omitted (absent, not [])"
+  );
+}
+
 function testBuildJobInputYesIsInert() {
   console.log("\n--- buildJobInput: -y changes nothing (reserved, no prompts) ---");
   const withYes = buildJobInput(parseArgs(["job", "start", "-d", "b", "-a", "a", "-m", "m", "-y"]));
@@ -3306,6 +3337,7 @@ async function main() {
   testGrammarResolution();
   testShortFlags();
   testBuildJobInputFlags();
+  testBuildJobInputSkills();
   testBuildJobInputYesIsInert();
   await testConfigFileMerge();
   testYamlConfig();
