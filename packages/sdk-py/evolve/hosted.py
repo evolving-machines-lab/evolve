@@ -781,7 +781,8 @@ class Job:
     #: Aggregate statistics (progress counters, token totals, ``cost_usd`` —
     #: measured spend, never a gate; ``gpu_cost_usd`` — the SEPARATE summed
     #: GPU compute estimate, never merged into ``cost_usd``; ``evals`` keyed
-    #: ``agent__model__dataset``).
+    #: ``agent__model__dataset``, each group carrying its mean and its
+    #: ``pass_at_k`` — read the latter with :func:`pass_at_k`).
     #: A plain dict with the wire's own keys, read by key, never constructed.
     stats: Dict[str, Any]
     #: Why the job FAILED, or None.
@@ -796,6 +797,68 @@ class Job:
     updated_at: str
     #: None while the job is live.
     finished_at: Optional[str]
+
+
+@dataclass
+class PassAtKPoint:
+    """One pass@k number: the estimate over ``k`` attempts."""
+    #: How many attempts the estimate is over — always 2 or more.
+    k: int
+    #: Probability that k attempts contain at least one success, in [0, 1].
+    value: float
+
+
+@dataclass
+class PassAtKGroup:
+    """One evals group's pass@k curve, ready to plot or print."""
+    #: The ``stats['evals']`` key these numbers belong to.
+    evals_key: str
+    #: Ascending by k; never empty (a group with no numbers is not returned).
+    points: List[PassAtKPoint]
+
+
+def pass_at_k(job: Job) -> List[PassAtKGroup]:
+    """Read a job's pass@k out of ``stats['evals']``, as numbers.
+
+    The wire keys k as a string (JSON object keys always are); this returns it
+    as an int, ascending, per evals group. Groups that cannot answer (empty
+    ``pass_at_k`` — rewards that are not binary, no eligible k, or attempts
+    still in flight) are left out entirely, so an empty list means "this job
+    has no pass@k to show" and the shape is the same whether the job is
+    running or finished.
+
+    Pure reading: no request is made and nothing is recomputed. The numbers are
+    the platform's, and the same ones the job's download archive carries.
+
+        for group in pass_at_k(job):
+            for point in group.points:
+                print(group.evals_key, f"pass@{point.k}", round(point.value, 3))
+    """
+    stats = job.stats if isinstance(job.stats, dict) else {}
+    evals = stats.get('evals')
+    if not isinstance(evals, dict):
+        return []
+    groups: List[PassAtKGroup] = []
+    for evals_key in sorted(evals):
+        entry = evals.get(evals_key)
+        raw = entry.get('pass_at_k') if isinstance(entry, dict) else None
+        if not isinstance(raw, dict):
+            continue
+        points: List[PassAtKPoint] = []
+        for key, value in raw.items():
+            try:
+                k = int(key)
+            except (TypeError, ValueError):
+                continue
+            # bool is an int in Python; a boolean here is malformed, not a 1.
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            points.append(PassAtKPoint(k=k, value=float(value)))
+        if not points:
+            continue
+        points.sort(key=lambda point: point.k)
+        groups.append(PassAtKGroup(evals_key=evals_key, points=points))
+    return groups
 
 
 @dataclass
@@ -3603,8 +3666,15 @@ class JobsClient:
         *,
         to: Optional[str] = None,
     ):
-        """Download a terminal job's results archive (gzipped, standard
-        results layout, deterministic bytes).
+        """Download a terminal job's results as one ``.tar.gz`` in the
+        standard job-directory layout (deterministic bytes).
+
+        The archive extracts to ``job-<id>/`` with ``config.json``,
+        ``result.json`` (stats incl. ``pass_at_k``), and per trial its
+        ``config.json``, ``result.json``, ``agent/trajectory.json`` (the
+        normalized ATIF trajectory), ``agent/{stdout,stderr}.log``,
+        ``verifier/test-stdout.txt``, ``verifier/reward.json`` and
+        ``exception.txt`` — absent artifacts are absent files.
 
         Returns the archive bytes — verified against the response's
         Content-Length and, when the server states one, its digest — or, when
@@ -3736,19 +3806,24 @@ class TrialsClient:
     async def artifact(
         self,
         trial_id: str,
-        stream: Literal['trace-parsed', 'verifier', 'trace-stdout', 'trace-stderr', 'trajectory', 'agent-home'],
+        stream: Literal['trace-parsed', 'verifier', 'trace-stdout', 'trace-stderr', 'trace-atif', 'trajectory', 'agent-home'],
     ) -> Optional[Union[str, Dict[str, str]]]:
         """One raw trace artifact for a trial, by the trace route's ``?stream=``
         selector.
 
         ``"verifier"`` / ``"trace-stdout"`` / ``"trace-stderr"`` answer the log
-        text; ``"agent-home"`` (the CLI's whole home folder, subagent
+        text; ``"trace-atif"`` answers the normalized trajectory — Harbor's
+        ATIF v1.7 document as JSON text, built server-side from the stored
+        parsed trace (the same document ``jobs.download()`` places at Harbor's
+        own path ``agent/trajectory.json``); ``"trajectory"`` is a DIFFERENT
+        artifact — the harness's own native session file, reserved ahead of
+        its server wave; the server answers not-found for it until that wave
+        lands, and the refusal surfaces as the API error it is;
+        ``"agent-home"`` (the CLI's whole home folder, subagent
         transcripts included by construction) answers a dict of sandbox path to
         text. None = never stored (normal answer, not an error): a
         QUEUED/CANCELLED trial, a harness that wrote nothing, or a purged
-        trace. ``"trajectory"`` is in the vocabulary ahead of its server wave —
-        until that wave lands the route answers not-found, reported honestly as
-        the API error it is. ``"trace-parsed"`` is in the vocabulary but is not
+        trace. ``"trace-parsed"`` is in the vocabulary but is not
         a raw artifact — the parsed event trace rides ``trace()`` /
         ``trace_events()``, and passing it here is refused with that guidance.
         """

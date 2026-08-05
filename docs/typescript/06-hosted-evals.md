@@ -247,6 +247,34 @@ for await (const item of evals.list({ search: "nightly" })) {
 
 `list({ search })` is a server-side free-text filter over the job name and its dataset names. `stats` is the aggregate block: progress counters (cumulative, Harbor-style: errored trials are a subset of completed, cancelled a subset of errored — the disjoint breakdown is `trials.byStatus`), token totals (`n_input_tokens` includes cache tokens; `n_cache_tokens` and `n_output_tokens` beside it), measured `cost_usd`, and `evals` — per-(agent, model, dataset) statistics keyed `agent__model__effort__dataset` — the dataset ref is always the LAST `__` segment, which is where Harbor-compatible readers recover it. The effort segment is always there, inserted before the dataset: a declared effort stamps itself, an omitted one stamps the agent's default (`__high`, `__max`, …) — see [Agent arms](#agent-arms). A failed job says why on `failure`, as `{ code, message }` — the same grammar an API error uses, under a different key so that `if (body.error) throw` stays correct on a healthy read. In practice you will not see it fire: `FAILED` is a [reserved job status](#statuses) that nothing sets today; read `trials.byStatus` for where a job actually went wrong.
 
+### pass@k
+
+When a job runs a task more than once, each evals group also carries `pass_at_k` — how likely it is that *k* attempts contain at least one success. The platform computes it; there is nothing to configure and no code of yours to run.
+
+```ts
+import { passAtK } from "@evolvingmachines/sdk";
+
+for (const group of passAtK(detail)) {
+    for (const point of group.points) {
+        console.log(group.evals_key, `pass@${point.k}`, point.value.toFixed(3));
+    }
+}
+// codex__gpt-5.5__high__deep-swe@1.1 pass@2 0.833
+// codex__gpt-5.5__high__deep-swe@1.1 pass@4 1.000
+```
+
+`passAtK(job)` reads `stats.evals[key].pass_at_k` — on the wire a map of k (as a string, the way JSON keys always are) to a value in `[0, 1]` — and hands it back as sorted numbers. Nothing is requested and nothing is recomputed.
+
+The number is the standard unbiased estimator, `1 - C(n-c, k) / C(n, k)` per task, averaged over the group's tasks. The k values are the powers of two and the multiples of five up to the group's *sparsest* task's attempt count, because every task has to be able to answer every k — so a single-attempt job has no pass@k at all. An attempt that produced no reward, because it errored or was cancelled, counts as a failed attempt; dropping it would quietly inflate every number.
+
+A group answers with an empty map for one of three reasons, and the reader simply leaves that group out:
+
+- its rewards are not binary — pass@k over partial credit would be an invented statistic, so one non-binary or multi-key reward disqualifies the whole group;
+- no k is small enough to be eligible;
+- attempts are still in flight. The statistic appears once every attempt of the group has settled, so an attempt that has not run yet is never counted as a failure.
+
+The same numbers ride in the job's [download archive](#download-the-archive), inside `result.json`; a live read and the archive of the same job never disagree.
+
 ### Trials
 
 Trials page the same way — await a page or iterate across pages. `status` filters, and on a multi-dataset job `dataset` narrows to one dataset's trials:
@@ -326,14 +354,15 @@ The first event of every trace (`seq` 0) is the task instruction itself, carried
 
 ## Trial artifacts — the raw record
 
-Beside the parsed trace, every trial archives its raw record, and one six-name vocabulary names the pieces everywhere — API, SDK, CLI, and the dashboard's download menu:
+Beside the parsed trace, every trial archives its raw record, and one vocabulary names the pieces everywhere — API, SDK, CLI, and the dashboard's download menu:
 
 | Name | What it is |
 |------|------------|
 | `trace-parsed` | The parsed event timeline — what `trace()` / `traceEvents()` page |
 | `trace-stdout` | The agent process's stdout, byte for byte |
 | `trace-stderr` | The agent process's stderr, byte for byte |
-| `trajectory` | The normalized-trajectory slot — in the vocabulary ahead of its server wave |
+| `trace-atif` | The normalized trajectory — an ATIF v1.7 document built from the parsed trace |
+| `trajectory` | Reserved: the harness's own native session file (not served yet — the server answers not-found until its wave lands) |
 | `agent-home` | The CLI's whole home folder, collected after the run |
 | `verifier` | Everything the scoring step printed |
 
@@ -348,9 +377,9 @@ const home   = await t.artifact(trialId, "agent-home");     // Record<path, text
 
 `trace-stdout` and `trace-stderr` are the referee whenever the parsed trace looks wrong. `agent-home` is the agent CLI's entire home folder (`/root/.claude`, `/root/.codex`, …) collected whole after the run, subagent transcripts included by construction, keyed by sandbox path. Null is a normal answer, never an error: the trial never stored that artifact (it was cancelled early, the agent wrote nothing, or the trace was purged).
 
-`trajectory` is different: it is in the vocabulary **ahead of its server wave**. Until that wave lands, the route answers not-found for it, and the SDK and CLI report that as the API error it is — no silent empty answer. The name is published now so a client written today parses the slot the day it first fills.
+`trace-atif` is the normalized view of the same run: one **ATIF v1.7** document (Harbor's Agent Trajectory Interchange Format — the strict interchange schema its trainer and analysis tooling read), built server-side from the stored parsed trace. The instruction opens it as the first `user` step, each agent turn carries its message, reasoning, tool calls and their observed results, and `final_metrics` states the trial's token totals and measured cost. It answers on the same `{log}` envelope as the raw logs — the string is the JSON document — and null keeps the same meaning: nothing was stored (or the id is a regrade result, whose agent half belongs to its immutable source trial). It is the same document the job archive places at Harbor's own path `agent/trajectory.json`; the separate `trajectory` name stays reserved for a different artifact — the harness's own native session file.
 
-The CLI speaks the same six words. `evolve trial download <trial-id> --stream <name>` prints one artifact to stdout; without `--stream`, everything the trial recorded is saved under `<dir>/<trial-id>/` — `trace-parsed.jsonl`, `verifier.log`, `trace-stdout.log`, `trace-stderr.log`, and `agent-home/` with the folder tree preserved (`trajectory` joins the saved set when its wave lands). The two modes are exclusive, and `--cursor`/`--limit` page only `--stream trace-parsed` — the CLI refuses any other mix as a usage error instead of letting one flag silently win.
+The CLI speaks the same words. `evolve trial download <trial-id> --stream <name>` prints one artifact to stdout; without `--stream`, everything the trial recorded is saved under `<dir>/<trial-id>/` — `trace-parsed.jsonl`, `trace-atif.json`, `verifier.log`, `trace-stdout.log`, `trace-stderr.log`, and `agent-home/` with the folder tree preserved. The two modes are exclusive, and `--cursor`/`--limit` page only `--stream trace-parsed` — the CLI refuses any other mix as a usage error instead of letting one flag silently win.
 
 This archive belongs to hosted evals: trials are scoring evidence. A managed agent session keeps its parsed transcript download; its raw stream lives in the SDK's local session log and its home folder inside your own sandbox.
 
@@ -486,7 +515,7 @@ const stream = await evals.download(job.id, { stream: true });  // raw response 
 
 The Buffer and `{ to }` shapes are verified against the response's length and, when the server states one, its digest; `{ stream: true }` hands you the raw bytes to verify yourself.
 
-The archive unpacks to Harbor's job layout — a job-level `config.json` and `result.json`, plus one directory per trial with its own `result.json` and logs. The counters inside the job-level `result.json` are the same cumulative, Harbor-style numbers the live API reports on `stats`: errored trials are a subset of completed, cancelled a subset of errored. The bundle and a live read of the same terminal job never disagree.
+The archive unpacks to Harbor's job layout — a job-level `config.json` and `result.json`, plus one directory per trial holding its `config.json`, `result.json`, the normalized ATIF trajectory at `agent/trajectory.json`, the raw streams at `agent/stdout.log` / `agent/stderr.log`, the verifier's console at `verifier/test-stdout.txt`, its rewards at `verifier/reward.json`, and `exception.txt` when the trial carries one — an artifact the trial never stored is an absent file, never an empty placeholder. The counters inside the job-level `result.json` are the same cumulative, Harbor-style numbers the live API reports on `stats` (errored trials are a subset of completed, cancelled a subset of errored), and each evals group also states `pass_at_k` — the same numbers a live read reports (see [pass@k](#passk)). The archive and a live read of the same terminal job never disagree.
 
 ---
 
@@ -558,7 +587,7 @@ The read side, worked through:
 
 ```bash
 evolve job list --limit 20 --search nightly
-evolve job show <id> [id...]
+evolve job show <id> [id...]               # incl. a pass@k block, once attempts settle
 evolve job trials <id> --status INFRASTRUCTURE_ERROR,SCORING_ERROR
 evolve job trials <id> --dataset deep-swe
 evolve job tasks <id>                      # per-task rollup
@@ -568,7 +597,7 @@ evolve job stop <id> --dataset deep-swe    # one dataset's live trials
 evolve job resume <id> -f InfrastructureError
 evolve job retry <id> --failed-only        # or -t <trial-id> (repeatable), or bare for the whole job
 evolve job regrade <id> --task task-001
-evolve job download <id> -o results/
+evolve job download <id> -o results/       # unpacks the job tree to results/job-<id>/
 
 evolve trial show <trial-id>
 evolve trial download <trial-id> --stream trace-stdout
@@ -583,6 +612,8 @@ evolve auth status
 ```
 
 Output follows one precedence everywhere: human tables on a TTY, tab-separated rows when piped, `--json` for the machine shape (NDJSON for `--watch` streams), and `-q` for ids-only lists (on `job start --watch`, `-q` suppresses the event log and prints the final block only). `--columns` chooses and orders list columns (`--columns help` names them; for `job list` they are `id`, `name`, `status`, `datasets`, `agents`, `trials`, `spent`, `started` — the money column's key is `spent`, not `cost`), `--no-trunc` disables cell truncation, `--no-headers` drops the header row from piped output. `--limit` and `--cursor` page every listing the same way.
+
+`job show` ends with a **pass@k** block — one line per evals group, each k to three decimals — whenever the platform has numbers to show. Groups that cannot answer are simply absent from it, and a job with nothing computed prints no block at all; `--json` always carries the raw `stats.evals[].pass_at_k`.
 
 Wherever a verb takes a **job id**, an unambiguous prefix of at least 8 characters works too: `job show aabbccdd` is `job show aabbccdd-…` when exactly one of your jobs starts that way. The CLI resolves the prefix against your own job list before calling the server — the wire always carries the full id — and refuses loudly when the prefix matches nothing or more than one job. Trial ids are not prefix-resolved; trial verbs take full ids.
 
@@ -1340,6 +1371,17 @@ interface JobStats {
     cost_usd?: number | null;            // measured spend across settled trials
     gpu_cost_usd?: number | null;        // summed GPU compute ESTIMATE — separate, never inside cost_usd
 }
+
+interface AgentDatasetStats {            // one evals group
+    n_trials?: number;                   // trials that produced a rewards map
+    n_errors?: number;                   // trials carrying exception_info
+    metrics?: Record<string, unknown>[]; // a mean entry per arm today
+    pass_at_k?: Record<string, number>;  // k (as a string) -> value; {} = cannot answer
+}
+
+interface PassAtKPoint { k: number; value: number }
+interface PassAtKGroup { evals_key: string; points: PassAtKPoint[] }
+declare function passAtK(job: Job): PassAtKGroup[];   // reads stats.evals, sorted, numeric
 
 interface TimingInfo {                   // a phase wall-clock: a PAIR, never a duration
     started_at: string | null;

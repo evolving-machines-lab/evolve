@@ -103,6 +103,7 @@ export {
   TRIAL_ARTIFACT_STREAMS,
   TRIAL_STATUSES,
   isHostedErrorCode,
+  passAtK,
 } from "./types";
 export type {
   ActiveDataset,
@@ -179,6 +180,8 @@ export type {
   ModelInfo,
   Page,
   PageOptions,
+  PassAtKGroup,
+  PassAtKPoint,
   ProviderCapability,
   PublishDatasetInput,
   RegradeRequest,
@@ -2040,8 +2043,12 @@ export function trials(config?: HostedClientConfig): TrialsClient {
   /**
    * One raw trace artifact for a trial, by the trace route's ?stream=
    * selector: "verifier" | "trace-stdout" | "trace-stderr" answer
-   * { log: string | null }; "agent-home" (the CLI's whole home folder,
-   * subagent transcripts included by construction) answers
+   * { log: string | null }; "trace-atif" answers the same envelope carrying
+   * the normalized ATIF v1.7 document as JSON text (built server-side from
+   * the stored parsed trace); "trajectory" — the reserved harness-native
+   * session file — is refused not-found by the server until its wave lands,
+   * and the refusal surfaces as the API error it is; "agent-home" (the CLI's
+   * whole home folder, subagent transcripts included by construction) answers
    * { files: Record<sandbox-path, text> | null }. Null = never stored
    * (normal answer, not an error): a QUEUED/CANCELLED trial, a harness that
    * wrote nothing, or a purged trace.

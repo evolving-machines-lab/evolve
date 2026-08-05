@@ -23,10 +23,12 @@ import {
   datasets,
   hosted,
   meta,
+  passAtK,
   EvolveApiError,
   HOSTED_ERROR_CODES,
   isHostedErrorCode,
 } from "../../src/hosted/index.ts";
+import type { Job } from "../../src/hosted/types.ts";
 
 let passed = 0;
 let failed = 0;
@@ -402,6 +404,41 @@ async function main() {
     });
     const dataset = await datasets().get("old");
     assertEqual(dataset.upstream, null, "a missing upstream field maps to null, not undefined");
+  }
+
+  {
+    // passAtK(job): the wire's string-keyed map read as sorted numeric points.
+    // Pure reading — no request, no recomputation.
+    const job = {
+      stats: {
+        evals: {
+          // Deliberately out of order on the wire and out of order by k.
+          "z__m__bench@1.0": { pass_at_k: { "4": 1, "2": 0.5 } },
+          "a__m__bench@1.0": { pass_at_k: {} },
+          "m__m__bench@1.0": { pass_at_k: { "2": 0.25 } },
+        },
+      },
+    } as unknown as Job;
+    const groups = passAtK(job);
+    assertEqual(
+      groups.map((g) => g.evals_key),
+      ["m__m__bench@1.0", "z__m__bench@1.0"],
+      "groups come back sorted by evals key, and a group that cannot answer is omitted",
+    );
+    assertEqual(
+      groups[1].points,
+      [{ k: 2, value: 0.5 }, { k: 4, value: 1 }],
+      "points are numeric and ascending by k",
+    );
+    assertEqual(passAtK({ stats: {} } as unknown as Job), [], "a job with no evals reads as no pass@k");
+    assertEqual(passAtK({} as unknown as Job), [], "a job body without stats never throws");
+    assertEqual(
+      passAtK({
+        stats: { evals: { "a__m__b@1.0": { pass_at_k: { nope: 1, "2": "x" } } } },
+      } as unknown as Job),
+      [],
+      "junk keys and non-numeric values are dropped, not surfaced",
+    );
   }
 
   globalThis.fetch = originalFetch;

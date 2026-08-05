@@ -422,9 +422,18 @@ export interface AgentDatasetStats {
    */
   metrics?: Record<string, unknown>[];
   /**
-   * pass@k slot — keys are k as strings, values in [0,1]. Present and empty
-   * until the platform computes it; the slot exists so adding the statistic is
-   * not a wire change.
+   * pass@k for this group — the standard unbiased estimator
+   * `1 - C(n-c, k)/C(n, k)` per task, averaged over the group's tasks. Keys
+   * are k as strings (JSON object keys always are), values in [0,1]. The k set
+   * is the powers of two and the multiples of five up to the group's sparsest
+   * task's attempt count, so k=1 is never present and a single-attempt job
+   * answers `{}`. An attempt that produced no reward counts as a FAILED
+   * attempt, never an excluded one.
+   *
+   * `{}` means the group cannot answer: its rewards are not binary, no
+   * eligible k exists, or attempts are still in flight (the statistic appears
+   * once every attempt of the group has settled). `passAtK(job)` reads this
+   * field into sorted numeric points.
    */
   pass_at_k?: Record<string, number>;
   /** reward key -> reward value -> trial identifiers. */
@@ -502,6 +511,53 @@ export interface TrialGpuCost {
   measured_from: string | null;
   /** Observed sandbox end (ISO); null when unmeasured. */
   measured_to: string | null;
+}
+
+/** One pass@k number: the estimate over `k` attempts. */
+export interface PassAtKPoint {
+  /** How many attempts the estimate is over — always 2 or more. */
+  k: number;
+  /** Probability that k attempts contain at least one success, in [0,1]. */
+  value: number;
+}
+
+/** One evals group's pass@k curve, ready to plot or print. */
+export interface PassAtKGroup {
+  /** The `stats.evals` key these numbers belong to. */
+  evals_key: string;
+  /** Ascending by k; never empty (a group with no numbers is not returned). */
+  points: PassAtKPoint[];
+}
+
+/**
+ * Read a job's pass@k out of `stats.evals`, as numbers instead of the wire's
+ * string keys. Groups that cannot answer (empty `pass_at_k` — non-binary
+ * rewards, no eligible k, or attempts still in flight) are left out entirely,
+ * so an empty array means "this job has no pass@k to show", and the shape is
+ * the same whether the job is running or finished.
+ *
+ * Pure reading: no request is made, nothing is recomputed. The numbers are the
+ * platform's, and the same ones the job's download archive carries.
+ */
+export function passAtK(job: Job): PassAtKGroup[] {
+  const evals = job.stats?.evals ?? {};
+  const groups: PassAtKGroup[] = [];
+  for (const evals_key of Object.keys(evals).sort()) {
+    const raw = evals[evals_key]?.pass_at_k ?? {};
+    const points: PassAtKPoint[] = [];
+    for (const key of Object.keys(raw)) {
+      const k = Number(key);
+      const value = raw[key];
+      if (!Number.isFinite(k) || typeof value !== "number" || !Number.isFinite(value)) {
+        continue;
+      }
+      points.push({ k, value });
+    }
+    if (points.length === 0) continue;
+    points.sort((a, b) => a.k - b.k);
+    groups.push({ evals_key, points });
+  }
+  return groups;
 }
 
 /**
@@ -1798,12 +1854,17 @@ export interface JobsClient {
    */
   compare(ids: string[]): Promise<CompareResponse>;
   /**
-   * Download a terminal job's results archive (gzipped, standard results
-   * layout, deterministic bytes). Default: Buffer — verified against the
-   * response's Content-Length and, when the server states one, its digest.
-   * { to } saves to a directory (temp-then-rename, same verification) and
-   * returns the file path. { stream: true } returns the raw response stream,
-   * the one shape the caller must verify themselves.
+   * Download a terminal job's results as one .tar.gz in the standard
+   * job-directory layout (deterministic bytes): extracts to `job-<id>/` with
+   * config.json, result.json (stats incl. pass_at_k), and per trial its
+   * config.json, result.json, agent/trajectory.json (the normalized ATIF
+   * trajectory), agent/{stdout,stderr}.log, verifier/test-stdout.txt,
+   * verifier/reward.json and exception.txt — absent artifacts are absent
+   * files. Default: Buffer — verified against the response's Content-Length
+   * and, when the server states one, its digest. { to } saves to a directory
+   * (temp-then-rename, same verification) and returns the file path.
+   * { stream: true } returns the raw response stream, the one shape the
+   * caller must verify themselves.
    */
   download(id: string): Promise<Buffer>;
   download(id: string, options: { to: string }): Promise<string>;
@@ -1817,16 +1878,20 @@ export interface JobsClient {
 /**
  * The trace route's `?stream=` selectors, in the contract's own order —
  * `trace-parsed` (the parsed event trace, the same answer as omitting
- * `stream`) followed by the raw-artifact vocabulary. A runtime value (not
- * only a type) so a drift gate can hold it to the spec's enum, and the CLI
- * can build its `--stream` validation from the same list instead of a
- * second copy.
+ * `stream`) followed by the raw-artifact vocabulary. `trace-atif` is the
+ * SERVED normalized trajectory (Harbor's ATIF v1.7); `trajectory` is a
+ * DIFFERENT artifact — the harness's own native session file, in the
+ * vocabulary ahead of its server wave (the server answers not-found for it
+ * until that wave lands). A runtime value (not only a type) so a drift gate
+ * can hold it to the spec's enum, and the CLI can build its `--stream`
+ * validation from the same list instead of a second copy.
  */
 export const TRIAL_ARTIFACT_STREAMS = [
   "trace-parsed",
   "verifier",
   "trace-stdout",
   "trace-stderr",
+  "trace-atif",
   "trajectory",
   "agent-home",
 ] as const;
@@ -1853,11 +1918,14 @@ export interface TrialsClient {
   /**
    * One RAW trace artifact, by the trace route's ?stream= selector.
    * "verifier" | "trace-stdout" | "trace-stderr" answer the log text;
+   * "trace-atif" answers the normalized trajectory — Harbor's ATIF v1.7
+   * document as JSON text, built server-side from the stored parsed trace
+   * (the same document jobs.download() places at Harbor's own path
+   * agent/trajectory.json); "trajectory" is the reserved harness-native
+   * session file, refused not-found by the server until its wave lands;
    * "agent-home" answers the CLI's whole home folder (subagent transcripts
    * included), keyed by sandbox path. Null = never stored
-   * (a normal answer, not an error). "trajectory" is in the vocabulary ahead
-   * of its server wave — until that wave lands the route answers not-found,
-   * reported honestly as the API error it is. "trace-parsed" is not an
+   * (a normal answer, not an error). "trace-parsed" is not an
    * artifact — the parsed event trace rides trace()/traceEvents().
    */
   artifact(

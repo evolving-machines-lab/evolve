@@ -130,12 +130,15 @@ function restoreFetch() {
 // IMPORT (after mock setup)
 // =============================================================================
 
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { createGzip } from "node:zlib";
+import { pack } from "tar-stream";
 
 import {
   buildAgentInput,
@@ -1492,8 +1495,12 @@ async function testHelpAndVersion() {
   const trialCmdText = trialCmd.out.join("\n");
   assert(trialCmdText.includes("--stream"), "help <group> <verb> resolves the command help");
   assert(
-    trialCmdText.includes("trajectory (not served yet)"),
-    "--stream help admits trajectory is ahead of its server wave"
+    trialCmdText.includes("trace-atif (the ATIF trajectory)"),
+    "--stream help names the served ATIF artifact by its trace-atif name"
+  );
+  assert(
+    trialCmdText.includes("trajectory (reserved"),
+    "--stream help tells the truth about the reserved harness-native trajectory slot"
   );
 
   const resumeCmd = captureIO();
@@ -2101,6 +2108,78 @@ async function testJobShowGpuCost() {
     assert(
       !without.out.join("\n").includes("gpu compute"),
       "a job with no GPU estimate shows no row — absent, not $0",
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testJobShowPassAtK() {
+  console.log("\n--- runCli: job show renders pass@k ---");
+  installMockFetch();
+  try {
+    // Two arms: one that can answer, one whose attempts are still in flight
+    // (the server sends {} — the CLI never invents a number for it).
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: wireJob({
+        n_attempts: 4,
+        stats: {
+          cost_usd: null,
+          evals: {
+            "codex__gpt-5.5__deep-swe@1.1": {
+              n_trials: 8,
+              n_errors: 0,
+              metrics: [{ mean: 0.5 }],
+              pass_at_k: { "2": 0.8333333333333333, "4": 1 },
+            },
+            "claude__opus__deep-swe@1.1": {
+              n_trials: 0,
+              n_errors: 0,
+              metrics: [],
+              pass_at_k: {},
+            },
+          },
+        },
+      }),
+    });
+    setMockResponse("/api/jobs/eval-2", {
+      status: 200,
+      body: wireJob({ id: "eval-2" }),
+    });
+
+    const shown = captureIO();
+    assertEqual(await runCli(["job", "show", "eval-1", ...AUTH], shown.io), 0, "job show exits 0");
+    const text = shown.out.join("\n");
+    assert(text.includes("pass@k"), "the detail view has a pass@k block");
+    assert(
+      text.includes("pass@2 0.833") && text.includes("pass@4 1.000"),
+      "each k is printed to three decimals, ascending",
+    );
+    assert(
+      text.includes("codex__gpt-5.5__deep-swe@1.1"),
+      "the numbers are labelled with the evals key they belong to",
+    );
+    assert(
+      !text.includes("claude__opus__deep-swe@1.1"),
+      "a group that cannot answer is left out, never printed as 0",
+    );
+
+    // A job whose groups are all empty prints no block at all — silence, not a
+    // zero and not an empty heading.
+    const bare = captureIO();
+    await runCli(["job", "show", "eval-2", ...AUTH], bare.io);
+    assert(!bare.out.join("\n").includes("pass@"), "no pass@k block when nothing is computed");
+
+    // --json is untouched: the raw wire field, string keys and all.
+    const json = captureIO();
+    await runCli(["job", "show", "eval-1", "--json", ...AUTH], json.io);
+    const body = JSON.parse(json.out[0]);
+    assertEqual(
+      body.stats.evals["codex__gpt-5.5__deep-swe@1.1"].pass_at_k["4"],
+      1,
+      "--json carries stats.evals[].pass_at_k verbatim",
+
     );
   } finally {
     restoreFetch();
@@ -2877,17 +2956,55 @@ async function testTrialRegrade() {
   }
 }
 
+/**
+ * Build a .tar.gz fixture the way the server's archive builder does — real
+ * tar entries through tar-stream — including deliberately hostile shapes
+ * (`..` climbs, entries outside the root, symlinks) the extractor must
+ * refuse.
+ */
+async function gzipTarArchive(
+  entries: { name: string; content?: string; type?: "file" | "directory" | "symlink"; linkname?: string }[]
+): Promise<Buffer> {
+  const tar = pack();
+  for (const e of entries) {
+    if (e.type === "directory") {
+      tar.entry({ name: e.name, type: "directory" });
+    } else if (e.type === "symlink") {
+      tar.entry({ name: e.name, type: "symlink", linkname: e.linkname ?? "/etc/passwd" });
+    } else {
+      tar.entry({ name: e.name, type: "file" }, e.content ?? "");
+    }
+  }
+  tar.finalize();
+  const gzip = createGzip();
+  const chunks: Buffer[] = [];
+  const drained = (async () => {
+    for await (const chunk of gzip) chunks.push(Buffer.from(chunk));
+  })();
+  await Promise.all([pipeline(tar, gzip), drained]);
+  return Buffer.concat(chunks);
+}
+
 async function testCompareCancelDownload() {
   console.log("\n--- runCli: job compare / cancel / download ---");
   installMockFetch();
   const tmpDir = join(tmpdir(), `cli-job-dl-${Date.now()}`);
   try {
     setMockResponse("/api/jobs/eval-1/cancel", { status: 202, body: wireJob({ status: "CANCELLING" }) });
+    // A REAL archive in the server's shape: everything rooted at job-<id>/,
+    // ATIF at Harbor's own agent/trajectory.json path.
+    const archive = await gzipTarArchive([
+      { name: "job-eval-1/config.json", content: '{"job_name":"job-eval-1"}' },
+      { name: "job-eval-1/result.json", content: '{"stats":{}}' },
+      { name: "job-eval-1/t0__task", type: "directory" },
+      { name: "job-eval-1/t0__task/agent/trajectory.json", content: '{"schema_version":"ATIF-v1.7"}' },
+      { name: "job-eval-1/t0__task/verifier/reward.json", content: '{"reward":1}' },
+    ]);
     setMockResponse("/api/jobs/eval-1/download", {
       status: 200,
       body: null,
-      bodyBytes: Buffer.from("results bytes"),
-      headers: { "Content-Disposition": 'attachment; filename="job-eval-1-results.tar.gz"' },
+      bodyBytes: archive,
+      headers: { "Content-Disposition": 'attachment; filename="job-eval-1.tar.gz"' },
     });
     setMockResponse("/api/jobs/compare", {
       status: 200,
@@ -2912,9 +3029,117 @@ async function testCompareCancelDownload() {
     const download = captureIO();
     assertEqual(await runCli(["job", "download", "eval-1", "-o", tmpDir, ...AUTH], download.io), 0, "download exits 0");
     assert(fetchCalls[fetchCalls.length - 1].url.endsWith("/api/jobs/eval-1/download"), "hits the download route");
-    const written = await readFile(join(tmpDir, "job-eval-1-results.tar.gz"));
-    assertEqual(written.toString(), "results bytes", "-o saves the archive bytes");
-    assert(download.out.some((l) => l.includes("job-eval-1-results.tar.gz")), "prints the saved path");
+    const treeDir = join(tmpDir, "job-eval-1");
+    assertEqual(
+      (await readFile(join(treeDir, "config.json"))).toString(),
+      '{"job_name":"job-eval-1"}',
+      "-o unpacks the tree: config.json on disk"
+    );
+    assertEqual(
+      (await readFile(join(treeDir, "t0__task", "agent", "trajectory.json"))).toString(),
+      '{"schema_version":"ATIF-v1.7"}',
+      "ATIF lands at Harbor's own agent/trajectory.json path"
+    );
+    assertEqual(
+      (await readFile(join(treeDir, "t0__task", "verifier", "reward.json"))).toString(),
+      '{"reward":1}',
+      "verifier rewards land under verifier/"
+    );
+    const leftovers = (await readdir(tmpDir)).filter((name) => name.endsWith(".tar.gz"));
+    assertEqual(leftovers, [], "no .tar.gz survives — the tree IS the result");
+    assert(
+      download.out.some((l) => l.includes(treeDir) && l.includes("4 files")),
+      "prints the tree path and the file count"
+    );
+
+    // --json reports the tree, not an archive path.
+    const jsonDownload = captureIO();
+    assertEqual(
+      await runCli(["job", "download", "eval-1", "-o", tmpDir, "--overwrite", "--json", ...AUTH], jsonDownload.io),
+      0,
+      "--overwrite --json re-download exits 0"
+    );
+    assertEqual(JSON.parse(jsonDownload.out[0]), { path: treeDir, files: 4 }, "--json = { path, files }");
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    restoreFetch();
+  }
+}
+
+async function testJobDownloadUnpackGuards() {
+  console.log("\n--- runCli: job download unpack guards ---");
+  installMockFetch();
+  const tmpDir = await mkdtemp(join(tmpdir(), "cli-job-dl-guards-"));
+  try {
+    // An existing tree is never silently replaced.
+    setMockResponse(
+      "/api/jobs/eval-1/download",
+      { status: 200, body: null, bodyBytes: await gzipTarArchive([{ name: "job-eval-1/config.json", content: "{}" }]) }
+    );
+    await mkdir(join(tmpDir, "job-eval-1"), { recursive: true });
+    await writeFile(join(tmpDir, "job-eval-1", "stale.txt"), "old");
+    const refused = captureIO();
+    assertEqual(await runCli(["job", "download", "eval-1", "-o", tmpDir, ...AUTH], refused.io), 1, "existing job-<id>/ refused");
+    assert(refused.err.some((l) => l.includes("--overwrite")), "refusal names --overwrite as the remedy");
+    assertEqual((await readFile(join(tmpDir, "job-eval-1", "stale.txt"))).toString(), "old", "the existing tree is untouched");
+
+    // --overwrite replaces the tree.
+    const replaced = captureIO();
+    assertEqual(await runCli(["job", "download", "eval-1", "-o", tmpDir, "--overwrite", ...AUTH], replaced.io), 0, "--overwrite exits 0");
+    assert(!existsSync(join(tmpDir, "job-eval-1", "stale.txt")), "--overwrite replaces the old tree, not merges into it");
+    assert(existsSync(join(tmpDir, "job-eval-1", "config.json")), "the fresh tree is on disk");
+
+    // A `..` climb aborts the extraction and the partial tree never survives.
+    setMockResponse("/api/jobs/eval-2/download", {
+      status: 200,
+      body: null,
+      bodyBytes: await gzipTarArchive([
+        { name: "job-eval-2/config.json", content: "{}" },
+        { name: "job-eval-2/../../evil.txt", content: "boom" },
+      ]),
+    });
+    const climb = captureIO();
+    assertEqual(await runCli(["job", "download", "eval-2", "-o", tmpDir, ...AUTH], climb.io), 1, "a .. climb fails the command");
+    assert(climb.err.some((l) => l.includes("refusing to extract")), "the refusal names the entry");
+    assert(!existsSync(join(dirname(tmpDir), "evil.txt")), "nothing lands outside the output dir");
+    assert(!existsSync(join(tmpDir, "job-eval-2")), "the partial tree is removed on failure");
+
+    // An entry outside job-<id>/ is refused even without a climb.
+    setMockResponse("/api/jobs/eval-3/download", {
+      status: 200,
+      body: null,
+      bodyBytes: await gzipTarArchive([{ name: "other-place/config.json", content: "{}" }]),
+    });
+    const outside = captureIO();
+    assertEqual(await runCli(["job", "download", "eval-3", "-o", tmpDir, ...AUTH], outside.io), 1, "an entry outside job-<id>/ fails");
+    assert(outside.err.some((l) => l.includes("outside job-eval-3/")), "the refusal names the expected root");
+    assert(!existsSync(join(tmpDir, "other-place")), "the stray entry is never written");
+
+    // A backslash name is refused: an ordinary character on posix, a path
+    // separator on Windows — refusing beats extracting something ambiguous.
+    setMockResponse("/api/jobs/eval-5/download", {
+      status: 200,
+      body: null,
+      bodyBytes: await gzipTarArchive([{ name: "job-eval-5/..\\..\\evil.txt", content: "boom" }]),
+    });
+    const backslash = captureIO();
+    assertEqual(await runCli(["job", "download", "eval-5", "-o", tmpDir, ...AUTH], backslash.io), 1, "a backslash name fails the command");
+    assert(backslash.err.some((l) => l.includes("refusing to extract")), "the backslash refusal names the entry");
+    assert(!existsSync(join(tmpDir, "job-eval-5")), "the backslash archive leaves no tree behind");
+
+    // A symlink in the stream is an error, never a created foothold.
+    setMockResponse("/api/jobs/eval-4/download", {
+      status: 200,
+      body: null,
+      bodyBytes: await gzipTarArchive([
+        { name: "job-eval-4/config.json", content: "{}" },
+        { name: "job-eval-4/link", type: "symlink", linkname: "/etc/passwd" },
+      ]),
+    });
+    const link = captureIO();
+    assertEqual(await runCli(["job", "download", "eval-4", "-o", tmpDir, ...AUTH], link.io), 1, "a symlink entry fails the command");
+    assert(link.err.some((l) => l.includes("unsupported entry type")), "the refusal names the entry type");
+    assert(!existsSync(join(tmpDir, "job-eval-4")), "the symlink archive leaves no tree behind");
   } finally {
     await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
     restoreFetch();
@@ -3021,11 +3246,11 @@ async function testGpuSurfaces() {
 }
 
 async function testTrialDownloadStream() {
-  console.log("\n--- runCli: trial download --stream — the six-name artifact vocabulary ---");
+  console.log("\n--- runCli: trial download --stream — the seven-name artifact vocabulary ---");
   installMockFetch();
   try {
     setMockResponse("/trace?stream=trace-stdout", { status: 200, body: { log: "raw harness stdout" } });
-    setMockResponse("/trace?stream=trajectory", { status: 200, body: { log: '{"steps":[]}' } });
+    setMockResponse("/trace?stream=trace-atif", { status: 200, body: { log: '{"steps":[]}' } });
     setMockResponse("/trace?limit=100&cursor=5", {
       status: 200,
       body: { items: [{ seq: 6, type: "agent.message", data: {} }], nextCursor: null, hasMore: false },
@@ -3040,15 +3265,15 @@ async function testTrialDownloadStream() {
     );
     assertEqual(stdout.out, ["raw harness stdout"], "prints the raw log verbatim");
 
-    // The trajectory NAME is accepted now; the server may still refuse it
-    // until its wave — here the mock serves it and the CLI passes it through.
-    const trajectory = captureIO();
+    // The normalized ATIF document rides the same {log} envelope as the raw
+    // logs — the CLI passes the served JSON text through verbatim.
+    const atif = captureIO();
     assertEqual(
-      await runCli(["trial", "download", "run-1", "--stream", "trajectory", ...AUTH], trajectory.io),
+      await runCli(["trial", "download", "run-1", "--stream", "trace-atif", ...AUTH], atif.io),
       0,
-      "--stream trajectory is a valid selector"
+      "--stream trace-atif is a valid selector"
     );
-    assertEqual(trajectory.out, ['{"steps":[]}'], "prints the trajectory verbatim");
+    assertEqual(atif.out, ['{"steps":[]}'], "prints the ATIF document verbatim");
 
     const parsed = captureIO();
     assertEqual(
@@ -3071,13 +3296,15 @@ async function testTrialDownloadTrajectoryRefused() {
   console.log("\n--- runCli: --stream trajectory surfaces the server's refusal honestly ---");
   installMockFetch();
   try {
-    // The graceful not-yet answer the spec promises until trajectory's wave
-    // lands. The CLI's whole job is a clean relay: the server's own sentence,
-    // one line, nothing invented and nothing on stdout.
-    const sentence = "trajectory is not served yet; it arrives with a later wave";
+    // `trajectory` is the reserved harness-native session-file slot: the
+    // server answers not-found for it until its wave lands. The CLI's whole
+    // job is a clean relay: the server's own sentence, one line, nothing
+    // invented and nothing on stdout.
+    const sentence =
+      'the "trajectory" artifact (the harness\'s own native session file) is not yet served';
     setMockResponse("/trace?stream=trajectory", {
       status: 404,
-      body: { error: { code: "not_found", message: sentence } },
+      body: { error: { code: "trial_not_found", message: sentence } },
     });
     const { io, out, err } = captureIO();
     const code = await runCli(["trial", "download", "run-1", "--stream", "trajectory", ...AUTH], io);
@@ -3096,6 +3323,7 @@ async function testTrialDownloadSave() {
   try {
     // Stream selectors first: the mock matches by substring, and a plain
     // "/trace" pattern would swallow "/trace?stream=…" if it were checked first.
+    setMockResponse("/trace?stream=trace-atif", { status: 200, body: { log: '{"schema_version":"ATIF-v1.7"}' } });
     setMockResponse("/trace?stream=verifier", { status: 200, body: { log: "verifier says 1.0" } });
     setMockResponse("/trace?stream=trace-stdout", { status: 200, body: { log: null } });
     setMockResponse("/trace?stream=trace-stderr", { status: 200, body: { log: null } });
@@ -3116,6 +3344,8 @@ async function testTrialDownloadSave() {
     assert(parsed.includes('"seq":0'), "parsed events land in trace-parsed.jsonl");
     const verifier = await readFile(join(target, "verifier.log"), "utf-8");
     assertEqual(verifier, "verifier says 1.0", "each stored raw log lands under its own name");
+    const savedAtif = await readFile(join(target, "trace-atif.json"), "utf-8");
+    assertEqual(savedAtif, '{"schema_version":"ATIF-v1.7"}', "the ATIF document saves as trace-atif.json");
     const home = await readFile(join(target, "agent-home", "root", ".claude", "history.jsonl"), "utf-8");
     assertEqual(home, "{}", "agent-home/ preserves the sandbox folder tree");
     // Null logs were never stored — absence is a normal answer, no empty files.
@@ -3153,7 +3383,10 @@ async function testTrialDownloadUsageErrors() {
     const { io, err } = captureIO();
     const code = await runCli(["trial", "download", "run-1", "--stream", "bogus", ...AUTH], io);
     assertEqual(code, 2, "invalid --stream value exits 2 like every other usage error");
-    assert(err.some((l) => l.includes("trace-parsed") && l.includes("trajectory")), "names all six selectors");
+    assert(
+      err.some((l) => l.includes("trace-parsed") && l.includes("trace-atif") && l.includes("trajectory")),
+      "names all seven selectors"
+    );
   }
   {
     const { io, err } = captureIO();
@@ -3888,6 +4121,7 @@ async function main() {
   await testJobListOutputModes();
   await testJobShowMultiId();
   await testJobShowGpuCost();
+  await testJobShowPassAtK();
   await testJobTrialsAndTasks();
   await testJobStopDatasetSugar();
   await testJobStopDatasetChunking();
@@ -3901,6 +4135,7 @@ async function main() {
   await testJobRegrade();
   await testTrialRegrade();
   await testCompareCancelDownload();
+  await testJobDownloadUnpackGuards();
   await testTrialShow();
   await testGpuSurfaces();
   await testTrialDownloadStream();

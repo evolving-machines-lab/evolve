@@ -1,7 +1,8 @@
 /**
  * Deterministic tar + gzip writer for the directory publish path
  * (datasets().publish({ source: { directory } }) and the agent directory
- * upload).
+ * upload), plus the matching reader (`extractTarGz`) that `job download`
+ * uses to unpack the server's job archive onto disk.
  *
  * "Deterministic" means the SAME directory content always produces the SAME
  * bytes — the tarball sha256 the server records as the import's source
@@ -26,12 +27,12 @@
  * whole — only the compressed output is collected, since the upload takes one
  * body.
  */
-import { createGzip } from "node:zlib";
-import { createReadStream } from "node:fs";
-import { lstat, readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { createGunzip, createGzip } from "node:zlib";
+import { createReadStream, createWriteStream } from "node:fs";
+import { lstat, mkdir, readdir } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { pipeline } from "node:stream/promises";
-import { pack } from "tar-stream";
+import { extract, pack } from "tar-stream";
 
 /**
  * Names never packed, matched at any depth: version-control metadata, a macOS
@@ -110,4 +111,66 @@ export async function tarGzipDirectory(root: string): Promise<Buffer> {
 
   await Promise.all([pipeline(tar, gzip), feed, collect]);
   return Buffer.concat(chunks);
+}
+
+/**
+ * Unpack a downloaded .tar.gz onto disk — the read half of this module, used
+ * by `job download` to turn the server's job archive into the real directory
+ * tree the docs promise (`<dest>/job-<id>/...`).
+ *
+ * The archive comes from our own server, but the extractor still refuses to
+ * be a confused deputy: every entry must live under `root/` (the top-level
+ * directory the caller expects), no entry may be an absolute path or climb
+ * out with `..`, and only plain files and directories are written — a
+ * symlink, hardlink or device node in the stream is an error, never a
+ * silently created foothold. Paths are split on `/` and rejoined with the
+ * platform separator, so an archive written with posix names lands correctly
+ * everywhere.
+ *
+ * Entries stream straight from the gunzip to their files — the archive is
+ * never resident in memory as a whole. Returns the archive-relative paths of
+ * the files written, in archive order.
+ */
+export async function extractTarGz(archivePath: string, destDir: string, root: string): Promise<string[]> {
+  const ex = extract();
+  const written: string[] = [];
+
+  const consume = (async () => {
+    for await (const entry of ex) {
+      const name = entry.header.name;
+      const segments = name
+        .split("/")
+        .filter((segment) => segment !== "" && segment !== ".");
+      // Backslash refused outright: tar names are posix, and a backslash that
+      // is an ordinary character here becomes a path separator on Windows.
+      if (name.startsWith("/") || name.includes("\\") || segments.length === 0 || segments.some((s) => s === "..")) {
+        throw new Error(`refusing to extract "${name}": the path escapes the target directory`);
+      }
+      if (segments[0] !== root) {
+        throw new Error(`refusing to extract "${name}": entry outside ${root}/`);
+      }
+      if (entry.header.type === "directory") {
+        await mkdir(join(destDir, ...segments), { recursive: true });
+        entry.resume();
+        continue;
+      }
+      if (entry.header.type !== "file") {
+        throw new Error(`refusing to extract "${name}": unsupported entry type "${entry.header.type}"`);
+      }
+      const target = join(destDir, ...segments);
+      await mkdir(dirname(target), { recursive: true });
+      await pipeline(entry, createWriteStream(target));
+      written.push(segments.join("/"));
+    }
+  })();
+
+  try {
+    await Promise.all([pipeline(createReadStream(archivePath), createGunzip(), ex), consume]);
+  } catch (error) {
+    // A refused entry aborts the whole extraction; destroying the parser
+    // settles the other pipeline instead of leaving it wedged mid-stream.
+    ex.destroy();
+    throw error;
+  }
+  return written;
 }
