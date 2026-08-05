@@ -446,10 +446,18 @@ paths:
                 ├── agent/
                 │   ├── trajectory.json  the normalized ATIF v1.7 trajectory
                 │   ├── stdout.log       the harness process's raw streams,
-                │   └── stderr.log       when stored
-                └── verifier/
-                    ├── test-stdout.txt  the stored verifier log
-                    └── reward.json      the rewards the verifier produced
+                │   ├── stderr.log       when stored
+                │   └── sessions/        the agent CLI's home folder (the
+                │                        agent-home artifact), where Harbor's
+                │                        own agents keep session state
+                ├── verifier/
+                │   ├── test-stdout.txt  the stored verifier log
+                │   └── reward.json      the rewards the verifier produced
+                └── artifacts/           the collected artifacts (the agent's
+                                         patch and the task's manifest
+                                         entries), each mirrored at its
+                                         absolute source path minus the root
+                                         anchor — separate-mode trials only
 
         An artifact the trial never stored is an absent file, never an empty
         placeholder. Only terminal jobs are downloadable. The archive is
