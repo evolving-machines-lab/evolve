@@ -426,6 +426,25 @@ function testBuildJobInputRetry() {
     { max_retries: 0, min_wait_sec: 10 },
     "-r overrides the config file's max_retries; its other fields survive"
   );
+
+  // A Harbor config file's EXPLICIT `exclude_exceptions: null` survives the
+  // merge untouched. On the server (as in Harbor's pydantic) null means "no
+  // exclusions at all" — NOT the same as omitting the field, which keeps
+  // Harbor's default set — so the CLI must never drop or rewrite it.
+  const nullExclude = buildJobInput(
+    parseArgs(["job", "start", "--config", "job.json", "-d", "deep-swe", "-a", "codex", "-m", "m"]),
+    () =>
+      JSON.stringify({
+        datasets: [{ name: "deep-swe" }],
+        agents: [{ name: "codex", model_name: "m" }],
+        retry: { max_retries: 5, exclude_exceptions: null },
+      })
+  );
+  assertEqual(
+    nullExclude.retry,
+    { max_retries: 5, exclude_exceptions: null },
+    "an explicit exclude_exceptions null passes through the merge (Harbor's None: exclusions off)"
+  );
 }
 
 function testBuildJobInputYesIsInert() {

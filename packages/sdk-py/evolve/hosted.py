@@ -2853,7 +2853,11 @@ class JobsClient:
         ``min_wait_sec``, ``max_wait_sec``); omitted, the server applies its
         fleet defaults (infrastructure errors retry automatically — send
         ``{'max_retries': 0}`` to turn retries off), and the response echoes
-        the RESOLVED policy either way. ``agent_env`` / ``verifier_env`` are
+        the RESOLVED policy either way. Inside the policy, an EXPLICIT
+        ``'exclude_exceptions': None`` is not the same as leaving the key
+        out: None turns exclusions off entirely (everything the include set
+        admits is retried — Harbor's own None semantics), while an omitted
+        key keeps Harbor's default non-retryable set. ``agent_env`` / ``verifier_env`` are
         pass-through slots injected into every agent / verifier run — sent
         verbatim; the server owns acceptance (refused where unsupported,
         never silently dropped). Supports Idempotency-Key.

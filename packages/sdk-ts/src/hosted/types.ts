@@ -251,7 +251,11 @@ export interface RetryConfigInput {
    * Harbor's default non-retryable set (AgentTimeoutError,
    * VerifierTimeoutError, RewardFileNotFoundError, RewardFileEmptyError,
    * VerifierOutputParseError, ApiUsageLimitError, AgentSafetyRefusalError,
-   * AgentAuthenticationError, ModelNotFoundError).
+   * AgentAuthenticationError, ModelNotFoundError). An EXPLICIT null is
+   * DIFFERENT from omitting: null turns exclusions off entirely — everything
+   * the include set admits is retried, the default set included — exactly
+   * Harbor's None (their exclude check is guarded by
+   * `if exclude_exceptions and ...`, so None disables it).
    */
   exclude_exceptions?: string[] | null;
   /** Multiplier for exponential backoff wait time (default 1.0). */

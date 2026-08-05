@@ -1901,6 +1901,23 @@ class TestJobs:
         assert job.worst_case_spend_usd == 500
 
     @pytest.mark.asyncio
+    async def test_start_keeps_an_explicit_exclude_none_on_the_wire(self):
+        """`'exclude_exceptions': None` is a MEANINGFUL wire value (Harbor's
+        None: exclusions off entirely), distinct from omitting the key (the
+        server's default set) — the client must send the null, never drop it."""
+        fake = FakeUrlopen([('/api/jobs', JOB_SUMMARY)])
+        with patch('evolve._http.urlopen', fake):
+            await jobs_factory(CONFIG).start(
+                datasets=[{'name': 'deep-swe', 'version': '1.1'}],
+                agents=[AgentArm(name='codex', model_name='gpt-5.5')],
+                retry={'max_retries': 3, 'exclude_exceptions': None},
+            )
+
+        body = json.loads(fake.requests[0].data.decode('utf-8'))
+        assert body['retry'] == {'max_retries': 3, 'exclude_exceptions': None}
+        assert 'exclude_exceptions' in body['retry']
+
+    @pytest.mark.asyncio
     async def test_start_omits_absent_retry_and_old_servers_read_as_off(self):
         fake = FakeUrlopen([('/api/jobs', JOB_SUMMARY)])
         with patch('evolve._http.urlopen', fake):

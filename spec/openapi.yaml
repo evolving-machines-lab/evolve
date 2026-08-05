@@ -2097,7 +2097,14 @@ components:
             AgentTimeoutError, VerifierTimeoutError, RewardFileNotFoundError,
             RewardFileEmptyError, VerifierOutputParseError, ApiUsageLimitError,
             AgentSafetyRefusalError, AgentAuthenticationError,
-            ModelNotFoundError. On this platform a failure's exception name
+            ModelNotFoundError. An EXPLICIT null is not the same as omitting
+            the field: null disables exclusions entirely — every exception
+            the include set admits is retried, the default set included —
+            exactly Harbor's None (their field is typed `set[str] | None`
+            with the default set as its default_factory, and their exclude
+            check is guarded by `if exclude_exceptions and ...`, so None
+            turns it off). A config file written for Harbor means the same
+            thing here. On this platform a failure's exception name
             is InfrastructureError, refined by cause where the semantics
             match Harbor's names — a gateway credential refusal adjudicates
             as AgentAuthenticationError, a model that never served as
