@@ -2085,8 +2085,11 @@ components:
           items:
             type: string
           description: >
-            Exception types to retry on. Null or omitted = no filter
-            (Harbor: retries all exceptions the exclude set admits).
+            Exception types to retry on. Null, omitted, or the EMPTY array =
+            no filter (Harbor: retries all exceptions the exclude set admits —
+            their include check is guarded by `if include_exceptions and ...`,
+            so the empty set turns the filter off, same as None; an empty
+            array is echoed back as sent but filters nothing).
         exclude_exceptions:
           type: [array, 'null']
           items:

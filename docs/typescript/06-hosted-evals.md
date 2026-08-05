@@ -110,7 +110,7 @@ const job = await evals.start({
     agents: [{ name: "codex", model_name: "gpt-5.5" }],
     retry: {
         max_retries: 3,           // 0 turns retries off; omitted = fleet default (2)
-        include_exceptions: null, // null/omitted = no filter
+        include_exceptions: null, // null, omitted, or [] = no filter
         exclude_exceptions: ["AgentAuthenticationError"],  // wins over include
         wait_multiplier: 2,       // backoff: min_wait_sec × multiplier^attempt, capped at max_wait_sec
         min_wait_sec: 1,
@@ -120,7 +120,7 @@ const job = await evals.start({
 console.log(job.retry);           // the RESOLVED policy, every field present
 ```
 
-The include/exclude sets refine *within* the infrastructure class by exception name, exclude winning over include — Harbor's rule. A gateway credential refusal adjudicates as `AgentAuthenticationError` and a model that never served as `ModelNotFoundError`; everything else is `InfrastructureError`. Omitting `exclude_exceptions` keeps Harbor's default non-retryable set (auth refusals, timeouts, and the other failures that would re-fail identically). An **explicit** `exclude_exceptions: null` is different from omitting it: null turns exclusions off entirely — Harbor's own `None` semantics — so everything the include set admits is retried.
+The include/exclude sets refine *within* the infrastructure class by exception name, exclude winning over include — Harbor's rule. A gateway credential refusal adjudicates as `AgentAuthenticationError` and a model that never served as `ModelNotFoundError`; everything else is `InfrastructureError`. Omitting `exclude_exceptions` keeps Harbor's default non-retryable set (auth refusals, timeouts, and the other failures that would re-fail identically). An **explicit** `exclude_exceptions: null` is different from omitting it: null turns exclusions off entirely — Harbor's own `None` semantics — so everything the include set admits is retried. `include_exceptions` has no such split: null, omitted, and the empty array `[]` all mean no filter — Harbor's include check treats the empty set exactly like `None`, so an empty array never means "retry nothing".
 
 A retried trial keeps its receipts. `trial.n_retries` counts the requeues, and `trial.retries` lists each retired attempt with its exception, its spend, and its clocks — so a scored trial that took three attempts is auditable without archaeology, and the job's `stats.n_retries` is the consumed-retry sum across all trials. Each attempt spends against its own full per-trial cap, and every retired attempt's real spend stays in the job total — which is why `worst_case_spend_usd` carries the `(max_retries + 1)` product ([Money](#money)).
 

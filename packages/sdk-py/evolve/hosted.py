@@ -2857,7 +2857,11 @@ class JobsClient:
         ``'exclude_exceptions': None`` is not the same as leaving the key
         out: None turns exclusions off entirely (everything the include set
         admits is retried — Harbor's own None semantics), while an omitted
-        key keeps Harbor's default non-retryable set. ``agent_env`` / ``verifier_env`` are
+        key keeps Harbor's default non-retryable set.
+        ``'include_exceptions'`` has no such split: None, an omitted key,
+        and the empty list ``[]`` all mean no filter — Harbor's include
+        check treats the empty set exactly like None, so ``[]`` never means
+        "retry nothing". ``agent_env`` / ``verifier_env`` are
         pass-through slots injected into every agent / verifier run — sent
         verbatim; the server owns acceptance (refused where unsupported,
         never silently dropped). Supports Idempotency-Key.

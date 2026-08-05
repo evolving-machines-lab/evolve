@@ -244,7 +244,11 @@ export interface SourceJob {
 export interface RetryConfigInput {
   /** Maximum automatic retries per trial (0-10). Omitted = fleet default; 0 = off. */
   max_retries?: number;
-  /** Exception types to retry on. Null/omitted = no filter. */
+  /**
+   * Exception types to retry on. Null, omitted, or the empty array = no
+   * filter — Harbor's include check treats the empty set exactly like None,
+   * so `[]` never means "retry nothing".
+   */
   include_exceptions?: string[] | null;
   /**
    * Exception types to NOT retry on; wins over include_exceptions. Omitted =
