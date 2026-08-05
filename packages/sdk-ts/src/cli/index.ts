@@ -23,6 +23,7 @@
 import { existsSync, readFileSync, realpathSync } from "fs";
 import { fileURLToPath, pathToFileURL } from "url";
 import { LineCounter, type Tags, parse as parseYaml, parseDocument } from "yaml";
+import { parse as parseToml } from "smol-toml";
 import {
   EVAL_SANDBOX_PROVIDERS,
   EvolveApiError,
@@ -159,6 +160,16 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
     help:
       "Reasoning effort for EVERY arm (values: GET /api/meta). Applied verbatim — " +
       "an agent that cannot honor it is refused by the server, never silently skipped",
+  },
+  ak: {
+    kind: "repeat",
+    aliases: ["agent-kwarg"],
+    value: "key=value",
+    help:
+      "Agent kwarg for EVERY arm (repeatable, Harbor grammar). The delivered key is " +
+      "'config': --ak 'config=<path|inline JSON>' becomes the harness's native settings " +
+      "file (user config is the base, platform routing on top); the server refuses " +
+      "unsupported kwargs and config keys touching billing/base-URL/routing/env",
   },
   "agent-env": {
     kind: "repeat",
@@ -1373,6 +1384,95 @@ function parseAtRef(value: string, flag: string): { name: string; version?: stri
   return { name, version };
 }
 
+/**
+ * Parse one --ak value by Harbor's kwarg grammar (their cli/utils.py
+ * parse_kwargs): JSON first, then the Python literals JSON does not know,
+ * else the text verbatim — so `--ak key=3` is a number, `--ak key=True` a
+ * boolean, and `--ak key=high` a string, exactly as `harbor run` reads them.
+ */
+function parseKwargValue(value: string): unknown {
+  const trimmed = value.trim();
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    if (trimmed === "True") return true;
+    if (trimmed === "False") return false;
+    if (trimmed === "None") return null;
+    return trimmed;
+  }
+}
+
+/**
+ * Parse repeatable --ak key=value pairs into the wire's agents[].kwargs
+ * object. The `config` key gets the channel's one client-side mechanic: a
+ * string value is a LOCAL settings file (the server never reads a client
+ * path), resolved here to its parsed content — JSON or TOML by extension,
+ * with a both-ways attempt for anything else. Every other key rides verbatim;
+ * acceptance is the server's.
+ */
+export function parseAgentKwargs(
+  pairs: string[],
+  read: (path: string) => string = (path) => readFileSync(path, "utf-8")
+): Record<string, unknown> {
+  const kwargs: Record<string, unknown> = {};
+  for (const pair of pairs) {
+    const eq = pair.indexOf("=");
+    if (eq <= 0) {
+      throw new CliUsageError(`Invalid --ak "${pair}": expected key=value`);
+    }
+    const key = pair.slice(0, eq).trim();
+    let value = parseKwargValue(pair.slice(eq + 1));
+    if (key === "config" && typeof value === "string") {
+      value = loadAgentConfigFile(value, read);
+    }
+    kwargs[key] = value;
+  }
+  return kwargs;
+}
+
+/** Read and parse a local agent settings file for --ak config=<path>. */
+function loadAgentConfigFile(
+  path: string,
+  read: (path: string) => string
+): Record<string, unknown> {
+  let text: string;
+  try {
+    text = read(path);
+  } catch (error) {
+    throw new CliUsageError(`--ak config: cannot read ${path}: ${(error as Error).message}`);
+  }
+  let parsed: unknown;
+  if (path.endsWith(".toml")) {
+    try {
+      parsed = parseToml(text);
+    } catch (error) {
+      throw new CliUsageError(`--ak config: ${path} is not valid TOML: ${(error as Error).message}`);
+    }
+  } else if (path.endsWith(".json")) {
+    try {
+      parsed = JSON.parse(text);
+    } catch (error) {
+      throw new CliUsageError(`--ak config: ${path} is not valid JSON: ${(error as Error).message}`);
+    }
+  } else {
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      try {
+        parsed = parseToml(text);
+      } catch {
+        throw new CliUsageError(
+          `--ak config: ${path} parses as neither JSON nor TOML; use a .json or .toml settings file`
+        );
+      }
+    }
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new CliUsageError(`--ak config: ${path} must contain a settings object`);
+  }
+  return parsed as Record<string, unknown>;
+}
+
 /** Parse repeatable KEY=VALUE pairs into an env map. */
 export function parseEnvPairs(pairs: string[], flag: string): Record<string, string> {
   const env: Record<string, string> = {};
@@ -1452,6 +1552,14 @@ export function buildJobInput(
     // silently dropping the value for some arms would run a sweep the flag no
     // longer describes.
     arms = arms.map((arm) => ({ ...arm, reasoning_effort: f.effort as string }));
+  }
+  if (f.ak !== undefined) {
+    // --ak is stamped on EVERY arm, Harbor's own merge posture (their jobs.py
+    // updates each configured agent's kwargs with the flag's pairs). Config
+    // FILE paths are resolved to inline content here — the server never
+    // reads a client path — and the server owns every refusal.
+    const kwargs = parseAgentKwargs(f.ak as string[], read);
+    arms = arms.map((arm) => ({ ...arm, kwargs: { ...(arm.kwargs ?? {}), ...kwargs } }));
   }
 
   const agentEnv =

@@ -624,6 +624,17 @@ export interface AgentConfig {
   /** Reasoning effort for models that support it */
   reasoningEffort?: ReasoningEffort;
   /**
+   * Native agent settings — Harbor's `config` agent kwarg. Either a local
+   * file path (read when the run resolves its config) or an inline JSON
+   * object; the SDK converts it into the harness's native settings document
+   * inside the sandbox (Claude: a settings JSON passed via `--settings`;
+   * Codex: the base `~/.codex/config.toml`). The user document is the BASE:
+   * platform inputs — gateway routing, MCP servers, model/effort flags — are
+   * stamped on top. Only harnesses with native-config support accept it
+   * (claude, codex); any other agent type refuses loudly.
+   */
+  config?: string | Record<string, unknown>;
+  /**
    * Context/completion ceiling for CLIs that must be told one (Kimi Code reads
    * it as `max_context_size` and sends it as the request's `max_tokens`).
    *
@@ -652,6 +663,11 @@ export interface ResolvedAgentConfig {
   reasoningEffort?: ReasoningEffort;
   /** Caller-pinned context/completion ceiling; used verbatim when present */
   maxContextSize?: number;
+  /**
+   * Native agent settings, NORMALIZED: a file path input has been read and
+   * parsed by now, so delivery code only ever sees the document object.
+   */
+  config?: Record<string, unknown>;
 }
 
 /** Options for Agent constructor */

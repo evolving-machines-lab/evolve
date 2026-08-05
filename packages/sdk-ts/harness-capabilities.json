@@ -63,7 +63,8 @@
         "max",
         "thinking"
       ],
-      "defaultEffort": "high"
+      "defaultEffort": "high",
+      "supportsConfig": true
     },
     "codex": {
       "defaultModel": "gpt-5.6-sol",
@@ -105,7 +106,8 @@
         "max",
         "thinking"
       ],
-      "defaultEffort": "high"
+      "defaultEffort": "high",
+      "supportsConfig": true
     },
     "droid": {
       "defaultModel": "claude-opus-5",
@@ -177,7 +179,8 @@
         "max",
         "thinking"
       ],
-      "defaultEffort": "high"
+      "defaultEffort": "high",
+      "supportsConfig": false
     },
     "gemini": {
       "defaultModel": "gemini-3.6-flash",
@@ -200,7 +203,8 @@
       ],
       "effortSupport": "none",
       "efforts": [],
-      "defaultEffort": null
+      "defaultEffort": null,
+      "supportsConfig": false
     },
     "kimi": {
       "defaultModel": "kimi-k3",
@@ -239,7 +243,8 @@
         "max",
         "thinking"
       ],
-      "defaultEffort": "max"
+      "defaultEffort": "max",
+      "supportsConfig": false
     },
     "opencode": {
       "defaultModel": "openrouter/anthropic/claude-opus-5",
@@ -311,7 +316,8 @@
         "max",
         "thinking"
       ],
-      "defaultEffort": "high"
+      "defaultEffort": "high",
+      "supportsConfig": false
     },
     "qwen": {
       "defaultModel": "qwen3.7-max",
@@ -339,7 +345,8 @@
         "medium",
         "thinking"
       ],
-      "defaultEffort": "thinking"
+      "defaultEffort": "thinking",
+      "supportsConfig": false
     }
   }
 }

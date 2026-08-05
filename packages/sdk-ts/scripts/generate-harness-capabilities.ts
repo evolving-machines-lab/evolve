@@ -71,6 +71,12 @@ export type HarnessCapabilitiesArtifact = {
       effortSupport: "level" | "binary" | "none";
       efforts: string[];
       defaultEffort: string | null;
+      /**
+       * Whether the harness takes a native user config document — the
+       * `--ak config=...` channel (Harbor's SUPPORTS_CONFIG). The server's
+       * create door refuses `agents[].kwargs.config` for a false entry.
+       */
+      supportsConfig: boolean;
     }
   >;
 };
@@ -95,6 +101,7 @@ export function buildHarnessCapabilitiesArtifact(): HarnessCapabilitiesArtifact 
       // The harness's own pinned default is the truth; the vocabulary-level
       // default is only the fallback for entries that pin nothing.
       defaultEffort: entry.defaultReasoningEffort ?? vocabulary.defaultEffort,
+      supportsConfig: entry.nativeConfig !== undefined,
     };
   }
   return {

@@ -206,6 +206,22 @@ export interface AgentArmInput {
   model_name: string;
   version?: string | null;
   reasoning_effort?: string | null;
+  /**
+   * Agent kwargs, Harbor's `--ak` channel and wire shape. The one key this
+   * platform delivers is `config`: an INLINE JSON object converted into the
+   * harness's native settings document inside the sandbox (the CLI resolves
+   * `--ak config=<path>` to the file's parsed content before sending — the
+   * server never reads a client path). The user document is the base;
+   * platform routing is stamped on top. Part of the arm's identity: the same
+   * agent+model with two configs are two arms.
+   *
+   * Server acceptance is typed, never silent: an unrecognized kwarg key is
+   * `agent_kwarg_unsupported`, `config` for an agent without native-config
+   * support (see /api/meta `supports_config`) is `agent_config_unsupported`,
+   * and a config key touching billing, base URLs, routing, or env is
+   * `agent_config_key_refused`.
+   */
+  kwargs?: Record<string, unknown> | null;
 }
 
 /** One agent arm as echoed on job bodies (requested pin; null = took the latest). */
@@ -214,6 +230,8 @@ export interface AgentArm {
   model_name: string;
   version: string | null;
   reasoning_effort: string | null;
+  /** The arm's agent kwargs as accepted; null when none were declared. */
+  kwargs: Record<string, unknown> | null;
 }
 
 /**
@@ -1641,6 +1659,9 @@ export const HOSTED_ERROR_CODES = [
   "agent_too_large",
   "agent_limit_reached",
   "agent_version_not_found",
+  "agent_kwarg_unsupported",
+  "agent_config_unsupported",
+  "agent_config_key_refused",
   "job_too_large",
   "provider_unsupported",
   "job_not_found",
@@ -1687,6 +1708,12 @@ export interface AgentCapability {
   effort_support: boolean;
   /** Whether job agents[].version may pin this agent. */
   version_pinnable: boolean;
+  /**
+   * Whether job `agents[].kwargs.config` reaches this agent — native
+   * agent-settings support (Harbor's SUPPORTS_CONFIG). Declaring a config for
+   * an agent without it is refused `agent_config_unsupported`.
+   */
+  supports_config?: boolean;
   /**
    * Newest published version, for a "your pin is out of date" badge. Null
    * means "not known right now", never "up to date".

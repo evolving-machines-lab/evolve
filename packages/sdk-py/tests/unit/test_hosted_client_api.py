@@ -1001,6 +1001,34 @@ class TestJobs:
         assert job.idempotent_replay is False
 
     @pytest.mark.asyncio
+    async def test_agent_kwargs_ride_the_wire_and_map_back(self):
+        # The --ak channel: kwargs (config above all) are part of the arm and
+        # go out verbatim; the echoed arm maps kwargs back, and an older
+        # server that omits the field reads as None, never a crash.
+        fake = FakeUrlopen([('/api/jobs', JOB_SUMMARY)])
+        config = {'permissions': {'deny': ['WebSearch', 'WebFetch']}}
+        with patch('evolve._http.urlopen', fake):
+            await jobs_factory(CONFIG).start(
+                datasets=[DatasetSelector(name='deep-swe')],
+                agents=[AgentArm(name='claude', model_name='opus', kwargs={'config': config})],
+            )
+        body = json.loads(fake.requests[0].data.decode('utf-8'))
+        assert body['agents'] == [
+            {'name': 'claude', 'model_name': 'opus', 'kwargs': {'config': config}}
+        ]
+
+        from evolve.hosted import _map_agent_arm
+        echoed = _map_agent_arm({
+            'name': 'claude', 'model_name': 'opus', 'version': None,
+            'reasoning_effort': None, 'kwargs': {'config': config},
+        })
+        assert echoed.kwargs == {'config': config}
+        legacy = _map_agent_arm({'name': 'claude', 'model_name': 'opus'})
+        assert legacy.kwargs is None
+        garbage = _map_agent_arm({'name': 'claude', 'model_name': 'opus', 'kwargs': ['x']})
+        assert garbage.kwargs is None
+
+    @pytest.mark.asyncio
     async def test_start_accepts_snake_case_dicts(self):
         fake = FakeUrlopen([('/api/jobs', JOB_SUMMARY)])
         with patch('evolve._http.urlopen', fake):

@@ -113,6 +113,12 @@ export interface BuildCommandOptions {
   isResume: boolean;
   sessionId?: string;
   reasoningEffort?: string;
+  /**
+   * Sandbox path of the user-supplied native config document, for harnesses
+   * whose nativeConfig.delivery is 'settings-flag' (Claude's `--settings`).
+   * 'base-file' harnesses read their config path natively and ignore this.
+   */
+  nativeConfigPath?: string;
   isDirectMode?: boolean;
   /**
    * External gateway mode (caller-minted credential + base URL). Direct-mode
@@ -179,6 +185,31 @@ export interface AgentRegistryEntry {
 
   /** MCP configuration */
   mcpConfig: McpConfigInfo;
+
+  /**
+   * Native agent-settings knowledge — the `--ak config=...` channel (Harbor's
+   * SUPPORTS_CONFIG, agents/installed/base.py:517-559). Present only for
+   * harnesses whose native settings document the SDK knows how to deliver;
+   * absent = the harness does not support a user config and naming one is a
+   * typed refusal, never a silent drop (Harbor base.py:528-531).
+   *
+   * Precedence law (Harbor's codex.py:1022-1062): the user document is the
+   * BASE; platform inputs — gateway routing, MCP servers, model/effort flags —
+   * are stamped ON TOP of it, never underneath.
+   */
+  nativeConfig?: {
+    /** Document format the harness reads: JSON (Claude settings) or TOML (Codex config). */
+    format: "json" | "toml";
+    /** Sandbox path the user base document is written to. */
+    path: string;
+    /**
+     * How the harness is pointed at the document: 'settings-flag' passes it
+     * per-run (Claude `--settings`, mirroring Harbor claude_code.py:1531-1532);
+     * 'base-file' relies on the harness reading `path` natively (Codex
+     * `$CODEX_HOME/config.toml`, Harbor codex.py:1178-1181).
+     */
+    delivery: "settings-flag" | "base-file";
+  };
 
   /** Build the CLI command for this agent */
   buildCommand: (opts: BuildCommandOptions) => string;
@@ -335,14 +366,25 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       format: "json",
       projectConfig: true,
     },
+    // A dedicated file (never ~/.claude/settings.json, which the platform's
+    // MCP writer owns) passed per run via --settings — the same per-run
+    // settings layer Harbor uses (claude_code.py:37-38, 1531-1532). Model and
+    // effort still ride CLI flags, which Claude ranks above any settings file,
+    // so platform stamps stay on top of the user document.
+    nativeConfig: {
+      format: "json",
+      path: "~/.claude/evolve-user-settings.json",
+      delivery: "settings-flag",
+    },
     skillsConfig: {
       sourceDir: "~/.evolve/skills",
       targetDir: "~/.claude/skills",
     },
-    buildCommand: ({ prompt, model, isResume, reasoningEffort }) => {
+    buildCommand: ({ prompt, model, isResume, reasoningEffort, nativeConfigPath }) => {
       const continueFlag = isResume ? "--continue " : "";
       const effortFlag = reasoningEffort ? ` --effort ${reasoningEffort}` : "";
-      return `echo "${prompt}" | claude -p ${continueFlag}--model ${model}${effortFlag} --output-format stream-json --verbose --dangerously-skip-permissions`;
+      const settingsFlag = nativeConfigPath ? ` --settings ${nativeConfigPath}` : "";
+      return `echo "${prompt}" | claude -p ${continueFlag}--model ${model}${effortFlag}${settingsFlag} --output-format stream-json --verbose --dangerously-skip-permissions`;
     },
   },
 
@@ -384,6 +426,16 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       settingsDir: "~/.codex",
       filename: "config.toml",
       format: "toml",
+    },
+    // The user document IS the base ~/.codex/config.toml, written before the
+    // platform's writers (MCP merge, gateway provider block) parse-and-rewrite
+    // it — so platform routing lands ON TOP of the user's keys, exactly
+    // Harbor's merge order (codex.py:1022-1062, 1178-1181). Effort and model
+    // still ride -c/--model flags, which Codex ranks above config.toml.
+    nativeConfig: {
+      format: "toml",
+      path: "~/.codex/config.toml",
+      delivery: "base-file",
     },
     skillsConfig: {
       sourceDir: "~/.evolve/skills",

@@ -164,7 +164,7 @@ export class EvolveAdapter {
 
   private buildAgentConfig(params: InitializeParams): AgentConfig | undefined {
     // Only build config if any agent params provided (TS SDK resolves defaults from env)
-    if (!params.agent_type && !params.api_key && !params.provider_api_key && !params.oauth_token && !params.model && !params.reasoning_effort && params.max_context_size === undefined) {
+    if (!params.agent_type && !params.api_key && !params.provider_api_key && !params.oauth_token && !params.model && !params.reasoning_effort && params.max_context_size === undefined && params.agent_config === undefined) {
       return undefined;
     }
     return {
@@ -176,6 +176,7 @@ export class EvolveAdapter {
       ...(params.model && { model: params.model }),
       ...(params.reasoning_effort && { reasoningEffort: params.reasoning_effort as ReasoningEffort }),
       ...(params.max_context_size !== undefined && { maxContextSize: params.max_context_size }),
+      ...(params.agent_config !== undefined && { config: params.agent_config }),
     } as AgentConfig;
   }
 

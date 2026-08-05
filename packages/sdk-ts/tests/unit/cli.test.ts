@@ -144,6 +144,7 @@ import {
   CliUsageError,
   eventLine,
   importStatusLine,
+  parseAgentKwargs,
   parseArgs,
   parseEnvPairs,
   parseYamlConfig,
@@ -3366,6 +3367,96 @@ function testBuildInputsDirect() {
 }
 
 // =============================================================================
+// --ak agent kwargs — Harbor's grammar, config resolved client-side
+// =============================================================================
+
+function testAgentKwargs() {
+  console.log("\n--- parseAgentKwargs / --ak stamping ---");
+
+  // Harbor's value grammar (their cli/utils.py parse_kwargs): JSON first,
+  // then Python literals, else the text verbatim.
+  assertEqual(parseAgentKwargs(["k=3"]), { k: 3 }, "number value parses as JSON");
+  assertEqual(parseAgentKwargs(["k=true"]), { k: true }, "json boolean");
+  assertEqual(parseAgentKwargs(["k=True"]), { k: true }, "python True literal");
+  assertEqual(parseAgentKwargs(["k=False"]), { k: false }, "python False literal");
+  assertEqual(parseAgentKwargs(["k=None"]), { k: null }, "python None literal");
+  assertEqual(parseAgentKwargs(["k=high"]), { k: "high" }, "bare word stays a string");
+  assertEqual(parseAgentKwargs(['k={"a":1}']), { k: { a: 1 } }, "inline JSON object");
+  assertEqual(
+    parseAgentKwargs(["a=1", "a=2", "b=x"]),
+    { a: 2, b: "x" },
+    "repeats merge, last one wins (dict assignment, Harbor's behaviour)"
+  );
+  assertThrowsUsage(() => parseAgentKwargs(["noequals"]), "key=value", "malformed --ak pair");
+
+  // config=<path>: resolved to the file's parsed content — the server never
+  // reads a client path.
+  const files: Record<string, string> = {
+    "/s.json": '{"permissions":{"deny":["WebSearch"]}}',
+    "/c.toml": 'model_reasoning_effort = "low"\n[sandbox_workspace_write]\nnetwork_access = false\n',
+    "/bare": '{"a":1}',
+    "/bad.json": "{nope",
+    "/garbage": "]]not either[[",
+  };
+  const read = (path: string) => {
+    if (!(path in files)) throw new Error(`ENOENT: ${path}`);
+    return files[path];
+  };
+  assertEqual(
+    parseAgentKwargs(["config=/s.json"], read),
+    { config: { permissions: { deny: ["WebSearch"] } } },
+    "config JSON file resolves to its parsed object"
+  );
+  assertEqual(
+    parseAgentKwargs(["config=/c.toml"], read),
+    { config: { model_reasoning_effort: "low", sandbox_workspace_write: { network_access: false } } },
+    "config TOML file resolves to its parsed table"
+  );
+  assertEqual(
+    parseAgentKwargs(["config=/bare"], read),
+    { config: { a: 1 } },
+    "extensionless config file tries JSON first"
+  );
+  assertEqual(
+    parseAgentKwargs(['config={"model":"x"}'], read),
+    { config: { model: "x" } },
+    "inline JSON config is passed through without touching the filesystem"
+  );
+  assertThrowsUsage(() => parseAgentKwargs(["config=/missing.json"], read), "cannot read", "unreadable config path");
+  assertThrowsUsage(() => parseAgentKwargs(["config=/bad.json"], read), "not valid JSON", "malformed JSON config file");
+  assertThrowsUsage(
+    () => parseAgentKwargs(["config=/garbage"], read),
+    "neither JSON nor TOML",
+    "extensionless file that parses as nothing names both formats"
+  );
+
+  // Stamped on EVERY arm, like --effort; the server owns every refusal.
+  const inv = parseArgs([
+    "job", "start", "-d", "d", "-a", "claude", "-m", "opus", "-m", "sonnet",
+    "--ak", "config=/s.json", "--ak", "max_turns=5",
+  ]);
+  const input = buildJobInput(inv, read);
+  assertEqual(
+    input.agents,
+    [
+      {
+        name: "claude",
+        model_name: "opus",
+        kwargs: { config: { permissions: { deny: ["WebSearch"] } }, max_turns: 5 },
+      },
+      {
+        name: "claude",
+        model_name: "sonnet",
+        kwargs: { config: { permissions: { deny: ["WebSearch"] } }, max_turns: 5 },
+      },
+    ],
+    "--ak kwargs stamped on every arm"
+  );
+  const plain = buildJobInput(parseArgs(["job", "start", "-d", "d", "-a", "claude", "-m", "opus"]), read);
+  assert(!("kwargs" in plain.agents[0]), "no kwargs key when --ak omitted");
+}
+
+// =============================================================================
 // MAIN
 // =============================================================================
 
@@ -3376,6 +3467,7 @@ async function main() {
   testShortFlags();
   testBuildJobInputFlags();
   testBuildJobInputYesIsInert();
+  testAgentKwargs();
   await testConfigFileMerge();
   testYamlConfig();
   await testPrintConfig();

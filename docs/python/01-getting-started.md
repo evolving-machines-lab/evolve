@@ -317,6 +317,15 @@ When you omit `reasoning_effort`, Evolve does not leave the choice to the CLI. F
 
 Note that thinking cannot be disabled on Kimi K3 at the API level — `'no-thinking'` applies to the K2-generation models.
 
+Agent-specific option: `config` supplies the harness's own native settings — a local file path or an inline dict. Claude receives it as a settings JSON passed through `--settings`; Codex receives it as the base `~/.codex/config.toml` (an inline dict must be losslessly representable as TOML — no `None` values). Your document is the base layer: Evolve's own inputs — gateway routing, MCP servers, the model and effort stamps — always land on top of it, so a config can tune permissions, sandbox settings, or tool behavior but never re-route where the model traffic goes. Only `claude` and `codex` support a native config; naming one on any other agent type raises rather than being silently ignored.
+
+```python
+evolve = Evolve().with_agent(AgentConfig(
+    type='claude',
+    config={'permissions': {'deny': ['WebSearch', 'WebFetch']}},
+))
+```
+
 For Claude Fable 5, use `model='fable'`. For OpenCode via OpenRouter, use `model='openrouter/anthropic/claude-fable-5'`. For Claude 1M context window, use `model='sonnet[1m]'` or `model='opus[1m]'`.
 
 #### Harness and Model Pairing

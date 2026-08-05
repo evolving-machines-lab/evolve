@@ -53,6 +53,7 @@ import {
   writeKimiSpendConfig,
   writeDroidGatewaySettings,
 } from "./mcp";
+import { stringify as stringifyToml } from "smol-toml";
 import { createAgentParser, type AgentParser } from "./parsers";
 import type { OutputEvent } from "./parsers/types";
 import {
@@ -1805,6 +1806,14 @@ export class Agent {
       };
     }
 
+    // The user's native config document is the BASE layer and must exist
+    // before the platform writers below parse-and-rewrite the same files —
+    // that ordering is what stamps platform routing ON TOP of the user's keys
+    // (Harbor's codex.py merge order). Claude's document is a separate file
+    // delivered per run via --settings, so ordering is moot there but the
+    // write belongs with the other settings setup either way.
+    await this.writeNativeAgentConfig(sandbox);
+
     // Write MCP config if any servers configured.
     // NOTE: On restore, this intentionally overwrites the archived MCP config.
     // MCP servers require fresh auth tokens (managed URLs, API keys) that the
@@ -1852,6 +1861,46 @@ export class Agent {
     if (this.skills?.length) {
       await this.setupSkills(sandbox);
     }
+  }
+
+  /**
+   * Write the user's native config document into the sandbox — the delivery
+   * half of the `config` agent option (the `--ak config=...` channel).
+   *
+   * The document was normalized to a plain object at resolve time
+   * (loadNativeAgentConfig), so this method only serializes and writes:
+   * JSON for Claude's settings layer, TOML for Codex's base config.toml.
+   * chmod 600 because a user settings file may carry values the box's other
+   * processes have no business reading (Harbor does the same, base.py:889-912).
+   */
+  private async writeNativeAgentConfig(sandbox: SandboxInstance): Promise<void> {
+    const document = this.agentConfig.config;
+    if (!document) return;
+    const native = this.registry.nativeConfig;
+    if (!native) {
+      // Unreachable through validated doors; loud beats silent if a new door forgets.
+      throw new Error(
+        `Agent "${this.agentConfig.type}" has a config but no nativeConfig registry knowledge`,
+      );
+    }
+    const path = expandPath(native.path, this.homeDir);
+    const dir = path.substring(0, path.lastIndexOf("/"));
+    const content =
+      native.format === "toml"
+        ? stringifyToml(document)
+        : JSON.stringify(document, null, 2);
+    await sandbox.commands.run(`mkdir -p ${dir}`, { timeoutMs: 30000 });
+    await sandbox.files.write(path, content);
+    await sandbox.commands.run(`chmod 600 ${path}`, { timeoutMs: 30000 });
+  }
+
+  /** Sandbox path of the per-run settings document, for 'settings-flag' delivery. */
+  private nativeConfigFlagPath(): string | undefined {
+    const native = this.registry.nativeConfig;
+    if (!native || native.delivery !== "settings-flag" || !this.agentConfig.config) {
+      return undefined;
+    }
+    return expandPath(native.path, this.homeDir);
   }
 
   /**
@@ -1952,6 +2001,7 @@ export class Agent {
       sessionId:
         this.agentConfig.type === "droid" ? this.droidSessionId : undefined,
       reasoningEffort: this.reasoningEffort(),
+      nativeConfigPath: this.nativeConfigFlagPath(),
       isDirectMode: this.agentConfig.isDirectMode,
       isExternalGateway: Boolean(this.agentConfig.externalGateway),
       skills: this.skills,

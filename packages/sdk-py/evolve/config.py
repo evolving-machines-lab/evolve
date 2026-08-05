@@ -206,6 +206,13 @@ class AgentConfig:
     model: Optional[str] = None
     reasoning_effort: Optional[ReasoningEffort] = None
     max_context_size: Optional[int] = None
+    #: Native agent settings - Harbor's ``config`` agent kwarg. A local file
+    #: path or an inline dict, converted into the harness's native settings
+    #: document inside the sandbox (Claude: settings JSON via --settings;
+    #: Codex: the base ~/.codex/config.toml). The user document is the BASE;
+    #: platform routing/MCP/model/effort are stamped on top. Only claude and
+    #: codex support it; any other agent type refuses loudly.
+    config: Optional[Union[str, Dict[str, Any]]] = None
 
 
 @runtime_checkable

@@ -1720,6 +1720,9 @@ components:
         - agent_limit_reached
         # Jobs + trials
         - agent_version_not_found
+        - agent_kwarg_unsupported
+        - agent_config_unsupported
+        - agent_config_key_refused
         - job_too_large
         - provider_unsupported
         - job_not_found
@@ -1944,11 +1947,34 @@ components:
             Platform extension — declared effort, part of arm identity.
             Accepted values published by /api/meta; omitted, the runner
             default applies.
+        kwargs:
+          type: object
+          description: >
+            Agent kwargs — Harbor's `--ak` channel, wire shape verbatim. The
+            one key this platform delivers is `config`: an INLINE settings
+            object converted into the harness's native settings document
+            inside the sandbox (Claude settings JSON via `--settings`, Codex
+            base config.toml). Clients resolve a local `config=<path>` to the
+            file's parsed content before sending; the server never reads a
+            client path, and a string `config` is refused. The user document
+            is the BASE — platform routing, MCP servers, and model/effort
+            stamps land ON TOP (Harbor's codex.py merge order). Part of arm
+            identity: the same agent and model with two configs are two arms.
+            Acceptance is typed, never silent — an unrecognized kwarg key is
+            `agent_kwarg_unsupported`; `config` for an agent whose /api/meta
+            entry lacks `supports_config` is `agent_config_unsupported`; a
+            config key touching billing, base URLs, provider routing, or env
+            injection is `agent_config_key_refused` (the refusal names the
+            keys).
+          properties:
+            config:
+              type: object
+              description: Inline settings document for the harness's native format.
 
     AgentArm:
       type: object
       description: One agent arm as echoed on job bodies.
-      required: [name, model_name, version, reasoning_effort]
+      required: [name, model_name, version, reasoning_effort, kwargs]
       properties:
         name:
           type: string
@@ -1960,6 +1986,9 @@ components:
         reasoning_effort:
           type: [string, 'null']
           description: Declared effort; null when the run took the runner default.
+        kwargs:
+          type: [object, 'null']
+          description: The arm's agent kwargs as accepted; null when none were declared.
 
     SourceJob:
       type: object
@@ -3715,6 +3744,12 @@ components:
           type: boolean
         version_pinnable:
           type: boolean
+        supports_config:
+          type: boolean
+          description: >
+            Whether `agents[].kwargs.config` reaches this agent — native
+            agent-settings support (Harbor's SUPPORTS_CONFIG). Declaring a
+            config for an agent without it is `agent_config_unsupported`.
         latest_version:
           type: [string, 'null']
 

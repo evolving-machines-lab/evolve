@@ -136,6 +136,9 @@ HostedErrorCode = Literal[
     'agent_too_large',
     'agent_limit_reached',
     'agent_version_not_found',
+    'agent_kwarg_unsupported',
+    'agent_config_unsupported',
+    'agent_config_key_refused',
     'job_too_large',
     'provider_unsupported',
     'job_not_found',
@@ -469,6 +472,10 @@ class AgentCapability:
     #: Newest published version, for a "your pin is out of date" badge. None
     #: means "not known right now", never "up to date".
     latest_version: Optional[str] = None
+    #: Whether job ``agents[].kwargs['config']`` reaches this agent — native
+    #: agent-settings support (Harbor's SUPPORTS_CONFIG). Declaring a config
+    #: for an agent without it is refused ``agent_config_unsupported``.
+    supports_config: bool = False
 
 
 @dataclass
@@ -589,11 +596,25 @@ class AgentArm:
     ``trial.agent_info``. An effort an agent cannot apply is refused at
     creation rather than recorded and never sent — see
     :attr:`AgentCapability.effort_support`.
+
+    ``kwargs`` is Harbor's ``--ak`` channel in its wire shape. The one key
+    this platform delivers is ``config``: an INLINE settings dict converted
+    into the harness's native settings document inside the sandbox (the user
+    document is the base; platform routing is stamped on top). It is part of
+    the arm's identity — the same agent and model with two configs are two
+    arms. Acceptance is typed, never silent: an unrecognized kwarg key is
+    ``agent_kwarg_unsupported``, ``config`` for an agent without
+    :attr:`AgentCapability.supports_config` is ``agent_config_unsupported``,
+    and a config key touching billing, base URLs, routing, or env is
+    ``agent_config_key_refused``. Pass a dict, not a path — the server never
+    reads a client path (the CLI's ``--ak config=<path>`` resolves the file
+    client-side the same way).
     """
     name: str
     model_name: str
     version: Optional[str] = None
     reasoning_effort: Optional[str] = None
+    kwargs: Optional[Dict[str, Any]] = None
 
     def _to_wire(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {'name': self.name, 'model_name': self.model_name}
@@ -601,6 +622,8 @@ class AgentArm:
             result['version'] = self.version
         if self.reasoning_effort is not None:
             result['reasoning_effort'] = self.reasoning_effort
+        if self.kwargs is not None:
+            result['kwargs'] = self.kwargs
         return result
 
 
@@ -1119,11 +1142,15 @@ def _map_dataset_ref(data: Dict[str, Any]) -> DatasetRef:
 
 def _map_agent_arm(data: Dict[str, Any]) -> AgentArm:
     # Map only the public arm fields.
+    kwargs = data.get('kwargs')
     return AgentArm(
         name=data.get('name', ''),
         model_name=data.get('model_name', ''),
         version=data.get('version'),
         reasoning_effort=data.get('reasoning_effort'),
+        # Absent on older servers = none declared; anything non-dict is
+        # unreadable and reads as none rather than crashing a list call.
+        kwargs=kwargs if isinstance(kwargs, dict) else None,
     )
 
 
@@ -1159,6 +1186,7 @@ def _map_capability_document(raw: Dict[str, Any]) -> CapabilityDocument:
                 effort_support=item.get('effort_support') is True,
                 version_pinnable=item.get('version_pinnable') is True,
                 latest_version=item.get('latest_version'),
+                supports_config=item.get('supports_config') is True,
             )
             for item in raw.get('agents', [])
         ],

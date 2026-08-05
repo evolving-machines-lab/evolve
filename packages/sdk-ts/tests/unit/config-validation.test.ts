@@ -24,6 +24,8 @@
 
 import { Agent, Evolve, EvolveConfigError } from "../../dist/index.js";
 import type { AgentConfig, ResolvedAgentConfig, RunOptions } from "../../src/types.js";
+import { AGENT_REGISTRY } from "../../src/registry.js";
+import { loadNativeAgentConfig, nativeConfigAgentTypes } from "../../src/utils/config.js";
 
 // =============================================================================
 // TEST HELPERS
@@ -178,6 +180,98 @@ function testAgentConstructorGuards(): void {
   assertEqual((error as EvolveConfigError).field, "model", "the error names the model field");
 }
 
+/**
+ * Native agent config (`config`, the --ak channel): supported harnesses take
+ * a document or a path, everything else refuses by name at the door; the
+ * loader normalizes and holds Harbor's own validity lines (JSON round trip,
+ * TOML losslessness, object-shaped documents only).
+ */
+function testNativeAgentConfig(): void {
+  console.log("\n[6] Native agent config: claude/codex only, validated at the door");
+
+  const unsupported = thrownBy(() =>
+    new Evolve().withAgent({ type: "gemini", providerApiKey: "key", config: { a: 1 } }),
+  );
+  assert(unsupported instanceof EvolveConfigError, "config on gemini throws EvolveConfigError");
+  assertEqual((unsupported as EvolveConfigError).field, "config", "the error names the config field");
+  assert(
+    (unsupported as Error).message.includes("claude, codex"),
+    "the refusal lists the agents that DO support a native config",
+  );
+
+  const okInline = thrownBy(() =>
+    new Evolve().withAgent({
+      type: "claude",
+      apiKey: "key",
+      config: { permissions: { deny: ["WebSearch", "WebFetch"] } },
+    }),
+  );
+  assertEqual(okInline, undefined, "an inline settings object on claude is accepted");
+
+  const okPath = thrownBy(() =>
+    new Evolve().withAgent({ type: "codex", providerApiKey: "key", config: "./config.toml" }),
+  );
+  assertEqual(okPath, undefined, "a path on codex is accepted at the door (read at run resolution)");
+
+  const wrongShape = thrownBy(() =>
+    new Evolve().withAgent({
+      type: "claude",
+      apiKey: "key",
+      config: [1, 2] as unknown as Record<string, unknown>,
+    }),
+  );
+  assertEqual((wrongShape as EvolveConfigError)?.field, "config", "an array config is rejected by name");
+
+  // The loader itself: normalization + Harbor's validity lines.
+  const missingFile = thrownBy(() => loadNativeAgentConfig("claude", "/does/not/exist.json"));
+  assert(
+    (missingFile as Error)?.message.includes("Agent config file not found"),
+    "a missing config file is named (Harbor's FileNotFoundError message)",
+  );
+
+  const codexNull = thrownBy(() => loadNativeAgentConfig("codex", { web_search: null }));
+  assert(
+    (codexNull as Error)?.message.includes("TOML"),
+    "a codex document TOML cannot represent (null) is refused as a TOML conversion error",
+  );
+
+  const claudeNull = thrownBy(() => loadNativeAgentConfig("claude", { env: null }));
+  assertEqual(claudeNull, undefined, "a JSON-representable claude document passes the loader");
+
+  const loaded = loadNativeAgentConfig("codex", { model_reasoning_effort: "low" });
+  assertEqual(
+    JSON.stringify(loaded),
+    '{"model_reasoning_effort":"low"}',
+    "the loader returns the normalized document object",
+  );
+
+  // Delivery wiring: claude's command grows --settings only when a config rode in.
+  const withSettings = AGENT_REGISTRY.claude.buildCommand({
+    prompt: "p",
+    model: "opus",
+    isResume: false,
+    nativeConfigPath: "/home/user/.claude/evolve-user-settings.json",
+  });
+  assert(
+    withSettings.includes("--settings /home/user/.claude/evolve-user-settings.json"),
+    "claude command carries --settings at the user document's sandbox path",
+  );
+  const withoutSettings = AGENT_REGISTRY.claude.buildCommand({
+    prompt: "p",
+    model: "opus",
+    isResume: false,
+  });
+  assert(!withoutSettings.includes("--settings"), "no --settings flag without a config");
+
+  // The registry's knowledge itself: exactly claude and codex support config,
+  // codex as the base config.toml (Harbor's SUPPORTS_CONFIG lineup — their
+  // third supporter, deerflow, is not an Evolve harness).
+  assertEqual(nativeConfigAgentTypes().join(","), "claude,codex", "supporters are claude and codex");
+  assertEqual(AGENT_REGISTRY.codex.nativeConfig?.path, "~/.codex/config.toml", "codex delivery is the base config.toml");
+  assertEqual(AGENT_REGISTRY.codex.nativeConfig?.delivery, "base-file", "codex reads its path natively");
+  assertEqual(AGENT_REGISTRY.claude.nativeConfig?.delivery, "settings-flag", "claude delivery is the --settings flag");
+}
+
 // =============================================================================
 // RUNNER
 // =============================================================================
@@ -190,6 +284,7 @@ async function main(): Promise<void> {
   testUnknownAgentType();
   await testMissingPrompt();
   testAgentConstructorGuards();
+  testNativeAgentConfig();
 
   console.log("\n" + "=".repeat(60));
   console.log(`Results: ${passed} passed, ${failed} failed`);

@@ -3,6 +3,7 @@
  */
 
 import * as fs from "fs";
+import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import type { AgentConfig, AgentType, ResolvedAgentConfig, RunOptions } from "../types";
 import { DEFAULT_AGENT_TYPE, ENV_EVOLVE_API_KEY, RESERVED_OBSERVABILITY_KEYS } from "../constants";
 import { AGENT_REGISTRY, getAgentConfig, isValidAgentType } from "../registry";
@@ -66,6 +67,155 @@ export function validateAgentConfig(config?: AgentConfig | ResolvedAgentConfig):
       `or omit model entirely to use ${type}'s default.`,
     );
   }
+
+  if (config.config !== undefined) {
+    if (!agentSupportsNativeConfig(type)) {
+      // Harbor's SUPPORTS_CONFIG refusal (agents/installed/base.py:528-531),
+      // named at the door instead of at run time.
+      throw new EvolveConfigError(
+        "config",
+        `Evolve agent config: agent "${type}" does not support a native config. ` +
+        `Agents with native-config support: ${nativeConfigAgentTypes().join(", ")}.`,
+      );
+    }
+    const value = config.config;
+    if (typeof value === "string") {
+      if (!isFilled(value)) {
+        throw new EvolveConfigError(
+          "config",
+          `Evolve agent config: "config" is an empty path (${describe(value)}). ` +
+          `Pass a local settings file path or an inline JSON object.`,
+        );
+      }
+    } else if (!isPlainRecord(value)) {
+      throw new EvolveConfigError(
+        "config",
+        `Evolve agent config: "config" must be a local file path or a JSON object, ` +
+        `received ${describe(value)}.`,
+      );
+    }
+  }
+}
+
+/** A JSON-object-shaped value: a plain record, not an array/null/scalar. */
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Whether an agent type has native-config knowledge in the registry. */
+export function agentSupportsNativeConfig(type: AgentType): boolean {
+  return AGENT_REGISTRY[type]?.nativeConfig !== undefined;
+}
+
+/** The agent types that accept a native config document, registry order. */
+export function nativeConfigAgentTypes(): AgentType[] {
+  return (Object.keys(AGENT_REGISTRY) as AgentType[]).filter(agentSupportsNativeConfig);
+}
+
+/**
+ * Normalize a native agent config input into the document object the sandbox
+ * delivery writes: a file path is read and parsed here (JSON, or TOML for a
+ * TOML-format harness), an inline object is round-trip checked so nothing the
+ * wire cannot carry (functions, Dates, NaN) sneaks into a settings file —
+ * Harbor does the identical checks in base.py:533-559 and codex.py:989-1020.
+ */
+export function loadNativeAgentConfig(
+  type: AgentType,
+  config: string | Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (config === undefined) return undefined;
+  const native = AGENT_REGISTRY[type]?.nativeConfig;
+  if (!native) {
+    throw new EvolveConfigError(
+      "config",
+      `Evolve agent config: agent "${type}" does not support a native config. ` +
+      `Agents with native-config support: ${nativeConfigAgentTypes().join(", ")}.`,
+    );
+  }
+
+  let document: unknown;
+  if (typeof config === "string") {
+    const expandedPath = config.replace(/^~/, process.env.HOME || "");
+    if (!fs.existsSync(expandedPath)) {
+      throw new EvolveConfigError("config", `Agent config file not found: ${expandedPath}`);
+    }
+    const text = fs.readFileSync(expandedPath, "utf-8");
+    try {
+      document = native.format === "toml" ? parseToml(text) : JSON.parse(text);
+    } catch (error) {
+      throw new EvolveConfigError(
+        "config",
+        `Invalid ${type} config file ${config}: ${(error as Error).message}`,
+      );
+    }
+  } else {
+    // Inline object: must survive a JSON round trip unchanged, so a value the
+    // serializer would rewrite (a Date, NaN, undefined, a function) is refused
+    // by name instead of silently landing in the sandbox as something else.
+    let roundTripped: unknown;
+    try {
+      roundTripped = JSON.parse(JSON.stringify(config)) as unknown;
+    } catch (error) {
+      throw new EvolveConfigError(
+        "config",
+        `Invalid inline ${type} config: not JSON-serializable: ${(error as Error).message}`,
+      );
+    }
+    if (JSON.stringify(roundTripped) !== JSON.stringify(config)) {
+      throw new EvolveConfigError(
+        "config",
+        `Invalid inline ${type} config: expected a JSON object that can be ` +
+        `represented without conversion`,
+      );
+    }
+    document = roundTripped;
+  }
+
+  if (!isPlainRecord(document)) {
+    throw new EvolveConfigError(
+      "config",
+      `Invalid ${type} config: expected a ${native.format === "toml" ? "TOML table" : "JSON object"}.`,
+    );
+  }
+
+  if (native.format === "toml") {
+    // The document must serialize to TOML losslessly (Harbor codex.py:994-1006).
+    // smol-toml silently DROPS what TOML cannot carry (null above all), so the
+    // round trip is compared key-insensitively — a dropped key is exactly the
+    // silent rewrite this check exists to refuse.
+    let roundTripped: unknown;
+    try {
+      roundTripped = parseToml(stringifyToml(document));
+    } catch (error) {
+      throw new EvolveConfigError(
+        "config",
+        `Invalid ${type} config for TOML conversion: ${(error as Error).message}`,
+      );
+    }
+    if (canonicalJson(roundTripped) !== canonicalJson(document)) {
+      throw new EvolveConfigError(
+        "config",
+        `Invalid ${type} config: the document cannot be represented losslessly as TOML ` +
+        `(TOML has no null and no mixed-type arrays)`,
+      );
+    }
+  }
+
+  return document;
+}
+
+/** JSON with recursively sorted object keys — an order-insensitive comparison form. */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`);
+    return `{${entries.join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
 }
 
 /**
@@ -150,6 +300,12 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
   const type = (config?.type ?? DEFAULT_AGENT_TYPE) as AgentType;
   const registry = getAgentConfig(type);
 
+  // Native config is credential-mode independent: normalized once here (file
+  // paths read NOW, at run resolution — Harbor reads at agent __init__) and
+  // attached to whichever mode branch returns below.
+  const nativeConfig = loadNativeAgentConfig(type, config?.config);
+  const nativeConfigProp = nativeConfig !== undefined ? { config: nativeConfig } : {};
+
   // ─────────────────────────────────────────────────────────────────────────
   // EXPLICIT CONFIG (user passed values directly - always respect these)
   // ─────────────────────────────────────────────────────────────────────────
@@ -172,6 +328,7 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
       model: config.model,
       reasoningEffort: config.reasoningEffort,
       maxContextSize: config.maxContextSize,
+      ...nativeConfigProp,
     };
   }
 
@@ -191,6 +348,7 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
       model: config.model,
       reasoningEffort: config.reasoningEffort,
       maxContextSize: config.maxContextSize,
+      ...nativeConfigProp,
     };
   }
 
@@ -206,6 +364,7 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
       model: config.model,
       reasoningEffort: config.reasoningEffort,
       maxContextSize: config.maxContextSize,
+      ...nativeConfigProp,
     };
   }
 
@@ -218,6 +377,7 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
       model: config.model,
       reasoningEffort: config.reasoningEffort,
       maxContextSize: config.maxContextSize,
+      ...nativeConfigProp,
     };
   }
 
@@ -235,6 +395,7 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
       model: config?.model,
       reasoningEffort: config?.reasoningEffort,
       maxContextSize: config?.maxContextSize,
+      ...nativeConfigProp,
     };
   }
 
@@ -256,6 +417,7 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
         model: config?.model,
         reasoningEffort: config?.reasoningEffort,
         maxContextSize: config?.maxContextSize,
+        ...nativeConfigProp,
       };
     }
   }
@@ -273,6 +435,7 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
       model: config?.model,
       reasoningEffort: config?.reasoningEffort,
       maxContextSize: config?.maxContextSize,
+      ...nativeConfigProp,
     };
   }
 
@@ -292,6 +455,7 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
           model: config?.model,
           reasoningEffort: config?.reasoningEffort,
           maxContextSize: config?.maxContextSize,
+          ...nativeConfigProp,
         };
       }
       // Token-based OAuth (Claude): env var is token itself
@@ -303,6 +467,7 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
         model: config?.model,
         reasoningEffort: config?.reasoningEffort,
         maxContextSize: config?.maxContextSize,
+        ...nativeConfigProp,
       };
     }
   }

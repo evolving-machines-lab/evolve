@@ -73,6 +73,8 @@ export interface InitializeParams {
   model?: string;
   reasoning_effort?: string;
   max_context_size?: number;
+  /** Native agent settings: a local file path or an inline settings object. */
+  agent_config?: string | Record<string, unknown>;
   // Sandbox provider (optional - TS SDK resolves from EVOLVE_API_KEY env var)
   sandbox_provider?: {
     type: 'e2b' | 'daytona' | 'modal';

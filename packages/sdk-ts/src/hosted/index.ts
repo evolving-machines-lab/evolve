@@ -451,11 +451,18 @@ function mapDatasetRef(raw: Record<string, unknown>): DatasetRef {
 
 function mapAgentArm(raw: Record<string, unknown>): AgentArm {
   // Map only the public arm fields.
+  const kwargs = raw.kwargs;
   return {
     name: raw.name as string,
     model_name: raw.model_name as string,
     version: (raw.version as string | null) ?? null,
     reasoning_effort: (raw.reasoning_effort as string | null) ?? null,
+    // Absent on older servers = no kwargs were declared; anything non-object
+    // is unreadable and reads as none rather than crashing a list page.
+    kwargs:
+      kwargs && typeof kwargs === "object" && !Array.isArray(kwargs)
+        ? (kwargs as Record<string, unknown>)
+        : null,
   };
 }
 
