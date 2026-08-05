@@ -47,6 +47,7 @@ import type {
   JobTaskRollup,
   PublishDatasetInput,
   RetryConfigInput,
+  RetryRequest,
   StopResponse,
   Task,
   TraceEvent,
@@ -305,6 +306,29 @@ const GROUPS: Record<string, GroupSpec> = {
         positionalUsage: "<id>",
         example: "evolve-evals job resume cme12ab34 -f InfrastructureError",
       },
+      retry: {
+        summary: "New linked job re-running selected trials (all, failed-only, or named ids)",
+        flags: {
+          "failed-only": {
+            kind: "boolean",
+            help:
+              "Only retry failed trials (SCORING_ERROR, INFRASTRUCTURE_ERROR, INDETERMINATE); " +
+              "stopped and scored trials are not failures",
+          },
+          trial: {
+            kind: "repeat",
+            short: "t",
+            value: "<trial-id>",
+            help:
+              "Retry exactly this trial (repeatable, all-or-nothing; each must be settled, " +
+              "the job may still be running). Not combinable with --failed-only",
+          },
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<id>",
+        example: "evolve-evals job retry cme12ab34 --failed-only",
+      },
       regrade: {
         summary: "Verifier-only re-run of a terminal job (the result IS a job)",
         flags: {
@@ -363,6 +387,14 @@ const GROUPS: Record<string, GroupSpec> = {
         maxPositionals: 1,
         positionalUsage: "<trial-id>",
         example: "evolve-evals trial download cmt90ef12 --stream trace-stdout",
+      },
+      retry: {
+        summary: "Run one settled trial again (the result IS a job)",
+        flags: {},
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<trial-id>",
+        example: "evolve-evals trial retry cmt90ef12",
       },
       regrade: {
         summary: "Verifier-only re-run of one trial (the result IS a job)",
@@ -1712,7 +1744,15 @@ function jobLines(e: Job): string[] {
     .join(" · ");
   if (histogram) rows.push(["trials", histogram]);
   for (const source of e.source_jobs) {
-    rows.push([source.action === "regrade" ? "regrade of" : "resume of", source.job_id]);
+    // One label per verb — the stored action IS the word.
+    rows.push([
+      source.action === "regrade"
+        ? "regrade of"
+        : source.action === "retry"
+          ? "retry of"
+          : "resume of",
+      source.job_id,
+    ]);
   }
   if (e.idempotent_replay) rows.push(["note", "idempotent replay of an existing job"]);
   if (e.failure) rows.push(["failure", `${e.failure.code}: ${e.failure.message}`]);
@@ -2399,6 +2439,36 @@ async function cmdJobResume(inv: Invocation, io: CliIO): Promise<number> {
   return 0;
 }
 
+async function cmdJobRetry(inv: Invocation, io: CliIO): Promise<number> {
+  // The selection grammar mirrors the API's XOR verbatim: -t/--trial names
+  // exact settled trials (all-or-nothing, job may still run), --failed-only
+  // narrows a terminal job to its failures, bare = the whole terminal job.
+  // The contradiction is refused HERE with the same sentence the server
+  // would use, so the caller never spends a round-trip on it.
+  const trialIds = inv.flags.trial as string[] | undefined;
+  const failedOnly = inv.flags["failed-only"] === true;
+  if (trialIds !== undefined && failedOnly) {
+    throw new CliUsageError(
+      '"job retry" takes EITHER -t/--trial OR --failed-only, not both — explicit ids are already a selection'
+    );
+  }
+  const req: RetryRequest = {};
+  if (trialIds !== undefined) req.trial_ids = trialIds;
+  if (failedOnly) req.failed_only = true;
+  const job = await jobs(clientConfig(inv)).retry(
+    await resolveJobId(inv, inv.positionals[0]),
+    req
+  );
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(job));
+  } else {
+    for (const line of jobLines(job)) io.out(line);
+    io.out("");
+    io.out(`Follow it with: evolve-evals job show ${job.id}`);
+  }
+  return 0;
+}
+
 async function cmdJobRegrade(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
   const req: { statuses?: TrialStatus[]; task_name?: string } = {};
@@ -2548,6 +2618,20 @@ async function cmdTrialDownload(inv: Invocation, io: CliIO): Promise<number> {
     io.out(JSON.stringify({ path: targetDir, saved }));
   } else {
     io.out(`Saved ${targetDir}`);
+  }
+  return 0;
+}
+
+async function cmdTrialRetry(inv: Invocation, io: CliIO): Promise<number> {
+  // One settled trial, run again — the result IS a job, same output shape as
+  // every other job-creating verb.
+  const job = await trials(clientConfig(inv)).retry(inv.positionals[0]);
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(job));
+  } else {
+    for (const line of jobLines(job)) io.out(line);
+    io.out("");
+    io.out(`Follow it with: evolve-evals job show ${job.id}`);
   }
   return 0;
 }
@@ -2879,10 +2963,12 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "job cancel": cmdJobCancel,
   "job stop": cmdJobStop,
   "job resume": cmdJobResume,
+  "job retry": cmdJobRetry,
   "job regrade": cmdJobRegrade,
   "job download": cmdJobDownload,
   "trial show": cmdTrialShow,
   "trial download": cmdTrialDownload,
+  "trial retry": cmdTrialRetry,
   "trial regrade": cmdTrialRegrade,
   "trial stop": cmdTrialStop,
   "dataset list": cmdDatasetList,

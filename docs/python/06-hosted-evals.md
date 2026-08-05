@@ -89,7 +89,7 @@ datasets=[
 ],
 ```
 
-Every job response is the same shape, whatever produced it. `start()`, `get()`, `cancel()`, `resume()`, `regrade()` and each row of `list()` carry the same fields, so a job card renders from any of them without your knowing which call it came from. `counts` is entity cardinality — the parts a job is made of — and `trials` is the one "how many" structure: a total plus a status histogram that names every status, zeros included, so a status bar never needs the enum hardcoded. `job_name` is a user-facing label — pass one or take the server's.
+Every job response is the same shape, whatever produced it. `start()`, `get()`, `cancel()`, `resume()`, `retry()`, `regrade()` and each row of `list()` carry the same fields, so a job card renders from any of them without your knowing which call it came from. `counts` is entity cardinality — the parts a job is made of — and `trials` is the one "how many" structure: a total plus a status histogram that names every status, zeros included, so a status bar never needs the enum hardcoded. `job_name` is a user-facing label — pass one or take the server's.
 
 ### Money
 
@@ -384,6 +384,35 @@ await evals.resume(job.id, filter_error_types=['InfrastructureError'])
 
 ---
 
+## Retry
+
+`retry()` is the manual verb beside resume's automatic one, and the two answer different questions on purpose. Resume answers *"finish what broke"* — it picks up failures and stopped work, and never touches a scored trial. Retry answers *"run THESE again"*: you choose the trials, and a scored trial is a legitimate target — a flaky task, a changed world, one more sample. Like resume, it creates a **new linked job** inheriting the source's config; the source is never mutated, and the new job's `source_jobs` records `action='retry'`:
+
+```python
+# The whole job again (source must be terminal)
+again = await evals.retry(job.id)
+print(again.source_jobs)   # [SourceJob(action='retry', type='hub', job_id=job.id)]
+
+# Only the failed trials (SCORING_ERROR, INFRASTRUCTURE_ERROR, INDETERMINATE)
+await evals.retry(job.id, failed_only=True)
+
+# Exactly these trials — all-or-nothing, and the JOB may still be running:
+# a settled trial's facts are final, so it can retry the moment it settles
+await evals.retry(job.id, trial_ids=[trial_a, trial_b])
+
+# One trial, from the trials client — the same operation, addressed by the
+# trial you are holding
+one_more = await t.retry(trial_id)
+```
+
+The selection is `trial_ids` XOR `failed_only` — both together is a `400` contradiction. In `trial_ids` mode every named trial must be **settled** (`SCORED`, `SCORING_ERROR`, `INFRASTRUCTURE_ERROR`, `INDETERMINATE`, or `CANCELLED`); a still-live id refuses the whole request with `409 trial_not_settled`, and an id that is not this job's refuses it with `404 trial_not_found` — a partial retry that silently dropped half the selection would read as a full one. The whole-job and `failed_only` modes require a terminal source (`409 job_not_terminal` — on a live job the selection would change under the request), and `failed_only` with nothing failed answers `409 no_failed_trials`; stopped (`CANCELLED`) trials are not failures — name them in `trial_ids`, or use `resume()`, which exists for exactly that.
+
+Both doors take an `idempotency_key`. The fingerprint covers the **resolved selection** under this verb's own namespace: two retries of one source selecting different trials are different requests, the trial door and the job door replay each other for the identical one-trial request, and a create or resume key can never replay a retry.
+
+One deviation from Harbor is deliberate and named: Harbor's hosted `trial retry` re-opens the *same* job with fresh pending attempts. Here a finished job is immutable — its numbers are settled and separately citable — so the retry is a new job linked via `source_jobs`, exactly like resume and regrade.
+
+---
+
 ## Regrade
 
 A regrade re-runs **only the verifier**. The trial's recorded submission — the patch and artifacts captured when it ran — is restored into a fresh, sealed verifier sandbox and scored again; the agent phase is never re-run, and the source trial is never modified. Use it when a verifier was fixed or tightened and you want the same agent work re-scored under it, without paying for a single new agent run.
@@ -454,8 +483,8 @@ The archive unpacks to Harbor's job layout — a job-level `config.json` and `re
 The SDK's TypeScript package ships the `evolve-evals` binary — a thin shell over the same five clients this chapter documents (`npx evolve-evals`, no Python required). The grammar is noun-verb: `evolve-evals <noun> <verb>`, with `run` as the one top-level shortcut (an alias of `job start`). Singular nouns are canonical; the plurals parse as hidden aliases, as does `ls` for `list`.
 
 ```
-job      start | list | show | trials | tasks | compare | cancel | stop | resume | regrade | download
-trial    show | download | regrade | stop
+job      start | list | show | trials | tasks | compare | cancel | stop | resume | retry | regrade | download
+trial    show | download | retry | regrade | stop
 dataset  list | show | publish | download | activate
 agent    list | show | add | remove
 auth     status
@@ -512,12 +541,14 @@ npx evolve-evals job compare <id> <id>
 npx evolve-evals job cancel <id>
 npx evolve-evals job stop <id> --dataset deep-swe    # one dataset's live trials
 npx evolve-evals job resume <id> -f InfrastructureError
+npx evolve-evals job retry <id> --failed-only          # or -t <trial-id> (repeatable), or bare for the whole job
 npx evolve-evals job regrade <id> --task task-001
 npx evolve-evals job download <id> -o results/
 
 npx evolve-evals trial show <trial-id>
 npx evolve-evals trial download <trial-id> --stream trace-stdout
 npx evolve-evals trial download <trial-id> -o trials/
+npx evolve-evals trial retry <trial-id>
 npx evolve-evals trial regrade <trial-id>
 npx evolve-evals trial stop <trial-id> [trial-id...]
 

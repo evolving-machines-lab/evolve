@@ -19,7 +19,8 @@ Coverage:
 - jobs().start() — contract body (field order), Idempotency-Key header
 - jobs().get()/list()/trials() — mapping + cursor params + status filter
 - jobs().list()/trials() — await one page + async-for auto-pagination
-- jobs().cancel()/resume()/regrade() — POST semantics; a regrade IS a job
+- jobs().cancel()/resume()/retry()/regrade() — POST semantics; a derived job
+  (retry, regrade) IS a job
 - jobs().download() — bytes and streamed-to-file, both verified
 - jobs().compare() — aggregates + task matrix (frozen taskMatrix wire key)
 - jobs().watch() — SSE event stream: replay, Last-Event-ID resume on
@@ -1425,6 +1426,81 @@ class TestJobs:
         sent = json.loads(fake.requests[1].data.decode('utf-8'))
         assert sent == {'filter_error_types': ['InfrastructureError']}
         assert fake.requests[1].get_header('Idempotency-key') == 'idem-rr'
+
+    @pytest.mark.asyncio
+    async def test_retry_job_selections(self):
+        """jobs.retry() — the three selections ride the body verbatim, the
+        response is a NEW linked job with action='retry' (its own verb, never
+        resume's word)."""
+        retry_job = {
+            **JOB_SUMMARY,
+            'id': 'job-4',
+            'source_jobs': [{'action': 'retry', 'type': 'hub', 'job_id': 'job-1'}],
+        }
+        fake = FakeUrlopen([
+            ('/retry', retry_job),
+            ('/retry', retry_job),
+            ('/retry', retry_job),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            client = jobs_factory(CONFIG)
+            by_ids = await client.retry(
+                'job-1', trial_ids=['run-1', 'run-2'], idempotency_key='idem-retry'
+            )
+            await client.retry('job-1', failed_only=True)
+            await client.retry('job-1')
+
+        assert by_ids.id == 'job-4'
+        assert by_ids.source_jobs == [SourceJob(action='retry', type='hub', job_id='job-1')]
+        assert by_ids.is_regrade is False
+        assert fake.requests[0].get_method() == 'POST'
+        assert fake.requests[0].full_url.endswith('/api/jobs/job-1/retry')
+        assert json.loads(fake.requests[0].data.decode('utf-8')) == {
+            'trial_ids': ['run-1', 'run-2'],
+        }
+        assert fake.requests[0].get_header('Idempotency-key') == 'idem-retry'
+        assert json.loads(fake.requests[1].data.decode('utf-8')) == {'failed_only': True}
+        # No selection: the empty body — the whole (terminal) job retries.
+        assert json.loads(fake.requests[2].data.decode('utf-8')) == {}
+
+    @pytest.mark.asyncio
+    async def test_retry_trial_returns_a_job(self):
+        """trials.retry() — one settled trial, the trial id alone addresses
+        it, and THE RESPONSE IS A JOB."""
+        retry_job = {
+            **JOB_SUMMARY,
+            'id': 'job-5',
+            'source_jobs': [{'action': 'retry', 'type': 'hub', 'job_id': 'job-1'}],
+        }
+        fake = FakeUrlopen([('/run-1/retry', retry_job)])
+        with patch('evolve._http.urlopen', fake):
+            job = await trials_factory(CONFIG).retry('run-1', idempotency_key='idem-tr')
+
+        assert fake.requests[0].get_method() == 'POST'
+        assert fake.requests[0].full_url.endswith('/api/trials/run-1/retry')
+        assert fake.requests[0].get_header('Idempotency-key') == 'idem-tr'
+        assert job.id == 'job-5'
+        assert job.source_jobs == [SourceJob(action='retry', type='hub', job_id='job-1')]
+
+    @pytest.mark.asyncio
+    async def test_retry_not_settled_is_typed_error(self):
+        import io
+        import urllib.error
+
+        def raise_http_error(request, timeout=None):
+            raise urllib.error.HTTPError(
+                request.full_url, 409, 'Conflict', {},
+                io.BytesIO(json.dumps({'error': {
+                    'code': 'trial_not_settled',
+                    'message': 'Trial is RUNNING; retry requires a settled trial',
+                }}).encode('utf-8')),
+            )
+
+        with patch('evolve._http.urlopen', raise_http_error):
+            with pytest.raises(EvolveAPIError) as exc:
+                await trials_factory(CONFIG).retry('run-live')
+        assert exc.value.status == 409
+        assert exc.value.code == 'trial_not_settled'
 
     @pytest.mark.asyncio
     async def test_regrade_returns_a_job(self):

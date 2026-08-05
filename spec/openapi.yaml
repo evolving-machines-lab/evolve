@@ -57,6 +57,15 @@ info:
     - **Resume semantics.** `POST /api/jobs/{jobId}/resume` creates a NEW
       linked job (`source_jobs`), keeping the original immutable and
       separately citable. It never mutates the source job.
+    - **Retry semantics.** `POST /api/jobs/{jobId}/retry` and
+      `POST /api/trials/{trialId}/retry` are the manual verb: run
+      caller-SELECTED settled trials again (explicit ids, the failed ones,
+      or the whole job). Same derived-job law as resume — a NEW linked job
+      (`source_jobs` records `action: "retry"`), the source never mutated.
+      Where Harbor's hosted branch re-opens the SAME job with fresh pending
+      attempts, a finished job here is immutable — its numbers are settled
+      and separately citable — so the retry is a new job. That is the one
+      named deviation.
     - **Compare cap.** `GET /api/jobs/compare` takes 2–10 ids. Bounded, not
       unbounded: one GET must not become an unbounded server-side fan-out.
 
@@ -86,9 +95,9 @@ security:
 
 tags:
   - name: jobs
-    description: Create, read, watch, cancel, resume, regrade, download, compare.
+    description: Create, read, watch, cancel, resume, retry, regrade, download, compare.
   - name: trials
-    description: Globally addressable trials — read, trace, regrade, stop.
+    description: Globally addressable trials — read, trace, retry, regrade, stop.
   - name: datasets
     description: Catalog, publish (async import), package download, activation.
   - name: agents
@@ -509,6 +518,99 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/jobs/{jobId}/retry:
+    post:
+      tags: [jobs]
+      operationId: retryJob
+      summary: Retry selected trials (new linked job over caller-selected trials)
+      description: |
+        MANUAL retry: creates a NEW job holding fresh trials for
+        caller-SELECTED trials of the source, linked back via `source_jobs`
+        (`action: "retry"`). The source job is never mutated.
+
+        The body selects the trials — `trial_ids` XOR `failed_only`:
+        - Omitted body (or `{}`): every trial of the job. The source must be
+          terminal (on a live job the selection changes under the request).
+        - `failed_only: true`: the source's failed trials
+          (SCORING_ERROR, INFRASTRUCTURE_ERROR, INDETERMINATE). Stopped
+          (CANCELLED) and scored trials are not failures — retry them via
+          `trial_ids`, or use resume for stopped work. Source must be
+          terminal; an empty selection is refused (`no_failed_trials`).
+        - `trial_ids`: exactly these trials, all-or-nothing — an unknown id
+          (or one from another job) refuses the whole request
+          (`trial_not_found`). Each named trial must be SETTLED
+          (SCORED, SCORING_ERROR, INFRASTRUCTURE_ERROR, INDETERMINATE,
+          CANCELLED) — still-live ids are refused (`trial_not_settled`) —
+          but the JOB may still be running: a settled trial's facts are
+          final. Passing both `trial_ids` and `failed_only` is a
+          contradiction (400).
+
+        Retry differs from resume ON PURPOSE: resume answers "finish what
+        broke" (failures and stopped work), retry answers "run THESE again"
+        — a scored trial is a legitimate target (flaky task, changed world,
+        fresh sample). Harbor's hosted branch re-opens the SAME job with
+        fresh pending attempts; here the retry is a NEW job because a
+        finished job's numbers are immutable — the one named deviation.
+
+        Supports `Idempotency-Key` with a fingerprint over the RESOLVED
+        selection, namespaced to this route: two retries of one source
+        selecting different trials are different requests, and a create or
+        resume key can never replay a retry.
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RetryRequest'
+      responses:
+        '202':
+          description: The new linked job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '200':
+          description: Idempotent replay of an identical retry request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '402':
+          description: Out of credits (`insufficient_credits`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: >
+            Job not found (`job_not_found`), or a named trial id is not this
+            job's (`trial_not_found` — all-or-nothing, the message names the
+            missing ids).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: >
+            Source not terminal in job mode (`job_not_terminal`), a named
+            trial still live (`trial_not_settled`), no failed trials under
+            `failed_only` (`no_failed_trials`), or `idempotency_key_reused`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /api/jobs/{jobId}/regrade:
     post:
       tags: [jobs]
@@ -812,6 +914,68 @@ paths:
           description: >
             `job_not_terminal`, `no_regradable_trials`, or
             `regrade_source_ineligible`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/trials/{trialId}/retry:
+    post:
+      tags: [trials]
+      operationId: retryTrial
+      summary: Retry one settled trial
+      description: |
+        Run ONE settled trial again. **The response is a Job** — a one-trial
+        retry job inheriting the source job's config, with `source_jobs`
+        recording `action: "retry"`; view it with `GET /api/jobs/{jobId}`
+        (the 202 carries a `Location` header naming it). The source trial is
+        immutable.
+
+        The same operation as `POST /api/jobs/{jobId}/retry` with
+        `{"trial_ids": [this]}` — one selection rule, one builder, one
+        fingerprint — kept as its own door because the trial page (and
+        Harbor's hosted `trial retry <id>`) address the trial, not the job.
+        The source JOB may still be running: a settled trial's facts are
+        final, so "run it again" is well-defined the moment it settles.
+
+        Supports `Idempotency-Key` — the identical fingerprint the job-level
+        door computes for this one-trial selection, because it IS the
+        identical request.
+      parameters:
+        - $ref: '#/components/parameters/TrialId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: >
+            The retry job. `Location` names it (`/api/jobs/{jobId}`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '200':
+          description: Idempotent replay of an identical retry request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '402':
+          description: Out of credits (`insufficient_credits`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: >
+            Trial still live (`trial_not_settled` — QUEUED, RUNNING, and
+            SCORING trials cannot be retried), or `idempotency_key_reused`.
           content:
             application/json:
               schema:
@@ -1731,6 +1895,8 @@ components:
         - job_not_terminal
         - no_failed_trials
         - trial_not_found
+        # Manual retry: a named trial is still live (QUEUED/RUNNING/SCORING)
+        - trial_not_settled
         - concurrent_update
         # Regrade
         - regrade_source_ineligible
@@ -1971,13 +2137,15 @@ components:
       description: >
         Provenance of a derived job. `action: regrade` = verifier-only re-run
         of the source; `action: resume` (platform extension) = new job over
-        the source's failed and stopped trials. `type` is always `hub` on
-        this hosted surface.
+        the source's failed and stopped trials; `action: retry` = manual
+        retry — new job over caller-SELECTED source trials (explicit ids,
+        failed-only, or the whole job). `type` is always `hub` on this
+        hosted surface.
       required: [action, type, job_id]
       properties:
         action:
           type: string
-          enum: [regrade, resume]
+          enum: [regrade, resume, retry]
         type:
           type: string
           enum: [hub]
@@ -2180,6 +2348,32 @@ components:
             `CancelledError`) and still-QUEUED trials of a cancelled source.
           items:
             type: string
+
+    RetryRequest:
+      type: object
+      description: |
+        Body of POST /api/jobs/{jobId}/retry — the selection, `trial_ids`
+        XOR `failed_only`. Omitted (or `{}`) selects every trial of the
+        (terminal) job. Passing both is a contradiction (400).
+      properties:
+        trial_ids:
+          type: array
+          minItems: 1
+          description: |
+            Exactly these trials of the source job, all-or-nothing: an
+            unknown id refuses the whole request. Each named trial must be
+            settled (SCORED, SCORING_ERROR, INFRASTRUCTURE_ERROR,
+            INDETERMINATE, CANCELLED); the job itself may still be running.
+            Duplicates are deduplicated.
+          items:
+            type: string
+        failed_only:
+          type: boolean
+          description: |
+            Select the source's failed trials only (SCORING_ERROR,
+            INFRASTRUCTURE_ERROR, INDETERMINATE). Stopped (CANCELLED) and
+            scored trials are not failures — name them in `trial_ids`, or
+            use resume for stopped work.
 
     RegradeRequest:
       type: object

@@ -1592,6 +1592,121 @@ async function testResumeConflictError() {
 }
 
 // =============================================================================
+// MANUAL RETRY — caller-selected trials, the response is a JOB
+// =============================================================================
+
+async function testRetryJob() {
+  console.log("\n--- jobs().retry() creates the linked job over SELECTED trials ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs/eval-1/retry", {
+      status: 202,
+      body: {
+        ...JOB_SUMMARY,
+        id: "retry-2",
+        source_jobs: [{ action: "retry", type: "hub", job_id: "eval-1" }],
+      },
+    });
+    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+
+    // trial_ids mode, with the Idempotency-Key plumbing.
+    const job = await e.retry(
+      "eval-1",
+      { trial_ids: ["trial-a", "trial-b"] },
+      { idempotencyKey: "idem-retry" }
+    );
+    const call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.endsWith("/api/jobs/eval-1/retry"), "hits the retry route");
+    assertEqual(call.init?.method, "POST", "uses POST");
+    assertEqual(
+      JSON.parse(call.init?.body as string),
+      { trial_ids: ["trial-a", "trial-b"] },
+      "sends the trial_ids selection verbatim"
+    );
+    const headers = call.init?.headers as Record<string, string>;
+    assertEqual(headers?.["Idempotency-Key"], "idem-retry", "Idempotency-Key header sent");
+    assertEqual(job.id, "retry-2", "returns the NEW job");
+    assertEqual(
+      job.source_jobs,
+      [{ action: "retry", type: "hub", job_id: "eval-1" }],
+      "source_jobs records the RETRY provenance — a third verb, not resume"
+    );
+
+    // failed_only mode.
+    await e.retry("eval-1", { failed_only: true });
+    assertEqual(
+      JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string),
+      { failed_only: true },
+      "failed_only rides the body"
+    );
+
+    // No selection: the empty object = the whole (terminal) job.
+    await e.retry("eval-1");
+    assertEqual(
+      JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string),
+      {},
+      "omitted selection sends the empty body — the whole job retries"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testRetryTrialReturnsJob() {
+  console.log("\n--- trials().retry() — one settled trial, the response is a JOB ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/trials/trial-a/retry", {
+      status: 202,
+      body: {
+        ...JOB_SUMMARY,
+        id: "retry-3",
+        source_jobs: [{ action: "retry", type: "hub", job_id: "eval-1" }],
+      },
+    });
+    const t = trials({ apiKey: "test-key", baseUrl: BASE });
+    const job = await t.retry("trial-a", { idempotencyKey: "idem-tr" });
+    const call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.endsWith("/api/trials/trial-a/retry"), "hits the per-trial retry route");
+    assertEqual(call.init?.method, "POST", "uses POST");
+    const headers = call.init?.headers as Record<string, string>;
+    assertEqual(headers?.["Idempotency-Key"], "idem-tr", "Idempotency-Key header sent");
+    assertEqual(job.id, "retry-3", "the response is the retry JOB");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testRetryNotSettledIsTypedError() {
+  console.log("\n--- retry surfaces 409 trial_not_settled as the typed error ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/trials/trial-live/retry", {
+      status: 409,
+      body: {
+        error: {
+          code: "trial_not_settled",
+          message: "Trial is RUNNING; retry requires a settled trial",
+        },
+      },
+    });
+    const t = trials({ apiKey: "test-key", baseUrl: BASE });
+    let threw = false;
+    try {
+      await t.retry("trial-live");
+    } catch (err: any) {
+      threw = true;
+      assert(err instanceof EvolveApiError, "throws the typed EvolveApiError");
+      assertEqual(err.status, 409, "carries the HTTP status");
+      assertEqual(err.code, "trial_not_settled", "carries the stable error code");
+    }
+    assert(threw, "throws on 409");
+  } finally {
+    restoreFetch();
+  }
+}
+
+// =============================================================================
 // REGRADE — the response is a JOB
 // =============================================================================
 
@@ -3277,6 +3392,9 @@ async function main() {
   await testCancel();
   await testResume();
   await testResumeConflictError();
+  await testRetryJob();
+  await testRetryTrialReturnsJob();
+  await testRetryNotSettledIsTypedError();
   await testRegradeJob();
   await testRegradeTrialReturnsJob();
   await testRegradeIneligibleError();

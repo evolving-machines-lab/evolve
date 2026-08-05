@@ -219,11 +219,12 @@ export interface AgentArm {
 /**
  * Provenance of a derived job. `action: "regrade"` = verifier-only re-run of
  * the source; `action: "resume"` (platform extension) = new job over the
- * source's failed and stopped trials. `type` is always "hub" on this hosted
- * surface.
+ * source's failed and stopped trials; `action: "retry"` = manual retry — new
+ * job over caller-SELECTED source trials (explicit ids, failed-only, or the
+ * whole job). `type` is always "hub" on this hosted surface.
  */
 export interface SourceJob {
-  action: "regrade" | "resume";
+  action: "regrade" | "resume" | "retry";
   type: "hub";
   job_id: string;
 }
@@ -327,6 +328,29 @@ export interface ResumeRequest {
    * and still-QUEUED trials of a cancelled source.
    */
   filter_error_types?: string[];
+}
+
+/**
+ * Body of POST /api/jobs/{jobId}/retry — the selection, `trial_ids` XOR
+ * `failed_only`. Omitted (or `{}`) selects every trial of the (terminal)
+ * job; passing both fields is a contradiction the server refuses (400).
+ */
+export interface RetryRequest {
+  /**
+   * Exactly these trials of the source job, all-or-nothing: an unknown id
+   * refuses the whole request (`trial_not_found`). Each named trial must be
+   * settled — SCORED, SCORING_ERROR, INFRASTRUCTURE_ERROR, INDETERMINATE,
+   * or CANCELLED (`trial_not_settled` otherwise) — but the JOB may still be
+   * running: a settled trial's facts are final. Duplicates are deduplicated.
+   */
+  trial_ids?: string[];
+  /**
+   * Select the source's failed trials only (SCORING_ERROR,
+   * INFRASTRUCTURE_ERROR, INDETERMINATE). Stopped (CANCELLED) and scored
+   * trials are not failures — name them in `trial_ids`, or use resume for
+   * stopped work.
+   */
+  failed_only?: boolean;
 }
 
 /**
@@ -1578,6 +1602,18 @@ export interface JobsClient {
    */
   resume(id: string, request?: ResumeRequest, options?: StartJobOptions): Promise<Job>;
   /**
+   * MANUAL retry: a NEW linked job holding fresh trials for caller-SELECTED
+   * trials of the source (`source_jobs` records `action: "retry"`); the
+   * source is never mutated. The request selects — `trial_ids` XOR
+   * `failed_only`, omitted = every trial of the (terminal) job. Retry
+   * differs from resume on purpose: resume answers "finish what broke",
+   * retry answers "run THESE again" — a scored trial is a legitimate target.
+   * In trial_ids mode the job may still be running; each named trial must be
+   * settled. Supports Idempotency-Key (fingerprint over the RESOLVED
+   * selection, namespaced to this verb).
+   */
+  retry(id: string, request?: RetryRequest, options?: StartJobOptions): Promise<Job>;
+  /**
    * Regrade a terminal job: re-run the verifier of every REGRADABLE trial
    * against its recorded inputs, in fresh separate verifier boxes. The agent
    * phase is never re-run and the source trials are never modified. THE
@@ -1667,6 +1703,16 @@ export interface TrialsClient {
    * recording the provenance.
    */
   regrade(trialId: string): Promise<Job>;
+  /**
+   * Run ONE settled trial again. THE RESPONSE IS A JOB — a one-trial retry
+   * job inheriting the source job's config, with `source_jobs` recording
+   * `action: "retry"`; the source trial is immutable. The same operation as
+   * jobs.retry(jobId, {trial_ids: [trialId]}) — one selection rule, one
+   * fingerprint — kept as its own door because the trial is what you are
+   * holding. The source JOB may still be running; the trial must be settled
+   * (`trial_not_settled` otherwise). Supports Idempotency-Key.
+   */
+  retry(trialId: string, options?: StartJobOptions): Promise<Job>;
   /**
    * Stop selected in-flight trials without cancelling their job: each trial's
    * sandbox is killed and the trial is settled with its spend read from the
@@ -1762,6 +1808,7 @@ export const HOSTED_ERROR_CODES = [
   "job_not_terminal",
   "no_failed_trials",
   "trial_not_found",
+  "trial_not_settled",
   "concurrent_update",
   "regrade_source_ineligible",
   "no_regradable_trials",

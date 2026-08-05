@@ -123,12 +123,14 @@ OPERATION_TO_METHOD = {
     'watchJob': (JobsClient, 'watch'),
     'downloadJob': (JobsClient, 'download'),
     'resumeJob': (JobsClient, 'resume'),
+    'retryJob': (JobsClient, 'retry'),
     'regradeJob': (JobsClient, 'regrade'),
     'listJobTrials': (JobsClient, 'trials'),
     'listJobTasks': (JobsClient, 'tasks'),
     # Trials (globally addressable)
     'getTrial': (TrialsClient, 'get'),
     'getTrialTrace': (TrialsClient, 'trace'),  # ?stream= raw selectors ride artifact()
+    'retryTrial': (TrialsClient, 'retry'),
     'regradeTrial': (TrialsClient, 'regrade'),
     'stopTrials': (TrialsClient, 'stop'),
     # Datasets

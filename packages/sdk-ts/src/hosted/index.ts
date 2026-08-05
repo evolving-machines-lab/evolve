@@ -70,6 +70,7 @@ import type {
   RegradeRequest,
   ResumeRequest,
   RetryConfig,
+  RetryRequest,
   SourceJob,
   SpendSource,
   StartJobOptions,
@@ -184,6 +185,7 @@ export type {
   ResumeRequest,
   RetryConfig,
   RetryConfigInput,
+  RetryRequest,
   SourceJob,
   SpendSource,
   StartJobOptions,
@@ -1856,6 +1858,32 @@ export function jobs(config?: HostedClientConfig): JobsClient {
       return mapJob((await res.json()) as Record<string, unknown>);
     },
 
+    async retry(
+      id: string,
+      req?: RetryRequest,
+      options?: StartJobOptions
+    ): Promise<Job> {
+      // Manual retry — the selection rides the body verbatim (trial_ids XOR
+      // failed_only; {} = the whole terminal job) and the server owns every
+      // refusal. Same Idempotency-Key plumbing as resume, under retry's own
+      // server-side fingerprint.
+      const res = await request(
+        cfg,
+        `/api/jobs/${encodeURIComponent(id)}/retry`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(options?.idempotencyKey
+              ? { "Idempotency-Key": options.idempotencyKey }
+              : {}),
+          },
+          body: JSON.stringify(req ?? {}),
+        }
+      );
+      return mapJob((await res.json()) as Record<string, unknown>);
+    },
+
     async regrade(id: string, req?: RegradeRequest): Promise<Job> {
       // A regrade IS a job: the response is the ordinary job body with
       // source_jobs recording {action: "regrade"} — view it with get().
@@ -1981,6 +2009,23 @@ export function trials(config?: HostedClientConfig): TrialsClient {
       return mapJob((await res.json()) as Record<string, unknown>);
     },
 
+    async retry(trialId: string, options?: StartJobOptions): Promise<Job> {
+      // A one-trial retry is still a JOB — same body, source_jobs recording
+      // {action: "retry"}. Identical to jobs().retry(jobId, {trial_ids:
+      // [trialId]}) down to the idempotency fingerprint.
+      const res = await request(
+        cfg,
+        `/api/trials/${encodeURIComponent(trialId)}/retry`,
+        {
+          method: "POST",
+          ...(options?.idempotencyKey
+            ? { headers: { "Idempotency-Key": options.idempotencyKey } }
+            : {}),
+        }
+      );
+      return mapJob((await res.json()) as Record<string, unknown>);
+    },
+
     async stop(trialIds: string[]): Promise<StopResponse> {
       const res = await request(cfg, "/api/trials/stop", {
         method: "POST",
@@ -2072,7 +2117,7 @@ export interface HostedEvolve {
   readonly datasets: DatasetsClient;
   /** Your own bring-your-own agent registrations. */
   readonly agents: AgentsClient;
-  /** Jobs: start, watch, compare, resume, regrade, download. */
+  /** Jobs: start, watch, compare, resume, retry, regrade, download. */
   readonly jobs: JobsClient;
   /** Globally addressable trials: get, trace, artifact, regrade, stop. */
   readonly trials: TrialsClient;

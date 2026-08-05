@@ -2587,6 +2587,90 @@ async function testJobResume() {
   }
 }
 
+async function testJobRetry() {
+  console.log("\n--- runCli: job retry — the three selections and the XOR refusal ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs/eval-1/retry", {
+      status: 202,
+      body: wireJob({ id: "retry-1", source_jobs: [{ action: "retry", type: "hub", job_id: "eval-1" }] }),
+    });
+
+    // -t/--trial repeatable → trial_ids, all-or-nothing server-side.
+    const { io, out } = captureIO();
+    const code = await runCli(
+      ["job", "retry", "eval-1", "-t", "run-1", "-t", "run-2", ...AUTH],
+      io
+    );
+    assertEqual(code, 0, "exit 0");
+    const call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.endsWith("/api/jobs/eval-1/retry"), "hits the retry route");
+    assertEqual(call.init?.method, "POST", "uses POST");
+    assertEqual(
+      JSON.parse(call.init?.body as string),
+      { trial_ids: ["run-1", "run-2"] },
+      "-t is repeatable and lands as trial_ids"
+    );
+    assert(out.some((l) => l.includes("retry of") && l.includes("eval-1")), "renders the RETRY provenance — its own word, not resume's");
+    assert(out.some((l) => l.includes("job show retry-1")), "prints the follow hint");
+
+    // --failed-only → failed_only: true.
+    const failed = captureIO();
+    await runCli(["job", "retry", "eval-1", "--failed-only", ...AUTH], failed.io);
+    assertEqual(
+      JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string),
+      { failed_only: true },
+      "--failed-only lands as failed_only"
+    );
+
+    // Bare: the whole terminal job.
+    const bare = captureIO();
+    await runCli(["job", "retry", "eval-1", ...AUTH], bare.io);
+    assertEqual(
+      JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string),
+      {},
+      "no flags sends the empty body — the whole job retries"
+    );
+
+    // The contradiction is refused locally, before any request.
+    const callsBefore = fetchCalls.length;
+    const both = captureIO();
+    const bothCode = await runCli(
+      ["job", "retry", "eval-1", "-t", "run-1", "--failed-only", ...AUTH],
+      both.io
+    );
+    assert(bothCode !== 0, "-t with --failed-only is a usage error");
+    assert(
+      both.err.some((l) => l.includes("not both")),
+      "the refusal names the contradiction"
+    );
+    assertEqual(fetchCalls.length, callsBefore, "no request was spent on it");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testTrialRetry() {
+  console.log("\n--- runCli: trial retry hits the global trial route ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/trials/run-1/retry", {
+      status: 202,
+      body: wireJob({ id: "retry-2", source_jobs: [{ action: "retry", type: "hub", job_id: "eval-1" }] }),
+    });
+    const { io, out } = captureIO();
+    const code = await runCli(["trial", "retry", "run-1", ...AUTH], io);
+    assertEqual(code, 0, "exit 0");
+    const call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.endsWith("/api/trials/run-1/retry"), "the trial id alone addresses the retry");
+    assertEqual(call.init?.method, "POST", "uses POST");
+    assert(out.some((l) => l.includes("retry-2")), "renders the retry JOB id");
+    assert(out.some((l) => l.includes("job show retry-2")), "a retry is read with job show");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testJobRegrade() {
   console.log("\n--- runCli: job regrade posts the filter and renders the job ---");
   installMockFetch();
@@ -3404,6 +3488,8 @@ async function main() {
   await testJobIdPrefixLaw();
   await testRateLimitSurfacesCleanly();
   await testJobResume();
+  await testJobRetry();
+  await testTrialRetry();
   await testJobRegrade();
   await testTrialRegrade();
   await testCompareCancelDownload();

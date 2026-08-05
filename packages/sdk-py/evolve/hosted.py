@@ -142,6 +142,7 @@ HostedErrorCode = Literal[
     'job_not_terminal',
     'no_failed_trials',
     'trial_not_found',
+    'trial_not_settled',
     'concurrent_update',
     'regrade_source_ineligible',
     'no_regradable_trials',
@@ -610,7 +611,9 @@ class SourceJob:
 
     ``action='regrade'`` = verifier-only re-run of the source;
     ``action='resume'`` = new job over the source's failed and stopped
-    trials. ``type`` is always ``'hub'`` on this hosted surface.
+    trials; ``action='retry'`` = manual retry — new job over caller-SELECTED
+    source trials (explicit ids, failed-only, or the whole job). ``type`` is
+    always ``'hub'`` on this hosted surface.
     """
     action: str
     type: str
@@ -3294,6 +3297,46 @@ class JobsClient:
         )
         return _map_job(raw)
 
+    async def retry(
+        self,
+        id: str,
+        *,
+        trial_ids: Optional[List[str]] = None,
+        failed_only: Optional[bool] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> Job:
+        """MANUAL retry: a NEW linked job holding fresh trials for
+        caller-SELECTED trials of the source.
+
+        ``source_jobs`` on the new job records ``action="retry"``; the source
+        is never mutated. The selection is ``trial_ids`` XOR ``failed_only``
+        (both together is refused): omitted, every trial of the (terminal)
+        source retries; ``failed_only=True`` narrows a terminal source to its
+        failures (SCORING_ERROR, INFRASTRUCTURE_ERROR, INDETERMINATE —
+        stopped and scored trials are not failures); ``trial_ids`` names
+        exact trials all-or-nothing, each must be SETTLED (the job itself may
+        still be running — a settled trial's facts are final).
+
+        Retry differs from :meth:`resume` on purpose: resume answers "finish
+        what broke", retry answers "run THESE again" — a scored trial is a
+        legitimate target. Supports Idempotency-Key (fingerprint over the
+        RESOLVED selection, namespaced to this verb — a resume key can never
+        replay a retry).
+        """
+        body: Dict[str, Any] = {}
+        if trial_ids is not None:
+            body['trial_ids'] = trial_ids
+        if failed_only is not None:
+            body['failed_only'] = failed_only
+        headers = {'Idempotency-Key': idempotency_key} if idempotency_key else None
+        raw = await self._http.request_json(
+            f'/api/jobs/{urllib.parse.quote(id)}/retry',
+            method='POST',
+            body=body,
+            headers=headers,
+        )
+        return _map_job(raw)
+
     async def regrade(
         self,
         id: str,
@@ -3500,6 +3543,32 @@ class TrialsClient:
         )
         return _map_job(raw)
 
+    async def retry(
+        self,
+        trial_id: str,
+        *,
+        idempotency_key: Optional[str] = None,
+    ) -> Job:
+        """Run ONE settled trial again.
+
+        THE RESPONSE IS A JOB — a one-trial retry job inheriting the source
+        job's config, with ``source_jobs`` recording ``action="retry"``; the
+        source trial is immutable. The same operation as
+        ``jobs.retry(job_id, trial_ids=[trial_id])`` — one selection rule,
+        one idempotency fingerprint — kept as its own door because the trial
+        is what you are holding. The source JOB may still be running; the
+        trial must be settled (``trial_not_settled`` otherwise). Supports
+        Idempotency-Key.
+        """
+        headers = {'Idempotency-Key': idempotency_key} if idempotency_key else None
+        raw = await self._http.request_json(
+            f'/api/trials/{urllib.parse.quote(trial_id)}/retry',
+            method='POST',
+            body={},
+            headers=headers,
+        )
+        return _map_job(raw)
+
     async def stop(self, trial_ids: List[str]) -> StopResponse:
         """Stop selected in-flight trials without cancelling their job.
 
@@ -3618,7 +3687,7 @@ class HostedEvolve:
 
     @property
     def jobs(self) -> JobsClient:
-        """Jobs: start, watch, compare, resume, regrade, download."""
+        """Jobs: start, watch, compare, resume, retry, regrade, download."""
         if self._jobs is None:
             self._jobs = JobsClient(self._config)
         return self._jobs
