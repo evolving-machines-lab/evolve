@@ -47,6 +47,7 @@
     "job_not_terminal",
     "no_failed_trials",
     "trial_not_found",
+    "trial_not_settled",
     "concurrent_update",
     "regrade_source_ineligible",
     "no_regradable_trials",

@@ -422,6 +422,7 @@ export {
   type CompareResponse,
   type SourceJob,
   type ResumeRequest,
+  type RetryRequest,
   type RegradeRequest,
   type DatasetImport,
   type DatasetPatch,

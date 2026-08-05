@@ -52,6 +52,8 @@ import type {
   JobEvent,
   JobTaskRollup,
   PublishDatasetInput,
+  RetryConfigInput,
+  RetryRequest,
   StopResponse,
   Task,
   TraceEvent,
@@ -198,6 +200,26 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
     value: "<usd>",
     help: "Model-spend cap for EACH trial (default: the server's, $200)",
   },
+  "max-retries": {
+    kind: "number",
+    short: "r",
+    value: "<n>",
+    help:
+      "Max automatic retries per trial on infrastructure errors " +
+      "(default: the server's fleet default; 0 = off). Each attempt carries the full trial cap",
+  },
+  "retry-include": {
+    kind: "repeat",
+    value: "<exception>",
+    help: "Exception types to retry on (repeatable; default: everything --retry-exclude admits)",
+  },
+  "retry-exclude": {
+    kind: "repeat",
+    value: "<exception>",
+    help:
+      "Exception types to NOT retry on (repeatable; wins over --retry-include; " +
+      "default: Harbor's non-retryable set)",
+  },
   env: { kind: "string", short: "e", value: "<provider>", help: "Sandbox provider: e2b | daytona | modal (default e2b)" },
   watch: { kind: "boolean", help: "Stream events until the job finishes" },
   quiet: { kind: "boolean", short: "q", help: "With --watch: suppress the event log, print the final block only" },
@@ -308,6 +330,29 @@ const GROUPS: Record<string, GroupSpec> = {
         positionalUsage: "<id>",
         example: "evolve job resume cme12ab34 -f InfrastructureError",
       },
+      retry: {
+        summary: "New linked job re-running selected trials (all, failed-only, or named ids)",
+        flags: {
+          "failed-only": {
+            kind: "boolean",
+            help:
+              "Only retry failed trials (SCORING_ERROR, INFRASTRUCTURE_ERROR, INDETERMINATE); " +
+              "stopped and scored trials are not failures",
+          },
+          trial: {
+            kind: "repeat",
+            short: "t",
+            value: "<trial-id>",
+            help:
+              "Retry exactly this trial (repeatable, all-or-nothing; each must be settled, " +
+              "the job may still be running). Not combinable with --failed-only",
+          },
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<id>",
+        example: "evolve job retry cme12ab34 --failed-only",
+      },
       regrade: {
         summary: "Verifier-only re-run of a terminal job (the result IS a job)",
         flags: {
@@ -366,6 +411,14 @@ const GROUPS: Record<string, GroupSpec> = {
         maxPositionals: 1,
         positionalUsage: "<trial-id>",
         example: "evolve trial download cmt90ef12 --stream trace-stdout",
+      },
+      retry: {
+        summary: "Run one settled trial again (the result IS a job)",
+        flags: {},
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<trial-id>",
+        example: "evolve trial retry cmt90ef12",
       },
       regrade: {
         summary: "Verifier-only re-run of one trial (the result IS a job)",
@@ -1603,6 +1656,15 @@ export function buildJobInput(
   const provider =
     f.env !== undefined ? (f.env as EvalSandboxProvider) : base.sandbox_provider;
 
+  // Retry policy: the config file's `retry` object is the base and each flag
+  // overrides ITS field — Harbor's own CLI merge rule (their jobs.py applies
+  // --max-retries/--retry-include/--retry-exclude onto config.retry field by
+  // field). Omitted entirely, the server applies its fleet defaults.
+  const retry: RetryConfigInput = { ...(base.retry ?? {}) };
+  if (f["max-retries"] !== undefined) retry.max_retries = f["max-retries"] as number;
+  if (f["retry-include"] !== undefined) retry.include_exceptions = f["retry-include"] as string[];
+  if (f["retry-exclude"] !== undefined) retry.exclude_exceptions = f["retry-exclude"] as string[];
+
   return {
     ...(jobName !== undefined ? { job_name: jobName } : {}),
     datasets: selectors,
@@ -1611,6 +1673,7 @@ export function buildJobInput(
     ...(nConcurrent !== undefined ? { n_concurrent_trials: nConcurrent } : {}),
     ...(maxSpend !== undefined ? { max_trial_spend_usd: maxSpend } : {}),
     ...(provider !== undefined ? { sandbox_provider: provider } : {}),
+    ...(Object.keys(retry).length > 0 ? { retry } : {}),
     ...(agentEnv !== undefined ? { agent_env: agentEnv } : {}),
     ...(verifierEnv !== undefined ? { verifier_env: verifierEnv } : {}),
   };
@@ -1849,6 +1912,13 @@ function jobLines(e: Job): string[] {
   rows.push(["concurrency", String(e.n_concurrent_trials)]);
   rows.push(["max spend/trial", fmtUsd(e.max_trial_spend_usd)]);
   rows.push(["worst case", fmtUsd(e.worst_case_spend_usd)]);
+  // The retry policy and its consumption. "worst case" above already includes
+  // the (max_retries + 1) product; this row says why.
+  rows.push([
+    "retries",
+    `${e.retry.max_retries}/trial on infrastructure errors` +
+      ((e.stats.n_retries ?? 0) > 0 ? ` (${e.stats.n_retries} used)` : ""),
+  ]);
   rows.push(["provider", e.sandbox_provider]);
   rows.push(["spent", fmtUsd(e.stats.cost_usd)]);
   // Only the statuses actually present: the response names all of them (so a
@@ -1859,7 +1929,15 @@ function jobLines(e: Job): string[] {
     .join(" · ");
   if (histogram) rows.push(["trials", histogram]);
   for (const source of e.source_jobs) {
-    rows.push([source.action === "regrade" ? "regrade of" : "resume of", source.job_id]);
+    // One label per verb — the stored action IS the word.
+    rows.push([
+      source.action === "regrade"
+        ? "regrade of"
+        : source.action === "retry"
+          ? "retry of"
+          : "resume of",
+      source.job_id,
+    ]);
   }
   if (e.idempotent_replay) rows.push(["note", "idempotent replay of an existing job"]);
   if (e.failure) rows.push(["failure", `${e.failure.code}: ${e.failure.message}`]);
@@ -1986,6 +2064,20 @@ export function trialDetailLines(run: Trial): string[] {
   if (run.exception_info) {
     rows.push(["failure type", run.exception_info.exception_type]);
     rows.push(["failure detail", run.exception_info.exception_message]);
+  }
+  // ATTEMPT LINEAGE: one row per retried-away attempt, oldest first — the
+  // trial body above is the FINAL attempt, so a scored trial that took three
+  // attempts shows where the other two died and what they cost.
+  if (run.n_retries > 0) {
+    rows.push(["auto-retries", String(run.n_retries)]);
+    for (const attempt of run.retries) {
+      rows.push([
+        `attempt ${attempt.attempt_number}`,
+        `${attempt.exception_info.exception_type}` +
+          ` · spent ${fmtUsd(attempt.cost_usd)}` +
+          (attempt.settled_at ? ` · settled ${attempt.settled_at}` : ""),
+      ]);
+    }
   }
   if (run.session_ref) rows.push(["session", run.session_ref]);
   if (run.started_at) rows.push(["started", run.started_at]);
@@ -2532,6 +2624,36 @@ async function cmdJobResume(inv: Invocation, io: CliIO): Promise<number> {
   return 0;
 }
 
+async function cmdJobRetry(inv: Invocation, io: CliIO): Promise<number> {
+  // The selection grammar mirrors the API's XOR verbatim: -t/--trial names
+  // exact settled trials (all-or-nothing, job may still run), --failed-only
+  // narrows a terminal job to its failures, bare = the whole terminal job.
+  // The contradiction is refused HERE with the same sentence the server
+  // would use, so the caller never spends a round-trip on it.
+  const trialIds = inv.flags.trial as string[] | undefined;
+  const failedOnly = inv.flags["failed-only"] === true;
+  if (trialIds !== undefined && failedOnly) {
+    throw new CliUsageError(
+      '"job retry" takes EITHER -t/--trial OR --failed-only, not both — explicit ids are already a selection'
+    );
+  }
+  const req: RetryRequest = {};
+  if (trialIds !== undefined) req.trial_ids = trialIds;
+  if (failedOnly) req.failed_only = true;
+  const job = await jobs(clientConfig(inv)).retry(
+    await resolveJobId(inv, inv.positionals[0]),
+    req
+  );
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(job));
+  } else {
+    for (const line of jobLines(job)) io.out(line);
+    io.out("");
+    io.out(`Follow it with: evolve job show ${job.id}`);
+  }
+  return 0;
+}
+
 async function cmdJobRegrade(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
   const req: { statuses?: TrialStatus[]; task_name?: string } = {};
@@ -2681,6 +2803,20 @@ async function cmdTrialDownload(inv: Invocation, io: CliIO): Promise<number> {
     io.out(JSON.stringify({ path: targetDir, saved }));
   } else {
     io.out(`Saved ${targetDir}`);
+  }
+  return 0;
+}
+
+async function cmdTrialRetry(inv: Invocation, io: CliIO): Promise<number> {
+  // One settled trial, run again — the result IS a job, same output shape as
+  // every other job-creating verb.
+  const job = await trials(clientConfig(inv)).retry(inv.positionals[0]);
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(job));
+  } else {
+    for (const line of jobLines(job)) io.out(line);
+    io.out("");
+    io.out(`Follow it with: evolve job show ${job.id}`);
   }
   return 0;
 }
@@ -3040,10 +3176,12 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "job cancel": cmdJobCancel,
   "job stop": cmdJobStop,
   "job resume": cmdJobResume,
+  "job retry": cmdJobRetry,
   "job regrade": cmdJobRegrade,
   "job download": cmdJobDownload,
   "trial show": cmdTrialShow,
   "trial download": cmdTrialDownload,
+  "trial retry": cmdTrialRetry,
   "trial regrade": cmdTrialRegrade,
   "trial stop": cmdTrialStop,
   "dataset list": cmdDatasetList,

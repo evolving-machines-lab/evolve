@@ -57,6 +57,15 @@ info:
     - **Resume semantics.** `POST /api/jobs/{jobId}/resume` creates a NEW
       linked job (`source_jobs`), keeping the original immutable and
       separately citable. It never mutates the source job.
+    - **Retry semantics.** `POST /api/jobs/{jobId}/retry` and
+      `POST /api/trials/{trialId}/retry` are the manual verb: run
+      caller-SELECTED settled trials again (explicit ids, the failed ones,
+      or the whole job). Same derived-job law as resume — a NEW linked job
+      (`source_jobs` records `action: "retry"`), the source never mutated.
+      Where Harbor's hosted branch re-opens the SAME job with fresh pending
+      attempts, a finished job here is immutable — its numbers are settled
+      and separately citable — so the retry is a new job. That is the one
+      named deviation.
     - **Compare cap.** `GET /api/jobs/compare` takes 2–10 ids. Bounded, not
       unbounded: one GET must not become an unbounded server-side fan-out.
 
@@ -86,9 +95,9 @@ security:
 
 tags:
   - name: jobs
-    description: Create, read, watch, cancel, resume, regrade, download, compare.
+    description: Create, read, watch, cancel, resume, retry, regrade, download, compare.
   - name: trials
-    description: Globally addressable trials — read, trace, regrade, stop.
+    description: Globally addressable trials — read, trace, retry, regrade, stop.
   - name: datasets
     description: Catalog, publish (async import), package download, activation.
   - name: agents
@@ -360,7 +369,12 @@ paths:
         Event types (frozen): `job.created`, `job.running`, `job.cancelling`,
         `job.cancelled`, `job.completed`, `job.failed` (reserved — declared
         terminal, no server path emits it today), `trial.running`,
-        `trial.scoring`, `trial.spend`, `trial.settled`.
+        `trial.scoring`, `trial.spend`, `trial.settled`, `trial.retrying`.
+
+        A retried trial emits `trial.settled` for the failure it just
+        recorded, then `trial.retrying` when the policy puts it back on the
+        queue — a watcher that treats `trial.settled` as final must check for
+        a following `trial.retrying` on the same trial.
 
         Resume with the standard `Last-Event-ID` header or `?after=<seq>` —
         both mean "events strictly after this sequence number". Heartbeat
@@ -495,6 +509,99 @@ paths:
           description: >
             Source not terminal (`job_not_terminal`), nothing to resume
             (`no_failed_trials`), or `idempotency_key_reused`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/jobs/{jobId}/retry:
+    post:
+      tags: [jobs]
+      operationId: retryJob
+      summary: Retry selected trials (new linked job over caller-selected trials)
+      description: |
+        MANUAL retry: creates a NEW job holding fresh trials for
+        caller-SELECTED trials of the source, linked back via `source_jobs`
+        (`action: "retry"`). The source job is never mutated.
+
+        The body selects the trials — `trial_ids` XOR `failed_only`:
+        - Omitted body (or `{}`): every trial of the job. The source must be
+          terminal (on a live job the selection changes under the request).
+        - `failed_only: true`: the source's failed trials
+          (SCORING_ERROR, INFRASTRUCTURE_ERROR, INDETERMINATE). Stopped
+          (CANCELLED) and scored trials are not failures — retry them via
+          `trial_ids`, or use resume for stopped work. Source must be
+          terminal; an empty selection is refused (`no_failed_trials`).
+        - `trial_ids`: exactly these trials, all-or-nothing — an unknown id
+          (or one from another job) refuses the whole request
+          (`trial_not_found`). Each named trial must be SETTLED
+          (SCORED, SCORING_ERROR, INFRASTRUCTURE_ERROR, INDETERMINATE,
+          CANCELLED) — still-live ids are refused (`trial_not_settled`) —
+          but the JOB may still be running: a settled trial's facts are
+          final. Passing both `trial_ids` and `failed_only` is a
+          contradiction (400).
+
+        Retry differs from resume ON PURPOSE: resume answers "finish what
+        broke" (failures and stopped work), retry answers "run THESE again"
+        — a scored trial is a legitimate target (flaky task, changed world,
+        fresh sample). Harbor's hosted branch re-opens the SAME job with
+        fresh pending attempts; here the retry is a NEW job because a
+        finished job's numbers are immutable — the one named deviation.
+
+        Supports `Idempotency-Key` with a fingerprint over the RESOLVED
+        selection, namespaced to this route: two retries of one source
+        selecting different trials are different requests, and a create or
+        resume key can never replay a retry.
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RetryRequest'
+      responses:
+        '202':
+          description: The new linked job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '200':
+          description: Idempotent replay of an identical retry request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '402':
+          description: Out of credits (`insufficient_credits`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: >
+            Job not found (`job_not_found`), or a named trial id is not this
+            job's (`trial_not_found` — all-or-nothing, the message names the
+            missing ids).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: >
+            Source not terminal in job mode (`job_not_terminal`), a named
+            trial still live (`trial_not_settled`), no failed trials under
+            `failed_only` (`no_failed_trials`), or `idempotency_key_reused`.
           content:
             application/json:
               schema:
@@ -807,6 +914,68 @@ paths:
           description: >
             `job_not_terminal`, `no_regradable_trials`, or
             `regrade_source_ineligible`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/trials/{trialId}/retry:
+    post:
+      tags: [trials]
+      operationId: retryTrial
+      summary: Retry one settled trial
+      description: |
+        Run ONE settled trial again. **The response is a Job** — a one-trial
+        retry job inheriting the source job's config, with `source_jobs`
+        recording `action: "retry"`; view it with `GET /api/jobs/{jobId}`
+        (the 202 carries a `Location` header naming it). The source trial is
+        immutable.
+
+        The same operation as `POST /api/jobs/{jobId}/retry` with
+        `{"trial_ids": [this]}` — one selection rule, one builder, one
+        fingerprint — kept as its own door because the trial page (and
+        Harbor's hosted `trial retry <id>`) address the trial, not the job.
+        The source JOB may still be running: a settled trial's facts are
+        final, so "run it again" is well-defined the moment it settles.
+
+        Supports `Idempotency-Key` — the identical fingerprint the job-level
+        door computes for this one-trial selection, because it IS the
+        identical request.
+      parameters:
+        - $ref: '#/components/parameters/TrialId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: >
+            The retry job. `Location` names it (`/api/jobs/{jobId}`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '200':
+          description: Idempotent replay of an identical retry request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '402':
+          description: Out of credits (`insufficient_credits`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: >
+            Trial still live (`trial_not_settled` — QUEUED, RUNNING, and
+            SCORING trials cannot be retried), or `idempotency_key_reused`.
           content:
             application/json:
               schema:
@@ -1747,6 +1916,8 @@ components:
         - job_not_terminal
         - no_failed_trials
         - trial_not_found
+        # Manual retry: a named trial is still live (QUEUED/RUNNING/SCORING)
+        - trial_not_settled
         - concurrent_update
         # Regrade
         - regrade_source_ineligible
@@ -2035,13 +2206,15 @@ components:
       description: >
         Provenance of a derived job. `action: regrade` = verifier-only re-run
         of the source; `action: resume` (platform extension) = new job over
-        the source's failed and stopped trials. `type` is always `hub` on
-        this hosted surface.
+        the source's failed and stopped trials; `action: retry` = manual
+        retry — new job over caller-SELECTED source trials (explicit ids,
+        failed-only, or the whole job). `type` is always `hub` on this
+        hosted surface.
       required: [action, type, job_id]
       properties:
         action:
           type: string
-          enum: [regrade, resume]
+          enum: [regrade, resume, retry]
         type:
           type: string
           enum: [hub]
@@ -2097,6 +2270,8 @@ components:
             tuned it).
         sandbox_provider:
           $ref: '#/components/schemas/SandboxProvider'
+        retry:
+          $ref: '#/components/schemas/RetryConfigInput'
         agent_env:
           type: object
           additionalProperties:
@@ -2113,6 +2288,121 @@ components:
             Env injected into every verifier run — same pass-through
             contract.
 
+    RetryConfigInput:
+      type: object
+      description: |
+        Auto-retry policy — Harbor's RetryConfig vocabulary verbatim
+        (their models/job/config.py RetryConfig). Only trials that settle
+        INFRASTRUCTURE_ERROR are ever considered (platform law: a
+        verifier-visible outcome never re-runs the agent on its own); the
+        include/exclude sets refine WITHIN that class by exception name,
+        with exclude taking precedence over include, exactly Harbor's rule.
+
+        Every omitted field takes Harbor's own default, with ONE named
+        deviation: `max_retries` omitted takes the PLATFORM's fleet default
+        (published as `limits.job.default_max_retries` on /api/meta, 2
+        unless the operator tuned it) rather than Harbor's 0 — on a hosted
+        fleet an infrastructure error is usually the platform's weather, and
+        such failures retry automatically. Send `max_retries: 0` to turn
+        retries off.
+
+        Each attempt carries the job's FULL per-trial spend cap (a fresh
+        gateway key per attempt), and the job's `worst_case_spend_usd`
+        states the (max_retries + 1) product outright.
+      properties:
+        max_retries:
+          type: integer
+          minimum: 0
+          maximum: 10
+          description: >
+            Maximum automatic retries per trial. Omitted = the fleet
+            default; 0 = off.
+        include_exceptions:
+          type: [array, 'null']
+          items:
+            type: string
+          description: >
+            Exception types to retry on. Null, omitted, or the EMPTY array =
+            no filter (Harbor: retries all exceptions the exclude set admits —
+            their include check is guarded by `if include_exceptions and ...`,
+            so the empty set turns the filter off, same as None; an empty
+            array is echoed back as sent but filters nothing).
+        exclude_exceptions:
+          type: [array, 'null']
+          items:
+            type: string
+          description: |
+            Exception types to NOT retry on; takes precedence over
+            include_exceptions. Omitted = Harbor's default set:
+            AgentTimeoutError, VerifierTimeoutError, RewardFileNotFoundError,
+            RewardFileEmptyError, VerifierOutputParseError, ApiUsageLimitError,
+            AgentSafetyRefusalError, AgentAuthenticationError,
+            ModelNotFoundError. An EXPLICIT null is not the same as omitting
+            the field: null disables exclusions entirely — every exception
+            the include set admits is retried, the default set included —
+            exactly Harbor's None (their field is typed `set[str] | None`
+            with the default set as its default_factory, and their exclude
+            check is guarded by `if exclude_exceptions and ...`, so None
+            turns it off). A config file written for Harbor means the same
+            thing here. On this platform a failure's exception name
+            is InfrastructureError, refined by cause where the semantics
+            match Harbor's names — a gateway credential refusal adjudicates
+            as AgentAuthenticationError, a model that never served as
+            ModelNotFoundError — so the default set means what it means in
+            Harbor: failures that would re-fail identically are not retried.
+        wait_multiplier:
+          type: number
+          minimum: 0
+          default: 1.0
+          description: Multiplier for exponential backoff wait time.
+        min_wait_sec:
+          type: number
+          minimum: 0
+          default: 1.0
+          description: Minimum wait in seconds between retries.
+        max_wait_sec:
+          type: number
+          minimum: 0
+          maximum: 3600
+          default: 60.0
+          description: >
+            Maximum wait in seconds between retries. The platform caps it at
+            3600 — a job must not park itself for a day.
+
+    RetryConfig:
+      type: object
+      description: >
+        The RESOLVED auto-retry policy a job runs under, echoed on every job
+        body — the caller's values or the defaults of the day, resolved at
+        create and stored, so the row always states the policy it executes.
+        Backoff between attempts is Harbor's formula:
+        min(min_wait_sec x wait_multiplier^attempt, max_wait_sec).
+      required:
+        - max_retries
+        - include_exceptions
+        - exclude_exceptions
+        - wait_multiplier
+        - min_wait_sec
+        - max_wait_sec
+      properties:
+        max_retries:
+          type: integer
+          minimum: 0
+        include_exceptions:
+          type: [array, 'null']
+          items:
+            type: string
+        exclude_exceptions:
+          type: array
+          items:
+            type: string
+        wait_multiplier:
+          type: number
+        min_wait_sec:
+          type: number
+        max_wait_sec:
+          type: number
+
     ResumeRequest:
       type: object
       description: Body of POST /api/jobs/{jobId}/resume.
@@ -2127,6 +2417,32 @@ components:
             `CancelledError`) and still-QUEUED trials of a cancelled source.
           items:
             type: string
+
+    RetryRequest:
+      type: object
+      description: |
+        Body of POST /api/jobs/{jobId}/retry — the selection, `trial_ids`
+        XOR `failed_only`. Omitted (or `{}`) selects every trial of the
+        (terminal) job. Passing both is a contradiction (400).
+      properties:
+        trial_ids:
+          type: array
+          minItems: 1
+          description: |
+            Exactly these trials of the source job, all-or-nothing: an
+            unknown id refuses the whole request. Each named trial must be
+            settled (SCORED, SCORING_ERROR, INFRASTRUCTURE_ERROR,
+            INDETERMINATE, CANCELLED); the job itself may still be running.
+            Duplicates are deduplicated.
+          items:
+            type: string
+        failed_only:
+          type: boolean
+          description: |
+            Select the source's failed trials only (SCORING_ERROR,
+            INFRASTRUCTURE_ERROR, INDETERMINATE). Stopped (CANCELLED) and
+            scored trials are not failures — name them in `trial_ids`, or
+            use resume for stopped work.
 
     RegradeRequest:
       type: object
@@ -2237,6 +2553,9 @@ components:
         n_retries:
           type: integer
           minimum: 0
+          description: >
+            Total automatic retries the job's trials consumed (the sum of
+            every trial's n_retries) — Harbor's cumulative counter.
         evals:
           type: object
           description: >
@@ -2286,6 +2605,7 @@ components:
         - n_concurrent_trials
         - max_trial_spend_usd
         - worst_case_spend_usd
+        - retry
         - sandbox_provider
         - counts
         - n_total_trials
@@ -2328,10 +2648,14 @@ components:
         worst_case_spend_usd:
           type: number
           description: |
-            The most this job can cost: every trial spending its whole cap.
-            Stated outright — the per-trial cap is the only enforcement, so
-            the product is the number someone approving a 500-trial run
-            actually needs to see.
+            The most this job can cost: every trial spending its whole cap on
+            every attempt the retry policy allows — cap x trials x
+            (retry.max_retries + 1), since each attempt is minted its own
+            full cap. Stated outright — the per-trial cap is the only
+            enforcement, so the product is the number someone approving a
+            500-trial run actually needs to see.
+        retry:
+          $ref: '#/components/schemas/RetryConfig'
         sandbox_provider:
           $ref: '#/components/schemas/SandboxProvider'
         counts:
@@ -2581,6 +2905,8 @@ components:
         - reward
         - verifier_result
         - exception_info
+        - n_retries
+        - retries
         - started_at
         - finished_at
       properties:
@@ -2682,6 +3008,21 @@ components:
           oneOf:
             - $ref: '#/components/schemas/AttemptPhase'
             - type: 'null'
+        n_retries:
+          type: integer
+          minimum: 0
+          description: >
+            Automatic retries this trial consumed (0 = never retried). The
+            trial body always shows the LATEST attempt; `retries` holds the
+            lineage behind it.
+        retries:
+          type: array
+          description: >
+            Attempt lineage: the earlier attempts whose failure was retried
+            away, oldest first. The final attempt's outcome is the trial body
+            itself and is not repeated here; a never-retried trial answers [].
+          items:
+            $ref: '#/components/schemas/TrialRetry'
         session_ref:
           type: [string, 'null']
           description: Reference to the agent session/trace, when recorded.
@@ -2691,6 +3032,33 @@ components:
         finished_at:
           type: [string, 'null']
           format: date-time
+
+    TrialRetry:
+      type: object
+      description: >
+        One retired attempt of a trial — the terminal facts preserved when
+        the auto-retry scheduler put the trial back on the queue. Its spend
+        is REAL money the job total includes; the trial's own
+        `agent_result.cost_usd` carries only the final attempt's.
+      required: [attempt_number, exception_info, cost_usd, started_at, settled_at]
+      properties:
+        attempt_number:
+          type: integer
+          minimum: 1
+          description: 1-based dispatch number within this trial.
+        exception_info:
+          $ref: '#/components/schemas/ExceptionInfo'
+        cost_usd:
+          type: [number, 'null']
+          description: What THIS attempt spent; null when nothing was recorded.
+        started_at:
+          type: [string, 'null']
+          format: date-time
+          description: When the attempt was claimed.
+        settled_at:
+          type: [string, 'null']
+          format: date-time
+          description: When its failure settled (and the retry was scheduled).
 
     TrialPage:
       type: object
@@ -2920,6 +3288,7 @@ components:
         - $ref: '#/components/schemas/TrialScoringEvent'
         - $ref: '#/components/schemas/TrialSpendEvent'
         - $ref: '#/components/schemas/TrialSettledEvent'
+        - $ref: '#/components/schemas/TrialRetryingEvent'
       discriminator:
         propertyName: type
         mapping:
@@ -2933,6 +3302,7 @@ components:
           trial.scoring: '#/components/schemas/TrialScoringEvent'
           trial.spend: '#/components/schemas/TrialSpendEvent'
           trial.settled: '#/components/schemas/TrialSettledEvent'
+          trial.retrying: '#/components/schemas/TrialRetryingEvent'
 
     EventSeq:
       type: integer
@@ -3059,6 +3429,18 @@ components:
         data:
           $ref: '#/components/schemas/TrialSettledData'
 
+    TrialRetryingEvent:
+      type: object
+      required: [seq, type, data]
+      properties:
+        seq:
+          $ref: '#/components/schemas/EventSeq'
+        type:
+          type: string
+          const: trial.retrying
+        data:
+          $ref: '#/components/schemas/TrialRetryingData'
+
     JobCreatedData:
       type: object
       description: >
@@ -3073,6 +3455,7 @@ components:
         - max_trial_spend_usd
         - sandbox_provider
         - trial_count
+        - retry
       properties:
         datasets:
           type: array
@@ -3094,6 +3477,8 @@ components:
           $ref: '#/components/schemas/SandboxProvider'
         trial_count:
           type: integer
+        retry:
+          $ref: '#/components/schemas/RetryConfig'
 
     JobRunningData:
       type: object
@@ -3222,6 +3607,33 @@ components:
           oneOf:
             - $ref: '#/components/schemas/AttemptPhase'
             - type: 'null'
+
+    TrialRetryingData:
+      type: object
+      description: >
+        The auto-retry policy put a failed trial back on the queue. Follows
+        the `trial.settled` of the failure it retries; the trial will run
+        again no earlier than `delay_sec` from this event.
+      required: [trial_id, task_name, retry, max_retries, delay_sec, exception_type]
+      properties:
+        trial_id:
+          type: string
+          format: uuid
+        task_name:
+          type: string
+        retry:
+          type: integer
+          minimum: 1
+          description: Which retry this is (1-based).
+        max_retries:
+          type: integer
+          description: The policy's budget, for "retry 2/3" displays.
+        delay_sec:
+          type: number
+          description: The backoff applied before the trial is claimable again.
+        exception_type:
+          type: string
+          description: The exception name the adjudication ran under.
 
     # -------------------------------------------------------------------------
     # Datasets
@@ -4061,6 +4473,15 @@ components:
                       type: integer
                 default_max_trial_spend_usd:
                   type: number
+                default_max_retries:
+                  type: integer
+                  description: >
+                    Applied to retry.max_retries when the create request
+                    omits it — the auto-retry fleet default (the named
+                    Harbor deviation; their local default is 0).
+                max_retries_ceiling:
+                  type: integer
+                  description: The most retries a request may ask for.
                 default_sandbox_provider:
                   type: string
                 default_sizing:

@@ -69,6 +69,8 @@ import type {
   PublishDatasetInput,
   RegradeRequest,
   ResumeRequest,
+  RetryConfig,
+  RetryRequest,
   SourceJob,
   SpendSource,
   StartJobOptions,
@@ -84,6 +86,7 @@ import type {
   TrialCounts,
   TrialList,
   TrialPage,
+  TrialRetry,
   TrialStatus,
   TrialsClient,
   UpstreamStatus,
@@ -180,6 +183,9 @@ export type {
   PublishDatasetInput,
   RegradeRequest,
   ResumeRequest,
+  RetryConfig,
+  RetryConfigInput,
+  RetryRequest,
   SourceJob,
   SpendSource,
   StartJobOptions,
@@ -197,6 +203,7 @@ export type {
   TrialCounts,
   TrialList,
   TrialPage,
+  TrialRetry,
   TrialStatus,
   TrialStatusTally,
   TrialsClient,
@@ -580,6 +587,41 @@ function mapSourceJob(raw: Record<string, unknown>): SourceJob {
   };
 }
 
+/**
+ * The resolved retry policy off a job body. Tolerant of an OLDER server that
+ * does not send one yet: the absent-field reading is the retries-off policy
+ * with Harbor's defaults — exactly how such a server behaves.
+ */
+function mapRetryConfig(raw: unknown): RetryConfig {
+  const value = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  return {
+    max_retries: typeof value.max_retries === "number" ? value.max_retries : 0,
+    include_exceptions: Array.isArray(value.include_exceptions)
+      ? (value.include_exceptions as string[])
+      : null,
+    exclude_exceptions: Array.isArray(value.exclude_exceptions)
+      ? (value.exclude_exceptions as string[])
+      : [],
+    wait_multiplier: typeof value.wait_multiplier === "number" ? value.wait_multiplier : 1.0,
+    min_wait_sec: typeof value.min_wait_sec === "number" ? value.min_wait_sec : 1.0,
+    max_wait_sec: typeof value.max_wait_sec === "number" ? value.max_wait_sec : 60.0,
+  };
+}
+
+/** One retired attempt of a trial (the auto-retry lineage). */
+function mapTrialRetry(raw: Record<string, unknown>): TrialRetry {
+  return {
+    attempt_number: raw.attempt_number as number,
+    exception_info: (raw.exception_info as ExceptionInfo) ?? {
+      exception_type: "InfrastructureError",
+      exception_message: "",
+    },
+    cost_usd: (raw.cost_usd as number | null) ?? null,
+    started_at: (raw.started_at as string | null) ?? null,
+    settled_at: (raw.settled_at as string | null) ?? null,
+  };
+}
+
 /** ONE job mapper for every call — nothing conditional, because nothing is optional. */
 function mapJob(raw: Record<string, unknown>): Job {
   const trials = (raw.trials ?? {}) as Record<string, unknown>;
@@ -593,6 +635,7 @@ function mapJob(raw: Record<string, unknown>): Job {
     n_concurrent_trials: raw.n_concurrent_trials as number,
     max_trial_spend_usd: raw.max_trial_spend_usd as number,
     worst_case_spend_usd: raw.worst_case_spend_usd as number,
+    retry: mapRetryConfig(raw.retry),
     sandbox_provider: raw.sandbox_provider as EvalSandboxProvider,
     counts: raw.counts as Job["counts"],
     n_total_trials: (raw.n_total_trials as number) ?? 0,
@@ -698,6 +741,12 @@ function mapTrial(raw: Record<string, unknown>): Trial {
     verifier_environment_mode:
       (raw.verifier_environment_mode as VerifierEnvironmentMode | null) ?? null,
     attempt_phase: (raw.attempt_phase as AttemptPhase | null) ?? null,
+    // Auto-retry lineage. An older server sends neither key; 0 / [] is
+    // exactly what such a server's behavior means.
+    n_retries: (raw.n_retries as number) ?? 0,
+    retries: Array.isArray(raw.retries)
+      ? (raw.retries as Record<string, unknown>[]).map(mapTrialRetry)
+      : [],
     session_ref: (raw.session_ref as string | null) ?? null,
     started_at: (raw.started_at as string | null) ?? null,
     finished_at: (raw.finished_at as string | null) ?? null,
@@ -1883,6 +1932,32 @@ export function jobs(config?: HostedClientConfig): JobsClient {
       return mapJob((await res.json()) as Record<string, unknown>);
     },
 
+    async retry(
+      id: string,
+      req?: RetryRequest,
+      options?: StartJobOptions
+    ): Promise<Job> {
+      // Manual retry — the selection rides the body verbatim (trial_ids XOR
+      // failed_only; {} = the whole terminal job) and the server owns every
+      // refusal. Same Idempotency-Key plumbing as resume, under retry's own
+      // server-side fingerprint.
+      const res = await request(
+        cfg,
+        `/api/jobs/${encodeURIComponent(id)}/retry`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(options?.idempotencyKey
+              ? { "Idempotency-Key": options.idempotencyKey }
+              : {}),
+          },
+          body: JSON.stringify(req ?? {}),
+        }
+      );
+      return mapJob((await res.json()) as Record<string, unknown>);
+    },
+
     async regrade(id: string, req?: RegradeRequest): Promise<Job> {
       // A regrade IS a job: the response is the ordinary job body with
       // source_jobs recording {action: "regrade"} — view it with get().
@@ -2008,6 +2083,23 @@ export function trials(config?: HostedClientConfig): TrialsClient {
       return mapJob((await res.json()) as Record<string, unknown>);
     },
 
+    async retry(trialId: string, options?: StartJobOptions): Promise<Job> {
+      // A one-trial retry is still a JOB — same body, source_jobs recording
+      // {action: "retry"}. Identical to jobs().retry(jobId, {trial_ids:
+      // [trialId]}) down to the idempotency fingerprint.
+      const res = await request(
+        cfg,
+        `/api/trials/${encodeURIComponent(trialId)}/retry`,
+        {
+          method: "POST",
+          ...(options?.idempotencyKey
+            ? { headers: { "Idempotency-Key": options.idempotencyKey } }
+            : {}),
+        }
+      );
+      return mapJob((await res.json()) as Record<string, unknown>);
+    },
+
     async stop(trialIds: string[]): Promise<StopResponse> {
       const res = await request(cfg, "/api/trials/stop", {
         method: "POST",
@@ -2099,7 +2191,7 @@ export interface HostedEvolve {
   readonly datasets: DatasetsClient;
   /** Your own bring-your-own agent registrations. */
   readonly agents: AgentsClient;
-  /** Jobs: start, watch, compare, resume, regrade, download. */
+  /** Jobs: start, watch, compare, resume, retry, regrade, download. */
   readonly jobs: JobsClient;
   /** Globally addressable trials: get, trace, artifact, regrade, stop. */
   readonly trials: TrialsClient;

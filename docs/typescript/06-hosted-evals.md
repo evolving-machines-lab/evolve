@@ -88,15 +88,43 @@ datasets: [
 ],
 ```
 
-Every job response is the same shape, whatever produced it. `start()`, `get()`, `cancel()`, `resume()`, `regrade()` and each row of `list()` carry the same fields, so a job card renders from any of them without your knowing which call it came from. `counts` is entity cardinality — the parts a job is made of — and `trials` is the one "how many" structure: a total plus a status histogram that names every status, zeros included, so a status bar never needs the enum hardcoded. `job_name` is a user-facing label — pass one or take the server's.
+Every job response is the same shape, whatever produced it. `start()`, `get()`, `cancel()`, `resume()`, `retry()`, `regrade()` and each row of `list()` carry the same fields, so a job card renders from any of them without your knowing which call it came from. `counts` is entity cardinality — the parts a job is made of — and `trials` is the one "how many" structure: a total plus a status histogram that names every status, zeros included, so a status bar never needs the enum hardcoded. `job_name` is a user-facing label — pass one or take the server's.
 
 ### Money
 
 `max_trial_spend_usd` caps what a single trial may spend on model calls, and it is the only spend limit the platform enforces: every trial runs on its own freshly minted gateway key, and the cap is that key's budget. Leave it out and the platform applies its published default ($200 per trial). The response always reports the cap that actually applied — `job.max_trial_spend_usd` — so an omitted one is never a mystery.
 
-There is no job-wide budget, which means a job's real ceiling is simply its trial count times that cap. The response states it for you as `job.worst_case_spend_usd`, so you can see what a large matrix commits you to before it starts running. Your account credit balance is the hard backstop underneath: when the balance runs out, spending stops mid-job whatever the caps say, and starting a job while the balance is already at zero is refused up front with a `402 insufficient_credits`. A trial that exhausts its own cap is not a failure — the agent just runs out of budget, and the trial is still scored on whatever it produced.
+There is no job-wide budget. A job's real ceiling is its trial count times that cap **times the attempts the retry policy allows**: infrastructure failures re-run automatically ([Automatic retries](#automatic-retries)), and each attempt is minted its own full per-trial cap — a retry is a fresh run, not a discounted one. So the ceiling is `max_trial_spend_usd × trials × (retry.max_retries + 1)`, which with the fleet default of 2 retries is three times the single-attempt product. The response states it for you as `job.worst_case_spend_usd`, so the number you approve before a large matrix starts running is the honest one. Your account credit balance is the hard backstop underneath: when the balance runs out, spending stops mid-job whatever the caps say, and starting a job while the balance is already at zero is refused up front with a `402 insufficient_credits`. A trial that exhausts its own cap is not a failure — the agent just runs out of budget, and the trial is still scored on whatever it produced.
 
 Runs on your own provider key are the one exception to the credit ledger. When a [managed BYO provider key](./01-getting-started.md#managed-byo-provider-keys) is enabled for the model's provider, the trial's model calls bill your provider account directly and draw no Evolve credits — the per-trial cap still meters and bounds the trial exactly as before. The exception is about who pays, not about the gate at the door: the zero-balance check runs on every job create and every `resume()`, BYOK included, so keep a non-zero balance even if you run BYOK-only.
+
+### Automatic retries
+
+An infrastructure failure — a sandbox that died mid-run, a worker whose lease expired, a box that never booted — is usually the platform's weather, not a verdict on your task. Trials that settle `INFRASTRUCTURE_ERROR` are therefore put back on the queue automatically, up to `max_retries` times each (fleet default 2, published as `limits.job.default_max_retries` in the [capability document](#what-the-platform-supports)). No other status ever re-runs on its own: a scored zero, a `SCORING_ERROR`, an `INDETERMINATE` are verdicts about the run, and they stand.
+
+The policy is Harbor's RetryConfig vocabulary, verbatim, passed as `retry` on `start()` — and the response echoes the **resolved** policy on every job body, so the row always states what it runs under:
+
+```ts
+const job = await evals.start({
+    datasets: [{ name: "deep-swe" }],
+    agents: [{ name: "codex", model_name: "gpt-5.5" }],
+    retry: {
+        max_retries: 3,           // 0 turns retries off; omitted = fleet default (2)
+        include_exceptions: null, // null, omitted, or [] = no filter
+        exclude_exceptions: ["AgentAuthenticationError"],  // wins over include
+        wait_multiplier: 2,       // backoff: min_wait_sec × multiplier^attempt, capped at max_wait_sec
+        min_wait_sec: 1,
+        max_wait_sec: 60,
+    },
+});
+console.log(job.retry);           // the RESOLVED policy, every field present
+```
+
+The include/exclude sets refine *within* the infrastructure class by exception name, exclude winning over include — Harbor's rule. A gateway credential refusal adjudicates as `AgentAuthenticationError` and a model that never served as `ModelNotFoundError`; everything else is `InfrastructureError`. Omitting `exclude_exceptions` keeps Harbor's default non-retryable set (auth refusals, timeouts, and the other failures that would re-fail identically). An **explicit** `exclude_exceptions: null` is different from omitting it: null turns exclusions off entirely — Harbor's own `None` semantics — so everything the include set admits is retried. `include_exceptions` has no such split: null, omitted, and the empty array `[]` all mean no filter — Harbor's include check treats the empty set exactly like `None`, so an empty array never means "retry nothing".
+
+A retried trial keeps its receipts. `trial.n_retries` counts the requeues, and `trial.retries` lists each retired attempt with its exception, its spend, and its clocks — so a scored trial that took three attempts is auditable without archaeology, and the job's `stats.n_retries` is the consumed-retry sum across all trials. Each attempt spends against its own full per-trial cap, and every retired attempt's real spend stays in the job total — which is why `worst_case_spend_usd` carries the `(max_retries + 1)` product ([Money](#money)).
+
+On the stream, a requeue emits `trial.retrying` right after the `trial.settled` that recorded the failure. That means **`trial.settled` is not final** for a trial the policy may still re-run: a watcher that treats it as terminal must check for a following `trial.retrying` on the same trial. From the CLI, `-r/--max-retries` and the repeatable `--retry-include`/`--retry-exclude` set the same fields, merging field-by-field over a `--config` file's `retry` object ([CLI](#cli)).
 
 ### Shape and ceilings
 
@@ -175,6 +203,8 @@ const final = await evals.watch(job.id, {
 ```
 
 The stream replays from the beginning, so attaching late loses nothing. The parser honors every line terminator the SSE grammar names — CRLF, LF, and a lone CR — even when one arrives split across network chunks. On disconnect it resumes from the last sequence number with exponential backoff — no gaps, no duplicates. Once the job reaches a terminal status, the handle resolves with the final `Job`.
+
+One caveat for watchers that key off `trial.settled`: it is not final for a trial the [auto-retry policy](#automatic-retries) may still re-run. When an infrastructure failure is retried, a `trial.retrying` event follows the `trial.settled` that recorded it, and the trial runs again — treat a settle as that trial's last word only when no `trial.retrying` follows it.
 
 ### Live cost and live tokens
 
@@ -274,6 +304,8 @@ Every phase's wall-clock is a **start/stop pair**, never a duration: `environmen
 
 `attempt_phase` answers the question `RUNNING` alone cannot: which step the trial is in (`prepare`, `build`, `boot`, `install`, `agent`, `verify`, `persist`), so a polling caller can tell a slow environment build from a slow agent.
 
+A trial the [auto-retry policy](#automatic-retries) re-ran carries its history: `n_retries` counts the requeues, and `retries` lists each retired attempt — `attempt_number`, its `exception_info`, its `cost_usd` (real spend the job total includes), and its clocks. The trial body itself always describes the **final** attempt; the lineage is where the earlier ones live.
+
 ### The trace
 
 Fetch a trial's recorded event timeline:
@@ -362,6 +394,35 @@ await evals.resume(job.id, { filter_error_types: ["InfrastructureError"] });
 
 ---
 
+## Retry
+
+`retry()` is the manual verb beside resume's automatic one, and the two answer different questions on purpose. Resume answers *"finish what broke"* — it picks up failures and stopped work, and never touches a scored trial. Retry answers *"run THESE again"*: you choose the trials, and a scored trial is a legitimate target — a flaky task, a changed world, one more sample. Like resume, it creates a **new linked job** inheriting the source's config; the source is never mutated, and the new job's `source_jobs` records `action: "retry"`:
+
+```ts
+// The whole job again (source must be terminal)
+const again = await evals.retry(job.id);
+console.log(again.source_jobs);   // [{ action: "retry", type: "hub", job_id: job.id }]
+
+// Only the failed trials (SCORING_ERROR, INFRASTRUCTURE_ERROR, INDETERMINATE)
+await evals.retry(job.id, { failed_only: true });
+
+// Exactly these trials — all-or-nothing, and the JOB may still be running:
+// a settled trial's facts are final, so it can retry the moment it settles
+await evals.retry(job.id, { trial_ids: [trialA, trialB] });
+
+// One trial, from the trials client — the same operation, addressed by the
+// trial you are holding
+const oneMore = await t.retry(trialId);
+```
+
+The selection is `trial_ids` XOR `failed_only` — both together is a `400` contradiction. In `trial_ids` mode every named trial must be **settled** (`SCORED`, `SCORING_ERROR`, `INFRASTRUCTURE_ERROR`, `INDETERMINATE`, or `CANCELLED`); a still-live id refuses the whole request with `409 trial_not_settled`, and an id that is not this job's refuses it with `404 trial_not_found` — a partial retry that silently dropped half the selection would read as a full one. The whole-job and `failed_only` modes require a terminal source (`409 job_not_terminal` — on a live job the selection would change under the request), and `failed_only` with nothing failed answers `409 no_failed_trials`; stopped (`CANCELLED`) trials are not failures — name them in `trial_ids`, or use `resume()`, which exists for exactly that.
+
+Both doors take an `Idempotency-Key` (the `{ idempotencyKey }` option). The fingerprint covers the **resolved selection** under this verb's own namespace: two retries of one source selecting different trials are different requests, the trial door and the job door replay each other for the identical one-trial request, and a create or resume key can never replay a retry.
+
+One deviation from Harbor is deliberate and named: Harbor's hosted `trial retry` re-opens the *same* job with fresh pending attempts. Here a finished job is immutable — its numbers are settled and separately citable — so the retry is a new job linked via `source_jobs`, exactly like resume and regrade.
+
+---
+
 ## Regrade
 
 A regrade re-runs **only the verifier**. The trial's recorded submission — the patch and artifacts captured when it ran — is restored into a fresh, sealed verifier sandbox and scored again; the agent phase is never re-run, and the source trial is never modified. Use it when a verifier was fixed or tightened and you want the same agent work re-scored under it, without paying for a single new agent run.
@@ -434,8 +495,8 @@ The archive unpacks to Harbor's job layout — a job-level `config.json` and `re
 The SDK ships an `evolve` binary — a thin shell over the five clients. The grammar is noun-verb: `evolve <noun> <verb>`. `run` also stands on its own at the top level, taking `job start`'s flags and documenting itself as `evolve run`. Singular nouns are canonical; `job`, `trial` and `dataset` also answer to their plurals as hidden aliases, as does `ls` for `list`. The plural `agents` is deliberately not an alias — that word is reserved for the managed-agents CLI and refuses with the reason, so use the singular `evolve agent` for eval agent arms.
 
 ```
-job      start | list | show | trials | tasks | compare | cancel | stop | resume | regrade | download
-trial    show | download | regrade | stop
+job      start | list | show | trials | tasks | compare | cancel | stop | resume | retry | regrade | download
+trial    show | download | retry | regrade | stop
 dataset  list | show | publish | download | activate
 agent    list | show | add | remove
 auth     status
@@ -465,7 +526,7 @@ evolve run \
     --watch                      # stream events until the job finishes
 ```
 
-`-i/--include-task-name` and `-x/--exclude-task-name` filter task names by glob and `-l/--n-tasks` caps each dataset's count after filters — all three are stamped onto every dataset selector, so a glob that matches nothing in one dataset simply filters nothing there. `--effort <value>` sets the reasoning effort on **every** arm, verbatim; an agent that cannot honor it is refused by the server rather than silently skipped, so a mixed sweep that needs per-arm efforts belongs in the SDK. `--agent-env` / `--verifier-env` take `KEY=VALUE`, repeatable. `--job-name` labels the run. A flag's value may itself begin with `-` — a glob like `-x '-*'`, a negative number, a bare `-` — and is taken as the value; only a token that spells another flag of the same command is refused, and that refusal shows the `--flag=value` form that states the intent.
+`-i/--include-task-name` and `-x/--exclude-task-name` filter task names by glob and `-l/--n-tasks` caps each dataset's count after filters — all three are stamped onto every dataset selector, so a glob that matches nothing in one dataset simply filters nothing there. `--effort <value>` sets the reasoning effort on **every** arm, verbatim; an agent that cannot honor it is refused by the server rather than silently skipped, so a mixed sweep that needs per-arm efforts belongs in the SDK. `--agent-env` / `--verifier-env` take `KEY=VALUE`, repeatable. `-r/--max-retries` caps [automatic infrastructure-error retries](#automatic-retries) per trial (0 turns them off), and the repeatable `--retry-include`/`--retry-exclude` refine which exception names retry; with `-c/--config`, the file's `retry` object is the base and each flag overrides its own field — Harbor's merge rule. `--job-name` labels the run. A flag's value may itself begin with `-` — a glob like `-x '-*'`, a negative number, a bare `-` — and is taken as the value; only a token that spells another flag of the same command is refused, and that refusal shows the `--flag=value` form that states the intent.
 
 `--ak key=value` (repeatable, alias `--agent-kwarg`) is Harbor's agent-kwarg channel, stamped on **every** arm like `--effort`. The key the platform delivers is `config`: `--ak 'config=./settings.json'` reads the local file (JSON, or TOML for a Codex config) and sends its parsed content inline — the server never reads a client path — and `--ak 'config={"permissions":{"deny":["WebSearch"]}}'` passes the document straight. In the sandbox it becomes the harness's native settings file (Claude: a settings JSON layered in via `--settings`; Codex: the base `~/.codex/config.toml`), with your document as the base and the platform's routing, MCP, model and effort stamps on top — so a config can tune permissions or tool behavior, never where model traffic goes. Acceptance is typed, never silent: an unrecognized kwarg key refuses `agent_kwarg_unsupported`, `config` on an agent without native-config support (only `claude` and `codex` have it — each capability entry publishes `supports_config`) refuses `agent_config_unsupported`, and a config key touching billing, base URLs, provider routing, or env injection refuses `agent_config_key_refused` naming the keys. The accepted config is part of the arm's identity: the same agent and model with two configs are two arms, and job bodies echo `kwargs` on each arm.
 
@@ -505,12 +566,14 @@ evolve job compare <id> <id>
 evolve job cancel <id>
 evolve job stop <id> --dataset deep-swe    # one dataset's live trials
 evolve job resume <id> -f InfrastructureError
+evolve job retry <id> --failed-only        # or -t <trial-id> (repeatable), or bare for the whole job
 evolve job regrade <id> --task task-001
 evolve job download <id> -o results/
 
 evolve trial show <trial-id>
 evolve trial download <trial-id> --stream trace-stdout
 evolve trial download <trial-id> -o trials/
+evolve trial retry <trial-id>
 evolve trial regrade <trial-id>
 evolve trial stop <trial-id> [trial-id...]
 
@@ -1231,7 +1294,8 @@ interface Job {                          // ONE shape from every call
     n_attempts: number;
     n_concurrent_trials: number;
     max_trial_spend_usd: number;         // the resolved per-trial cap
-    worst_case_spend_usd: number;        // trials × the cap — stated, never left to you
+    worst_case_spend_usd: number;        // cap × trials × (retry.max_retries + 1) — stated, never left to you
+    retry: RetryConfig;                  // the RESOLVED auto-retry policy, every field present
     sandbox_provider: EvalSandboxProvider;
     counts: { agents: number; tasks: number };   // entity cardinality only
     n_total_trials: number;
@@ -1254,7 +1318,7 @@ interface JobStats {
     n_running_trials?: number;
     n_pending_trials?: number;
     n_cancelled_trials?: number;
-    n_retries?: number;
+    n_retries?: number;                  // consumed auto-retries, summed across trials
     evals?: Record<string, AgentDatasetStats>;   // keyed agent__model(__effort)__dataset — dataset last
     n_input_tokens?: number | null;      // cache included; null until recorded
     n_cache_tokens?: number | null;
@@ -1316,9 +1380,19 @@ interface Trial {                        // list rows and detail, one shape
     verifier_sandbox_id: string | null;  // null in shared mode or before verify
     verifier_environment_mode: VerifierEnvironmentMode | null;
     attempt_phase: AttemptPhase | null;  // which step a RUNNING trial is in
+    n_retries: number;                   // auto-retries consumed; 0 = never retried
+    retries: TrialRetry[];               // retired attempts, oldest first; [] = never retried
     session_ref: string | null;
     started_at: string | null;
     finished_at: string | null;
+}
+
+interface TrialRetry {                   // one retired attempt — the receipts a retry keeps
+    attempt_number: number;              // 1-based dispatch number within the trial
+    exception_info: ExceptionInfo;       // why that attempt failed
+    cost_usd: number | null;             // REAL spend the job total includes
+    started_at: string | null;
+    settled_at: string | null;           // when its failure settled (and the retry was scheduled)
 }
 
 interface StopResponse {                 // trials().stop() — every id in exactly one list
@@ -1348,7 +1422,8 @@ type JobEvent =
     | { seq: number; type: "trial.scoring";  data: { trial_id: string; captured_bytes?: number } }
     | { seq: number; type: "trial.spend";    data: { trial_id: string; task_name: string; live_spent_usd: number;
                                                      n_input_tokens?: number; n_cache_tokens?: number; n_output_tokens?: number } }
-    | { seq: number; type: "trial.settled";  data: TrialSettledData };
+    | { seq: number; type: "trial.settled";  data: TrialSettledData }
+    | { seq: number; type: "trial.retrying"; data: TrialRetryingData };
 
 interface TrialSettledData {
     trial_id: string;
@@ -1357,6 +1432,18 @@ interface TrialSettledData {
     reward?: number | null;              // scored path only; zero is a reward
     exception_type?: string;             // failures only
     attempt_phase?: AttemptPhase | null; // present when the settle happened mid-phase
+}
+
+// Follows the trial.settled of the failure it retries — so trial.settled is
+// NOT final for a trial the retry policy may still re-run (see Automatic
+// retries).
+interface TrialRetryingData {
+    trial_id: string;
+    task_name: string;
+    retry: number;                       // which retry this is (1-based)
+    max_retries: number;                 // the policy's budget, for "retry 2/3" displays
+    delay_sec: number;                   // the backoff before it is claimable again
+    exception_type: string;              // the failure that triggered the retry
 }
 
 interface Dataset {                      // datasets().list() / get(ref)

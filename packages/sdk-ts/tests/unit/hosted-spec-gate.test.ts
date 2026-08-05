@@ -163,12 +163,14 @@ const OPERATION_TO_METHOD: Record<string, string | null> = {
   watchJob: "jobs.watch",
   downloadJob: "jobs.download",
   resumeJob: "jobs.resume",
+  retryJob: "jobs.retry",
   regradeJob: "jobs.regrade",
   listJobTrials: "jobs.trials",
   listJobTasks: "jobs.tasks",
   // Trials (globally addressable)
   getTrial: "trials.get",
   getTrialTrace: "trials.trace", // ?stream= raw selectors ride trials.artifact
+  retryTrial: "trials.retry",
   regradeTrial: "trials.regrade",
   stopTrials: "trials.stop",
   // Datasets
