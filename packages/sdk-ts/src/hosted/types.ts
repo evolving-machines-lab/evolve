@@ -505,7 +505,10 @@ export interface JobStats {
   n_input_tokens?: number | null;
   n_cache_tokens?: number | null;
   n_output_tokens?: number | null;
-  /** Measured spend across settled trials; null before any settled. */
+  /**
+   * Measured spend across settled trials — the WHOLE model bill, agent and
+   * judge together; null before any settled.
+   */
   cost_usd?: number | null;
   /**
    * Sum of the job's per-trial GPU compute ESTIMATES (each trial's
@@ -515,6 +518,12 @@ export interface JobStats {
    * sandbox) keeps the sum non-null. Absent on servers predating the field.
    */
   gpu_cost_usd?: number | null;
+  /**
+   * The judge share of `cost_usd`, itemized: what the trials' verifier-phase
+   * judge keys spent. 0 for a job with no judge-enabled tasks; null before
+   * anything settled, like `cost_usd`.
+   */
+  judge_cost_usd?: number | null;
 }
 
 /**
@@ -709,6 +718,26 @@ export interface AgentResult {
 }
 
 /**
+ * What the verifier phase's LLM judge consumed — the judge half of a trial's
+ * model bill. A judge-enabled task's verifier holds a DISTINCT short-lived
+ * gateway key (scoped to the requested credential's model family only, minted
+ * at verify start, revoked after scoring; judge model selection itself is
+ * Harbor-exact — the rubric names the model, or rewardkit's own library
+ * default applies), and these figures are that key's spend and tokens as the platform
+ * measured them at the gateway — never anything the verifier reported about
+ * itself. `cost_usd` is the judge share alone; `agent_result.cost_usd` stays
+ * the agent's, and the trial's whole bill is the sum. See `judge_spend_source`
+ * on the trial for which lane the figure is in.
+ */
+export interface JudgeResult {
+  n_input_tokens?: number | null;
+  n_cache_tokens?: number | null;
+  n_output_tokens?: number | null;
+  /** Null until measured; null never means $0. */
+  cost_usd?: number | null;
+}
+
+/**
  * The verifier's rewards map. The primary-reward convention: the value under
  * the key "reward"; else, when exactly one key exists, that value; else no
  * primary reward. Zero is a reward.
@@ -775,6 +804,12 @@ export interface Trial {
   verifier_result: VerifierResult | null;
   exception_info: ExceptionInfo | null;
   agent_result: AgentResult | null;
+  /**
+   * The judge share of the trial's bill, itemized. Null when no judge ever
+   * ran — the task requested no judge credential, or the trial never reached
+   * its verify phase. Null never means "$0 of judging".
+   */
+  judge_result?: JudgeResult | null;
   environment_setup: TimingInfo | null;
   agent_setup: TimingInfo | null;
   agent_execution: TimingInfo | null;
@@ -783,6 +818,12 @@ export interface Trial {
   step_results: StepResult[] | null;
   /** Which lane `agent_result.cost_usd` came from — see SpendSource; only "measured" is final. */
   spend_source: SpendSource | null;
+  /**
+   * Which lane `judge_result.cost_usd` is in — the same three-lane vocabulary
+   * as `spend_source`, same rules. Null exactly when `judge_result` is null:
+   * no judge ever ran.
+   */
+  judge_spend_source?: SpendSource | null;
   /**
    * A mid-run LOWER BOUND on spend, never the trial's cost. Only ever climbs
    * while the trial runs, and is CLEARED when the trial settles — on a

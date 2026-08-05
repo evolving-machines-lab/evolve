@@ -267,7 +267,7 @@ for await (const item of evals.list({ search: "nightly" })) {
 }
 ```
 
-`list({ search })` is a server-side free-text filter over the job name and its dataset names. `stats` is the aggregate block: progress counters (cumulative, Harbor-style: errored trials are a subset of completed, cancelled a subset of errored — the disjoint breakdown is `trials.byStatus`), token totals (`n_input_tokens` includes cache tokens; `n_cache_tokens` and `n_output_tokens` beside it), measured `cost_usd`, and `evals` — per-(agent, model, dataset) statistics keyed `agent__model__effort__dataset` — the dataset ref is always the LAST `__` segment, which is where Harbor-compatible readers recover it. The effort segment is always there, inserted before the dataset: a declared effort stamps itself, an omitted one stamps the agent's default (`__high`, `__max`, …) — see [Agent arms](#agent-arms). A failed job says why on `failure`, as `{ code, message }` — the same grammar an API error uses, under a different key so that `if (body.error) throw` stays correct on a healthy read. In practice you will not see it fire: `FAILED` is a [reserved job status](#statuses) that nothing sets today; read `trials.byStatus` for where a job actually went wrong.
+`list({ search })` is a server-side free-text filter over the job name and its dataset names. `stats` is the aggregate block: progress counters (cumulative, Harbor-style: errored trials are a subset of completed, cancelled a subset of errored — the disjoint breakdown is `trials.byStatus`), token totals (`n_input_tokens` includes cache tokens; `n_cache_tokens` and `n_output_tokens` beside it), measured `cost_usd` — the whole model bill, with the judge share itemized beside it as `judge_cost_usd` (see [LLM judges](#llm-judges)) — and `evals` — per-(agent, model, dataset) statistics keyed `agent__model__effort__dataset` — the dataset ref is always the LAST `__` segment, which is where Harbor-compatible readers recover it. The effort segment is always there, inserted before the dataset: a declared effort stamps itself, an omitted one stamps the agent's default (`__high`, `__max`, …) — see [Agent arms](#agent-arms). A failed job says why on `failure`, as `{ code, message }` — the same grammar an API error uses, under a different key so that `if (body.error) throw` stays correct on a healthy read. In practice you will not see it fire: `FAILED` is a [reserved job status](#statuses) that nothing sets today; read `trials.byStatus` for where a job actually went wrong.
 
 ### pass@k
 
@@ -348,7 +348,7 @@ console.log(trial.exception_info?.exception_type, // why it failed, when it did
 
 Every phase's wall-clock is a **start/stop pair**, never a duration: `environment_setup`, `agent_setup`, `agent_execution`, and `verifier` are each `{ started_at, finished_at }`, either bound null while the phase has not reached it. Durations you compute yourself keep their provenance — you always know which clock produced them.
 
-> **Reading spend:** `spend_source` is the lane the figure came from, and only `"measured"` is final. `"measured_provisional"` is a real reading taken inside the gateway's asynchronous spend flush — an honest floor that a deferred pass later confirms or raises into `"measured"`. `"assumed_cap"` means nobody measured this trial's spend; the number it holds is zero — a placeholder, never an observation (the platform under-bills rather than publish an invented figure), and the deferred pass replaces it when a real reading lands. So a read taken shortly after settle can show `"measured_provisional"`, or `"assumed_cap"` with `$0` — treat anything but `"measured"` as not yet final. `agent_result.cost_usd: null` means the trial never ran — a queued or cancelled trial — and is not the same as `0`, which is a real measurement. `trial.max_trial_spend_usd` is the cap *this* trial's key carried, which can differ from the job's current cap on rows settled before a change.
+> **Reading spend:** `spend_source` is the lane the figure came from, and only `"measured"` is final. `"measured_provisional"` is a real reading taken inside the gateway's asynchronous spend flush — an honest floor that a deferred pass later confirms or raises into `"measured"`. `"assumed_cap"` means nobody measured this trial's spend; the number it holds is zero — a placeholder, never an observation (the platform under-bills rather than publish an invented figure), and the deferred pass replaces it when a real reading lands. So a read taken shortly after settle can show `"measured_provisional"`, or `"assumed_cap"` with `$0` — treat anything but `"measured"` as not yet final. `agent_result.cost_usd: null` means the trial never ran — a queued or cancelled trial — and is not the same as `0`, which is a real measurement. `trial.max_trial_spend_usd` is the cap *this* trial's key carried, which can differ from the job's current cap on rows settled before a change. A [judge-enabled task](#llm-judges)'s verifier spends on its own key, itemized apart: `judge_result.cost_usd` with its own `judge_spend_source` lane (same three-lane rules), null on every trial where no judge ever ran — and `agent_result.cost_usd` stays the agent's alone, so the trial's whole bill is the sum.
 
 > **Reading failures:** `status` is the primary key for failure classes; `exception_info` is the detail — `exception_type` is one of the platform's stable failure names (`ScoringError`, `InfrastructureError`, `CancelledError`, `IncompleteTrialError`), `exception_message` is truncated to 2000 characters on list rows and full on the detail route, and `exception_traceback` rides along when one was recorded.
 
@@ -745,7 +745,7 @@ Tasks declare the agent sandbox's network access:
 
 **A task that declares no mode gets `public`** — the task format's own omission rule, honored as written. That is worth knowing before you assume a sealed box: only `no-network` makes the per-trial spend cap a hard boundary, because only then is the gateway the sole route out. See [What keeps a trial inside its budget](#the-run-contract).
 
-The **verifier never gets network**, in any mode — it always runs sealed, regardless of what the task declares. Each trial records the mode it ran under and where that decision came from in `agent_result.metadata` — compare rewards only across trials that agree on both, because an agent with internet access ran a different experiment from a sealed one.
+The **verifier never gets network**, in any mode — it always runs sealed, regardless of what the task declares. The one exception is a [judge-enabled task](#llm-judges), whose verifier can reach the platform's model gateway — the gateway, and nothing else. Each trial records the mode it ran under and where that decision came from in `agent_result.metadata` — compare rewards only across trials that agree on both, because an agent with internet access ran a different experiment from a sealed one.
 
 ### Verifier modes
 
@@ -753,6 +753,21 @@ The **verifier never gets network**, in any mode — it always runs sealed, rega
 - `shared` — the verifier command runs inside the agent's sandbox, after the agent finishes and its credentials are revoked.
 
 Both are supported; the task picks (`environment_mode` in its config). The mode that ran is recorded on every trial as `verifier_environment_mode` — and it decides [regrade eligibility](#regrade).
+
+### LLM judges
+
+A verifier can grade with a language model. The task asks for the credential the way Harbor tasks already do — an environment template in `task.toml`:
+
+```toml
+[verifier.env]
+ANTHROPIC_API_KEY = "${ANTHROPIC_API_KEY}"
+```
+
+Harbor resolves that template from the machine's own environment and hands the raw provider key into the sandbox. This platform honors the same task file without ever doing that: at verify start the trial mints a **distinct, short-lived gateway credential** — scoped to the requested key's model family only, capped with its own budget, revoked the moment scoring ends — and the requested variable resolves to it. The matching base-URL variable is set alongside automatically, so `litellm`-style clients (including Harbor's `rewardkit`, which is available offline in the verifier box — a `test.sh` running `uvx --from harbor-rewardkit… rewardkit /tests` works unchanged, with no network) call the platform's gateway without the task changing a line. The recognized templates are `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` and their base-URL companions (`ANTHROPIC_API_BASE`, `ANTHROPIC_BASE_URL`, `OPENAI_API_BASE`, `OPENAI_BASE_URL`); any other `${VAR}` template is refused at import — there is no host environment to resolve it from.
+
+Judge model selection is Harbor-exact: the platform never chooses a judge model. Your rubric names one exactly as it would under Harbor, and when it names nothing, `rewardkit`'s own library default (`anthropic/claude-sonnet-4-6`) applies — applied by the library inside the box, never injected by the platform; a verifier that names no model anywhere fails the same way it would on Harbor. Judge calls travel the gateway's normal provider routes on the trial's judge credential, whose model scope is the family of the key the task requested — `ANTHROPIC_API_KEY` admits Anthropic models, `OPENAI_API_KEY` admits OpenAI models — so a model outside the requested family is refused by the key, exactly as an agent's key refuses a model outside its arm. If your account [brings its own provider key](./01-getting-started.md#managed-byo-provider-keys), judge calls ride the same provider preference as every other call, pinned to your key's provider — the gateway can never swap your injected key for another vendor's.
+
+The judge's money is measured at the gateway off its own key — never taken from anything the verifier reports — and itemized apart from the agent's everywhere: `judge_result` / `judge_spend_source` on the trial, `stats.judge_cost_usd` on the job (a share of `stats.cost_usd`, which is the whole bill). Works in both verifier modes. Judge-enabled tasks are not regradable yet — the regrade lane refuses them with a typed error instead of re-scoring without a judge.
 
 ### Compute sizing
 
@@ -1399,8 +1414,9 @@ interface JobStats {
     n_input_tokens?: number | null;      // cache included; null until recorded
     n_cache_tokens?: number | null;
     n_output_tokens?: number | null;
-    cost_usd?: number | null;            // measured spend across settled trials
+    cost_usd?: number | null;            // the WHOLE model bill (agent + judge); null before any settled
     gpu_cost_usd?: number | null;        // summed GPU compute ESTIMATE — separate, never inside cost_usd
+    judge_cost_usd?: number | null;      // the judge share of cost_usd; 0 with no judge tasks
 }
 
 interface AgentDatasetStats {            // one evals group
@@ -1435,6 +1451,13 @@ interface AgentResult {                  // what the agent phase produced and co
     metadata?: Record<string, unknown> | null;   // bundle digest, network mode + source, …
 }
 
+interface JudgeResult {                  // the judge half of a trial's model bill
+    n_input_tokens?: number | null;      // measured at the gateway off the judge key —
+    n_cache_tokens?: number | null;      // never anything the verifier reported
+    n_output_tokens?: number | null;
+    cost_usd?: number | null;            // the judge share alone; the trial's bill is the sum
+}
+
 interface ExceptionInfo {                // why a trial failed, when it did
     exception_type: string;              // ScoringError | InfrastructureError | …
     exception_message: string;           // truncated to 2000 chars on list rows
@@ -1454,12 +1477,14 @@ interface Trial {                        // list rows and detail, one shape
     verifier_result: { rewards?: Record<string, number> | null } | null;
     exception_info: ExceptionInfo | null;
     agent_result: AgentResult | null;
+    judge_result?: JudgeResult | null;   // the judge share, itemized; null == no judge ever ran
     environment_setup: TimingInfo | null;    // the four phase timing pairs
     agent_setup: TimingInfo | null;
     agent_execution: TimingInfo | null;
     verifier: TimingInfo | null;
     step_results: StepResult[] | null;   // multi-step placeholder; null today
     spend_source: SpendSource | null;
+    judge_spend_source?: SpendSource | null;  // the judge figure's lane; null == no judge ever ran
     live_spent_usd: number | null;       // mid-run LOWER BOUND; cleared at settle
     live_spend_at: string | null;
     max_trial_spend_usd: number | null;  // the cap THIS trial's key carried

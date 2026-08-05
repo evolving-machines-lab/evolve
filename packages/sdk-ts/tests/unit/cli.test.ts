@@ -1716,6 +1716,33 @@ function testTrialDetailGpuCost() {
   assert(!cpu.includes("gpu compute"), "a non-GPU trial shows no GPU row at all");
 }
 
+function testTrialDetailJudgeSplit() {
+  console.log("\n--- trialDetailLines: the judge share, itemized (Wave-3 lane 12) ---");
+  const judged = trialDetailLines(
+    trialFixture({
+      status: "SCORED",
+      reward: 1,
+      agent_result: { cost_usd: 0.31 },
+      spend_source: "measured",
+      judge_result: { cost_usd: 0.04 },
+      judge_spend_source: "measured",
+    }),
+  ).join("\n");
+  assert(judged.includes("spent (judge)"), "a judge trial shows the judge row");
+  assert(judged.includes("$0.04"), "the judge row carries the judge figure");
+  assert(judged.includes("$0.31"), "the agent figure stays the agent's alone");
+
+  const plain = trialDetailLines(
+    trialFixture({
+      status: "SCORED",
+      reward: 1,
+      agent_result: { cost_usd: 0.31 },
+      spend_source: "measured",
+    }),
+  ).join("\n");
+  assert(!plain.includes("spent (judge)"), "no judge ever ran means no judge row, never $0");
+}
+
 // =============================================================================
 // WIRE FIXTURES
 // =============================================================================
@@ -2210,7 +2237,35 @@ async function testJobShowPassAtK() {
       body.stats.evals["codex__gpt-5.5__deep-swe@1.1"].pass_at_k["4"],
       1,
       "--json carries stats.evals[].pass_at_k verbatim",
+    );
+  } finally {
+    restoreFetch();
+  }
+}
 
+async function testJobShowJudgeSplit() {
+  console.log("\n--- runCli: job show itemizes the judge share (Wave-3 lane 12) ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: wireJob({ stats: { cost_usd: 1.54, judge_cost_usd: 0.04 } }),
+    });
+    const judged = captureIO();
+    await runCli(["job", "show", "eval-1", ...AUTH], judged.io);
+    const judgedText = judged.out.join("\n");
+    assert(judgedText.includes("spent (judge)"), "a judged job shows the judge row");
+    assert(judgedText.includes("$0.04"), "the judge row carries the judge share");
+
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: wireJob({ stats: { cost_usd: 1.5, judge_cost_usd: 0 } }),
+    });
+    const plain = captureIO();
+    await runCli(["job", "show", "eval-1", ...AUTH], plain.io);
+    assert(
+      !plain.out.join("\n").includes("spent (judge)"),
+      "a zero judge share is noise, not a row",
     );
   } finally {
     restoreFetch();
@@ -4144,6 +4199,7 @@ async function main() {
   testEventLine();
   testTrialDetailLiveSpend();
   testTrialDetailGpuCost();
+  testTrialDetailJudgeSplit();
   testBuildInputsDirect();
   await testRunWatchEndToEnd();
   await testRunWatchJsonAndQuiet();
@@ -4154,6 +4210,7 @@ async function main() {
   await testJobShowMultiId();
   await testJobShowGpuCost();
   await testJobShowPassAtK();
+  await testJobShowJudgeSplit();
   await testJobTrialsAndTasks();
   await testJobStopDatasetSugar();
   await testJobStopDatasetChunking();
