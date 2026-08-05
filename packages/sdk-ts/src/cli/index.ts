@@ -1,12 +1,17 @@
 #!/usr/bin/env node
 /**
- * evolve-evals — CLI for Evolve hosted datasets & jobs.
+ * evolve — the CLI for Evolve hosted datasets & jobs.
  *
- * Noun-verb grammar over the hosted client: `evolve-evals <noun> <verb>`,
- * with `run` as the one top-level shortcut (alias of `job start`). Singular
- * nouns are canonical; the plurals parse as hidden aliases. The CLI speaks
- * ONLY through the SDK clients (datasets() / agents() / jobs() / trials() /
- * auth()) — no raw HTTP lives here.
+ * Noun-verb grammar over the hosted client: `evolve <noun> <verb>`, plus
+ * first-class top-level commands that need no noun — today that is `run`,
+ * which takes `job start`'s flags and is spelled, helped and dispatched as a
+ * command in its own right (Harbor registers their `run` the same way, as the
+ * `job start` function bound at the top level: cli/main.py:164). Singular
+ * nouns are canonical; `job`/`trial`/`dataset` also answer to their plurals as
+ * hidden aliases, but `agents` does NOT — that word is reserved for the
+ * managed-agents CLI and refuses with the reason. The CLI speaks ONLY through
+ * the SDK clients (datasets() / agents() / jobs() / trials() / auth()) — no
+ * raw HTTP lives here.
  *
  * Output: human tables on a TTY, tab-separated rows when piped, --json for
  * the rendered machine shape (NDJSON for --watch event streams), -q for
@@ -28,7 +33,7 @@ import {
   datasets,
   jobs,
   trials,
-} from "./index";
+} from "../hosted/index";
 import type {
   Agent,
   AgentArm,
@@ -52,7 +57,7 @@ import type {
   Trial,
   TrialStatus,
   UpstreamStatus,
-} from "./types";
+} from "../hosted/types";
 
 // =============================================================================
 // GRAMMAR
@@ -201,7 +206,7 @@ const GROUPS: Record<string, GroupSpec> = {
         flags: JOB_START_FLAGS,
         minPositionals: 0,
         maxPositionals: 0,
-        example: "evolve-evals job start -d deep-swe@1.1 -a codex -m gpt-5.5 -k 2 --watch",
+        example: "evolve job start -d deep-swe@1.1 -a codex -m gpt-5.5 -k 2 --watch",
       },
       list: {
         summary: "List your jobs (newest first)",
@@ -211,7 +216,7 @@ const GROUPS: Record<string, GroupSpec> = {
         },
         minPositionals: 0,
         maxPositionals: 0,
-        example: "evolve-evals job list --limit 20 -q",
+        example: "evolve job list --limit 20 -q",
       },
       show: {
         summary: "Show one or more jobs in full",
@@ -219,7 +224,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: Infinity,
         positionalUsage: "<id> [id...]",
-        example: "evolve-evals job show cme12ab34",
+        example: "evolve job show cme12ab34",
       },
       trials: {
         summary: "List a job's trials",
@@ -231,7 +236,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve-evals job trials cme12ab34 --status FAILED,SCORING_ERROR",
+        example: "evolve job trials cme12ab34 --status FAILED,SCORING_ERROR",
       },
       tasks: {
         summary: "Per-task rollup of a job",
@@ -239,7 +244,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve-evals job tasks cme12ab34",
+        example: "evolve job tasks cme12ab34",
       },
       compare: {
         summary: "Compare 2-10 jobs side by side",
@@ -247,7 +252,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 2,
         maxPositionals: 10,
         positionalUsage: "<id> <id> [...]",
-        example: "evolve-evals job compare cme12ab34 cme56cd78",
+        example: "evolve job compare cme12ab34 cme56cd78",
       },
       cancel: {
         summary: "Request cancellation of a job",
@@ -255,7 +260,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve-evals job cancel cme12ab34",
+        example: "evolve job cancel cme12ab34",
       },
       stop: {
         summary: "Stop one dataset's live trials without cancelling the job",
@@ -265,7 +270,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve-evals job stop cme12ab34 --dataset deep-swe",
+        example: "evolve job stop cme12ab34 --dataset deep-swe",
       },
       resume: {
         summary: "New linked job over a terminal job's failed or stopped trials",
@@ -282,7 +287,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve-evals job resume cme12ab34 -f InfrastructureError",
+        example: "evolve job resume cme12ab34 -f InfrastructureError",
       },
       regrade: {
         summary: "Verifier-only re-run of a terminal job (the result IS a job)",
@@ -293,7 +298,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve-evals job regrade cme12ab34 --task tricky-task",
+        example: "evolve job regrade cme12ab34 --task tricky-task",
       },
       download: {
         summary: "Download the results archive (gzipped)",
@@ -303,7 +308,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve-evals job download cme12ab34 -o results/",
+        example: "evolve job download cme12ab34 -o results/",
       },
     },
   },
@@ -316,7 +321,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<trial-id>",
-        example: "evolve-evals trial show cmt90ef12",
+        example: "evolve trial show cmt90ef12",
       },
       download: {
         summary: "Save everything a trial recorded, or stream one artifact",
@@ -341,7 +346,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<trial-id>",
-        example: "evolve-evals trial download cmt90ef12 --stream trace-stdout",
+        example: "evolve trial download cmt90ef12 --stream trace-stdout",
       },
       regrade: {
         summary: "Verifier-only re-run of one trial (the result IS a job)",
@@ -349,7 +354,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<trial-id>",
-        example: "evolve-evals trial regrade cmt90ef12",
+        example: "evolve trial regrade cmt90ef12",
       },
       stop: {
         summary: "Stop in-flight trials without cancelling their job",
@@ -357,7 +362,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: Infinity,
         positionalUsage: "<trial-id> [trial-id...]",
-        example: "evolve-evals trial stop cmt90ef12 cmt34gh56",
+        example: "evolve trial stop cmt90ef12 cmt34gh56",
       },
     },
   },
@@ -372,7 +377,7 @@ const GROUPS: Record<string, GroupSpec> = {
         },
         minPositionals: 0,
         maxPositionals: 0,
-        example: "evolve-evals dataset list -q",
+        example: "evolve dataset list -q",
       },
       show: {
         summary: "Show one dataset (versions + tasks + providers)",
@@ -383,7 +388,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<name[@version]>",
-        example: "evolve-evals dataset show deep-swe@1.1",
+        example: "evolve dataset show deep-swe@1.1",
       },
       publish: {
         summary: "Publish a dataset version from a git source or a local directory",
@@ -397,7 +402,7 @@ const GROUPS: Record<string, GroupSpec> = {
         },
         minPositionals: 0,
         maxPositionals: 0,
-        example: "evolve-evals dataset publish --name my-swe --version 1.0 --dir ./corpus --watch",
+        example: "evolve dataset publish --name my-swe --version 1.0 --dir ./corpus --watch",
       },
       download: {
         summary: "Download the original corpus package (owner only)",
@@ -407,7 +412,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<name[@version]>",
-        example: "evolve-evals dataset download my-swe@1.0 -o corpora/",
+        example: "evolve dataset download my-swe@1.0 -o corpora/",
       },
       activate: {
         summary: "Make a READY version the dataset's active version",
@@ -415,7 +420,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 2,
         maxPositionals: 2,
         positionalUsage: "<name> <version>",
-        example: "evolve-evals dataset activate my-swe 1.0",
+        example: "evolve dataset activate my-swe 1.0",
       },
     },
   },
@@ -427,7 +432,7 @@ const GROUPS: Record<string, GroupSpec> = {
         flags: { ...LIST_FLAGS },
         minPositionals: 0,
         maxPositionals: 0,
-        example: "evolve-evals agent list",
+        example: "evolve agent list",
       },
       show: {
         summary: "Show one registered agent",
@@ -435,7 +440,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<name>",
-        example: "evolve-evals agent show acme-cli",
+        example: "evolve agent show acme-cli",
       },
       add: {
         summary: "Register an agent (install script or local directory)",
@@ -453,7 +458,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<name>",
-        example: 'evolve-evals agent add acme-cli --install-script ./install.sh --run "acme-cli --headless"',
+        example: 'evolve agent add acme-cli --install-script ./install.sh --run "acme-cli --headless"',
       },
       remove: {
         summary: "Delete a registered agent (past jobs keep their record)",
@@ -461,7 +466,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<name>",
-        example: "evolve-evals agent remove acme-cli",
+        example: "evolve agent remove acme-cli",
       },
     },
   },
@@ -473,9 +478,27 @@ const GROUPS: Record<string, GroupSpec> = {
         flags: {},
         minPositionals: 0,
         maxPositionals: 0,
-        example: "evolve-evals auth status",
+        example: "evolve auth status",
       },
     },
+  },
+};
+
+/**
+ * Commands that stand at the top level with no noun in front of them. `run` is
+ * `job start` under a shorter name — the same flags, the same handler — but it
+ * is a command in its own right, not a spelling that gets rewritten: `evolve
+ * run --help` documents `evolve run`, and an error inside it names `evolve
+ * run`. Harbor binds theirs identically, the `job start` function registered as
+ * a top-level command (cli/main.py:164).
+ */
+const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
+  run: {
+    summary: "Start a job (add --watch to follow it) — the short form of `job start`",
+    flags: JOB_START_FLAGS,
+    minPositionals: 0,
+    maxPositionals: 0,
+    example: "evolve run -d deep-swe@1.1 -a codex -m gpt-5.5 -k 2 --watch",
   },
 };
 
@@ -484,7 +507,18 @@ const GROUP_ALIASES: Record<string, string> = {
   jobs: "job",
   trials: "trial",
   datasets: "dataset",
-  agents: "agent",
+};
+
+/**
+ * Words this CLI deliberately does not answer to yet. `agents` would be the
+ * ordinary plural alias of `agent`, and it is withheld on purpose: it belongs
+ * to the managed-agents CLI that ships after launch, and quietly aliasing it to
+ * the eval agent-arm catalog now would make that later meaning a breaking
+ * change. A reserved word refuses by name and points at the command that does
+ * exist, rather than guessing.
+ */
+const RESERVED_GROUPS: Record<string, string> = {
+  agents: '"agents" is reserved for the managed-agents CLI (not released yet) — for eval agent arms use "evolve agent"',
 };
 
 /** Hidden `ls` alias on every list verb. */
@@ -516,11 +550,16 @@ function flagLines(flags: Record<string, FlagSpec>): string[] {
   });
 }
 
-function commandHelp(group: string, verb: string, spec: CommandSpec): string {
+/**
+ * One command's help page. `command` is the full command as it is typed —
+ * "job start" for a noun-verb command, "run" for a top-level one — so the
+ * usage line always echoes the words the caller used.
+ */
+function commandHelp(command: string, spec: CommandSpec): string {
   const positional = spec.positionalUsage ? ` ${spec.positionalUsage}` : "";
   const options = Object.keys(spec.flags).length > 0 ? " [options]" : "";
   const lines = [
-    `Usage: evolve-evals ${group} ${verb}${positional}${options}`,
+    `Usage: evolve ${command}${positional}${options}`,
     "",
     spec.summary,
   ];
@@ -535,7 +574,7 @@ function commandHelp(group: string, verb: string, spec: CommandSpec): string {
 function groupHelp(group: string): string {
   const spec = GROUPS[group];
   const lines = [
-    `Usage: evolve-evals ${group} <command> [options]`,
+    `Usage: evolve ${group} <command> [options]`,
     "",
     spec.summary,
     "",
@@ -545,19 +584,21 @@ function groupHelp(group: string): string {
   for (const [verb, cmd] of Object.entries(spec.commands)) {
     lines.push(`  ${verb.padEnd(width)}  ${cmd.summary}`);
   }
-  lines.push("", `Run "evolve-evals ${group} <command> --help" for flags and an example.`);
+  lines.push("", `Run "evolve ${group} <command> --help" for flags and an example.`);
   return lines.join("\n");
 }
 
 function rootHelp(): string {
   const lines = [
-    "evolve-evals — Evolve hosted jobs CLI",
+    "evolve — Evolve hosted jobs CLI",
     "",
-    "Usage: evolve-evals <command> [options]",
+    "Usage: evolve <command> [options]",
     "",
     "Commands:",
-    "  run                    Start a job — alias for `job start`",
   ];
+  for (const [name, spec] of Object.entries(TOP_LEVEL_COMMANDS)) {
+    lines.push(`  ${name.padEnd(22)} ${spec.summary}`);
+  }
   for (const [group, spec] of Object.entries(GROUPS)) {
     const verbs = Object.keys(spec.commands).join(" | ");
     lines.push(`  ${group.padEnd(22)} ${spec.summary}`);
@@ -571,7 +612,7 @@ function rootHelp(): string {
     "  -v, --version                     Print the CLI version",
     "",
     "Example:",
-    "  evolve-evals run -d deep-swe@1.1 -a codex -m gpt-5.5 --watch"
+    "  evolve run -d deep-swe@1.1 -a codex -m gpt-5.5 --watch"
   );
   return lines.join("\n");
 }
@@ -579,7 +620,7 @@ function rootHelp(): string {
 export const USAGE = rootHelp();
 
 function cliVersion(): string {
-  // Two levels up from both src/hosted/ and dist/hosted/ sits package.json.
+  // Two levels up from both src/cli/ and dist/cli/ sits package.json.
   try {
     const pkg = JSON.parse(
       readFileSync(fileURLToPath(new URL("../../package.json", import.meta.url)), "utf-8")
@@ -742,8 +783,14 @@ export function parseArgs(argv: string[]): Invocation {
   if (head === "--version" || head === "-v") {
     return { command: "version", positionals: [], flags: {} };
   }
-  if (head === "run") {
-    return parseCommandArgs("job start", GROUPS.job.commands.start, argv.slice(1));
+  const topLevel = TOP_LEVEL_COMMANDS[head];
+  if (topLevel) {
+    return parseCommandArgs(head, topLevel, argv.slice(1));
+  }
+
+  const reserved = RESERVED_GROUPS[head];
+  if (reserved) {
+    throw new CliUsageError(reserved);
   }
 
   const group = GROUP_ALIASES[head] ?? head;
@@ -756,7 +803,7 @@ export function parseArgs(argv: string[]): Invocation {
     return { command: "help", positionals: [group], flags: {} };
   }
   if (rawVerb.startsWith("-")) {
-    throw new CliUsageError(`"${group}" requires a command (run "evolve-evals ${group} --help")`);
+    throw new CliUsageError(`"${group}" requires a command (run "evolve ${group} --help")`);
   }
   const verb = VERB_ALIASES[rawVerb] ?? rawVerb;
   const spec = groupSpec.commands[verb];
@@ -942,7 +989,7 @@ export function parseYamlConfigLocated(
  * (checkWireValue): what a JSON body can carry at all is not the spec's
  * subject.
  *
- * The published package carries the spec two directories above dist/hosted/;
+ * The published package carries the spec two directories above dist/cli/;
  * a source checkout reads the repo-root copy the staged one is built from.
  */
 const SPEC_RELATIVE_CANDIDATES = ["../../spec/openapi.yaml", "../../../../spec/openapi.yaml"];
@@ -1340,7 +1387,7 @@ export function parseEnvPairs(pairs: string[], flag: string): Record<string, str
 }
 
 /**
- * Build the POST /api/jobs body from a parsed `job start` invocation:
+ * Build the POST /api/jobs body from a parsed `job start` / `run` invocation:
  * -c loads a base config in the spec's own vocabulary, then every explicitly
  * passed flag overrides the corresponding field. -i/-x/-l are stamped onto
  * EVERY dataset selector — per-selector filters with one flag grammar, so a
@@ -1364,7 +1411,9 @@ export function buildJobInput(
   } else if (Array.isArray(base.datasets) && base.datasets.length > 0) {
     selectors = base.datasets.map((selector) => ({ ...selector }));
   } else {
-    throw new CliUsageError('"job start" requires -d/--dataset (or datasets in --config)');
+    // Name the command the caller actually typed: someone who ran `evolve run`
+    // is told about "run", not about a spelling they never used.
+    throw new CliUsageError(`"${inv.command}" requires -d/--dataset (or datasets in --config)`);
   }
   if (f["include-task-name"] !== undefined) {
     for (const s of selectors) s.task_names = f["include-task-name"] as string[];
@@ -1395,7 +1444,7 @@ export function buildJobInput(
   } else if (Array.isArray(base.agents) && base.agents.length > 0) {
     arms = base.agents.map((arm) => ({ ...arm }));
   } else {
-    throw new CliUsageError('"job start" requires -a/--agent and -m/--model (or agents in --config)');
+    throw new CliUsageError(`"${inv.command}" requires -a/--agent and -m/--model (or agents in --config)`);
   }
   if (f.effort !== undefined) {
     // --effort is stamped on EVERY arm, verbatim. The server owns the
@@ -1756,7 +1805,7 @@ const AGENT_COLUMNS: ListColumn<Agent>[] = [
 const AGENT_DEFAULT_COLUMNS = ["name", "source", "run", "updated"];
 
 /**
- * Full-detail rendering of one trial — evolve-evals trial show. Exported for
+ * Full-detail rendering of one trial — evolve trial show. Exported for
  * tests, like the other line renderers.
  */
 export function trialDetailLines(run: Trial): string[] {
@@ -1809,7 +1858,7 @@ export function trialDetailLines(run: Trial): string[] {
 }
 
 /**
- * One registered agent — evolve-evals agent show / add. Declared env is shown
+ * One registered agent — evolve agent show / add. Declared env is shown
  * by KEY only; the values were the caller's to set and are not echoed back
  * into a terminal. `--json` carries the response verbatim.
  */
@@ -1839,7 +1888,7 @@ function fmtReward(reward: number | null): string {
   return reward !== null ? String(Math.round(reward * 1000) / 1000) : "-";
 }
 
-/** One trace event line — evolve-evals trial download --stream trace-parsed. */
+/** One trace event line — evolve trial download --stream trace-parsed. */
 export function traceEventLine(event: TraceEvent): string {
   const detail = truncate(JSON.stringify(event.data ?? {}), 140);
   return `#${String(event.seq).padStart(4)} ${event.type.padEnd(26)} ${detail}`.trimEnd();
@@ -2035,7 +2084,7 @@ async function cmdJobStart(inv: Invocation, io: CliIO): Promise<number> {
     } else {
       for (const line of jobLines(created)) io.out(line);
       io.out("");
-      io.out(`Follow it with: evolve-evals job show ${created.id}`);
+      io.out(`Follow it with: evolve job show ${created.id}`);
     }
     return 0;
   }
@@ -2081,7 +2130,7 @@ async function cmdJobList(inv: Invocation, io: CliIO): Promise<number> {
   }
   renderList(inv, io, page.items, JOB_COLUMNS, JOB_DEFAULT_COLUMNS, (e) => e.id);
   if (page.nextCursor && io.tty === true && inv.flags.quiet !== true) {
-    io.out(`\nMore: evolve-evals job list --cursor ${page.nextCursor}`);
+    io.out(`\nMore: evolve job list --cursor ${page.nextCursor}`);
   }
   return 0;
 }
@@ -2127,7 +2176,7 @@ async function cmdJobTrials(inv: Invocation, io: CliIO): Promise<number> {
   if (io.tty === true && inv.flags.quiet !== true) {
     io.out(`\n${page.items.length} trial(s) shown`);
     if (page.nextCursor) {
-      io.out(`More: evolve-evals job trials ${inv.positionals[0]} --cursor ${page.nextCursor}`);
+      io.out(`More: evolve job trials ${inv.positionals[0]} --cursor ${page.nextCursor}`);
     }
   }
   return 0;
@@ -2147,7 +2196,7 @@ async function cmdJobTasks(inv: Invocation, io: CliIO): Promise<number> {
   }
   renderList(inv, io, page.items, TASK_ROLLUP_COLUMNS, TASK_ROLLUP_DEFAULT_COLUMNS, (r) => r.task_name);
   if (page.nextCursor && io.tty === true && inv.flags.quiet !== true) {
-    io.out(`\nMore: evolve-evals job tasks ${inv.positionals[0]} --cursor ${page.nextCursor}`);
+    io.out(`\nMore: evolve job tasks ${inv.positionals[0]} --cursor ${page.nextCursor}`);
   }
   return 0;
 }
@@ -2226,7 +2275,7 @@ async function cmdJobStop(inv: Invocation, io: CliIO): Promise<number> {
   const dataset = inv.flags.dataset as string | undefined;
   if (!dataset) {
     throw new CliUsageError(
-      "job stop needs --dataset <name> (to stop the whole job, use: evolve-evals job cancel <id>)"
+      "job stop needs --dataset <name> (to stop the whole job, use: evolve job cancel <id>)"
     );
   }
   const client = jobs(clientConfig(inv));
@@ -2342,7 +2391,7 @@ async function cmdJobResume(inv: Invocation, io: CliIO): Promise<number> {
   } else {
     for (const line of jobLines(e)) io.out(line);
     io.out("");
-    io.out(`Follow it with: evolve-evals job show ${e.id}`);
+    io.out(`Follow it with: evolve job show ${e.id}`);
   }
   return 0;
 }
@@ -2359,7 +2408,7 @@ async function cmdJobRegrade(inv: Invocation, io: CliIO): Promise<number> {
   } else {
     for (const line of jobLines(job)) io.out(line);
     io.out("");
-    io.out(`Follow it with: evolve-evals job show ${job.id}`);
+    io.out(`Follow it with: evolve job show ${job.id}`);
   }
   return 0;
 }
@@ -2507,7 +2556,7 @@ async function cmdTrialRegrade(inv: Invocation, io: CliIO): Promise<number> {
   } else {
     for (const line of jobLines(job)) io.out(line);
     io.out("");
-    io.out(`Follow it with: evolve-evals job show ${job.id}`);
+    io.out(`Follow it with: evolve job show ${job.id}`);
   }
   return 0;
 }
@@ -2573,7 +2622,7 @@ function datasetDetailLines(b: Dataset): string[] {
     }
     lines.push(...table(rows));
     if (b.tasks.nextCursor) {
-      lines.push(`More tasks: evolve-evals dataset show ${b.name} --cursor ${b.tasks.nextCursor}`);
+      lines.push(`More tasks: evolve dataset show ${b.name} --cursor ${b.tasks.nextCursor}`);
     }
     // Name each refusal once below the table; the runner refuses with the
     // same reason at run time.
@@ -2616,7 +2665,7 @@ function upstreamNotices(
     const at = item.active_version ? `@${item.active_version.version}` : "";
     lines.push(
       `${item.name}${at} · upstream ${item.upstream.ref} moved — ` +
-        `run: evolve-evals dataset publish --name ${item.name} --version <new-version> ` +
+        `run: evolve dataset publish --name ${item.name} --version <new-version> ` +
         `--git <url> --ref ${item.upstream.ref}`
     );
   }
@@ -2669,7 +2718,7 @@ async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
       for (const line of importLines(created)) io.out(line);
       io.out("");
       // Version state (VALIDATING → READY/FAILED) lives on the dataset body.
-      io.out(`Follow it with: evolve-evals dataset show ${input.name}`);
+      io.out(`Follow it with: evolve dataset show ${input.name}`);
     }
     return 0;
   }
@@ -2762,7 +2811,7 @@ async function cmdAgentAdd(inv: Invocation, io: CliIO): Promise<number> {
   } else {
     for (const line of agentLines(created)) io.out(line);
     io.out("");
-    io.out(`Use it with: evolve-evals run -d <dataset> -a ${created.name} -m <model>`);
+    io.out(`Use it with: evolve run -d <dataset> -a ${created.name} -m <model>`);
   }
   return 0;
 }
@@ -2807,6 +2856,13 @@ async function cmdAuthStatus(inv: Invocation, io: CliIO): Promise<number> {
 
 function helpFor(topic: string[]): { text: string; code: number } {
   if (topic.length === 0) return { text: rootHelp(), code: 0 };
+  const topLevel = TOP_LEVEL_COMMANDS[topic[0]];
+  if (topLevel) return { text: commandHelp(topic[0], topLevel), code: 0 };
+  // A reserved word asked about by name answers with the reason it is
+  // reserved, not with the root page — "help agents" is exactly the question
+  // that deserves the honest sentence.
+  const reserved = RESERVED_GROUPS[topic[0]];
+  if (reserved) return { text: reserved, code: 0 };
   const group = GROUP_ALIASES[topic[0]] ?? topic[0];
   const groupSpec = GROUPS[group];
   if (!groupSpec) return { text: rootHelp(), code: 0 };
@@ -2814,10 +2870,13 @@ function helpFor(topic: string[]): { text: string; code: number } {
   const verb = VERB_ALIASES[topic[1]] ?? topic[1];
   const spec = groupSpec.commands[verb];
   if (!spec) return { text: groupHelp(group), code: 0 };
-  return { text: commandHelp(group, verb, spec), code: 0 };
+  return { text: commandHelp(`${group} ${verb}`, spec), code: 0 };
 }
 
 const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> = {
+  // `run` and `job start` are one command reached by two names — same spec,
+  // same handler — so neither can drift into a second implementation.
+  run: cmdJobStart,
   "job start": cmdJobStart,
   "job list": cmdJobList,
   "job show": cmdJobShow,
@@ -2872,7 +2931,7 @@ export async function runCli(argv: string[], io: CliIO = defaultIO): Promise<num
   } catch (error) {
     if (error instanceof CliUsageError) {
       io.err(`Error: ${error.message}`);
-      io.err('Run "evolve-evals help" for usage.');
+      io.err('Run "evolve help" for usage.');
       return 2;
     }
     throw error;
@@ -2899,7 +2958,7 @@ export async function runCli(argv: string[], io: CliIO = defaultIO): Promise<num
   } catch (error) {
     if (error instanceof CliUsageError) {
       io.err(`Error: ${error.message}`);
-      io.err(`Run "evolve-evals ${inv.command} --help" for usage.`);
+      io.err(`Run "evolve ${inv.command} --help" for usage.`);
       return 2;
     }
     // --json promised a machine-readable stdout, and a refusal is part of that
@@ -2922,10 +2981,10 @@ export async function runCli(argv: string[], io: CliIO = defaultIO): Promise<num
   }
 }
 
-// Run only when invoked as the `evolve-evals` bin — never on test/library import.
+// Run only when invoked as the `evolve` bin — never on test/library import.
 //
 // argv[1] is the path the process was STARTED with, which after a normal
-// install is node_modules/.bin/evolve-evals — a SYMLINK. Node dereferences
+// install is node_modules/.bin/evolve — a SYMLINK. Node dereferences
 // symlinks when it builds import.meta.url, so the two agree only once argv[1]
 // is resolved as well; comparing the raw path made the installed bin a silent
 // no-op. The raw form is still tried first: it serves direct, relative and

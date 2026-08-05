@@ -15,7 +15,8 @@ evolve/
 │   │       ├── types.ts         # Shared types
 │   │       ├── constants.ts     # Constants
 │   │       ├── index.ts         # Public exports
-│   │       ├── hosted/          # Hosted evals client + the evolve-evals CLI binary
+│   │       ├── cli/             # The `evolve` CLI binary (src/cli/index.ts)
+│   │       ├── hosted/          # Hosted evals client (datasets/agents/jobs/trials/auth)
 │   │       ├── parsers/         # CLI output parsers (claude, codex, gemini, qwen, kimi, opencode, droid)
 │   │       ├── integrations.ts  # Managed integration helpers
 │   │       ├── managed-secrets.ts   # Dashboard-stored secrets attached by name

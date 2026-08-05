@@ -318,7 +318,7 @@ const home   = await t.artifact(trialId, "agent-home");     // Record<path, text
 
 `trajectory` is different: it is in the vocabulary **ahead of its server wave**. Until that wave lands, the route answers not-found for it, and the SDK and CLI report that as the API error it is — no silent empty answer. The name is published now so a client written today parses the slot the day it first fills.
 
-The CLI speaks the same six words. `evolve-evals trial download <trial-id> --stream <name>` prints one artifact to stdout; without `--stream`, everything the trial recorded is saved under `<dir>/<trial-id>/` — `trace-parsed.jsonl`, `verifier.log`, `trace-stdout.log`, `trace-stderr.log`, and `agent-home/` with the folder tree preserved (`trajectory` joins the saved set when its wave lands). The two modes are exclusive, and `--cursor`/`--limit` page only `--stream trace-parsed` — the CLI refuses any other mix as a usage error instead of letting one flag silently win.
+The CLI speaks the same six words. `evolve trial download <trial-id> --stream <name>` prints one artifact to stdout; without `--stream`, everything the trial recorded is saved under `<dir>/<trial-id>/` — `trace-parsed.jsonl`, `verifier.log`, `trace-stdout.log`, `trace-stderr.log`, and `agent-home/` with the folder tree preserved (`trajectory` joins the saved set when its wave lands). The two modes are exclusive, and `--cursor`/`--limit` page only `--stream trace-parsed` — the CLI refuses any other mix as a usage error instead of letting one flag silently win.
 
 This archive belongs to hosted evals: trials are scoring evidence. A managed agent session keeps its parsed transcript download; its raw stream lives in the SDK's local session log and its home folder inside your own sandbox.
 
@@ -339,7 +339,7 @@ console.log(report.not_found);                 // not yours or not real — neve
 
 `stop()` kills each trial's sandbox and settles the trial with its spend read from the gateway. Every requested id appears in exactly one of the three lists. Ids belonging to someone else land in `not_found` — existence is never leaked — and already-terminal trials are reported as such and left untouched, so the call is idempotent. One request takes up to 100 ids. A stopped trial rejoins the run by default on [`resume()`](#resume) once its job is terminal.
 
-The CLI adds one convenience on top: `evolve-evals job stop <id> --dataset <name>` stops one dataset's trials and leaves the job — and every other dataset — running. It is pure sugar over surfaces that already exist (the job's `datasets[]`, the trial list's `dataset` filter, and the stop door), pages its batch under the 100-id cap, and merges the reports into one outcome. Every one of the dataset's trials is named to the door — deliberately not pre-filtered to live ones — so the report stays honest: a dataset whose trials have all settled reports them under `already_terminal`, and an empty report means exactly one thing, a dataset with no trials at all. Naming the whole slice is what that honesty costs: one stop request per 100 trials even when every one of them has already settled, so a big fully-settled dataset sends the requests a live-only pre-filter would have skipped, and a request that fails mid-batch — a 429 on the third of fifty — ends the command there. What it does not do is lose the half that landed: the trials already stopped are dead server-side and this report is the only place their ids exist, so the report prints first, marked partial with the count of trials no answer came back for and that unanswered batch named by trial position (`partial: true` and `unreported` under `--json`), and only then does the rate limit print and the command exit 1. Rerunning the same command finishes the rest and returns the already-dead under `already_terminal`. Stopping a dataset the job never spanned is a refusal, not an empty no-op — silence would read as "nothing was running".
+The CLI adds one convenience on top: `evolve job stop <id> --dataset <name>` stops one dataset's trials and leaves the job — and every other dataset — running. It is pure sugar over surfaces that already exist (the job's `datasets[]`, the trial list's `dataset` filter, and the stop door), pages its batch under the 100-id cap, and merges the reports into one outcome. Every one of the dataset's trials is named to the door — deliberately not pre-filtered to live ones — so the report stays honest: a dataset whose trials have all settled reports them under `already_terminal`, and an empty report means exactly one thing, a dataset with no trials at all. Naming the whole slice is what that honesty costs: one stop request per 100 trials even when every one of them has already settled, so a big fully-settled dataset sends the requests a live-only pre-filter would have skipped, and a request that fails mid-batch — a 429 on the third of fifty — ends the command there. What it does not do is lose the half that landed: the trials already stopped are dead server-side and this report is the only place their ids exist, so the report prints first, marked partial with the count of trials no answer came back for and that unanswered batch named by trial position (`partial: true` and `unreported` under `--json`), and only then does the rate limit print and the command exit 1. Rerunning the same command finishes the rest and returns the already-dead under `already_terminal`. Stopping a dataset the job never spanned is a refusal, not an empty no-op — silence would read as "nothing was running".
 
 ---
 
@@ -431,7 +431,7 @@ The archive unpacks to Harbor's job layout — a job-level `config.json` and `re
 
 ## CLI
 
-The SDK ships an `evolve-evals` binary — a thin shell over the five clients. The grammar is noun-verb: `evolve-evals <noun> <verb>`, with `run` as the one top-level shortcut (an alias of `job start`). Singular nouns are canonical; the plurals parse as hidden aliases, as does `ls` for `list`.
+The SDK ships an `evolve` binary — a thin shell over the five clients. The grammar is noun-verb: `evolve <noun> <verb>`. `run` also stands on its own at the top level, taking `job start`'s flags and documenting itself as `evolve run`. Singular nouns are canonical; `job`, `trial` and `dataset` also answer to their plurals as hidden aliases, as does `ls` for `list`. The plural `agents` is deliberately not an alias — that word is reserved for the managed-agents CLI and refuses with the reason, so use the singular `evolve agent` for eval agent arms.
 
 ```
 job      start | list | show | trials | tasks | compare | cancel | stop | resume | regrade | download
@@ -441,10 +441,19 @@ agent    list | show | add | remove
 auth     status
 ```
 
+The commands below are written as `evolve …`, which is what the binary is called once the package is installed:
+
+```bash
+npm install @evolvingmachines/sdk
+npx evolve --help          # inside a project that has the package
+```
+
+A one-off run without installing needs the package named explicitly — `npx --package=@evolvingmachines/sdk evolve --help` — because a bare `npx evolve` would fetch an unrelated package of that name from the public registry.
+
 Start a job with the short flags — each one mirrors a field of the create body:
 
 ```bash
-npx evolve-evals run \
+evolve run \
     -d deep-swe@1.1 \            # --dataset, repeatable; bare name = active version
     -d frontier-swe \
     -a codex \                   # --agent <name[@version]> — the @version pins
@@ -476,34 +485,34 @@ max_trial_spend_usd: 25
 ```
 
 ```bash
-npx evolve-evals job start -c nightly.yaml --print-config   # inspect the exact body
-npx evolve-evals job start -c nightly.yaml --watch          # then run it
+evolve job start -c nightly.yaml --print-config   # inspect the exact body
+evolve job start -c nightly.yaml --watch          # then run it
 ```
 
 The read side, worked through:
 
 ```bash
-npx evolve-evals job list --limit 20 --search nightly
-npx evolve-evals job show <id> [id...]
-npx evolve-evals job trials <id> --status INFRASTRUCTURE_ERROR,SCORING_ERROR
-npx evolve-evals job trials <id> --dataset deep-swe
-npx evolve-evals job tasks <id>                      # per-task rollup
-npx evolve-evals job compare <id> <id>
-npx evolve-evals job cancel <id>
-npx evolve-evals job stop <id> --dataset deep-swe    # one dataset's live trials
-npx evolve-evals job resume <id> -f InfrastructureError
-npx evolve-evals job regrade <id> --task task-001
-npx evolve-evals job download <id> -o results/
+evolve job list --limit 20 --search nightly
+evolve job show <id> [id...]
+evolve job trials <id> --status INFRASTRUCTURE_ERROR,SCORING_ERROR
+evolve job trials <id> --dataset deep-swe
+evolve job tasks <id>                      # per-task rollup
+evolve job compare <id> <id>
+evolve job cancel <id>
+evolve job stop <id> --dataset deep-swe    # one dataset's live trials
+evolve job resume <id> -f InfrastructureError
+evolve job regrade <id> --task task-001
+evolve job download <id> -o results/
 
-npx evolve-evals trial show <trial-id>
-npx evolve-evals trial download <trial-id> --stream trace-stdout
-npx evolve-evals trial download <trial-id> -o trials/
-npx evolve-evals trial regrade <trial-id>
-npx evolve-evals trial stop <trial-id> [trial-id...]
+evolve trial show <trial-id>
+evolve trial download <trial-id> --stream trace-stdout
+evolve trial download <trial-id> -o trials/
+evolve trial regrade <trial-id>
+evolve trial stop <trial-id> [trial-id...]
 
-npx evolve-evals dataset list -q
-npx evolve-evals dataset show deep-swe@1.1
-npx evolve-evals auth status
+evolve dataset list -q
+evolve dataset show deep-swe@1.1
+evolve auth status
 ```
 
 Output follows one precedence everywhere: human tables on a TTY, tab-separated rows when piped, `--json` for the machine shape (NDJSON for `--watch` streams), and `-q` for ids-only lists (on `job start --watch`, `-q` suppresses the event log and prints the final block only). `--columns` chooses and orders list columns (`--columns help` names them; for `job list` they are `id`, `name`, `status`, `datasets`, `agents`, `trials`, `spent`, `started` — the money column's key is `spent`, not `cost`), `--no-trunc` disables cell truncation, `--no-headers` drops the header row from piped output. `--limit` and `--cursor` page every listing the same way.
@@ -521,7 +530,7 @@ Credentials: `$EVOLVE_API_KEY`, or `--api-key`; `--base-url` targets a non-defau
 Today the credential story is one step: create an API key in the dashboard and export it as `EVOLVE_API_KEY`. `auth status` then tells you who the platform thinks you are — your user, your email, and a descriptor of the key in use (the secret is never returned):
 
 ```bash
-npx evolve-evals auth status
+evolve auth status
 ```
 
 `auth login` — the browser sign-in flow that mints the key for you — lands with the auth release. Key listing and revocation are already in the contract and served; their SDK and CLI verbs arrive with the same release.
@@ -743,10 +752,10 @@ const history = await catalog.listImports({ dataset: "my-swe", limit: 20 });
 `warnings` is worth reading even on success: an import whose warnings include `no_solutions_archived` produced a version that can never be activated through this API (`version_not_activatable`) — an import that will never become runnable must not look identical to one that will.
 
 ```bash
-npx evolve-evals dataset publish \
+evolve dataset publish \
     --git https://github.com/acme/my-swe.git --ref v1.0.0 \
     --name my-swe --version 1.0 --watch
-npx evolve-evals dataset publish --dir ./my-swe --name my-swe --version 1.0 --watch
+evolve dataset publish --dir ./my-swe --name my-swe --version 1.0 --watch
 ```
 
 Every lane resolves to the same thing — a task-layout directory — and is held to the same rules. The corpus root is a directory whose `tasks/` subdirectory holds one directory per task, or the tasks directory itself. Provenance is recorded per lane: the resolved commit for a git publish, the sha256 of the exact uploaded bytes for a directory. On the wire a publish is `multipart/form-data` — the SDK produces it for you — and uploads past the compressed-size cap are refused with a `413 import_too_large`. The metadata parts come first, so a name owned by someone else is refused with the `409` before the upload is received rather than after. A git source must be an `https://` url: the import runs on a worker with no ssh client, so `ssh://` and `git@` remotes are refused at validation rather than failing inside the job — for a private repository, put a token in the https url.
@@ -760,7 +769,7 @@ What happens next:
   - **gold** — the task's reference solution (`solution/`) is pushed through the real agent-side + verifier path and must score exactly `1.0`. Proof the task is solvable as written.
   - **no-op** — an empty submission goes straight to the verifier and must *not* score `1.0`. A task a do-nothing agent passes measures nothing.
 
-`COMPLETED` is the import's terminal success: the corpus landed as a dataset version, visible in the catalog (`catalog.get("my-swe@1.0")`) in state `VALIDATING`. The gate then runs, and a version that passes it in full reaches `READY` — the one state that accepts jobs — and becomes the dataset's active version in the same step. A publish is therefore finished when its gate passes: nothing else to call, and `{ name: "my-swe" }` in a job already resolves to what you just published. A version that fails its gate terminally lands in state `FAILED`, with the reason attached: every version row carries a `gate` field — `{ status, attempts, code, message, failed_tasks }`, where `failed_tasks` names each ineligible task with the gate's own reasons (`[{ task_name, outcome, reasons }]`, the first 25) — and `evolve-evals dataset show` prints a failed gate as its own line (`version 1.0 activation gate FAILED: <the server's reason>`) followed by one indented line per failed task (`  starter-task: gold run produced no usable score …`), so a dead publish is never mistaken for one still validating and the cause is on the page, not just the count. The failure changes nothing else — the dataset keeps serving whatever it served before. `evals.start()` against any other state is rejected with a `409 version_not_ready` naming it.
+`COMPLETED` is the import's terminal success: the corpus landed as a dataset version, visible in the catalog (`catalog.get("my-swe@1.0")`) in state `VALIDATING`. The gate then runs, and a version that passes it in full reaches `READY` — the one state that accepts jobs — and becomes the dataset's active version in the same step. A publish is therefore finished when its gate passes: nothing else to call, and `{ name: "my-swe" }` in a job already resolves to what you just published. A version that fails its gate terminally lands in state `FAILED`, with the reason attached: every version row carries a `gate` field — `{ status, attempts, code, message, failed_tasks }`, where `failed_tasks` names each ineligible task with the gate's own reasons (`[{ task_name, outcome, reasons }]`, the first 25) — and `evolve dataset show` prints a failed gate as its own line (`version 1.0 activation gate FAILED: <the server's reason>`) followed by one indented line per failed task (`  starter-task: gold run produced no usable score …`), so a dead publish is never mistaken for one still validating and the cause is on the page, not just the count. The failure changes nothing else — the dataset keeps serving whatever it served before. `evals.start()` against any other state is rejected with a `409 version_not_ready` naming it.
 
 Two gate rules worth knowing before your first publish:
 
@@ -776,7 +785,7 @@ await catalog.activate("my-swe", "1.0");
 ```
 
 ```bash
-npx evolve-evals dataset activate my-swe 1.0
+evolve dataset activate my-swe 1.0
 ```
 
 From then on `{ name: "my-swe" }` in a job resolves to that version, and asking for the version that is already active succeeds without changing anything. Activating is refused with `version_not_ready` while the import and gate still run, and with `version_not_activatable` for a version that can never activate (no reference solutions were archived — the import's `warnings` told you at publish time).
@@ -792,7 +801,7 @@ const stream = await catalog.download("my-swe@1.0", { stream: true });
 ```
 
 ```bash
-npx evolve-evals dataset download my-swe@1.0 -o corpora/
+evolve dataset download my-swe@1.0 -o corpora/
 ```
 
 Reach for `{ to }` on anything sizeable: the default shape buffers the whole package in memory, and a corpus can be hundreds of megabytes. The ref is `"name"` (the active version's package) or `"name@version"`. You get back the gzipped tarball you uploaded, or, for a git publish, the checked-out tree packed at import time. Either way it is the whole corpus directory: the task config, `instruction.md`, `tests/`, `environment/`, and your `solution/`.
@@ -994,13 +1003,13 @@ await mine.upsert("acme-cli", {
 Both upload lanes — an agent and a dataset corpus — send `multipart/form-data`: the metadata travels as named parts and the bytes as a `file` part. The SDK builds that for you, and it is why nothing sensitive rides a URL: a run command and a set of environment values in a query string end up in every access log and proxy buffer between you and the server.
 
 ```bash
-npx evolve-evals agent add acme-cli \
+evolve agent add acme-cli \
     --install-script ./install.sh \
     --run "acme-cli --headless" \
     --agent-env ACME_PROFILE=bench
-npx evolve-evals agent list
-npx evolve-evals agent show acme-cli
-npx evolve-evals agent remove acme-cli
+evolve agent list
+evolve agent show acme-cli
+evolve agent remove acme-cli
 ```
 
 The CLI's `--install-script` names a **file**; its contents are what gets uploaded. `--dir` is the directory lane, and `--agent-env KEY=VALUE` repeats once per variable.

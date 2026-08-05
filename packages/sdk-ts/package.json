@@ -24,7 +24,7 @@
   },
   "type": "module",
   "bin": {
-    "evolve-evals": "dist/hosted/cli.js"
+    "evolve": "dist/cli/index.js"
   },
   "main": "dist/index.cjs",
   "types": "dist/index.d.ts",
@@ -51,7 +51,7 @@
     "type-check": "tsc --noEmit && tsc -p tsconfig.types-test.json",
     "test": "npm run test:unit && npm run test:integration",
     "pretest:unit": "npm run build",
-    "test:unit": "tsx tests/unit/semaphore.test.ts && tsx tests/unit/swarm-concurrency.test.ts && tsx tests/unit/swarm-verify.test.ts && tsx tests/unit/swarm-retry-verify.test.ts && tsx tests/unit/prompt-construction.test.ts && tsx tests/unit/observability-metadata.test.ts && tsx tests/unit/observability-identity.test.ts && tsx tests/unit/skills-integration.test.ts && tsx tests/unit/auth-config.test.ts && tsx tests/unit/config-validation.test.ts && tsx tests/unit/browser-config.test.ts && tsx tests/unit/integrations-config.test.ts && tsx tests/unit/managed-secrets.test.ts && tsx tests/unit/managed-modal.test.ts && tsx tests/unit/plugins-config.test.ts && tsx tests/unit/session-runtime.test.ts && tsx tests/unit/cost-api.test.ts && tsx tests/unit/storage-config.test.ts && tsx tests/unit/checkpoint-tar.test.ts && tsx tests/unit/checkpoint-errors.test.ts && tsx tests/unit/checkpoint-flows.test.ts && tsx tests/unit/checkpoint-dx.test.ts && tsx tests/unit/checkpoint-edge-cases.test.ts && tsx tests/unit/codex-parser-errors.test.ts && tsx tests/unit/codex-toml.test.ts && tsx tests/unit/kimi-parser.test.ts && tsx tests/unit/kimi-mcp.test.ts && tsx tests/unit/opencode-parser.test.ts && tsx tests/unit/droid-parser.test.ts && tsx tests/unit/droid-mcp.test.ts && tsx tests/unit/provider-parity.test.ts && tsx tests/unit/storage-client.test.ts && tsx tests/unit/sessions-client.test.ts && tsx tests/unit/hosted-client.test.ts && tsx tests/unit/hosted-ergonomics.test.ts && tsx tests/unit/hosted-cli.test.ts && tsx tests/unit/hosted-cli-bin.test.ts && tsx tests/unit/hosted-types.test.ts && tsx tests/unit/hosted-error-codes.test.ts && tsx tests/unit/hosted-spec-gate.test.ts && tsx tests/unit/harness-capabilities.test.ts && tsx tests/unit/sandbox-artifacts.test.ts && tsx tests/unit/upload-file-from-path.test.ts && tsx tests/unit/file-utils.test.ts && tsx --expose-gc tests/unit/hosted-tar.test.ts",
+    "test:unit": "tsx tests/unit/semaphore.test.ts && tsx tests/unit/swarm-concurrency.test.ts && tsx tests/unit/swarm-verify.test.ts && tsx tests/unit/swarm-retry-verify.test.ts && tsx tests/unit/prompt-construction.test.ts && tsx tests/unit/observability-metadata.test.ts && tsx tests/unit/observability-identity.test.ts && tsx tests/unit/skills-integration.test.ts && tsx tests/unit/auth-config.test.ts && tsx tests/unit/config-validation.test.ts && tsx tests/unit/browser-config.test.ts && tsx tests/unit/integrations-config.test.ts && tsx tests/unit/managed-secrets.test.ts && tsx tests/unit/managed-modal.test.ts && tsx tests/unit/plugins-config.test.ts && tsx tests/unit/session-runtime.test.ts && tsx tests/unit/cost-api.test.ts && tsx tests/unit/storage-config.test.ts && tsx tests/unit/checkpoint-tar.test.ts && tsx tests/unit/checkpoint-errors.test.ts && tsx tests/unit/checkpoint-flows.test.ts && tsx tests/unit/checkpoint-dx.test.ts && tsx tests/unit/checkpoint-edge-cases.test.ts && tsx tests/unit/codex-parser-errors.test.ts && tsx tests/unit/codex-toml.test.ts && tsx tests/unit/kimi-parser.test.ts && tsx tests/unit/kimi-mcp.test.ts && tsx tests/unit/opencode-parser.test.ts && tsx tests/unit/droid-parser.test.ts && tsx tests/unit/droid-mcp.test.ts && tsx tests/unit/provider-parity.test.ts && tsx tests/unit/storage-client.test.ts && tsx tests/unit/sessions-client.test.ts && tsx tests/unit/hosted-client.test.ts && tsx tests/unit/hosted-ergonomics.test.ts && tsx tests/unit/cli.test.ts && tsx tests/unit/cli-bin.test.ts && tsx tests/unit/hosted-types.test.ts && tsx tests/unit/hosted-error-codes.test.ts && tsx tests/unit/hosted-spec-gate.test.ts && tsx tests/unit/harness-capabilities.test.ts && tsx tests/unit/sandbox-artifacts.test.ts && tsx tests/unit/upload-file-from-path.test.ts && tsx tests/unit/file-utils.test.ts && tsx --expose-gc tests/unit/hosted-tar.test.ts",
     "test:unit:upload-from-path": "tsx tests/unit/upload-file-from-path.test.ts",
     "test:unit:parity": "tsx tests/unit/provider-parity.test.ts",
     "test:unit:semaphore": "tsx tests/unit/semaphore.test.ts",
@@ -110,8 +110,8 @@
     "test:codex": "tsx tests/integration/01-all-agents-parallel.ts codex",
     "test:gemini": "tsx tests/integration/01-all-agents-parallel.ts gemini",
     "test:qwen": "tsx tests/integration/01-all-agents-parallel.ts qwen",
-    "test:unit:hosted-cli": "tsx tests/unit/hosted-cli.test.ts",
-    "test:unit:hosted-cli-bin": "tsx tests/unit/hosted-cli-bin.test.ts",
+    "test:unit:cli": "tsx tests/unit/cli.test.ts",
+    "test:unit:cli-bin": "tsx tests/unit/cli-bin.test.ts",
     "test:unit:sandbox-artifacts": "tsx tests/unit/sandbox-artifacts.test.ts",
     "test:unit:hosted-tar": "tsx --expose-gc tests/unit/hosted-tar.test.ts",
     "prepack": "node scripts/copy-spec.mjs"

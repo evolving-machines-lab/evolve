@@ -1,6 +1,6 @@
 ---
 name: evolve
-description: "Evolve SDK development for TypeScript and Python. Use when building applications with Evolve to run AI agents (Claude, Codex, Gemini, Qwen, Kimi, OpenCode, Droid) in secure sandboxes. Triggers: (1) Creating Evolve applications, (2) Configuring agents with skills, Integrations, MCP servers, (3) Using Swarm abstractions (map, filter, reduce, bestOf/best_of, verify), (4) Building Pipelines, (5) Structured output with schemas, (6) Session management, streaming, observability, (7) Checkpointing, storage & StorageClient, (8) Cost tracking (per-run and per-session spend), (9) Historical sessions & trace download via sessions() client, (10) Hosted evals via datasets()/agents()/jobs()/trials() clients and the evolve-evals CLI, including bring-your-own agents, (11) Dataset publishing (git or local directory), regrades, and sandbox create options (image, resources, network policy)."
+description: "Evolve SDK development for TypeScript and Python. Use when building applications with Evolve to run AI agents (Claude, Codex, Gemini, Qwen, Kimi, OpenCode, Droid) in secure sandboxes. Triggers: (1) Creating Evolve applications, (2) Configuring agents with skills, Integrations, MCP servers, (3) Using Swarm abstractions (map, filter, reduce, bestOf/best_of, verify), (4) Building Pipelines, (5) Structured output with schemas, (6) Session management, streaming, observability, (7) Checkpointing, storage & StorageClient, (8) Cost tracking (per-run and per-session spend), (9) Historical sessions & trace download via sessions() client, (10) Hosted evals via datasets()/agents()/jobs()/trials() clients and the evolve CLI, including bring-your-own agents, (11) Dataset publishing (git or local directory), regrades, and sandbox create options (image, resources, network policy)."
 ---
 
 # Evolve SDK
@@ -49,7 +49,7 @@ Read on demand when the user's task requires them:
 |-------------|-----------|--------|
 | Building a UI, handling real-time events | [04-streaming.md](references/typescript/04-streaming.md) | [04-streaming.md](references/python/04-streaming.md) |
 | Parallel agents (map/filter/reduce/bestOf/verify), Pipeline chaining | [05-swarm-pipeline.md](references/typescript/05-swarm-pipeline.md) | [05-swarm-pipeline.md](references/python/05-swarm-pipeline.md) |
-| Hosted eval jobs (datasets()/agents()/jobs()/trials(), watch, download, evolve-evals CLI) | [06-hosted-evals.md](references/typescript/06-hosted-evals.md) | [06-hosted-evals.md](references/python/06-hosted-evals.md) |
+| Hosted eval jobs (datasets()/agents()/jobs()/trials(), watch, download, evolve CLI) | [06-hosted-evals.md](references/typescript/06-hosted-evals.md) | [06-hosted-evals.md](references/python/06-hosted-evals.md) |
 
 ## Topic Index
 
@@ -134,7 +134,7 @@ Read on demand when the user's task requires them:
 | Regrade (verifier-only re-run — the response IS a job) | [TS](references/typescript/06-hosted-evals.md#regrade) | [PY](references/python/06-hosted-evals.md#regrade) |
 | compare() (aggregates + task matrix) | [TS](references/typescript/06-hosted-evals.md#compare) | [PY](references/python/06-hosted-evals.md#compare) |
 | download() (the results archive) | [TS](references/typescript/06-hosted-evals.md#download-the-archive) | [PY](references/python/06-hosted-evals.md#download-the-archive) |
-| evolve-evals CLI (noun-verb grammar, short flags, -c config) | [TS](references/typescript/06-hosted-evals.md#cli) | [PY](references/python/06-hosted-evals.md#cli) |
+| evolve CLI (noun-verb grammar, top-level run, short flags, -c config) | [TS](references/typescript/06-hosted-evals.md#cli) | [PY](references/python/06-hosted-evals.md#cli) |
 | Auth (auth status today; auth login with its release) | [TS](references/typescript/06-hosted-evals.md#signing-in) | [PY](references/python/06-hosted-evals.md#signing-in) |
 | Capability document (meta(), GET /api/meta — public, ETag'd) | [TS](references/typescript/06-hosted-evals.md#what-the-platform-supports) | [PY](references/python/06-hosted-evals.md#what-the-platform-supports) |
 | Errors (code, param, details, retryAfterSec, requestId) | [TS](references/typescript/06-hosted-evals.md#errors) | [PY](references/python/06-hosted-evals.md#errors) |

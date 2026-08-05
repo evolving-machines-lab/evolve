@@ -5,7 +5,7 @@
 - [Cookbooks](https://github.com/evolving-machines-lab/evolve/tree/main/cookbooks)
 - [Changelog](https://github.com/evolving-machines-lab/evolve/blob/main/CHANGELOG.md)
 
-The SDK has two halves. One runs a CLI agent in a sandbox you control — that is the quickstart below. The other scores agents against datasets of tasks on Evolve's own infrastructure: you start a job, and read back per-trial rewards. See [Hosted Evals](./typescript/06-hosted-evals.md) ([Python](./python/06-hosted-evals.md)) for `jobs()`, `datasets()`, and the `evolve-evals` CLI.
+The SDK has two halves. One runs a CLI agent in a sandbox you control — that is the quickstart below. The other scores agents against datasets of tasks on Evolve's own infrastructure: you start a job, and read back per-trial rewards. See [Hosted Evals](./typescript/06-hosted-evals.md) ([Python](./python/06-hosted-evals.md)) for `jobs()`, `datasets()`, and the `evolve` CLI.
 
 ## Get Started
 

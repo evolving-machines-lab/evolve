@@ -3,7 +3,11 @@ import { defineConfig } from "tsup";
 export default defineConfig({
   entry: {
     index: "src/index.ts",
-    "hosted/cli": "src/hosted/cli.ts",
+    // Two directories deep on purpose: the CLI reads package.json and the
+    // staged spec/openapi.yaml at "../../", which resolves to the package root
+    // from dist/cli/ and from src/cli/ alike. A flat dist/cli.js would break
+    // both lookups.
+    "cli/index": "src/cli/index.ts",
   },
   format: ["esm", "cjs"],
   dts: true,

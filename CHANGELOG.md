@@ -38,8 +38,11 @@
 
 ### CLI
 
+- Renamed the binary to `evolve`. `evolve-evals` is gone with no alias — pre-launch, it had no external users — and the CLI source moved from `src/hosted/cli.ts` to `src/cli/index.ts` (built to `dist/cli/index.js`). Nothing about the grammar or the flags changed with the name.
+- Made `run` a first-class top-level command instead of a spelling rewritten to `job start`. It carries the same flags and the same handler, but `evolve run --help` documents `evolve run`, and a usage error raised inside it names `run` rather than a command the caller never typed.
+- Reserved `agents` instead of aliasing it. `job`, `trial` and `dataset` still answer to their plurals; `agents` belongs to the managed-agents CLI shipping after launch, so it refuses by name and points at `evolve agent`.
 - Renamed `task-runs` to `trials` and added `--agent harness:model[:version]`, `--max-trial-spend`, and `--status` filtering.
-- Added `evolve-evals regrade <id> [trial-id]` (whole-job filters `--status` / `--task`), `evolve-evals regrade-job <id>`, `agents` (`add` / `get` / `remove`), and `--dir` on `import`.
+- Added `evolve regrade <id> [trial-id]` (whole-job filters `--status` / `--task`), `evolve regrade-job <id>`, `agents` (`add` / `get` / `remove`), and `--dir` on `import`.
 
 ### Documentation And Skills
 

@@ -110,7 +110,7 @@ await evolve.run({ prompt: "Hello world" });
 | Regrade (`regrade()` — the response IS a job) | [Hosted Evals → Regrade](./06-hosted-evals.md#regrade) |
 | `compare()` (aggregates + task matrix) | [Hosted Evals → Compare](./06-hosted-evals.md#compare) |
 | `download()` (the results archive) | [Hosted Evals → Download the Archive](./06-hosted-evals.md#download-the-archive) |
-| `evolve-evals` CLI (noun-verb grammar, short flags, `-c` config) | [Hosted Evals → CLI](./06-hosted-evals.md#cli) |
+| `evolve` CLI (noun-verb grammar, top-level `run`, short flags, `-c` config) | [Hosted Evals → CLI](./06-hosted-evals.md#cli) |
 | Auth (`auth status` today; `auth login` with its release) | [Hosted Evals → Signing In](./06-hosted-evals.md#signing-in) |
 | `meta()` / `GET /api/meta` — the public capability document | [Hosted Evals → What the Platform Supports](./06-hosted-evals.md#what-the-platform-supports) |
 | Errors (`code`, `param`, `details`, `retryAfterSec`, `requestId`) | [Hosted Evals → Errors](./06-hosted-evals.md#errors) |

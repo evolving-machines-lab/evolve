@@ -1,9 +1,10 @@
 #!/usr/bin/env tsx
 /**
- * Unit Test: evolve-evals CLI (src/hosted/cli.ts)
+ * Unit Test: evolve CLI (src/cli/index.ts)
  *
  * The noun-verb grammar: group resolution (singular canonical, plural and
- * `ls` hidden aliases, `run` = `job start`), short flags, repeatables,
+ * `ls` hidden aliases, `agents` reserved and refused by name), the first-class
+ * top-level `run`, short flags, repeatables,
  * the -c config loader (JSON + real YAML via the yaml package, PyYAML's
  * readings pinned differentially) with flag-over-file merging,
  * --print-config, per-command help with a worked example, --version, the
@@ -17,7 +18,7 @@
  * Uses mock fetch to test without real network calls.
  *
  * Usage:
- *   npx tsx tests/unit/hosted-cli.test.ts
+ *   npx tsx tests/unit/cli.test.ts
  */
 
 // =============================================================================
@@ -148,8 +149,8 @@ import {
   parseYamlConfig,
   runCli,
   trialDetailLines,
-} from "../../src/hosted/cli.ts";
-import type { CliIO } from "../../src/hosted/cli.ts";
+} from "../../src/cli/index.ts";
+import type { CliIO } from "../../src/cli/index.ts";
 import type { Trial } from "../../src/hosted/types.ts";
 
 const BASE = "http://localhost:3000";
@@ -171,7 +172,28 @@ function testGrammarResolution() {
   assertEqual(parseArgs(["job", "list"]).command, "job list", "noun verb resolves");
   assertEqual(parseArgs(["jobs", "list"]).command, "job list", "plural noun is a hidden alias");
   assertEqual(parseArgs(["job", "ls"]).command, "job list", "`ls` is a hidden alias of list");
-  assertEqual(parseArgs(["run"]).command, "job start", "`run` is the top-level alias of job start");
+  assertEqual(parseArgs(["run"]).command, "run", "`run` is a command in its own right, not rewritten to job start");
+  assertEqual(
+    parseArgs(["run", "-d", "deep-swe", "-a", "codex", "-m", "gpt-5.5"]).flags,
+    { dataset: ["deep-swe"], agent: "codex", model: ["gpt-5.5"] },
+    "`run` parses job start's flags"
+  );
+  assertEqual(
+    parseArgs(["run", "-h"]),
+    { command: "help", positionals: ["run"], flags: {} },
+    "-h on run asks for run's own help page"
+  );
+  assertThrowsUsage(
+    () => parseArgs(["agents", "list"]),
+    "reserved for the managed-agents CLI",
+    "`agents` is reserved, not a hidden plural alias of `agent`"
+  );
+  assertThrowsUsage(
+    () => parseArgs(["agents"]),
+    'use "evolve agent"',
+    "the reserved word points at the command that does exist"
+  );
+  assertEqual(parseArgs(["agent", "list"]).command, "agent list", "the singular `agent` still resolves");
   assertEqual(parseArgs([]).command, "help", "bare invocation is help, not an error");
   assertEqual(parseArgs(["help"]).command, "help", "help command");
   assertEqual(parseArgs(["--version"]).command, "version", "--version resolves");
@@ -1330,7 +1352,7 @@ async function testHelpAndVersion() {
   const root = captureIO();
   assertEqual(await runCli([], root.io), 0, "bare invocation exits 0");
   const rootText = root.out.join("\n");
-  assert(rootText.includes("Usage: evolve-evals"), "root help prints usage");
+  assert(rootText.includes("Usage: evolve"), "root help prints usage");
   assert(rootText.includes("job") && rootText.includes("dataset"), "root help names the groups");
 
   const group = captureIO();
@@ -1342,7 +1364,54 @@ async function testHelpAndVersion() {
   const cmdText = cmd.out.join("\n");
   assert(cmdText.includes("-d, --dataset"), "command help shows the short + long flags");
   assert(cmdText.includes("Example:"), "command help carries a worked example");
-  assert(cmdText.includes("evolve-evals job start -d "), "the example is a runnable line");
+  assert(cmdText.includes("evolve job start -d "), "the example is a runnable line");
+
+  // `run` is first-class: its help page documents `run`, never `job start`.
+  // The old behavior rewrote the command before help was rendered, so a caller
+  // who typed `evolve run --help` was handed a page for words they never used.
+  const runCmd = captureIO();
+  assertEqual(await runCli(["run", "--help"], runCmd.io), 0, "run --help exits 0");
+  const runText = runCmd.out.join("\n");
+  assert(runText.includes("Usage: evolve run"), "run --help documents `evolve run`");
+  assert(!runText.includes("Usage: evolve job start"), "run --help does not deflect to job start");
+  assert(runText.includes("-d, --dataset"), "run --help carries job start's flags");
+  assert(runText.includes("evolve run -d "), "run's example is spelled as run");
+  assert(rootText.includes("  run "), "root help lists run as its own command");
+
+  // A refusal raised inside `run` names `run`. Reaching for job start's
+  // spelling here would send the caller to a command they did not type.
+  const runNoDataset = captureIO();
+  assertEqual(await runCli(["run", ...AUTH], runNoDataset.io), 2, "run with no dataset is a usage error");
+  assert(
+    runNoDataset.err.join("\n").includes('"run" requires -d/--dataset'),
+    "the refusal inside run names run, not job start"
+  );
+  const startNoDataset = captureIO();
+  assertEqual(await runCli(["job", "start", ...AUTH], startNoDataset.io), 2, "job start with no dataset is a usage error");
+  assert(
+    startNoDataset.err.join("\n").includes('"job start" requires -d/--dataset'),
+    "the same refusal under job start still names job start"
+  );
+
+  // The reserved word answers with its reason on every road in.
+  const reservedHelp = captureIO();
+  assertEqual(await runCli(["help", "agents"], reservedHelp.io), 0, "help agents exits 0");
+  assert(
+    reservedHelp.out.join("\n").includes("reserved for the managed-agents CLI"),
+    "help agents explains the reservation instead of printing the root page"
+  );
+  const reservedRun = captureIO();
+  assertEqual(await runCli(["agents", "list", ...AUTH], reservedRun.io), 2, "agents <verb> is a usage error");
+  assert(
+    reservedRun.err.join("\n").includes("reserved for the managed-agents CLI"),
+    "running a reserved word refuses by name"
+  );
+
+  // The old binary name is gone from every rendered surface — a stray
+  // `evolve-evals` in help is an instruction to type a command that no
+  // installer writes.
+  const allHelp = [rootText, group.out.join("\n"), cmdText, runText].join("\n");
+  assert(!allHelp.includes("evolve-evals"), "no help surface still says evolve-evals");
 
   const trialCmd = captureIO();
   await runCli(["help", "trial", "download"], trialCmd.io);
@@ -1803,7 +1872,7 @@ async function testJobListOutputModes() {
     const tty = captureIO(true);
     await runCli(["job", "list", ...AUTH], tty.io);
     assert(tty.out[0].includes("ID") && !tty.out[0].includes("\t"), "TTY output is an aligned table");
-    assert(tty.out.some((l) => l.includes("More: evolve-evals job list --cursor cur-1")), "TTY shows the next-page hint");
+    assert(tty.out.some((l) => l.includes("More: evolve job list --cursor cur-1")), "TTY shows the next-page hint");
 
     const quiet = captureIO();
     await runCli(["job", "list", "-q", ...AUTH], quiet.io);
@@ -2689,7 +2758,7 @@ async function testTrialDownloadTrajectoryRefused() {
 async function testTrialDownloadSave() {
   console.log("\n--- runCli: trial download saves under <dir>/<trial-id>/; --overwrite gates ---");
   installMockFetch();
-  const tmpDir = await mkdtemp(join(tmpdir(), "evolve-evals-trial-dl-"));
+  const tmpDir = await mkdtemp(join(tmpdir(), "evolve-trial-dl-"));
   try {
     // Stream selectors first: the mock matches by substring, and a plain
     // "/trace" pattern would swallow "/trace?stream=…" if it were checked first.
@@ -3301,7 +3370,7 @@ function testBuildInputsDirect() {
 // =============================================================================
 
 async function main() {
-  console.log("evolve-evals CLI Unit Tests\n");
+  console.log("evolve CLI Unit Tests\n");
 
   testGrammarResolution();
   testShortFlags();
