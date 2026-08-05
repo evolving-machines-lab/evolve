@@ -43,6 +43,7 @@ from evolve import (
     EvalSandboxProvider,
     JobStatus,
     JobsClient,
+    SkillsClient,
     SpendSource,
     TrialStatus,
     TrialsClient,
@@ -149,6 +150,11 @@ OPERATION_TO_METHOD = {
     'getAgent': (AgentsClient, 'get'),
     'upsertAgent': (AgentsClient, 'upsert'),
     'deleteAgent': (AgentsClient, 'delete'),
+    # Skills (platform uploads referenced as upload:<id> in agents[].skills)
+    'uploadSkill': (SkillsClient, 'upload'),
+    'listSkills': (SkillsClient, 'list'),
+    'getSkill': (SkillsClient, 'get'),
+    'deleteSkill': (SkillsClient, 'delete'),
     # Meta + auth
     'getMeta': meta,
     'getAuthStatus': (AuthClient, 'status'),

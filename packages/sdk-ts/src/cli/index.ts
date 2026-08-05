@@ -182,6 +182,7 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
       "'config': --ak 'config=<path|inline JSON>' becomes the harness's native settings " +
       "file (user config is the base, platform routing on top); the server refuses " +
       "unsupported kwargs and config keys touching billing/base-URL/routing/env",
+  },
   skill: {
     kind: "repeat",
     aliases: ["skills"],
@@ -2865,7 +2866,7 @@ async function cmdJobDownload(inv: Invocation, io: CliIO): Promise<number> {
   }
   const { mkdtemp, rm } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
-  const { extractTarGz } = await import("./tar");
+  const { extractTarGz } = await import("../hosted/tar");
   const scratch = await mkdtemp(join(tmpdir(), "evolve-job-download-"));
   try {
     const archivePath = await client.download(id, { to: scratch });

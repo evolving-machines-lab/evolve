@@ -584,6 +584,8 @@ class TestPassAtK:
             n_total_trials=0,
             trials=TrialTally(total=0),
             stats=stats,
+            # {} is the older-server / no-auto-retry read of the policy echo.
+            retry={},
             failure=None,
             source_jobs=[],
             is_regrade=False,
