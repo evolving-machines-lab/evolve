@@ -19,7 +19,15 @@
  *     MCP writer never touches it — the file stays exactly the user document,
  *     and nativeConfigFlagPath() aims the --settings flag at that same path;
  *   - no config = no write: the settings path is never created and no chmod
- *     runs, so an agent without a document cannot grow a stray empty file.
+ *     runs, so an agent without a document cannot grow a stray empty file;
+ *   - presets ride the SAME delivery and are pinned here too, because every
+ *     preset test elsewhere exercises pure helpers and stayed green with the
+ *     delivery wiring reverted (effectiveNativeConfigDocument -> plain user
+ *     config, presetFlags dropped from buildCommand): a claude preset ALONE
+ *     writes the settings document carrying the deny/pin and --settings aims
+ *     at it; a claude preset + user config lands as ONE merged document with
+ *     the user's own deny surviving beside the platform's; a codex preset
+ *     puts its -c flags on the actual built command line.
  *
  * Usage:
  *   npm run test:unit:native-config-delivery
@@ -31,7 +39,11 @@ import { parse as parseToml } from "smol-toml";
 // src/agent.ts directly would drag the .md prompt assets through tsx, which
 // only the build step knows how to inline.
 import { Agent } from "../../dist/index.js";
-import { AGENT_REGISTRY, expandPath } from "../../src/registry.ts";
+import {
+  AGENT_REGISTRY,
+  expandPath,
+  PINNED_CONTEXT_WINDOW_TOKENS,
+} from "../../src/registry.ts";
 import type {
   SandboxInstance,
   SandboxCommandHandle,
@@ -176,10 +188,11 @@ const CLAUDE_SETTINGS_PATH = expandPath(AGENT_REGISTRY.claude.nativeConfig!.path
 async function runSetupWorkspace(
   type: "codex" | "claude",
   config: Record<string, unknown> | undefined,
+  preset?: "no-internet" | "pinned-context",
 ): Promise<ReturnType<typeof createRecordingSandbox>> {
   const recording = createRecordingSandbox();
   const agent = new Agent(
-    { type, apiKey: "sk-evolve-test", isDirectMode: false, config },
+    { type, apiKey: "sk-evolve-test", isDirectMode: false, config, preset },
     { mcpServers: MCP_SERVERS },
   );
   // The private setup path every fresh sandbox goes through before the
@@ -365,6 +378,164 @@ async function testNoConfigNoWrite(): Promise<void> {
   }
 }
 
+/**
+ * Claude preset ALONE: the preset IS a settings document. The guarantee
+ * cannot depend on the user also bringing a config — so with no user config
+ * at all, the stamped document must still land in the sandbox and the
+ * --settings flag must still aim at it. This is exactly what a reverted
+ * effectiveNativeConfigDocument (plain `this.agentConfig.config`) silently
+ * drops: the preset gets accepted, stored, echoed — and never delivered.
+ */
+async function testClaudePresetAloneDelivery(): Promise<void> {
+  console.log("\n[4] claude preset alone: the stamp IS the delivered settings document");
+
+  // no-internet: the deny lands in the box.
+  {
+    const { events, files } = await runSetupWorkspace("claude", undefined, "no-internet");
+    const settingsWrites = writesTo(events, CLAUDE_SETTINGS_PATH);
+    assertEqual(
+      settingsWrites.length,
+      1,
+      "no-internet with no user config still writes the settings document exactly once",
+    );
+    const doc = JSON.parse(files.get(CLAUDE_SETTINGS_PATH) ?? "null") as {
+      permissions?: { deny?: string[] };
+    } | null;
+    const deny = doc?.permissions?.deny ?? [];
+    assert(
+      deny.includes("WebSearch") && deny.includes("WebFetch"),
+      "the delivered document denies WebSearch and WebFetch (the no-internet guarantee)",
+    );
+    const chmodIndex = firstIndex(
+      events,
+      (e) => e.kind === "run" && e.cmd === `chmod 600 ${CLAUDE_SETTINGS_PATH}`,
+    );
+    assert(
+      chmodIndex !== -1 && settingsWrites[0] !== undefined && chmodIndex > settingsWrites[0].index,
+      "the preset document is chmod 600 right after it is written",
+    );
+  }
+
+  // pinned-context: the window pin lands in the box.
+  {
+    const { files } = await runSetupWorkspace("claude", undefined, "pinned-context");
+    const doc = JSON.parse(files.get(CLAUDE_SETTINGS_PATH) ?? "null") as Record<
+      string,
+      unknown
+    > | null;
+    assertEqual(
+      doc?.autoCompactWindow as number,
+      PINNED_CONTEXT_WINDOW_TOKENS,
+      "the delivered document pins autoCompactWindow to the platform number",
+    );
+    assertEqual(
+      doc?.autoCompactEnabled as boolean,
+      true,
+      "the delivered document forces autoCompactEnabled on, so a default cannot disable the pin",
+    );
+  }
+
+  // …and --settings aims at the document a preset-only agent wrote.
+  const agent = new Agent(
+    { type: "claude", apiKey: "sk-evolve-test", isDirectMode: false, preset: "no-internet" },
+    {},
+  );
+  const flagPath = (agent as unknown as {
+    nativeConfigFlagPath(): string | undefined;
+  }).nativeConfigFlagPath();
+  assertEqual(
+    flagPath,
+    CLAUDE_SETTINGS_PATH,
+    "nativeConfigFlagPath() aims --settings at the preset document even with no user config",
+  );
+}
+
+/**
+ * Claude preset + user config: ONE merged document, user base under the
+ * platform stamp, arrays unioned — the user's own deny survives BESIDE the
+ * platform's, never replaced by it.
+ */
+async function testClaudePresetMergedWithUserConfig(): Promise<void> {
+  console.log("\n[5] claude preset + user config: one merged document, user deny surviving");
+
+  const { events, files } = await runSetupWorkspace("claude", CLAUDE_USER_DOC, "no-internet");
+  const settingsWrites = writesTo(events, CLAUDE_SETTINGS_PATH);
+  assertEqual(
+    settingsWrites.length,
+    1,
+    "preset + user config is still exactly one settings write (one merged document)",
+  );
+  const doc = JSON.parse(files.get(CLAUDE_SETTINGS_PATH) ?? "null") as {
+    includeCoAuthoredBy?: boolean;
+    permissions?: { deny?: string[] };
+  } | null;
+  const deny = doc?.permissions?.deny ?? [];
+  assert(
+    deny.includes("Bash(rm -rf *)"),
+    "the user's own deny entry survives the platform stamp (arrays union, not overwrite)",
+  );
+  assert(
+    deny.includes("WebSearch") && deny.includes("WebFetch"),
+    "the platform's WebSearch/WebFetch deny landed beside the user's entry",
+  );
+  assertEqual(
+    doc?.includeCoAuthoredBy,
+    false,
+    "the user's unrelated settings key survives in the merged document",
+  );
+}
+
+/**
+ * Codex presets ride the ACTUAL built command line — the -c flags codex
+ * ranks above config.toml. Dropping `presetFlags` from the buildCommand
+ * options is exactly the revert that left every helper test green while the
+ * real command ran unsealed.
+ */
+async function testCodexPresetOnBuiltCommand(): Promise<void> {
+  console.log("\n[6] codex preset: the -c flags are on the actual built command");
+
+  const buildFor = (preset: "no-internet" | "pinned-context", config?: Record<string, unknown>): string => {
+    const agent = new Agent(
+      { type: "codex", apiKey: "sk-evolve-test", isDirectMode: false, config, preset },
+      {},
+    );
+    return (agent as unknown as { buildCommand(prompt: string): string }).buildCommand("hello");
+  };
+
+  const sealed = buildFor("no-internet");
+  assert(
+    sealed.includes(" -c web_search=disabled"),
+    "no-internet puts -c web_search=disabled on the command (harbor's exact flag and enum)",
+  );
+
+  const pinned = buildFor("pinned-context");
+  assert(
+    pinned.includes(` -c model_context_window=${PINNED_CONTEXT_WINDOW_TOKENS}`),
+    "pinned-context puts -c model_context_window on the command with the platform number",
+  );
+
+  // The flag survives a user config too: the command line is what codex
+  // ranks above the config.toml that document becomes.
+  const sealedWithConfig = buildFor("no-internet", CODEX_USER_DOC);
+  assert(
+    sealedWithConfig.includes(" -c web_search=disabled"),
+    "the seal stays on the command line even when the user brought a config.toml document",
+  );
+
+  // And a preset-less command carries no preset flags — the seal is opt-in.
+  const openAgent = new Agent(
+    { type: "codex", apiKey: "sk-evolve-test", isDirectMode: false },
+    {},
+  );
+  const open = (openAgent as unknown as { buildCommand(prompt: string): string }).buildCommand(
+    "hello",
+  );
+  assert(
+    !open.includes("web_search") && !open.includes("model_context_window"),
+    "no preset = no preset flags on the command",
+  );
+}
+
 // =============================================================================
 // MAIN
 // =============================================================================
@@ -377,6 +548,9 @@ async function main(): Promise<void> {
   await testCodexDelivery();
   await testClaudeDelivery();
   await testNoConfigNoWrite();
+  await testClaudePresetAloneDelivery();
+  await testClaudePresetMergedWithUserConfig();
+  await testCodexPresetOnBuiltCommand();
 
   console.log("\n" + "=".repeat(60));
   console.log(`Results: ${passed} passed, ${failed} failed`);

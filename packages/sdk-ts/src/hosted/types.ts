@@ -235,9 +235,7 @@ export interface AgentArmInput {
    * `invalid_input`, and a known preset on an agent whose /api/meta entry
    * does not list it under `presets` is `agent_preset_unsupported` — a
    * preset the platform cannot guarantee is refused, never half-applied.
-   * (The no-internet guarantee is enforced twice: harness settings here,
-   * plus the gateway stripping web-tool declarations on the run's one
-   * allowed model route.)
+   * Enforcement is harness configuration, exactly as Harbor delivers it.
    */
   preset?: string | null;
 }

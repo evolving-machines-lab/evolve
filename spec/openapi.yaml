@@ -1980,9 +1980,8 @@ components:
             ON TOP of the user document, so a user config can never undo it.
             `no-internet` turns off the vendor's server-side web tools
             (Claude settings deny WebSearch/WebFetch; Codex
-            `-c web_search=disabled`) — and the platform gateway additionally
-            strips/refuses web-tool declarations on the run's one allowed
-            model route, the internet path sandbox sealing cannot close.
+            `-c web_search=disabled`) — enforcement is harness
+            configuration, exactly as Harbor delivers it.
             `pinned-context` pins one fixed effective context window
             (200000 tokens) so vendor-side window tuning never confounds a
             comparison. Part of arm identity: the same agent and model with
