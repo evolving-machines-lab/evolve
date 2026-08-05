@@ -340,6 +340,49 @@ export interface JobStats {
   n_output_tokens?: number | null;
   /** Measured spend across settled trials; null before any settled. */
   cost_usd?: number | null;
+  /**
+   * Sum of the job's per-trial GPU compute ESTIMATES (each trial's
+   * `gpu_cost.estimate_usd`) — a SEPARATE labeled figure, never merged into
+   * `cost_usd` (metered model spend). Null when no trial of the job carries
+   * an estimate; a real $0 (a GPU trial that provably never booted a
+   * sandbox) keeps the sum non-null. Absent on servers predating the field.
+   */
+  gpu_cost_usd?: number | null;
+}
+
+/**
+ * GPU COMPUTE ESTIMATE of one trial — present on settled GPU trials only,
+ * null on every other trial. The estimate is the trial's MEASURED
+ * agent-sandbox lifetime multiplied by a versioned, source-dated rate-card
+ * row (the provider's public list price per GPU-second, times `gpu_count`).
+ * A SEPARATE labeled figure by law: never merged into
+ * `agent_result.cost_usd`, which is metered model spend. Exactly one of
+ * `estimate_usd` / `unpriced_reason` is set — an unmeasurable lifetime (a
+ * reaped run) or a rate-less type (`any`) states its reason instead of a
+ * guessed number, and a GPU trial that provably never booted a sandbox
+ * carries a real `estimate_usd: 0`.
+ */
+export interface TrialGpuCost {
+  /** The estimate, USD, micro-dollar resolution. Null exactly when `unpriced_reason` is set. */
+  estimate_usd: number | null;
+  /** Why no estimate exists. Null exactly when `estimate_usd` is set. */
+  unpriced_reason: string | null;
+  provider: EvalSandboxProvider;
+  /** The rate card's billing name (e.g. `H100`); null when the declared type never resolved. */
+  gpu_type: string | null;
+  /** The task's own declared spelling (first named `gpu_types` entry, or `any`). */
+  declared_gpu_type: string;
+  gpu_count: number;
+  /** Measured sandbox lifetime, fractional seconds; null when unmeasured. */
+  duration_sec: number | null;
+  /** The applied list price per GPU per second; null when no rate applied. */
+  rate_usd_per_gpu_sec: number | null;
+  /** Which card priced this trial: version, provider pricing page, and the date it was read. */
+  rate_card: { version: number; source: string | null; source_date: string | null };
+  /** Observed sandbox birth (ISO); null when unmeasured. */
+  measured_from: string | null;
+  /** Observed sandbox end (ISO); null when unmeasured. */
+  measured_to: string | null;
 }
 
 /**
@@ -549,6 +592,13 @@ export interface Trial {
     to: EvalSandboxProvider;
     reason: string;
   } | null;
+  /**
+   * GPU compute ESTIMATE — measured sandbox lifetime x the platform's
+   * versioned, source-dated rate card (see TrialGpuCost). Present on settled
+   * GPU trials only; null on every other trial, and never merged into
+   * `agent_result.cost_usd`. Absent on servers predating the field.
+   */
+  gpu_cost?: TrialGpuCost | null;
   /** Provider id of the box the agent executed in; null when none booted. */
   sandbox_id: string | null;
   /** The separate verifier box; null in shared mode or when never reached. */

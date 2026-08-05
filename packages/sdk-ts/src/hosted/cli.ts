@@ -1666,6 +1666,11 @@ function jobLines(e: Job): string[] {
   rows.push(["worst case", fmtUsd(e.worst_case_spend_usd)]);
   rows.push(["provider", e.sandbox_provider]);
   rows.push(["spent", fmtUsd(e.stats.cost_usd)]);
+  // GPU compute is a SEPARATE labeled estimate (lane 5) — never summed into
+  // the spent row above, and absent entirely for a job with no GPU trials.
+  if (e.stats.gpu_cost_usd != null) {
+    rows.push(["gpu compute (est.)", `$${e.stats.gpu_cost_usd.toFixed(4)}`]);
+  }
   // Only the statuses actually present: the response names all of them (so a
   // client never hardcodes the enum), but a row of eight zeros helps nobody.
   const histogram = Object.entries(e.trials.byStatus)
@@ -1712,6 +1717,14 @@ const TRIAL_COLUMNS: ListColumn<Trial>[] = [
   { key: "status", header: "STATUS", cell: (r) => r.status },
   { key: "reward", header: "REWARD", cell: (r) => (r.reward !== null ? String(r.reward) : "-") },
   { key: "spent", header: "SPENT", cell: (r) => fmtUsd(r.agent_result?.cost_usd) },
+  {
+    // GPU compute estimate — its own column, never folded into SPENT (lane-5
+    // law). Opt-in via --columns; "-" for non-GPU trials and unpriced ones.
+    key: "gpu",
+    header: "GPU (EST)",
+    cell: (r) =>
+      r.gpu_cost?.estimate_usd != null ? `$${r.gpu_cost.estimate_usd.toFixed(4)}` : "-",
+  },
   { key: "id", header: "TRIAL ID", cell: (r) => r.id },
 ];
 const TRIAL_DEFAULT_COLUMNS = ["task", "agent", "attempt", "status", "reward", "spent", "id"];
@@ -1799,6 +1812,27 @@ export function trialDetailLines(run: Trial): string[] {
   if (run.sandbox_provider_degrade) {
     const d = run.sandbox_provider_degrade;
     rows.push(["provider degrade", `${d.from} → ${d.to}: ${d.reason}`]);
+  }
+  // GPU compute (lane 5): a SEPARATE labeled estimate, never folded into the
+  // spent row above. Priced = the full audit sentence (what x how long x whose
+  // rate card); unpriced = the server's own reason, verbatim — a number is
+  // never invented client-side.
+  if (run.gpu_cost) {
+    const g = run.gpu_cost;
+    if (g.estimate_usd != null) {
+      const type = g.gpu_type ?? g.declared_gpu_type;
+      const duration =
+        g.duration_sec != null ? `${Math.round(g.duration_sec)}s` : "unmeasured";
+      const card = `rate card v${g.rate_card.version}${
+        g.rate_card.source ? `, ${g.rate_card.source} ${g.rate_card.source_date ?? ""}`.trimEnd() : ""
+      }`;
+      rows.push([
+        "gpu compute (est.)",
+        `$${g.estimate_usd.toFixed(4)} — ${type} x${g.gpu_count}, ${duration} on ${g.provider} (${card})`,
+      ]);
+    } else {
+      rows.push(["gpu compute (est.)", `not priced — ${g.unpriced_reason ?? "no reason recorded"}`]);
+    }
   }
   if (run.sandbox_id) rows.push(["sandbox", run.sandbox_id]);
   if (run.verifier_environment_mode) rows.push(["verifier", run.verifier_environment_mode]);

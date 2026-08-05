@@ -1472,6 +1472,69 @@ function testTrialDetailLiveSpend() {
   assert(!noReading.includes("spent (live)"), "no reading yet means no live row, never $0");
 }
 
+/**
+ * GPU COST (Wave-3 lane 5): the trial detail renders the compute estimate as
+ * its own labeled row — the audit sentence for a priced trial, the server's
+ * own reason for an unpriced one, and NOTHING for a non-GPU trial. Never
+ * folded into the spent row.
+ */
+function testTrialDetailGpuCost() {
+  console.log("\n--- trialDetailLines: GPU compute estimate (lane 5) ---");
+  const priced = trialDetailLines(
+    trialFixture({
+      status: "SCORED",
+      reward: 1,
+      agent_result: { cost_usd: 0.31 },
+      spend_source: "measured",
+      gpu_cost: {
+        estimate_usd: 3.9492,
+        unpriced_reason: null,
+        provider: "modal",
+        gpu_type: "H100",
+        declared_gpu_type: "h100",
+        gpu_count: 1,
+        duration_sec: 3600,
+        rate_usd_per_gpu_sec: 0.001097,
+        rate_card: { version: 1, source: "modal.com/pricing", source_date: "2026-08-05" },
+        measured_from: "2026-07-29T00:00:10.000Z",
+        measured_to: "2026-07-29T01:00:10.000Z",
+      },
+    }),
+  ).join("\n");
+  assert(priced.includes("gpu compute (est.)"), "the estimate row is labeled as an estimate");
+  assert(
+    priced.includes("$3.9492 — H100 x1, 3600s on modal (rate card v1, modal.com/pricing 2026-08-05)"),
+    "the priced row carries the full audit sentence: figure, type x count, duration, provider, card",
+  );
+  assert(priced.includes("$0.31"), "the model spend row keeps its own figure beside it");
+  assert(!priced.includes("$4.26"), "the two figures are never summed into one");
+
+  const unpriced = trialDetailLines(
+    trialFixture({
+      gpu_cost: {
+        estimate_usd: null,
+        unpriced_reason: "the worker died mid-run",
+        provider: "modal",
+        gpu_type: "H100",
+        declared_gpu_type: "h100",
+        gpu_count: 1,
+        duration_sec: null,
+        rate_usd_per_gpu_sec: null,
+        rate_card: { version: 1, source: null, source_date: null },
+        measured_from: null,
+        measured_to: null,
+      },
+    }),
+  ).join("\n");
+  assert(
+    unpriced.includes("not priced — the worker died mid-run"),
+    "an unpriced trial states the server's reason verbatim, never an invented number",
+  );
+
+  const cpu = trialDetailLines(trialFixture({})).join("\n");
+  assert(!cpu.includes("gpu compute"), "a non-GPU trial shows no GPU row at all");
+}
+
 // =============================================================================
 // WIRE FIXTURES
 // =============================================================================
@@ -1860,6 +1923,42 @@ async function testJobShowMultiId() {
     await runCli(["job", "show", "eval-1", "eval-2", ...AUTH], rendered.io);
     const text = rendered.out.join("\n");
     assert(text.includes("eval-1") && text.includes("eval-2"), "rendered view shows both jobs");
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * GPU COST on the job card (lane 5): stats.gpu_cost_usd renders as its own
+ * labeled row beside — never inside — the spent row, and a job without one
+ * (no GPU trials, or an older server) shows no row at all.
+ */
+async function testJobShowGpuCost() {
+  console.log("\n--- runCli: job show renders the GPU compute estimate separately ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: wireJob({ stats: { cost_usd: 1.5, gpu_cost_usd: 0.25 } }),
+    });
+    const withGpu = captureIO();
+    assertEqual(await runCli(["job", "show", "eval-1", ...AUTH], withGpu.io), 0, "exit 0");
+    const text = withGpu.out.join("\n");
+    assert(text.includes("gpu compute (est.)"), "the GPU estimate row is labeled");
+    assert(text.includes("$0.2500"), "the summed estimate renders at 4 decimals");
+    assert(text.includes("$1.50"), "the spent row keeps the model-spend figure untouched");
+    assert(!text.includes("$1.75"), "the two figures are never summed into one");
+
+    setMockResponse("/api/jobs/eval-2", {
+      status: 200,
+      body: wireJob({ id: "eval-2", stats: { cost_usd: 1.5 } }),
+    });
+    const without = captureIO();
+    await runCli(["job", "show", "eval-2", ...AUTH], without.io);
+    assert(
+      !without.out.join("\n").includes("gpu compute"),
+      "a job with no GPU estimate shows no row — absent, not $0",
+    );
   } finally {
     restoreFetch();
   }
@@ -3391,6 +3490,7 @@ async function main() {
   testImportStatusLine();
   testEventLine();
   testTrialDetailLiveSpend();
+  testTrialDetailGpuCost();
   testBuildInputsDirect();
   await testRunWatchEndToEnd();
   await testRunWatchJsonAndQuiet();
@@ -3399,6 +3499,7 @@ async function main() {
   await testJsonErrorObject();
   await testJobListOutputModes();
   await testJobShowMultiId();
+  await testJobShowGpuCost();
   await testJobTrialsAndTasks();
   await testJobStopDatasetSugar();
   await testJobStopDatasetChunking();

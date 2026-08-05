@@ -697,7 +697,9 @@ class Job:
     #: ``stats``.
     trials: TrialTally
     #: Aggregate statistics (progress counters, token totals, ``cost_usd`` —
-    #: measured spend, never a gate; ``evals`` keyed ``agent__model__dataset``).
+    #: measured spend, never a gate; ``gpu_cost_usd`` — the SEPARATE summed
+    #: GPU compute estimate, never merged into ``cost_usd``; ``evals`` keyed
+    #: ``agent__model__dataset``).
     #: A plain dict with the wire's own keys, read by key, never constructed.
     stats: Dict[str, Any]
     #: Why the job FAILED, or None.
@@ -841,6 +843,16 @@ class Trial:
     #: task declared GPUs the job's stamped provider could not allocate, so it
     #: ran on modal instead. None on every other trial.
     sandbox_provider_degrade: Optional[Dict[str, str]]
+    #: GPU compute ESTIMATE — present on settled GPU trials only, None on
+    #: every other trial. Measured agent-sandbox lifetime x the platform's
+    #: versioned, source-dated rate card; a SEPARATE labeled figure NEVER
+    #: merged into ``agent_result.cost_usd`` (metered model spend). Keys:
+    #: ``estimate_usd``/``unpriced_reason`` (exactly one set), ``provider``,
+    #: ``gpu_type``, ``declared_gpu_type``, ``gpu_count``, ``duration_sec``,
+    #: ``rate_usd_per_gpu_sec``, ``rate_card`` ({version, source,
+    #: source_date}), ``measured_from``, ``measured_to``. A GPU trial that
+    #: provably never booted a sandbox carries a real ``estimate_usd: 0``.
+    gpu_cost: Optional[Dict[str, Any]]
     # WHERE THIS TRIAL RAN: the provider id of the box the agent executed in.
     # None is honest and common — a QUEUED or CANCELLED trial never booted one.
     sandbox_id: Optional[str]
@@ -1564,6 +1576,10 @@ def _map_trial(data: Dict[str, Any]) -> Trial:
             data['sandbox_provider_degrade']
             if isinstance(data.get('sandbox_provider_degrade'), dict)
             else None
+        ),
+        # Same defensive rule; absent (an older server) reads as None too.
+        gpu_cost=(
+            data['gpu_cost'] if isinstance(data.get('gpu_cost'), dict) else None
         ),
         # Where the trial ran. Absent reads the same as "never booted a box".
         sandbox_id=data.get('sandbox_id'),

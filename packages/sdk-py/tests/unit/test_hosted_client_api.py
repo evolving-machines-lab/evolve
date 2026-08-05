@@ -1360,6 +1360,48 @@ class TestJobs:
 
 
     @pytest.mark.asyncio
+    async def test_trial_gpu_cost_mapping(self):
+        """GPU COST (Wave-3 lane 5): ``gpu_cost`` maps through as the wire's
+        own dict on GPU trials, None on every other trial and on a malformed
+        object — and it is a SEPARATE figure, never folded into
+        ``agent_result.cost_usd``."""
+        record = {
+            'estimate_usd': 3.9492,
+            'unpriced_reason': None,
+            'provider': 'modal',
+            'gpu_type': 'H100',
+            'declared_gpu_type': 'h100',
+            'gpu_count': 1,
+            'duration_sec': 3600,
+            'rate_usd_per_gpu_sec': 0.001097,
+            'rate_card': {'version': 1, 'source': 'modal.com/pricing', 'source_date': '2026-08-05'},
+            'measured_from': '2026-07-22T00:00:10.000Z',
+            'measured_to': '2026-07-22T01:00:10.000Z',
+        }
+        fake = FakeUrlopen([
+            ('/api/jobs/job-1/trials', {
+                'items': [
+                    wire_trial(gpu_cost=record),
+                    wire_trial(id='trial-cpu'),
+                    wire_trial(id='trial-bad', gpu_cost='not-a-dict'),
+                ],
+                'nextCursor': None,
+                'hasMore': False,
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            page = await jobs_factory(CONFIG).trials('job-1')
+
+        gpu, cpu, bad = page.items
+        assert gpu.gpu_cost == record
+        # SEPARATE by law: the model spend keeps its own number beside it.
+        assert gpu.agent_result.cost_usd == 0.93
+        # A non-GPU trial (field absent on the wire) reads None, never a crash…
+        assert cpu.gpu_cost is None
+        # …and so does a malformed value (defensive, like the degrade record).
+        assert bad.gpu_cost is None
+
+    @pytest.mark.asyncio
     async def test_trials_dataset_filter(self):
         """``dataset=`` narrows to one dataset's trials — exact match on source."""
         fake = FakeUrlopen([

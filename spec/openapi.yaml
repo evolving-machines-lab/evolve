@@ -38,7 +38,10 @@ info:
       `worst_case_spend_usd` (stated, never left to the caller to multiply),
       and the live lower-bound pair `live_spent_usd` / `live_spend_at`.
       Measured spend travels as `cost_usd` (job: `stats.cost_usd`; trial:
-      `agent_result.cost_usd`).
+      `agent_result.cost_usd`). GPU trials additionally carry a compute
+      ESTIMATE — measured sandbox lifetime x a versioned, source-dated rate
+      card — as a SEPARATE labeled figure (trial: `gpu_cost`; job:
+      `stats.gpu_cost_usd`), never merged into any `cost_usd`.
     - **Typed error catalog.** A closed 52-code union; every error response is
       one envelope: `{code, message, param, details, retryAfterSec,
       request_id, requestId}` (envelope keys frozen verbatim; `requestId` is
@@ -2185,6 +2188,15 @@ components:
         cost_usd:
           type: [number, 'null']
           description: Measured spend across settled trials; null before any settled.
+        gpu_cost_usd:
+          type: [number, 'null']
+          description: >
+            Sum of the job's per-trial GPU compute ESTIMATES (each trial's
+            `gpu_cost.estimate_usd`) — a SEPARATE labeled figure, never
+            merged into `cost_usd`, which is metered model spend. Null when
+            no trial of the job carries an estimate (no GPU trials, or none
+            priced); a real $0 (a GPU trial that provably never booted a
+            sandbox) keeps the sum non-null.
 
     JobFailure:
       type: object
@@ -2615,6 +2627,75 @@ components:
               $ref: '#/components/schemas/SandboxProvider'
             reason:
               type: string
+        gpu_cost:
+          type: [object, 'null']
+          required: [estimate_usd, unpriced_reason, provider, gpu_type, declared_gpu_type,
+                     gpu_count, duration_sec, rate_usd_per_gpu_sec, rate_card,
+                     measured_from, measured_to]
+          description: |
+            GPU COMPUTE ESTIMATE — present on settled GPU trials only, null on
+            every other trial (CPU sandbox cost tracking is a separate,
+            not-yet-offered feature). The estimate is the trial's MEASURED
+            agent-sandbox lifetime multiplied by a versioned, source-dated
+            rate card row (the provider's public list price per GPU-second,
+            times `gpu_count`). It is an estimate of platform-paid compute, a
+            SEPARATE labeled figure by law: it is never merged into
+            `agent_result.cost_usd` (metered model spend) or any other
+            `cost_usd`. Exactly one of `estimate_usd` / `unpriced_reason` is
+            set — when the lifetime could not be measured (a reaped run) or
+            no single list price applies (GPU type `any`), the reason is
+            stated and no number is invented. A GPU trial that provably never
+            booted a sandbox carries a real `estimate_usd: 0`.
+          properties:
+            estimate_usd:
+              type: [number, 'null']
+              description: The estimate, USD, micro-dollar resolution. Null exactly when `unpriced_reason` is set.
+            unpriced_reason:
+              type: [string, 'null']
+              description: Why no estimate exists. Null exactly when `estimate_usd` is set.
+            provider:
+              $ref: '#/components/schemas/SandboxProvider'
+            gpu_type:
+              type: [string, 'null']
+              description: >
+                The rate card's billing name the rate was looked up under
+                (e.g. `H100`, `A100-80GB`); null when the declared type never
+                resolved to one (`any`, or an unknown spelling).
+            declared_gpu_type:
+              type: string
+              description: The task's own declared spelling (first named `gpu_types` entry, or `any`).
+            gpu_count:
+              type: integer
+              minimum: 1
+            duration_sec:
+              type: [number, 'null']
+              description: Measured sandbox lifetime, fractional seconds; null when unmeasured.
+            rate_usd_per_gpu_sec:
+              type: [number, 'null']
+              description: The applied list price per GPU per second; null when no rate applied.
+            rate_card:
+              type: object
+              required: [version, source, source_date]
+              description: >
+                Which card priced this trial: the platform's rate-card
+                version, the provider pricing page the rate was read from,
+                and the date it was read — so a stored estimate stays
+                auditable after the card changes.
+              properties:
+                version:
+                  type: integer
+                source:
+                  type: [string, 'null']
+                source_date:
+                  type: [string, 'null']
+            measured_from:
+              type: [string, 'null']
+              format: date-time
+              description: Observed sandbox birth; null when unmeasured.
+            measured_to:
+              type: [string, 'null']
+              format: date-time
+              description: Observed sandbox end; null when unmeasured.
         sandbox_id:
           type: [string, 'null']
           description: Provider id of the box the agent executed in; null when none booted.
