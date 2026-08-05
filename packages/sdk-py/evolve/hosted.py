@@ -2827,7 +2827,12 @@ class SkillsClient:
         if not isinstance(directory, str) or not directory.strip():
             raise ValueError('skills().upload() requires a local skill directory path')
         gzipped = await asyncio.to_thread(_tar_gzip_directory, directory)
-        body, content_type = _multipart_body({}, ('skill.tar.gz', gzipped))
+        # The archive packs the folder's CONTENT (SKILL.md at the archive
+        # root); the folder's own name travels beside it, so a single-skill
+        # upload is recorded — and later mounted — under its folder name.
+        folder_name = os.path.basename(os.path.abspath(directory))
+        fields = {'name': folder_name} if folder_name else {}
+        body, content_type = _multipart_body(fields, ('skill.tar.gz', gzipped))
         raw = await self._http.request_upload(
             '/api/skills', body, {'Content-Type': content_type}
         )

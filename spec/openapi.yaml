@@ -1430,7 +1430,10 @@ paths:
         Uploads one gzipped tarball (`archive`) of a skill folder — a
         directory containing `SKILL.md`, or a root whose immediate child
         directories each contain `SKILL.md` (Harbor's discovery law; a root
-        creates one record per contained skill). Content-addressed: the
+        creates one record per contained skill). The archive packs the
+        folder's CONTENT, so a single-skill folder arrives nameless: its
+        folder name rides in the `name` part and becomes the record's name
+        (and the directory the harness mounts). Content-addressed: the
         digest is Harbor's skill-digest recipe over the folder, and
         re-uploading identical content under the same name answers the
         existing record instead of duplicating it. The `ref` on each record
@@ -1448,6 +1451,15 @@ paths:
                   type: string
                   format: binary
                   description: Gzipped tarball of the skill folder.
+                name:
+                  type: string
+                  maxLength: 100
+                  pattern: '^[A-Za-z0-9._-]+$'
+                  description: >-
+                    The uploaded folder's own name. Required when the archive
+                    root is itself one skill (`SKILL.md` at the archive
+                    root); ignored for a root of skill folders, whose
+                    children name themselves.
       responses:
         '201':
           description: The uploaded skill records (one per contained skill).

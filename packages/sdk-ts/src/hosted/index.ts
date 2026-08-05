@@ -1598,10 +1598,18 @@ export function skills(config?: HostedClientConfig): SkillsClient {
         throw new Error("skills().upload() requires a local skill directory path");
       }
       const { tarGzipDirectory } = await import("./tar");
+      const { basename, resolve } = await import("node:path");
+      // The archive packs the folder's CONTENT (SKILL.md at the archive
+      // root); the folder's own name travels beside it, so a single-skill
+      // upload is recorded — and later mounted — under its folder name.
+      const folderName = basename(resolve(directory));
       const gzipped = await tarGzipDirectory(directory);
       const res = await request(cfg, "/api/skills", {
         method: "POST",
-        body: uploadForm({}, { bytes: gzipped, filename: "skill.tar.gz" }),
+        body: uploadForm(
+          { name: folderName || undefined },
+          { bytes: gzipped, filename: "skill.tar.gz" },
+        ),
       });
       const body = (await res.json()) as Record<string, unknown>;
       const items = Array.isArray(body.skills) ? (body.skills as Record<string, unknown>[]) : [body];

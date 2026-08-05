@@ -803,6 +803,53 @@ REGISTERED_AGENT = {
 }
 
 
+class TestSkills:
+    @pytest.mark.asyncio
+    async def test_upload_sends_the_folder_name_beside_the_content_archive(self, tmp_path):
+        import io
+        import tarfile
+
+        from evolve import skills as skills_factory
+
+        skill_dir = tmp_path / 'my-solo-skill'
+        skill_dir.mkdir()
+        (skill_dir / 'SKILL.md').write_text('# solo\n')
+
+        fake = FakeUrlopen([
+            ('/api/skills', {
+                'skills': [{
+                    'id': 'sk_1',
+                    'name': 'my-solo-skill',
+                    'digest': 'sha256:' + '0' * 64,
+                    'size_bytes': 7,
+                    'description': None,
+                    'ref': 'upload:sk_1',
+                    'created_at': '2026-08-01T00:00:00Z',
+                }],
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            uploaded = await skills_factory(CONFIG).upload(str(skill_dir))
+
+        request = fake.requests[0]
+        assert request.get_method() == 'POST'
+        assert request.full_url.endswith('/api/skills')
+        assert request.get_header('Content-type').startswith('multipart/form-data; boundary=')
+        parts = _multipart_parts(request)
+        # The archive packs the folder's CONTENT (SKILL.md at the archive
+        # root), so the folder's own name MUST travel as a named part —
+        # without it the server cannot name a single-skill upload.
+        assert parts['name'] == b'my-solo-skill'
+        data = parts['archive']
+        assert data[:2] == b'\x1f\x8b'  # gzip magic
+        with tarfile.open(fileobj=io.BytesIO(gzip.decompress(data)), mode='r') as tar:
+            names = tar.getnames()
+        assert any(name.rstrip('/').endswith('SKILL.md') for name in names)
+
+        assert uploaded[0].name == 'my-solo-skill'
+        assert uploaded[0].ref == 'upload:sk_1'
+
+
 class TestAgents:
     @pytest.mark.asyncio
     async def test_create_posts_the_install_script_as_named_parts(self):

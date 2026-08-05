@@ -138,6 +138,7 @@ import {
   agents,
   datasets,
   jobs,
+  skills,
   trials,
   EvolveApiError,
   EvolveDigestMismatchError,
@@ -791,6 +792,55 @@ async function testAgentCreateTarball() {
     const tarText = gunzipSync(Buffer.from(body)).toString("latin1");
     assert(tarText.includes("bin/acme-cli"), "the tar carries the agent executable path");
     assertEqual(created.source, "tarball", "server echoes the tarball source");
+  } finally {
+    restoreFetch();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function testSkillsUploadCarriesFolderName() {
+  console.log("\n--- skills().upload() sends the folder's name beside the content archive ---");
+  installMockFetch();
+  const dir = await mkdtemp(join(tmpdir(), "evolve-skill-upload-"));
+  const skillDir = join(dir, "my-solo-skill");
+  try {
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(join(skillDir, "SKILL.md"), "# solo\n");
+    setMockResponse("/api/skills", {
+      status: 201,
+      body: {
+        skills: [
+          {
+            id: "sk_1",
+            name: "my-solo-skill",
+            digest: "sha256:" + "0".repeat(64),
+            size_bytes: 7,
+            description: null,
+            ref: "upload:sk_1",
+            created_at: "2026-08-01T00:00:00Z",
+          },
+        ],
+      },
+    });
+
+    const s = skills({ apiKey: "test-key", baseUrl: BASE });
+    const uploaded = await s.upload(skillDir);
+
+    const call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.endsWith("/api/skills"), "posts to /api/skills, nothing in the query string");
+    const form = call.init?.body as FormData;
+    assert(form instanceof FormData, "body is multipart/form-data");
+    // The archive packs the folder's CONTENT (SKILL.md at the archive root),
+    // so the folder's own name MUST travel as a named part — without it the
+    // server cannot name a single-skill upload.
+    assertEqual(form.get("name"), "my-solo-skill", "the folder name is a named part");
+    const file = form.get("archive") as File;
+    assert(file instanceof Blob, "the content rides as the archive part");
+    const body = new Uint8Array(await file.arrayBuffer());
+    assert(body[0] === 0x1f && body[1] === 0x8b, "archive part is a gzip stream (magic 1f 8b)");
+    const tarText = gunzipSync(Buffer.from(body)).toString("latin1");
+    assert(tarText.includes("SKILL.md"), "the tar packs the folder content at the archive root");
+    assertEqual(uploaded[0]?.name, "my-solo-skill", "the mapped record carries the server's name");
   } finally {
     restoreFetch();
     await rm(dir, { recursive: true, force: true });
@@ -3259,6 +3309,7 @@ async function main() {
   await testWatchImportSurvivesRateLimit();
   await testAgentCreateInstallScript();
   await testAgentCreateTarball();
+  await testSkillsUploadCarriesFolderName();
   await testAgentCreateRequiresOneSource();
   await testAgentListGetDelete();
   await testAgentNotFoundIsTypedError();

@@ -713,7 +713,10 @@ export interface AgentOptions {
   };
   /** Plugins/extensions to install in the sandbox user profile before first run */
   plugins?: AgentPluginConfig[];
-  /** Skills to enable (e.g., ["pdf", "dev-browser"]) */
+  /**
+   * Skill references to mount: `skills.sh/<owner>/<repo>[/<skill>]`,
+   * `org/repo[@ref]`, an https git URL, or a local folder path.
+   */
   skills?: SkillName[];
 
   /**

@@ -276,6 +276,65 @@ async function main(): Promise<void> {
   }
 
   // ==========================================================================
+  console.log("\nGit-backed naming and digest (seeded content cache, no network)");
+  // ==========================================================================
+  // A 40-hex ref is already a pin (no ls-remote) and a complete cache entry
+  // skips the fetch, so the checkout law is exercisable offline. The cache
+  // layout under test: {host}/{org}/{repo}/{sha}/ holds the completeness
+  // marker BESIDE a tree named after the repo — the tree is what discovery,
+  // digesting and mounting see.
+  const cache = mkdtempSync(join(tmpdir(), "skillcache-"));
+  try {
+    const sha = "a".repeat(40);
+    const entry = join(cache, "github.com", "acme", "solo-skill", sha);
+    mkdirSync(join(entry, "solo-skill"), { recursive: true });
+    writeFileSync(join(entry, "solo-skill", "SKILL.md"), "# solo\n");
+    writeFileSync(join(entry, ".evolve-complete"), "");
+
+    const resolved = await resolveSkills([`acme/solo-skill@${sha}`], { cacheDir: cache });
+    assertEquals(
+      resolved.map((s: ResolvedSkill) => s.name),
+      ["solo-skill"],
+      "a repo whose skill is a root SKILL.md resolves to ONE skill named after the repo, never the sha",
+    );
+    assertEquals(resolved[0].gitCommit, sha, "the pin is carried on the resolved skill");
+
+    // Harbor's recipe over the tree ALONE: the cache marker never digests.
+    const h = createHash("sha256");
+    h.update("SKILL.md");
+    h.update("\0");
+    h.update(createHash("sha256").update("# solo\n").digest("hex"));
+    h.update("\0");
+    assertEquals(
+      resolved[0].digest,
+      `sha256:${h.digest("hex")}`,
+      "root-skill digest is Harbor's recipe over the checkout tree — no cache marker inside",
+    );
+
+    // skills.sh/<owner>/<repo>/<name> can therefore address a root-skill repo.
+    const selected = await resolveSkills([`skills.sh/acme/solo-skill/solo-skill@${sha}`], { cacheDir: cache });
+    assertEquals(
+      selected.map((s: ResolvedSkill) => s.name),
+      ["solo-skill"],
+      "skills.sh named selection matches a root-skill repo by its repo name",
+    );
+
+    // Container discovery works through the same tree.
+    const entry2 = join(cache, "github.com", "acme", "toolbox", sha);
+    mkdirSync(join(entry2, "toolbox", "skills", "alpha"), { recursive: true });
+    writeFileSync(join(entry2, "toolbox", "skills", "alpha", "SKILL.md"), "# alpha\n");
+    writeFileSync(join(entry2, ".evolve-complete"), "");
+    const contained = await resolveSkills([`acme/toolbox@${sha}`], { cacheDir: cache });
+    assertEquals(
+      contained.map((s: ResolvedSkill) => s.name),
+      ["alpha"],
+      "standard-container skills discover from the cached tree, named after their directory",
+    );
+  } finally {
+    rmSync(cache, { recursive: true, force: true });
+  }
+
+  // ==========================================================================
   console.log(`\n${passed} passed, ${failed} failed`);
   // ==========================================================================
   if (failed > 0) process.exit(1);

@@ -484,26 +484,33 @@ function cacheRoot(opts: SkillResolveOptions): string {
 
 /**
  * Fetch a repo at an exact sha into the content cache and return the checkout
- * root. Cache key is {host}/{org}/{repo}/{sha} (Harbor's layout,
- * skills.py:234-249); a `.evolve-complete` marker makes reuse safe, and a
- * racing second resolver at worst repeats the checkout into a temp dir and
- * discards it — never corrupts the winner (Harbor accepts the same worst case
- * on Windows, skills.py:179-183).
+ * TREE. Cache entries are keyed {host}/{org}/{repo}/{sha} (Harbor's layout,
+ * skills.py:234-249). Inside an entry the checkout lives in a directory named
+ * after the repo — so a repo whose skill is a root SKILL.md resolves to a
+ * skill named after the repo, never the sha — and the `.evolve-complete`
+ * completeness marker sits BESIDE that tree, never inside it, so digests and
+ * mounted content stay marker-free (one folder digests identically under
+ * Harbor and here). A racing second resolver at worst repeats the checkout
+ * into a temp dir and discards it — never corrupts the winner (Harbor accepts
+ * the same worst case on Windows, skills.py:179-183).
  */
 async function ensureCheckout(
   parsed: Extract<ParsedSkillRef, { kind: "git" }>,
   sha: string,
   opts: SkillResolveOptions,
 ): Promise<string> {
-  const root = join(cacheRoot(opts), parsed.host, parsed.org, parsed.repo, sha);
-  const marker = join(root, ".evolve-complete");
-  if (await isFile(marker)) return root;
+  const entry = join(cacheRoot(opts), parsed.host, parsed.org, parsed.repo, sha);
+  const tree = join(entry, parsed.repo);
+  const marker = join(entry, ".evolve-complete");
+  if ((await isFile(marker)) && (await isDir(tree))) return tree;
 
-  await mkdir(dirname(root), { recursive: true });
-  const tmp = await mkdtemp(`${root}.tmp-`);
+  await mkdir(dirname(entry), { recursive: true });
+  const tmp = await mkdtemp(`${entry}.tmp-`);
+  const tmpTree = join(tmp, parsed.repo);
   const timeoutMs = opts.checkoutTimeoutMs ?? 120_000;
-  const gitOpts = { cwd: tmp, timeoutMs, gitEnv: opts.gitEnv };
+  const gitOpts = { cwd: tmpTree, timeoutMs, gitEnv: opts.gitEnv };
   try {
+    await mkdir(tmpTree);
     await runGit(["init", "--quiet"], gitOpts);
     await runGit(["remote", "add", "origin", skillCloneUrl(parsed)], gitOpts);
     if (parsed.subdir) {
@@ -518,15 +525,18 @@ async function ensureCheckout(
     }
     await runGit(["fetch", "--quiet", "--depth=1", "origin", sha], gitOpts);
     await runGit(["checkout", "--quiet", "FETCH_HEAD"], gitOpts);
-    await rm(join(tmp, ".git"), { recursive: true, force: true });
+    await rm(join(tmpTree, ".git"), { recursive: true, force: true });
     await writeFile(join(tmp, ".evolve-complete"), "");
+    // An entry present without a valid marker-plus-tree pair is stale (a
+    // half-written or older-layout entry): clear it before claiming the slot.
+    await rm(entry, { recursive: true, force: true });
     try {
-      await rename(tmp, root);
+      await rename(tmp, entry);
     } catch {
       // Lost the race — the winner's checkout is byte-identical (same sha).
       await rm(tmp, { recursive: true, force: true });
     }
-    return root;
+    return tree;
   } catch (e) {
     await rm(tmp, { recursive: true, force: true });
     throw e;

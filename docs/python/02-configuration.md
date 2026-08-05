@@ -646,7 +646,7 @@ Browse [skills.sh](https://skills.sh) for published skills. The SKILL.md format 
 How references resolve:
 
 - Git references are pinned to their exact commit, fetched as a sparse checkout of only the skill content, and cached by commit under `~/.cache/evolve/skills` — the same reference always mounts the same bytes.
-- A whole-repo reference discovers skills in the ecosystem's standard places: a `SKILL.md` at the repo root, `skills/`, `skills/.curated/`, `skills/.experimental/`, `skills/.system/`, and `.claude/skills/`.
+- A whole-repo reference discovers skills in the ecosystem's standard places: a `SKILL.md` at the repo root (one skill, named after the repo), `skills/`, `skills/.curated/`, `skills/.experimental/`, `skills/.system/`, and `.claude/skills/`.
 - A local path, or an explicit `/tree/<ref>/<subdir>` URL, must be one skill folder containing `SKILL.md` — or a root whose immediate child directories each contain one. A child without `SKILL.md` is a loud refusal naming the child.
 - Duplicate skill names resolve last-wins, and each skill mounts into the harness's native skills directory (for example `~/.claude/skills/<name>`), where the agent discovers it on its own.
 
