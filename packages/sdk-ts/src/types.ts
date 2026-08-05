@@ -161,8 +161,15 @@ export interface SandboxCreateOptions {
    * silently ignore them (modal sizes cpu/memory at create but cannot size
    * disk; e2b sizes at template build only; daytona sizes at snapshot build,
    * so an existing snapshot cannot be resized at create).
+   *
+   * `gpu` is a create-time GPU reservation (count) with `gpuTypes` the
+   * acceptable type names. Modal is the one first-party provider that takes
+   * it: the adapter maps the pair to Modal's "<TYPE>:<count>" reservation
+   * string ('any' when no types; the FIRST type when several — Modal takes
+   * one). e2b has no GPU offering and daytona allocates GPU at snapshot
+   * build, so both typed-reject a create-time `gpu` — same law as `disk`.
    */
-  resources?: { cpu?: number; memory?: number; disk?: number };
+  resources?: { cpu?: number; memory?: number; disk?: number; gpu?: number; gpuTypes?: string[] };
   /** Providers must reject policies they cannot enforce; never silently ignore them. */
   network?: SandboxNetworkPolicy;
   /**

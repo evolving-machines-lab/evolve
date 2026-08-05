@@ -357,6 +357,38 @@ async function testMapResourcesDiskRejected(): Promise<void> {
   );
 }
 
+async function testMapResourcesGpu(): Promise<void> {
+  console.log("\n[2m] mapResources() - GPU reservation string (Harbor modal.py:1085-1097 rule)");
+
+  assertEqual(
+    _testMapResources({ gpu: 1 }),
+    { cpu: 4, memoryMiB: 4096, gpu: "any:1" },
+    "count without types → 'any:<count>' (Harbor's rule when no type is named)"
+  );
+  assertEqual(
+    _testMapResources({ cpu: 2, memory: 8, gpu: 4, gpuTypes: ["A100-80GB", "H100"] }),
+    { cpu: 2, memoryMiB: 8192, gpu: "A100-80GB:4" },
+    "several types → the FIRST, verbatim (Modal takes one type per reservation)"
+  );
+  assertEqual(
+    _testMapResources({ cpu: 2 }),
+    { cpu: 2, memoryMiB: 4096 },
+    "no gpu request → no gpu key at all (create params stay byte-identical)"
+  );
+
+  let error: unknown;
+  try {
+    _testMapResources({ gpuTypes: ["H100"] });
+  } catch (e) {
+    error = e;
+  }
+  assert(
+    error instanceof ModalResourcesError,
+    "gpuTypes without a positive gpu count throws ModalResourcesError"
+  );
+  assert(String(error).includes("gpuTypes"), "message names the contradiction");
+}
+
 // =============================================================================
 // [3] resolveImageRegistry() — image tag routing
 // =============================================================================
@@ -1019,6 +1051,7 @@ const tests = [
   testMapResourcesDefaults,
   testMapResourcesHonored,
   testMapResourcesDiskRejected,
+  testMapResourcesGpu,
   // [3] resolveImageRegistry
   testImageRegistryDetection,
   // [4] buildSandboxInfo

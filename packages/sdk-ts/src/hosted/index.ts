@@ -526,6 +526,13 @@ function mapTask(raw: Record<string, unknown>): Task {
     task_name: raw.task_name as string,
     agent_timeout_sec: raw.agent_timeout_sec as number,
     verifier_timeout_sec: raw.verifier_timeout_sec as number,
+    // The declared GPU requirement (Harbor's fields). Absent (older server)
+    // or garbage reads as "a CPU task" — never a crash.
+    gpus: typeof raw.gpus === "number" && raw.gpus > 0 ? raw.gpus : 0,
+    gpu_types:
+      Array.isArray(raw.gpu_types) && raw.gpu_types.length > 0
+        ? (raw.gpu_types as string[]).map(String)
+        : null,
     // Per-provider capability verdicts — the law: where a task can run is
     // visible before any money is spent.
     providers: raw.providers as Task["providers"],
@@ -627,6 +634,14 @@ function mapAgentInfo(raw: Record<string, unknown>): AgentInfo {
   };
 }
 
+/** The wire degrade object, defensively: anything malformed answers null. */
+function mapProviderDegrade(raw: unknown): Trial["sandbox_provider_degrade"] {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const { from, to, reason } = raw as Record<string, unknown>;
+  if (typeof from !== "string" || typeof to !== "string" || typeof reason !== "string") return null;
+  return { from: from as EvalSandboxProvider, to: to as EvalSandboxProvider, reason };
+}
+
 function mapTrial(raw: Record<string, unknown>): Trial {
   return {
     id: raw.id as string,
@@ -652,6 +667,9 @@ function mapTrial(raw: Record<string, unknown>): Trial {
     live_spend_at: (raw.live_spend_at as string | null) ?? null,
     max_trial_spend_usd: (raw.max_trial_spend_usd as number | null) ?? null,
     sandbox_provider: (raw.sandbox_provider as EvalSandboxProvider | null) ?? null,
+    // GPU degrade record — defensive: a malformed object reads as null,
+    // never a crash or a partial row.
+    sandbox_provider_degrade: mapProviderDegrade(raw.sandbox_provider_degrade),
     // Where the trial ran. Absent reads the same as "never booted a box": null.
     sandbox_id: (raw.sandbox_id as string | null) ?? null,
     verifier_sandbox_id: (raw.verifier_sandbox_id as string | null) ?? null,

@@ -2617,6 +2617,83 @@ async function testTrialShow() {
   }
 }
 
+async function testGpuSurfaces() {
+  console.log("\n--- runCli: GPU tasks — requirement column, degrade verdicts, trial degrade row ---");
+  installMockFetch();
+  try {
+    // Dataset with one GPU task: the GPU column appears (it stays absent for
+    // CPU-only datasets — testDatasetListAndShow pins that), e2b renders the
+    // degrade arrow, and the limitation line says where the task actually runs.
+    setMockResponse("/api/datasets/gpu-bench", {
+      status: 200,
+      body: {
+        name: "gpu-bench",
+        title: "GPU bench",
+        description: null,
+        active_version: { version: "1.0", state: "READY", created_at: "2026-08-01T00:00:00Z", task_count: 1 },
+        versions: [{ version: "1.0", state: "READY", created_at: "2026-08-01T00:00:00Z", task_count: 1 }],
+        selected_version: { version: "1.0", state: "READY", created_at: "2026-08-01T00:00:00Z", task_count: 1 },
+        tasks: {
+          items: [
+            {
+              task_name: "train-lora",
+              agent_timeout_sec: 600,
+              verifier_timeout_sec: 120,
+              gpus: 2,
+              gpu_types: ["H100"],
+              providers: {
+                e2b: { ok: true, degrades_to: "modal", reason: "e2b offers no GPU allocation" },
+                daytona: { ok: true, degrades_to: "modal", reason: "this Daytona account cannot provision GPU sandboxes" },
+                modal: { ok: true },
+              },
+            },
+          ],
+          nextCursor: null,
+          hasMore: false,
+        },
+        upstream: null,
+        created_at: "2026-08-01T00:00:00Z",
+        updated_at: "2026-08-01T00:00:00Z",
+      },
+    });
+    const show = captureIO();
+    assertEqual(await runCli(["dataset", "show", "gpu-bench", ...AUTH], show.io), 0, "show exits 0");
+    const text = show.out.join("\n");
+    assert(text.includes("GPU"), "the GPU column appears when a task declares GPUs");
+    assert(text.includes("2x H100"), "the requirement renders count and types");
+    assert(text.includes("e2b →modal"), "a degrade verdict renders as an arrow, not a refusal");
+    assert(
+      text.includes("e2b: runs on modal — e2b offers no GPU allocation"),
+      "the limitation line names where the task actually runs and why"
+    );
+
+    // Trial detail: the degrade is a labeled row with from/to and the reason.
+    setMockResponse("/api/trials/run-9", {
+      status: 200,
+      body: trialFixture({
+        status: "SCORED",
+        reward: 1,
+        sandbox_provider: "modal",
+        sandbox_provider_degrade: {
+          from: "e2b",
+          to: "modal",
+          reason: "e2b offers no GPU allocation",
+        },
+      }),
+    });
+    const trial = captureIO();
+    assertEqual(await runCli(["trial", "show", "run-9", ...AUTH], trial.io), 0, "trial show exits 0");
+    const trialText = trial.out.join("\n");
+    assert(trialText.includes("provider degrade"), "the degrade row is labeled");
+    assert(
+      trialText.includes("e2b → modal: e2b offers no GPU allocation"),
+      "the row states from, to, and the refusing provider's reason"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testTrialDownloadStream() {
   console.log("\n--- runCli: trial download --stream — the six-name artifact vocabulary ---");
   installMockFetch();
@@ -3334,6 +3411,7 @@ async function main() {
   await testTrialRegrade();
   await testCompareCancelDownload();
   await testTrialShow();
+  await testGpuSurfaces();
   await testTrialDownloadStream();
   await testTrialDownloadTrajectoryRefused();
   await testTrialDownloadSave();

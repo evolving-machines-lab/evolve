@@ -226,6 +226,7 @@ def wire_trial(**overrides):
         'live_spend_at': None,
         'max_trial_spend_usd': 2,
         'sandbox_provider': 'daytona',
+        'sandbox_provider_degrade': None,
         'sandbox_id': 'im8f0wgqwehvng70evvro',
         'verifier_sandbox_id': 'iv2k1xbqwehvng70evvrp',
         'verifier_environment_mode': 'separate',
@@ -312,8 +313,10 @@ class TestDatasets:
                             'task_name': 'abs-module-cache-flags',
                             'agent_timeout_sec': 5400,
                             'verifier_timeout_sec': 1800,
+                            'gpus': 1,
+                            'gpu_types': ['H100'],
                             'providers': {
-                                'e2b': {'ok': True},
+                                'e2b': {'ok': True, 'degrades_to': 'modal', 'reason': 'e2b offers no GPU allocation'},
                                 'daytona': {'ok': True},
                                 'modal': {'ok': False, 'reason': 'multi-container tasks are not supported on modal'},
                             },
@@ -347,8 +350,15 @@ class TestDatasets:
         task = detail.tasks.items[0]
         assert task.task_name == 'abs-module-cache-flags'
         assert task.agent_timeout_sec == 5400
-        # Per-provider capability verdicts — visible before any money is spent
-        assert task.providers['e2b'] == TaskProviderVerdict(ok=True)
+        # The task's declared GPU requirement, Harbor's own vocabulary.
+        assert task.gpus == 1
+        assert task.gpu_types == ['H100']
+        # Per-provider capability verdicts — visible before any money is spent.
+        # A GPU degrade arrives as ok WITH degrades_to + this provider's reason.
+        assert task.providers['e2b'] == TaskProviderVerdict(
+            ok=True, degrades_to='modal', reason='e2b offers no GPU allocation'
+        )
+        assert task.providers['daytona'] == TaskProviderVerdict(ok=True)
         assert task.providers['modal'] == TaskProviderVerdict(
             ok=False, reason='multi-container tasks are not supported on modal'
         )
@@ -1338,6 +1348,8 @@ class TestJobs:
         assert trial.agent_execution.finished_at == '2026-07-22T00:04:03.000Z'
         # First-class run facts on list rows — same shape as the detail route
         assert trial.sandbox_provider == 'daytona'
+        # Not a GPU-degraded trial; the field is honestly None, never absent-crash.
+        assert trial.sandbox_provider_degrade is None
         assert trial.verifier_environment_mode == 'separate'
         assert trial.agent_info.version == 'codex-cli 0.145.0'
         assert trial.agent_info.model_info.name == 'gpt-5.5'

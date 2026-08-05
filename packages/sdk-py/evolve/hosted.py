@@ -350,9 +350,15 @@ class DatasetVersion:
 
 @dataclass
 class TaskProviderVerdict:
-    """One provider's verdict for a task: runnable (ok), or refused with the limitation named."""
+    """One provider's verdict for a task: runnable (ok), refused with the
+    limitation named, or — GPU tasks only — runnable via a recorded DEGRADE:
+    ``ok`` True with ``degrades_to`` ``"modal"`` means a job stamped on this
+    provider still runs the task, on modal, and the trial records the same
+    fact as ``sandbox_provider_degrade``; ``reason`` then carries this
+    provider's own sentence for why it could not serve the GPUs itself."""
     ok: bool
     reason: Optional[str] = None
+    degrades_to: Optional[str] = None
 
 
 @dataclass
@@ -363,11 +369,17 @@ class Task:
     Advisory for choosing a job's provider — creating a job whose tasks include
     one refused on the chosen provider is rejected with the same reason, so
     nothing is ever spent on a trial that cannot execute.
+
+    ``gpus``/``gpu_types`` are the task's declared GPU requirement (Harbor's
+    task fields honored verbatim): 0 = a CPU task; ``gpu_types`` None = any
+    type is acceptable (always None when ``gpus`` is 0).
     """
     task_name: str
     agent_timeout_sec: float
     verifier_timeout_sec: float
     providers: Dict[str, TaskProviderVerdict]
+    gpus: int = 0
+    gpu_types: Optional[List[str]] = None
 
 
 @dataclass
@@ -473,11 +485,17 @@ class AgentCapability:
 
 @dataclass
 class ProviderCapability:
-    """One sandbox provider, its ceilings, and what it refuses."""
+    """One sandbox provider, its ceilings, and what it refuses.
+
+    ``gpus`` (a dict with the wire's own keys: supported / max_gpus /
+    degrades_to / reason / source) states this provider's GPU capability
+    right now; None on servers predating the field.
+    """
     name: str
     default: bool
     sizing: Dict[str, Any]
     refuses: List[Dict[str, str]]
+    gpus: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -532,6 +550,9 @@ class CapabilityDocument:
     #: The ImportWarning codes the platform can attach to an import.
     import_warning_codes: List[str]
     error_codes: List[str]
+    #: Fleet-wide cap on concurrently in-flight trials of GPU-declaring tasks
+    #: (platform-paid GPU compute). None on servers predating the field.
+    gpu_concurrency_cap: Optional[int] = None
 
 
 @dataclass
@@ -816,6 +837,10 @@ class Trial:
     max_trial_spend_usd: Optional[float]
     # Sandbox provider the trial executed on; None until it has executed
     sandbox_provider: Optional[EvalSandboxProvider]
+    #: GPU degrade record: present ({'from','to','reason'}) when this trial's
+    #: task declared GPUs the job's stamped provider could not allocate, so it
+    #: ran on modal instead. None on every other trial.
+    sandbox_provider_degrade: Optional[Dict[str, str]]
     # WHERE THIS TRIAL RAN: the provider id of the box the agent executed in.
     # None is honest and common — a QUEUED or CANCELLED trial never booted one.
     sandbox_id: Optional[str]
@@ -1169,6 +1194,7 @@ def _map_capability_document(raw: Dict[str, Any]) -> CapabilityDocument:
                 default=item.get('default', False),
                 sizing=item.get('sizing', {}),
                 refuses=item.get('refuses', []),
+                gpus=item.get('gpus') if isinstance(item.get('gpus'), dict) else None,
             )
             for item in raw.get('sandbox_providers', [])
         ],
@@ -1195,6 +1221,11 @@ def _map_capability_document(raw: Dict[str, Any]) -> CapabilityDocument:
         limits=raw.get('limits', {}),
         import_warning_codes=raw.get('import_warning_codes', []),
         error_codes=raw.get('error_codes', []),
+        gpu_concurrency_cap=(
+            raw['gpu_concurrency_cap']
+            if isinstance(raw.get('gpu_concurrency_cap'), int)
+            else None
+        ),
     )
 
 
@@ -1278,6 +1309,8 @@ def _map_dataset_summary(data: Dict[str, Any]) -> Dataset:
 
 def _map_task(data: Dict[str, Any]) -> Task:
     providers_raw = data.get('providers') or {}
+    gpus_raw = data.get('gpus')
+    gpu_types_raw = data.get('gpu_types')
     return Task(
         task_name=data['task_name'],
         agent_timeout_sec=data.get('agent_timeout_sec', 0),
@@ -1286,10 +1319,18 @@ def _map_task(data: Dict[str, Any]) -> Task:
             provider: TaskProviderVerdict(
                 ok=bool(verdict.get('ok')),
                 reason=verdict.get('reason'),
+                degrades_to=verdict.get('degrades_to'),
             )
             for provider, verdict in providers_raw.items()
             if isinstance(verdict, dict)
         },
+        # Absent (older server) or garbage reads as "a CPU task" — never a crash.
+        gpus=gpus_raw if isinstance(gpus_raw, int) and gpus_raw > 0 else 0,
+        gpu_types=(
+            [str(entry) for entry in gpu_types_raw]
+            if isinstance(gpu_types_raw, list) and gpu_types_raw
+            else None
+        ),
     )
 
 
@@ -1518,6 +1559,12 @@ def _map_trial(data: Dict[str, Any]) -> Trial:
         live_spend_at=data.get('live_spend_at'),
         max_trial_spend_usd=data.get('max_trial_spend_usd'),
         sandbox_provider=data.get('sandbox_provider'),
+        # Defensive: a malformed degrade object reads as None, never a crash.
+        sandbox_provider_degrade=(
+            data['sandbox_provider_degrade']
+            if isinstance(data.get('sandbox_provider_degrade'), dict)
+            else None
+        ),
         # Where the trial ran. Absent reads the same as "never booted a box".
         sandbox_id=data.get('sandbox_id'),
         verifier_sandbox_id=data.get('verifier_sandbox_id'),

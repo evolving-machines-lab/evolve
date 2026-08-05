@@ -221,6 +221,28 @@ export class DaytonaImagePullError extends Error {
  * (reject what you cannot enforce) it is refused loudly instead: pre-build a
  * snapshot with the desired sizing under its own name, or drop `resources`.
  */
+/**
+ * Typed refusal for a GPU TYPE constraint: @daytonaio/sdk 0.134.0 has no
+ * gpu_type field anywhere (snapshot build takes only a count), so honoring
+ * `resources.gpuTypes` is impossible and silently dropping it would turn
+ * "give me an H100" into "give me some GPU". Same provider law as every
+ * other unenforceable option: reject, never silently ignore.
+ */
+export class DaytonaGpuTypeError extends Error {
+  /** The snapshot/image the create named. */
+  readonly snapshot: string;
+
+  constructor(snapshot: string) {
+    super(
+      `Daytona cannot constrain the GPU type for "${snapshot}": the SDK's snapshot resources ` +
+        "take only a GPU count, no type — drop `resources.gpuTypes`, or run type-constrained " +
+        "GPU work on a provider that reserves typed GPUs (modal)."
+    );
+    this.name = "DaytonaGpuTypeError";
+    this.snapshot = snapshot;
+  }
+}
+
 export class DaytonaResourcesError extends Error {
   /** The existing snapshot whose pinned sizing cannot be overridden. */
   readonly snapshot: string;
@@ -933,6 +955,15 @@ export interface SandboxResources {
   memory?: number;
   /** Disk in GB (default: 10) */
   disk?: number;
+  /**
+   * GPU reservation (count). NOT enforceable at create time — Daytona
+   * allocates GPU at snapshot build, and GPU machines are tier-gated — so a
+   * create-time value throws DaytonaResourcesError like every other sizing
+   * field on an existing snapshot.
+   */
+  gpu?: number;
+  /** Acceptable GPU types; rejected alongside `gpu` (see above). */
+  gpuTypes?: string[];
 }
 
 /** Options for creating a sandbox */
@@ -2106,11 +2137,19 @@ export class DaytonaProvider implements SandboxProvider {
     // True when the caller declared any create-time sizing. An EXISTING
     // snapshot pins its sizing (create-from-snapshot cannot resize), so the
     // fast path below must refuse rather than silently ignore the request.
+    // A GPU TYPE constraint can never be honored here: @daytonaio/sdk 0.134.0
+    // has no gpu_type field anywhere (snapshot build takes only a count), so
+    // "give me an H100" would silently become "give me some GPU". Reject, per
+    // the provider law — run type-constrained GPU work on modal.
+    if (options.resources?.gpuTypes !== undefined) {
+      throw new DaytonaGpuTypeError(imageName);
+    }
     const wantsResources =
       options.resources !== undefined &&
       (options.resources.cpu !== undefined ||
         options.resources.memory !== undefined ||
-        options.resources.disk !== undefined);
+        options.resources.disk !== undefined ||
+        options.resources.gpu !== undefined);
 
     // Managed mode never builds. Snapshots are platform artifacts on the
     // Evolve organization's Daytona account: a managed caller who could
@@ -2185,6 +2224,16 @@ export class DaytonaProvider implements SandboxProvider {
               cpu: options.resources?.cpu ?? 4,
               memory: options.resources?.memory ?? 4,
               disk: options.resources?.disk ?? 10,
+              // GPU count, when requested: Daytona allocates GPU at snapshot
+              // build (the SDK's one GPU knob). Tier-gated on Daytona's side —
+              // an account without GPU quota gets Daytona's own loud refusal
+              // here, never a silent CPU snapshot. NOTE gpuTypes has no wire
+              // field in @daytonaio/sdk 0.134.0 and is deliberately NOT
+              // dropped silently: callers constraining the type must use a
+              // provider that can express it (modal).
+              ...((options.resources?.gpu ?? 0) > 0
+                ? { gpu: options.resources!.gpu! }
+                : {}),
             },
           },
           { onLogs: (log: string) => console.log(`[daytona] ${log}`) },

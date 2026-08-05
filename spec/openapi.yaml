@@ -2599,6 +2599,22 @@ components:
           oneOf:
             - $ref: '#/components/schemas/SandboxProvider'
             - type: 'null'
+        sandbox_provider_degrade:
+          type: [object, 'null']
+          required: [from, to, reason]
+          description: >
+            Present when this trial's task declared GPUs the job's stamped
+            provider could not allocate, so the trial ran on modal instead:
+            `from` is the job's request, `to` where the boxes actually ran,
+            `reason` the refusing provider's own sentence. Null on every
+            other trial.
+          properties:
+            from:
+              $ref: '#/components/schemas/SandboxProvider'
+            to:
+              $ref: '#/components/schemas/SandboxProvider'
+            reason:
+              type: string
         sandbox_id:
           type: [string, 'null']
           description: Provider id of the box the agent executed in; null when none booted.
@@ -3316,24 +3332,35 @@ components:
     TaskProviderVerdict:
       type: object
       description: >
-        One provider's verdict for a task: runnable there, or refused with
-        the limitation named. Advisory for planning — creating a job whose
+        One provider's verdict for a task: runnable there, refused with the
+        limitation named, or — GPU tasks only — runnable via a recorded
+        DEGRADE to modal. Advisory for planning — creating a job whose
         tasks include one refused on the chosen provider is rejected with the
         same reason, so nothing is ever spent on a trial that cannot execute.
       required: [ok]
       properties:
         ok:
           type: boolean
+        degrades_to:
+          type: string
+          enum: [modal]
+          description: >
+            Present (with ok true) when this provider cannot allocate the
+            task's declared GPUs itself: a job stamped here still runs the
+            task, on modal, and the trial records the same degrade as
+            `sandbox_provider_degrade`.
         reason:
           type: string
-          description: Present when ok is false.
+          description: >
+            Present when ok is false, and alongside `degrades_to` — this
+            provider's own sentence for why it cannot serve the task itself.
 
     Task:
       type: object
       description: >
         Public task fields only — instructions, environments, and tests never
         leave the server.
-      required: [task_name, agent_timeout_sec, verifier_timeout_sec, providers, gate]
+      required: [task_name, agent_timeout_sec, verifier_timeout_sec, gpus, gpu_types, providers, gate]
       properties:
         task_name:
           type: string
@@ -3341,6 +3368,20 @@ components:
           type: number
         verifier_timeout_sec:
           type: number
+        gpus:
+          type: integer
+          minimum: 0
+          description: >
+            GPUs the task declares (task.toml [environment] gpus, Harbor's
+            field honored verbatim). 0 = a CPU task, which is every task
+            that declares nothing.
+        gpu_types:
+          type: [array, 'null']
+          items:
+            type: string
+          description: >
+            Acceptable GPU types (e.g. ["H100", "A100"]), Harbor semantics:
+            null means ANY type is acceptable. Always null when gpus is 0.
         providers:
           type: object
           description: Verdict per sandbox provider.
@@ -3720,7 +3761,7 @@ components:
 
     ProviderCapability:
       type: object
-      required: [name, default, sizing, refuses]
+      required: [name, default, sizing, gpus, refuses]
       properties:
         name:
           type: string
@@ -3739,6 +3780,30 @@ components:
             storage:
               type: string
               enum: [sized, fixed]
+        gpus:
+          type: object
+          required: [supported, max_gpus]
+          description: >
+            GPU capability of this provider for eval boxes right now. When
+            `supported` is false, `degrades_to` names where a GPU job stamped
+            here actually runs and `reason` is the same sentence the trial
+            records; daytona's answer comes from a live org-quota probe that
+            fails closed, and `source` says whether it was measured
+            ('live-quota') or is the conservative fallback.
+          properties:
+            supported:
+              type: boolean
+            max_gpus:
+              type: integer
+              description: Per-container allocation ceiling; import refuses tasks above it.
+            degrades_to:
+              type: string
+              enum: [modal]
+            reason:
+              type: string
+            source:
+              type: string
+              enum: [live-quota, fallback, provider-constant]
         refuses:
           type: array
           items:
@@ -3797,6 +3862,7 @@ components:
         - agents
         - agent_registration
         - sandbox_providers
+        - gpu_concurrency_cap
         - managed_providers
         - platform_constraints
         - network_modes
@@ -3844,6 +3910,14 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ProviderCapability'
+        gpu_concurrency_cap:
+          type: integer
+          description: |
+            Fleet-wide cap on concurrently in-flight trials of GPU-declaring
+            tasks (platform-paid GPU compute). Queued GPU trials past the cap
+            simply wait for a slot — published so a client can explain the
+            wait. Per-provider GPU capability lives on each
+            `sandbox_providers` entry (`gpus`).
         managed_providers:
           type: array
           description: |
