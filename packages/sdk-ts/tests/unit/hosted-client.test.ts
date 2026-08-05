@@ -458,6 +458,9 @@ async function testPublishGitSource() {
     assertEqual(form.get("git_url"), "https://github.com/x/bench.git", "git_url is a named part");
     assertEqual(form.get("git_ref"), "main", "git_ref is a named part");
     assertEqual(form.get("archive"), null, "no archive part for a git source");
+    // Root import: no git_path part at all — an absent part means "the
+    // repository root", and an empty one would be refused server-side.
+    assertEqual(form.get("git_path"), null, "no git_path part when none was given");
     const headers = call.init?.headers as Record<string, string>;
     assertEqual(headers?.Authorization, "Bearer test-key", "Bearer token sent");
 
@@ -466,6 +469,25 @@ async function testPublishGitSource() {
       { id: "imp-1", status: "QUEUED", name: "deep-swe", version: "1.2", failure: null, warnings: [] },
       "202 response mapped (id, status, name, version, failure, warnings)"
     );
+
+    // Subfolder import: git_path rides as one more named part, verbatim.
+    await d.publish({
+      source: {
+        git_url: "https://github.com/x/monorepo.git",
+        git_ref: "v2",
+        git_path: "datasets/deep-swe",
+      },
+      name: "deep-swe",
+      version: "1.3",
+    });
+    const subfolderCall = fetchCalls[fetchCalls.length - 1];
+    const subfolderForm = subfolderCall.init?.body as FormData;
+    assertEqual(
+      subfolderForm.get("git_path"),
+      "datasets/deep-swe",
+      "git_path is a named part when narrowing to a subfolder"
+    );
+    assertEqual(subfolderForm.get("git_ref"), "v2", "git_ref still rides beside git_path");
   } finally {
     restoreFetch();
   }

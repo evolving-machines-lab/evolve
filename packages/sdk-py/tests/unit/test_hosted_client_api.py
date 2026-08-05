@@ -576,6 +576,43 @@ class TestDatasets:
         assert job.version == '1.2'
 
     @pytest.mark.asyncio
+    async def test_publish_git_path_rides_as_a_named_part(self):
+        # git_path narrows the import to ONE repository subfolder (the server
+        # fetches it via sparse checkout). Verbatim on the wire; absent when
+        # not given (the root import above pins that: no git_path key at all).
+        fake = FakeUrlopen([
+            ('/api/datasets/publish', {
+                'id': 'imp-2', 'status': 'QUEUED', 'name': 'my-set', 'version': '1.3',
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            await datasets_factory(CONFIG).publish(
+                git_url='https://github.com/org/monorepo.git',
+                git_ref='v2',
+                git_path='datasets/deep-swe',
+                name='my-set',
+                version='1.3',
+            )
+
+        parts = _multipart_parts(fake.requests[0])
+        assert parts == {
+            'name': b'my-set',
+            'version': b'1.3',
+            'git_url': b'https://github.com/org/monorepo.git',
+            'git_ref': b'v2',
+            'git_path': b'datasets/deep-swe',
+        }
+
+    @pytest.mark.asyncio
+    async def test_publish_git_path_refused_with_a_directory(self, tmp_path):
+        # A subfolder narrows a git clone, not a local directory — for a local
+        # corpus the caller points directory= at the subfolder itself.
+        with pytest.raises(ValueError, match='git_path'):
+            await datasets_factory(CONFIG).publish(
+                directory=str(tmp_path), git_path='tasks', name='b', version='1.0',
+            )
+
+    @pytest.mark.asyncio
     async def test_publish_uploads_a_directory(self, tmp_path):
         import io
         import tarfile

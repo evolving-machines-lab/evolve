@@ -1043,6 +1043,16 @@ export type DatasetSource =
       git_url: string;
       /** A pinned branch, tag, or commit. Required: an unpinned import is not reproducible. */
       git_ref: string;
+      /**
+       * Optional repository SUBFOLDER holding the corpus (POSIX path relative
+       * to the repository root, e.g. "datasets/my-swe"). The server imports
+       * only that folder, fetched via git sparse checkout. Ambiguity is
+       * refused rather than interpreted: no absolute paths, no "." / ".." or
+       * empty segments, no backslashes, whitespace, pattern characters, or
+       * ".git" segments — and a path that is not a directory at the pinned
+       * ref fails the import loudly instead of landing a 0-task version.
+       */
+      git_path?: string;
       directory?: never;
     }
   | {
@@ -1050,6 +1060,7 @@ export type DatasetSource =
       directory: string;
       git_url?: never;
       git_ref?: never;
+      git_path?: never;
     };
 
 /** Input for datasets().publish() */
@@ -1850,6 +1861,7 @@ export interface CapabilityDocument {
       max_version_length: number;
       max_git_url_length: number;
       max_git_ref_length: number;
+      max_git_path_length: number;
     };
     /** How many items an error MESSAGE names before "and N more". */
     max_items_named_in_error_message: number;

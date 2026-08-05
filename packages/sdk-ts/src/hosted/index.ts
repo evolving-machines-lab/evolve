@@ -1343,6 +1343,9 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
             version: input.version,
             git_url: src.git_url,
             git_ref: src.git_ref,
+            // Only when narrowing to a subfolder: an absent part means "the
+            // repository root", and sending an empty part would be refused.
+            ...(src.git_path !== undefined ? { git_path: src.git_path } : {}),
           }),
         });
         return mapDatasetImport((await res.json()) as Record<string, unknown>);

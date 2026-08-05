@@ -2363,6 +2363,7 @@ class DatasetsClient:
         *,
         git_url: Optional[str] = None,
         git_ref: Optional[str] = None,
+        git_path: Optional[str] = None,
         directory: Optional[str] = None,
         name: Optional[str] = None,
         version: Optional[str] = None,
@@ -2374,6 +2375,14 @@ class DatasetsClient:
         client and uploaded). Returns immediately; poll with
         :meth:`get_import` / :meth:`watch_import`. ``version`` labels the new
         immutable version.
+
+        ``git_path`` (git sources only) narrows the import to ONE repository
+        subfolder — a POSIX path relative to the repository root, e.g.
+        ``datasets/my-swe``. The server fetches just that folder via git
+        sparse checkout; a path that is not a directory at the pinned ref
+        fails the import loudly. Ambiguous paths (absolute, ``..`` or ``.``
+        segments, backslashes, whitespace, pattern characters, ``.git``) are
+        refused at validation.
 
         ``name`` and ``version`` may be omitted for a ``directory`` whose
         corpus carries a Harbor ``dataset.toml`` manifest — the server derives
@@ -2387,7 +2396,14 @@ class DatasetsClient:
         private repository, put a token in the https url.
         """
         # ONE body grammar: multipart/form-data, metadata in named parts. The
-        # corpus is the ``archive`` part; a git source is git_url + git_ref.
+        # corpus is the ``archive`` part; a git source is git_url + git_ref
+        # (+ optional git_path).
+        if directory is not None and git_path is not None:
+            raise ValueError(
+                'publish() takes git_path only with a git source — a subfolder '
+                'narrows a git clone, not a local directory (point directory=... '
+                'at the subfolder itself instead)'
+            )
         if directory is not None:
             if name is None or version is None:
                 # The only client-side check is the cheap one that saves a
@@ -2419,12 +2435,17 @@ class DatasetsClient:
                     'because a git repository is cloned server-side after the publish '
                     'is accepted'
                 )
-            body, content_type = _multipart_body({
+            fields = {
                 'name': name,
                 'version': version,
                 'git_url': git_url,
                 'git_ref': git_ref,
-            })
+            }
+            # Only when narrowing to a subfolder: an absent part means "the
+            # repository root", and an empty part would be refused.
+            if git_path is not None:
+                fields['git_path'] = git_path
+            body, content_type = _multipart_body(fields)
         else:
             raise ValueError(
                 'publish() requires either a git source (git_url=..., git_ref=...) '

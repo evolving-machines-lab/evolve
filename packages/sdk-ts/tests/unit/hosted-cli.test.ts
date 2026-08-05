@@ -3271,6 +3271,30 @@ function testBuildInputsDirect() {
     { source: { git_url: "g", git_ref: "r" }, name: "n", version: "1" },
     "git publish input"
   );
+  // --path narrows a git publish to one repository subfolder (wire: git_path).
+  const gitSubfolder = buildPublishInput(
+    parseArgs([
+      "dataset", "publish",
+      "--git", "g", "--ref", "r", "--path", "datasets/deep-swe",
+      "--name", "n", "--version", "1",
+    ])
+  );
+  assertEqual(
+    gitSubfolder,
+    {
+      source: { git_url: "g", git_ref: "r", git_path: "datasets/deep-swe" },
+      name: "n",
+      version: "1",
+    },
+    "git publish with --path carries git_path"
+  );
+  // A subfolder narrows a git clone, not a local directory — with --dir the
+  // user just points --dir at the subfolder itself.
+  assertThrowsUsage(
+    () => buildPublishInput(parseArgs(["dataset", "publish", "--dir", "/tmp/corpus", "--path", "tasks"])),
+    "--git/--ref/--path",
+    "--path beside --dir refuses"
+  );
   const dirInput = buildPublishInput(
     parseArgs(["dataset", "publish", "--dir", "/tmp/corpus", "--name", "n", "--version", "1"])
   );

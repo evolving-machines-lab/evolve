@@ -1135,8 +1135,9 @@ paths:
         Starts a server-side import that creates or extends a catalog dataset
         with one new immutable version. Multipart only. Source is exactly one
         of: a git repository (`git_url` + pinned `git_ref` — https only, an
-        unpinned import is not reproducible) or an uploaded gzipped tarball
-        (`archive`).
+        unpinned import is not reproducible — optionally narrowed to one
+        repository subfolder with `git_path`, fetched via sparse checkout) or
+        an uploaded gzipped tarball (`archive`).
 
         A corpus carrying Harbor's dataset.toml manifest (at the corpus root
         or beside the task directories) imports what the MANIFEST says: it
@@ -3584,6 +3585,17 @@ components:
         git_ref:
           type: string
           description: Pinned branch, tag, or commit. Required with git_url.
+        git_path:
+          type: string
+          description: >
+            Optional repository subfolder holding the corpus (POSIX path
+            relative to the repository root, e.g. `datasets/my-swe`) — the
+            import reads ONLY that folder, fetched via git sparse checkout.
+            Refused rather than interpreted when ambiguous: no absolute
+            paths, no `.`/`..` or empty segments, no backslashes, whitespace,
+            pattern characters, or `.git` segments. A path that is not a
+            directory at the pinned ref fails the import loudly. Only valid
+            beside git_url + git_ref.
         archive:
           type: string
           format: binary
@@ -4070,6 +4082,8 @@ components:
                 max_git_url_length:
                   type: integer
                 max_git_ref_length:
+                  type: integer
+                max_git_path_length:
                   type: integer
             max_items_named_in_error_message:
               type: integer

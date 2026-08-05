@@ -681,6 +681,18 @@ publish_job = await catalog.publish(
     version='1.0',                # the version label for the published corpus
 )
 
+# A corpus living in ONE SUBFOLDER of a bigger repository: add git_path.
+# The server fetches just that folder (git sparse checkout) and imports it as
+# the corpus root. The path is POSIX, relative to the repository root; a path
+# that is not a directory at the pinned ref fails the import loudly.
+subfolder_publish = await catalog.publish(
+    git_url='https://github.com/acme/benchmarks.git',
+    git_ref='v2.1.0',
+    git_path='datasets/my-swe',
+    name='my-swe',
+    version='2.1',
+)
+
 # From a local directory — tarred + gzipped deterministically on the client and uploaded
 local_publish = await catalog.publish(
     directory='./my-swe',
@@ -725,10 +737,13 @@ history = await catalog.list_imports(dataset='my-swe', limit=20)
 npx evolve-evals dataset publish \
     --git https://github.com/acme/my-swe.git --ref v1.0.0 \
     --name my-swe --version 1.0 --watch
+npx evolve-evals dataset publish \
+    --git https://github.com/acme/benchmarks.git --ref v2.1.0 --path datasets/my-swe \
+    --name my-swe --version 2.1 --watch     # one subfolder of a bigger repository
 npx evolve-evals dataset publish --dir ./my-swe --name my-swe --version 1.0 --watch
 ```
 
-Every lane resolves to the same thing — a task-layout directory — and is held to the same rules. The corpus root is a directory whose `tasks/` subdirectory holds one directory per task, or the tasks directory itself. Provenance is recorded per lane: the resolved commit for a git publish, the sha256 of the exact uploaded bytes for a directory. On the wire a publish is `multipart/form-data` — the SDK produces it for you — and uploads past the compressed-size cap are refused with a `413 import_too_large`. The metadata parts come first, so a name owned by someone else is refused with the `409` before the upload is received rather than after. A git source must be an `https://` url: the import runs on a worker with no ssh client, so `ssh://` and `git@` remotes are refused at validation rather than failing inside the job — for a private repository, put a token in the https url.
+Every lane resolves to the same thing — a task-layout directory — and is held to the same rules. The corpus root is a directory whose `tasks/` subdirectory holds one directory per task, or the tasks directory itself. Provenance is recorded per lane: the resolved commit for a git publish, the sha256 of the exact uploaded bytes for a directory. On the wire a publish is `multipart/form-data` — the SDK produces it for you — and uploads past the compressed-size cap are refused with a `413 import_too_large`. The metadata parts come first, so a name owned by someone else is refused with the `409` before the upload is received rather than after. A git source must be an `https://` url: the import runs on a worker with no ssh client, so `ssh://` and `git@` remotes are refused at validation rather than failing inside the job — for a private repository, put a token in the https url. A git publish may name one repository subfolder (`git_path` / `--path`) and the platform fetches just that folder via git sparse checkout — the subfolder becomes the corpus root, the recorded provenance keeps the path beside the resolved commit, and a path that is not a directory at the pinned ref fails the import loudly rather than landing an empty version.
 
 ### The dataset manifest (dataset.toml)
 

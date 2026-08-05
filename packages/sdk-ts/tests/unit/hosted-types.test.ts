@@ -68,6 +68,19 @@ const unpinnedSource: DatasetSource = {
   git_url: "https://github.com/acme/corpus.git",
 };
 
+// A subfolder pin rides the git branch...
+const subfolderSource: DatasetSource = {
+  git_url: "https://github.com/acme/monorepo.git",
+  git_ref: "v2",
+  git_path: "datasets/my-swe",
+};
+
+// @ts-expect-error ...and never the directory branch — a subfolder narrows a git clone, not a local upload
+const subfolderOnDir: DatasetSource = {
+  directory: "./corpus",
+  git_path: "datasets/my-swe",
+};
+
 // ---------------------------------------------------------------------------
 // 2. AgentInput — EXACTLY ONE source, plus the common fields
 // ---------------------------------------------------------------------------

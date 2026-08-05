@@ -390,6 +390,7 @@ const GROUPS: Record<string, GroupSpec> = {
         flags: {
           git: { kind: "string", value: "<url>", help: "Git repository URL (with --ref)" },
           ref: { kind: "string", value: "<ref>", help: "Git ref: branch, tag, or commit (with --git)" },
+          path: { kind: "string", value: "<subfolder>", help: "Repository subfolder holding the corpus (with --git; sparse checkout — only that folder is imported)" },
           dir: { kind: "string", value: "<path>", help: "Local corpus directory (tarred + uploaded)" },
           name: { kind: "string", value: "<dataset>", help: "Catalog dataset name to create or extend (optional with --dir when the corpus carries a dataset.toml manifest; required with --git)" },
           version: { kind: "string", value: "<v>", help: "Version label for the published version (optional with --dir when dataset.toml declares one; required with --git)" },
@@ -1454,9 +1455,10 @@ export function buildJobInput(
 export function buildPublishInput(inv: Invocation): PublishDatasetInput {
   const f = inv.flags;
   const hasDir = typeof f.dir === "string";
-  const hasGit = typeof f.git === "string" || typeof f.ref === "string";
+  const hasGit =
+    typeof f.git === "string" || typeof f.ref === "string" || typeof f.path === "string";
   if (hasDir && hasGit) {
-    throw new CliUsageError('"dataset publish" takes EITHER --dir OR --git/--ref, not both');
+    throw new CliUsageError('"dataset publish" takes EITHER --dir OR --git/--ref/--path, not both');
   }
   if (hasDir) {
     return {
@@ -1475,7 +1477,13 @@ export function buildPublishInput(inv: Invocation): PublishDatasetInput {
     }
   }
   return {
-    source: { git_url: f.git as string, git_ref: f.ref as string },
+    source: {
+      git_url: f.git as string,
+      git_ref: f.ref as string,
+      // --path narrows the import to ONE repository subfolder (the server
+      // fetches it with a sparse checkout); absent = the repository root.
+      ...(typeof f.path === "string" ? { git_path: f.path } : {}),
+    },
     name: f.name as string,
     version: f.version as string,
   };
