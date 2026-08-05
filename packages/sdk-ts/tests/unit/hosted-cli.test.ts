@@ -1349,8 +1349,12 @@ async function testHelpAndVersion() {
   const trialCmdText = trialCmd.out.join("\n");
   assert(trialCmdText.includes("--stream"), "help <group> <verb> resolves the command help");
   assert(
-    trialCmdText.includes("trajectory (ATIF)"),
-    "--stream help names the served trajectory artifact"
+    trialCmdText.includes("trace-atif (the ATIF trajectory)"),
+    "--stream help names the served ATIF artifact by its trace-atif name"
+  );
+  assert(
+    trialCmdText.includes("trajectory (reserved"),
+    "--stream help tells the truth about the reserved harness-native trajectory slot"
   );
 
   const resumeCmd = captureIO();
@@ -2618,11 +2622,11 @@ async function testTrialShow() {
 }
 
 async function testTrialDownloadStream() {
-  console.log("\n--- runCli: trial download --stream — the six-name artifact vocabulary ---");
+  console.log("\n--- runCli: trial download --stream — the seven-name artifact vocabulary ---");
   installMockFetch();
   try {
     setMockResponse("/trace?stream=trace-stdout", { status: 200, body: { log: "raw harness stdout" } });
-    setMockResponse("/trace?stream=trajectory", { status: 200, body: { log: '{"steps":[]}' } });
+    setMockResponse("/trace?stream=trace-atif", { status: 200, body: { log: '{"steps":[]}' } });
     setMockResponse("/trace?limit=100&cursor=5", {
       status: 200,
       body: { items: [{ seq: 6, type: "agent.message", data: {} }], nextCursor: null, hasMore: false },
@@ -2639,13 +2643,13 @@ async function testTrialDownloadStream() {
 
     // The normalized ATIF document rides the same {log} envelope as the raw
     // logs — the CLI passes the served JSON text through verbatim.
-    const trajectory = captureIO();
+    const atif = captureIO();
     assertEqual(
-      await runCli(["trial", "download", "run-1", "--stream", "trajectory", ...AUTH], trajectory.io),
+      await runCli(["trial", "download", "run-1", "--stream", "trace-atif", ...AUTH], atif.io),
       0,
-      "--stream trajectory is a valid selector"
+      "--stream trace-atif is a valid selector"
     );
-    assertEqual(trajectory.out, ['{"steps":[]}'], "prints the trajectory verbatim");
+    assertEqual(atif.out, ['{"steps":[]}'], "prints the ATIF document verbatim");
 
     const parsed = captureIO();
     assertEqual(
@@ -2668,13 +2672,15 @@ async function testTrialDownloadTrajectoryRefused() {
   console.log("\n--- runCli: --stream trajectory surfaces the server's refusal honestly ---");
   installMockFetch();
   try {
-    // An OLDER server that predates the trajectory wave refuses the selector.
-    // The CLI's whole job is a clean relay: the server's own sentence,
-    // one line, nothing invented and nothing on stdout.
-    const sentence = "trajectory is not served yet; it arrives with a later wave";
+    // `trajectory` is the reserved harness-native session-file slot: the
+    // server answers not-found for it until its wave lands. The CLI's whole
+    // job is a clean relay: the server's own sentence, one line, nothing
+    // invented and nothing on stdout.
+    const sentence =
+      'the "trajectory" artifact (the harness\'s own native session file) is not yet served';
     setMockResponse("/trace?stream=trajectory", {
       status: 404,
-      body: { error: { code: "not_found", message: sentence } },
+      body: { error: { code: "trial_not_found", message: sentence } },
     });
     const { io, out, err } = captureIO();
     const code = await runCli(["trial", "download", "run-1", "--stream", "trajectory", ...AUTH], io);
@@ -2693,7 +2699,7 @@ async function testTrialDownloadSave() {
   try {
     // Stream selectors first: the mock matches by substring, and a plain
     // "/trace" pattern would swallow "/trace?stream=…" if it were checked first.
-    setMockResponse("/trace?stream=trajectory", { status: 200, body: { log: '{"schema_version":"ATIF-v1.7"}' } });
+    setMockResponse("/trace?stream=trace-atif", { status: 200, body: { log: '{"schema_version":"ATIF-v1.7"}' } });
     setMockResponse("/trace?stream=verifier", { status: 200, body: { log: "verifier says 1.0" } });
     setMockResponse("/trace?stream=trace-stdout", { status: 200, body: { log: null } });
     setMockResponse("/trace?stream=trace-stderr", { status: 200, body: { log: null } });
@@ -2714,8 +2720,8 @@ async function testTrialDownloadSave() {
     assert(parsed.includes('"seq":0'), "parsed events land in trace-parsed.jsonl");
     const verifier = await readFile(join(target, "verifier.log"), "utf-8");
     assertEqual(verifier, "verifier says 1.0", "each stored raw log lands under its own name");
-    const savedTrajectory = await readFile(join(target, "trajectory.json"), "utf-8");
-    assertEqual(savedTrajectory, '{"schema_version":"ATIF-v1.7"}', "the ATIF document saves as trajectory.json");
+    const savedAtif = await readFile(join(target, "trace-atif.json"), "utf-8");
+    assertEqual(savedAtif, '{"schema_version":"ATIF-v1.7"}', "the ATIF document saves as trace-atif.json");
     const home = await readFile(join(target, "agent-home", "root", ".claude", "history.jsonl"), "utf-8");
     assertEqual(home, "{}", "agent-home/ preserves the sandbox folder tree");
     // Null logs were never stored — absence is a normal answer, no empty files.
@@ -2753,7 +2759,10 @@ async function testTrialDownloadUsageErrors() {
     const { io, err } = captureIO();
     const code = await runCli(["trial", "download", "run-1", "--stream", "bogus", ...AUTH], io);
     assertEqual(code, 2, "invalid --stream value exits 2 like every other usage error");
-    assert(err.some((l) => l.includes("trace-parsed") && l.includes("trajectory")), "names all six selectors");
+    assert(
+      err.some((l) => l.includes("trace-parsed") && l.includes("trace-atif") && l.includes("trajectory")),
+      "names all seven selectors"
+    );
   }
   {
     const { io, err } = captureIO();

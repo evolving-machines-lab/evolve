@@ -1501,16 +1501,20 @@ export interface JobsClient {
 /**
  * The trace route's `?stream=` selectors, in the contract's own order —
  * `trace-parsed` (the parsed event trace, the same answer as omitting
- * `stream`) followed by the raw-artifact vocabulary. A runtime value (not
- * only a type) so a drift gate can hold it to the spec's enum, and the CLI
- * can build its `--stream` validation from the same list instead of a
- * second copy.
+ * `stream`) followed by the raw-artifact vocabulary. `trace-atif` is the
+ * SERVED normalized trajectory (Harbor's ATIF v1.7); `trajectory` is a
+ * DIFFERENT artifact — the harness's own native session file, in the
+ * vocabulary ahead of its server wave (the server answers not-found for it
+ * until that wave lands). A runtime value (not only a type) so a drift gate
+ * can hold it to the spec's enum, and the CLI can build its `--stream`
+ * validation from the same list instead of a second copy.
  */
 export const TRIAL_ARTIFACT_STREAMS = [
   "trace-parsed",
   "verifier",
   "trace-stdout",
   "trace-stderr",
+  "trace-atif",
   "trajectory",
   "agent-home",
 ] as const;
@@ -1537,8 +1541,11 @@ export interface TrialsClient {
   /**
    * One RAW trace artifact, by the trace route's ?stream= selector.
    * "verifier" | "trace-stdout" | "trace-stderr" answer the log text;
-   * "trajectory" answers the normalized trajectory — Harbor's ATIF v1.7
-   * document as JSON text, built server-side from the stored parsed trace;
+   * "trace-atif" answers the normalized trajectory — Harbor's ATIF v1.7
+   * document as JSON text, built server-side from the stored parsed trace
+   * (the same document jobs.download() places at Harbor's own path
+   * agent/trajectory.json); "trajectory" is the reserved harness-native
+   * session file, refused not-found by the server until its wave lands;
    * "agent-home" answers the CLI's whole home folder (subagent transcripts
    * included), keyed by sandbox path. Null = never stored
    * (a normal answer, not an error). "trace-parsed" is not an

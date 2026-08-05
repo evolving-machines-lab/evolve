@@ -2089,22 +2089,23 @@ class TestTrials:
         assert typing.get_args(hints['return']) == (str, Dict[str, str], type(None))
 
     @pytest.mark.asyncio
-    async def test_artifact_trajectory_selector(self):
-        """The trajectory selector is log-shaped: the served ATIF document
+    async def test_artifact_trace_atif_selector(self):
+        """The trace-atif selector is log-shaped: the served ATIF document
         rides the same {log} envelope as the raw logs, and the client passes
-        the JSON text through verbatim."""
-        fake = FakeUrlopen([('stream=trajectory', {'log': '{"steps":[]}'})])
+        the JSON text through verbatim. (`trajectory` is a different,
+        still-reserved selector — the harness-native session file.)"""
+        fake = FakeUrlopen([('stream=trace-atif', {'log': '{"steps":[]}'})])
         client = trials_factory(CONFIG)
         with patch('evolve._http.urlopen', fake):
-            log = await client.artifact('run-1', 'trajectory')
+            log = await client.artifact('run-1', 'trace-atif')
 
-        assert '/api/trials/run-1/trace?stream=trajectory' in fake.requests[0].full_url
+        assert '/api/trials/run-1/trace?stream=trace-atif' in fake.requests[0].full_url
         assert log == '{"steps":[]}'
-        # The Literal carries all six selectors in the contract's own order —
+        # The Literal carries all seven selectors in the contract's own order —
         # trace-parsed first, agent-home last.
         hints = typing.get_type_hints(client.artifact)
         assert typing.get_args(hints['stream']) == (
-            'trace-parsed', 'verifier', 'trace-stdout', 'trace-stderr', 'trajectory', 'agent-home',
+            'trace-parsed', 'verifier', 'trace-stdout', 'trace-stderr', 'trace-atif', 'trajectory', 'agent-home',
         )
 
     @pytest.mark.asyncio

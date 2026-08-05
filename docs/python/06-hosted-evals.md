@@ -284,14 +284,15 @@ The first event of every trace (`seq` 0) is the task instruction itself, carried
 
 ## Trial artifacts — the raw record
 
-Beside the parsed trace, every trial archives its raw record, and one six-name vocabulary names the pieces everywhere — API, SDK, CLI, and the dashboard's download menu:
+Beside the parsed trace, every trial archives its raw record, and one vocabulary names the pieces everywhere — API, SDK, CLI, and the dashboard's download menu:
 
 | Name | What it is |
 |------|------------|
 | `trace-parsed` | The parsed event timeline — what `trace()` / `trace_events()` page |
 | `trace-stdout` | The agent process's stdout, byte for byte |
 | `trace-stderr` | The agent process's stderr, byte for byte |
-| `trajectory` | The normalized trajectory — an ATIF v1.7 document built from the parsed trace |
+| `trace-atif` | The normalized trajectory — an ATIF v1.7 document built from the parsed trace |
+| `trajectory` | Reserved: the harness's own native session file (not served yet — the server answers not-found until its wave lands) |
 | `agent-home` | The CLI's whole home folder, collected after the run |
 | `verifier` | Everything the scoring step printed |
 
@@ -306,9 +307,9 @@ home = await t.artifact(trial_id, 'agent-home')       # dict[path, text] | None
 
 `trace-stdout` and `trace-stderr` are the referee whenever the parsed trace looks wrong. `agent-home` is the agent CLI's entire home folder (`/root/.claude`, `/root/.codex`, …) collected whole after the run, subagent transcripts included by construction, keyed by sandbox path. `None` is a normal answer, never an error: the trial never stored that artifact (it was cancelled early, the agent wrote nothing, or the trace was purged).
 
-`trajectory` is the normalized view of the same run: one **ATIF v1.7** document (Harbor's Agent Trajectory Interchange Format — the strict interchange schema its trainer and analysis tooling read), built server-side from the stored parsed trace. The instruction opens it as the first `user` step, each agent turn carries its message, reasoning, tool calls and their observed results, and `final_metrics` states the trial's token totals and measured cost. It answers on the same `{log}` envelope as the raw logs — the string is the JSON document — and None keeps the same meaning: nothing was stored (or the id is a regrade result, whose agent half belongs to its immutable source trial).
+`trace-atif` is the normalized view of the same run: one **ATIF v1.7** document (Harbor's Agent Trajectory Interchange Format — the strict interchange schema its trainer and analysis tooling read), built server-side from the stored parsed trace. The instruction opens it as the first `user` step, each agent turn carries its message, reasoning, tool calls and their observed results, and `final_metrics` states the trial's token totals and measured cost. It answers on the same `{log}` envelope as the raw logs — the string is the JSON document — and None keeps the same meaning: nothing was stored (or the id is a regrade result, whose agent half belongs to its immutable source trial). It is the same document the job archive places at Harbor's own path `agent/trajectory.json`; the separate `trajectory` name stays reserved for a different artifact — the harness's own native session file.
 
-The CLI speaks the same six words. `evolve-evals trial download <trial-id> --stream <name>` prints one artifact to stdout; without `--stream`, everything the trial recorded is saved under `<dir>/<trial-id>/` — `trace-parsed.jsonl`, `trajectory.json`, `verifier.log`, `trace-stdout.log`, `trace-stderr.log`, and `agent-home/` with the folder tree preserved. The two modes are exclusive, and `--cursor`/`--limit` page only `--stream trace-parsed` — the CLI refuses any other mix as a usage error instead of letting one flag silently win.
+The CLI speaks the same words. `evolve-evals trial download <trial-id> --stream <name>` prints one artifact to stdout; without `--stream`, everything the trial recorded is saved under `<dir>/<trial-id>/` — `trace-parsed.jsonl`, `trace-atif.json`, `verifier.log`, `trace-stdout.log`, `trace-stderr.log`, and `agent-home/` with the folder tree preserved. The two modes are exclusive, and `--cursor`/`--limit` page only `--stream trace-parsed` — the CLI refuses any other mix as a usage error instead of letting one flag silently win.
 
 This archive belongs to hosted evals: trials are scoring evidence. A managed agent session keeps its parsed transcript download; its raw stream lives in the SDK's local session log and its home folder inside your own sandbox.
 

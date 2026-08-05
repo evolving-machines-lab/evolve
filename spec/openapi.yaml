@@ -62,10 +62,12 @@ info:
 
     ## Wave sequencing
     Anything marked `x-wave: 2` belongs to the second build wave: today the
-    API-key management pair (served, not yet in the SDKs). The `trajectory`
-    artifact selector, published ahead of its wave, is SERVED since Wave 3 —
-    the normalized ATIF v1.7 trajectory. Everything unmarked is live end to
-    end.
+    API-key management pair (served, not yet in the SDKs) and the
+    `trajectory` artifact selector — the harness's OWN native session file,
+    published ahead of its wave; until that wave lands the route answers
+    not-found for it. The normalized ATIF v1.7 trajectory is the SERVED
+    `trace-atif` selector — a different artifact under its own name.
+    Everything unmarked is live end to end.
 
     ## Deliberately absent (wave 3, not yet specified)
     The rename map's additive rows are new capabilities, not renames, and are
@@ -706,18 +708,21 @@ paths:
         `cursor` (a sequence number) and `limit` (default 200, max 1000).
 
         With `stream`: raw artifacts instead of parsed events —
-        - `verifier`, `trace-stdout`, `trace-stderr`, `trajectory`:
+        - `verifier`, `trace-stdout`, `trace-stderr`, `trace-atif`:
           the artifact text as JSON (`{"log": string | null}`; null means this
           trial never stored it — a normal answer, never an error).
-          `trajectory` is the normalized ATIF v1.7 trajectory (Harbor's
+          `trace-atif` is the normalized ATIF v1.7 trajectory (Harbor's
           Agent Trajectory Interchange Format), built server-side from the
-          stored parsed trace; the string is the JSON document, and null
-          also answers a regrade id, whose agent half belongs to its
-          immutable source trial.
+          stored parsed trace — the same document the job archive places at
+          Harbor's own path `agent/trajectory.json`; the string is the JSON
+          document, and null also answers a regrade id, whose agent half
+          belongs to its immutable source trial. (The `trajectory` selector
+          is a DIFFERENT artifact: the harness's own native session file,
+          reserved ahead of its wave — see Wave sequencing.)
           With `format=log` a present artifact is delivered as an attachment
           — `text/plain` named `<trialId>_<stream>.log` for the raw logs,
-          `application/json` named `<trialId>_trajectory.json` for the
-          trajectory; an absent one still answers the JSON `{"log": null}`.
+          `application/json` named `<trialId>_trace-atif.json` for the
+          ATIF trajectory; an absent one still answers the JSON `{"log": null}`.
         - `agent-home`: the agent home tree as JSON
           (`{"files": {"<sandbox-path>": "<text>", ...} | null}`; null means
           nothing was collected). With `format=tgz` a present tree is
@@ -741,7 +746,9 @@ paths:
         - name: stream
           in: query
           description: >
-            Raw artifact selector.
+            Raw artifact selector. `trajectory` is in the vocabulary ahead of
+            its server wave: until that wave lands the route answers
+            not-found for it, reported as the API error it is.
           schema:
             type: string
             enum:
@@ -749,13 +756,14 @@ paths:
               - verifier
               - trace-stdout
               - trace-stderr
-              - trajectory   # the normalized ATIF v1.7 trajectory
+              - trace-atif   # the normalized ATIF v1.7 trajectory
+              - trajectory   # x-wave: 2 — the harness-native session file slot
               - agent-home
         - name: format
           in: query
           description: >
             `log` (attachment form of the log-family selectors — text/plain
-            for the raw logs, application/json for `trajectory`) or `tgz`
+            for the raw logs, application/json for `trace-atif`) or `tgz`
             (gzipped tarball, agent-home only).
           schema:
             type: string

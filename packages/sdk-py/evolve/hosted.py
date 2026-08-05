@@ -3392,15 +3392,20 @@ class TrialsClient:
     async def artifact(
         self,
         trial_id: str,
-        stream: Literal['trace-parsed', 'verifier', 'trace-stdout', 'trace-stderr', 'trajectory', 'agent-home'],
+        stream: Literal['trace-parsed', 'verifier', 'trace-stdout', 'trace-stderr', 'trace-atif', 'trajectory', 'agent-home'],
     ) -> Optional[Union[str, Dict[str, str]]]:
         """One raw trace artifact for a trial, by the trace route's ``?stream=``
         selector.
 
         ``"verifier"`` / ``"trace-stdout"`` / ``"trace-stderr"`` answer the log
-        text; ``"trajectory"`` answers the normalized trajectory — Harbor's
+        text; ``"trace-atif"`` answers the normalized trajectory — Harbor's
         ATIF v1.7 document as JSON text, built server-side from the stored
-        parsed trace; ``"agent-home"`` (the CLI's whole home folder, subagent
+        parsed trace (the same document ``jobs.download()`` places at Harbor's
+        own path ``agent/trajectory.json``); ``"trajectory"`` is a DIFFERENT
+        artifact — the harness's own native session file, reserved ahead of
+        its server wave; the server answers not-found for it until that wave
+        lands, and the refusal surfaces as the API error it is;
+        ``"agent-home"`` (the CLI's whole home folder, subagent
         transcripts included by construction) answers a dict of sandbox path to
         text. None = never stored (normal answer, not an error): a
         QUEUED/CANCELLED trial, a harness that wrote nothing, or a purged
