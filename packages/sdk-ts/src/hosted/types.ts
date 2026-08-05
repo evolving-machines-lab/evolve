@@ -389,7 +389,15 @@ export interface JobCreate {
    * never silently dropped).
    */
   agent_env?: Record<string, string>;
-  /** Env injected into every verifier run — same pass-through contract. */
+  /**
+   * Env injected into every verifier run — same pass-through contract. The
+   * hosted platform honors exactly two keys, Harbor rewardkit's per-run judge
+   * override (their `--ve` mechanism): `REWARDKIT_JUDGE` overwrites the
+   * rubric's `[judge].judge` field and `REWARDKIT_MODEL` overwrites its
+   * `[judge].model` field when the judge is an agent. Both are delivered into
+   * the verifier environment in both verifier modes, over any task-declared
+   * value of the same name; any other key is refused at create.
+   */
   verifier_env?: Record<string, string>;
 }
 

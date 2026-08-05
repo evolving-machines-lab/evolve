@@ -2553,14 +2553,26 @@ components:
           description: >
             Env injected into every agent run — a pass-through slot: the
             client sends it verbatim and the server owns acceptance (refused
-            where unsupported, never silently dropped).
+            where unsupported, never silently dropped). This deployment
+            honors no agent_env keys yet; a non-empty object is refused with
+            a message naming the honored verifier_env keys.
         verifier_env:
           type: object
           additionalProperties:
             type: string
           description: >
             Env injected into every verifier run — same pass-through
-            contract.
+            contract. This deployment honors exactly two keys, Harbor
+            rewardkit's per-run judge override (their `--ve` mechanism):
+            `REWARDKIT_JUDGE` overwrites the rubric's `[judge].judge` field
+            and `REWARDKIT_MODEL` overwrites its `[judge].model` field when
+            the judge is an agent. Both are delivered into the verifier
+            environment in BOTH verifier modes, merged over any
+            task-declared value of the same name (Harbor's own --ve
+            precedence); the pair is part of the idempotency fingerprint,
+            and derived jobs (resume, retry) inherit it verbatim. Any other
+            key is refused at create with a message naming the two honored
+            keys — never silently dropped.
 
     RetryConfigInput:
       type: object

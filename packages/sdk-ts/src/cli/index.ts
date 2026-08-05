@@ -202,7 +202,9 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
     kind: "repeat",
     aliases: ["ve"],
     value: "KEY=VALUE",
-    help: "Env for every verifier run (repeatable); a pass-through slot the server owns",
+    help:
+      "Env for every verifier run (repeatable); the server honors exactly " +
+      "REWARDKIT_JUDGE and REWARDKIT_MODEL (rewardkit's judge override) and refuses any other key",
   },
   "n-attempts": { kind: "number", short: "k", value: "<n>", help: "Attempts per task x arm (default 1)" },
   "n-concurrent": { kind: "number", short: "n", value: "<n>", help: "Parallel trials (default 4)" },

@@ -130,7 +130,7 @@ On the stream, a requeue emits `trial.retrying` right after the `trial.settled` 
 
 A job expands to `tasks × agents × n_attempts` trials, each in its own sandbox. `n_concurrent_trials` is how many run at once. The ceilings — distinct agent arms per job, attempts per task, total trials — all refuse at create rather than partway through, and every one of them is published under `limits.job` in the [capability document](#what-the-platform-supports) rather than only here, so a form can check a sweep before it POSTs. `sandbox_provider` (optional, default `"e2b"`) picks where the sandboxes run — see [Where it runs](#where-it-runs).
 
-`agent_env` and `verifier_env` inject environment values into every agent or verifier run. They are pass-through slots: the client sends them verbatim and the server owns acceptance — refused where unsupported, never silently dropped.
+`agent_env` and `verifier_env` inject environment values into every agent or verifier run. They are pass-through slots: the client sends them verbatim and the server owns acceptance — refused where unsupported, never silently dropped. The platform honors exactly two `verifier_env` keys — `REWARDKIT_JUDGE` and `REWARDKIT_MODEL`, rewardkit's per-run judge override ([LLM judges](#llm-judges)); every other key, and all of `agent_env`, is refused at create with a message naming that pair.
 
 ### Agent arms
 
@@ -766,6 +766,21 @@ ANTHROPIC_API_KEY = "${ANTHROPIC_API_KEY}"
 Harbor resolves that template from the machine's own environment and hands the raw provider key into the sandbox. This platform honors the same task file without ever doing that: at verify start the trial mints a **distinct, short-lived gateway credential** — scoped to the requested key's model family only, capped with its own budget, revoked the moment scoring ends — and the requested variable resolves to it. The matching base-URL variable is set alongside automatically, so `litellm`-style clients (including Harbor's `rewardkit`, which is available offline in the verifier box — a `test.sh` running `uvx --from harbor-rewardkit… rewardkit /tests` works unchanged, with no network) call the platform's gateway without the task changing a line. The recognized templates are `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` and their base-URL companions (`ANTHROPIC_API_BASE`, `ANTHROPIC_BASE_URL`, `OPENAI_API_BASE`, `OPENAI_BASE_URL`); any other `${VAR}` template is refused at import — there is no host environment to resolve it from.
 
 Judge model selection is Harbor-exact: the platform never chooses a judge model. Your rubric names one exactly as it would under Harbor, and when it names nothing, `rewardkit`'s own library default (`anthropic/claude-sonnet-4-6`) applies — applied by the library inside the box, never injected by the platform; a verifier that names no model anywhere fails the same way it would on Harbor. Judge calls travel the gateway's normal provider routes on the trial's judge credential, whose model scope is the family of the key the task requested — `ANTHROPIC_API_KEY` admits Anthropic models, `OPENAI_API_KEY` admits OpenAI models — so a model outside the requested family is refused by the key, exactly as an agent's key refuses a model outside its arm. If your account [brings its own provider key](./01-getting-started.md#managed-byo-provider-keys), judge calls ride the same provider preference as every other call, pinned to your key's provider — the gateway can never swap your injected key for another vendor's.
+
+Swap the judge per run without touching the task: the job's `verifier_env` slot honors exactly two keys — rewardkit's own override variables, the same pair Harbor users set with `--ve`. `REWARDKIT_JUDGE` overwrites the rubric's `[judge].judge` field; `REWARDKIT_MODEL` overwrites its `[judge].model` field when the judge is an agent (e.g. `claude-code`, `codex`). Both are delivered into the verifier environment in both verifier modes, over any value the task declared under the same name, and derived jobs (resume, retry) inherit the pair verbatim. Every other `verifier_env` key is refused at create, naming this pair.
+
+```ts
+const job = await evals.start({
+    datasets: [{ name: "judged-swe" }],
+    agents: [{ name: "codex", model_name: "gpt-5.5" }],
+    verifier_env: {
+        REWARDKIT_JUDGE: "claude-code",
+        REWARDKIT_MODEL: "anthropic/claude-sonnet-4-6",
+    },
+});
+```
+
+From the CLI it is Harbor's own flag: `--ve REWARDKIT_JUDGE=claude-code --ve REWARDKIT_MODEL=anthropic/claude-sonnet-4-6`.
 
 The judge's money is measured at the gateway off its own key — never taken from anything the verifier reports — and itemized apart from the agent's everywhere: `judge_result` / `judge_spend_source` on the trial, `stats.judge_cost_usd` on the job (a share of `stats.cost_usd`, which is the whole bill). Works in both verifier modes. Judge-enabled tasks are not regradable yet — the regrade lane refuses them with a typed error instead of re-scoring without a judge.
 

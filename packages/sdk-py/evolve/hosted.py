@@ -3422,7 +3422,14 @@ class JobsClient:
         "retry nothing". ``agent_env`` / ``verifier_env`` are
         pass-through slots injected into every agent / verifier run — sent
         verbatim; the server owns acceptance (refused where unsupported,
-        never silently dropped). Supports Idempotency-Key.
+        never silently dropped). The hosted platform honors exactly two
+        ``verifier_env`` keys, Harbor rewardkit's per-run judge override
+        (their ``--ve`` mechanism): ``REWARDKIT_JUDGE`` overwrites the
+        rubric's ``[judge].judge`` field and ``REWARDKIT_MODEL`` overwrites
+        its ``[judge].model`` field when the judge is an agent. Both are
+        delivered into the verifier environment in both verifier modes,
+        over any task-declared value of the same name; any other key is
+        refused at create. Supports Idempotency-Key.
         """
         body: Dict[str, Any] = {}
         if job_name is not None:
