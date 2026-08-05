@@ -746,7 +746,9 @@ class JudgeResult:
     trial's model bill.
 
     A judge-enabled task's verifier holds a DISTINCT short-lived gateway key
-    (judge models only, minted at verify start, revoked after scoring), and
+    (scoped to the requested credential's model family only, minted at verify
+    start, revoked after scoring; judge model selection itself is Harbor-exact
+    — the rubric names the model, or rewardkit's own library default applies), and
     these figures are that key's spend and tokens as the platform measured
     them at the gateway — never anything the verifier reported about itself.
     ``cost_usd`` is the judge share alone; ``agent_result.cost_usd`` stays the
