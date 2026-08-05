@@ -3341,6 +3341,30 @@ function testBuildInputsDirect() {
     { source: { git_url: "g", git_ref: "r" }, name: "n", version: "1" },
     "git publish input"
   );
+  // --path narrows a git publish to one repository subfolder (wire: git_path).
+  const gitSubfolder = buildPublishInput(
+    parseArgs([
+      "dataset", "publish",
+      "--git", "g", "--ref", "r", "--path", "datasets/deep-swe",
+      "--name", "n", "--version", "1",
+    ])
+  );
+  assertEqual(
+    gitSubfolder,
+    {
+      source: { git_url: "g", git_ref: "r", git_path: "datasets/deep-swe" },
+      name: "n",
+      version: "1",
+    },
+    "git publish with --path carries git_path"
+  );
+  // A subfolder narrows a git clone, not a local directory — with --dir the
+  // user just points --dir at the subfolder itself.
+  assertThrowsUsage(
+    () => buildPublishInput(parseArgs(["dataset", "publish", "--dir", "/tmp/corpus", "--path", "tasks"])),
+    "--git/--ref/--path",
+    "--path beside --dir refuses"
+  );
   const dirInput = buildPublishInput(
     parseArgs(["dataset", "publish", "--dir", "/tmp/corpus", "--name", "n", "--version", "1"])
   );
@@ -3348,6 +3372,27 @@ function testBuildInputsDirect() {
     dirInput,
     { source: { directory: "/tmp/corpus" }, name: "n", version: "1" },
     "directory publish input"
+  );
+  // --name/--version are OPTIONAL with --dir: a corpus carrying a dataset.toml
+  // manifest supplies them server-side. The CLI passes the omission through —
+  // the SDK (which can see the directory) refuses when no manifest exists.
+  const manifestDir = buildPublishInput(parseArgs(["dataset", "publish", "--dir", "/tmp/corpus"]));
+  assertEqual(
+    manifestDir,
+    { source: { directory: "/tmp/corpus" } },
+    "directory publish without --name/--version carries neither (manifest supplies them)"
+  );
+  // A git source cannot lean on the manifest — the repo is cloned server-side
+  // after the 202 — so the old requirement stands, with the reason.
+  assertThrowsUsage(
+    () => buildPublishInput(parseArgs(["dataset", "publish", "--git", "g", "--ref", "r", "--version", "1"])),
+    "--name",
+    "git publish without --name still refuses"
+  );
+  assertThrowsUsage(
+    () => buildPublishInput(parseArgs(["dataset", "publish", "--git", "g", "--ref", "r", "--name", "n"])),
+    "--version",
+    "git publish without --version still refuses"
   );
 
   const agent = buildAgentInput(

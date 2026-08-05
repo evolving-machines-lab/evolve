@@ -1135,8 +1135,25 @@ paths:
         Starts a server-side import that creates or extends a catalog dataset
         with one new immutable version. Multipart only. Source is exactly one
         of: a git repository (`git_url` + pinned `git_ref` — https only, an
-        unpinned import is not reproducible) or an uploaded gzipped tarball
-        (`archive`).
+        unpinned import is not reproducible — optionally narrowed to one
+        repository subfolder with `git_path`, fetched via sparse checkout) or
+        an uploaded gzipped tarball (`archive`).
+
+        A corpus carrying Harbor's dataset.toml manifest (at the corpus root
+        or beside the task directories) imports what the MANIFEST says: it
+        drives task selection (only the tasks it names are imported; a named
+        task missing from the checkout fails the import,
+        `manifest_task_missing`) and dataset metadata, and every pinned
+        content digest is verified with Harbor's exact per-task content-hash
+        recipe — a mismatch is a FAILED import (`manifest_digest_mismatch`),
+        never a silent import of unpinned bytes. A manifest carrying a
+        metric.py custom metric script is refused
+        (`custom_metric_not_supported`). For an archive source, `name` and
+        `version` may then be omitted: the manifest supplies them (name from
+        the short segment of its `org/name`, version from
+        `[dataset].version`); explicit parts win. A git source still requires
+        both — its manifest is only readable after the clone, long after this
+        202 has promised a name.
 
         The import is asynchronous: the 202 returns a DatasetImport to poll at
         `GET /api/datasets/imports/{importId}`. Name collisions are checked
@@ -3233,7 +3250,7 @@ components:
     DatasetVersion:
       type: object
       description: One immutable version of a dataset — one shape on every surface.
-      required: [version, state, created_at, task_count, gate]
+      required: [version, state, created_at, task_count, manifest, gate]
       properties:
         version:
           type: string
@@ -3245,6 +3262,14 @@ components:
         task_count:
           type: integer
           minimum: 0
+        manifest:
+          oneOf:
+            - $ref: '#/components/schemas/DatasetManifestMetadata'
+            - type: 'null'
+          description: >
+            The dataset.toml identity/metadata this version imported under.
+            Null when the corpus carried no manifest (or the version predates
+            manifest support).
         gate:
           oneOf:
             - $ref: '#/components/schemas/ActivationGate'
@@ -3254,6 +3279,46 @@ components:
             no gate was ever scheduled — a version imported before the gate
             scheduler existed, a platform-seeded one, or one whose import
             archived no reference solutions (see the import's `warnings`).
+
+    DatasetManifestMetadata:
+      type: object
+      description: >
+        The metadata half of a Harbor dataset.toml manifest, as verified at
+        import. The full manifest additionally pins per-task and per-file
+        content digests; those were verified against the corpus at import
+        (mismatch = FAILED import, `manifest_digest_mismatch`) and remain
+        readable in the retained package (`GET /api/datasets/{name}/download`
+        with the version's package) — the wire carries identity + metadata.
+      required: [name, version, description, authors, keywords, task_count]
+      properties:
+        name:
+          type: string
+          description: The manifest's own dataset name, Harbor `org/name` format.
+        version:
+          type: [string, 'null']
+          description: The manifest's `[dataset].version`; null when it declares none.
+        description:
+          type: string
+        authors:
+          type: array
+          items:
+            type: object
+            required: [name, email]
+            properties:
+              name:
+                type: string
+              email:
+                type: [string, 'null']
+        keywords:
+          type: array
+          items:
+            type: string
+        task_count:
+          type: [integer, 'null']
+          description: >
+            How many `[[tasks]]` refs the manifest listed (duplicates
+            included, matching Harbor's task_count). Null on rows stored
+            before the count was recorded.
 
     ActivationGateStatus:
       type: string
@@ -3548,21 +3613,41 @@ components:
       type: object
       description: >
         Multipart body of POST /api/datasets/publish. Exactly one source:
-        `git_url` + `git_ref`, or `archive`.
-      required: [name, version]
+        `git_url` + `git_ref`, or `archive`. `name` and `version` are required
+        for a git source; for an archive whose corpus carries a dataset.toml
+        manifest they may be omitted — the manifest supplies whichever is
+        missing (name from the short segment of the manifest's `org/name`,
+        version from `[dataset].version`). Explicit parts always win.
       properties:
         name:
           type: string
-          description: Catalog dataset name the version lands under (created or extended).
+          description: >
+            Catalog dataset name the version lands under (created or
+            extended). Optional when the uploaded archive carries a
+            dataset.toml; required otherwise.
         version:
           type: string
-          description: Version label for the new immutable version.
+          description: >
+            Version label for the new immutable version. Optional when the
+            uploaded archive's dataset.toml declares `[dataset].version`;
+            required otherwise.
         git_url:
           type: string
           description: https:// repository URL. For a private repo, put a token in the URL.
         git_ref:
           type: string
           description: Pinned branch, tag, or commit. Required with git_url.
+        git_path:
+          type: string
+          description: >
+            Optional repository subfolder holding the corpus (POSIX path
+            relative to the repository root, e.g. `datasets/my-swe`) — the
+            import reads ONLY that folder, fetched via git sparse checkout.
+            Refused rather than interpreted when ambiguous: no absolute
+            paths, no `.`/`..` or empty segments, no backslashes, whitespace,
+            pattern characters, or `.git` segments. A path that is not a
+            directory at the pinned ref fails the import loudly. Only valid
+            beside git_url + git_ref.
         archive:
           type: string
           format: binary
@@ -3583,7 +3668,15 @@ components:
       properties:
         code:
           type: string
-          description: '`import_failed` when none was recorded.'
+          description: >
+            `import_failed` when none was recorded. Manifest imports record
+            typed causes: `dataset_manifest_invalid` (dataset.toml cannot be
+            parsed, or cannot be mapped onto the checkout),
+            `manifest_task_missing` (the manifest names tasks the checkout
+            does not contain), `manifest_digest_mismatch` (a pinned task or
+            file digest does not match the checkout's bytes), and
+            `custom_metric_not_supported` (the dataset carries a metric.py
+            custom metric script, a postponed feature).
         message:
           type: string
         failures:
@@ -4055,6 +4148,8 @@ components:
                 max_git_url_length:
                   type: integer
                 max_git_ref_length:
+                  type: integer
+                max_git_path_length:
                   type: integer
             max_items_named_in_error_message:
               type: integer

@@ -301,7 +301,14 @@ class TestDatasets:
                 'name': 'deep-swe',
                 'title': 'DeepSWE',
                 'description': 'SWE tasks',
-                'active_version': {'version': '1.1', 'state': 'READY', 'created_at': '2026-07-21', 'task_count': 113},
+                'active_version': {
+                    'version': '1.1', 'state': 'READY', 'created_at': '2026-07-21', 'task_count': 113,
+                    'manifest': {
+                        'name': 'acme/deep-swe', 'version': '1.1', 'description': 'SWE tasks',
+                        'authors': [{'name': 'Acme', 'email': 'eng@acme.dev'}, {'name': 'NoMail'}],
+                        'keywords': ['swe'], 'task_count': 113,
+                    },
+                },
                 'versions': [
                     {'version': '1.1', 'state': 'READY', 'created_at': '2026-07-21', 'task_count': 113},
                 ],
@@ -335,9 +342,23 @@ class TestDatasets:
         assert detail.active_version.version == '1.1'
         assert detail.active_version.state == 'READY'
         assert detail.active_version.task_count == 113
+        # The dataset.toml identity/metadata the version imported under, mapped
+        # defensively: a missing author email normalizes to None.
+        manifest = detail.active_version.manifest
+        assert manifest is not None
+        assert manifest.name == 'acme/deep-swe'
+        assert manifest.version == '1.1'
+        assert manifest.description == 'SWE tasks'
+        assert [(a.name, a.email) for a in manifest.authors] == [
+            ('Acme', 'eng@acme.dev'), ('NoMail', None),
+        ]
+        assert manifest.keywords == ['swe']
+        assert manifest.task_count == 113
         # selected_version is a full version object — the tasks' provenance
         assert detail.selected_version.version == '1.1'
         assert detail.selected_version.created_at == '2026-07-21'
+        # No manifest field from the server (older server / no manifest) → None.
+        assert detail.selected_version.manifest is None
         # No gate field from the server (older server / none scheduled) → None,
         # never a crash and never "passed".
         assert detail.selected_version.gate is None
@@ -555,6 +576,43 @@ class TestDatasets:
         assert job.version == '1.2'
 
     @pytest.mark.asyncio
+    async def test_publish_git_path_rides_as_a_named_part(self):
+        # git_path narrows the import to ONE repository subfolder (the server
+        # fetches it via sparse checkout). Verbatim on the wire; absent when
+        # not given (the root import above pins that: no git_path key at all).
+        fake = FakeUrlopen([
+            ('/api/datasets/publish', {
+                'id': 'imp-2', 'status': 'QUEUED', 'name': 'my-set', 'version': '1.3',
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            await datasets_factory(CONFIG).publish(
+                git_url='https://github.com/org/monorepo.git',
+                git_ref='v2',
+                git_path='datasets/deep-swe',
+                name='my-set',
+                version='1.3',
+            )
+
+        parts = _multipart_parts(fake.requests[0])
+        assert parts == {
+            'name': b'my-set',
+            'version': b'1.3',
+            'git_url': b'https://github.com/org/monorepo.git',
+            'git_ref': b'v2',
+            'git_path': b'datasets/deep-swe',
+        }
+
+    @pytest.mark.asyncio
+    async def test_publish_git_path_refused_with_a_directory(self, tmp_path):
+        # A subfolder narrows a git clone, not a local directory — for a local
+        # corpus the caller points directory= at the subfolder itself.
+        with pytest.raises(ValueError, match='git_path'):
+            await datasets_factory(CONFIG).publish(
+                directory=str(tmp_path), git_path='tasks', name='b', version='1.0',
+            )
+
+    @pytest.mark.asyncio
     async def test_publish_uploads_a_directory(self, tmp_path):
         import io
         import tarfile
@@ -747,9 +805,50 @@ class TestDatasets:
         client = datasets_factory(CONFIG)
         with pytest.raises(ValueError, match='git source'):
             await client.publish(git_url='', git_ref='main', name='b', version='1.0')
-        with pytest.raises(TypeError):
-            # version is required — the publish surface has no server-assigned labels
+        # A git source still requires name AND version: its dataset.toml is only
+        # readable after the server clones it, so the manifest cannot supply
+        # them the way it can for a directory source.
+        with pytest.raises(ValueError, match='cloned server-side'):
             await client.publish(git_url='g', git_ref='main', name='b')
+        with pytest.raises(ValueError, match='cloned server-side'):
+            await client.publish(git_url='g', git_ref='main', version='1.0')
+
+    @pytest.mark.asyncio
+    async def test_publish_directory_manifest_supplies_identity(self, tmp_path):
+        # A corpus carrying dataset.toml publishes with NO name/version kwargs:
+        # the parts are simply omitted and the server derives both from the
+        # manifest (which also drives selection + digest verification there).
+        (tmp_path / 'tasks' / 'abc').mkdir(parents=True)
+        (tmp_path / 'tasks' / 'abc' / 'task.toml').write_text('schema_version = "1.1"\n')
+        (tmp_path / 'dataset.toml').write_text(
+            '[dataset]\nname = "acme/my-set"\nversion = "0.1"\n\n'
+            '[[tasks]]\nname = "acme/abc"\ndigest = "sha256:' + '0' * 64 + '"\n'
+        )
+        fake = FakeUrlopen([
+            ('/api/datasets/publish', {
+                'id': 'imp-3', 'name': 'my-set', 'version': '0.1',
+                'status': 'QUEUED', 'failure': None, 'warnings': [],
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            imported = await datasets_factory(CONFIG).publish(directory=str(tmp_path))
+        body = fake.requests[0].data
+        assert b'name="archive"' in body
+        assert b'name="name"' not in body  # no name part — the manifest supplies it
+        assert b'name="version"' not in body
+        assert imported.name == 'my-set'
+        assert imported.version == '0.1'
+
+    @pytest.mark.asyncio
+    async def test_publish_directory_without_manifest_needs_identity(self, tmp_path):
+        # No flags and no manifest: refused BEFORE tarring/uploading anything.
+        (tmp_path / 'tasks' / 'abc').mkdir(parents=True)
+        (tmp_path / 'tasks' / 'abc' / 'task.toml').write_text('schema_version = "1.1"\n')
+        fake = FakeUrlopen([])
+        with patch('evolve._http.urlopen', fake):
+            with pytest.raises(ValueError, match='dataset.toml'):
+                await datasets_factory(CONFIG).publish(directory=str(tmp_path))
+        assert fake.requests == []
 
     @pytest.mark.asyncio
     async def test_list_search_rides_every_page_fetch(self):

@@ -218,8 +218,8 @@ async function testDatasetsList() {
     assertEqual(catalog.items[0].title, "DeepSWE", "maps title");
     assertEqual(
       catalog.items[0].active_version,
-      { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113, gate: null },
-      "maps active_version object (one shape: version/state/created_at/task_count/gate)"
+      { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113, manifest: null, gate: null },
+      "maps active_version object (one shape: version/state/created_at/task_count/manifest/gate; manifest null on older servers)"
     );
     assertEqual(catalog.items[1].active_version, null, "null active_version preserved");
 
@@ -277,8 +277,8 @@ async function testDatasetsGet() {
     assertEqual(detail.versions?.length, 2, "maps versions");
     assertEqual(
       detail.selected_version,
-      { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113, gate: null },
-      "selected_version is a full version object (never a bare label; gate null when the server sends none)"
+      { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113, manifest: null, gate: null },
+      "selected_version is a full version object (never a bare label; manifest/gate null when the server sends none)"
     );
     // A nested collection is the same envelope as a top-level one.
     assertEqual(detail.tasks?.hasMore, true, "tasks are paged like every collection");
@@ -458,6 +458,9 @@ async function testPublishGitSource() {
     assertEqual(form.get("git_url"), "https://github.com/x/bench.git", "git_url is a named part");
     assertEqual(form.get("git_ref"), "main", "git_ref is a named part");
     assertEqual(form.get("archive"), null, "no archive part for a git source");
+    // Root import: no git_path part at all — an absent part means "the
+    // repository root", and an empty one would be refused server-side.
+    assertEqual(form.get("git_path"), null, "no git_path part when none was given");
     const headers = call.init?.headers as Record<string, string>;
     assertEqual(headers?.Authorization, "Bearer test-key", "Bearer token sent");
 
@@ -466,6 +469,25 @@ async function testPublishGitSource() {
       { id: "imp-1", status: "QUEUED", name: "deep-swe", version: "1.2", failure: null, warnings: [] },
       "202 response mapped (id, status, name, version, failure, warnings)"
     );
+
+    // Subfolder import: git_path rides as one more named part, verbatim.
+    await d.publish({
+      source: {
+        git_url: "https://github.com/x/monorepo.git",
+        git_ref: "v2",
+        git_path: "datasets/deep-swe",
+      },
+      name: "deep-swe",
+      version: "1.3",
+    });
+    const subfolderCall = fetchCalls[fetchCalls.length - 1];
+    const subfolderForm = subfolderCall.init?.body as FormData;
+    assertEqual(
+      subfolderForm.get("git_path"),
+      "datasets/deep-swe",
+      "git_path is a named part when narrowing to a subfolder"
+    );
+    assertEqual(subfolderForm.get("git_ref"), "v2", "git_ref still rides beside git_path");
   } finally {
     restoreFetch();
   }
@@ -545,6 +567,137 @@ async function testPublishDirectorySource() {
   } finally {
     restoreFetch();
     await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function testPublishManifestDerivedIdentity() {
+  console.log("\n--- datasets().publish() lets dataset.toml supply name/version for a directory source ---");
+  installMockFetch();
+  const dir = await mkdtemp(join(tmpdir(), "evolve-import-manifest-"));
+  try {
+    await mkdir(join(dir, "tasks", "abc"), { recursive: true });
+    await writeFile(join(dir, "tasks", "abc", "task.toml"), 'schema_version = "1.1"\n');
+    await writeFile(
+      join(dir, "dataset.toml"),
+      '[dataset]\nname = "acme/my-set"\nversion = "0.1"\n\n[[tasks]]\nname = "acme/abc"\ndigest = "sha256:' +
+        "0".repeat(64) +
+        '"\n'
+    );
+    setMockResponse("/api/datasets/publish", {
+      status: 202,
+      body: { id: "imp-3", name: "my-set", version: "0.1", status: "QUEUED", warnings: [] },
+    });
+
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    // No name, no version: the SERVER derives both from the manifest.
+    const imported = await d.publish({ source: { directory: dir } });
+
+    const call = fetchCalls[fetchCalls.length - 1];
+    const form = call.init?.body as FormData;
+    assert(form instanceof FormData, "body is multipart/form-data");
+    assertEqual(form.get("name"), null, "no name part — the manifest supplies it server-side");
+    assertEqual(form.get("version"), null, "no version part — the manifest supplies it server-side");
+    assert(form.get("archive") instanceof Blob, "the corpus still rides the archive part");
+    assertEqual(imported.name, "my-set", "202 echoes the server-derived name");
+    assertEqual(imported.version, "0.1", "202 echoes the server-derived version");
+  } finally {
+    restoreFetch();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function testPublishDirectoryWithoutManifestNeedsIdentity() {
+  console.log("\n--- datasets().publish() refuses a nameless directory publish when no dataset.toml exists ---");
+  installMockFetch();
+  const dir = await mkdtemp(join(tmpdir(), "evolve-import-nomanifest-"));
+  try {
+    await mkdir(join(dir, "tasks", "abc"), { recursive: true });
+    await writeFile(join(dir, "tasks", "abc", "task.toml"), 'schema_version = "1.1"\n');
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    let threw = false;
+    try {
+      await d.publish({ source: { directory: dir } });
+    } catch (e: any) {
+      threw = true;
+      assert(e.message.includes("dataset.toml"), "message points at the manifest alternative");
+    }
+    assert(threw, "no name, no version, no manifest throws");
+    assertEqual(fetchCalls.length, 0, "the corpus is never tarred or uploaded for a doomed publish");
+  } finally {
+    restoreFetch();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function testPublishGitSourceRequiresIdentity() {
+  console.log("\n--- datasets().publish() still requires name/version for a git source ---");
+  installMockFetch();
+  try {
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    let threw = false;
+    try {
+      await d.publish({
+        source: { git_url: "https://github.com/x/bench.git", git_ref: "main" },
+      });
+    } catch (e: any) {
+      threw = true;
+      assert(e.message.includes("cloned server-side"), "message explains WHY the manifest cannot supply them");
+    }
+    assert(threw, "git source without name/version throws");
+    assertEqual(fetchCalls.length, 0, "refused before the network");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testVersionManifestMapping() {
+  console.log("\n--- dataset versions carry the manifest metadata the server reports ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/datasets/deep-swe", {
+      status: 200,
+      body: {
+        name: "deep-swe",
+        title: null,
+        description: null,
+        active_version: {
+          version: "1.1",
+          state: "READY",
+          created_at: "2026-07-21T00:00:00.000Z",
+          task_count: 113,
+          manifest: {
+            name: "acme/deep-swe",
+            version: "1.1",
+            description: "SWE tasks",
+            authors: [{ name: "Acme", email: "eng@acme.dev" }, { name: "NoMail" }],
+            keywords: ["swe", "agentic"],
+            task_count: 113,
+          },
+        },
+        versions: [],
+        created_at: "2026-07-01T00:00:00.000Z",
+        updated_at: "2026-07-21T00:00:00.000Z",
+      },
+    });
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    const detail = await d.get("deep-swe");
+    assertEqual(
+      detail.active_version?.manifest,
+      {
+        name: "acme/deep-swe",
+        version: "1.1",
+        description: "SWE tasks",
+        authors: [
+          { name: "Acme", email: "eng@acme.dev" },
+          { name: "NoMail", email: null },
+        ],
+        keywords: ["swe", "agentic"],
+        task_count: 113,
+      },
+      "manifest maps identity + metadata; a missing author email normalizes to null"
+    );
+  } finally {
+    restoreFetch();
   }
 }
 
@@ -3254,6 +3407,10 @@ async function main() {
   await testPublishGitSource();
   await testPublishRequiresGitSource();
   await testPublishDirectorySource();
+  await testPublishManifestDerivedIdentity();
+  await testPublishDirectoryWithoutManifestNeedsIdentity();
+  await testPublishGitSourceRequiresIdentity();
+  await testVersionManifestMapping();
   await testGetImport();
   await testWatchImportPollsToTerminal();
   await testWatchImportSurvivesRateLimit();

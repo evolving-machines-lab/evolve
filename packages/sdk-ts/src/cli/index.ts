@@ -414,9 +414,10 @@ const GROUPS: Record<string, GroupSpec> = {
         flags: {
           git: { kind: "string", value: "<url>", help: "Git repository URL (with --ref)" },
           ref: { kind: "string", value: "<ref>", help: "Git ref: branch, tag, or commit (with --git)" },
+          path: { kind: "string", value: "<subfolder>", help: "Repository subfolder holding the corpus (with --git; sparse checkout — only that folder is imported)" },
           dir: { kind: "string", value: "<path>", help: "Local corpus directory (tarred + uploaded)" },
-          name: { kind: "string", value: "<dataset>", help: "Catalog dataset name to create or extend (required)" },
-          version: { kind: "string", value: "<v>", help: "Version label for the published version (required)" },
+          name: { kind: "string", value: "<dataset>", help: "Catalog dataset name to create or extend (optional with --dir when the corpus carries a dataset.toml manifest; required with --git)" },
+          version: { kind: "string", value: "<v>", help: "Version label for the published version (optional with --dir when dataset.toml declares one; required with --git)" },
           watch: { kind: "boolean", help: "Poll until the publish is COMPLETED or FAILED" },
         },
         minPositionals: 0,
@@ -1615,34 +1616,46 @@ export function buildJobInput(
   };
 }
 
-/** Build the datasets().publish() input from a parsed `dataset publish` invocation. */
+/**
+ * Build the datasets().publish() input from a parsed `dataset publish`
+ * invocation. `--name`/`--version` are optional with `--dir`: a corpus
+ * carrying a dataset.toml manifest supplies them server-side (Harbor's
+ * dataset layout), and the SDK refuses before uploading when neither the
+ * flags nor a manifest exist. A git source always requires both — its
+ * manifest is only readable after the server clones it.
+ */
 export function buildPublishInput(inv: Invocation): PublishDatasetInput {
   const f = inv.flags;
   const hasDir = typeof f.dir === "string";
-  const hasGit = typeof f.git === "string" || typeof f.ref === "string";
+  const hasGit =
+    typeof f.git === "string" || typeof f.ref === "string" || typeof f.path === "string";
   if (hasDir && hasGit) {
-    throw new CliUsageError('"dataset publish" takes EITHER --dir OR --git/--ref, not both');
+    throw new CliUsageError('"dataset publish" takes EITHER --dir OR --git/--ref/--path, not both');
   }
   if (hasDir) {
-    for (const req of ["name", "version"] as const) {
-      if (typeof f[req] !== "string") {
-        throw new CliUsageError(`"dataset publish" requires --${req}`);
-      }
-    }
     return {
       source: { directory: f.dir as string },
-      name: f.name as string,
-      version: f.version as string,
+      ...(typeof f.name === "string" ? { name: f.name } : {}),
+      ...(typeof f.version === "string" ? { version: f.version } : {}),
     };
   }
   for (const req of ["git", "ref", "name", "version"] as const) {
     if (typeof f[req] !== "string") {
-      const suffix = req === "git" || req === "ref" ? " (or --dir for a local corpus directory)" : "";
+      const suffix =
+        req === "git" || req === "ref"
+          ? " (or --dir for a local corpus directory)"
+          : " (a git source cannot take it from dataset.toml — the repository is only cloned after the publish is accepted)";
       throw new CliUsageError(`"dataset publish" requires --${req}${suffix}`);
     }
   }
   return {
-    source: { git_url: f.git as string, git_ref: f.ref as string },
+    source: {
+      git_url: f.git as string,
+      git_ref: f.ref as string,
+      // --path narrows the import to ONE repository subfolder (the server
+      // fetches it with a sparse checkout); absent = the repository root.
+      ...(typeof f.path === "string" ? { git_path: f.path } : {}),
+    },
     name: f.name as string,
     version: f.version as string,
   };
@@ -2706,6 +2719,22 @@ function datasetDetailLines(b: Dataset): string[] {
     ["description", b.description ?? "-"],
     ["active version", b.active_version?.version ?? "-"],
   ]);
+  // The dataset.toml identity the active version imported under, when it had
+  // one — the manifest's own org/name and its declared metadata. One quiet
+  // block; a version without a manifest prints nothing.
+  const manifest = b.active_version?.manifest;
+  if (manifest) {
+    lines.push(
+      `manifest: ${manifest.name}${manifest.version ? `@${manifest.version}` : ""}` +
+        (manifest.task_count !== null ? ` (${manifest.task_count} tasks pinned)` : "")
+    );
+    if (manifest.authors.length > 0) {
+      lines.push(`  authors: ${manifest.authors.map((a) => (a.email ? `${a.name} <${a.email}>` : a.name)).join(", ")}`);
+    }
+    if (manifest.keywords.length > 0) {
+      lines.push(`  keywords: ${manifest.keywords.join(", ")}`);
+    }
+  }
   if (b.versions && b.versions.length > 0) {
     lines.push("");
     // The GATE column appears only when the server reports gate progress —
@@ -2841,7 +2870,9 @@ async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
       for (const line of importLines(created)) io.out(line);
       io.out("");
       // Version state (VALIDATING → READY/FAILED) lives on the dataset body.
-      io.out(`Follow it with: evolve dataset show ${input.name}`);
+      // `created.name`, not the flag: a manifest-derived publish had no --name,
+      // and the 202 echoes the name the server actually chose.
+      io.out(`Follow it with: evolve dataset show ${created.name}`);
     }
     return 0;
   }
@@ -2849,7 +2880,7 @@ async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
   if (json) {
     io.out(JSON.stringify({ kind: "import.created", datasetImport: created }));
   } else {
-    io.out(`Publish ${created.id} (${input.name}) ${created.status} — watching…`);
+    io.out(`Publish ${created.id} (${created.name}) ${created.status} — watching…`);
   }
 
   const final = await client.watchImport(created.id, {
