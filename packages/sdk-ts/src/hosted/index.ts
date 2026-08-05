@@ -100,6 +100,7 @@ export {
   TRIAL_ARTIFACT_STREAMS,
   TRIAL_STATUSES,
   isHostedErrorCode,
+  passAtK,
 } from "./types";
 export type {
   ActiveDataset,
@@ -176,6 +177,8 @@ export type {
   ModelInfo,
   Page,
   PageOptions,
+  PassAtKGroup,
+  PassAtKPoint,
   ProviderCapability,
   PublishDatasetInput,
   RegradeRequest,

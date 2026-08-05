@@ -27,6 +27,7 @@ import {
   auth,
   datasets,
   jobs,
+  passAtK,
   trials,
 } from "./index";
 import type {
@@ -214,7 +215,7 @@ const GROUPS: Record<string, GroupSpec> = {
         example: "evolve-evals job list --limit 20 -q",
       },
       show: {
-        summary: "Show one or more jobs in full",
+        summary: "Show one or more jobs in full (incl. pass@k, once attempts settle)",
         flags: {},
         minPositionals: 1,
         maxPositionals: Infinity,
@@ -1687,7 +1688,27 @@ function jobLines(e: Job): string[] {
   if (e.failure) rows.push(["failure", `${e.failure.code}: ${e.failure.message}`]);
   rows.push(["started", e.started_at]);
   rows.push(["updated", e.updated_at]);
-  return table(rows);
+  return [...table(rows), ...passAtKLines(e)];
+}
+
+/**
+ * The pass@k block, one line per evals group that has numbers — its own table
+ * below the detail rows, because an evals key is far wider than any label
+ * column and folding it in would pad every other row to its width.
+ *
+ * Silent when nothing is computed: a single-attempt job has no k to answer,
+ * and a group whose rewards are not binary, or whose attempts are still in
+ * flight, deliberately reports nothing rather than a number that would mean
+ * something else. `--json` always carries the raw `stats.evals[].pass_at_k`.
+ */
+function passAtKLines(e: Job): string[] {
+  const groups = passAtK(e);
+  if (groups.length === 0) return [];
+  const rows = groups.map((group) => [
+    `  ${group.evals_key}`,
+    group.points.map((point) => `pass@${point.k} ${point.value.toFixed(3)}`).join("  "),
+  ]);
+  return ["", "pass@k", ...table(rows)];
 }
 
 const JOB_COLUMNS: ListColumn<Job>[] = [

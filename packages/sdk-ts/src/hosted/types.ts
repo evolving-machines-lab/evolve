@@ -303,9 +303,18 @@ export interface AgentDatasetStats {
    */
   metrics?: Record<string, unknown>[];
   /**
-   * pass@k slot — keys are k as strings, values in [0,1]. Present and empty
-   * until the platform computes it; the slot exists so adding the statistic is
-   * not a wire change.
+   * pass@k for this group — the standard unbiased estimator
+   * `1 - C(n-c, k)/C(n, k)` per task, averaged over the group's tasks. Keys
+   * are k as strings (JSON object keys always are), values in [0,1]. The k set
+   * is the powers of two and the multiples of five up to the group's sparsest
+   * task's attempt count, so k=1 is never present and a single-attempt job
+   * answers `{}`. An attempt that produced no reward counts as a FAILED
+   * attempt, never an excluded one.
+   *
+   * `{}` means the group cannot answer: its rewards are not binary, no
+   * eligible k exists, or attempts are still in flight (the statistic appears
+   * once every attempt of the group has settled). `passAtK(job)` reads this
+   * field into sorted numeric points.
    */
   pass_at_k?: Record<string, number>;
   /** reward key -> reward value -> trial identifiers. */
@@ -340,6 +349,53 @@ export interface JobStats {
   n_output_tokens?: number | null;
   /** Measured spend across settled trials; null before any settled. */
   cost_usd?: number | null;
+}
+
+/** One pass@k number: the estimate over `k` attempts. */
+export interface PassAtKPoint {
+  /** How many attempts the estimate is over — always 2 or more. */
+  k: number;
+  /** Probability that k attempts contain at least one success, in [0,1]. */
+  value: number;
+}
+
+/** One evals group's pass@k curve, ready to plot or print. */
+export interface PassAtKGroup {
+  /** The `stats.evals` key these numbers belong to. */
+  evals_key: string;
+  /** Ascending by k; never empty (a group with no numbers is not returned). */
+  points: PassAtKPoint[];
+}
+
+/**
+ * Read a job's pass@k out of `stats.evals`, as numbers instead of the wire's
+ * string keys. Groups that cannot answer (empty `pass_at_k` — non-binary
+ * rewards, no eligible k, or attempts still in flight) are left out entirely,
+ * so an empty array means "this job has no pass@k to show", and the shape is
+ * the same whether the job is running or finished.
+ *
+ * Pure reading: no request is made, nothing is recomputed. The numbers are the
+ * platform's, and the same ones the job's download archive carries.
+ */
+export function passAtK(job: Job): PassAtKGroup[] {
+  const evals = job.stats?.evals ?? {};
+  const groups: PassAtKGroup[] = [];
+  for (const evals_key of Object.keys(evals).sort()) {
+    const raw = evals[evals_key]?.pass_at_k ?? {};
+    const points: PassAtKPoint[] = [];
+    for (const key of Object.keys(raw)) {
+      const k = Number(key);
+      const value = raw[key];
+      if (!Number.isFinite(k) || typeof value !== "number" || !Number.isFinite(value)) {
+        continue;
+      }
+      points.push({ k, value });
+    }
+    if (points.length === 0) continue;
+    points.sort((a, b) => a.k - b.k);
+    groups.push({ evals_key, points });
+  }
+  return groups;
 }
 
 /**

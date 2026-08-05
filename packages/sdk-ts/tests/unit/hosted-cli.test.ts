@@ -1872,6 +1872,77 @@ async function testJobShowMultiId() {
   }
 }
 
+async function testJobShowPassAtK() {
+  console.log("\n--- runCli: job show renders pass@k ---");
+  installMockFetch();
+  try {
+    // Two arms: one that can answer, one whose attempts are still in flight
+    // (the server sends {} — the CLI never invents a number for it).
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: wireJob({
+        n_attempts: 4,
+        stats: {
+          cost_usd: null,
+          evals: {
+            "codex__gpt-5.5__deep-swe@1.1": {
+              n_trials: 8,
+              n_errors: 0,
+              metrics: [{ mean: 0.5 }],
+              pass_at_k: { "2": 0.8333333333333333, "4": 1 },
+            },
+            "claude__opus__deep-swe@1.1": {
+              n_trials: 0,
+              n_errors: 0,
+              metrics: [],
+              pass_at_k: {},
+            },
+          },
+        },
+      }),
+    });
+    setMockResponse("/api/jobs/eval-2", {
+      status: 200,
+      body: wireJob({ id: "eval-2" }),
+    });
+
+    const shown = captureIO();
+    assertEqual(await runCli(["job", "show", "eval-1", ...AUTH], shown.io), 0, "job show exits 0");
+    const text = shown.out.join("\n");
+    assert(text.includes("pass@k"), "the detail view has a pass@k block");
+    assert(
+      text.includes("pass@2 0.833") && text.includes("pass@4 1.000"),
+      "each k is printed to three decimals, ascending",
+    );
+    assert(
+      text.includes("codex__gpt-5.5__deep-swe@1.1"),
+      "the numbers are labelled with the evals key they belong to",
+    );
+    assert(
+      !text.includes("claude__opus__deep-swe@1.1"),
+      "a group that cannot answer is left out, never printed as 0",
+    );
+
+    // A job whose groups are all empty prints no block at all — silence, not a
+    // zero and not an empty heading.
+    const bare = captureIO();
+    await runCli(["job", "show", "eval-2", ...AUTH], bare.io);
+    assert(!bare.out.join("\n").includes("pass@"), "no pass@k block when nothing is computed");
+
+    // --json is untouched: the raw wire field, string keys and all.
+    const json = captureIO();
+    await runCli(["job", "show", "eval-1", "--json", ...AUTH], json.io);
+    const body = JSON.parse(json.out[0]);
+    assertEqual(
+      body.stats.evals["codex__gpt-5.5__deep-swe@1.1"].pass_at_k["4"],
+      1,
+      "--json carries stats.evals[].pass_at_k verbatim",
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testJobTrialsAndTasks() {
   console.log("\n--- runCli: job trials + job tasks ---");
   installMockFetch();
@@ -3483,6 +3554,7 @@ async function main() {
   await testJsonErrorObject();
   await testJobListOutputModes();
   await testJobShowMultiId();
+  await testJobShowPassAtK();
   await testJobTrialsAndTasks();
   await testJobStopDatasetSugar();
   await testJobStopDatasetChunking();

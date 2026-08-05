@@ -2143,10 +2143,26 @@ components:
             additionalProperties: true
         pass_at_k:
           type: object
-          description: >
-            pass@k slot — keys are k as strings, values in [0,1]. Present and
-            empty until the platform computes it; the slot exists so adding
-            the statistic is not a wire change.
+          description: |
+            pass@k for this group — the standard unbiased estimator
+            `1 - C(n-c, k)/C(n, k)` per task, averaged over the group's tasks.
+            Keys are k as strings (JSON object keys always are), values in
+            [0,1]. The k set is the powers of two and the multiples of five up
+            to the group's SPARSEST task's attempt count — every task must be
+            able to answer every k — so k=1 is never present and a
+            single-attempt job answers `{}`.
+
+            An attempt that produced no reward (errored, indeterminate,
+            cancelled) counts as a FAILED attempt, never as an excluded one.
+
+            `{}` means the group cannot answer, for one of three reasons: its
+            rewards are not binary (any trial whose rewards map is not exactly
+            one key valued 0 or 1 disqualifies the whole group — pass@k over
+            partial credit would be an invented statistic); no eligible k
+            exists; or attempts are still in flight (the statistic appears once
+            every attempt of the group has settled, so an unrun attempt is
+            never counted as a failure). The identical numbers appear in the
+            download archive's `result.json`.
           additionalProperties:
             type: number
         reward_stats:

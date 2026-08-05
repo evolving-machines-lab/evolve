@@ -35,6 +35,11 @@ from evolve import (
     is_hosted_error_code,
     jobs as jobs_factory,
     meta as meta_fn,
+    pass_at_k,
+    Job,
+    JobCounts,
+    PassAtKPoint,
+    TrialTally,
 )
 from evolve.hosted import _map_upstream
 
@@ -552,3 +557,61 @@ class TestUpstream:
         )
         assert never_checked.moved is False
         assert never_checked.checked_at is None
+
+
+class TestPassAtK:
+    """``pass_at_k(job)`` — the wire's string-keyed map read as numbers.
+
+    Same contract as TypeScript's ``passAtK(job)``, verb for verb: sorted by
+    evals key, points ascending by k, groups that cannot answer omitted, and
+    never a throw on a body that is missing pieces.
+    """
+
+    @staticmethod
+    def _job(stats):
+        return Job(
+            id='j',
+            job_name='n',
+            status='COMPLETED',
+            datasets=[],
+            agents=[],
+            n_attempts=4,
+            n_concurrent_trials=1,
+            max_trial_spend_usd=1.0,
+            worst_case_spend_usd=1.0,
+            sandbox_provider='e2b',
+            counts=JobCounts(agents=1, tasks=1),
+            n_total_trials=0,
+            trials=TrialTally(total=0),
+            stats=stats,
+            failure=None,
+            source_jobs=[],
+            is_regrade=False,
+            idempotent_replay=False,
+            started_at='',
+            updated_at='',
+            finished_at=None,
+        )
+
+    def test_reads_numeric_points_sorted_by_key_and_by_k(self):
+        job = self._job(
+            {
+                'evals': {
+                    'z__m__bench@1.0': {'pass_at_k': {'4': 1, '2': 0.5}},
+                    'a__m__bench@1.0': {'pass_at_k': {}},
+                    'm__m__bench@1.0': {'pass_at_k': {'2': 0.25}},
+                }
+            }
+        )
+        groups = pass_at_k(job)
+        # The group that cannot answer is omitted, never reported as zero.
+        assert [g.evals_key for g in groups] == ['m__m__bench@1.0', 'z__m__bench@1.0']
+        assert groups[1].points == [PassAtKPoint(k=2, value=0.5), PassAtKPoint(k=4, value=1.0)]
+
+    def test_a_body_without_stats_reads_as_nothing_to_show(self):
+        assert pass_at_k(self._job({})) == []
+        assert pass_at_k(self._job({'evals': None})) == []
+
+    def test_junk_keys_and_values_are_dropped_not_surfaced(self):
+        job = self._job({'evals': {'a__m__b@1.0': {'pass_at_k': {'nope': 1, '2': 'x', '4': True}}}})
+        assert pass_at_k(job) == []

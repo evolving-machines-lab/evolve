@@ -84,6 +84,8 @@ from .hosted import (
     ModelInfo,
     NoActiveVersionError,
     ManagedProviderCapability,
+    PassAtKGroup,
+    PassAtKPoint,
     ProviderCapability,
     SourceJob,
     SpendSource,
@@ -105,6 +107,7 @@ from .hosted import (
     VerifierResult,
     is_hosted_error_code,
     meta,
+    pass_at_k,
 )
 from .results import (
     AgentResponse,
@@ -465,6 +468,9 @@ __all__ = [
     'VerifierEnvironmentMode',
     'AttemptPhase',
     'JobTaskRollup',
+    'PassAtKGroup',
+    'PassAtKPoint',
+    'pass_at_k',
     'SourceJob',
     'TrialTally',
     'JobEvent',

@@ -211,6 +211,32 @@ async for item in evals.list(search='nightly'):
 
 `list(search=...)` is a server-side free-text filter over the job name and its dataset names. `stats` is the aggregate block, a plain dict with the wire's own keys: progress counters (cumulative, Harbor-style: errored trials are a subset of completed, cancelled a subset of errored — the disjoint breakdown is `trials.by_status`), token totals (`n_input_tokens` includes cache tokens; `n_cache_tokens` and `n_output_tokens` beside it), measured `cost_usd`, and `evals` — per-(agent, model, dataset) statistics keyed `agent__model__effort__dataset` — the dataset ref is always the LAST `__` segment, which is where Harbor-compatible readers recover it. The effort segment is always there, inserted before the dataset: a declared effort stamps itself, an omitted one stamps the agent's default (`__high`, `__max`, …) — see [Agent arms](#agent-arms). A failed job says why on `failure`, as a `JobFailure(code, message)` — the same grammar an API error uses, under a different key so that "error means this request failed" stays true on a healthy read. In practice you will not see it fire: `FAILED` is a [reserved job status](#statuses) that nothing sets today; read `trials.by_status` for where a job actually went wrong.
 
+### pass@k
+
+When a job runs a task more than once, each evals group also carries `pass_at_k` — how likely it is that *k* attempts contain at least one success. The platform computes it; there is nothing to configure and no code of yours to run.
+
+```python
+from evolve import pass_at_k
+
+for group in pass_at_k(detail):
+    for point in group.points:
+        print(group.evals_key, f"pass@{point.k}", f"{point.value:.3f}")
+# codex__gpt-5.5__high__deep-swe@1.1 pass@2 0.833
+# codex__gpt-5.5__high__deep-swe@1.1 pass@4 1.000
+```
+
+`pass_at_k(job)` reads `job.stats['evals'][key]['pass_at_k']` — on the wire a map of k (as a string, the way JSON keys always are) to a value in `[0, 1]` — and hands it back as sorted numbers. Nothing is requested and nothing is recomputed.
+
+The number is the standard unbiased estimator, `1 - C(n-c, k) / C(n, k)` per task, averaged over the group's tasks. The k values are the powers of two and the multiples of five up to the group's *sparsest* task's attempt count, because every task has to be able to answer every k — so a single-attempt job has no pass@k at all. An attempt that produced no reward, because it errored or was cancelled, counts as a failed attempt; dropping it would quietly inflate every number.
+
+A group answers with an empty map for one of three reasons, and the reader simply leaves that group out:
+
+- its rewards are not binary — pass@k over partial credit would be an invented statistic, so one non-binary or multi-key reward disqualifies the whole group;
+- no k is small enough to be eligible;
+- attempts are still in flight. The statistic appears once every attempt of the group has settled, so an attempt that has not run yet is never counted as a failure.
+
+The same numbers ride in the job's [download archive](#download-the-archive), inside `result.json`; a live read and the archive of the same job never disagree.
+
 ### Trials
 
 Trials page the same way — await a page or iterate across pages. `status` filters, and on a multi-dataset job `dataset` narrows to one dataset's trials:
@@ -414,7 +440,7 @@ path = await evals.download(job.id, to='./results')  # save; returns file path
 
 Both shapes are verified — the bytes against the response's length and, when the server states one, its digest; the to-disk shape hashes while streaming and promotes the file only after the check. There is deliberately no stream shape here where the TypeScript SDK has one: the HTTP layer is urllib inside a worker thread, so a chunk iterator would hand out unverified bytes one thread hop at a time, while `to=` already streams to disk in constant memory. Pipe from the file.
 
-The archive unpacks to Harbor's job layout — a job-level `config.json` and `result.json`, plus one directory per trial holding its `config.json`, `result.json`, the normalized ATIF trajectory at `agent/trajectory.json`, the raw streams at `agent/stdout.log` / `agent/stderr.log`, the verifier's console at `verifier/test-stdout.txt`, its rewards at `verifier/reward.json`, and `exception.txt` when the trial carries one — an artifact the trial never stored is an absent file, never an empty placeholder. The counters inside the job-level `result.json` are the same cumulative, Harbor-style numbers the live API reports on `stats` (errored trials are a subset of completed, cancelled a subset of errored), and each evals group also states `pass_at_k` — Harbor's estimator over the group's per-task attempts, `{}` when the group's rewards are not binary. The archive and a live read of the same terminal job never disagree.
+The archive unpacks to Harbor's job layout — a job-level `config.json` and `result.json`, plus one directory per trial holding its `config.json`, `result.json`, the normalized ATIF trajectory at `agent/trajectory.json`, the raw streams at `agent/stdout.log` / `agent/stderr.log`, the verifier's console at `verifier/test-stdout.txt`, its rewards at `verifier/reward.json`, and `exception.txt` when the trial carries one — an artifact the trial never stored is an absent file, never an empty placeholder. The counters inside the job-level `result.json` are the same cumulative, Harbor-style numbers the live API reports on `stats` (errored trials are a subset of completed, cancelled a subset of errored), and each evals group also states `pass_at_k` — the same numbers a live read reports (see [pass@k](#passk)). The archive and a live read of the same terminal job never disagree.
 
 ---
 
@@ -473,7 +499,7 @@ The read side, worked through:
 
 ```bash
 npx evolve-evals job list --limit 20 --search nightly
-npx evolve-evals job show <id> [id...]
+npx evolve-evals job show <id> [id...]         # incl. a pass@k block, once attempts settle
 npx evolve-evals job trials <id> --status INFRASTRUCTURE_ERROR,SCORING_ERROR
 npx evolve-evals job trials <id> --dataset deep-swe
 npx evolve-evals job tasks <id>                      # per-task rollup
@@ -496,6 +522,8 @@ npx evolve-evals auth status
 ```
 
 Output follows one precedence everywhere: human tables on a TTY, tab-separated rows when piped, `--json` for the machine shape (NDJSON for `--watch` streams), and `-q` for ids-only lists (on `job start --watch`, `-q` suppresses the event log and prints the final block only). `--columns` chooses and orders list columns (`--columns help` names them; for `job list` they are `id`, `name`, `status`, `datasets`, `agents`, `trials`, `spent`, `started` — the money column's key is `spent`, not `cost`), `--no-trunc` disables cell truncation, `--no-headers` drops the header row from piped output. `--limit` and `--cursor` page every listing the same way.
+
+`job show` ends with a **pass@k** block — one line per evals group, each k to three decimals — whenever the platform has numbers to show. Groups that cannot answer are simply absent from it, and a job with nothing computed prints no block at all; `--json` always carries the raw `stats.evals[].pass_at_k`.
 
 Wherever a verb takes a **job id**, an unambiguous prefix of at least 8 characters works too: `job show aabbccdd` is `job show aabbccdd-…` when exactly one of your jobs starts that way. The CLI resolves the prefix against your own job list before calling the server — the wire always carries the full id — and refuses loudly when the prefix matches nothing or more than one job. Trial ids are not prefix-resolved; trial verbs take full ids.
 
@@ -1146,6 +1174,19 @@ class Job:                          # ONE shape from every call
     started_at: str
     updated_at: str
     finished_at: Optional[str]      # None while live
+
+@dataclass
+class PassAtKPoint:                 # one pass@k number
+    k: int                          # how many attempts the estimate is over
+    value: float                    # in [0, 1]
+
+@dataclass
+class PassAtKGroup:                 # one evals group's curve
+    evals_key: str
+    points: List[PassAtKPoint]      # ascending by k; never empty
+
+def pass_at_k(job: Job) -> List[PassAtKGroup]:  # reads job.stats['evals'], sorted, numeric
+    ...
 
 @dataclass
 class TimingInfo:                   # a phase wall-clock: a PAIR, never a duration
