@@ -228,6 +228,55 @@ export interface SourceJob {
   job_id: string;
 }
 
+/**
+ * Auto-retry policy input — Harbor's RetryConfig vocabulary verbatim. Only
+ * trials that settle INFRASTRUCTURE_ERROR are ever considered; the
+ * include/exclude sets refine within that class by exception name, exclude
+ * taking precedence (Harbor's rule). Every omitted field takes Harbor's own
+ * default, with ONE named deviation: `max_retries` omitted takes the
+ * PLATFORM fleet default (published as `limits.job.default_max_retries` on
+ * GET /api/meta; 2 unless the operator tuned it) rather than Harbor's 0 —
+ * infrastructure errors on a hosted fleet retry automatically. Send
+ * `max_retries: 0` to turn retries off. Each attempt carries the job's FULL
+ * per-trial spend cap, and `worst_case_spend_usd` states the
+ * (max_retries + 1) product outright.
+ */
+export interface RetryConfigInput {
+  /** Maximum automatic retries per trial (0-10). Omitted = fleet default; 0 = off. */
+  max_retries?: number;
+  /** Exception types to retry on. Null/omitted = no filter. */
+  include_exceptions?: string[] | null;
+  /**
+   * Exception types to NOT retry on; wins over include_exceptions. Omitted =
+   * Harbor's default non-retryable set (AgentTimeoutError,
+   * VerifierTimeoutError, RewardFileNotFoundError, RewardFileEmptyError,
+   * VerifierOutputParseError, ApiUsageLimitError, AgentSafetyRefusalError,
+   * AgentAuthenticationError, ModelNotFoundError).
+   */
+  exclude_exceptions?: string[] | null;
+  /** Multiplier for exponential backoff wait time (default 1.0). */
+  wait_multiplier?: number;
+  /** Minimum wait in seconds between retries (default 1.0). */
+  min_wait_sec?: number;
+  /** Maximum wait in seconds between retries (default 60.0; platform cap 3600). */
+  max_wait_sec?: number;
+}
+
+/**
+ * The RESOLVED auto-retry policy a job runs under, echoed on every job body —
+ * the caller's values or the defaults of the day, resolved at create and
+ * stored. Backoff between attempts is Harbor's formula:
+ * min(min_wait_sec x wait_multiplier^attempt, max_wait_sec).
+ */
+export interface RetryConfig {
+  max_retries: number;
+  include_exceptions: string[] | null;
+  exclude_exceptions: string[];
+  wait_multiplier: number;
+  min_wait_sec: number;
+  max_wait_sec: number;
+}
+
 /** The job-creation body — POST /api/jobs. */
 export interface JobCreate {
   /** User-facing label; server-generated when omitted. */
@@ -248,6 +297,8 @@ export interface JobCreate {
   max_trial_spend_usd?: number;
   /** Sandbox provider to run on (optional; server default: `e2b`). */
   sandbox_provider?: EvalSandboxProvider;
+  /** Auto-retry policy (Harbor RetryConfig grammar); omitted = the fleet defaults. */
+  retry?: RetryConfigInput;
   /**
    * Env injected into every agent run — a pass-through slot: the client sends
    * it verbatim and the server owns acceptance (refused where unsupported,
@@ -370,11 +421,15 @@ export interface Job {
   /** The resolved per-trial cap every trial key was minted with. */
   max_trial_spend_usd: number;
   /**
-   * The most this job can cost: every trial spending its whole cap. Stated
-   * outright — the per-trial cap is the only enforcement, so the product is
-   * the number someone approving a 500-trial run actually needs to see.
+   * The most this job can cost: every trial spending its whole cap on every
+   * attempt the retry policy allows — cap x trials x (retry.max_retries + 1),
+   * since each attempt is minted its own full cap. Stated outright — the
+   * per-trial cap is the only enforcement, so the product is the number
+   * someone approving a 500-trial run actually needs to see.
    */
   worst_case_spend_usd: number;
+  /** The RESOLVED auto-retry policy this job runs under. */
+  retry: RetryConfig;
   sandbox_provider: EvalSandboxProvider;
   /** Entity cardinality only — things with no status of their own. */
   counts: { agents: number; tasks: number };
@@ -547,10 +602,39 @@ export interface Trial {
    * build from a slow agent. Null when the trial is not mid-phase.
    */
   attempt_phase: AttemptPhase | null;
+  /**
+   * Automatic retries this trial consumed (0 = never retried). The trial
+   * body always shows the LATEST attempt; `retries` holds the lineage.
+   */
+  n_retries: number;
+  /**
+   * Attempt lineage: earlier attempts whose failure was retried away, oldest
+   * first. The final attempt's outcome is the trial body itself and is not
+   * repeated here; a never-retried trial answers [].
+   */
+  retries: TrialRetry[];
   /** Reference to the agent session/trace, when recorded. */
   session_ref: string | null;
   started_at: string | null;
   finished_at: string | null;
+}
+
+/**
+ * One retired attempt of a trial — the terminal facts preserved when the
+ * auto-retry scheduler put the trial back on the queue. Its `cost_usd` is
+ * REAL money the job total includes; the trial's own `agent_result.cost_usd`
+ * carries only the final attempt's.
+ */
+export interface TrialRetry {
+  /** 1-based dispatch number within this trial. */
+  attempt_number: number;
+  exception_info: ExceptionInfo;
+  /** What THIS attempt spent; null when nothing was recorded. */
+  cost_usd: number | null;
+  /** When the attempt was claimed. */
+  started_at: string | null;
+  /** When its failure settled (and the retry was scheduled). */
+  settled_at: string | null;
 }
 
 /** Per-trial outcome of POST /api/trials/stop; every requested id appears in exactly one list. */
@@ -660,6 +744,8 @@ export interface JobCreatedData {
   max_trial_spend_usd: number;
   sandbox_provider: EvalSandboxProvider;
   trial_count: number;
+  /** The resolved auto-retry policy the job runs under. */
+  retry: RetryConfig;
 }
 
 export interface JobCancellingData {
@@ -724,6 +810,26 @@ export interface TrialSettledData {
 }
 
 /**
+ * The auto-retry policy put a failed trial back on the queue. Follows the
+ * `trial.settled` of the failure it retries — a watcher that treats
+ * `trial.settled` as final must check for a following `trial.retrying` on
+ * the same trial. The trial runs again no earlier than `delay_sec` from
+ * this event.
+ */
+export interface TrialRetryingData {
+  trial_id: string;
+  task_name: string;
+  /** Which retry this is (1-based). */
+  retry: number;
+  /** The policy's budget, for "retry 2/3" displays. */
+  max_retries: number;
+  /** The backoff applied before the trial is claimable again. */
+  delay_sec: number;
+  /** The exception name the adjudication ran under. */
+  exception_type: string;
+}
+
+/**
  * One server-sent event from jobs().watch(), as a DISCRIMINATED UNION on
  * `type` and ONLY on `type`: several event types carry identically shaped
  * payloads (`job.running` and `job.completed` are both `{job_id}`), so payload
@@ -745,7 +851,8 @@ export type JobEvent =
   | (JobEventBase & { type: "trial.running"; data: TrialRunningData })
   | (JobEventBase & { type: "trial.scoring"; data: TrialScoringData })
   | (JobEventBase & { type: "trial.spend"; data: TrialSpendData })
-  | (JobEventBase & { type: "trial.settled"; data: TrialSettledData });
+  | (JobEventBase & { type: "trial.settled"; data: TrialSettledData })
+  | (JobEventBase & { type: "trial.retrying"; data: TrialRetryingData });
 
 /**
  * The handle returned by jobs().watch(). It is both:
@@ -1776,6 +1883,14 @@ export interface CapabilityDocument {
       max_trials: number;
       n_concurrent_trials: { default: number; max: number };
       default_max_trial_spend_usd: number;
+      /**
+       * Applied to retry.max_retries when a create request omits it — the
+       * auto-retry fleet default (Harbor's local default is 0; here
+       * infrastructure errors retry automatically).
+       */
+      default_max_retries: number;
+      /** The most retries a request may ask for. */
+      max_retries_ceiling: number;
       default_sandbox_provider: string;
       default_sizing: { cpus: number; memory_mb: number; storage_mb: number };
       /** Every agent must name a model; the server applies no default. */

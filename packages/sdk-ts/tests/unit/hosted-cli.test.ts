@@ -374,6 +374,60 @@ function testBuildJobInputFlags() {
   assertThrowsUsage(() => parseEnvPairs(["NOEQUALS"], "--agent-env"), "KEY=VALUE", "malformed env pair");
 }
 
+function testBuildJobInputRetry() {
+  console.log("\n--- buildJobInput: -r/--max-retries, --retry-include, --retry-exclude ---");
+  // All three flags land under one `retry` object, Harbor's field names.
+  const withFlags = buildJobInput(
+    parseArgs([
+      "job", "start",
+      "-d", "deep-swe",
+      "-a", "codex",
+      "-m", "m",
+      "-r", "3",
+      "--retry-include", "InfrastructureError",
+      "--retry-exclude", "AgentAuthenticationError",
+      "--retry-exclude", "ModelNotFoundError",
+    ])
+  );
+  assertEqual(
+    withFlags.retry,
+    {
+      max_retries: 3,
+      include_exceptions: ["InfrastructureError"],
+      exclude_exceptions: ["AgentAuthenticationError", "ModelNotFoundError"],
+    },
+    "retry flags become the JobCreate.retry object (Harbor vocabulary)"
+  );
+
+  // No flags, no key: the server's fleet default is the ask.
+  const minimal = buildJobInput(parseArgs(["job", "start", "-d", "deep-swe", "-a", "codex", "-m", "m"]));
+  assert(!("retry" in minimal), "no retry key when no retry flag given");
+
+  // Config-file base is merged FIELD BY FIELD, a flag overriding its field —
+  // Harbor's own CLI merge rule.
+  const merged = buildJobInput(
+    parseArgs([
+      "job", "start",
+      "--config", "job.json",
+      "-d", "deep-swe",
+      "-a", "codex",
+      "-m", "m",
+      "-r", "0",
+    ]),
+    () =>
+      JSON.stringify({
+        datasets: [{ name: "deep-swe" }],
+        agents: [{ name: "codex", model_name: "m" }],
+        retry: { max_retries: 5, min_wait_sec: 10 },
+      })
+  );
+  assertEqual(
+    merged.retry,
+    { max_retries: 0, min_wait_sec: 10 },
+    "-r overrides the config file's max_retries; its other fields survive"
+  );
+}
+
 function testBuildJobInputYesIsInert() {
   console.log("\n--- buildJobInput: -y changes nothing (reserved, no prompts) ---");
   const withYes = buildJobInput(parseArgs(["job", "start", "-d", "b", "-a", "a", "-m", "m", "-y"]));
@@ -3306,6 +3360,7 @@ async function main() {
   testGrammarResolution();
   testShortFlags();
   testBuildJobInputFlags();
+  testBuildJobInputRetry();
   testBuildJobInputYesIsInert();
   await testConfigFileMerge();
   testYamlConfig();

@@ -360,7 +360,12 @@ paths:
         Event types (frozen): `job.created`, `job.running`, `job.cancelling`,
         `job.cancelled`, `job.completed`, `job.failed` (reserved — declared
         terminal, no server path emits it today), `trial.running`,
-        `trial.scoring`, `trial.spend`, `trial.settled`.
+        `trial.scoring`, `trial.spend`, `trial.settled`, `trial.retrying`.
+
+        A retried trial emits `trial.settled` for the failure it just
+        recorded, then `trial.retrying` when the policy puts it back on the
+        queue — a watcher that treats `trial.settled` as final must check for
+        a following `trial.retrying` on the same trial.
 
         Resume with the standard `Last-Event-ID` header or `?after=<seq>` —
         both mean "events strictly after this sequence number". Heartbeat
@@ -2028,6 +2033,8 @@ components:
             tuned it).
         sandbox_provider:
           $ref: '#/components/schemas/SandboxProvider'
+        retry:
+          $ref: '#/components/schemas/RetryConfigInput'
         agent_env:
           type: object
           additionalProperties:
@@ -2043,6 +2050,111 @@ components:
           description: >
             Env injected into every verifier run — same pass-through
             contract.
+
+    RetryConfigInput:
+      type: object
+      description: |
+        Auto-retry policy — Harbor's RetryConfig vocabulary verbatim
+        (their models/job/config.py RetryConfig). Only trials that settle
+        INFRASTRUCTURE_ERROR are ever considered (platform law: a
+        verifier-visible outcome never re-runs the agent on its own); the
+        include/exclude sets refine WITHIN that class by exception name,
+        with exclude taking precedence over include, exactly Harbor's rule.
+
+        Every omitted field takes Harbor's own default, with ONE named
+        deviation: `max_retries` omitted takes the PLATFORM's fleet default
+        (published as `limits.job.default_max_retries` on /api/meta, 2
+        unless the operator tuned it) rather than Harbor's 0 — on a hosted
+        fleet an infrastructure error is usually the platform's weather, and
+        such failures retry automatically. Send `max_retries: 0` to turn
+        retries off.
+
+        Each attempt carries the job's FULL per-trial spend cap (a fresh
+        gateway key per attempt), and the job's `worst_case_spend_usd`
+        states the (max_retries + 1) product outright.
+      properties:
+        max_retries:
+          type: integer
+          minimum: 0
+          maximum: 10
+          description: >
+            Maximum automatic retries per trial. Omitted = the fleet
+            default; 0 = off.
+        include_exceptions:
+          type: [array, 'null']
+          items:
+            type: string
+          description: >
+            Exception types to retry on. Null or omitted = no filter
+            (Harbor: retries all exceptions the exclude set admits).
+        exclude_exceptions:
+          type: [array, 'null']
+          items:
+            type: string
+          description: |
+            Exception types to NOT retry on; takes precedence over
+            include_exceptions. Omitted = Harbor's default set:
+            AgentTimeoutError, VerifierTimeoutError, RewardFileNotFoundError,
+            RewardFileEmptyError, VerifierOutputParseError, ApiUsageLimitError,
+            AgentSafetyRefusalError, AgentAuthenticationError,
+            ModelNotFoundError. On this platform a failure's exception name
+            is InfrastructureError, refined by cause where the semantics
+            match Harbor's names — a gateway credential refusal adjudicates
+            as AgentAuthenticationError, a model that never served as
+            ModelNotFoundError — so the default set means what it means in
+            Harbor: failures that would re-fail identically are not retried.
+        wait_multiplier:
+          type: number
+          minimum: 0
+          default: 1.0
+          description: Multiplier for exponential backoff wait time.
+        min_wait_sec:
+          type: number
+          minimum: 0
+          default: 1.0
+          description: Minimum wait in seconds between retries.
+        max_wait_sec:
+          type: number
+          minimum: 0
+          maximum: 3600
+          default: 60.0
+          description: >
+            Maximum wait in seconds between retries. The platform caps it at
+            3600 — a job must not park itself for a day.
+
+    RetryConfig:
+      type: object
+      description: >
+        The RESOLVED auto-retry policy a job runs under, echoed on every job
+        body — the caller's values or the defaults of the day, resolved at
+        create and stored, so the row always states the policy it executes.
+        Backoff between attempts is Harbor's formula:
+        min(min_wait_sec x wait_multiplier^attempt, max_wait_sec).
+      required:
+        - max_retries
+        - include_exceptions
+        - exclude_exceptions
+        - wait_multiplier
+        - min_wait_sec
+        - max_wait_sec
+      properties:
+        max_retries:
+          type: integer
+          minimum: 0
+        include_exceptions:
+          type: [array, 'null']
+          items:
+            type: string
+        exclude_exceptions:
+          type: array
+          items:
+            type: string
+        wait_multiplier:
+          type: number
+        min_wait_sec:
+          type: number
+        max_wait_sec:
+          type: number
 
     ResumeRequest:
       type: object
@@ -2168,6 +2280,9 @@ components:
         n_retries:
           type: integer
           minimum: 0
+          description: >
+            Total automatic retries the job's trials consumed (the sum of
+            every trial's n_retries) — Harbor's cumulative counter.
         evals:
           type: object
           description: >
@@ -2217,6 +2332,7 @@ components:
         - n_concurrent_trials
         - max_trial_spend_usd
         - worst_case_spend_usd
+        - retry
         - sandbox_provider
         - counts
         - n_total_trials
@@ -2259,10 +2375,14 @@ components:
         worst_case_spend_usd:
           type: number
           description: |
-            The most this job can cost: every trial spending its whole cap.
-            Stated outright — the per-trial cap is the only enforcement, so
-            the product is the number someone approving a 500-trial run
-            actually needs to see.
+            The most this job can cost: every trial spending its whole cap on
+            every attempt the retry policy allows — cap x trials x
+            (retry.max_retries + 1), since each attempt is minted its own
+            full cap. Stated outright — the per-trial cap is the only
+            enforcement, so the product is the number someone approving a
+            500-trial run actually needs to see.
+        retry:
+          $ref: '#/components/schemas/RetryConfig'
         sandbox_provider:
           $ref: '#/components/schemas/SandboxProvider'
         counts:
@@ -2512,6 +2632,8 @@ components:
         - reward
         - verifier_result
         - exception_info
+        - n_retries
+        - retries
         - started_at
         - finished_at
       properties:
@@ -2613,6 +2735,21 @@ components:
           oneOf:
             - $ref: '#/components/schemas/AttemptPhase'
             - type: 'null'
+        n_retries:
+          type: integer
+          minimum: 0
+          description: >
+            Automatic retries this trial consumed (0 = never retried). The
+            trial body always shows the LATEST attempt; `retries` holds the
+            lineage behind it.
+        retries:
+          type: array
+          description: >
+            Attempt lineage: the earlier attempts whose failure was retried
+            away, oldest first. The final attempt's outcome is the trial body
+            itself and is not repeated here; a never-retried trial answers [].
+          items:
+            $ref: '#/components/schemas/TrialRetry'
         session_ref:
           type: [string, 'null']
           description: Reference to the agent session/trace, when recorded.
@@ -2622,6 +2759,33 @@ components:
         finished_at:
           type: [string, 'null']
           format: date-time
+
+    TrialRetry:
+      type: object
+      description: >
+        One retired attempt of a trial — the terminal facts preserved when
+        the auto-retry scheduler put the trial back on the queue. Its spend
+        is REAL money the job total includes; the trial's own
+        `agent_result.cost_usd` carries only the final attempt's.
+      required: [attempt_number, exception_info, cost_usd, started_at, settled_at]
+      properties:
+        attempt_number:
+          type: integer
+          minimum: 1
+          description: 1-based dispatch number within this trial.
+        exception_info:
+          $ref: '#/components/schemas/ExceptionInfo'
+        cost_usd:
+          type: [number, 'null']
+          description: What THIS attempt spent; null when nothing was recorded.
+        started_at:
+          type: [string, 'null']
+          format: date-time
+          description: When the attempt was claimed.
+        settled_at:
+          type: [string, 'null']
+          format: date-time
+          description: When its failure settled (and the retry was scheduled).
 
     TrialPage:
       type: object
@@ -2851,6 +3015,7 @@ components:
         - $ref: '#/components/schemas/TrialScoringEvent'
         - $ref: '#/components/schemas/TrialSpendEvent'
         - $ref: '#/components/schemas/TrialSettledEvent'
+        - $ref: '#/components/schemas/TrialRetryingEvent'
       discriminator:
         propertyName: type
         mapping:
@@ -2864,6 +3029,7 @@ components:
           trial.scoring: '#/components/schemas/TrialScoringEvent'
           trial.spend: '#/components/schemas/TrialSpendEvent'
           trial.settled: '#/components/schemas/TrialSettledEvent'
+          trial.retrying: '#/components/schemas/TrialRetryingEvent'
 
     EventSeq:
       type: integer
@@ -2990,6 +3156,18 @@ components:
         data:
           $ref: '#/components/schemas/TrialSettledData'
 
+    TrialRetryingEvent:
+      type: object
+      required: [seq, type, data]
+      properties:
+        seq:
+          $ref: '#/components/schemas/EventSeq'
+        type:
+          type: string
+          const: trial.retrying
+        data:
+          $ref: '#/components/schemas/TrialRetryingData'
+
     JobCreatedData:
       type: object
       description: >
@@ -3004,6 +3182,7 @@ components:
         - max_trial_spend_usd
         - sandbox_provider
         - trial_count
+        - retry
       properties:
         datasets:
           type: array
@@ -3025,6 +3204,8 @@ components:
           $ref: '#/components/schemas/SandboxProvider'
         trial_count:
           type: integer
+        retry:
+          $ref: '#/components/schemas/RetryConfig'
 
     JobRunningData:
       type: object
@@ -3153,6 +3334,33 @@ components:
           oneOf:
             - $ref: '#/components/schemas/AttemptPhase'
             - type: 'null'
+
+    TrialRetryingData:
+      type: object
+      description: >
+        The auto-retry policy put a failed trial back on the queue. Follows
+        the `trial.settled` of the failure it retries; the trial will run
+        again no earlier than `delay_sec` from this event.
+      required: [trial_id, task_name, retry, max_retries, delay_sec, exception_type]
+      properties:
+        trial_id:
+          type: string
+          format: uuid
+        task_name:
+          type: string
+        retry:
+          type: integer
+          minimum: 1
+          description: Which retry this is (1-based).
+        max_retries:
+          type: integer
+          description: The policy's budget, for "retry 2/3" displays.
+        delay_sec:
+          type: number
+          description: The backoff applied before the trial is claimable again.
+        exception_type:
+          type: string
+          description: The exception name the adjudication ran under.
 
     # -------------------------------------------------------------------------
     # Datasets
@@ -3902,6 +4110,15 @@ components:
                       type: integer
                 default_max_trial_spend_usd:
                   type: number
+                default_max_retries:
+                  type: integer
+                  description: >
+                    Applied to retry.max_retries when the create request
+                    omits it — the auto-retry fleet default (the named
+                    Harbor deviation; their local default is 0).
+                max_retries_ceiling:
+                  type: integer
+                  description: The most retries a request may ask for.
                 default_sandbox_provider:
                   type: string
                 default_sizing:

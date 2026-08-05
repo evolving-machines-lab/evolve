@@ -666,9 +666,16 @@ class Job:
     n_concurrent_trials: int
     #: The resolved per-trial cap every trial key was minted with.
     max_trial_spend_usd: float
-    #: The most this job can cost: every trial spending its whole cap. There is
-    #: no job-wide budget, so this product is the real ceiling.
+    #: The most this job can cost: every trial spending its whole cap on every
+    #: attempt the retry policy allows — cap x trials x
+    #: (retry['max_retries'] + 1), since each attempt is minted its own full
+    #: cap. There is no job-wide budget, so this product is the real ceiling.
     worst_case_spend_usd: float
+    #: The RESOLVED auto-retry policy this job runs under — Harbor's
+    #: RetryConfig field names (``max_retries``, ``include_exceptions``,
+    #: ``exclude_exceptions``, ``wait_multiplier``, ``min_wait_sec``,
+    #: ``max_wait_sec``). A plain dict with the wire's own keys, read by key.
+    retry: Dict[str, Any]
     sandbox_provider: EvalSandboxProvider
     counts: JobCounts
     n_total_trials: int
@@ -830,6 +837,31 @@ class Trial:
     session_ref: Optional[str]
     started_at: Optional[str]
     finished_at: Optional[str]
+    #: Automatic retries this trial consumed (0 = never retried). The trial
+    #: body always shows the LATEST attempt; ``retries`` holds the lineage.
+    n_retries: int = 0
+    #: Attempt lineage: earlier attempts whose failure was retried away,
+    #: oldest first — each a :class:`TrialRetry`. The final attempt's outcome
+    #: is the trial body itself and is not repeated here.
+    retries: List['TrialRetry'] = field(default_factory=list)
+
+
+@dataclass
+class TrialRetry:
+    """One retired attempt of a trial — the terminal facts preserved when the
+    auto-retry scheduler put the trial back on the queue. ``cost_usd`` is REAL
+    money the job total includes; the trial's own ``agent_result.cost_usd``
+    carries only the final attempt's.
+    """
+    #: 1-based dispatch number within this trial.
+    attempt_number: int
+    exception_info: ExceptionInfo
+    #: What THIS attempt spent; None when nothing was recorded.
+    cost_usd: Optional[float] = None
+    #: When the attempt was claimed.
+    started_at: Optional[str] = None
+    #: When its failure settled (and the retry was scheduled).
+    settled_at: Optional[str] = None
 
 
 @dataclass
@@ -1366,6 +1398,9 @@ def _map_job(data: Dict[str, Any]) -> Job:
         n_concurrent_trials=int(data.get('n_concurrent_trials', 0)),
         max_trial_spend_usd=float(data.get('max_trial_spend_usd', 0)),
         worst_case_spend_usd=float(data.get('worst_case_spend_usd', 0)),
+        # An older server sends no policy; {} reads as "no auto-retry", which
+        # is exactly how such a server behaves.
+        retry=data.get('retry') if isinstance(data.get('retry'), dict) else {},
         sandbox_provider=data.get('sandbox_provider', ''),
         counts=_map_counts(data.get('counts')),
         n_total_trials=int(data.get('n_total_trials', 0)),
@@ -1493,7 +1528,21 @@ def _map_exception_info(data: Any) -> Optional[ExceptionInfo]:
     )
 
 
+def _map_trial_retry(data: Dict[str, Any]) -> TrialRetry:
+    exception_info = _map_exception_info(data.get('exception_info'))
+    return TrialRetry(
+        attempt_number=int(data.get('attempt_number', 0)),
+        exception_info=exception_info
+        if exception_info is not None
+        else ExceptionInfo(exception_type='InfrastructureError', exception_message=''),
+        cost_usd=data.get('cost_usd'),
+        started_at=data.get('started_at'),
+        settled_at=data.get('settled_at'),
+    )
+
+
 def _map_trial(data: Dict[str, Any]) -> Trial:
+    retries = data.get('retries')
     return Trial(
         id=data['id'],
         job_id=data.get('job_id', ''),
@@ -1526,6 +1575,14 @@ def _map_trial(data: Dict[str, Any]) -> Trial:
         session_ref=data.get('session_ref'),
         started_at=data.get('started_at'),
         finished_at=data.get('finished_at'),
+        # Auto-retry lineage. An older server sends neither key; 0 / [] is
+        # exactly what such a server's behavior means.
+        n_retries=int(data.get('n_retries', 0) or 0),
+        retries=(
+            [_map_trial_retry(item) for item in retries if isinstance(item, dict)]
+            if isinstance(retries, list)
+            else []
+        ),
     )
 
 
@@ -2772,6 +2829,7 @@ class JobsClient:
         n_concurrent_trials: Optional[int] = None,
         max_trial_spend_usd: Optional[float] = None,
         sandbox_provider: Optional[str] = None,
+        retry: Optional[Dict[str, Any]] = None,
         agent_env: Optional[Dict[str, str]] = None,
         verifier_env: Optional[Dict[str, str]] = None,
         idempotency_key: Optional[str] = None,
@@ -2789,7 +2847,13 @@ class JobsClient:
         spend enforcement; omitted, the server applies its own default ($200,
         operator-tunable). The response echoes the RESOLVED cap either way, so
         an omitted one is never invisible, and reports the resulting worst
-        case for the whole job. ``agent_env`` / ``verifier_env`` are
+        case for the whole job. ``retry`` is the auto-retry policy in
+        Harbor's RetryConfig vocabulary (``max_retries``,
+        ``include_exceptions``, ``exclude_exceptions``, ``wait_multiplier``,
+        ``min_wait_sec``, ``max_wait_sec``); omitted, the server applies its
+        fleet defaults (infrastructure errors retry automatically — send
+        ``{'max_retries': 0}`` to turn retries off), and the response echoes
+        the RESOLVED policy either way. ``agent_env`` / ``verifier_env`` are
         pass-through slots injected into every agent / verifier run — sent
         verbatim; the server owns acceptance (refused where unsupported,
         never silently dropped). Supports Idempotency-Key.
@@ -2813,6 +2877,8 @@ class JobsClient:
             body['max_trial_spend_usd'] = max_trial_spend_usd
         if sandbox_provider is not None:
             body['sandbox_provider'] = sandbox_provider
+        if retry is not None:
+            body['retry'] = retry
         if agent_env is not None:
             body['agent_env'] = agent_env
         if verifier_env is not None:

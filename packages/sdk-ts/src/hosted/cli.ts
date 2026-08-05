@@ -46,6 +46,7 @@ import type {
   JobEvent,
   JobTaskRollup,
   PublishDatasetInput,
+  RetryConfigInput,
   StopResponse,
   Task,
   TraceEvent,
@@ -173,6 +174,26 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
     kind: "number",
     value: "<usd>",
     help: "Model-spend cap for EACH trial (default: the server's, $200)",
+  },
+  "max-retries": {
+    kind: "number",
+    short: "r",
+    value: "<n>",
+    help:
+      "Max automatic retries per trial on infrastructure errors " +
+      "(default: the server's fleet default; 0 = off). Each attempt carries the full trial cap",
+  },
+  "retry-include": {
+    kind: "repeat",
+    value: "<exception>",
+    help: "Exception types to retry on (repeatable; default: everything --retry-exclude admits)",
+  },
+  "retry-exclude": {
+    kind: "repeat",
+    value: "<exception>",
+    help:
+      "Exception types to NOT retry on (repeatable; wins over --retry-include; " +
+      "default: Harbor's non-retryable set)",
   },
   env: { kind: "string", short: "e", value: "<provider>", help: "Sandbox provider: e2b | daytona | modal (default e2b)" },
   watch: { kind: "boolean", help: "Stream events until the job finishes" },
@@ -1430,6 +1451,15 @@ export function buildJobInput(
   const provider =
     f.env !== undefined ? (f.env as EvalSandboxProvider) : base.sandbox_provider;
 
+  // Retry policy: the config file's `retry` object is the base and each flag
+  // overrides ITS field — Harbor's own CLI merge rule (their jobs.py applies
+  // --max-retries/--retry-include/--retry-exclude onto config.retry field by
+  // field). Omitted entirely, the server applies its fleet defaults.
+  const retry: RetryConfigInput = { ...(base.retry ?? {}) };
+  if (f["max-retries"] !== undefined) retry.max_retries = f["max-retries"] as number;
+  if (f["retry-include"] !== undefined) retry.include_exceptions = f["retry-include"] as string[];
+  if (f["retry-exclude"] !== undefined) retry.exclude_exceptions = f["retry-exclude"] as string[];
+
   return {
     ...(jobName !== undefined ? { job_name: jobName } : {}),
     datasets: selectors,
@@ -1438,6 +1468,7 @@ export function buildJobInput(
     ...(nConcurrent !== undefined ? { n_concurrent_trials: nConcurrent } : {}),
     ...(maxSpend !== undefined ? { max_trial_spend_usd: maxSpend } : {}),
     ...(provider !== undefined ? { sandbox_provider: provider } : {}),
+    ...(Object.keys(retry).length > 0 ? { retry } : {}),
     ...(agentEnv !== undefined ? { agent_env: agentEnv } : {}),
     ...(verifierEnv !== undefined ? { verifier_env: verifierEnv } : {}),
   };
@@ -1664,6 +1695,13 @@ function jobLines(e: Job): string[] {
   rows.push(["concurrency", String(e.n_concurrent_trials)]);
   rows.push(["max spend/trial", fmtUsd(e.max_trial_spend_usd)]);
   rows.push(["worst case", fmtUsd(e.worst_case_spend_usd)]);
+  // The retry policy and its consumption. "worst case" above already includes
+  // the (max_retries + 1) product; this row says why.
+  rows.push([
+    "retries",
+    `${e.retry.max_retries}/trial on infrastructure errors` +
+      ((e.stats.n_retries ?? 0) > 0 ? ` (${e.stats.n_retries} used)` : ""),
+  ]);
   rows.push(["provider", e.sandbox_provider]);
   rows.push(["spent", fmtUsd(e.stats.cost_usd)]);
   // Only the statuses actually present: the response names all of them (so a
@@ -1801,6 +1839,20 @@ export function trialDetailLines(run: Trial): string[] {
   if (run.exception_info) {
     rows.push(["failure type", run.exception_info.exception_type]);
     rows.push(["failure detail", run.exception_info.exception_message]);
+  }
+  // ATTEMPT LINEAGE: one row per retried-away attempt, oldest first — the
+  // trial body above is the FINAL attempt, so a scored trial that took three
+  // attempts shows where the other two died and what they cost.
+  if (run.n_retries > 0) {
+    rows.push(["auto-retries", String(run.n_retries)]);
+    for (const attempt of run.retries) {
+      rows.push([
+        `attempt ${attempt.attempt_number}`,
+        `${attempt.exception_info.exception_type}` +
+          ` · spent ${fmtUsd(attempt.cost_usd)}` +
+          (attempt.settled_at ? ` · settled ${attempt.settled_at}` : ""),
+      ]);
+    }
   }
   if (run.session_ref) rows.push(["session", run.session_ref]);
   if (run.started_at) rows.push(["started", run.started_at]);
