@@ -37,6 +37,7 @@
     "agent_too_large",
     "agent_limit_reached",
     "skill_not_found",
+    "skill_name_not_found",
     "skill_ref_invalid",
     "skill_unresolvable",
     "skill_invalid",

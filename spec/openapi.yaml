@@ -113,7 +113,10 @@ tags:
   - name: agents
     description: Bring-your-own agents (private to their owner).
   - name: skills
-    description: Uploaded skills, referenced as upload:<id> in agents[].skills.
+    description: >-
+      Uploaded skills, referenced as upload:<id> (immutable record) or
+      name:<skill-name> (moving pointer to the latest upload of that name)
+      in agents[].skills.
   - name: meta
     description: Public capability document.
   - name: auth
@@ -1690,6 +1693,13 @@ paths:
         existing record instead of duplicating it. The `ref` on each record
         (`upload:<id>`) is what jobs put in `agents[].skills`. Multipart
         only — nothing travels in the query string.
+
+        A skill NAME is a MOVING POINTER, unique per caller: every record
+        this door answers with becomes its name's current record — same name
+        with different content creates a new record and moves the pointer;
+        old records stay, their `upload:<id>` handles immutable, and past
+        jobs' pinned `skill_locks` never rewrite. `name:<skill-name>` in
+        `agents[].skills` resolves through the pointer at job create.
       requestBody:
         required: true
         content:
@@ -1774,14 +1784,17 @@ paths:
       operationId: getSkill
       summary: Get one uploaded skill, including its SKILL.md text
       description: >
-        Private to its owner — another user's skill id reads
-        `skill_not_found`, never a permission error.
+        `{id}` is a record id, or `name:<skill-name>` — the caller's moving
+        name pointer, answered with its CURRENT record (an unknown name is
+        the typed `skill_name_not_found`). Private to its owner — another
+        user's skill id or name reads not-found, never a permission error.
       parameters:
         - name: id
           in: path
           required: true
           schema:
             type: string
+          description: A skill record id, or `name:<skill-name>`.
       responses:
         '200':
           description: The skill, with its manifest text.
@@ -1809,8 +1822,12 @@ paths:
       operationId: deleteSkill
       summary: Delete an uploaded skill
       description: >
-        Refused (`skill_in_use`, 409) while a non-terminal job references
-        `upload:<id>`; finished jobs keep their recorded locks either way.
+        Takes a RECORD id only — a `name:` reference is refused
+        (`invalid_input`), because deleting whatever a moving pointer points
+        at today is a race. Refused (`skill_in_use`, 409) while a
+        non-terminal job references `upload:<id>`; finished jobs keep their
+        recorded locks either way. Deleting a name's current record
+        unregisters the name; deleting an older record leaves it untouched.
       parameters:
         - name: id
           in: path
@@ -2140,6 +2157,8 @@ components:
         - agent_limit_reached
         # Skills
         - skill_not_found
+        # A name:<skill-name> reference with no pointer for this caller.
+        - skill_name_not_found
         - skill_ref_invalid
         - skill_unresolvable
         - skill_invalid
@@ -2437,12 +2456,16 @@ components:
             Skill references mounted into every run of this arm — Harbor's
             trial-config shape: a list of source strings. Accepted forms:
             `skills.sh/<owner>/<repo>[/<skill>]`, `org/repo[@ref]`, an https
-            git URL (optionally `/tree/<ref>/<subdir>`), or `upload:<id>`
-            naming an uploaded skill. Raw filesystem paths are refused —
-            clients upload local folders first (the CLI does this for
-            `--skill ./folder`). Git references are pinned to their exact
-            commit at creation; part of the arm's identity, so the same
-            agent and model with different skills are two arms.
+            git URL (optionally `/tree/<ref>/<subdir>`), `upload:<id>`
+            naming an uploaded skill, or `name:<skill-name>` — the caller's
+            moving name pointer, resolved server-side at creation to its
+            current record and pinned as that record's `upload:<id>` (an
+            unknown name is the typed `skill_name_not_found`, 404). Raw
+            filesystem paths are refused — clients upload local folders
+            first (the CLI does this for `--skill ./folder`). Git references
+            are pinned to their exact commit at creation; part of the arm's
+            identity, so the same agent and model with different skills are
+            two arms.
 
     SkillLock:
       type: object

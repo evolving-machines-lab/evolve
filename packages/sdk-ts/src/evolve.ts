@@ -286,6 +286,10 @@ export class Evolve extends EventEmitter {
    * - an https git URL, optionally `/tree/<ref>/<subdir>`
    * - a local folder path (`./skills/my-skill`) containing SKILL.md
    *
+   * `upload:<id>` and `name:<skill-name>` (the platform's moving name
+   * pointer) are hosted-platform references: only the platform resolves
+   * them, so the local resolver refuses both with the reason.
+   *
    * References are resolved by the SDK's one resolver (skills.ts): pinned to
    * an exact commit, fetched only as selected, cached by content, and mounted
    * into the harness's native skills directory where it auto-discovers them.

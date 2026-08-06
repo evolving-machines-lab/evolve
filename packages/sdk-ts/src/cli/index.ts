@@ -7,11 +7,11 @@
  * which takes `job start`'s flags and is spelled, helped and dispatched as a
  * command in its own right (Harbor registers their `run` the same way, as the
  * `job start` function bound at the top level: cli/main.py:164). Singular
- * nouns are canonical; `job`/`trial`/`dataset` also answer to their plurals as
- * hidden aliases, but `agents` does NOT — that word is reserved for the
- * managed-agents CLI and refuses with the reason. The CLI speaks ONLY through
- * the SDK clients (datasets() / agents() / jobs() / trials() / auth()) — no
- * raw HTTP lives here.
+ * nouns are canonical; `job`/`trial`/`dataset`/`skill` also answer to their
+ * plurals as hidden aliases, but `agents` does NOT — that word is reserved for
+ * the managed-agents CLI and refuses with the reason. The CLI speaks ONLY
+ * through the SDK clients (datasets() / agents() / jobs() / trials() /
+ * skills() / auth()) — no raw HTTP lives here.
  *
  * Output: human tables on a TTY, tab-separated rows when piped, --json for
  * the rendered machine shape (NDJSON for --watch event streams), -q for
@@ -57,6 +57,7 @@ import type {
   PublishDatasetInput,
   RetryConfigInput,
   RetryRequest,
+  SkillUpload,
   StopResponse,
   Task,
   TraceEvent,
@@ -190,7 +191,8 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
     value: "<ref|path>",
     help:
       "Skill for EVERY agent arm (repeatable): skills.sh/<owner>/<repo>[/<skill>], " +
-      "org/repo[@ref], an https git URL, upload:<id>, or a local folder " +
+      "org/repo[@ref], an https git URL, upload:<id>, name:<skill-name> (your " +
+      "moving name pointer, resolved server-side), or a local folder " +
       "(uploaded to the platform first, then referenced)",
   },
   "agent-env": {
@@ -545,6 +547,42 @@ const GROUPS: Record<string, GroupSpec> = {
       },
     },
   },
+  skill: {
+    summary: "Upload and manage platform-stored skills",
+    commands: {
+      list: {
+        summary: "List your uploaded skills (newest first)",
+        flags: { ...LIST_FLAGS },
+        minPositionals: 0,
+        maxPositionals: 0,
+        example: "evolve skill list",
+      },
+      upload: {
+        summary: "Upload a skill folder (its name becomes your moving name pointer)",
+        flags: {},
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<dir>",
+        example: "evolve skill upload ./my-skill",
+      },
+      show: {
+        summary: "Show one uploaded skill (metadata + SKILL.md)",
+        flags: {},
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<id | name:<skill-name>>",
+        example: "evolve skill show name:my-skill",
+      },
+      delete: {
+        summary: "Delete an uploaded skill record (past jobs keep their locks)",
+        flags: {},
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<id>",
+        example: "evolve skill delete 6f6f1f36-1c60-4f8e-9e2b-2a54cbb0f2aa",
+      },
+    },
+  },
   agent: {
     summary: "Register and manage your own agents",
     commands: {
@@ -628,6 +666,7 @@ const GROUP_ALIASES: Record<string, string> = {
   jobs: "job",
   trials: "trial",
   datasets: "dataset",
+  skills: "skill",
 };
 
 /**
@@ -2158,6 +2197,29 @@ const DATASET_COLUMNS: ListColumn<Dataset>[] = [
 ];
 const DATASET_DEFAULT_COLUMNS = ["name", "active", "state", "tasks", "title"];
 
+/** "sha256:<hex>" cut to the length every skill surface prints (19 chars). */
+function fmtDigestShort(digest: string): string {
+  return digest.length > 19 ? `${digest.slice(0, 19)}…` : digest;
+}
+
+/** Compact byte count for the skills table — a skill is instructions-sized. */
+function fmtBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+const SKILL_COLUMNS: ListColumn<SkillUpload>[] = [
+  { key: "name", header: "NAME", cell: (s) => s.name },
+  { key: "id", header: "ID", cell: (s) => s.id },
+  { key: "digest", header: "DIGEST", cell: (s) => fmtDigestShort(s.digest) },
+  { key: "size", header: "SIZE", cell: (s) => fmtBytes(s.size_bytes) },
+  { key: "created", header: "CREATED", cell: (s) => s.created_at },
+  { key: "description", header: "DESCRIPTION", cell: (s) => s.description ?? "-" },
+  { key: "ref", header: "REF", cell: (s) => s.ref },
+];
+const SKILL_DEFAULT_COLUMNS = ["name", "id", "digest", "size", "created"];
+
 const AGENT_COLUMNS: ListColumn<Agent>[] = [
   { key: "name", header: "NAME", cell: (a) => a.name },
   { key: "source", header: "SOURCE", cell: (a) => a.source },
@@ -3450,6 +3512,95 @@ async function cmdDatasetActivate(inv: Invocation, io: CliIO): Promise<number> {
   return 0;
 }
 
+/**
+ * One uploaded skill — evolve skill upload / show. The record's two handles
+ * are both printed: `ref` (upload:<id>, immutable) and the name (a moving
+ * pointer this record currently answers for right after an upload).
+ */
+function skillLines(skill: SkillUpload): string[] {
+  const rows: string[][] = [
+    ["name", skill.name],
+    ["id", skill.id],
+    ["ref", skill.ref],
+    ["digest", skill.digest],
+    ["size", fmtBytes(skill.size_bytes)],
+  ];
+  if (skill.description) rows.push(["description", skill.description]);
+  rows.push(["created", skill.created_at]);
+  return table(rows);
+}
+
+async function cmdSkillList(inv: Invocation, io: CliIO): Promise<number> {
+  if (columnsHelpRequested(inv, io, SKILL_COLUMNS)) return 0;
+  const client = skills(clientConfig(inv));
+  const page = await client.list(pageOptions(inv));
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(page));
+    return 0;
+  }
+  if (page.items.length === 0) {
+    if (inv.flags.quiet !== true) io.out("No uploaded skills.");
+    return 0;
+  }
+  renderList(inv, io, page.items, SKILL_COLUMNS, SKILL_DEFAULT_COLUMNS, (s) => s.id);
+  if (page.nextCursor && io.tty === true && inv.flags.quiet !== true) {
+    io.out(`\nMore: evolve skill list --cursor ${page.nextCursor}`);
+  }
+  return 0;
+}
+
+async function cmdSkillUpload(inv: Invocation, io: CliIO): Promise<number> {
+  const client = skills(clientConfig(inv));
+  // One folder, 1..n records: a root of skills uploads each child as its own
+  // record (the server's discovery law). --json prints ONE document: the
+  // record for a single skill, an array for a root.
+  const uploaded = await client.upload(inv.positionals[0]);
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(uploaded.length === 1 ? uploaded[0] : uploaded));
+    return 0;
+  }
+  uploaded.forEach((skill, index) => {
+    if (index > 0) io.out("");
+    for (const line of skillLines(skill)) io.out(line);
+  });
+  io.out("");
+  io.out(
+    `Use it with: evolve run --skill name:${uploaded[0].name} (moving pointer) ` +
+      `or --skill ${uploaded[0].ref} (this exact content)`
+  );
+  return 0;
+}
+
+async function cmdSkillShow(inv: Invocation, io: CliIO): Promise<number> {
+  // The positional is a record id, or name:<skill-name> — the server resolves
+  // the name pointer to its current record; the CLI passes the string through.
+  const skill = await skills(clientConfig(inv)).get(inv.positionals[0]);
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(skill));
+    return 0;
+  }
+  for (const line of skillLines(skill)) io.out(line);
+  if (skill.skill_md) {
+    io.out("");
+    io.out(skill.skill_md);
+  }
+  return 0;
+}
+
+async function cmdSkillDelete(inv: Invocation, io: CliIO): Promise<number> {
+  // A skill_in_use refusal (a live job references this record) surfaces
+  // VERBATIM through the standard error path — nothing rewrites the server's
+  // sentence.
+  const id = inv.positionals[0];
+  await skills(clientConfig(inv)).delete(id);
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify({ id, deleted: true }));
+  } else {
+    io.out(`Deleted skill ${id}`);
+  }
+  return 0;
+}
+
 async function cmdAgentList(inv: Invocation, io: CliIO): Promise<number> {
   if (columnsHelpRequested(inv, io, AGENT_COLUMNS)) return 0;
   const client = agents(clientConfig(inv));
@@ -3573,6 +3724,10 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "dataset publish": cmdDatasetPublish,
   "dataset download": cmdDatasetDownload,
   "dataset activate": cmdDatasetActivate,
+  "skill list": cmdSkillList,
+  "skill upload": cmdSkillUpload,
+  "skill show": cmdSkillShow,
+  "skill delete": cmdSkillDelete,
   "agent list": cmdAgentList,
   "agent show": cmdAgentShow,
   "agent add": cmdAgentAdd,

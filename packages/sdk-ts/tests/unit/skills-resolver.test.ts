@@ -154,6 +154,27 @@ async function main(): Promise<void> {
   );
 
   // ==========================================================================
+  console.log("\nReference grammar: platform skill names (moving pointers)");
+  // ==========================================================================
+  {
+    const p = parseSkillRef("name:frontend-design");
+    assert(p.kind === "name" && p.name === "frontend-design", "name:<skill-name> parses to a name pointer");
+  }
+  await assertThrows(() => parseSkillRef("name:"), "SkillRefError", "names no skill", "name with no skill refused");
+  await assertThrows(
+    () => parseSkillRef("name:has spaces"),
+    "SkillRefError",
+    "letters, digits",
+    "a name outside the segment law is refused with the law",
+  );
+  await assertThrows(
+    () => resolveSkills(["name:frontend-design"]),
+    "SkillResolveError",
+    "server-side",
+    "resolver refuses name pointers (platform resolves them at job create)",
+  );
+
+  // ==========================================================================
   console.log("\nDigest: Harbor's recipe, byte for byte");
   // ==========================================================================
   const digestDir = mkdtempSync(join(tmpdir(), "skilldigest-"));
