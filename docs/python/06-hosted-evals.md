@@ -121,6 +121,8 @@ job = await evals.start(
 print(job.retry)                     # the RESOLVED policy, every field present
 ```
 
+Both halves are typed. The dict you pass is `JobRetryConfigInput` (every key optional) and the echo on `job.retry` is `JobRetryConfig` (every key required — an older server that sends no policy reads as the retries-off policy with Harbor's defaults, so a key read never crashes on any server). At runtime both stay the plain dicts above; the classes only teach type checkers the keys. One naming note: Harbor and the platform spec call this pair `RetryConfig` / `RetryConfigInput`, but `evolve.RetryConfig` already names the [Swarm retry helper](05-swarm-pipeline.md) — an unrelated client-side shape (`max_attempts`, `backoff_ms`) — so the hosted pair carries the `Job` prefix and the two never shadow each other.
+
 The include/exclude sets refine *within* the infrastructure class by exception name, exclude winning over include — Harbor's rule. A gateway credential refusal adjudicates as `AgentAuthenticationError` and a model that never served as `ModelNotFoundError`; everything else is `InfrastructureError`. Omitting `exclude_exceptions` keeps Harbor's default non-retryable set (auth refusals, timeouts, and the other failures that would re-fail identically). An **explicit** `'exclude_exceptions': None` is different from omitting the key: None turns exclusions off entirely — Harbor's own `None` semantics — so everything the include set admits is retried. `include_exceptions` has no such split: None, omitted, and the empty list `[]` all mean no filter — Harbor's include check treats the empty set exactly like `None`, so an empty list never means "retry nothing".
 
 A retried trial keeps its receipts. `trial.n_retries` counts the requeues, and `trial.retries` lists each retired attempt with its exception, its spend, and its clocks — so a scored trial that took three attempts is auditable without archaeology, and the job's `stats['n_retries']` is the consumed-retry sum across all trials. Each attempt spends against its own full per-trial cap, and every retired attempt's real spend stays in the job total — which is why `worst_case_spend_usd` carries the `(max_retries + 1)` product ([Money](#money)).
@@ -1357,7 +1359,7 @@ class Job:                          # ONE shape from every call
     n_concurrent_trials: int
     max_trial_spend_usd: float      # the resolved per-trial cap
     worst_case_spend_usd: float     # cap × trials × (max_retries + 1) — stated, never left to you
-    retry: Dict[str, Any]           # the RESOLVED auto-retry policy, every field present
+    retry: JobRetryConfig           # the RESOLVED auto-retry policy, every field present
     sandbox_provider: EvalSandboxProvider
     counts: JobCounts               # agents + tasks — entity cardinality only
     n_total_trials: int
