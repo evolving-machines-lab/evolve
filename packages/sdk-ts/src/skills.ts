@@ -23,6 +23,11 @@
  *   upload:<id>                 a platform-stored uploaded skill (hosted only;
  *                               this module refuses it — the platform resolves
  *                               uploads to local folders before calling here)
+ *   name:<skill-name>           the caller's platform skill NAME — a moving
+ *                               pointer to the latest upload of that name,
+ *                               resolved SERVER-SIDE at job create to its
+ *                               current record's upload:<id> (hosted only;
+ *                               this module refuses it the same way)
  *
  * The git grammar and discovery law mirror Harbor's resolver
  * (REFERENCES/Harbor/src/harbor/skills.py): shorthand and URL parsing at
@@ -117,7 +122,8 @@ export type ParsedSkillRef =
       raw: string;
     }
   | { kind: "local"; path: string; raw: string }
-  | { kind: "upload"; id: string; raw: string };
+  | { kind: "upload"; id: string; raw: string }
+  | { kind: "name"; name: string; raw: string };
 
 /** One resolved skill: content on local disk plus its full provenance. */
 export interface ResolvedSkill {
@@ -210,6 +216,16 @@ export function parseSkillRef(ref: string): ParsedSkillRef {
     const id = raw.slice("upload:".length);
     if (!id) throw new SkillRefError(`Skill upload reference ${JSON.stringify(raw)} names no upload id.`);
     return { kind: "upload", id, raw };
+  }
+
+  // Platform name pointer — the moving reference the server resolves at job
+  // create. Parsed here so every surface shares one grammar; RESOLVED only by
+  // the platform (resolveSkills below refuses it like upload:).
+  if (raw.startsWith("name:")) {
+    const name = raw.slice("name:".length);
+    if (!name) throw new SkillRefError(`Skill name reference ${JSON.stringify(raw)} names no skill.`);
+    requireSegment(name, "skill name", raw);
+    return { kind: "name", name, raw };
   }
 
   // Local folders — Harbor's prefix law (skills.py:136).
@@ -607,6 +623,14 @@ export async function resolveSkills(
       throw new SkillResolveError(
         `Skill reference ${JSON.stringify(parsed.raw)} is a platform upload handle; ` +
           "only the hosted platform can resolve it. Use a skills.sh/git reference or a local folder here.",
+      );
+    }
+
+    if (parsed.kind === "name") {
+      throw new SkillResolveError(
+        `Skill reference ${JSON.stringify(parsed.raw)} is a platform skill name — a moving ` +
+          "pointer only the hosted platform can resolve (server-side, at job create). " +
+          "Use a skills.sh/git reference or a local folder here.",
       );
     }
 

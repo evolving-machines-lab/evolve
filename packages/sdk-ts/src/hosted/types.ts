@@ -242,8 +242,12 @@ export interface AgentArmInput {
    * Skill references mounted into every run of this arm — Harbor's
    * trial-config shape: a list of source strings (models/trial/config.py:81).
    * Accepted forms: `skills.sh/<owner>/<repo>[/<skill>]`, `org/repo[@ref]`,
-   * an https git URL (optionally `/tree/<ref>/<subdir>`), or `upload:<id>`
-   * naming a skill uploaded to the platform. Local filesystem paths are a
+   * an https git URL (optionally `/tree/<ref>/<subdir>`), `upload:<id>`
+   * naming a skill uploaded to the platform, or `name:<skill-name>` — the
+   * caller's moving name pointer, resolved SERVER-SIDE at creation to its
+   * current record and pinned as that record's `upload:<id>` (an unknown
+   * name is the typed `skill_name_not_found`). The SDK passes the string
+   * through — no client-side resolution. Local filesystem paths are a
    * CLIENT-side convenience only — the CLI uploads the folder first and sends
    * the `upload:<id>` handle; the server refuses raw paths.
    *
@@ -2041,12 +2045,20 @@ export interface SkillsClient {
    * child directories each contain SKILL.md — Harbor's discovery law; a root
    * uploads each child as its own skill and resolves to the full list).
    * Re-uploading identical content under the same name answers the existing
-   * record — uploads are content-addressed, never duplicated.
+   * record — uploads are content-addressed, never duplicated. A skill NAME
+   * is a moving pointer: every upload makes its record the name's current
+   * one (different content = new record, pointer moves; old records keep
+   * their immutable `upload:<id>` handles), and `name:<skill-name>` in
+   * `agents[].skills` resolves through it at job create.
    */
   upload(directory: string): Promise<SkillUpload[]>;
   /** List the caller's uploaded skills (cursor-paged). */
   list(options?: ListSkillsOptions): SkillUploadList;
-  /** Get one uploaded skill by id, including its SKILL.md text. */
+  /**
+   * Get one uploaded skill, including its SKILL.md text. Takes a record id,
+   * or `name:<skill-name>` — the moving name pointer, answered with its
+   * CURRENT record (unknown names are the typed `skill_name_not_found`).
+   */
   get(id: string): Promise<SkillUpload & { skill_md: string | null }>;
   /**
    * Delete an uploaded skill. Refused while a non-terminal job references it;
@@ -2318,6 +2330,7 @@ export const HOSTED_ERROR_CODES = [
   "agent_too_large",
   "agent_limit_reached",
   "skill_not_found",
+  "skill_name_not_found",
   "skill_ref_invalid",
   "skill_unresolvable",
   "skill_invalid",

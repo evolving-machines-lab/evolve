@@ -138,6 +138,7 @@ HostedErrorCode = Literal[
     'agent_too_large',
     'agent_limit_reached',
     'skill_not_found',
+    'skill_name_not_found',
     'skill_ref_invalid',
     'skill_unresolvable',
     'skill_invalid',
@@ -833,8 +834,12 @@ class AgentArm:
     #: Skill references mounted into every run of this arm — Harbor's
     #: trial-config shape: a list of source strings. Accepted forms:
     #: ``skills.sh/<owner>/<repo>[/<skill>]``, ``org/repo[@ref]``, an https
-    #: git URL, or ``upload:<id>`` naming an uploaded skill (see
-    #: :class:`SkillsClient`). Git references are pinned to their exact commit
+    #: git URL, ``upload:<id>`` naming an uploaded skill (see
+    #: :class:`SkillsClient`), or ``name:<skill-name>`` — the caller's moving
+    #: name pointer, resolved SERVER-SIDE at creation to its current record
+    #: and pinned as that record's ``upload:<id>`` (unknown names are the
+    #: typed ``skill_name_not_found``; the SDK passes the string through).
+    #: Git references are pinned to their exact commit
     #: at job creation and echoed back in pinned spelling; part of the arm's
     #: identity. Raw filesystem paths are refused by the server — upload the
     #: folder first.
@@ -3688,6 +3693,11 @@ class SkillsClient:
         root uploads each child as its own skill and the list holds one record
         per skill). Content-addressed: re-uploading identical content under
         the same name answers the existing record instead of duplicating it.
+        A skill NAME is a moving pointer: every upload makes its record the
+        name's current one (different content = new record, pointer moves;
+        old records keep their immutable ``upload:<id>`` handles), and
+        ``name:<skill-name>`` in ``agents[].skills`` resolves through it at
+        job create.
         """
         if not isinstance(directory, str) or not directory.strip():
             raise ValueError('skills().upload() requires a local skill directory path')
@@ -3732,7 +3742,12 @@ class SkillsClient:
         )
 
     async def get(self, skill_id: str) -> SkillUpload:
-        """Get one uploaded skill by id, including its SKILL.md text."""
+        """Get one uploaded skill, including its SKILL.md text.
+
+        Takes a record id, or ``name:<skill-name>`` — the moving name
+        pointer, answered with its CURRENT record (unknown names are the
+        typed ``skill_name_not_found``).
+        """
         raw = await self._http.request_json(
             f'/api/skills/{urllib.parse.quote(skill_id)}'
         )

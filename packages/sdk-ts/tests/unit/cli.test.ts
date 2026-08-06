@@ -198,6 +198,8 @@ function testGrammarResolution() {
     "the reserved word points at the command that does exist"
   );
   assertEqual(parseArgs(["agent", "list"]).command, "agent list", "the singular `agent` still resolves");
+  assertEqual(parseArgs(["skill", "list"]).command, "skill list", "the skill noun resolves");
+  assertEqual(parseArgs(["skills", "list"]).command, "skill list", "`skills` is a hidden plural alias of `skill`");
   assertEqual(parseArgs([]).command, "help", "bare invocation is help, not an error");
   assertEqual(parseArgs(["help"]).command, "help", "help command");
   assertEqual(parseArgs(["--version"]).command, "version", "--version resolves");
@@ -560,6 +562,15 @@ function testBuildJobInputSkills() {
   assert(
     without.agents.every((arm) => !("skills" in arm)),
     "no skills key when --skill omitted (absent, not [])"
+  );
+
+  const withName = buildJobInput(
+    parseArgs(["job", "start", "-d", "b", "-a", "a", "-m", "m", "--skill", "name:frontend-design"])
+  );
+  assertEqual(
+    withName.agents[0].skills,
+    ["name:frontend-design"],
+    "name:<skill-name> stays verbatim — the SERVER resolves the moving pointer at create"
   );
 }
 
@@ -4285,6 +4296,144 @@ async function testAgentListShowRemove() {
 }
 
 // =============================================================================
+// SKILL — list, upload, show, delete (the noun group over the skills() client)
+// =============================================================================
+
+const CLI_SKILL = {
+  id: "6f6f1f36-1c60-4f8e-9e2b-2a54cbb0f2aa",
+  name: "my-skill",
+  digest: "sha256:" + "a".repeat(64),
+  size_bytes: 2048,
+  description: "Does one thing well",
+  ref: "upload:6f6f1f36-1c60-4f8e-9e2b-2a54cbb0f2aa",
+  created_at: "2026-08-06T00:00:00Z",
+};
+
+async function testSkillUpload() {
+  console.log("\n--- runCli: skill upload posts the folder and prints both handles ---");
+  installMockFetch();
+  const dir = await mkdtemp(join(tmpdir(), "evolve-skill-cli-"));
+  const skillDir = join(dir, "my-skill");
+  try {
+    await mkdir(skillDir);
+    await writeFile(join(skillDir, "SKILL.md"), "# my-skill\n\nDoes one thing well.\n");
+    setMockResponse("/api/skills", { status: 201, body: { skills: [CLI_SKILL] } });
+
+    const { io, out, err } = captureIO();
+    const code = await runCli(["skill", "upload", skillDir, ...AUTH], io);
+    assertEqual(code, 0, "exit 0");
+    assertEqual(err, [], "nothing on stderr");
+    const call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.endsWith("/api/skills"), "hits the skills route");
+    assertEqual(call.init?.method, "POST", "uses POST");
+    const form = call.init?.body as FormData;
+    assert(form instanceof FormData, "body is multipart/form-data");
+    assertEqual(form.get("name"), "my-skill", "the folder's own name travels as the name part");
+    const text = out.join("\n");
+    assert(text.includes(CLI_SKILL.ref), "prints the immutable upload:<id> handle");
+    assert(text.includes("my-skill"), "prints the record's name");
+    assert(text.includes(CLI_SKILL.digest), "prints the content digest");
+    assert(text.includes("name:my-skill"), "the follow-up hint offers the moving name pointer");
+  } finally {
+    restoreFetch();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function testSkillListShowDelete() {
+  console.log("\n--- runCli: skill list / show (id or name:) / delete ---");
+  installMockFetch();
+  try {
+    // Insertion order matters: most-specific patterns first.
+    setMockResponse("/api/skills/name%3Amy-skill", {
+      status: 200,
+      body: { ...CLI_SKILL, skill_md: "# my-skill\n\nManifest body." },
+    });
+    setMockResponse(`/api/skills/${CLI_SKILL.id}`, { status: 204, body: null });
+    setMockResponse("/api/skills", {
+      status: 200,
+      body: { items: [CLI_SKILL], nextCursor: null, hasMore: false },
+    });
+
+    const list = captureIO();
+    assertEqual(await runCli(["skill", "list", ...AUTH], list.io), 0, "list exits 0");
+    assert(list.out[0].includes("NAME\tID"), "TSV header when piped");
+    assert(list.out[1].startsWith("my-skill\t"), "lists the skill row");
+    assert(list.out[1].includes("sha256:aaaaaaaaaaaa"), "row carries the short digest");
+
+    const quiet = captureIO();
+    assertEqual(await runCli(["skill", "list", "-q", ...AUTH], quiet.io), 0, "-q exits 0");
+    assertEqual(quiet.out, [CLI_SKILL.id], "-q prints ids only");
+
+    // `skill show name:<x>` passes the string through — the SERVER resolves
+    // the moving pointer; the CLI encodes it into the path and nothing more.
+    const show = captureIO();
+    assertEqual(await runCli(["skill", "show", "name:my-skill", ...AUTH], show.io), 0, "show exits 0");
+    const showCall = fetchCalls[fetchCalls.length - 1];
+    assert(showCall.url.endsWith("/api/skills/name%3Amy-skill"), "show passes name:<x> through, URL-encoded");
+    const showText = show.out.join("\n");
+    assert(showText.includes(CLI_SKILL.ref), "show prints the current record's upload:<id>");
+    assert(showText.includes("Manifest body."), "show prints the SKILL.md text");
+
+    const remove = captureIO();
+    assertEqual(await runCli(["skill", "delete", CLI_SKILL.id, ...AUTH], remove.io), 0, "delete exits 0");
+    const delCall = fetchCalls[fetchCalls.length - 1];
+    assert(delCall.url.endsWith(`/api/skills/${CLI_SKILL.id}`), "delete targets the detail route");
+    assertEqual(delCall.init?.method, "DELETE", "delete uses DELETE");
+    assert(remove.out.some((l) => l.includes(`Deleted skill ${CLI_SKILL.id}`)), "confirms the delete");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testSkillDeleteInUseVerbatim() {
+  console.log("\n--- runCli: skill delete surfaces the skill_in_use refusal verbatim ---");
+  installMockFetch();
+  try {
+    const sentence =
+      `Skill "${CLI_SKILL.id}" is referenced by a job that is not finished (eval-9); wait for it or cancel it first`;
+    setMockResponse(`/api/skills/${CLI_SKILL.id}`, {
+      status: 409,
+      body: { error: { code: "skill_in_use", message: sentence } },
+    });
+    const { io, out, err } = captureIO();
+    const code = await runCli(["skill", "delete", CLI_SKILL.id, ...AUTH], io);
+    assertEqual(code, 1, "a server refusal is exit 1");
+    assertEqual(err, [`Error: ${sentence}`], "the server's sentence reaches stderr VERBATIM, one line");
+    assertEqual(out, [], "a refusal prints nothing on stdout");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testSkillNamePassThroughOnStart() {
+  console.log("\n--- runCli: --skill name:<x> rides the job body untouched — no upload, no resolution ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs", { status: 202, body: wireJob() });
+    const { io } = captureIO();
+    const code = await runCli(
+      ["job", "start", "-d", "deep-swe", "-a", "codex", "-m", "gpt-5.5", "--skill", "name:frontend-design", ...AUTH],
+      io
+    );
+    assertEqual(code, 0, "exit 0");
+    assert(
+      !fetchCalls.some((c) => c.url.includes("/api/skills")),
+      "a name pointer is NOT a local folder — nothing is uploaded"
+    );
+    const createCall = fetchCalls.find((c) => c.url === `${BASE}/api/jobs`);
+    const body = JSON.parse(createCall?.init?.body as string);
+    assertEqual(
+      body.agents[0].skills,
+      ["name:frontend-design"],
+      "the body carries name:<x> verbatim — resolution is the server's"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+// =============================================================================
 // AUTH
 // =============================================================================
 
@@ -4579,6 +4728,10 @@ async function main() {
   await testDatasetDownloadAndActivate();
   await testAgentAdd();
   await testAgentListShowRemove();
+  await testSkillUpload();
+  await testSkillListShowDelete();
+  await testSkillDeleteInUseVerbatim();
+  await testSkillNamePassThroughOnStart();
   await testAuthStatus();
 
   console.log(`\n${passed} passed, ${failed} failed`);
