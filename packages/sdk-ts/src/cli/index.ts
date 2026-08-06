@@ -233,6 +233,33 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
       "Exception types to NOT retry on (repeatable; wins over --retry-include; " +
       "default: Harbor's non-retryable set)",
   },
+  "timeout-multiplier": {
+    kind: "number",
+    value: "<x>",
+    help:
+      "Multiplier for task timeouts (default 1.0; > 0, server ceiling on GET /api/meta). " +
+      "Multiplies each task's DECLARED timeouts for this job only — the task is never rewritten",
+  },
+  "agent-timeout-multiplier": {
+    kind: "number",
+    value: "<x>",
+    help: "Multiplier for agent execution timeout (overrides --timeout-multiplier)",
+  },
+  "verifier-timeout-multiplier": {
+    kind: "number",
+    value: "<x>",
+    help: "Multiplier for verifier timeout (overrides --timeout-multiplier)",
+  },
+  "agent-setup-timeout-multiplier": {
+    kind: "number",
+    value: "<x>",
+    help: "Multiplier for agent setup timeout (overrides --timeout-multiplier)",
+  },
+  "environment-build-timeout-multiplier": {
+    kind: "number",
+    value: "<x>",
+    help: "Multiplier for environment build timeout (overrides --timeout-multiplier)",
+  },
   env: { kind: "string", short: "e", value: "<provider>", help: "Sandbox provider: e2b | daytona | modal (default e2b)" },
   watch: { kind: "boolean", help: "Stream events until the job finishes" },
   quiet: { kind: "boolean", short: "q", help: "With --watch: suppress the event log, print the final block only" },
@@ -1692,6 +1719,24 @@ export function buildJobInput(
   if (f["retry-include"] !== undefined) retry.include_exceptions = f["retry-include"] as string[];
   if (f["retry-exclude"] !== undefined) retry.exclude_exceptions = f["retry-exclude"] as string[];
 
+  // Timeout multipliers: Harbor's five flags verbatim (their
+  // cli/jobs.py:378-424), flat on the body exactly as their JobConfig
+  // carries them. The config file's fields are the base and each flag
+  // overrides ITS field; omitted entirely, the server applies 1.0 to every
+  // phase. The server owns the ceiling refusal — a client-side bound would
+  // just be a second copy of the published limit that could drift.
+  const timeoutMultipliers: Partial<JobCreate> = {};
+  for (const [flag, field] of [
+    ["timeout-multiplier", "timeout_multiplier"],
+    ["agent-timeout-multiplier", "agent_timeout_multiplier"],
+    ["verifier-timeout-multiplier", "verifier_timeout_multiplier"],
+    ["agent-setup-timeout-multiplier", "agent_setup_timeout_multiplier"],
+    ["environment-build-timeout-multiplier", "environment_build_timeout_multiplier"],
+  ] as const) {
+    const value = f[flag] !== undefined ? (f[flag] as number) : base[field];
+    if (value !== undefined) (timeoutMultipliers as Record<string, number>)[field] = value;
+  }
+
   return {
     ...(jobName !== undefined ? { job_name: jobName } : {}),
     datasets: selectors,
@@ -1701,6 +1746,7 @@ export function buildJobInput(
     ...(maxSpend !== undefined ? { max_trial_spend_usd: maxSpend } : {}),
     ...(provider !== undefined ? { sandbox_provider: provider } : {}),
     ...(Object.keys(retry).length > 0 ? { retry } : {}),
+    ...timeoutMultipliers,
     ...(agentEnv !== undefined ? { agent_env: agentEnv } : {}),
     ...(verifierEnv !== undefined ? { verifier_env: verifierEnv } : {}),
   };
@@ -1960,6 +2006,27 @@ function jobLines(e: Job): string[] {
     `${e.retry.max_retries}/trial on infrastructure errors` +
       ((e.stats.n_retries ?? 0) > 0 ? ` (${e.stats.n_retries} used)` : ""),
   ]);
+  // Timeout multipliers, only when the job stretches (or shrinks) anything —
+  // a row saying "x1" on every default job would be noise. Phase overrides
+  // are named beside the global so the row states the whole policy.
+  {
+    const phases: [string, number | null][] = [
+      ["agent", e.agent_timeout_multiplier],
+      ["verifier", e.verifier_timeout_multiplier],
+      ["agent setup", e.agent_setup_timeout_multiplier],
+      ["environment build", e.environment_build_timeout_multiplier],
+    ];
+    const overrides = phases.filter(([, m]) => m !== null && m !== undefined);
+    if (e.timeout_multiplier !== 1 || overrides.length > 0) {
+      rows.push([
+        "timeouts",
+        `x${e.timeout_multiplier}` +
+          (overrides.length > 0
+            ? ` (${overrides.map(([name, m]) => `${name} x${m}`).join(", ")})`
+            : ""),
+      ]);
+    }
+  }
   rows.push(["provider", e.sandbox_provider]);
   rows.push(["spent", fmtUsd(e.stats.cost_usd)]);
   // GPU compute is a SEPARATE labeled estimate (lane 5) — never summed into

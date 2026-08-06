@@ -384,6 +384,27 @@ export interface JobCreate {
   /** Auto-retry policy (Harbor RetryConfig grammar); omitted = the fleet defaults. */
   retry?: RetryConfigInput;
   /**
+   * Multiplier for task timeouts — Harbor's `--timeout-multiplier`, all five
+   * fields flat on this body exactly as Harbor's JobConfig carries them. The
+   * worker multiplies each TASK-DECLARED timeout at the point that phase's
+   * timeout is armed; the task itself is never rewritten, so the same task
+   * runs unstretched in every other job. Values below 1 shrink, as in
+   * Harbor. Every multiplier must be greater than 0 and at most the
+   * published ceiling (`limits.job.max_timeout_multiplier` on GET /api/meta;
+   * 10 unless the fleet changes it) — an absurd value is refused with a
+   * typed `invalid_input` naming the bound, never silently clamped.
+   * Default 1.0.
+   */
+  timeout_multiplier?: number;
+  /** Multiplier for the agent execution timeout (overrides timeout_multiplier). */
+  agent_timeout_multiplier?: number;
+  /** Multiplier for the verifier timeout (overrides timeout_multiplier). */
+  verifier_timeout_multiplier?: number;
+  /** Multiplier for the agent setup timeout (overrides timeout_multiplier). */
+  agent_setup_timeout_multiplier?: number;
+  /** Multiplier for the environment build timeout (overrides timeout_multiplier). */
+  environment_build_timeout_multiplier?: number;
+  /**
    * Env injected into every agent run — a pass-through slot: the client sends
    * it verbatim and the server owns acceptance (refused where unsupported,
    * never silently dropped).
@@ -653,6 +674,17 @@ export interface Job {
   worst_case_spend_usd: number;
   /** The RESOLVED auto-retry policy this job runs under. */
   retry: RetryConfig;
+  /**
+   * The RESOLVED timeout multipliers this job's phases arm under — Harbor's
+   * five flat JobConfig fields, echoed on every job body. The global one is
+   * always a number (1.0 when the create request named none); each phase
+   * field is null when not overridden, meaning the global applies.
+   */
+  timeout_multiplier: number;
+  agent_timeout_multiplier: number | null;
+  verifier_timeout_multiplier: number | null;
+  agent_setup_timeout_multiplier: number | null;
+  environment_build_timeout_multiplier: number | null;
   sandbox_provider: EvalSandboxProvider;
   /** Entity cardinality only — things with no status of their own. */
   counts: { agents: number; tasks: number };
@@ -1020,6 +1052,15 @@ export interface JobCreatedData {
   trial_count: number;
   /** The resolved auto-retry policy the job runs under. */
   retry: RetryConfig;
+  /**
+   * The resolved timeout multipliers (the same five flat fields the job body
+   * echoes); events older than the feature replay as every phase at 1.0.
+   */
+  timeout_multiplier: number;
+  agent_timeout_multiplier: number | null;
+  verifier_timeout_multiplier: number | null;
+  agent_setup_timeout_multiplier: number | null;
+  environment_build_timeout_multiplier: number | null;
 }
 
 export interface JobCancellingData {

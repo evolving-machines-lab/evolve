@@ -1213,6 +1213,44 @@ class TestJobs:
         assert garbage.preset is None
 
     @pytest.mark.asyncio
+    async def test_timeout_multipliers_ride_the_wire_and_map_back(self):
+        # Harbor's five timeout knobs (their cli/jobs.py:378-424), flat on the
+        # body exactly as Harbor's JobConfig carries them; unset ones send NO
+        # key (the server's global-applies default is the ask). The echoed job
+        # maps the five fields back, and an older server that omits them reads
+        # as every phase at 1.0, never a crash.
+        fake = FakeUrlopen([('/api/jobs', JOB_SUMMARY)])
+        with patch('evolve._http.urlopen', fake):
+            await jobs_factory(CONFIG).start(
+                datasets=[DatasetSelector(name='deep-swe')],
+                agents=[AgentArm(name='codex', model_name='gpt-5.5')],
+                timeout_multiplier=2,
+                verifier_timeout_multiplier=3,
+            )
+        body = json.loads(fake.requests[0].data.decode('utf-8'))
+        assert body['timeout_multiplier'] == 2
+        assert body['verifier_timeout_multiplier'] == 3
+        assert 'agent_timeout_multiplier' not in body
+        assert 'agent_setup_timeout_multiplier' not in body
+        assert 'environment_build_timeout_multiplier' not in body
+
+        from evolve.hosted import _map_job
+        echoed = _map_job({
+            **JOB_SUMMARY,
+            'timeout_multiplier': 2,
+            'agent_timeout_multiplier': None,
+            'verifier_timeout_multiplier': 3,
+            'agent_setup_timeout_multiplier': None,
+            'environment_build_timeout_multiplier': None,
+        })
+        assert echoed.timeout_multiplier == 2
+        assert echoed.verifier_timeout_multiplier == 3
+        assert echoed.agent_timeout_multiplier is None
+        legacy = _map_job(JOB_SUMMARY)
+        assert legacy.timeout_multiplier == 1.0
+        assert legacy.verifier_timeout_multiplier is None
+
+    @pytest.mark.asyncio
     async def test_start_accepts_snake_case_dicts(self):
         fake = FakeUrlopen([('/api/jobs', JOB_SUMMARY)])
         with patch('evolve._http.urlopen', fake):
@@ -1402,9 +1440,12 @@ class TestJobs:
         assert vars(got).keys() == vars(listed).keys()
         # ...and it is the FULL shape, not a shared subset.
         assert sorted(vars(got)) == [
+            'agent_setup_timeout_multiplier',
+            'agent_timeout_multiplier',
             'agents',
             'counts',
             'datasets',
+            'environment_build_timeout_multiplier',
             'failure',
             'finished_at',
             'id',
@@ -1421,8 +1462,10 @@ class TestJobs:
             'started_at',
             'stats',
             'status',
+            'timeout_multiplier',
             'trials',
             'updated_at',
+            'verifier_timeout_multiplier',
             'worst_case_spend_usd',
         ]
 

@@ -902,6 +902,16 @@ class Job:
     #: ``exclude_exceptions``, ``wait_multiplier``, ``min_wait_sec``,
     #: ``max_wait_sec``). A plain dict with the wire's own keys, read by key.
     retry: Dict[str, Any]
+    #: The RESOLVED timeout multipliers this job's phases arm under —
+    #: Harbor's five flat JobConfig fields, echoed on every job body. The
+    #: global one is always a number (1.0 when the create request named
+    #: none); each phase field below is None when not overridden, meaning the
+    #: global one applies to that phase.
+    timeout_multiplier: float
+    agent_timeout_multiplier: Optional[float]
+    verifier_timeout_multiplier: Optional[float]
+    agent_setup_timeout_multiplier: Optional[float]
+    environment_build_timeout_multiplier: Optional[float]
     sandbox_provider: EvalSandboxProvider
     counts: JobCounts
     n_total_trials: int
@@ -1832,6 +1842,11 @@ def _map_source_job(data: Dict[str, Any]) -> SourceJob:
     )
 
 
+def _optional_float(value: Any) -> Optional[float]:
+    """A wire number or None — anything else (an older server, garbage) is None."""
+    return float(value) if isinstance(value, (int, float)) else None
+
+
 def _map_job(data: Dict[str, Any]) -> Job:
     """The ONE job mapper — nothing conditional, because nothing is optional."""
     agents = data.get('agents')
@@ -1854,6 +1869,19 @@ def _map_job(data: Dict[str, Any]) -> Job:
         # An older server sends no policy; {} reads as "no auto-retry", which
         # is exactly how such a server behaves.
         retry=data.get('retry') if isinstance(data.get('retry'), dict) else {},
+        # Timeout multipliers: an older server sends none — 1.0 / None reads
+        # as "every phase at 1.0", exactly how such a server behaves.
+        timeout_multiplier=(
+            float(data['timeout_multiplier'])
+            if isinstance(data.get('timeout_multiplier'), (int, float))
+            else 1.0
+        ),
+        agent_timeout_multiplier=_optional_float(data.get('agent_timeout_multiplier')),
+        verifier_timeout_multiplier=_optional_float(data.get('verifier_timeout_multiplier')),
+        agent_setup_timeout_multiplier=_optional_float(data.get('agent_setup_timeout_multiplier')),
+        environment_build_timeout_multiplier=_optional_float(
+            data.get('environment_build_timeout_multiplier')
+        ),
         sandbox_provider=data.get('sandbox_provider', ''),
         counts=_map_counts(data.get('counts')),
         n_total_trials=int(data.get('n_total_trials', 0)),
@@ -3486,6 +3514,11 @@ class JobsClient:
         max_trial_spend_usd: Optional[float] = None,
         sandbox_provider: Optional[str] = None,
         retry: Optional[Dict[str, Any]] = None,
+        timeout_multiplier: Optional[float] = None,
+        agent_timeout_multiplier: Optional[float] = None,
+        verifier_timeout_multiplier: Optional[float] = None,
+        agent_setup_timeout_multiplier: Optional[float] = None,
+        environment_build_timeout_multiplier: Optional[float] = None,
         agent_env: Optional[Dict[str, str]] = None,
         verifier_env: Optional[Dict[str, str]] = None,
         idempotency_key: Optional[str] = None,
@@ -3517,7 +3550,19 @@ class JobsClient:
         ``'include_exceptions'`` has no such split: None, an omitted key,
         and the empty list ``[]`` all mean no filter — Harbor's include
         check treats the empty set exactly like None, so ``[]`` never means
-        "retry nothing". ``agent_env`` / ``verifier_env`` are
+        "retry nothing". The five ``*timeout_multiplier`` arguments are
+        Harbor's timeout knobs verbatim: ``timeout_multiplier`` multiplies
+        every TASK-DECLARED timeout for this job's runs (default 1.0;
+        values below 1 shrink), and each phase-specific one —
+        ``agent_timeout_multiplier``, ``verifier_timeout_multiplier``,
+        ``agent_setup_timeout_multiplier``,
+        ``environment_build_timeout_multiplier`` — overrides it for that
+        phase. The task itself is never rewritten. Every multiplier must be
+        greater than 0 and at most the published ceiling
+        (``limits['job']['max_timeout_multiplier']`` on the capability
+        document; 10 unless the fleet changes it) — an absurd value is
+        refused at create with a typed message naming the bound.
+        ``agent_env`` / ``verifier_env`` are
         pass-through slots injected into every agent / verifier run — sent
         verbatim; the server owns acceptance (refused where unsupported,
         never silently dropped). The hosted platform honors exactly two
@@ -3550,6 +3595,16 @@ class JobsClient:
             body['sandbox_provider'] = sandbox_provider
         if retry is not None:
             body['retry'] = retry
+        if timeout_multiplier is not None:
+            body['timeout_multiplier'] = timeout_multiplier
+        if agent_timeout_multiplier is not None:
+            body['agent_timeout_multiplier'] = agent_timeout_multiplier
+        if verifier_timeout_multiplier is not None:
+            body['verifier_timeout_multiplier'] = verifier_timeout_multiplier
+        if agent_setup_timeout_multiplier is not None:
+            body['agent_setup_timeout_multiplier'] = agent_setup_timeout_multiplier
+        if environment_build_timeout_multiplier is not None:
+            body['environment_build_timeout_multiplier'] = environment_build_timeout_multiplier
         if agent_env is not None:
             body['agent_env'] = agent_env
         if verifier_env is not None:

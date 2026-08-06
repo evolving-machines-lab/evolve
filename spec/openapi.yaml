@@ -2576,6 +2576,63 @@ components:
           $ref: '#/components/schemas/SandboxProvider'
         retry:
           $ref: '#/components/schemas/RetryConfigInput'
+        timeout_multiplier:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 10
+          default: 1.0
+          description: >
+            Multiplier for task timeouts — Harbor's `--timeout-multiplier`
+            (their cli/jobs.py, JobConfig.timeout_multiplier, default 1.0),
+            all five fields flat on this body exactly as Harbor's JobConfig
+            carries them. The worker multiplies each TASK-DECLARED timeout at
+            the point that phase's timeout is armed (agent budget, verifier
+            budget, harness-install budget, image-prepare wait); the task is
+            never rewritten, so the same task runs unstretched in every other
+            job. Values below 1 shrink, exactly as in Harbor. The platform
+            bounds every multiplier: it must be greater than 0 and at most
+            `limits.job.max_timeout_multiplier` (10 on this fleet, published
+            by /api/meta) — an absurd value is refused with a typed
+            `invalid_input` naming the bound, never silently clamped.
+        agent_timeout_multiplier:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 10
+          description: >
+            Multiplier for the agent execution timeout (overrides
+            timeout_multiplier for that phase) — Harbor's
+            `--agent-timeout-multiplier`. Applied to the task's declared
+            `agent_timeout_sec` when the agent phase is armed.
+        verifier_timeout_multiplier:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 10
+          description: >
+            Multiplier for the verifier timeout (overrides
+            timeout_multiplier for that phase) — Harbor's
+            `--verifier-timeout-multiplier`. Applied to the task's declared
+            `verifier_timeout_sec` when the verify is armed, in both
+            verifier modes, and to the judge credential TTL sized from it.
+        agent_setup_timeout_multiplier:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 10
+          description: >
+            Multiplier for the agent setup timeout (overrides
+            timeout_multiplier for that phase) — Harbor's
+            `--agent-setup-timeout-multiplier`. Applied to the platform's
+            harness-install budget (its base is a platform constant here,
+            exactly as Harbor's agent-setup base is theirs).
+        environment_build_timeout_multiplier:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 10
+          description: >
+            Multiplier for the environment build timeout (overrides
+            timeout_multiplier for that phase) — Harbor's
+            `--environment-build-timeout-multiplier`. Tasks on this platform
+            carry prebuilt images, so it applies to the image-prepare wait —
+            the budget a trial gives that image to become bootable.
         agent_env:
           type: object
           additionalProperties:
@@ -2956,6 +3013,11 @@ components:
         - max_trial_spend_usd
         - worst_case_spend_usd
         - retry
+        - timeout_multiplier
+        - agent_timeout_multiplier
+        - verifier_timeout_multiplier
+        - agent_setup_timeout_multiplier
+        - environment_build_timeout_multiplier
         - sandbox_provider
         - counts
         - n_total_trials
@@ -3006,6 +3068,24 @@ components:
             500-trial run actually needs to see.
         retry:
           $ref: '#/components/schemas/RetryConfig'
+        timeout_multiplier:
+          type: number
+          description: >
+            The RESOLVED timeout multipliers this job's phases arm under —
+            Harbor's five flat JobConfig fields, echoed on every job body.
+            The global one is always a number (1.0 when the create request
+            named none); each phase field below is null when not overridden,
+            meaning the global one applies to that phase. A regrade echoes
+            every multiplier at its default: it re-runs verifiers from
+            recorded inputs, not from a job knob.
+        agent_timeout_multiplier:
+          type: [number, 'null']
+        verifier_timeout_multiplier:
+          type: [number, 'null']
+        agent_setup_timeout_multiplier:
+          type: [number, 'null']
+        environment_build_timeout_multiplier:
+          type: [number, 'null']
         sandbox_provider:
           $ref: '#/components/schemas/SandboxProvider'
         counts:
@@ -3933,6 +4013,11 @@ components:
         - sandbox_provider
         - trial_count
         - retry
+        - timeout_multiplier
+        - agent_timeout_multiplier
+        - verifier_timeout_multiplier
+        - agent_setup_timeout_multiplier
+        - environment_build_timeout_multiplier
       properties:
         datasets:
           type: array
@@ -3956,6 +4041,20 @@ components:
           type: integer
         retry:
           $ref: '#/components/schemas/RetryConfig'
+        timeout_multiplier:
+          type: number
+          description: >
+            The resolved timeout multipliers (the same five flat fields the
+            job body echoes); rows older than the feature replay as every
+            phase at 1.0.
+        agent_timeout_multiplier:
+          type: [number, 'null']
+        verifier_timeout_multiplier:
+          type: [number, 'null']
+        agent_setup_timeout_multiplier:
+          type: [number, 'null']
+        environment_build_timeout_multiplier:
+          type: [number, 'null']
 
     JobRunningData:
       type: object
@@ -5093,6 +5192,16 @@ components:
                 max_retries_ceiling:
                   type: integer
                   description: The most retries a request may ask for.
+                default_timeout_multiplier:
+                  type: number
+                  description: >
+                    Applied to every phase when the create request names no
+                    multiplier — Harbor's own default (1.0).
+                max_timeout_multiplier:
+                  type: number
+                  description: >
+                    Ceiling every one of the five timeout-multiplier fields
+                    is bounded by; above it the create is refused.
                 default_sandbox_provider:
                   type: string
                 default_sizing:
