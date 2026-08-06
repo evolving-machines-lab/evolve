@@ -2838,12 +2838,19 @@ components:
     AgentDatasetStats:
       type: object
       description: |
-        Per-(agent, model, dataset) statistics. The evals key format is
+        Per-(arm, dataset) statistics. The evals key format is
         `{agent}__{model}__{dataset}` — the dataset ref is always the LAST
         `__` segment, which is where Harbor-compatible readers recover it —
-        with the platform extension of an `__{effort}` segment inserted
-        BEFORE the dataset when a declared reasoning effort is part of the
-        arm identity: `{agent}__{model}__{effort}__{dataset}`.
+        with the platform's arm-identity extensions inserted BEFORE the
+        dataset, each present only when the arm declares it, in this order:
+        `{agent}__{model}[__{effort}][__cfg-{hash}][__preset-{name}][__skills-{hash}]__{dataset}`.
+        `{effort}` is the declared reasoning effort verbatim; `cfg-{hash}`
+        names the arm's accepted `kwargs` (12 hex of the canonical-JSON
+        sha256, so key order cannot split one config into two groups);
+        `preset-{name}` names the settings preset; `skills-{hash}` hashes the
+        pinned skill refs. Two arms differing in ANY identity field —
+        effort, kwargs, preset, skills — are two evals entries, never one
+        overwriting the other.
       properties:
         n_trials:
           type: integer
