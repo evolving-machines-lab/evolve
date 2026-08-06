@@ -473,6 +473,65 @@ function testBuildJobInputRetry() {
   );
 }
 
+function testBuildJobInputTimeoutMultipliers() {
+  console.log("\n--- buildJobInput: the five --*timeout-multiplier flags (Harbor's names) ---");
+  // The five flags land FLAT on the body, Harbor's JobConfig fields verbatim
+  // (their cli/jobs.py:378-424) — never nested under an object.
+  const withFlags = buildJobInput(
+    parseArgs([
+      "job", "start",
+      "-d", "deep-swe",
+      "-a", "codex",
+      "-m", "m",
+      "--timeout-multiplier", "2",
+      "--verifier-timeout-multiplier", "3",
+      "--agent-setup-timeout-multiplier", "1.5",
+    ])
+  );
+  assertEqual(withFlags.timeout_multiplier, 2, "--timeout-multiplier -> timeout_multiplier");
+  assertEqual(
+    withFlags.verifier_timeout_multiplier,
+    3,
+    "--verifier-timeout-multiplier -> verifier_timeout_multiplier"
+  );
+  assertEqual(
+    withFlags.agent_setup_timeout_multiplier,
+    1.5,
+    "--agent-setup-timeout-multiplier -> agent_setup_timeout_multiplier"
+  );
+  assert(
+    !("agent_timeout_multiplier" in withFlags),
+    "an unset phase flag sends NO key — the server's global-applies default is the ask"
+  );
+  assert(!("environment_build_timeout_multiplier" in withFlags), "same for environment build");
+
+  // No flags, no keys: the server's 1.0 default is the ask.
+  const minimal = buildJobInput(parseArgs(["job", "start", "-d", "deep-swe", "-a", "codex", "-m", "m"]));
+  assert(!("timeout_multiplier" in minimal), "no multiplier key when no flag given");
+
+  // Config-file base is merged FIELD BY FIELD, a flag overriding its field —
+  // the same rule the retry flags follow (Harbor's own CLI merge posture).
+  const merged = buildJobInput(
+    parseArgs([
+      "job", "start",
+      "--config", "job.json",
+      "-d", "deep-swe",
+      "-a", "codex",
+      "-m", "m",
+      "--timeout-multiplier", "4",
+    ]),
+    () =>
+      JSON.stringify({
+        datasets: [{ name: "deep-swe" }],
+        agents: [{ name: "codex", model_name: "m" }],
+        timeout_multiplier: 2,
+        agent_timeout_multiplier: 5,
+      })
+  );
+  assertEqual(merged.timeout_multiplier, 4, "the flag overrides the config file's field");
+  assertEqual(merged.agent_timeout_multiplier, 5, "the file's other multiplier fields survive");
+}
+
 function testBuildJobInputSkills() {
   console.log("\n--- buildJobInput: --skill stamps every arm, local paths stay verbatim ---");
   const input = buildJobInput(parseArgs([
@@ -4304,6 +4363,7 @@ async function main() {
   testShortFlags();
   testBuildJobInputFlags();
   testBuildJobInputRetry();
+  testBuildJobInputTimeoutMultipliers();
   testBuildJobInputSkills();
   testBuildJobInputYesIsInert();
   testAgentKwargs();

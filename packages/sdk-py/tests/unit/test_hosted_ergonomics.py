@@ -611,6 +611,12 @@ class TestPassAtK:
             stats=stats,
             # {} is the older-server / no-auto-retry read of the policy echo.
             retry={},
+            # The older-server read of the multipliers: every phase at 1.0.
+            timeout_multiplier=1.0,
+            agent_timeout_multiplier=None,
+            verifier_timeout_multiplier=None,
+            agent_setup_timeout_multiplier=None,
+            environment_build_timeout_multiplier=None,
             failure=None,
             source_jobs=[],
             is_regrade=False,

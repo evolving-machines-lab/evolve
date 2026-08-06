@@ -670,6 +670,11 @@ function mapTrialRetry(raw: Record<string, unknown>): TrialRetry {
   };
 }
 
+/** A wire number or null — anything else (an older server, garbage) is null. */
+function optionalNumber(value: unknown): number | null {
+  return typeof value === "number" ? value : null;
+}
+
 /** ONE job mapper for every call — nothing conditional, because nothing is optional. */
 function mapJob(raw: Record<string, unknown>): Job {
   const trials = (raw.trials ?? {}) as Record<string, unknown>;
@@ -684,6 +689,17 @@ function mapJob(raw: Record<string, unknown>): Job {
     max_trial_spend_usd: raw.max_trial_spend_usd as number,
     worst_case_spend_usd: raw.worst_case_spend_usd as number,
     retry: mapRetryConfig(raw.retry),
+    // Timeout multipliers, tolerant of an OLDER server that sends none: the
+    // absent-field reading is every phase at 1.0 — exactly how such a server
+    // behaves.
+    timeout_multiplier:
+      typeof raw.timeout_multiplier === "number" ? raw.timeout_multiplier : 1.0,
+    agent_timeout_multiplier: optionalNumber(raw.agent_timeout_multiplier),
+    verifier_timeout_multiplier: optionalNumber(raw.verifier_timeout_multiplier),
+    agent_setup_timeout_multiplier: optionalNumber(raw.agent_setup_timeout_multiplier),
+    environment_build_timeout_multiplier: optionalNumber(
+      raw.environment_build_timeout_multiplier
+    ),
     sandbox_provider: raw.sandbox_provider as EvalSandboxProvider,
     counts: raw.counts as Job["counts"],
     n_total_trials: (raw.n_total_trials as number) ?? 0,
