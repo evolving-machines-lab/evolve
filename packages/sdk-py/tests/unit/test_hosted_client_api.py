@@ -53,11 +53,14 @@ from evolve import (
     EvolveAPIError,
     EvolveDigestMismatchError,
     EvolveIncompleteDownloadError,
+    GateRunningError,
+    GateRunningProgress,
     HostedClientConfig,
     JobCounts,
     JobFailure,
     NoActiveVersionError,
     SourceJob,
+    TaskGate,
     TaskProviderVerdict,
     agents as agents_factory,
     auth as auth_factory,
@@ -87,10 +90,12 @@ def _multipart_parts(request):
 
 
 class FakeResponse:
-    def __init__(self, body, headers=None):
+    def __init__(self, body, headers=None, status=200):
         self._body = body if isinstance(body, bytes) else json.dumps(body).encode('utf-8')
         self._offset = 0
         self.headers = headers or {}
+        # The real urllib response carries the HTTP status; activate() reads it.
+        self.status = status
 
     def read(self, size=-1):
         if self._offset >= len(self._body):
@@ -124,7 +129,7 @@ class FakeUrlopen:
     """Callable standing in for urllib.request.urlopen, recording requests."""
 
     def __init__(self, responses):
-        # responses: list of (url_substring, body, headers?) matched in order
+        # responses: list of (url_substring, body, headers?, status?) matched in order
         self.responses = responses
         self.requests = []
 
@@ -134,8 +139,9 @@ class FakeUrlopen:
         for entry in self.responses:
             pattern, body = entry[0], entry[1]
             headers = entry[2] if len(entry) > 2 else {}
+            status = entry[3] if len(entry) > 3 else 200
             if pattern in url:
-                return FakeResponse(body, headers)
+                return FakeResponse(body, headers, status)
         raise AssertionError(f'Unexpected request URL: {url}')
 
 
@@ -328,6 +334,21 @@ class TestDatasets:
                                 'daytona': {'ok': True},
                                 'modal': {'ok': False, 'reason': 'multi-container tasks are not supported on modal'},
                             },
+                            # The per-task half of the version's gate: outcome +
+                            # flaky + reasons + ran_at, non-string reasons filtered.
+                            'gate': {
+                                'outcome': 'FLAKY', 'flaky': True,
+                                'reasons': ['gold passed on retry 2', 7],
+                                'ran_at': '2026-07-20T00:00:00.000Z',
+                            },
+                        },
+                        {
+                            'task_name': 'no-verdict-yet',
+                            'agent_timeout_sec': 600,
+                            'verifier_timeout_sec': 600,
+                            'providers': {'e2b': {'ok': True}},
+                            # No outcome word = no verdict at all — never a crash.
+                            'gate': {'flaky': False},
                         },
                     ],
                     'nextCursor': 'task-1',
@@ -384,6 +405,15 @@ class TestDatasets:
         assert task.providers['modal'] == TaskProviderVerdict(
             ok=False, reason='multi-container tasks are not supported on modal'
         )
+        # The per-task gate verdict maps (non-string reasons filtered); a gate
+        # value without an outcome word is no verdict at all — None, never a
+        # crash.
+        assert task.gate == TaskGate(
+            outcome='FLAKY', flaky=True,
+            reasons=['gold passed on retry 2'],
+            ran_at='2026-07-20T00:00:00.000Z',
+        )
+        assert detail.tasks.items[1].gate is None
 
     @pytest.mark.asyncio
     async def test_get_maps_activation_gate_both_wire_forms(self):
@@ -453,6 +483,8 @@ class TestDatasets:
                 ),
                 DatasetVersionGateFailedTask(task_name='bare-task', outcome=None, reasons=[]),
             ],
+            # No count from the server → falls back to the mapped list's length.
+            failed_task_count=2,
         )
         # Flat form maps unchanged; a healthy gate carries None code/message
         # and an empty failed-task list.
@@ -901,6 +933,89 @@ class TestDatasets:
         assert dataset.active_version.version == '1.0'
         assert dataset.active_version.state == 'READY'
         assert dataset.versions[0].task_count == 12
+
+    @pytest.mark.asyncio
+    async def test_activate_202_raises_typed_gate_running(self):
+        """A 202 gate_running is a healthy "not yet", never a garbage Dataset.
+
+        The body is a GateRunning progress report, deliberately not the error
+        envelope — so it surfaces as its own typed error (like
+        NoActiveVersionError), not as an EvolveAPIError.
+        """
+        fake = FakeUrlopen([
+            ('/api/datasets/my-swe/versions/1.0/activate', {
+                'code': 'gate_running',
+                'message': 'The activation gate is still proving version 1.0',
+                'gate': {'status': 'RUNNING', 'tasks': 12, 'unverified': 3, 'ineligible': 1},
+            }, {}, 202),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            with pytest.raises(GateRunningError) as exc:
+                await datasets_factory(CONFIG).activate('my-swe', '1.0')
+
+        assert not isinstance(exc.value, EvolveAPIError)
+        assert exc.value.code == 'gate_running'
+        assert exc.value.dataset == 'my-swe'
+        assert exc.value.version == '1.0'
+        assert str(exc.value) == 'The activation gate is still proving version 1.0'
+        assert exc.value.gate == GateRunningProgress(
+            status='RUNNING', tasks=12, unverified=3, ineligible=1
+        )
+
+    @pytest.mark.asyncio
+    async def test_activate_202_with_malformed_body_still_typed(self):
+        """A bodyless 202 still raises the typed refusal — defensively."""
+        fake = FakeUrlopen([
+            ('/api/datasets/my-swe/versions/2.0/activate', {}, {}, 202),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            with pytest.raises(GateRunningError) as exc:
+                await datasets_factory(CONFIG).activate('my-swe', '2.0')
+
+        # Missing progress reads as PENDING with zero counts — never a crash.
+        assert exc.value.gate == GateRunningProgress(
+            status='PENDING', tasks=0, unverified=0, ineligible=0
+        )
+
+    @pytest.mark.asyncio
+    async def test_gate_failed_task_count_carries_the_true_total(self):
+        """failed_task_count is the total behind the 25-task cap on the list."""
+        fake = FakeUrlopen([
+            ('/api/datasets/big-fail', {
+                'name': 'big-fail',
+                'title': None,
+                'description': None,
+                'active_version': None,
+                'versions': [
+                    {
+                        'version': '1.0', 'state': 'FAILED',
+                        'created_at': '2026-08-03', 'task_count': 40,
+                        'gate': {
+                            'status': 'FAILED', 'attempts': 1,
+                            'failure': {
+                                'code': 'gate_failed',
+                                'message': '40 of 40 task(s) failed the activation gate',
+                                'failed_tasks': [
+                                    {'task_name': f'task-{i}', 'outcome': 'FAIL',
+                                     'reasons': ['gold never scored 1.0']}
+                                    for i in range(25)
+                                ],
+                                'failed_task_count': 40,
+                            },
+                        },
+                    },
+                ],
+                'selected_version': None,
+                'tasks': {'items': [], 'nextCursor': None, 'hasMore': False},
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            detail = await datasets_factory(CONFIG).get('big-fail')
+
+        gate = detail.versions[0].gate
+        # The list stays capped at the server's first 25; the count never is.
+        assert len(gate.failed_tasks) == 25
+        assert gate.failed_task_count == 40
 
 
 REGISTERED_AGENT = {

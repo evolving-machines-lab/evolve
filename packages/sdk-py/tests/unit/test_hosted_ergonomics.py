@@ -49,10 +49,12 @@ EMPTY_PAGE = {'items': [], 'nextCursor': None, 'hasMore': False}
 
 
 class FakeResponse:
-    def __init__(self, body, headers=None):
+    def __init__(self, body, headers=None, status=200):
         self._body = body if isinstance(body, bytes) else json.dumps(body).encode('utf-8')
         self._offset = 0
         self.headers = headers or {}
+        # The real urllib response carries the HTTP status; activate() reads it.
+        self.status = status
 
     def read(self, size=-1):
         if self._offset >= len(self._body):

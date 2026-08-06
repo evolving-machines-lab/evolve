@@ -1267,6 +1267,13 @@ export interface DatasetVersionGate {
    * report", never a crash.
    */
   failed_tasks: DatasetVersionGateFailedTask[];
+  /**
+   * The TRUE total of ineligible tasks. `failed_tasks` is capped at 25, so a
+   * gate that failed more tasks than that is under-counted by its length —
+   * this number never is. Falls back to `failed_tasks.length` on servers that
+   * predate the field, which never truncated without it.
+   */
+  failed_task_count: number;
 }
 
 /**
@@ -1343,6 +1350,26 @@ export type TaskProviderVerdict =
   | { ok: true; degrades_to?: "modal"; reason?: string }
   | { ok: false; reason: string };
 
+/**
+ * One task's activation-gate verdict — the public subset. The per-task half
+ * of the version's `gate`: while the gate is RUNNING, verdicts appear on
+ * tasks as they land. The full stored verdict carries oracle diagnostics
+ * that stay internal, like the environment specs beside it.
+ */
+export interface TaskGate {
+  /**
+   * PASS; FLAKY (gold passed only on a retry — still eligible under the
+   * operator default); FAIL (definitive: gold never scored 1.0, or a
+   * do-nothing agent did); ERROR (inconclusive — no usable score, e.g. no
+   * archived solution to run).
+   */
+  outcome: string;
+  flaky: boolean;
+  /** Human-readable; empty on PASS. */
+  reasons: string[];
+  ran_at: string | null;
+}
+
 /** Public task fields only — instructions, environments, and tests never leave the server */
 export interface Task {
   task_name: string;
@@ -1366,6 +1393,26 @@ export interface Task {
    * spent on a trial that cannot execute.
    */
   providers: Record<EvalSandboxProvider, TaskProviderVerdict>;
+  /**
+   * This task's activation-gate verdict; null until the gate has run it, and
+   * null on servers that predate the field — absence is "nothing to report",
+   * never "passed".
+   */
+  gate: TaskGate | null;
+}
+
+/**
+ * Gate progress at the moment of an activate() call that answered 202 —
+ * carried on GateRunningError. `status` is the gate's own lifecycle
+ * (PENDING or RUNNING here), `tasks` the version's task count, `unverified`
+ * the tasks the gate has not yet produced a verdict for, and `ineligible`
+ * the tasks whose verdict so far is not activation-eligible.
+ */
+export interface GateRunningProgress {
+  status: string;
+  tasks: number;
+  unverified: number;
+  ineligible: number;
 }
 
 /**

@@ -996,7 +996,7 @@ What happens next:
   - **gold** — the task's reference solution (`solution/`) is pushed through the real agent-side + verifier path and must score exactly `1.0`. Proof the task is solvable as written.
   - **no-op** — an empty submission goes straight to the verifier and must *not* score `1.0`. A task a do-nothing agent passes measures nothing.
 
-`COMPLETED` is the import's terminal success: the corpus landed as a dataset version, visible in the catalog (`catalog.get("my-swe@1.0")`) in state `VALIDATING`. The gate then runs, and a version that passes it in full reaches `READY` — the one state that accepts jobs — and becomes the dataset's active version in the same step. A publish is therefore finished when its gate passes: nothing else to call, and `{ name: "my-swe" }` in a job already resolves to what you just published. A version that fails its gate terminally lands in state `FAILED`, with the reason attached: every version row carries a `gate` field — `{ status, attempts, code, message, failed_tasks }`, where `failed_tasks` names each ineligible task with the gate's own reasons (`[{ task_name, outcome, reasons }]`, the first 25) — and `evolve dataset show` prints a failed gate as its own line (`version 1.0 activation gate FAILED: <the server's reason>`) followed by one indented line per failed task (`  starter-task: gold run produced no usable score …`), so a dead publish is never mistaken for one still validating and the cause is on the page, not just the count. The failure changes nothing else — the dataset keeps serving whatever it served before. `evals.start()` against any other state is rejected with a `409 version_not_ready` naming it.
+`COMPLETED` is the import's terminal success: the corpus landed as a dataset version, visible in the catalog (`catalog.get("my-swe@1.0")`) in state `VALIDATING`. The gate then runs, and a version that passes it in full reaches `READY` — the one state that accepts jobs — and becomes the dataset's active version in the same step. A publish is therefore finished when its gate passes: nothing else to call, and `{ name: "my-swe" }` in a job already resolves to what you just published. A version that fails its gate terminally lands in state `FAILED`, with the reason attached: every version row carries a `gate` field — `{ status, attempts, code, message, failed_tasks, failed_task_count }`, where `failed_tasks` names each ineligible task with the gate's own reasons (`[{ task_name, outcome, reasons }]`, the first 25) and `failed_task_count` is the true total, so a gate that failed more than 25 tasks is never under-reported by the list's length — and `evolve dataset show` prints a failed gate as its own line (`version 1.0 activation gate FAILED: <the server's reason>`) followed by one indented line per failed task (`  starter-task: gold run produced no usable score …`), so a dead publish is never mistaken for one still validating and the cause is on the page, not just the count. The failure changes nothing else — the dataset keeps serving whatever it served before. `evals.start()` against any other state is rejected with a `409 version_not_ready` naming it.
 
 The gate is queued work, and the queue says so: within seconds of the import completing, the version's `gate` field shows `PENDING`. Each worker proves one version's gate at a time, and a single gate run can take minutes to hours of real sandbox work, so a `PENDING` gate may wait while another version's gate finishes ahead of it. `PENDING` means scheduled and waiting; `RUNNING` means your tasks are being proven right now. Neither means stuck.
 
@@ -1017,7 +1017,7 @@ await catalog.activate("my-swe", "1.0");
 evolve dataset activate my-swe 1.0
 ```
 
-From then on `{ name: "my-swe" }` in a job resolves to that version, and asking for the version that is already active succeeds without changing anything. Activating is refused with `version_not_ready` while the import and gate still run, and with `version_not_activatable` for a version that can never activate (no reference solutions were archived — the import's `warnings` told you at publish time).
+From then on `{ name: "my-swe" }` in a job resolves to that version, and asking for the version that is already active succeeds without changing anything. While the version's activation gate is still scheduled or running the API answers 202 `gate_running` — a healthy "not yet", deliberately not the error envelope — and the SDK raises it as the typed `GateRunningError`: `err.gate` carries the gate's progress (`{ status, tasks, unverified, ineligible }`), and there is normally nothing to do but wait, because a gate that passes activates the version itself. Once the gate has landed, activating is refused with `version_not_ready` for a version whose gate failed (the gate's failure detail rides `details.gate_failure`), and with `version_not_activatable` for a version that can never activate (no reference solutions were archived — the import's `warnings` told you at publish time).
 
 ### Getting your corpus back
 
@@ -1647,6 +1647,14 @@ interface DatasetVersionGate {           // the activation gate's progress
     attempts: number;
     code: string | null;                 // set on failure, e.g. "gate_failed"
     message: string | null;              // the human reason, set on failure
+    failed_tasks: DatasetVersionGateFailedTask[];  // the ineligible tasks, first 25
+    failed_task_count: number;           // the TRUE total behind the 25-task cap
+}
+
+interface DatasetVersionGateFailedTask {
+    task_name: string;
+    outcome: string | null;              // FAIL, or ERROR (no usable score)
+    reasons: string[];                   // the gate's own sentences
 }
 
 interface Task {                         // public fields only
@@ -1654,6 +1662,14 @@ interface Task {                         // public fields only
     agent_timeout_sec: number;
     verifier_timeout_sec: number;
     providers: Record<EvalSandboxProvider, TaskProviderVerdict>;  // where it can run
+    gate: TaskGate | null;               // this task's gate verdict; null until it ran
+}
+
+interface TaskGate {                     // the per-task half of the version's gate
+    outcome: string;                     // PASS | FLAKY | FAIL | ERROR
+    flaky: boolean;
+    reasons: string[];                   // human-readable; empty on PASS
+    ran_at: string | null;
 }
 
 type TaskProviderVerdict = { ok: true } | { ok: false; reason: string };
