@@ -49,6 +49,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 import {
+  AGENT_EFFORT_SUPPORT_VALUES,
   EVAL_SANDBOX_PROVIDERS,
   HOSTED_ERROR_CODES,
   TRIAL_ARTIFACT_STREAMS,
@@ -89,6 +90,7 @@ console.log("\n=== Hosted spec drift gate (vs spec/openapi.yaml) ===\n");
 // -----------------------------------------------------------------------------
 
 const specOperations = new Map<string, number>(); // operationId -> wave
+const runtimePlaneOperations = new Set<string>(); // operations marked x-plane: sdk-runtime
 {
   let current: string | null = null;
   for (const line of specLines) {
@@ -100,6 +102,11 @@ const specOperations = new Map<string, number>(); // operationId -> wave
     }
     const wave = /^ {6}x-wave: (\d+)\s*$/.exec(line);
     if (wave && current) specOperations.set(current, Number(wave[1]));
+    const plane = /^ {6}x-plane: sdk-runtime\s*$/.exec(line);
+    if (plane && current) {
+      runtimePlaneOperations.add(current);
+      specOperations.delete(current);
+    }
   }
 }
 
@@ -208,6 +215,85 @@ function resolve(path: string): unknown {
   const target = surfaces[head];
   return method === undefined ? target : (target as Record<string, unknown>)?.[method];
 }
+
+// -----------------------------------------------------------------------------
+// 1b. RUNTIME-PLANE OPERATIONS — the spec's `x-plane: sdk-runtime` doors (the
+// managed-agents surface). They are NOT served by the hosted clients this
+// file exercises, so they carry their own hand-maintained map: operationId ->
+// the SDK module that speaks that door. Same law as the hosted map — a new
+// runtime operation fails the gate until someone states its SDK answer, and
+// a map entry whose operation left the spec fails as phantom.
+// -----------------------------------------------------------------------------
+
+const RUNTIME_OPERATION_TO_MODULE: Record<string, string> = {
+  listSessions: "src/sessions/index.ts",
+  deleteSessions: "src/sessions/index.ts",
+  getSession: "src/sessions/index.ts",
+  deleteSession: "src/sessions/index.ts",
+  ingestSessionEvents: "src/observability/session-logger.ts",
+  getSessionSpend: "src/sessions/index.ts (cost surface)",
+  listCheckpoints: "src/storage/index.ts",
+  createCheckpoint: "src/storage/index.ts",
+  getCheckpoint: "src/storage/index.ts",
+  presignCheckpointTransfer: "src/storage/index.ts",
+  listManagedSecrets: "src/managed-secrets.ts",
+  createManagedRuntimeToken: "src/managed-secrets.ts",
+  extendManagedRuntimeToken: "src/managed-secrets.ts",
+  revokeManagedRuntimeToken: "src/managed-secrets.ts",
+  createProviderRuntimeToken: "src/provider-secrets.ts",
+  extendProviderRuntimeToken: "src/provider-secrets.ts",
+  revokeProviderRuntimeToken: "src/provider-secrets.ts",
+  listBrowserCredentials: "src/browser-credentials.ts",
+  storeBrowserCredential: "src/browser-credentials.ts",
+  deleteBrowserCredentials: "src/browser-credentials.ts",
+  deleteBrowserCredential: "src/browser-credentials.ts",
+  getBrowserCredentialsPublicKey: "src/browser-credentials.ts",
+  createBrowserLoginMcpConfig: "src/browser.ts",
+  listBrowserProfiles: "src/browser-profiles.ts",
+  deleteBrowserProfile: "src/browser-profiles.ts",
+  createBrowserSession: "src/browser.ts",
+  deleteBrowserSession: "src/browser.ts",
+  createIntegrationSession: "src/integrations.ts",
+  updateIntegrationAccounts: "src/integrations.ts",
+  connectIntegration: "src/integrations.ts",
+  disconnectIntegration: "src/integrations.ts",
+  getIntegrationsStatus: "src/integrations.ts",
+  proxyDaytonaGet: "src/agent.ts (managed door)",
+  proxyDaytonaPost: "src/agent.ts (managed door)",
+  proxyDaytonaDelete: "src/agent.ts (managed door)",
+  proxyDaytonaToolboxGet: "src/agent.ts (managed door)",
+  proxyDaytonaToolboxPost: "src/agent.ts (managed door)",
+  proxyDaytonaToolboxDelete: "src/agent.ts (managed door)",
+  proxyE2bGet: "src/agent.ts (managed door)",
+  proxyE2bPost: "src/agent.ts (managed door)",
+  proxyE2bDelete: "src/agent.ts (managed door)",
+  proxyModalGet: "src/utils/managed-modal.ts",
+  proxyModalPost: "src/utils/managed-modal.ts",
+  proxyModalDelete: "src/utils/managed-modal.ts",
+};
+
+const runtimeUnmapped = [...runtimePlaneOperations].filter(
+  (id) => !(id in RUNTIME_OPERATION_TO_MODULE)
+);
+assert(
+  runtimeUnmapped.length === 0,
+  runtimeUnmapped.length === 0
+    ? `every runtime-plane operation has a stated SDK module (${runtimePlaneOperations.size} doors)`
+    : `runtime operations missing from the map (state their SDK answer): ${runtimeUnmapped.join(", ")}`
+);
+const runtimePhantom = Object.keys(RUNTIME_OPERATION_TO_MODULE).filter(
+  (id) => !runtimePlaneOperations.has(id)
+);
+assert(
+  runtimePhantom.length === 0,
+  runtimePhantom.length === 0
+    ? "the runtime map invents no operation the spec does not declare"
+    : `runtime map entries with no spec operation: ${runtimePhantom.join(", ")}`
+);
+assert(
+  runtimePlaneOperations.size >= 25,
+  `the runtime plane parsed (${runtimePlaneOperations.size} operations found)`
+);
 
 const unmapped = [...specOperations.keys()].filter((id) => !(id in OPERATION_TO_METHOD));
 assert(
@@ -337,6 +423,59 @@ assert(
   JSON.stringify(declaredSpendSources) === JSON.stringify(specSpendSources)
     ? `SpendSource is the spec's enum, byte-exactly (${specSpendSources.join(", ")})`
     : `spend lanes drifted: SDK [${declaredSpendSources.join(", ")}] vs spec [${specSpendSources.join(", ")}]`
+);
+
+// -----------------------------------------------------------------------------
+// 6. AGENT EFFORT VOCABULARY — the axis the effort_support CRITICAL proved
+// missing: the spec typed the field as a boolean while the server served a
+// three-value string, and no gate on any side noticed. The published runtime
+// list AND the published union are both held to the contract's enum.
+// -----------------------------------------------------------------------------
+
+/** A property's inline `enum: [a, b, c]` line, scoped to one schema's block. */
+function propertyEnum(schemaName: string, property: string): string[] {
+  let inSchema = false;
+  let inProperty = false;
+  for (const line of specLines) {
+    if (!inSchema) {
+      if (new RegExp(`^ {4}${schemaName}:\\s*$`).test(line)) inSchema = true;
+      continue;
+    }
+    if (/^ {4}[A-Z]\w*:\s*$/.test(line)) break;
+    if (new RegExp(`^ {8}${property}:\\s*$`).test(line)) {
+      inProperty = true;
+      continue;
+    }
+    if (inProperty) {
+      if (/^ {8}\w/.test(line)) break; // the next property ends the scope
+      const m = /^ {10}enum: \[([^\]]+)\]\s*$/.exec(line);
+      if (m) return m[1].split(",").map((s) => s.trim());
+    }
+  }
+  return [];
+}
+
+const specEffortSupport = propertyEnum("AgentCapability", "effort_support");
+assert(
+  specEffortSupport.length >= 3,
+  `the spec's AgentCapability.effort_support enum parsed (${specEffortSupport.length} members)`
+);
+assert(
+  JSON.stringify([...AGENT_EFFORT_SUPPORT_VALUES]) === JSON.stringify(specEffortSupport),
+  JSON.stringify([...AGENT_EFFORT_SUPPORT_VALUES]) === JSON.stringify(specEffortSupport)
+    ? `AGENT_EFFORT_SUPPORT_VALUES is the spec's enum, byte-exactly (${specEffortSupport.join(", ")})`
+    : `effort_support drifted: SDK [${AGENT_EFFORT_SUPPORT_VALUES.join(", ")}] vs spec [${specEffortSupport.join(", ")}]`
+);
+
+// The published AgentEffortSupport union derives from the runtime list
+// (`(typeof AGENT_EFFORT_SUPPORT_VALUES)[number]`), so holding the list to
+// the contract holds the type with it — asserted through the source so a
+// hand-rewritten literal union cannot quietly replace the derivation.
+assert(
+  /export type AgentEffortSupport = \(typeof AGENT_EFFORT_SUPPORT_VALUES\)\[number\];/.test(
+    TYPES_SOURCE
+  ),
+  "AgentEffortSupport derives from AGENT_EFFORT_SUPPORT_VALUES (no shadow union)"
 );
 
 console.log(`\n═══ ${passed} passed, ${failed} failed ═══\n`);

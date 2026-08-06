@@ -108,6 +108,7 @@ import type {
 
 // Re-exported from the hosted barrel so the package root can hand them on.
 export {
+  AGENT_EFFORT_SUPPORT_VALUES,
   EVAL_SANDBOX_PROVIDERS,
   HOSTED_ERROR_CODES,
   TRIAL_ARTIFACT_STREAMS,
@@ -122,7 +123,9 @@ export type {
   AgentArmInput,
   AgentCapability,
   AgentDatasetStats,
+  AgentEffortSupport,
   AgentInfo,
+  AgentModelOption,
   AgentInput,
   AgentList,
   AgentPage,

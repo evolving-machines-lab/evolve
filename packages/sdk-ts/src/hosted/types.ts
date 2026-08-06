@@ -2383,11 +2383,50 @@ export interface StatusVocabulary {
   terminal: string[];
 }
 
+/**
+ * The `effort_support` vocabulary, published as a runtime list so the drift
+ * gate can hold this union to the contract's enum — and so a client can
+ * narrow an unknown string. The server serves exactly these members.
+ */
+export const AGENT_EFFORT_SUPPORT_VALUES = ["level", "binary", "none"] as const;
+
+/** What an agent does with `agents[].reasoning_effort` — see AgentCapability. */
+export type AgentEffortSupport = (typeof AGENT_EFFORT_SUPPORT_VALUES)[number];
+
+/** One model alias an agent offers, for a picker's option list. */
+export interface AgentModelOption {
+  alias: string;
+  model_id: string;
+  description: string | null;
+}
+
 /** One built-in agent's declared capabilities. */
 export interface AgentCapability {
   name: string;
-  /** Whether job agents[].reasoning_effort reaches this agent. */
-  effort_support: boolean;
+  /** false = registered but the agent phase must refuse it, with `reason` set. */
+  runnable: boolean;
+  /** Why not, when `runnable` is false. Null otherwise. */
+  reason: string | null;
+  /**
+   * What the evolve SDK runs when no model is named. This API REQUIRES an
+   * explicit model (limits.job.model_required), so treat it as the sensible
+   * pre-selection for a picker — the server never fills it in for you.
+   */
+  default_model: string | null;
+  /** Known model aliases for this agent — the picker's option list. */
+  models: AgentModelOption[];
+  /**
+   * What this agent does with `agents[].reasoning_effort`:
+   *   'level'   the value reaches the agent CLI as a level
+   *   'binary'  thinking on/off only — a level outside
+   *             limits.job.binary_effort_values is refused at create
+   *   'none'    no effort input at all; naming one is refused at create
+   * Published so a builder greys the control out instead of discovering the
+   * refusal after a POST.
+   */
+  effort_support: AgentEffortSupport;
+  /** The pinned default stored when a create request omits the effort; null for 'none'. */
+  default_effort: string | null;
   /** Whether job agents[].version may pin this agent. */
   version_pinnable: boolean;
   /**
@@ -2546,6 +2585,10 @@ export interface CapabilityDocument {
     uploads: {
       dataset_archive_bytes: number;
       agent_tarball_bytes: number;
+      /** Compressed cap on one uploaded skill tarball (`skill_too_large` past it). */
+      skill_archive_bytes: number;
+      /** Uploaded-skill records one caller may hold (`skill_limit_reached` past it). */
+      skill_uploads_per_user: number;
     };
     dataset_names: {
       pattern: string;

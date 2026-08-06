@@ -36,6 +36,7 @@ import typing
 from pathlib import Path
 
 from evolve import (
+    EFFORT_SUPPORT_VALUES,
     HOSTED_ERROR_CODES,
     AgentsClient,
     AuthClient,
@@ -49,6 +50,7 @@ from evolve import (
     TrialsClient,
     meta,
 )
+from evolve.hosted import EffortSupport
 
 SPEC_PATH = Path(__file__).resolve().parents[4] / 'spec' / 'openapi.yaml'
 
@@ -57,10 +59,16 @@ def _spec_lines() -> 'list[str]':
     return SPEC_PATH.read_text().split('\n')
 
 
-def _spec_operations() -> 'dict[str, int]':
-    """operationId -> wave. Operation-level keys sit at exactly 6 spaces;
-    parameter-level x-wave markers sit deeper and are not the operation's."""
+def _parse_operations() -> 'tuple[dict[str, int], set[str]]':
+    """(hosted operationId -> wave, runtime-plane operationIds).
+
+    Operation-level keys sit at exactly 6 spaces; parameter-level x-wave
+    markers sit deeper and are not the operation's. Operations marked
+    ``x-plane: sdk-runtime`` are the managed-agents runtime doors — a
+    different SDK surface with its own map below, never the hosted clients'.
+    """
     operations: 'dict[str, int]' = {}
+    runtime: 'set[str]' = set()
     current = None
     for line in _spec_lines():
         op = re.match(r'^ {6}operationId: (\w+)\s*$', line)
@@ -71,8 +79,15 @@ def _spec_operations() -> 'dict[str, int]':
         wave = re.match(r'^ {6}x-wave: (\d+)\s*$', line)
         if wave and current:
             operations[current] = int(wave.group(1))
+        if re.match(r'^ {6}x-plane: sdk-runtime\s*$', line) and current:
+            runtime.add(current)
+            operations.pop(current, None)
     assert len(operations) >= 25, 'the operation parse found too few — spec moved?'
-    return operations
+    return operations, runtime
+
+
+def _spec_operations() -> 'dict[str, int]':
+    return _parse_operations()[0]
 
 
 def _enum_entries(start: str, end: str, entry: str) -> 'list[str]':
@@ -170,12 +185,73 @@ def _resolve(entry):
     return entry
 
 
+# The runtime plane's own map: operationId -> the evolve module that speaks
+# that door. Documentary like the hosted map — a new runtime operation fails
+# the gate until someone states its SDK answer. The TypeScript gate holds the
+# same list against the same spec.
+RUNTIME_OPERATION_TO_MODULE = {
+    'listSessions': 'evolve/sessions_client.py',
+    'deleteSessions': 'evolve/sessions_client.py',
+    'getSession': 'evolve/sessions_client.py',
+    'deleteSession': 'evolve/sessions_client.py',
+    'ingestSessionEvents': 'evolve/agent.py (observability push)',
+    'getSessionSpend': 'evolve/sessions_client.py (cost surface)',
+    'listCheckpoints': 'evolve/storage_client.py',
+    'createCheckpoint': 'evolve/storage_client.py',
+    'getCheckpoint': 'evolve/storage_client.py',
+    'presignCheckpointTransfer': 'evolve/storage_client.py',
+    'listManagedSecrets': 'evolve/managed_secrets.py',
+    'createManagedRuntimeToken': 'evolve/managed_secrets.py',
+    'extendManagedRuntimeToken': 'evolve/managed_secrets.py',
+    'revokeManagedRuntimeToken': 'evolve/managed_secrets.py',
+    'createProviderRuntimeToken': 'evolve/agent.py (provider secrets)',
+    'extendProviderRuntimeToken': 'evolve/agent.py (provider secrets)',
+    'revokeProviderRuntimeToken': 'evolve/agent.py (provider secrets)',
+    'listBrowserCredentials': 'evolve/browser_credentials.py',
+    'storeBrowserCredential': 'evolve/browser_credentials.py',
+    'deleteBrowserCredentials': 'evolve/browser_credentials.py',
+    'deleteBrowserCredential': 'evolve/browser_credentials.py',
+    'getBrowserCredentialsPublicKey': 'evolve/browser_credentials.py',
+    'createBrowserLoginMcpConfig': 'evolve/agent.py (browser login)',
+    'listBrowserProfiles': 'evolve/browser_profiles.py',
+    'deleteBrowserProfile': 'evolve/browser_profiles.py',
+    'createBrowserSession': 'evolve/agent.py (browser sessions)',
+    'deleteBrowserSession': 'evolve/agent.py (browser sessions)',
+    'createIntegrationSession': 'evolve/integrations.py',
+    'updateIntegrationAccounts': 'evolve/integrations.py',
+    'connectIntegration': 'evolve/integrations.py',
+    'disconnectIntegration': 'evolve/integrations.py',
+    'getIntegrationsStatus': 'evolve/integrations.py',
+    'proxyDaytonaGet': 'evolve/agent.py (managed door)',
+    'proxyDaytonaPost': 'evolve/agent.py (managed door)',
+    'proxyDaytonaDelete': 'evolve/agent.py (managed door)',
+    'proxyDaytonaToolboxGet': 'evolve/agent.py (managed door)',
+    'proxyDaytonaToolboxPost': 'evolve/agent.py (managed door)',
+    'proxyDaytonaToolboxDelete': 'evolve/agent.py (managed door)',
+    'proxyE2bGet': 'evolve/agent.py (managed door)',
+    'proxyE2bPost': 'evolve/agent.py (managed door)',
+    'proxyE2bDelete': 'evolve/agent.py (managed door)',
+    'proxyModalGet': 'evolve/agent.py (managed modal)',
+    'proxyModalPost': 'evolve/agent.py (managed modal)',
+    'proxyModalDelete': 'evolve/agent.py (managed modal)',
+}
+
+
 def test_every_spec_operation_is_mapped():
     operations = _spec_operations()
     unmapped = [op for op in operations if op not in OPERATION_TO_METHOD]
     assert not unmapped, f'spec operations missing from the map (state their SDK answer): {unmapped}'
     phantom = [op for op in OPERATION_TO_METHOD if op not in operations]
     assert not phantom, f'map entries with no spec operation: {phantom}'
+
+
+def test_every_runtime_plane_operation_is_mapped():
+    _, runtime = _parse_operations()
+    assert len(runtime) >= 25, 'the runtime-plane parse found too few — spec moved?'
+    unmapped = [op for op in runtime if op not in RUNTIME_OPERATION_TO_MODULE]
+    assert not unmapped, f'runtime operations missing from the map (state their SDK answer): {unmapped}'
+    phantom = [op for op in RUNTIME_OPERATION_TO_MODULE if op not in runtime]
+    assert not phantom, f'runtime map entries with no spec operation: {phantom}'
 
 
 def test_wave_1_operations_all_reach_a_method():
@@ -239,3 +315,36 @@ def test_spend_source_literal_matches_the_spec_enum():
     lanes = _spec_inline_enum('SpendSource')
     assert len(lanes) >= 3, 'the SpendSource parse found too few — spec moved?'
     assert list(typing.get_args(SpendSource)) == lanes
+
+
+def _spec_property_enum(schema: str, prop: str) -> 'list[str]':
+    """A property's inline ``enum: [a, b, c]``, scoped to one schema's block."""
+    in_schema = False
+    in_property = False
+    for line in _spec_lines():
+        if not in_schema:
+            in_schema = re.match(rf'^ {{4}}{schema}:\s*$', line) is not None
+            continue
+        if re.match(r'^ {4}[A-Z]\w*:\s*$', line):
+            break
+        if re.match(rf'^ {{8}}{prop}:\s*$', line):
+            in_property = True
+            continue
+        if in_property:
+            if re.match(r'^ {8}\w', line):
+                break  # the next property ends the scope
+            matched = re.match(r'^ {10}enum: \[([^\]]+)\]\s*$', line)
+            if matched:
+                return [member.strip() for member in matched.group(1).split(',')]
+    return []
+
+
+def test_effort_support_vocabulary_matches_the_spec_enum():
+    """The axis the effort_support CRITICAL proved missing: the spec typed the
+    field as a boolean while the server served a three-value string, and this
+    SDK's ``is True`` coercion read every agent as no-effort-support. Both the
+    runtime tuple and the Literal are held to the contract's enum."""
+    members = _spec_property_enum('AgentCapability', 'effort_support')
+    assert len(members) >= 3, 'the effort_support enum parse found too few — spec moved?'
+    assert list(EFFORT_SUPPORT_VALUES) == members
+    assert list(typing.get_args(EffortSupport)) == members

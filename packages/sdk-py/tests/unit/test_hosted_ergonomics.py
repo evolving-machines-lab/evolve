@@ -23,6 +23,7 @@ from unittest.mock import patch
 import pytest
 
 from evolve import (
+    AgentModelOption,
     CapabilityDocument,
     EvolveAPIError,
     HostedClientConfig,
@@ -419,10 +420,25 @@ class TestFrontDoor:
             'agents': [
                 {
                     'name': 'claude',
-                    'effort_support': True,
+                    'runnable': True,
+                    'reason': None,
+                    'default_model': 'opus',
+                    'models': [
+                        {'alias': 'opus', 'model_id': 'claude-opus-5', 'description': None}
+                    ],
+                    'effort_support': 'level',
+                    'default_effort': 'high',
                     'version_pinnable': True,
                     'latest_version': '1.2.3',
-                }
+                },
+                {
+                    # An agent whose effort_support the SDK does not recognize
+                    # (here: the boolean an obsolete server would send) must
+                    # fail CLOSED to 'none', never truthy-coerce.
+                    'name': 'mystery',
+                    'effort_support': True,
+                    'version_pinnable': False,
+                },
             ],
             'agent_registration': {'max_per_user': 25},
             'sandbox_providers': [
@@ -458,8 +474,21 @@ class TestFrontDoor:
 
         assert isinstance(result, CapabilityDocument)
         assert result.schema_version == 3
-        assert result.agents[0].effort_support is True
+        # The tri-state vocabulary arrives verbatim — the coercion that read
+        # 'level' as False (`is True`) reported every agent as no-effort.
+        assert result.agents[0].effort_support == 'level'
+        assert result.agents[0].runnable is True
+        assert result.agents[0].reason is None
+        assert result.agents[0].default_model == 'opus'
+        assert result.agents[0].models == [
+            AgentModelOption(alias='opus', model_id='claude-opus-5', description=None)
+        ]
+        assert result.agents[0].default_effort == 'high'
         assert result.agents[0].latest_version == '1.2.3'
+        # Unrecognized effort_support fails closed; absent runnable stays True.
+        assert result.agents[1].effort_support == 'none'
+        assert result.agents[1].runnable is True
+        assert result.agents[1].models == []
         assert result.statuses['job'].terminal == ['COMPLETED']
         assert result.sandbox_providers[0].default is True
         # The door list is objects, never bare names — a client asks each door

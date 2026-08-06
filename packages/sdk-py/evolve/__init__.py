@@ -34,12 +34,14 @@ from .config import (
     HostedClientConfig,
 )
 from .hosted import (
+    EFFORT_SUPPORT_VALUES,
     ActiveDataset,
     Agent,
     AgentArm,
     AgentCapability,
     AgentDatasetStats,
     AgentInfo,
+    AgentModelOption,
     AgentPage,
     AgentResult,
     AgentsClient,
@@ -554,6 +556,8 @@ __all__ = [
     'HostedEvolve',
     'CapabilityDocument',
     'AgentCapability',
+    'AgentModelOption',
+    'EFFORT_SUPPORT_VALUES',
     'ManagedProviderCapability',
     'ProviderCapability',
     'StatusVocabulary',

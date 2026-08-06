@@ -639,14 +639,50 @@ class StatusVocabulary:
     terminal: List[str]
 
 
+#: The ``effort_support`` vocabulary, as one runtime tuple so the contract
+#: drift gate can hold it to the spec's enum — and so a caller can narrow an
+#: unknown string. The server serves exactly these members.
+EFFORT_SUPPORT_VALUES = ('level', 'binary', 'none')
+
+#: What an agent does with ``agents[].reasoning_effort`` — see
+#: :attr:`AgentCapability.effort_support`.
+EffortSupport = Literal['level', 'binary', 'none']
+
+
+@dataclass
+class AgentModelOption:
+    """One model alias an agent offers, for a picker's option list."""
+    alias: str
+    model_id: str
+    description: Optional[str] = None
+
+
 @dataclass
 class AgentCapability:
     """One built-in agent's declared capabilities."""
     name: str
-    #: Whether job ``agents[].reasoning_effort`` reaches this agent.
-    effort_support: bool
+    #: What this agent does with ``agents[].reasoning_effort``:
+    #: ``'level'`` — the value reaches the agent CLI as a level;
+    #: ``'binary'`` — thinking on/off only, a level outside
+    #: ``limits['job']['binary_effort_values']`` is refused at create;
+    #: ``'none'`` — no effort input at all, naming one is refused at create.
+    #: Anything this SDK does not recognize maps to ``'none'`` (fail closed).
+    effort_support: EffortSupport
     #: Whether job ``agents[].version`` may pin this agent.
     version_pinnable: bool
+    #: False = registered but the agent phase must refuse it; ``reason`` says why.
+    runnable: bool = True
+    #: Why not, when ``runnable`` is False. None otherwise.
+    reason: Optional[str] = None
+    #: What the evolve SDK runs when no model is named. This API REQUIRES an
+    #: explicit model, so treat it as the sensible pre-selection for a picker —
+    #: the server never fills it in for you.
+    default_model: Optional[str] = None
+    #: Known model aliases for this agent — the picker's option list.
+    models: List[AgentModelOption] = field(default_factory=list)
+    #: The pinned default stored when a create request omits the effort;
+    #: None for ``effort_support`` ``'none'``.
+    default_effort: Optional[str] = None
     #: Newest published version, for a "your pin is out of date" badge. None
     #: means "not known right now", never "up to date".
     latest_version: Optional[str] = None
@@ -1777,8 +1813,30 @@ def _map_capability_document(raw: Dict[str, Any]) -> CapabilityDocument:
         agents=[
             AgentCapability(
                 name=item['name'],
-                effort_support=item.get('effort_support') is True,
+                # The wire value is the tri-state string vocabulary; anything
+                # else (including the boolean an obsolete server would send)
+                # fails CLOSED to 'none' — never a silently-accepted effort.
+                effort_support=item.get('effort_support')
+                if item.get('effort_support') in EFFORT_SUPPORT_VALUES else 'none',
                 version_pinnable=item.get('version_pinnable') is True,
+                # Absent on an older server = the historical behavior: every
+                # listed agent was runnable.
+                runnable=item.get('runnable') is not False,
+                reason=item.get('reason') if isinstance(item.get('reason'), str) else None,
+                default_model=item.get('default_model')
+                if isinstance(item.get('default_model'), str) else None,
+                models=[
+                    AgentModelOption(
+                        alias=m['alias'],
+                        model_id=m['model_id'],
+                        description=m.get('description')
+                        if isinstance(m.get('description'), str) else None,
+                    )
+                    for m in item.get('models', [])
+                    if isinstance(m, dict) and 'alias' in m and 'model_id' in m
+                ] if isinstance(item.get('models'), list) else [],
+                default_effort=item.get('default_effort')
+                if isinstance(item.get('default_effort'), str) else None,
                 latest_version=item.get('latest_version'),
                 supports_config=item.get('supports_config') is True,
                 presets=[p for p in item.get('presets', []) if isinstance(p, str)]

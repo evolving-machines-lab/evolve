@@ -121,6 +121,13 @@ tags:
     description: Public capability document.
   - name: auth
     description: Key and identity surface.
+  - name: sdk-runtime
+    description: >-
+      The managed-agents SDK-runtime surface: the doors the evolve SDK's
+      session, checkpoint, secrets, browser, and integrations clients call
+      (marked x-plane: sdk-runtime). Paths, methods, and auth are pinned here
+      and machine-checked by the server's drift gate; the payload documents
+      are the runtime clients' own shapes, typed at door level.
 
 paths:
   # ===========================================================================
@@ -479,6 +486,23 @@ paths:
         fixed tar mtimes, zero gzip mtime — re-downloads are byte-identical.
         Task environment identity only — instructions, verifier commands, and
         test files never leave the server.
+
+        EXTENSION KEYS. The record files are Harbor's own vocabulary, and a
+        Harbor parser ignores keys it does not know; everything Evolve-specific
+        rides under `x_evolve`. The job's `config.json` and `result.json`
+        carry `JobArchiveConfigExtension` and `JobArchiveResultExtension`; a
+        trial's `config.json` and `result.json` carry
+        `TrialArchiveConfigExtension` and `TrialArchiveResultExtension` (all
+        four are component schemas in this contract). Money reconciles from
+        the extensions, not from the Harbor-native field: a trial's
+        authoritative spend is `x_evolve.spentUsd` beside its
+        `spendSource` lane, the job total is the job `result.json`'s
+        `x_evolve.spentUsd`, and `agent_result.cost_usd` states only a
+        MEASURED model spend (null otherwise). Two more extensions ride the
+        job `config.json`'s `agents` entries: `x_reasoning_effort` (the arm's
+        declared effort) and `x_preset` (the platform settings preset), each
+        omitted when the arm declared none. `artifacts/manifest.json` is a
+        JSON LIST of `ArtifactManifestEntry`.
       parameters:
         - $ref: '#/components/parameters/JobId'
       responses:
@@ -1969,6 +1993,819 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  # ===========================================================================
+  # SDK runtime (managed agents) — every operation below carries
+  # `x-plane: sdk-runtime`.
+  #
+  # Everything above this line is the hosted-evals contract, served to the
+  # hosted SDK clients (jobs/trials/datasets/agents/skills/meta/auth). The
+  # doors below are the OTHER public wire surface the evolve SDK speaks: the
+  # managed-agents runtime — sessions and their transcripts, checkpoints,
+  # managed/provider secrets and runtime tokens, browser credentials and
+  # sessions, integrations, and the managed-provider passthroughs. They were
+  # previously undeclared and explicitly excluded from the drift gate, which
+  # meant the largest public surface could change server-side unchecked.
+  #
+  # Fidelity law for this section: the PATHS, METHODS, and AUTH are the
+  # contract and are machine-checked by the server's route gate in both
+  # directions. The payloads are the runtime clients' own document shapes,
+  # declared here at door level (`RuntimeDocument`) — tightening a door to a
+  # full field-level schema is welcome, but inventing one here without
+  # reading the serving code is not. Errors on this plane are the runtime's
+  # `{ error: string }` envelope, NOT the hosted contract's typed ErrorCode
+  # envelope.
+  # ===========================================================================
+
+  /api/sessions:
+    get:
+      tags: [sdk-runtime]
+      operationId: listSessions
+      x-plane: sdk-runtime
+      summary: List the caller's agent sessions
+      responses:
+        '200':
+          description: The caller's sessions, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+    delete:
+      tags: [sdk-runtime]
+      operationId: deleteSessions
+      x-plane: sdk-runtime
+      summary: Bulk-delete the caller's sessions
+      responses:
+        '200':
+          description: Deletion result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+
+  /api/sessions/{sessionId}:
+    get:
+      tags: [sdk-runtime]
+      operationId: getSession
+      x-plane: sdk-runtime
+      summary: Get one session
+      parameters:
+        - $ref: '#/components/parameters/RuntimeSessionId'
+      responses:
+        '200':
+          description: The session document.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+        '404':
+          $ref: '#/components/responses/RuntimeNotFound'
+    delete:
+      tags: [sdk-runtime]
+      operationId: deleteSession
+      x-plane: sdk-runtime
+      summary: Delete one session
+      parameters:
+        - $ref: '#/components/parameters/RuntimeSessionId'
+      responses:
+        '200':
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+        '404':
+          $ref: '#/components/responses/RuntimeNotFound'
+
+  /api/sessions/ingest:
+    post:
+      tags: [sdk-runtime]
+      operationId: ingestSessionEvents
+      x-plane: sdk-runtime
+      summary: Ingest session observability events
+      description: >
+        The SDK's observability push: session lifecycle and transcript events,
+        batched. Returns `{ success: true }` on acceptance.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RuntimeDocument'
+      responses:
+        '200':
+          description: Accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+
+  /api/sessions/spend:
+    get:
+      tags: [sdk-runtime]
+      operationId: getSessionSpend
+      x-plane: sdk-runtime
+      summary: Read a session's spend by tag
+      parameters:
+        - name: tag
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: runId
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The spend document for the tagged session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+        '404':
+          $ref: '#/components/responses/RuntimeNotFound'
+
+  /api/checkpoints:
+    get:
+      tags: [sdk-runtime]
+      operationId: listCheckpoints
+      x-plane: sdk-runtime
+      summary: List the caller's checkpoints
+      responses:
+        '200':
+          description: One page of checkpoint records.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+    post:
+      tags: [sdk-runtime]
+      operationId: createCheckpoint
+      x-plane: sdk-runtime
+      summary: Record a checkpoint
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RuntimeDocument'
+      responses:
+        '200':
+          description: The stored checkpoint record.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+
+  /api/checkpoints/{checkpointId}:
+    get:
+      tags: [sdk-runtime]
+      operationId: getCheckpoint
+      x-plane: sdk-runtime
+      summary: Get one checkpoint
+      parameters:
+        - name: checkpointId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The checkpoint record.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+        '404':
+          $ref: '#/components/responses/RuntimeNotFound'
+
+  /api/checkpoints/presign:
+    post:
+      tags: [sdk-runtime]
+      operationId: presignCheckpointTransfer
+      x-plane: sdk-runtime
+      summary: Presign a checkpoint upload/download
+      description: >
+        Mints short-lived object-store URLs so checkpoint bytes never travel
+        through the API.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RuntimeDocument'
+      responses:
+        '200':
+          description: The presigned transfer document.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+
+  /api/managed-secrets:
+    get:
+      tags: [sdk-runtime]
+      operationId: listManagedSecrets
+      x-plane: sdk-runtime
+      summary: List the caller's managed secret names
+      description: Names and metadata only — secret VALUES never leave the server.
+      responses:
+        '200':
+          description: The caller's managed secrets.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+
+  /api/managed-secrets/runtime-token:
+    post:
+      tags: [sdk-runtime]
+      operationId: createManagedRuntimeToken
+      x-plane: sdk-runtime
+      summary: Mint a session-scoped runtime token for managed secrets
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RuntimeDocument'
+      responses:
+        '200':
+          description: The minted token document.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+    patch:
+      tags: [sdk-runtime]
+      operationId: extendManagedRuntimeToken
+      x-plane: sdk-runtime
+      summary: Extend a managed-secrets runtime token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RuntimeDocument'
+      responses:
+        '200':
+          description: The extended token document.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+    delete:
+      tags: [sdk-runtime]
+      operationId: revokeManagedRuntimeToken
+      x-plane: sdk-runtime
+      summary: Revoke a managed-secrets runtime token
+      responses:
+        '200':
+          description: Revoked.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+
+  /api/provider-secrets/runtime-token:
+    post:
+      tags: [sdk-runtime]
+      operationId: createProviderRuntimeToken
+      x-plane: sdk-runtime
+      summary: Mint a session-scoped runtime token for provider secrets
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RuntimeDocument'
+      responses:
+        '200':
+          description: The minted token document.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+    patch:
+      tags: [sdk-runtime]
+      operationId: extendProviderRuntimeToken
+      x-plane: sdk-runtime
+      summary: Extend a provider-secrets runtime token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RuntimeDocument'
+      responses:
+        '200':
+          description: The extended token document.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+    delete:
+      tags: [sdk-runtime]
+      operationId: revokeProviderRuntimeToken
+      x-plane: sdk-runtime
+      summary: Revoke a provider-secrets runtime token
+      responses:
+        '200':
+          description: Revoked.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+
+  /api/browser-credentials:
+    get:
+      tags: [sdk-runtime]
+      operationId: listBrowserCredentials
+      x-plane: sdk-runtime
+      summary: List stored browser credentials (metadata only)
+      responses:
+        '200':
+          description: Credential metadata; secret values never leave the server.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+    post:
+      tags: [sdk-runtime]
+      operationId: storeBrowserCredential
+      x-plane: sdk-runtime
+      summary: Store a browser credential (client-side encrypted)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RuntimeDocument'
+      responses:
+        '200':
+          description: The stored credential's metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+    delete:
+      tags: [sdk-runtime]
+      operationId: deleteBrowserCredentials
+      x-plane: sdk-runtime
+      summary: Delete browser credentials
+      responses:
+        '200':
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+
+  /api/browser-credentials/{credentialId}:
+    delete:
+      tags: [sdk-runtime]
+      operationId: deleteBrowserCredential
+      x-plane: sdk-runtime
+      summary: Delete one browser credential
+      parameters:
+        - name: credentialId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+        '404':
+          $ref: '#/components/responses/RuntimeNotFound'
+
+  /api/browser-credentials/public-key:
+    get:
+      tags: [sdk-runtime]
+      operationId: getBrowserCredentialsPublicKey
+      x-plane: sdk-runtime
+      summary: Public key for client-side credential encryption
+      responses:
+        '200':
+          description: The encryption public key document.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+
+  /api/browser-login/mcp-config:
+    post:
+      tags: [sdk-runtime]
+      operationId: createBrowserLoginMcpConfig
+      x-plane: sdk-runtime
+      summary: Mint the in-sandbox browser-login MCP configuration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RuntimeDocument'
+      responses:
+        '200':
+          description: The MCP config document the sandbox agent mounts.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+
+  /api/browser-profiles:
+    get:
+      tags: [sdk-runtime]
+      operationId: listBrowserProfiles
+      x-plane: sdk-runtime
+      summary: List stored browser profiles
+      responses:
+        '200':
+          description: The caller's browser profiles.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+    delete:
+      tags: [sdk-runtime]
+      operationId: deleteBrowserProfile
+      x-plane: sdk-runtime
+      summary: Delete a stored browser profile
+      responses:
+        '200':
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+
+  /api/browser-sessions:
+    post:
+      tags: [sdk-runtime]
+      operationId: createBrowserSession
+      x-plane: sdk-runtime
+      summary: Start a managed browser session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RuntimeDocument'
+      responses:
+        '200':
+          description: The browser-session document.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+
+  /api/browser-sessions/{browserSessionId}:
+    delete:
+      tags: [sdk-runtime]
+      operationId: deleteBrowserSession
+      x-plane: sdk-runtime
+      summary: End a managed browser session
+      parameters:
+        - name: browserSessionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Ended.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+        '404':
+          $ref: '#/components/responses/RuntimeNotFound'
+
+  /api/integration-sessions:
+    post:
+      tags: [sdk-runtime]
+      operationId: createIntegrationSession
+      x-plane: sdk-runtime
+      summary: Start an integration session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RuntimeDocument'
+      responses:
+        '200':
+          description: The integration-session document.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+
+  /api/integrations/accounts/update:
+    post:
+      tags: [sdk-runtime]
+      operationId: updateIntegrationAccounts
+      x-plane: sdk-runtime
+      summary: Update connected integration accounts
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RuntimeDocument'
+      responses:
+        '200':
+          description: The updated accounts document.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+
+  /api/integrations/connect:
+    post:
+      tags: [sdk-runtime]
+      operationId: connectIntegration
+      x-plane: sdk-runtime
+      summary: Begin connecting an integration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RuntimeDocument'
+      responses:
+        '200':
+          description: The connect document (auth URL or completion state).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+
+  /api/integrations/disconnect:
+    post:
+      tags: [sdk-runtime]
+      operationId: disconnectIntegration
+      x-plane: sdk-runtime
+      summary: Disconnect an integration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RuntimeDocument'
+      responses:
+        '200':
+          description: Disconnected.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+
+  /api/integrations/status:
+    get:
+      tags: [sdk-runtime]
+      operationId: getIntegrationsStatus
+      x-plane: sdk-runtime
+      summary: Read the caller's integration connection status
+      responses:
+        '200':
+          description: Per-integration connection status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeDocument'
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+
+  /api/managed/daytona/{path}:
+    get:
+      tags: [sdk-runtime]
+      operationId: proxyDaytonaGet
+      x-plane: sdk-runtime
+      summary: Managed Daytona passthrough (GET)
+      description: >
+        The managed sandbox door: the SDK drives the provider holding nothing
+        but an Evolve key; the server injects the provider credential. The
+        route is a catch-all — `{path}` stands for the remainder of the URL,
+        any depth.
+      parameters:
+        - $ref: '#/components/parameters/RuntimeProxyPath'
+      responses:
+        '200':
+          description: The provider's own response, passed through.
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+    post:
+      tags: [sdk-runtime]
+      operationId: proxyDaytonaPost
+      x-plane: sdk-runtime
+      summary: Managed Daytona passthrough (POST)
+      parameters:
+        - $ref: '#/components/parameters/RuntimeProxyPath'
+      responses:
+        '200':
+          description: The provider's own response, passed through.
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+    delete:
+      tags: [sdk-runtime]
+      operationId: proxyDaytonaDelete
+      x-plane: sdk-runtime
+      summary: Managed Daytona passthrough (DELETE)
+      parameters:
+        - $ref: '#/components/parameters/RuntimeProxyPath'
+      responses:
+        '200':
+          description: The provider's own response, passed through.
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+
+  /api/managed/daytona/toolbox/{sandboxId}/{path}:
+    get:
+      tags: [sdk-runtime]
+      operationId: proxyDaytonaToolboxGet
+      x-plane: sdk-runtime
+      summary: Managed Daytona toolbox passthrough (GET)
+      parameters:
+        - $ref: '#/components/parameters/RuntimeSandboxId'
+        - $ref: '#/components/parameters/RuntimeProxyPath'
+      responses:
+        '200':
+          description: The provider's own response, passed through.
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+    post:
+      tags: [sdk-runtime]
+      operationId: proxyDaytonaToolboxPost
+      x-plane: sdk-runtime
+      summary: Managed Daytona toolbox passthrough (POST)
+      parameters:
+        - $ref: '#/components/parameters/RuntimeSandboxId'
+        - $ref: '#/components/parameters/RuntimeProxyPath'
+      responses:
+        '200':
+          description: The provider's own response, passed through.
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+    delete:
+      tags: [sdk-runtime]
+      operationId: proxyDaytonaToolboxDelete
+      x-plane: sdk-runtime
+      summary: Managed Daytona toolbox passthrough (DELETE)
+      parameters:
+        - $ref: '#/components/parameters/RuntimeSandboxId'
+        - $ref: '#/components/parameters/RuntimeProxyPath'
+      responses:
+        '200':
+          description: The provider's own response, passed through.
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+
+  /api/managed/e2b/{path}:
+    get:
+      tags: [sdk-runtime]
+      operationId: proxyE2bGet
+      x-plane: sdk-runtime
+      summary: Managed E2B passthrough (GET)
+      parameters:
+        - $ref: '#/components/parameters/RuntimeProxyPath'
+      responses:
+        '200':
+          description: The provider's own response, passed through.
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+    post:
+      tags: [sdk-runtime]
+      operationId: proxyE2bPost
+      x-plane: sdk-runtime
+      summary: Managed E2B passthrough (POST)
+      parameters:
+        - $ref: '#/components/parameters/RuntimeProxyPath'
+      responses:
+        '200':
+          description: The provider's own response, passed through.
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+    delete:
+      tags: [sdk-runtime]
+      operationId: proxyE2bDelete
+      x-plane: sdk-runtime
+      summary: Managed E2B passthrough (DELETE)
+      parameters:
+        - $ref: '#/components/parameters/RuntimeProxyPath'
+      responses:
+        '200':
+          description: The provider's own response, passed through.
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+
+  /api/managed/modal/{path}:
+    get:
+      tags: [sdk-runtime]
+      operationId: proxyModalGet
+      x-plane: sdk-runtime
+      summary: Managed Modal passthrough (GET)
+      parameters:
+        - $ref: '#/components/parameters/RuntimeProxyPath'
+      responses:
+        '200':
+          description: The provider's own response, passed through.
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+    post:
+      tags: [sdk-runtime]
+      operationId: proxyModalPost
+      x-plane: sdk-runtime
+      summary: Managed Modal passthrough (POST)
+      parameters:
+        - $ref: '#/components/parameters/RuntimeProxyPath'
+      responses:
+        '200':
+          description: The provider's own response, passed through.
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+    delete:
+      tags: [sdk-runtime]
+      operationId: proxyModalDelete
+      x-plane: sdk-runtime
+      summary: Managed Modal passthrough (DELETE)
+      parameters:
+        - $ref: '#/components/parameters/RuntimeProxyPath'
+      responses:
+        '200':
+          description: The provider's own response, passed through.
+        '401':
+          $ref: '#/components/responses/RuntimeUnauthorized'
+
 # =============================================================================
 # Components
 # =============================================================================
@@ -1990,6 +2827,27 @@ components:
       schema:
         type: string
         format: uuid
+    RuntimeSessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema:
+        type: string
+    RuntimeSandboxId:
+      name: sandboxId
+      in: path
+      required: true
+      schema:
+        type: string
+    RuntimeProxyPath:
+      name: path
+      in: path
+      required: true
+      description: >
+        The remainder of the provider URL. The serving route is a catch-all:
+        this one parameter stands for any number of path segments.
+      schema:
+        type: string
     TrialId:
       name: trialId
       in: path
@@ -2044,6 +2902,22 @@ components:
         maxLength: 200
 
   responses:
+    RuntimeUnauthorized:
+      description: >
+        Missing or invalid Bearer key, in the SDK-runtime plane's own
+        `{ error: string }` envelope (NOT the hosted ErrorCode envelope).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/RuntimeError'
+    RuntimeNotFound:
+      description: >
+        No such resource for this caller, in the SDK-runtime plane's own
+        `{ error: string }` envelope.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/RuntimeError'
     BadRequest:
       description: >
         Malformed request — `invalid_json`, `invalid_input`, `invalid_limit`,
@@ -2105,6 +2979,29 @@ components:
             $ref: '#/components/schemas/Error'
 
   schemas:
+    # -------------------------------------------------------------------------
+    # SDK-runtime plane (x-plane: sdk-runtime operations)
+    # -------------------------------------------------------------------------
+
+    RuntimeDocument:
+      type: object
+      additionalProperties: true
+      description: >
+        A document of the SDK-runtime plane. Deliberately open: the runtime
+        clients own these shapes, and this contract pins the plane's ROUTES,
+        METHODS, and AUTH (machine-checked by the server's drift gate) without
+        restating every field. A door promoted to a field-level schema should
+        replace its RuntimeDocument reference with a named schema — never the
+        other way around.
+
+    RuntimeError:
+      type: object
+      required: [error]
+      description: The SDK-runtime plane's error envelope.
+      properties:
+        error:
+          type: string
+
     # -------------------------------------------------------------------------
     # Errors
     # -------------------------------------------------------------------------
@@ -3761,6 +4658,174 @@ components:
           type: boolean
 
     # -------------------------------------------------------------------------
+    # Job archive (the downloadJob tar) — the Evolve extension keys inside the
+    # otherwise Harbor-vocabulary record files. Not HTTP bodies: these schemas
+    # define file content inside the archive, referenced by name from the
+    # downloadJob description. Key spellings are the archive's exact bytes
+    # (camelCase where the emitter is camelCase).
+    # -------------------------------------------------------------------------
+
+    ArtifactManifestEntry:
+      type: object
+      description: >
+        One entry of a trial's `artifacts/manifest.json` — Harbor's own
+        artifact-manifest vocabulary, written as a JSON list (`[]` when the
+        trial recorded nothing). Every recorded artifact is a file with
+        content, so `type` is always `file`; `status` `skipped` is the
+        keep-first collision verdict for a destination two sources claimed.
+      required: [source, destination, type, status, service]
+      properties:
+        source:
+          type: string
+          description: The in-sandbox path the artifact was collected from.
+        destination:
+          type: string
+          description: >
+            Where it landed under the trial's `artifacts/` directory.
+        type:
+          type: string
+          enum: [file]
+        status:
+          type: string
+          enum: [ok, skipped]
+        service:
+          type: [string, 'null']
+          description: >
+            The sidecar service the source fell under; null = the main
+            container.
+
+    ArchiveDatasetRef:
+      type: object
+      description: One dataset a job ran over, as the archive extensions spell it.
+      required: [name, version]
+      properties:
+        name:
+          type: string
+        version:
+          type: string
+        sourceDigest:
+          type: [string, 'null']
+          description: The dataset version's source digest; null when unrecorded.
+
+    JobArchiveConfigExtension:
+      type: object
+      description: >
+        The `x_evolve` object on the job's `config.json`. The singular
+        `dataset`/`sourceDigest` stamps are the FIRST entry (kept exact for
+        pre-multi-dataset readers); the `datasets` list is canonical.
+      required: [jobId, dataset, sourceDigest, datasets]
+      properties:
+        jobId:
+          type: string
+        dataset:
+          type: string
+          description: The first dataset's `name@version` ref.
+        sourceDigest:
+          type: [string, 'null']
+        datasets:
+          type: array
+          items:
+            $ref: '#/components/schemas/ArchiveDatasetRef'
+
+    JobArchiveResultExtension:
+      type: object
+      description: >
+        The `x_evolve` object on the job's `result.json`. `spentUsd` is the
+        job's authoritative platform-metered total.
+      required: [jobId, status, spentUsd, sandboxProvider, dataset, datasets]
+      properties:
+        jobId:
+          type: string
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        spentUsd:
+          type: [number, 'null']
+        sandboxProvider:
+          $ref: '#/components/schemas/SandboxProvider'
+        dataset:
+          type: string
+          description: The first dataset's `name@version` ref.
+        datasets:
+          type: array
+          items:
+            $ref: '#/components/schemas/ArchiveDatasetRef'
+
+    TrialArchiveConfigExtension:
+      type: object
+      description: >
+        The `x_evolve` object on a trial's `config.json`: the sandbox provider
+        this trial executed on plus the per-task environment identity (image,
+        base commit, resources — identity only, never instructions or test
+        files).
+      required: [sandboxProvider, environment]
+      properties:
+        sandboxProvider:
+          $ref: '#/components/schemas/SandboxProvider'
+        environment:
+          type: [object, 'null']
+          description: >
+            Per-task identity; null when the task row is gone. `agent` carries
+            `image`, `baseCommit`, `cpus`, `memoryMb`, `storageMb`,
+            `allowInternet`, `workingDir` (each nullable); `verifier` carries
+            `image` and `mode` (each nullable).
+
+    TrialArchiveResultExtension:
+      type: object
+      description: >
+        The `x_evolve` object on a trial's `result.json` — the platform's own
+        record beside Harbor's. `spentUsd` + `spendSource` are the trial's
+        authoritative money lane: unlike `agent_result.cost_usd` (measured
+        model spend only), an assumed or capped figure lives HERE and nowhere
+        else in the archive.
+      required: [trialId, jobId, agentSystemId, runNumber, status, score,
+                 spentUsd, spendSource, sandboxProvider]
+      properties:
+        trialId:
+          type: string
+        jobId:
+          type: string
+        agentSystemId:
+          type: string
+        systemDigest:
+          type: [string, 'null']
+        runNumber:
+          type: integer
+        status:
+          $ref: '#/components/schemas/TrialStatus'
+        score:
+          type: [number, 'null']
+        metrics:
+          type: [object, 'null']
+          additionalProperties:
+            type: number
+        failurePhase:
+          type: [string, 'null']
+        failureDetail:
+          type: [string, 'null']
+        phaseTimingsMs:
+          type: [object, 'null']
+          additionalProperties:
+            type: number
+        modelUsage:
+          type: [object, 'null']
+          description: The raw per-model token/cost usage map, when recorded.
+        sandboxProvider:
+          $ref: '#/components/schemas/SandboxProvider'
+        verifierMode:
+          type: [string, 'null']
+        spentUsd:
+          type: [number, 'null']
+        spendSource:
+          oneOf:
+            - $ref: '#/components/schemas/SpendSource'
+            - type: 'null'
+        sessionRef:
+          type: [string, 'null']
+        outputFiles:
+          type: [object, 'null']
+          description: The trial's recorded output-file index, when recorded.
+
+    # -------------------------------------------------------------------------
     # Compare
     # -------------------------------------------------------------------------
 
@@ -5015,12 +6080,48 @@ components:
     AgentCapability:
       type: object
       description: One built-in agent's declared capabilities.
-      required: [name, effort_support, version_pinnable]
+      required: [name, runnable, reason, default_model, models, effort_support,
+                 default_effort, version_pinnable]
       properties:
         name:
           type: string
-        effort_support:
+        runnable:
           type: boolean
+          description: >
+            false = registered but the agent phase must refuse it, with
+            `reason` set.
+        reason:
+          type: [string, 'null']
+          description: Why not, when `runnable` is false. Null otherwise.
+        default_model:
+          type: [string, 'null']
+          description: >
+            What the evolve SDK runs when no model is named. This API REQUIRES
+            an explicit model (`limits.job.model_required`), so treat it as
+            the sensible pre-selection for a picker, not as something the
+            server will apply — the server never fills it in for you.
+        models:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentModelOption'
+          description: >
+            Known model aliases for this agent — the picker's option list.
+        effort_support:
+          type: string
+          enum: [level, binary, none]
+          description: >
+            What this agent does with `agents[].reasoning_effort`.
+            `level` — the value reaches the agent CLI as a level.
+            `binary` — thinking on/off only; a level outside
+            `limits.job.binary_effort_values` is refused at create.
+            `none` — no effort input at all; naming one is refused at create.
+            Published so a builder greys the control out instead of
+            discovering the refusal after a POST.
+        default_effort:
+          type: [string, 'null']
+          description: >
+            The pinned default stored when a create request omits the effort;
+            null for `effort_support` `none`.
         version_pinnable:
           type: boolean
         supports_config:
@@ -5038,6 +6139,18 @@ components:
             (`no-internet`, `pinned-context`). Declaring `agents[].preset`
             outside this list is `agent_preset_unsupported`.
         latest_version:
+          type: [string, 'null']
+
+    AgentModelOption:
+      type: object
+      description: One model alias an agent offers, for a picker's option list.
+      required: [alias, model_id, description]
+      properties:
+        alias:
+          type: string
+        model_id:
+          type: string
+        description:
           type: [string, 'null']
 
     ProviderCapability:
@@ -5347,6 +6460,16 @@ components:
                   type: integer
                 agent_tarball_bytes:
                   type: integer
+                skill_archive_bytes:
+                  type: integer
+                  description: >
+                    Compressed cap on one uploaded skill tarball
+                    (`skill_too_large` past it).
+                skill_uploads_per_user:
+                  type: integer
+                  description: >
+                    Uploaded-skill records one caller may hold
+                    (`skill_limit_reached` past it; delete some to add more).
             dataset_names:
               type: object
               description: >
