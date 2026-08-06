@@ -3844,6 +3844,10 @@ async function testDatasetShowGate() {
       text.includes("  quiet-task: FAIL"),
       "a task the server names without reasons still gets its line — the outcome word stands in"
     );
+    assert(
+      !text.includes("… and"),
+      "when the failed-task list is complete (count equals the list length) no truncation line appears"
+    );
 
     const json = captureIO();
     assertEqual(await runCli(["dataset", "show", "r1-init", "--json", ...AUTH], json.io), 0, "show --json exits 0");
@@ -3868,6 +3872,67 @@ async function testDatasetShowGate() {
       body.versions[1].gate,
       { status: "RUNNING", attempts: 1, code: null, message: null, failed_tasks: [], failed_task_count: 0 },
       "--json carries a healthy gate with null code/message, no failed tasks, count 0"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testDatasetShowGateTruncation() {
+  console.log("\n--- runCli: dataset show truncated gate list names the true total ---");
+  installMockFetch();
+  try {
+    // The server caps failed_tasks at 25 entries but reports the true count
+    // separately. Here it names 2 tasks out of 27 ineligible — the page must
+    // say "… and 25 more" or it under-reports the damage.
+    setMockResponse("/api/datasets/big-fail", {
+      status: 200,
+      body: {
+        name: "big-fail",
+        title: null,
+        description: null,
+        active_version: null,
+        versions: [
+          {
+            version: "1.0",
+            state: "FAILED",
+            created_at: "2026-08-03T19:15:55.930Z",
+            task_count: 30,
+            gate: {
+              status: "FAILED",
+              attempts: 1,
+              failure: {
+                code: "gate_failed",
+                message: "27 of 30 task(s) failed the activation gate",
+                failed_tasks: [
+                  { task_name: "task-a", outcome: "FAIL", reasons: ["gold run failed"] },
+                  { task_name: "task-b", outcome: "ERROR", reasons: ["verifier crashed"] },
+                ],
+                failed_task_count: 27,
+              },
+            },
+          },
+        ],
+        selected_version: null,
+        tasks: { items: [], nextCursor: null, hasMore: false },
+        upstream: null,
+        created_at: "2026-08-03T19:15:55.921Z",
+        updated_at: "2026-08-03T19:15:55.921Z",
+      },
+    });
+
+    const show = captureIO();
+    assertEqual(await runCli(["dataset", "show", "big-fail", ...AUTH], show.io), 0, "show exits 0");
+    const text = show.out.join("\n");
+    assert(
+      text.includes("version 1.0 activation gate FAILED: 27 of 30 task(s) failed the activation gate"),
+      "the verdict line still leads with the server's reason"
+    );
+    assert(text.includes("  task-a: gold run failed"), "the named tasks keep their cause lines");
+    assert(text.includes("  task-b: verifier crashed"), "every listed task appears before the truncation notice");
+    assert(
+      text.includes("  … and 25 more (27 ineligible tasks in total)"),
+      "a capped list must confess the true total: 27 ineligible, 2 named, 25 unnamed"
     );
   } finally {
     restoreFetch();
@@ -4447,6 +4512,7 @@ async function main() {
   await testDatasetListAndShow();
   await testDatasetProvenanceAndPinNotice();
   await testDatasetShowGate();
+  await testDatasetShowGateTruncation();
   await testDatasetPublishWatch();
   await testDatasetPublishFailedAndErrors();
   await testDatasetDownloadAndActivate();
