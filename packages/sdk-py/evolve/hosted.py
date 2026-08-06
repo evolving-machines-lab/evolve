@@ -874,6 +874,75 @@ class JobStats(TypedDict, total=False):
     judge_cost_usd: Optional[float]
 
 
+class JobRetryConfigInput(TypedDict, total=False):
+    """Auto-retry policy INPUT — ``jobs().start(retry=...)``, the spec's
+    ``RetryConfigInput`` schema, Harbor's RetryConfig vocabulary verbatim.
+
+    ONE NAMING NOTE: Harbor, the spec, and the TypeScript SDK call this pair
+    ``RetryConfig`` / ``RetryConfigInput``. The Python SDK exports them as
+    ``JobRetryConfig`` / ``JobRetryConfigInput`` because ``evolve.RetryConfig``
+    already names the Swarm client-side retry helper (``max_attempts``,
+    ``backoff_ms``, ...) — two unrelated shapes never share one exported name.
+
+    A ``TypedDict``: pass the plain dict you always passed — the class only
+    teaches type checkers the keys. Every key is optional, and an omitted key
+    takes Harbor's own default with ONE named deviation: ``max_retries``
+    omitted takes the PLATFORM fleet default (published as
+    ``limits['job']['default_max_retries']`` on ``meta()``; 2 unless the
+    operator tuned it) rather than Harbor's 0 — infrastructure errors on a
+    hosted fleet retry automatically. Send ``{'max_retries': 0}`` to turn
+    retries off.
+
+    Inside the policy, an EXPLICIT ``'exclude_exceptions': None`` is not the
+    same as leaving the key out: None turns exclusions off entirely (Harbor's
+    own None semantics), while an omitted key keeps Harbor's default
+    non-retryable set. ``include_exceptions`` has no such split: None, an
+    omitted key, and ``[]`` all mean no filter.
+    """
+    #: Maximum automatic retries per trial (0-10). Omitted = fleet default; 0 = off.
+    max_retries: int
+    #: Exception types to retry on. None, omitted, or ``[]`` = no filter.
+    include_exceptions: Optional[List[str]]
+    #: Exception types to NOT retry on; wins over ``include_exceptions``.
+    #: Omitted = Harbor's default non-retryable set; an EXPLICIT None turns
+    #: exclusions off entirely.
+    exclude_exceptions: Optional[List[str]]
+    #: Multiplier for exponential backoff wait time (default 1.0).
+    wait_multiplier: float
+    #: Minimum wait in seconds between retries (default 1.0).
+    min_wait_sec: float
+    #: Maximum wait in seconds between retries (default 60.0; platform cap 3600).
+    max_wait_sec: float
+
+
+class JobRetryConfig(TypedDict):
+    """The RESOLVED auto-retry policy a job runs under — the spec's
+    ``RetryConfig`` schema, echoed on every job body as ``Job.retry``: the
+    caller's values or the defaults of the day, resolved at create and
+    stored, so the row always states the policy it executes. Backoff between
+    attempts is Harbor's formula:
+    min(min_wait_sec x wait_multiplier^attempt, max_wait_sec).
+
+    A ``TypedDict``: at runtime this IS the plain wire dict, read by key like
+    always (``job.retry['max_retries']``) — the class only teaches type
+    checkers the keys. Every key is REQUIRED, like the spec's own required
+    list: the mapper reads an older server that sends no policy as the
+    retries-off policy with Harbor's defaults — exactly how such a server
+    behaves — so every field is always present.
+
+    Named ``JobRetryConfig`` rather than the spec's ``RetryConfig`` because
+    ``evolve.RetryConfig`` is the (unrelated) Swarm retry helper — see
+    :class:`JobRetryConfigInput` for the input half and the naming note.
+    """
+    max_retries: int
+    #: None = no include filter (everything the exclude set admits).
+    include_exceptions: Optional[List[str]]
+    exclude_exceptions: List[str]
+    wait_multiplier: float
+    min_wait_sec: float
+    max_wait_sec: float
+
+
 @dataclass
 class Job:
     """THE job body — the same shape from start, get, list rows, cancel,
@@ -900,8 +969,11 @@ class Job:
     #: The RESOLVED auto-retry policy this job runs under — Harbor's
     #: RetryConfig field names (``max_retries``, ``include_exceptions``,
     #: ``exclude_exceptions``, ``wait_multiplier``, ``min_wait_sec``,
-    #: ``max_wait_sec``). A plain dict with the wire's own keys, read by key.
-    retry: Dict[str, Any]
+    #: ``max_wait_sec``). Still the plain wire dict at runtime, read by key —
+    #: :class:`JobRetryConfig` types the keys, and every field is ALWAYS
+    #: present: an older server that sends no policy reads as the retries-off
+    #: policy with Harbor's defaults, exactly how such a server behaves.
+    retry: JobRetryConfig
     #: The RESOLVED timeout multipliers this job's phases arm under —
     #: Harbor's five flat JobConfig fields, echoed on every job body. The
     #: global one is always a number (1.0 when the create request named
@@ -1847,6 +1919,29 @@ def _optional_float(value: Any) -> Optional[float]:
     return float(value) if isinstance(value, (int, float)) else None
 
 
+def _map_retry_config(data: Any) -> JobRetryConfig:
+    """The resolved retry policy off a job body. Tolerant of an OLDER server
+    that does not send one yet: the absent-field reading is the retries-off
+    policy with Harbor's defaults — exactly how such a server behaves.
+    """
+    raw = data if isinstance(data, dict) else {}
+
+    def _number(value: Any, default: float) -> float:
+        # bool is an int in Python; a boolean here is malformed, not a number.
+        return value if isinstance(value, (int, float)) and not isinstance(value, bool) else default
+
+    include = raw.get('include_exceptions')
+    exclude = raw.get('exclude_exceptions')
+    return {
+        'max_retries': int(_number(raw.get('max_retries'), 0)),
+        'include_exceptions': include if isinstance(include, list) else None,
+        'exclude_exceptions': exclude if isinstance(exclude, list) else [],
+        'wait_multiplier': _number(raw.get('wait_multiplier'), 1.0),
+        'min_wait_sec': _number(raw.get('min_wait_sec'), 1.0),
+        'max_wait_sec': _number(raw.get('max_wait_sec'), 60.0),
+    }
+
+
 def _map_job(data: Dict[str, Any]) -> Job:
     """The ONE job mapper — nothing conditional, because nothing is optional."""
     agents = data.get('agents')
@@ -1866,9 +1961,10 @@ def _map_job(data: Dict[str, Any]) -> Job:
         n_concurrent_trials=int(data.get('n_concurrent_trials', 0)),
         max_trial_spend_usd=float(data.get('max_trial_spend_usd', 0)),
         worst_case_spend_usd=float(data.get('worst_case_spend_usd', 0)),
-        # An older server sends no policy; {} reads as "no auto-retry", which
-        # is exactly how such a server behaves.
-        retry=data.get('retry') if isinstance(data.get('retry'), dict) else {},
+        # Resolved with Harbor's defaults for anything absent — an older
+        # server that sends no policy reads as the retries-off policy, which
+        # is exactly how such a server behaves; every field always present.
+        retry=_map_retry_config(data.get('retry')),
         # Timeout multipliers: an older server sends none — 1.0 / None reads
         # as "every phase at 1.0", exactly how such a server behaves.
         timeout_multiplier=(
@@ -2033,6 +2129,23 @@ def _map_trial_retry(data: Dict[str, Any]) -> TrialRetry:
     )
 
 
+def _map_provider_degrade(data: Any) -> Optional[Dict[str, str]]:
+    """The wire degrade object, defensively: anything malformed answers None,
+    never a crash and never a partial row; extra keys never ride through."""
+    if not isinstance(data, dict):
+        return None
+    from_provider = data.get('from')
+    to_provider = data.get('to')
+    reason = data.get('reason')
+    if not (
+        isinstance(from_provider, str)
+        and isinstance(to_provider, str)
+        and isinstance(reason, str)
+    ):
+        return None
+    return {'from': from_provider, 'to': to_provider, 'reason': reason}
+
+
 def _map_trial(data: Dict[str, Any]) -> Trial:
     retries = data.get('retries')
     return Trial(
@@ -2064,11 +2177,7 @@ def _map_trial(data: Dict[str, Any]) -> Trial:
         max_trial_spend_usd=data.get('max_trial_spend_usd'),
         sandbox_provider=data.get('sandbox_provider'),
         # Defensive: a malformed degrade object reads as None, never a crash.
-        sandbox_provider_degrade=(
-            data['sandbox_provider_degrade']
-            if isinstance(data.get('sandbox_provider_degrade'), dict)
-            else None
-        ),
+        sandbox_provider_degrade=_map_provider_degrade(data.get('sandbox_provider_degrade')),
         # Same defensive rule; absent (an older server) reads as None too.
         gpu_cost=(
             data['gpu_cost'] if isinstance(data.get('gpu_cost'), dict) else None
@@ -3513,7 +3622,7 @@ class JobsClient:
         n_concurrent_trials: Optional[int] = None,
         max_trial_spend_usd: Optional[float] = None,
         sandbox_provider: Optional[str] = None,
-        retry: Optional[Dict[str, Any]] = None,
+        retry: Optional[JobRetryConfigInput] = None,
         timeout_multiplier: Optional[float] = None,
         agent_timeout_multiplier: Optional[float] = None,
         verifier_timeout_multiplier: Optional[float] = None,
@@ -3539,10 +3648,12 @@ class JobsClient:
         case for the whole job. ``retry`` is the auto-retry policy in
         Harbor's RetryConfig vocabulary (``max_retries``,
         ``include_exceptions``, ``exclude_exceptions``, ``wait_multiplier``,
-        ``min_wait_sec``, ``max_wait_sec``); omitted, the server applies its
+        ``min_wait_sec``, ``max_wait_sec``) — a plain dict, typed
+        :class:`JobRetryConfigInput`; omitted, the server applies its
         fleet defaults (infrastructure errors retry automatically — send
         ``{'max_retries': 0}`` to turn retries off), and the response echoes
-        the RESOLVED policy either way. Inside the policy, an EXPLICIT
+        the RESOLVED policy either way as ``Job.retry``
+        (:class:`JobRetryConfig`, every field present). Inside the policy, an EXPLICIT
         ``'exclude_exceptions': None`` is not the same as leaving the key
         out: None turns exclusions off entirely (everything the include set
         admits is retried — Harbor's own None semantics), while an omitted

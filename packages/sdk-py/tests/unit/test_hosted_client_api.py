@@ -1680,6 +1680,43 @@ class TestJobs:
         assert bad.gpu_cost is None
 
     @pytest.mark.asyncio
+    async def test_trial_provider_degrade_mapping(self):
+        """GPU DEGRADE (Wave-3 lane 5): a well-formed record rides as exactly
+        ``{'from','to','reason'}``; anything malformed — a missing key, a
+        non-string value — reads None, never a crash and never a partial
+        row. The same defensive rule as the TypeScript mapProviderDegrade."""
+        fake = FakeUrlopen([
+            ('/api/jobs/job-1/trials', {
+                'items': [
+                    wire_trial(sandbox_provider_degrade={
+                        'from': 'e2b',
+                        'to': 'modal',
+                        'reason': 'e2b offers no GPU allocation',
+                        'internal_ticket': 'never-rides',
+                    }),
+                    wire_trial(id='trial-partial',
+                               sandbox_provider_degrade={'from': 'e2b'}),
+                    wire_trial(id='trial-nonstring',
+                               sandbox_provider_degrade={'from': 'e2b', 'to': 'modal', 'reason': 7}),
+                ],
+                'nextCursor': None,
+                'hasMore': False,
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            page = await jobs_factory(CONFIG).trials('job-1')
+
+        degraded, partial, nonstring = page.items
+        # Exactly the three public keys — server internals never ride through.
+        assert degraded.sandbox_provider_degrade == {
+            'from': 'e2b',
+            'to': 'modal',
+            'reason': 'e2b offers no GPU allocation',
+        }
+        assert partial.sandbox_provider_degrade is None
+        assert nonstring.sandbox_provider_degrade is None
+
+    @pytest.mark.asyncio
     async def test_trials_dataset_filter(self):
         """``dataset=`` narrows to one dataset's trials — exact match on source."""
         fake = FakeUrlopen([
@@ -2335,8 +2372,43 @@ class TestJobs:
         body = json.loads(fake.requests[0].data.decode('utf-8'))
         # ABSENT, never None: the omission asks for the server's fleet default.
         assert 'retry' not in body
-        # JOB_SUMMARY carries no retry echo (an older server): {} — no policy.
-        assert job.retry == {}
+        # JOB_SUMMARY carries no retry echo (an older server): the mapper
+        # reads that as the retries-off policy with Harbor's defaults — every
+        # field present, exactly like the TypeScript SDK's mapRetryConfig.
+        assert job.retry == {
+            'max_retries': 0,
+            'include_exceptions': None,
+            'exclude_exceptions': [],
+            'wait_multiplier': 1.0,
+            'min_wait_sec': 1.0,
+            'max_wait_sec': 60.0,
+        }
+
+    @pytest.mark.asyncio
+    async def test_job_retry_echo_fills_absent_fields_with_harbor_defaults(self):
+        """A PARTIAL retry echo resolves field-by-field: the server's values
+        ride through and anything absent (or unreadable) takes Harbor's own
+        default — the same absent-tolerant reading as the TypeScript SDK."""
+        fake = FakeUrlopen([
+            ('/api/jobs/eval-1', {
+                **JOB_SUMMARY,
+                # max_retries rides; the rest is absent or garbage.
+                'retry': {'max_retries': 5, 'wait_multiplier': 'fast'},
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            job = await jobs_factory(CONFIG).get('eval-1')
+
+        assert job.retry == {
+            'max_retries': 5,
+            'include_exceptions': None,
+            'exclude_exceptions': [],
+            'wait_multiplier': 1.0,
+            'min_wait_sec': 1.0,
+            'max_wait_sec': 60.0,
+        }
+        # Every field is ALWAYS present — key reads never crash on any server.
+        assert job.retry['max_wait_sec'] == 60.0
 
     @pytest.mark.asyncio
     async def test_start_posts_sandbox_provider(self):

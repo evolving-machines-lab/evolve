@@ -81,6 +81,8 @@ from .hosted import (
     JobEvent,
     JobFailure,
     JobPage,
+    JobRetryConfig,
+    JobRetryConfigInput,
     JobStats,
     JobStatus,
     JobTaskRollup,
@@ -486,6 +488,8 @@ __all__ = [
     'Job',
     'JobCounts',
     'JobFailure',
+    'JobRetryConfig',
+    'JobRetryConfigInput',
     'JobStats',
     'JobStatus',
     'TrialStatus',
@@ -605,7 +609,10 @@ __all__ = [
     'JudgeCompleteEvent',
     'EmitOption',
 
-    # Retry
+    # Retry — the SWARM client-side retry helper. The hosted job auto-retry
+    # policy is a different shape with its own names: JobRetryConfig /
+    # JobRetryConfigInput above (the spec calls that pair RetryConfig /
+    # RetryConfigInput; the Python export is prefixed so the two never shadow).
     'RetryConfig',
     'OnItemRetryCallback',
     'execute_with_retry',
