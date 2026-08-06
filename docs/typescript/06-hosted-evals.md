@@ -1067,7 +1067,7 @@ if (dataset.upstream?.moved) {
 }
 ```
 
-`upstream` is also where a dataset says what its active version was **built from**: `git_url` (userinfo stripped — an embedded token never reaches the wire), the requested `ref`, the resolved commit (`current_commit`), and the repository subfolder (`path`, null for the repository root). Beside the provenance ride the watch fields: where the ref points now (`latest_commit`, null when the last check failed), `acked_commit` (the newest commit a local version already exists for), `moved` (the field a badge branches on), `checked_at`, `error` (why the last check failed — show "could not check", never "up to date"), and `auto_import`.
+`upstream` also carries the same provenance for the **active** version: `git_url` (userinfo stripped — an embedded token never reaches the wire), the requested `ref`, the resolved commit (`current_commit`), and the repository subfolder (`path`, null for the repository root). But provenance is not an active-version privilege — **every** git-imported version carries its own `source` object (`{git_url, ref, commit, path}`) whatever its state, so a version whose activation gate FAILED (which can never activate) still says exactly which bytes it imported; for an annotated tag, `commit` is the peeled commit the clone landed on, never the tag object. A version that did not come from a git remote serves `source: null` — never a fabricated value. Beside the provenance ride the watch fields: where the ref points now (`latest_commit`, null when the last check failed), `acked_commit` (the newest commit a local version already exists for), `moved` (the field a badge branches on), `checked_at`, `error` (why the last check failed — show "could not check", never "up to date"), and `auto_import`.
 
 It is `null`, not "up to date", when the active version did not come from a git remote — an uploaded corpus, or one published before provenance was recorded. A version pinned to an exact commit sha serves its provenance with the watch at rest (`latest_commit`/`checked_at`/`error` null, `moved` false): a pin cannot move, and nothing checks one. A tag keeps the watch — a re-pointed tag is an update worth a badge. A failed check keeps the last known answer and sets `error`: a network blip should not quietly erase an update that is genuinely available.
 
@@ -1639,7 +1639,15 @@ interface DatasetVersion {
     state: DatasetVersionState;          // the lifecycle above
     created_at: string;
     task_count: number;
+    source: DatasetVersionSource | null; // THIS version's git provenance; null = not a git import
     gate: DatasetVersionGate | null;     // null = no gate scheduled (or an older server)
+}
+
+interface DatasetVersionSource {         // served on EVERY git-imported version, active or not
+    git_url: string | null;              // userinfo stripped; null only if the stored url is unparseable
+    ref: string;                         // exactly as requested: a sha, a tag, or (legacy) a branch
+    commit: string;                      // the RESOLVED sha — for an annotated tag, the peeled commit
+    path: string | null;                 // repository subfolder; null = repository root
 }
 
 interface DatasetVersionGate {           // the activation gate's progress

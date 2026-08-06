@@ -3777,6 +3777,66 @@ async function testDatasetProvenanceAndPinNotice() {
   }
 }
 
+async function testDatasetShowVersionSource() {
+  console.log("\n--- runCli: dataset show serves a gate-FAILED version's git provenance ---");
+  installMockFetch();
+  try {
+    // The Q5 shape: annotated-tag import COMPLETED, gate FAILED, NO active
+    // version — so `upstream` is null, and only the per-version `source` can
+    // say which bytes were imported. The human page must show the PEELED
+    // commit both on the source line (selected version) and in the versions
+    // table's COMMIT column.
+    const PEELED = "459ff6ec99417589b7f679d14ddf3b3f0ae4f1dc";
+    const version = {
+      version: "1.0",
+      state: "FAILED",
+      created_at: "2026-08-05T00:00:00Z",
+      task_count: 2,
+      source: {
+        git_url: "https://github.com/laude-institute/harbor",
+        ref: "v0.20.0",
+        commit: PEELED,
+        path: "examples/tasks/network-policy-matrix/extra-allowed-hosts",
+      },
+      gate: { status: "FAILED", attempts: 1, code: "gate_failed", message: "2 of 2 task(s) failed the activation gate" },
+    };
+    setMockResponse("/api/datasets/q5-tagpeel", {
+      status: 200,
+      body: {
+        name: "q5-tagpeel",
+        title: null,
+        description: null,
+        active_version: null,
+        versions: [version],
+        selected_version: version,
+        tasks: { items: [], nextCursor: null, hasMore: false },
+        upstream: null,
+        created_at: "2026-08-05T00:00:00Z",
+        updated_at: "2026-08-05T00:00:00Z",
+      },
+    });
+
+    const show = captureIO();
+    assertEqual(await runCli(["dataset", "show", "q5-tagpeel@1.0", ...AUTH], show.io), 0, "show exits 0");
+    const text = show.out.join("\n");
+    assert(
+      text.includes(`source: https://github.com/laude-institute/harbor @ v0.20.0 (commit ${PEELED.slice(0, 12)})`),
+      "the source line renders the FAILED version's own provenance — requested tag @ PEELED commit — with no active version at all"
+    );
+    assert(
+      text.includes("subfolder: examples/tasks/network-policy-matrix/extra-allowed-hosts"),
+      "the narrowed import names its subfolder"
+    );
+    assert(text.includes("COMMIT"), "the versions table grows a COMMIT column when a version carries git provenance");
+    assert(
+      show.out.some((l) => l.includes("1.0") && l.includes("FAILED") && l.includes(PEELED.slice(0, 12))),
+      "the FAILED version's row carries its resolved commit"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testDatasetShowGate() {
   console.log("\n--- runCli: dataset show surfaces the activation gate ---");
   installMockFetch();
@@ -4511,6 +4571,7 @@ async function main() {
   await testTrialStop();
   await testDatasetListAndShow();
   await testDatasetProvenanceAndPinNotice();
+  await testDatasetShowVersionSource();
   await testDatasetShowGate();
   await testDatasetShowGateTruncation();
   await testDatasetPublishWatch();

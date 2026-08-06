@@ -37,6 +37,7 @@ import type {
   DatasetVersion,
   DatasetVersionGate,
   DatasetVersionGateFailedTask,
+  DatasetVersionSource,
   DatasetVersionState,
   DatasetsClient,
   DownloadDatasetOptions,
@@ -156,6 +157,7 @@ export type {
   DatasetVersion,
   DatasetVersionGate,
   DatasetVersionGateFailedTask,
+  DatasetVersionSource,
   DatasetVersionState,
   DatasetsClient,
   DownloadDatasetOptions,
@@ -658,6 +660,25 @@ function mapVersionManifest(raw: unknown): DatasetVersion["manifest"] {
   };
 }
 
+/**
+ * A version's own git provenance ({git_url, ref, commit, path}) — served on
+ * every git-imported version, including one whose activation gate FAILED (it
+ * can never activate, so it never appears as `upstream`). Absent (an older
+ * server, or a non-git version) or unreadable input is null — "nothing to
+ * report", never a fabricated value and never a crash.
+ */
+function mapVersionSource(raw: unknown): DatasetVersion["source"] {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const blob = raw as Record<string, unknown>;
+  if (typeof blob.ref !== "string" || typeof blob.commit !== "string") return null;
+  return {
+    git_url: typeof blob.git_url === "string" ? blob.git_url : null,
+    ref: blob.ref,
+    commit: blob.commit,
+    path: typeof blob.path === "string" ? blob.path : null,
+  };
+}
+
 function mapDatasetVersion(raw: Record<string, unknown>): DatasetVersion {
   return {
     version: raw.version as string,
@@ -665,6 +686,7 @@ function mapDatasetVersion(raw: Record<string, unknown>): DatasetVersion {
     created_at: raw.created_at as string,
     task_count: (raw.task_count as number) ?? 0,
     manifest: mapVersionManifest(raw.manifest),
+    source: mapVersionSource(raw.source),
     gate: mapVersionGate(raw.gate),
   };
 }

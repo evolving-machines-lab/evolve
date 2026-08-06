@@ -220,8 +220,8 @@ async function testDatasetsList() {
     assertEqual(catalog.items[0].title, "DeepSWE", "maps title");
     assertEqual(
       catalog.items[0].active_version,
-      { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113, manifest: null, gate: null },
-      "maps active_version object (one shape: version/state/created_at/task_count/manifest/gate; manifest null on older servers)"
+      { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113, manifest: null, source: null, gate: null },
+      "maps active_version object (one shape: version/state/created_at/task_count/manifest/source/gate; manifest/source null on older servers)"
     );
     assertEqual(catalog.items[1].active_version, null, "null active_version preserved");
 
@@ -290,8 +290,8 @@ async function testDatasetsGet() {
     assertEqual(detail.versions?.length, 2, "maps versions");
     assertEqual(
       detail.selected_version,
-      { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113, manifest: null, gate: null },
-      "selected_version is a full version object (never a bare label; manifest/gate null when the server sends none)"
+      { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113, manifest: null, source: null, gate: null },
+      "selected_version is a full version object (never a bare label; manifest/source/gate null when the server sends none)"
     );
     // A nested collection is the same envelope as a top-level one.
     assertEqual(detail.tasks?.hasMore, true, "tasks are paged like every collection");
@@ -456,6 +456,83 @@ async function testGateFailedTaskCountTruncation() {
     const gate = detail.versions?.[0].gate;
     assertEqual(gate?.failed_tasks.length, 25, "the list stays capped at the server's first 25");
     assertEqual(gate?.failed_task_count, 40, "failed_task_count is the true total, not the list's length");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testVersionSourceMapping() {
+  console.log("\n--- datasets().get() maps per-version git provenance (source), incl. a gate-FAILED version ---");
+  installMockFetch();
+  try {
+    // The Q5 shape: an annotated-tag import COMPLETED, the activation gate
+    // FAILED, the dataset never gained an active version — and the resolved
+    // PEELED commit must still be observable on the version object itself.
+    setMockResponse("/api/datasets/q5-tagpeel", {
+      status: 200,
+      body: {
+        name: "q5-tagpeel",
+        title: null,
+        description: null,
+        active_version: null,
+        versions: [
+          {
+            version: "1.0",
+            state: "FAILED",
+            created_at: "2026-08-05T00:00:00.000Z",
+            task_count: 2,
+            source: {
+              git_url: "https://github.com/laude-institute/harbor",
+              ref: "v0.20.0",
+              commit: "459ff6ec99417589b7f679d14ddf3b3f0ae4f1dc",
+              path: "examples/tasks/network-policy-matrix/extra-allowed-hosts",
+            },
+            gate: { status: "FAILED", attempts: 1, code: "gate_failed", message: "2 of 2 task(s) failed" },
+          },
+          // A non-git version (uploaded tarball): source is null on the wire.
+          { version: "0.9", state: "READY", created_at: "2026-08-01T00:00:00.000Z", task_count: 2, source: null },
+          // Garbage source value: never a crash, always null.
+          { version: "0.8", state: "READY", created_at: "2026-07-01T00:00:00.000Z", task_count: 2, source: "oops" },
+        ],
+        selected_version: {
+          version: "1.0",
+          state: "FAILED",
+          created_at: "2026-08-05T00:00:00.000Z",
+          task_count: 2,
+          source: {
+            git_url: "https://github.com/laude-institute/harbor",
+            ref: "v0.20.0",
+            commit: "459ff6ec99417589b7f679d14ddf3b3f0ae4f1dc",
+            path: "examples/tasks/network-policy-matrix/extra-allowed-hosts",
+          },
+        },
+        tasks: { items: [], nextCursor: null, hasMore: false },
+        upstream: null,
+      },
+    });
+
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    const detail = await d.get("q5-tagpeel@1.0");
+    const [failed, upload, garbage] = detail.versions ?? [];
+
+    assertEqual(
+      failed.source,
+      {
+        git_url: "https://github.com/laude-institute/harbor",
+        ref: "v0.20.0",
+        commit: "459ff6ec99417589b7f679d14ddf3b3f0ae4f1dc",
+        path: "examples/tasks/network-policy-matrix/extra-allowed-hosts",
+      },
+      "a gate-FAILED git version serves its full provenance — url, requested ref, PEELED commit, subfolder"
+    );
+    assertEqual(detail.upstream, null, "upstream stays the ACTIVE version's field — null when nothing activated");
+    assertEqual(
+      detail.selected_version?.source?.commit,
+      "459ff6ec99417589b7f679d14ddf3b3f0ae4f1dc",
+      "selected_version carries the same per-version source"
+    );
+    assertEqual(upload.source, null, "a non-git version maps source null — never a fake");
+    assertEqual(garbage.source, null, "an unreadable source value maps to null, never a throw");
   } finally {
     restoreFetch();
   }
@@ -3706,6 +3783,7 @@ async function main() {
   await testDatasetsGet();
   await testDatasetGateMapping();
   await testGateFailedTaskCountTruncation();
+  await testVersionSourceMapping();
   await testActivateGateRunning202();
   await testGetActive();
   await testGetActiveNoActiveVersion();
