@@ -46,6 +46,7 @@ from typing import (
     Literal,
     NoReturn,
     Optional,
+    TypedDict,
     Union,
     get_args,
 )
@@ -781,6 +782,80 @@ class JobFailure:
     message: str
 
 
+class AgentDatasetStats(TypedDict, total=False):
+    """Per-(agent, model, dataset) statistics — one ``stats['evals']`` group.
+
+    The evals key format is ``{agent}__{model}__{dataset}`` — the dataset ref
+    is always the LAST ``__`` segment, which is where Harbor-compatible
+    readers recover it — with the platform extension of an ``__{effort}``
+    segment inserted BEFORE the dataset when a declared reasoning effort is
+    part of the arm identity: ``{agent}__{model}__{effort}__{dataset}``.
+
+    A ``TypedDict``: at runtime this IS the plain wire dict, read by key like
+    always — the class only teaches type checkers the keys. Every key is
+    optional, like the TypeScript interface's ``?`` fields.
+    """
+    #: Trials that produced a rewards map — rewarded, not merely settled.
+    n_trials: int
+    #: Trials carrying ``exception_info`` — indeterminate and cancelled included.
+    n_errors: int
+    #: Metric results (a mean entry per arm today: the primary reward averaged
+    #: over EVERY trial of the group, unrewarded trials counting 0); open objects.
+    metrics: List[Dict[str, Any]]
+    #: pass@k for this group, k (as a string — JSON object keys always are) to
+    #: a value in [0, 1]; ``{}`` when the group cannot answer. Read it with
+    #: :func:`pass_at_k`, which returns sorted numeric points.
+    pass_at_k: Dict[str, float]
+    #: reward key -> reward value -> trial identifiers.
+    reward_stats: Dict[str, Dict[str, List[str]]]
+    #: exception type -> trial identifiers.
+    exception_stats: Dict[str, List[str]]
+
+
+class JobStats(TypedDict, total=False):
+    """Aggregate statistics of a job. Progress counters, token totals, and
+    measured cost. The ``n_*`` counters are CUMULATIVE, Harbor-style: errored
+    trials are a subset of completed, cancelled a subset of errored — a
+    cancelled trial counts in all three. The disjoint per-status breakdown
+    rides ``Job.trials.by_status``. ``cost_usd`` is what the trials actually
+    spent so far — reporting, never a gate (enforcement is the per-trial cap).
+
+    A ``TypedDict``: at runtime this IS the plain wire dict, read by key like
+    always (``stats.get('cost_usd')``, ``stats['evals']``) — the class only
+    teaches type checkers the keys. Every key is optional, like the
+    TypeScript interface's ``?`` fields.
+    """
+    #: Cumulative: every trial that produced a result — errored and cancelled included.
+    n_completed_trials: int
+    #: Cumulative: every completed trial carrying ``exception_info``, cancelled included.
+    n_errored_trials: int
+    n_running_trials: int
+    n_pending_trials: int
+    #: A subset of ``n_errored_trials``.
+    n_cancelled_trials: int
+    n_retries: int
+    #: Keyed ``{agent}__{model}__{dataset}`` — dataset ref last, optional
+    #: effort segment before it.
+    evals: Dict[str, AgentDatasetStats]
+    #: Total input tokens (cache included); None until recorded.
+    n_input_tokens: Optional[int]
+    n_cache_tokens: Optional[int]
+    n_output_tokens: Optional[int]
+    #: Measured spend across settled trials — the WHOLE model bill, agent and
+    #: judge together; None before any settled.
+    cost_usd: Optional[float]
+    #: Sum of the job's per-trial GPU compute ESTIMATES (each trial's
+    #: ``gpu_cost['estimate_usd']``) — a SEPARATE labeled figure, never merged
+    #: into ``cost_usd`` (metered model spend). None when no trial of the job
+    #: carries an estimate; a real $0 (a GPU trial that provably never booted
+    #: a sandbox) keeps the sum non-None.
+    gpu_cost_usd: Optional[float]
+    #: The judge share of ``cost_usd``, itemized: what the trials'
+    #: verifier-phase judge keys spent. 0 for a job with no judge-enabled
+    #: tasks; None before anything settled, like ``cost_usd``.
+    judge_cost_usd: Optional[float]
+
+
 @dataclass
 class Job:
     """THE job body — the same shape from start, get, list rows, cancel,
@@ -820,8 +895,10 @@ class Job:
     #: GPU compute estimate, never merged into ``cost_usd``; ``evals`` keyed
     #: ``agent__model__dataset``, each group carrying its mean and its
     #: ``pass_at_k`` — read the latter with :func:`pass_at_k`).
-    #: A plain dict with the wire's own keys, read by key, never constructed.
-    stats: Dict[str, Any]
+    #: Still the plain wire dict at runtime, read by key, never constructed —
+    #: :class:`JobStats` types the keys so ``stats['evals']`` and friends
+    #: check instead of being ``Any``.
+    stats: JobStats
     #: Why the job FAILED, or None.
     failure: Optional[JobFailure]
     #: Provenance of a derived job; empty for an original one.

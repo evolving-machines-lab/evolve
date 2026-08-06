@@ -259,7 +259,7 @@ async for item in evals.list(search='nightly'):
     print(item.id, item.job_name, item.status, item.stats.get('cost_usd'))
 ```
 
-`list(search=...)` is a server-side free-text filter over the job name and its dataset names. `stats` is the aggregate block, a plain dict with the wire's own keys: progress counters (cumulative, Harbor-style: errored trials are a subset of completed, cancelled a subset of errored — the disjoint breakdown is `trials.by_status`), token totals (`n_input_tokens` includes cache tokens; `n_cache_tokens` and `n_output_tokens` beside it), measured `cost_usd` — the whole model bill, with the judge share itemized beside it as `judge_cost_usd` (see [LLM judges](#llm-judges)) — and `evals` — per-(agent, model, dataset) statistics keyed `agent__model__effort__dataset` — the dataset ref is always the LAST `__` segment, which is where Harbor-compatible readers recover it. The effort segment is always there, inserted before the dataset: a declared effort stamps itself, an omitted one stamps the agent's default (`__high`, `__max`, …) — see [Agent arms](#agent-arms). A failed job says why on `failure`, as a `JobFailure(code, message)` — the same grammar an API error uses, under a different key so that "error means this request failed" stays true on a healthy read. In practice you will not see it fire: `FAILED` is a [reserved job status](#statuses) that nothing sets today; read `trials.by_status` for where a job actually went wrong.
+`list(search=...)` is a server-side free-text filter over the job name and its dataset names. `stats` is the aggregate block, typed as `JobStats` — a `TypedDict`, so at runtime it is still the plain wire dict, read by key, and the class only teaches type checkers the keys: progress counters (cumulative, Harbor-style: errored trials are a subset of completed, cancelled a subset of errored — the disjoint breakdown is `trials.by_status`), token totals (`n_input_tokens` includes cache tokens; `n_cache_tokens` and `n_output_tokens` beside it), measured `cost_usd` — the whole model bill, with the judge share itemized beside it as `judge_cost_usd` (see [LLM judges](#llm-judges)) — and `evals` — per-(agent, model, dataset) statistics keyed `agent__model__effort__dataset` — the dataset ref is always the LAST `__` segment, which is where Harbor-compatible readers recover it. The effort segment is always there, inserted before the dataset: a declared effort stamps itself, an omitted one stamps the agent's default (`__high`, `__max`, …) — see [Agent arms](#agent-arms). A failed job says why on `failure`, as a `JobFailure(code, message)` — the same grammar an API error uses, under a different key so that "error means this request failed" stays true on a healthy read. In practice you will not see it fire: `FAILED` is a [reserved job status](#statuses) that nothing sets today; read `trials.by_status` for where a job actually went wrong.
 
 ### pass@k
 
@@ -1356,8 +1356,7 @@ class Job:                          # ONE shape from every call
     counts: JobCounts               # agents + tasks — entity cardinality only
     n_total_trials: int
     trials: TrialTally              # total + zeros-included by_status histogram
-    stats: Dict[str, Any]           # counters, token totals, measured cost_usd, evals,
-                                    #   gpu_cost_usd (summed GPU estimate — separate, never in cost_usd)
+    stats: JobStats                 # counters, token totals, measured cost_usd, evals
     failure: Optional[JobFailure]   # never the key `error`
     source_jobs: List[SourceJob]    # provenance of a derived job; empty on originals
     is_regrade: bool
@@ -1365,6 +1364,31 @@ class Job:                          # ONE shape from every call
     started_at: str
     updated_at: str
     finished_at: Optional[str]      # None while live
+
+class JobStats(TypedDict, total=False):   # the wire dict itself, keys typed; every key optional
+    # Cumulative, Harbor-style: errored is a subset of completed, cancelled a
+    # subset of errored; the disjoint breakdown rides trials.by_status.
+    n_completed_trials: int
+    n_errored_trials: int
+    n_running_trials: int
+    n_pending_trials: int
+    n_cancelled_trials: int
+    n_retries: int                        # consumed auto-retries, summed across trials
+    evals: Dict[str, AgentDatasetStats]   # keyed agent__model(__effort)__dataset — dataset last
+    n_input_tokens: Optional[int]         # cache included; None until recorded
+    n_cache_tokens: Optional[int]
+    n_output_tokens: Optional[int]
+    cost_usd: Optional[float]             # the WHOLE model bill (agent + judge); None before any settled
+    gpu_cost_usd: Optional[float]         # summed GPU compute ESTIMATE — separate, never inside cost_usd
+    judge_cost_usd: Optional[float]       # the judge share of cost_usd; 0 with no judge tasks
+
+class AgentDatasetStats(TypedDict, total=False):   # one evals group
+    n_trials: int                         # trials that produced a rewards map
+    n_errors: int                         # trials carrying exception_info
+    metrics: List[Dict[str, Any]]         # a mean entry per arm today
+    pass_at_k: Dict[str, float]           # k (as a string) -> value; {} = cannot answer
+    reward_stats: Dict[str, Dict[str, List[str]]]   # reward key -> value -> trial ids
+    exception_stats: Dict[str, List[str]]           # exception type -> trial ids
 
 @dataclass
 class PassAtKPoint:                 # one pass@k number
