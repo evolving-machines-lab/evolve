@@ -52,7 +52,8 @@ from tests.utils.test_helpers import (
 PROVIDER_NAME = os.getenv('TEST_SANDBOX_PROVIDER', 'e2b')
 STORAGE_MODE = os.getenv('TEST_STORAGE_MODE', 'byok')
 IS_GATEWAY = STORAGE_MODE == 'gateway'
-STORAGE_URL = f's3://swarmkit-test-checkpoints-905418019965/py-integration-test-26-{PROVIDER_NAME}/'
+STORAGE_BUCKET = os.getenv('EVOLVE_TEST_CHECKPOINT_BUCKET', 'evolve-test-checkpoints-placeholder')
+STORAGE_URL = f's3://{STORAGE_BUCKET}/py-integration-test-26-{PROVIDER_NAME}/'
 STORAGE_REGION = 'us-west-2'
 TIMEOUT = 180000  # 3 min per run
 
@@ -164,7 +165,7 @@ async def cleanup_s3_prefix() -> None:
     try:
         import boto3
         client = boto3.client('s3', region_name=STORAGE_REGION)
-        bucket = 'swarmkit-test-checkpoints-905418019965'
+        bucket = STORAGE_BUCKET
         prefix = f'py-integration-test-26-{PROVIDER_NAME}/'
 
         total_deleted = 0
