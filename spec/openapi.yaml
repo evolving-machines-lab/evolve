@@ -441,7 +441,12 @@ paths:
             │                            also carries `pass_at_k`
             └── <trial_name>/
                 ├── config.json
+                ├── lock.json            the resolved trial inputs (task ref +
+                │                        digest, agent, environment, verifier)
                 ├── result.json
+                ├── trial.log            deterministic lifecycle summary of
+                │                        the trial (status, phases, exception,
+                │                        rewards)
                 ├── exception.txt        when the trial carries an exception
                 ├── agent/
                 │   ├── trajectory.json  the normalized ATIF v1.7 trajectory
@@ -453,14 +458,20 @@ paths:
                 ├── verifier/
                 │   ├── test-stdout.txt  the stored verifier log
                 │   └── reward.json      the rewards the verifier produced
-                └── artifacts/           the collected artifacts (the agent's
+                └── artifacts/
+                    ├── manifest.json    always present — what was collected,
+                    │                    from where (`[]` when the trial
+                    │                    recorded nothing)
+                    └── …                the collected artifacts (the agent's
                                          patch and the task's manifest
                                          entries), each mirrored at its
                                          absolute source path minus the root
                                          anchor — separate-mode trials only
 
         An artifact the trial never stored is an absent file, never an empty
-        placeholder. Only terminal jobs are downloadable. The archive is
+        placeholder; the record files (`config.json`, `lock.json`,
+        `result.json`, `trial.log`, `artifacts/manifest.json`) are present for
+        every trial. Only terminal jobs are downloadable. The archive is
         deterministic: sorted keys at every depth, no generation timestamp,
         fixed tar mtimes, zero gzip mtime — re-downloads are byte-identical.
         Task environment identity only — instructions, verifier commands, and
