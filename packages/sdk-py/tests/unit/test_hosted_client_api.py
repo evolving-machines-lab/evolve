@@ -50,6 +50,7 @@ from evolve import (
     DatasetSelector,
     DatasetVersionGate,
     DatasetVersionGateFailedTask,
+    DatasetVersionSource,
     EvolveAPIError,
     EvolveDigestMismatchError,
     EvolveIncompleteDownloadError,
@@ -492,6 +493,66 @@ class TestDatasets:
             status='RUNNING', attempts=1, code=None, message=None, failed_tasks=[]
         )
         assert garbage.gate is None
+
+    @pytest.mark.asyncio
+    async def test_get_maps_per_version_git_provenance(self):
+        # The Q5 shape: an annotated-tag import COMPLETED, the activation gate
+        # FAILED, the dataset never gained an active version — the resolved
+        # PEELED commit must still be observable on the version object itself.
+        peeled = '459ff6ec99417589b7f679d14ddf3b3f0ae4f1dc'
+        failed_version = {
+            'version': '1.0', 'state': 'FAILED',
+            'created_at': '2026-08-05', 'task_count': 2,
+            'source': {
+                'git_url': 'https://github.com/laude-institute/harbor',
+                'ref': 'v0.20.0',
+                'commit': peeled,
+                'path': 'examples/tasks/network-policy-matrix/extra-allowed-hosts',
+            },
+            'gate': {'status': 'FAILED', 'attempts': 1, 'code': 'gate_failed',
+                     'message': '2 of 2 task(s) failed the activation gate'},
+        }
+        fake = FakeUrlopen([
+            ('/api/datasets/q5-tagpeel', {
+                'name': 'q5-tagpeel',
+                'title': None,
+                'description': None,
+                'active_version': None,
+                'versions': [
+                    failed_version,
+                    # A non-git version (uploaded tarball): source null on the wire.
+                    {'version': '0.9', 'state': 'READY', 'created_at': '2026-08-01',
+                     'task_count': 2, 'source': None},
+                    # Garbage source value: never a crash, always None.
+                    {'version': '0.8', 'state': 'READY', 'created_at': '2026-07-01',
+                     'task_count': 2, 'source': 'oops'},
+                ],
+                'selected_version': failed_version,
+                'tasks': {'items': [], 'nextCursor': None, 'hasMore': False},
+                'upstream': None,
+                'created_at': '2026-08-05',
+                'updated_at': '2026-08-05',
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            detail = await datasets_factory(CONFIG).get('q5-tagpeel@1.0')
+
+        failed, upload, garbage = detail.versions
+        # A gate-FAILED git version serves its full provenance: url, the ref
+        # exactly as requested, the PEELED commit, and the subfolder.
+        assert failed.source == DatasetVersionSource(
+            ref='v0.20.0',
+            commit=peeled,
+            git_url='https://github.com/laude-institute/harbor',
+            path='examples/tasks/network-policy-matrix/extra-allowed-hosts',
+        )
+        # `upstream` stays the ACTIVE version's field — None when nothing
+        # activated; the per-version source is the only honest carrier here.
+        assert detail.upstream is None
+        assert detail.selected_version.source.commit == peeled
+        # Non-git and unreadable sources are None — never a fabricated value.
+        assert upload.source is None
+        assert garbage.source is None
 
     @pytest.mark.asyncio
     async def test_get_active_resolves_runnable_shape(self):

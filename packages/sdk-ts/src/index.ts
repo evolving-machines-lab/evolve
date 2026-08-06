@@ -412,6 +412,7 @@ export {
   type Dataset,
   type ActiveDataset,
   type DatasetVersion,
+  type DatasetVersionSource,
   type DatasetVersionState,
   type DatasetRef,
   type DatasetSelector,

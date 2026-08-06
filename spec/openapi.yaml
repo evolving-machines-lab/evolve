@@ -4245,7 +4245,7 @@ components:
     DatasetVersion:
       type: object
       description: One immutable version of a dataset — one shape on every surface.
-      required: [version, state, created_at, task_count, manifest, gate]
+      required: [version, state, created_at, task_count, manifest, source, gate]
       properties:
         version:
           type: string
@@ -4265,6 +4265,17 @@ components:
             The dataset.toml identity/metadata this version imported under.
             Null when the corpus carried no manifest (or the version predates
             manifest support).
+        source:
+          oneOf:
+            - $ref: '#/components/schemas/DatasetVersionSource'
+            - type: 'null'
+          description: >
+            THIS version's git provenance — served on every version whatever
+            its state, so a version whose activation gate FAILED (and so can
+            never become the active version) still says exactly which bytes
+            it imported. Null when the version was not imported from a git
+            remote (an uploaded tarball, a seeded directory, or a
+            pre-provenance row) — never a fabricated value.
         gate:
           oneOf:
             - $ref: '#/components/schemas/ActivationGate'
@@ -4274,6 +4285,39 @@ components:
             no gate was ever scheduled — a version imported before the gate
             scheduler existed, a platform-seeded one, or one whose import
             archived no reference solutions (see the import's `warnings`).
+
+    DatasetVersionSource:
+      type: object
+      description: |
+        One version's git provenance: the repository, the ref exactly as
+        requested, the RESOLVED commit the clone landed on (for an annotated
+        tag, the peeled commit — never the tag object), and the repository
+        subfolder the corpus was read from. Stamped on the version row at
+        import, so it is observable on every surface for every git-imported
+        version — active, waiting, or gate-FAILED alike. The active version's
+        `upstream` field derives its provenance half from the same stored
+        columns; the two can never disagree.
+      required: [git_url, ref, commit, path]
+      properties:
+        git_url:
+          type: [string, 'null']
+          description: >
+            The repository this version was imported from, with any userinfo
+            (an embedded token) stripped; null only when the stored url
+            cannot be parsed.
+        ref:
+          type: string
+          description: >
+            The ref the import was asked for, exactly as requested: a commit
+            sha, a tag, or (legacy rows) a branch.
+        commit:
+          type: string
+          description: >
+            The commit the corpus was actually read from — the resolved sha,
+            peeled for an annotated tag.
+        path:
+          type: [string, 'null']
+          description: The repository subfolder the corpus was read from; null = repository root.
 
     DatasetManifestMetadata:
       type: object

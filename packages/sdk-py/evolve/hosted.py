@@ -429,6 +429,31 @@ class DatasetManifestMetadata:
 
 
 @dataclass
+class DatasetVersionSource:
+    """One version's git provenance.
+
+    The repository, the ref exactly as requested, the RESOLVED commit the
+    clone landed on (for an annotated tag, the peeled commit — never the tag
+    object), and the repository subfolder the corpus was read from. Served on
+    EVERY git-imported version whatever its state — a version whose activation
+    gate FAILED can never become the active version, so this is where its
+    imported bytes stay observable.
+    """
+    #: The ref the import was asked for, exactly as requested: a sha, a tag,
+    #: or (legacy rows) a branch.
+    ref: str
+    #: The commit the corpus was actually read from — the resolved sha,
+    #: peeled for an annotated tag.
+    commit: str
+    #: The repository this version was imported from, userinfo (an embedded
+    #: token) stripped; ``None`` only when the stored url cannot be parsed.
+    git_url: Optional[str] = None
+    #: The repository subfolder the corpus was read from; ``None`` =
+    #: repository root.
+    path: Optional[str] = None
+
+
+@dataclass
 class DatasetVersion:
     """One immutable version of a dataset — one shape on every surface."""
     version: str
@@ -439,6 +464,11 @@ class DatasetVersion:
     #: ``None`` when the corpus carried no manifest, and on servers that
     #: predate the field — absence is "nothing to report", never a crash.
     manifest: Optional[DatasetManifestMetadata] = None
+    #: What THIS version was imported from — git only. ``None`` when the
+    #: version was not imported from a git remote (an uploaded tarball, a
+    #: seeded directory, a pre-provenance row), and on servers that predate
+    #: the field — never a fabricated value.
+    source: Optional[DatasetVersionSource] = None
     #: Activation-gate progress. ``None`` when no gate was scheduled for this
     #: version, and also ``None`` when the server predates the gate field — a
     #: missing gate never means "passed", only "nothing to report".
@@ -1894,6 +1924,31 @@ def _map_version_manifest(data: Any) -> Optional[DatasetManifestMetadata]:
     )
 
 
+def _map_version_source(data: Any) -> Optional[DatasetVersionSource]:
+    """Map a version's own git provenance, tolerating every server generation.
+
+    Absent (an older server, or a non-git version — an uploaded tarball has
+    no git upstream) or unreadable input is ``None`` — "nothing to report",
+    never a fabricated value and never a crash. Served on every git-imported
+    version, including one whose activation gate FAILED (it can never
+    activate, so it never appears as ``upstream``).
+    """
+    if not isinstance(data, dict):
+        return None
+    ref = data.get('ref')
+    commit = data.get('commit')
+    if not isinstance(ref, str) or not isinstance(commit, str):
+        return None
+    git_url = data.get('git_url')
+    path = data.get('path')
+    return DatasetVersionSource(
+        ref=ref,
+        commit=commit,
+        git_url=git_url if isinstance(git_url, str) else None,
+        path=path if isinstance(path, str) else None,
+    )
+
+
 def _map_dataset_version(data: Dict[str, Any]) -> DatasetVersion:
     return DatasetVersion(
         version=data['version'],
@@ -1901,6 +1956,7 @@ def _map_dataset_version(data: Dict[str, Any]) -> DatasetVersion:
         created_at=data.get('created_at', ''),
         task_count=int(data.get('task_count', 0)),
         manifest=_map_version_manifest(data.get('manifest')),
+        source=_map_version_source(data.get('source')),
         gate=_map_version_gate(data.get('gate')),
     )
 

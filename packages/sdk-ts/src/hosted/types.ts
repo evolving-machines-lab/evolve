@@ -1316,6 +1316,28 @@ export interface DatasetManifestMetadata {
   task_count: number | null;
 }
 
+/**
+ * One version's git provenance: the repository, the ref exactly as requested,
+ * the RESOLVED commit the clone landed on (for an annotated tag, the peeled
+ * commit — never the tag object), and the repository subfolder the corpus was
+ * read from. Served on EVERY git-imported version whatever its state — a
+ * version whose activation gate FAILED can never become the active version,
+ * so this is where its imported bytes stay observable.
+ */
+export interface DatasetVersionSource {
+  /**
+   * The repository this version was imported from, userinfo (an embedded
+   * token) stripped; null only when the stored url cannot be parsed.
+   */
+  git_url: string | null;
+  /** The ref the import was asked for, exactly as requested: a sha, a tag, or (legacy rows) a branch. */
+  ref: string;
+  /** The commit the corpus was actually read from — the resolved sha, peeled for an annotated tag. */
+  commit: string;
+  /** The repository subfolder the corpus was read from; null = repository root. */
+  path: string | null;
+}
+
 /** One immutable version of a dataset — one shape on every surface */
 export interface DatasetVersion {
   version: string;
@@ -1328,6 +1350,13 @@ export interface DatasetVersion {
    * absence is "nothing to report", never a crash.
    */
   manifest: DatasetManifestMetadata | null;
+  /**
+   * What THIS version was imported from — git only. Null when the version was
+   * not imported from a git remote (an uploaded tarball, a seeded directory,
+   * a pre-provenance row), and on servers that predate the field — absence is
+   * "nothing to report", never a fabricated value.
+   */
+  source: DatasetVersionSource | null;
   /**
    * Activation-gate progress. Null when no gate was scheduled for this
    * version, and also null when the server predates the gate field — so a

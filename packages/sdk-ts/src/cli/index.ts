@@ -3149,11 +3149,20 @@ function datasetDetailLines(b: Dataset): string[] {
     ["description", b.description ?? "-"],
     ["active version", b.active_version?.version ?? "-"],
   ]);
-  // PROVENANCE: what the active version was built from — the repository, the
+  // PROVENANCE: what the SHOWN version was built from — the repository, the
   // requested ref, the resolved commit, and the subfolder when the import was
-  // narrowed to one. Quiet block, like the manifest below: a dataset without
-  // a git source prints nothing.
-  if (b.upstream) {
+  // narrowed to one. The selected version's own `source` wins: `dataset show
+  // name@version` must say what THAT version imported even when its gate
+  // FAILED and it can never activate — exactly the moment a user needs the
+  // resolved sha. `upstream` (the active version's provenance) is the
+  // fallback for a server that predates per-version `source`. Quiet block,
+  // like the manifest below: a dataset without a git source prints nothing.
+  const shown = b.selected_version?.source ?? b.active_version?.source ?? null;
+  if (shown) {
+    const refPart = shown.ref === shown.commit ? "" : ` @ ${shown.ref}`;
+    lines.push(`source: ${shown.git_url ?? "?"}${refPart} (commit ${shown.commit.slice(0, 12)})`);
+    if (shown.path) lines.push(`  subfolder: ${shown.path}`);
+  } else if (b.upstream) {
     const u = b.upstream;
     const refPart = u.ref === u.current_commit ? "" : ` @ ${u.ref}`;
     lines.push(`source: ${u.git_url ?? "?"}${refPart} (commit ${u.current_commit.slice(0, 12)})`);
@@ -3178,15 +3187,22 @@ function datasetDetailLines(b: Dataset): string[] {
   if (b.versions && b.versions.length > 0) {
     lines.push("");
     // The GATE column appears only when the server reports gate progress —
-    // an older server without the field keeps the four-column table.
+    // an older server without the field keeps the four-column table. Same law
+    // for COMMIT: it appears when some version carries git provenance, and
+    // shows EVERY version's resolved sha — a gate-FAILED version can never
+    // activate, and this column is where its imported bytes stay observable.
     const anyGate = b.versions.some((v) => v.gate != null);
-    const rows = [["VERSION", "STATE", "TASKS", "CREATED", ...(anyGate ? ["GATE"] : [])]];
+    const anySource = b.versions.some((v) => v.source != null);
+    const rows = [
+      ["VERSION", "STATE", "TASKS", "CREATED", ...(anySource ? ["COMMIT"] : []), ...(anyGate ? ["GATE"] : [])],
+    ];
     for (const v of b.versions) {
       rows.push([
         v.version,
         v.state,
         String(v.task_count),
         v.created_at ?? "-",
+        ...(anySource ? [v.source ? v.source.commit.slice(0, 12) : "-"] : []),
         ...(anyGate ? [v.gate?.status ?? "-"] : []),
       ]);
     }
