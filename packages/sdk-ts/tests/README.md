@@ -17,3 +17,4 @@ npm run test:qwen
 - `EVOLVE_API_KEY` - Required
 - `TEST_AGENT_TYPE` - Default agent (codex|claude|gemini|qwen)
 - `CODEX_MODEL`, `CODEX_REASONING_EFFORT` - Codex config
+- `EVOLVE_TEST_CHECKPOINT_BUCKET` - Required for the storage integration tests (20-23, 26) in BYOK mode: the name of an S3 bucket you own, used for checkpoint upload/restore. The default is a non-existent placeholder, so these tests fail without it.

@@ -88,6 +88,11 @@ QWEN_MODEL=qwen3.7-max
 
 # Optional: MCP server testing
 BRAVE_API_KEY=your_brave_api_key                # For Brave MCP tests
+
+# Required for storage integration tests (test_20-23, test_26) in BYOK mode:
+# an S3 bucket you own, used for checkpoint upload/restore. The default is a
+# non-existent placeholder, so these tests fail without it.
+EVOLVE_TEST_CHECKPOINT_BUCKET=your-checkpoint-test-bucket
 ```
 
 ## 🚀 Running Tests

@@ -62,7 +62,8 @@ const LOGS_DIR = resolve(
   __dirname,
   `../test-logs/26-storage-full-surface-${PROVIDER_LABEL}`
 );
-const STORAGE_URL = `s3://swarmkit-test-checkpoints-905418019965/integration-test-full-${PROVIDER_LABEL}/`;
+const STORAGE_BUCKET = process.env.EVOLVE_TEST_CHECKPOINT_BUCKET || "evolve-test-checkpoints-placeholder";
+const STORAGE_URL = `s3://${STORAGE_BUCKET}/integration-test-full-${PROVIDER_LABEL}/`;
 const STORAGE_REGION = "us-west-2";
 const STORAGE_MODE = (process.env.TEST_STORAGE_MODE || "byok") as
   | "byok"
@@ -277,7 +278,7 @@ async function cleanupS3Prefix() {
     const { S3Client, ListObjectsV2Command, DeleteObjectsCommand } =
       await import("@aws-sdk/client-s3");
     const client = new S3Client({ region: STORAGE_REGION });
-    const bucket = "swarmkit-test-checkpoints-905418019965";
+    const bucket = STORAGE_BUCKET;
     const prefix = `integration-test-full-${PROVIDER_LABEL}/`;
 
     let continuationToken: string | undefined;
