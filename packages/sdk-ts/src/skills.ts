@@ -329,6 +329,16 @@ async function runGit(
  * Resolve a git-backed reference to its exact commit sha via `git ls-remote`
  * — Harbor's pinning move (skills.py:252-279). A 40-hex ref is already a pin
  * and is returned as-is without touching the network.
+ *
+ * An annotated tag names a TAG OBJECT, not the commit a checkout lands on —
+ * and a pattern-filtered ls-remote advertisement does NOT volunteer the
+ * peeled `^{}` row (verified on git 2.44 against local remotes and GitHub
+ * https; all 26 Harbor tags are annotated). So the peeled row is requested BY
+ * NAME as a second pattern, and preferred when present: a tag reference pins
+ * to its peeled commit (`rev-parse <ref>^{commit}` semantics). `^` cannot
+ * appear in a ref name, so the extra pattern can only ever match a peeled
+ * row — for a lightweight tag, a branch, or HEAD it matches nothing and
+ * behavior is byte-identical.
  */
 export async function resolveSkillSha(
   parsed: Extract<ParsedSkillRef, { kind: "git" }>,
@@ -336,17 +346,30 @@ export async function resolveSkillSha(
 ): Promise<string> {
   if (parsed.gitRef && SHA_RE.test(parsed.gitRef)) return parsed.gitRef;
   const ref = parsed.gitRef ?? "HEAD";
-  const out = await runGit(["ls-remote", skillCloneUrl(parsed), ref], {
+  const out = await runGit(["ls-remote", skillCloneUrl(parsed), ref, `${ref}^{}`], {
     timeoutMs: opts.lsRemoteTimeoutMs ?? 30_000,
     gitEnv: opts.gitEnv,
   });
-  const first = out.trim().split("\n")[0];
-  if (!first) {
+  const rows = out
+    .trim()
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      const [sha, name] = line.split("\t");
+      return { sha, name };
+    });
+  if (rows.length === 0 || !rows[0].sha) {
     throw new SkillResolveError(
       `No matching ref ${JSON.stringify(ref)} found in ${skillDisplayUrl(parsed)}`,
     );
   }
-  return first.split("\t")[0];
+  // Same selection as always: the advertisement's first row (refs/heads sorts
+  // before refs/tags, so a branch still wins a name collision with a tag).
+  // For an annotated tag its peeled row — named `<ref>^{}`, carrying the
+  // commit — immediately follows; prefer it.
+  const first = rows[0];
+  const peeled = rows.find((row) => row.name === `${first.name}^{}`);
+  return (peeled ?? first).sha;
 }
 
 /**
