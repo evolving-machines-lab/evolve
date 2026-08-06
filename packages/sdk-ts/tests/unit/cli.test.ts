@@ -3860,13 +3860,14 @@ async function testDatasetShowGate() {
           { task_name: "starter-task", outcome: "ERROR", reasons: [goldReason, "second reason"] },
           { task_name: "quiet-task", outcome: "FAIL", reasons: [] },
         ],
+        failed_task_count: 2,
       },
-      "--json carries the gate: status, attempts, code, message, and the full failed_tasks array"
+      "--json carries the gate: status, attempts, code, message, the full failed_tasks array, and the true count"
     );
     assertEqual(
       body.versions[1].gate,
-      { status: "RUNNING", attempts: 1, code: null, message: null, failed_tasks: [] },
-      "--json carries a healthy gate with null code/message and no failed tasks"
+      { status: "RUNNING", attempts: 1, code: null, message: null, failed_tasks: [], failed_task_count: 0 },
+      "--json carries a healthy gate with null code/message, no failed tasks, count 0"
     );
   } finally {
     restoreFetch();
@@ -4011,6 +4012,41 @@ async function testDatasetDownloadAndActivate() {
 
     const missing = captureIO();
     assertEqual(await runCli(["dataset", "activate", "acme", ...AUTH], missing.io), 2, "activate needs name AND version");
+
+    // A 202 gate_running is a healthy "not yet": named as such (never the
+    // generic Error: line), with the gate's progress and the next step, exit 1
+    // because nothing was activated.
+    setMockResponse("/api/datasets/acme/versions/2.0/activate", {
+      status: 202,
+      body: {
+        code: "gate_running",
+        message: "The activation gate is still proving version 2.0",
+        gate: { status: "RUNNING", tasks: 12, unverified: 3, ineligible: 1 },
+      },
+    });
+    const running = captureIO();
+    const runningCode = await runCli(["dataset", "activate", "acme", "2.0", ...AUTH], running.io);
+    assertEqual(runningCode, 1, "a gate still running exits 1 — nothing was activated");
+    const runningText = running.out.join("\n");
+    assert(runningText.includes("Not yet: The activation gate is still proving version 2.0"), "says 'not yet' with the server's own sentence");
+    assert(runningText.includes("12 task(s), 3 unverified, 1 ineligible"), "prints the gate's progress");
+    assert(runningText.includes("evolve dataset show acme"), "points at the poll command");
+    assertEqual(running.err.length, 0, "a healthy in-progress gate is not an Error: line");
+
+    const runningJson = captureIO();
+    assertEqual(await runCli(["dataset", "activate", "acme", "2.0", "--json", ...AUTH], runningJson.io), 1, "--json exits 1 too");
+    assertEqual(
+      JSON.parse(runningJson.out.join("\n")),
+      {
+        kind: "gate.running",
+        code: "gate_running",
+        message: "The activation gate is still proving version 2.0",
+        dataset: "acme",
+        version: "2.0",
+        gate: { status: "RUNNING", tasks: 12, unverified: 3, ineligible: 1 },
+      },
+      "--json carries the typed gate-running shape, never a garbage Dataset"
+    );
   } finally {
     await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
     restoreFetch();

@@ -281,6 +281,36 @@ class NoActiveVersionError(Exception):
         self.dataset = name
 
 
+class GateRunningError(Exception):
+    """Raised by ``datasets().activate()`` when the activation gate is still
+    scheduled or running — the API's 202 ``gate_running`` answer.
+
+    NOT an :class:`EvolveAPIError`: the wire body is deliberately not the
+    error envelope, because an in-progress gate is a healthy state — nothing
+    is wrong and nothing is asked of the caller. Poll the dataset (each
+    version carries ``gate``); a gate that PASSES activates the version
+    itself, so there is normally nothing left to call. Its own type, like
+    :class:`NoActiveVersionError`, because ``activate()`` promised a Dataset
+    it cannot return yet.
+
+    ``gate`` is a :class:`GateRunningProgress` — the gate's progress at the
+    moment of the call.
+    """
+
+    def __init__(
+        self, dataset: str, version: str, message: str, gate: 'GateRunningProgress'
+    ):
+        super().__init__(message)
+        #: The stable machine word for this state.
+        self.code = 'gate_running'
+        #: The dataset whose version is still being proven.
+        self.dataset = dataset
+        #: The version the gate is proving.
+        self.version = version
+        #: Gate progress at the moment of the call.
+        self.gate = gate
+
+
 # =============================================================================
 # PUBLIC TYPES
 # =============================================================================
@@ -341,13 +371,34 @@ class DatasetVersionGate:
     ``failed_tasks`` names each ineligible task with the gate's own reasons
     (the server sends the first 25); it is empty while the gate is healthy and
     empty on servers that predate the field — absence is "nothing to report",
-    never a crash.
+    never a crash. ``failed_task_count`` is the TRUE total of ineligible
+    tasks: the list is capped at 25, so a gate that failed more tasks than
+    that is under-counted by ``len(failed_tasks)`` — this number never is (it
+    falls back to the length on servers that predate the field, which never
+    truncated without it).
     """
     status: str
     attempts: int
     code: Optional[str] = None
     message: Optional[str] = None
     failed_tasks: List[DatasetVersionGateFailedTask] = field(default_factory=list)
+    failed_task_count: int = 0
+
+
+@dataclass
+class GateRunningProgress:
+    """Gate progress at the moment of an ``activate()`` call that answered
+    202 — carried on :class:`GateRunningError`.
+
+    ``status`` is the gate's own lifecycle (PENDING or RUNNING here),
+    ``tasks`` the version's task count, ``unverified`` the tasks the gate has
+    not yet produced a verdict for, and ``ineligible`` the tasks whose
+    verdict so far is not activation-eligible.
+    """
+    status: str
+    tasks: int = 0
+    unverified: int = 0
+    ineligible: int = 0
 
 
 @dataclass
@@ -408,6 +459,25 @@ class TaskProviderVerdict:
 
 
 @dataclass
+class TaskGate:
+    """One task's activation-gate verdict — the public subset.
+
+    The per-task half of the version's ``gate``: while the gate is RUNNING,
+    verdicts appear on tasks as they land. ``outcome`` is PASS; FLAKY (gold
+    passed only on a retry — still eligible under the operator default); FAIL
+    (definitive: gold never scored 1.0, or a do-nothing agent did); or ERROR
+    (inconclusive — no usable score, e.g. no archived solution to run).
+    ``reasons`` are human-readable and empty on PASS. The full stored verdict
+    carries oracle diagnostics that stay internal, like the environment specs
+    beside it.
+    """
+    outcome: str
+    flaky: bool = False
+    reasons: List[str] = field(default_factory=list)
+    ran_at: Optional[str] = None
+
+
+@dataclass
 class Task:
     """Public task fields only — instructions/environments/tests never leave the server.
 
@@ -419,6 +489,10 @@ class Task:
     ``gpus``/``gpu_types`` are the task's declared GPU requirement (Harbor's
     task fields honored verbatim): 0 = a CPU task; ``gpu_types`` None = any
     type is acceptable (always None when ``gpus`` is 0).
+
+    ``gate`` is this task's activation-gate verdict — ``None`` until the gate
+    has run it, and ``None`` on servers that predate the field: absence is
+    "nothing to report", never "passed".
     """
     task_name: str
     agent_timeout_sec: float
@@ -426,6 +500,7 @@ class Task:
     providers: Dict[str, TaskProviderVerdict]
     gpus: int = 0
     gpu_types: Optional[List[str]] = None
+    gate: Optional[TaskGate] = None
 
 
 @dataclass
@@ -1739,12 +1814,24 @@ def _map_version_gate(data: Any) -> Optional[DatasetVersionGate]:
     raw_failed = data.get('failed_tasks')
     if not isinstance(raw_failed, list):
         raw_failed = failure.get('failed_tasks')
+    failed_tasks = _map_gate_failed_tasks(raw_failed)
+    raw_count = data.get('failed_task_count')
+    if not isinstance(raw_count, int) or isinstance(raw_count, bool):
+        raw_count = failure.get('failed_task_count')
     return DatasetVersionGate(
         status=data['status'],
         attempts=attempts if isinstance(attempts, int) and not isinstance(attempts, bool) else 0,
         code=code if isinstance(code, str) else None,
         message=message if isinstance(message, str) else None,
-        failed_tasks=_map_gate_failed_tasks(raw_failed),
+        failed_tasks=failed_tasks,
+        # The TRUE total behind the 25-task cap on failed_tasks. An older
+        # server never truncated without the count, so absence reads as the
+        # length.
+        failed_task_count=(
+            raw_count
+            if isinstance(raw_count, int) and not isinstance(raw_count, bool)
+            else len(failed_tasks)
+        ),
     )
 
 
@@ -1833,6 +1920,46 @@ def _map_dataset_summary(data: Dict[str, Any]) -> Dataset:
     )
 
 
+def _map_gate_running_progress(data: Any) -> GateRunningProgress:
+    """The 202 body's ``gate`` progress block, defensively.
+
+    A count that is not a number reads as 0 and a missing status as PENDING
+    (scheduled is the least a 202 can mean) — a misbehaving server must never
+    crash the refusal path.
+    """
+    raw = data if isinstance(data, dict) else {}
+
+    def _count(value: Any) -> int:
+        return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+    status = raw.get('status')
+    return GateRunningProgress(
+        status=status if isinstance(status, str) else 'PENDING',
+        tasks=_count(raw.get('tasks')),
+        unverified=_count(raw.get('unverified')),
+        ineligible=_count(raw.get('ineligible')),
+    )
+
+
+def _map_task_gate(data: Any) -> Optional[TaskGate]:
+    """A task's own activation-gate verdict, with the gate mappers' tolerance.
+
+    Absent (the gate has not run it, or an older server) or unreadable input
+    is ``None`` — "nothing to report", never "passed" and never a crash. An
+    entry without an outcome word is no verdict at all.
+    """
+    if not isinstance(data, dict) or not isinstance(data.get('outcome'), str):
+        return None
+    reasons = data.get('reasons')
+    ran_at = data.get('ran_at')
+    return TaskGate(
+        outcome=data['outcome'],
+        flaky=data.get('flaky') is True,
+        reasons=[r for r in reasons if isinstance(r, str)] if isinstance(reasons, list) else [],
+        ran_at=ran_at if isinstance(ran_at, str) else None,
+    )
+
+
 def _map_task(data: Dict[str, Any]) -> Task:
     providers_raw = data.get('providers') or {}
     gpus_raw = data.get('gpus')
@@ -1857,6 +1984,9 @@ def _map_task(data: Dict[str, Any]) -> Task:
             if isinstance(gpu_types_raw, list) and gpu_types_raw
             else None
         ),
+        # The per-task half of the version's gate — verdicts appear here as
+        # they land while the gate runs.
+        gate=_map_task_gate(data.get('gate')),
     )
 
 
@@ -2434,6 +2564,25 @@ class _HostedHttp:
     ) -> Dict[str, Any]:
         return await asyncio.to_thread(self._request_sync, path, method, body, headers, False)
 
+    async def request_json_status(
+        self,
+        path: str,
+        method: str = 'GET',
+        body: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> 'tuple[Dict[str, Any], int]':
+        """Like :meth:`request_json`, plus the HTTP status code.
+
+        For the one verb whose 2xx statuses mean different bodies — activate
+        answers 200 with the Dataset and 202 with a GateRunning progress
+        report — where parsing every 2xx as the success shape returned a
+        garbage object.
+        """
+        return await asyncio.to_thread(
+            self._request_sync, path, method, body, headers, False,
+            REQUEST_TIMEOUT_SEC, True,
+        )
+
     async def request_bytes(
         self, path: str, *, timeout: int = DOWNLOAD_TIMEOUT_SEC
     ) -> 'tuple[bytes, Dict[str, str]]':
@@ -2493,6 +2642,7 @@ class _HostedHttp:
         headers: Optional[Dict[str, str]],
         raw: bool,
         timeout: int = REQUEST_TIMEOUT_SEC,
+        with_status: bool = False,
     ):
         data = json.dumps(body).encode('utf-8') if body is not None else None
         request_headers = {
@@ -2512,13 +2662,13 @@ class _HostedHttp:
         try:
             with _http.urlopen(request, timeout=timeout) as response:
                 payload = response.read()
+                status = response.status
                 if raw:
                     return payload, dict(response.headers.items())
         except urllib.error.HTTPError as exc:
             _raise_api_error(exc)
-        if not payload:
-            return {}
-        return json.loads(payload.decode('utf-8'))
+        parsed = json.loads(payload.decode('utf-8')) if payload else {}
+        return (parsed, status) if with_status else parsed
 
     def _download_sync(self, path: str, to_dir: str, default_filename: str) -> str:
         """Stream a download straight to disk — never buffers the archive in memory."""
@@ -3216,13 +3366,33 @@ class DatasetsClient:
     async def activate(self, name: str, version: str) -> Dataset:
         """Make a READY version the dataset's active version.
 
-        Returns the full detail shape, exactly like :meth:`get`.
+        Returns the full detail shape, exactly like :meth:`get`. While the
+        version's activation gate is still scheduled or running the API
+        answers 202 ``gate_running`` — a healthy in-progress state, raised
+        here as the typed :class:`GateRunningError` (its ``gate`` carries the
+        gate's progress). A gate that passes activates the version itself, so
+        there is normally nothing left to call.
         """
-        raw = await self._http.request_json(
+        raw, status = await self._http.request_json_status(
             f'/api/datasets/{urllib.parse.quote(name)}'
             f'/versions/{urllib.parse.quote(version)}/activate',
             method='POST',
         )
+        # 202 is "not yet", not "here is the dataset": the body is a
+        # GateRunning progress report — parsing it as a Dataset returned a
+        # garbage object. Typed, like NoActiveVersionError, so a caller can
+        # branch and poll.
+        if status == 202:
+            message = raw.get('message')
+            raise GateRunningError(
+                name,
+                version,
+                message if isinstance(message, str) else (
+                    f'Dataset {name!r} version {version!r} is still being '
+                    'proven by its activation gate'
+                ),
+                _map_gate_running_progress(raw.get('gate')),
+            )
         return _map_dataset_detail(raw)
 
     async def update(self, name: str, *, upstream_auto_import: bool) -> Dataset:

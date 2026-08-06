@@ -143,6 +143,7 @@ import {
   EvolveApiError,
   EvolveDigestMismatchError,
   EvolveIncompleteDownloadError,
+  GateRunningError,
   isHostedErrorCode,
   NoActiveVersionError,
 } from "../../src/hosted/index.ts";
@@ -254,6 +255,17 @@ async function testDatasetsGet() {
               agent_timeout_sec: 5400,
               verifier_timeout_sec: 1800,
               providers: { e2b: { ok: true }, daytona: { ok: true }, modal: { ok: false, reason: "multi-container tasks are not supported on modal" } },
+              // The per-task half of the version's gate: outcome + flaky +
+              // reasons + ran_at, non-string reasons filtered.
+              gate: { outcome: "FLAKY", flaky: true, reasons: ["gold passed on retry 2", 7], ran_at: "2026-07-20T00:00:00.000Z" },
+            },
+            {
+              task_name: "no-verdict-yet",
+              agent_timeout_sec: 600,
+              verifier_timeout_sec: 600,
+              providers: { e2b: { ok: true }, daytona: { ok: true }, modal: { ok: true } },
+              // No outcome word = no verdict at all — never a crash.
+              gate: { flaky: false },
             },
           ],
           nextCursor: "task-1",
@@ -289,6 +301,16 @@ async function testDatasetsGet() {
       detail.tasks?.items[0].providers,
       { e2b: { ok: true }, daytona: { ok: true }, modal: { ok: false, reason: "multi-container tasks are not supported on modal" } },
       "per-task provider verdicts mapped — capability visible before money is spent"
+    );
+    assertEqual(
+      detail.tasks?.items[0].gate,
+      { outcome: "FLAKY", flaky: true, reasons: ["gold passed on retry 2"], ran_at: "2026-07-20T00:00:00.000Z" },
+      "per-task gate verdict mapped (outcome/flaky/reasons/ran_at; non-string reasons filtered)"
+    );
+    assertEqual(
+      detail.tasks?.items[1].gate,
+      null,
+      "a gate value without an outcome word is no verdict at all — null, never a crash"
     );
 
     // Bare name: no version param
@@ -374,16 +396,133 @@ async function testDatasetGateMapping() {
           },
           { task_name: "bare-task", outcome: null, reasons: [] },
         ],
+        failed_task_count: 2,
       },
-      "nested failure form maps to {status, attempts, code, message, failed_tasks}; nameless/garbage entries dropped, non-string reasons filtered"
+      "nested failure form maps to {status, attempts, code, message, failed_tasks, failed_task_count}; nameless/garbage entries dropped, non-string reasons filtered; absent count falls back to the mapped list's length"
     );
     assertEqual(
       running.gate,
-      { status: "RUNNING", attempts: 1, code: null, message: null, failed_tasks: [] },
-      "flat form maps unchanged; healthy gate carries null code/message and no failed tasks"
+      { status: "RUNNING", attempts: 1, code: null, message: null, failed_tasks: [], failed_task_count: 0 },
+      "flat form maps unchanged; healthy gate carries null code/message, no failed tasks, count 0"
     );
     assertEqual(none.gate, null, "a version without a gate field maps to gate null (older server: no crash)");
     assertEqual(garbage.gate, null, "an unreadable gate value maps to null, never a throw");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testGateFailedTaskCountTruncation() {
+  console.log("\n--- gate failed_task_count carries the TRUE total behind the 25-task cap ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/datasets/big-fail", {
+      status: 200,
+      body: {
+        name: "big-fail",
+        title: null,
+        description: null,
+        active_version: null,
+        versions: [
+          {
+            version: "1.0",
+            state: "FAILED",
+            created_at: "2026-08-03T00:00:00.000Z",
+            task_count: 40,
+            gate: {
+              status: "FAILED",
+              attempts: 1,
+              failure: {
+                code: "gate_failed",
+                message: "40 of 40 task(s) failed the activation gate",
+                failed_tasks: Array.from({ length: 25 }, (_, i) => ({
+                  task_name: `task-${i}`,
+                  outcome: "FAIL",
+                  reasons: ["gold never scored 1.0"],
+                })),
+                failed_task_count: 40,
+              },
+            },
+          },
+        ],
+        selected_version: null,
+        tasks: { items: [], nextCursor: null, hasMore: false },
+        upstream: null,
+      },
+    });
+
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    const detail = await d.get("big-fail");
+    const gate = detail.versions?.[0].gate;
+    assertEqual(gate?.failed_tasks.length, 25, "the list stays capped at the server's first 25");
+    assertEqual(gate?.failed_task_count, 40, "failed_task_count is the true total, not the list's length");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testActivateGateRunning202() {
+  console.log("\n--- datasets().activate() surfaces a 202 gate_running as the typed GateRunningError ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/datasets/my-swe/versions/1.0/activate", {
+      status: 202,
+      body: {
+        code: "gate_running",
+        message: "The activation gate is still proving version 1.0",
+        gate: { status: "RUNNING", tasks: 12, unverified: 3, ineligible: 1 },
+      },
+    });
+
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    try {
+      await d.activate("my-swe", "1.0");
+      assert(false, "a 202 must not resolve to a Dataset");
+    } catch (error) {
+      assert(error instanceof GateRunningError, "202 gate_running throws GateRunningError, never a garbage Dataset");
+      const gateRunning = error as GateRunningError;
+      assert(!(gateRunning instanceof EvolveApiError), "healthy in-progress state is NOT an EvolveApiError");
+      assertEqual(gateRunning.code, "gate_running", "carries the stable machine word");
+      assertEqual(gateRunning.dataset, "my-swe", "names the dataset");
+      assertEqual(gateRunning.version, "1.0", "names the version");
+      assertEqual(gateRunning.message, "The activation gate is still proving version 1.0", "keeps the server's own sentence");
+      assertEqual(
+        gateRunning.gate,
+        { status: "RUNNING", tasks: 12, unverified: 3, ineligible: 1 },
+        "carries the gate progress block"
+      );
+    }
+
+    // A malformed 202 body still yields the typed refusal, defensively.
+    setMockResponse("/api/datasets/my-swe/versions/2.0/activate", { status: 202, body: {} });
+    try {
+      await d.activate("my-swe", "2.0");
+      assert(false, "a malformed 202 must not resolve to a Dataset");
+    } catch (error) {
+      assert(error instanceof GateRunningError, "a bodyless 202 still throws GateRunningError");
+      assertEqual(
+        (error as GateRunningError).gate,
+        { status: "PENDING", tasks: 0, unverified: 0, ineligible: 0 },
+        "missing progress reads as PENDING with zero counts — never a crash"
+      );
+    }
+
+    // A 200 keeps returning the Dataset detail shape.
+    setMockResponse("/api/datasets/other/versions/1.0/activate", {
+      status: 200,
+      body: {
+        name: "other",
+        title: null,
+        description: null,
+        active_version: { version: "1.0", state: "READY", created_at: "2026-08-01T00:00:00.000Z", task_count: 3 },
+        versions: [],
+        selected_version: null,
+        tasks: { items: [], nextCursor: null, hasMore: false },
+        upstream: null,
+      },
+    });
+    const activated = await d.activate("other", "1.0");
+    assertEqual(activated.active_version?.version, "1.0", "200 still maps the full Dataset detail");
   } finally {
     restoreFetch();
   }
@@ -3566,6 +3705,8 @@ async function main() {
   await testDatasetsList();
   await testDatasetsGet();
   await testDatasetGateMapping();
+  await testGateFailedTaskCountTruncation();
+  await testActivateGateRunning202();
   await testGetActive();
   await testGetActiveNoActiveVersion();
   await testDatasetUpdate();

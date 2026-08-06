@@ -43,6 +43,7 @@ import type {
   DownloadJobOptions,
   EvalSandboxProvider,
   ExceptionInfo,
+  GateRunningProgress,
   GetDatasetOptions,
   HostedClientConfig,
   ImportWarning,
@@ -84,6 +85,7 @@ import type {
   StepResult,
   StopResponse,
   Task,
+  TaskGate,
   TimingInfo,
   TraceEvent,
   TraceEventPage,
@@ -160,6 +162,7 @@ export type {
   DownloadJobOptions,
   EvalSandboxProvider,
   ExceptionInfo,
+  GateRunningProgress,
   GetDatasetOptions,
   HostedClientConfig,
   HostedErrorCode,
@@ -210,6 +213,7 @@ export type {
   StepResult,
   StopResponse,
   Task,
+  TaskGate,
   TaskProviderVerdict,
   TimingInfo,
   TraceEvent,
@@ -395,6 +399,54 @@ export class NoActiveVersionError extends Error {
   }
 }
 
+/**
+ * Thrown by datasets().activate() when the version's activation gate is
+ * still scheduled or running — the API's 202 `gate_running` answer.
+ *
+ * NOT an EvolveApiError: the wire body is deliberately not the error
+ * envelope, because an in-progress gate is a healthy state — nothing is
+ * wrong and nothing is asked of the caller. Poll the dataset (each version
+ * carries `gate`); a gate that PASSES activates the version itself, so
+ * there is normally nothing left to call. Its own type, like
+ * NoActiveVersionError, because activate() promised a Dataset it cannot
+ * return yet.
+ */
+export class GateRunningError extends Error {
+  readonly name = "GateRunningError";
+  /** The stable machine word for this state. */
+  readonly code = "gate_running";
+  /** The dataset whose version is still being proven. */
+  readonly dataset: string;
+  /** The version the gate is proving. */
+  readonly version: string;
+  /** Gate progress at the moment of the call. */
+  readonly gate: GateRunningProgress;
+  constructor(dataset: string, version: string, message: string, gate: GateRunningProgress) {
+    super(message);
+    this.dataset = dataset;
+    this.version = version;
+    this.gate = gate;
+  }
+}
+
+/**
+ * The 202 body's `gate` progress block, defensively: a count that is not a
+ * number reads as 0 and a missing status as PENDING (scheduled is the least
+ * a 202 can mean) — a misbehaving server must never crash the refusal path.
+ */
+function mapGateRunningProgress(raw: unknown): GateRunningProgress {
+  const value = (raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {}) as Record<
+    string,
+    unknown
+  >;
+  return {
+    status: typeof value.status === "string" ? value.status : "PENDING",
+    tasks: typeof value.tasks === "number" ? value.tasks : 0,
+    unverified: typeof value.unverified === "number" ? value.unverified : 0,
+    ineligible: typeof value.ineligible === "number" ? value.ineligible : 0,
+  };
+}
+
 const DEFAULT_RECONNECT_DELAY_MS = 1_000;
 const MAX_RECONNECT_DELAY_MS = 30_000;
 
@@ -533,14 +585,22 @@ function mapVersionGate(raw: unknown): DatasetVersionGate | null {
       : {};
   const code = typeof value.code === "string" ? value.code : failure.code;
   const message = typeof value.message === "string" ? value.message : failure.message;
+  const failedTasks = mapGateFailedTasks(
+    Array.isArray(value.failed_tasks) ? value.failed_tasks : failure.failed_tasks
+  );
+  const rawCount =
+    typeof value.failed_task_count === "number"
+      ? value.failed_task_count
+      : failure.failed_task_count;
   return {
     status: value.status,
     attempts: typeof value.attempts === "number" ? value.attempts : 0,
     code: typeof code === "string" ? code : null,
     message: typeof message === "string" ? message : null,
-    failed_tasks: mapGateFailedTasks(
-      Array.isArray(value.failed_tasks) ? value.failed_tasks : failure.failed_tasks
-    ),
+    failed_tasks: failedTasks,
+    // The TRUE total behind the 25-task cap on failed_tasks. An older server
+    // never truncated without the count, so its absence reads as the length.
+    failed_task_count: typeof rawCount === "number" ? rawCount : failedTasks.length,
   };
 }
 
@@ -609,6 +669,26 @@ function mapDatasetVersion(raw: Record<string, unknown>): DatasetVersion {
   };
 }
 
+/**
+ * A task's own activation-gate verdict, with the tolerance every gate mapper
+ * here keeps: absent (the gate has not run it, or an older server) or
+ * unreadable input is null — "nothing to report", never "passed" and never a
+ * crash. An entry without an outcome word is no verdict at all.
+ */
+function mapTaskGate(raw: unknown): TaskGate | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const value = raw as Record<string, unknown>;
+  if (typeof value.outcome !== "string") return null;
+  return {
+    outcome: value.outcome,
+    flaky: value.flaky === true,
+    reasons: Array.isArray(value.reasons)
+      ? value.reasons.filter((r): r is string => typeof r === "string")
+      : [],
+    ran_at: typeof value.ran_at === "string" ? value.ran_at : null,
+  };
+}
+
 function mapTask(raw: Record<string, unknown>): Task {
   return {
     task_name: raw.task_name as string,
@@ -624,6 +704,9 @@ function mapTask(raw: Record<string, unknown>): Task {
     // Per-provider capability verdicts — the law: where a task can run is
     // visible before any money is spent.
     providers: raw.providers as Task["providers"],
+    // The per-task half of the version's gate — verdicts appear here as they
+    // land while the gate runs.
+    gate: mapTaskGate(raw.gate),
   };
 }
 
@@ -1584,6 +1667,21 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
         `/api/datasets/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/activate`,
         { method: "POST" }
       );
+      // 202 is "not yet", not "here is the dataset": the activation gate is
+      // still proving this version, and the body is a GateRunning progress
+      // report — parsing it as a Dataset returned a garbage object. Typed,
+      // like NoActiveVersionError, so a caller can branch and poll.
+      if (res.status === 202) {
+        const body = (await res.json()) as Record<string, unknown>;
+        throw new GateRunningError(
+          name,
+          version,
+          typeof body.message === "string"
+            ? body.message
+            : `Dataset "${name}" version "${version}" is still being proven by its activation gate`,
+          mapGateRunningProgress(body.gate)
+        );
+      }
       return mapDatasetDetail((await res.json()) as Record<string, unknown>);
     },
 

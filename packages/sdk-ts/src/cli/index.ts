@@ -27,6 +27,7 @@ import { parse as parseToml } from "smol-toml";
 import {
   EVAL_SANDBOX_PROVIDERS,
   EvolveApiError,
+  GateRunningError,
   TRIAL_ARTIFACT_STREAMS,
   TRIAL_STATUSES,
   agents,
@@ -3202,6 +3203,15 @@ function datasetDetailLines(b: Dataset): string[] {
           const why = t.reasons.length > 0 ? t.reasons.join("; ") : (t.outcome ?? "no reason reported");
           lines.push(`  ${t.task_name}: ${why}`);
         }
+        // The list is capped at 25; the count is not. A gate that failed
+        // more tasks than the list names must say so, or the page under-
+        // reports the damage.
+        if (v.gate.failed_task_count > v.gate.failed_tasks.length) {
+          lines.push(
+            `  … and ${v.gate.failed_task_count - v.gate.failed_tasks.length} more ` +
+              `(${v.gate.failed_task_count} ineligible tasks in total)`
+          );
+        }
       }
     }
   }
@@ -3386,7 +3396,36 @@ async function cmdDatasetDownload(inv: Invocation, io: CliIO): Promise<number> {
 async function cmdDatasetActivate(inv: Invocation, io: CliIO): Promise<number> {
   const client = datasets(clientConfig(inv));
   const [name, version] = inv.positionals;
-  const dataset = await client.activate(name, version);
+  let dataset: Dataset;
+  try {
+    dataset = await client.activate(name, version);
+  } catch (error) {
+    // 202 gate_running: a healthy "not yet", not a failure — say so instead
+    // of the generic Error: line, but exit 1 because nothing was activated.
+    if (error instanceof GateRunningError) {
+      if (inv.flags.json === true) {
+        io.out(
+          JSON.stringify({
+            kind: "gate.running",
+            code: error.code,
+            message: error.message,
+            dataset: error.dataset,
+            version: error.version,
+            gate: error.gate,
+          })
+        );
+      } else {
+        io.out(`Not yet: ${error.message}`);
+        io.out(
+          `Gate ${error.gate.status}: ${error.gate.tasks} task(s), ` +
+            `${error.gate.unverified} unverified, ${error.gate.ineligible} ineligible so far.`
+        );
+        io.out(`Follow it with: evolve dataset show ${name} — a gate that passes activates the version itself.`);
+      }
+      return 1;
+    }
+    throw error;
+  }
   if (inv.flags.json === true) {
     io.out(JSON.stringify(dataset));
   } else {
