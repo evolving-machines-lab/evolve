@@ -162,6 +162,7 @@ HostedErrorCode = Literal[
     'import_not_found',
     'import_too_large',
     'invalid_archive',
+    'unpinned_git_ref',
     'package_not_retained',
     'package_corrupt',
     'package_missing',
@@ -438,15 +439,22 @@ class TaskPage:
 
 @dataclass
 class UpstreamStatus:
-    """Where a dataset's git source points now, versus what its active version
-    was built from — the data behind a "new version available" badge.
+    """The active version's git provenance, plus the watch on a ref that can
+    move.
+
+    The provenance half — ``git_url`` + the requested ``ref`` + the resolved
+    commit (``current_commit``) + the repository subfolder (``path``) — says
+    what the active version was built from. The watch half (``latest_commit``,
+    ``moved``, ``checked_at``, …) is the data behind a "new version available"
+    badge; on a version pinned to a commit sha it stays at rest (None / False),
+    because a pin cannot move and nothing checks one.
 
     Nothing here imports anything by itself — a new version is always a row you
     create, or ``auto_import`` creates.
     """
-    #: The ref the active version was imported from.
+    #: The ref the active version was imported from, exactly as requested.
     ref: str
-    #: The commit the active version was built from.
+    #: The commit the active version was built from (the resolved sha).
     current_commit: str
     #: Where the ref points upstream now; None when the last check failed.
     latest_commit: Optional[str]
@@ -460,6 +468,16 @@ class UpstreamStatus:
     error: Optional[str]
     #: Whether a moved upstream automatically imports a new version.
     auto_import: bool = False
+    #: The repository the active version was imported from, userinfo (an
+    #: embedded token) stripped. None on an older server or an unparseable url.
+    git_url: Optional[str] = None
+    #: The repository subfolder the corpus was read from; None = the
+    #: repository root (or an older server).
+    path: Optional[str] = None
+    #: The newest commit a local version already exists for, whether or not it
+    #: is the active one; None before any import recorded one (or an older
+    #: server).
+    acked_commit: Optional[str] = None
 
 
 @dataclass
@@ -1554,6 +1572,9 @@ def _map_upstream(data: Any) -> Optional[UpstreamStatus]:
         checked_at=data.get('checked_at'),
         error=data.get('error'),
         auto_import=data.get('auto_import') is True,
+        git_url=data.get('git_url'),
+        path=data.get('path'),
+        acked_commit=data.get('acked_commit'),
     )
 
 

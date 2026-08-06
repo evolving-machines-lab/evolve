@@ -1302,9 +1302,13 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
     if (!raw || typeof raw !== "object") return null;
     const value = raw as Record<string, unknown>;
     return {
+      // The provenance half (git-pin-provenance): null on an older server.
+      git_url: (value.git_url as string | null) ?? null,
       ref: value.ref as string,
       current_commit: value.current_commit as string,
+      path: (value.path as string | null) ?? null,
       latest_commit: (value.latest_commit as string | null) ?? null,
+      acked_commit: (value.acked_commit as string | null) ?? null,
       moved: value.moved === true,
       behind_by: typeof value.behind_by === "number" ? value.behind_by : null,
       checked_at: (value.checked_at as string | null) ?? null,

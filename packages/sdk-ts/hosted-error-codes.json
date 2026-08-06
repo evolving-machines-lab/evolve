@@ -61,6 +61,7 @@
     "import_not_found",
     "import_too_large",
     "invalid_archive",
+    "unpinned_git_ref",
     "package_not_retained",
     "package_corrupt",
     "package_missing",

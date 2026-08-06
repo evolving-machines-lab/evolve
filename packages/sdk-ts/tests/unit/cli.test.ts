@@ -3602,6 +3602,122 @@ async function testDatasetListAndShow() {
   }
 }
 
+async function testDatasetProvenanceAndPinNotice() {
+  console.log("\n--- runCli: dataset show provenance + pinned upstream notice ---");
+  installMockFetch();
+  try {
+    const SHA = "e".repeat(40);
+    setMockResponse("/api/datasets/pinned-swe", {
+      status: 200,
+      body: {
+        name: "pinned-swe",
+        title: null,
+        description: null,
+        active_version: { version: "1.0", state: "READY", created_at: "2026-07-01T00:00:00Z", task_count: 3 },
+        versions: [{ version: "1.0", state: "READY", created_at: "2026-07-01T00:00:00Z", task_count: 3 }],
+        selected_version: null,
+        tasks: { items: [], nextCursor: null, hasMore: false },
+        // A commit-pinned import: provenance present, watch at rest.
+        upstream: {
+          git_url: "https://github.com/acme/bench",
+          ref: SHA,
+          current_commit: SHA,
+          path: "datasets/my-swe",
+          latest_commit: null,
+          acked_commit: null,
+          moved: false,
+          behind_by: null,
+          checked_at: null,
+          error: null,
+          auto_import: false,
+        },
+        created_at: "2026-07-01T00:00:00Z",
+        updated_at: "2026-07-01T00:00:00Z",
+      },
+    });
+
+    const show = captureIO();
+    assertEqual(await runCli(["dataset", "show", "pinned-swe", ...AUTH], show.io), 0, "show exits 0");
+    const text = show.out.join("\n");
+    assert(
+      text.includes(`source: https://github.com/acme/bench (commit ${SHA.slice(0, 12)})`),
+      "show renders where the version came from — url + resolved commit, no duplicate ref when the ref IS the commit"
+    );
+    assert(text.includes("subfolder: datasets/my-swe"), "a narrowed import names its subfolder");
+    assert(!text.includes("upstream") || !text.includes("moved"), "a pin never prints a moved notice");
+
+    // A TAG import renders the requested ref beside the resolved commit.
+    setMockResponse("/api/datasets/pinned-swe", {
+      status: 200,
+      body: {
+        name: "pinned-swe",
+        title: null,
+        description: null,
+        active_version: { version: "1.0", state: "READY", created_at: "2026-07-01T00:00:00Z", task_count: 3 },
+        upstream: {
+          git_url: "https://github.com/acme/bench",
+          ref: "v1.0",
+          current_commit: SHA,
+          path: null,
+          latest_commit: null,
+          acked_commit: null,
+          moved: false,
+          behind_by: null,
+          checked_at: null,
+          error: null,
+          auto_import: false,
+        },
+      },
+    });
+    const tagShow = captureIO();
+    await runCli(["dataset", "show", "pinned-swe", ...AUTH], tagShow.io);
+    assert(
+      tagShow.out.some((l) => l.includes("source: https://github.com/acme/bench @ v1.0") && l.includes(SHA.slice(0, 12))),
+      "a tag import renders requested-ref @ resolved-commit"
+    );
+
+    // The moved notice suggests a PIN the server will accept — the observed
+    // commit and the real url — never the branch name the server now refuses.
+    setMockResponse("/api/datasets", {
+      status: 200,
+      body: {
+        items: [
+          {
+            name: "legacy-swe",
+            title: null,
+            description: null,
+            active_version: { version: "1.1", state: "READY", created_at: "2026-07-01T00:00:00Z", task_count: 2 },
+            upstream: {
+              git_url: "https://github.com/acme/legacy",
+              ref: "main",
+              current_commit: "a".repeat(40),
+              path: "corpus",
+              latest_commit: "b".repeat(40),
+              acked_commit: null,
+              moved: true,
+              behind_by: null,
+              checked_at: "2026-07-01T00:00:00Z",
+              error: null,
+              auto_import: false,
+            },
+          },
+        ],
+        nextCursor: null,
+        hasMore: false,
+      },
+    });
+    const list = captureIO();
+    await runCli(["dataset", "list", ...AUTH], list.io);
+    const notice = list.out.find((l) => l.includes("upstream main moved"));
+    assert(notice !== undefined, "the moved notice still appears for a legacy branch watch");
+    assert(notice!.includes(`--ref ${"b".repeat(40)}`), "the suggested command pins the observed commit, not the refused branch name");
+    assert(notice!.includes("--git https://github.com/acme/legacy"), "the suggested command carries the real url");
+    assert(notice!.includes("--path corpus"), "the suggested command keeps the subfolder");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testDatasetShowGate() {
   console.log("\n--- runCli: dataset show surfaces the activation gate ---");
   installMockFetch();
@@ -4233,6 +4349,7 @@ async function main() {
   await testTrialDownloadUsageErrors();
   await testTrialStop();
   await testDatasetListAndShow();
+  await testDatasetProvenanceAndPinNotice();
   await testDatasetShowGate();
   await testDatasetPublishWatch();
   await testDatasetPublishFailedAndErrors();

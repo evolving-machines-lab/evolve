@@ -486,7 +486,7 @@ const GROUPS: Record<string, GroupSpec> = {
         summary: "Publish a dataset version from a git source or a local directory",
         flags: {
           git: { kind: "string", value: "<url>", help: "Git repository URL (with --ref)" },
-          ref: { kind: "string", value: "<ref>", help: "Git ref: branch, tag, or commit (with --git)" },
+          ref: { kind: "string", value: "<ref>", help: "Pinned git ref: a full 40-hex commit sha, or a tag (resolved to its commit at publish and verified at import). Branch names are refused — unpinned_git_ref (with --git)" },
           path: { kind: "string", value: "<subfolder>", help: "Repository subfolder holding the corpus (with --git; sparse checkout — only that folder is imported)" },
           dir: { kind: "string", value: "<path>", help: "Local corpus directory (tarred + uploaded)" },
           name: { kind: "string", value: "<dataset>", help: "Catalog dataset name to create or extend (optional with --dir when the corpus carries a dataset.toml manifest; required with --git)" },
@@ -3081,6 +3081,16 @@ function datasetDetailLines(b: Dataset): string[] {
     ["description", b.description ?? "-"],
     ["active version", b.active_version?.version ?? "-"],
   ]);
+  // PROVENANCE: what the active version was built from — the repository, the
+  // requested ref, the resolved commit, and the subfolder when the import was
+  // narrowed to one. Quiet block, like the manifest below: a dataset without
+  // a git source prints nothing.
+  if (b.upstream) {
+    const u = b.upstream;
+    const refPart = u.ref === u.current_commit ? "" : ` @ ${u.ref}`;
+    lines.push(`source: ${u.git_url ?? "?"}${refPart} (commit ${u.current_commit.slice(0, 12)})`);
+    if (u.path) lines.push(`  subfolder: ${u.path}`);
+  }
   // The dataset.toml identity the active version imported under, when it had
   // one — the manifest's own org/name and its declared metadata. One quiet
   // block; a version without a manifest prints nothing.
@@ -3195,10 +3205,18 @@ function upstreamNotices(
   for (const item of items) {
     if (!item.upstream?.moved) continue;
     const at = item.active_version ? `@${item.active_version.version}` : "";
+    // The suggested command must pass a PIN — the server refuses branch names
+    // (unpinned_git_ref) — so it names the observed commit, not the moving
+    // ref. latest_commit is non-null whenever moved is true; the fallback is
+    // for a server that predates that invariant. git_url rides the upstream
+    // field since git-pin-provenance, so the command is complete as printed.
+    const pin = item.upstream.latest_commit ?? item.upstream.ref;
+    const url = item.upstream.git_url ?? "<url>";
+    const path = item.upstream.path ? ` --path ${item.upstream.path}` : "";
     lines.push(
       `${item.name}${at} · upstream ${item.upstream.ref} moved — ` +
         `run: evolve dataset publish --name ${item.name} --version <new-version> ` +
-        `--git <url> --ref ${item.upstream.ref}`
+        `--git ${url} --ref ${pin}${path}`
     );
   }
   return lines;

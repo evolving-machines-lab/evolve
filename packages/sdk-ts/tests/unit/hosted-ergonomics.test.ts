@@ -372,9 +372,12 @@ async function main() {
         selected_version: null,
         tasks: emptyPage,
         upstream: {
+          git_url: "https://github.com/acme/bench",
           ref: "main",
           current_commit: "a".repeat(40),
+          path: "datasets/deep-swe",
           latest_commit: "b".repeat(40),
+          acked_commit: "b".repeat(40),
           moved: true,
           behind_by: null,
           checked_at: "2026-07-24T00:00:00.000Z",
@@ -389,6 +392,10 @@ async function main() {
     assertEqual(dataset.upstream?.moved, true, "upstream.moved is what a badge branches on");
     assertEqual(dataset.upstream?.behind_by, null, "behind_by is null — the watcher never fetches a commit graph");
     assertEqual(dataset.upstream?.auto_import, true, "auto_import says whether a moved upstream imports itself");
+    // git-pin-provenance: upstream also says what the version was BUILT FROM.
+    assertEqual(dataset.upstream?.git_url, "https://github.com/acme/bench", "upstream carries the (token-free) repository url");
+    assertEqual(dataset.upstream?.path, "datasets/deep-swe", "upstream carries the imported subfolder");
+    assertEqual(dataset.upstream?.acked_commit, "b".repeat(40), "upstream carries the newest already-imported commit");
   }
 
   {

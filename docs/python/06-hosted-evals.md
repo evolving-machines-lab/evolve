@@ -839,13 +839,15 @@ What you publish is **private to your account**. It never appears in anyone else
 
 ### Publishing
 
-Publish from a git repository pinned to a ref, or upload a local corpus directory — the same corpus, the same pipeline, the same rules either way:
+Publish from a git repository pinned to a ref, or upload a local corpus directory — the same corpus, the same pipeline, the same rules either way.
+
+A git ref must be **pinned**: a full 40-hex commit sha, or a tag. A tag is resolved to the commit it points at when the publish is accepted, the sha is stored, and the import verifies the tag still points there — a tag re-pointed in between fails loudly instead of importing different bytes. A branch name is refused with `unpinned_git_ref`, and the refusal's `details` carry the commit the branch points at right now, so pinning it is one copy-paste:
 
 ```python
 # From a git repository, pinned to a ref
 publish_job = await catalog.publish(
     git_url='https://github.com/acme/my-swe.git',
-    git_ref='v1.0.0',             # a branch, tag, or commit — always pinned
+    git_ref='v1.0.0',             # a tag or a full commit sha — always PINNED
     name='my-swe',
     version='1.0',                # the version label for the published corpus
 )
@@ -1016,7 +1018,9 @@ if dataset.upstream and dataset.upstream.moved:
     print(f'{dataset.upstream.ref} has moved past {dataset.upstream.current_commit}')
 ```
 
-`upstream` carries the ref, the commit the active version was built from, where the ref points now (`latest_commit`, `None` when the last check failed), `moved` (the field a badge branches on), `checked_at`, `error` (why the last check failed — show "could not check", never "up to date"), and `auto_import`. It is `None`, not "up to date", when there is nothing to watch — an uploaded corpus, one imported at an exact commit sha (a pinned commit cannot move), or one published before provenance was recorded. A failed check keeps the last known answer and sets `error`: a network blip should not quietly erase an update that is genuinely available.
+`upstream` is also where a dataset says what its active version was **built from**: `git_url` (userinfo stripped — an embedded token never reaches the wire), the requested `ref`, the resolved commit (`current_commit`), and the repository subfolder (`path`, `None` for the repository root). Beside the provenance ride the watch fields: where the ref points now (`latest_commit`, `None` when the last check failed), `acked_commit` (the newest commit a local version already exists for), `moved` (the field a badge branches on), `checked_at`, `error` (why the last check failed — show "could not check", never "up to date"), and `auto_import`.
+
+It is `None`, not "up to date", when the active version did not come from a git remote — an uploaded corpus, or one published before provenance was recorded. A version pinned to an exact commit sha serves its provenance with the watch at rest (`latest_commit`/`checked_at`/`error` `None`, `moved` `False`): a pin cannot move, and nothing checks one. A tag keeps the watch — a re-pointed tag is an update worth a badge. A failed check keeps the last known answer and sets `error`: a network blip should not quietly erase an update that is genuinely available.
 
 By default, watching produces a fact, never an action — a new version is always an immutable row **you** create with `publish()`. The one exception is opt-in:
 
@@ -1523,7 +1527,7 @@ class Dataset:                      # datasets().list() / get(ref)
     versions: Optional[List[DatasetVersion]]   # get() only, newest first
     selected_version: Optional[DatasetVersion] # get() only — the tasks' provenance
     tasks: Optional[TaskPage]                  # get() only; page with limit/cursor
-    upstream: Optional[UpstreamStatus]         # None = nothing to watch, NEVER "up to date"
+    upstream: Optional[UpstreamStatus]         # provenance + watch; None = no git source, NEVER "up to date"
     created_at: Optional[str]                  # get() only
     updated_at: Optional[str]                  # get() only
     # ActiveDataset (get_active) is the same shape with version + tasks guaranteed
@@ -1588,6 +1592,6 @@ Codes you will actually branch on: `dataset_not_found` (also what another accoun
 
 [Registered agents](#bring-your-own-agent) add their own: `agent_not_found` (also what another owner's name reads as), `agent_name_taken`, `agent_name_reserved` (the name collides with a built-in), `agent_source_required` (neither an install script nor a tarball), `agent_source_conflict` (both), `agent_invalid_env` (declared env tries to override a run-contract key), `agent_invalid_name`, `agent_too_large`, and `agent_limit_reached` (the per-account ceiling).
 
-[Datasets](#bring-your-own-dataset) add `dataset_not_owned`, `dataset_in_use` (409 — jobs reference it; `details` names a sample), `package_not_retained`, `package_missing` (410), and `upstream_not_watchable` (the auto-import toggle on a dataset with no moving ref).
+[Datasets](#bring-your-own-dataset) add `dataset_not_owned`, `dataset_in_use` (409 — jobs reference it; `details` names a sample), `package_not_retained`, `package_missing` (410), `upstream_not_watchable` (the auto-import toggle on a dataset with no moving ref), and `unpinned_git_ref` (a git publish whose ref is a branch name or otherwise not pinned — pass a full commit sha or a tag; for a branch, the refusal's `details.commit` is the sha to use).
 
 Three more come from the shapes above: `idempotency_key_reused` (409 — the key already stands for a different request), `invalid_multipart` (400 — an upload that is not `multipart/form-data`, or is malformed), and `invalid_cursor` (400 — a malformed `cursor` on a paged read).

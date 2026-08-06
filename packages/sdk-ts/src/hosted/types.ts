@@ -1328,19 +1328,41 @@ export interface Task {
 }
 
 /**
- * Where a dataset's git source points now, versus what its active version was
- * built from — the data behind a "new version available" badge. Null on a
- * dataset whose source cannot be re-resolved; null is "nothing to watch",
- * never "up to date". Nothing here imports anything — a new version is always
- * a row you create (or `auto_import` creates).
+ * The active version's git PROVENANCE — git_url + the requested ref + the
+ * resolved commit + the repository subfolder — plus, for a ref that can move,
+ * the WATCH: where the ref points now versus what the version was built from,
+ * the data behind a "new version available" badge. Null when the active
+ * version did not come from a git remote (an uploaded tarball, a seeded
+ * corpus, a pre-provenance row); null is never "up to date". A version pinned
+ * to a commit sha serves the provenance with the watch at rest (latest_commit
+ * / checked_at / error null, moved false) — nothing checks a pin. Nothing
+ * here imports anything — a new version is always a row you create (or
+ * `auto_import` creates).
  */
 export interface UpstreamStatus {
-  /** The ref the active version was imported from. */
+  /**
+   * The repository the active version was imported from, with any userinfo
+   * (an embedded token) stripped; null only when the stored url cannot be
+   * parsed. Absent on a pre-provenance server.
+   */
+  git_url?: string | null;
+  /** The ref the active version was imported from, exactly as requested. */
   ref: string;
-  /** The commit the active version was built from. */
+  /** The commit the active version was built from (the resolved sha). */
   current_commit: string;
+  /**
+   * The repository subfolder the corpus was read from; null = repository
+   * root. Absent on a pre-provenance server.
+   */
+  path?: string | null;
   /** Where the ref points upstream now; null when the last check failed. */
   latest_commit: string | null;
+  /**
+   * The newest commit a local version already exists for, whether or not it
+   * is the active one; null before any import recorded one. Absent on an
+   * older server.
+   */
+  acked_commit?: string | null;
   /** True when upstream has moved off the built-from commit. Branch on this. */
   moved: boolean;
   /** Reserved; always null today. */
@@ -1440,7 +1462,14 @@ export type DatasetSource =
        * For a private repository, put a token in the https url.
        */
       git_url: string;
-      /** A pinned branch, tag, or commit. Required: an unpinned import is not reproducible. */
+      /**
+       * A PINNED ref, required: a full 40-hex commit sha, or a tag (the
+       * server resolves it to its commit at accept time, stores the sha, and
+       * verifies the tag still points there at import). A branch name is
+       * refused with `unpinned_git_ref` — an unpinned import is not
+       * reproducible — and the refusal's details carry the commit the branch
+       * points at right now, the pin to use instead.
+       */
       git_ref: string;
       /**
        * Optional repository SUBFOLDER holding the corpus (POSIX path relative
@@ -2196,6 +2225,7 @@ export const HOSTED_ERROR_CODES = [
   "import_not_found",
   "import_too_large",
   "invalid_archive",
+  "unpinned_git_ref",
   "package_not_retained",
   "package_corrupt",
   "package_missing",

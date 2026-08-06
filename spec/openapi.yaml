@@ -1365,10 +1365,15 @@ paths:
       description: |
         Starts a server-side import that creates or extends a catalog dataset
         with one new immutable version. Multipart only. Source is exactly one
-        of: a git repository (`git_url` + pinned `git_ref` — https only, an
-        unpinned import is not reproducible — optionally narrowed to one
-        repository subfolder with `git_path`, fetched via sparse checkout) or
-        an uploaded gzipped tarball (`archive`).
+        of: a git repository (`git_url` + pinned `git_ref` — https only, and
+        the ref must be PINNED: a full 40-hex commit sha, or a tag, which the
+        server resolves to its commit at accept time and verifies at import.
+        A branch name is refused with `unpinned_git_ref` (an unpinned import
+        is not reproducible); the refusal's details carry the commit the
+        branch points at right now, so pinning it is one copy-paste. The
+        import is optionally narrowed to one repository subfolder with
+        `git_path`, fetched via sparse checkout) or an uploaded gzipped
+        tarball (`archive`).
 
         A corpus carrying Harbor's dataset.toml manifest (at the corpus root
         or beside the task directories) imports what the MANIFEST says: it
@@ -2163,6 +2168,12 @@ components:
         - import_not_found
         - import_too_large
         - invalid_archive
+        # A git publish whose git_ref is not pinned: not a full 40-hex commit
+        # sha and not a tag on the remote (i.e. a branch name, an abbreviated
+        # sha, or an unknown ref). Details carry `ref`, `ref_kind`
+        # ("branch" | "unknown") and, for a branch, `commit` — where it points
+        # right now, the pin to use instead.
+        - unpinned_git_ref
         # Retained source package (owner-only download)
         - package_not_retained
         - package_corrupt
@@ -4417,21 +4428,45 @@ components:
     UpstreamStatus:
       type: object
       description: |
-        Where the dataset's git source points now versus what its active
-        version was built from — the data behind a "new version available"
-        badge. The whole object is null on a dataset with nothing to watch;
-        null is never "up to date". Nothing here imports anything — a new
-        version is always a row you create (or `auto_import` creates).
-      required: [ref, current_commit, latest_commit, moved, behind_by, checked_at, error, auto_import]
+        The active version's git PROVENANCE — `git_url` + the requested `ref`
+        + the resolved commit (`current_commit`) + the repository subfolder
+        (`path`) — plus, for a ref that can move, the WATCH: where the ref
+        points now versus what the version was built from, the data behind a
+        "new version available" badge. The whole object is null when the
+        active version did not come from a git remote (an uploaded tarball, a
+        seeded corpus, or a pre-provenance row); null is never "up to date".
+        A version pinned to a commit sha serves the provenance with the watch
+        at rest (`latest_commit`/`checked_at`/`error` null, `moved` false):
+        nothing checks a pin, and null `checked_at` is what keeps that honest.
+        Nothing here imports anything — a new version is always a row you
+        create (or `auto_import` creates).
+      required: [git_url, ref, current_commit, path, latest_commit, acked_commit, moved, behind_by, checked_at, error, auto_import]
       properties:
+        git_url:
+          type: [string, 'null']
+          description: >
+            The repository the active version was imported from, with any
+            userinfo (an embedded token) stripped; null only when the stored
+            url cannot be parsed.
         ref:
           type: string
-          description: The ref the active version was imported from.
+          description: >
+            The ref the active version was imported from, exactly as
+            requested: a commit sha, a tag, or (legacy rows) a branch.
         current_commit:
           type: string
+          description: The commit the active version was actually built from (the resolved sha).
+        path:
+          type: [string, 'null']
+          description: The repository subfolder the corpus was read from; null = repository root.
         latest_commit:
           type: [string, 'null']
           description: Where the ref points upstream now; null when the last check failed.
+        acked_commit:
+          type: [string, 'null']
+          description: >
+            The newest commit a local version already exists for, whether or
+            not it is the active one; null before any import recorded one.
         moved:
           type: boolean
           description: True when upstream has moved off the built-from commit. Branch on this.
@@ -4539,7 +4574,13 @@ components:
           description: https:// repository URL. For a private repo, put a token in the URL.
         git_ref:
           type: string
-          description: Pinned branch, tag, or commit. Required with git_url.
+          description: >
+            Required with git_url, and must be PINNED: a full 40-hex commit
+            sha, or a tag (resolved to the commit it points at when the
+            publish is accepted; the stored sha is verified at import, so a
+            tag re-pointed in between fails loudly). A branch name is refused
+            with `unpinned_git_ref` — its details name the commit the branch
+            points at right now, the pin to use instead.
         git_path:
           type: string
           description: >

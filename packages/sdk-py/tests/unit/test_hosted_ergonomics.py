@@ -503,9 +503,12 @@ class TestUpstream:
             'selected_version': None,
             'tasks': EMPTY_PAGE,
             'upstream': {
+                'git_url': 'https://github.com/acme/bench',
                 'ref': 'main',
                 'current_commit': 'a' * 40,
+                'path': 'datasets/deep-swe',
                 'latest_commit': 'b' * 40,
+                'acked_commit': 'b' * 40,
                 'moved': True,
                 'behind_by': None,
                 'checked_at': '2026-07-24T00:00:00.000Z',
@@ -522,6 +525,28 @@ class TestUpstream:
         assert dataset.upstream.moved is True
         # The watcher never fetches a commit graph, so this stays None.
         assert dataset.upstream.behind_by is None
+        # git-pin-provenance: upstream also says what the version was BUILT
+        # FROM — the (token-free) url, the subfolder, the acked commit.
+        assert dataset.upstream.git_url == 'https://github.com/acme/bench'
+        assert dataset.upstream.path == 'datasets/deep-swe'
+        assert dataset.upstream.acked_commit == 'b' * 40
+
+    def test_provenance_fields_default_to_none_on_an_older_server(self):
+        """A server from before git-pin-provenance omits the three new keys."""
+        status = _map_upstream(
+            {
+                'ref': 'v1.0',
+                'current_commit': 'a' * 40,
+                'latest_commit': None,
+                'moved': False,
+                'behind_by': None,
+                'checked_at': None,
+                'error': None,
+            }
+        )
+        assert status.git_url is None
+        assert status.path is None
+        assert status.acked_commit is None
 
     @pytest.mark.asyncio
     async def test_a_missing_upstream_field_reads_as_nothing_to_watch(self):
