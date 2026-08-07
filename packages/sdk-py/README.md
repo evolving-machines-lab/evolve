@@ -1,4 +1,8 @@
-# Evolve SDK Python SDK
+<p align="center">
+  <img src="https://raw.githubusercontent.com/evolving-machines-lab/evolve/main/logo/evolving-machines-ink.png" alt="Evolving Machines" width="380">
+</p>
+
+# Evolving Machines — Evolve SDK (Python)
 
 Evolve SDK lets you run and orchestrate terminal-based AI agents in secure sandboxes with built-in observability.
 

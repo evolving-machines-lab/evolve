@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="logo/evolve-logo.png" alt="Evolve SDK" height="200">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="logo/evolving-machines-offwhite.png">
+    <img src="logo/evolving-machines-ink.png" alt="Evolving Machines" width="440">
+  </picture>
 </p>
 
 <p align="center">

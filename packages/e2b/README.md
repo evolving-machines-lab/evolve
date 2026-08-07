@@ -1,4 +1,8 @@
-# Evolve SDK E2B Provider
+<p align="center">
+  <img src="https://raw.githubusercontent.com/evolving-machines-lab/evolve/main/logo/evolving-machines-ink.png" alt="Evolving Machines" width="380">
+</p>
+
+# Evolving Machines — Evolve E2B Provider
 
 E2B sandbox provider for [Evolve SDK](https://www.npmjs.com/package/@evolvingmachines/sdk).
 
