@@ -162,6 +162,11 @@ paths:
         fingerprinted IN ORDER: `datasets` echoes the request order back, so
         the same selectors reordered are a different request and a shared key
         across the two orders is refused rather than silently replayed.
+        Agent versions follow the same resolved-fingerprint law: an unpinned
+        arm identifies as the version stamped at creation, so its key
+        replays while the vendor's latest is unchanged and is refused once
+        it has moved — the two requests would no longer install the same
+        agent bytes.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -3064,6 +3069,10 @@ components:
         - skill_limit_reached
         # Jobs + trials
         - agent_version_not_found
+        # An unpinned arm's latest version could not be resolved at create
+        # (502, retryable): unpinned versions are resolved ONCE at creation
+        # and stamped, never per trial, so a failed lookup refuses the job.
+        - agent_version_unresolvable
         - agent_kwarg_unsupported
         - agent_config_unsupported
         - agent_config_key_refused
@@ -3292,8 +3301,14 @@ components:
         version:
           type: string
           description: >
-            Pin an agent version; omitted, the platform resolves the latest
-            supported (`agent_version_not_found` when a pin cannot resolve).
+            Pin an agent version; omitted, the platform resolves the agent's
+            latest published version ONCE at job creation and stamps it on
+            the arm — every trial of the job installs that same version, even
+            when the vendor releases while the job runs, and the job body
+            echoes the stamped version. An unpublished pin is
+            `agent_version_not_found`; a failed latest lookup refuses the
+            create with `agent_version_unresolvable` (502, retryable) rather
+            than deferring resolution to dispatch.
         reasoning_effort:
           type: string
           description: >
@@ -3397,7 +3412,11 @@ components:
           type: string
         version:
           type: [string, 'null']
-          description: The requested pin; null when the run took the latest.
+          description: >
+            The STAMPED version every trial of this arm installs — the
+            caller's pin, or the latest resolved once at creation for an
+            unpinned arm. Null only for registered agents (versioned by their
+            own content) and for jobs created before version stamping.
         reasoning_effort:
           type: [string, 'null']
           description: Declared effort; null when the run took the runner default.

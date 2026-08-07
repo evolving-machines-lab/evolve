@@ -146,6 +146,7 @@ HostedErrorCode = Literal[
     'skill_too_large',
     'skill_limit_reached',
     'agent_version_not_found',
+    'agent_version_unresolvable',
     'agent_kwarg_unsupported',
     'agent_config_unsupported',
     'agent_config_key_refused',
