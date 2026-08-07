@@ -1,4 +1,4 @@
-<br>
+<br><br>
 
 <p align="center">
   <picture>
@@ -7,7 +7,7 @@
   </picture>
 </p>
 
-<br>
+<br><br>
 
 <p align="center">
   Run, deploy and monitor CLI agents in secure Cloud sandboxes.
