@@ -574,7 +574,8 @@ const GROUPS: Record<string, GroupSpec> = {
         example: "evolve skill show name:my-skill",
       },
       delete: {
-        summary: "Delete an uploaded skill record (past jobs keep their locks)",
+        summary:
+          "Delete an uploaded skill record (past jobs keep their locks); refused (skill_in_use, 409) while a running job references it",
         flags: {},
         minPositionals: 1,
         maxPositionals: 1,
