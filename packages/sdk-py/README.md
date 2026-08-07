@@ -1,6 +1,10 @@
+<br>
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/evolving-machines-lab/evolve/main/logo/evolving-machines-ink.png" alt="Evolving Machines" width="380">
 </p>
+
+<br>
 
 # Evolving Machines — Evolve SDK (Python)
 
