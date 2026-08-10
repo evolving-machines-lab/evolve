@@ -1,7 +1,8 @@
 /**
  * Daytona Sandbox Provider
  *
- * @requires @daytonaio/sdk >= 0.134.0
+ * @requires @daytonaio/sdk >= 0.203.0 (cursor-based list pagination; Daytona
+ *   retired the page-numbered endpoint on 2026-06-25)
  *
  * Design principles:
  * - Mirror E2B provider interface for SDK compatibility
@@ -40,7 +41,12 @@ import {
   STDERR_PREFIX_BYTES,
   STDOUT_PREFIX_BYTES,
 } from "@daytonaio/sdk";
-import type { Sandbox as DaytonaSandbox } from "@daytonaio/sdk";
+import type {
+  GpuType,
+  ListSandboxesQuery,
+  Sandbox as DaytonaSandbox,
+  SandboxState as DaytonaApiSandboxState,
+} from "@daytonaio/sdk";
 import { resolve4 } from "node:dns/promises";
 
 // ============================================================
@@ -129,18 +135,21 @@ const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
 
 /**
- * Sandboxes requested per list page. Held at the value every provider in this
- * lineup accepts, so one number is valid everywhere a fleet is enumerated.
+ * Sandboxes requested per list fetch — the cursor API's per-page size
+ * (ListSandboxesQuery.limit bounds one fetch, never the total). Held at the
+ * value every provider in this lineup accepts, so one number is valid
+ * everywhere a fleet is enumerated.
  */
 export const DAYTONA_LIST_PAGE_SIZE = 100;
 
 /**
- * Page ceiling for one enumeration — 10,000 sandboxes at the page size above.
- * A walk that reaches it stops and reports itself INCOMPLETE, because the one
- * thing a fleet enumeration may never do is return a short list that reads like
- * a whole one.
+ * Row ceiling for one enumeration — the same 10,000 sandboxes the old
+ * 100-pages-of-100 ceiling allowed, restated in rows because cursor pagination
+ * has no page numbers to count. A walk that reaches it stops and reports
+ * itself INCOMPLETE, because the one thing a fleet enumeration may never do is
+ * return a short list that reads like a whole one.
  */
-export const DAYTONA_MAX_LIST_PAGES = 100;
+export const DAYTONA_MAX_LIST_SCAN = 10_000;
 
 function getParentDir(path: string): string {
   const lastSlash = path.lastIndexOf("/");
@@ -222,11 +231,12 @@ export class DaytonaImagePullError extends Error {
  * snapshot with the desired sizing under its own name, or drop `resources`.
  */
 /**
- * Typed refusal for a GPU TYPE constraint: @daytonaio/sdk 0.134.0 has no
- * gpu_type field anywhere (snapshot build takes only a count), so honoring
- * `resources.gpuTypes` is impossible and silently dropping it would turn
- * "give me an H100" into "give me some GPU". Same provider law as every
- * other unenforceable option: reject, never silently ignore.
+ * @deprecated No longer thrown. @daytonaio/sdk 0.203.0 grew a real
+ * `Resources.gpuType` field, so `resources.gpuTypes` is now FORWARDED on the
+ * snapshot-build path instead of refused (Daytona validates the type names
+ * server-side). Sizing against an EXISTING snapshot — GPU type included —
+ * still throws DaytonaResourcesError like every other pinned field. The class
+ * stays exported so callers with `instanceof` checks keep compiling.
  */
 export class DaytonaGpuTypeError extends Error {
   /** The snapshot/image the create named. */
@@ -234,9 +244,8 @@ export class DaytonaGpuTypeError extends Error {
 
   constructor(snapshot: string) {
     super(
-      `Daytona cannot constrain the GPU type for "${snapshot}": the SDK's snapshot resources ` +
-        "take only a GPU count, no type — drop `resources.gpuTypes`, or run type-constrained " +
-        "GPU work on a provider that reserves typed GPUs (modal)."
+      `Daytona cannot constrain the GPU type for "${snapshot}": the snapshot already exists ` +
+        "and pins its resources — pre-build a snapshot with the desired GPU type under its own name."
     );
     this.name = "DaytonaGpuTypeError";
     this.snapshot = snapshot;
@@ -878,12 +887,14 @@ function toSandboxInfo(sandbox: DaytonaSandboxLike): SandboxInfo {
 
 /**
  * Map a Daytona sandbox state onto Evolve's list() filter states.
- * "started" → running; "stopped"/"archived" → paused (our pause() stops the
- * sandbox); transitional and terminal states match no filter.
+ * "started" → running; "stopped"/"archived"/"paused" → paused (our pause()
+ * stops the sandbox; Daytona 0.203.0 added a native "paused" state for
+ * pause-capable sandbox classes, and a box resting in it is paused by any
+ * reading); transitional and terminal states match no filter.
  */
 function daytonaStateToEvolveState(state?: string): "running" | "paused" | undefined {
   if (state === "started") return "running";
-  if (state === "stopped" || state === "archived") return "paused";
+  if (state === "stopped" || state === "archived" || state === "paused") return "paused";
   return undefined;
 }
 
@@ -956,13 +967,17 @@ export interface SandboxResources {
   /** Disk in GB (default: 10) */
   disk?: number;
   /**
-   * GPU reservation (count). NOT enforceable at create time — Daytona
-   * allocates GPU at snapshot build, and GPU machines are tier-gated — so a
-   * create-time value throws DaytonaResourcesError like every other sizing
-   * field on an existing snapshot.
+   * GPU reservation (count). Applied when a SNAPSHOT IS BUILT (Daytona
+   * allocates GPU at snapshot build; GPU machines are tier-gated on Daytona's
+   * side) — against an existing snapshot it throws DaytonaResourcesError like
+   * every other pinned sizing field.
    */
   gpu?: number;
-  /** Acceptable GPU types; rejected alongside `gpu` (see above). */
+  /**
+   * Acceptable GPU types (Daytona's GpuType names, e.g. "H100", "H200",
+   * "RTX-PRO-6000"). Forwarded on the build path — Daytona validates the
+   * names server-side — and refused on an existing snapshot alongside `gpu`.
+   */
   gpuTypes?: string[];
 }
 
@@ -1037,6 +1052,13 @@ export interface SandboxListOptions {
 export interface SandboxListPage {
   sandboxes: SandboxInfo[];
   complete: boolean;
+  /**
+   * Fetch units consumed: rows scanned from the cursor stream (before
+   * filtering). Cursor pagination has no page numbers to count — and the modal
+   * provider already reports item counts here — so "pages" reads as "units of
+   * enumeration work", kept under this name because the field is shared
+   * provider-neutral surface.
+   */
   pagesFetched: number;
   error?: string;
 }
@@ -1137,35 +1159,84 @@ interface ResolvedDaytonaConfig {
  *
  * `apiUrl` covers the control plane only. Everything an agent actually does —
  * every command, every file read and write — goes to a per-sandbox runner the
- * SDK discovers by calling GET /sandbox/{id}/toolbox-proxy-url and then talks
- * to DIRECTLY (@daytonaio/sdk/src/Daytona.js:409-419, Sandbox.js:569-578). So
- * pointing `apiUrl` at the Evolve Dashboard, the way the managed E2B lane
- * points E2B's, captures create and list and nothing an agent does.
+ * SDK talks to DIRECTLY. Since 0.203.0 the runner base is not one discovery
+ * call but DATA: every control-plane response DTO carries `toolboxProxyUrl`,
+ * `processSandboxDto` re-derives the toolbox base `<toolboxProxyUrl>/<id>`
+ * from it on EVERY refresh (esm/Sandbox.js:1303-1314), and
+ * `sandboxApi.getToolboxProxyUrl(id)` is only the fallback for a DTO that
+ * arrived without it (esm/Daytona.js:480-486). So pointing `apiUrl` at the
+ * Evolve Dashboard captures create and list and nothing an agent does — and a
+ * single overridden discovery method (the pre-0.203 seam) would be undone by
+ * the first refreshData() that carried the real runner URL.
  *
- * Managed mode closes that by answering the discovery call locally with the
- * Dashboard's own toolbox route, so the client builds
+ * Managed mode therefore wraps the ONE object every DTO flows through: the
+ * client's `sandboxApi`. The wrap answers getToolboxProxyUrl locally with the
+ * Dashboard's toolbox route and rewrites `toolboxProxyUrl` to that same route
+ * in every response DTO, so the client builds
  * `<dashboard>/api/managed/daytona/toolbox/<sandboxId>/…` for exactly the
- * paths it would otherwise have sent to Daytona's runner. The client is not
- * patched and no path is rewritten: the base URL is the only thing that moves,
- * which is the same seam the control plane already uses.
+ * paths it would otherwise have sent to Daytona's runner — a runner the
+ * managed caller has no credential for (the account key that opens it lives
+ * gateway-side and never reaches an SDK process; the Dashboard resolves the
+ * host itself, per sandbox, and forwards with a per-sandbox token). No path
+ * is rewritten: the base URL is the only thing that moves.
  */
+
+/** The DTO-bearing responses the managed wrap rewrites. */
+function rewriteToolboxProxyUrls(payload: unknown, managedToolboxUrl: string): void {
+  if (!payload || typeof payload !== "object") return;
+  const record = payload as { toolboxProxyUrl?: unknown; items?: unknown };
+  // Only a DTO that CARRIES the field is rewritten: processSandboxDto ignores
+  // an absent one and the wrapped getToolboxProxyUrl covers that path locally.
+  if (typeof record.toolboxProxyUrl === "string") {
+    record.toolboxProxyUrl = managedToolboxUrl;
+  }
+  if (Array.isArray(record.items)) {
+    for (const item of record.items) rewriteToolboxProxyUrls(item, managedToolboxUrl);
+  }
+}
+
+/**
+ * Wrap the SDK's sandbox api-client so no response can point the toolbox at
+ * Daytona's runner. Generic over the method set on purpose: the api client is
+ * generated code that grows methods every release, and the invariant is about
+ * the DATA (any DTO carrying toolboxProxyUrl), not about which call returned
+ * it.
+ */
+function wrapManagedSandboxApi<T extends object>(api: T, managedToolboxUrl: string): T {
+  return new Proxy(api, {
+    get(target, prop, receiver) {
+      if (prop === "getToolboxProxyUrl") {
+        // Answered locally, never upstream: the managed door does not serve
+        // runner discovery, and the Dashboard route is the same for every box.
+        return async () => ({ data: { url: managedToolboxUrl } });
+      }
+      const value = Reflect.get(target, prop, receiver);
+      if (typeof value !== "function") return value;
+      return function (this: unknown, ...args: unknown[]) {
+        const result = (value as (...a: unknown[]) => unknown).apply(target, args);
+        if (result instanceof Promise) {
+          return result.then((response) => {
+            rewriteToolboxProxyUrls((response as { data?: unknown } | undefined)?.data, managedToolboxUrl);
+            return response;
+          });
+        }
+        return result;
+      };
+    },
+  });
+}
+
 class ManagedDaytona extends Daytona {
   constructor(
-    config: { apiKey: string; apiUrl?: string; target?: string },
-    private readonly managedToolboxUrl: string,
+    config: ConstructorParameters<typeof Daytona>[0],
+    managedToolboxUrl: string,
   ) {
     super(config);
-  }
-
-  /**
-   * Answered locally, never upstream. The real discovery call would hand back
-   * Daytona's runner host, which a managed caller has no credential for — the
-   * account key that opens it lives gateway-side and never reaches an SDK
-   * process. The Dashboard resolves that host itself, per sandbox, and
-   * forwards with a per-sandbox token.
-   */
-  override async getProxyToolboxUrl(): Promise<string> {
-    return this.managedToolboxUrl;
+    // `sandboxApi` is TypeScript-private but a plain runtime property, and it
+    // is the single instance shared with every Sandbox the client hands out —
+    // so wrapping it here covers create, get, list, refreshData and fork alike.
+    const self = this as unknown as { sandboxApi: object };
+    self.sandboxApi = wrapManagedSandboxApi(self.sandboxApi, managedToolboxUrl);
   }
 }
 
@@ -2047,6 +2118,11 @@ export class DaytonaProvider implements SandboxProvider {
       apiKey: config.apiKey,
       apiUrl: config.apiUrl,
       target: config.target,
+      // Since 0.203.0 the client otherwise opens a socket.io WebSocket to the
+      // API at CONSTRUCTION for event streaming. Polling keeps the wire
+      // behavior this provider has always had — and a managed caller's apiUrl
+      // is a Dashboard route handler, which can never terminate that socket.
+      useDeprecatedPolling: true,
     };
     this.client = config.managedToolboxUrl
       ? new ManagedDaytona(clientConfig, config.managedToolboxUrl)
@@ -2137,19 +2213,17 @@ export class DaytonaProvider implements SandboxProvider {
     // True when the caller declared any create-time sizing. An EXISTING
     // snapshot pins its sizing (create-from-snapshot cannot resize), so the
     // fast path below must refuse rather than silently ignore the request.
-    // A GPU TYPE constraint can never be honored here: @daytonaio/sdk 0.134.0
-    // has no gpu_type field anywhere (snapshot build takes only a count), so
-    // "give me an H100" would silently become "give me some GPU". Reject, per
-    // the provider law — run type-constrained GPU work on modal.
-    if (options.resources?.gpuTypes !== undefined) {
-      throw new DaytonaGpuTypeError(imageName);
-    }
+    // GPU TYPE counts as sizing since @daytonaio/sdk 0.203.0 grew a real
+    // `Resources.gpuType` field: on a BUILD it is forwarded (Daytona validates
+    // the type names server-side), and against an existing snapshot it is as
+    // pinned as every other resource.
     const wantsResources =
       options.resources !== undefined &&
       (options.resources.cpu !== undefined ||
         options.resources.memory !== undefined ||
         options.resources.disk !== undefined ||
-        options.resources.gpu !== undefined);
+        options.resources.gpu !== undefined ||
+        options.resources.gpuTypes !== undefined);
 
     // Managed mode never builds. Snapshots are platform artifacts on the
     // Evolve organization's Daytona account: a managed caller who could
@@ -2225,14 +2299,18 @@ export class DaytonaProvider implements SandboxProvider {
               memory: options.resources?.memory ?? 4,
               disk: options.resources?.disk ?? 10,
               // GPU count, when requested: Daytona allocates GPU at snapshot
-              // build (the SDK's one GPU knob). Tier-gated on Daytona's side —
-              // an account without GPU quota gets Daytona's own loud refusal
-              // here, never a silent CPU snapshot. NOTE gpuTypes has no wire
-              // field in @daytonaio/sdk 0.134.0 and is deliberately NOT
-              // dropped silently: callers constraining the type must use a
-              // provider that can express it (modal).
+              // build. Tier-gated on Daytona's side — an account without GPU
+              // quota gets Daytona's own loud refusal here, never a silent CPU
+              // snapshot.
               ...((options.resources?.gpu ?? 0) > 0
                 ? { gpu: options.resources!.gpu! }
+                : {}),
+              // GPU TYPE, when constrained: a real wire field since 0.203.0
+              // (Resources.gpuType, e.g. "H100"). Passed through as given —
+              // Daytona rejects names outside its GpuType enum loudly, which
+              // beats this provider maintaining a shadow copy of their list.
+              ...(options.resources?.gpuTypes?.length
+                ? { gpuType: options.resources.gpuTypes as GpuType[] }
                 : {}),
             },
           },
@@ -2260,6 +2338,13 @@ export class DaytonaProvider implements SandboxProvider {
                 cpu: options.resources?.cpu ?? 4,
                 memory: options.resources?.memory ?? 4,
                 disk: options.resources?.disk ?? 10,
+                // The same GPU knobs the snapshot build would have honored:
+                // a fallback that silently downgraded "an H100 box" to a CPU
+                // box would be this file's own provider law broken in-house.
+                ...((options.resources?.gpu ?? 0) > 0 ? { gpu: options.resources!.gpu! } : {}),
+                ...(options.resources?.gpuTypes?.length
+                  ? { gpuType: options.resources.gpuTypes as GpuType[] }
+                  : {}),
               },
             },
             {
@@ -2299,18 +2384,21 @@ export class DaytonaProvider implements SandboxProvider {
   }
 
   /**
-   * List sandboxes, walking every page.
+   * List sandboxes, walking the cursor stream to exhaustion.
    *
-   * This used to request page 1 and stop, discarding `totalPages` — an
+   * An early version requested page 1 and stopped, discarding the rest — an
    * organization with more than one page of sandboxes was silently truncated,
    * and nothing in the return value said so. For any caller that reads absence
-   * from the list as "this sandbox is gone", that is a correctness bug.
+   * from the list as "this sandbox is gone", that is a correctness bug. Cursor
+   * pagination (mandatory since Daytona retired page numbers on 2026-06-25)
+   * changes the mechanics, not the law: the walk still runs to the end or says
+   * it could not.
    *
-   * ORDER OF OPERATIONS, because it is observable: `limit` bounds the sandboxes
-   * RETURNED, and Daytona has no server-side state filter, so the state filter
-   * runs client-side on each page BEFORE the limit is counted. Asking for 10
-   * running sandboxes therefore keeps paging until ten running ones have been
-   * found, rather than filtering ten arbitrary rows down to whatever survives.
+   * ORDER OF OPERATIONS, because it is observable: `limit` bounds the
+   * sandboxes RETURNED, and the state filter runs client-side on every row
+   * BEFORE the limit is counted. Asking for 10 running sandboxes therefore
+   * keeps walking until ten running ones have been found, rather than
+   * filtering ten arbitrary rows down to whatever survives.
    */
   async list(options?: SandboxListOptions): Promise<SandboxInfo[]> {
     const page = await this.paginate(options);
@@ -2337,83 +2425,31 @@ export class DaytonaProvider implements SandboxProvider {
   private async paginate(
     options?: SandboxListOptions,
   ): Promise<SandboxListPage & { stoppedAtLimit: boolean }> {
-    return collectSandboxPages(
-      (page) => this.listPage(options, page),
-      options,
-    );
+    return collectSandboxStream(this.listStream(options), options);
   }
 
   /**
-   * One page, asking the API to do the state filtering when it can.
+   * The cursor stream, asking the API to narrow server-side where it can.
    *
-   * Daytona's REST endpoint takes a `states` array
-   * (api-client sandbox-api.d.ts listSandboxesPaginated), but the SDK wrapper
-   * this provider is built on does not expose it — `Daytona.list(labels, page,
-   * limit)` is the whole public surface, and `sandboxApi` is declared private.
-   * Without the server-side filter, `state: ['running']` on an organization
-   * full of archived boxes pages through all of them client-side looking for a
-   * handful of live ones.
-   *
-   * So the server filter is applied OPPORTUNISTICALLY, through the private
-   * field when it is shaped the way we expect, and the client-side filter in
-   * the walk stays the authority regardless. That ordering is the whole point:
-   * if a future SDK refactor renames or removes the field, this degrades to the
-   * request count it has today, and can never degrade to admitting states the
-   * caller excluded.
+   * Since 0.203.0 the SDK's public `list(query)` takes `states` and `labels`
+   * directly and pages by cursor internally (items + nextCursor,
+   * esm/Daytona.js:430-476), so the old reach-around through the private
+   * `sandboxApi.listSandboxesPaginated` field is gone along with the method
+   * itself. The client-side filter in the walk stays the authority regardless:
+   * a server filter that silently stopped applying must never be able to admit
+   * a state the caller excluded.
    */
-  private async listPage(
-    options: SandboxListOptions | undefined,
-    page: number,
-  ): Promise<DaytonaSandboxPage> {
+  private listStream(options?: SandboxListOptions): AsyncIterable<DaytonaSandbox> {
     const states = options?.state ? evolveStatesToDaytonaStates(options.state) : undefined;
-    if (states && states.length > 0) {
-      const api = (this.client as unknown as { sandboxApi?: DaytonaSandboxApiShape }).sandboxApi;
-      if (typeof api?.listSandboxesPaginated === "function") {
-        try {
-          const response = await api.listSandboxesPaginated(
-            undefined,
-            page,
-            DAYTONA_LIST_PAGE_SIZE,
-            undefined,
-            undefined,
-            options?.metadata ? JSON.stringify(options.metadata) : undefined,
-            undefined,
-            states,
-          );
-          return { items: response.data.items, totalPages: response.data.totalPages };
-        } catch {
-          // Any shape surprise falls through to the supported path rather than
-          // failing a list; the walk filters client-side either way.
-        }
-      }
-    }
-    return this.client.list(options?.metadata, page, DAYTONA_LIST_PAGE_SIZE);
+    const query: ListSandboxesQuery = {
+      // Per-FETCH size, not a total bound — the iterator keeps following
+      // nextCursor until the fleet runs out.
+      limit: DAYTONA_LIST_PAGE_SIZE,
+      ...(options?.metadata ? { labels: options.metadata } : {}),
+      ...(states && states.length > 0 ? { states: states as DaytonaApiSandboxState[] } : {}),
+    };
+    return this.client.list(query);
   }
-}
-
-/** One page as Daytona's `list(labels?, page?, limit?)` returns it. */
-export interface DaytonaSandboxPage {
-  items: DaytonaSandbox[];
-  totalPages?: number;
-}
-
-/**
- * The one api-client method the opportunistic server-side state filter uses.
- * Declared structurally rather than imported: it is reached through a field the
- * SDK marks private, so this is a shape we CHECK for, never a contract we can
- * rely on.
- */
-interface DaytonaSandboxApiShape {
-  listSandboxesPaginated(
-    organizationId?: string,
-    page?: number,
-    limit?: number,
-    id?: string,
-    name?: string,
-    labels?: string,
-    includeErroredDeleted?: boolean,
-    states?: string[],
-  ): Promise<{ data: { items: DaytonaSandbox[]; totalPages?: number } }>;
 }
 
 /**
@@ -2426,111 +2462,103 @@ function evolveStatesToDaytonaStates(states: ("running" | "paused")[]): string[]
   const out: string[] = [];
   for (const state of states) {
     if (state === "running") out.push("started");
-    if (state === "paused") out.push("stopped", "archived");
+    if (state === "paused") out.push("stopped", "archived", "paused");
   }
   return out;
 }
 
 /**
- * Walk every page into one answer, with an honest completeness verdict.
+ * Walk the cursor stream into one answer, with an honest completeness verdict.
  *
  * Separate from the provider because everything worth getting wrong lives here
  * and none of it needs a network: the ways a walk can fail to terminate, the
- * difference between "the caller asked for ten" and "the provider ran out", and
- * the rule that a failure mid-walk yields the sandboxes seen so far marked
+ * difference between "the caller asked for ten" and "the provider ran out",
+ * and the rule that a failure mid-walk yields the sandboxes seen so far marked
  * INCOMPLETE rather than either an exception or a short complete list.
  *
- * Exported for its test (`_testCollectSandboxPages`).
+ * WHAT CURSORS CHANGED HERE, and what they did not. The vendor's iterator ends
+ * itself when nextCursor runs out, so "exhausted" is now the stream ending
+ * rather than a totalPages comparison; a fetch failure mid-walk surfaces as
+ * the iterator throwing. The LAWS are unchanged: a walk that could not finish
+ * reports `complete: false` with what it saw, a caller's limit is reported as
+ * truncation whenever one more row provably exists (the row after the limit is
+ * that proof — the walk holds it, so no extra fetch is spent on it beyond, at
+ * worst, the one the iterator was already making), and a runaway fleet stops
+ * at the scan ceiling as a refusal, never as a short list that reads complete.
+ *
+ * Exported for its test (`_testCollectSandboxStream`).
  */
-async function collectSandboxPages(
-  fetchPage: (page: number) => Promise<DaytonaSandboxPage>,
+async function collectSandboxStream(
+  stream: AsyncIterable<DaytonaSandboxLike & { state?: string }>,
   options?: SandboxListOptions,
 ): Promise<SandboxListPage & { stoppedAtLimit: boolean }> {
   const wanted = options?.limit;
   const sandboxes: SandboxInfo[] = [];
-  let pagesFetched = 0;
+  /** Rows consumed from the stream — what `pagesFetched` reports (fetch units). */
+  let scanned = 0;
   /**
-   * OFFSET PAGING OVER A MUTATING FLEET REPEATS ROWS. Daytona pages by number,
-   * so a sandbox deleted while the walk is in flight shifts everything after it
-   * back one page and the walk sees a row it already has — measured, not
-   * theorised. A fleet enumeration that reports the same sandbox twice makes
-   * every count downstream wrong, so ids are deduped as they arrive.
+   * Consistency across a mutating fleet is cursor pagination's own promise,
+   * but it is the VENDOR's promise: a fleet enumeration that reported the same
+   * sandbox twice would make every count downstream wrong, so ids are still
+   * deduped as they arrive. Costs nothing when the promise holds.
    */
   const seenIds = new Set<string>();
 
-  for (let page = 1; page <= DAYTONA_MAX_LIST_PAGES; page += 1) {
-    let result: DaytonaSandboxPage;
-    try {
-      result = await fetchPage(page);
-    } catch (err) {
-      return {
-        sandboxes,
-        complete: false,
-        pagesFetched,
-        stoppedAtLimit: false,
-        error: `sandbox list failed: ${err instanceof Error ? err.message : String(err)}`,
-      };
-    }
-    pagesFetched += 1;
-
-    for (const sandbox of result.items) {
-      if (options?.state) {
-        // The state filter runs client-side on the REAL API-reported state, and
-        // it stays the authority even when the server was asked to narrow too:
-        // an opportunistic server filter that silently stopped applying must
-        // never be able to admit a state the caller excluded. It runs BEFORE
-        // the limit is counted, so "ten running" means ten running rather than
-        // ten rows minus misses.
-        const evolveState = daytonaStateToEvolveState(sandbox.state);
-        if (evolveState === undefined || !options.state.includes(evolveState)) continue;
-      }
-      if (seenIds.has(sandbox.id)) continue;
-      // BOUND CHECKED BEFORE THE PUSH: checked after, `limit: 0` returns one.
+  try {
+    for await (const sandbox of stream) {
+      // TRUNCATION EVIDENCE FIRST: any row arriving after the limit is filled
+      // proves the enumeration is holding something back. Checked before the
+      // state filter on purpose — the old page walk called ANY remaining page
+      // truncation, and a cheaper answer that scans on to prove the filtered
+      // remainder empty would spend unbounded requests to upgrade
+      // "incomplete" to "complete" for a caller who asked for a sample.
       if (wanted !== undefined && sandboxes.length >= wanted) {
-        // Stopping on the caller's limit is NOT completion — there is at least
-        // one more sandbox here and we are holding it.
         return {
           sandboxes,
           complete: false,
-          pagesFetched,
+          pagesFetched: scanned,
           stoppedAtLimit: true,
           error: `stopped at the requested limit of ${wanted} with more sandboxes available`,
         };
       }
+      scanned += 1;
+      if (scanned > DAYTONA_MAX_LIST_SCAN) {
+        return {
+          sandboxes,
+          complete: false,
+          pagesFetched: DAYTONA_MAX_LIST_SCAN,
+          stoppedAtLimit: false,
+          error: `sandbox list exceeded ${DAYTONA_MAX_LIST_SCAN} sandboxes scanned`,
+        };
+      }
+      if (options?.state) {
+        // The state filter runs client-side on the REAL API-reported state,
+        // and it stays the authority even when the server was asked to narrow
+        // too: a server filter that silently stopped applying must never be
+        // able to admit a state the caller excluded. It runs BEFORE the limit
+        // is counted, so "ten running" means ten running rather than ten rows
+        // minus misses.
+        const evolveState = daytonaStateToEvolveState(sandbox.state);
+        if (evolveState === undefined || !options.state.includes(evolveState)) continue;
+      }
+      if (seenIds.has(sandbox.id)) continue;
       seenIds.add(sandbox.id);
       sandboxes.push(toSandboxInfo(sandbox));
     }
-
-    // totalPages is the server's own count; an empty page ends the walk too, so
-    // a server that omits or miscounts totalPages still cannot spin us.
-    const exhausted =
-      result.items.length === 0 ||
-      (typeof result.totalPages === "number" && page >= result.totalPages);
-    if (wanted !== undefined && sandboxes.length >= wanted && !exhausted) {
-      return {
-        sandboxes,
-        complete: false,
-        pagesFetched,
-        stoppedAtLimit: true,
-        error: `stopped at the requested limit of ${wanted} with more sandboxes available`,
-      };
-    }
-    if (exhausted) break;
-    if (page === DAYTONA_MAX_LIST_PAGES) {
-      return {
-        sandboxes,
-        complete: false,
-        pagesFetched,
-        stoppedAtLimit: false,
-        error: `sandbox list exceeded ${DAYTONA_MAX_LIST_PAGES} pages`,
-      };
-    }
+  } catch (err) {
+    return {
+      sandboxes,
+      complete: false,
+      pagesFetched: scanned,
+      stoppedAtLimit: false,
+      error: `sandbox list failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
   }
 
-  return { sandboxes, complete: true, pagesFetched, stoppedAtLimit: false };
+  return { sandboxes, complete: true, pagesFetched: scanned, stoppedAtLimit: false };
 }
 
-export const _testCollectSandboxPages = collectSandboxPages;
+export const _testCollectSandboxStream = collectSandboxStream;
 
 // ============================================================
 // FACTORY

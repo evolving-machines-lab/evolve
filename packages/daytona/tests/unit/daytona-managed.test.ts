@@ -863,13 +863,76 @@ async function testManagedProviderAnswersDiscoveryLocally(): Promise<void> {
     managedToolboxUrl: "https://dash.test/api/managed/daytona/toolbox",
   });
 
-  const client = (provider as unknown as { client: { getProxyToolboxUrl: (id: string, region: string) => Promise<string> } }).client;
-  const url = await client.getProxyToolboxUrl("dtn_1", "us");
+  // Since @daytonaio/sdk 0.203.0 the discovery is sandboxApi.getToolboxProxyUrl
+  // (the old Daytona.getProxyToolboxUrl seam is gone), and the managed wrap
+  // answers it locally with the Dashboard route.
+  const client = (provider as unknown as {
+    client: { sandboxApi: { getToolboxProxyUrl: (id: string) => Promise<{ data: { url: string } }> } };
+  }).client;
+  const response = await client.sandboxApi.getToolboxProxyUrl("dtn_1");
 
   assert(
-    url === "https://dash.test/api/managed/daytona/toolbox",
-    `discovery returns the Dashboard route (got ${url})`,
+    response.data.url === "https://dash.test/api/managed/daytona/toolbox",
+    `discovery returns the Dashboard route (got ${response.data.url})`,
   );
+}
+
+async function testManagedProviderRewritesDtoToolboxUrls(): Promise<void> {
+  console.log("\n[3a2] Managed mode rewrites toolboxProxyUrl in every control-plane DTO");
+
+  // The runner base is DATA now: processSandboxDto re-derives the toolbox base
+  // from every DTO's toolboxProxyUrl on every refresh, so a single DTO
+  // carrying Daytona's real runner URL would point the client at a host the
+  // managed caller holds no credential for. The wrap must scrub singles and
+  // list responses alike — through methods it has never heard of, because the
+  // api client is generated code that grows methods every release.
+  const provider = createDaytonaProvider({
+    apiKey: "sk-evolve",
+    apiUrl: "https://dash.test/api/managed/daytona",
+    managedToolboxUrl: "https://dash.test/api/managed/daytona/toolbox",
+  });
+  const client = (provider as unknown as { client: { sandboxApi: object } }).client;
+  const api = client.sandboxApi as {
+    getSandbox?: unknown;
+    someFutureMethod?: (...args: unknown[]) => Promise<unknown>;
+  };
+  // Stand in for ANY generated api method returning DTOs.
+  const raw = {
+    async single() {
+      return { data: { id: "dtn_1", toolboxProxyUrl: "https://runner.daytona.io/proxy" } };
+    },
+    async page() {
+      return {
+        data: {
+          items: [
+            { id: "dtn_1", toolboxProxyUrl: "https://runner.daytona.io/proxy" },
+            { id: "dtn_2", toolboxProxyUrl: "https://other-runner.daytona.io/proxy" },
+          ],
+          nextCursor: "abc",
+        },
+      };
+    },
+  };
+  Object.assign(api, { single: raw.single, page: raw.page });
+  const wrapped = api as unknown as {
+    single: () => Promise<{ data: { toolboxProxyUrl: string } }>;
+    page: () => Promise<{ data: { items: Array<{ toolboxProxyUrl: string }>; nextCursor: string } }>;
+  };
+
+  const single = await wrapped.single();
+  assert(
+    single.data.toolboxProxyUrl === "https://dash.test/api/managed/daytona/toolbox",
+    "a single-sandbox DTO comes back pointing at the Dashboard route",
+  );
+
+  const page = await wrapped.page();
+  assert(
+    page.data.items.every(
+      (item) => item.toolboxProxyUrl === "https://dash.test/api/managed/daytona/toolbox",
+    ),
+    "every row of a list response is rewritten too",
+  );
+  assert(page.data.nextCursor === "abc", "and nothing else in the response is touched");
 }
 
 function testDirectProviderStillDiscoversUpstream(): void {
@@ -948,6 +1011,7 @@ const tests = [
   testDeadFollowReconcileShedsTheSentinel,
   testFollowCutMidSentinelLeaksNothing,
   testManagedProviderAnswersDiscoveryLocally,
+  testManagedProviderRewritesDtoToolboxUrls,
   testDirectProviderStillDiscoversUpstream,
   testManagedCreateRefusesResources,
   testManagedCreateNamesThePlatformSnapshot,

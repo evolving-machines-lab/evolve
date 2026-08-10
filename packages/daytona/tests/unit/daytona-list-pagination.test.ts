@@ -1,32 +1,33 @@
 #!/usr/bin/env tsx
 /**
- * Unit Test: Daytona sandbox list pagination
+ * Unit Test: Daytona sandbox list — cursor walk + completeness honesty
  *
- * `list()` used to request page 1 and stop, discarding the server's own
- * totalPages — an organization with more than one page of sandboxes was
- * silently truncated, and nothing in the return value said so. The caller that
- * cares is a fleet sweep, which reads a sandbox's ABSENCE from the list as
- * evidence it is gone, so a truncated page read as a whole fleet is a
- * correctness bug and not a slow query.
+ * Daytona retired page-numbered pagination (deadline 2026-06-25); since SDK
+ * 0.203.0 `Daytona.list()` returns an async iterator that follows nextCursor
+ * internally. The LAW under test is unchanged by the mechanics: a fleet sweep
+ * reads a sandbox's ABSENCE from the list as evidence it is gone, so a
+ * truncated enumeration must never be reported as a whole one — and the
+ * completeness verdict must be EVIDENCE, never a default.
  *
  * What is asserted here is the walk itself, with no network in it:
- *   1. every page is drained, not just page 1
+ *   1. the stream is drained to exhaustion, not sampled
  *   2. the client-side state filter runs BEFORE the limit is counted, so
  *      "ten running" means ten running
- *   3. an explicit limit stops early and reports COMPLETE
- *   4. a failure mid-walk reports INCOMPLETE, keeping what it saw
- *   5. neither a missing totalPages nor a wrong one can spin the loop
- *   6. the page ceiling is a refusal, never a short "complete" answer
+ *   3. a limit that provably hides rows reports INCOMPLETE; a limit landing
+ *      exactly on the end of the fleet reports COMPLETE
+ *   4. a stream failure mid-walk reports INCOMPLETE, keeping what it saw —
+ *      including the honesty red case: a stream that DIES after a plausible
+ *      prefix must never come back `complete: true`
+ *   5. the scan ceiling is a refusal, never a short "complete" answer
  *
  * Usage:
  *   npx tsx tests/unit/daytona-list-pagination.test.ts
  */
 
 import {
-  DAYTONA_MAX_LIST_PAGES,
+  DAYTONA_MAX_LIST_SCAN,
   DAYTONA_LIST_PAGE_SIZE,
-  _testCollectSandboxPages,
-  type DaytonaSandboxPage,
+  _testCollectSandboxStream,
 } from "../../src/index.ts";
 
 // =============================================================================
@@ -57,67 +58,61 @@ function box(id: string, state = "started") {
   };
 }
 
-type FakePage = { ids: string[]; state?: string; totalPages?: number; throws?: string };
+type Row = ReturnType<typeof box>;
 
-/** A page fetcher double. Records which pages were asked for. */
-function pagesOf(pages: FakePage[]): {
-  fetch: (page: number) => Promise<DaytonaSandboxPage>;
-  requested: number[];
-} {
-  const requested: number[] = [];
-  return {
-    requested,
-    fetch: async (page: number) => {
-      requested.push(page);
-      const spec = pages[page - 1];
-      if (!spec) return { items: [], totalPages: pages.length } as DaytonaSandboxPage;
-      if (spec.throws) throw new Error(spec.throws);
-      return {
-        items: spec.ids.map((id) => box(id, spec.state)),
-        totalPages: spec.totalPages ?? pages.length,
-      } as unknown as DaytonaSandboxPage;
-    },
-  };
+/**
+ * A cursor-stream double: yields rows one by one the way the SDK's iterator
+ * does, records how many were PULLED (each pull is the walk asking for more —
+ * the observable unit under cursors, where page boundaries are the vendor's
+ * private business), and can die mid-stream like a fetch failing on a cursor.
+ */
+function streamOf(
+  rows: Row[],
+  options?: { throwAfter?: number; error?: string },
+): { stream: AsyncIterable<Row>; pulled: () => number } {
+  let pulled = 0;
+  async function* generate() {
+    for (const row of rows) {
+      if (options?.throwAfter !== undefined && pulled >= options.throwAfter) {
+        throw new Error(options.error ?? "stream failed");
+      }
+      pulled += 1;
+      yield row;
+    }
+    if (options?.throwAfter !== undefined && pulled >= options.throwAfter) {
+      throw new Error(options.error ?? "stream failed");
+    }
+  }
+  return { stream: generate(), pulled: () => pulled };
 }
 
-const ids = (n: number, prefix: string) =>
-  Array.from({ length: n }, (_, i) => `${prefix}-${i}`);
+const rows = (n: number, prefix: string, state = "started") =>
+  Array.from({ length: n }, (_, i) => box(`${prefix}-${i}`, state));
 
 // =============================================================================
 // TESTS
 // =============================================================================
 
-async function testDrainsEveryPage(): Promise<void> {
-  console.log("\n[1] Multi-page accumulation");
+async function testDrainsWholeStream(): Promise<void> {
+  console.log("\n[1] The stream is drained to exhaustion");
 
-  const { fetch, requested } = pagesOf([
-    { ids: ids(100, "a") },
-    { ids: ids(100, "b") },
-    { ids: ids(5, "c") },
-  ]);
-  const page = await _testCollectSandboxPages(fetch);
+  const { stream, pulled } = streamOf([...rows(100, "a"), ...rows(100, "b"), ...rows(5, "c")]);
+  const page = await _testCollectSandboxStream(stream);
 
-  assert(page.sandboxes.length === 205, "returns every sandbox across three pages, not just page 1");
+  assert(page.sandboxes.length === 205, "returns every sandbox in the stream, not a sample");
   assert(page.complete === true, "an exhausted walk is COMPLETE");
-  assert(page.pagesFetched === 3, "reports the three requests it made");
-  assert(requested.join(",") === "1,2,3", "asks for pages in order, starting at 1");
+  assert(page.pagesFetched === 205, "reports the rows it consumed");
+  assert(pulled() === 205, "and consumed exactly the fleet, nothing invented");
 }
 
 async function testStateFilterBeforeLimit(): Promise<void> {
   console.log("\n[2] The client-side state filter runs BEFORE the limit is counted");
 
-  // Page 1 is all archived; the running boxes are on page 2. Asking for two
-  // running sandboxes has to keep paging rather than returning nothing.
-  const fetch = async (page: number): Promise<DaytonaSandboxPage> =>
-    ({
-      items:
-        page === 1
-          ? ids(3, "old").map((id) => box(id, "archived"))
-          : ids(3, "live").map((id) => box(id, "started")),
-      totalPages: 2,
-    }) as unknown as DaytonaSandboxPage;
-
-  const page = await _testCollectSandboxPages(fetch, { state: ["running"], limit: 2 });
+  // The first stretch is all archived; the running boxes come later. Asking
+  // for two running sandboxes has to keep walking rather than returning
+  // nothing.
+  const { stream } = streamOf([...rows(3, "old", "archived"), ...rows(3, "live", "started")]);
+  const page = await _testCollectSandboxStream(stream, { state: ["running"], limit: 2 });
 
   assert(page.sandboxes.length === 2, "returns two RUNNING sandboxes, not two rows minus misses");
   assert(
@@ -136,36 +131,44 @@ async function testStateFilterExcludesArchived(): Promise<void> {
   // The measured case this filter exists for: a live Daytona account answered
   // an unfiltered list with 19 months-old archived boxes and a running-only
   // list with zero.
-  const { fetch } = pagesOf([{ ids: ids(19, "archived"), state: "archived" }]);
-  const page = await _testCollectSandboxPages(fetch, { state: ["running"] });
+  const { stream } = streamOf(rows(19, "archived", "archived"));
+  const page = await _testCollectSandboxStream(stream, { state: ["running"] });
 
   assert(page.sandboxes.length === 0, "none of the 19 archived boxes are returned");
   assert(page.complete === true, "and the answer is COMPLETE — genuinely zero running");
 }
 
+async function testNativePausedStateCounts(): Promise<void> {
+  console.log("\n[3b] Daytona's native 'paused' state matches our 'paused' filter");
+
+  const { stream } = streamOf([box("p-1", "paused"), box("s-1", "stopped"), box("r-1", "started")]);
+  const page = await _testCollectSandboxStream(stream, { state: ["paused"] });
+
+  assert(
+    page.sandboxes.map((s) => s.sandboxId).join(",") === "p-1,s-1",
+    "paused and stopped both count as paused; the running box does not",
+  );
+}
+
 async function testLimitStopsEarly(): Promise<void> {
   console.log("\n[4] An explicit limit bounds ITEMS — and a limit that hides sandboxes is INCOMPLETE");
 
-  const { fetch, requested } = pagesOf([
-    { ids: ids(100, "a") },
-    { ids: ids(100, "b") },
-    { ids: ids(100, "c") },
-  ]);
-  const page = await _testCollectSandboxPages(fetch, { limit: 150 });
+  const { stream, pulled } = streamOf(rows(300, "a"));
+  const page = await _testCollectSandboxStream(stream, { limit: 150 });
 
   assert(page.sandboxes.length === 150, "returns exactly the limit");
-  assert(requested.length === 2, "and stops requesting pages once it has them");
-  // THE FINDING: reported complete:true, so the sweep — which always passed a
-  // limit — could never learn it had been truncated.
-  assert(page.complete === false, "INCOMPLETE, because a third page provably exists");
+  assert(pulled() === 151, "stops one row past the limit — that row IS the truncation evidence");
+  // THE ORIGINAL FINDING: this used to report complete:true, so the sweep —
+  // which always passed a limit — could never learn it had been truncated.
+  assert(page.complete === false, "INCOMPLETE, because a 151st sandbox provably exists");
   assert((page.error ?? "").includes("limit"), "and the reason names the limit");
 }
 
 async function testLimitExactlyAtFleetEnd(): Promise<void> {
   console.log("\n[4b] A limit that lands exactly on the end of the fleet IS complete");
 
-  const { fetch } = pagesOf([{ ids: ids(5, "a") }]);
-  const page = await _testCollectSandboxPages(fetch, { limit: 5 });
+  const { stream } = streamOf(rows(5, "a"));
+  const page = await _testCollectSandboxStream(stream, { limit: 5 });
 
   assert(page.sandboxes.length === 5, "returns all five");
   assert(page.complete === true, "complete — nothing was hidden");
@@ -174,25 +177,22 @@ async function testLimitExactlyAtFleetEnd(): Promise<void> {
 async function testLimitZero(): Promise<void> {
   console.log("\n[4c] limit: 0 returns nothing, not one");
 
-  const { fetch } = pagesOf([{ ids: ids(3, "a") }]);
-  const page = await _testCollectSandboxPages(fetch, { limit: 0 });
+  const { stream } = streamOf(rows(3, "a"));
+  const page = await _testCollectSandboxStream(stream, { limit: 0 });
 
   assert(page.sandboxes.length === 0, "returns zero sandboxes");
   assert(page.complete === false, "and says so — three were hidden by the bound");
 }
 
-async function testDedupesAcrossPages(): Promise<void> {
-  console.log("\n[4d] Offset paging over a MUTATING fleet must not repeat a sandbox");
+async function testDedupesRepeatedIds(): Promise<void> {
+  console.log("\n[4d] A repeated id is dropped, whatever the vendor promised");
 
-  // A sandbox deleted mid-walk shifts everything after it back one page, so the
-  // next page re-serves a row the walk already has. Measured, not theorised.
-  const fetch = async (page: number): Promise<DaytonaSandboxPage> =>
-    ({
-      items: page === 1 ? [box("a"), box("b")] : [box("b"), box("c")],
-      totalPages: 2,
-    }) as unknown as DaytonaSandboxPage;
-
-  const result = await _testCollectSandboxPages(fetch);
+  // No-duplicates-under-mutation is cursor pagination's own selling point, but
+  // it is the VENDOR's promise: an enumeration that reported the same sandbox
+  // twice would make every count downstream wrong, so the walk keeps its own
+  // guard.
+  const { stream } = streamOf([box("a"), box("b"), box("b"), box("c")]);
+  const result = await _testCollectSandboxStream(stream);
 
   assert(result.sandboxes.length === 3, "three distinct sandboxes, not four");
   assert(
@@ -204,100 +204,81 @@ async function testDedupesAcrossPages(): Promise<void> {
 async function testFailureMidWalk(): Promise<void> {
   console.log("\n[5] A failure mid-walk is INCOMPLETE, never a short complete list");
 
-  const { fetch } = pagesOf([
-    { ids: ids(100, "a"), totalPages: 3 },
-    { ids: [], throws: "503 service unavailable" },
-    { ids: ids(3, "c") },
-  ]);
-  const page = await _testCollectSandboxPages(fetch);
+  // THE HONESTY RED CASE. A cursor stream that dies after 100 rows has
+  // produced a perfectly plausible-looking fleet — nothing about those rows
+  // says "there were more". If the walk's completeness verdict were a default
+  // rather than evidence (complete unless someone remembered to flip it), this
+  // is exactly the case that would ship a truncated list as a whole one and
+  // let a sweep kill every sandbox the enumeration never reached. So this
+  // test is the tripwire: it goes RED the moment completeness stops being
+  // earned by the stream actually ENDING.
+  const { stream } = streamOf(rows(200, "a"), {
+    throwAfter: 100,
+    error: "503 service unavailable",
+  });
+  const page = await _testCollectSandboxStream(stream);
 
-  assert(page.complete === false, "the walk admits it did not finish");
+  assert(page.complete === false, "the walk admits it did not finish — NEVER complete on a died stream");
   assert(page.sandboxes.length === 100, "and keeps what it did see");
-  assert(page.pagesFetched === 1, "counting only the pages that landed");
+  assert(page.pagesFetched === 100, "counting only the rows that landed");
   assert((page.error ?? "").includes("503"), "carrying the provider's own reason");
 }
 
-async function testFirstPageFailure(): Promise<void> {
-  console.log("\n[6] A failure on the FIRST page is not an empty fleet");
+async function testImmediateFailure(): Promise<void> {
+  console.log("\n[6] A failure before the first row is not an empty fleet");
 
-  const { fetch } = pagesOf([{ ids: [], throws: "connection reset" }]);
-  const page = await _testCollectSandboxPages(fetch);
+  const { stream } = streamOf(rows(50, "a"), { throwAfter: 0, error: "connection reset" });
+  const page = await _testCollectSandboxStream(stream);
 
   assert(page.sandboxes.length === 0, "no sandboxes are reported");
   assert(
     page.complete === false,
     "but complete is FALSE — this is the case that would mass-kill a live fleet if it read as empty",
   );
+  assert((page.error ?? "").includes("connection reset"), "with the transport's own reason");
 }
 
-async function testEmptyPageEndsWalk(): Promise<void> {
-  console.log("\n[7] An empty page ends the walk even when totalPages lies");
+async function testScanCeiling(): Promise<void> {
+  console.log("\n[7] The scan ceiling is a refusal, not a short answer");
 
-  // A server that reports totalPages: 999 but runs out of items must not be
-  // able to keep us asking for 999 pages.
-  let calls = 0;
-  const fetch = async (page: number): Promise<DaytonaSandboxPage> => {
-    calls += 1;
-    return {
-      items: page === 1 ? [box("only-1")] : [],
-      totalPages: 999,
-    } as unknown as DaytonaSandboxPage;
-  };
-
-  const result = await _testCollectSandboxPages(fetch);
-
-  assert(calls === 2, "stops after the first empty page");
-  assert(result.sandboxes.length === 1, "keeping the one real sandbox");
-  assert(result.complete === true, "and the answer is complete — the fleet really did run out");
-}
-
-async function testMissingTotalPages(): Promise<void> {
-  console.log("\n[8] A missing totalPages still terminates");
-
-  let calls = 0;
-  const fetch = async (page: number): Promise<DaytonaSandboxPage> => {
-    calls += 1;
-    return { items: page <= 2 ? [box(`sb-${page}`)] : [] } as unknown as DaytonaSandboxPage;
-  };
-
-  const result = await _testCollectSandboxPages(fetch);
-
-  assert(calls === 3, "walks until a page comes back empty");
-  assert(result.sandboxes.length === 2, "collecting both real sandboxes");
-  assert(result.complete === true, "and reports complete");
-}
-
-async function testPageCeiling(): Promise<void> {
-  console.log("\n[9] The page ceiling is a refusal, not a short answer");
-
-  // A server that always has one more item and claims more pages forever.
-  const fetch = async (page: number): Promise<DaytonaSandboxPage> =>
-    ({ items: [box(`sb-${page}`)], totalPages: 1_000_000 }) as unknown as DaytonaSandboxPage;
-
-  const result = await _testCollectSandboxPages(fetch);
+  // A stream that always has one more row — a runaway server, or a cursor
+  // loop upstream — must be refused, not returned as a plausible fleet.
+  let served = 0;
+  async function* endless() {
+    for (;;) {
+      served += 1;
+      yield box(`sb-${served}`);
+    }
+  }
+  const result = await _testCollectSandboxStream(endless());
 
   assert(
-    result.pagesFetched === DAYTONA_MAX_LIST_PAGES,
-    `stops at ${DAYTONA_MAX_LIST_PAGES} pages`,
+    result.pagesFetched === DAYTONA_MAX_LIST_SCAN,
+    `stops at ${DAYTONA_MAX_LIST_SCAN} rows scanned`,
   );
+  assert(served <= DAYTONA_MAX_LIST_SCAN + 1, "and stops PULLING, rather than draining forever");
   assert(result.complete === false, "and says so, rather than returning a plausible-looking list");
   assert((result.error ?? "").includes("exceeded"), "with a reason a log can be read for");
 }
 
 async function testEmptyFleet(): Promise<void> {
-  console.log("\n[10] A genuinely empty organization is COMPLETE and empty");
+  console.log("\n[8] A genuinely empty organization is COMPLETE and empty");
 
-  const { fetch } = pagesOf([{ ids: [] }]);
-  const result = await _testCollectSandboxPages(fetch);
+  const { stream } = streamOf([]);
+  const result = await _testCollectSandboxStream(stream);
 
   assert(result.sandboxes.length === 0, "no sandboxes");
   assert(result.complete === true, "and complete — the answer a sweep may act on");
 }
 
 function testPageSizeConstant(): void {
-  console.log("\n[11] Page size stays inside what every provider in the lineup accepts");
+  console.log("\n[9] Per-fetch size stays inside what every provider in the lineup accepts");
 
   assert(DAYTONA_LIST_PAGE_SIZE <= 100, "never above 100");
+  assert(
+    DAYTONA_MAX_LIST_SCAN === 10_000,
+    "and the scan ceiling still covers the same 10,000-sandbox fleet the page ceiling did",
+  );
 }
 
 // =============================================================================
@@ -305,24 +286,23 @@ function testPageSizeConstant(): void {
 // =============================================================================
 
 const tests = [
-  testDrainsEveryPage,
+  testDrainsWholeStream,
   testStateFilterBeforeLimit,
   testStateFilterExcludesArchived,
+  testNativePausedStateCounts,
   testLimitStopsEarly,
   testLimitExactlyAtFleetEnd,
   testLimitZero,
-  testDedupesAcrossPages,
+  testDedupesRepeatedIds,
   testFailureMidWalk,
-  testFirstPageFailure,
-  testEmptyPageEndsWalk,
-  testMissingTotalPages,
-  testPageCeiling,
+  testImmediateFailure,
+  testScanCeiling,
   testEmptyFleet,
   testPageSizeConstant,
 ];
 
 (async () => {
-  console.log("=== Daytona Provider: list pagination + completeness Tests ===");
+  console.log("=== Daytona Provider: cursor list + completeness Tests ===");
   try {
     for (const test of tests) {
       await test();

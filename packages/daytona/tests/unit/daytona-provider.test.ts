@@ -28,7 +28,6 @@ import {
   DAYTONA_MAX_NETWORK_ALLOWLIST,
   DAYTONA_AUTO_DELETE_GRACE_MINUTES,
   DaytonaNetworkPolicyError,
-  DaytonaGpuTypeError,
   DaytonaResourcesError,
   DaytonaIdleTimeoutError,
   DaytonaImagePullError,
@@ -585,31 +584,75 @@ async function testCreateValidatesBeforeNetwork(): Promise<void> {
   );
 }
 
-async function testCreateRejectsGpuTypesOffline(): Promise<void> {
-  console.log("\n[6a2] DaytonaProvider.create() - GPU TYPE constraint typed-rejected offline");
+async function testCreateForwardsGpuTypesOnBuild(): Promise<void> {
+  console.log("\n[6a2] DaytonaProvider.create() - GPU TYPE: forwarded on build, refused on a pinned snapshot");
 
+  // @daytonaio/sdk 0.203.0 grew a real Resources.gpuType wire field, so the
+  // old blanket DaytonaGpuTypeError refusal is retired: on the BUILD path
+  // "give me an H100" now reaches Daytona verbatim (which validates the name
+  // server-side), and only an EXISTING snapshot — whose sizing is pinned —
+  // still refuses, with the same DaytonaResourcesError as every other sizing
+  // field.
+
+  // Build path: no snapshot exists; both the snapshot build and the direct
+  // fallback must carry the count AND the type.
   const provider = createDaytonaProvider({ apiKey: "test-key" });
+  const captured: Array<{ resources?: { gpu?: number; gpuType?: string[] } }> = [];
+  (provider as unknown as { client: unknown }).client = {
+    snapshot: {
+      get: async () => {
+        throw new Error("not found");
+      },
+      create: async (params: { resources?: { gpu?: number; gpuType?: string[] } }) => {
+        captured.push(params);
+        throw new Error("MARKER_SNAPSHOT_BUILD_FAILED");
+      },
+    },
+    create: async (params: { resources?: { gpu?: number; gpuType?: string[] } }) => {
+      captured.push(params);
+      throw new Error("MARKER_DIRECT_CREATE_FAILED");
+    },
+  };
 
-  // @daytonaio/sdk 0.134.0 has no gpu_type field anywhere: honoring
-  // `resources.gpuTypes` is impossible, and silently dropping it would turn
-  // "give me an H100" into "give me some GPU". Typed refusal, before any API
-  // call — same provider law as disk on modal.
-  let gpuTypeError: unknown;
+  let buildError = "";
   try {
     await provider.create({
       image: "evolve-all",
       resources: { gpu: 1, gpuTypes: ["H100"] },
     });
   } catch (e) {
-    gpuTypeError = e;
+    buildError = String(e);
   }
+  assert(captured.length === 2, "the walk tried the snapshot build, then the direct fallback");
   assert(
-    gpuTypeError instanceof DaytonaGpuTypeError,
-    "create() throws DaytonaGpuTypeError for a gpuTypes constraint"
+    captured[0]?.resources?.gpu === 1 &&
+      JSON.stringify(captured[0]?.resources?.gpuType) === '["H100"]',
+    "the snapshot build carries gpu count AND gpuType — no silent 'some GPU'"
   );
   assert(
-    String(gpuTypeError).includes("modal"),
-    "the message points at the provider that CAN reserve typed GPUs"
+    captured[1]?.resources?.gpu === 1 &&
+      JSON.stringify(captured[1]?.resources?.gpuType) === '["H100"]',
+    "and the direct fallback keeps both rather than downgrading to a CPU box"
+  );
+  assert(buildError.includes("MARKER_DIRECT_CREATE_FAILED"), "no typed refusal fired on the build path");
+
+  // Pinned-snapshot path: the type is as unresizable as cpu/memory/disk.
+  const pinned = createDaytonaProvider({ apiKey: "test-key" });
+  (pinned as unknown as { client: unknown }).client = {
+    snapshot: { get: async () => ({ state: "active" }) },
+    create: async () => {
+      throw new Error("MARKER_CLIENT_CREATE_CALLED");
+    },
+  };
+  let pinnedError: unknown;
+  try {
+    await pinned.create({ image: "evolve-all", resources: { gpuTypes: ["H100"] } });
+  } catch (e) {
+    pinnedError = e;
+  }
+  assert(
+    pinnedError instanceof DaytonaResourcesError,
+    "gpuTypes against an existing snapshot throws DaytonaResourcesError before any create call"
   );
 }
 
@@ -1145,7 +1188,7 @@ const tests = [
   testStateMapping,
   // [6] provider create validation
   testCreateValidatesBeforeNetwork,
-  testCreateRejectsGpuTypesOffline,
+  testCreateForwardsGpuTypesOnBuild,
   testCreateNoLongerRejectsUserAndNetwork,
   testCreateRejectsResourcesOnCachedSnapshot,
   testCreateRejectsIdleTimeout,
