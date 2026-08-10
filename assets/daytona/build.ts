@@ -46,7 +46,12 @@ async function main() {
   console.log('╚════════════════════════════════════════╝')
   console.log(`\nSnapshot: ${SNAPSHOT_NAME}`)
 
-  const daytona = new Daytona()
+  // useDeprecatedPolling: since 0.203 the bare constructor eagerly opens a
+  // socket.io WebSocket for lifecycle events. Nothing here consumes events,
+  // and the open socket would keep this one-shot script's event loop alive
+  // after the build finishes — it would never exit. Same flag, same reason,
+  // as packages/daytona.
+  const daytona = new Daytona({ useDeprecatedPolling: true })
 
   // Delete existing snapshot if present
   await deleteExistingSnapshot(daytona)
