@@ -204,7 +204,12 @@ jobs:
             const pkg = JSON.parse(fs.readFileSync(path, 'utf8'))
             pkg.dependencies ??= {}
             for (const name of packages) {
-              pkg.dependencies[name] = `^${version}`
+              // EXACT pin, never a caret. All five packages publish in lockstep
+              // from one commit, so equality is the true contract — and under
+              // semver `^0.0.52-<prerelease>` admits stable 0.0.52, which
+              // outranks the prerelease, so a caret ships a fresh install the
+              // PREVIOUS adapters (2026-08-10 Daytona QA caught this live).
+              pkg.dependencies[name] = version
             }
             fs.writeFileSync(path, `${JSON.stringify(pkg, null, 2)}\n`)
           }
