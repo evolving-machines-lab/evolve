@@ -263,7 +263,7 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
     value: "<x>",
     help: "Multiplier for environment build timeout (overrides --timeout-multiplier)",
   },
-  env: { kind: "string", short: "e", value: "<provider>", help: "Sandbox provider: e2b | daytona | modal (default e2b)" },
+  env: { kind: "string", short: "e", value: "<provider>", help: "Sandbox provider: e2b | daytona | modal (default daytona)" },
   watch: { kind: "boolean", help: "Stream events until the job finishes" },
   quiet: { kind: "boolean", short: "q", help: "With --watch: suppress the event log, print the final block only" },
   yes: {

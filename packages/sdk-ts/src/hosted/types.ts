@@ -383,7 +383,7 @@ export interface JobCreate {
    * resulting worst case for the job as a whole.
    */
   max_trial_spend_usd?: number;
-  /** Sandbox provider to run on (optional; server default: `e2b`). */
+  /** Sandbox provider to run on (optional; server default: `daytona`). */
   sandbox_provider?: EvalSandboxProvider;
   /** Auto-retry policy (Harbor RetryConfig grammar); omitted = the fleet defaults. */
   retry?: RetryConfigInput;
