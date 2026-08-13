@@ -31,6 +31,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      EVOLVE_OPENAPI_SPEC_PATH: ${{ github.workspace }}/contract/spec/openapi.yaml
 
     steps:
       - name: Checkout
@@ -38,6 +40,19 @@ jobs:
         with:
           ref: ${{ github.ref_name }}
           fetch-depth: 0
+
+      # The npm package ships the API contract, whose home is the private
+      # server repo (the YAML is not a free download from this public tree),
+      # and prepack refuses to pack without it. Check the contract out
+      # sparsely and point the build at it; a missing SPEC_READ_TOKEN fails
+      # here, loudly, instead of shipping a contract-less package.
+      - name: Checkout the contract (private server repo, spec/ only)
+        uses: actions/checkout@v4
+        with:
+          repository: evolving-machines-lab/swarm_dashboard
+          token: ${{ secrets.SPEC_READ_TOKEN }}
+          path: contract
+          sparse-checkout: spec
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

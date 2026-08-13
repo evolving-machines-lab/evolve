@@ -16,15 +16,31 @@ The law of the shape:
   drilling into a group gets typed fields, not ``Any``.
 """
 
+import os
 import re
 import typing
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import pytest
+
 from evolve import AgentDatasetStats, Job, JobStats, pass_at_k
 from evolve.hosted import _map_job
 
-SPEC_PATH = Path(__file__).resolve().parents[4] / 'spec' / 'openapi.yaml'
+# The contract lives in the private server repo; EVOLVE_OPENAPI_SPEC_PATH
+# points at a checkout of it. The repo-root path stays as the legacy fallback
+# for checkouts that still carry a copy.
+_SPEC_OVERRIDE = os.environ.get('EVOLVE_OPENAPI_SPEC_PATH')
+SPEC_PATH = (
+    Path(_SPEC_OVERRIDE)
+    if _SPEC_OVERRIDE
+    else Path(__file__).resolve().parents[4] / 'spec' / 'openapi.yaml'
+)
+if not SPEC_PATH.exists():
+    pytest.skip(
+        'spec not present — gate runs in private CI or with EVOLVE_OPENAPI_SPEC_PATH',
+        allow_module_level=True,
+    )
 
 
 def _spec_schema_properties(schema_name: str) -> 'list[str]':

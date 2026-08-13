@@ -31,9 +31,12 @@ The spec is parsed line-by-line against its own committed formatting; every
 parse asserts non-vacuity so an empty parse fails loudly instead of passing.
 """
 
+import os
 import re
 import typing
 from pathlib import Path
+
+import pytest
 
 from evolve import (
     EFFORT_SUPPORT_VALUES,
@@ -52,7 +55,20 @@ from evolve import (
 )
 from evolve.hosted import EffortSupport
 
-SPEC_PATH = Path(__file__).resolve().parents[4] / 'spec' / 'openapi.yaml'
+# The contract lives in the private server repo; EVOLVE_OPENAPI_SPEC_PATH
+# points at a checkout of it. The repo-root path stays as the legacy fallback
+# for checkouts that still carry a copy.
+_SPEC_OVERRIDE = os.environ.get('EVOLVE_OPENAPI_SPEC_PATH')
+SPEC_PATH = (
+    Path(_SPEC_OVERRIDE)
+    if _SPEC_OVERRIDE
+    else Path(__file__).resolve().parents[4] / 'spec' / 'openapi.yaml'
+)
+if not SPEC_PATH.exists():
+    pytest.skip(
+        'spec not present — gate runs in private CI or with EVOLVE_OPENAPI_SPEC_PATH',
+        allow_module_level=True,
+    )
 
 
 def _spec_lines() -> 'list[str]':

@@ -139,18 +139,26 @@ try {
   // running file ("../../spec/openapi.yaml"). Moving the CLI from dist/hosted/
   // to dist/cli/ kept that depth on purpose; a flat dist/cli.js would have
   // resolved one directory too high and turned every -c config into "the spec
-  // could not be found". Only the built bin can prove it.
-  const configPath = join(workDir, "job.yaml");
-  writeFileSync(
-    configPath,
-    ["datasets:", "  - name: deep-swe", "agents:", "  - name: codex", "    model_name: gpt-5.5", ""].join("\n"),
-  );
-  const printConfig = runNode(BIN_PATH, ["run", "-c", configPath, "--print-config"]);
-  assert(printConfig.code === 0, `--print-config through the built bin exits 0 (stderr: ${printConfig.stderr.trim()})`);
-  assert(
-    printConfig.stdout.includes('"deep-swe"'),
-    "--print-config validated the config against the spec it still finds from dist/cli/",
-  );
+  // could not be found". Only the built bin can prove it. The contract lives
+  // in the private server repo, so the staged copy exists only where a build
+  // could reach it (EVOLVE_OPENAPI_SPEC_PATH — inherited by the spawned bin —
+  // or a legacy repo-root copy).
+  const envSpec = process.env.EVOLVE_OPENAPI_SPEC_PATH;
+  if ((envSpec !== undefined && existsSync(envSpec)) || existsSync(join(PACKAGE_ROOT, "spec", "openapi.yaml"))) {
+    const configPath = join(workDir, "job.yaml");
+    writeFileSync(
+      configPath,
+      ["datasets:", "  - name: deep-swe", "agents:", "  - name: codex", "    model_name: gpt-5.5", ""].join("\n"),
+    );
+    const printConfig = runNode(BIN_PATH, ["run", "-c", configPath, "--print-config"]);
+    assert(printConfig.code === 0, `--print-config through the built bin exits 0 (stderr: ${printConfig.stderr.trim()})`);
+    assert(
+      printConfig.stdout.includes('"deep-swe"'),
+      "--print-config validated the config against the spec it still finds from dist/cli/",
+    );
+  } else {
+    console.log("  - SKIP: spec not present — gate runs in private CI or with EVOLVE_OPENAPI_SPEC_PATH");
+  }
 
   // ---- THE GATE STILL SHUTS: importing the module must not run main() ----
   // This is what the gate is for. A fix that simply always ran main() would

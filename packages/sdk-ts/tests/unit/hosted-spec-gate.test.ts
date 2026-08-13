@@ -44,7 +44,7 @@
  *   npx tsx tests/unit/hosted-spec-gate.test.ts
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -77,7 +77,15 @@ function assert(condition: boolean, message: string): void {
 }
 
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const SPEC_PATH = join(PACKAGE_ROOT, "..", "..", "spec", "openapi.yaml");
+// The contract lives in the private server repo; EVOLVE_OPENAPI_SPEC_PATH
+// points at a checkout of it. The repo-root path stays as the legacy
+// fallback for checkouts that still carry a copy.
+const SPEC_PATH =
+  process.env.EVOLVE_OPENAPI_SPEC_PATH ?? join(PACKAGE_ROOT, "..", "..", "spec", "openapi.yaml");
+if (!existsSync(SPEC_PATH)) {
+  console.log("SKIP: spec not present — gate runs in private CI or with EVOLVE_OPENAPI_SPEC_PATH");
+  process.exit(0);
+}
 const specLines = readFileSync(SPEC_PATH, "utf8").split("\n");
 
 console.log("\n=== Hosted spec drift gate (vs spec/openapi.yaml) ===\n");

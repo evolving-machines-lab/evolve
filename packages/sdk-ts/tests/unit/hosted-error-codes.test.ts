@@ -23,7 +23,7 @@
  *   npx tsx tests/unit/hosted-error-codes.test.ts
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -59,21 +59,27 @@ assert(
 );
 
 // THE JSON'S OWN PROVENANCE. Its $comment claims the contract's ErrorCode enum
-// owns the vocabulary; this proves the claim instead of trusting it. The spec
-// lives at the repo root (the published package carries its own copy under
-// spec/, but tests do not ship), so this check runs in-repo only.
-const SPEC_PATH = join(PACKAGE_ROOT, "..", "..", "spec", "openapi.yaml");
-const specText = readFileSync(SPEC_PATH, "utf8");
-const enumBlock = specText.split("    ErrorCode:")[1]?.split("\n    Error:")[0] ?? "";
-const specCodes = [...enumBlock.matchAll(/^\s+- ([a-z_]+)\s*(?:#.*)?$/gm)].map((m) => m[1]);
-assert(
-  JSON.stringify(specCodes) === JSON.stringify(referee.codes),
-  specCodes.length === referee.codes.length &&
-    specCodes.every((code, i) => code === referee.codes[i])
-    ? `hosted-error-codes.json is the contract's ErrorCode enum, in its order (${specCodes.length} codes)`
-    : "hosted-error-codes.json drifted from the contract's ErrorCode enum " +
-        `(spec has ${specCodes.length}, json has ${referee.codes.length})`,
-);
+// owns the vocabulary; this proves the claim instead of trusting it. The
+// contract lives in the private server repo — EVOLVE_OPENAPI_SPEC_PATH points
+// at a checkout of it, the repo-root path stays as the legacy fallback — so
+// this check runs only where a spec is present.
+const SPEC_PATH =
+  process.env.EVOLVE_OPENAPI_SPEC_PATH ?? join(PACKAGE_ROOT, "..", "..", "spec", "openapi.yaml");
+if (existsSync(SPEC_PATH)) {
+  const specText = readFileSync(SPEC_PATH, "utf8");
+  const enumBlock = specText.split("    ErrorCode:")[1]?.split("\n    Error:")[0] ?? "";
+  const specCodes = [...enumBlock.matchAll(/^\s+- ([a-z_]+)\s*(?:#.*)?$/gm)].map((m) => m[1]);
+  assert(
+    JSON.stringify(specCodes) === JSON.stringify(referee.codes),
+    specCodes.length === referee.codes.length &&
+      specCodes.every((code, i) => code === referee.codes[i])
+      ? `hosted-error-codes.json is the contract's ErrorCode enum, in its order (${specCodes.length} codes)`
+      : "hosted-error-codes.json drifted from the contract's ErrorCode enum " +
+          `(spec has ${specCodes.length}, json has ${referee.codes.length})`,
+  );
+} else {
+  console.log("  - SKIP: spec not present — gate runs in private CI or with EVOLVE_OPENAPI_SPEC_PATH");
+}
 
 const missing = referee.codes.filter(
   (code) => !(HOSTED_ERROR_CODES as readonly string[]).includes(code),

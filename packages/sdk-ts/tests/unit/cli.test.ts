@@ -167,6 +167,19 @@ function captureIO(tty = false): { io: CliIO; out: string[]; err: string[] } {
 
 const AUTH = ["--api-key", "test-key", "--base-url", BASE];
 
+// The -c validation vocabulary reads out of the contract itself, and the
+// contract lives in the private server repo — resolvable here through the
+// same doors the CLI tries: EVOLVE_OPENAPI_SPEC_PATH, the staged package
+// copy, the legacy repo-root copy. Without any of them the -c suites skip.
+const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const SPEC_AVAILABLE = [
+  process.env.EVOLVE_OPENAPI_SPEC_PATH,
+  join(PACKAGE_ROOT, "spec", "openapi.yaml"),
+  join(PACKAGE_ROOT, "..", "..", "spec", "openapi.yaml"),
+].some((candidate) => candidate !== undefined && existsSync(candidate));
+const SPEC_SKIP_REASON =
+  "SKIP: spec not present — gate runs in private CI or with EVOLVE_OPENAPI_SPEC_PATH";
+
 // =============================================================================
 // PARSING — grammar resolution
 // =============================================================================
@@ -432,7 +445,12 @@ function testBuildJobInputRetry() {
   assert(!("retry" in minimal), "no retry key when no retry flag given");
 
   // Config-file base is merged FIELD BY FIELD, a flag overriding its field —
-  // Harbor's own CLI merge rule.
+  // Harbor's own CLI merge rule. A -c file validates against the contract, so
+  // this half runs only where a spec is present.
+  if (!SPEC_AVAILABLE) {
+    console.log(`  - ${SPEC_SKIP_REASON}`);
+    return;
+  }
   const merged = buildJobInput(
     parseArgs([
       "job", "start",
@@ -513,6 +531,12 @@ function testBuildJobInputTimeoutMultipliers() {
 
   // Config-file base is merged FIELD BY FIELD, a flag overriding its field —
   // the same rule the retry flags follow (Harbor's own CLI merge posture).
+  // A -c file validates against the contract, so this half runs only where a
+  // spec is present.
+  if (!SPEC_AVAILABLE) {
+    console.log(`  - ${SPEC_SKIP_REASON}`);
+    return;
+  }
   const merged = buildJobInput(
     parseArgs([
       "job", "start",
@@ -915,9 +939,13 @@ async function testConfigFileMerge() {
         ["must be an integer", "[spec: JobCreate.n_attempts]"],
       ],
       [
+        // The ceiling's VALUE is the contract's to move (it has moved once
+        // already, 16 -> 150), so the needle pins the refusal and the ruling
+        // shape, not the number — 100000 sits above any ceiling the spec
+        // would ever state.
         "over-concurrency",
-        "n_concurrent_trials: 64\ndatasets: [{name: deep-swe}]\nagents: [{name: claude, model_name: opus}]",
-        ["must be at most 16"],
+        "n_concurrent_trials: 100000\ndatasets: [{name: deep-swe}]\nagents: [{name: claude, model_name: opus}]",
+        ["must be at most", "[spec: JobCreate.n_concurrent_trials]"],
       ],
       [
         "zero-tasks",
@@ -1503,18 +1531,22 @@ async function testPrintConfig() {
     // --print-config is the dry-run a paid remote run deserves, so it owes an
     // honest exit code: a config it cannot resolve exits 2 with the reason on
     // stderr, never 0 over a character-indexed body the server would refuse.
-    const dir = await mkdtemp(join(tmpdir(), "evolve-cli-print-"));
-    try {
-      const bare = join(dir, "bare.yaml");
-      await writeFile(bare, "job_name: nightly\ndatasets: [swe-bench]\nagents: [{name: claude, model_name: opus}]\n");
-      const bad = captureIO();
-      const badCode = await runCli(["job", "start", "-c", bare, "--print-config", ...AUTH], bad.io);
-      assertEqual(badCode, 2, "a bare dataset name exits 2, not 0");
-      assertEqual(bad.out.join("\n"), "", "nothing was printed as a body");
-      assert(bad.err.join("\n").includes("datasets[0]"), "stderr names the offending element");
-      assertEqual(fetchCalls.length, 0, "still nothing was sent");
-    } finally {
-      await rm(dir, { recursive: true, force: true });
+    if (SPEC_AVAILABLE) {
+      const dir = await mkdtemp(join(tmpdir(), "evolve-cli-print-"));
+      try {
+        const bare = join(dir, "bare.yaml");
+        await writeFile(bare, "job_name: nightly\ndatasets: [swe-bench]\nagents: [{name: claude, model_name: opus}]\n");
+        const bad = captureIO();
+        const badCode = await runCli(["job", "start", "-c", bare, "--print-config", ...AUTH], bad.io);
+        assertEqual(badCode, 2, "a bare dataset name exits 2, not 0");
+        assertEqual(bad.out.join("\n"), "", "nothing was printed as a body");
+        assert(bad.err.join("\n").includes("datasets[0]"), "stderr names the offending element");
+        assertEqual(fetchCalls.length, 0, "still nothing was sent");
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    } else {
+      console.log(`  - ${SPEC_SKIP_REASON}`);
     }
   } finally {
     restoreFetch();
@@ -4776,7 +4808,8 @@ async function main() {
   testBuildJobInputSkills();
   testBuildJobInputYesIsInert();
   testAgentKwargs();
-  await testConfigFileMerge();
+  if (SPEC_AVAILABLE) await testConfigFileMerge();
+  else console.log(`\n--- buildJobInput: -c config file — ${SPEC_SKIP_REASON}`);
   testYamlConfig();
   await testPrintConfig();
   await testHelpAndVersion();

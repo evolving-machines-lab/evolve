@@ -1193,8 +1193,10 @@ export function parseYamlConfigLocated(
  * (checkWireValue): what a JSON body can carry at all is not the spec's
  * subject.
  *
- * The published package carries the spec two directories above dist/cli/;
- * a source checkout reads the repo-root copy the staged one is built from.
+ * The published package carries the spec two directories above dist/cli/.
+ * The contract's home is the private server repo, so a source checkout
+ * without a staged copy points EVOLVE_OPENAPI_SPEC_PATH at it; the repo-root
+ * candidate remains for legacy checkouts that still carry one.
  */
 const SPEC_RELATIVE_CANDIDATES = ["../../spec/openapi.yaml", "../../../../spec/openapi.yaml"];
 
@@ -1210,8 +1212,12 @@ let jobSpecShapes: JobSpecShapes | undefined;
 function loadJobSpecShapes(): JobSpecShapes {
   if (jobSpecShapes) return jobSpecShapes;
   const tried: string[] = [];
-  for (const relative of SPEC_RELATIVE_CANDIDATES) {
-    const specPath = fileURLToPath(new URL(relative, import.meta.url));
+  const candidates = SPEC_RELATIVE_CANDIDATES.map((relative) =>
+    fileURLToPath(new URL(relative, import.meta.url))
+  );
+  const envPath = process.env.EVOLVE_OPENAPI_SPEC_PATH;
+  if (envPath) candidates.unshift(envPath);
+  for (const specPath of candidates) {
     tried.push(specPath);
     if (!existsSync(specPath)) continue;
     const spec = parseYaml(readFileSync(specPath, "utf-8")) as {
@@ -1228,7 +1234,7 @@ function loadJobSpecShapes(): JobSpecShapes {
     return jobSpecShapes;
   }
   throw new Error(
-    `spec/openapi.yaml not found (tried: ${tried.join(", ")}) — the package ships it; reinstall the SDK`
+    `spec/openapi.yaml not found (tried: ${tried.join(", ")}) — the package ships it; reinstall the SDK, or point EVOLVE_OPENAPI_SPEC_PATH at a contract checkout`
   );
 }
 
