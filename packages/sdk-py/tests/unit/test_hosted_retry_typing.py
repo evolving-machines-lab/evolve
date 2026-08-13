@@ -23,35 +23,19 @@ The law of the shape:
 """
 
 import importlib
-import os
 import re
 import typing
-from pathlib import Path
 from typing import List, Optional
-
-import pytest
 
 import evolve
 from evolve import Job, JobRetryConfig, JobRetryConfigInput, JobsClient, RetryConfig
+from tests.unit.conftest import resolve_spec_path
 
 # `evolve.hosted` the ATTRIBUTE is a callable on the package surface, so the
 # module itself is fetched by name — the tests below inspect module contents.
 hosted_module = importlib.import_module('evolve.hosted')
 
-# The contract lives in the private server repo; EVOLVE_OPENAPI_SPEC_PATH
-# points at a checkout of it. The repo-root path stays as the legacy fallback
-# for checkouts that still carry a copy.
-_SPEC_OVERRIDE = os.environ.get('EVOLVE_OPENAPI_SPEC_PATH')
-SPEC_PATH = (
-    Path(_SPEC_OVERRIDE)
-    if _SPEC_OVERRIDE
-    else Path(__file__).resolve().parents[4] / 'spec' / 'openapi.yaml'
-)
-if not SPEC_PATH.exists():
-    pytest.skip(
-        'spec not present — gate runs in private CI or with EVOLVE_OPENAPI_SPEC_PATH',
-        allow_module_level=True,
-    )
+SPEC_PATH = resolve_spec_path()
 
 
 def _spec_schema_properties(schema_name: str) -> 'list[str]':

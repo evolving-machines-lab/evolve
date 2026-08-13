@@ -70,7 +70,7 @@ job = await evals.start(
         {'name': 'claude', 'model_name': 'fable'},
     ],
     n_attempts=1,               # (optional) attempts per task × agent arm, default 1
-    n_concurrent_trials=4,      # (optional) parallel trials, default 4, ceiling 16
+    n_concurrent_trials=4,      # (optional) parallel trials, default 4, ceiling 150
     max_trial_spend_usd=25,     # (optional) hard model-spend cap for EACH trial
 )
 

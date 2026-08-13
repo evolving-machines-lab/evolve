@@ -69,7 +69,7 @@ const job = await evals.start({
         { name: "claude", model_name: "fable" },
     ],
     n_attempts: 1,                // (optional) attempts per task × agent arm, default 1
-    n_concurrent_trials: 4,       // (optional) parallel trials, default 4, ceiling 16
+    n_concurrent_trials: 4,       // (optional) parallel trials, default 4, ceiling 150
     max_trial_spend_usd: 25,      // (optional) hard model-spend cap for EACH trial
 });
 
@@ -1400,7 +1400,7 @@ interface JobCreate {                    // jobs().start()
     datasets: DatasetSelector[];
     agents: AgentArmInput[];
     n_attempts?: number;                 // default 1
-    n_concurrent_trials?: number;        // default 4, ceiling 16
+    n_concurrent_trials?: number;        // default 4, ceiling 150
     max_trial_spend_usd?: number;        // the ONLY spend enforcement
     sandbox_provider?: EvalSandboxProvider;
     agent_env?: Record<string, string>;      // pass-through; server owns acceptance

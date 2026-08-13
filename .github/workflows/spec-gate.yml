@@ -13,18 +13,24 @@ on:
   pull_request:
     branches: [main, project-sable, 'berth/**']
 
+permissions:
+  contents: read
+
 jobs:
   spec-gate:
     runs-on: ubuntu-latest
     env:
-      SPEC_READ_TOKEN: ${{ secrets.SPEC_READ_TOKEN }}
       EVOLVE_OPENAPI_SPEC_PATH: ${{ github.workspace }}/contract/spec/openapi.yaml
     steps:
       # Secrets cannot be referenced in `if:` directly, so the documented
       # pattern applies: export the secret into env, probe it in a step, and
-      # gate every later step on the probe's output.
+      # gate every later step on the probe's output. The export is STEP-level
+      # on purpose — a job-level env would hand the private-repo token to
+      # `npm ci` and `pip install` too, where third-party install scripts run.
       - name: Probe for the contract-read token
         id: token
+        env:
+          SPEC_READ_TOKEN: ${{ secrets.SPEC_READ_TOKEN }}
         run: echo "present=${SPEC_READ_TOKEN:+true}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout
