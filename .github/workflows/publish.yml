@@ -250,6 +250,40 @@ jobs:
         run: npm run build
 
       # =======================================================================
+      # CONTRACT GATE (strict) — the last chance to catch a stale SDK
+      # =======================================================================
+
+      # The routine spec gates (spec-gate.yml here, sdk-spec-gate.yml in the
+      # server repo) tolerate the spec LEADING the SDK: between a server wave
+      # merging and the SDK publish that serves it, the contract legitimately
+      # names operations and error codes the SDK does not have yet, and failing
+      # every topic branch over that is a false alarm (see
+      # packages/sdk-ts/tests/unit/spec-lag.ts for the law and its lanes).
+      #
+      # That toleration must not survive to a release. A published package IS
+      # the SDK's answer to the contract, so here — and only here —
+      # EVOLVE_SPEC_GATE_STRICT=1 removes the exception and demands full
+      # equality. The gate runs after the build (two entrypoints read dist/)
+      # and before anything is pushed anywhere, so a lagging SDK fails the job
+      # instead of shipping. Its remedy is always the same: land the SDK side
+      # of the wave, then publish.
+      - name: Install Python test dependencies
+        run: pip install -r packages/sdk-py/requirements-dev.txt
+
+      - name: Gate the release against the contract (strict — no lag tolerated)
+        env:
+          EVOLVE_SPEC_GATE_STRICT: '1'
+        run: |
+          cd packages/sdk-ts
+          npx tsx tests/unit/hosted-spec-gate.test.ts
+          npx tsx tests/unit/hosted-error-codes.test.ts
+          npx tsx tests/unit/hosted-client.test.ts
+          npx tsx tests/unit/cli.test.ts
+          npx tsx tests/unit/cli-bin.test.ts
+          cd ../sdk-py
+          python -m pytest tests/unit/test_hosted_spec_gate.py tests/unit/test_hosted_stats_typing.py tests/unit/test_hosted_retry_typing.py -v
+
+      # =======================================================================
       # DOCKER IMAGE (tag derived from build inputs; must exist on Docker Hub
       # before the packages that default to it go live)
       # =======================================================================
