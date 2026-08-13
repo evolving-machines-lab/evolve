@@ -1501,6 +1501,47 @@ class TraceEventPage:
 
 
 @dataclass
+class JobGrepGroup:
+    """One trial's slice of a job-wide grep — jobs().grep().
+
+    ``match_count`` is EXACT and never truncates; ``events`` is the first few
+    matching events (the platform caps the sample at 5). The full match list
+    of one trial is ``trials().trace()`` with the same pattern as ``grep``.
+    ``task_name`` is None only when the task row is gone.
+    """
+    trial_id: str
+    task_name: Optional[str]
+    match_count: int
+    events: List[TraceEvent]
+
+
+@dataclass
+class JobGrepPage:
+    """One page of a job-wide grep, ordered by trial id — jobs().grep()."""
+    items: List[JobGrepGroup]
+    next_cursor: Optional[str]
+    has_more: bool
+
+
+@dataclass
+class TrialFile:
+    """One stored file of a trial's tree — trials().files().
+
+    ``path`` is prefix-relative, exactly the path ``trials().file()`` reads.
+    """
+    path: str
+    size_bytes: int
+
+
+@dataclass
+class TrialFilePage:
+    """One page of a trial's stored file tree, sorted by path."""
+    items: List[TrialFile]
+    next_cursor: Optional[str]
+    has_more: bool
+
+
+@dataclass
 class CompareCoverage:
     """Scored-trial coverage behind an aggregate (means cover SCORED trials only)."""
     scored: int
@@ -2459,6 +2500,22 @@ def _map_trace_event(data: Dict[str, Any]) -> TraceEvent:
     )
 
 
+def _map_grep_group(data: Dict[str, Any]) -> JobGrepGroup:
+    return JobGrepGroup(
+        trial_id=data.get('trial_id', ''),
+        task_name=data.get('task_name'),
+        match_count=int(data.get('match_count', 0)),
+        events=[_map_trace_event(item) for item in data.get('events') or []],
+    )
+
+
+def _map_trial_file(data: Dict[str, Any]) -> TrialFile:
+    return TrialFile(
+        path=data.get('path', ''),
+        size_bytes=int(data.get('size_bytes', 0)),
+    )
+
+
 def _map_coverage(data: Any) -> CompareCoverage:
     data = data if isinstance(data, dict) else {}
     return CompareCoverage(
@@ -2704,7 +2761,11 @@ class _HostedHttp:
         )
 
     async def request_bytes(
-        self, path: str, *, timeout: int = DOWNLOAD_TIMEOUT_SEC
+        self,
+        path: str,
+        *,
+        timeout: int = DOWNLOAD_TIMEOUT_SEC,
+        headers: Optional[Dict[str, str]] = None,
     ) -> 'tuple[bytes, Dict[str, str]]':
         """GET raw bytes plus response headers.
 
@@ -2713,9 +2774,11 @@ class _HostedHttp:
         does not arrive inside a request timeout sized for a status poll. The
         to-disk path has always used the larger budget, and the two shapes
         failing at different sizes is the kind of difference nobody debugs.
+        ``headers`` exists for the one extra header this surface speaks:
+        the byte-range read's ``Range``.
         """
         return await asyncio.to_thread(
-            self._request_sync, path, 'GET', None, None, True, timeout
+            self._request_sync, path, 'GET', None, headers, True, timeout
         )
 
     async def request_upload(
@@ -4531,6 +4594,37 @@ class JobsClient:
                 raise EvolveDigestMismatchError(expected, actual)
         return payload
 
+    async def grep(
+        self,
+        id: str,
+        q: str,
+        *,
+        type: Optional[str] = None,
+        cursor: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> JobGrepPage:
+        """Grep the parsed trace of EVERY trial of the job in one server-side
+        pass.
+
+        ``q`` is the trace filter's grammar: a case-insensitive POSIX regex
+        over each event's type and serialized content, where a plain string
+        is a plain substring — grep's own rules; ``type`` narrows to one
+        event type first. Items are per-trial groups ordered by trial id
+        (the cursor is the last group's trial id): the trial's task name,
+        the EXACT match count, and the first few matching events. An empty
+        page means no matches anywhere — a normal answer.
+        """
+        raw = await self._http.request_json(
+            f'/api/jobs/{urllib.parse.quote(id)}/grep'
+            f'{_page_query(limit, cursor, q=q, type=type)}'
+        )
+        items, next_cursor, has_more = _page_parts(raw)
+        return JobGrepPage(
+            items=[_map_grep_group(item) for item in items],
+            next_cursor=next_cursor,
+            has_more=has_more,
+        )
+
     async def compare(self, ids: List[str]) -> CompareResponse:
         """Side-by-side comparison of 2-10 owned jobs.
 
@@ -4590,6 +4684,9 @@ class TrialsClient:
         *,
         cursor: Optional[str] = None,
         limit: Optional[int] = None,
+        type: Optional[str] = None,
+        grep: Optional[str] = None,
+        tail: Optional[int] = None,
     ) -> TraceEventPage:
         """Get one page of a trial's trace.
 
@@ -4597,10 +4694,18 @@ class TrialsClient:
         from the beginning); resume with ``cursor=page.next_cursor``. A None
         ``next_cursor`` means CAUGHT UP — to resume a poll later, keep the last
         event's ``seq`` and pass it as ``cursor``.
+
+        ``type`` / ``grep`` / ``tail`` filter the parsed events and COMPOSE
+        with the cursor: only events of exactly that type; only events whose
+        type or serialized content matches the case-insensitive POSIX regex
+        (a plain string is a plain substring — grep's own grammar; an invalid
+        pattern is the server's typed ``invalid_input`` refusal); only the
+        last N matching events (a floor on the seq timeline, after which
+        paging proceeds normally, oldest-first).
         """
         raw = await self._http.request_json(
             f'/api/trials/{urllib.parse.quote(trial_id)}/trace'
-            f'{_page_query(limit, cursor)}'
+            f'{_page_query(limit, cursor, type=type, grep=grep, tail=str(tail) if tail is not None else None)}'
         )
         items, next_cursor, has_more = _page_parts(raw)
         return TraceEventPage(
@@ -4615,22 +4720,85 @@ class TrialsClient:
         *,
         cursor: Optional[str] = None,
         limit: Optional[int] = None,
+        type: Optional[str] = None,
+        grep: Optional[str] = None,
+        tail: Optional[int] = None,
     ):
         """Iterate a trial's trace events, fetching pages under the hood.
 
         Drains the currently available trace, then stops: ``next_cursor`` is
         None when there is no next page, which says "caught up" rather than
         echoing the position back. Resume later by passing the last seen seq as
-        ``cursor``.
+        ``cursor``. The ``type`` / ``grep`` / ``tail`` filters ride every
+        page — a filtered drain is still one drain.
         """
         position = cursor
         while True:
-            page = await self.trace(trial_id, cursor=position, limit=limit)
+            page = await self.trace(
+                trial_id, cursor=position, limit=limit, type=type, grep=grep, tail=tail
+            )
             for event in page.items:
                 yield event
             if not page.next_cursor:
                 return
             position = page.next_cursor
+
+    async def files(
+        self,
+        trial_id: str,
+        *,
+        cursor: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> TrialFilePage:
+        """List the trial's ENTIRE stored file tree.
+
+        The read-only-filesystem law: everything the platform stored under
+        the trial's prefix — native session files, the verifier log, the raw
+        agent streams, live checkpoint chunks — as ``{path, size_bytes}``
+        rows sorted by path, no curation. Read any row with :meth:`file`.
+        An empty page is a normal answer.
+        """
+        raw = await self._http.request_json(
+            f'/api/trials/{urllib.parse.quote(trial_id)}/files'
+            f'{_page_query(limit, cursor)}'
+        )
+        items, next_cursor, has_more = _page_parts(raw)
+        return TrialFilePage(
+            items=[_map_trial_file(item) for item in items],
+            next_cursor=next_cursor,
+            has_more=has_more,
+        )
+
+    async def file(
+        self,
+        trial_id: str,
+        path: str,
+        *,
+        start: Optional[int] = None,
+        end: Optional[int] = None,
+        suffix: Optional[int] = None,
+    ) -> bytes:
+        """RAW BYTES of one stored file, by the path :meth:`files` names.
+
+        Byte fidelity, no translation. ``start``/``end`` read an inclusive
+        slice (``start`` alone reads to the end); ``suffix`` reads the last N
+        bytes — the wire's single-``Range`` grammar, so a huge log tails
+        without shipping whole. A path the tree does not hold surfaces as the
+        API's typed 404.
+        """
+        encoded = '/'.join(
+            urllib.parse.quote(segment) for segment in path.split('/') if segment
+        )
+        headers: Optional[Dict[str, str]] = None
+        if suffix is not None:
+            headers = {'Range': f'bytes=-{suffix}'}
+        elif start is not None:
+            headers = {'Range': f'bytes={start}-{end if end is not None else ""}'}
+        payload, _headers = await self._http.request_bytes(
+            f'/api/trials/{urllib.parse.quote(trial_id)}/files/{encoded}',
+            headers=headers,
+        )
+        return payload
 
     async def artifact(
         self,

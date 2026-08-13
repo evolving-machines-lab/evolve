@@ -31,11 +31,14 @@ import {
   TRIAL_ARTIFACT_STREAMS,
   TRIAL_STATUSES,
   agents,
+  assembleTrialTree,
   auth,
   datasets,
+  jobEvolveRecord,
   jobs,
   passAtK,
   skills,
+  trialEvolveRecord,
   trials,
 } from "../hosted/index";
 import type {
@@ -49,6 +52,7 @@ import type {
   DatasetImport,
   DatasetSelector,
   EvalSandboxProvider,
+  GrepJobOptions,
   HostedClientConfig,
   Job,
   JobCreate,
@@ -61,6 +65,7 @@ import type {
   StopResponse,
   Task,
   TraceEvent,
+  TraceOptions,
   Trial,
   TrialStatus,
   UpstreamStatus,
@@ -408,7 +413,8 @@ const GROUPS: Record<string, GroupSpec> = {
         example: "evolve job regrade cme12ab34 --task tricky-task",
       },
       download: {
-        summary: "Download the job's results, unpacked as the standard job-directory tree",
+        summary:
+          "Download the job's results, unpacked as the standard job-directory tree (plus evolve.json records)",
         flags: {
           "output-dir": {
             kind: "string",
@@ -423,6 +429,23 @@ const GROUPS: Record<string, GroupSpec> = {
         positionalUsage: "<id>",
         example: "evolve job download cme12ab34 -o results/",
       },
+      grep: {
+        summary: "Search every trial's parsed trace in one server-side pass",
+        flags: {
+          type: { kind: "string", value: "<event-type>", help: "Only search events of exactly this type" },
+          limit: {
+            kind: "number",
+            short: "l",
+            value: "<n>",
+            help: "Per-trial match groups per page (default 50, max 200)",
+          },
+          cursor: { kind: "string", value: "<c>", help: "Resume after this trial id (the previous page's nextCursor)" },
+        },
+        minPositionals: 2,
+        maxPositionals: 2,
+        positionalUsage: "<id> <pattern>",
+        example: "evolve job grep cme12ab34 'permission denied'",
+      },
     },
   },
   trial: {
@@ -436,8 +459,28 @@ const GROUPS: Record<string, GroupSpec> = {
         positionalUsage: "<trial-id>",
         example: "evolve trial show cmt90ef12",
       },
+      trace: {
+        summary: "Print a trial's parsed trace, filtered server-side",
+        flags: {
+          type: { kind: "string", value: "<event-type>", help: "Only events of exactly this type" },
+          grep: {
+            kind: "string",
+            value: "<pattern>",
+            help:
+              "Only events matching this case-insensitive regex over type + content " +
+              "(a plain string is a plain substring — grep's own grammar)",
+          },
+          tail: { kind: "number", value: "<n>", help: "Only the last N matching events" },
+          cursor: { kind: "string", value: "<seq>", help: "Resume after this seq" },
+          limit: { kind: "number", short: "l", value: "<n>", help: "Events per page fetch (default 200, max 1000)" },
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<trial-id>",
+        example: "evolve trial trace cmt90ef12 --grep 'permission denied' --tail 50",
+      },
       download: {
-        summary: "Save everything a trial recorded, or stream one artifact",
+        summary: "Save a trial as Harbor's trial tree (plus evolve.json), or stream one artifact",
         flags: {
           "output-dir": {
             kind: "string",
@@ -3017,6 +3060,41 @@ async function cmdJobDownload(inv: Invocation, io: CliIO): Promise<number> {
       await rm(targetDir, { recursive: true, force: true }).catch(() => {});
       throw error;
     }
+    // The evolve.json records — the platform facts Harbor's layout has no
+    // slot for (gateway money/tokens per lane, provider, org, regrade
+    // lineage): one at the job root, one per trial directory, each trial
+    // matched by the id its result.json's x_evolve extension names. Content
+    // is the SDK's (jobEvolveRecord / trialEvolveRecord); this verb only
+    // fetches, matches and writes.
+    const { readdir, readFile: readFileAsync, writeFile } = await import("node:fs/promises");
+    const jobBody = await client.get(id);
+    const org = await callerOrg(inv);
+    const trialsById = new Map<string, Trial>();
+    for await (const run of client.trials(id)) trialsById.set(run.id, run);
+    await writeFile(
+      join(targetDir, "evolve.json"),
+      JSON.stringify(jobEvolveRecord(jobBody, org), null, 2) + "\n"
+    );
+    files.push("evolve.json");
+    for (const entry of await readdir(targetDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      let trialId: string | undefined;
+      try {
+        const result = JSON.parse(
+          await readFileAsync(join(targetDir, entry.name, "result.json"), "utf8")
+        ) as { x_evolve?: { trialId?: string } };
+        trialId = result.x_evolve?.trialId;
+      } catch {
+        continue;
+      }
+      const run = trialId !== undefined ? trialsById.get(trialId) : undefined;
+      if (!run) continue;
+      await writeFile(
+        join(targetDir, entry.name, "evolve.json"),
+        JSON.stringify(trialEvolveRecord(run, jobBody, org), null, 2) + "\n"
+      );
+      files.push(`${entry.name}/evolve.json`);
+    }
     if (inv.flags.json === true) {
       io.out(JSON.stringify({ path: targetDir, files: files.length }));
     } else {
@@ -3109,57 +3187,106 @@ async function cmdTrialDownload(inv: Invocation, io: CliIO): Promise<number> {
     return 0;
   }
 
-  // Save mode: everything the trial recorded lands under <output-dir>/<trial-id>/.
-  // The parsed events as trace-parsed.jsonl; the normalized ATIF document as
-  // trace-atif.json (its selector name — the job archive is where it wears
-  // Harbor's own agent/trajectory.json path); each raw log under its own
-  // name; the agent's home folder under agent-home/ with its sandbox paths
-  // preserved.
+  // Save mode: the trial as HARBOR'S TRIAL TREE under <output-dir>/<trial-id>/
+  // — config.json, result.json, agent/ (trajectory, raw logs, parsed events,
+  // sessions/), verifier/, PLUS evolve.json (the platform record Harbor has
+  // no slot for: gateway money/tokens per lane, provider, org, regrade
+  // lineage). The assembly is the SDK's (assembleTrialTree — the CLI only
+  // fetches parts and writes files); absent artifacts are absent files.
   const { mkdir, writeFile } = await import("node:fs/promises");
   const { join, dirname } = await import("node:path");
   const targetDir = join((inv.flags["output-dir"] as string | undefined) ?? "trials", trialId);
   if (existsSync(targetDir) && inv.flags.overwrite !== true) {
     throw new Error(`${targetDir} already exists (pass --overwrite to replace it)`);
   }
+  const run = await client.get(trialId);
+  // The job carries the regrade lineage; a trial without a reachable job
+  // still downloads, with the lineage read as an original run's.
+  let jobBody: Job | null = null;
+  try {
+    jobBody = await jobs(clientConfig(inv)).get(run.job_id);
+  } catch {
+    jobBody = null;
+  }
+  const events: TraceEvent[] = [];
+  for await (const event of client.traceEvents(trialId)) events.push(event);
+  const files = assembleTrialTree({
+    trial: run,
+    job: jobBody,
+    events,
+    atif: await client.artifact(trialId, "trace-atif"),
+    verifierLog: await client.artifact(trialId, "verifier"),
+    stdout: await client.artifact(trialId, "trace-stdout"),
+    stderr: await client.artifact(trialId, "trace-stderr"),
+    home: await client.artifact(trialId, "agent-home"),
+    org: await callerOrg(inv),
+  });
   await mkdir(targetDir, { recursive: true });
   const saved: string[] = [];
-  const report = (line: string) => {
-    saved.push(line);
-    if (!json) io.out(line);
-  };
-  const lines: string[] = [];
-  for await (const event of client.traceEvents(trialId)) {
-    lines.push(JSON.stringify(event));
-  }
-  await writeFile(join(targetDir, "trace-parsed.jsonl"), lines.join("\n") + (lines.length ? "\n" : ""));
-  report(`trace-parsed.jsonl (${lines.length} events)`);
-  // Every artifact saves under its selector name — the ATIF document
-  // included (trace-atif.json; Harbor's trajectory.json filename belongs to
-  // the job archive's Harbor-layout tree, not to this per-trial folder).
-  const atif = await client.artifact(trialId, "trace-atif");
-  if (atif !== null) {
-    await writeFile(join(targetDir, "trace-atif.json"), atif);
-    report(`trace-atif.json (${Buffer.byteLength(atif, "utf8")} bytes)`);
-  }
-  for (const which of ["verifier", "trace-stdout", "trace-stderr"] as const) {
-    const log = await client.artifact(trialId, which);
-    if (log === null) continue;
-    await writeFile(join(targetDir, `${which}.log`), log);
-    report(`${which}.log (${Buffer.byteLength(log, "utf8")} bytes)`);
-  }
-  const home = await client.artifact(trialId, "agent-home");
-  if (home !== null) {
-    for (const [path, content] of Object.entries(home)) {
-      const target = join(targetDir, "agent-home", ...path.split("/").filter(Boolean));
-      await mkdir(dirname(target), { recursive: true });
-      await writeFile(target, content);
-    }
-    report(`agent-home/ (${Object.keys(home).length} files)`);
+  for (const path of Object.keys(files).sort()) {
+    const target = join(targetDir, ...path.split("/"));
+    await mkdir(dirname(target), { recursive: true });
+    await writeFile(target, files[path]);
+    saved.push(path);
+    if (!json) io.out(path);
   }
   if (json) {
     io.out(JSON.stringify({ path: targetDir, saved }));
   } else {
     io.out(`Saved ${targetDir}`);
+  }
+  return 0;
+}
+
+/** The caller's identity for evolve.json's `org` — null when unreachable. */
+async function callerOrg(inv: Invocation): Promise<string | null> {
+  try {
+    return (await auth(clientConfig(inv)).status()).user_id;
+  } catch {
+    return null;
+  }
+}
+
+async function cmdTrialTrace(inv: Invocation, io: CliIO): Promise<number> {
+  const client = trials(clientConfig(inv));
+  const json = inv.flags.json === true;
+  // Parse, call, print: the filters travel verbatim — validation (regex
+  // syntax included) is the server's, and its typed refusal is the answer.
+  const options: TraceOptions = pageOptions(inv);
+  if (inv.flags.type !== undefined) options.type = String(inv.flags.type);
+  if (inv.flags.grep !== undefined) options.grep = String(inv.flags.grep);
+  if (inv.flags.tail !== undefined) options.tail = inv.flags.tail as number;
+  let count = 0;
+  for await (const event of client.traceEvents(inv.positionals[0], options)) {
+    io.out(json ? JSON.stringify(event) : traceEventLine(event));
+    count += 1;
+  }
+  if (!json && count === 0) io.out("No trace events.");
+  return 0;
+}
+
+async function cmdJobGrep(inv: Invocation, io: CliIO): Promise<number> {
+  const client = jobs(clientConfig(inv));
+  const id = await resolveJobId(inv, inv.positionals[0]);
+  const options: GrepJobOptions = pageOptions(inv);
+  if (inv.flags.type !== undefined) options.type = String(inv.flags.type);
+  const page = await client.grep(id, inv.positionals[1], options);
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(page));
+    return 0;
+  }
+  if (page.items.length === 0) {
+    io.out("No matches.");
+    return 0;
+  }
+  for (const group of page.items) {
+    const label = group.match_count === 1 ? "match" : "matches";
+    io.out(`${group.trial_id}  ${group.task_name ?? "-"}  ${group.match_count} ${label}`);
+    for (const event of group.events) io.out(`  ${traceEventLine(event)}`);
+  }
+  if (page.hasMore && page.nextCursor) {
+    io.out("");
+    io.out(`More trials match — resume with --cursor ${page.nextCursor}`);
   }
   return 0;
 }
@@ -3715,7 +3842,9 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "job retry": cmdJobRetry,
   "job regrade": cmdJobRegrade,
   "job download": cmdJobDownload,
+  "job grep": cmdJobGrep,
   "trial show": cmdTrialShow,
+  "trial trace": cmdTrialTrace,
   "trial download": cmdTrialDownload,
   "trial retry": cmdTrialRetry,
   "trial regrade": cmdTrialRegrade,

@@ -2913,6 +2913,89 @@ class TestTrials:
         assert cursors == [None, '2']
 
     @pytest.mark.asyncio
+    async def test_trace_filters_ride_the_query(self):
+        """type/grep/tail are spelled exactly as the spec spells them and
+        compose with the cursor — the remote-inspection filter surface."""
+        fake = FakeUrlopen([('/trace', {'items': [], 'nextCursor': None, 'hasMore': False})])
+        with patch('evolve._http.urlopen', fake):
+            await trials_factory(CONFIG).trace(
+                'run-1', type='agent.message', grep='permission denied', tail=50, cursor='2'
+            )
+        query = urllib_parse.parse_qs(urllib_parse.urlsplit(fake.requests[0].full_url).query)
+        assert query['type'] == ['agent.message']
+        assert query['grep'] == ['permission denied']
+        assert query['tail'] == ['50']
+        assert query['cursor'] == ['2']
+
+    @pytest.mark.asyncio
+    async def test_job_grep_groups(self):
+        """jobs().grep() — per-trial groups in the ordinary envelope, the
+        sample events mapped through the one TraceEvent mapper."""
+        fake = FakeUrlopen([
+            ('/grep', {
+                'items': [{
+                    'trial_id': 'run-1',
+                    'task_name': 'fix-bug',
+                    'match_count': 7,
+                    'events': [{'seq': 1, 'type': 'agent.message', 'data': {'text': 'permission denied'}}],
+                }],
+                'nextCursor': None,
+                'hasMore': False,
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            page = await jobs_factory(CONFIG).grep(
+                'job-1', 'permission denied', type='agent.message', limit=10
+            )
+        url = fake.requests[0].full_url
+        assert '/api/jobs/job-1/grep' in url
+        query = urllib_parse.parse_qs(urllib_parse.urlsplit(url).query)
+        assert query['q'] == ['permission denied']
+        assert query['type'] == ['agent.message']
+        assert query['limit'] == ['10']
+        group = page.items[0]
+        assert group.trial_id == 'run-1'
+        assert group.task_name == 'fix-bug'
+        assert group.match_count == 7
+        assert group.events[0].type == 'agent.message'
+        assert page.has_more is False
+
+    @pytest.mark.asyncio
+    async def test_trial_files_listing(self):
+        """trials().files() — the read-only-filesystem listing."""
+        fake = FakeUrlopen([
+            ('/files', {
+                'items': [{'path': 'verifier/verifier.log', 'size_bytes': 12}],
+                'nextCursor': None,
+                'hasMore': False,
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            page = await trials_factory(CONFIG).files('run-1', limit=5)
+        url = fake.requests[0].full_url
+        assert '/api/trials/run-1/files' in url and 'limit=5' in url
+        assert page.items[0].path == 'verifier/verifier.log'
+        assert page.items[0].size_bytes == 12
+
+    @pytest.mark.asyncio
+    async def test_trial_file_bytes_and_range(self):
+        """trials().file() — raw bytes; the path's slashes ARE the route; the
+        three Range spellings ride the header."""
+        fake = FakeUrlopen([('/files/verifier/verifier.log', b'PASS checks')])
+        client = trials_factory(CONFIG)
+        with patch('evolve._http.urlopen', fake):
+            whole = await client.file('run-1', 'verifier/verifier.log')
+            await client.file('run-1', 'verifier/verifier.log', start=10, end=19)
+            await client.file('run-1', 'verifier/verifier.log', start=10)
+            await client.file('run-1', 'verifier/verifier.log', suffix=100)
+        assert whole == b'PASS checks'
+        assert fake.requests[0].full_url.endswith('/api/trials/run-1/files/verifier/verifier.log')
+        assert fake.requests[0].headers.get('Range') is None
+        assert fake.requests[1].headers.get('Range') == 'bytes=10-19'
+        assert fake.requests[2].headers.get('Range') == 'bytes=10-'
+        assert fake.requests[3].headers.get('Range') == 'bytes=-100'
+
+    @pytest.mark.asyncio
     async def test_regrade_returns_a_job(self):
         regrade_job = {
             **JOB_SUMMARY,

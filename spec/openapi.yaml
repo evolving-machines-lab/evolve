@@ -837,6 +837,72 @@ paths:
   # Trials (globally addressable)
   # ===========================================================================
 
+  /api/jobs/{jobId}/grep:
+    get:
+      tags: [jobs]
+      operationId: grepJob
+      summary: Grep one job's whole trace
+      description: |
+        Search the parsed trace of EVERY trial of the job in one pass. `q` is
+        the trace route's `grep` grammar: a case-insensitive POSIX regex over
+        each event's type and serialized content, where a plain string is a
+        plain substring — grep's own rules; `type` narrows to one event type
+        first.
+
+        Items are PER-TRIAL groups ordered by trial id (the cursor is the
+        last group's trial id): the trial's task name, the EXACT match count,
+        and the first few matching events (the platform caps the sample at 5;
+        the count never truncates). A trial with no match has no group, so an
+        empty page means "no matches anywhere" — a normal answer. Drilling
+        into one trial's full match list is that trial's own trace route with
+        the same pattern as `grep`. A regrade job answers the empty page: its
+        re-runs record no parsed events of their own.
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+        - name: q
+          in: query
+          required: true
+          description: The pattern (same grammar as the trace route's `grep`).
+          schema:
+            type: string
+            maxLength: 512
+        - name: type
+          in: query
+          description: Only search events of exactly this type.
+          schema:
+            type: string
+            maxLength: 100
+        - name: limit
+          in: query
+          description: Per-trial groups per page. Default 50, max 200.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: cursor
+          in: query
+          description: Resume after this trial id (the previous page's `nextCursor`).
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Matches grouped per trial.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobGrepPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /api/trials/{trialId}:
     get:
       tags: [trials]
@@ -874,6 +940,17 @@ paths:
         its vocabulary name): one page of parsed trace events, paged by
         `cursor` (a sequence number) and `limit` (default 200, max 1000).
 
+        `type`, `grep` and `tail` filter the parsed events — exact event
+        type; case-insensitive POSIX regex over the event's type and
+        serialized content (a plain string is a plain substring, grep's own
+        grammar); only the last N matching events. They COMPOSE with the
+        cursor: a filter narrows which events exist on the timeline, `tail`
+        floors it at the Nth-from-last match, and paging proceeds oldest-first
+        with the same null-means-caught-up envelope. Filters belong to
+        parsed-event mode only — combined with `stream` the request is
+        refused (`invalid_input`), and an invalid regex is the same typed
+        refusal, never a 500.
+
         With `stream`: raw artifacts instead of parsed events —
         - `verifier`, `trace-stdout`, `trace-stderr`, `trace-atif`:
           the artifact text as JSON (`{"log": string | null}`; null means this
@@ -910,6 +987,32 @@ paths:
             minimum: 1
             maximum: 1000
             default: 200
+        - name: type
+          in: query
+          description: Parsed-event mode — only events of exactly this type.
+          schema:
+            type: string
+            maxLength: 100
+        - name: grep
+          in: query
+          description: >
+            Parsed-event mode — only events whose type or serialized content
+            matches this case-insensitive POSIX regex (a plain string is a
+            plain substring). An invalid pattern is the typed
+            `invalid_input` refusal.
+          schema:
+            type: string
+            maxLength: 512
+        - name: tail
+          in: query
+          description: >
+            Parsed-event mode — only the last N MATCHING events: a floor on
+            the seq timeline, after which cursor paging proceeds normally,
+            oldest-first.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 10000
         - name: stream
           in: query
           description: >
@@ -977,6 +1080,122 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/trials/{trialId}/files:
+    get:
+      tags: [trials]
+      operationId: listTrialFiles
+      summary: List a trial's entire stored file tree
+      description: |
+        The remote-inspection law: the API is a read-only filesystem over the
+        wire. This lists EVERYTHING the platform stored under the trial's
+        prefix — native session files, the verifier log, the raw agent
+        streams, live checkpoint chunks — as `{path, size_bytes}` rows sorted
+        by path, with no curation between the store and the wire. Read any
+        row's bytes at `/api/trials/{trialId}/files/{filePath}`. An empty
+        page is a normal answer (a QUEUED/CANCELLED trial, a purged trace, or
+        a regrade id, whose only artifact is its own re-run's verifier log).
+      parameters:
+        - $ref: '#/components/parameters/TrialId'
+        - name: limit
+          in: query
+          description: Page size. Default 200, max 1000.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 200
+        - name: cursor
+          in: query
+          description: Resume after this path (the previous page's `nextCursor`).
+          schema:
+            type: string
+      responses:
+        '200':
+          description: One page of the file tree.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrialFilePage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/trials/{trialId}/files/{filePath}:
+    get:
+      tags: [trials]
+      operationId: getTrialFile
+      summary: Read one stored file, raw bytes
+      description: |
+        RAW BYTES of one file the listing names — application/octet-stream,
+        byte fidelity, no translation. A standard single `Range` header
+        (`bytes=a-b`, `bytes=a-`, `bytes=-n`) reads a slice and answers 206
+        with `Content-Range`, so a huge log tails without shipping whole;
+        `Accept-Ranges: bytes` advertises it. The surface is strict: a
+        malformed or multi-range header is the typed 400, an out-of-file
+        range the 416 with the size in `Content-Range` — never a silent
+        whole-file fallback. A path the tree does not hold answers 404 (the
+        `trial_not_found` code — the vocabulary's one 404 member on the
+        trial surface — with the message naming the missing path).
+      parameters:
+        - $ref: '#/components/parameters/TrialId'
+        - name: filePath
+          in: path
+          required: true
+          description: >
+            The slash-separated path exactly as the files listing names it
+            (e.g. `verifier/verifier.log`).
+          schema:
+            type: string
+        - name: Range
+          in: header
+          description: >
+            Optional single byte range (`bytes=a-b` / `bytes=a-` /
+            `bytes=-n`).
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The whole file.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '206':
+          description: >
+            The requested byte range (`Content-Range` states position and
+            size).
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '416':
+          description: >
+            Range selects nothing inside the file (`invalid_input`;
+            `Content-Range` carries `bytes */<size>`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -4671,6 +4890,64 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/TraceEvent'
+        nextCursor:
+          type: [string, 'null']
+        hasMore:
+          type: boolean
+
+    JobGrepGroup:
+      type: object
+      description: >
+        One trial's slice of a job-wide grep: the EXACT number of matching
+        events plus the first few of them (the platform caps the sample at
+        5; the count never truncates). `task_name` is null only when the
+        task row is gone.
+      required: [trial_id, task_name, match_count, events]
+      properties:
+        trial_id:
+          type: string
+        task_name:
+          type: [string, 'null']
+        match_count:
+          type: integer
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/TraceEvent'
+
+    JobGrepPage:
+      type: object
+      required: [items, nextCursor, hasMore]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/JobGrepGroup'
+        nextCursor:
+          type: [string, 'null']
+        hasMore:
+          type: boolean
+
+    TrialFile:
+      type: object
+      description: >
+        One stored file of a trial's tree, named by its prefix-relative path
+        (the same path `getTrialFile` reads).
+      required: [path, size_bytes]
+      properties:
+        path:
+          type: string
+        size_bytes:
+          type: integer
+
+    TrialFilePage:
+      type: object
+      required: [items, nextCursor, hasMore]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrialFile'
         nextCursor:
           type: [string, 'null']
         hasMore:

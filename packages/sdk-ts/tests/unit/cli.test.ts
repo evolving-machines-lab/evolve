@@ -3153,6 +3153,7 @@ async function testCompareCancelDownload() {
       { name: "job-eval-1/config.json", content: '{"job_name":"job-eval-1"}' },
       { name: "job-eval-1/result.json", content: '{"stats":{}}' },
       { name: "job-eval-1/t0__task", type: "directory" },
+      { name: "job-eval-1/t0__task/result.json", content: '{"x_evolve":{"trialId":"run-1"}}' },
       { name: "job-eval-1/t0__task/agent/trajectory.json", content: '{"schema_version":"ATIF-v1.7"}' },
       { name: "job-eval-1/t0__task/verifier/reward.json", content: '{"reward":1}' },
     ]);
@@ -3162,6 +3163,33 @@ async function testCompareCancelDownload() {
       bodyBytes: archive,
       headers: { "Content-Disposition": 'attachment; filename="job-eval-1.tar.gz"' },
     });
+    // The evolve.json enrichment reads the job body + trial rows after the
+    // extract. Registered AFTER the /download and /cancel patterns — the
+    // mock matches by substring in insertion order.
+    setMockResponse("/api/jobs/eval-1/trials", {
+      status: 200,
+      body: {
+        items: [
+          {
+            id: "run-1",
+            job_id: "eval-1",
+            task_name: "task",
+            source: "deep-swe",
+            agent_info: { name: "codex", version: null, model_info: { name: "gpt-5.5", provider: null }, reasoning_effort: null },
+            status: "SCORED",
+            reward: 1,
+            spend_source: "measured",
+            sandbox_provider: "e2b",
+            agent_result: { n_input_tokens: 1, n_cache_tokens: 0, n_output_tokens: 1, cost_usd: 0.25, rollout_details: null, metadata: null },
+            n_retries: 0,
+            retries: [],
+          },
+        ],
+        nextCursor: null,
+        hasMore: false,
+      },
+    });
+    setMockResponse("/api/jobs/eval-1", { status: 200, body: wireJob({ status: "COMPLETED" }) });
     setMockResponse("/api/jobs/compare", {
       status: 200,
       body: {
@@ -3184,7 +3212,10 @@ async function testCompareCancelDownload() {
 
     const download = captureIO();
     assertEqual(await runCli(["job", "download", "eval-1", "-o", tmpDir, ...AUTH], download.io), 0, "download exits 0");
-    assert(fetchCalls[fetchCalls.length - 1].url.endsWith("/api/jobs/eval-1/download"), "hits the download route");
+    assert(
+      fetchCalls.some((c) => c.url.endsWith("/api/jobs/eval-1/download")),
+      "hits the download route"
+    );
     const treeDir = join(tmpDir, "job-eval-1");
     assertEqual(
       (await readFile(join(treeDir, "config.json"))).toString(),
@@ -3203,9 +3234,17 @@ async function testCompareCancelDownload() {
     );
     const leftovers = (await readdir(tmpDir)).filter((name) => name.endsWith(".tar.gz"));
     assertEqual(leftovers, [], "no .tar.gz survives — the tree IS the result");
+    // The evolve.json records ride the tree: one at the job root, one per
+    // trial directory (matched by result.json's x_evolve.trialId).
+    const jobEvolve = JSON.parse(await readFile(join(treeDir, "evolve.json"), "utf-8"));
+    assertEqual(jobEvolve.job_id, "eval-1", "the job root carries evolve.json");
+    assertEqual(jobEvolve.provider, "e2b", "the job evolve.json names the provider");
+    const trialEvolve = JSON.parse(await readFile(join(treeDir, "t0__task", "evolve.json"), "utf-8"));
+    assertEqual(trialEvolve.trial_id, "run-1", "each trial dir gets its own evolve.json");
+    assertEqual(trialEvolve.gateway.cost_usd, 0.25, "the trial evolve.json carries the gateway meter");
     assert(
-      download.out.some((l) => l.includes(treeDir) && l.includes("4 files")),
-      "prints the tree path and the file count"
+      download.out.some((l) => l.includes(treeDir) && l.includes("7 files")),
+      "prints the tree path and the file count (evolve.json records included)"
     );
 
     // --json reports the tree, not an archive path.
@@ -3215,7 +3254,7 @@ async function testCompareCancelDownload() {
       0,
       "--overwrite --json re-download exits 0"
     );
-    assertEqual(JSON.parse(jsonDownload.out[0]), { path: treeDir, files: 4 }, "--json = { path, files }");
+    assertEqual(JSON.parse(jsonDownload.out[0]), { path: treeDir, files: 7 }, "--json = { path, files }");
   } finally {
     await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
     restoreFetch();
@@ -3232,6 +3271,12 @@ async function testJobDownloadUnpackGuards() {
       "/api/jobs/eval-1/download",
       { status: 200, body: null, bodyBytes: await gzipTarArchive([{ name: "job-eval-1/config.json", content: "{}" }]) }
     );
+    // The evolve.json enrichment's reads, for the one download that extracts.
+    setMockResponse("/api/jobs/eval-1/trials", {
+      status: 200,
+      body: { items: [], nextCursor: null, hasMore: false },
+    });
+    setMockResponse("/api/jobs/eval-1", { status: 200, body: wireJob({ status: "COMPLETED" }) });
     await mkdir(join(tmpDir, "job-eval-1"), { recursive: true });
     await writeFile(join(tmpDir, "job-eval-1", "stale.txt"), "old");
     const refused = captureIO();
@@ -3473,7 +3518,7 @@ async function testTrialDownloadTrajectoryRefused() {
 }
 
 async function testTrialDownloadSave() {
-  console.log("\n--- runCli: trial download saves under <dir>/<trial-id>/; --overwrite gates ---");
+  console.log("\n--- runCli: trial download saves Harbor's trial tree + evolve.json; --overwrite gates ---");
   installMockFetch();
   const tmpDir = await mkdtemp(join(tmpdir(), "evolve-trial-dl-"));
   try {
@@ -3491,28 +3536,82 @@ async function testTrialDownloadSave() {
       status: 200,
       body: { items: [{ seq: 0, type: "agent.message", data: {} }], nextCursor: null, hasMore: false },
     });
+    // The trial body the tree's config/result/evolve records derive from.
+    // Registered AFTER every "/trace" pattern — substring matching. The job
+    // and auth-status lookups stay unmocked on purpose: both are
+    // best-effort (lineage reads as an original run's, org as null).
+    setMockResponse("/api/trials/run-1", {
+      status: 200,
+      body: {
+        id: "run-1",
+        job_id: "job-1",
+        task_name: "fix-bug",
+        source: "swe-bench",
+        agent_info: {
+          name: "codex",
+          version: "1.0.0",
+          model_info: { name: "gpt-test", provider: null },
+          reasoning_effort: null,
+        },
+        attempt: 1,
+        status: "SCORED",
+        reward: 1,
+        verifier_result: { rewards: { reward: 1 } },
+        exception_info: null,
+        agent_result: {
+          n_input_tokens: 10,
+          n_cache_tokens: 0,
+          n_output_tokens: 5,
+          cost_usd: 0.5,
+          rollout_details: null,
+          metadata: null,
+        },
+        spend_source: "measured",
+        sandbox_provider: "modal",
+        max_trial_spend_usd: 200,
+        n_retries: 0,
+        retries: [],
+        started_at: "2026-08-01T00:00:00.000Z",
+        finished_at: "2026-08-01T00:10:00.000Z",
+      },
+    });
     const { io, out, err } = captureIO();
     const code = await runCli(["trial", "download", "run-1", "-o", tmpDir, ...AUTH], io);
     assertEqual(code, 0, "exit 0");
     assertEqual(err, [], "nothing on stderr");
     const target = join(tmpDir, "run-1");
-    const parsed = await readFile(join(target, "trace-parsed.jsonl"), "utf-8");
-    assert(parsed.includes('"seq":0'), "parsed events land in trace-parsed.jsonl");
-    const verifier = await readFile(join(target, "verifier.log"), "utf-8");
-    assertEqual(verifier, "verifier says 1.0", "each stored raw log lands under its own name");
-    const savedAtif = await readFile(join(target, "trace-atif.json"), "utf-8");
-    assertEqual(savedAtif, '{"schema_version":"ATIF-v1.7"}', "the ATIF document saves as trace-atif.json");
-    const home = await readFile(join(target, "agent-home", "root", ".claude", "history.jsonl"), "utf-8");
-    assertEqual(home, "{}", "agent-home/ preserves the sandbox folder tree");
+    // HARBOR'S TRIAL TREE, file for file — the same names the job archive
+    // extracts to — plus evolve.json, the platform's own record.
+    const config = JSON.parse(await readFile(join(target, "config.json"), "utf-8"));
+    assertEqual(config.task.name, "fix-bug", "config.json carries the task identity");
+    assertEqual(config.agent.name, "codex", "config.json carries the agent identity");
+    const result = JSON.parse(await readFile(join(target, "result.json"), "utf-8"));
+    assertEqual(result.status, "SCORED", "result.json carries the outcome");
+    const savedAtif = await readFile(join(target, "agent", "trajectory.json"), "utf-8");
+    assertEqual(savedAtif, '{"schema_version":"ATIF-v1.7"}', "the ATIF document is agent/trajectory.json");
+    const parsed = await readFile(join(target, "agent", "trace-parsed.jsonl"), "utf-8");
+    assert(parsed.includes('"seq":0'), "parsed events land in agent/trace-parsed.jsonl");
+    const verifier = await readFile(join(target, "verifier", "test-stdout.txt"), "utf-8");
+    assertEqual(verifier, "verifier says 1.0", "the verifier log is verifier/test-stdout.txt");
+    const reward = JSON.parse(await readFile(join(target, "verifier", "reward.json"), "utf-8"));
+    assertEqual(reward.reward, 1, "the rewards map is verifier/reward.json");
+    const home = await readFile(join(target, "agent", "sessions", "claude", "history.jsonl"), "utf-8");
+    assertEqual(home, "{}", "agent/sessions/ wears the home tree's visible names");
+    const evolve = JSON.parse(await readFile(join(target, "evolve.json"), "utf-8"));
+    assertEqual(evolve.provider, "modal", "evolve.json names the provider");
+    assertEqual(evolve.gateway.cost_usd, 0.5, "evolve.json carries the gateway meter");
+    assertEqual(evolve.gateway.spend_source, "measured", "evolve.json names the spend lane");
+    assertEqual(evolve.org, null, "an unreachable auth status reads as org null");
+    assertEqual(evolve.regrade_lineage.is_regrade, false, "an unreachable job reads as original lineage");
     // Null logs were never stored — absence is a normal answer, no empty files.
     let missingThrew = false;
     try {
-      await readFile(join(target, "trace-stdout.log"), "utf-8");
+      await readFile(join(target, "agent", "stdout.log"), "utf-8");
     } catch {
       missingThrew = true;
     }
     assert(missingThrew, "an unstored artifact writes no file");
-    assert(out.some((l) => l.includes("trace-parsed.jsonl")), "reports the parsed trace file");
+    assert(out.some((l) => l.includes("config.json")), "reports the written files");
 
     // The directory now exists: a second save without --overwrite must refuse
     // instead of silently mixing two downloads.
