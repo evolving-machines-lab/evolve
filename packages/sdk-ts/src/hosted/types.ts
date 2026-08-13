@@ -424,6 +424,35 @@ export interface JobCreate {
    * value of the same name; any other key is refused at create.
    */
   verifier_env?: Record<string, string>;
+  /**
+   * Stored env secrets to deliver into every agent run — REFERENCES to the
+   * caller's own env secrets, never values on the wire. Resolved at create
+   * and pinned: an omitted `label` takes the 'default'-labeled row when one
+   * exists (the single row when exactly one exists), and a bare name
+   * matching several labels with no 'default' is the typed
+   * `secret_ambiguous` refusal naming the labels — a job never guesses
+   * which secret it runs with. `as` renames the env var inside the sandbox;
+   * names the trial contract owns (the EVOLVE_ prefix, gateway/vendor key
+   * slots, the judge-override pair) are refused. NOTE the eval lane's
+   * documented degradation: values are injected as RAW env for the run and
+   * scrubbed at the credential seal — the secret's allowed-hosts egress
+   * scoping (the managed-agents proxy lane) is NOT yet enforced here.
+   */
+  secrets?: JobSecretRef[];
+}
+
+/**
+ * One attached env secret: a reference to a stored secret of the caller's,
+ * by name and optional label, with an optional in-sandbox rename. Mirrors
+ * the managed-agents lane's ManagedSecretRef with the label lane added.
+ */
+export interface JobSecretRef {
+  /** The stored secret's name (env-var-shaped; the EVOLVE_ prefix is reserved). */
+  name: string;
+  /** Which labeled row of that name; omitted = 'default' resolution law. */
+  label?: string;
+  /** Env var the value lands under in the sandbox (default: the name). */
+  as?: string;
 }
 
 /** Body of POST /api/jobs/{jobId}/resume. */
@@ -2425,6 +2454,8 @@ export const HOSTED_ERROR_CODES = [
   "skill_in_use",
   "skill_too_large",
   "skill_limit_reached",
+  "secret_not_found",
+  "secret_ambiguous",
   "agent_version_not_found",
   "agent_version_unresolvable",
   "agent_kwarg_unsupported",

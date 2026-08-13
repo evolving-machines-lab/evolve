@@ -44,6 +44,8 @@
     "skill_in_use",
     "skill_too_large",
     "skill_limit_reached",
+    "secret_not_found",
+    "secret_ambiguous",
     "agent_version_not_found",
     "agent_version_unresolvable",
     "agent_kwarg_unsupported",

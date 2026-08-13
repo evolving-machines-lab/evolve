@@ -189,6 +189,7 @@ export type {
   JobList,
   JobPage,
   JobStats,
+  JobSecretRef,
   JobStatus,
   JobTaskRollup,
   JobTaskRollupList,

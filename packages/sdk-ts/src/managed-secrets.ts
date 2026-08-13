@@ -9,6 +9,12 @@ export interface ManagedSecretRef {
 export interface ManagedSecretMetadata {
   id: string;
   name: string;
+  /**
+   * The row's label — secrets are unique by (name, label), 'default' when
+   * none was chosen at store time. Optional: servers older than the label
+   * lane omit it.
+   */
+  label?: string;
   allowedHosts: string[];
   allowedPathPrefixes: string[];
   allowedMethods: string[];
