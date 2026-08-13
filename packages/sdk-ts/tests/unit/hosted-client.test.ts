@@ -3018,6 +3018,125 @@ async function testTraceEventsIterator() {
   }
 }
 
+async function testInspectionSurface() {
+  console.log("\n--- remote inspection: trace filters, jobs().grep(), trials().files()/file() ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/trials/run-1/trace", {
+      status: 200,
+      body: { items: [], nextCursor: null, hasMore: false },
+    });
+    const t = trials({ apiKey: "test-key", baseUrl: BASE });
+
+    // The parsed-event filters ride the query verbatim, spelled as the
+    // contract spells them, and compose with cursor/limit.
+    await t.trace("run-1", { type: "agent.message", grep: "permission denied", tail: 50, cursor: "2" });
+    const filtered = new URL(fetchCalls[fetchCalls.length - 1].url);
+    assertEqual(filtered.searchParams.get("type"), "agent.message", "type rides the query");
+    assertEqual(filtered.searchParams.get("grep"), "permission denied", "grep rides the query");
+    assertEqual(filtered.searchParams.get("tail"), "50", "tail rides the query");
+    assertEqual(filtered.searchParams.get("cursor"), "2", "the cursor still composes with the filters");
+
+    // traceEvents() carries the filters on EVERY page, not only the first.
+    (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+      const urlStr = url.toString();
+      fetchCalls.push({ url: urlStr, init });
+      const cursor = new URL(urlStr).searchParams.get("cursor");
+      const pages: Record<string, unknown> = {
+        "": { items: [{ seq: 1, type: "a", data: {} }], nextCursor: "1", hasMore: true },
+        "1": { items: [{ seq: 2, type: "a", data: {} }], nextCursor: null, hasMore: false },
+      };
+      return buildMockResponse({ status: 200, body: pages[cursor ?? ""] });
+    };
+    fetchCalls.length = 0;
+    const drained: number[] = [];
+    for await (const event of t.traceEvents("run-1", { grep: "boom" })) drained.push(event.seq);
+    assertEqual(drained, [1, 2], "the filtered drain yields every matching event");
+    assert(
+      fetchCalls.every((c) => new URL(c.url).searchParams.get("grep") === "boom"),
+      "every page of a filtered drain carries the filter"
+    );
+    installMockFetch();
+
+    // jobs().grep() — per-trial groups in the ordinary envelope.
+    setMockResponse("/api/jobs/eval-1/grep", {
+      status: 200,
+      body: {
+        items: [
+          {
+            trial_id: "run-1",
+            task_name: "fix-bug",
+            match_count: 7,
+            events: [{ seq: 1, type: "agent.message", data: { text: "permission denied" } }],
+          },
+        ],
+        nextCursor: null,
+        hasMore: false,
+      },
+    });
+    const j = jobs({ apiKey: "test-key", baseUrl: BASE });
+    const grepPage = await j.grep("eval-1", "permission denied", { type: "agent.message", limit: 10 });
+    const grepUrl = new URL(fetchCalls[fetchCalls.length - 1].url);
+    assert(grepUrl.pathname.endsWith("/api/jobs/eval-1/grep"), "targets the job grep route");
+    assertEqual(grepUrl.searchParams.get("q"), "permission denied", "q rides the query");
+    assertEqual(grepUrl.searchParams.get("type"), "agent.message", "the type narrower rides the query");
+    assertEqual(grepUrl.searchParams.get("limit"), "10", "limit pages the trial groups");
+    assertEqual(grepPage.items[0].trial_id, "run-1", "groups are keyed by trial");
+    assertEqual(grepPage.items[0].match_count, 7, "the exact count survives the mapping");
+    assertEqual(
+      grepPage.items[0].events[0],
+      { seq: 1, type: "agent.message", data: { text: "permission denied" } },
+      "sample events map through the one TraceEvent mapper"
+    );
+
+    // trials().files() — the read-only-filesystem listing. The file-bytes
+    // pattern registers FIRST: the mock matches by substring in insertion
+    // order, and the bare "/files" pattern would swallow "/files/<path>".
+    setMockResponse("/api/trials/run-1/files/verifier/verifier.log", {
+      status: 200,
+      body: null,
+      bodyBytes: Buffer.from("PASS checks"),
+    });
+    setMockResponse("/api/trials/run-1/files", {
+      status: 200,
+      body: {
+        items: [{ path: "verifier/verifier.log", size_bytes: 12 }],
+        nextCursor: null,
+        hasMore: false,
+      },
+    });
+    const filesPage = await t.files("run-1", { limit: 5 });
+    const filesUrl = new URL(fetchCalls[fetchCalls.length - 1].url);
+    assert(filesUrl.pathname.endsWith("/api/trials/run-1/files"), "targets the files listing");
+    assertEqual(filesUrl.searchParams.get("limit"), "5", "limit pages the listing");
+    assertEqual(
+      filesPage.items[0],
+      { path: "verifier/verifier.log", size_bytes: 12 },
+      "rows map as {path, size_bytes}"
+    );
+
+    // trials().file() — raw bytes, path segments encoded one by one, and the
+    // three Range spellings.
+    const whole = await t.file("run-1", "verifier/verifier.log");
+    assertEqual(whole.toString("utf8"), "PASS checks", "the whole file arrives as raw bytes");
+    assert(
+      fetchCalls[fetchCalls.length - 1].url.endsWith("/api/trials/run-1/files/verifier/verifier.log"),
+      "the path's slashes ARE the route"
+    );
+    const headerOf = () =>
+      (fetchCalls[fetchCalls.length - 1].init?.headers as Record<string, string> | undefined)?.Range;
+    assertEqual(headerOf(), undefined, "no Range header without a range");
+    await t.file("run-1", "verifier/verifier.log", { start: 10, end: 19 });
+    assertEqual(headerOf(), "bytes=10-19", "start+end spells bytes=a-b");
+    await t.file("run-1", "verifier/verifier.log", { start: 10 });
+    assertEqual(headerOf(), "bytes=10-", "start alone spells bytes=a-");
+    await t.file("run-1", "verifier/verifier.log", { suffix: 100 });
+    assertEqual(headerOf(), "bytes=-100", "suffix spells bytes=-n");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testTrialArtifact() {
   console.log("\n--- trials().artifact() selects raw streams; null = never stored ---");
   installMockFetch();
@@ -3854,6 +3973,7 @@ async function main() {
   await testTrialLiveSpend();
   await testTrialTracePage();
   await testTraceEventsIterator();
+  await testInspectionSurface();
   await testTrialArtifact();
   await testStopTrials();
   await testCompare();

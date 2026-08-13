@@ -141,11 +141,14 @@ OPERATION_TO_METHOD = {
     'resumeJob': (JobsClient, 'resume'),
     'retryJob': (JobsClient, 'retry'),
     'regradeJob': (JobsClient, 'regrade'),
+    'grepJob': (JobsClient, 'grep'),
     'listJobTrials': (JobsClient, 'trials'),
     'listJobTasks': (JobsClient, 'tasks'),
     # Trials (globally addressable)
     'getTrial': (TrialsClient, 'get'),
     'getTrialTrace': (TrialsClient, 'trace'),  # ?stream= raw selectors ride artifact()
+    'listTrialFiles': (TrialsClient, 'files'),
+    'getTrialFile': (TrialsClient, 'file'),
     'retryTrial': (TrialsClient, 'retry'),
     'regradeTrial': (TrialsClient, 'regrade'),
     'stopTrials': (TrialsClient, 'stop'),

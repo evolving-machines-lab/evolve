@@ -46,12 +46,15 @@ import type {
   ExceptionInfo,
   GateRunningProgress,
   GetDatasetOptions,
+  GrepJobOptions,
   HostedClientConfig,
   ImportWarning,
   Job,
   JobCreate,
   JobEvent,
   JobFailure,
+  JobGrepGroup,
+  JobGrepPage,
   JobList,
   JobPage,
   JobStats,
@@ -67,6 +70,7 @@ import type {
   ListJobTasksOptions,
   ListJobsOptions,
   ListSkillsOptions,
+  ListTrialFilesOptions,
   ListTrialsOptions,
   Page,
   PageOptions,
@@ -94,6 +98,9 @@ import type {
   Trial,
   TrialArtifactStream,
   TrialCounts,
+  TrialFile,
+  TrialFilePage,
+  TrialFileRange,
   TrialList,
   TrialPage,
   TrialRetry,
@@ -169,6 +176,7 @@ export type {
   ExceptionInfo,
   GateRunningProgress,
   GetDatasetOptions,
+  GrepJobOptions,
   HostedClientConfig,
   HostedErrorCode,
   ImportWarning,
@@ -176,6 +184,8 @@ export type {
   JobCreate,
   JobEvent,
   JobFailure,
+  JobGrepGroup,
+  JobGrepPage,
   JobList,
   JobPage,
   JobStats,
@@ -192,6 +202,7 @@ export type {
   ListJobTasksOptions,
   ListJobsOptions,
   ListSkillsOptions,
+  ListTrialFilesOptions,
   ListTrialsOptions,
   ManagedProviderCapability,
   ModelInfo,
@@ -227,6 +238,9 @@ export type {
   Trial,
   TrialArtifactStream,
   TrialCounts,
+  TrialFile,
+  TrialFilePage,
+  TrialFileRange,
   TrialList,
   TrialPage,
   TrialRetry,
@@ -245,6 +259,17 @@ import {
   type CapabilityDocument,
   type HostedErrorCode,
 } from "./types";
+
+// The client-side Harbor-tree assembly behind `evolve trial download` /
+// `evolve job download` — pure functions, re-exported so callers can
+// materialize the same tree the CLI writes.
+export {
+  assembleTrialTree,
+  jobEvolveRecord,
+  trialEvolveRecord,
+  visibleHomeTree,
+  type TrialTreeParts,
+} from "./trial-tree";
 
 /**
  * A typed failure from the hosted evals API.
@@ -1016,6 +1041,23 @@ function mapTraceEvent(raw: Record<string, unknown>): TraceEvent {
     type: raw.type as string,
     data: (raw.data as Record<string, unknown>) ?? {},
   };
+}
+
+function mapJobGrepGroup(raw: Record<string, unknown>): JobGrepGroup {
+  return {
+    trial_id: raw.trial_id as string,
+    task_name: (raw.task_name as string | null) ?? null,
+    match_count: raw.match_count as number,
+    events: ((raw.events as Record<string, unknown>[]) || []).map(mapTraceEvent),
+  };
+}
+
+/** The `Range: bytes=…` header for a TrialFileRange, or null for the whole file. */
+function rangeHeaderFor(range?: TrialFileRange): string | null {
+  if (!range) return null;
+  if (range.suffix !== undefined) return `bytes=-${range.suffix}`;
+  if (range.start === undefined) return null;
+  return `bytes=${range.start}-${range.end ?? ""}`;
 }
 
 function throwIfAborted(signal?: AbortSignal): void {
@@ -2281,6 +2323,14 @@ export function jobs(config?: HostedClientConfig): JobsClient {
       await verifyPackageDigest(res, bytes);
       return bytes;
     }) as JobsClient["download"],
+
+    async grep(id: string, q: string, options?: GrepJobOptions): Promise<JobGrepPage> {
+      const res = await request(
+        cfg,
+        `/api/jobs/${encodeURIComponent(id)}/grep${pageQuery(options, { q, type: options?.type })}`
+      );
+      return mapPage((await res.json()) as Record<string, unknown>, mapJobGrepGroup);
+    },
   };
 }
 
@@ -2303,7 +2353,13 @@ export function trials(config?: HostedClientConfig): TrialsClient {
   ): Promise<TraceEventPage> {
     const res = await request(
       cfg,
-      `/api/trials/${encodeURIComponent(trialId)}/trace${pageQuery(options)}`
+      `/api/trials/${encodeURIComponent(trialId)}/trace${pageQuery(options, {
+        // The parsed-event filters (type / grep / tail), spelled exactly as
+        // the contract spells them; they compose with cursor paging.
+        type: options?.type,
+        grep: options?.grep,
+        tail: options?.tail !== undefined ? String(options.tail) : undefined,
+      })}`
     );
     return mapPage((await res.json()) as Record<string, unknown>, mapTraceEvent);
   }
@@ -2356,7 +2412,8 @@ export function trials(config?: HostedClientConfig): TrialsClient {
     ): AsyncIterableIterator<TraceEvent> {
       let cursor = options?.cursor;
       for (;;) {
-        const page = await getTrace(trialId, { cursor, limit: options?.limit });
+        // The filters ride every page — a filtered drain is still one drain.
+        const page = await getTrace(trialId, { ...options, cursor });
         for (const event of page.items) yield event;
         // Drained: nextCursor is null when there is no next page, which says
         // "caught up" rather than echoing the position back.
@@ -2405,6 +2462,33 @@ export function trials(config?: HostedClientConfig): TrialsClient {
         already_terminal: (body.already_terminal as string[]) ?? [],
         not_found: (body.not_found as string[]) ?? [],
       };
+    },
+
+    async files(trialId: string, options?: ListTrialFilesOptions): Promise<TrialFilePage> {
+      const res = await request(
+        cfg,
+        `/api/trials/${encodeURIComponent(trialId)}/files${pageQuery(options)}`
+      );
+      return mapPage((await res.json()) as Record<string, unknown>, (raw) => ({
+        path: raw.path as string,
+        size_bytes: raw.size_bytes as number,
+      }));
+    },
+
+    async file(trialId: string, path: string, range?: TrialFileRange): Promise<Buffer> {
+      // Each path segment encodes separately — the slashes ARE the route.
+      const encodedPath = path
+        .split("/")
+        .filter(Boolean)
+        .map(encodeURIComponent)
+        .join("/");
+      const rangeHeader = rangeHeaderFor(range);
+      const res = await request(
+        cfg,
+        `/api/trials/${encodeURIComponent(trialId)}/files/${encodedPath}`,
+        rangeHeader ? { headers: { Range: rangeHeader } } : undefined
+      );
+      return Buffer.from(await res.arrayBuffer());
     },
   };
 }
