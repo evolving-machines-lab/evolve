@@ -2,7 +2,7 @@ name: Sync docs to skill references
 
 on:
   push:
-    branches: [main]
+    branches: [main, project-sable]
     paths:
       - 'docs/typescript/[0-9]*.md'
       - 'docs/python/[0-9]*.md'
