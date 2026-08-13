@@ -151,7 +151,7 @@ Every multiplier must be greater than 0 and at most the published ceiling — `l
 
 ### Shape and ceilings
 
-A job expands to `tasks × agents × n_attempts` trials, each in its own sandbox. `n_concurrent_trials` is how many run at once. The ceilings — distinct agent arms per job, attempts per task, total trials — all refuse at create rather than partway through, and every one of them is published under `limits['job']` in the [capability document](#what-the-platform-supports) rather than only here, so a form can check a sweep before it POSTs. `sandbox_provider` (optional, default `"e2b"`) picks where the sandboxes run — see [Where it runs](#where-it-runs).
+A job expands to `tasks × agents × n_attempts` trials, each in its own sandbox. `n_concurrent_trials` is how many run at once. The ceilings — distinct agent arms per job, attempts per task, total trials — all refuse at create rather than partway through, and every one of them is published under `limits['job']` in the [capability document](#what-the-platform-supports) rather than only here, so a form can check a sweep before it POSTs. `sandbox_provider` (optional, default `"daytona"`) picks where the sandboxes run — see [Where it runs](#where-it-runs).
 
 `agent_env` and `verifier_env` inject environment values into every agent or verifier run. They are pass-through slots: the client sends them verbatim and the server owns acceptance — refused where unsupported, never silently dropped. The platform honors exactly two `verifier_env` keys — `REWARDKIT_JUDGE` and `REWARDKIT_MODEL`, rewardkit's per-run judge override ([LLM judges](#llm-judges)); every other key, and all of `agent_env`, is refused at create with a message naming that pair.
 
@@ -813,7 +813,7 @@ job = await evals.start(
     datasets=[{'name': 'swe-bench-verified', 'version': '1.0'}],
     agents=[{'name': 'codex', 'model_name': 'gpt-5.5'}],
     max_trial_spend_usd=25,
-    sandbox_provider='daytona',   # "e2b" (default) | "daytona" | "modal"
+    sandbox_provider='daytona',   # "e2b" | "daytona" (default) | "modal"
 )
 ```
 
