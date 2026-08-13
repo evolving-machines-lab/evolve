@@ -8,7 +8,7 @@ import { z } from "zod";  // Or use plain JSON Schema objects instead
 
 const swarm = new Swarm({
     agent: { type: "claude" },   // Default agent for all operations
-    skills: ["pdf"],                 // Default skills
+    skills: ["anthropics/skills"],   // Default skills (skills.sh / git / local references)
     integrations: {                  // Default Integrations config for all workers
         userId: "root",
         apps: ["github", "linear"],
@@ -30,12 +30,14 @@ const swarm = new Swarm({
 **SwarmConfig** — configuration for Swarm instance:
 ```ts
 {
-    agent?: AgentOverride,
+    agent?: AgentConfig,
+    sandbox?: SandboxProvider,
     skills?: string[],
     integrations?: IntegrationsSetup,
     mcpServers?: Record<string, McpServerConfig>,
     concurrency?: number,
     timeoutMs?: number,
+    workspaceMode?: "knowledge" | "swe",
     tag?: string,
     retry?: RetryConfig,
 }
@@ -44,16 +46,20 @@ const swarm = new Swarm({
 | Option | Default | Notes |
 |--------|---------|-------|
 | `agent.type` | `'claude'` | Auto-resolved from env |
-| `agent.model` | per type | `'sonnet'` (claude), `'gpt-5.2'` (codex), etc. |
+| `agent.model` | per type | `'opus'` (claude), `'gpt-5.6-sol'` (codex), etc. |
+| `sandbox` | auto-resolved | Provider for every worker; falls back to env (`E2B_API_KEY`, `DAYTONA_API_KEY`, `MODAL_TOKEN_*`, `EVOLVE_API_KEY`) |
 | `skills` | `undefined` | Set here or per-operation |
 | `integrations` | `undefined` | Set here or per-operation |
 | `mcpServers` | `undefined` | Set here or per-operation |
 | `concurrency` | `4` | Max parallel sandboxes |
 | `timeoutMs` | `3_600_000` | 1 hour per worker |
+| `workspaceMode` | `'knowledge'` | `'knowledge'` or `'swe'`; `'task'` is not a Swarm mode (the type excludes it) |
 | `tag` | `'swarm'` | Observability prefix |
 | `retry` | `undefined` | Set here or per-operation |
 
-**Minimal setup** — with `EVOLVE_API_KEY` set (see [1.1 Authentication](./01-getting-started.md#11-authentication)):
+The `agent` here is the full `AgentConfig` — the same shape `.withAgent()` takes, so `apiKey`, `providerApiKey`, `oauthToken` and `maxContextSize` all belong on it. The narrower `AgentOverride` (type, model, reasoningEffort) is what individual operations take when they override this default; see [AgentOverride](#agentoverride).
+
+**Minimal setup** — with `EVOLVE_API_KEY` set (see [Authentication](./01-getting-started.md#authentication)):
 
 ```ts
 import "dotenv/config";  // If using .env file
@@ -261,7 +267,7 @@ Use different agents per candidate:
 ```ts
 const claudeAgent = { type: "claude", model: "opus" };
 const codexAgent = { type: "codex", model: "gpt-5.3-codex" };
-const geminiAgent = { type: "gemini", model: "gemini-3-flash-preview" };
+const geminiAgent = { type: "gemini", model: "gemini-3.6-flash" };
 
 const result = await swarm.bestOf({
     item: input,
@@ -272,8 +278,8 @@ const result = await swarm.bestOf({
         judgeAgent: claudeAgent,
         mcpServers: {...},        // (optional) MCP servers for candidates
         judgeMcpServers: {...},   // (optional) MCP servers for judge
-        skills: ["pdf"],          // (optional) Skills for candidates
-        judgeSkills: ["pdf"],     // (optional) Skills for judge
+        skills: ["anthropics/skills"], // (optional) Skills for candidates
+        judgeSkills: ["anthropics/skills"], // (optional) Skills for judge
         integrations: {...},          // (optional) Integrations config for candidates
         judgeIntegrations: {...},     // (optional) Integrations config for judge
     },
@@ -313,7 +319,7 @@ swarm.map<T>({
     verify?: VerifyConfig,              // LLM-as-judge quality check with retry loop
     retry?: RetryConfig,                // Auto-retry on error with backoff
     mcpServers?: Record<string, McpServerConfig>,
-    skills?: string[],                  // e.g. ["pdf"]
+    skills?: string[],                  // e.g. ["anthropics/skills"]
     integrations?: IntegrationsSetup,           // managed integrations config
     timeoutMs?: number,
 }): Promise<SwarmResultList<T>>
@@ -445,7 +451,7 @@ swarm.filter<T>({
     verify?: VerifyConfig,              // LLM-as-judge quality check with retry loop
     retry?: RetryConfig,                // Auto-retry on error with backoff
     mcpServers?: Record<string, McpServerConfig>,
-    skills?: string[],                  // e.g. ["pdf"]
+    skills?: string[],                  // e.g. ["anthropics/skills"]
     integrations?: IntegrationsSetup,           // managed integrations config
     timeoutMs?: number,
 }): Promise<SwarmResultList<T>>
@@ -509,7 +515,7 @@ swarm.reduce<T>({
     verify?: VerifyConfig,              // LLM-as-judge quality check with retry loop
     retry?: RetryConfig,                // Auto-retry on error with backoff
     mcpServers?: Record<string, McpServerConfig>,
-    skills?: string[],                  // e.g. ["pdf"]
+    skills?: string[],                  // e.g. ["anthropics/skills"]
     integrations?: IntegrationsSetup,           // managed integrations config
     timeoutMs?: number,
 }): Promise<ReduceResult<T>>
@@ -568,7 +574,7 @@ const results = await swarm.map({
         criteria: "Analysis must include specific data points and cite sources",
         maxAttempts: 3,              // Default: 3
         // verifierAgent: { type: "claude", model: "opus" },  // Override verifier agent
-        // verifierSkills: ["pdf"],   // Skills for verifier
+        // verifierSkills: ["anthropics/skills"], // Skills for verifier
         onWorkerComplete: (idx, attempt, status) => {
             console.log(`Item ${idx}, attempt ${attempt}: ${status}`);
         },

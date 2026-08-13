@@ -56,18 +56,6 @@ const result = await evolve.executeCommand("pytest", {
 
 - If `background` is `true`, returns a start handshake (`exitCode: 0`). Completion arrives via `lifecycle` events (`command_background_complete` or `command_background_failed`).
 
-### prepareSandbox
-
-Creates and fully initializes the configured sandbox without starting an agent command, and returns the sandbox ID:
-
-```ts
-const sandboxId = await evolve.prepareSandbox();
-// Persist sandboxId, then run as usual — the sandbox is already up
-await evolve.run({ prompt: "..." });
-```
-
-Durable orchestrators use this to persist the sandbox ID *before* handing execution to the agent — if the orchestrator crashes mid-run, the sandbox can be found and cleaned up instead of leaking. Calling `run()`/`executeCommand()` afterwards reuses the prepared sandbox.
-
 ### Streaming Events
 
 Subscribe to real-time output from `run()` and `executeCommand()`:
@@ -159,6 +147,8 @@ console.log(output.error);                // undefined (or validation error mess
 - **`error`** — Validation error message if schema validation failed (undefined otherwise)
 
 Files created before the last `run()` or `executeCommand()` are filtered out.
+
+`saveLocalDir()` confines every entry to the target directory: a name whose resolved path escapes it (`../`, absolute) throws instead of writing outside the directory you chose — file names come from sandbox output and are not trusted.
 
 ### Session Controls
 
@@ -401,112 +391,6 @@ await evolve.run({ prompt: 'Compare results' });  // Back to sandbox A
 
 ---
 
-## Task Sandboxes & Credential Lifecycle
-
-The pieces for running benchmark/eval-style task sandboxes, where the trust boundary matters: run the agent with a capped credential, **seal** (revoke) that credential, and only then collect the agent's work product — so nothing the agent wrote can spend money after the run, and artifact collection happens from a credential-free sandbox.
-
-The building blocks:
-
-- `.withWorkspaceMode("task")` — the image owns the working directory; Evolve writes nothing into it ([Configuration → Workspace Modes](./02-configuration.md#workspace-modes)).
-- `.withSandboxCreateOptions({ image, user, homeDir, network })` — task image, run-as user, and outbound network policy ([Configuration → Sandbox Create Options](./02-configuration.md#sandbox-create-options)).
-- `prepareSandbox()` — create the sandbox and persist its ID before the agent starts ([above](#preparesandbox)).
-- `executeCommand()` — credential-free phases (environment setup before the run, verifiers after sealing).
-- `sealCredentials()` / `isSealed()` — irreversibly revoke the sandbox's model credential.
-- `collectArtifacts()` — read declared files/directories out of the sealed sandbox.
-- `externalGateway` — bring a caller-minted, spend-capped, revocable gateway key ([Getting Started → External Gateway Mode](./01-getting-started.md#external-gateway-mode)).
-
-### sealCredentials
-
-Irreversibly revokes the Evolve-managed model credential attached to the sandbox. After sealing, agent runs are disabled for this instance (`run()`, `getSandbox` on a new sandbox, `setSession()` all throw); credential-free `executeCommand()` remains available for verifiers.
-
-```ts
-await evolve.run({ prompt: "Solve the task" });
-
-await evolve.sealCredentials();          // revoke the model credential — fails loudly if revocation fails
-console.log(evolve.isSealed());          // true
-
-const verdict = await evolve.executeCommand("python /tests/verify.py"); // credential-free
-```
-
-Sealing is intentionally **fail-closed** — configurations that may have placed other credentials in the sandbox cannot claim to be sealed:
-
-- Requires gateway mode or `externalGateway`. Direct provider keys cannot be revoked by Evolve, so sealing throws in Direct Provider Key Mode.
-- Requires a credential-minimal sandbox: combining sealing with `.withSecrets()`, `sandboxCreateOptions.envs`, `.withManagedSecrets()`, `.withIntegrations()`, `.withMcpServers()`, or browser credentials throws.
-- In gateway mode, sealing revokes the Evolve-managed sandbox credential; if no revocable credential exists or revocation fails after retries, sealing **throws** rather than reporting a false guarantee.
-- With `externalGateway`, sealing calls your `revoke()`; if it throws, the sandbox is not marked sealed.
-- Cannot seal while a process is running.
-
-### collectArtifacts
-
-Collects declared files or directories from the working directory — only after sealing:
-
-```ts
-await evolve.sealCredentials();
-
-const artifacts = await evolve.collectArtifacts(["patch.diff", "logs/"]);
-// FileMap: relative path → content
-
-console.log(artifacts["patch.diff"]);
-```
-
-- Throws unless `sealCredentials()` has completed — collection always happens across the credential boundary.
-- Relative paths resolve against the working directory; paths escaping it are rejected.
-- A missing or unreadable declared root **throws** — it must never read as "the agent produced nothing". An empty result is legitimate only when every declared root exists and is readable.
-- Text-only contract: contents come back as strings. ASCII-armored formats (git patches including `--binary` hunks, JSON, logs) are safe; raw binary files are not.
-- Limits: at most 256 files, 100 MB per file, 500 MB total.
-
-### End-to-End Eval Run
-
-The full credential lifecycle with a caller-minted spend-capped key: mint → run → seal (revokes) → verify → collect → kill.
-
-```ts
-import { Evolve } from "@evolvingmachines/sdk";
-
-// 1. Mint a spend-capped gateway credential for this task run
-const key = await litellm.mintKey({ maxBudgetUsd: 2 });
-
-const evolve = new Evolve()
-    .withAgent({
-        type: "codex",
-        model: "gpt-5.5",
-        externalGateway: {
-            apiKey: key.value,
-            baseUrl: LITELLM_URL,
-            revoke: () => litellm.revokeKey(key.id),
-        },
-    })
-    .withWorkspaceMode("task")
-    .withSandboxCreateOptions({
-        image: "swe-task-042",
-        user: "root",
-        workingDirectory: "/repo",
-        network: { outbound: "blocked", allowedDestinations: ["pypi.org"] },
-    });
-
-try {
-    // 2. Create the sandbox first and persist its ID (crash safety)
-    const sandboxId = await evolve.prepareSandbox();
-    await db.saveSandboxId(taskRunId, sandboxId);
-
-    // 3. Agent phase — the only phase that holds a model credential
-    await evolve.run({ prompt: taskInstructions, timeoutMs: 30 * 60 * 1000 });
-
-    // 4. Seal: revoke the credential. From here the sandbox can't spend.
-    await evolve.sealCredentials();
-
-    // 5. Verify + collect from the credential-free sandbox
-    const verdict = await evolve.executeCommand("bash /tests/run-tests.sh");
-    const artifacts = await evolve.collectArtifacts(["patch.diff", "reward.json"]);
-    await db.saveResult(taskRunId, verdict.exitCode, artifacts);
-} finally {
-    await evolve.kill();
-}
-```
-
-> Running evals yourself is the low-level path. For managed benchmark evaluations on Evolve's infrastructure — this same lifecycle operated for you — see [Hosted Evals](./06-hosted-evals.md).
-
----
-
 ## Storage & Checkpointing
 
 > **Gateway feature** — requires `EVOLVE_API_KEY`. Storage is fully managed by Evolve; no S3 buckets or AWS credentials needed.
@@ -684,7 +568,7 @@ interface CheckpointInfo {
     sizeBytes?: number;      // Archive size in bytes
     agentType?: string;      // "claude" | "codex" | "gemini" | "qwen" | "kimi" | "opencode" | "droid"
     model?: string;          // Model used
-    workspaceMode?: string;  // "knowledge" | "swe" | "task"
+    workspaceMode?: string;  // "knowledge" | "swe"
     parentId?: string;       // Parent checkpoint ID (lineage)
     comment?: string;        // User-provided label
 }
@@ -943,6 +827,8 @@ Common errors and how to handle them:
 |-------|-------|-----|
 | `No API key configured` | No `EVOLVE_API_KEY` or provider key in env | Set `EVOLVE_API_KEY` or pass `apiKey`/`providerApiKey` to `.withAgent()` |
 | `No sandbox provider configured` | No sandbox provider key in env | Set `E2B_API_KEY`, `MODAL_TOKEN_ID`+`SECRET`, or `DAYTONA_API_KEY` |
+| `Evolve agent config: "model" is empty` | `.withAgent({ model: "" })` — an empty string is not a model id | Pass a model id, or drop `model` to take the agent's default |
+| `run() requires a non-empty "prompt" string` | `run()` called without a prompt | Pass `run({ prompt: "..." })` |
 | `Operation already active` | Calling `run()` while another run is in progress | `await evolve.interrupt()` first, or wait for the active operation |
 | `Cannot use 'from' with existing session` | `run({ from: "..." })` with `.withSession()` | Checkpoint restore requires a fresh sandbox — remove `.withSession()` |
 | `No checkpoints found` | `run({ from: "latest" })` with no prior checkpoints | Create a checkpoint first, or use `storage().listCheckpoints()` to verify |

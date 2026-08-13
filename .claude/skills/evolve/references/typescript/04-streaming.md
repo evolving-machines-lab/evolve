@@ -173,6 +173,7 @@ interface ToolCallUpdate {
 | Type | `sessionUpdate` | Description |
 |------|-----------------|-------------|
 | `Plan` | `"plan"` | TodoWrite updates (replaces entire list) |
+| `AgentError` | `"error"` | A failure the HARNESS reported. **Not agent work** — see below |
 
 ```typescript
 interface Plan {
@@ -368,3 +369,31 @@ evolve.on("content", handleEvent);
 7. **Track `locations`** — Show affected file paths in UI
 
 ---
+
+
+## Harness-reported failures (`error`)
+
+A harness can fail without the process dying, and it reports that on the same stream it uses for
+output. Codex, for example, writes `{"type":"error"}` while it retries and `{"type":"turn.failed"}`
+when a turn gives up — on **stdout**, while stderr says only `Reading prompt from stdin...`. Those
+are surfaced as their own update so a transcript shows what actually happened:
+
+```typescript
+interface AgentError {
+  sessionUpdate: "error";
+  /** The harness's own message, verbatim. */
+  message: string;
+  /** True when the harness treated it as terminal for the turn. */
+  fatal: boolean;
+}
+```
+
+**It is deliberately not a message chunk.** If you are counting "did the agent do any work",
+an error must not count — otherwise a run that never reached the model looks like a run that
+produced output. Use the exported predicate rather than writing the check yourself:
+
+```typescript
+import { isAgentWorkUpdate } from "@evolvingmachines/sdk";
+
+const didWork = events.some((e) => isAgentWorkUpdate(e.update));
+```

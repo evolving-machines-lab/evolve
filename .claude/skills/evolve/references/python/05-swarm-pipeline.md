@@ -13,7 +13,7 @@ swarm = Swarm(SwarmConfig(
     concurrency=4,                   # Max parallel sandboxes (default: 4)
     timeout_ms=3_600_000,            # Default timeout per worker (default: 1 hour)
     tag='my-pipeline',               # Tag prefix for observability
-    skills=['pdf'],                  # Default skills
+    skills=['anthropics/skills'],    # Default skills (skills.sh / git / local references)
     integrations=IntegrationsSetup(          # Default Integrations config for all workers
         user_id='root',
         apps=['gmail', 'notion'],
@@ -33,11 +33,13 @@ swarm = Swarm(SwarmConfig(
 ```python
 SwarmConfig(
     agent=AgentConfig,
+    sandbox=SandboxProvider,
     skills=list[str],
     integrations=IntegrationsSetup,
     mcp_servers=dict[str, McpServerConfig],
     concurrency=int,
     timeout_ms=int,
+    workspace_mode=str,
     tag=str,
     retry=RetryConfig,
 )
@@ -46,14 +48,18 @@ SwarmConfig(
 | Option | Default | Notes |
 |--------|---------|-------|
 | `agent.type` | `'claude'` | Auto-resolved from env |
-| `agent.model` | per type | `'sonnet'` (claude), `'gpt-5.2'` (codex), etc. |
+| `agent.model` | per type | `'opus'` (claude), `'gpt-5.6-sol'` (codex), etc. |
+| `sandbox` | auto-resolved | Provider for every worker; falls back to env (`E2B_API_KEY`, `DAYTONA_API_KEY`, `MODAL_TOKEN_*`, `EVOLVE_API_KEY`) |
 | `skills` | `None` | Set here or per-operation |
 | `integrations` | `None` | Set here or per-operation |
 | `mcp_servers` | `None` | Set here or per-operation |
 | `concurrency` | `4` | Max parallel sandboxes |
 | `timeout_ms` | `3_600_000` | 1 hour per worker |
+| `workspace_mode` | `'knowledge'` | `'knowledge'` or `'swe'`; `'task'` is not a Swarm mode (the type does not stop you writing it — do not) |
 | `tag` | `'swarm'` | Observability prefix |
 | `retry` | `None` | Set here or per-operation |
+
+The `agent` here is the full `AgentConfig` — the same shape `Evolve(config=...)` takes, so `api_key`, `provider_api_key`, `oauth_token` and `max_context_size` all belong on it. Individual operations override this default with the same `AgentConfig` class, not a narrower one: `map(..., agent=AgentConfig(...))`, and `BestOfConfig(task_agents=[...], judge_agent=...)` take exactly what you pass here. (The TypeScript SDK narrows the per-operation form to an `AgentOverride`; Python does not.)
 
 **Minimal setup** — with `EVOLVE_API_KEY` set (see [Authentication](./01-getting-started.md#authentication)):
 
@@ -270,7 +276,7 @@ Use different agents per candidate:
 ```python
 claude_agent = AgentConfig(type='claude', model='opus')
 codex_agent = AgentConfig(type='codex', model='gpt-5.3-codex')
-gemini_agent = AgentConfig(type='gemini', model='gemini-3-flash-preview')
+gemini_agent = AgentConfig(type='gemini', model='gemini-3.6-flash')
 
 result = await swarm.best_of(
     item=input_item,
@@ -281,8 +287,8 @@ result = await swarm.best_of(
         judge_agent=claude_agent,
         mcp_servers={...},           # (optional) MCP servers for candidates
         judge_mcp_servers={...},     # (optional) MCP servers for judge
-        skills=['pdf'],              # (optional) Skills for candidates
-        judge_skills=['pdf'],        # (optional) Skills for judge
+        skills=['anthropics/skills'], # (optional) Skills for candidates
+        judge_skills=['anthropics/skills'], # (optional) Skills for judge
         integrations=IntegrationsSetup(...), # (optional) Integrations config for candidates
         judge_integrations=IntegrationsSetup(...),  # (optional) Integrations config for judge
     ),
@@ -322,7 +328,7 @@ await swarm.map(
     verify=VerifyConfig,                    # LLM-as-judge quality check with retry loop
     retry=RetryConfig,                      # Auto-retry on error with backoff
     mcp_servers=dict[str, McpServerConfig], # Optional
-    skills=list[str],                       # Optional - e.g. ['pdf']
+    skills=list[str],                       # Optional - e.g. ['anthropics/skills']
     integrations=IntegrationsSetup,                 # managed integrations config
     timeout_ms=int,                         # Optional
 ) -> SwarmResultList
@@ -448,7 +454,7 @@ await swarm.filter(
     verify=VerifyConfig,                    # LLM-as-judge quality check with retry loop
     retry=RetryConfig,                      # Auto-retry on error with backoff
     mcp_servers=dict[str, McpServerConfig], # Optional
-    skills=list[str],                       # Optional - e.g. ['pdf']
+    skills=list[str],                       # Optional - e.g. ['anthropics/skills']
     integrations=IntegrationsSetup,                 # managed integrations config
     timeout_ms=int,                         # Optional
 ) -> SwarmResultList
@@ -511,7 +517,7 @@ await swarm.reduce(
     verify=VerifyConfig,                    # LLM-as-judge quality check with retry loop
     retry=RetryConfig,                      # Auto-retry on error with backoff
     mcp_servers=dict[str, McpServerConfig], # Optional
-    skills=list[str],                       # Optional - e.g. ['pdf']
+    skills=list[str],                       # Optional - e.g. ['anthropics/skills']
     integrations=IntegrationsSetup,                 # managed integrations config
     timeout_ms=int,                         # Optional
 ) -> ReduceResult
@@ -568,7 +574,7 @@ results = await swarm.map(
         criteria='Analysis must include specific data points and cite sources',
         max_attempts=3,              # Default: 3
         # verifier_agent=AgentConfig(type='claude', model='opus'),  # Override verifier
-        # verifier_skills=['pdf'],   # Skills for verifier
+        # verifier_skills=['anthropics/skills'], # Skills for verifier
         on_worker_complete=lambda idx, attempt, status: print(f'Item {idx}, attempt {attempt}: {status}'),
         on_verifier_complete=lambda idx, attempt, passed, feedback: print(f'Verify item {idx}: {"PASS" if passed else feedback}'),
     ),
@@ -711,7 +717,7 @@ await swarm.reduce(
 
 ## AgentOverride
 
-Override the default agent for any operation (api_key inherited from Swarm config):
+Override the default agent for any operation. There is no separate override type in Python — you pass the same `AgentConfig` the Swarm itself takes, and `api_key` is inherited from the Swarm config when you leave it out. Only the fields worth overriding per operation are shown:
 
 ```python
 @dataclass

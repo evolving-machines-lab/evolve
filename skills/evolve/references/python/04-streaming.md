@@ -245,6 +245,7 @@ UI display. For replay after cleanup, use the `session_id` with
 | `ToolCall` | `"tool_call"` | Tool execution started |
 | `ToolCallUpdate` | `"tool_call_update"` | Tool execution finished |
 | `Plan` | `"plan"` | TodoWrite updates (replaces entire list) |
+| `AgentError` | `"error"` | A failure the HARNESS reported. **Not agent work** — see below |
 
 ---
 
@@ -327,3 +328,34 @@ evolve.on("content", handle_event)
 8. **Use `cast()` for narrowing** — TypedDict unions need explicit casting after checking `sessionUpdate`
 
 ---
+
+
+## Harness-reported failures (`error`)
+
+A harness can fail without the process dying, and it reports that on the same stream it uses for
+output. Codex, for example, writes `{"type": "error"}` while it retries and
+`{"type": "turn.failed"}` when a turn gives up — on **stdout**, while stderr says only
+`Reading prompt from stdin...`. Those are surfaced as their own update so a transcript shows what
+actually happened:
+
+```python
+{
+    "update": {
+        "sessionUpdate": "error",
+        "message": "stream disconnected before completion: ...",  # the harness's own words
+        "fatal": False,  # True when the harness treated it as terminal for the turn
+    }
+}
+```
+
+Python receives events as plain dicts (there is no typed union to import, unlike TypeScript), so
+this arrives as `event["update"]["sessionUpdate"] == "error"`.
+
+**It is deliberately not a message chunk.** If you are counting "did the agent do any work", an
+error must not count — otherwise a run that never reached the model looks like a run that produced
+output:
+
+```python
+def did_work(events):
+    return any(e.get("update", {}).get("sessionUpdate") != "error" for e in events)
+```

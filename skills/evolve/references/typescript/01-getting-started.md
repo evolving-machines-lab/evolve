@@ -43,7 +43,7 @@ import { Evolve } from "@evolvingmachines/sdk";
 const evolve = new Evolve()
     .withSystemPrompt("You are Manus Evolve, a powerful AI agent. You can execute code, browse the web, manage files, and solve complex tasks.")
     .withBrowser()  // optional; defaults to remote managed agent-browser automation in Gateway mode
-    .withSkills(["pdf", "docx", "pptx"])
+    .withSkills(["anthropics/skills", "./my-skill"])  // skills.sh / git / local references
     .withIntegrations({ userId: "root", apps: ["gmail", "notion"] });  // optional; managed integrations in Gateway mode
 
 // Run agent
@@ -115,6 +115,7 @@ When using `EVOLVE_API_KEY`:
 - **Tracing:** Automatic tracing and agent analytics at [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) for observability and replay — no extra setup needed. Use `withSessionTagPrefix()` to label sessions for easy filtering.
 - **Browser Automation:** Call `.withBrowser()` for the default and recommended managed browser path with dashboard live view and replay.
 - **Checkpointing:** Snapshot sandbox state to Evolve-managed storage with `.withStorage()` — no S3 credentials needed. See [Storage & Checkpointing](./03-runtime.md#storage--checkpointing).
+- **Hosted Evals:** Score agents against datasets of tasks on managed infrastructure with `jobs()` and `datasets()`, or the `evolve` CLI. See [Hosted Evals](./06-hosted-evals.md).
 
 ---
 
@@ -159,7 +160,7 @@ Use this when you want supported provider usage billed to your provider account 
 2. Keep `EVOLVE_API_KEY` in your app.
 3. Run any supported agent normally.
 
-Supported managed provider routes include Anthropic, OpenAI, Gemini, DashScope, Kimi, OpenRouter, and Droid/Factory.
+**You can save a key for Anthropic and OpenAI.** Those are the two providers this route serves today, so a Claude run or a Codex run can bill your own account. The gateway itself reaches seven providers — Anthropic, OpenAI, Gemini, DashScope, Kimi, OpenRouter, and Droid/Factory — but the other five have no bring-your-own path, and a run that routes through one of them is billed to Evolve whether or not you have a key saved. That is not a silent fallback so much as arithmetic: an Anthropic key cannot pay for a Moonshot call.
 
 When enabled, Evolve routes supported provider calls through a short-lived, sandbox-scoped credential. The SDK does not receive the raw provider key, and the sandbox does not receive `EVOLVE_API_KEY` for that provider route. If no managed key is enabled for that provider, gateway mode falls back to Evolve-managed model routing.
 
@@ -189,34 +190,6 @@ const evolve = new Evolve()
     })
     .withSandbox(sandbox);
 ```
-
-### External Gateway Mode
-
-Use this when your application mints its own OpenAI-compatible gateway credential per run — for example a spend-capped LiteLLM virtual key per benchmark task — and needs Evolve to be able to revoke it.
-
-```ts
-const key = await myGateway.mintKey({ maxBudgetUsd: 2 }); // caller-minted, spend-capped
-
-const evolve = new Evolve()
-    .withAgent({
-        type: "codex",
-        model: "gpt-5.5",
-        externalGateway: {
-            apiKey: key.value,                        // injected like a direct-mode key
-            baseUrl: "https://gateway.example.com",   // OpenAI-compatible base URL
-            revoke: () => myGateway.revokeKey(key.id), // called by sealCredentials()
-        },
-    });
-```
-
-The credential lifecycle:
-
-1. **Mint** a capped key on your gateway and pass it via `externalGateway`.
-2. **Run** — the agent's model calls flow through your gateway under your cap. Evolve adds no spend headers or runtime tokens; budget enforcement is your gateway's.
-3. **Seal** — `evolve.sealCredentials()` calls your `revoke()`. If `revoke()` throws, sealing fails: the sandbox is never reported sealed on a failed revocation.
-4. **Collect** — after sealing, `evolve.collectArtifacts()` and credential-free `executeCommand()` (e.g. a verifier) still work; agent runs are disabled.
-
-`externalGateway` is a standalone credential mode — combining it with `apiKey` (gateway mode) or `providerApiKey`/`providerBaseUrl`/`oauthToken` (direct mode) throws at configuration time. See [Runtime → Task Sandboxes & Credential Lifecycle](./03-runtime.md#task-sandboxes--credential-lifecycle) for the sealing rules and the full eval-run pattern.
 
 ### BYO Claude Max Subscription
 
@@ -322,26 +295,47 @@ The Direct key column applies to Direct Provider Key Mode. Managed BYO Provider 
 | type | models | default | Gateway | Direct key |
 |------|--------|---------|---------|------|
 | `"claude"` | `"fable"` `"opus"` `"sonnet"` `"haiku"` `"opus[1m]"` `"sonnet[1m]"` | `"opus"` | `EVOLVE_API_KEY` | `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` |
-| `"codex"` | `"gpt-5.5"` `"gpt-5.4"` `"gpt-5.4-mini"` `"gpt-5.3-codex"` `"gpt-5.2"` | `"gpt-5.4"` | `EVOLVE_API_KEY` | `OPENAI_API_KEY` or `CODEX_OAUTH_FILE_PATH` |
-| `"gemini"` | `"gemini-3.1-pro-preview"` `"gemini-3.1-flash-lite-preview"` `"gemini-3.5-flash"` `"gemini-3-flash-preview"` `"gemini-2.5-pro"` `"gemini-2.5-flash"` `"gemini-2.5-flash-lite"` | `"gemini-3.1-pro-preview"` | `EVOLVE_API_KEY` | `GEMINI_API_KEY` or `GEMINI_OAUTH_FILE_PATH` |
-| `"qwen"` | `"qwen3.7-max"` `"qwen3.7-plus"` `"qwen3.6-flash"` `"qwen3.6-plus"` | `"qwen3.7-max"` | `EVOLVE_API_KEY` | `OPENAI_API_KEY` |
-| `"kimi"` | `"kimi-k2.6"` `"kimi-k2p6-raptor"` `"kimi-k2p7-code-raptor"` `"kimi-k2.5"` | `"kimi-k2.6"` | `EVOLVE_API_KEY` | `KIMI_API_KEY` |
-| `"opencode"` | `"openrouter/anthropic/claude-fable-5"` `"openrouter/anthropic/claude-opus-4.8"` `"openrouter/anthropic/claude-sonnet-4.6"` `"openrouter/anthropic/claude-haiku-4.5"` `"openrouter/openai/gpt-5.5"` `"openrouter/openai/gpt-5.4"` `"openrouter/openai/gpt-5.4-mini"` `"openrouter/openai/gpt-5.3-codex"` `"openrouter/openai/gpt-5.2"` `"openrouter/google/gemini-3.1-pro-preview"` `"openrouter/google/gemini-3.5-flash"` `"openrouter/google/gemini-3-flash-preview"` `"openrouter/qwen/qwen3-coder-next"` `"openrouter/qwen/qwen3-coder-plus"` `"openrouter/moonshotai/kimi-k2.6"` `"openrouter/moonshotai/kimi-k2.5"` `"openrouter/z-ai/glm-5"` | `"openrouter/anthropic/claude-sonnet-4.6"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
-| `"droid"` | `"claude-opus-4-8"` `"claude-opus-4-8-fast"` `"claude-sonnet-4-6"` `"claude-opus-4-6"` `"claude-opus-4-6-fast"` `"claude-opus-4-5"` `"claude-sonnet-4-5"` `"claude-haiku-4-5"` `"gpt-5.5"` `"gpt-5.5-fast"` `"gpt-5.5-pro"` `"gpt-5.4"` `"gpt-5.4-fast"` `"gpt-5.4-mini"` `"gpt-5.3-codex"` `"gpt-5.3-codex-fast"` `"gpt-5.2"` `"gpt-5.2-codex"` `"gemini-3.1-pro-preview"` `"gemini-3-pro-preview"` `"gemini-3-flash-preview"` `"kimi-k2.6"` `"kimi-k2.5"` `"deepseek-v4-pro"` `"minimax-m2.7"` `"minimax-m2.5"` `"glm-5.1"` | `"gpt-5.5"` | `EVOLVE_API_KEY` | `FACTORY_API_KEY` |
+| `"codex"` | `"gpt-5.6-sol"` `"gpt-5.6-terra"` `"gpt-5.6-luna"` `"gpt-5.5"` `"gpt-5.3-codex"` | `"gpt-5.6-sol"` | `EVOLVE_API_KEY` | `OPENAI_API_KEY` or `CODEX_OAUTH_FILE_PATH` |
+| `"gemini"` | `"gemini-3.6-flash"` `"gemini-3.5-flash-lite"` `"gemini-3.1-pro-preview"` | `"gemini-3.6-flash"` | `EVOLVE_API_KEY` | `GEMINI_API_KEY` or `GEMINI_OAUTH_FILE_PATH` |
+| `"qwen"` | `"qwen3.7-max"` `"qwen3.7-plus"` `"qwen3.6-flash"` | `"qwen3.7-max"` | `EVOLVE_API_KEY` | `OPENAI_API_KEY` |
+| `"kimi"` | `"kimi-k3"` `"kimi-k2.7-code"` `"kimi-k3-raptor"` `"kimi-k2p7-code-raptor"` | `"kimi-k3"` | `EVOLVE_API_KEY` | `KIMI_API_KEY` |
+| `"opencode"` | `"openrouter/anthropic/claude-fable-5"` `"openrouter/anthropic/claude-opus-5"` `"openrouter/anthropic/claude-sonnet-5"` `"openrouter/anthropic/claude-haiku-4.5"` `"openrouter/openai/gpt-5.6-sol"` `"openrouter/openai/gpt-5.6-terra"` `"openrouter/openai/gpt-5.6-luna"` `"openrouter/google/gemini-3.6-flash"` `"openrouter/qwen/qwen3.7-max"` `"openrouter/moonshotai/kimi-k3"` `"openrouter/z-ai/glm-5.2"` | `"openrouter/anthropic/claude-opus-5"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
+| `"droid"` | `"claude-fable-5"` `"claude-opus-5"` `"claude-sonnet-5"` `"claude-haiku-4-5"` `"gpt-5.6-sol"` `"gpt-5.6-terra"` `"gpt-5.6-luna"` `"gemini-3.6-flash"` `"qwen3.7-max"` `"kimi-k3"` `"glm-5.2"` | `"claude-opus-5"` | `EVOLVE_API_KEY` | `FACTORY_API_KEY` |
+
+Model names route by themselves: pass just the name from the table and Evolve serves it on its default provider, or pass a provider-prefixed name (`openai/gpt-5.5`, `openrouter/moonshotai/kimi-k3`) to pick the provider explicitly. The table's names are the supported, priced set — prefixed routing beyond it works for advanced use but is outside the supported lineup.
 
 Agent-specific option: `reasoningEffort` controls how much reasoning/thinking the selected agent uses when that agent supports it.
 
-| Agent | Default when omitted | Supported `reasoningEffort` |
-|-------|----------------------|-----------------------------|
-| `"claude"` | Claude/model default | `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
-| `"codex"` | OpenAI model default | `"low"` `"medium"` `"high"` `"xhigh"` |
-| `"gemini"` | Gemini CLI/model default | Not supported |
+| Agent | Default when omitted (pinned by Evolve) | Supported `reasoningEffort` |
+|-------|------------------------------------------|-----------------------------|
+| `"claude"` | `"high"` — Claude Code's documented default | `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
+| `"codex"` | `"high"` — pinned by Evolve (owner policy: graded harnesses run high) | `"none"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"` (`"none"` and `"max"` are GPT-5.6 values) |
+| `"gemini"` | No effort control | Not supported |
 | `"qwen"` | `"thinking"` | `"thinking"` `"no-thinking"` |
-| `"kimi"` | `"thinking"` | `"thinking"` `"no-thinking"` |
-| `"opencode"` | `"thinking"` + `"medium"` | `"thinking"` `"no-thinking"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
-| `"droid"` | Droid/model default | `"off"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"`; exact values depend on the Droid model |
+| `"kimi"` | `"thinking"` at `"max"` effort — the Kimi K3 API default | `"thinking"` `"no-thinking"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
+| `"opencode"` | `"thinking"` + `"high"` | `"thinking"` `"no-thinking"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
+| `"droid"` | `"high"` — matches Droid’s own default for Opus 5, pinned by Evolve | `"off"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"`; exact values depend on the Droid model |
 
-Kimi Code has provider-dependent internal effort settings, but the Moonshot/Kimi API documents thinking on/off and preserved-thinking controls, not public effort levels.
+When you omit `reasoningEffort`, Evolve does not leave the choice to the CLI. For every harness with an effort control, the SDK stamps the pinned default from the table explicitly on the run — as a flag, an environment variable, or a config-file entry, whatever that CLI reads. This keeps runs reproducible: the effort a run used is always recorded in the run itself, never implied by a vendor default that could change under you. Where the vendor documents a default, the pin matches it; `gemini` has no effort control, so nothing is stamped there.
+
+Note that thinking cannot be disabled on Kimi K3 at the API level — `"no-thinking"` applies to the K2-generation models.
+
+Agent-specific option: `config` supplies the harness's own native settings — a local file path or an inline object. Claude receives it as a settings JSON passed through `--settings`; Codex receives it as the base `~/.codex/config.toml` (an inline object must be losslessly representable as TOML — no `null` values). Your document is the base layer: Evolve's own inputs — gateway routing, MCP servers, the model and effort stamps — always land on top of it, so a config can tune permissions, sandbox settings, or tool behavior but never re-route where the model traffic goes. Only `claude` and `codex` support a native config; naming one on any other agent type throws at `.withAgent()` rather than being silently ignored.
+
+```typescript
+const evolve = new Evolve()
+    .withAgent({
+        type: "claude",
+        config: { permissions: { deny: ["WebSearch", "WebFetch"] } },
+    });
+```
+
+Instead of hand-writing such a config, `preset` names a bundle Evolve ships and guarantees. `preset: "no-internet"` turns off the vendor's server-side web tools — Claude gets that exact `permissions.deny` stamp, Codex gets `-c web_search=disabled` on its command line (Codex's default is `"cached"`, an OpenAI-maintained web index, so only the explicit flag removes the tool). `preset: "pinned-context"` pins one fixed effective context window (200000 tokens) — Claude via `autoCompactWindow`, Codex via `-c model_context_window` — so vendor-side window tuning never changes what a run had to work with. A preset is stamped **on top** of any `config` you also pass, and a preset stamp always wins where the two disagree: your document cannot undo the guarantee. Only `claude` and `codex` can guarantee the presets today; naming one on any other agent type throws at `.withAgent()` rather than running without its guarantee.
+
+```typescript
+const evolve = new Evolve()
+    .withAgent({ type: "codex", preset: "no-internet" });
+```
 
 For Claude Fable 5, use `model: "fable"`. For OpenCode via OpenRouter, use `model: "openrouter/anthropic/claude-fable-5"`. For Claude 1M context window, use `model: "sonnet[1m]"` or `model: "opus[1m]"`.
 
@@ -351,6 +345,17 @@ A harness and its model are chosen together, and a few harnesses only accept mod
 
 - **`qwen`** must run a Qwen-native model (the `qwen3.x` aliases, routed via DashScope). Qwen Code injects the DashScope-only `enable_thinking` request parameter on every call, which OpenAI-family models reject with a `400` — so pointing the `qwen` harness at a non-Qwen model fails.
 - **`opencode`** routes every model through OpenRouter, so its models are the `openrouter/…` ids in the table above (a bare id is prefixed with `openrouter/` for you).
+- **`kimi`** must be told a context ceiling, which Kimi Code sends as the request's `max_tokens`. Its own models get Kimi's 262144; any other model (say `gpt-5.5` behind an OpenAI-compatible gateway) gets a conservative 128000 instead, because an oversized `max_tokens` is rejected outright — LiteLLM answers `400 max_tokens is too large`. Pass the model's real ceiling to skip the guess:
+
+```ts
+.withAgent({
+    type: "kimi",
+    model: "gpt-5.5",
+    maxContextSize: 128000,   // (optional) the model's real completion ceiling, used verbatim
+})
+```
+
+`maxContextSize` is an SDK option, never an environment variable. Harnesses that do not send a ceiling ignore it.
 
 Two harness quirks the SDK handles automatically, with nothing for you to set: the `claude` harness runs with `IS_SANDBOX=1` so Claude Code's `--dangerously-skip-permissions` is allowed under root, and the `gemini` harness boots with workspace trust set so Gemini CLI runs headless instead of refusing an untrusted workspace.
 
@@ -360,7 +365,7 @@ These models require Gateway mode (`EVOLVE_API_KEY`) and are routed by Evolve fo
 
 | Agent | Model | Use |
 |-------|-------|-----|
-| `"kimi"` | `"kimi-k2p6-raptor"` | Kimi K2.6 Raptor route for interactive coding and agent runs |
+| `"kimi"` | `"kimi-k3-raptor"` | Kimi K3 fast route for latency-sensitive agent runs |
 | `"kimi"` | `"kimi-k2p7-code-raptor"` | Kimi K2.7 Code Raptor route for interactive coding and agent runs |
 
 ### Agent Examples
@@ -436,7 +441,7 @@ const evolve = new Evolve()
     .withAgent({ type: "kimi" });
 
 const evolve = new Evolve()
-    .withAgent({ type: "kimi", model: "kimi-k2.6" });
+    .withAgent({ type: "kimi", model: "kimi-k3" });
 
 const evolve = new Evolve()
     .withAgent({
@@ -452,7 +457,7 @@ const evolve = new Evolve()
     .withAgent({ type: "opencode" });
 
 const evolve = new Evolve()
-    .withAgent({ type: "opencode", model: "openrouter/openai/gpt-5.2" });
+    .withAgent({ type: "opencode", model: "openrouter/openai/gpt-5.6-sol" });
 
 const evolve = new Evolve()
     .withAgent({ type: "opencode", model: "openrouter/anthropic/claude-fable-5" });
@@ -471,3 +476,11 @@ const evolve = new Evolve()
 ```
 
 ---
+
+## Where to go next
+
+- [Configuration](./02-configuration.md) shapes the sandbox: which provider, which image, which skills, secrets and integrations.
+- [Runtime](./03-runtime.md) covers everything after `run()` — files in and out, sessions, checkpointing, cost.
+- [Streaming](./04-streaming.md) is the event surface a UI subscribes to.
+- [Swarm & Pipeline](./05-swarm-pipeline.md) runs many agents in parallel and chains the results.
+- [Hosted Evals](./06-hosted-evals.md) is the other half of the SDK, and the part that is easiest to miss. Instead of driving one agent yourself, you hand Evolve datasets and a list of agents and read back scored trials — `jobs()` and `datasets()`, or the `evolve` CLI, with no `Evolve` instance involved. Start with `datasets().list()`: what comes back is whatever the platform has published to your account. If that list is empty, you have not hit a wall — the same chapter's [Bring your own dataset](./06-hosted-evals.md#bring-your-own-dataset) section publishes a corpus of your own.

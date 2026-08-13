@@ -49,6 +49,63 @@ Only use explicit provider creation (below) if you need custom settings like tim
 
 ---
 
+### Managed Sandboxes
+
+With `EVOLVE_API_KEY` and no provider key, the platform runs the sandbox for you: Evolve
+authenticates your key, creates the box on its own account, and records who owns it. You never
+hold an E2B, Daytona, or Modal credential, and you are never billed by them directly.
+
+That is already what auto-resolution does when only `EVOLVE_API_KEY` is set — it gives you a
+managed **E2B** sandbox. To run on a different provider, say which one:
+
+```ts
+import { Evolve, managedSandbox } from "@evolvingmachines/sdk";
+
+const evolve = new Evolve()
+    .withAgent({ type: "claude" })
+    .withSandbox(await managedSandbox("daytona"));
+
+await evolve.run({ prompt: "Hello" });
+```
+
+`managedSandbox()` with no argument is managed E2B — the same sandbox auto-resolution gives you.
+The provider is an argument rather than an environment variable on purpose: which provider your
+program runs on is part of the program.
+
+The second argument is an options bag: the Evolve key (when it should not come from
+`EVOLVE_API_KEY`) plus sandbox-shape defaults applied to every sandbox the provider creates.
+Per-run options from `.withSandboxCreateOptions()` still win, and every default rides the same
+validated path as a create-time option — a provider or managed door that cannot enforce a value
+refuses it loudly, never silently ignores it:
+
+```ts
+const provider = await managedSandbox("daytona", {
+    apiKey: "sk-...",              // (optional) Default: EVOLVE_API_KEY
+    timeoutMs: 7_200_000,          // (optional) Lifetime cap for every create
+    resources: { cpu: 2 },         // (optional) Sizing; refused where not enforceable
+});
+```
+
+Managed Daytona carries both of Daytona's planes through the Dashboard — creating and listing
+sandboxes, and every command and file operation the agent performs, including streamed command
+output. Images come from the snapshots the platform publishes: a managed create names one and
+never builds one, so a `resources` request that an existing snapshot cannot honor is refused
+rather than silently ignored.
+
+Managed Modal — `managedSandbox("modal")` — runs commands and file operations through the
+Dashboard's Modal door. Command output streams live, chunk by chunk, and each command's
+duration is bounded by the door: 60 minutes by default, 120 minutes at most — a longer
+`timeoutMs` is refused with an error naming the bound, never silently shortened. Two Modal
+traits carry over: there is no pause — persist progress with Evolve checkpoints instead — and
+a running command cannot be interrupted. Sizing, network policy, and the sandbox user are the
+platform's; a create that asks for them is refused rather than silently ignored. File writes
+ride the door one JSON body at a time, capped at 1 MiB per request — and the cap is on WIRE
+bytes, base64 inflation included, so the largest binary payload one write can carry is about
+768 KiB (text rides as-is and gets the full 1 MiB). An over-cap write is refused with a typed
+error before anything is sent; split the payload into smaller writes.
+
+---
+
 ### E2B (default)
 ```bash
 # .env - Gateway mode
@@ -115,7 +172,7 @@ const sandbox = createDaytonaProvider({
     apiUrl: "https://app.daytona.io/api", // (optional) Default: https://app.daytona.io/api
     target: "us",                          // (optional) Target region. Default: "us"
     defaultTimeoutMs: 3600000,             // (optional) Default: 3600000 (1 hour) - converted to minutes for auto-stop
-    snapshotName: "evolve-all",            // (optional) Default: "evolve-all". Custom snapshots via build.sh daytona
+    snapshotName: "my-snapshot",           // (optional) Default: the current release snapshot ("evolve-all-c-<12hex>", tag derived from the image build inputs); explicit names pass through untouched. Custom snapshots via build.sh daytona
 });
 ```
 
@@ -162,17 +219,12 @@ Constraints:
 |------|-----------------|------------|
 | `"knowledge"` (default) | Creates `context/`, `scripts/`, `temp/`, `output/` + writes the system prompt file | General agent work with structured deliverables |
 | `"swe"` | Same as knowledge + `repo/` for code repositories | Software-engineering tasks on cloned repos |
-| `"task"` | Nothing — the working directory is left exactly as the sandbox image provides it | Benchmark/eval task images that own the working directory |
 
 ```ts
 const evolve = new Evolve()
-    .withWorkspaceMode("task")
-    .withSandboxCreateOptions({ image: "my-eval-template", workingDirectory: "/repo" });
+    .withWorkspaceMode("swe")
+    .withSandboxCreateOptions({ image: "my-ci-template" });
 ```
-
-In `"task"` mode the task image is the source of truth, so combining it with `.withContext()`, `.withFiles()`, `.withSystemPrompt()`, `.withSchema()`, or a browser prompt throws — those all write into the working directory.
-
-See [Runtime → Task Sandboxes & Credential Lifecycle](./03-runtime.md#task-sandboxes--credential-lifecycle) for the full eval-run pattern.
 
 ---
 
@@ -185,17 +237,17 @@ const evolve = new Evolve()
     .withAgent({
         type: "codex",                        // "claude" | "codex" | "gemini" | "qwen" | "kimi" | "opencode" | "droid" - defaults to "claude"
         model: "gpt-5.3-codex",               // (optional) Uses default if omitted. Use "fable" for Claude Fable 5 or "sonnet[1m]" / "opus[1m]" for 1M context (Claude only)
-        reasoningEffort: "medium",            // (optional) Native reasoning/thinking control; valid values vary by agent/model
+        reasoningEffort: "medium",            // (optional) Native reasoning/thinking control; valid values vary by agent/model. Omitted = Evolve stamps its pinned per-harness default (see Getting Started → Agent Reference)
+        // maxContextSize: 128000,            // (optional) Context/completion ceiling for CLIs that must be told one (see Getting Started → Harness and Model Pairing)
         apiKey: process.env.EVOLVE_API_KEY!, // (optional) Gateway mode - auto-resolves from env
         // providerApiKey: process.env.ANTHROPIC_API_KEY!, // (optional) Direct Provider Key Mode
         // oauthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN!, // (optional) Claude Max subscription
-        // externalGateway: { apiKey, baseUrl, revoke },    // (optional) Caller-minted revocable gateway credential (see Getting Started → External Gateway Mode)
     })
 
     // Sandbox provider (see 2.1 above, or auto-resolves from env)
     .withSandbox(sandbox)
 
-    // (optional) Workspace mode: "knowledge" (default) | "swe" | "task" (see Workspace Modes above)
+    // (optional) Workspace mode: "knowledge" (default) | "swe" (see Workspace Modes above)
     .withWorkspaceMode("knowledge")
 
     // (optional) Uploads to /home/user/workspace/context/ on first run
@@ -233,8 +285,8 @@ const evolve = new Evolve()
         sparse: [".agents/plugins"],
     })
 
-    // (optional) Skills for the agent
-    .withSkills(["pdf", "docx", "pptx"])
+    // (optional) Skills for the agent — skills.sh / git / local references
+    .withSkills(["anthropics/skills", "./my-skill"])
 
     // (optional) Managed integrations (gateway mode only)
     .withIntegrations({
@@ -258,7 +310,7 @@ const evolve = new Evolve()
 
     // (optional) Provider-neutral options for fresh sandbox creation (see Sandbox Create Options above)
     .withSandboxCreateOptions({
-        image: "my-benchmark-image",
+        image: "my-task-image",
         network: { outbound: "blocked", allowedDestinations: ["pypi.org"] },
         user: "root",
     })
@@ -473,7 +525,7 @@ Dashboard setup:
 3. Add a browser login with `Account label`, `Website`, `Email`, and `Password`.
 4. Use `Website` for the domain, such as `github.com`; use `Account label` as one word with no spaces, such as `qa-admin`, `work`, or `personal`, to distinguish multiple saved accounts for the same website. It is not the website username or email.
 
-Passwords are encrypted before upload. The dashboard and SDK list only login metadata: account label, website, email, and last-used time.
+Passwords are encrypted client-side with RSA-OAEP-SHA256 against the dashboard's published public key before upload — the SDK verifies it is handed a genuine `rsaEncryption` key before encrypting, and a plaintext password never leaves the machine. The dashboard and SDK list only login metadata: account label, website, email, and last-used time.
 
 Expose saved logins to a run:
 
@@ -563,71 +615,33 @@ If `.withAgent()` is omitted, plugins target the default agent (`claude`).
 
 ## Agent Skills
 
-Skills extend agent capabilities with specialized tools and workflows. See [agentskills.io](https://agentskills.io/home) for the open standard.
-
-```bash
-# .env
-EVOLVE_API_KEY=sk-...
-```
+Skills are folders of instructions and helper files — a `SKILL.md` manifest plus anything it needs — that the agent's harness discovers natively. `.withSkills()` takes real references; there is no built-in catalog:
 
 ```ts
 import { Evolve } from "@evolvingmachines/sdk";
 
 const evolve = new Evolve()
-    .withSkills(["pptx"]);
+    .withSkills([
+        "skills.sh/vercel-labs/agent-skills/frontend-design",     // one named skill from a skills.sh-listed repo
+        "anthropics/skills",                                      // every skill a GitHub repo publishes
+        "anthropics/skills@main",                                 // pinned to a branch, tag, or commit
+        "https://github.com/org/repo/tree/main/skills/my-skill",  // any https git URL, down to a subfolder
+        "./my-skill",                                             // a local folder containing SKILL.md
+    ]);
 
 await evolve.run({ prompt: "Create a slide deck summarizing the uploaded notes." });
 ```
 
-### Documents
-| Skill | Description | Source |
-|-------|-------------|--------|
-| `pdf` | Read, extract, and analyze PDF documents | [skills/pdf](https://github.com/evolving-machines-lab/evolve/tree/main/skills/pdf) |
-| `docx` | Create and edit Word documents | [skills/docx](https://github.com/evolving-machines-lab/evolve/tree/main/skills/docx) |
-| `pptx` | Create and edit PowerPoint presentations | [skills/pptx](https://github.com/evolving-machines-lab/evolve/tree/main/skills/pptx) |
-| `xlsx` | Create and edit Excel spreadsheets | [skills/xlsx](https://github.com/evolving-machines-lab/evolve/tree/main/skills/xlsx) |
+Browse [skills.sh](https://skills.sh) for published skills. The SKILL.md format is the open standard described at [agentskills.io](https://agentskills.io/home).
 
-### Research & Analysis
-| Skill | Description | Source |
-|-------|-------------|--------|
-| `content-research-writer` | Research and write content | [skills/content-research-writer](https://github.com/evolving-machines-lab/evolve/tree/main/skills/content-research-writer) |
-| `lead-research-assistant` | Research and qualify leads | [skills/lead-research-assistant](https://github.com/evolving-machines-lab/evolve/tree/main/skills/lead-research-assistant) |
-| `meeting-insights-analyzer` | Analyze meeting insights | [skills/meeting-insights-analyzer](https://github.com/evolving-machines-lab/evolve/tree/main/skills/meeting-insights-analyzer) |
-| `developer-growth-analysis` | Analyze developer growth metrics | [skills/developer-growth-analysis](https://github.com/evolving-machines-lab/evolve/tree/main/skills/developer-growth-analysis) |
-| `competitive-ads-extractor` | Extract and analyze competitor ads | [skills/competitive-ads-extractor](https://github.com/evolving-machines-lab/evolve/tree/main/skills/competitive-ads-extractor) |
+How references resolve:
 
-### Design & Media
-| Skill | Description | Source |
-|-------|-------------|--------|
-| `canvas-design` | Canvas and design creation | [skills/canvas-design](https://github.com/evolving-machines-lab/evolve/tree/main/skills/canvas-design) |
-| `image-enhancer` | Enhance and process images | [skills/image-enhancer](https://github.com/evolving-machines-lab/evolve/tree/main/skills/image-enhancer) |
-| `theme-factory` | Create themes and styles | [skills/theme-factory](https://github.com/evolving-machines-lab/evolve/tree/main/skills/theme-factory) |
-| `video-downloader` | Download videos from URLs | [skills/video-downloader](https://github.com/evolving-machines-lab/evolve/tree/main/skills/video-downloader) |
-| `slack-gif-creator` | Create GIFs for Slack | [skills/slack-gif-creator](https://github.com/evolving-machines-lab/evolve/tree/main/skills/slack-gif-creator) |
+- Git references are pinned to their exact commit, fetched as a sparse checkout of only the skill content, and cached by commit under `~/.cache/evolve/skills` — the same reference always mounts the same bytes.
+- A whole-repo reference discovers skills in the ecosystem's standard places: a `SKILL.md` at the repo root (one skill, named after the repo), `skills/`, `skills/.curated/`, `skills/.experimental/`, `skills/.system/`, and `.claude/skills/`.
+- A local path, or an explicit `/tree/<ref>/<subdir>` URL, must be one skill folder containing `SKILL.md` — or a root whose immediate child directories each contain one. A child without `SKILL.md` is a loud refusal naming the child.
+- Duplicate skill names resolve last-wins, and each skill mounts into the harness's native skills directory (for example `~/.claude/skills/<name>`), where the agent discovers it on its own.
 
-### Business & Productivity
-| Skill | Description | Source |
-|-------|-------------|--------|
-| `file-organizer` | Organize files and directories | [skills/file-organizer](https://github.com/evolving-machines-lab/evolve/tree/main/skills/file-organizer) |
-| `invoice-organizer` | Organize and process invoices | [skills/invoice-organizer](https://github.com/evolving-machines-lab/evolve/tree/main/skills/invoice-organizer) |
-| `brand-guidelines` | Brand asset and guidelines management | [skills/brand-guidelines](https://github.com/evolving-machines-lab/evolve/tree/main/skills/brand-guidelines) |
-| `internal-comms` | Internal communications tools | [skills/internal-comms](https://github.com/evolving-machines-lab/evolve/tree/main/skills/internal-comms) |
-| `tailored-resume-generator` | Generate tailored resumes | [skills/tailored-resume-generator](https://github.com/evolving-machines-lab/evolve/tree/main/skills/tailored-resume-generator) |
-| `domain-name-brainstormer` | Brainstorm domain names | [skills/domain-name-brainstormer](https://github.com/evolving-machines-lab/evolve/tree/main/skills/domain-name-brainstormer) |
-
-### Development
-| Skill | Description | Source |
-|-------|-------------|--------|
-| `mcp-builder` | Build MCP servers | [skills/mcp-builder](https://github.com/evolving-machines-lab/evolve/tree/main/skills/mcp-builder) |
-| `skill-creator` | Create new skills | [skills/skill-creator](https://github.com/evolving-machines-lab/evolve/tree/main/skills/skill-creator) |
-| `skill-share` | Share skills with others | [skills/skill-share](https://github.com/evolving-machines-lab/evolve/tree/main/skills/skill-share) |
-| `changelog-generator` | Generate changelogs from commits | [skills/changelog-generator](https://github.com/evolving-machines-lab/evolve/tree/main/skills/changelog-generator) |
-| `artifacts-builder` | Build artifacts and deliverables | [skills/artifacts-builder](https://github.com/evolving-machines-lab/evolve/tree/main/skills/artifacts-builder) |
-
-### Other
-| Skill | Description | Source |
-|-------|-------------|--------|
-| `raffle-winner-picker` | Pick raffle winners randomly | [skills/raffle-winner-picker](https://github.com/evolving-machines-lab/evolve/tree/main/skills/raffle-winner-picker) |
+After a run, `evolve.resolvedSkills()` reports exactly what mounted: each skill's name, source reference, exact git commit for git-backed skills, and content digest.
 
 ## Managed Secrets
 
