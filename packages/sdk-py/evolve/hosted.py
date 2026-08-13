@@ -145,6 +145,8 @@ HostedErrorCode = Literal[
     'skill_in_use',
     'skill_too_large',
     'skill_limit_reached',
+    'secret_not_found',
+    'secret_ambiguous',
     'agent_version_not_found',
     'agent_version_unresolvable',
     'agent_kwarg_unsupported',
@@ -1060,6 +1062,20 @@ class JobRetryConfigInput(TypedDict, total=False):
     min_wait_sec: float
     #: Maximum wait in seconds between retries (default 60.0; platform cap 3600).
     max_wait_sec: float
+
+
+# One attached env secret — ``jobs().start(secrets=[...])``, the spec's
+# JobSecretRef schema: a REFERENCE to a stored env secret of the caller's
+# (Secrets surface), by name and optional label, with an optional in-sandbox
+# rename — values never ride the wire. Functional TypedDict form because
+# ``as`` is a Python keyword; pass the plain dict either way. Resolution law
+# (the 'default'-label fallback, the typed ``secret_ambiguous`` refusal, the
+# reserved-name refusals) is the server's — see ``start()``.
+JobSecretRef = TypedDict(
+    'JobSecretRef',
+    {'name': str, 'label': str, 'as': str},
+    total=False,
+)
 
 
 class JobRetryConfig(TypedDict):
@@ -3993,6 +4009,7 @@ class JobsClient:
         environment_build_timeout_multiplier: Optional[float] = None,
         agent_env: Optional[Dict[str, str]] = None,
         verifier_env: Optional[Dict[str, str]] = None,
+        secrets: Optional[List[Union['JobSecretRef', Dict[str, Any]]]] = None,
         idempotency_key: Optional[str] = None,
     ) -> Job:
         """Start a job over one or more catalog datasets.
@@ -4046,7 +4063,20 @@ class JobsClient:
         its ``[judge].model`` field when the judge is an agent. Both are
         delivered into the verifier environment in both verifier modes,
         over any task-declared value of the same name; any other key is
-        refused at create. Supports Idempotency-Key.
+        refused at create. ``secrets`` attaches stored env secrets of yours
+        to every agent run — REFERENCES (``{'name': ..., 'label': ...,
+        'as': ...}``, the spec's JobSecretRef), never values on the wire.
+        Resolution is the server's and is pinned at create: an omitted
+        ``label`` takes the 'default'-labeled row when one exists (the
+        single row when exactly one exists), and a bare name matching
+        several labels with no 'default' is the typed ``secret_ambiguous``
+        refusal naming the labels; ``as`` renames the env var inside the
+        sandbox, and names the trial contract owns (the ``EVOLVE_`` prefix,
+        gateway/vendor key slots, the judge-override pair) are refused.
+        NOTE the eval lane's documented degradation: the value is injected
+        as RAW env for the run (scrubbed at the credential seal) — the
+        secret's allowed-hosts egress scoping from the managed-agents proxy
+        lane is NOT yet enforced here. Supports Idempotency-Key.
         """
         body: Dict[str, Any] = {}
         if job_name is not None:
@@ -4083,6 +4113,8 @@ class JobsClient:
             body['agent_env'] = agent_env
         if verifier_env is not None:
             body['verifier_env'] = verifier_env
+        if secrets is not None:
+            body['secrets'] = [dict(ref) for ref in secrets]
         headers = {'Idempotency-Key': idempotency_key} if idempotency_key else None
         raw = await self._http.request_json('/api/jobs', method='POST', body=body, headers=headers)
         return _map_job(raw)

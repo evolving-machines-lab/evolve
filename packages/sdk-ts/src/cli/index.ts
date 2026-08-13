@@ -57,6 +57,7 @@ import type {
   Job,
   JobCreate,
   JobEvent,
+  JobSecretRef,
   JobTaskRollup,
   PublishDatasetInput,
   RetryConfigInput,
@@ -213,6 +214,16 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
     help:
       "Env for every verifier run (repeatable); the server honors exactly " +
       "REWARDKIT_JUDGE and REWARDKIT_MODEL (rewardkit's judge override) and refuses any other key",
+  },
+  secret: {
+    kind: "repeat",
+    value: "NAME[@LABEL][=ENVNAME]",
+    help:
+      "Attach one of your stored env secrets to every agent run (repeatable). " +
+      "NAME is the stored secret's name; @LABEL picks a labeled row (omitted = " +
+      "the 'default' row, or the only row — several labels with no 'default' is " +
+      "refused as ambiguous); =ENVNAME renames the env var inside the sandbox. " +
+      "References only — the value never rides the command line or the wire",
   },
   "n-attempts": { kind: "number", short: "k", value: "<n>", help: "Attempts per task x arm (default 1)" },
   "n-concurrent": { kind: "number", short: "n", value: "<n>", help: "Parallel trials (default 4)" },
@@ -1672,6 +1683,37 @@ function loadAgentConfigFile(
   return parsed as Record<string, unknown>;
 }
 
+/**
+ * Parse repeatable --secret NAME[@LABEL][=ENVNAME] references into the wire's
+ * secrets[] objects. The grammar splits on the FIRST '=' (everything after it
+ * is the in-sandbox env name) and then the FIRST '@' (everything after it is
+ * the label), so neither delimiter is legal inside the parts — which matches
+ * the server's vocabularies (env-var-shaped names, [A-Za-z0-9._-] labels).
+ * Only the shape is ruled here; name/label semantics (reserved names, the
+ * 'default' fallback, the ambiguity refusal) are the server's.
+ */
+export function parseSecretRefs(values: string[]): JobSecretRef[] {
+  return values.map((value) => {
+    const eq = value.indexOf("=");
+    const ref = eq === -1 ? value : value.slice(0, eq);
+    const envName = eq === -1 ? undefined : value.slice(eq + 1);
+    if (eq !== -1 && !envName) {
+      throw new CliUsageError(`Invalid --secret "${value}": expected NAME[@LABEL][=ENVNAME]`);
+    }
+    const at = ref.indexOf("@");
+    const name = at === -1 ? ref : ref.slice(0, at);
+    const label = at === -1 ? undefined : ref.slice(at + 1);
+    if (!name || (at !== -1 && !label)) {
+      throw new CliUsageError(`Invalid --secret "${value}": expected NAME[@LABEL][=ENVNAME]`);
+    }
+    return {
+      name,
+      ...(label !== undefined ? { label } : {}),
+      ...(envName !== undefined ? { as: envName } : {}),
+    };
+  });
+}
+
 /** Parse repeatable KEY=VALUE pairs into an env map. */
 export function parseEnvPairs(pairs: string[], flag: string): Record<string, string> {
   const env: Record<string, string> = {};
@@ -1783,6 +1825,11 @@ export function buildJobInput(
     f["verifier-env"] !== undefined
       ? parseEnvPairs(f["verifier-env"] as string[], "--verifier-env")
       : base.verifier_env;
+  // --secret replaces the file's list outright, like -d does: the flags are
+  // one complete attachment statement, never a merge whose halves could
+  // collide on an env name only the server would notice.
+  const secrets =
+    f.secret !== undefined ? parseSecretRefs(f.secret as string[]) : base.secrets;
 
   const jobName = f["job-name"] !== undefined ? String(f["job-name"]) : base.job_name;
   const nAttempts = f["n-attempts"] !== undefined ? (f["n-attempts"] as number) : base.n_attempts;
@@ -1839,6 +1886,7 @@ export function buildJobInput(
     ...timeoutMultipliers,
     ...(agentEnv !== undefined ? { agent_env: agentEnv } : {}),
     ...(verifierEnv !== undefined ? { verifier_env: verifierEnv } : {}),
+    ...(secrets !== undefined ? { secrets } : {}),
   };
 }
 

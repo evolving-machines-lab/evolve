@@ -150,6 +150,7 @@ import {
   parseAgentKwargs,
   parseArgs,
   parseEnvPairs,
+  parseSecretRefs,
   parseYamlConfig,
   runCli,
   trialDetailLines,
@@ -413,6 +414,53 @@ function testBuildJobInputFlags() {
     "malformed dataset ref"
   );
   assertThrowsUsage(() => parseEnvPairs(["NOEQUALS"], "--agent-env"), "KEY=VALUE", "malformed env pair");
+}
+
+function testSecretRefs() {
+  console.log("\n--- --secret NAME[@LABEL][=ENVNAME] -> JobCreate.secrets ---");
+  assertEqual(
+    parseSecretRefs(["GITHUB_TOKEN"]),
+    [{ name: "GITHUB_TOKEN" }],
+    "bare NAME is a ref with no label and no rename"
+  );
+  assertEqual(
+    parseSecretRefs(["API_KEY@staging"]),
+    [{ name: "API_KEY", label: "staging" }],
+    "@LABEL picks a labeled row"
+  );
+  assertEqual(
+    parseSecretRefs(["API_KEY=SERVICE_KEY"]),
+    [{ name: "API_KEY", as: "SERVICE_KEY" }],
+    "=ENVNAME renames the env var in the sandbox"
+  );
+  assertEqual(
+    parseSecretRefs(["API_KEY@prod=SERVICE_KEY"]),
+    [{ name: "API_KEY", label: "prod", as: "SERVICE_KEY" }],
+    "full grammar: NAME@LABEL=ENVNAME"
+  );
+  assertThrowsUsage(() => parseSecretRefs(["@nolabel"]), "NAME[@LABEL][=ENVNAME]", "empty name");
+  assertThrowsUsage(() => parseSecretRefs(["NAME@"]), "NAME[@LABEL][=ENVNAME]", "empty label");
+  assertThrowsUsage(() => parseSecretRefs(["NAME="]), "NAME[@LABEL][=ENVNAME]", "empty env name");
+
+  const built = buildJobInput(
+    parseArgs([
+      "job", "start",
+      "-d", "deep-swe",
+      "-a", "codex",
+      "-m", "m",
+      "--secret", "GITHUB_TOKEN",
+      "--secret", "API_KEY@prod=SERVICE_KEY",
+    ])
+  );
+  assertEqual(
+    built.secrets,
+    [{ name: "GITHUB_TOKEN" }, { name: "API_KEY", label: "prod", as: "SERVICE_KEY" }],
+    "--secret is repeatable and lands as JobCreate.secrets in order"
+  );
+  const withoutFlag = buildJobInput(
+    parseArgs(["job", "start", "-d", "deep-swe", "-a", "codex", "-m", "m"])
+  );
+  assert(!("secrets" in withoutFlag), "no secrets key when no --secret given");
 }
 
 function testBuildJobInputRetry() {
@@ -4804,6 +4852,7 @@ async function main() {
   testShortFlags();
   testBuildJobInputFlags();
   testBuildJobInputRetry();
+  testSecretRefs();
   testBuildJobInputTimeoutMultipliers();
   testBuildJobInputSkills();
   testBuildJobInputYesIsInert();
