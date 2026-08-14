@@ -157,6 +157,34 @@ function installFetchMock(): void {
   globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
     const urlString = String(url);
     fetchCalls.push({ url: urlString, init });
+    if (urlString.endsWith("/api/managed-secrets") && init?.method === "POST") {
+      // The write door answers snake_case metadata (the new-surface wire law).
+      const body = JSON.parse(String(init.body));
+      return new Response(JSON.stringify({
+        status: "created",
+        secret: {
+          id: "secret_2",
+          name: body.name,
+          label: body.label ?? "default",
+          delivery: body.delivery,
+          allowed_hosts: body.allowed_hosts ?? [],
+          allowed_path_prefixes: body.allowed_path_prefixes ?? [],
+          allowed_methods: body.allowed_methods ?? [],
+          enabled: true,
+          created_at: "2026-01-01T00:00:00.000Z",
+          updated_at: "2026-01-01T00:00:00.000Z",
+          last_used_at: null,
+        },
+      }), { status: 201, headers: { "content-type": "application/json" } });
+    }
+    if (urlString.endsWith("/api/managed-secrets") && init?.method === "DELETE") {
+      const body = JSON.parse(String(init.body));
+      return new Response(JSON.stringify({
+        ok: true,
+        name: body.name,
+        label: body.label ?? "default",
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
     if (urlString.endsWith("/api/managed-secrets") && (!init || init.method === undefined)) {
       return new Response(JSON.stringify({
         secrets: [{
@@ -267,6 +295,42 @@ async function testListClient(): Promise<void> {
   assertEqual(secrets.length, 1, "one secret returned");
   assertEqual(secrets[0].name, "GITHUB_TOKEN", "secret name returned");
   assert(!JSON.stringify(secrets).includes("ghp_real"), "secret value is not returned");
+}
+
+async function testWriteClient(): Promise<void> {
+  console.log("\n[1b] managedSecrets().set()/.delete() speak the snake_case write door");
+  installFetchMock();
+  fetchCalls.length = 0;
+  const client = managedSecrets({ apiKey: "ev_key", dashboardUrl: "https://dashboard.test" });
+  const result = await client.set({
+    name: "GITHUB_TOKEN",
+    value: "ghp_real_value",
+    delivery: "brokered",
+    allowedHosts: ["api.github.com"],
+    allowedPathPrefixes: ["/"],
+    allowedMethods: ["GET"],
+  });
+  const post = fetchCalls.find(
+    (call) => call.url.endsWith("/api/managed-secrets") && call.init?.method === "POST",
+  );
+  assert(post !== undefined, "set() POSTs the managed-secrets door");
+  const postBody = JSON.parse(String(post?.init?.body));
+  assertEqual(postBody.allowed_hosts?.[0], "api.github.com", "request wire is snake_case");
+  assertEqual(postBody.value, "ghp_real_value", "value rides the body (sealed server-side)");
+  assertEqual(result.status, "created", "created status surfaces");
+  assertEqual(result.secret.allowedHosts[0], "api.github.com", "snake_case response maps to camelCase metadata");
+  assertEqual(result.secret.delivery, "brokered", "delivery surfaces on the stored row");
+  assert(!JSON.stringify(result).includes("ghp_real_value"), "the stored value is never echoed back");
+
+  fetchCalls.length = 0;
+  const deleted = await client.delete({ name: "GITHUB_TOKEN", label: "staging" });
+  const del = fetchCalls.find(
+    (call) => call.url.endsWith("/api/managed-secrets") && call.init?.method === "DELETE",
+  );
+  assert(del !== undefined, "delete() DELETEs the managed-secrets door");
+  assertEqual(JSON.parse(String(del?.init?.body)).label, "staging", "delete names the labeled row");
+  assertEqual(deleted.ok, true, "delete acknowledges");
+  assertEqual(deleted.label, "staging", "delete answers the resolved label");
 }
 
 function testSandboxEnvAndProxyConfigUsePlaceholders(): void {
@@ -934,6 +998,7 @@ print(len(handled), second.decode().splitlines()[0])
 
 async function main(): Promise<void> {
   await testListClient();
+  await testWriteClient();
   testSandboxEnvAndProxyConfigUsePlaceholders();
   testDirectDeliveryBypassesProxy();
   testLabelRefsNormalized();

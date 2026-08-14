@@ -72,6 +72,11 @@ import type {
   TrialStatus,
   UpstreamStatus,
 } from "../hosted/types";
+import {
+  managedSecrets,
+  type ManagedSecretMetadata,
+  type ManagedSecretsClientConfig,
+} from "../managed-secrets";
 
 // =============================================================================
 // GRAMMAR
@@ -711,6 +716,85 @@ const GROUPS: Record<string, GroupSpec> = {
       },
     },
   },
+  secrets: {
+    summary: "Store and manage env secrets (values are write-only; reads return metadata)",
+    commands: {
+      set: {
+        summary:
+          "Store an env secret, or re-shape delivery/scoping by restating the same value; " +
+          "a DIFFERENT value under an existing name+label is refused (secret_exists, 409) — " +
+          "delete first or use another label, never a silent overwrite",
+        flags: {
+          value: {
+            kind: "string",
+            value: "<value>",
+            help: "The secret value; omit to pipe it on stdin (keeps it out of shell history)",
+          },
+          label: {
+            kind: "string",
+            value: "<label>",
+            help: "Labeled-row identity — several values of one name live side by side (default: 'default')",
+          },
+          delivery: {
+            kind: "string",
+            value: "<mode>",
+            help:
+              "Required: 'brokered' (value never enters a sandbox; needs the --allowed-* scoping) " +
+              "or 'direct' (raw value in the sandbox env; scoping refused)",
+          },
+          "allowed-host": {
+            kind: "repeat",
+            value: "<host>",
+            help: "Brokered scoping: hostname or wildcard like *.example.com (repeatable)",
+          },
+          "allowed-path-prefix": {
+            kind: "repeat",
+            value: "</prefix>",
+            help: "Brokered scoping: allowed URL path prefix (repeatable)",
+          },
+          "allowed-method": {
+            kind: "repeat",
+            value: "<METHOD>",
+            help: "Brokered scoping: allowed HTTP method (repeatable)",
+          },
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<NAME>",
+        example:
+          'printf %s "$GITHUB_TOKEN" | evolve secrets set GITHUB_TOKEN --delivery brokered ' +
+          "--allowed-host api.github.com --allowed-path-prefix / --allowed-method GET",
+      },
+      list: {
+        summary: "List your env secrets (metadata only — values never leave the server)",
+        flags: {
+          columns: {
+            kind: "string",
+            value: "<keys|all|help>",
+            help: "Choose and order columns (comma-separated keys; 'help' lists them)",
+          },
+          quiet: { kind: "boolean", short: "q", help: "Print only name[:label], one per line" },
+          "no-trunc": { kind: "boolean", help: "Full cell content instead of one-line truncation" },
+          "no-headers": { kind: "boolean", help: "Omit the header row in piped (TSV) output" },
+        },
+        minPositionals: 0,
+        maxPositionals: 0,
+        example: "evolve secrets list",
+      },
+      delete: {
+        summary:
+          "Delete an env secret by name (+ --label when several labeled rows share it); " +
+          "revokes every runtime grant riding the row",
+        flags: {
+          label: { kind: "string", value: "<label>", help: "The labeled row to delete" },
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<NAME>",
+        example: "evolve secrets delete GITHUB_TOKEN --label staging",
+      },
+    },
+  },
 };
 
 /**
@@ -731,12 +815,18 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
   },
 };
 
-/** Hidden plural aliases — the singular noun is canonical. */
+/**
+ * Hidden plural aliases — the singular noun is canonical. `secrets` is the
+ * one deliberate exception (plural canonical, singular aliased): the noun
+ * names the surface — the dashboard's Secrets page and the managed-secrets
+ * API — not one record.
+ */
 const GROUP_ALIASES: Record<string, string> = {
   jobs: "job",
   trials: "trial",
   datasets: "dataset",
   skills: "skill",
+  secret: "secrets",
 };
 
 /**
@@ -2398,6 +2488,18 @@ const AGENT_COLUMNS: ListColumn<Agent>[] = [
 ];
 const AGENT_DEFAULT_COLUMNS = ["name", "source", "run", "updated"];
 
+// Values never appear in any column — the server never returns them.
+const SECRET_COLUMNS: ListColumn<ManagedSecretMetadata>[] = [
+  { key: "name", header: "NAME", cell: (s) => s.name },
+  { key: "label", header: "LABEL", cell: (s) => s.label ?? "default" },
+  { key: "delivery", header: "DELIVERY", cell: (s) => s.delivery ?? "brokered" },
+  { key: "hosts", header: "ALLOWED HOSTS", cell: (s) => s.allowedHosts.join(", ") || "-" },
+  { key: "updated", header: "UPDATED", cell: (s) => s.updatedAt },
+  { key: "last-used", header: "LAST USED", cell: (s) => s.lastUsedAt ?? "-" },
+  { key: "id", header: "ID", cell: (s) => s.id },
+];
+const SECRET_DEFAULT_COLUMNS = ["name", "label", "delivery", "hosts", "updated"];
+
 /**
  * Full-detail rendering of one trial — evolve trial show. Exported for
  * tests, like the other line renderers.
@@ -3929,6 +4031,115 @@ async function cmdAuthStatus(inv: Invocation, io: CliIO): Promise<number> {
   return 0;
 }
 
+/**
+ * The secrets verbs speak the managed-agents door (dashboard base URL), not
+ * the hosted jobs client — same key, same host, its own client config shape.
+ */
+function secretsClientConfig(inv: Invocation): ManagedSecretsClientConfig {
+  const config: ManagedSecretsClientConfig = {};
+  if (typeof inv.flags["api-key"] === "string") config.apiKey = inv.flags["api-key"];
+  if (typeof inv.flags["base-url"] === "string") config.dashboardUrl = inv.flags["base-url"];
+  return config;
+}
+
+/**
+ * The value channel of `secrets set`: --value, or piped stdin when the flag
+ * is absent — piping keeps the value out of shell history and process lists.
+ * One trailing newline is stripped (every `printf`-less `echo` adds one); an
+ * interactive terminal with no --value is a usage error, never a hang.
+ */
+function readSecretValue(inv: Invocation): string {
+  const flag = inv.flags.value;
+  if (typeof flag === "string") {
+    if (flag.length === 0) throw new CliUsageError("--value must not be empty");
+    return flag;
+  }
+  if (process.stdin.isTTY) {
+    throw new CliUsageError(
+      "no value given: pass --value <value> or pipe the value on stdin " +
+        '(e.g. printf %s "$TOKEN" | evolve secrets set NAME --delivery ...)'
+    );
+  }
+  const piped = readFileSync(0, "utf8");
+  const value = piped.endsWith("\r\n")
+    ? piped.slice(0, -2)
+    : piped.endsWith("\n")
+      ? piped.slice(0, -1)
+      : piped;
+  if (value.length === 0) throw new CliUsageError("stdin carried no value");
+  return value;
+}
+
+async function cmdSecretsSet(inv: Invocation, io: CliIO): Promise<number> {
+  const name = inv.positionals[0];
+  const delivery = inv.flags.delivery;
+  if (delivery !== "brokered" && delivery !== "direct") {
+    throw new CliUsageError("--delivery is required: 'brokered' or 'direct'");
+  }
+  const value = readSecretValue(inv);
+  const client = managedSecrets(secretsClientConfig(inv));
+  const result = await client.set({
+    name,
+    value,
+    delivery,
+    ...(typeof inv.flags.label === "string" ? { label: inv.flags.label } : {}),
+    ...(inv.flags["allowed-host"] !== undefined
+      ? { allowedHosts: inv.flags["allowed-host"] as string[] }
+      : {}),
+    ...(inv.flags["allowed-path-prefix"] !== undefined
+      ? { allowedPathPrefixes: inv.flags["allowed-path-prefix"] as string[] }
+      : {}),
+    ...(inv.flags["allowed-method"] !== undefined
+      ? { allowedMethods: inv.flags["allowed-method"] as string[] }
+      : {}),
+  });
+  // The value is NEVER echoed — not on success, not in --json output (the
+  // server's response carries metadata only).
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(result));
+    return 0;
+  }
+  const secret = result.secret;
+  io.out(
+    `${result.status === "created" ? "Stored" : "Updated"} env secret ${secret.name} ` +
+      `(label ${secret.label ?? "default"}, delivery ${secret.delivery ?? "brokered"})`
+  );
+  return 0;
+}
+
+async function cmdSecretsList(inv: Invocation, io: CliIO): Promise<number> {
+  if (columnsHelpRequested(inv, io, SECRET_COLUMNS)) return 0;
+  const client = managedSecrets(secretsClientConfig(inv));
+  const secrets = await client.list();
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify({ secrets }));
+    return 0;
+  }
+  if (secrets.length === 0) {
+    if (inv.flags.quiet !== true) io.out("No env secrets stored.");
+    return 0;
+  }
+  renderList(inv, io, secrets, SECRET_COLUMNS, SECRET_DEFAULT_COLUMNS, (s) =>
+    s.label && s.label !== "default" ? `${s.name}:${s.label}` : s.name
+  );
+  return 0;
+}
+
+async function cmdSecretsDelete(inv: Invocation, io: CliIO): Promise<number> {
+  const name = inv.positionals[0];
+  const client = managedSecrets(secretsClientConfig(inv));
+  const result = await client.delete({
+    name,
+    ...(typeof inv.flags.label === "string" ? { label: inv.flags.label } : {}),
+  });
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(result));
+    return 0;
+  }
+  io.out(`Deleted env secret ${result.name} (label ${result.label})`);
+  return 0;
+}
+
 // =============================================================================
 // ENTRY
 // =============================================================================
@@ -3989,6 +4200,9 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "agent add": cmdAgentAdd,
   "agent remove": cmdAgentRemove,
   "auth status": cmdAuthStatus,
+  "secrets set": cmdSecretsSet,
+  "secrets list": cmdSecretsList,
+  "secrets delete": cmdSecretsDelete,
 };
 
 /**

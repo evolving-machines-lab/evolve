@@ -85,3 +85,83 @@ async def test_managed_secrets_client_lists_metadata(monkeypatch):
     assert result[0].delivery == 'brokered'
     assert result[0].allowed_hosts == ['api.github.com']
     assert 'ghp_' not in repr(result)
+
+
+class _FakeWriteResponse:
+    """One canned JSON answer, capturing nothing — the request rides urlopen."""
+
+    def __init__(self, payload):
+        self._payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def read(self):
+        return json.dumps(self._payload).encode()
+
+
+@pytest.mark.asyncio
+async def test_managed_secrets_client_set_speaks_snake_case_wire(monkeypatch):
+    opener = Mock(return_value=_FakeWriteResponse({
+        'status': 'created',
+        'secret': {
+            'id': 'secret_2',
+            'name': 'GITHUB_TOKEN',
+            'label': 'default',
+            'delivery': 'brokered',
+            'allowed_hosts': ['api.github.com'],
+            'allowed_path_prefixes': ['/'],
+            'allowed_methods': ['GET'],
+            'enabled': True,
+            'created_at': '2026-01-01T00:00:00.000Z',
+            'updated_at': '2026-01-01T00:00:00.000Z',
+            'last_used_at': None,
+        },
+    }))
+    monkeypatch.setattr('evolve._http.urlopen', opener)
+
+    client = managed_secrets(ManagedSecretsClientConfig(api_key='ev_key', dashboard_url='https://dashboard.test'))
+    result = await client.set(
+        name='GITHUB_TOKEN',
+        value='ghp_secret_value',
+        delivery='brokered',
+        allowed_hosts=['api.github.com'],
+        allowed_path_prefixes=['/'],
+        allowed_methods=['GET'],
+    )
+
+    request = opener.call_args[0][0]
+    assert request.get_method() == 'POST'
+    assert request.full_url.endswith('/api/managed-secrets')
+    body = json.loads(request.data.decode())
+    assert body['allowed_hosts'] == ['api.github.com']
+    assert body['delivery'] == 'brokered'
+    assert body['value'] == 'ghp_secret_value'
+    assert result.status == 'created'
+    # The snake_case response parses through the same tolerant reader as list.
+    assert result.secret.allowed_hosts == ['api.github.com']
+    assert result.secret.delivery == 'brokered'
+    # The stored value is never echoed back by the metadata document.
+    assert 'ghp_secret_value' not in repr(result)
+
+
+@pytest.mark.asyncio
+async def test_managed_secrets_client_delete_names_the_labeled_row(monkeypatch):
+    opener = Mock(return_value=_FakeWriteResponse({
+        'ok': True,
+        'name': 'GITHUB_TOKEN',
+        'label': 'staging',
+    }))
+    monkeypatch.setattr('evolve._http.urlopen', opener)
+
+    client = managed_secrets(ManagedSecretsClientConfig(api_key='ev_key', dashboard_url='https://dashboard.test'))
+    result = await client.delete(name='GITHUB_TOKEN', label='staging')
+
+    request = opener.call_args[0][0]
+    assert request.get_method() == 'DELETE'
+    assert json.loads(request.data.decode()) == {'name': 'GITHUB_TOKEN', 'label': 'staging'}
+    assert result.ok is True
+    assert result.label == 'staging'

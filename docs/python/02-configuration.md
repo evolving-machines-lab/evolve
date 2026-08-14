@@ -652,7 +652,7 @@ How references resolve:
 
 ## Managed Secrets
 
-Managed secrets are available only in gateway mode (`EVOLVE_API_KEY`). Save the secret in Dashboard **Secrets** with a **Name**, an optional **Label**, and a **delivery mode**. Secrets are unique by `(name, label)` — several values of one name live side by side (`API_KEY` at `staging` and at `prod`) and a run attaches one by label. The SDK can list available names and attach the selected secrets to a run.
+Managed secrets are available only in gateway mode (`EVOLVE_API_KEY`). Store the secret with a **Name**, an optional **Label**, and a **delivery mode** — in Dashboard **Secrets**, or programmatically through the SDK's `set()` / the CLI's `evolve secrets set` (below). Secrets are unique by `(name, label)` — several values of one name live side by side (`API_KEY` at `staging` and at `prod`) and a run attaches one by label. The SDK can list available names and attach the selected secrets to a run.
 
 The delivery mode is chosen when the secret is saved and decides how the value reaches the sandbox:
 
@@ -680,6 +680,54 @@ Runtime behavior:
 - Brokered secrets: the sandbox receives the requested env var names with opaque sandbox-scoped values; code and tools read them normally, and Evolve validates allowed host, path, method, and live sandbox binding before substituting the real value on egress. Request and response bodies are limited to 10 MiB each.
 - Direct secrets: the sandbox receives the raw value as a plain env var. When every attached secret is direct, the in-sandbox egress proxy is not started at all.
 - `secrets` is still for local raw env injection; `managed_secrets` is for Dashboard-stored values.
+
+### Storing secrets programmatically
+
+`managed_secrets()` also writes: `set()` creates an env secret (or updates one — see the collision rule), and `delete()` removes one. The value travels in the HTTPS request body and is sealed server-side with the platform vault cipher; no read ever returns it. Values are limited to 190 bytes.
+
+```python
+import os
+from evolve import managed_secrets
+
+secrets = managed_secrets()
+
+await secrets.set(
+    name='GITHUB_TOKEN',
+    value=os.environ['GITHUB_TOKEN'],
+    delivery='brokered',
+    allowed_hosts=['api.github.com'],
+    allowed_path_prefixes=['/'],
+    allowed_methods=['GET'],
+)
+
+await secrets.set(
+    name='STRIPE_KEY',
+    label='staging',
+    value=os.environ['STRIPE_TEST_KEY'],
+    delivery='direct',              # direct secrets carry no scoping
+)
+
+await secrets.delete(name='STRIPE_KEY', label='staging')
+```
+
+Or from the terminal — the value comes from `--value` or piped stdin (piping keeps it out of shell history):
+
+```bash
+printf %s "$GITHUB_TOKEN" | evolve secrets set GITHUB_TOKEN \
+    --delivery brokered \
+    --allowed-host api.github.com --allowed-path-prefix / --allowed-method GET
+
+evolve secrets list
+evolve secrets delete GITHUB_TOKEN
+```
+
+The write rules, all typed and machine-readable (the HTTP error body carries a `code`):
+
+- `delivery` is required. `brokered` requires at least one allowed host, path prefix, and method; `direct` refuses scoping fields — an unscoped value in the sandbox environment cannot honor them.
+- An existing `(name, label)` is **never overwritten with a different value**: the request is refused (`secret_exists`, HTTP 409). Rotate by `delete` + `set`, or store the new value under another label. Restating the **same value byte-for-byte** succeeds as an update — that is where the delivery mode and scoping are editable, and every runtime grant already minted against the row is revoked.
+- `delete` with a bare name resolves the label like everything else (the `default` row, else the single row, else a typed ambiguity refusal naming every label).
+- A **read-only API key** can `list` but not `set`/`delete` (`read_only_key`, HTTP 403).
+- **LLM provider keys (BYOK) cannot be stored through this door.** A provider key gates billing — the routing preference behind it decides whose account pays for model traffic — so provider keys are managed only in the signed-in Dashboard **Secrets** page.
 
 ---
 

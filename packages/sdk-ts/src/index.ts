@@ -151,6 +151,9 @@ export type {
   ManagedSecretRef,
   ManagedSecretDelivery,
   ManagedSecretMetadata,
+  ManagedSecretSetInput,
+  ManagedSecretWriteResult,
+  ManagedSecretDeleteResult,
   ManagedSecretsClient,
   ManagedSecretsClientConfig,
 } from "./managed-secrets";

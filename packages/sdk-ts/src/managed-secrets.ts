@@ -47,8 +47,56 @@ export interface ManagedSecretsClientConfig {
   dashboardUrl?: string;
 }
 
+/**
+ * Input of the API-key write door (`POST /api/managed-secrets`). The value
+ * rides the HTTPS body and is sealed server-side with the vault cipher — the
+ * same posture the inline job-secrets door on job create established; no
+ * read ever returns it. `delivery` is required: 'brokered' needs the
+ * allowedHosts/allowedPathPrefixes/allowedMethods scoping triple, 'direct'
+ * refuses it (an unscoped value in the sandbox env cannot honor scoping).
+ */
+export interface ManagedSecretSetInput {
+  name: string;
+  /** Labeled-row identity; omitted = 'default'. */
+  label?: string;
+  /** The secret value (at most 190 bytes UTF-8). Never returned by any read. */
+  value: string;
+  delivery: ManagedSecretDelivery;
+  allowedHosts?: string[];
+  allowedPathPrefixes?: string[];
+  allowedMethods?: string[];
+}
+
+export interface ManagedSecretWriteResult {
+  /**
+   * 'created' for a fresh (name, label) identity; 'updated' when the request
+   * restated the stored value byte-for-byte and the row converged (the one
+   * path where delivery and scoping are editable). A DIFFERENT value under
+   * an existing identity never overwrites — the server refuses typed
+   * (HTTP 409, code `secret_exists`); rotate by delete + set, or use
+   * another label.
+   */
+  status: "created" | "updated";
+  secret: ManagedSecretMetadata;
+}
+
+export interface ManagedSecretDeleteResult {
+  ok: boolean;
+  name: string;
+  /** The label of the row that was deleted (resolution may have defaulted it). */
+  label: string;
+}
+
 export interface ManagedSecretsClient {
   list(): Promise<ManagedSecretMetadata[]>;
+  /** Create or update an env secret through the API-key write door. */
+  set(input: ManagedSecretSetInput): Promise<ManagedSecretWriteResult>;
+  /**
+   * Delete an env secret by (name, label). An omitted label resolves by the
+   * shared law: the 'default' row, else the single row, else a typed
+   * ambiguity refusal naming every label.
+   */
+  delete(input: { name: string; label?: string }): Promise<ManagedSecretDeleteResult>;
 }
 
 export interface ManagedSecretRuntimeToken {
@@ -571,6 +619,34 @@ async function requestJson<T>(
   return (await response.json()) as T;
 }
 
+/**
+ * The write verbs answer snake_case metadata (the wire law of newly declared
+ * surfaces); the list document keeps its original camelCase. One tolerant
+ * reader serves both spellings — the same posture the Python SDK's
+ * metadata parser has always taken.
+ */
+function metadataFromWire(record: Record<string, unknown>): ManagedSecretMetadata {
+  const strings = (value: unknown): string[] =>
+    Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+  return {
+    id: String(record.id ?? ""),
+    name: String(record.name ?? ""),
+    ...(typeof record.label === "string" ? { label: record.label } : {}),
+    ...(record.delivery === "brokered" || record.delivery === "direct"
+      ? { delivery: record.delivery }
+      : {}),
+    allowedHosts: strings(record.allowed_hosts ?? record.allowedHosts),
+    allowedPathPrefixes: strings(record.allowed_path_prefixes ?? record.allowedPathPrefixes),
+    allowedMethods: strings(record.allowed_methods ?? record.allowedMethods),
+    createdAt: String(record.created_at ?? record.createdAt ?? ""),
+    updatedAt: String(record.updated_at ?? record.updatedAt ?? ""),
+    lastUsedAt:
+      typeof (record.last_used_at ?? record.lastUsedAt) === "string"
+        ? ((record.last_used_at ?? record.lastUsedAt) as string)
+        : null,
+  };
+}
+
 export function managedSecrets(config: ManagedSecretsClientConfig = {}): ManagedSecretsClient {
   return {
     async list() {
@@ -579,6 +655,39 @@ export function managedSecrets(config: ManagedSecretsClientConfig = {}): Managed
         "/api/managed-secrets",
       );
       return result.secrets ?? [];
+    },
+    async set(input) {
+      // snake_case on the wire; optional fields are omitted, never null.
+      const body: Record<string, unknown> = {
+        name: input.name,
+        value: input.value,
+        delivery: input.delivery,
+        ...(input.label !== undefined ? { label: input.label } : {}),
+        ...(input.allowedHosts !== undefined ? { allowed_hosts: input.allowedHosts } : {}),
+        ...(input.allowedPathPrefixes !== undefined
+          ? { allowed_path_prefixes: input.allowedPathPrefixes }
+          : {}),
+        ...(input.allowedMethods !== undefined ? { allowed_methods: input.allowedMethods } : {}),
+      };
+      const result = await requestJson<{
+        status: "created" | "updated";
+        secret: Record<string, unknown>;
+      }>(config, "/api/managed-secrets", { method: "POST", body: JSON.stringify(body) });
+      return { status: result.status, secret: metadataFromWire(result.secret ?? {}) };
+    },
+    async delete(input) {
+      const result = await requestJson<{ ok: boolean; name: string; label: string }>(
+        config,
+        "/api/managed-secrets",
+        {
+          method: "DELETE",
+          body: JSON.stringify({
+            name: input.name,
+            ...(input.label !== undefined ? { label: input.label } : {}),
+          }),
+        },
+      );
+      return { ok: result.ok, name: result.name, label: result.label };
     },
   };
 }

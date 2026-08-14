@@ -218,6 +218,8 @@ RUNTIME_OPERATION_TO_MODULE = {
     'getCheckpoint': 'evolve/storage_client.py',
     'presignCheckpointTransfer': 'evolve/storage_client.py',
     'listManagedSecrets': 'evolve/managed_secrets.py',
+    'setManagedSecret': 'evolve/managed_secrets.py',
+    'deleteManagedSecret': 'evolve/managed_secrets.py',
     'createManagedRuntimeToken': 'evolve/managed_secrets.py',
     'extendManagedRuntimeToken': 'evolve/managed_secrets.py',
     'revokeManagedRuntimeToken': 'evolve/managed_secrets.py',

@@ -4689,6 +4689,136 @@ async function testAuthStatus() {
 }
 
 // =============================================================================
+// SECRETS — evolve secrets set / list / delete
+// =============================================================================
+
+async function testSecretsVerbs() {
+  console.log("\n--- runCli: secrets set / list / delete ---");
+
+  console.log("  [grammar]");
+  assertEqual(parseArgs(["secrets", "list"]).command, "secrets list", "secrets noun resolves");
+  assertEqual(parseArgs(["secret", "list"]).command, "secrets list", "singular is a hidden alias");
+  assertEqual(parseArgs(["secrets", "ls"]).command, "secrets list", "`ls` alias holds on secrets");
+
+  console.log("  [set]");
+  installMockFetch();
+  try {
+    setMockResponse("/api/managed-secrets", {
+      status: 201,
+      body: {
+        status: "created",
+        secret: {
+          id: "secret_1",
+          name: "GITHUB_TOKEN",
+          label: "default",
+          delivery: "brokered",
+          allowed_hosts: ["api.github.com"],
+          allowed_path_prefixes: ["/"],
+          allowed_methods: ["GET"],
+          enabled: true,
+          created_at: "2026-01-01T00:00:00.000Z",
+          updated_at: "2026-01-01T00:00:00.000Z",
+          last_used_at: null,
+        },
+      },
+    });
+    const { io, out } = captureIO();
+    const code = await runCli(
+      [
+        "secrets", "set", "GITHUB_TOKEN",
+        "--value", "ghp_secret_value",
+        "--delivery", "brokered",
+        "--allowed-host", "api.github.com",
+        "--allowed-path-prefix", "/",
+        "--allowed-method", "GET",
+        ...AUTH,
+      ],
+      io
+    );
+    assertEqual(code, 0, "set exits 0");
+    const post = fetchCalls.find(
+      (call) => call.url.endsWith("/api/managed-secrets") && call.init?.method === "POST"
+    );
+    assert(post !== undefined, "set POSTs the managed-secrets door");
+    const body = JSON.parse(String(post?.init?.body));
+    assertEqual(body.allowed_hosts, ["api.github.com"], "wire carries snake_case scoping");
+    assertEqual(body.delivery, "brokered", "wire carries the delivery mode");
+    assert(!out.join("\n").includes("ghp_secret_value"), "the value is never echoed");
+    assert(out.join("\n").includes("Stored env secret GITHUB_TOKEN"), "set narrates the stored row");
+
+    // --delivery is required — refused before any request.
+    fetchCalls.length = 0;
+    const missing = captureIO();
+    const missingCode = await runCli(
+      ["secrets", "set", "GITHUB_TOKEN", "--value", "v", ...AUTH],
+      missing.io
+    );
+    assertEqual(missingCode, 2, "missing --delivery is a usage error");
+    assertEqual(fetchCalls.length, 0, "no request is made without --delivery");
+  } finally {
+    restoreFetch();
+  }
+
+  console.log("  [list]");
+  installMockFetch();
+  try {
+    setMockResponse("/api/managed-secrets", {
+      status: 200,
+      body: {
+        secrets: [
+          {
+            id: "secret_1",
+            name: "GITHUB_TOKEN",
+            label: "default",
+            delivery: "brokered",
+            allowedHosts: ["api.github.com"],
+            allowedPathPrefixes: ["/"],
+            allowedMethods: ["GET"],
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            lastUsedAt: null,
+          },
+        ],
+      },
+    });
+    const { io, out } = captureIO(true);
+    const code = await runCli(["secrets", "list", ...AUTH], io);
+    assertEqual(code, 0, "list exits 0");
+    const text = out.join("\n");
+    assert(text.includes("GITHUB_TOKEN") && text.includes("brokered"), "table carries name + delivery");
+
+    const quiet = captureIO();
+    await runCli(["secrets", "list", "-q", ...AUTH], quiet.io);
+    assertEqual(quiet.out, ["GITHUB_TOKEN"], "-q prints name only");
+  } finally {
+    restoreFetch();
+  }
+
+  console.log("  [delete]");
+  installMockFetch();
+  try {
+    setMockResponse("/api/managed-secrets", {
+      status: 200,
+      body: { ok: true, name: "GITHUB_TOKEN", label: "staging" },
+    });
+    const { io, out } = captureIO();
+    const code = await runCli(
+      ["secrets", "delete", "GITHUB_TOKEN", "--label", "staging", ...AUTH],
+      io
+    );
+    assertEqual(code, 0, "delete exits 0");
+    const del = fetchCalls.find(
+      (call) => call.url.endsWith("/api/managed-secrets") && call.init?.method === "DELETE"
+    );
+    assert(del !== undefined, "delete DELETEs the managed-secrets door");
+    assertEqual(JSON.parse(String(del?.init?.body)).label, "staging", "delete names the labeled row");
+    assert(out.join("\n").includes("Deleted env secret GITHUB_TOKEN"), "delete narrates the resolved row");
+  } finally {
+    restoreFetch();
+  }
+}
+
+// =============================================================================
 // buildPublishInput / buildAgentInput direct coverage
 // =============================================================================
 
@@ -4960,6 +5090,7 @@ async function main() {
   await testSkillDeleteInUseVerbatim();
   await testSkillNamePassThroughOnStart();
   await testAuthStatus();
+  await testSecretsVerbs();
 
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

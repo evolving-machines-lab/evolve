@@ -265,6 +265,8 @@ const RUNTIME_OPERATION_TO_MODULE: Record<string, string> = {
   getCheckpoint: "src/storage/index.ts",
   presignCheckpointTransfer: "src/storage/index.ts",
   listManagedSecrets: "src/managed-secrets.ts",
+  setManagedSecret: "src/managed-secrets.ts",
+  deleteManagedSecret: "src/managed-secrets.ts",
   createManagedRuntimeToken: "src/managed-secrets.ts",
   extendManagedRuntimeToken: "src/managed-secrets.ts",
   revokeManagedRuntimeToken: "src/managed-secrets.ts",
