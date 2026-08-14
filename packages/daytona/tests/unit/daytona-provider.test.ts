@@ -20,6 +20,8 @@
 
 import {
   _testActivateSnapshot,
+  _testWaitForSnapshotConflictWinner,
+  _testIsSnapshotNameConflict,
   _testWrapCommand,
   _testMapNetworkPolicy,
   _testImageRegistryHost,
@@ -32,7 +34,9 @@ import {
   DaytonaIdleTimeoutError,
   DaytonaImagePullError,
   DaytonaSnapshotActivationError,
+  DaytonaSnapshotConflictError,
   DaytonaCommands,
+  DaytonaProvider,
   createDaytonaProvider,
 } from "../../src/index.ts";
 
@@ -1005,6 +1009,500 @@ async function testActivateSnapshotPollFailureIsTyped(): Promise<void> {
 }
 
 // =============================================================================
+// [6.6] WAIT-ON-CONFLICT — a lost snapshot name race waits for the winner
+//
+// Harbor's law (REFERENCES/Harbor/src/harbor/environments/daytona/
+// snapshots.py:281-288): when snapshot.create loses the name, another process
+// is already building this exact image — wait for it and reuse it, rather than
+// pulling the same bytes again on the slow direct path.
+// =============================================================================
+
+/** Silence both log and warn: the conflict wait narrates on both channels. */
+async function silenceNoise<T>(fn: () => Promise<T>): Promise<T> {
+  const log = console.log;
+  const warn = console.warn;
+  console.log = () => {};
+  console.warn = () => {};
+  try {
+    return await fn();
+  } finally {
+    console.log = log;
+    console.warn = warn;
+  }
+}
+
+/** Production conflict clocks are 10 minutes; the tests measure the SHAPE. */
+class FastConflictProvider extends DaytonaProvider {
+  protected override snapshotConflictTiming = { timeoutMs: 50, pollMs: 1 };
+}
+
+/**
+ * A client whose snapshot.get answers a SCRIPT: the first answer is consumed
+ * by create()'s fast path (which must miss for the build path to run), and the
+ * rest by the conflict wait. A `null` entry means "the GET itself failed".
+ */
+function createConflictClient(
+  script: Array<{ state?: string } | null>,
+  opts?: { createError?: unknown },
+) {
+  const state = {
+    gets: 0,
+    snapshotCreateCalls: 0,
+    createParams: undefined as
+      | { snapshot?: string; image?: string; resources?: { cpu?: number; memory?: number } }
+      | undefined,
+  };
+  const client = {
+    snapshot: {
+      get: async () => {
+        const answer = script[state.gets++];
+        if (answer === null || answer === undefined) throw new Error("snapshot not found");
+        return answer;
+      },
+      create: async () => {
+        state.snapshotCreateCalls++;
+        throw (
+          opts?.createError ??
+          new Error('Snapshot with name "eval-env-cafe" already exists')
+        );
+      },
+    },
+    create: async (params: { snapshot?: string; image?: string }) => {
+      state.createParams = params;
+      return { id: params.snapshot ? "sb-from-snapshot" : "sb-direct-pull" };
+    },
+  };
+  return { client, state };
+}
+
+async function testConflictWaitsThenReusesWinner(): Promise<void> {
+  console.log("\n[6m] DaytonaProvider.create() - name conflict: wait for the winner, then reuse it");
+
+  // Fast path misses, our own create loses the name, the winner is still
+  // building, and it lands active — the sandbox must come FROM the snapshot.
+  const { client, state } = createConflictClient([
+    null, // fast path: snapshot not found yet
+    { state: "pulling" },
+    { state: "pulling" },
+    { state: "active" },
+  ]);
+  const provider = new FastConflictProvider({ apiKey: "test-key" });
+  (provider as unknown as { client: unknown }).client = client;
+
+  const instance = await silenceNoise(() => provider.create({ image: "eval-env-cafe" }));
+  assertEqual(instance.sandboxId, "sb-from-snapshot", "the sandbox is created from the winner's snapshot");
+  assertEqual(state.createParams?.snapshot, "eval-env-cafe", "create names the snapshot, not a raw image");
+  assertEqual(state.createParams?.image, undefined, "the slow direct image pull is never reached");
+  assertEqual(state.snapshotCreateCalls, 1, "the losing build is attempted exactly once");
+  assertEqual(state.gets, 4, "the wait polls until the winner reports active");
+}
+
+async function testConflictWinnerFailureFallsBackToDirectPull(): Promise<void> {
+  console.log("\n[6n] DaytonaProvider.create() - the winner's build dies: direct pull is still the fallback");
+
+  // Terminal failure is the ONE case a direct pull is still right: nobody is
+  // going to produce this snapshot, so waiting longer buys nothing.
+  const { client, state } = createConflictClient([
+    null,
+    { state: "pulling" },
+    { state: "build_failed" },
+  ]);
+  const provider = new FastConflictProvider({ apiKey: "test-key" });
+  (provider as unknown as { client: unknown }).client = client;
+
+  const instance = await silenceNoise(() => provider.create({ image: "eval-env-cafe" }));
+  assertEqual(instance.sandboxId, "sb-direct-pull", "the fallback path produces the sandbox");
+  assertEqual(state.createParams?.image, "eval-env-cafe", "the fallback pulls the image directly");
+  assertEqual(state.createParams?.snapshot, undefined, "no snapshot is named on the fallback create");
+}
+
+async function testConflictTimeoutIsFinalNotADirectPull(): Promise<void> {
+  console.log("\n[6o] DaytonaProvider.create() - a winner that never finishes is a loud error, not a second build");
+
+  // A build that is still running is not a reason to run a second copy of it:
+  // that doubles the spend and hides the incident behind a slow success.
+  const { client, state } = createConflictClient([null, { state: "pulling" }]);
+  // Every later poll keeps answering "pulling" until the budget runs out.
+  client.snapshot.get = async () => {
+    state.gets++;
+    return state.gets === 1 ? Promise.reject(new Error("not found")) : { state: "pulling" };
+  };
+  const provider = new FastConflictProvider({ apiKey: "test-key" });
+  (provider as unknown as { client: unknown }).client = client;
+
+  let error: unknown;
+  try {
+    await silenceNoise(() => provider.create({ image: "eval-env-cafe" }));
+  } catch (e) {
+    error = e;
+  }
+  assert(error instanceof DaytonaSnapshotConflictError, "the exhausted wait throws DaytonaSnapshotConflictError");
+  assert(String(error).includes("eval-env-cafe"), "the error names the contended snapshot");
+  assert(String(error).includes("pulling"), "the error reports the winner's last observed state");
+  assertEqual(state.createParams, undefined, "no sandbox is created — neither from snapshot nor by direct pull");
+}
+
+async function testConflictWithResourcesPullsDirectlyWithThatSizing(): Promise<void> {
+  console.log("\n[6p] DaytonaProvider.create() - conflict + declared sizing: direct pull that HONOURS the sizing");
+
+  // The winner's snapshot pins ITS resources, so joining the race would hand
+  // back a box that quietly ignores this caller's request. The direct pull
+  // takes the request — and it is what this case has always done.
+  const { client, state } = createConflictClient([null, { state: "active" }]);
+  const provider = new FastConflictProvider({ apiKey: "test-key" });
+  (provider as unknown as { client: unknown }).client = client;
+
+  const instance = await silenceNoise(() =>
+    provider.create({ image: "eval-env-cafe", resources: { cpu: 8, memory: 16 } })
+  );
+  assertEqual(instance.sandboxId, "sb-direct-pull", "the sandbox comes from the direct image pull");
+  assertEqual(state.createParams?.image, "eval-env-cafe", "the fallback pulls the image directly");
+  assertEqual(state.createParams?.resources?.cpu, 8, "the caller's cpu request survives");
+  assertEqual(state.createParams?.resources?.memory, 16, "and so does the memory request");
+  assertEqual(state.gets, 1, "no wait is spent on a build that cannot carry this sizing");
+}
+
+async function testInFlightBuildIsJoinedWithoutASecondCreate(): Promise<void> {
+  console.log("\n[6x] DaytonaProvider.create() - a snapshot already mid-build is joined, never re-created");
+
+  // The fast-path GET already knows a build is running: calling snapshot.create
+  // here can only lose the name, and an answer that is NOT a 409 leaves the SDK
+  // polling that build with no budget of ours at all.
+  let gets = 0;
+  let snapshotCreateCalls = 0;
+  let createParams: { snapshot?: string; image?: string } | undefined;
+  const provider = new FastConflictProvider({ apiKey: "test-key" });
+  (provider as unknown as { client: unknown }).client = {
+    snapshot: {
+      get: async () => {
+        gets++;
+        return gets === 1 ? { state: "pending" } : { state: "active" };
+      },
+      create: async () => {
+        snapshotCreateCalls++;
+        throw new Error("MARKER_SECOND_BUILD_STARTED");
+      },
+    },
+    create: async (params: { snapshot?: string; image?: string }) => {
+      createParams = params;
+      return { id: "sb-joined" };
+    },
+  };
+
+  const instance = await silenceNoise(() => provider.create({ image: "eval-env-cafe" }));
+  assertEqual(instance.sandboxId, "sb-joined", "the sandbox comes from the build that was already running");
+  assertEqual(snapshotCreateCalls, 0, "no second build is started");
+  assertEqual(createParams?.snapshot, "eval-env-cafe", "the sandbox is created from the snapshot");
+  assertEqual(createParams?.image, undefined, "and never by direct pull");
+}
+
+async function testInFlightBuildWithResourcesPullsDirectly(): Promise<void> {
+  console.log("\n[6y] DaytonaProvider.create() - mid-build + declared sizing: straight to the direct pull");
+
+  let gets = 0;
+  let snapshotCreateCalls = 0;
+  let createParams: { image?: string; resources?: { cpu?: number } } | undefined;
+  const provider = new FastConflictProvider({ apiKey: "test-key" });
+  (provider as unknown as { client: unknown }).client = {
+    snapshot: {
+      get: async () => {
+        gets++;
+        return { state: "building" };
+      },
+      create: async () => {
+        snapshotCreateCalls++;
+        throw new Error("MARKER_SECOND_BUILD_STARTED");
+      },
+    },
+    create: async (params: { image?: string; resources?: { cpu?: number } }) => {
+      createParams = params;
+      return { id: "sb-direct-pull" };
+    },
+  };
+
+  const instance = await silenceNoise(() =>
+    provider.create({ image: "eval-env-cafe", resources: { cpu: 8 } })
+  );
+  assertEqual(instance.sandboxId, "sb-direct-pull", "the caller gets a box built to the requested size");
+  assertEqual(createParams?.resources?.cpu, 8, "the sizing request survives");
+  assertEqual(snapshotCreateCalls, 0, "no doomed snapshot build is attempted");
+  assertEqual(gets, 1, "and no wait is spent on a build that cannot carry this sizing");
+}
+
+async function testConflictWinnerFoundInactiveIsReactivatedAndReused(): Promise<void> {
+  console.log("\n[6z] DaytonaProvider.create() - a winner found asleep is reactivated, not rebuilt");
+
+  // Daytona deactivates a snapshot unused for two weeks, so a build that won
+  // the name long ago can be found inactive. Exists-but-inactive is HEALED
+  // here for the same reason the fast path heals it.
+  let gets = 0;
+  let activateCalls = 0;
+  let createParams: { snapshot?: string; image?: string } | undefined;
+  const provider = new FastConflictProvider({ apiKey: "test-key" });
+  (provider as unknown as { client: unknown }).client = {
+    snapshot: {
+      get: async () => {
+        gets++;
+        if (gets === 1) throw new Error("snapshot not found");
+        return gets === 2 ? { state: "inactive" } : { state: "active" };
+      },
+      activate: async () => {
+        activateCalls++;
+        return { state: "active" };
+      },
+      create: async () => {
+        throw new Error('Snapshot with name "eval-env-cafe" already exists');
+      },
+    },
+    create: async (params: { snapshot?: string; image?: string }) => {
+      createParams = params;
+      return { id: "sb-reactivated" };
+    },
+  };
+
+  const instance = await silenceNoise(() => provider.create({ image: "eval-env-cafe" }));
+  assertEqual(instance.sandboxId, "sb-reactivated", "the sandbox comes from the reactivated snapshot");
+  assertEqual(activateCalls, 1, "the sleeping winner is activated exactly once");
+  assertEqual(createParams?.snapshot, "eval-env-cafe", "and the sandbox is created from it");
+  assertEqual(createParams?.image, undefined, "no direct pull is needed");
+}
+
+async function testCleanBuildPathIsUnchanged(): Promise<void> {
+  console.log("\n[6q] DaytonaProvider.create() - no conflict: the build path is untouched");
+
+  let gets = 0;
+  let snapshotCreateCalls = 0;
+  let createParams: { snapshot?: string; image?: string } | undefined;
+  const provider = new FastConflictProvider({ apiKey: "test-key" });
+  (provider as unknown as { client: unknown }).client = {
+    snapshot: {
+      get: async () => {
+        gets++;
+        throw new Error("snapshot not found");
+      },
+      create: async () => {
+        snapshotCreateCalls++;
+        return {};
+      },
+    },
+    create: async (params: { snapshot?: string; image?: string }) => {
+      createParams = params;
+      return { id: "sb-built" };
+    },
+  };
+
+  const instance = await silenceNoise(() => provider.create({ image: "eval-env-cafe" }));
+  assertEqual(instance.sandboxId, "sb-built", "a clean build still produces the sandbox");
+  assertEqual(snapshotCreateCalls, 1, "the snapshot is built once");
+  assertEqual(createParams?.snapshot, "eval-env-cafe", "the sandbox is created from the fresh snapshot");
+  assertEqual(gets, 1, "no conflict wait is entered when nothing conflicted");
+}
+
+async function testNonConflictBuildFailureStillFallsBack(): Promise<void> {
+  console.log("\n[6r] DaytonaProvider.create() - a non-conflict build failure keeps the old fallback");
+
+  // Quota, credentials, a bad image: unchanged behavior, and no ten-minute
+  // wait for a winner that does not exist.
+  const { client, state } = createConflictClient([null, { state: "active" }], {
+    createError: new Error("insufficient quota for snapshot build"),
+  });
+  const provider = new FastConflictProvider({ apiKey: "test-key" });
+  (provider as unknown as { client: unknown }).client = client;
+
+  const instance = await silenceNoise(() => provider.create({ image: "eval-env-cafe" }));
+  assertEqual(instance.sandboxId, "sb-direct-pull", "the direct image fallback still runs");
+  assertEqual(state.createParams?.image, "eval-env-cafe", "the fallback pulls the image directly");
+  assertEqual(state.gets, 1, "no conflict wait is spent on a failure that is not a race");
+}
+
+async function testWaitPollsTransitionalStatesToActive(): Promise<void> {
+  console.log("\n[6s] waitForSnapshotConflictWinner() - transitional states are polled through to active");
+
+  const states = ["pending", "pulling", "active"];
+  let gets = 0;
+  const client = { snapshot: { get: async () => ({ state: states[gets++] }) } };
+
+  const result = await silenceNoise(() =>
+    _testWaitForSnapshotConflictWinner(client, "evolve-all", { timeoutMs: 5_000, pollMs: 1 })
+  );
+  assertEqual(result.state, "active", "the wait ends on the active state");
+  assertEqual(gets, 3, "each poll asks the API again");
+}
+
+async function testWaitReturnsTerminalFailureRatherThanThrowing(): Promise<void> {
+  console.log("\n[6t] waitForSnapshotConflictWinner() - a dead winner is REPORTED, so the caller can fall back");
+
+  for (const dead of ["error", "build_failed"]) {
+    const client = { snapshot: { get: async () => ({ state: dead }) } };
+    const result = await silenceNoise(() =>
+      _testWaitForSnapshotConflictWinner(client, "evolve-all", { timeoutMs: 5_000, pollMs: 1 })
+    );
+    assertEqual(result.state, dead, `state "${dead}" is returned, not thrown`);
+  }
+}
+
+async function testWaitOnlyWaitsOnInFlightStates(): Promise<void> {
+  console.log("\n[6aa] waitForSnapshotConflictWinner() - only a build IN FLIGHT is worth waiting for");
+
+  // The wait is a whitelist, not a blacklist of known failures: "inactive" is
+  // reusable after reactivation, "removing" is gone, and a state Daytona has
+  // not invented yet must not poll a doomed name for the full budget.
+  for (const resolved of ["inactive", "removing", "some_new_daytona_state"]) {
+    let gets = 0;
+    const client = {
+      snapshot: {
+        get: async () => {
+          gets++;
+          return { state: resolved };
+        },
+      },
+    };
+    const result = await silenceNoise(() =>
+      _testWaitForSnapshotConflictWinner(client, "evolve-all", { timeoutMs: 5_000, pollMs: 1 })
+    );
+    assertEqual(result.state, resolved, `state "${resolved}" resolves the wait`);
+    assertEqual(gets, 1, `and "${resolved}" is answered on the first poll, never waited out`);
+  }
+
+  // The in-flight states, by contrast, are exactly what the wait is for.
+  for (const inFlight of ["pending", "pulling", "building", "snapshotting"]) {
+    let gets = 0;
+    const client = {
+      snapshot: {
+        get: async () => {
+          gets++;
+          return { state: gets < 3 ? inFlight : "active" };
+        },
+      },
+    };
+    const result = await silenceNoise(() =>
+      _testWaitForSnapshotConflictWinner(client, "evolve-all", { timeoutMs: 5_000, pollMs: 1 })
+    );
+    assertEqual(result.state, "active", `state "${inFlight}" is waited through to active`);
+    assertEqual(gets, 3, `and "${inFlight}" keeps polling while the build runs`);
+  }
+}
+
+async function testWaitEndsEarlyOnAuthFailure(): Promise<void> {
+  console.log("\n[6ab] waitForSnapshotConflictWinner() - rejected credentials end the wait at once");
+
+  // A 401 does not become a 200 in nine more minutes, and this wait has no
+  // outer retry to catch it — burning the budget would only hide the cause.
+  for (const refusal of [
+    { status: 401, message: "Unauthorized" },
+    { response: { status: 403 }, message: "nope" },
+    new Error("Request failed with status code 401"),
+  ]) {
+    let gets = 0;
+    const client = {
+      snapshot: {
+        get: async () => {
+          gets++;
+          throw refusal;
+        },
+      },
+    };
+
+    let error: unknown;
+    try {
+      await silenceNoise(() =>
+        _testWaitForSnapshotConflictWinner(client, "evolve-all", { timeoutMs: 5_000, pollMs: 1 })
+      );
+    } catch (e) {
+      error = e;
+    }
+    assert(error instanceof DaytonaSnapshotConflictError, "an auth refusal throws the typed error");
+    assert(String(error).includes("cannot read the snapshot"), "and says the credentials are the problem");
+    assertEqual(gets, 1, "the wait stops on the first refusal");
+  }
+}
+
+async function testWaitEndsAfterRepeatedIdenticalFailures(): Promise<void> {
+  console.log("\n[6ac] waitForSnapshotConflictWinner() - a control plane that keeps failing the same way ends the wait");
+
+  let gets = 0;
+  const client = {
+    snapshot: {
+      get: async () => {
+        gets++;
+        throw new Error("connect ECONNREFUSED");
+      },
+    },
+  };
+
+  let error: unknown;
+  try {
+    await silenceNoise(() =>
+      _testWaitForSnapshotConflictWinner(client, "evolve-all", { timeoutMs: 60_000, pollMs: 1 })
+    );
+  } catch (e) {
+    error = e;
+  }
+  assert(error instanceof DaytonaSnapshotConflictError, "three identical failures throw the typed error");
+  assert(String(error).includes("ECONNREFUSED"), "the cause survives in the message");
+  assertEqual(gets, 3, "and the wait stops there rather than running to its deadline");
+}
+
+async function testWaitToleratesTransientPollFailures(): Promise<void> {
+  console.log("\n[6u] waitForSnapshotConflictWinner() - a failed poll is retried, not fatal");
+
+  // Unlike the activation poll, a GET failure here is expected: the winner's
+  // record can be briefly unreadable mid-build.
+  let gets = 0;
+  const client = {
+    snapshot: {
+      get: async () => {
+        gets++;
+        if (gets < 3) throw new Error("socket hang up");
+        return { state: "active" };
+      },
+    },
+  };
+
+  const result = await silenceNoise(() =>
+    _testWaitForSnapshotConflictWinner(client, "evolve-all", { timeoutMs: 5_000, pollMs: 1 })
+  );
+  assertEqual(result.state, "active", "the wait survives transient poll failures");
+  assertEqual(gets, 3, "and keeps polling until the winner answers");
+}
+
+async function testWaitIsBoundedByItsBudget(): Promise<void> {
+  console.log("\n[6v] waitForSnapshotConflictWinner() - the wait is bounded and says what it saw");
+
+  const client = { snapshot: { get: async () => ({ state: "building" }) } };
+
+  let error: unknown;
+  try {
+    await silenceNoise(() =>
+      _testWaitForSnapshotConflictWinner(client, "evolve-all", { timeoutMs: 0, pollMs: 1 })
+    );
+  } catch (e) {
+    error = e;
+  }
+  assert(error instanceof DaytonaSnapshotConflictError, "the exhausted budget throws the typed error");
+  assert(String(error).includes("evolve-all"), "the error names the snapshot");
+  assert(String(error).includes("building"), "the error reports the last observed state");
+  assert(String(error).includes("0ms"), "the error states the bound that was exceeded");
+}
+
+async function testConflictDetection(): Promise<void> {
+  console.log("\n[6w] isSnapshotNameConflict() - what counts as a lost name race");
+
+  // Harbor decides on the same two substrings (snapshots.py:281-283); the HTTP
+  // status is what the TS SDK adds on top.
+  assert(_testIsSnapshotNameConflict(new Error("Snapshot already exists")), '"already exists" is a conflict');
+  assert(_testIsSnapshotNameConflict(new Error("ALREADY EXISTS")), "the match is case-insensitive");
+  assert(_testIsSnapshotNameConflict(new Error("409 Conflict")), '"conflict" is a conflict');
+  assert(_testIsSnapshotNameConflict({ status: 409, message: "nope" }), "a 409 status is a conflict");
+  assert(_testIsSnapshotNameConflict({ statusCode: 409 }), "statusCode is read too");
+  assert(_testIsSnapshotNameConflict({ response: { status: 409 } }), "so is response.status");
+
+  assert(!_testIsSnapshotNameConflict(new Error("insufficient quota")), "a quota failure is not a race");
+  assert(!_testIsSnapshotNameConflict(new Error("build 409abc failed")), "a stray 409 in text is not a race");
+  assert(!_testIsSnapshotNameConflict({ status: 500 }), "a server error is not a race");
+}
+
+// =============================================================================
 // [7] DaytonaCommands — mock-based session exec wiring
 // =============================================================================
 
@@ -1201,6 +1699,24 @@ const tests = [
   testActivateSnapshotTimesOutLoudly,
   testActivateSnapshotSurfacesActivateFailure,
   testActivateSnapshotPollFailureIsTyped,
+  // [6.6] wait-on-conflict
+  testConflictWaitsThenReusesWinner,
+  testConflictWinnerFailureFallsBackToDirectPull,
+  testConflictTimeoutIsFinalNotADirectPull,
+  testConflictWithResourcesPullsDirectlyWithThatSizing,
+  testInFlightBuildIsJoinedWithoutASecondCreate,
+  testInFlightBuildWithResourcesPullsDirectly,
+  testConflictWinnerFoundInactiveIsReactivatedAndReused,
+  testCleanBuildPathIsUnchanged,
+  testNonConflictBuildFailureStillFallsBack,
+  testWaitPollsTransitionalStatesToActive,
+  testWaitReturnsTerminalFailureRatherThanThrowing,
+  testWaitOnlyWaitsOnInFlightStates,
+  testWaitEndsEarlyOnAuthFailure,
+  testWaitEndsAfterRepeatedIdenticalFailures,
+  testWaitToleratesTransientPollFailures,
+  testWaitIsBoundedByItsBudget,
+  testConflictDetection,
   // [7] DaytonaCommands
   testCommandsRunAsRootUsesSudoWrapper,
   testCommandsRunDefaultUserNoWrapper,
