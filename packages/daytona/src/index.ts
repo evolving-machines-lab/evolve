@@ -110,6 +110,19 @@ export const DAYTONA_SNAPSHOT_ACTIVATE_TIMEOUT_MS = 180_000;
 const DAYTONA_SNAPSHOT_ACTIVATE_POLL_MS = 2_000;
 
 /**
+ * How long a create that LOST a snapshot name race waits for the winner's
+ * build before giving up. Same budget the build path already spends on its own
+ * snapshot create and on the sandbox create that follows it ({ timeout: 600 }),
+ * and the same number Harbor waits — see
+ * REFERENCES/Harbor/src/harbor/environments/daytona/snapshots.py:306-311
+ * (`_wait_for_active`, `timeout: int = 600`).
+ */
+export const DAYTONA_SNAPSHOT_CONFLICT_TIMEOUT_MS = 600_000;
+
+/** Harbor polls the losing side every 5s (snapshots.py:312-313). */
+const DAYTONA_SNAPSHOT_CONFLICT_POLL_MS = 5_000;
+
+/**
  * Clocks of a STREAMED run (see awaitStreamedExit). The poll that reads the
  * command's exit code backs off from pollMin to pollMax. A follow whose
  * command has already ended is cut once it has been SILENT for drainMs —
@@ -372,6 +385,129 @@ async function activateSnapshot(
 
   console.log(`[daytona] Snapshot "${name}" reactivated.`);
   return current;
+}
+
+/**
+ * Typed error for a snapshot name race whose WINNER never finished. The losing
+ * create waited out its whole budget while another process was still building
+ * the same name, so there is nothing to reuse and nothing failed either — the
+ * only honest answer is to say so. Deliberately NOT a direct-pull trigger: a
+ * second copy of a build that is still running would double the spend on the
+ * same image and hide a provider incident behind a slow success.
+ */
+export class DaytonaSnapshotConflictError extends Error {
+  /** The contended snapshot name. */
+  readonly snapshot: string;
+
+  constructor(snapshot: string, lastState: string | undefined, timeoutMs: number) {
+    super(
+      `Daytona snapshot "${snapshot}" is being created by another process and was still ` +
+        `"${lastState ?? "unknown"}" after ${timeoutMs}ms. The other build is holding the name, so ` +
+        "this run can neither reuse nor rebuild it. Retry once the build finishes, or check the " +
+        "snapshot in the Daytona dashboard (Snapshots page)."
+    );
+    this.name = "DaytonaSnapshotConflictError";
+    this.snapshot = snapshot;
+  }
+}
+
+/**
+ * The slice of the Daytona client the conflict wait touches — structural, so
+ * the unit tests can drive it with a plain mock.
+ */
+interface SnapshotWaitClient {
+  snapshot: {
+    get(name: string): Promise<{ state?: string } | undefined>;
+  };
+}
+
+/**
+ * Does this snapshot-create failure mean "someone else already owns this
+ * name"? Harbor decides the same question on the same evidence — lowercased
+ * message contains "already exists" or "conflict"
+ * (REFERENCES/Harbor/src/harbor/environments/daytona/snapshots.py:281-283) —
+ * and this adds the HTTP status the TS SDK carries on its error objects, which
+ * the Python side does not surface as plainly.
+ *
+ * Kept to those signals on purpose: anything looser (a bare "409" anywhere in
+ * the text, say) would classify an unrelated build failure as a race and make
+ * this create wait ten minutes for a winner that does not exist.
+ */
+function isSnapshotNameConflict(err: unknown): boolean {
+  const e = err as {
+    status?: number;
+    statusCode?: number;
+    response?: { status?: number };
+  } | null;
+  const status = e?.status ?? e?.statusCode ?? e?.response?.status;
+  if (status === 409) return true;
+  const message = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return message.includes("already exists") || message.includes("conflict");
+}
+
+/**
+ * Wait for the winner of a snapshot name race to finish, and report which way
+ * it went.
+ *
+ * WAIT-ON-CONFLICT, Harbor's law: when snapshot.create loses the name, the
+ * image is already being built by the process that won it, so the right move
+ * is to wait for that build and then use it — never to start a second, slower
+ * copy of the same work. Harbor does exactly this at
+ * REFERENCES/Harbor/src/harbor/environments/daytona/snapshots.py:281-288
+ * (conflict -> `_wait_for_active`), with the poll loop at :306-330.
+ *
+ * Two deliberate adaptations to this provider's idiom:
+ *   - GET FIRST, then sleep. Harbor sleeps a full interval before its first
+ *     look; most races here are lost to a build that finished seconds ago, and
+ *     a wait that starts by looking costs nothing when the answer is already
+ *     "active". Same loop shape as activateSnapshot() above.
+ *   - A failed GET is not fatal. The winner's snapshot can be briefly
+ *     unreadable mid-build, so a poll error is logged and retried until the
+ *     deadline (Harbor warns and continues too, :327-329) — unlike the
+ *     activation poll, where a failed GET IS the verdict.
+ *
+ * Returns the terminal snapshot record: `active` means reuse it, `error` /
+ * `build_failed` means the winner's build died and the caller may fall back.
+ * Throws DaytonaSnapshotConflictError if the budget runs out first.
+ */
+async function waitForSnapshotConflictWinner(
+  client: SnapshotWaitClient,
+  name: string,
+  timing?: { timeoutMs?: number; pollMs?: number },
+): Promise<{ state?: string }> {
+  const timeoutMs = timing?.timeoutMs ?? DAYTONA_SNAPSHOT_CONFLICT_TIMEOUT_MS;
+  const pollMs = timing?.pollMs ?? DAYTONA_SNAPSHOT_CONFLICT_POLL_MS;
+
+  console.log(
+    `[daytona] Snapshot "${name}" is already being created by another process — waiting for it ` +
+      `(up to ${Math.round(timeoutMs / 1000)}s) instead of pulling the image directly...`
+  );
+
+  const deadline = Date.now() + timeoutMs;
+  let current: { state?: string } | undefined;
+  for (;;) {
+    try {
+      current = await client.snapshot.get(name);
+    } catch (err) {
+      // Expected while the winner builds: the record may not be readable yet.
+      current = undefined;
+      console.warn(
+        `[daytona] Poll of contended snapshot "${name}" failed, retrying: ` +
+          `${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+
+    if (current?.state === "active") return current;
+    // Terminal failure of the winner's build. Reported, not thrown: this is
+    // the one case where nobody is going to produce the snapshot and a direct
+    // image pull is still the caller's best remaining move.
+    if (current?.state === "error" || current?.state === "build_failed") return current;
+
+    if (Date.now() >= deadline) {
+      throw new DaytonaSnapshotConflictError(name, current?.state, timeoutMs);
+    }
+    await sleep(pollMs);
+  }
 }
 
 // ============================================================
@@ -2113,6 +2249,16 @@ export class DaytonaProvider implements SandboxProvider {
   /** Set only in Evolve-managed mode; see the EVOLVE-MANAGED MODE section. */
   private readonly managedStream?: ManagedStreamContext;
 
+  /**
+   * Clocks of the WAIT-ON-CONFLICT path (see waitForSnapshotConflictWinner).
+   * A field rather than a constant so tests can drive the shape of the wait
+   * without spending its production budget, the same way streamTimings does.
+   */
+  protected snapshotConflictTiming: { timeoutMs: number; pollMs: number } = {
+    timeoutMs: DAYTONA_SNAPSHOT_CONFLICT_TIMEOUT_MS,
+    pollMs: DAYTONA_SNAPSHOT_CONFLICT_POLL_MS,
+  };
+
   constructor(config: ResolvedDaytonaConfig) {
     const clientConfig = {
       apiKey: config.apiKey,
@@ -2290,33 +2436,67 @@ export class DaytonaProvider implements SandboxProvider {
       try {
         // Step 1: Create named snapshot (blocking — so it's available for all future runs)
         // Use Image.base() — snapshot.create() requires a Daytona Image object, not a raw string
-        await this.client.snapshot.create(
-          {
-            name: imageName,
-            image: Image.base(publicImage),
-            resources: {
-              cpu: options.resources?.cpu ?? 4,
-              memory: options.resources?.memory ?? 4,
-              disk: options.resources?.disk ?? 10,
-              // GPU count, when requested: Daytona allocates GPU at snapshot
-              // build. Tier-gated on Daytona's side — an account without GPU
-              // quota gets Daytona's own loud refusal here, never a silent CPU
-              // snapshot.
-              ...((options.resources?.gpu ?? 0) > 0
-                ? { gpu: options.resources!.gpu! }
-                : {}),
-              // GPU TYPE, when constrained: a real wire field since 0.203.0
-              // (Resources.gpuType, e.g. "H100"). Passed through as given —
-              // Daytona rejects names outside its GpuType enum loudly, which
-              // beats this provider maintaining a shadow copy of their list.
-              ...(options.resources?.gpuTypes?.length
-                ? { gpuType: options.resources.gpuTypes as GpuType[] }
-                : {}),
+        try {
+          await this.client.snapshot.create(
+            {
+              name: imageName,
+              image: Image.base(publicImage),
+              resources: {
+                cpu: options.resources?.cpu ?? 4,
+                memory: options.resources?.memory ?? 4,
+                disk: options.resources?.disk ?? 10,
+                // GPU count, when requested: Daytona allocates GPU at snapshot
+                // build. Tier-gated on Daytona's side — an account without GPU
+                // quota gets Daytona's own loud refusal here, never a silent CPU
+                // snapshot.
+                ...((options.resources?.gpu ?? 0) > 0
+                  ? { gpu: options.resources!.gpu! }
+                  : {}),
+                // GPU TYPE, when constrained: a real wire field since 0.203.0
+                // (Resources.gpuType, e.g. "H100"). Passed through as given —
+                // Daytona rejects names outside its GpuType enum loudly, which
+                // beats this provider maintaining a shadow copy of their list.
+                ...(options.resources?.gpuTypes?.length
+                  ? { gpuType: options.resources.gpuTypes as GpuType[] }
+                  : {}),
+              },
             },
-          },
-          { onLogs: (log: string) => console.log(`[daytona] ${log}`) },
-        );
-        console.log(`[daytona] Snapshot "${imageName}" ready.`);
+            { onLogs: (log: string) => console.log(`[daytona] ${log}`) },
+          );
+          console.log(`[daytona] Snapshot "${imageName}" ready (built here).`);
+        } catch (createErr) {
+          // WAIT-ON-CONFLICT. Losing the name means another process is ALREADY
+          // building this exact image, so the cheap move is to wait for it and
+          // then use it as a cache hit. The old code fell straight through to
+          // the direct image pull below, which pulls the same bytes a second
+          // time on the slow path — the 2026-07-31 evolve-all prod incident,
+          // whose other half (exists-but-inactive) is healed in the fast path
+          // above. Harbor rules this the same way:
+          // REFERENCES/Harbor/src/harbor/environments/daytona/snapshots.py:281-288.
+          if (!isSnapshotNameConflict(createErr)) throw createErr;
+
+          // Declared sizing cannot survive a lost race: the winner's snapshot
+          // pins its own resources and create-from-snapshot cannot resize, so
+          // this is the same verdict the fast path gives for a snapshot that
+          // already exists — refused before the wait, never silently ignored.
+          if (wantsResources) throw new DaytonaResourcesError(imageName);
+
+          const winner = await waitForSnapshotConflictWinner(
+            this.client,
+            imageName,
+            this.snapshotConflictTiming,
+          );
+          if (winner.state !== "active") {
+            // The winner's build died, so nobody is going to produce this
+            // snapshot: the direct pull below is the only remaining path.
+            throw new Error(
+              `the concurrent build of snapshot "${imageName}" ended in state "${winner.state}"`
+            );
+          }
+          console.log(
+            `[daytona] Snapshot "${imageName}" ready (built by a concurrent create) — reusing it.`
+          );
+        }
 
         // Step 2: Create sandbox from the just-created snapshot (fast)
         sandbox = await this.client.create(
@@ -2327,6 +2507,13 @@ export class DaytonaProvider implements SandboxProvider {
           { timeout: 600 }
         );
       } catch (snapshotErr) {
+        // The same two final verdicts the fast path honours, for the same
+        // reason: a caller's declared sizing that an existing snapshot cannot
+        // enforce, and a name race whose winner never finished, are both
+        // answers — not reasons to pull the image the slow way and call it a
+        // success.
+        if (snapshotErr instanceof DaytonaResourcesError) throw snapshotErr;
+        if (snapshotErr instanceof DaytonaSnapshotConflictError) throw snapshotErr;
         // Snapshot creation failed — fall back to direct image creation
         console.warn(`[daytona] Snapshot creation failed, falling back to direct image: ${snapshotErr instanceof Error ? snapshotErr.message : snapshotErr}`);
         try {
@@ -2596,6 +2783,8 @@ export const _testImageRegistryHost = imageRegistryHost;
 export const _testToSandboxInfo = toSandboxInfo;
 export const _testDaytonaStateToEvolveState = daytonaStateToEvolveState;
 export const _testActivateSnapshot = activateSnapshot;
+export const _testWaitForSnapshotConflictWinner = waitForSnapshotConflictWinner;
+export const _testIsSnapshotNameConflict = isSnapshotNameConflict;
 export const _testImageMap = IMAGE_MAP;
 export const _testWithEndOfOutputSentinel = withEndOfOutputSentinel;
 export const _testStripEndOfOutputSentinel = stripEndOfOutputSentinel;
