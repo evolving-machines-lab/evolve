@@ -3314,7 +3314,7 @@ async function cmdTrialDownload(inv: Invocation, io: CliIO): Promise<number> {
   // Save mode: the trial as HARBOR'S TRIAL TREE under <output-dir>/<trial-id>/
   // — config.json, result.json, agent/ (trajectory, raw logs, parsed events,
   // sessions/), verifier/, PLUS evolve.json (the platform record Harbor has
-  // no slot for: gateway money/tokens per lane, provider, org, regrade
+  // no slot for: gateway money/tokens per lane, provider, user_id, regrade
   // lineage). The assembly is the SDK's (assembleTrialTree — the CLI only
   // fetches parts and writes files); absent artifacts are absent files.
   const { mkdir, writeFile } = await import("node:fs/promises");
