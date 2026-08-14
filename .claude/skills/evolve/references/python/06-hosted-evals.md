@@ -70,7 +70,7 @@ job = await evals.start(
         {'name': 'claude', 'model_name': 'fable'},
     ],
     n_attempts=1,               # (optional) attempts per task × agent arm, default 1
-    n_concurrent_trials=4,      # (optional) parallel trials, default 4, ceiling 16
+    n_concurrent_trials=4,      # (optional) parallel trials, default 4, ceiling 150
     max_trial_spend_usd=25,     # (optional) hard model-spend cap for EACH trial
 )
 
@@ -127,6 +127,8 @@ The include/exclude sets refine *within* the infrastructure class by exception n
 
 A retried trial keeps its receipts. `trial.n_retries` counts the requeues, and `trial.retries` lists each retired attempt with its exception, its spend, and its clocks — so a scored trial that took three attempts is auditable without archaeology, and the job's `stats['n_retries']` is the consumed-retry sum across all trials. Each attempt spends against its own full per-trial cap, and every retired attempt's real spend stays in the job total — which is why `worst_case_spend_usd` carries the `(max_retries + 1)` product ([Money](#money)).
 
+The budget can also end early. Two consecutive infrastructure failures with the **same signature** break the circuit: the retry the policy would have scheduled is refused, the trial stays terminal, and whatever remains of `max_retries` goes unspent. A signature is the class of fault, read from the typed failure phase alone and never from message text — `sandbox_death` (the box ceased to exist mid-run), `provider_create_failure` (the box never came up), `stream_disconnect` (the run's event stream ended without the harness ever speaking). The trial's `exception_info.exception_message` is rewritten to name the signature and the count, and the job stream carries `trial.retry_circuit_broken` with `signature`, `consecutive`, `failure_phase` and `retries_unused`. The reason is arithmetic: a dead provider-and-region combination answers the same way every time, so it should cost minutes, not a whole retry budget's worth of timeouts. Three guarantees keep it from eating real transients — the **first** failure of any signature always retries, **alternating** signatures never accumulate (the streak resets on any non-matching failure), and the breaker runs strictly after the `max_retries` and include/exclude adjudication, so it can only ever shorten the budget, never extend it.
+
 On the stream, a requeue emits `trial.retrying` right after the `trial.settled` that recorded the failure. That means **`trial.settled` is not final** for a trial the policy may still re-run: a watcher that treats it as terminal must check for a following `trial.retrying` on the same trial. From the CLI, `-r/--max-retries` and the repeatable `--retry-include`/`--retry-exclude` set the same fields, merging field-by-field over a `--config` file's `retry` object ([CLI](#cli)).
 
 ### Timeout multipliers
@@ -151,9 +153,11 @@ Every multiplier must be greater than 0 and at most the published ceiling — `l
 
 ### Shape and ceilings
 
-A job expands to `tasks × agents × n_attempts` trials, each in its own sandbox. `n_concurrent_trials` is how many run at once. The ceilings — distinct agent arms per job, attempts per task, total trials — all refuse at create rather than partway through, and every one of them is published under `limits['job']` in the [capability document](#what-the-platform-supports) rather than only here, so a form can check a sweep before it POSTs. `sandbox_provider` (optional, default `"e2b"`) picks where the sandboxes run — see [Where it runs](#where-it-runs).
+A job expands to `tasks × agents × n_attempts` trials, each in its own sandbox. `n_concurrent_trials` is how many run at once. The ceilings — distinct agent arms per job, attempts per task, total trials — all refuse at create rather than partway through, and every one of them is published under `limits['job']` in the [capability document](#what-the-platform-supports) rather than only here, so a form can check a sweep before it POSTs. `sandbox_provider` (optional, default `"daytona"`) picks where the sandboxes run — see [Where it runs](#where-it-runs).
 
 `agent_env` and `verifier_env` inject environment values into every agent or verifier run. They are pass-through slots: the client sends them verbatim and the server owns acceptance — refused where unsupported, never silently dropped. The platform honors exactly two `verifier_env` keys — `REWARDKIT_JUDGE` and `REWARDKIT_MODEL`, rewardkit's per-run judge override ([LLM judges](#llm-judges)); every other key, and all of `agent_env`, is refused at create with a message naming that pair.
+
+`secrets` attaches env secrets to every agent run. References (`{'name': ..., 'label': ..., 'as': ...}`) point at stored secrets — never values on the wire. Secrets live on the platform's Secrets surface under a `(name, label)` identity, so several values of one name can exist side by side (`API_KEY` at `staging` and at `prod`); an omitted `label` takes the `default`-labeled row when one exists, the single row when exactly one exists, and refuses as the typed `secret_ambiguous` (naming the labels) when several match and none is `default` — a job never guesses which secret it runs with. `as` renames the env var inside the sandbox, and names the trial's own credential contract owns (the `EVOLVE_` prefix, every built-in harness's gateway and vendor credential/routing slots — including the whole `KIMI_MODEL_*` family — the model env pins, and the judge-override pair) are refused. Inline entries (`{'name': ..., 'value': ..., 'delivery': ..., 'label': ..., 'as': ...}`) are the same vault through a convenience door: the value is saved as a normal env secret first (`delivery` is required — no silent default; `label` defaults to `default`) and the job then stores only the reference — the stored job never contains a value. A `(name, label)` identity that already exists splits on proof: an inline entry restating the stored row byte-for-byte (same value, same delivery) attaches it exactly like a reference — a retry of the same request converges instead of colliding with its own first attempt — while a different value or delivery refuses as the typed `secret_exists` (attach it by reference or pick a label; inline values never overwrite). Every stored env secret carries a **delivery mode**: `brokered` means the value never enters any sandbox (the managed-agents egress-proxy machinery, for header-based HTTPS APIs), `direct` means the raw value is placed in the sandbox environment (URL-parameter keys, gRPC, websockets). Eval trials deliver exactly the **direct** mode — the value enters the trial env and is scrubbed at the credential seal, before hidden tests enter; host/path/method scoping does not apply to a direct secret in any lane. Attaching a brokered secret refuses at create as the typed `secret_brokered_unsupported` — save the secret as direct or use the managed-agents lane; never a silent downgrade.
 
 ### Agent arms
 
@@ -412,9 +416,106 @@ home = await t.artifact(trial_id, 'agent-home')       # dict[path, text] | None
 
 `trace-atif` is the normalized view of the same run: one **ATIF v1.7** document (Harbor's Agent Trajectory Interchange Format — the strict interchange schema its trainer and analysis tooling read), built server-side from the stored parsed trace. The instruction opens it as the first `user` step, each agent turn carries its message, reasoning, tool calls and their observed results, and `final_metrics` states the trial's token totals and measured cost. It answers on the same `{log}` envelope as the raw logs — the string is the JSON document — and None keeps the same meaning: nothing was stored (or the id is a regrade result, whose agent half belongs to its immutable source trial). It is the same document the job archive places at Harbor's own path `agent/trajectory.json`; the separate `trajectory` name stays reserved for a different artifact — the harness's own native session file.
 
-The CLI speaks the same words. `evolve trial download <trial-id> --stream <name>` prints one artifact to stdout; without `--stream`, everything the trial recorded is saved under `<dir>/<trial-id>/` — `trace-parsed.jsonl`, `trace-atif.json`, `verifier.log`, `trace-stdout.log`, `trace-stderr.log`, and `agent-home/` with the folder tree preserved. The two modes are exclusive, and `--cursor`/`--limit` page only `--stream trace-parsed` — the CLI refuses any other mix as a usage error instead of letting one flag silently win.
+The CLI speaks the same words. `evolve trial download <trial-id> --stream <name>` prints one artifact to stdout. Without `--stream` the trial is written out whole under `<dir>/<trial-id>/`, and the layout is **Harbor's trial tree** — Harbor's own names and folders, not the artifact names in the table above:
+
+```
+config.json               trial identity: task + agent, in Harbor vocabulary
+result.json               status, reward, verifier verdict, exception,
+                          agent_result, phase clocks
+agent/trajectory.json     the normalized ATIF trajectory
+agent/stdout.log          the harness process's raw streams
+agent/stderr.log
+agent/trace-parsed.jsonl  the parsed event trace — Evolve's own artifact, riding
+                          inside agent/ because Harbor has no slot for it, and a
+                          Harbor reader ignores it
+agent/sessions/...        the agent CLI's home folder in its VISIBLE shape
+                          (`codex/...`, never `root/.codex/...`)
+verifier/test-stdout.txt  the stored verifier log
+verifier/reward.json      the rewards map, when the verifier produced one
+exception.txt             when the trial carries an exception
+evolve.json               the platform's own record: gateway cost and tokens per
+                          lane, provider, `user_id`, regrade lineage
+```
+
+An artifact the trial never recorded is an **absent file**, never an empty placeholder — Harbor's own law, so listing the directory is an honest inventory of what the run produced.
+
+This tree is assembled on your machine out of the trial's own artifacts, which is why it is not identical to the per-trial directories inside [the job archive](#download-the-archive): the server builds those, so they also carry `lock.json`, `trial.log` and `artifacts/`, and they have no `agent/trace-parsed.jsonl`. `evolve job download` adds an `evolve.json` of its own — one at the job root, one in every trial directory.
+
+The two modes are exclusive, and `--cursor`/`--limit` page only `--stream trace-parsed` — the CLI refuses any other mix as a usage error instead of letting one flag silently win.
 
 This archive belongs to hosted evals: trials are scoring evidence. A managed agent session keeps its parsed transcript download; its raw stream lives in the SDK's local session log and its home folder inside your own sandbox.
+
+---
+
+## Inspect a run without downloading it
+
+A trial's record can be large, and the question you actually have is usually narrow: which events mention this error, what did the verifier print at the end, does any trial in this job hit that stack trace. All three are answered on the server, so nothing has to come down first.
+
+### Filter one trial's trace
+
+`trace()` and `trace_events()` take three filters, and each one composes with the cursor instead of replacing it:
+
+```python
+# type — an exact event type, not a pattern
+calls = await t.trace(trial_id, type='tool.call')
+
+# grep — case-insensitive POSIX regex over the event's type AND its content
+denied = await t.trace(trial_id, grep='permission denied')
+
+# tail — only the last N matching events
+ending = await t.trace(trial_id, tail=50)
+
+# and they combine; paging still runs through the filtered set
+async for event in t.trace_events(trial_id, grep='Traceback', tail=20):
+    print(event.seq, event.type)
+```
+
+`grep` is Postgres's own regex engine, so a plain string is a plain substring match, exactly like `grep` itself; an invalid pattern comes back as a typed `invalid_input` refusal naming `grep`, never a `500`. A filter narrows which events exist on the timeline and nothing else: the cursor still means "seq strictly greater than", `next_cursor` still pages through the filtered set, and events always arrive oldest-first. `tail` is a floor on that same timeline rather than a reversed ordering, so `tail` plus paging drains exactly the last N matches, in order. The bounds: `type` at most 100 characters, `grep` at most 512, `tail` between 1 and 10000, and `limit` up to 1000 (default 200).
+
+### Grep every trial of a job
+
+One pattern, one pass over the whole job:
+
+```python
+hits = await evals.grep(job.id, 'CUDA out of memory')
+for group in hits.items:
+    print(group.trial_id, group.task_name, group.match_count)
+    for event in group.events:
+        print('   ', event.seq, event.type)
+```
+
+Matches group per trial: `match_count` is that trial's exact total, never truncated, and `events` carries the first five matching events as a sample. A trial with no match produces no group, so an empty page means the pattern appears nowhere in the job. Groups order by trial id, `next_cursor` is where the next page resumes, and `limit` defaults to 50 with a maximum of 200. `type` narrows the same way it does on a single trial's trace.
+
+The scan is bounded per request rather than per job, so a sparse pattern over a very large job can answer with a short page and `has_more` still true — keep paging. A pattern too expensive to evaluate is refused as a typed `invalid_input` on `q` that says to narrow it: add `type`, anchor the pattern, or grep one trial's own trace. The full match list for any single trial is exactly that follow-up — same pattern, same engine, same answer.
+
+### List and read a trial's stored files
+
+The files a trial left behind can be listed, and read by the byte, so the tail of a 200 MB log costs a range request instead of a download:
+
+```python
+listing = await t.files(trial_id)
+for file in listing.items:
+    print(file.path, file.size_bytes)
+
+whole = await t.file(trial_id, 'agent/stdout.log')                      # bytes
+head = await t.file(trial_id, 'agent/stdout.log', start=0, end=65535)
+last = await t.file(trial_id, 'agent/stdout.log', suffix=4096)          # last 4 KB
+```
+
+The listing pages like every other collection (`limit` default 200, maximum 1000) and orders by path; an empty listing is a normal answer for a trial that stored nothing. A range that selects nothing inside the file is refused, and asking for a whole file above the server's unranged ceiling is refused with both the file's size and that ceiling — in either case the answer is to ask for a range.
+
+Those two are **SDK-only today**: there is no `evolve trial files` and no `evolve trial read`. The trace side does have CLI verbs:
+
+```bash
+evolve trial trace <trial-id> --grep 'permission denied' --tail 50
+evolve trial trace <trial-id> --type tool.call --limit 500
+evolve job grep <id> 'CUDA out of memory'
+evolve job grep <id> 'Traceback' --type agent.error --cursor <cursor>
+```
+
+`evolve trial trace` drains the filtered trace for you, so its `--limit` is the size of each page it fetches, not a total. `evolve job grep` prints a single page — one line per matching trial, with its sampled events — and names the cursor to resume from when more trials match.
+
+When you do want the bytes on disk after all, [the job archive](#download-the-archive) and `evolve trial download` are still there.
 
 ---
 
@@ -557,11 +658,13 @@ The record files are Harbor's own vocabulary, and everything Evolve-specific rid
 The SDK's TypeScript package ships the `evolve` binary — a thin shell over the same five clients this chapter documents, and nothing in it needs Python. The grammar is noun-verb: `evolve <noun> <verb>`. `run` also stands on its own at the top level, taking `job start`'s flags and documenting itself as `evolve run`. Singular nouns are canonical; `job`, `trial` and `dataset` also answer to their plurals as hidden aliases, as does `ls` for `list`. The plural `agents` is deliberately not an alias — that word is reserved for the managed-agents CLI and refuses with the reason, so use the singular `evolve agent` for eval agent arms.
 
 ```
-job      start | list | show | trials | tasks | compare | cancel | stop | resume | retry | regrade | download
-trial    show | download | retry | regrade | stop
+job      start | list | show | trials | tasks | compare | cancel | stop | resume | retry | regrade | download | grep
+trial    show | trace | download | retry | regrade | stop
 dataset  list | show | publish | download | activate
+skill    list | upload | show | delete
 agent    list | show | add | remove
 auth     status
+secrets  set | list | delete
 ```
 
 The commands below are written as `evolve …`, which is what the binary is called once the package is installed:
@@ -588,13 +691,13 @@ evolve run \
     --watch                      # stream events until the job finishes
 ```
 
-`-i/--include-task-name` and `-x/--exclude-task-name` filter task names by glob and `-l/--n-tasks` caps each dataset's count after filters — all three are stamped onto every dataset selector, so a glob that matches nothing in one dataset simply filters nothing there. `--effort <value>` sets the reasoning effort on **every** arm, verbatim; an agent that cannot honor it is refused by the server rather than silently skipped, so a mixed sweep that needs per-arm efforts belongs in the SDK. `--skill <ref>` (repeatable) mounts skills on **every** arm the same way — `skills.sh/<owner>/<repo>[/<skill>]`, `org/repo[@ref]`, an https git URL, `upload:<id>`, `name:<skill-name>` (your moving name pointer, resolved server-side), or a local folder, which the CLI uploads to the platform first and swaps for its `upload:<id>` handle (`--print-config` still shows the path you typed). `--agent-env` / `--verifier-env` take `KEY=VALUE`, repeatable. `-r/--max-retries` caps [automatic infrastructure-error retries](#automatic-retries) per trial (0 turns them off), and the repeatable `--retry-include`/`--retry-exclude` refine which exception names retry; with `-c/--config`, the file's `retry` object is the base and each flag overrides its own field — Harbor's merge rule. `--timeout-multiplier` stretches (or shrinks) every task-declared timeout for this job's runs, and the four phase flags — `--agent-timeout-multiplier`, `--verifier-timeout-multiplier`, `--agent-setup-timeout-multiplier`, `--environment-build-timeout-multiplier` — each override it for their phase ([Timeout multipliers](#timeout-multipliers)); same field-by-field merge over a `--config` file. `--job-name` labels the run. A flag's value may itself begin with `-` — a glob like `-x '-*'`, a negative number, a bare `-` — and is taken as the value; only a token that spells another flag of the same command is refused, and that refusal shows the `--flag=value` form that states the intent.
+`-i/--include-task-name` and `-x/--exclude-task-name` filter task names by glob and `-l/--n-tasks` caps each dataset's count after filters — all three are stamped onto every dataset selector, so a glob that matches nothing in one dataset simply filters nothing there. `--effort <value>` sets the reasoning effort on **every** arm, verbatim; an agent that cannot honor it is refused by the server rather than silently skipped, so a mixed sweep that needs per-arm efforts belongs in the SDK. `--skill <ref>` (repeatable) mounts skills on **every** arm the same way — `skills.sh/<owner>/<repo>[/<skill>]`, `org/repo[@ref]`, an https git URL, `upload:<id>`, `name:<skill-name>` (your moving name pointer, resolved server-side), or a local folder, which the CLI uploads to the platform first and swaps for its `upload:<id>` handle (`--print-config` still shows the path you typed). `--agent-env` / `--verifier-env` take `KEY=VALUE`, repeatable. `--secret NAME[@LABEL][=ENVNAME]` (repeatable) attaches one of your stored env secrets to every agent run — a reference, never a value: `NAME` is the stored secret's name, `@LABEL` picks a labeled row (omitted = the `default` row, or the only row; several labels with no `default` is refused as ambiguous), and `=ENVNAME` renames the env var inside the sandbox. `--secret-inline "NAME[@LABEL]:DELIVERY=VALUE"` (repeatable) saves `VALUE` into your vault as an env secret and attaches it in one step — `DELIVERY` is `brokered` or `direct` and sits before the `=` so everything after the first `=` is the value, byte-for-byte; `@LABEL` defaults to `default`, and an existing `(NAME, LABEL)` secret splits on proof, exactly as an inline entry does in the SDK: restating it byte-for-byte (same value, same delivery) attaches it, so re-running the same command converges instead of colliding with its own first attempt, while a different value or delivery refuses as `secret_exists` (attach it with `--secret` or pick a label). The job stores only the reference, never the value. `-r/--max-retries` caps [automatic infrastructure-error retries](#automatic-retries) per trial (0 turns them off), and the repeatable `--retry-include`/`--retry-exclude` refine which exception names retry; with `-c/--config`, the file's `retry` object is the base and each flag overrides its own field — Harbor's merge rule. `--timeout-multiplier` stretches (or shrinks) every task-declared timeout for this job's runs, and the four phase flags — `--agent-timeout-multiplier`, `--verifier-timeout-multiplier`, `--agent-setup-timeout-multiplier`, `--environment-build-timeout-multiplier` — each override it for their phase ([Timeout multipliers](#timeout-multipliers)); same field-by-field merge over a `--config` file. `--job-name` labels the run. A flag's value may itself begin with `-` — a glob like `-x '-*'`, a negative number, a bare `-` — and is taken as the value; only a token that spells another flag of the same command is refused, and that refusal shows the `--flag=value` form that states the intent.
 
 `--ak key=value` (repeatable, alias `--agent-kwarg`) is Harbor's agent-kwarg channel, stamped on **every** arm like `--effort`. The key the platform delivers is `config`: `--ak 'config=./settings.json'` reads the local file (JSON, or TOML for a Codex config) and sends its parsed content inline — the server never reads a client path — and `--ak 'config={"permissions":{"deny":["WebSearch"]}}'` passes the document straight. In the sandbox it becomes the harness's native settings file (Claude: a settings JSON layered in via `--settings`; Codex: the base `~/.codex/config.toml`), with your document as the base and the platform's routing, MCP, model and effort stamps on top — so a config can tune permissions or tool behavior, never where model traffic goes. Acceptance is typed, never silent: an unrecognized kwarg key refuses `agent_kwarg_unsupported`, `config` on an agent without native-config support (only `claude` and `codex` have it — each capability entry publishes `supports_config`) refuses `agent_config_unsupported`, and a config key touching billing, base URLs, provider routing, or env injection refuses `agent_config_key_refused` naming the keys. The accepted config is part of the arm's identity: the same agent and model with two configs are two arms, and job bodies echo `kwargs` on each arm.
 
 `--preset <name>` is the plain-words door to the same channel, stamped on **every** arm. Two presets exist: `no-internet` turns off the vendor's server-side web tools — Claude gets a settings `permissions.deny` for WebSearch/WebFetch, Codex gets `-c web_search=disabled` on its command line — enforcement is harness configuration, exactly as Harbor delivers it. Note what that does and does not do: the preset turns off the vendor's **server-side** web tools through harness settings — it does not seal the sandbox network, and what the box itself can reach is still governed by the task's declared [network mode](#network-modes). `pinned-context` pins one fixed effective context window (200000 tokens; Claude via `autoCompactWindow`, Codex via `-c model_context_window`) so vendor-side window tuning never confounds a comparison. A preset is stamped on top of any `--ak config` document and wins where they disagree — a user config cannot undo a guarantee. Acceptance is typed, never silent: an unknown name refuses `invalid_input` listing the vocabulary, and a preset on an agent that cannot guarantee it (each capability entry publishes `presets`; only `claude` and `codex` today) refuses `agent_preset_unsupported` — never a run silently missing its guarantee. The preset is part of the arm's identity, and job bodies echo `preset` on each arm.
 
-For a run you will repeat, put the body in a file. `-c/--config` loads YAML or JSON **in the spec's own vocabulary** — the same field names as `jobs().start()` — and explicit flags override its fields; `--print-config` prints the resolved body and exits without spending anything, the dry-run a paid remote run deserves. The YAML is real YAML, read by the standard `yaml` parser with PyYAML's semantics — the 1.1 schema, so `yes`/`on` read as booleans, a comment never lands inside a value, the apostrophe in `job_name: brando's run  # nightly` is a letter and the comment still strips, and a flow mapping like `- {name: claude, model_name: opus}` is one whole sequence item. That 1.1 schema is pinned rather than defaulted, so a `%YAML 1.1` or `%YAML 1.2` directive at the top of the file changes nothing about how the values under it read — PyYAML's resolver has no other mode either — while a version the parser does not know, like `%YAML 1.3`, refuses with its line number rather than being guessed at (PyYAML would read on; a refusal beats a guess in a file that spends money). Numbers follow PyYAML's pattern too, which is narrower than the 1.1 spec's in two places. A float needs a dot, and an exponent needs a sign, so `1.5e+3` is the number 1500 while `e3`, `1e3` and `5e-3` stay the text you typed — an ordinary build tag like `BUILD_TAG: e3` is a string, not a number that resolves to nothing. An integer may not be zero-padded, so `08`, `-09` and a clock-shaped `0:0` or `08:00` stay text as well, while `012` is still octal 10 and `12:30` is still 750. One strictness is the library's own and not PyYAML's: a flow collection written across several lines inside a block collection must keep its continuation lines indented past that block, so `agent_env: {A: 1,` with `B: 2}` back at the parent's indentation is refused with its line number — indent the continuation and it reads. Four things refuse with a line-numbered error instead of parsing quietly: a second document in the file, an unresolvable `!tag`, an unknown `%YAML` version directive, and a duplicate key (last-value-wins is a silent corruption a config file cannot afford). The shape of the body is not hand-kept anywhere: the file validates against the **contract itself** — the `JobCreate` schema in `spec/openapi.yaml`, shipped inside the package, and every shape it references (`DatasetSelector`, `AgentArmInput`, the `sandbox_provider` enum) — so a field the spec grows is accepted with zero CLI changes, and an unknown key is refused **by name at every level**, with the allowed keys listed. The file may be partial — `-d` and `-a`/`-m` can supply what it omits — so the top-level `datasets`/`agents` are not demanded of the file itself, but the keys **inside** an entry are: a selector needs its `name`, an agent arm its `name` and `model_name` (the server applies no model default). Types read out of the same schema, refused at the keyboard: `datasets`/`agents` entries are objects (a bare name like `datasets: [deep-swe]` is refused by element, never spread into characters), strings are strings — an unquoted `version: 1.10` is refused rather than shipped as the number 1.1, which names a different dataset version — `n_attempts`, `n_concurrent_trials` and `n_tasks` are integers, and the spec's stated constraints hold before any round trip: `sandbox_provider` one of `e2b | daytona | modal`, `n_attempts` 1-100, `n_concurrent_trials` 1-16, `n_tasks` at least 1, at most 8 agent arms, `job_name` at most 200 characters. A schema refusal names the config path, the file **and the line**, and the spec shape that ruled — `--config: datasets[0].version in nightly.yaml:5 must be a string, not a number — quote it (version: "...") [spec: DatasetSelector.version]` — so the fix is findable from the message alone (a JSON config refuses the same laws, just without a line: JSON keeps no positions). On top of the schema sit the wire laws only YAML can trip: any value YAML resolves past what a JSON body can carry — a bare `2026-08-02` date, `.inf`, `.nan`, `!!binary`, `!!set` — is refused instead of rewritten on the way out — as is a value that contains ITSELF, which two lines of valid YAML can write (`agent_env: &a` over `  X: *a`) and no JSON body can carry, named by its key and file rather than left to exhaust the reader. That last one is the quiet corruption: `JSON.stringify` does not refuse a Date, it turns it into an ISO string, and `job_name` is a plain string to the server, so a date-shaped name would be ACCEPTED and the job would carry a name nobody wrote (quote the value to keep it text). What stays the server's to judge is what only the server knows: whether a name exists. A config file reads like this:
+For a run you will repeat, put the body in a file. `-c/--config` loads YAML or JSON **in the spec's own vocabulary** — the same field names as `jobs().start()` — and explicit flags override its fields; `--print-config` prints the resolved body and exits without spending anything, the dry-run a paid remote run deserves. The YAML is real YAML, read by the standard `yaml` parser with PyYAML's semantics — the 1.1 schema, so `yes`/`on` read as booleans, a comment never lands inside a value, the apostrophe in `job_name: brando's run  # nightly` is a letter and the comment still strips, and a flow mapping like `- {name: claude, model_name: opus}` is one whole sequence item. That 1.1 schema is pinned rather than defaulted, so a `%YAML 1.1` or `%YAML 1.2` directive at the top of the file changes nothing about how the values under it read — PyYAML's resolver has no other mode either — while a version the parser does not know, like `%YAML 1.3`, refuses with its line number rather than being guessed at (PyYAML would read on; a refusal beats a guess in a file that spends money). Numbers follow PyYAML's pattern too, which is narrower than the 1.1 spec's in two places. A float needs a dot, and an exponent needs a sign, so `1.5e+3` is the number 1500 while `e3`, `1e3` and `5e-3` stay the text you typed — an ordinary build tag like `BUILD_TAG: e3` is a string, not a number that resolves to nothing. An integer may not be zero-padded, so `08`, `-09` and a clock-shaped `0:0` or `08:00` stay text as well, while `012` is still octal 10 and `12:30` is still 750. One strictness is the library's own and not PyYAML's: a flow collection written across several lines inside a block collection must keep its continuation lines indented past that block, so `agent_env: {A: 1,` with `B: 2}` back at the parent's indentation is refused with its line number — indent the continuation and it reads. Four things refuse with a line-numbered error instead of parsing quietly: a second document in the file, an unresolvable `!tag`, an unknown `%YAML` version directive, and a duplicate key (last-value-wins is a silent corruption a config file cannot afford). The shape of the body is not hand-kept anywhere: the file validates against the **contract itself** — the `JobCreate` schema in `spec/openapi.yaml`, shipped inside the package, and every shape it references (`DatasetSelector`, `AgentArmInput`, the `sandbox_provider` enum) — so a field the spec grows is accepted with zero CLI changes, and an unknown key is refused **by name at every level**, with the allowed keys listed. The file may be partial — `-d` and `-a`/`-m` can supply what it omits — so the top-level `datasets`/`agents` are not demanded of the file itself, but the keys **inside** an entry are: a selector needs its `name`, an agent arm its `name` and `model_name` (the server applies no model default). Types read out of the same schema, refused at the keyboard: `datasets`/`agents` entries are objects (a bare name like `datasets: [deep-swe]` is refused by element, never spread into characters), strings are strings — an unquoted `version: 1.10` is refused rather than shipped as the number 1.1, which names a different dataset version — `n_attempts`, `n_concurrent_trials` and `n_tasks` are integers, and the spec's stated constraints hold before any round trip: `sandbox_provider` one of `e2b | daytona | modal`, `n_attempts` 1-100, `n_concurrent_trials` 1-150, `n_tasks` at least 1, at most 8 agent arms, `job_name` at most 200 characters. A schema refusal names the config path, the file **and the line**, and the spec shape that ruled — `--config: datasets[0].version in nightly.yaml:5 must be a string, not a number — quote it (version: "...") [spec: DatasetSelector.version]` — so the fix is findable from the message alone (a JSON config refuses the same laws, just without a line: JSON keeps no positions). On top of the schema sit the wire laws only YAML can trip: any value YAML resolves past what a JSON body can carry — a bare `2026-08-02` date, `.inf`, `.nan`, `!!binary`, `!!set` — is refused instead of rewritten on the way out — as is a value that contains ITSELF, which two lines of valid YAML can write (`agent_env: &a` over `  X: *a`) and no JSON body can carry, named by its key and file rather than left to exhaust the reader. That last one is the quiet corruption: `JSON.stringify` does not refuse a Date, it turns it into an ISO string, and `job_name` is a plain string to the server, so a date-shaped name would be ACCEPTED and the job would carry a name nobody wrote (quote the value to keep it text). What stays the server's to judge is what only the server knows: whether a name exists. A config file reads like this:
 
 ```yaml
 # nightly.yaml
@@ -631,8 +734,10 @@ evolve job resume <id> -f InfrastructureError
 evolve job retry <id> --failed-only        # or -t <trial-id> (repeatable), or bare for the whole job
 evolve job regrade <id> --task task-001
 evolve job download <id> -o results/       # unpacks the job tree to results/job-<id>/
+evolve job grep <id> 'out of memory'       # every trial's trace, one pass
 
 evolve trial show <trial-id>
+evolve trial trace <trial-id> --grep 'permission denied' --tail 50
 evolve trial download <trial-id> --stream trace-stdout
 evolve trial download <trial-id> -o trials/
 evolve trial retry <trial-id>
@@ -670,6 +775,32 @@ print(status.user_id, status.email, status.key.label)
 The key descriptor's `last_used_at` is in the shape but nothing updates it yet: it stays `None` even on the key making the request. Read it as "not recorded", never as "this key is unused".
 
 Dataset publishing and agent registration have their own subcommands — shown in [Bring your own dataset](#bring-your-own-dataset) and [Bring your own agent](#bring-your-own-agent).
+
+### Env secrets
+
+`--secret` and `--secret-inline` attach secrets to a run; `evolve secrets` is the store they attach from — the same vault the dashboard's **Secrets** page writes, reached with your API key instead of a browser session. It is the one plural-canonical noun in the grammar (the word names the surface, not one record), and `secret` answers as a hidden alias.
+
+```bash
+# Store one — piping the value keeps it out of shell history and the process list
+printf %s "$GITHUB_TOKEN" | evolve secrets set GITHUB_TOKEN \
+    --delivery brokered \
+    --allowed-host api.github.com --allowed-path-prefix / --allowed-method GET
+
+# --value is the other channel, and --label puts a second value beside the first
+evolve secrets set STRIPE_KEY --label staging --delivery direct --value sk_test_123
+
+evolve secrets list                            # metadata only — values never leave the server
+evolve secrets list -q                         # name[:label], one per line
+evolve secrets delete STRIPE_KEY --label staging
+```
+
+`--delivery` is required on every write, with no default, because the two modes put the value in different places. **`brokered`** means the value never enters a sandbox: the run receives an opaque placeholder and the egress proxy swaps the real value in on requests to the hosts you allowed. **`direct`** means the raw value is placed in the sandbox environment as-is. A brokered write therefore needs the scoping triple — `--allowed-host` (a hostname or a wildcard like `*.example.com`), `--allowed-path-prefix`, `--allowed-method`, each repeatable — and a direct write refuses it, since a value sitting loose in the environment cannot be held to a host list. Eval trials deliver **direct** secrets only ([Shape and ceilings](#shape-and-ceilings)), so store secrets for this lane as direct and keep brokered ones for managed agents.
+
+Names are env-var-shaped (`[A-Z_][A-Z0-9_]{0,127}`, uppercased for you) and the `EVOLVE_` prefix is reserved; labels are at most 80 characters of `[A-Za-z0-9._-]`, and an omitted label is `default`. A value is at most **190 bytes of UTF-8** — API keys and tokens fit, a certificate or a private key does not and belongs in the task or agent image. `--value` and piped stdin are the only two channels, one trailing newline is stripped from the pipe (so a plain `echo` does not silently store a `\n`), and a terminal with neither is a usage error rather than a hang.
+
+Collisions follow the same converge-on-proof law `--secret-inline` does, for the same reason: restating a stored `(name, label)` byte-for-byte succeeds — and is the one place `--delivery` and the allowlists can be re-shaped — while a different value is refused as `secret_exists` (409). Rotate by `delete` then `set`, or store the new value under another label. `delete` resolves an omitted label exactly as attaching does (the `default` row, else the single row, else `secret_ambiguous` naming every label), and deleting revokes every runtime grant riding the row.
+
+Two things this door will not do. A **read-only API key** may `list` but not `set` or `delete` — the refusal is `read_only_key` (403) — so a key handed to CI to read results cannot rewrite what your runs authenticate with. And **LLM provider keys (BYOK) cannot be stored here at all**: a provider key decides whose account pays for model traffic, which is a billing decision, so those stay on the signed-in dashboard where a human is present to make it. The same three operations are on the SDK client, `managed_secrets()` — see [Managed Secrets](02-configuration.md#managed-secrets).
 
 ---
 
@@ -813,7 +944,7 @@ job = await evals.start(
     datasets=[{'name': 'swe-bench-verified', 'version': '1.0'}],
     agents=[{'name': 'codex', 'model_name': 'gpt-5.5'}],
     max_trial_spend_usd=25,
-    sandbox_provider='daytona',   # "e2b" (default) | "daytona" | "modal"
+    sandbox_provider='daytona',   # "e2b" | "daytona" (default) | "modal"
 )
 ```
 
