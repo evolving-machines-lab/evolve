@@ -131,6 +131,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -320,6 +321,26 @@ def uses_placeholder(path, headers, body):
         return True
     return any(ph_b in body for ph_b in PLACEHOLDER_BYTES)
 
+def brokered_status(transport_status, transport_reason, payload):
+    # A brokered reply carries the TRUE upstream status inside the payload;
+    # the dashboard's own status reports only the health of the hop to it.
+    # Servers older than the status lane omit it: those fall back.
+    status = payload.get("status")
+    if isinstance(status, bool) or not isinstance(status, int) or not 100 <= status <= 599:
+        return transport_status, transport_reason
+    reason = payload.get("statusText")
+    return status, reason if isinstance(reason, str) else ""
+
+def egress_failure(exc):
+    body = json.dumps({
+        "error": "managed secret egress request failed",
+        "detail": str(exc),
+    }).encode("utf-8")
+    return 502, "Managed Secret Egress Unavailable", {
+        "headers": {"content-type": "application/json"},
+        "bodyBase64": base64.b64encode(body).decode("ascii"),
+    }
+
 def call_dashboard(method, url, headers, body):
     payload = json.dumps({
         "method": method,
@@ -341,10 +362,18 @@ def call_dashboard(method, url, headers, body):
     )
     try:
         with urllib.request.urlopen(req, timeout=130) as resp:
-            return resp.status, resp.reason, json.loads(resp.read().decode("utf-8"))
+            result = json.loads(resp.read().decode("utf-8"))
+            if not isinstance(result, dict):
+                raise ValueError("managed secret egress returned a non-object response")
+            status, reason = brokered_status(resp.status, resp.reason, result)
+            return status, reason, result
     except urllib.error.HTTPError as err:
         text = err.read().decode("utf-8", "replace")
         return err.code, "Managed Secret Egress Error", {"headers": {"content-type": "application/json"}, "bodyBase64": base64.b64encode(text.encode()).decode("ascii")}
+    except (urllib.error.URLError, OSError, ValueError) as err:
+        # Connection reset, SSL EOF, timeout, or an unreadable body: the agent
+        # gets a typed 502 and the proxy keeps serving.
+        return egress_failure(err)
 
 def read_limited_response(stream):
     chunks = []
@@ -459,27 +488,49 @@ def handle_client(client):
         except Exception:
             pass
 
+def close_quietly(sock):
+    try:
+        sock.close()
+    except Exception:
+        pass
+
+def reject_client(client):
+    try:
+        client.sendall(b"HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+    except Exception:
+        pass
+    close_quietly(client)
+
 def serve():
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind(("127.0.0.1", int(CONFIG["port"])))
     server.listen(100)
     while True:
-        client, _ = server.accept()
+        # The listener outlives every connection: nothing a single accept or
+        # handoff raises may end the loop, or the sandbox loses egress for the
+        # rest of the session.
+        try:
+            client, _ = server.accept()
+        except Exception:
+            time.sleep(0.05)
+            continue
         if not WORKERS.acquire(blocking=False):
+            reject_client(client)
+            continue
+        # Bound per thread: the loop rebinds the client on the next accept.
+        def run_client(sock=client):
             try:
-                client.sendall(b"HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+                handle_client(sock)
             except Exception:
                 pass
-            client.close()
-            continue
-        def run_client():
-            try:
-                handle_client(client)
             finally:
                 WORKERS.release()
-        thread = threading.Thread(target=run_client, daemon=True)
-        thread.start()
+        try:
+            threading.Thread(target=run_client, daemon=True).start()
+        except Exception:
+            WORKERS.release()
+            close_quietly(client)
 
 if __name__ == "__main__":
     register_channel()

@@ -734,6 +734,204 @@ except RuntimeError as exc:
   }
 }
 
+function runProxyProbe(
+  probe: string,
+  configOverrides: Record<string, unknown> = {},
+): { status: number | null; stdout: string; stderr: string } {
+  const dir = mkdtempSync(join(tmpdir(), "evolve-managed-secrets-test-"));
+  try {
+    const configPath = join(dir, "config.json");
+    writeFileSync(configPath, JSON.stringify({
+      hosts: ["api.github.com"],
+      placeholders: ["evsec_placeholder"],
+      base_dir: dir,
+      ca_cert: join(dir, "ca.crt"),
+      ca_key: join(dir, "ca.key"),
+      port: 18181,
+      egress_url: "https://dashboard.test/api/managed-secrets/egress",
+      channel_url: "https://dashboard.test/api/managed-secrets/runtime-token/channel",
+      token: "evrt",
+      binding: "evrb",
+      ...configOverrides,
+    }));
+    const scriptPath = join(dir, "proxy.py");
+    writeFileSync(scriptPath, MANAGED_SECRET_PROXY_SCRIPT);
+    const result = spawnSync(
+      "python3",
+      ["-c", `SCRIPT = ${JSON.stringify(scriptPath)}\n${probe}`, configPath],
+      { encoding: "utf-8" },
+    );
+    return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function testProxyPropagatesUpstreamStatus(): void {
+  console.log("\n[15] brokered replies carry the upstream status, not the dashboard's");
+  const probe = `
+import base64, json, runpy, urllib.request
+ns = runpy.run_path(SCRIPT, run_name="proxy_unit")
+
+class FakeResponse:
+    def __init__(self, status, reason, payload):
+        self.status = status
+        self.reason = reason
+        self._payload = json.dumps(payload).encode("utf-8")
+    def read(self):
+        return self._payload
+    def __enter__(self):
+        return self
+    def __exit__(self, *args):
+        return False
+
+def responder(payload, status=200, reason="OK"):
+    def fake_urlopen(req, timeout=None):
+        return FakeResponse(status, reason, payload)
+    return fake_urlopen
+
+# The dashboard hop succeeded (200) while the real upstream returned 503.
+urllib.request.urlopen = responder({
+    "status": 503,
+    "statusText": "Service Unavailable",
+    "headers": {"content-type": "application/json"},
+    "bodyBase64": base64.b64encode(b'{"error":"upstream down"}').decode("ascii"),
+})
+status, reason, result = ns["call_dashboard"]("GET", "https://api.github.com/user", {}, b"")
+print(status, reason, base64.b64decode(result["bodyBase64"]).decode())
+
+# A server older than the status lane omits it: the transport status stands.
+urllib.request.urlopen = responder({"headers": {}, "bodyBase64": ""})
+legacy_status, legacy_reason, _ = ns["call_dashboard"]("GET", "https://api.github.com/user", {}, b"")
+print(legacy_status, legacy_reason)
+`;
+  const result = runProxyProbe(probe);
+  assertEqual(result.status, 0, `proxy status probe exits cleanly (${result.stderr.trim()})`);
+  const lines = result.stdout.trim().split("\n");
+  assertEqual(
+    lines[0],
+    '503 Service Unavailable {"error":"upstream down"}',
+    "a 200-wrapped 503 reaches the agent as 503 with the upstream body",
+  );
+  assertEqual(lines[1], "200 OK", "a payload without a status falls back to the dashboard's status");
+}
+
+function testProxyAnswersTypedGatewayErrorOnEgressFailure(): void {
+  console.log("\n[16] egress failure becomes a typed 502 instead of killing the connection");
+  const probe = `
+import base64, json, runpy, ssl, urllib.error, urllib.request
+ns = runpy.run_path(SCRIPT, run_name="proxy_unit")
+
+def ssl_eof(req, timeout=None):
+    raise urllib.error.URLError(ssl.SSLEOFError("EOF occurred in violation of protocol"))
+urllib.request.urlopen = ssl_eof
+status, reason, result = ns["call_dashboard"]("GET", "https://api.github.com/user", {}, b"")
+body = json.loads(base64.b64decode(result["bodyBase64"]).decode())
+print(status, reason, result["headers"]["content-type"], body["error"])
+
+def reset(req, timeout=None):
+    raise ConnectionResetError(104, "Connection reset by peer")
+urllib.request.urlopen = reset
+reset_status, _, _ = ns["call_dashboard"]("GET", "https://api.github.com/user", {}, b"")
+print(reset_status)
+`;
+  const result = runProxyProbe(probe);
+  assertEqual(result.status, 0, `proxy egress-failure probe exits cleanly (${result.stderr.trim()})`);
+  const lines = result.stdout.trim().split("\n");
+  assertEqual(
+    lines[0],
+    "502 Managed Secret Egress Unavailable application/json managed secret egress request failed",
+    "an SSL EOF is answered as a typed 502 naming the egress failure",
+  );
+  assertEqual(lines[1], "502", "a connection reset is answered as a typed 502 too");
+}
+
+function testProxyListenerSurvivesConnectionFailures(): void {
+  console.log("\n[17] the listener survives a failure and answers the next request");
+  const probe = `
+import runpy, socket as real_socket, threading, time
+ns = runpy.run_path(SCRIPT, run_name="proxy_unit")
+
+picker = real_socket.socket()
+picker.bind(("127.0.0.1", 0))
+port = picker.getsockname()[1]
+picker.close()
+ns["CONFIG"]["port"] = port
+
+class FlakyServerSocket:
+    def __init__(self, inner):
+        self._inner = inner
+        self._failed = False
+    def setsockopt(self, *args):
+        return self._inner.setsockopt(*args)
+    def bind(self, *args):
+        return self._inner.bind(*args)
+    def listen(self, *args):
+        return self._inner.listen(*args)
+    def accept(self):
+        if not self._failed:
+            self._failed = True
+            raise OSError(24, "Too many open files")
+        return self._inner.accept()
+
+class SocketShim:
+    AF_INET = real_socket.AF_INET
+    SOCK_STREAM = real_socket.SOCK_STREAM
+    SOL_SOCKET = real_socket.SOL_SOCKET
+    SO_REUSEADDR = real_socket.SO_REUSEADDR
+    @staticmethod
+    def socket(*args, **kwargs):
+        return FlakyServerSocket(real_socket.socket(*args, **kwargs))
+
+handled = []
+def flaky_handle_client(client):
+    handled.append(1)
+    # Drain first: closing a socket with unread bytes sends RST, which would
+    # reach the client as a connection error instead of a clean close.
+    try:
+        client.recv(4096)
+    except OSError:
+        pass
+    if len(handled) == 1:
+        client.close()
+        raise RuntimeError("handler exploded")
+    client.sendall(b"HTTP/1.1 200 OK\\r\\ncontent-length: 2\\r\\nconnection: close\\r\\n\\r\\nok")
+    client.close()
+
+ns["serve"].__globals__["socket"] = SocketShim
+ns["serve"].__globals__["handle_client"] = flaky_handle_client
+threading.Thread(target=ns["serve"], daemon=True).start()
+
+def request():
+    conn = real_socket.create_connection(("127.0.0.1", port), timeout=5)
+    try:
+        conn.sendall(b"CONNECT api.github.com:443 HTTP/1.1\\r\\n\\r\\n")
+        return conn.recv(4096)
+    finally:
+        conn.close()
+
+deadline = time.time() + 10
+while True:
+    try:
+        request()
+        break
+    except OSError:
+        if time.time() > deadline:
+            raise
+        time.sleep(0.05)
+
+second = request()
+print(len(handled), second.decode().splitlines()[0])
+`;
+  const result = runProxyProbe(probe);
+  assertEqual(result.status, 0, `proxy listener probe exits cleanly (${result.stderr.trim()})`);
+  assertEqual(
+    result.stdout.trim(),
+    "2 HTTP/1.1 200 OK",
+    "a failed accept and a throwing handler leave the listener serving the next request",
+  );
+}
+
 async function main(): Promise<void> {
   await testListClient();
   testSandboxEnvAndProxyConfigUsePlaceholders();
@@ -751,6 +949,9 @@ async function main(): Promise<void> {
   testProxyDetectsBinaryBodyPlaceholders();
   testProxyPassesThroughRequestsWithoutPlaceholders();
   testProxyCapsDirectResponseReads();
+  testProxyPropagatesUpstreamStatus();
+  testProxyAnswersTypedGatewayErrorOnEgressFailure();
+  testProxyListenerSurvivesConnectionFailures();
   console.log(`\nManaged secrets tests: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);
 }
