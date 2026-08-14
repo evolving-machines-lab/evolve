@@ -307,9 +307,15 @@ jobs:
       - name: Install Python test dependencies
         run: pip install -r packages/sdk-py/requirements-dev.txt
 
-      - name: Gate the release against the contract (strict — no lag tolerated)
+      # Strict applies to STABLE releases only. Dev prereleases are the
+      # deliberately-sequenced lag period's own vehicle — deploy trains publish
+      # them while the server legitimately leads the SDK — so they run the
+      # tolerant gate (which still hard-fails real drift: SDK ahead of the
+      # contract, or shared members diverging). A stable release remains the
+      # SDK's final answer to the contract: full equality, no exceptions.
+      - name: Gate the release against the contract (strict on stable)
         env:
-          EVOLVE_SPEC_GATE_STRICT: '1'
+          EVOLVE_SPEC_GATE_STRICT: ${{ inputs.release_type == 'stable' && '1' || '' }}
         run: |
           cd packages/sdk-ts
           npx tsx tests/unit/hosted-spec-gate.test.ts
