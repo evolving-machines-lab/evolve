@@ -63,13 +63,22 @@ jobs:
           BRANCH: ${{ github.ref_name }}
           TOKEN: ${{ secrets.SPEC_READ_TOKEN }}
         run: |
+          # REST probe, not git ls-remote: fine-grained PATs authenticate
+          # plainly as Bearer on the API, while ls-remote's basic-auth styles
+          # are inconsistent for them (the first run fell through to main
+          # because every probe silently 401'd).
           for ref in "$BRANCH" berth/day-one project-sable main; do
-            if git ls-remote --exit-code --heads "https://x-access-token:${TOKEN}@github.com/evolving-machines-lab/swarm_dashboard.git" "$ref" >/dev/null 2>&1; then
+            code=$(curl -s -o /dev/null -w "%{http_code}" \
+              -H "Authorization: Bearer ${TOKEN}" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/evolving-machines-lab/swarm_dashboard/branches/${ref}")
+            if [ "$code" = "200" ]; then
               echo "ref=$ref" >> "$GITHUB_OUTPUT"
               echo "resolved contract ref: $ref"
               exit 0
             fi
           done
+          echo "resolved contract ref: main (fallback — no candidate answered 200)"
           echo "ref=main" >> "$GITHUB_OUTPUT"
 
       - name: Checkout the contract (private server repo, spec/ only)
