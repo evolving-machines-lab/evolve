@@ -150,6 +150,7 @@ import {
   parseAgentKwargs,
   parseArgs,
   parseEnvPairs,
+  parseInlineSecrets,
   parseSecretRefs,
   parseYamlConfig,
   runCli,
@@ -461,6 +462,50 @@ function testSecretRefs() {
     parseArgs(["job", "start", "-d", "deep-swe", "-a", "codex", "-m", "m"])
   );
   assert(!("secrets" in withoutFlag), "no secrets key when no --secret given");
+}
+
+function testInlineSecrets() {
+  console.log("\n--- --secret-inline NAME[@LABEL]:DELIVERY=VALUE -> JobCreate.secrets ---");
+  assertEqual(
+    parseInlineSecrets(["GRPC_API_KEY:direct=raw-value"]),
+    [{ name: "GRPC_API_KEY", value: "raw-value", delivery: "direct" }],
+    "bare NAME:direct=VALUE is an inline entry with no label"
+  );
+  assertEqual(
+    parseInlineSecrets(["API_KEY@ci:direct=a=b:c@d"]),
+    [{ name: "API_KEY", value: "a=b:c@d", delivery: "direct", label: "ci" }],
+    "the value is everything after the FIRST '=' — '=', ':' and '@' ride through"
+  );
+  assertEqual(
+    parseInlineSecrets(["HOOK_TOKEN:brokered=v"]),
+    [{ name: "HOOK_TOKEN", value: "v", delivery: "brokered" }],
+    "brokered parses too — the server owns the refusal in the evals lane"
+  );
+  assertThrowsUsage(() => parseInlineSecrets(["NAME=value"]), "delivery mode is required", "missing delivery");
+  assertThrowsUsage(() => parseInlineSecrets(["NAME:proxied=value"]), "brokered or direct", "unknown delivery");
+  assertThrowsUsage(() => parseInlineSecrets(["NAME:direct="]), "must not be empty", "empty value");
+  assertThrowsUsage(() => parseInlineSecrets(["NAME:direct"]), "NAME[@LABEL]:brokered|direct=VALUE", "no value at all");
+  assertThrowsUsage(() => parseInlineSecrets(["@nolabel:direct=v"]), "NAME[@LABEL]:brokered|direct=VALUE", "empty name");
+  assertThrowsUsage(() => parseInlineSecrets(["NAME@:direct=v"]), "NAME[@LABEL]:brokered|direct=VALUE", "empty label");
+
+  const built = buildJobInput(
+    parseArgs([
+      "job", "start",
+      "-d", "deep-swe",
+      "-a", "codex",
+      "-m", "m",
+      "--secret", "GITHUB_TOKEN",
+      "--secret-inline", "GRPC_API_KEY@ci:direct=raw-value",
+    ])
+  );
+  assertEqual(
+    built.secrets,
+    [
+      { name: "GITHUB_TOKEN" },
+      { name: "GRPC_API_KEY", value: "raw-value", delivery: "direct", label: "ci" },
+    ],
+    "--secret and --secret-inline form one attachment list, references first"
+  );
 }
 
 function testBuildJobInputRetry() {
@@ -4853,6 +4898,7 @@ async function main() {
   testBuildJobInputFlags();
   testBuildJobInputRetry();
   testSecretRefs();
+  testInlineSecrets();
   testBuildJobInputTimeoutMultipliers();
   testBuildJobInputSkills();
   testBuildJobInputYesIsInert();

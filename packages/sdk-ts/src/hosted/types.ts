@@ -425,26 +425,37 @@ export interface JobCreate {
    */
   verifier_env?: Record<string, string>;
   /**
-   * Stored env secrets to deliver into every agent run — REFERENCES to the
-   * caller's own env secrets, never values on the wire. Resolved at create
-   * and pinned: an omitted `label` takes the 'default'-labeled row when one
-   * exists (the single row when exactly one exists), and a bare name
-   * matching several labels with no 'default' is the typed
+   * Env secrets to deliver into every agent run — REFERENCES to the
+   * caller's own stored env secrets, plus INLINE entries ({name, value,
+   * delivery, label?, as?}) whose values are saved into the vault as
+   * normal env secrets first and then pinned like any other reference
+   * (WIRE LAW: the stored job never contains a value; a (name, label)
+   * collision is the typed `secret_exists` refusal — attach by reference
+   * or pick a label, never a silent overwrite). References are resolved at
+   * create and pinned: an omitted `label` takes the 'default'-labeled row
+   * when one exists (the single row when exactly one exists), and a bare
+   * name matching several labels with no 'default' is the typed
    * `secret_ambiguous` refusal naming the labels — a job never guesses
-   * which secret it runs with. `as` renames the env var inside the sandbox;
-   * names the trial contract owns (the EVOLVE_ prefix, gateway/vendor key
-   * slots, the judge-override pair) are refused. NOTE the eval lane's
-   * documented degradation: values are injected as RAW env for the run and
-   * scrubbed at the credential seal — the secret's allowed-hosts egress
-   * scoping (the managed-agents proxy lane) is NOT yet enforced here.
+   * which secret it runs with. `as` renames the env var inside the
+   * sandbox; names the trial contract owns (the EVOLVE_ prefix,
+   * gateway/vendor key slots, the judge-override pair) are refused.
+   * DELIVERY MODES: every stored env secret carries `delivery` —
+   * 'brokered' (the value never enters any sandbox; the managed-agents
+   * egress-proxy machinery) or 'direct' (the raw value is placed in the
+   * sandbox environment). Eval trials deliver exactly the DIRECT mode:
+   * the value enters the trial env and is scrubbed at the credential seal,
+   * before hidden tests enter. Attaching a brokered secret is the typed
+   * `secret_brokered_unsupported` refusal at create — never a silent
+   * downgrade.
    */
-  secrets?: JobSecretRef[];
+  secrets?: Array<JobSecretRef | JobSecretInline>;
 }
 
 /**
  * One attached env secret: a reference to a stored secret of the caller's,
- * by name and optional label, with an optional in-sandbox rename. Mirrors
- * the managed-agents lane's ManagedSecretRef with the label lane added.
+ * by name and optional label, with an optional in-sandbox rename. The same
+ * {name, label?, as?} shape as the managed-agents lane's ManagedSecretRef,
+ * resolved by the same server-side law.
  */
 export interface JobSecretRef {
   /** The stored secret's name (env-var-shaped; the EVOLVE_ prefix is reserved). */
@@ -452,6 +463,28 @@ export interface JobSecretRef {
   /** Which labeled row of that name; omitted = 'default' resolution law. */
   label?: string;
   /** Env var the value lands under in the sandbox (default: the name). */
+  as?: string;
+}
+
+/**
+ * One INLINE env secret on a job create — the convenience door into the
+ * same vault, not a second wire shape for values: the value is saved as a
+ * normal env secret first (delivery as stated, `label` defaulting to
+ * 'default') and the job then stores only the reference. A (name, label)
+ * identity that is already a stored row is the typed `secret_exists`
+ * refusal (409); `delivery: 'brokered'` refuses as
+ * `secret_brokered_unsupported` until eval trials can broker.
+ */
+export interface JobSecretInline {
+  /** Same grammar and reserved-name law as JobSecretRef.name. */
+  name: string;
+  /** The secret value to vault (at most 190 bytes). Never stored on the job. */
+  value: string;
+  /** The saved secret's delivery mode — REQUIRED, no silent default. */
+  delivery: "brokered" | "direct";
+  /** The labeled row to claim in the vault (default 'default'). */
+  label?: string;
+  /** Same in-sandbox rename law as JobSecretRef.as. */
   as?: string;
 }
 
@@ -2456,6 +2489,8 @@ export const HOSTED_ERROR_CODES = [
   "skill_limit_reached",
   "secret_not_found",
   "secret_ambiguous",
+  "secret_brokered_unsupported",
+  "secret_exists",
   "agent_version_not_found",
   "agent_version_unresolvable",
   "agent_kwarg_unsupported",

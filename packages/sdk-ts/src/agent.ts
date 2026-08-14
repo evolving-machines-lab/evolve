@@ -112,6 +112,7 @@ import {
   managedSecretProxyStartCommand,
   managedSecretProxyEnvNames,
   managedSecretSandboxEnvs,
+  managedSecretTokenNeedsProxy,
   MANAGED_SECRET_PROXY_CONFIG_PATH,
   MANAGED_SECRET_PROXY_DIR,
   MANAGED_SECRET_PROXY_SCRIPT,
@@ -1156,6 +1157,11 @@ export class Agent {
 
   private async setupManagedSecretEgress(sandbox: SandboxInstance): Promise<void> {
     if (!this.managedSecretRuntimeToken) return;
+    // A token whose secrets are all DIRECT delivery has nothing to broker:
+    // the raw values already rode buildEnvironmentVariables() into the
+    // sandbox env, and the proxy (with its python3/openssl requirements)
+    // is never started.
+    if (!managedSecretTokenNeedsProxy(this.managedSecretRuntimeToken)) return;
     await sandbox.files.makeDir(MANAGED_SECRET_PROXY_DIR);
     await sandbox.commands.run(
       `umask 077 && mkdir -p ${MANAGED_SECRET_PROXY_DIR}/certs && chmod 700 ${MANAGED_SECRET_PROXY_DIR} ${MANAGED_SECRET_PROXY_DIR}/certs`,

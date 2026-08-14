@@ -146,17 +146,30 @@ class BrowserProfilesClientConfig:
 
 @dataclass
 class ManagedSecretRef:
-    """Dashboard-stored managed secret to expose as an opaque sandbox env var.
+    """Dashboard-stored managed secret to attach to a sandbox session.
+
+    How the value reaches the sandbox is the STORED secret's delivery mode
+    (chosen when the secret is saved): 'brokered' keeps the value out of the
+    sandbox (opaque placeholder env + egress-proxy swap toward the secret's
+    allowed hosts) and 'direct' places the raw value in the sandbox
+    environment (URL-parameter keys, gRPC, websockets).
 
     Args:
         name: Stable Dashboard secret name, e.g. "GITHUB_TOKEN"
+        label: Optional labeled row of that name. Omitted = the server's
+            shared resolution law: the 'default'-labeled row when one
+            exists, the single row when exactly one exists, and a typed
+            ambiguity refusal naming every label otherwise.
         as_name: Optional env var alias in the sandbox. Defaults to name.
     """
     name: str
+    label: Optional[str] = None
     as_name: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {'name': self.name}
+        if self.label:
+            result['label'] = self.label
         if self.as_name:
             result['as'] = self.as_name
         return result

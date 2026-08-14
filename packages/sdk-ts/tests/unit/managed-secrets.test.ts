@@ -11,9 +11,11 @@ import {
   managedSecretProxyConfigCleanupCommand,
   managedSecretProxyStartCommand,
   managedSecretSandboxEnvs,
+  managedSecretTokenNeedsProxy,
   MANAGED_SECRET_PROXY_CONFIG_PATH,
   MANAGED_SECRET_PROXY_SCRIPT,
   managedSecrets,
+  normalizeManagedSecretRefs,
   type ManagedSecretRuntimeToken,
 } from "../../src/managed-secrets";
 import { resolveManagedSandbox } from "../../src/utils/sandbox";
@@ -304,6 +306,109 @@ function testSandboxEnvAndProxyConfigUsePlaceholders(): void {
   assert(managedSecretProxyConfigCleanupCommand().includes(`rm -f ${MANAGED_SECRET_PROXY_CONFIG_PATH}`), "proxy config cleanup removes token material");
   assert(managedSecretCaSetupCommand().includes("ca-bundle.crt"), "proxy CA setup preserves system roots in a combined bundle");
   assert(managedSecretCaSetupCommand().includes("keyUsage=critical,keyCertSign,cRLSign"), "proxy CA has key usage for strict TLS clients");
+}
+
+function testDirectDeliveryBypassesProxy(): void {
+  console.log("\n[2b] direct delivery lands raw env; the proxy serves only brokered entries");
+  const mixed: ManagedSecretRuntimeToken = {
+    token: "evrt_managed",
+    bindingSecret: "evrb_managed",
+    egressUrl: "https://dashboard.test/api/managed-secrets/egress",
+    channelUrl: "https://dashboard.test/api/managed-secrets/runtime-token/channel",
+    expiresAt: "9999-12-31T23:59:59.999Z",
+    env: [
+      {
+        name: "GITHUB_TOKEN",
+        envName: "GITHUB_TOKEN",
+        delivery: "brokered",
+        placeholder: "evsec_placeholder",
+        allowedHosts: ["api.github.com"],
+      },
+      {
+        name: "GRPC_API_KEY",
+        envName: "GRPC_API_KEY",
+        delivery: "direct",
+        value: "raw_grpc_value",
+        allowedHosts: [],
+      },
+    ],
+  };
+  assert(managedSecretTokenNeedsProxy(mixed), "a mixed token still needs the proxy");
+  const envs = managedSecretSandboxEnvs(mixed);
+  assertEqual(envs.GRPC_API_KEY, "raw_grpc_value", "direct entry is the raw value in the sandbox env");
+  assertEqual(envs.GITHUB_TOKEN, "evsec_placeholder", "brokered entry stays a placeholder");
+  const proxyConfig = JSON.parse(managedSecretProxyConfig(mixed));
+  assertEqual(proxyConfig.placeholders.length, 1, "proxy config carries only the brokered placeholder");
+  assert(
+    !JSON.stringify(proxyConfig).includes("raw_grpc_value"),
+    "the proxy never learns the direct value",
+  );
+  assert(
+    !proxyConfig.hosts.includes("") && proxyConfig.hosts.length === 1,
+    "proxy hosts come from brokered entries only",
+  );
+
+  const allDirect: ManagedSecretRuntimeToken = {
+    ...mixed,
+    env: [mixed.env[1]],
+  };
+  assert(!managedSecretTokenNeedsProxy(allDirect), "an all-direct token skips the proxy entirely");
+  const directEnvs = managedSecretSandboxEnvs(allDirect);
+  assertEqual(directEnvs.GRPC_API_KEY, "raw_grpc_value", "all-direct env carries the raw value");
+  assert(!("HTTPS_PROXY" in directEnvs), "all-direct env sets no proxy routing");
+  assert(!("SSL_CERT_FILE" in directEnvs), "all-direct env sets no CA overrides");
+}
+
+function testLabelRefsNormalized(): void {
+  console.log("\n[2c] label refs pass the shared grammar and ride the wire");
+  const refs = normalizeManagedSecretRefs([
+    { name: "github_token", label: "prod", as: "gh_token" },
+    { name: "PLAIN" },
+  ]);
+  assertEqual(refs[0].name, "GITHUB_TOKEN", "name is normalized upper-case");
+  assertEqual(refs[0].label, "prod", "label rides through untouched");
+  assertEqual(refs[0].as, "GH_TOKEN", "alias is normalized upper-case");
+  assertEqual(refs[1].label, undefined, "an omitted label stays omitted — the server's defaulting law rules");
+  try {
+    normalizeManagedSecretRefs([{ name: "TOKEN", label: "bad label!" }]);
+    assert(false, "a malformed label should throw");
+  } catch (error) {
+    assert(
+      error instanceof Error && error.message.includes("label"),
+      "malformed label names the field",
+    );
+  }
+}
+
+async function testDirectDeliveryRuntimeTokenAccepted(): Promise<void> {
+  console.log("\n[2d] a runtime token carrying direct entries passes the response validator");
+  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    const urlString = String(url);
+    if (urlString.endsWith("/api/managed-secrets/runtime-token") && init?.method === "POST") {
+      return new Response(JSON.stringify({
+        enabled: true,
+        token: "evrt_managed",
+        bindingSecret: "evrb_managed",
+        egressUrl: "https://dashboard.test/api/managed-secrets/egress",
+        channelUrl: "https://dashboard.test/api/managed-secrets/runtime-token/channel",
+        expiresAt: "9999-12-31T23:59:59.999Z",
+        env: [{
+          name: "GRPC_API_KEY",
+          envName: "GRPC_API_KEY",
+          delivery: "direct",
+          value: "raw_grpc_value",
+          allowedHosts: [],
+        }],
+      }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  }) as typeof fetch;
+  const token = await requestManagedSecretRuntimeToken(
+    { apiKey: "ev_key", dashboardUrl: "https://dashboard.test" },
+    { sessionTag: "session_1", secrets: [{ name: "GRPC_API_KEY" }] },
+  );
+  assertEqual(token.env[0].delivery, "direct", "direct entry survives validation");
+  assertEqual(token.env[0].value, "raw_grpc_value", "direct value survives validation");
 }
 
 async function testReservedAliasRejected(): Promise<void> {
@@ -632,6 +737,9 @@ except RuntimeError as exc:
 async function main(): Promise<void> {
   await testListClient();
   testSandboxEnvAndProxyConfigUsePlaceholders();
+  testDirectDeliveryBypassesProxy();
+  testLabelRefsNormalized();
+  await testDirectDeliveryRuntimeTokenAccepted();
   await testReservedAliasRejected();
   await testEvolvePrefixRejected();
   await testSetSessionRejected();

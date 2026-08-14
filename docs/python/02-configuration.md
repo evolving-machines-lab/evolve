@@ -652,27 +652,33 @@ How references resolve:
 
 ## Managed Secrets
 
-Managed secrets are available only in gateway mode (`EVOLVE_API_KEY`). Save the secret in Dashboard **Secrets** with a unique **Name** plus allowed hosts, paths, and methods. The SDK can list available names and attach the selected secrets to a run; raw values stay server-side.
+Managed secrets are available only in gateway mode (`EVOLVE_API_KEY`). Save the secret in Dashboard **Secrets** with a **Name**, an optional **Label**, and a **delivery mode**. Secrets are unique by `(name, label)` — several values of one name live side by side (`API_KEY` at `staging` and at `prod`) and a run attaches one by label. The SDK can list available names and attach the selected secrets to a run.
+
+The delivery mode is chosen when the secret is saved and decides how the value reaches the sandbox:
+
+- **`brokered`** — the value never enters any sandbox. The sandbox sees an opaque placeholder, and Evolve substitutes the real value only for HTTPS egress toward the secret's allowed hosts, paths, and methods (required for brokered secrets). This works for header-based HTTPS APIs.
+- **`direct`** — the raw value is placed in the sandbox environment. This is the mode for keys the HTTPS broker cannot carry: URL-parameter keys, gRPC, websockets. Direct secrets carry no host/path/method scoping — nothing brokers a raw env value.
 
 ```python
 from evolve import Evolve, ManagedSecretRef, managed_secrets
 
-available = await managed_secrets().list()
+available = await managed_secrets().list()  # includes label + delivery
 
 evolve = Evolve(
     managed_secrets=[
-        ManagedSecretRef(name='GITHUB_TOKEN'),
-        ManagedSecretRef(name='SLACK_BOT_TOKEN', as_name='SLACK_TOKEN'),
+        ManagedSecretRef(name='GITHUB_TOKEN'),                          # 'default'-labeled row
+        ManagedSecretRef(name='API_KEY', label='prod'),                 # a specific labeled row
+        ManagedSecretRef(name='SLACK_BOT_TOKEN', as_name='SLACK_TOKEN'),  # renamed in the sandbox
     ],
 )
 ```
 
+An omitted `label` resolves by the server's one shared law (the same law hosted-evals job secrets use): the `default`-labeled row when one exists, the single row when exactly one exists, and a typed refusal naming every label when several match and none is `default` — never a guess.
+
 Runtime behavior:
 
-- The sandbox receives the requested env var names with opaque sandbox-scoped values.
-- Code and tools read those env vars normally; Evolve substitutes real values only for allowed HTTPS egress.
-- Evolve validates allowed host, path, method, and live sandbox binding before injecting the real value.
-- Managed-secret egress is for API calls; request and response bodies are limited to 10 MiB each.
+- Brokered secrets: the sandbox receives the requested env var names with opaque sandbox-scoped values; code and tools read them normally, and Evolve validates allowed host, path, method, and live sandbox binding before substituting the real value on egress. Request and response bodies are limited to 10 MiB each.
+- Direct secrets: the sandbox receives the raw value as a plain env var. When every attached secret is direct, the in-sandbox egress proxy is not started at all.
 - `secrets` is still for local raw env injection; `managed_secrets` is for Dashboard-stored values.
 
 ---

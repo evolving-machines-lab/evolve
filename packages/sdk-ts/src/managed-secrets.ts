@@ -3,8 +3,19 @@ import type { AgentRegistryEntry } from "./registry";
 
 export interface ManagedSecretRef {
   name: string;
+  /**
+   * Which labeled row of `name` to attach. Omitted = the server's shared
+   * resolution law (the same one the hosted evals lane runs): the
+   * 'default'-labeled row when one exists, the single row when exactly one
+   * exists, and a typed ambiguity refusal naming every label otherwise —
+   * never a guess.
+   */
+  label?: string;
   as?: string;
 }
+
+/** How a secret's value reaches the sandbox — the cross-lane vocabulary. */
+export type ManagedSecretDelivery = "brokered" | "direct";
 
 export interface ManagedSecretMetadata {
   id: string;
@@ -15,6 +26,14 @@ export interface ManagedSecretMetadata {
    * lane omit it.
    */
   label?: string;
+  /**
+   * The row's delivery mode: 'brokered' (the value never enters any
+   * sandbox — placeholder env + egress-proxy swap toward allowedHosts) or
+   * 'direct' (the raw value is placed in the sandbox environment — needed
+   * for URL-parameter keys, gRPC, websockets). Optional: servers older
+   * than the delivery lane omit it and always broker.
+   */
+  delivery?: ManagedSecretDelivery;
   allowedHosts: string[];
   allowedPathPrefixes: string[];
   allowedMethods: string[];
@@ -41,9 +60,25 @@ export interface ManagedSecretRuntimeToken {
   env: Array<{
     name: string;
     envName: string;
-    placeholder: string;
+    /**
+     * Omitted by servers older than the delivery lane, which always
+     * broker; treat absence as 'brokered'.
+     */
+    delivery?: ManagedSecretDelivery;
+    /** Present on brokered entries: the opaque env value the proxy swaps. */
+    placeholder?: string;
+    /**
+     * Present on direct entries: the RAW secret value, placed in the
+     * sandbox environment as-is (the proxy never serves it).
+     */
+    value?: string;
     allowedHosts: string[];
   }>;
+}
+
+/** Brokered unless the entry says 'direct' — the pre-delivery-lane reading. */
+function envEntryIsDirect(entry: { delivery?: ManagedSecretDelivery }): boolean {
+  return entry.delivery === "direct";
 }
 
 export const MANAGED_SECRET_BINDING_HEADER =
@@ -526,12 +561,24 @@ function isManagedSecretRuntimeToken(value: unknown): value is ManagedSecretRunt
     record.env.every((item) => {
       if (!item || typeof item !== "object" || Array.isArray(item)) return false;
       const env = item as Record<string, unknown>;
+      if (
+        typeof env.name !== "string" ||
+        typeof env.envName !== "string" ||
+        !isStringArray(env.allowedHosts)
+      ) {
+        return false;
+      }
+      if (env.delivery === "direct") {
+        // Direct entries carry the raw value and never a placeholder.
+        return typeof env.value === "string" && env.value.length > 0;
+      }
+      // Brokered entries (including pre-delivery-lane servers, which omit
+      // the field) carry the opaque placeholder and never a value.
       return (
-        typeof env.name === "string" &&
-        typeof env.envName === "string" &&
+        (env.delivery === undefined || env.delivery === "brokered") &&
         typeof env.placeholder === "string" &&
         env.placeholder.startsWith("evsec_") &&
-        isStringArray(env.allowedHosts)
+        env.value === undefined
       );
     })
   );
@@ -576,6 +623,10 @@ export async function revokeManagedSecretRuntimeToken(
   return result.ok;
 }
 
+// The one label grammar every labeled-secret surface shares (the server's
+// SECRET_LABEL_RE): [A-Za-z0-9._-], at most 80 characters.
+const MANAGED_SECRET_LABEL_RE = /^[A-Za-z0-9._-]{1,80}$/;
+
 export function normalizeManagedSecretRefs(secrets: ManagedSecretRef[]): ManagedSecretRef[] {
   if (!Array.isArray(secrets) || secrets.length === 0) {
     throw new Error("withManagedSecrets() requires at least one secret");
@@ -585,10 +636,23 @@ export function normalizeManagedSecretRefs(secrets: ManagedSecretRef[]): Managed
       throw new Error(`managedSecrets[${index}] must be an object with a name`);
     }
     const name = normalizeEnvName(secret.name, `managedSecrets[${index}].name`);
+    let label: string | undefined;
+    if (secret.label !== undefined) {
+      if (typeof secret.label !== "string" || !MANAGED_SECRET_LABEL_RE.test(secret.label.trim())) {
+        throw new Error(
+          `managedSecrets[${index}].label may contain only letters, numbers, dots, underscores, and hyphens (at most 80 characters)`,
+        );
+      }
+      label = secret.label.trim();
+    }
     const as = secret.as === undefined
       ? undefined
       : normalizeEnvName(secret.as, `managedSecrets[${index}].as`);
-    return as ? { name, as } : { name };
+    return {
+      name,
+      ...(label !== undefined ? { label } : {}),
+      ...(as !== undefined ? { as } : {}),
+    };
   });
 }
 
@@ -651,10 +715,29 @@ export function validateManagedSecretRefsForRegistry(
   return normalized;
 }
 
+/**
+ * Does this token need the in-sandbox egress proxy at all? Only brokered
+ * entries do; a token whose secrets are all DIRECT delivery skips the proxy
+ * (and its python3/openssl requirements) entirely.
+ */
+export function managedSecretTokenNeedsProxy(token: ManagedSecretRuntimeToken): boolean {
+  return token.env.some((item) => !envEntryIsDirect(item));
+}
+
 export function managedSecretSandboxEnvs(token: ManagedSecretRuntimeToken): Record<string, string> {
   const envs: Record<string, string> = {};
   for (const item of token.env) {
-    envs[item.envName] = item.placeholder;
+    if (envEntryIsDirect(item)) {
+      // DIRECT delivery: the raw value goes into the sandbox environment —
+      // the mode for URL-parameter keys, gRPC, websockets, anything the
+      // HTTPS header proxy cannot broker.
+      envs[item.envName] = item.value as string;
+    } else {
+      envs[item.envName] = item.placeholder as string;
+    }
+  }
+  if (!managedSecretTokenNeedsProxy(token)) {
+    return envs;
   }
   const proxy = `http://127.0.0.1:${MANAGED_SECRET_PROXY_PORT}`;
   envs.HTTPS_PROXY = proxy;
@@ -671,14 +754,16 @@ export function managedSecretSandboxEnvs(token: ManagedSecretRuntimeToken): Reco
 }
 
 export function managedSecretProxyConfig(token: ManagedSecretRuntimeToken): string {
-  const hosts = Array.from(new Set(token.env.flatMap((item) => item.allowedHosts)));
+  // Brokered entries only: the proxy never learns that direct secrets exist.
+  const brokered = token.env.filter((item) => !envEntryIsDirect(item));
+  const hosts = Array.from(new Set(brokered.flatMap((item) => item.allowedHosts)));
   return JSON.stringify({
     egress_url: token.egressUrl,
     channel_url: token.channelUrl,
     token: token.token,
     binding: token.bindingSecret,
     hosts,
-    placeholders: token.env.map((item) => item.placeholder),
+    placeholders: brokered.map((item) => item.placeholder),
     base_dir: MANAGED_SECRET_PROXY_DIR,
     ca_cert: MANAGED_SECRET_CA_CERT_PATH,
     ca_key: MANAGED_SECRET_CA_KEY_PATH,

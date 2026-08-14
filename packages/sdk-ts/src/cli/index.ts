@@ -58,6 +58,7 @@ import type {
   JobCreate,
   JobEvent,
   JobSecretRef,
+  JobSecretInline,
   JobTaskRollup,
   PublishDatasetInput,
   RetryConfigInput,
@@ -224,6 +225,18 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
       "the 'default' row, or the only row — several labels with no 'default' is " +
       "refused as ambiguous); =ENVNAME renames the env var inside the sandbox. " +
       "References only — the value never rides the command line or the wire",
+  },
+  "secret-inline": {
+    kind: "repeat",
+    value: "NAME[@LABEL]:DELIVERY=VALUE",
+    help:
+      "Save VALUE into your vault as an env secret and attach it to this job " +
+      "in one step (repeatable). DELIVERY is 'brokered' or 'direct' and sits " +
+      "before '=' so everything after the first '=' is the value, passed " +
+      "through byte-for-byte ('=', ':' and '@' need no escaping). @LABEL " +
+      "defaults to 'default'; if that (NAME, LABEL) secret already exists the " +
+      "job is refused — attach it with --secret or pick a label. The job " +
+      "stores only the reference, never the value",
   },
   "n-attempts": { kind: "number", short: "k", value: "<n>", help: "Attempts per task x arm (default 1)" },
   "n-concurrent": { kind: "number", short: "n", value: "<n>", help: "Parallel trials (default 4)" },
@@ -1714,6 +1727,55 @@ export function parseSecretRefs(values: string[]): JobSecretRef[] {
   });
 }
 
+/**
+ * Parse repeatable --secret-inline NAME[@LABEL]:DELIVERY=VALUE entries into
+ * the wire's inline secrets[] objects. DELIVERY sits BEFORE the '=' so the
+ * value — everything after the FIRST '=' — is passed through byte-for-byte
+ * and may contain '=', ':' and '@' unescaped. The head splits on its FIRST
+ * '@' (label) and LAST ':' (delivery), matching the label grammar
+ * ([A-Za-z0-9._-], no ':' possible). Only the shape is ruled here;
+ * name/label semantics and the collision refusal are the server's.
+ */
+export function parseInlineSecrets(values: string[]): JobSecretInline[] {
+  const expected = "NAME[@LABEL]:brokered|direct=VALUE";
+  return values.map((value) => {
+    const eq = value.indexOf("=");
+    if (eq === -1) {
+      throw new CliUsageError(`Invalid --secret-inline "${value}": expected ${expected}`);
+    }
+    const head = value.slice(0, eq);
+    const secretValue = value.slice(eq + 1);
+    if (!secretValue) {
+      throw new CliUsageError(`Invalid --secret-inline "${value}": the value must not be empty`);
+    }
+    const colon = head.lastIndexOf(":");
+    if (colon === -1) {
+      throw new CliUsageError(
+        `Invalid --secret-inline "${head}=...": a delivery mode is required — ${expected}`,
+      );
+    }
+    const ref = head.slice(0, colon);
+    const delivery = head.slice(colon + 1);
+    if (delivery !== "brokered" && delivery !== "direct") {
+      throw new CliUsageError(
+        `Invalid --secret-inline delivery "${delivery}": expected brokered or direct`,
+      );
+    }
+    const at = ref.indexOf("@");
+    const name = at === -1 ? ref : ref.slice(0, at);
+    const label = at === -1 ? undefined : ref.slice(at + 1);
+    if (!name || (at !== -1 && !label)) {
+      throw new CliUsageError(`Invalid --secret-inline "${head}=...": expected ${expected}`);
+    }
+    return {
+      name,
+      value: secretValue,
+      delivery,
+      ...(label !== undefined ? { label } : {}),
+    };
+  });
+}
+
 /** Parse repeatable KEY=VALUE pairs into an env map. */
 export function parseEnvPairs(pairs: string[], flag: string): Record<string, string> {
   const env: Record<string, string> = {};
@@ -1825,11 +1887,19 @@ export function buildJobInput(
     f["verifier-env"] !== undefined
       ? parseEnvPairs(f["verifier-env"] as string[], "--verifier-env")
       : base.verifier_env;
-  // --secret replaces the file's list outright, like -d does: the flags are
-  // one complete attachment statement, never a merge whose halves could
-  // collide on an env name only the server would notice.
-  const secrets =
-    f.secret !== undefined ? parseSecretRefs(f.secret as string[]) : base.secrets;
+  // --secret/--secret-inline replace the file's list outright, like -d does:
+  // the flags together are one complete attachment statement (references
+  // first, then inline entries), never a merge whose halves could collide on
+  // an env name only the server would notice.
+  const secrets: Array<JobSecretRef | JobSecretInline> | undefined =
+    f.secret !== undefined || f["secret-inline"] !== undefined
+      ? [
+          ...(f.secret !== undefined ? parseSecretRefs(f.secret as string[]) : []),
+          ...(f["secret-inline"] !== undefined
+            ? parseInlineSecrets(f["secret-inline"] as string[])
+            : []),
+        ]
+      : base.secrets;
 
   const jobName = f["job-name"] !== undefined ? String(f["job-name"]) : base.job_name;
   const nAttempts = f["n-attempts"] !== undefined ? (f["n-attempts"] as number) : base.n_attempts;

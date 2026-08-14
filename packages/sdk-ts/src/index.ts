@@ -149,6 +149,7 @@ export type {
 export { managedSecrets } from "./managed-secrets";
 export type {
   ManagedSecretRef,
+  ManagedSecretDelivery,
   ManagedSecretMetadata,
   ManagedSecretsClient,
   ManagedSecretsClientConfig,

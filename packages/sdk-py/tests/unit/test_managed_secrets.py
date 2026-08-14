@@ -12,6 +12,13 @@ def test_managed_secret_ref_to_dict():
         'name': 'GITHUB_TOKEN',
         'as': 'GH_TOKEN',
     }
+    # The label lane: identical wire shape to the evals lane's JobSecretRef —
+    # {name, label?, as?} — resolved by the server's one shared law.
+    assert ManagedSecretRef(name='GITHUB_TOKEN', label='prod', as_name='GH_TOKEN').to_dict() == {
+        'name': 'GITHUB_TOKEN',
+        'label': 'prod',
+        'as': 'GH_TOKEN',
+    }
 
 
 @pytest.mark.asyncio
@@ -55,6 +62,8 @@ async def test_managed_secrets_client_lists_metadata(monkeypatch):
                 'secrets': [{
                     'id': 'secret_1',
                     'name': 'GITHUB_TOKEN',
+                    'label': 'prod',
+                    'delivery': 'brokered',
                     'allowedHosts': ['api.github.com'],
                     'allowedPathPrefixes': ['/user'],
                     'allowedMethods': ['GET'],
@@ -72,5 +81,7 @@ async def test_managed_secrets_client_lists_metadata(monkeypatch):
 
     assert len(result) == 1
     assert result[0].name == 'GITHUB_TOKEN'
+    assert result[0].label == 'prod'
+    assert result[0].delivery == 'brokered'
     assert result[0].allowed_hosts == ['api.github.com']
     assert 'ghp_' not in repr(result)

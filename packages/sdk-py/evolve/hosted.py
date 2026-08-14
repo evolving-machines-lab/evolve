@@ -147,6 +147,8 @@ HostedErrorCode = Literal[
     'skill_limit_reached',
     'secret_not_found',
     'secret_ambiguous',
+    'secret_brokered_unsupported',
+    'secret_exists',
     'agent_version_not_found',
     'agent_version_unresolvable',
     'agent_kwarg_unsupported',
@@ -1067,13 +1069,31 @@ class JobRetryConfigInput(TypedDict, total=False):
 # One attached env secret — ``jobs().start(secrets=[...])``, the spec's
 # JobSecretRef schema: a REFERENCE to a stored env secret of the caller's
 # (Secrets surface), by name and optional label, with an optional in-sandbox
-# rename — values never ride the wire. Functional TypedDict form because
-# ``as`` is a Python keyword; pass the plain dict either way. Resolution law
-# (the 'default'-label fallback, the typed ``secret_ambiguous`` refusal, the
-# reserved-name refusals) is the server's — see ``start()``.
+# rename — values never ride the wire on a reference. Functional TypedDict
+# form because ``as`` is a Python keyword; pass the plain dict either way.
+# Resolution law (the 'default'-label fallback, the typed
+# ``secret_ambiguous`` refusal, the reserved-name refusals, the typed
+# ``secret_brokered_unsupported`` refusal for brokered-delivery secrets) is
+# the server's — see ``start()``.
 JobSecretRef = TypedDict(
     'JobSecretRef',
     {'name': str, 'label': str, 'as': str},
+    total=False,
+)
+
+
+# One INLINE env secret — the spec's JobSecretInline schema: the convenience
+# door into the same vault, not a second wire shape for values. The server
+# saves ``value`` as a normal env secret first (``delivery`` REQUIRED —
+# 'brokered' or 'direct', no silent default; ``label`` defaults to
+# 'default') and the job then stores only the reference — the stored job
+# never contains a value. A (name, label) identity that already exists is
+# the typed ``secret_exists`` refusal (attach by reference or pick a label —
+# never a silent overwrite); ``delivery='brokered'`` refuses as
+# ``secret_brokered_unsupported`` until eval trials can broker.
+JobSecretInline = TypedDict(
+    'JobSecretInline',
+    {'name': str, 'value': str, 'delivery': str, 'label': str, 'as': str},
     total=False,
 )
 
@@ -4009,7 +4029,7 @@ class JobsClient:
         environment_build_timeout_multiplier: Optional[float] = None,
         agent_env: Optional[Dict[str, str]] = None,
         verifier_env: Optional[Dict[str, str]] = None,
-        secrets: Optional[List[Union['JobSecretRef', Dict[str, Any]]]] = None,
+        secrets: Optional[List[Union['JobSecretRef', 'JobSecretInline', Dict[str, Any]]]] = None,
         idempotency_key: Optional[str] = None,
     ) -> Job:
         """Start a job over one or more catalog datasets.
@@ -4063,20 +4083,31 @@ class JobsClient:
         its ``[judge].model`` field when the judge is an agent. Both are
         delivered into the verifier environment in both verifier modes,
         over any task-declared value of the same name; any other key is
-        refused at create. ``secrets`` attaches stored env secrets of yours
-        to every agent run — REFERENCES (``{'name': ..., 'label': ...,
-        'as': ...}``, the spec's JobSecretRef), never values on the wire.
-        Resolution is the server's and is pinned at create: an omitted
-        ``label`` takes the 'default'-labeled row when one exists (the
-        single row when exactly one exists), and a bare name matching
-        several labels with no 'default' is the typed ``secret_ambiguous``
-        refusal naming the labels; ``as`` renames the env var inside the
-        sandbox, and names the trial contract owns (the ``EVOLVE_`` prefix,
-        gateway/vendor key slots, the judge-override pair) are refused.
-        NOTE the eval lane's documented degradation: the value is injected
-        as RAW env for the run (scrubbed at the credential seal) — the
-        secret's allowed-hosts egress scoping from the managed-agents proxy
-        lane is NOT yet enforced here. Supports Idempotency-Key.
+        refused at create. ``secrets`` attaches env secrets to every agent
+        run — REFERENCES to stored secrets (``{'name': ..., 'label': ...,
+        'as': ...}``, the spec's JobSecretRef) and INLINE entries
+        (``{'name': ..., 'value': ..., 'delivery': ..., 'label': ...,
+        'as': ...}``, the spec's JobSecretInline) whose values are saved
+        into your vault as normal env secrets FIRST and then pinned like
+        any other reference — the stored job never contains a value, and a
+        (name, label) collision with an existing row is the typed
+        ``secret_exists`` refusal (attach by reference or pick a label —
+        never a silent overwrite). Reference resolution is the server's and
+        is pinned at create: an omitted ``label`` takes the
+        'default'-labeled row when one exists (the single row when exactly
+        one exists), and a bare name matching several labels with no
+        'default' is the typed ``secret_ambiguous`` refusal naming the
+        labels; ``as`` renames the env var inside the sandbox, and names
+        the trial contract owns (the ``EVOLVE_`` prefix, gateway/vendor key
+        slots, the judge-override pair) are refused. DELIVERY MODES: every
+        stored env secret carries ``delivery`` — ``'brokered'`` (the value
+        never enters any sandbox; the managed-agents egress-proxy
+        machinery) or ``'direct'`` (the raw value is placed in the sandbox
+        environment). Eval trials deliver exactly the DIRECT mode: the
+        value enters the trial env and is scrubbed at the credential seal,
+        before hidden tests enter. Attaching a brokered secret is the
+        typed ``secret_brokered_unsupported`` refusal at create — never a
+        silent downgrade. Supports Idempotency-Key.
         """
         body: Dict[str, Any] = {}
         if job_name is not None:
