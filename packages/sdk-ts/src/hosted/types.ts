@@ -383,7 +383,7 @@ export interface JobCreate {
    * resulting worst case for the job as a whole.
    */
   max_trial_spend_usd?: number;
-  /** Sandbox provider to run on (optional; server default: `e2b`). */
+  /** Sandbox provider to run on (optional; server default: `daytona`). */
   sandbox_provider?: EvalSandboxProvider;
   /** Auto-retry policy (Harbor RetryConfig grammar); omitted = the fleet defaults. */
   retry?: RetryConfigInput;
@@ -424,6 +424,73 @@ export interface JobCreate {
    * value of the same name; any other key is refused at create.
    */
   verifier_env?: Record<string, string>;
+  /**
+   * Env secrets to deliver into every agent run — REFERENCES to the
+   * caller's own stored env secrets, plus INLINE entries ({name, value,
+   * delivery, label?, as?}) whose values are saved into the vault as
+   * normal env secrets first and then pinned like any other reference
+   * (WIRE LAW: the stored job never contains a value; a (name, label)
+   * collision splits on proof — a byte-equal restatement of the stored
+   * row, same value and delivery, attaches it so retries of the same
+   * request converge, while a different value or delivery is the typed
+   * `secret_exists` refusal — attach by reference or pick a label, never
+   * a silent overwrite). References are resolved at
+   * create and pinned: an omitted `label` takes the 'default'-labeled row
+   * when one exists (the single row when exactly one exists), and a bare
+   * name matching several labels with no 'default' is the typed
+   * `secret_ambiguous` refusal naming the labels — a job never guesses
+   * which secret it runs with. `as` renames the env var inside the
+   * sandbox; names the trial contract owns (the EVOLVE_ prefix,
+   * gateway/vendor key slots, the judge-override pair) are refused.
+   * DELIVERY MODES: every stored env secret carries `delivery` —
+   * 'brokered' (the value never enters any sandbox; the managed-agents
+   * egress-proxy machinery) or 'direct' (the raw value is placed in the
+   * sandbox environment). Eval trials deliver exactly the DIRECT mode:
+   * the value enters the trial env and is scrubbed at the credential seal,
+   * before hidden tests enter. Attaching a brokered secret is the typed
+   * `secret_brokered_unsupported` refusal at create — never a silent
+   * downgrade.
+   */
+  secrets?: Array<JobSecretRef | JobSecretInline>;
+}
+
+/**
+ * One attached env secret: a reference to a stored secret of the caller's,
+ * by name and optional label, with an optional in-sandbox rename. The same
+ * {name, label?, as?} shape as the managed-agents lane's ManagedSecretRef,
+ * resolved by the same server-side law.
+ */
+export interface JobSecretRef {
+  /** The stored secret's name (env-var-shaped; the EVOLVE_ prefix is reserved). */
+  name: string;
+  /** Which labeled row of that name; omitted = 'default' resolution law. */
+  label?: string;
+  /** Env var the value lands under in the sandbox (default: the name). */
+  as?: string;
+}
+
+/**
+ * One INLINE env secret on a job create — the convenience door into the
+ * same vault, not a second wire shape for values: the value is saved as a
+ * normal env secret first (delivery as stated, `label` defaulting to
+ * 'default') and the job then stores only the reference. A (name, label)
+ * identity that is already a stored row splits on proof: a byte-equal
+ * restatement (same value, same delivery) attaches that row — retries of
+ * the same request converge — while a different value or delivery is the
+ * typed `secret_exists` refusal (409); `delivery: 'brokered'` refuses as
+ * `secret_brokered_unsupported` until eval trials can broker.
+ */
+export interface JobSecretInline {
+  /** Same grammar and reserved-name law as JobSecretRef.name. */
+  name: string;
+  /** The secret value to vault (at most 190 bytes). Never stored on the job. */
+  value: string;
+  /** The saved secret's delivery mode — REQUIRED, no silent default. */
+  delivery: "brokered" | "direct";
+  /** The labeled row to claim in the vault (default 'default'). */
+  label?: string;
+  /** Same in-sandbox rename law as JobSecretRef.as. */
+  as?: string;
 }
 
 /** Body of POST /api/jobs/{jobId}/resume. */
@@ -1849,6 +1916,70 @@ export interface TraceOptions extends PageOptions {
   cursor?: string;
   /** Max events per page (server default: 200, max: 1000) */
   limit?: number;
+  /** Only events of exactly this type. */
+  type?: string;
+  /**
+   * Only events whose type or serialized content matches this
+   * case-insensitive POSIX regex (a plain string is a plain substring —
+   * grep's own grammar). An invalid pattern is the server's typed
+   * `invalid_input` refusal.
+   */
+  grep?: string;
+  /**
+   * Only the last N MATCHING events — a floor on the seq timeline, after
+   * which cursor paging proceeds normally, oldest-first.
+   */
+  tail?: number;
+}
+
+/** Options for jobs().grep() */
+export interface GrepJobOptions extends PageOptions {
+  /** Only search events of exactly this type. */
+  type?: string;
+}
+
+/**
+ * One trial's slice of a job-wide grep (jobs().grep()): the EXACT number of
+ * matching events plus the first few of them — the platform caps the sample
+ * (at 5), the count never truncates. The full match list of one trial is
+ * trials().trace() with the same pattern as { grep }.
+ */
+export interface JobGrepGroup {
+  trial_id: string;
+  /** The trial's task, for orientation; null only when the task row is gone. */
+  task_name: string | null;
+  match_count: number;
+  events: TraceEvent[];
+}
+
+/** One page of a job-wide grep, ordered by trial id. */
+export type JobGrepPage = Page<JobGrepGroup>;
+
+/**
+ * One stored file of a trial's tree (trials().files()), named by its
+ * prefix-relative path — the same path trials().file() reads.
+ */
+export interface TrialFile {
+  path: string;
+  size_bytes: number;
+}
+
+/** One page of a trial's stored file tree, sorted by path. */
+export type TrialFilePage = Page<TrialFile>;
+
+/** Options for trials().files() (default page 200, max 1000) */
+export interface ListTrialFilesOptions extends PageOptions {}
+
+/**
+ * Byte range for trials().file() — inclusive positions, the wire's
+ * `Range: bytes=start-end` grammar: { start } alone reads to the end,
+ * { suffix } alone reads the last N bytes.
+ */
+export interface TrialFileRange {
+  start?: number;
+  end?: number;
+  /** The last N bytes (mutually exclusive with start/end). */
+  suffix?: number;
 }
 
 /** Options for datasets().watchImport() */
@@ -2163,6 +2294,15 @@ export interface JobsClient {
     id: string,
     options?: DownloadJobOptions
   ): Promise<Buffer | string | ReadableStream<Uint8Array>>;
+  /**
+   * Grep the parsed trace of EVERY trial of the job in one server-side pass.
+   * `q` is the trace filter's grammar: a case-insensitive POSIX regex over
+   * each event's type and serialized content, where a plain string is a
+   * plain substring. Items are per-trial groups (exact count + the first few
+   * matching events), ordered by trial id; page with { cursor }. An empty
+   * page means no matches anywhere — a normal answer.
+   */
+  grep(id: string, q: string, options?: GrepJobOptions): Promise<JobGrepPage>;
 }
 
 /**
@@ -2249,6 +2389,21 @@ export interface TrialsClient {
    * already-terminal trials are reported as such and left untouched.
    */
   stop(trialIds: string[]): Promise<StopResponse>;
+  /**
+   * List the trial's ENTIRE stored file tree — the read-only-filesystem law:
+   * session files, verifier log, raw agent streams, live chunks, everything
+   * the platform stored, as {path, size_bytes} rows sorted by path. Read any
+   * row with file(). An empty page is a normal answer.
+   */
+  files(trialId: string, options?: ListTrialFilesOptions): Promise<TrialFilePage>;
+  /**
+   * RAW BYTES of one stored file, by the path files() names — byte fidelity,
+   * no translation. `range` reads a slice ({ start, end } inclusive,
+   * { start } to the end, or { suffix } for the last N bytes) so a huge log
+   * tails without shipping whole. A path the tree does not hold surfaces as
+   * the API's typed 404.
+   */
+  file(trialId: string, path: string, range?: TrialFileRange): Promise<Buffer>;
 }
 
 /** A key descriptor. The secret is never returned. */
@@ -2337,6 +2492,10 @@ export const HOSTED_ERROR_CODES = [
   "skill_in_use",
   "skill_too_large",
   "skill_limit_reached",
+  "secret_not_found",
+  "secret_ambiguous",
+  "secret_brokered_unsupported",
+  "secret_exists",
   "agent_version_not_found",
   "agent_version_unresolvable",
   "agent_kwarg_unsupported",

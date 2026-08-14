@@ -149,7 +149,11 @@ export type {
 export { managedSecrets } from "./managed-secrets";
 export type {
   ManagedSecretRef,
+  ManagedSecretDelivery,
   ManagedSecretMetadata,
+  ManagedSecretSetInput,
+  ManagedSecretWriteResult,
+  ManagedSecretDeleteResult,
   ManagedSecretsClient,
   ManagedSecretsClientConfig,
 } from "./managed-secrets";
@@ -503,4 +507,17 @@ export {
   type WatchImportOptions,
   type DownloadJobOptions,
   type DownloadDatasetOptions,
+  // Remote inspection: job-wide grep, the per-trial file tree, and the
+  // client-side Harbor-tree assembly behind trial/job download.
+  assembleTrialTree,
+  jobEvolveRecord,
+  trialEvolveRecord,
+  type TrialTreeParts,
+  type GrepJobOptions,
+  type JobGrepGroup,
+  type JobGrepPage,
+  type TrialFile,
+  type TrialFilePage,
+  type TrialFileRange,
+  type ListTrialFilesOptions,
 } from "./hosted";

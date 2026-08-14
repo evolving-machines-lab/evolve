@@ -31,11 +31,14 @@ import {
   TRIAL_ARTIFACT_STREAMS,
   TRIAL_STATUSES,
   agents,
+  assembleTrialTree,
   auth,
   datasets,
+  jobEvolveRecord,
   jobs,
   passAtK,
   skills,
+  trialEvolveRecord,
   trials,
 } from "../hosted/index";
 import type {
@@ -49,10 +52,13 @@ import type {
   DatasetImport,
   DatasetSelector,
   EvalSandboxProvider,
+  GrepJobOptions,
   HostedClientConfig,
   Job,
   JobCreate,
   JobEvent,
+  JobSecretRef,
+  JobSecretInline,
   JobTaskRollup,
   PublishDatasetInput,
   RetryConfigInput,
@@ -61,10 +67,16 @@ import type {
   StopResponse,
   Task,
   TraceEvent,
+  TraceOptions,
   Trial,
   TrialStatus,
   UpstreamStatus,
 } from "../hosted/types";
+import {
+  managedSecrets,
+  type ManagedSecretMetadata,
+  type ManagedSecretsClientConfig,
+} from "../managed-secrets";
 
 // =============================================================================
 // GRAMMAR
@@ -209,6 +221,30 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
       "Env for every verifier run (repeatable); the server honors exactly " +
       "REWARDKIT_JUDGE and REWARDKIT_MODEL (rewardkit's judge override) and refuses any other key",
   },
+  secret: {
+    kind: "repeat",
+    value: "NAME[@LABEL][=ENVNAME]",
+    help:
+      "Attach one of your stored env secrets to every agent run (repeatable). " +
+      "NAME is the stored secret's name; @LABEL picks a labeled row (omitted = " +
+      "the 'default' row, or the only row — several labels with no 'default' is " +
+      "refused as ambiguous); =ENVNAME renames the env var inside the sandbox. " +
+      "References only — the value never rides the command line or the wire",
+  },
+  "secret-inline": {
+    kind: "repeat",
+    value: "NAME[@LABEL]:DELIVERY=VALUE",
+    help:
+      "Save VALUE into your vault as an env secret and attach it to this job " +
+      "in one step (repeatable). DELIVERY is 'brokered' or 'direct' and sits " +
+      "before '=' so everything after the first '=' is the value, passed " +
+      "through byte-for-byte ('=', ':' and '@' need no escaping). @LABEL " +
+      "defaults to 'default'. An existing (NAME, LABEL) secret splits on " +
+      "proof: restating it exactly (same value, same delivery) attaches it, " +
+      "so re-running the same command converges; a DIFFERENT value or " +
+      "delivery is refused as secret_exists — attach it with --secret or pick " +
+      "a label. The job stores only the reference, never the value",
+  },
   "n-attempts": { kind: "number", short: "k", value: "<n>", help: "Attempts per task x arm (default 1)" },
   "n-concurrent": { kind: "number", short: "n", value: "<n>", help: "Parallel trials (default 4)" },
   "max-trial-spend": {
@@ -263,7 +299,7 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
     value: "<x>",
     help: "Multiplier for environment build timeout (overrides --timeout-multiplier)",
   },
-  env: { kind: "string", short: "e", value: "<provider>", help: "Sandbox provider: e2b | daytona | modal (default e2b)" },
+  env: { kind: "string", short: "e", value: "<provider>", help: "Sandbox provider: e2b | daytona | modal (default daytona)" },
   watch: { kind: "boolean", help: "Stream events until the job finishes" },
   quiet: { kind: "boolean", short: "q", help: "With --watch: suppress the event log, print the final block only" },
   yes: {
@@ -408,7 +444,8 @@ const GROUPS: Record<string, GroupSpec> = {
         example: "evolve job regrade cme12ab34 --task tricky-task",
       },
       download: {
-        summary: "Download the job's results, unpacked as the standard job-directory tree",
+        summary:
+          "Download the job's results, unpacked as the standard job-directory tree (plus evolve.json records)",
         flags: {
           "output-dir": {
             kind: "string",
@@ -423,6 +460,23 @@ const GROUPS: Record<string, GroupSpec> = {
         positionalUsage: "<id>",
         example: "evolve job download cme12ab34 -o results/",
       },
+      grep: {
+        summary: "Search every trial's parsed trace in one server-side pass",
+        flags: {
+          type: { kind: "string", value: "<event-type>", help: "Only search events of exactly this type" },
+          limit: {
+            kind: "number",
+            short: "l",
+            value: "<n>",
+            help: "Per-trial match groups per page (default 50, max 200)",
+          },
+          cursor: { kind: "string", value: "<c>", help: "Resume after this trial id (the previous page's nextCursor)" },
+        },
+        minPositionals: 2,
+        maxPositionals: 2,
+        positionalUsage: "<id> <pattern>",
+        example: "evolve job grep cme12ab34 'permission denied'",
+      },
     },
   },
   trial: {
@@ -436,8 +490,28 @@ const GROUPS: Record<string, GroupSpec> = {
         positionalUsage: "<trial-id>",
         example: "evolve trial show cmt90ef12",
       },
+      trace: {
+        summary: "Print a trial's parsed trace, filtered server-side",
+        flags: {
+          type: { kind: "string", value: "<event-type>", help: "Only events of exactly this type" },
+          grep: {
+            kind: "string",
+            value: "<pattern>",
+            help:
+              "Only events matching this case-insensitive regex over type + content " +
+              "(a plain string is a plain substring — grep's own grammar)",
+          },
+          tail: { kind: "number", value: "<n>", help: "Only the last N matching events" },
+          cursor: { kind: "string", value: "<seq>", help: "Resume after this seq" },
+          limit: { kind: "number", short: "l", value: "<n>", help: "Events per page fetch (default 200, max 1000)" },
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<trial-id>",
+        example: "evolve trial trace cmt90ef12 --grep 'permission denied' --tail 50",
+      },
       download: {
-        summary: "Save everything a trial recorded, or stream one artifact",
+        summary: "Save a trial as Harbor's trial tree (plus evolve.json), or stream one artifact",
         flags: {
           "output-dir": {
             kind: "string",
@@ -642,6 +716,85 @@ const GROUPS: Record<string, GroupSpec> = {
       },
     },
   },
+  secrets: {
+    summary: "Store and manage env secrets (values are write-only; reads return metadata)",
+    commands: {
+      set: {
+        summary:
+          "Store an env secret, or re-shape delivery/scoping by restating the same value; " +
+          "a DIFFERENT value under an existing name+label is refused (secret_exists, 409) — " +
+          "delete first or use another label, never a silent overwrite",
+        flags: {
+          value: {
+            kind: "string",
+            value: "<value>",
+            help: "The secret value; omit to pipe it on stdin (keeps it out of shell history)",
+          },
+          label: {
+            kind: "string",
+            value: "<label>",
+            help: "Labeled-row identity — several values of one name live side by side (default: 'default')",
+          },
+          delivery: {
+            kind: "string",
+            value: "<mode>",
+            help:
+              "Required: 'brokered' (value never enters a sandbox; needs the --allowed-* scoping) " +
+              "or 'direct' (raw value in the sandbox env; scoping refused)",
+          },
+          "allowed-host": {
+            kind: "repeat",
+            value: "<host>",
+            help: "Brokered scoping: hostname or wildcard like *.example.com (repeatable)",
+          },
+          "allowed-path-prefix": {
+            kind: "repeat",
+            value: "</prefix>",
+            help: "Brokered scoping: allowed URL path prefix (repeatable)",
+          },
+          "allowed-method": {
+            kind: "repeat",
+            value: "<METHOD>",
+            help: "Brokered scoping: allowed HTTP method (repeatable)",
+          },
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<NAME>",
+        example:
+          'printf %s "$GITHUB_TOKEN" | evolve secrets set GITHUB_TOKEN --delivery brokered ' +
+          "--allowed-host api.github.com --allowed-path-prefix / --allowed-method GET",
+      },
+      list: {
+        summary: "List your env secrets (metadata only — values never leave the server)",
+        flags: {
+          columns: {
+            kind: "string",
+            value: "<keys|all|help>",
+            help: "Choose and order columns (comma-separated keys; 'help' lists them)",
+          },
+          quiet: { kind: "boolean", short: "q", help: "Print only name[:label], one per line" },
+          "no-trunc": { kind: "boolean", help: "Full cell content instead of one-line truncation" },
+          "no-headers": { kind: "boolean", help: "Omit the header row in piped (TSV) output" },
+        },
+        minPositionals: 0,
+        maxPositionals: 0,
+        example: "evolve secrets list",
+      },
+      delete: {
+        summary:
+          "Delete an env secret by name (+ --label when several labeled rows share it); " +
+          "revokes every runtime grant riding the row",
+        flags: {
+          label: { kind: "string", value: "<label>", help: "The labeled row to delete" },
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<NAME>",
+        example: "evolve secrets delete GITHUB_TOKEN --label staging",
+      },
+    },
+  },
 };
 
 /**
@@ -662,12 +815,18 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
   },
 };
 
-/** Hidden plural aliases — the singular noun is canonical. */
+/**
+ * Hidden plural aliases — the singular noun is canonical. `secrets` is the
+ * one deliberate exception (plural canonical, singular aliased): the noun
+ * names the surface — the dashboard's Secrets page and the managed-secrets
+ * API — not one record.
+ */
 const GROUP_ALIASES: Record<string, string> = {
   jobs: "job",
   trials: "trial",
   datasets: "dataset",
   skills: "skill",
+  secret: "secrets",
 };
 
 /**
@@ -1150,8 +1309,10 @@ export function parseYamlConfigLocated(
  * (checkWireValue): what a JSON body can carry at all is not the spec's
  * subject.
  *
- * The published package carries the spec two directories above dist/cli/;
- * a source checkout reads the repo-root copy the staged one is built from.
+ * The published package carries the spec two directories above dist/cli/.
+ * The contract's home is the private server repo, so a source checkout
+ * without a staged copy points EVOLVE_OPENAPI_SPEC_PATH at it; the repo-root
+ * candidate remains for legacy checkouts that still carry one.
  */
 const SPEC_RELATIVE_CANDIDATES = ["../../spec/openapi.yaml", "../../../../spec/openapi.yaml"];
 
@@ -1167,8 +1328,12 @@ let jobSpecShapes: JobSpecShapes | undefined;
 function loadJobSpecShapes(): JobSpecShapes {
   if (jobSpecShapes) return jobSpecShapes;
   const tried: string[] = [];
-  for (const relative of SPEC_RELATIVE_CANDIDATES) {
-    const specPath = fileURLToPath(new URL(relative, import.meta.url));
+  const candidates = SPEC_RELATIVE_CANDIDATES.map((relative) =>
+    fileURLToPath(new URL(relative, import.meta.url))
+  );
+  const envPath = process.env.EVOLVE_OPENAPI_SPEC_PATH;
+  if (envPath) candidates.unshift(envPath);
+  for (const specPath of candidates) {
     tried.push(specPath);
     if (!existsSync(specPath)) continue;
     const spec = parseYaml(readFileSync(specPath, "utf-8")) as {
@@ -1185,7 +1350,7 @@ function loadJobSpecShapes(): JobSpecShapes {
     return jobSpecShapes;
   }
   throw new Error(
-    `spec/openapi.yaml not found (tried: ${tried.join(", ")}) — the package ships it; reinstall the SDK`
+    `spec/openapi.yaml not found (tried: ${tried.join(", ")}) — the package ships it; reinstall the SDK, or point EVOLVE_OPENAPI_SPEC_PATH at a contract checkout`
   );
 }
 
@@ -1623,6 +1788,86 @@ function loadAgentConfigFile(
   return parsed as Record<string, unknown>;
 }
 
+/**
+ * Parse repeatable --secret NAME[@LABEL][=ENVNAME] references into the wire's
+ * secrets[] objects. The grammar splits on the FIRST '=' (everything after it
+ * is the in-sandbox env name) and then the FIRST '@' (everything after it is
+ * the label), so neither delimiter is legal inside the parts — which matches
+ * the server's vocabularies (env-var-shaped names, [A-Za-z0-9._-] labels).
+ * Only the shape is ruled here; name/label semantics (reserved names, the
+ * 'default' fallback, the ambiguity refusal) are the server's.
+ */
+export function parseSecretRefs(values: string[]): JobSecretRef[] {
+  return values.map((value) => {
+    const eq = value.indexOf("=");
+    const ref = eq === -1 ? value : value.slice(0, eq);
+    const envName = eq === -1 ? undefined : value.slice(eq + 1);
+    if (eq !== -1 && !envName) {
+      throw new CliUsageError(`Invalid --secret "${value}": expected NAME[@LABEL][=ENVNAME]`);
+    }
+    const at = ref.indexOf("@");
+    const name = at === -1 ? ref : ref.slice(0, at);
+    const label = at === -1 ? undefined : ref.slice(at + 1);
+    if (!name || (at !== -1 && !label)) {
+      throw new CliUsageError(`Invalid --secret "${value}": expected NAME[@LABEL][=ENVNAME]`);
+    }
+    return {
+      name,
+      ...(label !== undefined ? { label } : {}),
+      ...(envName !== undefined ? { as: envName } : {}),
+    };
+  });
+}
+
+/**
+ * Parse repeatable --secret-inline NAME[@LABEL]:DELIVERY=VALUE entries into
+ * the wire's inline secrets[] objects. DELIVERY sits BEFORE the '=' so the
+ * value — everything after the FIRST '=' — is passed through byte-for-byte
+ * and may contain '=', ':' and '@' unescaped. The head splits on its FIRST
+ * '@' (label) and LAST ':' (delivery), matching the label grammar
+ * ([A-Za-z0-9._-], no ':' possible). Only the shape is ruled here;
+ * name/label semantics and the collision refusal are the server's.
+ */
+export function parseInlineSecrets(values: string[]): JobSecretInline[] {
+  const expected = "NAME[@LABEL]:brokered|direct=VALUE";
+  return values.map((value) => {
+    const eq = value.indexOf("=");
+    if (eq === -1) {
+      throw new CliUsageError(`Invalid --secret-inline "${value}": expected ${expected}`);
+    }
+    const head = value.slice(0, eq);
+    const secretValue = value.slice(eq + 1);
+    if (!secretValue) {
+      throw new CliUsageError(`Invalid --secret-inline "${value}": the value must not be empty`);
+    }
+    const colon = head.lastIndexOf(":");
+    if (colon === -1) {
+      throw new CliUsageError(
+        `Invalid --secret-inline "${head}=...": a delivery mode is required — ${expected}`,
+      );
+    }
+    const ref = head.slice(0, colon);
+    const delivery = head.slice(colon + 1);
+    if (delivery !== "brokered" && delivery !== "direct") {
+      throw new CliUsageError(
+        `Invalid --secret-inline delivery "${delivery}": expected brokered or direct`,
+      );
+    }
+    const at = ref.indexOf("@");
+    const name = at === -1 ? ref : ref.slice(0, at);
+    const label = at === -1 ? undefined : ref.slice(at + 1);
+    if (!name || (at !== -1 && !label)) {
+      throw new CliUsageError(`Invalid --secret-inline "${head}=...": expected ${expected}`);
+    }
+    return {
+      name,
+      value: secretValue,
+      delivery,
+      ...(label !== undefined ? { label } : {}),
+    };
+  });
+}
+
 /** Parse repeatable KEY=VALUE pairs into an env map. */
 export function parseEnvPairs(pairs: string[], flag: string): Record<string, string> {
   const env: Record<string, string> = {};
@@ -1734,6 +1979,19 @@ export function buildJobInput(
     f["verifier-env"] !== undefined
       ? parseEnvPairs(f["verifier-env"] as string[], "--verifier-env")
       : base.verifier_env;
+  // --secret/--secret-inline replace the file's list outright, like -d does:
+  // the flags together are one complete attachment statement (references
+  // first, then inline entries), never a merge whose halves could collide on
+  // an env name only the server would notice.
+  const secrets: Array<JobSecretRef | JobSecretInline> | undefined =
+    f.secret !== undefined || f["secret-inline"] !== undefined
+      ? [
+          ...(f.secret !== undefined ? parseSecretRefs(f.secret as string[]) : []),
+          ...(f["secret-inline"] !== undefined
+            ? parseInlineSecrets(f["secret-inline"] as string[])
+            : []),
+        ]
+      : base.secrets;
 
   const jobName = f["job-name"] !== undefined ? String(f["job-name"]) : base.job_name;
   const nAttempts = f["n-attempts"] !== undefined ? (f["n-attempts"] as number) : base.n_attempts;
@@ -1790,6 +2048,7 @@ export function buildJobInput(
     ...timeoutMultipliers,
     ...(agentEnv !== undefined ? { agent_env: agentEnv } : {}),
     ...(verifierEnv !== undefined ? { verifier_env: verifierEnv } : {}),
+    ...(secrets !== undefined ? { secrets } : {}),
   };
 }
 
@@ -2228,6 +2487,18 @@ const AGENT_COLUMNS: ListColumn<Agent>[] = [
   { key: "updated", header: "UPDATED", cell: (a) => a.updated_at },
 ];
 const AGENT_DEFAULT_COLUMNS = ["name", "source", "run", "updated"];
+
+// Values never appear in any column — the server never returns them.
+const SECRET_COLUMNS: ListColumn<ManagedSecretMetadata>[] = [
+  { key: "name", header: "NAME", cell: (s) => s.name },
+  { key: "label", header: "LABEL", cell: (s) => s.label ?? "default" },
+  { key: "delivery", header: "DELIVERY", cell: (s) => s.delivery ?? "brokered" },
+  { key: "hosts", header: "ALLOWED HOSTS", cell: (s) => s.allowedHosts.join(", ") || "-" },
+  { key: "updated", header: "UPDATED", cell: (s) => s.updatedAt },
+  { key: "last-used", header: "LAST USED", cell: (s) => s.lastUsedAt ?? "-" },
+  { key: "id", header: "ID", cell: (s) => s.id },
+];
+const SECRET_DEFAULT_COLUMNS = ["name", "label", "delivery", "hosts", "updated"];
 
 /**
  * Full-detail rendering of one trial — evolve trial show. Exported for
@@ -3017,6 +3288,41 @@ async function cmdJobDownload(inv: Invocation, io: CliIO): Promise<number> {
       await rm(targetDir, { recursive: true, force: true }).catch(() => {});
       throw error;
     }
+    // The evolve.json records — the platform facts Harbor's layout has no
+    // slot for (gateway money/tokens per lane, provider, user_id, regrade
+    // lineage): one at the job root, one per trial directory, each trial
+    // matched by the id its result.json's x_evolve extension names. Content
+    // is the SDK's (jobEvolveRecord / trialEvolveRecord); this verb only
+    // fetches, matches and writes.
+    const { readdir, readFile: readFileAsync, writeFile } = await import("node:fs/promises");
+    const jobBody = await client.get(id);
+    const userId = await callerUserId(inv);
+    const trialsById = new Map<string, Trial>();
+    for await (const run of client.trials(id)) trialsById.set(run.id, run);
+    await writeFile(
+      join(targetDir, "evolve.json"),
+      JSON.stringify(jobEvolveRecord(jobBody, userId), null, 2) + "\n"
+    );
+    files.push("evolve.json");
+    for (const entry of await readdir(targetDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      let trialId: string | undefined;
+      try {
+        const result = JSON.parse(
+          await readFileAsync(join(targetDir, entry.name, "result.json"), "utf8")
+        ) as { x_evolve?: { trialId?: string } };
+        trialId = result.x_evolve?.trialId;
+      } catch {
+        continue;
+      }
+      const run = trialId !== undefined ? trialsById.get(trialId) : undefined;
+      if (!run) continue;
+      await writeFile(
+        join(targetDir, entry.name, "evolve.json"),
+        JSON.stringify(trialEvolveRecord(run, jobBody, userId), null, 2) + "\n"
+      );
+      files.push(`${entry.name}/evolve.json`);
+    }
     if (inv.flags.json === true) {
       io.out(JSON.stringify({ path: targetDir, files: files.length }));
     } else {
@@ -3109,57 +3415,106 @@ async function cmdTrialDownload(inv: Invocation, io: CliIO): Promise<number> {
     return 0;
   }
 
-  // Save mode: everything the trial recorded lands under <output-dir>/<trial-id>/.
-  // The parsed events as trace-parsed.jsonl; the normalized ATIF document as
-  // trace-atif.json (its selector name — the job archive is where it wears
-  // Harbor's own agent/trajectory.json path); each raw log under its own
-  // name; the agent's home folder under agent-home/ with its sandbox paths
-  // preserved.
+  // Save mode: the trial as HARBOR'S TRIAL TREE under <output-dir>/<trial-id>/
+  // — config.json, result.json, agent/ (trajectory, raw logs, parsed events,
+  // sessions/), verifier/, PLUS evolve.json (the platform record Harbor has
+  // no slot for: gateway money/tokens per lane, provider, user_id, regrade
+  // lineage). The assembly is the SDK's (assembleTrialTree — the CLI only
+  // fetches parts and writes files); absent artifacts are absent files.
   const { mkdir, writeFile } = await import("node:fs/promises");
   const { join, dirname } = await import("node:path");
   const targetDir = join((inv.flags["output-dir"] as string | undefined) ?? "trials", trialId);
   if (existsSync(targetDir) && inv.flags.overwrite !== true) {
     throw new Error(`${targetDir} already exists (pass --overwrite to replace it)`);
   }
+  const run = await client.get(trialId);
+  // The job carries the regrade lineage; a trial without a reachable job
+  // still downloads, with the lineage read as an original run's.
+  let jobBody: Job | null = null;
+  try {
+    jobBody = await jobs(clientConfig(inv)).get(run.job_id);
+  } catch {
+    jobBody = null;
+  }
+  const events: TraceEvent[] = [];
+  for await (const event of client.traceEvents(trialId)) events.push(event);
+  const files = assembleTrialTree({
+    trial: run,
+    job: jobBody,
+    events,
+    atif: await client.artifact(trialId, "trace-atif"),
+    verifierLog: await client.artifact(trialId, "verifier"),
+    stdout: await client.artifact(trialId, "trace-stdout"),
+    stderr: await client.artifact(trialId, "trace-stderr"),
+    home: await client.artifact(trialId, "agent-home"),
+    userId: await callerUserId(inv),
+  });
   await mkdir(targetDir, { recursive: true });
   const saved: string[] = [];
-  const report = (line: string) => {
-    saved.push(line);
-    if (!json) io.out(line);
-  };
-  const lines: string[] = [];
-  for await (const event of client.traceEvents(trialId)) {
-    lines.push(JSON.stringify(event));
-  }
-  await writeFile(join(targetDir, "trace-parsed.jsonl"), lines.join("\n") + (lines.length ? "\n" : ""));
-  report(`trace-parsed.jsonl (${lines.length} events)`);
-  // Every artifact saves under its selector name — the ATIF document
-  // included (trace-atif.json; Harbor's trajectory.json filename belongs to
-  // the job archive's Harbor-layout tree, not to this per-trial folder).
-  const atif = await client.artifact(trialId, "trace-atif");
-  if (atif !== null) {
-    await writeFile(join(targetDir, "trace-atif.json"), atif);
-    report(`trace-atif.json (${Buffer.byteLength(atif, "utf8")} bytes)`);
-  }
-  for (const which of ["verifier", "trace-stdout", "trace-stderr"] as const) {
-    const log = await client.artifact(trialId, which);
-    if (log === null) continue;
-    await writeFile(join(targetDir, `${which}.log`), log);
-    report(`${which}.log (${Buffer.byteLength(log, "utf8")} bytes)`);
-  }
-  const home = await client.artifact(trialId, "agent-home");
-  if (home !== null) {
-    for (const [path, content] of Object.entries(home)) {
-      const target = join(targetDir, "agent-home", ...path.split("/").filter(Boolean));
-      await mkdir(dirname(target), { recursive: true });
-      await writeFile(target, content);
-    }
-    report(`agent-home/ (${Object.keys(home).length} files)`);
+  for (const path of Object.keys(files).sort()) {
+    const target = join(targetDir, ...path.split("/"));
+    await mkdir(dirname(target), { recursive: true });
+    await writeFile(target, files[path]);
+    saved.push(path);
+    if (!json) io.out(path);
   }
   if (json) {
     io.out(JSON.stringify({ path: targetDir, saved }));
   } else {
     io.out(`Saved ${targetDir}`);
+  }
+  return 0;
+}
+
+/** The caller's USER id for evolve.json's `user_id` — null when unreachable. */
+async function callerUserId(inv: Invocation): Promise<string | null> {
+  try {
+    return (await auth(clientConfig(inv)).status()).user_id;
+  } catch {
+    return null;
+  }
+}
+
+async function cmdTrialTrace(inv: Invocation, io: CliIO): Promise<number> {
+  const client = trials(clientConfig(inv));
+  const json = inv.flags.json === true;
+  // Parse, call, print: the filters travel verbatim — validation (regex
+  // syntax included) is the server's, and its typed refusal is the answer.
+  const options: TraceOptions = pageOptions(inv);
+  if (inv.flags.type !== undefined) options.type = String(inv.flags.type);
+  if (inv.flags.grep !== undefined) options.grep = String(inv.flags.grep);
+  if (inv.flags.tail !== undefined) options.tail = inv.flags.tail as number;
+  let count = 0;
+  for await (const event of client.traceEvents(inv.positionals[0], options)) {
+    io.out(json ? JSON.stringify(event) : traceEventLine(event));
+    count += 1;
+  }
+  if (!json && count === 0) io.out("No trace events.");
+  return 0;
+}
+
+async function cmdJobGrep(inv: Invocation, io: CliIO): Promise<number> {
+  const client = jobs(clientConfig(inv));
+  const id = await resolveJobId(inv, inv.positionals[0]);
+  const options: GrepJobOptions = pageOptions(inv);
+  if (inv.flags.type !== undefined) options.type = String(inv.flags.type);
+  const page = await client.grep(id, inv.positionals[1], options);
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(page));
+    return 0;
+  }
+  if (page.items.length === 0) {
+    io.out("No matches.");
+    return 0;
+  }
+  for (const group of page.items) {
+    const label = group.match_count === 1 ? "match" : "matches";
+    io.out(`${group.trial_id}  ${group.task_name ?? "-"}  ${group.match_count} ${label}`);
+    for (const event of group.events) io.out(`  ${traceEventLine(event)}`);
+  }
+  if (page.hasMore && page.nextCursor) {
+    io.out("");
+    io.out(`More trials match — resume with --cursor ${page.nextCursor}`);
   }
   return 0;
 }
@@ -3676,6 +4031,115 @@ async function cmdAuthStatus(inv: Invocation, io: CliIO): Promise<number> {
   return 0;
 }
 
+/**
+ * The secrets verbs speak the managed-agents door (dashboard base URL), not
+ * the hosted jobs client — same key, same host, its own client config shape.
+ */
+function secretsClientConfig(inv: Invocation): ManagedSecretsClientConfig {
+  const config: ManagedSecretsClientConfig = {};
+  if (typeof inv.flags["api-key"] === "string") config.apiKey = inv.flags["api-key"];
+  if (typeof inv.flags["base-url"] === "string") config.dashboardUrl = inv.flags["base-url"];
+  return config;
+}
+
+/**
+ * The value channel of `secrets set`: --value, or piped stdin when the flag
+ * is absent — piping keeps the value out of shell history and process lists.
+ * One trailing newline is stripped (every `printf`-less `echo` adds one); an
+ * interactive terminal with no --value is a usage error, never a hang.
+ */
+function readSecretValue(inv: Invocation): string {
+  const flag = inv.flags.value;
+  if (typeof flag === "string") {
+    if (flag.length === 0) throw new CliUsageError("--value must not be empty");
+    return flag;
+  }
+  if (process.stdin.isTTY) {
+    throw new CliUsageError(
+      "no value given: pass --value <value> or pipe the value on stdin " +
+        '(e.g. printf %s "$TOKEN" | evolve secrets set NAME --delivery ...)'
+    );
+  }
+  const piped = readFileSync(0, "utf8");
+  const value = piped.endsWith("\r\n")
+    ? piped.slice(0, -2)
+    : piped.endsWith("\n")
+      ? piped.slice(0, -1)
+      : piped;
+  if (value.length === 0) throw new CliUsageError("stdin carried no value");
+  return value;
+}
+
+async function cmdSecretsSet(inv: Invocation, io: CliIO): Promise<number> {
+  const name = inv.positionals[0];
+  const delivery = inv.flags.delivery;
+  if (delivery !== "brokered" && delivery !== "direct") {
+    throw new CliUsageError("--delivery is required: 'brokered' or 'direct'");
+  }
+  const value = readSecretValue(inv);
+  const client = managedSecrets(secretsClientConfig(inv));
+  const result = await client.set({
+    name,
+    value,
+    delivery,
+    ...(typeof inv.flags.label === "string" ? { label: inv.flags.label } : {}),
+    ...(inv.flags["allowed-host"] !== undefined
+      ? { allowedHosts: inv.flags["allowed-host"] as string[] }
+      : {}),
+    ...(inv.flags["allowed-path-prefix"] !== undefined
+      ? { allowedPathPrefixes: inv.flags["allowed-path-prefix"] as string[] }
+      : {}),
+    ...(inv.flags["allowed-method"] !== undefined
+      ? { allowedMethods: inv.flags["allowed-method"] as string[] }
+      : {}),
+  });
+  // The value is NEVER echoed — not on success, not in --json output (the
+  // server's response carries metadata only).
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(result));
+    return 0;
+  }
+  const secret = result.secret;
+  io.out(
+    `${result.status === "created" ? "Stored" : "Updated"} env secret ${secret.name} ` +
+      `(label ${secret.label ?? "default"}, delivery ${secret.delivery ?? "brokered"})`
+  );
+  return 0;
+}
+
+async function cmdSecretsList(inv: Invocation, io: CliIO): Promise<number> {
+  if (columnsHelpRequested(inv, io, SECRET_COLUMNS)) return 0;
+  const client = managedSecrets(secretsClientConfig(inv));
+  const secrets = await client.list();
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify({ secrets }));
+    return 0;
+  }
+  if (secrets.length === 0) {
+    if (inv.flags.quiet !== true) io.out("No env secrets stored.");
+    return 0;
+  }
+  renderList(inv, io, secrets, SECRET_COLUMNS, SECRET_DEFAULT_COLUMNS, (s) =>
+    s.label && s.label !== "default" ? `${s.name}:${s.label}` : s.name
+  );
+  return 0;
+}
+
+async function cmdSecretsDelete(inv: Invocation, io: CliIO): Promise<number> {
+  const name = inv.positionals[0];
+  const client = managedSecrets(secretsClientConfig(inv));
+  const result = await client.delete({
+    name,
+    ...(typeof inv.flags.label === "string" ? { label: inv.flags.label } : {}),
+  });
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(result));
+    return 0;
+  }
+  io.out(`Deleted env secret ${result.name} (label ${result.label})`);
+  return 0;
+}
+
 // =============================================================================
 // ENTRY
 // =============================================================================
@@ -3715,7 +4179,9 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "job retry": cmdJobRetry,
   "job regrade": cmdJobRegrade,
   "job download": cmdJobDownload,
+  "job grep": cmdJobGrep,
   "trial show": cmdTrialShow,
+  "trial trace": cmdTrialTrace,
   "trial download": cmdTrialDownload,
   "trial retry": cmdTrialRetry,
   "trial regrade": cmdTrialRegrade,
@@ -3734,6 +4200,9 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "agent add": cmdAgentAdd,
   "agent remove": cmdAgentRemove,
   "auth status": cmdAuthStatus,
+  "secrets set": cmdSecretsSet,
+  "secrets list": cmdSecretsList,
+  "secrets delete": cmdSecretsDelete,
 };
 
 /**

@@ -957,8 +957,9 @@ async function testUnterminatedHeredocFailsLoudly(): Promise<void> {
 
   assert(result.code !== 0, `it fails (got exit ${result.code})`);
   assertEqual(result.stdout, "", "nothing is printed that could be mistaken for the command's output");
+  // Case-insensitive: bash says "syntax error", dash (Ubuntu /bin/sh) "Syntax error".
   assert(
-    result.stderr.includes("syntax error"),
+    /syntax error/i.test(result.stderr),
     `the shell says why, on stderr (got ${JSON.stringify(result.stderr)})`,
   );
 }

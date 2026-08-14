@@ -88,6 +88,8 @@ from .hosted import (
     JobPage,
     JobRetryConfig,
     JobRetryConfigInput,
+    JobSecretRef,
+    JobSecretInline,
     JobStats,
     JobStatus,
     JobTaskRollup,
@@ -115,7 +117,11 @@ from .hosted import (
     TimingInfo,
     TraceEvent,
     TraceEventPage,
+    JobGrepGroup,
+    JobGrepPage,
     Trial,
+    TrialFile,
+    TrialFilePage,
     TrialPage,
     TrialRetry,
     TrialStatus,
@@ -145,7 +151,12 @@ from .storage_client import StorageClient
 from .sessions_client import SessionsClient
 from .browser_credentials import BrowserCredentialsClient, BrowserCredentialMetadata, BrowserCredentialsPage
 from .browser_profiles import BrowserProfilesClient, BrowserProfileMetadata, BrowserProfilesPage
-from .managed_secrets import ManagedSecretsClient, ManagedSecretMetadata
+from .managed_secrets import (
+    ManagedSecretsClient,
+    ManagedSecretMetadata,
+    ManagedSecretWriteResult,
+    ManagedSecretDeleteResult,
+)
 from .utils import read_local_dir, save_local_dir
 from .bridge import (
     SandboxNotFoundError,
@@ -440,6 +451,8 @@ __all__ = [
     'BrowserProfilesPage',
     'ManagedSecretsClient',
     'ManagedSecretMetadata',
+    'ManagedSecretWriteResult',
+    'ManagedSecretDeleteResult',
     'SandboxCreateOptions',
     'SandboxNetworkPolicy',
 
@@ -500,6 +513,8 @@ __all__ = [
     'JobFailure',
     'JobRetryConfig',
     'JobRetryConfigInput',
+    'JobSecretRef',
+    'JobSecretInline',
     'JobStats',
     'JobStatus',
     'TrialStatus',
@@ -535,6 +550,10 @@ __all__ = [
     'StopResponse',
     'TraceEvent',
     'TraceEventPage',
+    'JobGrepGroup',
+    'JobGrepPage',
+    'TrialFile',
+    'TrialFilePage',
     'JobPage',
     'TrialPage',
     'JobTaskRollupPage',

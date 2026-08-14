@@ -18,13 +18,13 @@ The law of the shape:
 
 import re
 import typing
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from evolve import AgentDatasetStats, Job, JobStats, pass_at_k
 from evolve.hosted import _map_job
+from tests.unit.conftest import resolve_spec_path
 
-SPEC_PATH = Path(__file__).resolve().parents[4] / 'spec' / 'openapi.yaml'
+SPEC_PATH = resolve_spec_path()
 
 
 def _spec_schema_properties(schema_name: str) -> 'list[str]':

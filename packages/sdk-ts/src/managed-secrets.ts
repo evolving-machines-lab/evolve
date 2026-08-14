@@ -3,12 +3,37 @@ import type { AgentRegistryEntry } from "./registry";
 
 export interface ManagedSecretRef {
   name: string;
+  /**
+   * Which labeled row of `name` to attach. Omitted = the server's shared
+   * resolution law (the same one the hosted evals lane runs): the
+   * 'default'-labeled row when one exists, the single row when exactly one
+   * exists, and a typed ambiguity refusal naming every label otherwise —
+   * never a guess.
+   */
+  label?: string;
   as?: string;
 }
+
+/** How a secret's value reaches the sandbox — the cross-lane vocabulary. */
+export type ManagedSecretDelivery = "brokered" | "direct";
 
 export interface ManagedSecretMetadata {
   id: string;
   name: string;
+  /**
+   * The row's label — secrets are unique by (name, label), 'default' when
+   * none was chosen at store time. Optional: servers older than the label
+   * lane omit it.
+   */
+  label?: string;
+  /**
+   * The row's delivery mode: 'brokered' (the value never enters any
+   * sandbox — placeholder env + egress-proxy swap toward allowedHosts) or
+   * 'direct' (the raw value is placed in the sandbox environment — needed
+   * for URL-parameter keys, gRPC, websockets). Optional: servers older
+   * than the delivery lane omit it and always broker.
+   */
+  delivery?: ManagedSecretDelivery;
   allowedHosts: string[];
   allowedPathPrefixes: string[];
   allowedMethods: string[];
@@ -22,8 +47,56 @@ export interface ManagedSecretsClientConfig {
   dashboardUrl?: string;
 }
 
+/**
+ * Input of the API-key write door (`POST /api/managed-secrets`). The value
+ * rides the HTTPS body and is sealed server-side with the vault cipher — the
+ * same posture the inline job-secrets door on job create established; no
+ * read ever returns it. `delivery` is required: 'brokered' needs the
+ * allowedHosts/allowedPathPrefixes/allowedMethods scoping triple, 'direct'
+ * refuses it (an unscoped value in the sandbox env cannot honor scoping).
+ */
+export interface ManagedSecretSetInput {
+  name: string;
+  /** Labeled-row identity; omitted = 'default'. */
+  label?: string;
+  /** The secret value (at most 190 bytes UTF-8). Never returned by any read. */
+  value: string;
+  delivery: ManagedSecretDelivery;
+  allowedHosts?: string[];
+  allowedPathPrefixes?: string[];
+  allowedMethods?: string[];
+}
+
+export interface ManagedSecretWriteResult {
+  /**
+   * 'created' for a fresh (name, label) identity; 'updated' when the request
+   * restated the stored value byte-for-byte and the row converged (the one
+   * path where delivery and scoping are editable). A DIFFERENT value under
+   * an existing identity never overwrites — the server refuses typed
+   * (HTTP 409, code `secret_exists`); rotate by delete + set, or use
+   * another label.
+   */
+  status: "created" | "updated";
+  secret: ManagedSecretMetadata;
+}
+
+export interface ManagedSecretDeleteResult {
+  ok: boolean;
+  name: string;
+  /** The label of the row that was deleted (resolution may have defaulted it). */
+  label: string;
+}
+
 export interface ManagedSecretsClient {
   list(): Promise<ManagedSecretMetadata[]>;
+  /** Create or update an env secret through the API-key write door. */
+  set(input: ManagedSecretSetInput): Promise<ManagedSecretWriteResult>;
+  /**
+   * Delete an env secret by (name, label). An omitted label resolves by the
+   * shared law: the 'default' row, else the single row, else a typed
+   * ambiguity refusal naming every label.
+   */
+  delete(input: { name: string; label?: string }): Promise<ManagedSecretDeleteResult>;
 }
 
 export interface ManagedSecretRuntimeToken {
@@ -35,9 +108,25 @@ export interface ManagedSecretRuntimeToken {
   env: Array<{
     name: string;
     envName: string;
-    placeholder: string;
+    /**
+     * Omitted by servers older than the delivery lane, which always
+     * broker; treat absence as 'brokered'.
+     */
+    delivery?: ManagedSecretDelivery;
+    /** Present on brokered entries: the opaque env value the proxy swaps. */
+    placeholder?: string;
+    /**
+     * Present on direct entries: the RAW secret value, placed in the
+     * sandbox environment as-is (the proxy never serves it).
+     */
+    value?: string;
     allowedHosts: string[];
   }>;
+}
+
+/** Brokered unless the entry says 'direct' — the pre-delivery-lane reading. */
+function envEntryIsDirect(entry: { delivery?: ManagedSecretDelivery }): boolean {
+  return entry.delivery === "direct";
 }
 
 export const MANAGED_SECRET_BINDING_HEADER =
@@ -90,6 +179,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -279,6 +369,26 @@ def uses_placeholder(path, headers, body):
         return True
     return any(ph_b in body for ph_b in PLACEHOLDER_BYTES)
 
+def brokered_status(transport_status, transport_reason, payload):
+    # A brokered reply carries the TRUE upstream status inside the payload;
+    # the dashboard's own status reports only the health of the hop to it.
+    # Servers older than the status lane omit it: those fall back.
+    status = payload.get("status")
+    if isinstance(status, bool) or not isinstance(status, int) or not 100 <= status <= 599:
+        return transport_status, transport_reason
+    reason = payload.get("statusText")
+    return status, reason if isinstance(reason, str) else ""
+
+def egress_failure(exc):
+    body = json.dumps({
+        "error": "managed secret egress request failed",
+        "detail": str(exc),
+    }).encode("utf-8")
+    return 502, "Managed Secret Egress Unavailable", {
+        "headers": {"content-type": "application/json"},
+        "bodyBase64": base64.b64encode(body).decode("ascii"),
+    }
+
 def call_dashboard(method, url, headers, body):
     payload = json.dumps({
         "method": method,
@@ -300,10 +410,18 @@ def call_dashboard(method, url, headers, body):
     )
     try:
         with urllib.request.urlopen(req, timeout=130) as resp:
-            return resp.status, resp.reason, json.loads(resp.read().decode("utf-8"))
+            result = json.loads(resp.read().decode("utf-8"))
+            if not isinstance(result, dict):
+                raise ValueError("managed secret egress returned a non-object response")
+            status, reason = brokered_status(resp.status, resp.reason, result)
+            return status, reason, result
     except urllib.error.HTTPError as err:
         text = err.read().decode("utf-8", "replace")
         return err.code, "Managed Secret Egress Error", {"headers": {"content-type": "application/json"}, "bodyBase64": base64.b64encode(text.encode()).decode("ascii")}
+    except (urllib.error.URLError, OSError, ValueError) as err:
+        # Connection reset, SSL EOF, timeout, or an unreadable body: the agent
+        # gets a typed 502 and the proxy keeps serving.
+        return egress_failure(err)
 
 def read_limited_response(stream):
     chunks = []
@@ -418,27 +536,49 @@ def handle_client(client):
         except Exception:
             pass
 
+def close_quietly(sock):
+    try:
+        sock.close()
+    except Exception:
+        pass
+
+def reject_client(client):
+    try:
+        client.sendall(b"HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+    except Exception:
+        pass
+    close_quietly(client)
+
 def serve():
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind(("127.0.0.1", int(CONFIG["port"])))
     server.listen(100)
     while True:
-        client, _ = server.accept()
+        # The listener outlives every connection: nothing a single accept or
+        # handoff raises may end the loop, or the sandbox loses egress for the
+        # rest of the session.
+        try:
+            client, _ = server.accept()
+        except Exception:
+            time.sleep(0.05)
+            continue
         if not WORKERS.acquire(blocking=False):
+            reject_client(client)
+            continue
+        # Bound per thread: the loop rebinds the client on the next accept.
+        def run_client(sock=client):
             try:
-                client.sendall(b"HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+                handle_client(sock)
             except Exception:
                 pass
-            client.close()
-            continue
-        def run_client():
-            try:
-                handle_client(client)
             finally:
                 WORKERS.release()
-        thread = threading.Thread(target=run_client, daemon=True)
-        thread.start()
+        try:
+            threading.Thread(target=run_client, daemon=True).start()
+        except Exception:
+            WORKERS.release()
+            close_quietly(client)
 
 if __name__ == "__main__":
     register_channel()
@@ -479,6 +619,34 @@ async function requestJson<T>(
   return (await response.json()) as T;
 }
 
+/**
+ * The write verbs answer snake_case metadata (the wire law of newly declared
+ * surfaces); the list document keeps its original camelCase. One tolerant
+ * reader serves both spellings — the same posture the Python SDK's
+ * metadata parser has always taken.
+ */
+function metadataFromWire(record: Record<string, unknown>): ManagedSecretMetadata {
+  const strings = (value: unknown): string[] =>
+    Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+  return {
+    id: String(record.id ?? ""),
+    name: String(record.name ?? ""),
+    ...(typeof record.label === "string" ? { label: record.label } : {}),
+    ...(record.delivery === "brokered" || record.delivery === "direct"
+      ? { delivery: record.delivery }
+      : {}),
+    allowedHosts: strings(record.allowed_hosts ?? record.allowedHosts),
+    allowedPathPrefixes: strings(record.allowed_path_prefixes ?? record.allowedPathPrefixes),
+    allowedMethods: strings(record.allowed_methods ?? record.allowedMethods),
+    createdAt: String(record.created_at ?? record.createdAt ?? ""),
+    updatedAt: String(record.updated_at ?? record.updatedAt ?? ""),
+    lastUsedAt:
+      typeof (record.last_used_at ?? record.lastUsedAt) === "string"
+        ? ((record.last_used_at ?? record.lastUsedAt) as string)
+        : null,
+  };
+}
+
 export function managedSecrets(config: ManagedSecretsClientConfig = {}): ManagedSecretsClient {
   return {
     async list() {
@@ -487,6 +655,39 @@ export function managedSecrets(config: ManagedSecretsClientConfig = {}): Managed
         "/api/managed-secrets",
       );
       return result.secrets ?? [];
+    },
+    async set(input) {
+      // snake_case on the wire; optional fields are omitted, never null.
+      const body: Record<string, unknown> = {
+        name: input.name,
+        value: input.value,
+        delivery: input.delivery,
+        ...(input.label !== undefined ? { label: input.label } : {}),
+        ...(input.allowedHosts !== undefined ? { allowed_hosts: input.allowedHosts } : {}),
+        ...(input.allowedPathPrefixes !== undefined
+          ? { allowed_path_prefixes: input.allowedPathPrefixes }
+          : {}),
+        ...(input.allowedMethods !== undefined ? { allowed_methods: input.allowedMethods } : {}),
+      };
+      const result = await requestJson<{
+        status: "created" | "updated";
+        secret: Record<string, unknown>;
+      }>(config, "/api/managed-secrets", { method: "POST", body: JSON.stringify(body) });
+      return { status: result.status, secret: metadataFromWire(result.secret ?? {}) };
+    },
+    async delete(input) {
+      const result = await requestJson<{ ok: boolean; name: string; label: string }>(
+        config,
+        "/api/managed-secrets",
+        {
+          method: "DELETE",
+          body: JSON.stringify({
+            name: input.name,
+            ...(input.label !== undefined ? { label: input.label } : {}),
+          }),
+        },
+      );
+      return { ok: result.ok, name: result.name, label: result.label };
     },
   };
 }
@@ -520,12 +721,24 @@ function isManagedSecretRuntimeToken(value: unknown): value is ManagedSecretRunt
     record.env.every((item) => {
       if (!item || typeof item !== "object" || Array.isArray(item)) return false;
       const env = item as Record<string, unknown>;
+      if (
+        typeof env.name !== "string" ||
+        typeof env.envName !== "string" ||
+        !isStringArray(env.allowedHosts)
+      ) {
+        return false;
+      }
+      if (env.delivery === "direct") {
+        // Direct entries carry the raw value and never a placeholder.
+        return typeof env.value === "string" && env.value.length > 0;
+      }
+      // Brokered entries (including pre-delivery-lane servers, which omit
+      // the field) carry the opaque placeholder and never a value.
       return (
-        typeof env.name === "string" &&
-        typeof env.envName === "string" &&
+        (env.delivery === undefined || env.delivery === "brokered") &&
         typeof env.placeholder === "string" &&
         env.placeholder.startsWith("evsec_") &&
-        isStringArray(env.allowedHosts)
+        env.value === undefined
       );
     })
   );
@@ -570,6 +783,10 @@ export async function revokeManagedSecretRuntimeToken(
   return result.ok;
 }
 
+// The one label grammar every labeled-secret surface shares (the server's
+// SECRET_LABEL_RE): [A-Za-z0-9._-], at most 80 characters.
+const MANAGED_SECRET_LABEL_RE = /^[A-Za-z0-9._-]{1,80}$/;
+
 export function normalizeManagedSecretRefs(secrets: ManagedSecretRef[]): ManagedSecretRef[] {
   if (!Array.isArray(secrets) || secrets.length === 0) {
     throw new Error("withManagedSecrets() requires at least one secret");
@@ -579,10 +796,23 @@ export function normalizeManagedSecretRefs(secrets: ManagedSecretRef[]): Managed
       throw new Error(`managedSecrets[${index}] must be an object with a name`);
     }
     const name = normalizeEnvName(secret.name, `managedSecrets[${index}].name`);
+    let label: string | undefined;
+    if (secret.label !== undefined) {
+      if (typeof secret.label !== "string" || !MANAGED_SECRET_LABEL_RE.test(secret.label.trim())) {
+        throw new Error(
+          `managedSecrets[${index}].label may contain only letters, numbers, dots, underscores, and hyphens (at most 80 characters)`,
+        );
+      }
+      label = secret.label.trim();
+    }
     const as = secret.as === undefined
       ? undefined
       : normalizeEnvName(secret.as, `managedSecrets[${index}].as`);
-    return as ? { name, as } : { name };
+    return {
+      name,
+      ...(label !== undefined ? { label } : {}),
+      ...(as !== undefined ? { as } : {}),
+    };
   });
 }
 
@@ -645,10 +875,29 @@ export function validateManagedSecretRefsForRegistry(
   return normalized;
 }
 
+/**
+ * Does this token need the in-sandbox egress proxy at all? Only brokered
+ * entries do; a token whose secrets are all DIRECT delivery skips the proxy
+ * (and its python3/openssl requirements) entirely.
+ */
+export function managedSecretTokenNeedsProxy(token: ManagedSecretRuntimeToken): boolean {
+  return token.env.some((item) => !envEntryIsDirect(item));
+}
+
 export function managedSecretSandboxEnvs(token: ManagedSecretRuntimeToken): Record<string, string> {
   const envs: Record<string, string> = {};
   for (const item of token.env) {
-    envs[item.envName] = item.placeholder;
+    if (envEntryIsDirect(item)) {
+      // DIRECT delivery: the raw value goes into the sandbox environment —
+      // the mode for URL-parameter keys, gRPC, websockets, anything the
+      // HTTPS header proxy cannot broker.
+      envs[item.envName] = item.value as string;
+    } else {
+      envs[item.envName] = item.placeholder as string;
+    }
+  }
+  if (!managedSecretTokenNeedsProxy(token)) {
+    return envs;
   }
   const proxy = `http://127.0.0.1:${MANAGED_SECRET_PROXY_PORT}`;
   envs.HTTPS_PROXY = proxy;
@@ -665,14 +914,16 @@ export function managedSecretSandboxEnvs(token: ManagedSecretRuntimeToken): Reco
 }
 
 export function managedSecretProxyConfig(token: ManagedSecretRuntimeToken): string {
-  const hosts = Array.from(new Set(token.env.flatMap((item) => item.allowedHosts)));
+  // Brokered entries only: the proxy never learns that direct secrets exist.
+  const brokered = token.env.filter((item) => !envEntryIsDirect(item));
+  const hosts = Array.from(new Set(brokered.flatMap((item) => item.allowedHosts)));
   return JSON.stringify({
     egress_url: token.egressUrl,
     channel_url: token.channelUrl,
     token: token.token,
     binding: token.bindingSecret,
     hosts,
-    placeholders: token.env.map((item) => item.placeholder),
+    placeholders: brokered.map((item) => item.placeholder),
     base_dir: MANAGED_SECRET_PROXY_DIR,
     ca_cert: MANAGED_SECRET_CA_CERT_PATH,
     ca_key: MANAGED_SECRET_CA_KEY_PATH,

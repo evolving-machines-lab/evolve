@@ -92,7 +92,10 @@ class Evolve:
                      containing SKILL.md. Resolved pinned + content-cached by the
                      SDK's one resolver and mounted where the harness discovers them.
             secrets: Environment variables for sandbox
-            managed_secrets: Dashboard-stored managed secrets exposed as opaque env vars
+            managed_secrets: Dashboard-stored managed secrets to attach
+                     ({'name', 'label'?, 'as'?} or ManagedSecretRef). Brokered
+                     secrets ride as opaque placeholder env vars behind the
+                     egress proxy; direct secrets land as raw env values
             sandbox_id: Existing sandbox ID to reconnect to
             session_tag_prefix: Optional semantic label for observability log files (e.g., 'experiment-7')
             schema: Schema for structured output - Pydantic model, dataclass, or JSON Schema dict

@@ -20,6 +20,13 @@
  *      itself, not from a shadow copy (hosted-error-codes.test.ts proves the
  *      shadow separately).
  *
+ * Axes 1 and 2 are the two the two repos publish out of step on, so both read
+ * the direction law in tests/unit/spec-lag.ts rather than plain equality: the
+ * spec leading the SDK is legal while a declared lane says so, loudly noticed,
+ * and self-arming; the SDK leading the spec, a divergence inside the overlap,
+ * or an undeclared lag all still fail. EVOLVE_SPEC_GATE_STRICT=1 (which the
+ * publish workflow sets) removes the exception and demands full equality.
+ *
  *   3. ARTIFACT SELECTORS. TRIAL_ARTIFACT_STREAMS equals the trace route's
  *      `?stream=` enum byte-exactly. The SDK ships wave-2 selectors ahead of
  *      the server (the route refuses them until its wave lands), so equality
@@ -44,7 +51,7 @@
  *   npx tsx tests/unit/hosted-spec-gate.test.ts
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -62,6 +69,12 @@ import {
   skills,
   trials,
 } from "../../src/hosted/index";
+import {
+  ERROR_CODE_LAG_LANES,
+  OPERATION_LAG_LANES,
+  SPEC_GATE_STRICT,
+  assessSpecLag,
+} from "./spec-lag";
 
 let passed = 0;
 let failed = 0;
@@ -77,10 +90,22 @@ function assert(condition: boolean, message: string): void {
 }
 
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const SPEC_PATH = join(PACKAGE_ROOT, "..", "..", "spec", "openapi.yaml");
+// The contract lives in the private server repo; EVOLVE_OPENAPI_SPEC_PATH
+// points at a checkout of it. The repo-root path stays as the legacy
+// fallback for checkouts that still carry a copy.
+const SPEC_PATH =
+  process.env.EVOLVE_OPENAPI_SPEC_PATH ?? join(PACKAGE_ROOT, "..", "..", "spec", "openapi.yaml");
+if (!existsSync(SPEC_PATH)) {
+  console.log("SKIP: spec not present — gate runs in private CI or with EVOLVE_OPENAPI_SPEC_PATH");
+  process.exit(0);
+}
 const specLines = readFileSync(SPEC_PATH, "utf8").split("\n");
 
-console.log("\n=== Hosted spec drift gate (vs spec/openapi.yaml) ===\n");
+console.log(
+  `\n=== Hosted spec drift gate (vs spec/openapi.yaml)${
+    SPEC_GATE_STRICT ? " — STRICT, no lag tolerated" : ""
+  } ===\n`
+);
 
 // -----------------------------------------------------------------------------
 // Parse the spec: operations (+ operation-level x-wave), the ErrorCode enum,
@@ -174,11 +199,14 @@ const OPERATION_TO_METHOD: Record<string, string | null> = {
   resumeJob: "jobs.resume",
   retryJob: "jobs.retry",
   regradeJob: "jobs.regrade",
+  grepJob: "jobs.grep",
   listJobTrials: "jobs.trials",
   listJobTasks: "jobs.tasks",
   // Trials (globally addressable)
   getTrial: "trials.get",
   getTrialTrace: "trials.trace", // ?stream= raw selectors ride trials.artifact
+  listTrialFiles: "trials.files",
+  getTrialFile: "trials.file",
   retryTrial: "trials.retry",
   regradeTrial: "trials.regrade",
   stopTrials: "trials.stop",
@@ -237,6 +265,8 @@ const RUNTIME_OPERATION_TO_MODULE: Record<string, string> = {
   getCheckpoint: "src/storage/index.ts",
   presignCheckpointTransfer: "src/storage/index.ts",
   listManagedSecrets: "src/managed-secrets.ts",
+  setManagedSecret: "src/managed-secrets.ts",
+  deleteManagedSecret: "src/managed-secrets.ts",
   createManagedRuntimeToken: "src/managed-secrets.ts",
   extendManagedRuntimeToken: "src/managed-secrets.ts",
   revokeManagedRuntimeToken: "src/managed-secrets.ts",
@@ -295,12 +325,29 @@ assert(
   `the runtime plane parsed (${runtimePlaneOperations.size} operations found)`
 );
 
-const unmapped = [...specOperations.keys()].filter((id) => !(id in OPERATION_TO_METHOD));
+// The map is allowed to lag the contract in ONE direction and only for a wave
+// spec-lag.ts declares: the server lands an operation family and this SDK
+// learns it at its next publish. The opposite direction — a map entry the spec
+// does not declare — is the `phantom` assert below, which is where this axis
+// enforces "SDK ahead of spec is a hard fail". The intersection is what goes in
+// here, so a phantom entry is reported once, by that assert, in its own words.
+const mappedIds = Object.keys(OPERATION_TO_METHOD).filter((id) => specOperations.has(id));
+const operationLag = assessSpecLag({
+  sdk: mappedIds,
+  spec: [...specOperations.keys()],
+  lanes: OPERATION_LAG_LANES,
+  unit: "operation",
+  remedy: "state their SDK answer in OPERATION_TO_METHOD",
+  ordered: false, // a map has no order to pin
+});
+if (operationLag.notice) console.log(operationLag.notice);
 assert(
-  unmapped.length === 0,
-  unmapped.length === 0
+  operationLag.ok,
+  operationLag.inSync
     ? "every spec operationId has an entry in the map"
-    : `spec operations missing from the map (state their SDK answer): ${unmapped.join(", ")}`
+    : operationLag.ok
+      ? `every spec operationId has an entry in the map, but for ${operationLag.behind.length} the SDK is deliberately behind on (see the lag notice above)`
+      : `spec operations missing from the map: ${operationLag.failure}`
 );
 
 const phantom = Object.keys(OPERATION_TO_METHOD).filter((id) => !specOperations.has(id));
@@ -336,11 +383,26 @@ assert(
 // 2. ERROR CODES — byte-exact against the contract's own enum.
 // -----------------------------------------------------------------------------
 
+// Byte-exact, with the same one-directional exception the map above gets: the
+// enum may carry codes a declared wave added and this SDK has not published
+// yet. A code the SDK has and the spec does not, a reordering of the codes
+// both sides carry, or a lag no lane claims all still fail here.
+const errorCodeLag = assessSpecLag({
+  sdk: [...HOSTED_ERROR_CODES],
+  spec: specErrorCodes,
+  lanes: ERROR_CODE_LAG_LANES,
+  unit: "error code",
+  remedy: "add them to src/hosted/types.ts",
+  ordered: true,
+});
+if (errorCodeLag.notice) console.log(errorCodeLag.notice);
 assert(
-  JSON.stringify([...HOSTED_ERROR_CODES]) === JSON.stringify(specErrorCodes),
-  JSON.stringify([...HOSTED_ERROR_CODES]) === JSON.stringify(specErrorCodes)
+  errorCodeLag.ok,
+  errorCodeLag.inSync
     ? `HOSTED_ERROR_CODES is the spec's ErrorCode enum, byte-exactly (${specErrorCodes.length} codes)`
-    : `HOSTED_ERROR_CODES drifted from the spec enum (SDK ${HOSTED_ERROR_CODES.length}, spec ${specErrorCodes.length})`
+    : errorCodeLag.ok
+      ? `HOSTED_ERROR_CODES is the spec's ErrorCode enum minus ${errorCodeLag.behind.length} codes it is deliberately behind on (SDK ${HOSTED_ERROR_CODES.length}, spec ${specErrorCodes.length} — see the lag notice above)`
+      : `HOSTED_ERROR_CODES drifted from the spec enum (SDK ${HOSTED_ERROR_CODES.length}, spec ${specErrorCodes.length}): ${errorCodeLag.failure}`
 );
 
 // -----------------------------------------------------------------------------

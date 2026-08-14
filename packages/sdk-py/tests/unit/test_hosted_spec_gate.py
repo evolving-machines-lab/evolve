@@ -14,6 +14,14 @@ Three axes, same law as the TypeScript gate:
 2. ERROR CODES. ``HOSTED_ERROR_CODES`` equals the spec's ErrorCode enum
    byte-exactly — same members, same order — sourced from the spec itself.
 
+Axes 1 and 2 are the two the two repos publish out of step on, so both read
+the direction law in ``tests/unit/spec_lag.py`` rather than plain equality:
+the spec leading the SDK is legal while a declared lane says so, loudly
+noticed, and self-arming; the SDK leading the spec, a divergence inside the
+overlap, or an undeclared lag all still fail. ``EVOLVE_SPEC_GATE_STRICT=1``
+(which the publish workflow sets) removes the exception and demands full
+equality.
+
 3. ARTIFACT SELECTORS. The ``artifact()`` stream Literal equals the trace
    route's ``?stream=`` enum byte-exactly. The SDK ships wave-2 selectors
    ahead of the server (the route refuses them until its wave lands), so
@@ -33,7 +41,6 @@ parse asserts non-vacuity so an empty parse fails loudly instead of passing.
 
 import re
 import typing
-from pathlib import Path
 
 from evolve import (
     EFFORT_SUPPORT_VALUES,
@@ -51,8 +58,15 @@ from evolve import (
     meta,
 )
 from evolve.hosted import EffortSupport
+from tests.unit.conftest import resolve_spec_path
+from tests.unit.spec_lag import (
+    ERROR_CODE_LAG_LANES,
+    OPERATION_LAG_LANES,
+    announce,
+    assess_spec_lag,
+)
 
-SPEC_PATH = Path(__file__).resolve().parents[4] / 'spec' / 'openapi.yaml'
+SPEC_PATH = resolve_spec_path()
 
 
 def _spec_lines() -> 'list[str]':
@@ -141,11 +155,14 @@ OPERATION_TO_METHOD = {
     'resumeJob': (JobsClient, 'resume'),
     'retryJob': (JobsClient, 'retry'),
     'regradeJob': (JobsClient, 'regrade'),
+    'grepJob': (JobsClient, 'grep'),
     'listJobTrials': (JobsClient, 'trials'),
     'listJobTasks': (JobsClient, 'tasks'),
     # Trials (globally addressable)
     'getTrial': (TrialsClient, 'get'),
     'getTrialTrace': (TrialsClient, 'trace'),  # ?stream= raw selectors ride artifact()
+    'listTrialFiles': (TrialsClient, 'files'),
+    'getTrialFile': (TrialsClient, 'file'),
     'retryTrial': (TrialsClient, 'retry'),
     'regradeTrial': (TrialsClient, 'regrade'),
     'stopTrials': (TrialsClient, 'stop'),
@@ -201,6 +218,8 @@ RUNTIME_OPERATION_TO_MODULE = {
     'getCheckpoint': 'evolve/storage_client.py',
     'presignCheckpointTransfer': 'evolve/storage_client.py',
     'listManagedSecrets': 'evolve/managed_secrets.py',
+    'setManagedSecret': 'evolve/managed_secrets.py',
+    'deleteManagedSecret': 'evolve/managed_secrets.py',
     'createManagedRuntimeToken': 'evolve/managed_secrets.py',
     'extendManagedRuntimeToken': 'evolve/managed_secrets.py',
     'revokeManagedRuntimeToken': 'evolve/managed_secrets.py',
@@ -239,8 +258,22 @@ RUNTIME_OPERATION_TO_MODULE = {
 
 def test_every_spec_operation_is_mapped():
     operations = _spec_operations()
-    unmapped = [op for op in operations if op not in OPERATION_TO_METHOD]
-    assert not unmapped, f'spec operations missing from the map (state their SDK answer): {unmapped}'
+    # The map may lag the contract in ONE direction and only for a wave
+    # spec_lag.py declares: the server lands an operation family and this SDK
+    # learns it at its next publish. The opposite direction — a map entry the
+    # spec does not declare — is the phantom assert below, which is where this
+    # axis enforces "SDK ahead of spec is a hard fail". The intersection is
+    # what goes in here, so a phantom entry is reported once, by that assert.
+    verdict = assess_spec_lag(
+        sdk=[op for op in OPERATION_TO_METHOD if op in operations],
+        spec=list(operations),
+        lanes=OPERATION_LAG_LANES,
+        unit='operation',
+        remedy='state their SDK answer in OPERATION_TO_METHOD',
+        ordered=False,  # a map has no order to pin
+    )
+    announce(verdict)
+    assert verdict.ok, f'spec operations missing from the map: {verdict.failure}'
     phantom = [op for op in OPERATION_TO_METHOD if op not in operations]
     assert not phantom, f'map entries with no spec operation: {phantom}'
 
@@ -269,7 +302,20 @@ def test_wave_1_operations_all_reach_a_method():
 
 
 def test_error_codes_match_the_spec_enum_byte_exactly():
-    assert list(HOSTED_ERROR_CODES) == _spec_error_codes()
+    # Byte-exact, with the same one-directional exception the map above gets:
+    # the enum may carry codes a declared wave added and this SDK has not
+    # published yet. A code the SDK has and the spec does not, a reordering of
+    # the codes both sides carry, or a lag no lane claims all still fail here.
+    verdict = assess_spec_lag(
+        sdk=list(HOSTED_ERROR_CODES),
+        spec=_spec_error_codes(),
+        lanes=ERROR_CODE_LAG_LANES,
+        unit='error code',
+        remedy='add them to the HostedErrorCode Literal in evolve/hosted.py',
+        ordered=True,
+    )
+    announce(verdict)
+    assert verdict.ok, f'HOSTED_ERROR_CODES drifted from the spec enum: {verdict.failure}'
 
 
 def test_artifact_selectors_match_the_spec_stream_enum():

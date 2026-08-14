@@ -145,6 +145,10 @@ HostedErrorCode = Literal[
     'skill_in_use',
     'skill_too_large',
     'skill_limit_reached',
+    'secret_not_found',
+    'secret_ambiguous',
+    'secret_brokered_unsupported',
+    'secret_exists',
     'agent_version_not_found',
     'agent_version_unresolvable',
     'agent_kwarg_unsupported',
@@ -1062,6 +1066,42 @@ class JobRetryConfigInput(TypedDict, total=False):
     max_wait_sec: float
 
 
+# One attached env secret — ``jobs().start(secrets=[...])``, the spec's
+# JobSecretRef schema: a REFERENCE to a stored env secret of the caller's
+# (Secrets surface), by name and optional label, with an optional in-sandbox
+# rename — values never ride the wire on a reference. Functional TypedDict
+# form because ``as`` is a Python keyword; pass the plain dict either way.
+# Resolution law (the 'default'-label fallback, the typed
+# ``secret_ambiguous`` refusal, the reserved-name refusals, the typed
+# ``secret_brokered_unsupported`` refusal for brokered-delivery secrets) is
+# the server's — see ``start()``.
+JobSecretRef = TypedDict(
+    'JobSecretRef',
+    {'name': str, 'label': str, 'as': str},
+    total=False,
+)
+
+
+# One INLINE env secret — the spec's JobSecretInline schema: the convenience
+# door into the same vault, not a second wire shape for values. The server
+# saves ``value`` as a normal env secret first (``delivery`` REQUIRED —
+# 'brokered' or 'direct', no silent default; ``label`` defaults to
+# 'default') and the job then stores only the reference — the stored job
+# never contains a value. A (name, label) identity that already exists
+# splits on proof: an entry restating the stored row byte-for-byte (same
+# value, same delivery) attaches it exactly like a reference — a network
+# retry of the same request converges instead of colliding with its own
+# first attempt — while a different value or delivery is the typed
+# ``secret_exists`` refusal (attach by reference or pick a label — never a
+# silent overwrite); ``delivery='brokered'`` refuses as
+# ``secret_brokered_unsupported`` until eval trials can broker.
+JobSecretInline = TypedDict(
+    'JobSecretInline',
+    {'name': str, 'value': str, 'delivery': str, 'label': str, 'as': str},
+    total=False,
+)
+
+
 class JobRetryConfig(TypedDict):
     """The RESOLVED auto-retry policy a job runs under — the spec's
     ``RetryConfig`` schema, echoed on every job body as ``Job.retry``: the
@@ -1496,6 +1536,47 @@ class TraceEventPage:
     ``cursor`` — a trace cursor IS a position in the seq timeline.
     """
     items: List[TraceEvent]
+    next_cursor: Optional[str]
+    has_more: bool
+
+
+@dataclass
+class JobGrepGroup:
+    """One trial's slice of a job-wide grep — jobs().grep().
+
+    ``match_count`` is EXACT and never truncates; ``events`` is the first few
+    matching events (the platform caps the sample at 5). The full match list
+    of one trial is ``trials().trace()`` with the same pattern as ``grep``.
+    ``task_name`` is None only when the task row is gone.
+    """
+    trial_id: str
+    task_name: Optional[str]
+    match_count: int
+    events: List[TraceEvent]
+
+
+@dataclass
+class JobGrepPage:
+    """One page of a job-wide grep, ordered by trial id — jobs().grep()."""
+    items: List[JobGrepGroup]
+    next_cursor: Optional[str]
+    has_more: bool
+
+
+@dataclass
+class TrialFile:
+    """One stored file of a trial's tree — trials().files().
+
+    ``path`` is prefix-relative, exactly the path ``trials().file()`` reads.
+    """
+    path: str
+    size_bytes: int
+
+
+@dataclass
+class TrialFilePage:
+    """One page of a trial's stored file tree, sorted by path."""
+    items: List[TrialFile]
     next_cursor: Optional[str]
     has_more: bool
 
@@ -2459,6 +2540,22 @@ def _map_trace_event(data: Dict[str, Any]) -> TraceEvent:
     )
 
 
+def _map_grep_group(data: Dict[str, Any]) -> JobGrepGroup:
+    return JobGrepGroup(
+        trial_id=data.get('trial_id', ''),
+        task_name=data.get('task_name'),
+        match_count=int(data.get('match_count', 0)),
+        events=[_map_trace_event(item) for item in data.get('events') or []],
+    )
+
+
+def _map_trial_file(data: Dict[str, Any]) -> TrialFile:
+    return TrialFile(
+        path=data.get('path', ''),
+        size_bytes=int(data.get('size_bytes', 0)),
+    )
+
+
 def _map_coverage(data: Any) -> CompareCoverage:
     data = data if isinstance(data, dict) else {}
     return CompareCoverage(
@@ -2704,7 +2801,11 @@ class _HostedHttp:
         )
 
     async def request_bytes(
-        self, path: str, *, timeout: int = DOWNLOAD_TIMEOUT_SEC
+        self,
+        path: str,
+        *,
+        timeout: int = DOWNLOAD_TIMEOUT_SEC,
+        headers: Optional[Dict[str, str]] = None,
     ) -> 'tuple[bytes, Dict[str, str]]':
         """GET raw bytes plus response headers.
 
@@ -2713,9 +2814,11 @@ class _HostedHttp:
         does not arrive inside a request timeout sized for a status poll. The
         to-disk path has always used the larger budget, and the two shapes
         failing at different sizes is the kind of difference nobody debugs.
+        ``headers`` exists for the one extra header this surface speaks:
+        the byte-range read's ``Range``.
         """
         return await asyncio.to_thread(
-            self._request_sync, path, 'GET', None, None, True, timeout
+            self._request_sync, path, 'GET', None, headers, True, timeout
         )
 
     async def request_upload(
@@ -3930,6 +4033,7 @@ class JobsClient:
         environment_build_timeout_multiplier: Optional[float] = None,
         agent_env: Optional[Dict[str, str]] = None,
         verifier_env: Optional[Dict[str, str]] = None,
+        secrets: Optional[List[Union['JobSecretRef', 'JobSecretInline', Dict[str, Any]]]] = None,
         idempotency_key: Optional[str] = None,
     ) -> Job:
         """Start a job over one or more catalog datasets.
@@ -3983,7 +4087,34 @@ class JobsClient:
         its ``[judge].model`` field when the judge is an agent. Both are
         delivered into the verifier environment in both verifier modes,
         over any task-declared value of the same name; any other key is
-        refused at create. Supports Idempotency-Key.
+        refused at create. ``secrets`` attaches env secrets to every agent
+        run — REFERENCES to stored secrets (``{'name': ..., 'label': ...,
+        'as': ...}``, the spec's JobSecretRef) and INLINE entries
+        (``{'name': ..., 'value': ..., 'delivery': ..., 'label': ...,
+        'as': ...}``, the spec's JobSecretInline) whose values are saved
+        into your vault as normal env secrets FIRST and then pinned like
+        any other reference — the stored job never contains a value. A
+        (name, label) collision with an existing row splits on proof: a
+        byte-equal restatement (same value, same delivery) attaches the
+        existing row — retries of the same request converge — while a
+        different value or delivery is the typed ``secret_exists``
+        refusal (attach by reference or pick a label — never a silent
+        overwrite). Reference resolution is the server's and
+        is pinned at create: an omitted ``label`` takes the
+        'default'-labeled row when one exists (the single row when exactly
+        one exists), and a bare name matching several labels with no
+        'default' is the typed ``secret_ambiguous`` refusal naming the
+        labels; ``as`` renames the env var inside the sandbox, and names
+        the trial contract owns (the ``EVOLVE_`` prefix, gateway/vendor key
+        slots, the judge-override pair) are refused. DELIVERY MODES: every
+        stored env secret carries ``delivery`` — ``'brokered'`` (the value
+        never enters any sandbox; the managed-agents egress-proxy
+        machinery) or ``'direct'`` (the raw value is placed in the sandbox
+        environment). Eval trials deliver exactly the DIRECT mode: the
+        value enters the trial env and is scrubbed at the credential seal,
+        before hidden tests enter. Attaching a brokered secret is the
+        typed ``secret_brokered_unsupported`` refusal at create — never a
+        silent downgrade. Supports Idempotency-Key.
         """
         body: Dict[str, Any] = {}
         if job_name is not None:
@@ -4020,6 +4151,8 @@ class JobsClient:
             body['agent_env'] = agent_env
         if verifier_env is not None:
             body['verifier_env'] = verifier_env
+        if secrets is not None:
+            body['secrets'] = [dict(ref) for ref in secrets]
         headers = {'Idempotency-Key': idempotency_key} if idempotency_key else None
         raw = await self._http.request_json('/api/jobs', method='POST', body=body, headers=headers)
         return _map_job(raw)
@@ -4531,6 +4664,37 @@ class JobsClient:
                 raise EvolveDigestMismatchError(expected, actual)
         return payload
 
+    async def grep(
+        self,
+        id: str,
+        q: str,
+        *,
+        type: Optional[str] = None,
+        cursor: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> JobGrepPage:
+        """Grep the parsed trace of EVERY trial of the job in one server-side
+        pass.
+
+        ``q`` is the trace filter's grammar: a case-insensitive POSIX regex
+        over each event's type and serialized content, where a plain string
+        is a plain substring — grep's own rules; ``type`` narrows to one
+        event type first. Items are per-trial groups ordered by trial id
+        (the cursor is the last group's trial id): the trial's task name,
+        the EXACT match count, and the first few matching events. An empty
+        page means no matches anywhere — a normal answer.
+        """
+        raw = await self._http.request_json(
+            f'/api/jobs/{urllib.parse.quote(id)}/grep'
+            f'{_page_query(limit, cursor, q=q, type=type)}'
+        )
+        items, next_cursor, has_more = _page_parts(raw)
+        return JobGrepPage(
+            items=[_map_grep_group(item) for item in items],
+            next_cursor=next_cursor,
+            has_more=has_more,
+        )
+
     async def compare(self, ids: List[str]) -> CompareResponse:
         """Side-by-side comparison of 2-10 owned jobs.
 
@@ -4590,6 +4754,9 @@ class TrialsClient:
         *,
         cursor: Optional[str] = None,
         limit: Optional[int] = None,
+        type: Optional[str] = None,
+        grep: Optional[str] = None,
+        tail: Optional[int] = None,
     ) -> TraceEventPage:
         """Get one page of a trial's trace.
 
@@ -4597,10 +4764,18 @@ class TrialsClient:
         from the beginning); resume with ``cursor=page.next_cursor``. A None
         ``next_cursor`` means CAUGHT UP — to resume a poll later, keep the last
         event's ``seq`` and pass it as ``cursor``.
+
+        ``type`` / ``grep`` / ``tail`` filter the parsed events and COMPOSE
+        with the cursor: only events of exactly that type; only events whose
+        type or serialized content matches the case-insensitive POSIX regex
+        (a plain string is a plain substring — grep's own grammar; an invalid
+        pattern is the server's typed ``invalid_input`` refusal); only the
+        last N matching events (a floor on the seq timeline, after which
+        paging proceeds normally, oldest-first).
         """
         raw = await self._http.request_json(
             f'/api/trials/{urllib.parse.quote(trial_id)}/trace'
-            f'{_page_query(limit, cursor)}'
+            f'{_page_query(limit, cursor, type=type, grep=grep, tail=str(tail) if tail is not None else None)}'
         )
         items, next_cursor, has_more = _page_parts(raw)
         return TraceEventPage(
@@ -4615,22 +4790,85 @@ class TrialsClient:
         *,
         cursor: Optional[str] = None,
         limit: Optional[int] = None,
+        type: Optional[str] = None,
+        grep: Optional[str] = None,
+        tail: Optional[int] = None,
     ):
         """Iterate a trial's trace events, fetching pages under the hood.
 
         Drains the currently available trace, then stops: ``next_cursor`` is
         None when there is no next page, which says "caught up" rather than
         echoing the position back. Resume later by passing the last seen seq as
-        ``cursor``.
+        ``cursor``. The ``type`` / ``grep`` / ``tail`` filters ride every
+        page — a filtered drain is still one drain.
         """
         position = cursor
         while True:
-            page = await self.trace(trial_id, cursor=position, limit=limit)
+            page = await self.trace(
+                trial_id, cursor=position, limit=limit, type=type, grep=grep, tail=tail
+            )
             for event in page.items:
                 yield event
             if not page.next_cursor:
                 return
             position = page.next_cursor
+
+    async def files(
+        self,
+        trial_id: str,
+        *,
+        cursor: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> TrialFilePage:
+        """List the trial's ENTIRE stored file tree.
+
+        The read-only-filesystem law: everything the platform stored under
+        the trial's prefix — native session files, the verifier log, the raw
+        agent streams, live checkpoint chunks — as ``{path, size_bytes}``
+        rows sorted by path, no curation. Read any row with :meth:`file`.
+        An empty page is a normal answer.
+        """
+        raw = await self._http.request_json(
+            f'/api/trials/{urllib.parse.quote(trial_id)}/files'
+            f'{_page_query(limit, cursor)}'
+        )
+        items, next_cursor, has_more = _page_parts(raw)
+        return TrialFilePage(
+            items=[_map_trial_file(item) for item in items],
+            next_cursor=next_cursor,
+            has_more=has_more,
+        )
+
+    async def file(
+        self,
+        trial_id: str,
+        path: str,
+        *,
+        start: Optional[int] = None,
+        end: Optional[int] = None,
+        suffix: Optional[int] = None,
+    ) -> bytes:
+        """RAW BYTES of one stored file, by the path :meth:`files` names.
+
+        Byte fidelity, no translation. ``start``/``end`` read an inclusive
+        slice (``start`` alone reads to the end); ``suffix`` reads the last N
+        bytes — the wire's single-``Range`` grammar, so a huge log tails
+        without shipping whole. A path the tree does not hold surfaces as the
+        API's typed 404.
+        """
+        encoded = '/'.join(
+            urllib.parse.quote(segment) for segment in path.split('/') if segment
+        )
+        headers: Optional[Dict[str, str]] = None
+        if suffix is not None:
+            headers = {'Range': f'bytes=-{suffix}'}
+        elif start is not None:
+            headers = {'Range': f'bytes={start}-{end if end is not None else ""}'}
+        payload, _headers = await self._http.request_bytes(
+            f'/api/trials/{urllib.parse.quote(trial_id)}/files/{encoded}',
+            headers=headers,
+        )
+        return payload
 
     async def artifact(
         self,

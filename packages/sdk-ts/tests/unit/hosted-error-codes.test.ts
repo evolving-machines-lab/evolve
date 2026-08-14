@@ -23,11 +23,12 @@
  *   npx tsx tests/unit/hosted-error-codes.test.ts
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 import { HOSTED_ERROR_CODES, isHostedErrorCode } from "../../src/hosted/types";
+import { ERROR_CODE_LAG_LANES, SPEC_GATE_STRICT, assessSpecLag } from "./spec-lag";
 
 let passed = 0;
 let failed = 0;
@@ -45,7 +46,11 @@ function assert(condition: boolean, message: string): void {
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const REFEREE_PATH = join(PACKAGE_ROOT, "hosted-error-codes.json");
 
-console.log("\n=== Hosted error-code parity (vs hosted-error-codes.json) ===\n");
+console.log(
+  `\n=== Hosted error-code parity (vs hosted-error-codes.json)${
+    SPEC_GATE_STRICT ? " — STRICT, no lag tolerated" : ""
+  } ===\n`,
+);
 
 const referee = JSON.parse(readFileSync(REFEREE_PATH, "utf8")) as {
   codes: string[];
@@ -59,21 +64,44 @@ assert(
 );
 
 // THE JSON'S OWN PROVENANCE. Its $comment claims the contract's ErrorCode enum
-// owns the vocabulary; this proves the claim instead of trusting it. The spec
-// lives at the repo root (the published package carries its own copy under
-// spec/, but tests do not ship), so this check runs in-repo only.
-const SPEC_PATH = join(PACKAGE_ROOT, "..", "..", "spec", "openapi.yaml");
-const specText = readFileSync(SPEC_PATH, "utf8");
-const enumBlock = specText.split("    ErrorCode:")[1]?.split("\n    Error:")[0] ?? "";
-const specCodes = [...enumBlock.matchAll(/^\s+- ([a-z_]+)\s*(?:#.*)?$/gm)].map((m) => m[1]);
-assert(
-  JSON.stringify(specCodes) === JSON.stringify(referee.codes),
-  specCodes.length === referee.codes.length &&
-    specCodes.every((code, i) => code === referee.codes[i])
-    ? `hosted-error-codes.json is the contract's ErrorCode enum, in its order (${specCodes.length} codes)`
-    : "hosted-error-codes.json drifted from the contract's ErrorCode enum " +
-        `(spec has ${specCodes.length}, json has ${referee.codes.length})`,
-);
+// owns the vocabulary; this proves the claim instead of trusting it. The
+// contract lives in the private server repo — EVOLVE_OPENAPI_SPEC_PATH points
+// at a checkout of it, the repo-root path stays as the legacy fallback — so
+// this check runs only where a spec is present.
+const SPEC_PATH =
+  process.env.EVOLVE_OPENAPI_SPEC_PATH ?? join(PACKAGE_ROOT, "..", "..", "spec", "openapi.yaml");
+if (existsSync(SPEC_PATH)) {
+  const specText = readFileSync(SPEC_PATH, "utf8");
+  const enumBlock = specText.split("    ErrorCode:")[1]?.split("\n    Error:")[0] ?? "";
+  const specCodes = [...enumBlock.matchAll(/^\s+- ([a-z_]+)\s*(?:#.*)?$/gm)].map((m) => m[1]);
+  // The one comparison in this file that crosses repos, so the one that reads
+  // the direction law (tests/unit/spec-lag.ts) instead of plain equality: the
+  // contract may carry a declared wave's codes before the publish that puts
+  // them in this shadow. Everything below stays equality — it compares two
+  // copies that ship together, which can never legitimately disagree.
+  const shadowLag = assessSpecLag({
+    sdk: referee.codes,
+    spec: specCodes,
+    lanes: ERROR_CODE_LAG_LANES,
+    unit: "error code",
+    remedy: "add them to src/hosted/types.ts and regenerate hosted-error-codes.json",
+    ordered: true,
+  });
+  if (shadowLag.notice) console.log(shadowLag.notice);
+  assert(
+    shadowLag.ok,
+    shadowLag.inSync
+      ? `hosted-error-codes.json is the contract's ErrorCode enum, in its order (${specCodes.length} codes)`
+      : shadowLag.ok
+        ? "hosted-error-codes.json is the contract's ErrorCode enum, in its order, minus " +
+          `${shadowLag.behind.length} codes the SDK is deliberately behind on ` +
+          `(spec has ${specCodes.length}, json has ${referee.codes.length} — see the lag notice above)`
+        : "hosted-error-codes.json drifted from the contract's ErrorCode enum " +
+          `(spec has ${specCodes.length}, json has ${referee.codes.length}): ${shadowLag.failure}`,
+  );
+} else {
+  console.log("  - SKIP: spec not present — gate runs in private CI or with EVOLVE_OPENAPI_SPEC_PATH");
+}
 
 const missing = referee.codes.filter(
   (code) => !(HOSTED_ERROR_CODES as readonly string[]).includes(code),

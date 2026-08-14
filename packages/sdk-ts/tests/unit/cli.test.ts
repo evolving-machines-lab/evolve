@@ -150,6 +150,8 @@ import {
   parseAgentKwargs,
   parseArgs,
   parseEnvPairs,
+  parseInlineSecrets,
+  parseSecretRefs,
   parseYamlConfig,
   runCli,
   trialDetailLines,
@@ -166,6 +168,19 @@ function captureIO(tty = false): { io: CliIO; out: string[]; err: string[] } {
 }
 
 const AUTH = ["--api-key", "test-key", "--base-url", BASE];
+
+// The -c validation vocabulary reads out of the contract itself, and the
+// contract lives in the private server repo — resolvable here through the
+// same doors the CLI tries: EVOLVE_OPENAPI_SPEC_PATH, the staged package
+// copy, the legacy repo-root copy. Without any of them the -c suites skip.
+const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const SPEC_AVAILABLE = [
+  process.env.EVOLVE_OPENAPI_SPEC_PATH,
+  join(PACKAGE_ROOT, "spec", "openapi.yaml"),
+  join(PACKAGE_ROOT, "..", "..", "spec", "openapi.yaml"),
+].some((candidate) => candidate !== undefined && existsSync(candidate));
+const SPEC_SKIP_REASON =
+  "SKIP: spec not present — gate runs in private CI or with EVOLVE_OPENAPI_SPEC_PATH";
 
 // =============================================================================
 // PARSING — grammar resolution
@@ -402,6 +417,97 @@ function testBuildJobInputFlags() {
   assertThrowsUsage(() => parseEnvPairs(["NOEQUALS"], "--agent-env"), "KEY=VALUE", "malformed env pair");
 }
 
+function testSecretRefs() {
+  console.log("\n--- --secret NAME[@LABEL][=ENVNAME] -> JobCreate.secrets ---");
+  assertEqual(
+    parseSecretRefs(["GITHUB_TOKEN"]),
+    [{ name: "GITHUB_TOKEN" }],
+    "bare NAME is a ref with no label and no rename"
+  );
+  assertEqual(
+    parseSecretRefs(["API_KEY@staging"]),
+    [{ name: "API_KEY", label: "staging" }],
+    "@LABEL picks a labeled row"
+  );
+  assertEqual(
+    parseSecretRefs(["API_KEY=SERVICE_KEY"]),
+    [{ name: "API_KEY", as: "SERVICE_KEY" }],
+    "=ENVNAME renames the env var in the sandbox"
+  );
+  assertEqual(
+    parseSecretRefs(["API_KEY@prod=SERVICE_KEY"]),
+    [{ name: "API_KEY", label: "prod", as: "SERVICE_KEY" }],
+    "full grammar: NAME@LABEL=ENVNAME"
+  );
+  assertThrowsUsage(() => parseSecretRefs(["@nolabel"]), "NAME[@LABEL][=ENVNAME]", "empty name");
+  assertThrowsUsage(() => parseSecretRefs(["NAME@"]), "NAME[@LABEL][=ENVNAME]", "empty label");
+  assertThrowsUsage(() => parseSecretRefs(["NAME="]), "NAME[@LABEL][=ENVNAME]", "empty env name");
+
+  const built = buildJobInput(
+    parseArgs([
+      "job", "start",
+      "-d", "deep-swe",
+      "-a", "codex",
+      "-m", "m",
+      "--secret", "GITHUB_TOKEN",
+      "--secret", "API_KEY@prod=SERVICE_KEY",
+    ])
+  );
+  assertEqual(
+    built.secrets,
+    [{ name: "GITHUB_TOKEN" }, { name: "API_KEY", label: "prod", as: "SERVICE_KEY" }],
+    "--secret is repeatable and lands as JobCreate.secrets in order"
+  );
+  const withoutFlag = buildJobInput(
+    parseArgs(["job", "start", "-d", "deep-swe", "-a", "codex", "-m", "m"])
+  );
+  assert(!("secrets" in withoutFlag), "no secrets key when no --secret given");
+}
+
+function testInlineSecrets() {
+  console.log("\n--- --secret-inline NAME[@LABEL]:DELIVERY=VALUE -> JobCreate.secrets ---");
+  assertEqual(
+    parseInlineSecrets(["GRPC_API_KEY:direct=raw-value"]),
+    [{ name: "GRPC_API_KEY", value: "raw-value", delivery: "direct" }],
+    "bare NAME:direct=VALUE is an inline entry with no label"
+  );
+  assertEqual(
+    parseInlineSecrets(["API_KEY@ci:direct=a=b:c@d"]),
+    [{ name: "API_KEY", value: "a=b:c@d", delivery: "direct", label: "ci" }],
+    "the value is everything after the FIRST '=' — '=', ':' and '@' ride through"
+  );
+  assertEqual(
+    parseInlineSecrets(["HOOK_TOKEN:brokered=v"]),
+    [{ name: "HOOK_TOKEN", value: "v", delivery: "brokered" }],
+    "brokered parses too — the server owns the refusal in the evals lane"
+  );
+  assertThrowsUsage(() => parseInlineSecrets(["NAME=value"]), "delivery mode is required", "missing delivery");
+  assertThrowsUsage(() => parseInlineSecrets(["NAME:proxied=value"]), "brokered or direct", "unknown delivery");
+  assertThrowsUsage(() => parseInlineSecrets(["NAME:direct="]), "must not be empty", "empty value");
+  assertThrowsUsage(() => parseInlineSecrets(["NAME:direct"]), "NAME[@LABEL]:brokered|direct=VALUE", "no value at all");
+  assertThrowsUsage(() => parseInlineSecrets(["@nolabel:direct=v"]), "NAME[@LABEL]:brokered|direct=VALUE", "empty name");
+  assertThrowsUsage(() => parseInlineSecrets(["NAME@:direct=v"]), "NAME[@LABEL]:brokered|direct=VALUE", "empty label");
+
+  const built = buildJobInput(
+    parseArgs([
+      "job", "start",
+      "-d", "deep-swe",
+      "-a", "codex",
+      "-m", "m",
+      "--secret", "GITHUB_TOKEN",
+      "--secret-inline", "GRPC_API_KEY@ci:direct=raw-value",
+    ])
+  );
+  assertEqual(
+    built.secrets,
+    [
+      { name: "GITHUB_TOKEN" },
+      { name: "GRPC_API_KEY", value: "raw-value", delivery: "direct", label: "ci" },
+    ],
+    "--secret and --secret-inline form one attachment list, references first"
+  );
+}
+
 function testBuildJobInputRetry() {
   console.log("\n--- buildJobInput: -r/--max-retries, --retry-include, --retry-exclude ---");
   // All three flags land under one `retry` object, Harbor's field names.
@@ -432,7 +538,12 @@ function testBuildJobInputRetry() {
   assert(!("retry" in minimal), "no retry key when no retry flag given");
 
   // Config-file base is merged FIELD BY FIELD, a flag overriding its field —
-  // Harbor's own CLI merge rule.
+  // Harbor's own CLI merge rule. A -c file validates against the contract, so
+  // this half runs only where a spec is present.
+  if (!SPEC_AVAILABLE) {
+    console.log(`  - ${SPEC_SKIP_REASON}`);
+    return;
+  }
   const merged = buildJobInput(
     parseArgs([
       "job", "start",
@@ -513,6 +624,12 @@ function testBuildJobInputTimeoutMultipliers() {
 
   // Config-file base is merged FIELD BY FIELD, a flag overriding its field —
   // the same rule the retry flags follow (Harbor's own CLI merge posture).
+  // A -c file validates against the contract, so this half runs only where a
+  // spec is present.
+  if (!SPEC_AVAILABLE) {
+    console.log(`  - ${SPEC_SKIP_REASON}`);
+    return;
+  }
   const merged = buildJobInput(
     parseArgs([
       "job", "start",
@@ -915,9 +1032,13 @@ async function testConfigFileMerge() {
         ["must be an integer", "[spec: JobCreate.n_attempts]"],
       ],
       [
+        // The ceiling's VALUE is the contract's to move (it has moved once
+        // already, 16 -> 150), so the needle pins the refusal and the ruling
+        // shape, not the number — 100000 sits above any ceiling the spec
+        // would ever state.
         "over-concurrency",
-        "n_concurrent_trials: 64\ndatasets: [{name: deep-swe}]\nagents: [{name: claude, model_name: opus}]",
-        ["must be at most 16"],
+        "n_concurrent_trials: 100000\ndatasets: [{name: deep-swe}]\nagents: [{name: claude, model_name: opus}]",
+        ["must be at most", "[spec: JobCreate.n_concurrent_trials]"],
       ],
       [
         "zero-tasks",
@@ -1503,18 +1624,22 @@ async function testPrintConfig() {
     // --print-config is the dry-run a paid remote run deserves, so it owes an
     // honest exit code: a config it cannot resolve exits 2 with the reason on
     // stderr, never 0 over a character-indexed body the server would refuse.
-    const dir = await mkdtemp(join(tmpdir(), "evolve-cli-print-"));
-    try {
-      const bare = join(dir, "bare.yaml");
-      await writeFile(bare, "job_name: nightly\ndatasets: [swe-bench]\nagents: [{name: claude, model_name: opus}]\n");
-      const bad = captureIO();
-      const badCode = await runCli(["job", "start", "-c", bare, "--print-config", ...AUTH], bad.io);
-      assertEqual(badCode, 2, "a bare dataset name exits 2, not 0");
-      assertEqual(bad.out.join("\n"), "", "nothing was printed as a body");
-      assert(bad.err.join("\n").includes("datasets[0]"), "stderr names the offending element");
-      assertEqual(fetchCalls.length, 0, "still nothing was sent");
-    } finally {
-      await rm(dir, { recursive: true, force: true });
+    if (SPEC_AVAILABLE) {
+      const dir = await mkdtemp(join(tmpdir(), "evolve-cli-print-"));
+      try {
+        const bare = join(dir, "bare.yaml");
+        await writeFile(bare, "job_name: nightly\ndatasets: [swe-bench]\nagents: [{name: claude, model_name: opus}]\n");
+        const bad = captureIO();
+        const badCode = await runCli(["job", "start", "-c", bare, "--print-config", ...AUTH], bad.io);
+        assertEqual(badCode, 2, "a bare dataset name exits 2, not 0");
+        assertEqual(bad.out.join("\n"), "", "nothing was printed as a body");
+        assert(bad.err.join("\n").includes("datasets[0]"), "stderr names the offending element");
+        assertEqual(fetchCalls.length, 0, "still nothing was sent");
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    } else {
+      console.log(`  - ${SPEC_SKIP_REASON}`);
     }
   } finally {
     restoreFetch();
@@ -3153,6 +3278,7 @@ async function testCompareCancelDownload() {
       { name: "job-eval-1/config.json", content: '{"job_name":"job-eval-1"}' },
       { name: "job-eval-1/result.json", content: '{"stats":{}}' },
       { name: "job-eval-1/t0__task", type: "directory" },
+      { name: "job-eval-1/t0__task/result.json", content: '{"x_evolve":{"trialId":"run-1"}}' },
       { name: "job-eval-1/t0__task/agent/trajectory.json", content: '{"schema_version":"ATIF-v1.7"}' },
       { name: "job-eval-1/t0__task/verifier/reward.json", content: '{"reward":1}' },
     ]);
@@ -3162,6 +3288,33 @@ async function testCompareCancelDownload() {
       bodyBytes: archive,
       headers: { "Content-Disposition": 'attachment; filename="job-eval-1.tar.gz"' },
     });
+    // The evolve.json enrichment reads the job body + trial rows after the
+    // extract. Registered AFTER the /download and /cancel patterns — the
+    // mock matches by substring in insertion order.
+    setMockResponse("/api/jobs/eval-1/trials", {
+      status: 200,
+      body: {
+        items: [
+          {
+            id: "run-1",
+            job_id: "eval-1",
+            task_name: "task",
+            source: "deep-swe",
+            agent_info: { name: "codex", version: null, model_info: { name: "gpt-5.5", provider: null }, reasoning_effort: null },
+            status: "SCORED",
+            reward: 1,
+            spend_source: "measured",
+            sandbox_provider: "e2b",
+            agent_result: { n_input_tokens: 1, n_cache_tokens: 0, n_output_tokens: 1, cost_usd: 0.25, rollout_details: null, metadata: null },
+            n_retries: 0,
+            retries: [],
+          },
+        ],
+        nextCursor: null,
+        hasMore: false,
+      },
+    });
+    setMockResponse("/api/jobs/eval-1", { status: 200, body: wireJob({ status: "COMPLETED" }) });
     setMockResponse("/api/jobs/compare", {
       status: 200,
       body: {
@@ -3184,7 +3337,10 @@ async function testCompareCancelDownload() {
 
     const download = captureIO();
     assertEqual(await runCli(["job", "download", "eval-1", "-o", tmpDir, ...AUTH], download.io), 0, "download exits 0");
-    assert(fetchCalls[fetchCalls.length - 1].url.endsWith("/api/jobs/eval-1/download"), "hits the download route");
+    assert(
+      fetchCalls.some((c) => c.url.endsWith("/api/jobs/eval-1/download")),
+      "hits the download route"
+    );
     const treeDir = join(tmpDir, "job-eval-1");
     assertEqual(
       (await readFile(join(treeDir, "config.json"))).toString(),
@@ -3203,9 +3359,17 @@ async function testCompareCancelDownload() {
     );
     const leftovers = (await readdir(tmpDir)).filter((name) => name.endsWith(".tar.gz"));
     assertEqual(leftovers, [], "no .tar.gz survives — the tree IS the result");
+    // The evolve.json records ride the tree: one at the job root, one per
+    // trial directory (matched by result.json's x_evolve.trialId).
+    const jobEvolve = JSON.parse(await readFile(join(treeDir, "evolve.json"), "utf-8"));
+    assertEqual(jobEvolve.job_id, "eval-1", "the job root carries evolve.json");
+    assertEqual(jobEvolve.provider, "e2b", "the job evolve.json names the provider");
+    const trialEvolve = JSON.parse(await readFile(join(treeDir, "t0__task", "evolve.json"), "utf-8"));
+    assertEqual(trialEvolve.trial_id, "run-1", "each trial dir gets its own evolve.json");
+    assertEqual(trialEvolve.gateway.cost_usd, 0.25, "the trial evolve.json carries the gateway meter");
     assert(
-      download.out.some((l) => l.includes(treeDir) && l.includes("4 files")),
-      "prints the tree path and the file count"
+      download.out.some((l) => l.includes(treeDir) && l.includes("7 files")),
+      "prints the tree path and the file count (evolve.json records included)"
     );
 
     // --json reports the tree, not an archive path.
@@ -3215,7 +3379,7 @@ async function testCompareCancelDownload() {
       0,
       "--overwrite --json re-download exits 0"
     );
-    assertEqual(JSON.parse(jsonDownload.out[0]), { path: treeDir, files: 4 }, "--json = { path, files }");
+    assertEqual(JSON.parse(jsonDownload.out[0]), { path: treeDir, files: 7 }, "--json = { path, files }");
   } finally {
     await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
     restoreFetch();
@@ -3232,6 +3396,12 @@ async function testJobDownloadUnpackGuards() {
       "/api/jobs/eval-1/download",
       { status: 200, body: null, bodyBytes: await gzipTarArchive([{ name: "job-eval-1/config.json", content: "{}" }]) }
     );
+    // The evolve.json enrichment's reads, for the one download that extracts.
+    setMockResponse("/api/jobs/eval-1/trials", {
+      status: 200,
+      body: { items: [], nextCursor: null, hasMore: false },
+    });
+    setMockResponse("/api/jobs/eval-1", { status: 200, body: wireJob({ status: "COMPLETED" }) });
     await mkdir(join(tmpDir, "job-eval-1"), { recursive: true });
     await writeFile(join(tmpDir, "job-eval-1", "stale.txt"), "old");
     const refused = captureIO();
@@ -3473,7 +3643,7 @@ async function testTrialDownloadTrajectoryRefused() {
 }
 
 async function testTrialDownloadSave() {
-  console.log("\n--- runCli: trial download saves under <dir>/<trial-id>/; --overwrite gates ---");
+  console.log("\n--- runCli: trial download saves Harbor's trial tree + evolve.json; --overwrite gates ---");
   installMockFetch();
   const tmpDir = await mkdtemp(join(tmpdir(), "evolve-trial-dl-"));
   try {
@@ -3491,28 +3661,82 @@ async function testTrialDownloadSave() {
       status: 200,
       body: { items: [{ seq: 0, type: "agent.message", data: {} }], nextCursor: null, hasMore: false },
     });
+    // The trial body the tree's config/result/evolve records derive from.
+    // Registered AFTER every "/trace" pattern — substring matching. The job
+    // and auth-status lookups stay unmocked on purpose: both are
+    // best-effort (lineage reads as an original run's, user_id as null).
+    setMockResponse("/api/trials/run-1", {
+      status: 200,
+      body: {
+        id: "run-1",
+        job_id: "job-1",
+        task_name: "fix-bug",
+        source: "swe-bench",
+        agent_info: {
+          name: "codex",
+          version: "1.0.0",
+          model_info: { name: "gpt-test", provider: null },
+          reasoning_effort: null,
+        },
+        attempt: 1,
+        status: "SCORED",
+        reward: 1,
+        verifier_result: { rewards: { reward: 1 } },
+        exception_info: null,
+        agent_result: {
+          n_input_tokens: 10,
+          n_cache_tokens: 0,
+          n_output_tokens: 5,
+          cost_usd: 0.5,
+          rollout_details: null,
+          metadata: null,
+        },
+        spend_source: "measured",
+        sandbox_provider: "modal",
+        max_trial_spend_usd: 200,
+        n_retries: 0,
+        retries: [],
+        started_at: "2026-08-01T00:00:00.000Z",
+        finished_at: "2026-08-01T00:10:00.000Z",
+      },
+    });
     const { io, out, err } = captureIO();
     const code = await runCli(["trial", "download", "run-1", "-o", tmpDir, ...AUTH], io);
     assertEqual(code, 0, "exit 0");
     assertEqual(err, [], "nothing on stderr");
     const target = join(tmpDir, "run-1");
-    const parsed = await readFile(join(target, "trace-parsed.jsonl"), "utf-8");
-    assert(parsed.includes('"seq":0'), "parsed events land in trace-parsed.jsonl");
-    const verifier = await readFile(join(target, "verifier.log"), "utf-8");
-    assertEqual(verifier, "verifier says 1.0", "each stored raw log lands under its own name");
-    const savedAtif = await readFile(join(target, "trace-atif.json"), "utf-8");
-    assertEqual(savedAtif, '{"schema_version":"ATIF-v1.7"}', "the ATIF document saves as trace-atif.json");
-    const home = await readFile(join(target, "agent-home", "root", ".claude", "history.jsonl"), "utf-8");
-    assertEqual(home, "{}", "agent-home/ preserves the sandbox folder tree");
+    // HARBOR'S TRIAL TREE, file for file — the same names the job archive
+    // extracts to — plus evolve.json, the platform's own record.
+    const config = JSON.parse(await readFile(join(target, "config.json"), "utf-8"));
+    assertEqual(config.task.name, "fix-bug", "config.json carries the task identity");
+    assertEqual(config.agent.name, "codex", "config.json carries the agent identity");
+    const result = JSON.parse(await readFile(join(target, "result.json"), "utf-8"));
+    assertEqual(result.status, "SCORED", "result.json carries the outcome");
+    const savedAtif = await readFile(join(target, "agent", "trajectory.json"), "utf-8");
+    assertEqual(savedAtif, '{"schema_version":"ATIF-v1.7"}', "the ATIF document is agent/trajectory.json");
+    const parsed = await readFile(join(target, "agent", "trace-parsed.jsonl"), "utf-8");
+    assert(parsed.includes('"seq":0'), "parsed events land in agent/trace-parsed.jsonl");
+    const verifier = await readFile(join(target, "verifier", "test-stdout.txt"), "utf-8");
+    assertEqual(verifier, "verifier says 1.0", "the verifier log is verifier/test-stdout.txt");
+    const reward = JSON.parse(await readFile(join(target, "verifier", "reward.json"), "utf-8"));
+    assertEqual(reward.reward, 1, "the rewards map is verifier/reward.json");
+    const home = await readFile(join(target, "agent", "sessions", "claude", "history.jsonl"), "utf-8");
+    assertEqual(home, "{}", "agent/sessions/ wears the home tree's visible names");
+    const evolve = JSON.parse(await readFile(join(target, "evolve.json"), "utf-8"));
+    assertEqual(evolve.provider, "modal", "evolve.json names the provider");
+    assertEqual(evolve.gateway.cost_usd, 0.5, "evolve.json carries the gateway meter");
+    assertEqual(evolve.gateway.spend_source, "measured", "evolve.json names the spend lane");
+    assertEqual(evolve.user_id, null, "an unreachable auth status reads as user_id null");
+    assertEqual(evolve.regrade_lineage.is_regrade, false, "an unreachable job reads as original lineage");
     // Null logs were never stored — absence is a normal answer, no empty files.
     let missingThrew = false;
     try {
-      await readFile(join(target, "trace-stdout.log"), "utf-8");
+      await readFile(join(target, "agent", "stdout.log"), "utf-8");
     } catch {
       missingThrew = true;
     }
     assert(missingThrew, "an unstored artifact writes no file");
-    assert(out.some((l) => l.includes("trace-parsed.jsonl")), "reports the parsed trace file");
+    assert(out.some((l) => l.includes("config.json")), "reports the written files");
 
     // The directory now exists: a second save without --overwrite must refuse
     // instead of silently mixing two downloads.
@@ -4465,6 +4689,136 @@ async function testAuthStatus() {
 }
 
 // =============================================================================
+// SECRETS — evolve secrets set / list / delete
+// =============================================================================
+
+async function testSecretsVerbs() {
+  console.log("\n--- runCli: secrets set / list / delete ---");
+
+  console.log("  [grammar]");
+  assertEqual(parseArgs(["secrets", "list"]).command, "secrets list", "secrets noun resolves");
+  assertEqual(parseArgs(["secret", "list"]).command, "secrets list", "singular is a hidden alias");
+  assertEqual(parseArgs(["secrets", "ls"]).command, "secrets list", "`ls` alias holds on secrets");
+
+  console.log("  [set]");
+  installMockFetch();
+  try {
+    setMockResponse("/api/managed-secrets", {
+      status: 201,
+      body: {
+        status: "created",
+        secret: {
+          id: "secret_1",
+          name: "GITHUB_TOKEN",
+          label: "default",
+          delivery: "brokered",
+          allowed_hosts: ["api.github.com"],
+          allowed_path_prefixes: ["/"],
+          allowed_methods: ["GET"],
+          enabled: true,
+          created_at: "2026-01-01T00:00:00.000Z",
+          updated_at: "2026-01-01T00:00:00.000Z",
+          last_used_at: null,
+        },
+      },
+    });
+    const { io, out } = captureIO();
+    const code = await runCli(
+      [
+        "secrets", "set", "GITHUB_TOKEN",
+        "--value", "ghp_secret_value",
+        "--delivery", "brokered",
+        "--allowed-host", "api.github.com",
+        "--allowed-path-prefix", "/",
+        "--allowed-method", "GET",
+        ...AUTH,
+      ],
+      io
+    );
+    assertEqual(code, 0, "set exits 0");
+    const post = fetchCalls.find(
+      (call) => call.url.endsWith("/api/managed-secrets") && call.init?.method === "POST"
+    );
+    assert(post !== undefined, "set POSTs the managed-secrets door");
+    const body = JSON.parse(String(post?.init?.body));
+    assertEqual(body.allowed_hosts, ["api.github.com"], "wire carries snake_case scoping");
+    assertEqual(body.delivery, "brokered", "wire carries the delivery mode");
+    assert(!out.join("\n").includes("ghp_secret_value"), "the value is never echoed");
+    assert(out.join("\n").includes("Stored env secret GITHUB_TOKEN"), "set narrates the stored row");
+
+    // --delivery is required — refused before any request.
+    fetchCalls.length = 0;
+    const missing = captureIO();
+    const missingCode = await runCli(
+      ["secrets", "set", "GITHUB_TOKEN", "--value", "v", ...AUTH],
+      missing.io
+    );
+    assertEqual(missingCode, 2, "missing --delivery is a usage error");
+    assertEqual(fetchCalls.length, 0, "no request is made without --delivery");
+  } finally {
+    restoreFetch();
+  }
+
+  console.log("  [list]");
+  installMockFetch();
+  try {
+    setMockResponse("/api/managed-secrets", {
+      status: 200,
+      body: {
+        secrets: [
+          {
+            id: "secret_1",
+            name: "GITHUB_TOKEN",
+            label: "default",
+            delivery: "brokered",
+            allowedHosts: ["api.github.com"],
+            allowedPathPrefixes: ["/"],
+            allowedMethods: ["GET"],
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            lastUsedAt: null,
+          },
+        ],
+      },
+    });
+    const { io, out } = captureIO(true);
+    const code = await runCli(["secrets", "list", ...AUTH], io);
+    assertEqual(code, 0, "list exits 0");
+    const text = out.join("\n");
+    assert(text.includes("GITHUB_TOKEN") && text.includes("brokered"), "table carries name + delivery");
+
+    const quiet = captureIO();
+    await runCli(["secrets", "list", "-q", ...AUTH], quiet.io);
+    assertEqual(quiet.out, ["GITHUB_TOKEN"], "-q prints name only");
+  } finally {
+    restoreFetch();
+  }
+
+  console.log("  [delete]");
+  installMockFetch();
+  try {
+    setMockResponse("/api/managed-secrets", {
+      status: 200,
+      body: { ok: true, name: "GITHUB_TOKEN", label: "staging" },
+    });
+    const { io, out } = captureIO();
+    const code = await runCli(
+      ["secrets", "delete", "GITHUB_TOKEN", "--label", "staging", ...AUTH],
+      io
+    );
+    assertEqual(code, 0, "delete exits 0");
+    const del = fetchCalls.find(
+      (call) => call.url.endsWith("/api/managed-secrets") && call.init?.method === "DELETE"
+    );
+    assert(del !== undefined, "delete DELETEs the managed-secrets door");
+    assertEqual(JSON.parse(String(del?.init?.body)).label, "staging", "delete names the labeled row");
+    assert(out.join("\n").includes("Deleted env secret GITHUB_TOKEN"), "delete narrates the resolved row");
+  } finally {
+    restoreFetch();
+  }
+}
+
+// =============================================================================
 // buildPublishInput / buildAgentInput direct coverage
 // =============================================================================
 
@@ -4673,11 +5027,14 @@ async function main() {
   testShortFlags();
   testBuildJobInputFlags();
   testBuildJobInputRetry();
+  testSecretRefs();
+  testInlineSecrets();
   testBuildJobInputTimeoutMultipliers();
   testBuildJobInputSkills();
   testBuildJobInputYesIsInert();
   testAgentKwargs();
-  await testConfigFileMerge();
+  if (SPEC_AVAILABLE) await testConfigFileMerge();
+  else console.log(`\n--- buildJobInput: -c config file — ${SPEC_SKIP_REASON}`);
   testYamlConfig();
   await testPrintConfig();
   await testHelpAndVersion();
@@ -4733,6 +5090,7 @@ async function main() {
   await testSkillDeleteInUseVerbatim();
   await testSkillNamePassThroughOnStart();
   await testAuthStatus();
+  await testSecretsVerbs();
 
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

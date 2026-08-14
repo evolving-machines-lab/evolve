@@ -11,9 +11,11 @@ import {
   managedSecretProxyConfigCleanupCommand,
   managedSecretProxyStartCommand,
   managedSecretSandboxEnvs,
+  managedSecretTokenNeedsProxy,
   MANAGED_SECRET_PROXY_CONFIG_PATH,
   MANAGED_SECRET_PROXY_SCRIPT,
   managedSecrets,
+  normalizeManagedSecretRefs,
   type ManagedSecretRuntimeToken,
 } from "../../src/managed-secrets";
 import { resolveManagedSandbox } from "../../src/utils/sandbox";
@@ -155,6 +157,34 @@ function installFetchMock(): void {
   globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
     const urlString = String(url);
     fetchCalls.push({ url: urlString, init });
+    if (urlString.endsWith("/api/managed-secrets") && init?.method === "POST") {
+      // The write door answers snake_case metadata (the new-surface wire law).
+      const body = JSON.parse(String(init.body));
+      return new Response(JSON.stringify({
+        status: "created",
+        secret: {
+          id: "secret_2",
+          name: body.name,
+          label: body.label ?? "default",
+          delivery: body.delivery,
+          allowed_hosts: body.allowed_hosts ?? [],
+          allowed_path_prefixes: body.allowed_path_prefixes ?? [],
+          allowed_methods: body.allowed_methods ?? [],
+          enabled: true,
+          created_at: "2026-01-01T00:00:00.000Z",
+          updated_at: "2026-01-01T00:00:00.000Z",
+          last_used_at: null,
+        },
+      }), { status: 201, headers: { "content-type": "application/json" } });
+    }
+    if (urlString.endsWith("/api/managed-secrets") && init?.method === "DELETE") {
+      const body = JSON.parse(String(init.body));
+      return new Response(JSON.stringify({
+        ok: true,
+        name: body.name,
+        label: body.label ?? "default",
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
     if (urlString.endsWith("/api/managed-secrets") && (!init || init.method === undefined)) {
       return new Response(JSON.stringify({
         secrets: [{
@@ -267,6 +297,42 @@ async function testListClient(): Promise<void> {
   assert(!JSON.stringify(secrets).includes("ghp_real"), "secret value is not returned");
 }
 
+async function testWriteClient(): Promise<void> {
+  console.log("\n[1b] managedSecrets().set()/.delete() speak the snake_case write door");
+  installFetchMock();
+  fetchCalls.length = 0;
+  const client = managedSecrets({ apiKey: "ev_key", dashboardUrl: "https://dashboard.test" });
+  const result = await client.set({
+    name: "GITHUB_TOKEN",
+    value: "ghp_real_value",
+    delivery: "brokered",
+    allowedHosts: ["api.github.com"],
+    allowedPathPrefixes: ["/"],
+    allowedMethods: ["GET"],
+  });
+  const post = fetchCalls.find(
+    (call) => call.url.endsWith("/api/managed-secrets") && call.init?.method === "POST",
+  );
+  assert(post !== undefined, "set() POSTs the managed-secrets door");
+  const postBody = JSON.parse(String(post?.init?.body));
+  assertEqual(postBody.allowed_hosts?.[0], "api.github.com", "request wire is snake_case");
+  assertEqual(postBody.value, "ghp_real_value", "value rides the body (sealed server-side)");
+  assertEqual(result.status, "created", "created status surfaces");
+  assertEqual(result.secret.allowedHosts[0], "api.github.com", "snake_case response maps to camelCase metadata");
+  assertEqual(result.secret.delivery, "brokered", "delivery surfaces on the stored row");
+  assert(!JSON.stringify(result).includes("ghp_real_value"), "the stored value is never echoed back");
+
+  fetchCalls.length = 0;
+  const deleted = await client.delete({ name: "GITHUB_TOKEN", label: "staging" });
+  const del = fetchCalls.find(
+    (call) => call.url.endsWith("/api/managed-secrets") && call.init?.method === "DELETE",
+  );
+  assert(del !== undefined, "delete() DELETEs the managed-secrets door");
+  assertEqual(JSON.parse(String(del?.init?.body)).label, "staging", "delete names the labeled row");
+  assertEqual(deleted.ok, true, "delete acknowledges");
+  assertEqual(deleted.label, "staging", "delete answers the resolved label");
+}
+
 function testSandboxEnvAndProxyConfigUsePlaceholders(): void {
   console.log("\n[2] managed secrets produce placeholder envs and proxy config");
   const token: ManagedSecretRuntimeToken = {
@@ -304,6 +370,109 @@ function testSandboxEnvAndProxyConfigUsePlaceholders(): void {
   assert(managedSecretProxyConfigCleanupCommand().includes(`rm -f ${MANAGED_SECRET_PROXY_CONFIG_PATH}`), "proxy config cleanup removes token material");
   assert(managedSecretCaSetupCommand().includes("ca-bundle.crt"), "proxy CA setup preserves system roots in a combined bundle");
   assert(managedSecretCaSetupCommand().includes("keyUsage=critical,keyCertSign,cRLSign"), "proxy CA has key usage for strict TLS clients");
+}
+
+function testDirectDeliveryBypassesProxy(): void {
+  console.log("\n[2b] direct delivery lands raw env; the proxy serves only brokered entries");
+  const mixed: ManagedSecretRuntimeToken = {
+    token: "evrt_managed",
+    bindingSecret: "evrb_managed",
+    egressUrl: "https://dashboard.test/api/managed-secrets/egress",
+    channelUrl: "https://dashboard.test/api/managed-secrets/runtime-token/channel",
+    expiresAt: "9999-12-31T23:59:59.999Z",
+    env: [
+      {
+        name: "GITHUB_TOKEN",
+        envName: "GITHUB_TOKEN",
+        delivery: "brokered",
+        placeholder: "evsec_placeholder",
+        allowedHosts: ["api.github.com"],
+      },
+      {
+        name: "GRPC_API_KEY",
+        envName: "GRPC_API_KEY",
+        delivery: "direct",
+        value: "raw_grpc_value",
+        allowedHosts: [],
+      },
+    ],
+  };
+  assert(managedSecretTokenNeedsProxy(mixed), "a mixed token still needs the proxy");
+  const envs = managedSecretSandboxEnvs(mixed);
+  assertEqual(envs.GRPC_API_KEY, "raw_grpc_value", "direct entry is the raw value in the sandbox env");
+  assertEqual(envs.GITHUB_TOKEN, "evsec_placeholder", "brokered entry stays a placeholder");
+  const proxyConfig = JSON.parse(managedSecretProxyConfig(mixed));
+  assertEqual(proxyConfig.placeholders.length, 1, "proxy config carries only the brokered placeholder");
+  assert(
+    !JSON.stringify(proxyConfig).includes("raw_grpc_value"),
+    "the proxy never learns the direct value",
+  );
+  assert(
+    !proxyConfig.hosts.includes("") && proxyConfig.hosts.length === 1,
+    "proxy hosts come from brokered entries only",
+  );
+
+  const allDirect: ManagedSecretRuntimeToken = {
+    ...mixed,
+    env: [mixed.env[1]],
+  };
+  assert(!managedSecretTokenNeedsProxy(allDirect), "an all-direct token skips the proxy entirely");
+  const directEnvs = managedSecretSandboxEnvs(allDirect);
+  assertEqual(directEnvs.GRPC_API_KEY, "raw_grpc_value", "all-direct env carries the raw value");
+  assert(!("HTTPS_PROXY" in directEnvs), "all-direct env sets no proxy routing");
+  assert(!("SSL_CERT_FILE" in directEnvs), "all-direct env sets no CA overrides");
+}
+
+function testLabelRefsNormalized(): void {
+  console.log("\n[2c] label refs pass the shared grammar and ride the wire");
+  const refs = normalizeManagedSecretRefs([
+    { name: "github_token", label: "prod", as: "gh_token" },
+    { name: "PLAIN" },
+  ]);
+  assertEqual(refs[0].name, "GITHUB_TOKEN", "name is normalized upper-case");
+  assertEqual(refs[0].label, "prod", "label rides through untouched");
+  assertEqual(refs[0].as, "GH_TOKEN", "alias is normalized upper-case");
+  assertEqual(refs[1].label, undefined, "an omitted label stays omitted — the server's defaulting law rules");
+  try {
+    normalizeManagedSecretRefs([{ name: "TOKEN", label: "bad label!" }]);
+    assert(false, "a malformed label should throw");
+  } catch (error) {
+    assert(
+      error instanceof Error && error.message.includes("label"),
+      "malformed label names the field",
+    );
+  }
+}
+
+async function testDirectDeliveryRuntimeTokenAccepted(): Promise<void> {
+  console.log("\n[2d] a runtime token carrying direct entries passes the response validator");
+  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    const urlString = String(url);
+    if (urlString.endsWith("/api/managed-secrets/runtime-token") && init?.method === "POST") {
+      return new Response(JSON.stringify({
+        enabled: true,
+        token: "evrt_managed",
+        bindingSecret: "evrb_managed",
+        egressUrl: "https://dashboard.test/api/managed-secrets/egress",
+        channelUrl: "https://dashboard.test/api/managed-secrets/runtime-token/channel",
+        expiresAt: "9999-12-31T23:59:59.999Z",
+        env: [{
+          name: "GRPC_API_KEY",
+          envName: "GRPC_API_KEY",
+          delivery: "direct",
+          value: "raw_grpc_value",
+          allowedHosts: [],
+        }],
+      }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  }) as typeof fetch;
+  const token = await requestManagedSecretRuntimeToken(
+    { apiKey: "ev_key", dashboardUrl: "https://dashboard.test" },
+    { sessionTag: "session_1", secrets: [{ name: "GRPC_API_KEY" }] },
+  );
+  assertEqual(token.env[0].delivery, "direct", "direct entry survives validation");
+  assertEqual(token.env[0].value, "raw_grpc_value", "direct value survives validation");
 }
 
 async function testReservedAliasRejected(): Promise<void> {
@@ -629,9 +798,211 @@ except RuntimeError as exc:
   }
 }
 
+function runProxyProbe(
+  probe: string,
+  configOverrides: Record<string, unknown> = {},
+): { status: number | null; stdout: string; stderr: string } {
+  const dir = mkdtempSync(join(tmpdir(), "evolve-managed-secrets-test-"));
+  try {
+    const configPath = join(dir, "config.json");
+    writeFileSync(configPath, JSON.stringify({
+      hosts: ["api.github.com"],
+      placeholders: ["evsec_placeholder"],
+      base_dir: dir,
+      ca_cert: join(dir, "ca.crt"),
+      ca_key: join(dir, "ca.key"),
+      port: 18181,
+      egress_url: "https://dashboard.test/api/managed-secrets/egress",
+      channel_url: "https://dashboard.test/api/managed-secrets/runtime-token/channel",
+      token: "evrt",
+      binding: "evrb",
+      ...configOverrides,
+    }));
+    const scriptPath = join(dir, "proxy.py");
+    writeFileSync(scriptPath, MANAGED_SECRET_PROXY_SCRIPT);
+    const result = spawnSync(
+      "python3",
+      ["-c", `SCRIPT = ${JSON.stringify(scriptPath)}\n${probe}`, configPath],
+      { encoding: "utf-8" },
+    );
+    return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function testProxyPropagatesUpstreamStatus(): void {
+  console.log("\n[15] brokered replies carry the upstream status, not the dashboard's");
+  const probe = `
+import base64, json, runpy, urllib.request
+ns = runpy.run_path(SCRIPT, run_name="proxy_unit")
+
+class FakeResponse:
+    def __init__(self, status, reason, payload):
+        self.status = status
+        self.reason = reason
+        self._payload = json.dumps(payload).encode("utf-8")
+    def read(self):
+        return self._payload
+    def __enter__(self):
+        return self
+    def __exit__(self, *args):
+        return False
+
+def responder(payload, status=200, reason="OK"):
+    def fake_urlopen(req, timeout=None):
+        return FakeResponse(status, reason, payload)
+    return fake_urlopen
+
+# The dashboard hop succeeded (200) while the real upstream returned 503.
+urllib.request.urlopen = responder({
+    "status": 503,
+    "statusText": "Service Unavailable",
+    "headers": {"content-type": "application/json"},
+    "bodyBase64": base64.b64encode(b'{"error":"upstream down"}').decode("ascii"),
+})
+status, reason, result = ns["call_dashboard"]("GET", "https://api.github.com/user", {}, b"")
+print(status, reason, base64.b64decode(result["bodyBase64"]).decode())
+
+# A server older than the status lane omits it: the transport status stands.
+urllib.request.urlopen = responder({"headers": {}, "bodyBase64": ""})
+legacy_status, legacy_reason, _ = ns["call_dashboard"]("GET", "https://api.github.com/user", {}, b"")
+print(legacy_status, legacy_reason)
+`;
+  const result = runProxyProbe(probe);
+  assertEqual(result.status, 0, `proxy status probe exits cleanly (${result.stderr.trim()})`);
+  const lines = result.stdout.trim().split("\n");
+  assertEqual(
+    lines[0],
+    '503 Service Unavailable {"error":"upstream down"}',
+    "a 200-wrapped 503 reaches the agent as 503 with the upstream body",
+  );
+  assertEqual(lines[1], "200 OK", "a payload without a status falls back to the dashboard's status");
+}
+
+function testProxyAnswersTypedGatewayErrorOnEgressFailure(): void {
+  console.log("\n[16] egress failure becomes a typed 502 instead of killing the connection");
+  const probe = `
+import base64, json, runpy, ssl, urllib.error, urllib.request
+ns = runpy.run_path(SCRIPT, run_name="proxy_unit")
+
+def ssl_eof(req, timeout=None):
+    raise urllib.error.URLError(ssl.SSLEOFError("EOF occurred in violation of protocol"))
+urllib.request.urlopen = ssl_eof
+status, reason, result = ns["call_dashboard"]("GET", "https://api.github.com/user", {}, b"")
+body = json.loads(base64.b64decode(result["bodyBase64"]).decode())
+print(status, reason, result["headers"]["content-type"], body["error"])
+
+def reset(req, timeout=None):
+    raise ConnectionResetError(104, "Connection reset by peer")
+urllib.request.urlopen = reset
+reset_status, _, _ = ns["call_dashboard"]("GET", "https://api.github.com/user", {}, b"")
+print(reset_status)
+`;
+  const result = runProxyProbe(probe);
+  assertEqual(result.status, 0, `proxy egress-failure probe exits cleanly (${result.stderr.trim()})`);
+  const lines = result.stdout.trim().split("\n");
+  assertEqual(
+    lines[0],
+    "502 Managed Secret Egress Unavailable application/json managed secret egress request failed",
+    "an SSL EOF is answered as a typed 502 naming the egress failure",
+  );
+  assertEqual(lines[1], "502", "a connection reset is answered as a typed 502 too");
+}
+
+function testProxyListenerSurvivesConnectionFailures(): void {
+  console.log("\n[17] the listener survives a failure and answers the next request");
+  const probe = `
+import runpy, socket as real_socket, threading, time
+ns = runpy.run_path(SCRIPT, run_name="proxy_unit")
+
+picker = real_socket.socket()
+picker.bind(("127.0.0.1", 0))
+port = picker.getsockname()[1]
+picker.close()
+ns["CONFIG"]["port"] = port
+
+class FlakyServerSocket:
+    def __init__(self, inner):
+        self._inner = inner
+        self._failed = False
+    def setsockopt(self, *args):
+        return self._inner.setsockopt(*args)
+    def bind(self, *args):
+        return self._inner.bind(*args)
+    def listen(self, *args):
+        return self._inner.listen(*args)
+    def accept(self):
+        if not self._failed:
+            self._failed = True
+            raise OSError(24, "Too many open files")
+        return self._inner.accept()
+
+class SocketShim:
+    AF_INET = real_socket.AF_INET
+    SOCK_STREAM = real_socket.SOCK_STREAM
+    SOL_SOCKET = real_socket.SOL_SOCKET
+    SO_REUSEADDR = real_socket.SO_REUSEADDR
+    @staticmethod
+    def socket(*args, **kwargs):
+        return FlakyServerSocket(real_socket.socket(*args, **kwargs))
+
+handled = []
+def flaky_handle_client(client):
+    handled.append(1)
+    # Drain first: closing a socket with unread bytes sends RST, which would
+    # reach the client as a connection error instead of a clean close.
+    try:
+        client.recv(4096)
+    except OSError:
+        pass
+    if len(handled) == 1:
+        client.close()
+        raise RuntimeError("handler exploded")
+    client.sendall(b"HTTP/1.1 200 OK\\r\\ncontent-length: 2\\r\\nconnection: close\\r\\n\\r\\nok")
+    client.close()
+
+ns["serve"].__globals__["socket"] = SocketShim
+ns["serve"].__globals__["handle_client"] = flaky_handle_client
+threading.Thread(target=ns["serve"], daemon=True).start()
+
+def request():
+    conn = real_socket.create_connection(("127.0.0.1", port), timeout=5)
+    try:
+        conn.sendall(b"CONNECT api.github.com:443 HTTP/1.1\\r\\n\\r\\n")
+        return conn.recv(4096)
+    finally:
+        conn.close()
+
+deadline = time.time() + 10
+while True:
+    try:
+        request()
+        break
+    except OSError:
+        if time.time() > deadline:
+            raise
+        time.sleep(0.05)
+
+second = request()
+print(len(handled), second.decode().splitlines()[0])
+`;
+  const result = runProxyProbe(probe);
+  assertEqual(result.status, 0, `proxy listener probe exits cleanly (${result.stderr.trim()})`);
+  assertEqual(
+    result.stdout.trim(),
+    "2 HTTP/1.1 200 OK",
+    "a failed accept and a throwing handler leave the listener serving the next request",
+  );
+}
+
 async function main(): Promise<void> {
   await testListClient();
+  await testWriteClient();
   testSandboxEnvAndProxyConfigUsePlaceholders();
+  testDirectDeliveryBypassesProxy();
+  testLabelRefsNormalized();
+  await testDirectDeliveryRuntimeTokenAccepted();
   await testReservedAliasRejected();
   await testEvolvePrefixRejected();
   await testSetSessionRejected();
@@ -643,6 +1014,9 @@ async function main(): Promise<void> {
   testProxyDetectsBinaryBodyPlaceholders();
   testProxyPassesThroughRequestsWithoutPlaceholders();
   testProxyCapsDirectResponseReads();
+  testProxyPropagatesUpstreamStatus();
+  testProxyAnswersTypedGatewayErrorOnEgressFailure();
+  testProxyListenerSurvivesConnectionFailures();
   console.log(`\nManaged secrets tests: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);
 }

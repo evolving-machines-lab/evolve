@@ -55,7 +55,9 @@
 - Swept both SDK chapters into Harbor's vocabulary and documented the capability document, the error envelope, the paging envelope, the per-trial budget model, the new verbs, upstream version awareness, and the run contract for registered agents.
 - Corrected the managed BYO provider key surface: keys can be saved for Anthropic and OpenAI. The seven-provider list is what the gateway can route to, which is a different thing.
 - Corrected the network-mode default: a task that declares nothing gets `public`, not `no-network` — which is exactly when the per-trial spend cap stops being a hard boundary.
-- Corrected the concurrency default (4, ceiling 16) and the Swarm registry model defaults (`opus` for claude, `gpt-5.4` for codex).
+- Corrected the concurrency default (4) and the Swarm registry model defaults (`opus` for claude, `gpt-5.4` for codex).
+- Corrected the `n_concurrent_trials` maximum everywhere it is documented: the chapters said 16, the platform has always enforced 150. A user reading the docs was capping a job at a ninth of the parallelism they were entitled to.
+- Moved the API contract out of this repo. `spec/openapi.yaml` now has one canonical home, in the private platform repo, so the two copies can no longer drift apart. The npm package still ships the contract, the released SDKs are unchanged, and the tests that read the spec say SKIP instead of failing when it is absent — set `EVOLVE_OPENAPI_SPEC_PATH` to run them against a local copy.
 - Removed the eval-composition primitives from the docs chapters — `task` workspace mode, `prepareSandbox()`, `sealCredentials()`, `collectArtifacts()`, and `externalGateway` — while keeping the table-stakes sandbox options (image, resources, network policy) documented.
 
 ## v0.0.52 - 2026-07-22

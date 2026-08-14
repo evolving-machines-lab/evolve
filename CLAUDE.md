@@ -92,6 +92,12 @@ npm run test:py:unit       # Python unit tests (builds the bridge first)
 npm run test:ts:integration  # TypeScript integration tests (needs live credentials)
 ```
 
+The API contract (`spec/openapi.yaml`) lives in the private platform repo, not here, so the tests that read it print SKIP in a normal checkout — including all of `test_hosted_spec_gate.py` and both `hosted-spec-gate` / typing gates. That is the expected result, not a failure. To actually run them, point `EVOLVE_OPENAPI_SPEC_PATH` at a local copy of the contract:
+
+```bash
+EVOLVE_OPENAPI_SPEC_PATH=/path/to/swarm_dashboard/spec/openapi.yaml npm run test:py:unit
+```
+
 ### Documentation rules
 
 - **`docs/` is the only place documentation is edited.** `skills/` and `.claude/skills/` are mirrors regenerated on push by `.github/workflows/sync-docs-to-skill.yml`. Hand-editing a mirror gets overwritten and loses the change.
