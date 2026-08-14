@@ -23,7 +23,7 @@
  *   verifier/reward.json      the rewards map, when the verifier produced one
  *   exception.txt             when the trial carries an exception
  *   evolve.json               the platform's own record: gateway cost/tokens
- *                             per lane, provider, org, regrade lineage
+ *                             per lane, provider, user_id, regrade lineage
  *
  * Absent artifacts are absent files — never empty placeholders (Harbor's own
  * law). Everything here is pure data-in, files-out: fetching belongs to the
@@ -47,8 +47,12 @@ export interface TrialTreeParts {
   stderr: string | null;
   /** trials().artifact(id, "agent-home") — true sandbox paths. */
   home: Record<string, string> | null;
-  /** The caller's identity (auth().status() user_id); null when unknown. */
-  org: string | null;
+  /**
+   * The caller's USER id (auth().status() user_id); null when unknown.
+   * Written to evolve.json as `user_id` — never `org`, which the platform
+   * reserves for real Organizations (team accounts).
+   */
+  userId: string | null;
 }
 
 /**
@@ -81,19 +85,20 @@ function record(value: unknown): string {
 /**
  * The trial's evolve.json — the platform record Harbor's vocabulary has no
  * slot for: the gateway meter per lane (agent and judge, with the spend
- * source naming how final each figure is), where the trial ran, whose org it
- * belongs to, and the regrade/retry lineage (the owning job's `source_jobs`
- * plus the trial's own auto-retry lineage).
+ * source naming how final each figure is), where the trial ran, which USER
+ * downloaded it (`user_id` — the caller's identity, not an Organization),
+ * and the regrade/retry lineage (the owning job's `source_jobs` plus the
+ * trial's own auto-retry lineage).
  */
 export function trialEvolveRecord(
   trial: Trial,
   job: Job | null,
-  org: string | null
+  userId: string | null
 ): Record<string, unknown> {
   return {
     trial_id: trial.id,
     job_id: trial.job_id,
-    org,
+    user_id: userId,
     provider: trial.sandbox_provider,
     gateway: {
       cost_usd: trial.agent_result?.cost_usd ?? null,
@@ -122,10 +127,10 @@ export function trialEvolveRecord(
 }
 
 /** The job-level evolve.json `evolve job download` writes beside config.json. */
-export function jobEvolveRecord(job: Job, org: string | null): Record<string, unknown> {
+export function jobEvolveRecord(job: Job, userId: string | null): Record<string, unknown> {
   return {
     job_id: job.id,
-    org,
+    user_id: userId,
     provider: job.sandbox_provider,
     gateway: {
       cost_usd: job.stats.cost_usd ?? null,
@@ -201,6 +206,6 @@ export function assembleTrialTree(parts: TrialTreeParts): Record<string, string>
       `${trial.exception_info.exception_type}: ${trial.exception_info.exception_message}\n`;
   }
 
-  files["evolve.json"] = record(trialEvolveRecord(trial, parts.job, parts.org));
+  files["evolve.json"] = record(trialEvolveRecord(trial, parts.job, parts.userId));
   return files;
 }

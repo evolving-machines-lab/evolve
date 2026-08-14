@@ -11,7 +11,7 @@
  *   - agent/sessions/ wears the home tree's VISIBLE names (the same
  *     re-keying the server archive and the agent-home tgz apply);
  *   - evolve.json carries the platform record Harbor has no slot for:
- *     gateway money/tokens per lane, provider, org, regrade lineage;
+ *     gateway money/tokens per lane, provider, user_id, regrade lineage;
  *   - the assembly is deterministic — same parts, same bytes.
  *
  * Usage:
@@ -163,7 +163,7 @@ function fullParts(overrides: Partial<TrialTreeParts> = {}): TrialTreeParts {
     stdout: "raw stdout\n",
     stderr: "raw stderr\n",
     home: { "/root/.codex/sessions/rollout.jsonl": "{}" },
-    org: "user-1",
+    userId: "user-1",
     ...overrides,
   };
 }
@@ -215,7 +215,7 @@ console.log("\n=== Harbor trial-tree assembly ===\n");
 
   const evolve = JSON.parse(files["evolve.json"]);
   assertEqual(evolve.trial_id, "run-1", "evolve.json names the trial");
-  assertEqual(evolve.org, "user-1", "evolve.json names the org");
+  assertEqual(evolve.user_id, "user-1", "evolve.json names the downloading user");
   assertEqual(evolve.provider, "modal", "evolve.json names the provider");
   assertEqual(evolve.gateway.cost_usd, 0.75, "evolve.json carries the gateway cost");
   assertEqual(evolve.gateway.spend_source, "measured", "evolve.json names the spend lane");
@@ -250,13 +250,13 @@ console.log("\n=== Harbor trial-tree assembly ===\n");
 }
 
 // -----------------------------------------------------------------------------
-// Exception + missing job + missing org
+// Exception + missing job + missing user id
 // -----------------------------------------------------------------------------
 {
   const files = assembleTrialTree(
     fullParts({
       job: null,
-      org: null,
+      userId: null,
       trial: fixtureTrial({
         status: "INFRASTRUCTURE_ERROR",
         reward: null,
@@ -276,7 +276,7 @@ console.log("\n=== Harbor trial-tree assembly ===\n");
     "an exception materializes exception.txt"
   );
   const evolve = JSON.parse(files["evolve.json"]);
-  assertEqual(evolve.org, null, "an unknown org is null, honestly");
+  assertEqual(evolve.user_id, null, "an unknown user id is null, honestly");
   assertEqual(evolve.regrade_lineage.is_regrade, false, "no reachable job reads as original lineage");
   assertEqual(evolve.regrade_lineage.source_jobs, [], "no reachable job reads as empty lineage");
 }

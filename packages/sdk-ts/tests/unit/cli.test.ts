@@ -3726,7 +3726,7 @@ async function testTrialDownloadSave() {
     assertEqual(evolve.provider, "modal", "evolve.json names the provider");
     assertEqual(evolve.gateway.cost_usd, 0.5, "evolve.json carries the gateway meter");
     assertEqual(evolve.gateway.spend_source, "measured", "evolve.json names the spend lane");
-    assertEqual(evolve.org, null, "an unreachable auth status reads as org null");
+    assertEqual(evolve.user_id, null, "an unreachable auth status reads as user_id null");
     assertEqual(evolve.regrade_lineage.is_regrade, false, "an unreachable job reads as original lineage");
     // Null logs were never stored — absence is a normal answer, no empty files.
     let missingThrew = false;

@@ -3185,19 +3185,19 @@ async function cmdJobDownload(inv: Invocation, io: CliIO): Promise<number> {
       throw error;
     }
     // The evolve.json records — the platform facts Harbor's layout has no
-    // slot for (gateway money/tokens per lane, provider, org, regrade
+    // slot for (gateway money/tokens per lane, provider, user_id, regrade
     // lineage): one at the job root, one per trial directory, each trial
     // matched by the id its result.json's x_evolve extension names. Content
     // is the SDK's (jobEvolveRecord / trialEvolveRecord); this verb only
     // fetches, matches and writes.
     const { readdir, readFile: readFileAsync, writeFile } = await import("node:fs/promises");
     const jobBody = await client.get(id);
-    const org = await callerOrg(inv);
+    const userId = await callerUserId(inv);
     const trialsById = new Map<string, Trial>();
     for await (const run of client.trials(id)) trialsById.set(run.id, run);
     await writeFile(
       join(targetDir, "evolve.json"),
-      JSON.stringify(jobEvolveRecord(jobBody, org), null, 2) + "\n"
+      JSON.stringify(jobEvolveRecord(jobBody, userId), null, 2) + "\n"
     );
     files.push("evolve.json");
     for (const entry of await readdir(targetDir, { withFileTypes: true })) {
@@ -3215,7 +3215,7 @@ async function cmdJobDownload(inv: Invocation, io: CliIO): Promise<number> {
       if (!run) continue;
       await writeFile(
         join(targetDir, entry.name, "evolve.json"),
-        JSON.stringify(trialEvolveRecord(run, jobBody, org), null, 2) + "\n"
+        JSON.stringify(trialEvolveRecord(run, jobBody, userId), null, 2) + "\n"
       );
       files.push(`${entry.name}/evolve.json`);
     }
@@ -3314,7 +3314,7 @@ async function cmdTrialDownload(inv: Invocation, io: CliIO): Promise<number> {
   // Save mode: the trial as HARBOR'S TRIAL TREE under <output-dir>/<trial-id>/
   // — config.json, result.json, agent/ (trajectory, raw logs, parsed events,
   // sessions/), verifier/, PLUS evolve.json (the platform record Harbor has
-  // no slot for: gateway money/tokens per lane, provider, org, regrade
+  // no slot for: gateway money/tokens per lane, provider, user_id, regrade
   // lineage). The assembly is the SDK's (assembleTrialTree — the CLI only
   // fetches parts and writes files); absent artifacts are absent files.
   const { mkdir, writeFile } = await import("node:fs/promises");
@@ -3343,7 +3343,7 @@ async function cmdTrialDownload(inv: Invocation, io: CliIO): Promise<number> {
     stdout: await client.artifact(trialId, "trace-stdout"),
     stderr: await client.artifact(trialId, "trace-stderr"),
     home: await client.artifact(trialId, "agent-home"),
-    org: await callerOrg(inv),
+    userId: await callerUserId(inv),
   });
   await mkdir(targetDir, { recursive: true });
   const saved: string[] = [];
@@ -3362,8 +3362,8 @@ async function cmdTrialDownload(inv: Invocation, io: CliIO): Promise<number> {
   return 0;
 }
 
-/** The caller's identity for evolve.json's `org` — null when unreachable. */
-async function callerOrg(inv: Invocation): Promise<string | null> {
+/** The caller's USER id for evolve.json's `user_id` — null when unreachable. */
+async function callerUserId(inv: Invocation): Promise<string | null> {
   try {
     return (await auth(clientConfig(inv)).status()).user_id;
   } catch {
