@@ -124,6 +124,8 @@ The include/exclude sets refine *within* the infrastructure class by exception n
 
 A retried trial keeps its receipts. `trial.n_retries` counts the requeues, and `trial.retries` lists each retired attempt with its exception, its spend, and its clocks — so a scored trial that took three attempts is auditable without archaeology, and the job's `stats.n_retries` is the consumed-retry sum across all trials. Each attempt spends against its own full per-trial cap, and every retired attempt's real spend stays in the job total — which is why `worst_case_spend_usd` carries the `(max_retries + 1)` product ([Money](#money)).
 
+The budget can also end early. Two consecutive infrastructure failures with the **same signature** break the circuit: the retry the policy would have scheduled is refused, the trial stays terminal, and whatever remains of `max_retries` goes unspent. A signature is the class of fault, read from the typed failure phase alone and never from message text — `sandbox_death` (the box ceased to exist mid-run), `provider_create_failure` (the box never came up), `stream_disconnect` (the run's event stream ended without the harness ever speaking). The trial's `exception_info.exception_message` is rewritten to name the signature and the count, and the job stream carries `trial.retry_circuit_broken` with `signature`, `consecutive`, `failure_phase` and `retries_unused`. The reason is arithmetic: a dead provider-and-region combination answers the same way every time, so it should cost minutes, not a whole retry budget's worth of timeouts. Three guarantees keep it from eating real transients — the **first** failure of any signature always retries, **alternating** signatures never accumulate (the streak resets on any non-matching failure), and the breaker runs strictly after the `max_retries` and include/exclude adjudication, so it can only ever shorten the budget, never extend it.
+
 On the stream, a requeue emits `trial.retrying` right after the `trial.settled` that recorded the failure. That means **`trial.settled` is not final** for a trial the policy may still re-run: a watcher that treats it as terminal must check for a following `trial.retrying` on the same trial. From the CLI, `-r/--max-retries` and the repeatable `--retry-include`/`--retry-exclude` set the same fields, merging field-by-field over a `--config` file's `retry` object ([CLI](#cli)).
 
 ### Timeout multipliers
@@ -676,6 +678,7 @@ dataset  list | show | publish | download | activate
 skill    list | upload | show | delete
 agent    list | show | add | remove
 auth     status
+secrets  set | list | delete
 ```
 
 The commands below are written as `evolve …`, which is what the binary is called once the package is installed:
@@ -785,6 +788,32 @@ evolve auth status
 The key descriptor's `last_used_at` is in the shape but nothing updates it yet: it stays `null` even on the key making the request. Read it as "not recorded", never as "this key is unused".
 
 Dataset publishing and agent registration have their own subcommands — shown in [Bring your own dataset](#bring-your-own-dataset) and [Bring your own agent](#bring-your-own-agent).
+
+### Env secrets
+
+`--secret` and `--secret-inline` attach secrets to a run; `evolve secrets` is the store they attach from — the same vault the dashboard's **Secrets** page writes, reached with your API key instead of a browser session. It is the one plural-canonical noun in the grammar (the word names the surface, not one record), and `secret` answers as a hidden alias.
+
+```bash
+# Store one — piping the value keeps it out of shell history and the process list
+printf %s "$GITHUB_TOKEN" | evolve secrets set GITHUB_TOKEN \
+    --delivery brokered \
+    --allowed-host api.github.com --allowed-path-prefix / --allowed-method GET
+
+# --value is the other channel, and --label puts a second value beside the first
+evolve secrets set STRIPE_KEY --label staging --delivery direct --value sk_test_123
+
+evolve secrets list                            # metadata only — values never leave the server
+evolve secrets list -q                         # name[:label], one per line
+evolve secrets delete STRIPE_KEY --label staging
+```
+
+`--delivery` is required on every write, with no default, because the two modes put the value in different places. **`brokered`** means the value never enters a sandbox: the run receives an opaque placeholder and the egress proxy swaps the real value in on requests to the hosts you allowed. **`direct`** means the raw value is placed in the sandbox environment as-is. A brokered write therefore needs the scoping triple — `--allowed-host` (a hostname or a wildcard like `*.example.com`), `--allowed-path-prefix`, `--allowed-method`, each repeatable — and a direct write refuses it, since a value sitting loose in the environment cannot be held to a host list. Eval trials deliver **direct** secrets only ([Shape and ceilings](#shape-and-ceilings)), so store secrets for this lane as direct and keep brokered ones for managed agents.
+
+Names are env-var-shaped (`[A-Z_][A-Z0-9_]{0,127}`, uppercased for you) and the `EVOLVE_` prefix is reserved; labels are at most 80 characters of `[A-Za-z0-9._-]`, and an omitted label is `default`. A value is at most **190 bytes of UTF-8** — API keys and tokens fit, a certificate or a private key does not and belongs in the task or agent image. `--value` and piped stdin are the only two channels, one trailing newline is stripped from the pipe (so a plain `echo` does not silently store a `\n`), and a terminal with neither is a usage error rather than a hang.
+
+Collisions follow the same converge-on-proof law `--secret-inline` does, for the same reason: restating a stored `(name, label)` byte-for-byte succeeds — and is the one place `--delivery` and the allowlists can be re-shaped — while a different value is refused as `secret_exists` (409). Rotate by `delete` then `set`, or store the new value under another label. `delete` resolves an omitted label exactly as attaching does (the `default` row, else the single row, else `secret_ambiguous` naming every label), and deleting revokes every runtime grant riding the row.
+
+Two things this door will not do. A **read-only API key** may `list` but not `set` or `delete` — the refusal is `read_only_key` (403) — so a key handed to CI to read results cannot rewrite what your runs authenticate with. And **LLM provider keys (BYOK) cannot be stored here at all**: a provider key decides whose account pays for model traffic, which is a billing decision, so those stay on the signed-in dashboard where a human is present to make it. The same three operations are on the SDK client, `Evolve.managedSecrets()` — see [Managed Secrets](02-configuration.md#managed-secrets).
 
 ---
 
