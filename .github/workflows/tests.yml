@@ -10,8 +10,13 @@ jobs:
   typescript:
     runs-on: ubuntu-latest
     steps:
+      # No step here pushes or re-fetches, so don't leave the workflow token
+      # in .git/config while `npm ci` / `pip install` run third-party scripts
+      # (actions/checkout persists it by default).
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -35,6 +40,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

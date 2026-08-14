@@ -35,6 +35,8 @@ jobs:
       EVOLVE_OPENAPI_SPEC_PATH: ${{ github.workspace }}/contract/spec/openapi.yaml
 
     steps:
+      # This checkout KEEPS persisted credentials on purpose: the release step
+      # at the end pushes the version commit and tag back over them.
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -46,6 +48,10 @@ jobs:
       # and prepack refuses to pack without it. Check the contract out
       # sparsely and point the build at it; a missing SPEC_READ_TOKEN fails
       # here, loudly, instead of shipping a contract-less package.
+      # persist-credentials: false — the default (true) would leave
+      # SPEC_READ_TOKEN in contract/.git/config for the life of the job,
+      # readable by every third-party install script (`npm ci`, pip). The
+      # contract is read once at checkout; nothing re-fetches it.
       - name: Checkout the contract (private server repo, spec/ only)
         uses: actions/checkout@v4
         with:
@@ -53,6 +59,7 @@ jobs:
           token: ${{ secrets.SPEC_READ_TOKEN }}
           path: contract
           sparse-checkout: spec
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

@@ -33,9 +33,17 @@ jobs:
           SPEC_READ_TOKEN: ${{ secrets.SPEC_READ_TOKEN }}
         run: echo "present=${SPEC_READ_TOKEN:+true}" >> "$GITHUB_OUTPUT"
 
+      # persist-credentials defaults TRUE and writes the checkout token into
+      # .git/config for the life of the job — the same third-party window
+      # (`npm ci` / `pip install` scripts) the step-scoped env above avoids.
+      # No later step fetches or pushes, so nothing here needs persisted
+      # credentials; the contract checkout would otherwise leave
+      # SPEC_READ_TOKEN readable on disk while third-party code runs.
       - name: Checkout
         if: steps.token.outputs.present == 'true'
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Checkout the contract (private server repo, spec/ only)
         if: steps.token.outputs.present == 'true'
@@ -45,6 +53,7 @@ jobs:
           token: ${{ secrets.SPEC_READ_TOKEN }}
           path: contract
           sparse-checkout: spec
+          persist-credentials: false
 
       - name: Setup Node.js
         if: steps.token.outputs.present == 'true'
