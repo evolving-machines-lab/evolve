@@ -426,9 +426,106 @@ const home   = await t.artifact(trialId, "agent-home");     // Record<path, text
 
 `trace-atif` is the normalized view of the same run: one **ATIF v1.7** document (Harbor's Agent Trajectory Interchange Format — the strict interchange schema its trainer and analysis tooling read), built server-side from the stored parsed trace. The instruction opens it as the first `user` step, each agent turn carries its message, reasoning, tool calls and their observed results, and `final_metrics` states the trial's token totals and measured cost. It answers on the same `{log}` envelope as the raw logs — the string is the JSON document — and null keeps the same meaning: nothing was stored (or the id is a regrade result, whose agent half belongs to its immutable source trial). It is the same document the job archive places at Harbor's own path `agent/trajectory.json`; the separate `trajectory` name stays reserved for a different artifact — the harness's own native session file.
 
-The CLI speaks the same words. `evolve trial download <trial-id> --stream <name>` prints one artifact to stdout; without `--stream`, everything the trial recorded is saved under `<dir>/<trial-id>/` — `trace-parsed.jsonl`, `trace-atif.json`, `verifier.log`, `trace-stdout.log`, `trace-stderr.log`, and `agent-home/` with the folder tree preserved. The two modes are exclusive, and `--cursor`/`--limit` page only `--stream trace-parsed` — the CLI refuses any other mix as a usage error instead of letting one flag silently win.
+The CLI speaks the same words. `evolve trial download <trial-id> --stream <name>` prints one artifact to stdout. Without `--stream` the trial is written out whole under `<dir>/<trial-id>/`, and the layout is **Harbor's trial tree** — Harbor's own names and folders, not the artifact names in the table above:
+
+```
+config.json               trial identity: task + agent, in Harbor vocabulary
+result.json               status, reward, verifier verdict, exception,
+                          agent_result, phase clocks
+agent/trajectory.json     the normalized ATIF trajectory
+agent/stdout.log          the harness process's raw streams
+agent/stderr.log
+agent/trace-parsed.jsonl  the parsed event trace — Evolve's own artifact, riding
+                          inside agent/ because Harbor has no slot for it, and a
+                          Harbor reader ignores it
+agent/sessions/...        the agent CLI's home folder in its VISIBLE shape
+                          (`codex/...`, never `root/.codex/...`)
+verifier/test-stdout.txt  the stored verifier log
+verifier/reward.json      the rewards map, when the verifier produced one
+exception.txt             when the trial carries an exception
+evolve.json               the platform's own record: gateway cost and tokens per
+                          lane, provider, `user_id`, regrade lineage
+```
+
+An artifact the trial never recorded is an **absent file**, never an empty placeholder — Harbor's own law, so listing the directory is an honest inventory of what the run produced.
+
+This tree is assembled on your machine out of the trial's own artifacts, which is why it is not identical to the per-trial directories inside [the job archive](#download-the-archive): the server builds those, so they also carry `lock.json`, `trial.log` and `artifacts/`, and they have no `agent/trace-parsed.jsonl`. `evolve job download` adds an `evolve.json` of its own — one at the job root, one in every trial directory.
+
+The two modes are exclusive, and `--cursor`/`--limit` page only `--stream trace-parsed` — the CLI refuses any other mix as a usage error instead of letting one flag silently win.
 
 This archive belongs to hosted evals: trials are scoring evidence. A managed agent session keeps its parsed transcript download; its raw stream lives in the SDK's local session log and its home folder inside your own sandbox.
+
+---
+
+## Inspect a run without downloading it
+
+A trial's record can be large, and the question you actually have is usually narrow: which events mention this error, what did the verifier print at the end, does any trial in this job hit that stack trace. All three are answered on the server, so nothing has to come down first.
+
+### Filter one trial's trace
+
+`trace()` and `traceEvents()` take three filters, and each one composes with the cursor instead of replacing it:
+
+```ts
+// type — an exact event type, not a pattern
+const calls = await t.trace(trialId, { type: "tool.call" });
+
+// grep — case-insensitive POSIX regex over the event's type AND its content
+const denied = await t.trace(trialId, { grep: "permission denied" });
+
+// tail — only the last N matching events
+const ending = await t.trace(trialId, { tail: 50 });
+
+// and they combine; paging still runs through the filtered set
+for await (const event of t.traceEvents(trialId, { grep: "Traceback", tail: 20 })) {
+    console.log(event.seq, event.type);
+}
+```
+
+`grep` is Postgres's own regex engine, so a plain string is a plain substring match, exactly like `grep` itself; an invalid pattern comes back as a typed `invalid_input` refusal naming `grep`, never a `500`. A filter narrows which events exist on the timeline and nothing else: the cursor still means "seq strictly greater than", `nextCursor` still pages through the filtered set, and events always arrive oldest-first. `tail` is a floor on that same timeline rather than a reversed ordering, so `tail` plus paging drains exactly the last N matches, in order. The bounds: `type` at most 100 characters, `grep` at most 512, `tail` between 1 and 10000, and `limit` up to 1000 (default 200).
+
+### Grep every trial of a job
+
+One pattern, one pass over the whole job:
+
+```ts
+const hits = await evals.grep(job.id, "CUDA out of memory");
+for (const group of hits.items) {
+    console.log(group.trial_id, group.task_name, group.match_count);
+    for (const event of group.events) console.log("   ", event.seq, event.type);
+}
+```
+
+Matches group per trial: `match_count` is that trial's exact total, never truncated, and `events` carries the first five matching events as a sample. A trial with no match produces no group, so an empty page means the pattern appears nowhere in the job. Groups order by trial id, `nextCursor` is where the next page resumes, and `limit` defaults to 50 with a maximum of 200. `type` narrows the same way it does on a single trial's trace.
+
+The scan is bounded per request rather than per job, so a sparse pattern over a very large job can answer with a short page and `hasMore` still true — keep paging. A pattern too expensive to evaluate is refused as a typed `invalid_input` on `q` that says to narrow it: add `type`, anchor the pattern, or grep one trial's own trace. The full match list for any single trial is exactly that follow-up — same pattern, same engine, same answer.
+
+### List and read a trial's stored files
+
+The files a trial left behind can be listed, and read by the byte, so the tail of a 200 MB log costs a range request instead of a download:
+
+```ts
+const listing = await t.files(trialId);
+for (const file of listing.items) console.log(file.path, file.size_bytes);
+
+const whole = await t.file(trialId, "agent/stdout.log");                          // Buffer
+const head  = await t.file(trialId, "agent/stdout.log", { start: 0, end: 65535 });
+const last  = await t.file(trialId, "agent/stdout.log", { suffix: 4096 });        // last 4 KB
+```
+
+The listing pages like every other collection (`limit` default 200, maximum 1000) and orders by path; an empty listing is a normal answer for a trial that stored nothing. A range that selects nothing inside the file is refused, and asking for a whole file above the server's unranged ceiling is refused with both the file's size and that ceiling — in either case the answer is to ask for a range.
+
+Those two are **SDK-only today**: there is no `evolve trial files` and no `evolve trial read`. The trace side does have CLI verbs:
+
+```bash
+evolve trial trace <trial-id> --grep 'permission denied' --tail 50
+evolve trial trace <trial-id> --type tool.call --limit 500
+evolve job grep <id> 'CUDA out of memory'
+evolve job grep <id> 'Traceback' --type agent.error --cursor <cursor>
+```
+
+`evolve trial trace` drains the filtered trace for you, so its `--limit` is the size of each page it fetches, not a total. `evolve job grep` prints a single page — one line per matching trial, with its sampled events — and names the cursor to resume from when more trials match.
+
+When you do want the bytes on disk after all, [the job archive](#download-the-archive) and `evolve trial download` are still there.
 
 ---
 
@@ -573,9 +670,10 @@ The record files are Harbor's own vocabulary, and everything Evolve-specific rid
 The SDK ships an `evolve` binary — a thin shell over the five clients. The grammar is noun-verb: `evolve <noun> <verb>`. `run` also stands on its own at the top level, taking `job start`'s flags and documenting itself as `evolve run`. Singular nouns are canonical; `job`, `trial` and `dataset` also answer to their plurals as hidden aliases, as does `ls` for `list`. The plural `agents` is deliberately not an alias — that word is reserved for the managed-agents CLI and refuses with the reason, so use the singular `evolve agent` for eval agent arms.
 
 ```
-job      start | list | show | trials | tasks | compare | cancel | stop | resume | retry | regrade | download
-trial    show | download | retry | regrade | stop
+job      start | list | show | trials | tasks | compare | cancel | stop | resume | retry | regrade | download | grep
+trial    show | trace | download | retry | regrade | stop
 dataset  list | show | publish | download | activate
+skill    list | upload | show | delete
 agent    list | show | add | remove
 auth     status
 ```
@@ -647,8 +745,10 @@ evolve job resume <id> -f InfrastructureError
 evolve job retry <id> --failed-only        # or -t <trial-id> (repeatable), or bare for the whole job
 evolve job regrade <id> --task task-001
 evolve job download <id> -o results/       # unpacks the job tree to results/job-<id>/
+evolve job grep <id> 'out of memory'       # every trial's trace, one pass
 
 evolve trial show <trial-id>
+evolve trial trace <trial-id> --grep 'permission denied' --tail 50
 evolve trial download <trial-id> --stream trace-stdout
 evolve trial download <trial-id> -o trials/
 evolve trial retry <trial-id>
