@@ -57,16 +57,28 @@ jobs:
       # then trunk — the same resolution law the spec gates use. Without it a
       # train publish reads the server's default branch, which may not carry
       # the spec yet.
+      #
+      # TWIN: .github/workflows/spec-gate.yml carries this same step. The two
+      # run: bodies are kept BYTE-IDENTICAL on purpose — one law, two spellings
+      # — so a change to the candidate order or to the failure handling lands
+      # in both or in neither. Edit one, edit the other.
       - name: Resolve contract ref
         id: contractref
         env:
-          BRANCH: ${{ github.ref_name }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
           TOKEN: ${{ secrets.SPEC_READ_TOKEN }}
         run: |
           # REST probe, not git ls-remote: fine-grained PATs authenticate
           # plainly as Bearer on the API, while ls-remote's basic-auth styles
           # are inconsistent for them (the first run fell through to main
           # because every probe silently 401'd).
+          #
+          # ONLY 404 means "no such branch". Every other non-200 is the PROBE
+          # failing, not an answer about the branch: an expired, under-scoped
+          # or rate-limited token replies 401/403/429, and reading that as
+          # "absent" would walk the whole candidate list and gate against the
+          # WRONG contract while the job looked healthy. So anything that is
+          # neither 200 nor 404 stops the job here and prints the code.
           for ref in "$BRANCH" berth/day-one project-sable main; do
             code=$(curl -s -o /dev/null -w "%{http_code}" \
               -H "Authorization: Bearer ${TOKEN}" \
@@ -77,9 +89,14 @@ jobs:
               echo "resolved contract ref: $ref"
               exit 0
             fi
+            if [ "$code" != "404" ]; then
+              echo "::error::contract-ref probe for '${ref}' answered HTTP ${code}; only 404 means the branch is absent. SPEC_READ_TOKEN is expired, under-scoped or rate-limited — refusing to gate against a branch this probe never confirmed."
+              exit 1
+            fi
+            echo "contract ref '${ref}': absent (404)"
           done
-          echo "resolved contract ref: main (fallback — no candidate answered 200)"
-          echo "ref=main" >> "$GITHUB_OUTPUT"
+          echo "::error::no contract branch found — every candidate answered 404 ($BRANCH, berth/day-one, project-sable, main). The server repo has no branch this ref can pair with."
+          exit 1
 
       - name: Checkout the contract (private server repo, spec/ only)
         uses: actions/checkout@v4
@@ -287,44 +304,41 @@ jobs:
         run: npm run build
 
       # =======================================================================
-      # CONTRACT GATE (strict) — the last chance to catch a stale SDK
+      # CONTRACT GATE — the last chance to catch a stale SDK
       # =======================================================================
 
-      # The routine spec gates (spec-gate.yml here, sdk-spec-gate.yml in the
-      # server repo) tolerate the spec LEADING the SDK: between a server wave
-      # merging and the SDK publish that serves it, the contract legitimately
-      # names operations and error codes the SDK does not have yet, and failing
-      # every topic branch over that is a false alarm (see
-      # packages/sdk-ts/tests/unit/spec-lag.ts for the law and its lanes).
+      # THE LAW, in full:
       #
-      # That toleration must not survive to a release. A published package IS
-      # the SDK's answer to the contract, so here — and only here —
-      # EVOLVE_SPEC_GATE_STRICT=1 removes the exception and demands full
-      # equality. The gate runs after the build (two entrypoints read dist/)
-      # and before anything is pushed anywhere, so a lagging SDK fails the job
-      # instead of shipping. Its remedy is always the same: land the SDK side
-      # of the wave, then publish.
+      #   stable release  -> STRICT   (EVOLVE_SPEC_GATE_STRICT=1)
+      #   dev prerelease  -> tolerant (the same gate every branch runs)
+      #
+      # The routine gates (spec-gate.yml here, sdk-spec-gate.yml in the server
+      # repo) tolerate the spec LEADING the SDK: between a server wave merging
+      # and the SDK publish that serves it, the contract legitimately names
+      # operations and error codes the SDK does not have yet, and failing every
+      # topic branch over that is a false alarm (packages/sdk-ts/tests/unit/
+      # spec-lag.ts holds the law and its declared lanes).
+      #
+      # Dev prereleases keep that toleration, because they are the lag period's
+      # own vehicle: a deploy train publishes one precisely so the server can
+      # go live while the SDK side of the wave is still landing. Tolerant is
+      # not lax — it still hard-fails real drift, meaning the SDK ahead of the
+      # contract, or a member both sides declare and spell differently.
+      #
+      # A stable release is the SDK's final answer to the contract, so it gets
+      # no exception: strict demands full equality. The gate runs after the
+      # build (two entrypoints read dist/) and before anything is published or
+      # pushed, so a lagging SDK fails the job instead of shipping. The remedy
+      # never changes: land the SDK side of the wave, then release.
       - name: Install Python test dependencies
         run: pip install -r packages/sdk-py/requirements-dev.txt
 
-      # Strict applies to STABLE releases only. Dev prereleases are the
-      # deliberately-sequenced lag period's own vehicle — deploy trains publish
-      # them while the server legitimately leads the SDK — so they run the
-      # tolerant gate (which still hard-fails real drift: SDK ahead of the
-      # contract, or shared members diverging). A stable release remains the
-      # SDK's final answer to the contract: full equality, no exceptions.
+      # One list, one home: scripts/run-spec-gates.sh is the same script the
+      # other two contract workflows run — see its header.
       - name: Gate the release against the contract (strict on stable)
         env:
           EVOLVE_SPEC_GATE_STRICT: ${{ inputs.release_type == 'stable' && '1' || '' }}
-        run: |
-          cd packages/sdk-ts
-          npx tsx tests/unit/hosted-spec-gate.test.ts
-          npx tsx tests/unit/hosted-error-codes.test.ts
-          npx tsx tests/unit/hosted-client.test.ts
-          npx tsx tests/unit/cli.test.ts
-          npx tsx tests/unit/cli-bin.test.ts
-          cd ../sdk-py
-          python -m pytest tests/unit/test_hosted_spec_gate.py tests/unit/test_hosted_stats_typing.py tests/unit/test_hosted_retry_typing.py -v
+        run: scripts/run-spec-gates.sh
 
       # =======================================================================
       # DOCKER IMAGE (tag derived from build inputs; must exist on Docker Hub

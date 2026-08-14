@@ -45,12 +45,16 @@ jobs:
         with:
           persist-credentials: false
 
-      # Same paired-branch resolution law as publish.yml's contract checkout
-      # (its twin — one law, two spellings kept textually identical): REST
-      # probe because fine-grained PATs speak Bearer on the API but not git's
-      # basic-auth styles. Without this, a berth-train run reads the server's
-      # default branch, finds no spec, and the gate goes green-with-skip while
-      # looking armed.
+      # The contract must come from the server branch PAIRED with this ref:
+      # same branch name first (berth/* trains), then the integration line,
+      # then trunk. Without it a berth-train run reads the server's default
+      # branch, finds no spec, and the gate goes green-with-skip while looking
+      # armed.
+      #
+      # TWIN: .github/workflows/publish.yml carries this same step. The two
+      # run: bodies are kept BYTE-IDENTICAL on purpose — one law, two spellings
+      # — so a change to the candidate order or to the failure handling lands
+      # in both or in neither. Edit one, edit the other.
       - name: Resolve contract ref
         if: steps.token.outputs.present == 'true'
         id: contractref
@@ -58,6 +62,17 @@ jobs:
           BRANCH: ${{ github.head_ref || github.ref_name }}
           TOKEN: ${{ secrets.SPEC_READ_TOKEN }}
         run: |
+          # REST probe, not git ls-remote: fine-grained PATs authenticate
+          # plainly as Bearer on the API, while ls-remote's basic-auth styles
+          # are inconsistent for them (the first run fell through to main
+          # because every probe silently 401'd).
+          #
+          # ONLY 404 means "no such branch". Every other non-200 is the PROBE
+          # failing, not an answer about the branch: an expired, under-scoped
+          # or rate-limited token replies 401/403/429, and reading that as
+          # "absent" would walk the whole candidate list and gate against the
+          # WRONG contract while the job looked healthy. So anything that is
+          # neither 200 nor 404 stops the job here and prints the code.
           for ref in "$BRANCH" berth/day-one project-sable main; do
             code=$(curl -s -o /dev/null -w "%{http_code}" \
               -H "Authorization: Bearer ${TOKEN}" \
@@ -68,9 +83,14 @@ jobs:
               echo "resolved contract ref: $ref"
               exit 0
             fi
+            if [ "$code" != "404" ]; then
+              echo "::error::contract-ref probe for '${ref}' answered HTTP ${code}; only 404 means the branch is absent. SPEC_READ_TOKEN is expired, under-scoped or rate-limited — refusing to gate against a branch this probe never confirmed."
+              exit 1
+            fi
+            echo "contract ref '${ref}': absent (404)"
           done
-          echo "resolved contract ref: main (fallback — no candidate answered 200)"
-          echo "ref=main" >> "$GITHUB_OUTPUT"
+          echo "::error::no contract branch found — every candidate answered 404 ($BRANCH, berth/day-one, project-sable, main). The server repo has no branch this ref can pair with."
+          exit 1
 
       - name: Checkout the contract (private server repo, spec/ only)
         if: steps.token.outputs.present == 'true'
@@ -110,17 +130,11 @@ jobs:
         if: steps.token.outputs.present == 'true'
         run: npm run build
 
-      - name: Run TypeScript spec-gate tests
+      # One list, one home: scripts/run-spec-gates.sh is the same script
+      # publish.yml and the server repo's sdk-spec-gate.yml run — see its
+      # header. This job runs it tolerant (EVOLVE_SPEC_GATE_STRICT unset): the
+      # spec may lead the SDK on a topic branch, and only the release gate
+      # demands full equality.
+      - name: Run the spec gates
         if: steps.token.outputs.present == 'true'
-        working-directory: packages/sdk-ts
-        run: |
-          npx tsx tests/unit/hosted-spec-gate.test.ts
-          npx tsx tests/unit/hosted-error-codes.test.ts
-          npx tsx tests/unit/hosted-client.test.ts
-          npx tsx tests/unit/cli.test.ts
-          npx tsx tests/unit/cli-bin.test.ts
-
-      - name: Run Python spec-gate tests
-        if: steps.token.outputs.present == 'true'
-        working-directory: packages/sdk-py
-        run: python -m pytest tests/unit/test_hosted_spec_gate.py tests/unit/test_hosted_stats_typing.py tests/unit/test_hosted_retry_typing.py -v
+        run: scripts/run-spec-gates.sh
