@@ -52,10 +52,31 @@ jobs:
       # SPEC_READ_TOKEN in contract/.git/config for the life of the job,
       # readable by every third-party install script (`npm ci`, pip). The
       # contract is read once at checkout; nothing re-fetches it.
+      # The contract must come from the server branch PAIRED with this ref:
+      # same branch name first (berth/* trains), then the integration line,
+      # then trunk — the same resolution law the spec gates use. Without it a
+      # train publish reads the server's default branch, which may not carry
+      # the spec yet.
+      - name: Resolve contract ref
+        id: contractref
+        env:
+          BRANCH: ${{ github.ref_name }}
+          TOKEN: ${{ secrets.SPEC_READ_TOKEN }}
+        run: |
+          for ref in "$BRANCH" berth/day-one project-sable main; do
+            if git ls-remote --exit-code --heads "https://x-access-token:${TOKEN}@github.com/evolving-machines-lab/swarm_dashboard.git" "$ref" >/dev/null 2>&1; then
+              echo "ref=$ref" >> "$GITHUB_OUTPUT"
+              echo "resolved contract ref: $ref"
+              exit 0
+            fi
+          done
+          echo "ref=main" >> "$GITHUB_OUTPUT"
+
       - name: Checkout the contract (private server repo, spec/ only)
         uses: actions/checkout@v4
         with:
           repository: evolving-machines-lab/swarm_dashboard
+          ref: ${{ steps.contractref.outputs.ref }}
           token: ${{ secrets.SPEC_READ_TOKEN }}
           path: contract
           sparse-checkout: spec
