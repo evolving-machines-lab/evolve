@@ -1087,9 +1087,13 @@ JobSecretRef = TypedDict(
 # saves ``value`` as a normal env secret first (``delivery`` REQUIRED —
 # 'brokered' or 'direct', no silent default; ``label`` defaults to
 # 'default') and the job then stores only the reference — the stored job
-# never contains a value. A (name, label) identity that already exists is
-# the typed ``secret_exists`` refusal (attach by reference or pick a label —
-# never a silent overwrite); ``delivery='brokered'`` refuses as
+# never contains a value. A (name, label) identity that already exists
+# splits on proof: an entry restating the stored row byte-for-byte (same
+# value, same delivery) attaches it exactly like a reference — a network
+# retry of the same request converges instead of colliding with its own
+# first attempt — while a different value or delivery is the typed
+# ``secret_exists`` refusal (attach by reference or pick a label — never a
+# silent overwrite); ``delivery='brokered'`` refuses as
 # ``secret_brokered_unsupported`` until eval trials can broker.
 JobSecretInline = TypedDict(
     'JobSecretInline',
@@ -4089,10 +4093,13 @@ class JobsClient:
         (``{'name': ..., 'value': ..., 'delivery': ..., 'label': ...,
         'as': ...}``, the spec's JobSecretInline) whose values are saved
         into your vault as normal env secrets FIRST and then pinned like
-        any other reference — the stored job never contains a value, and a
-        (name, label) collision with an existing row is the typed
-        ``secret_exists`` refusal (attach by reference or pick a label —
-        never a silent overwrite). Reference resolution is the server's and
+        any other reference — the stored job never contains a value. A
+        (name, label) collision with an existing row splits on proof: a
+        byte-equal restatement (same value, same delivery) attaches the
+        existing row — retries of the same request converge — while a
+        different value or delivery is the typed ``secret_exists``
+        refusal (attach by reference or pick a label — never a silent
+        overwrite). Reference resolution is the server's and
         is pinned at create: an omitted ``label`` takes the
         'default'-labeled row when one exists (the single row when exactly
         one exists), and a bare name matching several labels with no

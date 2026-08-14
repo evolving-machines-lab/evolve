@@ -430,8 +430,11 @@ export interface JobCreate {
    * delivery, label?, as?}) whose values are saved into the vault as
    * normal env secrets first and then pinned like any other reference
    * (WIRE LAW: the stored job never contains a value; a (name, label)
-   * collision is the typed `secret_exists` refusal — attach by reference
-   * or pick a label, never a silent overwrite). References are resolved at
+   * collision splits on proof — a byte-equal restatement of the stored
+   * row, same value and delivery, attaches it so retries of the same
+   * request converge, while a different value or delivery is the typed
+   * `secret_exists` refusal — attach by reference or pick a label, never
+   * a silent overwrite). References are resolved at
    * create and pinned: an omitted `label` takes the 'default'-labeled row
    * when one exists (the single row when exactly one exists), and a bare
    * name matching several labels with no 'default' is the typed
@@ -471,8 +474,10 @@ export interface JobSecretRef {
  * same vault, not a second wire shape for values: the value is saved as a
  * normal env secret first (delivery as stated, `label` defaulting to
  * 'default') and the job then stores only the reference. A (name, label)
- * identity that is already a stored row is the typed `secret_exists`
- * refusal (409); `delivery: 'brokered'` refuses as
+ * identity that is already a stored row splits on proof: a byte-equal
+ * restatement (same value, same delivery) attaches that row — retries of
+ * the same request converge — while a different value or delivery is the
+ * typed `secret_exists` refusal (409); `delivery: 'brokered'` refuses as
  * `secret_brokered_unsupported` until eval trials can broker.
  */
 export interface JobSecretInline {
