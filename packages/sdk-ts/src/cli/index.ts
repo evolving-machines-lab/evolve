@@ -234,9 +234,11 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
       "in one step (repeatable). DELIVERY is 'brokered' or 'direct' and sits " +
       "before '=' so everything after the first '=' is the value, passed " +
       "through byte-for-byte ('=', ':' and '@' need no escaping). @LABEL " +
-      "defaults to 'default'; if that (NAME, LABEL) secret already exists the " +
-      "job is refused — attach it with --secret or pick a label. The job " +
-      "stores only the reference, never the value",
+      "defaults to 'default'. An existing (NAME, LABEL) secret splits on " +
+      "proof: restating it exactly (same value, same delivery) attaches it, " +
+      "so re-running the same command converges; a DIFFERENT value or " +
+      "delivery is refused as secret_exists — attach it with --secret or pick " +
+      "a label. The job stores only the reference, never the value",
   },
   "n-attempts": { kind: "number", short: "k", value: "<n>", help: "Attempts per task x arm (default 1)" },
   "n-concurrent": { kind: "number", short: "n", value: "<n>", help: "Parallel trials (default 4)" },

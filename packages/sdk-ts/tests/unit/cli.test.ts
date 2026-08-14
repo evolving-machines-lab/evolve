@@ -3664,7 +3664,7 @@ async function testTrialDownloadSave() {
     // The trial body the tree's config/result/evolve records derive from.
     // Registered AFTER every "/trace" pattern — substring matching. The job
     // and auth-status lookups stay unmocked on purpose: both are
-    // best-effort (lineage reads as an original run's, org as null).
+    // best-effort (lineage reads as an original run's, user_id as null).
     setMockResponse("/api/trials/run-1", {
       status: 200,
       body: {
