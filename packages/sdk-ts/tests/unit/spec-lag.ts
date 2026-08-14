@@ -37,11 +37,19 @@
  * next wave's mistake.
  *
  * STRICT MODE turns the door off entirely: with EVOLVE_SPEC_GATE_STRICT=1 the
- * only passing state is full equality. The publish workflow sets it, so the
- * lag that is legal on a topic branch is impossible in the release that would
- * hand a stale vocabulary to real callers. The routine gates (spec-gate.yml
- * here, sdk-spec-gate.yml in the server repo) leave it unset and stay
- * lag-tolerant.
+ * only passing state is full equality. Who sets it, exactly:
+ *
+ *   stable release  -> strict. A stable package is the SDK's final answer to
+ *                      the contract, so the lag that is legal on a topic
+ *                      branch cannot reach the callers who install it.
+ *   dev prerelease  -> tolerant. A dev prerelease is the lag period's own
+ *                      vehicle: a deploy train publishes one precisely so the
+ *                      server can go live while the SDK side is still landing.
+ *   routine gates   -> tolerant (spec-gate.yml here, sdk-spec-gate.yml in the
+ *                      server repo leave it unset).
+ *
+ * Tolerant is not lax: the hard failures below — SDK ahead of the spec, a
+ * half-adopted lane, an undeclared lag — fail in either mode.
  */
 
 /**
@@ -95,8 +103,8 @@ function noticeFor(unit: string, lanes: readonly { lane: LagLane; behind: readon
   lines.push(
     "  This gate re-arms itself: the moment the SDK gains ANY member of a lane",
     "  above, that whole lane must match the spec byte-exact. Set",
-    "  EVOLVE_SPEC_GATE_STRICT=1 to forbid the lag outright — the publish",
-    "  workflow does, so no release can ship while the SDK is behind.",
+    "  EVOLVE_SPEC_GATE_STRICT=1 to forbid the lag outright — a STABLE release",
+    "  does, so no stable package can ship while the SDK is behind.",
     RULE,
     "",
   );
