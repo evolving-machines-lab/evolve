@@ -46,6 +46,40 @@ function expect(condition: boolean, message: string): void {
 
 const PROBE_URL = "https://pypi.org/simple/";
 
+/**
+ * Unique to THIS run, stamped into every box's metadata so the sweep at the
+ * end can tell "my boxes are gone" from "someone else's box is running".
+ */
+const RUN_ID = `e2b-bump-${Date.now()}`;
+
+/** Every sandbox this run created, so teardown can never miss one. */
+const created: Array<{ sandboxId: string; kill: () => Promise<void> }> = [];
+
+/**
+ * Kill a box and REFUSE TO BE QUIET ABOUT FAILING.
+ *
+ * The previous shape — `kill().catch(e => console.log(e))` — is how a live box
+ * survives a green run: the smoke reports success, the log line scrolls past,
+ * and the sandbox bills until someone finds it on the dashboard. (Two stale
+ * boxes were found by hand; this file's early runs are a plausible source.)
+ * One retry for a transient API blip, then it counts as a FAILURE.
+ */
+async function hardKill(box: { sandboxId: string; kill: () => Promise<void> }): Promise<void> {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      await box.kill();
+      return;
+    } catch (e) {
+      if (attempt === 2) {
+        failures += 1;
+        console.log(`   FAIL  could not kill ${box.sandboxId} after 2 attempts: ${String(e)}`);
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
+}
+
 async function main(): Promise<void> {
   const apiKey = process.env.E2B_API_KEY;
   if (!apiKey) throw new Error("E2B_API_KEY is required for this live smoke");
@@ -61,11 +95,12 @@ async function main(): Promise<void> {
   // deny everything, then allow the declared destinations back.
   const sandbox = await E2BSandbox.create("base", {
     apiKey,
-    metadata: { smoke: "e2b-bump" },
+    metadata: { smoke: "e2b-bump", run: RUN_ID },
     timeoutMs: 5 * 60 * 1000,
     allowInternetAccess: true,
     network: { denyOut: ["0.0.0.0/0"], allowOut: ["1.2.3.4/32"] },
   });
+  created.push(sandbox);
   console.log(`    sandbox ${sandbox.sandboxId}`);
   expect(typeof sandbox.sandboxId === "string" && sandbox.sandboxId.length > 0, "create returns a sandbox id");
 
@@ -156,7 +191,7 @@ async function main(): Promise<void> {
     expect(await sandbox.isRunning(), "still the same running sandbox");
   } finally {
     console.log("\n[cleanup] killing sandbox");
-    await sandbox.kill().catch((e: unknown) => console.log(`    kill failed: ${String(e)}`));
+    await hardKill(sandbox);
   }
 
   // ─── The adapter, not just the vendor client ───────────────────
@@ -171,8 +206,9 @@ async function main(): Promise<void> {
     image: "base",
     network: { outbound: "blocked", allowedDestinations: ["pypi.org"] },
     timeoutMs: 5 * 60 * 1000,
-    metadata: { smoke: "e2b-bump-adapter" },
+    metadata: { smoke: "e2b-bump-adapter", run: RUN_ID },
   });
+  created.push(box);
   console.log(`    sandbox ${box.sandboxId}`);
   try {
     const ran = await box.commands.run("echo adapter-ok");
@@ -205,8 +241,20 @@ async function main(): Promise<void> {
     );
   } finally {
     console.log("    killing adapter sandbox");
-    await box.kill().catch((e: unknown) => console.log(`    kill failed: ${String(e)}`));
+    await hardKill(box);
   }
+
+  // ─── The sweep: PROVE nothing was left running ─────────────────
+  // Teardown that "looks right" is what allowed two stale boxes to survive
+  // green runs. This asks the provider instead of trusting the code path: any
+  // box still carrying THIS run's marker is a leak, named and failed.
+  console.log("\n[11] leak sweep — no box from this run may still be alive");
+  const paginator = E2BSandbox.list({ apiKey });
+  const alive: Array<{ sandboxId: string; metadata?: Record<string, string> }> = [];
+  while (paginator.hasNext) alive.push(...(await paginator.nextItems()));
+  const leaked = alive.filter((s) => s.metadata?.run === RUN_ID);
+  for (const s of leaked) console.log(`   LEAKED ${s.sandboxId} ${JSON.stringify(s.metadata)}`);
+  expect(leaked.length === 0, `every sandbox this run created is gone (created ${created.length}, leaked ${leaked.length})`);
 
   console.log(`\n=== ${failures === 0 ? "SMOKE PASSED" : `SMOKE FAILED (${failures})`} ===`);
   if (failures > 0) process.exit(1);
