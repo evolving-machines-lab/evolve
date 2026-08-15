@@ -2557,6 +2557,17 @@ export class DaytonaProvider implements SandboxProvider {
     // (wildcard/IPv6/unresolvable/too-many) fail fast with typed errors.
     // Hostname destinations are DNS-pinned to IPv4 /32s here (see the
     // DNS-rotation caveat on SandboxCreateOptions.network).
+    // Every DECLARED phase policy is mapped here too, and its result thrown
+    // away: mapping is what rejects a destination this provider cannot express,
+    // and a phase policy that only gets mapped at switch time fails with the
+    // box up and the agent waiting. Upstream validates the baseline and every
+    // phase policy at start for the same reason (harbor
+    // environments/base.py:832-836).
+    // Daytona's mapper also RESOLVES hostnames, so this both validates and
+    // proves each phase's hosts are pinnable before the box exists.
+    for (const phase of options.phaseNetworkPolicies ?? []) {
+      await mapNetworkPolicy(phase);
+    }
     const networkParams = await mapNetworkPolicy(options.network);
 
     // Daytona has no per-exec user switch: a non-root user is applied as the

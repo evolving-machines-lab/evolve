@@ -77,8 +77,12 @@ export class E2BResourcesError extends Error {
 
 /**
  * Minimum `e2b` client that can switch a running sandbox's egress.
- * `Sandbox.updateNetwork` first appears in 2.26.0 — verified by inspecting the
- * published type declarations: absent in 2.24.0, present in 2.26.0.
+ * `Sandbox.updateNetwork` first appears in 2.26.0 — established by fetching the
+ * versions published to the npm registry and reading their shipped type
+ * declarations: absent in 2.24.0, present in 2.26.0. Cited that way on purpose:
+ * a line number in whatever copy happens to sit in node_modules says nothing
+ * about which RELEASE gained the method, which is the only thing a caller
+ * deciding on an upgrade needs to know.
  */
 export const E2B_MIN_UPDATE_NETWORK_VERSION = "2.26.0";
 
@@ -855,7 +859,8 @@ class E2BSandboxImpl implements SandboxInstance {
    * Replace the running sandbox's outbound policy — E2B's
    * `Sandbox.updateNetwork`: "Update the network configuration of the sandbox.
    * Replaces the current egress configuration atomically — fields that are
-   * omitted are cleared on the server." (e2b@2.26.0+ index.d.ts:9948-9957).
+   * omitted are cleared on the server." (from the published e2b 2.26.0+ type
+   * declarations for Sandbox.updateNetwork).
    *
    * That "omitted fields are cleared" rule is why the whole policy is sent
    * every time and never a delta: mapNetworkPolicy always states
@@ -972,6 +977,15 @@ export class E2BProvider implements SandboxProvider {
     }
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
     const templateId = options.image ?? this.templateId ?? "evolve-all";
+    // Every DECLARED phase policy is mapped here too, and its result thrown
+    // away: mapping is what rejects a destination this provider cannot express,
+    // and a phase policy that only gets mapped at switch time fails with the
+    // box up and the agent waiting. Upstream validates the baseline and every
+    // phase policy at start for the same reason (harbor
+    // environments/base.py:832-836).
+    for (const phase of options.phaseNetworkPolicies ?? []) {
+      mapNetworkPolicy(phase);
+    }
     const networkParams = mapNetworkPolicy(options.network);
 
     // Map generic 'image' to E2B's 'templateId'

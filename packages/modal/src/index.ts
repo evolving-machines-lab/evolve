@@ -459,12 +459,24 @@ function mapNetworkPolicy(
 
 /**
  * The same policy expressed the way Modal's RUNTIME switch takes it: both
- * allowlists, always. Modal requires both — "Both `outboundCidrAllowlist` and
- * `outboundDomainAllowlist` must be provided" (modal@0.9.0 index.d.ts:8040) —
- * and reads an omitted list as "allow all" for that dimension, so sending only
- * one would silently open the other. `blockNetwork` has no runtime form at
- * all, which is why a sealed policy becomes two EMPTY lists here: "an empty
- * array blocks all egress for that dimension" (index.d.ts:7915-7916).
+ * allowlists, always.
+ *
+ * Two independent reasons, and the second outlives the first. Modal requires
+ * both today — "Both `outboundCidrAllowlist` and `outboundDomainAllowlist`
+ * must be provided" (modal@0.9.0 index.d.ts:8040) — but that is documented as
+ * temporary ("This requirement will be relaxed in a future release",
+ * index.d.ts:7917-7919). What does not change is the meaning of leaving one
+ * out: "`undefined` leaves that dimension unchanged, while a defined value
+ * replaces it" (index.d.ts:7913-7915). An omitted list therefore CARRIES OVER
+ * whatever the box already had — which for a switch whose whole contract is
+ * "replace the policy" is precisely the silent-widening bug: the dimension the
+ * new policy never mentions would keep the old policy's allowances. Stating
+ * both is what makes the switch a true replace, and it stays correct when
+ * partial updates become legal.
+ *
+ * `blockNetwork` has no runtime form at all, which is why a sealed policy
+ * becomes empty lists here: "an empty array blocks all egress for that
+ * dimension" (index.d.ts:7913-7915).
  *
  * Built on mapNetworkPolicy so the classification of a destination — what
  * counts as a CIDR, what is rejected for carrying a port — is the SAME code
@@ -735,10 +747,12 @@ export interface SandboxCreateOptions {
    * index.d.ts:7682-7686) — so the blunt `blockNetwork: true` box this adapter
    * builds for a sealed policy has no allowlist to widen later. When a phase
    * policy here differs from `network`, the adapter creates the box in the
-   * switchable shape instead: `outboundCidrAllowlist: []` +
-   * `outboundDomainAllowlist: []`, which Modal documents as "an empty array
-   * blocks all egress for that dimension" (index.d.ts:7915-7916). Same zero
-   * egress, still switchable.
+   * switchable shape instead: an empty `outboundCidrAllowlist` — "an empty
+   * array blocks all egress for that dimension" (index.d.ts:7913-7915) — plus
+   * a domain allowlist holding only the unresolvable sentinel, never an empty
+   * one (see withDomainFilteringEnabled: an empty domain list leaves Modal's
+   * domain filter switched OFF and unswitchable). Same zero egress, still
+   * switchable.
    *
    * Upstream: harbor modal.py:1040-1047 (`_requires_dynamic_network`) and
    * :1169-1171 (`if self._dynamic_network: block_network = False`).
@@ -1633,6 +1647,15 @@ export class ModalProvider implements SandboxProvider {
     // `blockNetwork: true` one, because Modal refuses to combine the two and a
     // blockNetwork box therefore has nothing to widen later. Same egress at
     // boot either way — see dynamicNetworkPolicyParams. Harbor modal.py:1169-1171.
+    // Every DECLARED phase policy is mapped here too, and its result thrown
+    // away: mapping is what rejects a destination this provider cannot express
+    // (a bad IPv4, a host carrying a port), and a phase policy that only gets
+    // mapped at switch time fails with the box up and the agent waiting.
+    // Upstream validates the baseline and every phase policy at start for the
+    // same reason (harbor environments/base.py:832-836).
+    for (const phase of options.phaseNetworkPolicies ?? []) {
+      dynamicNetworkPolicyParams(phase);
+    }
     const networkParams = requiresDynamicNetwork(options.network, options.phaseNetworkPolicies)
       ? dynamicNetworkPolicyParams(options.network)
       : mapNetworkPolicy(options.network);

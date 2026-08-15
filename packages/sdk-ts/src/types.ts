@@ -194,10 +194,12 @@ export interface SandboxCreateOptions {
    * types say of each allowlist "Cannot be used with blockNetwork"
    * (modal@0.9.0 index.d.ts:7682-7686) — so a box created the blunt way for a
    * sealed first phase cannot be handed an allowlist later. Given this list
-   * the adapter creates the box in the switchable shape instead: empty
-   * allowlists, which Modal documents as "an empty array blocks all egress for
-   * that dimension" (index.d.ts:7915-7916) — the same zero egress, still
-   * switchable.
+   * the adapter creates the box in the switchable shape instead — an empty
+   * CIDR allowlist, which Modal documents as "an empty array blocks all egress
+   * for that dimension" (index.d.ts:7913-7915), plus a domain allowlist
+   * holding one unresolvable sentinel rather than nothing, because an EMPTY
+   * domain list leaves Modal's domain filter switched off and it cannot be
+   * switched on afterwards. Same zero egress at boot, still switchable.
    *
    * Providers that can switch freely (daytona, e2b) may ignore it; it changes
    * no create-time behaviour there. It is NOT a permission grant and NOT a

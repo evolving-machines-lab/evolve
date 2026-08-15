@@ -589,6 +589,49 @@ async function testCreateValidatesIdleTimeoutBeforeNetwork(): Promise<void> {
 }
 
 
+async function testCreateValidatesDeclaredPhasePolicies(): Promise<void> {
+  console.log("\n[6d] ModalProvider.create() - a bad PHASE policy throws before any API call");
+
+  const provider = createModalProvider({ tokenId: "test-id", tokenSecret: "test-secret" });
+
+  // The failure this prevents: a phase policy is only applied at the SWITCH,
+  // which happens with the box up and the agent about to run. Mapping it at
+  // create means an unexpressible destination costs nothing instead of
+  // stranding a booted sandbox. Tokens are fake, so anything reaching the
+  // network would fail as a transport error — the typed error IS the proof it
+  // never got there.
+  let error: unknown;
+  try {
+    await provider.create({
+      image: "evolve-all",
+      network: { outbound: "blocked" },
+      phaseNetworkPolicies: [{ outbound: "blocked", allowedDestinations: ["300.1.1.1"] }],
+    });
+  } catch (e) {
+    error = e;
+  }
+  assert(
+    error instanceof ModalNetworkPolicyError,
+    "an invalid IPv4 in a PHASE policy is refused at create, not at the switch"
+  );
+
+  // And the boot policy staying valid is not enough to excuse it.
+  let portError: unknown;
+  try {
+    await provider.create({
+      image: "evolve-all",
+      network: { outbound: "open" },
+      phaseNetworkPolicies: [{ outbound: "blocked", allowedDestinations: ["example.com:8443"] }],
+    });
+  } catch (e) {
+    portError = e;
+  }
+  assert(
+    portError instanceof ModalNetworkPolicyError,
+    "a port-carrying destination in a PHASE policy is refused at create too"
+  );
+}
+
 async function testCreateValidatesBeforeNetwork(): Promise<void> {
   console.log("\n[6a] ModalProvider.create() - cap and network validation fire before any API call");
 
@@ -1363,7 +1406,7 @@ async function testDynamicNetworkArmsTheDomainFilter(): Promise<void> {
 }
 
 async function testDynamicNetworkStatesBothDimensions(): Promise<void> {
-  console.log("\n[12b] both allowlists are always stated — an omitted one means ALLOW ALL");
+  console.log("\n[12b] both allowlists are always stated — an omitted one is left UNCHANGED");
 
   const open = _testDynamicNetworkPolicyParams({ outbound: "open" });
   assertEqual(
@@ -1383,7 +1426,10 @@ async function testDynamicNetworkStatesBothDimensions(): Promise<void> {
   );
 
   // The dangerous shape: a policy with ONLY domains must still send an empty
-  // CIDR list, or Modal reads the missing dimension as "allow all CIDRs".
+  // CIDR list. Modal leaves an omitted dimension UNCHANGED (index.d.ts
+  // :7913-7915), so the box would keep whatever CIDRs the PREVIOUS policy
+  // allowed — a switch that reads as tightening while silently carrying the
+  // old allowances forward.
   const domainsOnly = _testDynamicNetworkPolicyParams({
     outbound: "blocked",
     allowedDestinations: ["pypi.org"],
@@ -1391,7 +1437,7 @@ async function testDynamicNetworkStatesBothDimensions(): Promise<void> {
   assertEqual(
     domainsOnly.outboundCidrAllowlist,
     [],
-    "a domains-only policy still states an EMPTY CIDR list rather than omitting it"
+    "a domains-only policy states an EMPTY CIDR list, so the previous policy's CIDRs cannot survive"
   );
 }
 
@@ -1500,6 +1546,7 @@ const tests = [
   testCreateValidatesBeforeNetwork,
   testCreateNoLongerRejectsUserAndNetwork,
   testCreateValidatesIdleTimeoutBeforeNetwork,
+  testCreateValidatesDeclaredPhasePolicies,
   // [7] ModalCommands
   testCommandsRunAsUser,
   testCommandsRunAsRoot,
