@@ -942,6 +942,115 @@ From the CLI it is Harbor's own flag: `--ve REWARDKIT_JUDGE=claude-code --ve REW
 
 The judge's money is measured at the gateway off its own key — never taken from anything the verifier reports — and itemized apart from the agent's everywhere: `judge_result` / `judge_spend_source` on the trial, `stats.judge_cost_usd` on the job (a share of `stats.cost_usd`, which is the whole bill). Works in both verifier modes. Judge-enabled tasks are not regradable yet — the regrade lane refuses them with a typed error instead of re-scoring without a judge.
 
+### Multi-step tasks
+
+A task can walk the agent through **ordered steps in one shared environment**. The layout is the task format's own: a `steps/` directory holds one sub-directory per step in place of the root `instruction.md`, `tests/` and `solution/`, and a `[[steps]]` entry in `task.toml` declares each step in order. `environment/` stays at the root — the environment is built once and shared, and the container filesystem persists from step to step, which is how later steps build on earlier work.
+
+```
+tasks/migrate-then-prove/
+├── task.toml                # [[steps]] entries, one per step, in order
+├── environment/             # built ONCE, shared by every step
+│   └── Dockerfile
+├── tests/                   # optional shared helpers every step's verifier can use
+└── steps/
+    ├── 01-migrate/
+    │   ├── instruction.md
+    │   ├── tests/           # this step's verifier files, merged over the shared tests/
+    │   └── workdir/         # optional files landed before the step; its setup.sh runs first
+    └── 02-prove/
+        ├── instruction.md
+        └── tests/
+```
+
+Each step carries its own instruction, its own verifier (`tests/` merged over the task-level `tests/`), an optional `workdir/` upload whose reserved `setup.sh` runs before the step's agent starts, its own [readiness healthcheck](#healthchecks-and-the-agent-user), its own `[steps.agent]` / `[steps.verifier]` `timeout_sec` overriding the task-level values, its own `[steps.verifier].env` (the [judge-credential templates](#llm-judges) included), and its own per-step `artifacts` list. The step's verifier runs when the step ends, so a multi-step trial produces one verifier result per executed step.
+
+```toml
+multi_step_reward_strategy = "mean"    # "mean" (default) or "final"
+
+[[steps]]
+name = "01-migrate"
+min_reward = 0.5                       # score below this and the trial stops here
+
+[[steps]]
+name = "02-prove"
+
+[steps.agent]
+timeout_sec = 600                      # this step's override of the task-level timeout
+```
+
+Two declarations shape the score. **`multi_step_reward_strategy`** rolls the per-step results into the trial's reward: `"mean"` — the default — takes per-key means across the steps that produced a verifier result, and `"final"` takes the last executed step's result verbatim. **`min_reward`** on a step ends the trial early when the step under-scores: a number gates the primary `reward` key, a map gates each named key. Separately from both, a step that raises without producing a verifier result ends the trial where it stands — later steps never run — and a step whose healthcheck fails does the same.
+
+What each step recorded lands on the trial as `step_results`, in execution order: the step's name, its verifier result, its timing pairs, and its exception when the step raised. A trial that stopped early carries only the steps that ran; a single-step trial carries null there — "this trial has no steps", never "it ran zero of them" ([Types](#types)). An [automatic retry](#automatic-retries) restarts the whole trial from the first step in a fresh environment — there is no partial-step resume.
+
+Three per-step declarations are refused at import with the reason named rather than approximated: a per-step `user`, per-step network declarations, and a per-step verifier environment or mode — every step inherits the task-level [verifier mode](#verifier-modes) and runs against the task's one environment. And the two halves of the layout must agree, both ways: `[[steps]]` without a `steps/` directory, a `steps/` directory without `[[steps]]`, and a `steps/` sub-directory no entry declares are each named at import — a step nobody declared must not sit on disk looking like it runs.
+
+### Task environment variables
+
+A task's `[environment.env]` table is honored, and its two value kinds do different things:
+
+```toml
+[environment.env]
+APP_MODE = "ci"                        # literal — lands in the box as written
+GITHUB_TOKEN = "${GITHUB_TOKEN}"       # template — a secret THIS job must attach
+LOG_LEVEL = "${LOG_LEVEL:-info}"       # template with fallback — the attached value, else "info"
+```
+
+A **literal** value is delivered into the agent's environment exactly as written — it is dataset content, readable by everyone the dataset is published to, so it must never be a secret. A **template** — `${VAR}`, the whole value, nothing around it — is a request for a secret. The task format resolves templates from the environment of the machine that launched the run; a managed trial has no such machine, and the obvious substitute — reading `VAR` from your vault — is one this platform deliberately refuses. A dataset and the job running it routinely belong to **different people**: a public `task.toml` could declare `X = "${AWS_SECRET_ACCESS_KEY:-none}"`, a vault lookup would hand that dataset's author your live credential, and the fallback would hide that it ever happened. So a template resolves only against the secrets **attached to the job** — the `secrets` slot on the job body ([Shape and ceilings](#shape-and-ceilings)), the same [env secrets](#env-secrets) the CLI attaches with `--secret`. Attaching is one deliberate act per secret per job — this platform's translation of exporting the variable in your own shell.
+
+The mechanics: a template matches an attached secret by its **env name** — the attachment's `as`, defaulting to the secret's stored name — so `as` lets a vault entry called anything satisfy a task's `${GITHUB_TOKEN}`. `${VAR:-default}` is the attached value when the job carries one and the literal default when it does not — safe under attachment, because the fallback can only ever substitute for a secret you chose not to attach. A job that cannot satisfy a selected task's templates is refused at create as the typed `secret_not_attached`, naming the variable — never accepted and then failed per-trial. And a value that merely *contains* a template is a literal: only a whole-value template is a reference, the format's own rule.
+
+One delivery boundary to know: the table is delivered when the agent starts, not at container creation, so the agent and every process it spawns read the variables — a build step or an image entrypoint does not. And a [readiness healthcheck](#healthchecks-and-the-agent-user) sees the table only in one task shape — the split is spelled out in that section.
+
+### MCP servers
+
+A task can hand its agent MCP tools: `[[environment.mcp_servers]]` entries are registered into the harness's **native** MCP configuration alongside any servers the arm itself carries, so the agent discovers them the way that harness discovers any MCP server.
+
+```toml
+[[environment.mcp_servers]]
+name = "docs-search"
+transport = "streamable-http"          # or "sse" (the default when omitted); "http" is accepted as a spelling
+url = "http://mcp-server:8000/mcp"     # a compose service — reachable with no egress
+
+[[environment.mcp_servers]]
+name = "sqlite"
+transport = "stdio"                    # launched inside the box by the harness
+command = "uvx"
+args = ["mcp-server-sqlite", "--db-path", "/app/data.db"]
+```
+
+A `stdio` server declares a `command` (and `args`); the harness launches it as a child process, so it inherits the task's [`[environment.env]`](#task-environment-variables) variables — there is deliberately no `env` field on a server, because one door into the box's environment is enough. A remote server (`sse`, `streamable-http`) declares an `http`/`https` `url`; a credential written into the URL's authority (`user:token@host`) is refused at import, because a `task.toml` is published content and a secret in it is a published secret.
+
+A remote server must also be **reachable under the task's own declarations**, and that is checked at import rather than discovered as a dead tool at run time. Three shapes pass: a URL addressing the agent's own container (the `localhost` family — something the task's image starts itself), a URL addressing a [compose service](#what-runs) by name (resolved inside the sandbox, no egress involved), and a public host the task's [network policy](#network-modes) admits — `public`, or an `allowlist` naming the host (IPv4 and CIDR entries match IP-addressed URLs). Anything else is refused naming the server and the contradiction — an agent that meets a dead endpoint scores as if the tool simply did not help, which is the silent failure the refusal exists to prevent. One limit is named rather than papered over: a `stdio` command's own network use cannot be read off a string at import, so a stdio server that fetches itself from a package index (`npx …`, `uvx …`) imports under a `no-network` task and then fails at run time when the sealed box refuses its download — bake such servers into the task image.
+
+### Healthchecks and the agent user
+
+Two `task.toml` declarations govern the box the agent lands in — one about when it is ready, one about who the agent is inside it.
+
+**`[environment.healthcheck]`** keeps a slow-starting environment from meeting the agent too early: the command runs after the environment starts and before the agent is installed, with Docker `HEALTHCHECK` semantics, and the agent starts only once it exits `0`.
+
+```toml
+[environment.healthcheck]
+command = "curl -fsS http://localhost:8000/health"
+interval_sec = 5           # every field below command is optional; these are the defaults
+timeout_sec = 30
+start_period_sec = 0
+start_interval_sec = 5
+retries = 3
+```
+
+Exit `0` ends the wait immediately. Inside `start_period_sec` a failure does not count toward `retries` and the next attempt waits `start_interval_sec`; after that grace, consecutive failures count and attempts are spaced by `interval_sec`, each attempt bounded by `timeout_sec`. Reaching `retries` fails the trial **before any agent spend** — a box that never became ready surfaces as an infrastructure failure with the check named, never as a zero that looks like a wrong answer. The whole gate is additionally bounded by a budget derived from the declared numbers, so a broken check cannot hang a trial. A [multi-step task](#multi-step-tasks) may declare one per step as well — checked after the step's `setup.sh`, before the step's agent.
+
+One visibility rule before writing a check that reads your own variables: whether the command sees [`[environment.env]`](#task-environment-variables) depends on the task's shape. On a **multi-container** task the literal values are visible — they ride the compose bring-up the check executes under. On a **single-container** task they are not: the table is delivered with the agent, which does not exist yet when the check runs. Template (`${VAR}`) values are visible to no healthcheck in any shape — a secret is never written where it could outlive the credential seal. Point the check at the service, not at the env table.
+
+**`[agent] user`** declares who the agent runs as:
+
+```toml
+[agent]
+user = "dev"
+```
+
+The agent — and only the agent — runs as that user: `whoami` inside the agent's session prints `dev`, while everything the platform does around it (environment start, verification, artifact collection) keeps the box's default. The user must exist in the task's image — create it in the Dockerfile (`RUN useradd -m dev`) — and a preflight proves the account, its home, and the switch itself before the agent starts, so a missing user is a typed infrastructure refusal before any model spend, never an agent that silently ran as root against a task that asked for someone else. Declare a **name**, not a bare uid — a numeric uid is refused at import so the agent gets its own home. Omitted, `root`, and `0` all mean the default. Two neighboring declarations stay refusals with the reason named: `[verifier] user` (the verifier always runs as root here), and an `environment/Dockerfile` whose final stage drops to a non-root `USER` — the platform's boxes boot as root, so that image would run more privileged than it declares; say who the *agent* is with `[agent] user` instead.
+
 ### Compute sizing
 
 Tasks declare `cpus`, `memory_mb`, and `storage_mb`, and get exactly that. A provider whose ceiling is below the declaration **refuses the trial** — named in the per-task provider verdicts and in the trial's failure detail — rather than silently provisioning less. Current ceilings:
@@ -1136,13 +1245,15 @@ A **git** publish still requires both: the repository is only cloned server-side
 What happens next:
 
 - **All-or-nothing parse.** Every task is parsed before anything lands; one bad task fails the whole publish, with each failure named in `failure.failures`. No partial corpus ever exists.
-- **Strict by design.** Every task-config field is either honored or the publish is refused with the field and reason named — a task never silently runs on weaker semantics than it declares. GPU declarations (`gpus`, `gpu_types`) are honored — see [GPU tasks](#gpu-tasks); a GPU count no provider can allocate is refused at import with the numbers. Notably not yet supported: multi-step tasks (`step_results` is a declared placeholder on the wire, always null today).
+- **Strict by design.** Every task-config field is either honored or the publish is refused with the field and reason named — a task never silently runs on weaker semantics than it declares. GPU declarations (`gpus`, `gpu_types`) are honored — see [GPU tasks](#gpu-tasks); a GPU count no provider can allocate is refused at import with the numbers. Multi-step `[[steps]]` tasks, `[environment.env]` variables, MCP servers, readiness healthchecks, and `[agent] user` all import and run — see [What runs](#what-runs).
 - **Environments are prepared at import.** Dockerfile-defined environments are built once; multi-container service images are resolved and pinned so runs are reproducible.
 - **The activation gate certifies every task** before the version goes live:
   - **gold** — the task's reference solution (`solution/`) is pushed through the real agent-side + verifier path and must score exactly `1.0`. Proof the task is solvable as written.
   - **no-op** — an empty submission goes straight to the verifier and must *not* score `1.0`. A task a do-nothing agent passes measures nothing.
 
 `COMPLETED` is the import's terminal success: the corpus landed as a dataset version, visible in the catalog (`catalog.get("my-swe@1.0")`) in state `VALIDATING`. The gate then runs, and a version that passes it in full reaches `READY` — the one state that accepts jobs — and becomes the dataset's active version in the same step. A publish is therefore finished when its gate passes: nothing else to call, and `{ name: "my-swe" }` in a job already resolves to what you just published. A version that fails its gate terminally lands in state `FAILED`, with the reason attached: every version row carries a `gate` field — `{ status, attempts, code, message, failed_tasks, failed_task_count }`, where `failed_tasks` names each ineligible task with the gate's own reasons (`[{ task_name, outcome, reasons }]`, the first 25) and `failed_task_count` is the true total, so a gate that failed more than 25 tasks is never under-reported by the list's length — and `evolve dataset show` prints a failed gate as its own line (`version 1.0 activation gate FAILED: <the server's reason>`) followed by one indented line per failed task (`  starter-task: gold run produced no usable score …`), so a dead publish is never mistaken for one still validating and the cause is on the page, not just the count. The failure changes nothing else — the dataset keeps serving whatever it served before. `evals.start()` against any other state is rejected with a `409 version_not_ready` naming it.
+
+One corpus shape skips the gate honestly: a publish whose tasks ship **no reference solutions at all**. There is nothing to prove — no gold solution exists, so no gold run is possible — and Harbor publishes solution-less tasks with zero ceremony, so this platform does too: shortly after the import completes, the version activates on its own with its gate stamped `UNPROVEN` and the reason recorded. Never `PASSED`, because nothing passed; never `FAILED`, because nothing failed — the third word exists so a proof that ran can never be confused with one that could not. The version reaches `READY` and serves jobs like any other. The label is visible everywhere the gate is: the version row's `gate.status` reads `UNPROVEN` with the stamp beside it (`unproven: { reason, at }` on the wire), and `evolve dataset show` prints it as its own line — `version 1.0 gate UNPROVEN: no reference solutions to run`. The lane is all-or-nothing: a corpus where only *some* tasks carry a `solution/` runs the real gate, and the tasks without solutions fail it — a partial archive is a failed proof, never half of an unproven one.
 
 The gate is queued work, and the queue says so: within seconds of the import completing, the version's `gate` field shows `PENDING`. Each worker proves one version's gate at a time, and a single gate run can take minutes to hours of real sandbox work, so a `PENDING` gate may wait while another version's gate finishes ahead of it. `PENDING` means scheduled and waiting; `RUNNING` means your tasks are being proven right now. Neither means stuck.
 
@@ -1163,7 +1274,7 @@ await catalog.activate("my-swe", "1.0");
 evolve dataset activate my-swe 1.0
 ```
 
-From then on `{ name: "my-swe" }` in a job resolves to that version, and asking for the version that is already active succeeds without changing anything. While the version's activation gate is still scheduled or running the API answers 202 `gate_running` — a healthy "not yet", deliberately not the error envelope — and the SDK raises it as the typed `GateRunningError`: `err.gate` carries the gate's progress (`{ status, tasks, unverified, ineligible }`), and there is normally nothing to do but wait, because a gate that passes activates the version itself. Once the gate has landed, activating is refused with `version_not_ready` for a version whose gate failed (the gate's failure detail rides `details.gate_failure`), and with `version_not_activatable` for a version that can never activate (no reference solutions were archived — the import's `warnings` told you at publish time).
+From then on `{ name: "my-swe" }` in a job resolves to that version, and asking for the version that is already active succeeds without changing anything. While the version's activation gate is still scheduled or running the API answers 202 `gate_running` — a healthy "not yet", deliberately not the error envelope — and the SDK raises it as the typed `GateRunningError`: `err.gate` carries the gate's progress (`{ status, tasks, unverified, ineligible }`), and there is normally nothing to do but wait, because a gate that passes activates the version itself. Once the gate has landed, activating is refused with `version_not_ready` for a version whose gate failed (the gate's failure detail rides `details.gate_failure`), and with `version_not_activatable` for a version in a dead state (`FAILED`, or archived). A version whose import archived no reference solutions is not a dead end: the platform activates it itself with its gate stamped `UNPROVEN` ([Publishing](#publishing)), and an activate call that lands in the short window before that happens answers the same 202 `gate_running`.
 
 ### Getting your corpus back
 
@@ -1325,7 +1436,7 @@ That's the whole format. The rules that matter when converting:
 - `tests/Dockerfile` is built for real whenever the verifier can own its own image: a `separate` verifier on a task that builds from `environment/Dockerfile` — no pinned `docker_image`, no compose — gets a verifier image built from `tests/`, so grader dependencies installed there are genuinely present. Everywhere else the verifier reuses the task image and the test files are uploaded onto it. The Dockerfile is not built on that path, so it is accepted only while it stays trivial (`FROM`, `COPY`, `WORKDIR`, `LABEL`, and permission-only `RUN chmod` lines) — a richer recipe's dependencies would be silently missing, so it is refused by name.
 - The environment is `environment/Dockerfile` (built at import), a pinned `docker_image`, or `environment/docker-compose.yaml` for multi-container tasks (the agent runs in the `main` service). Any valid public image reference works for `docker_image` — Docker Hub, GHCR, ECR Public, or any other registry a pull can reach without credentials — with the tag pinned, never `:latest`. A reference that does not parse as an image reference is refused at import with the reference named; a reference that parses but cannot be pulled surfaces as an infrastructure error naming the pull, never as a task that quietly scores zero.
 - Timeouts are optional: agent defaults to 3600 s, verifier to 600 s, both published as `limits.job.default_agent_timeout_sec` and `default_verifier_timeout_sec`. A declared `timeout_sec` always wins — the corpus is the authority on how long its own task needs, and the fallback never shortens one.
-- `solution/` (`solve.sh`, or a `solution.patch` to apply) is what the gate certifies with — without it the version cannot reach `READY`.
+- `solution/` (`solve.sh`, or a `solution.patch` to apply) is what the gate certifies with. A corpus that ships none anywhere still publishes and activates, with its gate stamped `UNPROVEN` instead of a proof — see [Publishing](#publishing).
 
 Then publish and run it — exactly the [flow above](#publishing).
 
@@ -1678,7 +1789,7 @@ interface Trial {                        // list rows and detail, one shape
     harness_bundle: TimingInfo | null;
     image_prepare: TimingInfo | null;        // ~0 on Modal by design; its work lands in environment_setup
     harness_bundle_cache_hit: boolean | null; // true explains ms; false on minutes = a real build; null = unrecorded
-    step_results: StepResult[] | null;   // multi-step placeholder; null today
+    step_results: StepResult[] | null;   // per-step results, execution order; null = single-step trial
     spend_source: SpendSource | null;
     judge_spend_source?: SpendSource | null;  // the judge figure's lane; null == no judge ever ran
     live_spent_usd: number | null;       // mid-run LOWER BOUND; cleared at settle
@@ -1695,6 +1806,15 @@ interface Trial {                        // list rows and detail, one shape
     session_ref: string | null;
     started_at: string | null;
     finished_at: string | null;
+}
+
+interface StepResult {                   // one step of a multi-step trial — see What runs
+    step_name?: string;
+    agent_result?: AgentResult | null;   // per-step spend when measured; null never means $0
+    verifier_result?: VerifierResult | null;  // null = this step produced no result at all
+    exception_info?: ExceptionInfo | null;    // set when the step raised
+    agent_execution?: TimingInfo | null;
+    verifier?: TimingInfo | null;
 }
 
 interface TrialRetry {                   // one retired attempt — the receipts a retry keeps
@@ -1801,12 +1921,13 @@ interface DatasetVersionSource {         // served on EVERY git-imported version
 }
 
 interface DatasetVersionGate {           // the activation gate's progress
-    status: string;                      // PENDING | RUNNING | PASSED | FAILED
+    status: string;                      // PENDING | RUNNING | PASSED | FAILED | UNPROVEN
     attempts: number;
     code: string | null;                 // set on failure, e.g. "gate_failed"
     message: string | null;              // the human reason, set on failure
     failed_tasks: DatasetVersionGateFailedTask[];  // the ineligible tasks, first 25
     failed_task_count: number;           // the TRUE total behind the 25-task cap
+    unproven: { reason: string; at: string | null } | null;  // the UNPROVEN stamp; null on every other status
 }
 
 interface DatasetVersionGateFailedTask {
