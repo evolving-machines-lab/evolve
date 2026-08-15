@@ -24,6 +24,7 @@ import {
   _testIsSnapshotNameConflict,
   _testProviderCanRebuildSnapshot,
   _testImageMap,
+  EVOLVE_IMAGE_VERSION,
   _testWrapCommand,
   _testMapNetworkPolicy,
   _testImageRegistryHost,
@@ -37,6 +38,7 @@ import {
   DaytonaImagePullError,
   DaytonaSnapshotActivationError,
   DaytonaSnapshotConflictError,
+  DAYTONA_SNAPSHOT_GONE,
   DaytonaCommands,
   DaytonaProvider,
   createDaytonaProvider,
@@ -1049,6 +1051,7 @@ function createConflictClient(
 ) {
   const state = {
     gets: 0,
+    deletes: 0,
     snapshotCreateCalls: 0,
     createParams: undefined as
       | { snapshot?: string; image?: string; resources?: { cpu?: number; memory?: number } }
@@ -1060,6 +1063,12 @@ function createConflictClient(
         const answer = script[state.gets++];
         if (answer === null || answer === undefined) throw new Error("snapshot not found");
         return answer;
+      },
+      // The healer can reach every path this client drives, so the verb has to
+      // exist here too — a missing one would fail as a TypeError rather than
+      // exercising the behaviour under test.
+      delete: async () => {
+        state.deletes++;
       },
       create: async () => {
         state.snapshotCreateCalls++;
@@ -1134,10 +1143,13 @@ async function testDeadSnapshotIsDeletedThenRebuilt(): Promise<void> {
   // The bug this fixes: nothing ever removed a failed record, so snapshot.create
   // lost the name to it on every later run and each one degraded to the slow
   // direct pull, permanently.
+  // A TAGGED exemplar, because deletability is decided by the resolved ref:
+  // Daytona refuses to build an untagged image, so an untagged one must never
+  // be deleted (see the evolve-all case in [6af]).
   for (const dead of ["error", "build_failed"]) {
-    const { client, state } = createDeadSnapshotClient([{ state: dead, name: "evolve-all" }]);
+    const { client, state } = createDeadSnapshotClient([{ state: dead, name: "ubuntu:24.04" }]);
     const sandbox = await silenceNoise(() =>
-      providerOn(client).create({ image: "evolve-all" })
+      providerOn(client).create({ image: "ubuntu:24.04" })
     );
 
     assertEqual(state.deletes, 1, `a "${dead}" snapshot is deleted`);
@@ -1145,7 +1157,7 @@ async function testDeadSnapshotIsDeletedThenRebuilt(): Promise<void> {
     // The whole point: the sandbox comes from the snapshot, not the slow pull.
     assertEqual(
       state.createParams?.snapshot,
-      "evolve-all",
+      "ubuntu:24.04",
       `the box boots from the rebuilt snapshot, not a direct image pull ("${dead}")`
     );
     assert(sandbox !== undefined, "a sandbox is returned");
@@ -1155,9 +1167,9 @@ async function testDeadSnapshotIsDeletedThenRebuilt(): Promise<void> {
 async function testDeadSnapshotDeletePassesTheRecordItRead(): Promise<void> {
   console.log("\n[6ae] create() - the delete targets the snapshot record the GET returned");
 
-  const record = { state: "error", name: "evolve-all" };
+  const record = { state: "error", name: "ubuntu:24.04", errorReason: "base image gone" };
   const { client, state } = createDeadSnapshotClient([record]);
-  await silenceNoise(() => providerOn(client).create({ image: "evolve-all" }));
+  await silenceNoise(() => providerOn(client).create({ image: "ubuntu:24.04" }));
 
   // Daytona's delete takes the snapshot object, not the bare name.
   assertEqual(state.deleted, record, "the record read by the fast path is what gets deleted");
@@ -1193,20 +1205,20 @@ async function testDeadSnapshotDeleteFailureFallsBackInsteadOfThrowing(): Promis
   // turn a degraded path into a failure for callers who get boxes today.
   const { client, state } = createDeadSnapshotClient(
     [
-      { state: "error", name: "evolve-all" }, // fast path
-      { state: "error", name: "evolve-all" }, // the conflict wait, name still held
+      { state: "error", name: "ubuntu:24.04" }, // fast path
+      { state: "error", name: "ubuntu:24.04" }, // the conflict wait, name still held
     ],
     {
       deleteError: new Error("403 forbidden"),
-      createError: new Error('Snapshot with name "evolve-all" already exists'),
+      createError: new Error('Snapshot with name "ubuntu:24.04" already exists'),
     }
   );
-  const sandbox = await silenceNoise(() => providerOn(client).create({ image: "evolve-all" }));
+  const sandbox = await silenceNoise(() => providerOn(client).create({ image: "ubuntu:24.04" }));
 
   // Twice: the fast path tries to clear the corpse, and so does the join that
   // follows the lost create. Both are refused, neither is fatal.
   assertEqual(state.deletes, 2, "the delete was attempted and failed, without throwing");
-  assertEqual(state.createParams?.image, "evolvingmachines/evolve-all", "and the direct pull carried on");
+  assertEqual(state.createParams?.image, "ubuntu:24.04", "and the direct pull carried on");
   assert(sandbox !== undefined, "a sandbox is still returned");
 }
 
@@ -1216,35 +1228,122 @@ async function testDeadWinnerOfAJoinIsClearedThenBuilt(): Promise<void> {
   // The second poisoning route: the name was mid-build when we looked, so we
   // waited — and the winner's build failed, leaving the corpse holding the name.
   const { client, state } = createDeadSnapshotClient([
-    { state: "building", name: "evolve-all" }, // fast path: in flight, so JOIN it
-    { state: "build_failed", name: "evolve-all" }, // the wait: it died
+    { state: "building", name: "ubuntu:24.04" }, // fast path: in flight, so JOIN it
+    { state: "build_failed", name: "ubuntu:24.04" }, // the wait: it died
   ]);
-  await silenceNoise(() => providerOn(client).create({ image: "evolve-all" }));
+  await silenceNoise(() => providerOn(client).create({ image: "ubuntu:24.04" }));
 
   assertEqual(state.deletes, 1, "the dead winner is deleted");
   assertEqual(state.snapshotCreateCalls, 1, "and the build it was waiting for runs here");
-  assertEqual(state.createParams?.snapshot, "evolve-all", "the box boots from the rebuilt snapshot");
+  assertEqual(state.createParams?.snapshot, "ubuntu:24.04", "the box boots from the rebuilt snapshot");
+}
+
+async function testMissingSnapshotMidWaitIsAnAnswerNotAFailure(): Promise<void> {
+  console.log("\n[6aj] waitForSnapshotConflictWinner() - a name that VANISHES mid-wait is resolved, not failed");
+
+  // One process healing a dead name is exactly what should happen. The waiter
+  // must read the resulting 404s as "the name is clear", never as three
+  // identical poll failures meaning the control plane is down.
+  let gets = 0;
+  const client = {
+    snapshot: {
+      get: async () => {
+        gets++;
+        if (gets === 1) return { state: "building" };
+        throw new Error("404: snapshot not found");
+      },
+    },
+  };
+  const result = await silenceNoise(() =>
+    _testWaitForSnapshotConflictWinner(client, "ubuntu:24.04", { timeoutMs: 5_000, pollMs: 1 })
+  );
+  assertEqual(result, DAYTONA_SNAPSHOT_GONE, "the wait reports the name as GONE");
+  assertEqual(gets, 2, "and answers on the first 404, without spending the failure budget");
+}
+
+async function testVanishedNameIsBuiltRatherThanPulled(): Promise<void> {
+  console.log("\n[6ak] create() - a name cleared by another healer mid-wait is BUILT here");
+
+  // End to end: the corpse disappears while we wait, so this run builds the
+  // snapshot rather than falling back to the slow direct pull.
+  const { client, state } = createDeadSnapshotClient([
+    { state: "building", name: "ubuntu:24.04" }, // fast path: in flight, join it
+    // the wait's first poll: the script is exhausted, so the GET throws
+    // "snapshot not found" — another process cleared the name.
+  ]);
+  await silenceNoise(() => providerOn(client).create({ image: "ubuntu:24.04" }));
+
+  assertEqual(state.deletes, 0, "nothing to delete — someone else already did");
+  assertEqual(state.snapshotCreateCalls, 1, "the name is free, so it is built");
+  assertEqual(state.createParams?.snapshot, "ubuntu:24.04", "and the box boots from that snapshot");
+}
+
+async function testHealedRebuildIsTriedOnceAndNeverLoops(): Promise<void> {
+  console.log("\n[6al] create() - the heal adds ONE bounded retry, never a loop");
+
+  // Worst case, end to end: the corpse is cleared, the build loses the name to
+  // a third process anyway, the wait finds that name gone too, and the post-heal
+  // rebuild loses AGAIN. Each create is driven by fresh evidence that the name
+  // was free, so two is correct — what matters is that it STOPS there and takes
+  // the existing fallback instead of delete-build-repeat.
+  const { client, state } = createDeadSnapshotClient(
+    [
+      { state: "error", name: "ubuntu:24.04" }, // fast path: dead
+      // delete-confirmation poll: script exhausted, GET throws => name is gone
+    ],
+    { createError: new Error('Snapshot with name "ubuntu:24.04" already exists') }
+  );
+  await silenceNoise(() => providerOn(client).create({ image: "ubuntu:24.04" }));
+
+  assertEqual(state.deletes, 1, "the corpse is cleared exactly once");
+  assertEqual(
+    state.snapshotCreateCalls,
+    2,
+    "the build and ONE post-heal rebuild — bounded, never a delete-build loop"
+  );
+  assertEqual(state.createParams?.image, "ubuntu:24.04", "and the run ends on the direct pull");
 }
 
 async function testProviderCanRebuildSnapshotRule(): Promise<void> {
-  console.log("\n[6ai] providerCanRebuildSnapshot() - deletable means REBUILDABLE, nothing else");
+  console.log("\n[6ai] providerCanRebuildSnapshot() - deletable means REBUILDABLE, judged on the RESOLVED ref");
 
-  // Platform names: in IMAGE_MAP, so the build path knows the image.
-  assert(_testProviderCanRebuildSnapshot("evolve-all"), "the legacy platform name is rebuildable");
-  for (const mapped of Object.keys(_testImageMap)) {
-    assert(_testProviderCanRebuildSnapshot(mapped), `IMAGE_MAP name "${mapped}" is rebuildable`);
+  // Daytona's builder requires a tag or digest and rejects latest/lts/stable
+  // (https://www.daytona.io/docs/en/snapshots/), so those are the only refs we
+  // may destroy in order to remake.
+  for (const rebuildable of [
+    `evolve-all-${EVOLVE_IMAGE_VERSION}`, // IMAGE_MAP -> evolvingmachines/evolve-all:<version>
+    "ubuntu:24.04",
+    "ghcr.io/org/img:v1",
+    "905418019965.dkr.ecr.us-west-2.amazonaws.com/x:tag",
+    "ubuntu@sha256:0123456789abcdef",
+    "localhost:5000/img:v1",
+  ]) {
+    assert(_testProviderCanRebuildSnapshot(rebuildable), `"${rebuildable}" is rebuildable`);
   }
-  // Anything the build path would pull: a tag, a digest, or a registry path.
-  assert(_testProviderCanRebuildSnapshot("ubuntu:24.04"), "a tagged image is rebuildable");
-  assert(_testProviderCanRebuildSnapshot("ghcr.io/org/img"), "a registry path is rebuildable");
+
+  // PRESERVED. Every one of these would be destroyed by a delete this provider
+  // could not undo — including the platform's OWN legacy alias, whose IMAGE_MAP
+  // entry resolves to an UNTAGGED ref that Daytona refuses to build. Testing
+  // the name rather than the resolved ref got exactly this case wrong.
+  for (const preserved of [
+    "evolve-all", // IMAGE_MAP -> evolvingmachines/evolve-all, untagged
+    "ghcr.io/org/img", // registry path, no tag
+    "localhost:5000/img", // a PORT is not a tag
+    "ubuntu:latest",
+    "ubuntu:lts",
+    "ubuntu:stable",
+    "eval-env-cafe", // the eval platform heals its own aliases
+    "my-team-env",
+  ]) {
+    assert(!_testProviderCanRebuildSnapshot(preserved), `"${preserved}" is NOT ours to delete`);
+  }
+
+  // The untagged legacy alias really is in IMAGE_MAP — the trap is real, not hypothetical.
+  assert(_testImageMap["evolve-all"] !== undefined, "evolve-all IS an IMAGE_MAP key");
   assert(
-    _testProviderCanRebuildSnapshot("905418019965.dkr.ecr.us-west-2.amazonaws.com/x:tag"),
-    "a private ECR ref is rebuildable"
+    !_testImageMap["evolve-all"].includes(":"),
+    "and it resolves to an UNTAGGED ref, which is why the name alone could not decide this"
   );
-  // Bare labels name a snapshot and nothing else — the layer that authored them
-  // owns rebuilding them (the eval platform heals its own eval-env-* aliases).
-  assert(!_testProviderCanRebuildSnapshot("eval-env-cafe"), "a bare eval alias is NOT ours to delete");
-  assert(!_testProviderCanRebuildSnapshot("my-team-env"), "a user's bare snapshot name is NOT ours to delete");
 }
 
 async function testConflictWaitsThenReusesWinner(): Promise<void> {
@@ -1895,6 +1994,9 @@ const tests = [
   testUnrebuildableDeadNameIsPreserved,
   testDeadSnapshotDeleteFailureFallsBackInsteadOfThrowing,
   testDeadWinnerOfAJoinIsClearedThenBuilt,
+  testMissingSnapshotMidWaitIsAnAnswerNotAFailure,
+  testVanishedNameIsBuiltRatherThanPulled,
+  testHealedRebuildIsTriedOnceAndNeverLoops,
   testProviderCanRebuildSnapshotRule,
   // [7] DaytonaCommands
   testCommandsRunAsRootUsesSudoWrapper,
