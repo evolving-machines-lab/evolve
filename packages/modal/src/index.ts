@@ -457,6 +457,117 @@ function mapNetworkPolicy(
   return { outboundCidrAllowlist: cidrs, outboundDomainAllowlist: domains };
 }
 
+/**
+ * The same policy expressed the way Modal's RUNTIME switch takes it: both
+ * allowlists, always.
+ *
+ * Two independent reasons, and the second outlives the first. Modal requires
+ * both today — "Both `outboundCidrAllowlist` and `outboundDomainAllowlist`
+ * must be provided" (modal@0.9.0 index.d.ts:8040) — but that is documented as
+ * temporary ("This requirement will be relaxed in a future release",
+ * index.d.ts:7917-7919). What does not change is the meaning of leaving one
+ * out: "`undefined` leaves that dimension unchanged, while a defined value
+ * replaces it" (index.d.ts:7913-7915). An omitted list therefore CARRIES OVER
+ * whatever the box already had — which for a switch whose whole contract is
+ * "replace the policy" is precisely the silent-widening bug: the dimension the
+ * new policy never mentions would keep the old policy's allowances. Stating
+ * both is what makes the switch a true replace, and it stays correct when
+ * partial updates become legal.
+ *
+ * `blockNetwork` has no runtime form at all, which is why a sealed policy
+ * becomes empty lists here: "an empty array blocks all egress for that
+ * dimension" (index.d.ts:7913-7915).
+ *
+ * Built on mapNetworkPolicy so the classification of a destination — what
+ * counts as a CIDR, what is rejected for carrying a port — is the SAME code
+ * the create path uses. A second copy of that logic is how an update ends up
+ * admitting what the create refused.
+ *
+ * Upstream: harbor modal.py:1236-1249 (`_dynamic_network_kwargs`).
+ */
+function dynamicNetworkPolicyParams(network?: SandboxCreateOptions["network"]): {
+  outboundCidrAllowlist: string[];
+  outboundDomainAllowlist: string[];
+} {
+  if (!network || network.outbound === "open") {
+    if (network?.allowedDestinations?.length) {
+      throw new Error("network.allowedDestinations is only valid when outbound is blocked");
+    }
+    // Modal's own wildcards for "everything" — the runtime call has no way to
+    // say "unrestricted" other than allowing all of both dimensions.
+    return { outboundCidrAllowlist: ["0.0.0.0/0"], outboundDomainAllowlist: ["*"] };
+  }
+  const mapped = mapNetworkPolicy(network);
+  return {
+    outboundCidrAllowlist: mapped.outboundCidrAllowlist ?? [],
+    outboundDomainAllowlist: withDomainFilteringEnabled(mapped.outboundDomainAllowlist ?? []),
+  };
+}
+
+/**
+ * A domain that can never resolve to anything, used to keep Modal's domain
+ * filter TURNED ON while allowing nothing through it.
+ *
+ * `.invalid` is reserved by RFC 2606 §2 precisely so it can never be
+ * delegated, so this admits no real destination — it is a switch position, not
+ * an allowance.
+ */
+const MODAL_DOMAIN_FILTER_SENTINEL = "sealed.invalid";
+
+/**
+ * Keep a domain allowlist NON-EMPTY, because on Modal an empty one does not
+ * mean "allow no domains" — it means the domain filter was never turned on,
+ * and it cannot be turned on later.
+ *
+ * LIVE-PROVEN, and not something the published types say. A sandbox created
+ * with `outboundDomainAllowlist: []` refuses every runtime widening with
+ *
+ *   FAILED_PRECONDITION: sandbox was created without a domain allowlist;
+ *   enabling domain filtering while running is not currently supported;
+ *   create the sandbox with domains (* to start by allowing all) to update
+ *   them later
+ *
+ * (modal TaskCommandRouter/TaskSetNetworkAccess, observed 2026-08-14 on a real
+ * sandbox). Modal's own suggested remedy — create with `*` — is no use to a
+ * box whose first phase must be SEALED: it would grant every domain exactly
+ * when the task says none. So the filter is armed with an unresolvable
+ * sentinel instead: filtering is on from the start, nothing real is admitted,
+ * and the later switch to a real allowlist (or to `*`) is permitted.
+ *
+ * Applied on the update path too, so a switch BACK to a sealed policy cannot
+ * empty the list and strand the box unswitchable for whatever comes after.
+ *
+ * Upstream has this hole open: harbor's `_dynamic_network_kwargs` returns
+ * empty lists for NO_NETWORK (modal.py:1247-1248), so a harbor task whose
+ * environment baseline is no-network and whose agent phase is public would
+ * fail this same precondition at the switch, with the agent already waiting.
+ */
+function withDomainFilteringEnabled(domains: string[]): string[] {
+  return domains.length > 0 ? domains : [MODAL_DOMAIN_FILTER_SENTINEL];
+}
+
+/**
+ * Whether this box must be created in the switchable shape: true when any
+ * declared phase policy differs from the boot policy. Order and duplicate
+ * destinations are not meaning (Modal applies a set), so they are normalized
+ * away before comparing — otherwise a caller listing the same hosts in a
+ * different order would arm dynamic mode for no reason.
+ *
+ * Upstream: harbor modal.py:1040-1047 (`_requires_dynamic_network`).
+ */
+function requiresDynamicNetwork(
+  network: SandboxCreateOptions["network"],
+  phases: SandboxCreateOptions["phaseNetworkPolicies"]
+): boolean {
+  if (!phases || phases.length === 0) return false;
+  const key = (p?: { outbound: string; allowedDestinations?: string[] }): string =>
+    p === undefined
+      ? "open|"
+      : `${p.outbound}|${[...new Set(p.allowedDestinations ?? [])].sort().join(",")}`;
+  const bootKey = key(network);
+  return phases.some((phase) => key(phase) !== bootKey);
+}
+
 /** Container registry family for an image tag. */
 type ImageRegistry = "aws-ecr" | "gcp-artifact-registry" | "registry";
 
@@ -628,6 +739,29 @@ export interface SandboxCreateOptions {
     allowedDestinations?: string[];
   };
   /**
+   * Every policy `updateNetwork()` may later be asked for on this box.
+   *
+   * LOAD-BEARING ON MODAL, unlike on the other providers. Modal's create call
+   * takes EITHER `blockNetwork: true` OR the two allowlists — each allowlist
+   * field is documented "Cannot be used with blockNetwork" (modal@0.9.0
+   * index.d.ts:7682-7686) — so the blunt `blockNetwork: true` box this adapter
+   * builds for a sealed policy has no allowlist to widen later. When a phase
+   * policy here differs from `network`, the adapter creates the box in the
+   * switchable shape instead: an empty `outboundCidrAllowlist` — "an empty
+   * array blocks all egress for that dimension" (index.d.ts:7913-7915) — plus
+   * a domain allowlist holding only the unresolvable sentinel, never an empty
+   * one (see withDomainFilteringEnabled: an empty domain list leaves Modal's
+   * domain filter switched OFF and unswitchable). Same zero egress, still
+   * switchable.
+   *
+   * Upstream: harbor modal.py:1040-1047 (`_requires_dynamic_network`) and
+   * :1169-1171 (`if self._dynamic_network: block_network = False`).
+   */
+  phaseNetworkPolicies?: Array<{
+    outbound: "open" | "blocked";
+    allowedDestinations?: string[];
+  }>;
+  /**
    * Run all commands and file operations as this user (default "user"),
    * enforced via an `su <user> -c` wrapper since Modal executes everything as
    * root. Pass "root" to run directly as root with no wrapper.
@@ -772,6 +906,12 @@ export interface SandboxInstance {
 
   /** Pause sandbox (preserves state) */
   pause(): Promise<void>;
+
+  /** Replace the outbound network policy of the running sandbox. */
+  updateNetwork(network: {
+    outbound: "open" | "blocked";
+    allowedDestinations?: string[];
+  }): Promise<void>;
 }
 
 /** Sandbox lifecycle management */
@@ -1314,6 +1454,30 @@ class ModalSandboxImpl implements SandboxInstance {
     return buildSandboxInfo(this.sandbox.sandboxId, tags, this.image);
   }
 
+  /**
+   * Replace the running sandbox's outbound policy — Modal's
+   * `Sandbox.updateNetworkPolicy`, "Updates the outbound network policy of a
+   * running Sandbox. Established connections that the new policy no longer
+   * permits are terminated." (modal@0.9.0 index.d.ts:8035-8042).
+   *
+   * The policy is mapped by dynamicNetworkPolicyParams — the create path's own
+   * classification — so an update can never admit a destination the create
+   * would have refused.
+   *
+   * WHAT THIS CANNOT FIX: a box created with `blockNetwork: true` has no
+   * allowlist for Modal to widen, because create refuses the two together
+   * (index.d.ts:7682-7686). Declare `phaseNetworkPolicies` at create and the
+   * adapter builds the box switchable instead. Modal's refusal in that case is
+   * its own error, surfaced verbatim rather than reinterpreted here — guessing
+   * at a remote refusal is how a real quota or auth failure gets mislabelled.
+   */
+  async updateNetwork(network: {
+    outbound: "open" | "blocked";
+    allowedDestinations?: string[];
+  }): Promise<void> {
+    await this.sandbox.updateNetworkPolicy(dynamicNetworkPolicyParams(network));
+  }
+
   async kill(): Promise<void> {
     try {
       await this.sandbox.terminate();
@@ -1478,7 +1642,23 @@ export class ModalProvider implements SandboxProvider {
     // Resolved HERE, not at the create call, so an invalid idle bound throws
     // before the app/image round trips like every other validation above.
     const idleParams = mapIdleTimeout(options.idleTimeoutMs);
-    const networkParams = mapNetworkPolicy(options.network);
+    // A box whose later phases differ from its boot policy is created in the
+    // SWITCHABLE shape (two allowlists, possibly empty) rather than the blunt
+    // `blockNetwork: true` one, because Modal refuses to combine the two and a
+    // blockNetwork box therefore has nothing to widen later. Same egress at
+    // boot either way — see dynamicNetworkPolicyParams. Harbor modal.py:1169-1171.
+    // Every DECLARED phase policy is mapped here too, and its result thrown
+    // away: mapping is what rejects a destination this provider cannot express
+    // (a bad IPv4, a host carrying a port), and a phase policy that only gets
+    // mapped at switch time fails with the box up and the agent waiting.
+    // Upstream validates the baseline and every phase policy at start for the
+    // same reason (harbor environments/base.py:832-836).
+    for (const phase of options.phaseNetworkPolicies ?? []) {
+      dynamicNetworkPolicyParams(phase);
+    }
+    const networkParams = requiresDynamicNetwork(options.network, options.phaseNetworkPolicies)
+      ? dynamicNetworkPolicyParams(options.network)
+      : mapNetworkPolicy(options.network);
     const sizing = mapResources(options.resources);
     const user = options.user ?? DEFAULT_SANDBOX_USER;
 
@@ -1752,9 +1932,21 @@ export function createModalProvider(config: ModalConfig = {}): SandboxProvider {
 export const _testWrapCommand = wrapCommand;
 export const _testImageMap = IMAGE_MAP;
 export const _testMapNetworkPolicy = mapNetworkPolicy;
+export const _testDynamicNetworkPolicyParams = dynamicNetworkPolicyParams;
+export const _testRequiresDynamicNetwork = requiresDynamicNetwork;
 export const _testMapResources = mapResources;
 export const _testResolveImageRegistry = resolveImageRegistry;
 export const _testBuildSandboxInfo = buildSandboxInfo;
 export const _testCollectSandboxes = collectSandboxes;
 export const _testValidateTimeout = validateTimeout;
 export const _testMapIdleTimeout = mapIdleTimeout;
+
+/**
+ * TYPE-ONLY handle on the concrete sandbox class, for the contract-conformance
+ * seam. create() is declared to return the local SandboxInstance INTERFACE, so
+ * a seam reading create()'s return type checks the interface and never the
+ * class — which let a narrowed method on the class pass unnoticed. Exporting
+ * the type (never the constructor) gives the seam the real methods to pin.
+ */
+export type _testModalSandboxImpl = ModalSandboxImpl;
+

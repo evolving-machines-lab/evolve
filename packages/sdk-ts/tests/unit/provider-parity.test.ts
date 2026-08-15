@@ -270,6 +270,55 @@ assert(typeof createModalProvider === "function", "createModalProvider exists");
     `all ${CONFORMANCE_FILES.length} conformance files type-check against src/types.ts`,
   );
 
+  // ─── The seam guarding the seam ────────────────────────────────
+  // A conformance assertion that is silently wrong does not fail; it passes
+  // everything. So the pins are proved by BREAKING something and watching for
+  // the error, not by watching green. conformance-sabotage.ts narrows a
+  // required member and an optional parameterized one, and must be REJECTED —
+  // naming both — while its widened control stays legal.
+
+  console.log("\nSeam sabotage (the pins must actually reject a narrowing):");
+  const sabotageFile = resolve(REPO_ROOT, "packages/sdk-ts/tests/unit/conformance-sabotage.ts");
+  const sabotage = spawnSync(
+    process.execPath,
+    [
+      resolve(REPO_ROOT, "node_modules/typescript/bin/tsc"),
+      "--noEmit",
+      "--strict",
+      "--target", "es2022",
+      "--module", "esnext",
+      "--moduleResolution", "bundler",
+      "--esModuleInterop",
+      "--skipLibCheck",
+      "--forceConsistentCasingInFileNames",
+      sabotageFile,
+    ],
+    { encoding: "utf8", cwd: REPO_ROOT },
+  );
+  const sabotageOut = (sabotage.stdout || "") + (sabotage.stderr || "");
+  assert(sabotage.status !== 0, "a narrowed member is REJECTED (the pins are not vacuous)");
+  // Named, not merely "some error": an unrelated compile failure — a typo, a
+  // renamed import — would otherwise read exactly like a working seam.
+  assert(
+    sabotageOut.includes(`Type '"getHost"' does not satisfy`),
+    "the rejection NAMES the narrowed required member (getHost)",
+  );
+  assert(
+    sabotageOut.includes(`Type '"prepareImage"' does not satisfy`),
+    "and names the narrowed OPTIONAL parameterized member (prepareImage)",
+  );
+  // THE CONTROL, and it has to be exact. A pin that rejected EVERYTHING would
+  // pass both assertions above and look perfect, so the sabotage file also
+  // holds a member that accepts MORE than the contract — which is legal. Two
+  // errors and no more is the proof the pin discriminates rather than blankets.
+  const sabotageErrors = sabotageOut
+    .split("\n")
+    .filter((line) => line.includes("error TS")).length;
+  assert(
+    sabotageErrors === 2,
+    `exactly the two narrowings are flagged and the widened control is not (saw ${sabotageErrors} errors)`,
+  );
+
   console.log(`\n═══ ${passed} passed, ${failed} failed ═══\n`);
   if (failed > 0) process.exit(1);
 })();

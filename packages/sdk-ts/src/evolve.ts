@@ -10,6 +10,7 @@ import type { z } from "zod";
 import type {
   SandboxProvider,
   SandboxCreateOptions,
+  SandboxNetworkPolicy,
   McpServerConfig,
   WorkspaceMode,
   FileMap,
@@ -672,6 +673,33 @@ export class Evolve extends EventEmitter {
     const callbacks = this.createStreamCallbacks();
     const sandbox = await this.agent!.getSandbox(callbacks);
     return sandbox.sandboxId;
+  }
+
+  /**
+   * Replace the running sandbox's outbound network policy — no restart, and
+   * the sandbox keeps its filesystem, processes and identity.
+   *
+   * REPLACE, NOT MERGE: the policy passed here becomes the whole policy. Throws
+   * if the sandbox has not been created yet, if the provider cannot switch at
+   * all, or — with the provider's own typed error — if the provider refuses
+   * this particular switch (daytona's plan tier, an e2b client too old to have
+   * the call). It never returns quietly having done nothing.
+   */
+  async updateNetwork(network: SandboxNetworkPolicy): Promise<void> {
+    if (!this.agent) {
+      throw new Error(
+        "No sandbox yet. Call prepareSandbox(), run() or executeCommand() before updateNetwork().",
+      );
+    }
+    const sandbox = await this.agent.getSandbox(this.createStreamCallbacks());
+    if (typeof sandbox.updateNetwork !== "function") {
+      throw new Error(
+        `The ${this.config.sandbox?.providerType ?? "configured"} sandbox provider cannot ` +
+          "change network policy after start. Create the sandbox with the policy it needs for its " +
+          "whole lifetime, or use a provider that supports runtime changes.",
+      );
+    }
+    await sandbox.updateNetwork(network);
   }
 
   /**
