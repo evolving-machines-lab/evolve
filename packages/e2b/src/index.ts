@@ -77,14 +77,20 @@ export class E2BResourcesError extends Error {
 
 /**
  * Minimum `e2b` client that can switch a running sandbox's egress.
- * `Sandbox.updateNetwork` first appears in 2.26.0 — established by fetching the
- * versions published to the npm registry and reading their shipped type
- * declarations: absent in 2.24.0, present in 2.26.0. Cited that way on purpose:
- * a line number in whatever copy happens to sit in node_modules says nothing
- * about which RELEASE gained the method, which is the only thing a caller
- * deciding on an upgrade needs to know.
+ *
+ * 2.25.0, per e2b's own release notes: "Add `Sandbox.updateNetwork` /
+ * `update_network` to replace a running sandbox's egress configuration"
+ * (e2b@2.25.0). Confirmed against the published type declarations — absent in
+ * 2.24.0, present in 2.25.0.
+ *
+ * IT SAID 2.26.0 UNTIL THE RELEASE NOTES WERE READ. That number came from a
+ * binary search over published tarballs that happened to sample only even
+ * minors, so 2.25.0 was never tested and the first "present" result looked
+ * like the boundary. The search was sound and the conclusion was still wrong
+ * by one release — which is the argument for reading the vendor's own record
+ * rather than inferring version history from artifacts.
  */
-export const E2B_MIN_UPDATE_NETWORK_VERSION = "2.26.0";
+export const E2B_MIN_UPDATE_NETWORK_VERSION = "2.25.0";
 
 /**
  * Typed error for a runtime egress switch the INSTALLED client cannot make.
@@ -859,7 +865,7 @@ class E2BSandboxImpl implements SandboxInstance {
    * Replace the running sandbox's outbound policy — E2B's
    * `Sandbox.updateNetwork`: "Update the network configuration of the sandbox.
    * Replaces the current egress configuration atomically — fields that are
-   * omitted are cleared on the server." (from the published e2b 2.26.0+ type
+   * omitted are cleared on the server." (from the published e2b 2.25.0+ type
    * declarations for Sandbox.updateNetwork).
    *
    * That "omitted fields are cleared" rule is why the whole policy is sent
@@ -869,7 +875,7 @@ class E2BSandboxImpl implements SandboxInstance {
    * allowlist by the server's own rule rather than by a second call that could
    * fail in between and leave the box half-switched.
    *
-   * VERSION GATE. `updateNetwork` landed in e2b 2.26.0; the client resolved in
+   * VERSION GATE. `updateNetwork` landed in e2b 2.25.0; the client resolved in
    * this workspace today is older and has no such method. Feature-detected
    * rather than assumed, and refused loudly when absent — a `catch` around a
    * missing method, or an early return, would leave the sandbox on its
