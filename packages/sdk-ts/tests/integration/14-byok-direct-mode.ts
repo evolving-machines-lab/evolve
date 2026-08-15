@@ -20,6 +20,7 @@
 
 import { Evolve } from "../../dist/index.js";
 import { createE2BProvider } from "../../../e2b/src/index.js";
+import { e2eSandboxOptions, finishE2E, hardKill } from "./teardown.js";
 import { config } from "dotenv";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -157,9 +158,11 @@ async function testAgent(type: AgentType): Promise<{ ok: boolean; error?: string
   console.log(`[${type}] Model: ${agentConfig.model}`);
 
   // Build Evolve instance with BYOK (providerApiKey instead of apiKey)
+  const e2eProvider = createE2BProvider({ apiKey: env.E2B_API_KEY });
   const evolve = new Evolve()
     .withAgent(agentConfig)
-    .withSandbox(createE2BProvider({ apiKey: env.E2B_API_KEY }))
+    .withSandbox(e2eProvider)
+    .withSandboxCreateOptions(e2eSandboxOptions('14-byok-direct-mode'))
     .withSystemPrompt("You are a helpful assistant. Be concise.");
 
   try {
@@ -191,7 +194,7 @@ async function testAgent(type: AgentType): Promise<{ ok: boolean; error?: string
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     save(type, "error.txt", err instanceof Error ? err.stack || msg : msg);
-    await evolve.kill().catch(() => {});
+    await hardKill(evolve, '14-byok-direct-mode session');
     return { ok: false, error: msg, duration: Date.now() - start };
   }
 }
@@ -249,7 +252,7 @@ async function main() {
 
   // Exit with success if all non-skipped tests passed
   const failed = agents.length - skipped - passed;
-  process.exit(failed > 0 ? 1 : 0);
+  await finishE2E("14-byok-direct-mode", failed > 0 ? 1 : 0);
 }
 
 main();

@@ -17,6 +17,7 @@ import { fileURLToPath } from "url";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import type { OutputEvent } from "../../dist/index.js";
 import { getDefaultAgentConfig, getTestEnv } from "./test-config.js";
+import { e2eSandboxOptions, finishE2E, hardKill } from "./teardown.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, "../../../../.env") });
@@ -24,6 +25,7 @@ config({ path: resolve(__dirname, "../../../../.env") });
 const LOGS_DIR = resolve(__dirname, "../test-logs/07-background-timeouts");
 const agentConfig = getDefaultAgentConfig();
 const env = getTestEnv();
+const e2eProvider = createE2BProvider({ apiKey: env.E2B_API_KEY });
 
 function log(msg: string) {
   console.log(`[07-background-timeouts] ${msg}`);
@@ -43,7 +45,8 @@ async function main() {
 
   const evolve = new Evolve()
     .withAgent(agentConfig)
-    .withSandbox(createE2BProvider({ apiKey: env.E2B_API_KEY }));
+    .withSandbox(e2eProvider)
+    .withSandboxCreateOptions(e2eSandboxOptions('07-background-timeouts'));
 
   // Collect streaming events for background mode verification
   const stdoutChunks: string[] = [];
@@ -144,17 +147,17 @@ async function main() {
     log(`\n============================================================`);
     log(`PASS - All background & timeout tests passed (${duration}s)`);
     log(`============================================================\n`);
-    process.exit(0);
+    await finishE2E("07-background-timeouts", 0);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     save("error.txt", err instanceof Error ? err.stack || msg : msg);
-    await evolve.kill().catch(() => {});
+    await hardKill(evolve, '07-background-timeouts session');
 
     const duration = ((Date.now() - start) / 1000).toFixed(1);
     log(`\n============================================================`);
     log(`FAIL - ${msg} (${duration}s)`);
     log(`============================================================\n`);
-    process.exit(1);
+    await finishE2E("07-background-timeouts", 1);
   }
 }
 

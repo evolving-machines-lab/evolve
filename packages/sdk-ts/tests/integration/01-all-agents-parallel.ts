@@ -18,6 +18,7 @@ import { fileURLToPath } from "url";
 import { readFileSync, writeFileSync, mkdirSync, rmSync } from "fs";
 import type { AgentType, FileMap, OutputEvent } from "../../dist/index.js";
 import { getAgentConfig, getSandboxProvider } from "./test-config.js";
+import { e2eSandboxOptions, finishE2E, hardKill } from "./teardown.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, "../../../../.env") });
@@ -68,6 +69,7 @@ async function testAgent(type: AgentType): Promise<{ ok: boolean; error?: string
   const evolve = new Evolve()
     .withAgent(getAgentConfig(type))
     .withSandbox(getSandboxProvider())
+    .withSandboxCreateOptions(e2eSandboxOptions("01-all-agents-parallel"))
     .withSystemPrompt("Your name is Manus Evolve, a powerful autonomous AI agent.")
     .withContext({
       [FILES.withContext]: load(FILES.withContext),
@@ -115,7 +117,7 @@ async function testAgent(type: AgentType): Promise<{ ok: boolean; error?: string
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     save(type, "error.txt", err instanceof Error ? err.stack || msg : msg);
-    await evolve.kill().catch(() => {});
+    await hardKill(evolve, "01-all-agents-parallel session");
     return { ok: false, error: msg, duration: Date.now() - start };
   }
 }
@@ -146,7 +148,7 @@ async function main() {
   console.log("=".repeat(60));
   console.log(`${passed}/${agents.length} passed\n`);
 
-  process.exit(passed === agents.length ? 0 : 1);
+  await finishE2E("01-all-agents-parallel", passed === agents.length ? 0 : 1);
 }
 
 main();

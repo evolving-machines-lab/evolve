@@ -27,6 +27,7 @@ import {
 import { createE2BProvider } from "../../../e2b/src/index.js";
 import { createDaytonaProvider } from "../../../daytona/src/index.js";
 import { createModalProvider } from "../../../modal/src/index.js";
+import { e2eSandboxOptions, finishE2E, hardKill } from "./teardown.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, "../../../../.env") });
@@ -80,6 +81,7 @@ async function testProvider(provider: ProviderName): Promise<TestResult> {
   const evolve = new Evolve()
     .withAgent(getAgentConfig("claude"))
     .withSandbox(getSandboxProviderByName(provider))
+    .withSandboxCreateOptions(e2eSandboxOptions("17-provider-test"))
     .withSkills(["pdf", "slides-as-code"])
     .withContext({
       "data.xlsx": load("AMPX_Financial_Analysis.xlsx"),
@@ -284,7 +286,7 @@ async function testProvider(provider: ProviderName): Promise<TestResult> {
     }
 
     // Cleanup
-    await shortLivedEvolve.kill().catch(() => {});
+    await hardKill(shortLivedEvolve, "17-provider-test session");
 
     // =========================================================================
     // RESULT
@@ -295,7 +297,7 @@ async function testProvider(provider: ProviderName): Promise<TestResult> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     save(provider, "error.txt", err instanceof Error ? err.stack || msg : msg);
-    await evolve.kill().catch(() => {});
+    await hardKill(evolve, "17-provider-test session");
     return { provider, ok: false, error: msg, duration: Date.now() - start, checks };
   }
 }
@@ -312,7 +314,7 @@ async function main() {
     console.log("  Providers: e2b, modal, daytona, all");
     const available = getAvailableProviders();
     console.log(`  Available: ${available.join(", ") || "none"}`);
-    process.exit(1);
+    await finishE2E("17-provider-test", 1);
   }
 
   let providers: ProviderName[];
@@ -320,7 +322,7 @@ async function main() {
     providers = getAvailableProviders();
     if (providers.length === 0) {
       console.error("No providers available");
-      process.exit(1);
+      await finishE2E("17-provider-test", 1);
     }
   } else {
     providers = args as ProviderName[];
@@ -358,7 +360,7 @@ async function main() {
   console.log(`Logs: ${LOGS_DIR}`);
   console.log("=".repeat(60));
 
-  process.exit(passed === results.length ? 0 : 1);
+  await finishE2E("17-provider-test", passed === results.length ? 0 : 1);
 }
 
 main();

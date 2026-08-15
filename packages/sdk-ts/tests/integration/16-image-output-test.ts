@@ -12,6 +12,7 @@
 
 import { Evolve } from "../../dist/index.js";
 import { createE2BProvider } from "../../../e2b/src/index.js";
+import { e2eSandboxOptions, finishE2E, hardKill } from "./teardown.js";
 import { config } from "dotenv";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -65,9 +66,11 @@ function save(agent: string, name: string, content: string) {
 async function testAgent(type: AgentType): Promise<{ ok: boolean; error?: string; duration: number }> {
   const start = Date.now();
 
+  const e2eProvider = createE2BProvider({ apiKey: env.E2B_API_KEY });
   const evolve = new Evolve()
     .withAgent(getAgentConfig(type))
-    .withSandbox(createE2BProvider({ apiKey: env.E2B_API_KEY }))
+    .withSandbox(e2eProvider)
+    .withSandboxCreateOptions(e2eSandboxOptions('16-image-output-test'))
     .withContext({ "test_image.png": readFileSync(resolve(FIXTURES_DIR, "test_image.png")) })
     .withSkills(["dev-browser"])
     .withMcpServers(mcpServers);
@@ -98,7 +101,7 @@ async function testAgent(type: AgentType): Promise<{ ok: boolean; error?: string
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     save(type, "error.txt", msg);
-    await evolve.kill().catch(() => {});
+    await hardKill(evolve, '16-image-output-test session');
     return { ok: false, error: msg, duration: Date.now() - start };
   }
 }
@@ -129,7 +132,7 @@ async function main() {
   console.log(`${passed}/${agents.length} passed`);
   console.log(`\nLogs saved to: ${LOGS_DIR}\n`);
 
-  process.exit(passed === agents.length ? 0 : 1);
+  await finishE2E("16-image-output-test", passed === agents.length ? 0 : 1);
 }
 
 main();

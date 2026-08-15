@@ -31,6 +31,7 @@ import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { getAgentConfig, getSandboxProvider, getSandboxProviderByName, type ProviderName } from "./test-config.js";
+import { e2eSandboxOptions, finishE2E, hardKill } from "./teardown.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, "../../../../.env") });
@@ -176,6 +177,7 @@ async function main() {
     const evolve1 = new Evolve()
       .withAgent(agentConfig)
       .withSandbox(provider)
+      .withSandboxCreateOptions(e2eSandboxOptions("20-storage-checkpoints"))
       .withStorage(getStorageConfig());
 
     log("  Running prompt...");
@@ -210,6 +212,7 @@ async function main() {
     const evolve2 = new Evolve()
       .withAgent(agentConfig)
       .withSandbox(provider)
+      .withSandboxCreateOptions(e2eSandboxOptions("20-storage-checkpoints"))
       .withStorage(getStorageConfig());
 
     log(`  Restoring from checkpoint ${checkpoint1.id}...`);
@@ -252,6 +255,7 @@ async function main() {
     const evolve3 = new Evolve()
       .withAgent(agentConfig)
       .withSandbox(provider)
+      .withSandboxCreateOptions(e2eSandboxOptions("20-storage-checkpoints"))
       .withStorage(getStorageConfig());
 
     await assertThrows(
@@ -259,7 +263,7 @@ async function main() {
       "not found",
       "from with nonexistent ID throws 'not found'"
     );
-    await evolve3.kill().catch(() => {});
+    await hardKill(evolve3, "20-storage-checkpoints session");
 
     // 4b. from + withSession() mutual exclusivity
     await assertThrows(
@@ -267,6 +271,7 @@ async function main() {
         const e = new Evolve()
           .withAgent(agentConfig)
           .withSandbox(provider)
+          .withSandboxCreateOptions(e2eSandboxOptions("20-storage-checkpoints"))
           .withStorage(getStorageConfig())
           .withSession("some-sandbox-id");
         return e.run({ prompt: "test", from: checkpoint1.id, timeoutMs: 30000 });
@@ -284,7 +289,7 @@ async function main() {
     log("=".repeat(60));
     log(`PASS - All storage checkpoint tests passed (${duration}s)`);
     log("=".repeat(60) + "\n");
-    process.exit(0);
+    await finishE2E("20-storage-checkpoints", 0);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     save("error.txt", err instanceof Error ? err.stack || msg : msg);
@@ -295,7 +300,7 @@ async function main() {
     log("\n" + "=".repeat(60));
     log(`FAIL - ${msg} (${duration}s)`);
     log("=".repeat(60) + "\n");
-    process.exit(1);
+    await finishE2E("20-storage-checkpoints", 1);
   }
 }
 

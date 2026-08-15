@@ -20,6 +20,7 @@ import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { getTestEnv, getSandboxProvider, getAgentConfig } from "./test-config.js";
+import { e2eSandboxOptions, finishE2E, hardKill } from "./teardown.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, "../../../../.env") });
@@ -83,7 +84,8 @@ async function main(): Promise<void> {
       ...kimi,
       apiKey: env.EVOLVE_API_KEY,
     })
-    .withSandbox(getSandboxProvider());
+    .withSandbox(getSandboxProvider())
+    .withSandboxCreateOptions(e2eSandboxOptions("24-kimi-gateway-hello"));
 
   const contentEvents: OutputEvent[] = [];
   const lifecycleEvents: LifecycleEvent[] = [];
@@ -158,20 +160,24 @@ async function main(): Promise<void> {
       success,
       failureMessage: failureMessage ?? null,
     }, null, 2));
-    await evolve.kill().catch((e) => {
-      save("kill-error.txt", String(e));
-    });
+    // Was: a catch that saved the error to a file and carried on — better
+    // than silence, but the run still reported its own verdict as if the
+    // sandbox were gone. hardKill keeps the file AND makes the failure count.
+    await hardKill(
+      { kill: () => evolve.kill().catch((e) => { save("kill-error.txt", String(e)); throw e; }) },
+      "24-kimi-gateway-hello session",
+    );
   }
 
   if (!success) {
     log(`FAIL. Logs: ${LOGS_DIR}`);
-    process.exit(1);
+    await finishE2E("24-kimi-gateway-hello", 1);
   }
 
   log(`PASS. Logs: ${LOGS_DIR}`);
 }
 
-main().catch((error) => {
+main().catch(async (error) => {
   console.error(error);
-  process.exit(1);
+  await finishE2E("24-kimi-gateway-hello", 1);
 });

@@ -19,6 +19,7 @@ import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { getSandboxProvider } from "./test-config.js";
+import { e2eSandboxOptions, finishE2E, hardKill } from "./teardown.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, "../../../../.env") });
@@ -72,7 +73,8 @@ async function runTest(
 
   const evolve = new Evolve()
     .withAgent(agentConfig)
-    .withSandbox(sandbox);
+    .withSandbox(sandbox)
+    .withSandboxCreateOptions(e2eSandboxOptions("25-opencode-openrouter"));
 
   const contentEvents: OutputEvent[] = [];
   evolve.on("content", (e: OutputEvent) => contentEvents.push(e));
@@ -108,7 +110,7 @@ async function runTest(
     save(`${logPrefix}-error.txt`, redactSecrets(msg, secrets));
     return { pass: false, error: msg };
   } finally {
-    await evolve.kill().catch(() => {});
+    await hardKill(evolve, "25-opencode-openrouter session");
   }
 }
 
@@ -147,10 +149,10 @@ async function main(): Promise<void> {
 
   log(`\nResults: ${passed} passed, ${failed} failed. Logs: ${LOGS_DIR}`);
 
-  if (failed > 0) process.exit(1);
+  if (failed > 0) await finishE2E("25-opencode-openrouter", 1);
 }
 
-main().catch((error) => {
+main().catch(async (error) => {
   console.error(error);
-  process.exit(1);
+  await finishE2E("25-opencode-openrouter", 1);
 });
