@@ -178,7 +178,7 @@ sandbox = DaytonaProvider(
 )
 ```
 
-If a snapshot is found in a terminally failed state, the SDK deletes it and rebuilds it, so one bad build does not leave the name unusable. It only does this when it can rebuild the image itself — the reference carries a real tag or digest — and never for a name that resolves to no image, such as a snapshot you built yourself.
+If a snapshot is found in a terminally failed state, the SDK deletes it and rebuilds it, so one bad build does not leave the name unusable. It only does this when it can rebuild the image itself — the reference carries a real tag or digest — and never for a bare name that resolves to no image, such as `my-team-env`.
 
 
 ---

@@ -1038,6 +1038,10 @@ async function silenceNoise<T>(fn: () => Promise<T>): Promise<T> {
 /** Production conflict clocks are 10 minutes; the tests measure the SHAPE. */
 class FastConflictProvider extends DaytonaProvider {
   protected override snapshotConflictTiming = { timeoutMs: 50, pollMs: 1 };
+  // The delete-confirmation poll has its OWN clock. Overriding only the
+  // conflict one used to leave this running on production time — which is the
+  // bug that hid when the two shared a field.
+  protected override snapshotDeleteTiming = { timeoutMs: 50, pollMs: 1 };
 }
 
 /**
@@ -1215,9 +1219,10 @@ async function testDeadSnapshotDeleteFailureFallsBackInsteadOfThrowing(): Promis
   );
   const sandbox = await silenceNoise(() => providerOn(client).create({ image: "ubuntu:24.04" }));
 
-  // Twice: the fast path tries to clear the corpse, and so does the join that
-  // follows the lost create. Both are refused, neither is fatal.
-  assertEqual(state.deletes, 2, "the delete was attempted and failed, without throwing");
+  // ONCE: the fast path tries to clear the corpse and cannot, so the build is
+  // skipped rather than raced — which is also why the join that used to follow
+  // a lost create never runs. Refused, and still not fatal.
+  assertEqual(state.deletes, 1, "the delete was attempted and failed, without throwing");
   assertEqual(state.createParams?.image, "ubuntu:24.04", "and the direct pull carried on");
   assert(sandbox !== undefined, "a sandbox is still returned");
 }
@@ -1302,6 +1307,89 @@ async function testHealedRebuildIsTriedOnceAndNeverLoops(): Promise<void> {
     "the build and ONE post-heal rebuild — bounded, never a delete-build loop"
   );
   assertEqual(state.createParams?.image, "ubuntu:24.04", "and the run ends on the direct pull");
+}
+
+async function testDeleteConfirmationWaitsForTheRecordToVanish(): Promise<void> {
+  console.log("\n[6am] deleteDeadSnapshot() - the create waits for the delete to actually take effect");
+
+  // Daytona's delete is asynchronous: it acknowledges and moves the snapshot to
+  // "Removing". A create fired immediately loses the name to a corpse still
+  // being carried out, which deferred every heal by a run.
+  let gets = 0;
+  const { client, state } = createDeadSnapshotClient([{ state: "error", name: "ubuntu:24.04" }]);
+  const lingering = {
+    ...client,
+    snapshot: {
+      ...client.snapshot,
+      get: async () => {
+        gets++;
+        if (gets === 1) return { state: "error", name: "ubuntu:24.04" }; // fast path
+        if (gets <= 3) return { state: "removing", name: "ubuntu:24.04" }; // still going
+        throw new Error("404: snapshot not found"); // finally gone
+      },
+    },
+  };
+  await silenceNoise(() => providerOn(lingering).create({ image: "ubuntu:24.04" }));
+
+  assert(gets >= 4, "the poll kept looking until the record stopped resolving");
+  assertEqual(state.snapshotCreateCalls, 1, "and only then was the name rebuilt");
+  assertEqual(state.createParams?.snapshot, "ubuntu:24.04", "the box boots from that rebuild");
+}
+
+async function testDeleteConfirmationGivesUpOnItsOwnBudget(): Promise<void> {
+  console.log("\n[6an] deleteDeadSnapshot() - a record that never vanishes ends on the DELETE budget");
+
+  // The branch no test reached before: every earlier case exhausted the GET
+  // script and took the immediate-gone return, so a delete poll running on the
+  // ten-minute conflict clock looked exactly like one running on its own.
+  let gets = 0;
+  const { client, state } = createDeadSnapshotClient([{ state: "error", name: "ubuntu:24.04" }]);
+  const neverGone = {
+    ...client,
+    snapshot: {
+      ...client.snapshot,
+      // Dead on arrival, then stuck in Removing forever: the corpse never goes.
+      get: async () => {
+        gets++;
+        return gets === 1
+          ? { state: "error", name: "ubuntu:24.04" }
+          : { state: "removing", name: "ubuntu:24.04" };
+      },
+    },
+  };
+  const started = Date.now();
+  await silenceNoise(() => providerOn(neverGone).create({ image: "ubuntu:24.04" }));
+  const elapsed = Date.now() - started;
+
+  // The provider's delete clock is 50ms in tests; the conflict clock it used to
+  // borrow is 600s in production. A generous ceiling still proves which one ran.
+  assert(elapsed < 5_000, `the delete poll ended on its own budget (took ${elapsed}ms)`);
+  assertEqual(state.snapshotCreateCalls, 0, "an unconfirmed delete does NOT race the removal");
+  assertEqual(state.createParams?.image, "ubuntu:24.04", "the run ends on the direct pull instead");
+}
+
+async function testDeletePollTreatsOnlyNotFoundAsGone(): Promise<void> {
+  console.log("\n[6ao] deleteDeadSnapshot() - a 403 during the poll is not 'gone'");
+
+  // A permission failure says nothing about whether the record survived.
+  // Reading it as success would hand back a name a corpse still holds.
+  let gets = 0;
+  const { client, state } = createDeadSnapshotClient([{ state: "error", name: "ubuntu:24.04" }]);
+  const forbidden = {
+    ...client,
+    snapshot: {
+      ...client.snapshot,
+      get: async () => {
+        gets++;
+        if (gets === 1) return { state: "error", name: "ubuntu:24.04" };
+        throw new Error("403 forbidden");
+      },
+    },
+  };
+  await silenceNoise(() => providerOn(forbidden).create({ image: "ubuntu:24.04" }));
+
+  assertEqual(state.snapshotCreateCalls, 0, "a blip is never mistaken for a cleared name");
+  assertEqual(state.createParams?.image, "ubuntu:24.04", "so the run takes the direct pull");
 }
 
 async function testProviderCanRebuildSnapshotRule(): Promise<void> {
@@ -1997,6 +2085,9 @@ const tests = [
   testMissingSnapshotMidWaitIsAnAnswerNotAFailure,
   testVanishedNameIsBuiltRatherThanPulled,
   testHealedRebuildIsTriedOnceAndNeverLoops,
+  testDeleteConfirmationWaitsForTheRecordToVanish,
+  testDeleteConfirmationGivesUpOnItsOwnBudget,
+  testDeletePollTreatsOnlyNotFoundAsGone,
   testProviderCanRebuildSnapshotRule,
   // [7] DaytonaCommands
   testCommandsRunAsRootUsesSudoWrapper,
