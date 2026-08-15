@@ -24,6 +24,8 @@ import {
   _testIsSnapshotNameConflict,
   _testWrapCommand,
   _testMapNetworkPolicy,
+  _testMapNetworkPolicyForUpdate,
+  _testIsNetworkPolicyTierRefusal,
   _testImageRegistryHost,
   _testToSandboxInfo,
   _testDaytonaStateToEvolveState,
@@ -1654,6 +1656,94 @@ async function testAutoDeleteGrace(): Promise<void> {
 // RUNNER
 // =============================================================================
 
+// =============================================================================
+// [8] Runtime network switching — replace semantics and the org tier gate
+// =============================================================================
+
+async function testUpdateMapperClearsStaleAllowlists(): Promise<void> {
+  console.log("\n[8a] the update path states every field, so nothing stale survives");
+
+  // At create an omitted field is simply unset. On a box that already HAS a
+  // policy, an omitted field keeps its old value — which is how a switch to a
+  // narrow policy can silently leave a wide allowlist in force.
+  assertEqual(
+    await _testMapNetworkPolicyForUpdate({
+      outbound: "blocked",
+      allowedDestinations: ["10.1.2.0/24"],
+    }),
+    { networkBlockAll: false, networkAllowList: "10.1.2.0/24", domainAllowList: "" },
+    "a CIDR allowlist clears the domain allowlist it replaces"
+  );
+  assertEqual(
+    await _testMapNetworkPolicyForUpdate({ outbound: "blocked" }),
+    { networkBlockAll: true, networkAllowList: "", domainAllowList: "" },
+    "sealing the box clears both allowlists rather than leaving them behind"
+  );
+  assertEqual(
+    await _testMapNetworkPolicyForUpdate({ outbound: "open" }),
+    { networkBlockAll: false, networkAllowList: "", domainAllowList: "" },
+    "opening the box clears both — a leftover list would narrow an open policy"
+  );
+}
+
+async function testUpdateMapperKeepsCreateRefusals(): Promise<void> {
+  console.log("\n[8b] the update path refuses exactly what create refuses");
+
+  for (const destination of ["2001:db8::1", "*.example.com", "example.com:8443"]) {
+    let err: unknown;
+    try {
+      await _testMapNetworkPolicyForUpdate({
+        outbound: "blocked",
+        allowedDestinations: [destination],
+      });
+    } catch (e) {
+      err = e;
+    }
+    assert(
+      err instanceof DaytonaNetworkPolicyError,
+      `"${destination}" is refused on the update path too, with the typed error`
+    );
+  }
+}
+
+async function testTierRefusalIsNarrow(): Promise<void> {
+  console.log("\n[8c] the tier verdict needs real evidence, never a bare 403");
+
+  assert(
+    _testIsNetworkPolicyTierRefusal(
+      Object.assign(new Error("Organization tier does not permit network policy override"), {
+        status: 403,
+      })
+    ),
+    "403 naming the tier AND network policy is the tier gate"
+  );
+  assert(
+    _testIsNetworkPolicyTierRefusal(
+      new Error("Cannot override network policy at the sandbox level on this plan")
+    ),
+    "unmistakable language alone is enough, even with no status"
+  );
+
+  // The case that matters most: a revoked key is also a 403, and calling it a
+  // tier problem sends the caller to the billing page over a credential.
+  assert(
+    !_testIsNetworkPolicyTierRefusal(
+      Object.assign(new Error("Unauthorized"), { status: 403 })
+    ),
+    "a bare 403 stays unclassified and propagates verbatim"
+  );
+  assert(
+    !_testIsNetworkPolicyTierRefusal(new Error("connect ETIMEDOUT")),
+    "a transport failure is not a tier verdict"
+  );
+  assert(
+    !_testIsNetworkPolicyTierRefusal(
+      Object.assign(new Error("Sandbox not found"), { status: 404 })
+    ),
+    "a missing sandbox is not a tier verdict"
+  );
+}
+
 const tests = [
   // [1] wrapCommand user param
   testWrapCommandNoUserPassthrough,
@@ -1723,6 +1813,10 @@ const tests = [
   testCommandsSpawnRootWrapper,
   testSpawnWaitDistinguishesSandboxFromSession,
   testAutoDeleteGrace,
+  // [8] runtime network switching
+  testUpdateMapperClearsStaleAllowlists,
+  testUpdateMapperKeepsCreateRefusals,
+  testTierRefusalIsNarrow,
 ];
 
 (async () => {

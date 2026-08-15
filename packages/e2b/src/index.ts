@@ -76,6 +76,65 @@ export class E2BResourcesError extends Error {
 }
 
 /**
+ * Minimum `e2b` client that can switch a running sandbox's egress.
+ * `Sandbox.updateNetwork` first appears in 2.26.0 — verified by inspecting the
+ * published type declarations: absent in 2.24.0, present in 2.26.0.
+ */
+export const E2B_MIN_UPDATE_NETWORK_VERSION = "2.26.0";
+
+/**
+ * Typed error for a runtime egress switch the INSTALLED client cannot make.
+ *
+ * E2B the service supports it; an older `e2b` package simply has no method to
+ * call. That distinction matters to whoever reads this: the fix is a
+ * dependency bump, not a plan change or a different provider. Refused loudly
+ * rather than skipped, because a policy switch that quietly does nothing
+ * leaves the sandbox running under the previous policy — which, when the
+ * switch was meant to TIGHTEN egress, is the failure nobody notices.
+ */
+export class E2BNetworkUpdateUnsupportedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "E2BNetworkUpdateUnsupportedError";
+  }
+}
+
+/** E2B create/update params derived from Evolve's provider-neutral network policy. */
+interface E2BNetworkParams {
+  allowInternetAccess: boolean;
+  network?: { denyOut: string[]; allowOut: string[] };
+}
+
+/**
+ * Map Evolve's provider-neutral network policy onto E2B's network params.
+ *
+ * - outbound "open" (or no policy)     → unrestricted egress
+ * - outbound "blocked", no allowlist   → allowInternetAccess: false, which E2B
+ *   documents as behaving "the same as specifying `denyOut: ['0.0.0.0/0']`"
+ * - outbound "blocked" with allowlist  → deny everything, then allow the
+ *   declared destinations back
+ *
+ * ONE mapper for both paths. The create path and the runtime switch must agree
+ * on what a policy means, or an update would grant egress the create would
+ * have refused — and the two calls take structurally identical params
+ * (`SandboxNetworkUpdate` is documented as a "Subset of SandboxNetworkOpts"),
+ * so there is no reason for them to diverge.
+ */
+function mapNetworkPolicy(network?: SandboxCreateOptions["network"]): E2BNetworkParams {
+  if (network?.outbound === "open" && network.allowedDestinations?.length) {
+    throw new Error("network.allowedDestinations is only valid when outbound is blocked");
+  }
+  const allowedDestinations = network?.allowedDestinations ?? [];
+  const usesAllowlist = network?.outbound === "blocked" && allowedDestinations.length > 0;
+  return {
+    allowInternetAccess: network?.outbound !== "blocked" || usesAllowlist,
+    network: usesAllowlist
+      ? { denyOut: ["0.0.0.0/0"], allowOut: allowedDestinations }
+      : undefined,
+  };
+}
+
+/**
  * Typed error for an idle timeout E2B cannot enforce. E2B has exactly one
  * clock and it is absolute: the sandbox is killed when its timeout expires,
  * and only explicit client calls (create, connect, setTimeout) move that
@@ -347,6 +406,9 @@ export interface SandboxInstance {
 
   /** Pause sandbox (preserves state) */
   pause(): Promise<void>;
+
+  /** Replace the outbound network policy of the running sandbox. */
+  updateNetwork(network: SandboxCreateOptions["network"]): Promise<void>;
 }
 
 /** Sandbox lifecycle management */
@@ -772,6 +834,48 @@ class E2BSandboxImpl implements SandboxInstance {
     };
   }
 
+  /**
+   * Replace the running sandbox's outbound policy — E2B's
+   * `Sandbox.updateNetwork`: "Update the network configuration of the sandbox.
+   * Replaces the current egress configuration atomically — fields that are
+   * omitted are cleared on the server." (e2b@2.26.0+ index.d.ts:9948-9957).
+   *
+   * That "omitted fields are cleared" rule is why the whole policy is sent
+   * every time and never a delta: mapNetworkPolicy always states
+   * allowInternetAccess, and states `network` only when an allowlist is in
+   * force — so switching from an allowlist to a sealed box clears the
+   * allowlist by the server's own rule rather than by a second call that could
+   * fail in between and leave the box half-switched.
+   *
+   * VERSION GATE. `updateNetwork` landed in e2b 2.26.0; the client resolved in
+   * this workspace today is older and has no such method. Feature-detected
+   * rather than assumed, and refused loudly when absent — a `catch` around a
+   * missing method, or an early return, would leave the sandbox on its
+   * previous policy while the caller believes the switch happened.
+   */
+  async updateNetwork(network: SandboxCreateOptions["network"]): Promise<void> {
+    const params = mapNetworkPolicy(network);
+    const sandbox = this.sandbox as unknown as {
+      updateNetwork?: (update: {
+        allowOut?: string[];
+        denyOut?: string[];
+        allowInternetAccess?: boolean;
+      }) => Promise<void>;
+    };
+    if (typeof sandbox.updateNetwork !== "function") {
+      throw new E2BNetworkUpdateUnsupportedError(
+        `The installed e2b client cannot change a running sandbox's network policy: ` +
+          `Sandbox.updateNetwork requires e2b >= ${E2B_MIN_UPDATE_NETWORK_VERSION}. ` +
+          "Upgrade the e2b dependency (it is pulled in by @e2b/code-interpreter), or create the " +
+          "sandbox with the policy it needs for its whole lifetime."
+      );
+    }
+    await sandbox.updateNetwork({
+      allowInternetAccess: params.allowInternetAccess,
+      ...(params.network ?? {}),
+    });
+  }
+
   async kill(): Promise<void> {
     try {
       await this.sandbox.kill();
@@ -851,12 +955,7 @@ export class E2BProvider implements SandboxProvider {
     }
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
     const templateId = options.image ?? this.templateId ?? "evolve-all";
-    if (options.network?.outbound === "open" && options.network.allowedDestinations?.length) {
-      throw new Error("network.allowedDestinations is only valid when outbound is blocked");
-    }
-    const allowedDestinations = options.network?.allowedDestinations ?? [];
-    const usesAllowlist =
-      options.network?.outbound === "blocked" && allowedDestinations.length > 0;
+    const networkParams = mapNetworkPolicy(options.network);
 
     // Map generic 'image' to E2B's 'templateId'
     const sandbox = await E2BSandbox.create(templateId, {
@@ -865,14 +964,7 @@ export class E2BProvider implements SandboxProvider {
       envs: options.envs,
       metadata: options.metadata,
       timeoutMs,
-      allowInternetAccess:
-        options.network?.outbound !== "blocked" || usesAllowlist,
-      network: usesAllowlist
-        ? {
-            denyOut: ["0.0.0.0/0"],
-            allowOut: allowedDestinations,
-          }
-        : undefined,
+      ...networkParams,
     });
 
     if (options.workingDirectory) {

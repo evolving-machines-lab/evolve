@@ -185,7 +185,16 @@ export type DaytonaNetworkPolicyReason =
   | "port-unsupported"
   | "invalid-ipv4"
   | "unresolvable-hostname"
-  | "allowlist-too-large";
+  | "allowlist-too-large"
+  /**
+   * The ORGANIZATION is not allowed to set a sandbox-level network policy at
+   * all, whatever the policy says. Daytona gates this by plan tier:
+   * "Organizations on Tier 1 or Tier 2 cannot override network policy at the
+   * sandbox level" (Daytona docs, sandbox network configuration). It is a
+   * property of the account, not of the request, so no rewriting of the policy
+   * makes it succeed — the caller needs a tier upgrade or another provider.
+   */
+  | "org-tier-forbidden";
 
 /**
  * Typed error for network policies Daytona cannot enforce.
@@ -889,6 +898,17 @@ interface DaytonaNetworkCreateParams {
   networkAllowList?: string;
 }
 
+/**
+ * Daytona `updateNetworkSettings()` params. Every field is stated on this
+ * path, never omitted — see mapNetworkPolicyForUpdate for why an omitted field
+ * is a stale field here, which is not true at create.
+ */
+interface DaytonaNetworkUpdateParams {
+  networkBlockAll: boolean;
+  networkAllowList: string;
+  domainAllowList: string;
+}
+
 /** Resolves a hostname to its IPv4 addresses (injectable for tests). */
 type HostnameResolver = (hostname: string) => Promise<string[]>;
 
@@ -1068,6 +1088,80 @@ async function mapNetworkPolicy(
   // networkBlockAll must stay false: Daytona's runner checks blockAll first
   // and would ignore the allowlist if both were set.
   return { networkBlockAll: false, networkAllowList: uniqueCidrs.join(",") };
+}
+
+/**
+ * The same policy expressed for the RUNTIME switch
+ * (`sandbox.updateNetworkSettings`), which differs from create in one way that
+ * matters: it edits a box that already HAS a policy, so every field the new
+ * policy does not set must be cleared by hand or the old value survives.
+ *
+ * Daytona keeps two independent allowlists (`networkAllowList` for CIDRs,
+ * `domainAllowList` for names). This adapter only ever writes the CIDR one —
+ * hostnames are pinned to IPs by mapNetworkPolicy — but the box may have been
+ * created elsewhere, and a domain allowlist left behind would silently widen a
+ * policy we believe is narrow. So the update always states BOTH: the one it
+ * means, and "" for the one it does not.
+ *
+ * Upstream does exactly this, and only on the apply path: harbor
+ * daytona/environment.py:1313-1343 (`_network_kwargs(..., clear_public_allowlist=True)`,
+ * called from `_apply_network_policy` at :1508-1514) with the comment
+ * "Daytona treats block-all as authoritative over stored allowlists. Clear
+ * stale allowlist fields when reopening public access or switching between
+ * domain and CIDR allowlists."
+ */
+async function mapNetworkPolicyForUpdate(
+  network?: SandboxCreateOptions["network"],
+  resolveHostname: HostnameResolver = defaultResolveHostname
+): Promise<DaytonaNetworkUpdateParams> {
+  const params = await mapNetworkPolicy(network, resolveHostname);
+  if (params.networkAllowList !== undefined) {
+    // A CIDR allowlist: state it, and clear any domain allowlist it replaces.
+    return {
+      networkBlockAll: false,
+      networkAllowList: params.networkAllowList,
+      domainAllowList: "",
+    };
+  }
+  // Block-all, or open. Either way no allowlist is in force, so both are
+  // cleared — under block-all because a stale list must not outlive the seal
+  // if Daytona's precedence ever changes, and under open because a leftover
+  // list would narrow a policy that says "unrestricted".
+  return {
+    networkBlockAll: params.networkBlockAll === true,
+    networkAllowList: "",
+    domainAllowList: "",
+  };
+}
+
+/**
+ * Does this refusal mean "your organization may not set sandbox network
+ * policy" rather than "this request was malformed"?
+ *
+ * Deliberately narrow. A bare 403 is NOT enough on its own: the same status
+ * covers a revoked API key, and calling that a tier problem would send a
+ * caller to the billing page over a credential. The verdict needs the status
+ * AND language naming the tier/plan/permission for this specific capability —
+ * or, without a status, an unmistakable phrase. Anything else stays
+ * unclassified and propagates verbatim, which is the honest outcome for a
+ * refusal we do not recognize.
+ */
+function isNetworkPolicyTierRefusal(err: unknown): boolean {
+  const status = httpStatusOf(err);
+  const message = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  const namesNetworkPolicy =
+    message.includes("network policy") ||
+    message.includes("network settings") ||
+    message.includes("network configuration");
+  const namesEntitlement =
+    message.includes("tier") ||
+    message.includes("plan") ||
+    message.includes("upgrade") ||
+    message.includes("not allowed") ||
+    message.includes("not permitted") ||
+    message.includes("cannot override");
+  if ((status === 402 || status === 403) && (namesEntitlement || namesNetworkPolicy)) return true;
+  return namesNetworkPolicy && namesEntitlement;
 }
 
 // ============================================================
@@ -1325,6 +1419,8 @@ export interface SandboxInstance {
   getInfo(): Promise<SandboxInfo>;
   kill(): Promise<void>;
   pause(): Promise<void>;
+  /** Replace the outbound network policy of the running sandbox. */
+  updateNetwork(network: SandboxCreateOptions["network"]): Promise<void>;
 }
 
 /** Sandbox lifecycle management */
@@ -2314,6 +2410,53 @@ class DaytonaSandboxImpl implements SandboxInstance {
     return toSandboxInfo(this.sandbox);
   }
 
+  /**
+   * Replace the running sandbox's outbound policy — Daytona's
+   * `sandbox.updateNetworkSettings`, which "maps to the same mechanism as
+   * creating a sandbox with `networkBlockAll` / `networkAllowList` /
+   * `domainAllowList`: the runner applies iptables rules to the sandbox
+   * container" (@daytonaio/sdk@0.203.0 Sandbox.d.ts:495-511).
+   *
+   * TIER GATE, surfaced and never swallowed. Daytona allows sandbox-level
+   * network policy only on the higher plan tiers — "Organizations on Tier 1 or
+   * Tier 2 cannot override network policy at the sandbox level". Upstream does
+   * not model this: its validation passes and the runtime call then fails, so
+   * a task that declares a phase switch looks supported right up to the moment
+   * the agent is already running. Here the refusal becomes
+   * DaytonaNetworkPolicyError("org-tier-forbidden") — a typed answer a caller
+   * can act on, and never a quiet return, because a switch that silently does
+   * nothing leaves the agent running under the WRONG policy with no signal
+   * that anything went wrong.
+   *
+   * Refusals that do not match the tier signature propagate untouched: a
+   * revoked key and a plan limit both come back 403, and mislabelling the
+   * first as the second sends the caller to the billing page over a
+   * credential.
+   *
+   * DNS-PIN CAVEAT INHERITED FROM CREATE: hostname destinations are resolved
+   * to IPv4 /32s HERE, at switch time, so a switch to a hostname allowlist
+   * pins whatever DNS answers at that moment. A caller that pinned a host at
+   * create and needs the SAME addresses after the switch must pass the
+   * addresses, not the name — two lookups can disagree.
+   */
+  async updateNetwork(network: SandboxCreateOptions["network"]): Promise<void> {
+    const params = await mapNetworkPolicyForUpdate(network);
+    try {
+      await this.sandbox.updateNetworkSettings(params);
+    } catch (error) {
+      if (isNetworkPolicyTierRefusal(error)) {
+        throw new DaytonaNetworkPolicyError(
+          "org-tier-forbidden",
+          "Daytona refused to change this sandbox's network policy: organizations on Tier 1 or " +
+            "Tier 2 cannot override network policy at the sandbox level. Raise the organization's " +
+            "tier, or run this workload on a provider whose plan permits runtime policy changes " +
+            `(underlying error: ${error instanceof Error ? error.message : String(error)}).`
+        );
+      }
+      throw error;
+    }
+  }
+
   async kill(): Promise<void> {
     // Evidence: Daytona SDK sandbox.delete()
     await this.sandbox.delete();
@@ -2938,6 +3081,8 @@ export function createDaytonaProvider(config: DaytonaConfig = {}): SandboxProvid
 export const _testWrapCommand = wrapCommand;
 export const _testWithInBoxTimeout = withInBoxTimeout;
 export const _testMapNetworkPolicy = mapNetworkPolicy;
+export const _testMapNetworkPolicyForUpdate = mapNetworkPolicyForUpdate;
+export const _testIsNetworkPolicyTierRefusal = isNetworkPolicyTierRefusal;
 export const _testImageRegistryHost = imageRegistryHost;
 export const _testToSandboxInfo = toSandboxInfo;
 export const _testDaytonaStateToEvolveState = daytonaStateToEvolveState;

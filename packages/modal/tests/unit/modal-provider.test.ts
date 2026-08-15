@@ -31,6 +31,8 @@ import {
   _testWrapCommand,
   _testImageMap,
   _testMapNetworkPolicy,
+  _testDynamicNetworkPolicyParams,
+  _testRequiresDynamicNetwork,
   _testResolveImageRegistry,
   _testBuildSandboxInfo,
   _testValidateTimeout,
@@ -1291,6 +1293,128 @@ async function testFilesWriteBatchIsOneArchiveUpload(): Promise<void> {
 // RUNNER
 // =============================================================================
 
+// =============================================================================
+// [12] Dynamic network policy — the switchable-shape create and the runtime call
+// =============================================================================
+
+async function testDynamicNetworkSealedBoxStaysSwitchable(): Promise<void> {
+  console.log("\n[12a] a sealed policy maps to EMPTY allowlists, not blockNetwork");
+
+  // This is the whole reason phaseNetworkPolicies exists. Modal refuses to
+  // combine blockNetwork with either allowlist, so a box created the blunt way
+  // has nothing to widen later.
+  assertEqual(
+    _testMapNetworkPolicy({ outbound: "blocked" }),
+    { blockNetwork: true },
+    "create path (no phases declared): blocked with no destinations is blockNetwork"
+  );
+  assertEqual(
+    _testDynamicNetworkPolicyParams({ outbound: "blocked" }),
+    { outboundCidrAllowlist: [], outboundDomainAllowlist: [] },
+    "switchable path: the same seal expressed as two empty allowlists"
+  );
+  assert(
+    !("blockNetwork" in _testDynamicNetworkPolicyParams({ outbound: "blocked" })),
+    "and carries no blockNetwork, which would make the box unswitchable"
+  );
+}
+
+async function testDynamicNetworkStatesBothDimensions(): Promise<void> {
+  console.log("\n[12b] both allowlists are always stated — an omitted one means ALLOW ALL");
+
+  const open = _testDynamicNetworkPolicyParams({ outbound: "open" });
+  assertEqual(
+    open,
+    { outboundCidrAllowlist: ["0.0.0.0/0"], outboundDomainAllowlist: ["*"] },
+    "open egress is Modal's two wildcards, the only runtime way to say unrestricted"
+  );
+
+  const mixed = _testDynamicNetworkPolicyParams({
+    outbound: "blocked",
+    allowedDestinations: ["pypi.org", "10.1.2.0/24"],
+  });
+  assertEqual(
+    mixed,
+    { outboundCidrAllowlist: ["10.1.2.0/24"], outboundDomainAllowlist: ["pypi.org"] },
+    "an allowlist splits into CIDRs and domains, same classification as create"
+  );
+
+  // The dangerous shape: a policy with ONLY domains must still send an empty
+  // CIDR list, or Modal reads the missing dimension as "allow all CIDRs".
+  const domainsOnly = _testDynamicNetworkPolicyParams({
+    outbound: "blocked",
+    allowedDestinations: ["pypi.org"],
+  });
+  assertEqual(
+    domainsOnly.outboundCidrAllowlist,
+    [],
+    "a domains-only policy still states an EMPTY CIDR list rather than omitting it"
+  );
+}
+
+async function testDynamicNetworkReusesCreateClassification(): Promise<void> {
+  console.log("\n[12c] the runtime mapper refuses exactly what create refuses");
+
+  // A second copy of the destination classification is how an update ends up
+  // admitting what the create rejected, so the two must share one code path.
+  let threw = false;
+  try {
+    _testDynamicNetworkPolicyParams({
+      outbound: "blocked",
+      allowedDestinations: ["example.com:8080"],
+    });
+  } catch (err) {
+    threw = err instanceof ModalNetworkPolicyError;
+  }
+  assert(threw, "a port-carrying destination throws ModalNetworkPolicyError on the update path too");
+
+  let openThrew = false;
+  try {
+    _testDynamicNetworkPolicyParams({ outbound: "open", allowedDestinations: ["pypi.org"] });
+  } catch {
+    openThrew = true;
+  }
+  assert(openThrew, "destinations under an open policy are refused, as at create");
+}
+
+async function testRequiresDynamicNetworkComparesMeaning(): Promise<void> {
+  console.log("\n[12d] the switchable shape is armed only when a phase really differs");
+
+  const sealed = { outbound: "blocked" as const };
+  assert(
+    !_testRequiresDynamicNetwork(sealed, undefined),
+    "no declared phases: nothing to arm"
+  );
+  assert(
+    !_testRequiresDynamicNetwork(sealed, [{ outbound: "blocked" }]),
+    "a phase identical to the boot policy: still nothing to arm"
+  );
+  assert(
+    _testRequiresDynamicNetwork(sealed, [{ outbound: "open" }]),
+    "a phase that differs arms the switchable shape"
+  );
+  assert(
+    _testRequiresDynamicNetwork(sealed, [sealed, { outbound: "open" }]),
+    "one differing phase among several is enough"
+  );
+
+  // Order is not meaning — the provider applies a set — so a reordered list
+  // must not arm dynamic mode and silently change the create shape.
+  const hosts = { outbound: "blocked" as const, allowedDestinations: ["a.example", "b.example"] };
+  assert(
+    !_testRequiresDynamicNetwork(hosts, [
+      { outbound: "blocked", allowedDestinations: ["b.example", "a.example"] },
+    ]),
+    "the same destinations in a different order are the same policy"
+  );
+  assert(
+    _testRequiresDynamicNetwork(hosts, [
+      { outbound: "blocked", allowedDestinations: ["a.example"] },
+    ]),
+    "but a genuinely narrower phase does differ"
+  );
+}
+
 const tests = [
   // [1] wrapCommand pure function
   testWrapCommandRootPassthrough,
@@ -1363,6 +1487,11 @@ const tests = [
   testFilesWriteStreamExactMultipleHasNoEmptyTail,
   testFilesWriteStreamStillSplitsOversizedChunks,
   testFilesWriteBatchIsOneArchiveUpload,
+  // [12] dynamic network policy switching
+  testDynamicNetworkSealedBoxStaysSwitchable,
+  testDynamicNetworkStatesBothDimensions,
+  testDynamicNetworkReusesCreateClassification,
+  testRequiresDynamicNetworkComparesMeaning,
 ];
 
 (async () => {

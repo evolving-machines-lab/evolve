@@ -128,6 +128,18 @@ export interface SandboxNetworkPolicy {
   allowedDestinations?: string[];
 }
 
+/**
+ * Whether two policies mean the same egress, so a caller can skip a switch
+ * that would change nothing. Destination ORDER is not meaning — the providers
+ * all apply a set — so it is normalized away; duplicates likewise.
+ */
+export function sameNetworkPolicy(a: SandboxNetworkPolicy, b: SandboxNetworkPolicy): boolean {
+  if (a.outbound !== b.outbound) return false;
+  const norm = (p: SandboxNetworkPolicy): string =>
+    [...new Set(p.allowedDestinations ?? [])].sort().join(",");
+  return norm(a) === norm(b);
+}
+
 /** Options for creating a sandbox */
 export interface SandboxCreateOptions {
   /** Sandbox image/template ID. Provider uses its default if not specified. */
@@ -172,6 +184,31 @@ export interface SandboxCreateOptions {
   resources?: { cpu?: number; memory?: number; disk?: number; gpu?: number; gpuTypes?: string[] };
   /** Providers must reject policies they cannot enforce; never silently ignore them. */
   network?: SandboxNetworkPolicy;
+  /**
+   * Every policy `updateNetwork()` may later be asked for on this sandbox —
+   * declared UP FRONT because on some providers the create call decides
+   * whether switching is possible at all.
+   *
+   * Modal is the reason this exists and not merely a convenience. Its create
+   * call takes EITHER `blockNetwork: true` OR the two allowlists — the vendor
+   * types say of each allowlist "Cannot be used with blockNetwork"
+   * (modal@0.9.0 index.d.ts:7682-7686) — so a box created the blunt way for a
+   * sealed first phase cannot be handed an allowlist later. Given this list
+   * the adapter creates the box in the switchable shape instead: empty
+   * allowlists, which Modal documents as "an empty array blocks all egress for
+   * that dimension" (index.d.ts:7915-7916) — the same zero egress, still
+   * switchable.
+   *
+   * Providers that can switch freely (daytona, e2b) may ignore it; it changes
+   * no create-time behaviour there. It is NOT a permission grant and NOT a
+   * policy: `network` alone still decides what the box may reach at boot.
+   *
+   * Upstream shape: harbor BaseEnvironment's `phase_network_policies`
+   * (environments/base.py:832-836 validates the baseline and every phase
+   * policy up front; modal.py:1040-1047 `_requires_dynamic_network` is the
+   * same "do the phases differ from the start policy" question this answers).
+   */
+  phaseNetworkPolicies?: SandboxNetworkPolicy[];
   /**
    * Run all commands and file operations as this user.
    * Providers must reject it if they cannot enforce it, never silently ignore it.
@@ -303,6 +340,41 @@ export interface SandboxInstance {
   isRunning?(): Promise<boolean>;
   /** Sandbox metadata and timing. */
   getInfo?(): Promise<SandboxInfo>;
+
+  /**
+   * Replace the sandbox's outbound network policy WITHOUT restarting it, so a
+   * long-lived box can run one phase sealed and the next with egress.
+   *
+   * `network` takes exactly what `create({ network })` takes and MUST be
+   * mapped by the same code the provider's own create() uses — an update that
+   * maps a policy differently from the create it replaces is a silent security
+   * failure, not a cosmetic one: the box would end up with egress nobody
+   * declared. (Same law as `prepareImage`, for the same reason.)
+   *
+   * REPLACE, NOT MERGE. The new policy is the whole policy; whatever the box
+   * could reach before and this policy omits becomes unreachable. All three
+   * first-party providers document their call this way, and callers that want
+   * the previous destinations back must pass them again.
+   *
+   * Established connections the new policy forbids may be cut. Modal states
+   * this outright ("Established connections that the new policy no longer
+   * permits are terminated", modal@0.9.0 index.d.ts:8037); treat it as the
+   * rule everywhere rather than a Modal quirk.
+   *
+   * OPTIONAL, on the same terms as `list`/`prepareImage`: the SDK never calls
+   * it, so requiring it would break third-party providers passed to
+   * .withSandbox(). Declared here so every provider that offers it offers the
+   * SAME signature, and so callers can feature-detect it in a typed way rather
+   * than casting. A provider that cannot switch at all simply omits it; a
+   * provider that CAN switch but is refused at runtime (daytona's org tier)
+   * throws its own typed error rather than returning quietly — a policy switch
+   * that silently does nothing is the one outcome no caller can detect.
+   *
+   * Upstream: harbor BaseEnvironment.set_network_policy /
+   * `_apply_network_policy` (environments/base.py:838-853), gated there by the
+   * `dynamic_network_policy` capability flag (environments/capabilities.py:43).
+   */
+  updateNetwork?(network: SandboxNetworkPolicy): Promise<void>;
 }
 
 /** Sandbox lifecycle management - providers implement this */
