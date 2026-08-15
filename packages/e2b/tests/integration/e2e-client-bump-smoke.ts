@@ -14,13 +14,22 @@
  * a call this file has not caught up with.
  *
  * Plus the one thing the bump exists FOR: Sandbox.updateNetwork, which landed
- * in 2.26.0 and is absent from the pinned 2.10.3. It is exercised through the
- * vendor client directly, because the adapter method that will call it lives
- * on the dynamic-network branch — this proves the capability is really there
- * at this version, so the two branches compose.
+ * in 2.25.0 (e2b's release notes for that version) and is absent from the
+ * pinned 2.10.3. Now present in the INSTALLED client — node_modules/e2b/dist/
+ * index.d.ts:9957, documented at :8981 as "Replaces the current egress
+ * configuration atomically — fields that are omitted are cleared on the
+ * server." It is exercised through the vendor client here because the adapter
+ * method that calls it lives on the dynamic-network branch; that branch's own
+ * adapter-level E2E covers the wrapper.
  *
  * LIVE, and it costs a real E2B sandbox — run it deliberately, not in CI:
  *   E2B_API_KEY=... npx tsx tests/integration/e2e-client-bump-smoke.ts
+ *
+ * Last run 2026-08-15 against e2b 2.39.0: every check passed. The whole
+ * adapter surface behaved unchanged, and the unlock proved out both ways —
+ * sealed BLOCKED -> updateNetwork opens -> REACHABLE -> closes -> BLOCKED on
+ * one running box, plus the allowlist shape admitting pypi.org while blocking
+ * example.com.
  */
 import { Sandbox as E2BSandbox } from "@e2b/code-interpreter";
 import { createE2BProvider } from "../../src/index.ts";
