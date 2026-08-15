@@ -18,6 +18,10 @@
  *   8. ModalFiles — chown to sandbox user, skipped for root
  *   8x. ModalFiles.read() — text-vs-binary decided by content (NUL sniff +
  *      strict UTF-8), never by extension; byte-exact on both branches
+ *   11. ModalFiles uploads — message SIZE, the only thing that moves upload
+ *      wall-clock time: every stdin write is one awaited round trip, so the
+ *      64KiB default that the SDK's own copyFromLocal() inherits costs 2880
+ *      of them on a 180MiB bundle (311.6s measured, versus 30.1s at 8MiB)
  *
  * Usage:
  *   npx tsx tests/unit/modal-provider.test.ts
@@ -655,6 +659,7 @@ function createMockModalSandbox(opts?: {
 }) {
   const execCalls: ExecCall[] = [];
   const stdinWrites: Buffer[] = [];
+  const nativeCopyCalls: Array<{ localPath: string; remotePath: string }> = [];
   const stdoutText = opts?.stdout ?? "";
   const stderrText = opts?.stderr ?? "";
   const exitCode = opts?.exitCode ?? 0;
@@ -671,6 +676,13 @@ function createMockModalSandbox(opts?: {
 
   const sandbox = {
     sandboxId: "sb-mock-1",
+    // The SDK's own path-based copy. Stubbed here so a test can prove the
+    // provider deliberately does NOT route uploads through it — see [11b].
+    filesystem: {
+      copyFromLocal: async (localPath: string, remotePath: string) => {
+        nativeCopyCalls.push({ localPath, remotePath });
+      },
+    },
     exec: async (args: string[], params?: Record<string, unknown>) => {
       execCalls.push({ args, params });
       return {
@@ -688,7 +700,7 @@ function createMockModalSandbox(opts?: {
       };
     },
   };
-  return { sandbox, execCalls, stdinWrites };
+  return { sandbox, execCalls, stdinWrites, nativeCopyCalls };
 }
 
 async function testCommandsRunAsUser(): Promise<void> {
@@ -1024,6 +1036,150 @@ async function testDefaultImageNameIsVersioned(): Promise<void> {
 }
 
 // =============================================================================
+// [11] ModalFiles — upload message SIZE (what actually costs wall-clock time)
+//
+// Every stdin write is one awaited unary TaskExecStdinWrite round trip, so a
+// 180MiB bundle sent in Node's default 64KiB reads is 2880 sequential round
+// trips. Measured against live sandboxes: 64KiB 311.6s, the SDK's own
+// filesystem.copyFromLocal() 308.7s (it streams with a bare
+// createReadStream(), so it inherits the same 64KiB default), 4MiB 36.2s,
+// 8MiB 30.1s, 16MiB 31.4s. These tests pin the chunk size, because the cost
+// is invisible in every functional assertion — a 64KiB upload is byte-correct
+// and slow.
+// =============================================================================
+
+/** Run `fn` against a patterned file on disk, removed afterwards. */
+async function withTempFile(
+  size: number,
+  fn: (path: string, contents: Buffer) => Promise<void>
+): Promise<void> {
+  const { writeFileSync, rmSync, mkdtempSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+
+  const dir = mkdtempSync(join(tmpdir(), "modal-upload-"));
+  const path = join(dir, "bundle.bin");
+  const contents = patternedBuffer(size);
+  writeFileSync(path, contents);
+  try {
+    await fn(path, contents);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+async function testFilesWriteFromPathUsesChunkSizedMessages(): Promise<void> {
+  console.log("\n[11a] ModalFiles.writeFromPath() - reads the file in 8MiB messages, not 64KiB ones");
+
+  const size = 2 * MODAL_STDIN_CHUNK_BYTES + 12345; // 2 full chunks + ragged tail
+  await withTempFile(size, async (path, contents) => {
+    const { sandbox, stdinWrites } = createMockModalSandbox();
+    const files = new ModalFiles(sandbox as any, "root");
+
+    await files.writeFromPath("/workspace/bundle.bin", path);
+
+    assertEqual(stdinWrites.length, 3, "3 messages, not the 259 a 64KiB read would produce");
+    assertEqual(stdinWrites[0].length, MODAL_STDIN_CHUNK_BYTES, "Chunk 1 is exactly 8MiB");
+    assertEqual(stdinWrites[1].length, MODAL_STDIN_CHUNK_BYTES, "Chunk 2 is exactly 8MiB");
+    assertEqual(stdinWrites[2].length, 12345, "Tail chunk carries the remainder");
+    assert(Buffer.concat(stdinWrites).equals(contents), "Uploaded bytes are identical to the file on disk");
+  });
+}
+
+async function testFilesWriteFromPathAvoidsNativeCopy(): Promise<void> {
+  console.log("\n[11b] ModalFiles.writeFromPath() - streams by path WITHOUT the SDK's copyFromLocal");
+
+  await withTempFile(1024, async (path) => {
+    const { sandbox, execCalls, stdinWrites, nativeCopyCalls } = createMockModalSandbox();
+    const files = new ModalFiles(sandbox as any, "root");
+
+    await files.writeFromPath("/workspace/small.bin", path);
+
+    // Not a style preference: modal@0.9.0's copyFromLocal() streams the local
+    // file with a bare createReadStream() (Node's 64KiB default) and takes no
+    // chunk-size argument, so routing through it would cost 2880 round trips
+    // on a 180MiB bundle — 308.7s measured, versus 30.1s here. Modal's own
+    // Python SDK reads 16MiB per chunk for the same call.
+    assertEqual(nativeCopyCalls.length, 0, "Native copyFromLocal is deliberately not used");
+    const sink = execCalls.find((c) => c.args[0] === "bash");
+    assert(sink !== undefined, "Upload rides an exec stdin sink we control the chunking of");
+    assertEqual(sink?.params?.mode, "binary", "Sink is opened in binary mode so bytes survive");
+    assertEqual(stdinWrites.length, 1, "A small file is one message");
+  });
+}
+
+async function testFilesWriteStreamCoalescesSmallChunks(): Promise<void> {
+  console.log("\n[11c] ModalFiles.writeStream() - a small-chunk source is coalesced, not forwarded");
+
+  const piece = 64 * 1024; // what an fs read stream yields by default
+  const pieces = 200; // 12.5MiB total
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (let i = 0; i < pieces; i++) controller.enqueue(patternedBuffer(piece));
+      controller.close();
+    },
+  });
+
+  const { sandbox, stdinWrites } = createMockModalSandbox();
+  const files = new ModalFiles(sandbox as any, "root");
+  await files.writeStream("/workspace/streamed.bin", source);
+
+  assertEqual(stdinWrites.length, 2, "200 small pieces become 2 messages (8MiB + remainder)");
+  assertEqual(stdinWrites[0].length, MODAL_STDIN_CHUNK_BYTES, "First message fills a whole chunk");
+  const total = stdinWrites.reduce((n, c) => n + c.length, 0);
+  assertEqual(total, piece * pieces, "No bytes lost or duplicated while coalescing");
+}
+
+async function testFilesWriteStreamStillSplitsOversizedChunks(): Promise<void> {
+  console.log("\n[11d] ModalFiles.writeStream() - one oversized piece is still split under the cap");
+
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(patternedBuffer(2 * MODAL_STDIN_CHUNK_BYTES + 7)); // single 16MiB+ piece
+      controller.close();
+    },
+  });
+
+  const { sandbox, stdinWrites } = createMockModalSandbox();
+  const files = new ModalFiles(sandbox as any, "root");
+  await files.writeStream("/workspace/big-piece.bin", source);
+
+  assertEqual(stdinWrites.length, 3, "Oversized piece split into 8MiB messages plus a tail");
+  assert(
+    stdinWrites.every((c) => c.length <= MODAL_STDIN_CHUNK_BYTES),
+    "No message exceeds the chunk size, so none can reach Modal's 100MiB cap"
+  );
+}
+
+async function testFilesWriteBatchIsOneArchiveUpload(): Promise<void> {
+  console.log("\n[11e] ModalFiles.writeBatch() - one archive, one untar, regardless of file count");
+
+  const files_ = Array.from({ length: 40 }, (_, i) => ({
+    path: `/workspace/f${i}.bin`,
+    data: patternedBuffer(512 * 1024),
+  }));
+
+  const { sandbox, execCalls, stdinWrites, nativeCopyCalls } = createMockModalSandbox();
+  const files = new ModalFiles(sandbox as any, "root");
+  await files.writeBatch(files_);
+
+  // Harbor packs a directory into one tarball for exactly this reason:
+  // per-file SDK transfers "have been observed to silently skip files on
+  // large multi-file uploads" (REFERENCES/Harbor/src/harbor/environments/
+  // modal.py, _sdk_upload_dir).
+  const tarExecs = execCalls.filter((c) => c.args[0] === "tar");
+  assertEqual(tarExecs.length, 1, "40 files ride a single tar exec, not 40 transfers");
+  assertEqual(tarExecs[0].args, ["tar", "-xf", "-", "-C", "/"], "Remote side untars from stdin");
+  assertEqual(nativeCopyCalls.length, 0, "No per-file native copy");
+  assert(
+    stdinWrites.every((c) => c.length <= MODAL_STDIN_CHUNK_BYTES),
+    "The archive is delivered in chunk-sized messages"
+  );
+  const total = stdinWrites.reduce((n, c) => n + c.length, 0);
+  assert(total >= 40 * 512 * 1024, "Every file's bytes reached the archive");
+}
+
+// =============================================================================
 // RUNNER
 // =============================================================================
 
@@ -1091,6 +1247,12 @@ const tests = [
   // [10] versioned image pipeline
   testImageMapUsesVersionedTag,
   testDefaultImageNameIsVersioned,
+  // [11] ModalFiles upload message size (round trips, not correctness)
+  testFilesWriteFromPathUsesChunkSizedMessages,
+  testFilesWriteFromPathAvoidsNativeCopy,
+  testFilesWriteStreamCoalescesSmallChunks,
+  testFilesWriteStreamStillSplitsOversizedChunks,
+  testFilesWriteBatchIsOneArchiveUpload,
 ];
 
 (async () => {

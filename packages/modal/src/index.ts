@@ -84,6 +84,26 @@ export const MODAL_MAX_LIFETIME_MS = 24 * 60 * 60 * 1000;
 export const MODAL_STDIN_CHUNK_BYTES = 8 * 1024 * 1024;
 
 /**
+ * Iterate a web ReadableStream. Node's implementation is async-iterable, but
+ * the DOM lib type it is declared with is not, so the reader is driven by hand
+ * rather than asserting the stream into an AsyncIterable it may not be.
+ */
+async function* streamToAsyncIterable(
+  stream: ReadableStream<Uint8Array>
+): AsyncIterable<Uint8Array> {
+  const reader = stream.getReader();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) yield value;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+/**
  * Default sandbox user. Modal runs everything as root (ignoring the image's
  * USER directive), but agent CLIs refuse certain operations as root, so
  * commands and file ownership default to the image's "user" account.
@@ -966,6 +986,56 @@ export class ModalFiles implements SandboxFiles {
     }
   }
 
+  /**
+   * Stream a byte source into a process's stdin, buffering it into
+   * MODAL_STDIN_CHUNK_BYTES writes rather than forwarding the source's own
+   * chunk size.
+   *
+   * WHY this exists rather than the SDK's own file copy. Modal documents
+   * "convenience APIs for streaming file copies in both directions"
+   * (https://modal.com/docs/guide/sandbox-files), but the JS
+   * `filesystem.copyFromLocal()` in modal@0.9.0 streams the local file with
+   * a bare `createReadStream(localPath)` — Node's default 64KiB highWaterMark
+   * — and awaits one unary TaskExecStdinWrite per chunk. Modal's own Python
+   * SDK reads TASK_COMMAND_ROUTER_MAX_BUFFER_SIZE (16MiB) per chunk for the
+   * same operation, so the 64KiB default is a JS-side omission, not a
+   * transport limit. Since the size is not a parameter of copyFromLocal(),
+   * the native call cannot be made to send larger messages.
+   *
+   * Measured, 180MiB payload: 64KiB 311.6s (2880 messages), native
+   * copyFromLocal 308.7s, 4MiB 36.2s, 8MiB 30.1s, 16MiB 31.4s. The upload is
+   * round-trip bound until roughly 4MiB and throughput bound after it, so the
+   * fix is message SIZE rather than which sink receives the bytes — the
+   * exec-stdin sink stays and the chunking changes.
+   *
+   * Peak memory stays at one chunk plus the source's own, never the whole
+   * payload: bundles run to hundreds of MB while workers hold many trials in
+   * a small heap.
+   */
+  private async writeStdinCoalesced(
+    stdin: { writeBytes(data: Uint8Array): Promise<void> },
+    source: AsyncIterable<Uint8Array>
+  ): Promise<void> {
+    let pending: Uint8Array[] = [];
+    let pendingBytes = 0;
+
+    const flush = async (): Promise<void> => {
+      if (pendingBytes === 0) return;
+      const merged =
+        pending.length === 1 ? pending[0] : Buffer.concat(pending, pendingBytes);
+      pending = [];
+      pendingBytes = 0;
+      await this.writeStdinChunked(stdin, merged);
+    };
+
+    for await (const chunk of source) {
+      pending.push(chunk);
+      pendingBytes += chunk.length;
+      if (pendingBytes >= MODAL_STDIN_CHUNK_BYTES) await flush();
+    }
+    await flush();
+  }
+
   async read(path: string): Promise<string | Uint8Array> {
     // Always read raw bytes and decide text-vs-binary from CONTENT, never
     // from the file's name: the SandboxFiles contract is "read returns
@@ -1013,7 +1083,6 @@ export class ModalFiles implements SandboxFiles {
 
   async writeBatch(files: Array<{ path: string; data: string | Buffer | ArrayBuffer | Uint8Array }>): Promise<void> {
     const tarPack = pack();
-    const chunks: Buffer[] = [];
 
     // Collect unique parent directories for chown
     const dirs = new Set<string>();
@@ -1031,14 +1100,12 @@ export class ModalFiles implements SandboxFiles {
     }
     tarPack.finalize();
 
-    for await (const chunk of tarPack) {
-      chunks.push(Buffer.from(chunk));
-    }
-    const tarBuffer = Buffer.concat(chunks);
-
     const p = await this.sandbox.exec(["tar", "-xf", "-", "-C", "/"], { mode: "binary" });
-    // Chunked writeBytes(): one gRPC message per chunk, under Modal's 100MiB cap
-    await this.writeStdinChunked(p.stdin, new Uint8Array(tarBuffer));
+    // The archive streams into tar's stdin in MODAL_STDIN_CHUNK_BYTES writes
+    // (one gRPC message each, under Modal's 100MiB cap) instead of being
+    // concatenated into one Buffer first: tar-stream emits the archive as it
+    // is packed, so nothing needs to hold every file at once.
+    await this.writeStdinCoalesced(p.stdin, tarPack as AsyncIterable<Uint8Array>);
     const writer = p.stdin.getWriter();
     await writer.close();
     await p.wait();
@@ -1116,19 +1183,12 @@ export class ModalFiles implements SandboxFiles {
     const escapedPath = path.replace(/'/g, "'\\''");
     const p = await this.sandbox.exec(["bash", "-c", `cat > '${escapedPath}'`], { mode: "binary" });
 
-    const reader = stream.getReader();
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        // Split per chunk, not just per call: a source yielding >100MiB in one
-        // chunk would otherwise blow Modal's gRPC message cap. fs read streams
-        // (what writeFromPath feeds in) stay at 64KiB, so this is a no-op there.
-        await this.writeStdinChunked(p.stdin, value);
-      }
-    } finally {
-      reader.releaseLock();
-    }
+    // Coalesced, not forwarded chunk-for-chunk: a source that yields small
+    // pieces (an fs stream's 64KiB default is the common one) would otherwise
+    // cost one awaited gRPC round trip each. writeStdinCoalesced also splits
+    // anything oversized, so a source yielding >100MiB in one piece still
+    // cannot blow Modal's gRPC message cap.
+    await this.writeStdinCoalesced(p.stdin, streamToAsyncIterable(stream));
 
     const writer = p.stdin.getWriter();
     await writer.close();
@@ -1142,12 +1202,19 @@ export class ModalFiles implements SandboxFiles {
    * Upload a local file by PATH, chunk by chunk into the same `cat >` sink
    * writeStream() uses — so peak memory is one chunk rather than the whole
    * file, which is what makes a large artifact safe under concurrency.
+   *
+   * The read is sized to MODAL_STDIN_CHUNK_BYTES instead of Node's 64KiB
+   * default because every chunk costs one awaited round trip to Modal: the
+   * same 180MiB bundle took 311.6s at 64KiB and 30.1s at 8MiB (measured, one
+   * sandbox, same file). writeStdinCoalesced would batch a small-chunk stream
+   * anyway; asking the filesystem for whole chunks just avoids assembling
+   * them from 128 pieces.
    */
   async writeFromPath(sandboxPath: string, localPath: string): Promise<void> {
     const { createReadStream } = await import("node:fs");
     const { Readable } = await import("node:stream");
     const web = Readable.toWeb(
-      createReadStream(localPath)
+      createReadStream(localPath, { highWaterMark: MODAL_STDIN_CHUNK_BYTES })
     ) as ReadableStream<Uint8Array>;
     await this.writeStream(sandboxPath, web);
   }
