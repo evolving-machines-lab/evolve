@@ -73,7 +73,8 @@ async function runTest(
 
   const evolve = new Evolve()
     .withAgent(agentConfig)
-    .withSandbox(sandbox);
+    .withSandbox(sandbox)
+    .withSandboxCreateOptions(e2eSandboxOptions("25-opencode-openrouter"));
 
   const contentEvents: OutputEvent[] = [];
   evolve.on("content", (e: OutputEvent) => contentEvents.push(e));

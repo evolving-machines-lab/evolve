@@ -84,7 +84,8 @@ async function main(): Promise<void> {
       ...kimi,
       apiKey: env.EVOLVE_API_KEY,
     })
-    .withSandbox(getSandboxProvider());
+    .withSandbox(getSandboxProvider())
+    .withSandboxCreateOptions(e2eSandboxOptions("24-kimi-gateway-hello"));
 
   const contentEvents: OutputEvent[] = [];
   const lifecycleEvents: LifecycleEvent[] = [];
