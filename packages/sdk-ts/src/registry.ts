@@ -548,18 +548,22 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     baseUrlEnv: "GOOGLE_GEMINI_BASE_URL",
     // Roster policy (owner, 2026-08-15): only the latest flash, latest
     // flash-lite, and latest pro — never the whole version sequence.
-    // gemini-3.7-flash is the default (launched 2026-08-13; model id verified
-    // against https://ai.google.dev/gemini-api/docs/models/gemini-3.7-flash —
-    // stable id, no preview suffix). gemini-3.6-flash was dropped from the
-    // roster: gemini CLI 0.55.1 silently served gemini-3.5-flash whenever the
-    // arm asked for 3.6-flash, so that arm could never score — the hosted
-    // wrong-model integrity guard refused every substituted trial (D1,
-    // acceptance campaign 2026-08-15, trial e5d0788c). gemini-3.5-flash-lite
-    // remains live-proven end to end under its own name (trial e303b985:
-    // SCORED, metered, ATIF agent block records the served model).
-    defaultModel: "gemini-3.7-flash",
+    // "Latest" means the latest the STABLE gemini CLI actually serves, not
+    // the latest model Google has launched. Live probe 2026-08-15: requesting
+    // gemini-3.7-flash through the stable CLI (0.55.1) served gemini-3.5-flash
+    // — confirmed by the CLI's own session stats and by the gateway spend log.
+    // 0.55.1 predates 3.7-flash's launch; only nightlies know the model. Same
+    // failure mode that killed the 3.6-flash arm (silent substitution, hosted
+    // wrong-model integrity guard refuses every trial). gemini-3.5-flash is
+    // therefore the default. gemini-3.7-flash pending stable CLI support
+    // (0.55.1 predates the model; nightlies only) — gateway already carries
+    // the priced entry; flip the default when the stable release lands
+    // (2026-08-15). gemini-3.5-flash-lite remains live-proven end to end
+    // under its own name (trial e303b985: SCORED, metered, ATIF agent block
+    // records the served model).
+    defaultModel: "gemini-3.5-flash",
     models: [
-      { alias: "gemini-3.7-flash", modelId: "gemini-3.7-flash", description: "Newest stable workhorse: coding + agentic planning" },
+      { alias: "gemini-3.5-flash", modelId: "gemini-3.5-flash", description: "Latest flash the stable gemini CLI serves: coding + agentic planning" },
       { alias: "gemini-3.5-flash-lite", modelId: "gemini-3.5-flash-lite", description: "Most cost-effective 3.5-class model" },
       { alias: "gemini-3.1-pro-preview", modelId: "gemini-3.1-pro-preview", description: "Latest pro, complex agentic + coding" },
     ],
