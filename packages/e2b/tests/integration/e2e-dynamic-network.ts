@@ -58,6 +58,37 @@ function expect(condition: boolean, message: string): void {
   }
 }
 
+/**
+ * Unique to THIS run, stamped into the box's metadata so the sweep below can
+ * tell "my box is gone" from "someone else's box is running".
+ */
+const RUN_ID = `e2b-dynnet-${Date.now()}`;
+
+/**
+ * Kill the box and REFUSE TO BE QUIET ABOUT FAILING.
+ *
+ * `kill().catch(e => console.log(e))` is how a live sandbox survives a green
+ * run: the E2E reports success, the log line scrolls past, and the box bills
+ * until someone finds it on the provider's dashboard. Two stale boxes were
+ * found by hand, which is what prompted this. One retry for a transient blip,
+ * then it counts as a FAILURE.
+ */
+async function hardKill(box: { sandboxId: string; kill: () => Promise<void> }): Promise<void> {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      await box.kill();
+      return;
+    } catch (e) {
+      if (attempt === 2) {
+        failures += 1;
+        console.log(`   FAIL  could not kill ${box.sandboxId} after 2 attempts: ${String(e)}`);
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
+}
+
 type Box = Awaited<ReturnType<ReturnType<typeof createE2BProvider>["create"]>>;
 
 async function reaches(box: Box, host: string, label: string): Promise<boolean> {
@@ -90,6 +121,7 @@ async function main(): Promise<void> {
     network: baseline,
     phaseNetworkPolicies: [agentPhase],
     timeoutMs: 10 * 60 * 1000,
+    metadata: { e2e: 'e2b-dynnet', run: RUN_ID },
   });
   console.log(`    sandbox ${box.sandboxId}`);
 
@@ -130,7 +162,7 @@ async function main(): Promise<void> {
     expect((await box.isRunning?.()) === true, "still the same running sandbox");
   } finally {
     console.log("\n[cleanup] killing sandbox");
-    await box.kill().catch((e: unknown) => console.log(`    kill failed: ${String(e)}`));
+    await hardKill(box);
   }
 
   console.log(`\n=== ${failures === 0 ? "E2E PASSED" : `E2E FAILED (${failures})`} ===`);
