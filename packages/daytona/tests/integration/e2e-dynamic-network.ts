@@ -29,6 +29,17 @@
  *
  * LIVE, and it costs a real Daytona sandbox — run it deliberately, not in CI:
  *   DAYTONA_API_KEY=... npx tsx tests/integration/e2e-dynamic-network.ts
+ *
+ * Last run 2026-08-15: all five checks passed — sealed BLOCKED (DNS refused)
+ * -> public HTTP_200 -> sealed BLOCKED again, same running box, switch
+ * acknowledged in 161ms. So "" means "no allowlist in force", and a public
+ * agent phase does not starve.
+ *
+ * NOT COVERED, and it cannot be by a passing run: Daytona's org-tier refusal.
+ * The account this ran on is above the plan-tier gate, so the tier path never
+ * fires here. That path is a TYPED error
+ * (DaytonaNetworkPolicyError('org-tier-forbidden')) with unit coverage on the
+ * classifier; proving it live would need a Tier 1/2 organization.
  */
 import { createDaytonaProvider } from "../../src/index.ts";
 

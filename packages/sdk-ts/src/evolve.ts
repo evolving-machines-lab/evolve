@@ -676,23 +676,6 @@ export class Evolve extends EventEmitter {
   }
 
   /**
-   * Whether this session's sandbox can change its network policy while
-   * running. False both when the provider offers no such capability and when
-   * no sandbox exists yet.
-   *
-   * Ask before switching, not after: a caller that needs a mid-run policy
-   * change usually needs to REFUSE the whole run when it cannot have one —
-   * proceeding under the wrong policy either hands the workload egress it was
-   * not meant to have, or starves it, and both outcomes look like ordinary
-   * results afterwards.
-   */
-  async canUpdateNetwork(): Promise<boolean> {
-    if (!this.agent) return false;
-    const sandbox = await this.agent.getSandbox(this.createStreamCallbacks());
-    return typeof sandbox.updateNetwork === "function";
-  }
-
-  /**
    * Replace the running sandbox's outbound network policy — no restart, and
    * the sandbox keeps its filesystem, processes and identity.
    *
