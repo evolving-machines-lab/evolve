@@ -1310,12 +1310,55 @@ async function testDynamicNetworkSealedBoxStaysSwitchable(): Promise<void> {
   );
   assertEqual(
     _testDynamicNetworkPolicyParams({ outbound: "blocked" }),
-    { outboundCidrAllowlist: [], outboundDomainAllowlist: [] },
-    "switchable path: the same seal expressed as two empty allowlists"
+    { outboundCidrAllowlist: [], outboundDomainAllowlist: ["sealed.invalid"] },
+    "switchable path: an empty CIDR list, and the domain filter armed but allowing nothing"
   );
   assert(
     !("blockNetwork" in _testDynamicNetworkPolicyParams({ outbound: "blocked" })),
     "and carries no blockNetwork, which would make the box unswitchable"
+  );
+}
+
+async function testDynamicNetworkArmsTheDomainFilter(): Promise<void> {
+  console.log("\n[12e] the domain filter is armed even when no domain is allowed");
+
+  // LIVE-PROVEN, and the reason this sentinel exists at all: a modal sandbox
+  // created with an EMPTY domain allowlist has domain filtering switched OFF,
+  // and modal refuses to switch it on later —
+  //   FAILED_PRECONDITION: sandbox was created without a domain allowlist;
+  //   enabling domain filtering while running is not currently supported
+  // So a box whose first phase is sealed and whose agent phase is public would
+  // fail AT THE SWITCH, with the agent already waiting.
+  const sealed = _testDynamicNetworkPolicyParams({ outbound: "blocked" });
+  assert(
+    sealed.outboundDomainAllowlist.length > 0,
+    "a sealed policy still ships a non-empty domain allowlist, so filtering is ON"
+  );
+  assert(
+    sealed.outboundDomainAllowlist.every((d) => d.endsWith(".invalid")),
+    "and every entry is RFC 2606 .invalid, which can never resolve — a switch position, not an allowance"
+  );
+
+  // CIDR-only allowlists hit the same trap: real destinations, no domains.
+  const cidrOnly = _testDynamicNetworkPolicyParams({
+    outbound: "blocked",
+    allowedDestinations: ["10.1.2.0/24"],
+  });
+  assertEqual(
+    cidrOnly,
+    { outboundCidrAllowlist: ["10.1.2.0/24"], outboundDomainAllowlist: ["sealed.invalid"] },
+    "a CIDR-only allowlist keeps its CIDRs and still arms the domain filter"
+  );
+
+  // A real domain list needs no sentinel — filtering is already on.
+  const withDomain = _testDynamicNetworkPolicyParams({
+    outbound: "blocked",
+    allowedDestinations: ["pypi.org"],
+  });
+  assertEqual(
+    withDomain.outboundDomainAllowlist,
+    ["pypi.org"],
+    "a policy that names a real domain is left exactly as declared"
   );
 }
 
@@ -1492,6 +1535,7 @@ const tests = [
   testDynamicNetworkStatesBothDimensions,
   testDynamicNetworkReusesCreateClassification,
   testRequiresDynamicNetworkComparesMeaning,
+  testDynamicNetworkArmsTheDomainFilter,
 ];
 
 (async () => {

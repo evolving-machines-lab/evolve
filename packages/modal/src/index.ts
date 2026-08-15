@@ -488,8 +488,50 @@ function dynamicNetworkPolicyParams(network?: SandboxCreateOptions["network"]): 
   const mapped = mapNetworkPolicy(network);
   return {
     outboundCidrAllowlist: mapped.outboundCidrAllowlist ?? [],
-    outboundDomainAllowlist: mapped.outboundDomainAllowlist ?? [],
+    outboundDomainAllowlist: withDomainFilteringEnabled(mapped.outboundDomainAllowlist ?? []),
   };
+}
+
+/**
+ * A domain that can never resolve to anything, used to keep Modal's domain
+ * filter TURNED ON while allowing nothing through it.
+ *
+ * `.invalid` is reserved by RFC 2606 §2 precisely so it can never be
+ * delegated, so this admits no real destination — it is a switch position, not
+ * an allowance.
+ */
+const MODAL_DOMAIN_FILTER_SENTINEL = "sealed.invalid";
+
+/**
+ * Keep a domain allowlist NON-EMPTY, because on Modal an empty one does not
+ * mean "allow no domains" — it means the domain filter was never turned on,
+ * and it cannot be turned on later.
+ *
+ * LIVE-PROVEN, and not something the published types say. A sandbox created
+ * with `outboundDomainAllowlist: []` refuses every runtime widening with
+ *
+ *   FAILED_PRECONDITION: sandbox was created without a domain allowlist;
+ *   enabling domain filtering while running is not currently supported;
+ *   create the sandbox with domains (* to start by allowing all) to update
+ *   them later
+ *
+ * (modal TaskCommandRouter/TaskSetNetworkAccess, observed 2026-08-14 on a real
+ * sandbox). Modal's own suggested remedy — create with `*` — is no use to a
+ * box whose first phase must be SEALED: it would grant every domain exactly
+ * when the task says none. So the filter is armed with an unresolvable
+ * sentinel instead: filtering is on from the start, nothing real is admitted,
+ * and the later switch to a real allowlist (or to `*`) is permitted.
+ *
+ * Applied on the update path too, so a switch BACK to a sealed policy cannot
+ * empty the list and strand the box unswitchable for whatever comes after.
+ *
+ * Upstream has this hole open: harbor's `_dynamic_network_kwargs` returns
+ * empty lists for NO_NETWORK (modal.py:1247-1248), so a harbor task whose
+ * environment baseline is no-network and whose agent phase is public would
+ * fail this same precondition at the switch, with the agent already waiting.
+ */
+function withDomainFilteringEnabled(domains: string[]): string[] {
+  return domains.length > 0 ? domains : [MODAL_DOMAIN_FILTER_SENTINEL];
 }
 
 /**
