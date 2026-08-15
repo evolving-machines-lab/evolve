@@ -1132,7 +1132,7 @@ async function testFilesWriteFromPathUsesChunkSizedMessages(): Promise<void> {
 
     await files.writeFromPath("/workspace/bundle.bin", path);
 
-    assertEqual(stdinWrites.length, 3, "3 messages, not the 259 a 64KiB read would produce");
+    assertEqual(stdinWrites.length, 3, "3 messages, not the 257 a 64KiB read would produce");
     assertEqual(stdinWrites[0].length, MODAL_STDIN_CHUNK_BYTES, "Chunk 1 is exactly 8MiB");
     assertEqual(stdinWrites[1].length, MODAL_STDIN_CHUNK_BYTES, "Chunk 2 is exactly 8MiB");
     assertEqual(stdinWrites[2].length, 12345, "Tail chunk carries the remainder");
@@ -1184,8 +1184,34 @@ async function testFilesWriteStreamCoalescesSmallChunks(): Promise<void> {
   assertEqual(total, piece * pieces, "No bytes lost or duplicated while coalescing");
 }
 
+async function testFilesWriteStreamExactMultipleHasNoEmptyTail(): Promise<void> {
+  console.log("\n[11d] ModalFiles.writeStream() - an exact multiple sends no trailing empty message");
+
+  // The boundary the flush guard exists for: when the source ends exactly on a
+  // chunk boundary there is nothing pending, and a final flush that ignored
+  // that would send a zero-byte write. On a real sandbox that is a wasted
+  // round trip on every perfectly-sized payload.
+  const piece = MODAL_STDIN_CHUNK_BYTES / 4;
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (let i = 0; i < 8; i++) controller.enqueue(patternedBuffer(piece)); // exactly 2 chunks
+      controller.close();
+    },
+  });
+
+  const { sandbox, stdinWrites } = createMockModalSandbox();
+  const files = new ModalFiles(sandbox as any, "root");
+  await files.writeStream("/workspace/exact.bin", source);
+
+  assertEqual(stdinWrites.length, 2, "Exactly 2 messages for exactly 2 chunks — no empty third");
+  assert(
+    stdinWrites.every((c) => c.length === MODAL_STDIN_CHUNK_BYTES),
+    "Both messages are full chunks"
+  );
+}
+
 async function testFilesWriteStreamStillSplitsOversizedChunks(): Promise<void> {
-  console.log("\n[11d] ModalFiles.writeStream() - one oversized piece is still split under the cap");
+  console.log("\n[11e] ModalFiles.writeStream() - one oversized piece is still split under the cap");
 
   const source = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -1206,11 +1232,13 @@ async function testFilesWriteStreamStillSplitsOversizedChunks(): Promise<void> {
 }
 
 async function testFilesWriteBatchIsOneArchiveUpload(): Promise<void> {
-  console.log("\n[11e] ModalFiles.writeBatch() - one archive, one untar, regardless of file count");
+  console.log("\n[11f] ModalFiles.writeBatch() - one archive, one untar, every file intact");
 
+  // Distinct sizes and contents per file so a truncation, a swap, or a
+  // silently dropped entry cannot pass.
   const files_ = Array.from({ length: 40 }, (_, i) => ({
     path: `/workspace/f${i}.bin`,
-    data: patternedBuffer(512 * 1024),
+    data: patternedBuffer(512 * 1024 + i),
   }));
 
   const { sandbox, execCalls, stdinWrites, nativeCopyCalls } = createMockModalSandbox();
@@ -1220,7 +1248,9 @@ async function testFilesWriteBatchIsOneArchiveUpload(): Promise<void> {
   // Harbor packs a directory into one tarball for exactly this reason:
   // per-file SDK transfers "have been observed to silently skip files on
   // large multi-file uploads" (REFERENCES/Harbor/src/harbor/environments/
-  // modal.py, _sdk_upload_dir).
+  // modal.py, _sdk_upload_dir). So the claim to prove is not "bytes were
+  // sent" but "the archive the sandbox receives really contains all 40
+  // files, whole" — which means extracting what we captured.
   const tarExecs = execCalls.filter((c) => c.args[0] === "tar");
   assertEqual(tarExecs.length, 1, "40 files ride a single tar exec, not 40 transfers");
   assertEqual(tarExecs[0].args, ["tar", "-xf", "-", "-C", "/"], "Remote side untars from stdin");
@@ -1229,8 +1259,32 @@ async function testFilesWriteBatchIsOneArchiveUpload(): Promise<void> {
     stdinWrites.every((c) => c.length <= MODAL_STDIN_CHUNK_BYTES),
     "The archive is delivered in chunk-sized messages"
   );
-  const total = stdinWrites.reduce((n, c) => n + c.length, 0);
-  assert(total >= 40 * 512 * 1024, "Every file's bytes reached the archive");
+
+  // Reassemble the stdin messages and untar them, exactly as the sandbox would.
+  const { extract } = await import("tar-stream");
+  const { Readable } = await import("node:stream");
+  const received = new Map<string, Buffer>();
+  const extractor = extract();
+  extractor.on("entry", (header, stream, next) => {
+    const parts: Buffer[] = [];
+    stream.on("data", (d: Buffer) => parts.push(d));
+    stream.on("end", () => {
+      received.set(header.name, Buffer.concat(parts));
+      next();
+    });
+    stream.resume();
+  });
+  await new Promise<void>((resolve, reject) => {
+    extractor.on("finish", resolve);
+    extractor.on("error", reject);
+    Readable.from(Buffer.concat(stdinWrites)).pipe(extractor);
+  });
+
+  assertEqual(received.size, 40, "The archive holds exactly 40 entries");
+  const missing = files_.filter((f) => !received.has(f.path.slice(1)));
+  assertEqual(missing.length, 0, "No entry was silently skipped");
+  const corrupt = files_.filter((f) => !received.get(f.path.slice(1))!.equals(f.data));
+  assertEqual(corrupt.length, 0, "Every extracted file is byte-identical to what was handed in");
 }
 
 // =============================================================================
@@ -1306,6 +1360,7 @@ const tests = [
   testFilesWriteFromPathUsesChunkSizedMessages,
   testFilesWriteFromPathAvoidsNativeCopy,
   testFilesWriteStreamCoalescesSmallChunks,
+  testFilesWriteStreamExactMultipleHasNoEmptyTail,
   testFilesWriteStreamStillSplitsOversizedChunks,
   testFilesWriteBatchIsOneArchiveUpload,
 ];

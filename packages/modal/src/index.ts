@@ -76,10 +76,34 @@ const IMAGE_MAP: Record<string, string> = {
 export const MODAL_MAX_LIFETIME_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Chunk size for stdin uploads. Modal's gRPC transport rejects any single
- * TaskExecStdinWrite message larger than 100MiB (RESOURCE_EXHAUSTED at
- * 104,857,600 bytes), so file payloads are split into 8MiB writeBytes()
- * calls — the same per-chunk pattern writeStream() uses.
+ * Chunk size for stdin uploads, and the reason it is THIS big.
+ *
+ * Every writeBytes() call is one awaited unary TaskExecStdinWrite round trip
+ * to Modal, so upload time is set by how many messages a payload becomes, not
+ * by how many bytes it is. Measured on live sandboxes with a 180MiB file:
+ *
+ *     64KiB   311.6s   (2880 messages — Node's default read size)
+ *     4MiB     36.2s
+ *     8MiB     30.1s   <- this constant
+ *     16MiB    31.4s
+ *
+ * Below roughly 4MiB the upload is round-trip bound and shrinking the chunk
+ * makes it dramatically slower; above it the transport saturates near 6MiB/s
+ * and a bigger chunk buys nothing.
+ *
+ * Modal's 100MiB per-message cap (RESOURCE_EXHAUSTED at 104,857,600 bytes) is
+ * the CEILING this must stay under — it is not the reason for the value. Do
+ * not "play it safe" by trimming this toward the cap-satisfying end: 64KiB is
+ * equally cap-safe and ten times slower, which is exactly the state this
+ * constant was raised to fix.
+ *
+ * STANDING DECISION (chunk size stays 8MiB) and its trigger: a worker running
+ * 16 concurrent uploads buffers about 256MiB at this size, which is real
+ * pressure in a 1GB worker. The re-profile's saturation row runs exactly that
+ * 16-parallel case; the ruling is to move on ITS data, not on precaution. If
+ * that row shows memory pressure, dropping to 4MiB is a measured one-line
+ * change — 36.2s versus 30.1s, about 83% of the throughput for half the
+ * buffer — and everything above still holds.
  */
 export const MODAL_STDIN_CHUNK_BYTES = 8 * 1024 * 1024;
 
@@ -764,7 +788,6 @@ export interface SandboxProvider {
   /** Connect to existing sandbox */
   connect(sandboxId: string, timeoutMs?: number): Promise<SandboxInstance>;
 
-  /** List sandboxes (first page only, up to limit) */
   /** List sandboxes, walking the whole app. `limit` bounds items returned. */
   list(options?: SandboxListOptions): Promise<SandboxInfo[]>;
   /** The same enumeration for fleet bookkeeping: never throws, reports completeness. */
@@ -1422,9 +1445,30 @@ export class ModalProvider implements SandboxProvider {
    * There is deliberately no sizing parameter: on Modal, image identity is
    * the registry reference alone, and CPU/memory/GPU are create-time sandbox
    * options, so one eager build serves every sizing.
+   *
+   * OPERATIONAL TRAP, and prewarming at publish time is what makes it likely.
+   * From the same guide: "Modal treats external Image tags as immutable once
+   * pulled" and "Modal does not detect upstream changes to mutable tags like
+   * `:latest`". So prewarming a MUTABLE tag after re-pushing that tag warms
+   * the OLD image, and every later create() keeps launching the old image —
+   * quietly, because the reference still resolves. Modal's own remedy is to
+   * "update the tag in your deploy script (for example, `ubuntu:24.04` →
+   * `ubuntu:24.04-20240523`)".
+   *
+   * The versioned default (evolve-all-<c-hash>) is immune, because a content
+   * change moves the tag. The exposed legacy alias "evolve-all" is NOT: it
+   * maps to the mutable Docker Hub name, so prewarming it after a re-push
+   * warms the stale image. That alias is precisely why EVOLVE_IMAGE_VERSION
+   * exists — prewarm the versioned name unless you specifically want the
+   * account's already-pulled copy.
    */
   async prepareImage(imageName?: string): Promise<void> {
-    await this.resolveAndBuildImage(imageName ?? this.imageName);
+    // `||`, not `??`, so an empty string falls back to the default exactly as
+    // create()'s `options.image || this.imageName` does. Two different
+    // emptiness rules would put the prewarm on a different image than the
+    // create it is meant to serve — the one divergence this method exists to
+    // prevent.
+    await this.resolveAndBuildImage(imageName || this.imageName);
   }
 
   async create(options: SandboxCreateOptions): Promise<SandboxInstance> {
