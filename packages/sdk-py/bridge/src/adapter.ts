@@ -422,6 +422,7 @@ export class EvolveAdapter {
       background: params.background,
       from: params.from,
       checkpointComment: params.checkpoint_comment,
+      resume: params.resume,
     });
 
     return {
@@ -870,6 +871,7 @@ export class EvolveAdapter {
       background: runParams.background,
       from: runParams.from,
       checkpointComment: runParams.checkpoint_comment,
+      resume: runParams.resume,
     });
 
     return {

@@ -862,6 +862,32 @@ export interface RunOptions {
 
   /** Optional comment for the auto-checkpoint created after this run */
   checkpointComment?: string;
+
+  /**
+   * Whether this run CONTINUES the agent's previous conversation in this
+   * sandbox, or starts a fresh one.
+   *
+   * Omitted, the SDK decides as it always has: the first run in a sandbox is
+   * fresh and every run after it resumes (and a session attached with
+   * `withSession()` resumes, since the agent may already have run there). That
+   * default is right for a chat-shaped session, where each turn builds on the
+   * last.
+   *
+   * It is wrong for a sequence of INDEPENDENT tasks against one shared sandbox
+   * — the environment is meant to persist while the agent's context is not.
+   * Harbor's multi-step tasks are exactly that shape: steps share a container
+   * and, by default, each step starts the agent in a fresh conversation
+   * (docs/content/docs/tasks/multi-step.mdx:210). Before this option there was
+   * no way to ask for it: the resume flag was bound to internal state, so an
+   * evaluator running N steps in one box silently made every step after the
+   * first easier than the benchmark intended.
+   *
+   * `false` forces a fresh conversation, `true` forces a resume. Forcing a
+   * resume on the FIRST run of a sandbox asks a CLI to continue a session that
+   * does not exist, and each CLI answers that its own way — so pass `true` only
+   * when a previous run really happened.
+   */
+  resume?: boolean;
 }
 
 /** Options for executeCommand() */

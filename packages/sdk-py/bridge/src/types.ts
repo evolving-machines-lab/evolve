@@ -127,6 +127,8 @@ export interface RunParams {
   background?: boolean;
   from?: string;
   checkpoint_comment?: string;
+  /** Force a fresh conversation (false) or a resume (true); see RunOptions.resume. */
+  resume?: boolean;
 }
 
 export interface ExecuteCommandParams {

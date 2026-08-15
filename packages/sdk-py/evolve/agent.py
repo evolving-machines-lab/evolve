@@ -305,6 +305,7 @@ class Evolve:
         background: bool = False,
         from_checkpoint: Optional[str] = None,
         checkpoint_comment: Optional[str] = None,
+        resume: Optional[bool] = None,
     ) -> AgentResponse:
         """Run AI-assisted task (agent decides and acts).
 
@@ -318,6 +319,13 @@ class Evolve:
             from_checkpoint: Restore from checkpoint ID before running (requires storage).
                            Use 'latest' to restore the most recent checkpoint.
             checkpoint_comment: Optional label for the auto-checkpoint after this run
+            resume: Whether this run continues the agent's previous conversation
+                   in this sandbox. Omitted, the first run in a sandbox is fresh
+                   and every run after it resumes. Pass False to force a FRESH
+                   conversation in a sandbox the agent has already run in — the
+                   shape a sequence of independent tasks against one shared
+                   sandbox needs, where the environment persists but the context
+                   should not.
 
         Returns:
             AgentResponse with sandbox_id, exit_code, stdout, stderr, checkpoint
@@ -328,6 +336,8 @@ class Evolve:
             >>> result = await evolve.run(prompt='Long task', background=True)
             >>> # Restore from checkpoint
             >>> result = await evolve.run(prompt='Continue work', from_checkpoint='latest')
+            >>> # Independent tasks in one sandbox: keep the box, drop the context
+            >>> result = await evolve.run(prompt='Second, unrelated task', resume=False)
         """
         await self._ensure_initialized()
 
@@ -342,6 +352,8 @@ class Evolve:
             params['from'] = from_checkpoint
         if checkpoint_comment is not None:
             params['checkpoint_comment'] = checkpoint_comment
+        if resume is not None:
+            params['resume'] = resume
 
         response = await self.bridge.call(
             'run',
