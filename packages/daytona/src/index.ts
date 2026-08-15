@@ -533,7 +533,15 @@ function providerCanRebuildSnapshot(imageName: string): boolean {
   // A digest pin is the strongest form and needs no tag — but it must actually
   // BE a digest. A bare `@` would have judged `team@prod` rebuildable, which is
   // the same harm as the untagged case in its last remaining shape.
-  if (/@[a-z0-9]+(?:[.+_-][a-z0-9]+)*:[0-9a-f]{32,}$/i.test(resolved)) return true;
+  //
+  // AND AN `@` THAT IS NOT A VALID DIGEST ENDS THE QUESTION THERE. Falling
+  // through to the tag parse would read `ubuntu@sha256:0123456789abcdef` (too
+  // short to be a digest) as carrying the tag `0123456789abcdef` and call a
+  // malformed ref rebuildable — Daytona would refuse to build it, and the name
+  // would be deleted for nothing.
+  if (resolved.includes("@")) {
+    return /@[a-z0-9]+(?:[.+_-][a-z0-9]+)*:[0-9a-f]{32,}$/i.test(resolved);
+  }
   // The tag lives in the LAST path segment, so a registry port
   // (localhost:5000/img) is never mistaken for one.
   const lastSegment = resolved.substring(resolved.lastIndexOf("/") + 1);
@@ -603,12 +611,23 @@ async function deleteDeadSnapshot(
   try {
     await client.snapshot.delete(snapshot);
   } catch (err) {
-    console.warn(
-      `[daytona] Could not delete dead snapshot "${name}" (${err instanceof Error ? err.message : err}) — ` +
-        "delete it in the Daytona dashboard (Snapshots page) to restore the fast path; " +
-        "falling back to a direct image pull for now."
-    );
-    return false;
+    const failure = err instanceof Error ? err.message : String(err);
+    // ONE QUESTION, ONE ANSWER. A not-found here does not mean the delete
+    // failed — it means the record is already gone, or another healer is
+    // removing it right now. Both are the outcome we wanted, so this falls
+    // through to the poll below and lets IT answer definitively rather than
+    // guessing from the delete's reply. Treating it as a failure punished the
+    // LOSER of an ordinary two-healers race: it skipped the build it was
+    // entitled to and took the slow direct pull, which is worse than the
+    // behaviour that shipped before any of this existed.
+    if (!isMissingSnapshot(failure)) {
+      console.warn(
+        `[daytona] Could not delete dead snapshot "${name}" (${failure}) — ` +
+          "delete it in the Daytona dashboard (Snapshots page) to restore the fast path; " +
+          "falling back to a direct image pull for now."
+      );
+      return false;
+    }
   }
 
   // Wait for the name to stop resolving. Only a NOT-FOUND means gone: a 403 or

@@ -1037,11 +1037,13 @@ async function silenceNoise<T>(fn: () => Promise<T>): Promise<T> {
 
 /** Production conflict clocks are 10 minutes; the tests measure the SHAPE. */
 class FastConflictProvider extends DaytonaProvider {
-  protected override snapshotConflictTiming = { timeoutMs: 50, pollMs: 1 };
-  // The delete-confirmation poll has its OWN clock. Overriding only the
-  // conflict one used to leave this running on production time — which is the
-  // bug that hid when the two shared a field.
-  protected override snapshotDeleteTiming = { timeoutMs: 50, pollMs: 1 };
+  // DELIBERATELY DIFFERENT NUMBERS. When both clocks were 50ms, a delete poll
+  // handed the CONFLICT budget by mistake looked exactly like one on its own —
+  // which is how the shared-field bug survived a green suite. An order of
+  // magnitude between them makes the wrong clock measurable, and [6an] asserts
+  // on it.
+  protected override snapshotConflictTiming = { timeoutMs: 300, pollMs: 1 };
+  protected override snapshotDeleteTiming = { timeoutMs: 30, pollMs: 1 };
 }
 
 /**
@@ -1361,9 +1363,10 @@ async function testDeleteConfirmationGivesUpOnItsOwnBudget(): Promise<void> {
   await silenceNoise(() => providerOn(neverGone).create({ image: "ubuntu:24.04" }));
   const elapsed = Date.now() - started;
 
-  // The provider's delete clock is 50ms in tests; the conflict clock it used to
-  // borrow is 600s in production. A generous ceiling still proves which one ran.
-  assert(elapsed < 5_000, `the delete poll ended on its own budget (took ${elapsed}ms)`);
+  // The delete clock is 30ms here, the conflict clock 300ms. Landing under
+  // ~150ms proves the poll ended on ITS budget and not the one it used to
+  // borrow — the assertion the previous equal-valued clocks could not make.
+  assert(elapsed < 150, `the delete poll ended on its OWN budget (took ${elapsed}ms)`);
   assertEqual(state.snapshotCreateCalls, 0, "an unconfirmed delete does NOT race the removal");
   assertEqual(state.createParams?.image, "ubuntu:24.04", "the run ends on the direct pull instead");
 }
@@ -1392,6 +1395,54 @@ async function testDeletePollTreatsOnlyNotFoundAsGone(): Promise<void> {
   assertEqual(state.createParams?.image, "ubuntu:24.04", "so the run takes the direct pull");
 }
 
+async function testJoinPathDeleteRefusedFallsBack(): Promise<void> {
+  console.log("\n[6ap] joinInFlightSnapshotBuild() - a dead winner whose delete is REFUSED takes the fallback");
+
+  // The join path's own failure branch, which lost its coverage when the fast
+  // path started refusing to race an unconfirmed removal. A 403 is not a
+  // not-found, so it is a real refusal: nothing to build over, take the pull.
+  const { client, state } = createDeadSnapshotClient(
+    [
+      { state: "building", name: "ubuntu:24.04" }, // fast path: in flight, join it
+      { state: "build_failed", name: "ubuntu:24.04" }, // the wait: it died
+    ],
+    { deleteError: new Error("403 forbidden") }
+  );
+  await silenceNoise(() => providerOn(client).create({ image: "ubuntu:24.04" }));
+
+  assertEqual(state.deletes, 1, "the delete was attempted on the dead winner");
+  assertEqual(state.snapshotCreateCalls, 0, "a refused delete never leads to a build over the corpse");
+  assertEqual(state.createParams?.image, "ubuntu:24.04", "the run ends on the direct pull");
+}
+
+async function testDeleteRaceLoserStillBuilds(): Promise<void> {
+  console.log("\n[6aq] deleteDeadSnapshot() - LOSING a heal race is a success, not a demotion");
+
+  // Two healers meet the same corpse. The loser's delete answers not-found,
+  // which means the removal is done or under way by someone else — the outcome
+  // it wanted. Reading that as a failure made the loser skip its build and eat
+  // the slow pull, which is worse than the pre-heal behaviour.
+  let gets = 0;
+  const { client, state } = createDeadSnapshotClient([{ state: "error", name: "ubuntu:24.04" }], {
+    deleteError: new Error("404: snapshot not found"),
+  });
+  const raced = {
+    ...client,
+    snapshot: {
+      ...client.snapshot,
+      get: async () => {
+        gets++;
+        if (gets === 1) return { state: "error", name: "ubuntu:24.04" };
+        throw new Error("404: snapshot not found"); // the winner already cleared it
+      },
+    },
+  };
+  await silenceNoise(() => providerOn(raced).create({ image: "ubuntu:24.04" }));
+
+  assertEqual(state.snapshotCreateCalls, 1, "the loser still builds the name it is entitled to");
+  assertEqual(state.createParams?.snapshot, "ubuntu:24.04", "and boots from that snapshot, not a pull");
+}
+
 async function testProviderCanRebuildSnapshotRule(): Promise<void> {
   console.log("\n[6ai] providerCanRebuildSnapshot() - deletable means REBUILDABLE, judged on the RESOLVED ref");
 
@@ -1403,7 +1454,10 @@ async function testProviderCanRebuildSnapshotRule(): Promise<void> {
     "ubuntu:24.04",
     "ghcr.io/org/img:v1",
     "905418019965.dkr.ecr.us-west-2.amazonaws.com/x:tag",
-    "ubuntu@sha256:0123456789abcdef",
+    // A REAL 64-hex digest. The old 16-hex fixture was parsed as a TAG, so the
+    // digest branch was never exercised and reverting its regex stayed green.
+    "ubuntu@sha256:5d3c1a2b4e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809",
+    "ghcr.io/org/img@sha256:5d3c1a2b4e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809",
     "localhost:5000/img:v1",
   ]) {
     assert(_testProviderCanRebuildSnapshot(rebuildable), `"${rebuildable}" is rebuildable`);
@@ -1420,6 +1474,8 @@ async function testProviderCanRebuildSnapshotRule(): Promise<void> {
     "ubuntu:latest",
     "ubuntu:lts",
     "ubuntu:stable",
+    "team@prod", // an '@' is not a digest
+    "ubuntu@sha256:0123456789abcdef", // too short to be one either
     "eval-env-cafe", // the eval platform heals its own aliases
     "my-team-env",
   ]) {
@@ -2088,6 +2144,8 @@ const tests = [
   testDeleteConfirmationWaitsForTheRecordToVanish,
   testDeleteConfirmationGivesUpOnItsOwnBudget,
   testDeletePollTreatsOnlyNotFoundAsGone,
+  testJoinPathDeleteRefusedFallsBack,
+  testDeleteRaceLoserStillBuilds,
   testProviderCanRebuildSnapshotRule,
   // [7] DaytonaCommands
   testCommandsRunAsRootUsesSudoWrapper,
