@@ -192,7 +192,7 @@
       "presets": []
     },
     "gemini": {
-      "defaultModel": "gemini-3.6-flash",
+      "defaultModel": "gemini-3.5-flash-lite",
       "models": [
         {
           "alias": "gemini-3.6-flash",

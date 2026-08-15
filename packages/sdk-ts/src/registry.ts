@@ -546,7 +546,15 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     oauthFileName: "oauth_creds.json",
     oauthActivationEnv: { key: "GOOGLE_GENAI_USE_GCA", value: "true" },
     baseUrlEnv: "GOOGLE_GEMINI_BASE_URL",
-    defaultModel: "gemini-3.6-flash",
+    // D1 (acceptance campaign 2026-08-15, trial e5d0788c): gemini CLI 0.55.1
+    // silently serves gemini-3.5-flash whenever the arm asks for
+    // gemini-3.6-flash, so a 3.6-flash DEFAULT can never score — the hosted
+    // wrong-model integrity guard rightly refuses the substituted trial every
+    // time. gemini-3.5-flash-lite is the arm the CLI serves under its own
+    // name, live-proven end to end (trial e303b985: SCORED, metered, ATIF
+    // agent block records the served model as gemini-3.5-flash-lite). The
+    // 3.6-flash arm stays selectable for the day the CLI serves it honestly.
+    defaultModel: "gemini-3.5-flash-lite",
     models: [
       { alias: "gemini-3.6-flash", modelId: "gemini-3.6-flash", description: "Newest stable workhorse: coding + agentic planning" },
       { alias: "gemini-3.5-flash-lite", modelId: "gemini-3.5-flash-lite", description: "Most cost-effective 3.5-class model" },
