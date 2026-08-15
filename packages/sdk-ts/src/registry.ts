@@ -546,17 +546,20 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     oauthFileName: "oauth_creds.json",
     oauthActivationEnv: { key: "GOOGLE_GENAI_USE_GCA", value: "true" },
     baseUrlEnv: "GOOGLE_GEMINI_BASE_URL",
-    // D1 (acceptance campaign 2026-08-15, trial e5d0788c): gemini CLI 0.55.1
-    // silently serves gemini-3.5-flash whenever the arm asks for
-    // gemini-3.6-flash, so a 3.6-flash DEFAULT can never score — the hosted
-    // wrong-model integrity guard rightly refuses the substituted trial every
-    // time. gemini-3.5-flash-lite is the arm the CLI serves under its own
-    // name, live-proven end to end (trial e303b985: SCORED, metered, ATIF
-    // agent block records the served model as gemini-3.5-flash-lite). The
-    // 3.6-flash arm stays selectable for the day the CLI serves it honestly.
-    defaultModel: "gemini-3.5-flash-lite",
+    // Roster policy (owner, 2026-08-15): only the latest flash, latest
+    // flash-lite, and latest pro — never the whole version sequence.
+    // gemini-3.7-flash is the default (launched 2026-08-13; model id verified
+    // against https://ai.google.dev/gemini-api/docs/models/gemini-3.7-flash —
+    // stable id, no preview suffix). gemini-3.6-flash was dropped from the
+    // roster: gemini CLI 0.55.1 silently served gemini-3.5-flash whenever the
+    // arm asked for 3.6-flash, so that arm could never score — the hosted
+    // wrong-model integrity guard refused every substituted trial (D1,
+    // acceptance campaign 2026-08-15, trial e5d0788c). gemini-3.5-flash-lite
+    // remains live-proven end to end under its own name (trial e303b985:
+    // SCORED, metered, ATIF agent block records the served model).
+    defaultModel: "gemini-3.7-flash",
     models: [
-      { alias: "gemini-3.6-flash", modelId: "gemini-3.6-flash", description: "Newest stable workhorse: coding + agentic planning" },
+      { alias: "gemini-3.7-flash", modelId: "gemini-3.7-flash", description: "Newest stable workhorse: coding + agentic planning" },
       { alias: "gemini-3.5-flash-lite", modelId: "gemini-3.5-flash-lite", description: "Most cost-effective 3.5-class model" },
       { alias: "gemini-3.1-pro-preview", modelId: "gemini-3.1-pro-preview", description: "Latest pro, complex agentic + coding" },
     ],

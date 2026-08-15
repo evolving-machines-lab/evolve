@@ -192,11 +192,11 @@
       "presets": []
     },
     "gemini": {
-      "defaultModel": "gemini-3.5-flash-lite",
+      "defaultModel": "gemini-3.7-flash",
       "models": [
         {
-          "alias": "gemini-3.6-flash",
-          "modelId": "gemini-3.6-flash",
+          "alias": "gemini-3.7-flash",
+          "modelId": "gemini-3.7-flash",
           "description": "Newest stable workhorse: coding + agentic planning"
         },
         {
