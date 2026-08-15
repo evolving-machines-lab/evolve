@@ -33,7 +33,7 @@ import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { getAgentConfig, getSandboxProvider, getSandboxProviderByName, type ProviderName } from "./test-config.js";
-import { e2eSandboxOptions, hardKill } from "./teardown.js";
+import { e2eSandboxOptions, finishE2E, hardKill } from "./teardown.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, "../../../../.env") });
@@ -344,7 +344,7 @@ async function main() {
     log("=".repeat(60));
     log(`PASS - All restore fidelity tests passed (${duration}s)`);
     log("=".repeat(60) + "\n");
-    process.exit(0);
+    await finishE2E("21-storage-restore-fidelity", 0);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     save("error.txt", err instanceof Error ? err.stack || msg : msg);
@@ -360,7 +360,7 @@ async function main() {
     log("\n" + "=".repeat(60));
     log(`FAIL - ${msg} (${duration}s)`);
     log("=".repeat(60) + "\n");
-    process.exit(1);
+    await finishE2E("21-storage-restore-fidelity", 1);
   }
 }
 

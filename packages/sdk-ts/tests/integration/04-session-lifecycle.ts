@@ -28,7 +28,7 @@ import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import type { LifecycleEvent } from "../../dist/index.js";
-import { e2eSandboxOptions, hardKill } from "./teardown.js";
+import { e2eSandboxOptions, finishE2E, hardKill } from "./teardown.js";
 import {
   getDefaultAgentConfig,
   getSandboxProviderByName,
@@ -363,7 +363,7 @@ async function main() {
     log(`\n============================================================`);
     log(`PASS - All 17 tests passed (${duration}s)`);
     log(`============================================================\n`);
-    process.exit(0);
+    await finishE2E("04-session-lifecycle", 0);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     save("error.txt", err instanceof Error ? err.stack || msg : msg);
@@ -374,7 +374,7 @@ async function main() {
     log(`\n============================================================`);
     log(`FAIL - ${msg} (${duration}s)`);
     log(`============================================================\n`);
-    process.exit(1);
+    await finishE2E("04-session-lifecycle", 1);
   }
 }
 

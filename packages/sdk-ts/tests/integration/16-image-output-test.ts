@@ -12,7 +12,7 @@
 
 import { Evolve } from "../../dist/index.js";
 import { createE2BProvider } from "../../../e2b/src/index.js";
-import { e2eSandboxOptions, hardKill } from "./teardown.js";
+import { e2eSandboxOptions, finishE2E, hardKill } from "./teardown.js";
 import { config } from "dotenv";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -132,7 +132,7 @@ async function main() {
   console.log(`${passed}/${agents.length} passed`);
   console.log(`\nLogs saved to: ${LOGS_DIR}\n`);
 
-  process.exit(passed === agents.length ? 0 : 1);
+  await finishE2E("16-image-output-test", passed === agents.length ? 0 : 1);
 }
 
 main();

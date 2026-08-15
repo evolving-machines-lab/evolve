@@ -27,7 +27,7 @@ import {
 import { createE2BProvider } from "../../../e2b/src/index.js";
 import { createDaytonaProvider } from "../../../daytona/src/index.js";
 import { createModalProvider } from "../../../modal/src/index.js";
-import { e2eSandboxOptions, hardKill } from "./teardown.js";
+import { e2eSandboxOptions, finishE2E, hardKill } from "./teardown.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, "../../../../.env") });
@@ -314,7 +314,7 @@ async function main() {
     console.log("  Providers: e2b, modal, daytona, all");
     const available = getAvailableProviders();
     console.log(`  Available: ${available.join(", ") || "none"}`);
-    process.exit(1);
+    await finishE2E("17-provider-test", 1);
   }
 
   let providers: ProviderName[];
@@ -322,7 +322,7 @@ async function main() {
     providers = getAvailableProviders();
     if (providers.length === 0) {
       console.error("No providers available");
-      process.exit(1);
+      await finishE2E("17-provider-test", 1);
     }
   } else {
     providers = args as ProviderName[];
@@ -360,7 +360,7 @@ async function main() {
   console.log(`Logs: ${LOGS_DIR}`);
   console.log("=".repeat(60));
 
-  process.exit(passed === results.length ? 0 : 1);
+  await finishE2E("17-provider-test", passed === results.length ? 0 : 1);
 }
 
 main();

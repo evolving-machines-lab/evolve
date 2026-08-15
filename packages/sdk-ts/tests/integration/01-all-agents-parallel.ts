@@ -18,7 +18,7 @@ import { fileURLToPath } from "url";
 import { readFileSync, writeFileSync, mkdirSync, rmSync } from "fs";
 import type { AgentType, FileMap, OutputEvent } from "../../dist/index.js";
 import { getAgentConfig, getSandboxProvider } from "./test-config.js";
-import { e2eSandboxOptions, hardKill } from "./teardown.js";
+import { e2eSandboxOptions, finishE2E, hardKill } from "./teardown.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, "../../../../.env") });
@@ -148,7 +148,7 @@ async function main() {
   console.log("=".repeat(60));
   console.log(`${passed}/${agents.length} passed\n`);
 
-  process.exit(passed === agents.length ? 0 : 1);
+  await finishE2E("01-all-agents-parallel", passed === agents.length ? 0 : 1);
 }
 
 main();

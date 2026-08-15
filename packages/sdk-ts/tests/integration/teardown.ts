@@ -36,6 +36,9 @@
  */
 
 import type { SandboxProvider } from "../../dist/index.js";
+import { createE2BProvider } from "../../../e2b/src/index.js";
+import { createDaytonaProvider } from "../../../daytona/src/index.js";
+import { createModalProvider } from "../../../modal/src/index.js";
 
 /** Stamped into every sandbox this process creates. */
 export const E2E_RUN_ID = `e2e-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -118,12 +121,66 @@ export async function reportLeaks(provider: SandboxProvider, test: string): Prom
   }
   const leaked = alive.filter((s) => s.metadata?.run === E2E_RUN_ID);
   if (leaked.length === 0) {
-    console.log(`[teardown] ${test}: no sandbox from this run left alive`);
+    console.log(`[teardown] ${test}: ${provider.providerType} clean — no sandbox from this run left alive`);
     return;
   }
   teardownProblem = true;
-  console.error(`[teardown] ${test}: ${leaked.length} LEAKED sandbox(es) still running:`);
+  console.error(`[teardown] ${test}: ${leaked.length} LEAKED ${provider.providerType} sandbox(es) still running:`);
   for (const s of leaked) {
     console.error(`[teardown]   ${s.sandboxId} ${JSON.stringify(s.metadata ?? {})}`);
   }
+}
+
+/**
+ * Every provider this process could plausibly have created a sandbox on,
+ * built from whatever credentials are in the environment.
+ *
+ * WHY BUILD OUR OWN instead of taking the test's handle: most of these files
+ * create their session inside a helper that returns a result, so there is no
+ * single place where both "the run is over" and "the provider" are in scope.
+ * Asking for a handle would have meant restructuring ten files that cannot be
+ * run green here. Credentials are already required for the test to have run at
+ * all, so constructing a client from them adds no new requirement — and a
+ * provider whose key is absent simply cannot have been used.
+ */
+function providersFromEnv(): SandboxProvider[] {
+  const out: SandboxProvider[] = [];
+  if (process.env.E2B_API_KEY) out.push(createE2BProvider({ apiKey: process.env.E2B_API_KEY }));
+  if (process.env.DAYTONA_API_KEY) out.push(createDaytonaProvider({ apiKey: process.env.DAYTONA_API_KEY }));
+  if (process.env.MODAL_TOKEN_ID && process.env.MODAL_TOKEN_SECRET) out.push(createModalProvider());
+  return out;
+}
+
+/**
+ * End the process the way an integration script should: sweep every provider
+ * this run could have touched, then exit.
+ *
+ * REPLACES `process.exit(code)` AT EVERY EXIT POINT, and keeps its contract —
+ * control never returns to the caller, so the surrounding code behaves exactly
+ * as it did before.
+ *
+ * A PASSING RUN THAT LEAKED IS NOT A PASSING RUN: a zero exit is upgraded to 1
+ * when teardown failed or a sandbox from this run is still alive. A non-zero
+ * code is left alone — the test's own verdict is the more important one, and
+ * the leak is reported in the log either way.
+ *
+ * Deliberately NOT a process.exit monkey-patch, which would have been the only
+ * true one-call-site option: overriding exit means the caller keeps running
+ * after asking to terminate, and these files call it from inside try blocks,
+ * catch handlers and loops. Replacing each call is more edits and far less
+ * clever, which is the right trade in files nobody can run green here.
+ */
+export async function finishE2E(test: string, code: number): Promise<never> {
+  const providers = providersFromEnv();
+  if (providers.length === 0) {
+    console.log(`[teardown] ${test}: no provider credentials in env; leak check skipped`);
+  }
+  for (const provider of providers) {
+    await reportLeaks(provider, test);
+  }
+  const exitCode = code === 0 && teardownFailed() ? 1 : code;
+  if (exitCode !== code) {
+    console.error(`[teardown] ${test}: exiting 1 instead of 0 — the run could not prove it cleaned up`);
+  }
+  process.exit(exitCode);
 }

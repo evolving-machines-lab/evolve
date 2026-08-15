@@ -20,7 +20,7 @@ import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { getTestEnv, getSandboxProvider, getAgentConfig } from "./test-config.js";
-import { e2eSandboxOptions, hardKill } from "./teardown.js";
+import { e2eSandboxOptions, finishE2E, hardKill } from "./teardown.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, "../../../../.env") });
@@ -171,13 +171,13 @@ async function main(): Promise<void> {
 
   if (!success) {
     log(`FAIL. Logs: ${LOGS_DIR}`);
-    process.exit(1);
+    await finishE2E("24-kimi-gateway-hello", 1);
   }
 
   log(`PASS. Logs: ${LOGS_DIR}`);
 }
 
-main().catch((error) => {
+main().catch(async (error) => {
   console.error(error);
-  process.exit(1);
+  await finishE2E("24-kimi-gateway-hello", 1);
 });
