@@ -413,6 +413,16 @@ export class DaytonaSnapshotConflictError extends Error {
 }
 
 /**
+ * The wait's answer when the NAME IS GONE. A healer (this one, or the same code
+ * in another process) can delete a dead snapshot while a second caller is
+ * waiting on it, and that waiter must not read the resulting 404s as the
+ * control plane failing — the thing it was waiting for cannot arrive, and the
+ * name is now free to build. A symbol rather than a state string so it can
+ * never collide with a state Daytona invents later.
+ */
+export const DAYTONA_SNAPSHOT_GONE = Symbol("daytona-snapshot-gone");
+
+/**
  * The slice of the Daytona client the conflict wait touches — structural, so
  * the unit tests can drive it with a plain mock.
  */
@@ -456,6 +466,193 @@ function httpStatusOf(err: unknown): number | undefined {
     response?: { status?: number };
   } | null;
   return e?.status ?? e?.statusCode ?? e?.response?.status;
+}
+
+/**
+ * Snapshot states that hold no usable image and never will. A name sitting in
+ * one of these is not a cache entry, it is a headstone.
+ */
+const DAYTONA_SNAPSHOT_DEAD_STATES = new Set(["error", "build_failed"]);
+
+/**
+ * Tags Daytona's snapshot builder refuses outright. Its own documentation:
+ * the base image "must include either a tag or a digest (e.g. `ubuntu:22.04`)"
+ * and "the `latest`/`lts`/`stable` tags are not supported"
+ * (https://www.daytona.io/docs/en/snapshots/).
+ */
+const DAYTONA_UNBUILDABLE_TAGS = new Set(["latest", "lts", "stable"]);
+
+/**
+ * MAY THIS PROVIDER DELETE THE SNAPSHOT BEHIND THIS NAME? — our answer to the
+ * question Harbor answers with SnapshotPolicy.
+ *
+ * Harbor deletes an ERROR-state snapshot and rebuilds it under AUTO, and
+ * refuses loudly under EXPLICIT, where the name is one the USER supplied for a
+ * snapshot they manage
+ * (REFERENCES/Harbor/src/harbor/environments/daytona/snapshots.py:200-212).
+ * This provider has no policy flag, so the split has to be derived from the
+ * name itself — and there is a sharper criterion available than "who typed it":
+ * CAN WE PUT IT BACK?
+ *
+ * THE TEST IS ON THE RESOLVED IMAGE, NOT THE NAME, and that distinction is the
+ * whole of it. The build path creates a snapshot from
+ * `IMAGE_MAP[imageName] ?? imageName`, so the question "can we rebuild it" is a
+ * question about THAT ref, and Daytona will only build one carrying a real tag
+ * or digest. Testing the name instead got the platform's own legacy alias
+ * exactly wrong: `evolve-all` is an IMAGE_MAP key, which looked like proof we
+ * own it — but it resolves to the UNTAGGED `evolvingmachines/evolve-all`, which
+ * Daytona refuses to build. Delete would have succeeded, the rebuild would have
+ * been refused, and the name would be gone: the precise harm this predicate
+ * exists to prevent, committed on our own default. Reading the resolved ref
+ * also closes the blind spot a bare `includes("/")` had, since a registry path
+ * with no tag is just as unbuildable.
+ *
+ * When the ref does not qualify, the name belongs to a snapshot record that
+ * exists only in the user's account — built by their own tooling,
+ * unreproducible from here — and deleting it would throw away something nothing
+ * in this process could recreate. That is exactly the harm Harbor's EXPLICIT
+ * branch refuses, arrived at without a policy the caller must remember to set.
+ *
+ * Bare labels (`eval-env-<hash>`, `my-team-env`) are excluded and STILL HEALED,
+ * just not here: the layer that authored the name owns rebuilding it. The eval
+ * platform deletes and rebuilds its own `eval-env-*` aliases in its image
+ * preparation path (swarm_dashboard lib/evaluations/worker/templates.ts,
+ * commit 3f51b8d, merged to project-sable as 6ee52ed) — the same rule this
+ * function states, applied one floor up.
+ *
+ * A REFINEMENT DELIBERATELY NOT BUILT: the sharpest provenance seam available
+ * is `config.snapshotName` — a name the CALLER pinned is explicit by
+ * construction, where the derived default (`evolve-all-<version>`) is ours by
+ * construction. Threading that distinction from the constructor to here would
+ * beat any inference from the ref, and it is where this should go if the
+ * question is ever reopened. It is not built today because the resolved-ref
+ * test already refuses everything unbuildable, which is the harm that matters.
+ */
+function providerCanRebuildSnapshot(imageName: string): boolean {
+  const resolved = IMAGE_MAP[imageName] ?? imageName;
+  // A digest pin is the strongest form and needs no tag — but it must actually
+  // BE a digest. A bare `@` would have judged `team@prod` rebuildable, which is
+  // the same harm as the untagged case in its last remaining shape.
+  //
+  // AND AN `@` THAT IS NOT A VALID DIGEST ENDS THE QUESTION THERE. Falling
+  // through to the tag parse would read `ubuntu@sha256:0123456789abcdef` (too
+  // short to be a digest) as carrying the tag `0123456789abcdef` and call a
+  // malformed ref rebuildable — Daytona would refuse to build it, and the name
+  // would be deleted for nothing.
+  if (resolved.includes("@")) {
+    return /@[a-z0-9]+(?:[.+_-][a-z0-9]+)*:[0-9a-f]{32,}$/i.test(resolved);
+  }
+  // The tag lives in the LAST path segment, so a registry port
+  // (localhost:5000/img) is never mistaken for one.
+  const lastSegment = resolved.substring(resolved.lastIndexOf("/") + 1);
+  const colon = lastSegment.lastIndexOf(":");
+  if (colon < 0) return false;
+  const tag = lastSegment.substring(colon + 1);
+  if (tag === "") return false;
+  return !DAYTONA_UNBUILDABLE_TAGS.has(tag.toLowerCase());
+}
+
+/**
+ * Does this failure mean the snapshot is not there? Used for two opposite-
+ * looking purposes that are really the same one: confirming a delete took
+ * effect, and recognising that a name someone was waiting on has been cleared.
+ */
+function isMissingSnapshot(message: string): boolean {
+  const m = message.toLowerCase();
+  return m.includes("not found") || m.includes("404") || m.includes("does not exist");
+}
+
+/** How long to wait for a delete to actually take effect, and how often to look. */
+const DAYTONA_SNAPSHOT_DELETE_TIMEOUT_MS = 60_000;
+const DAYTONA_SNAPSHOT_DELETE_POLL_MS = 2_000;
+
+/**
+ * Delete a dead snapshot so the name is free to be built again. Reports whether
+ * the name is now CONFIRMED CLEAR.
+ *
+ * THE DELETE IS ASYNCHRONOUS, and treating it as instant is what made the first
+ * version of this heal itself deferred by a run: Daytona acknowledges the call
+ * and moves the snapshot to `Removing`, so a create fired immediately after
+ * usually loses the name to a corpse that is still being carried out. The
+ * repo's own builder already knows this and polls until the name stops
+ * resolving before rebuilding (assets/daytona/build.ts:26-38); this does the
+ * same on a bounded budget rather than an open loop.
+ *
+ * FAILING TO DELETE IS NOT FATAL, which MATCHES upstream rather than diverging
+ * from it: Harbor's _delete_snapshot logs the failure and carries on
+ * (REFERENCES/Harbor/src/harbor/environments/daytona/snapshots.py:213-224).
+ * It suits this provider for its own reason too — a working direct image pull
+ * still exists, so a refused delete leaves the behaviour that shipped before
+ * this function, where throwing would turn a degraded path into a hard failure
+ * for callers getting boxes today.
+ *
+ * The dead snapshot's errorReason is logged BEFORE the delete, because deleting
+ * it destroys the only record of why the build died.
+ */
+async function deleteDeadSnapshot(
+  client: {
+    snapshot: {
+      delete(snapshot: unknown): Promise<unknown>;
+      get(name: string): Promise<{ state?: string } | undefined>;
+    };
+  },
+  name: string,
+  // errorReason is nullable on the real SDK type, absent on the wait's
+  // structural one — accept both rather than making callers normalise it.
+  snapshot: { state?: string; errorReason?: string | null },
+  // Its OWN clock, not the conflict wait's — see snapshotDeleteTiming.
+  timing?: { timeoutMs?: number; pollMs?: number },
+): Promise<boolean> {
+  const reason = snapshot.errorReason ? `: ${snapshot.errorReason}` : "";
+  console.warn(
+    `[daytona] Deleting dead snapshot "${name}" (state "${snapshot.state ?? "unknown"}"${reason}) ` +
+      "before rebuilding it."
+  );
+  try {
+    await client.snapshot.delete(snapshot);
+  } catch (err) {
+    const failure = err instanceof Error ? err.message : String(err);
+    // ONE QUESTION, ONE ANSWER. A not-found here does not mean the delete
+    // failed — it means the record is already gone, or another healer is
+    // removing it right now. Both are the outcome we wanted, so this falls
+    // through to the poll below and lets IT answer definitively rather than
+    // guessing from the delete's reply. Treating it as a failure punished the
+    // LOSER of an ordinary two-healers race: it skipped the build it was
+    // entitled to and took the slow direct pull, which is worse than the
+    // behaviour that shipped before any of this existed.
+    if (!isMissingSnapshot(failure)) {
+      console.warn(
+        `[daytona] Could not delete dead snapshot "${name}" (${failure}) — ` +
+          "delete it in the Daytona dashboard (Snapshots page) to restore the fast path; " +
+          "falling back to a direct image pull for now."
+      );
+      return false;
+    }
+  }
+
+  // Wait for the name to stop resolving. Only a NOT-FOUND means gone: a 403 or
+  // a transient blip says nothing about whether the record survived, and
+  // reading either as success would hand back a name still held by a corpse.
+  // Same predicate the conflict wait uses, because it is the same question.
+  const timeoutMs = timing?.timeoutMs ?? DAYTONA_SNAPSHOT_DELETE_TIMEOUT_MS;
+  const pollMs = timing?.pollMs ?? DAYTONA_SNAPSHOT_DELETE_POLL_MS;
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      await client.snapshot.get(name);
+    } catch (err) {
+      if (isMissingSnapshot(err instanceof Error ? err.message : String(err))) return true;
+      // Anything else: keep looking until the budget runs out.
+    }
+    if (Date.now() >= deadline) {
+      console.warn(
+        `[daytona] Dead snapshot "${name}" still resolves ${timeoutMs}ms after it was deleted — ` +
+          "leaving the rebuild to the next run rather than racing the removal."
+      );
+      return false;
+    }
+    await sleep(pollMs);
+  }
 }
 
 /**
@@ -510,10 +707,23 @@ function isAuthFailure(err: unknown): boolean {
  *     look; most races here are lost to a build that finished seconds ago, and
  *     a wait that starts by looking costs nothing when the answer is already
  *     "active". Same loop shape as activateSnapshot() above.
- *   - A failed GET is not fatal. The winner's snapshot can be briefly
- *     unreadable mid-build, so a poll error is logged and retried (Harbor
- *     warns and continues too, :326-327) — unlike the activation poll, where a
- *     failed GET IS the verdict.
+ *   - A failed GET is not fatal, EXCEPT a not-found, which is an answer. The
+ *     winner's snapshot can be briefly unreadable mid-build, so an ordinary
+ *     poll error is logged and retried (Harbor warns and continues too,
+ *     :326-327) — unlike the activation poll, where a failed GET IS the
+ *     verdict. A 404 is different in kind: since this file gained a healer,
+ *     the ordinary reason a contended name stops resolving is that another
+ *     process cleared a corpse, so the FIRST not-found resolves the wait as
+ *     DAYTONA_SNAPSHOT_GONE rather than counting toward the
+ *     control-plane-is-down limit.
+ *
+ *     THE COST OF THAT CHOICE, ACCEPTED KNOWINGLY: a TRANSIENT 404 during a
+ *     legitimate build ends the wait early, and the caller builds a name whose
+ *     real owner still holds it — one doomed create, then the existing
+ *     fallback. Self-correcting, and cheap. Requiring two consecutive 404s
+ *     would remove it, at the price of an extra poll interval on what is now
+ *     the COMMON case; the heal is meant to be fast, so the rare doomed create
+ *     is the better trade.
  *   - WAIT ONLY ON A WHITELIST of in-flight states, where Harbor waits on
  *     everything that is not ACTIVE or ERROR (:316-323). Harbor's shape leaves
  *     `inactive`, `removing` and any future state polling for the whole budget
@@ -537,7 +747,7 @@ async function waitForSnapshotConflictWinner(
   client: SnapshotWaitClient,
   name: string,
   timing?: { timeoutMs?: number; pollMs?: number },
-): Promise<{ state?: string }> {
+): Promise<{ state?: string } | typeof DAYTONA_SNAPSHOT_GONE> {
   const timeoutMs = timing?.timeoutMs ?? DAYTONA_SNAPSHOT_CONFLICT_TIMEOUT_MS;
   const pollMs = timing?.pollMs ?? DAYTONA_SNAPSHOT_CONFLICT_POLL_MS;
 
@@ -558,6 +768,17 @@ async function waitForSnapshotConflictWinner(
     } catch (err) {
       current = undefined;
       const failure = err instanceof Error ? err.message : String(err);
+
+      // NOT-FOUND IS AN ANSWER, NOT A STRIKE. A healer clearing this dead name
+      // is exactly what SHOULD happen, and counting its 404s toward the
+      // control-plane-is-down limit would turn one process's repair into
+      // another's hard failure.
+      if (isMissingSnapshot(failure)) {
+        console.log(
+          `[daytona] Snapshot "${name}" no longer exists — the name is clear, building it.`
+        );
+        return DAYTONA_SNAPSHOT_GONE;
+      }
 
       // Credentials that cannot read the snapshot cannot read it in nine more
       // minutes either. Ending here also keeps the failure legible: the
@@ -2353,6 +2574,21 @@ export class DaytonaProvider implements SandboxProvider {
     pollMs: DAYTONA_SNAPSHOT_CONFLICT_POLL_MS,
   };
 
+  /**
+   * Clocks of the DELETE-CONFIRMATION poll (see deleteDeadSnapshot). Separate
+   * from snapshotConflictTiming because the two wait for different things on
+   * different scales: the conflict clock waits out another process's IMAGE
+   * BUILD, which legitimately takes minutes, while this one waits for a record
+   * to stop resolving after Daytona acknowledged its deletion — seconds of
+   * bookkeeping. Handing the delete poll the conflict budget let the fast path
+   * block for ten minutes on a lingering corpse and left this function's own
+   * constants unreachable.
+   */
+  protected snapshotDeleteTiming: { timeoutMs: number; pollMs: number } = {
+    timeoutMs: DAYTONA_SNAPSHOT_DELETE_TIMEOUT_MS,
+    pollMs: DAYTONA_SNAPSHOT_DELETE_POLL_MS,
+  };
+
   constructor(config: ResolvedDaytonaConfig) {
     const clientConfig = {
       apiKey: config.apiKey,
@@ -2492,6 +2728,10 @@ export class DaytonaProvider implements SandboxProvider {
     // (REFERENCES/Harbor/src/harbor/environments/daytona/snapshots.py:193-198).
     let inFlightState: string | undefined;
 
+    // Set when a dead snapshot was found and its removal could NOT be
+    // confirmed. The build path refuses to race a removal still in progress.
+    let deadNameCleared: boolean | undefined;
+
     // Try to use existing snapshot first (fast path for returning users or ./build.sh daytona)
     try {
       const snapshot = await this.client.snapshot.get(imageName);
@@ -2510,6 +2750,50 @@ export class DaytonaProvider implements SandboxProvider {
       // back to a slow direct pull — the 2026-07-31 evolve-all prod incident.
       if (snapshot && snapshotState === "inactive") {
         snapshotState = (await activateSnapshot(this.client, imageName, snapshot)).state;
+      }
+      // A DEAD snapshot is cleared right here, because the name is the whole
+      // problem: nothing below can build over it, so every later run of this
+      // image degraded to the slow direct pull, permanently. Harbor deletes and
+      // rebuilds for the same reason (snapshots.py:200-212); the rebuild is the
+      // build path below, which this fall-through reaches with the name free.
+      //
+      // TWO OF THE THREE WAYS TO MEET A CORPSE ARE HEALED IN THIS PASS: found
+      // dead here, and found dead by the conflict wait below. The third is a
+      // snapshot that dies DURING reactivation — activateSnapshot's own poll
+      // sees the dead state and raises its typed refusal, which is a final
+      // verdict rather than a build trigger, so no delete happens on that run.
+      // It is left that way on purpose: the refusal is what tells the caller
+      // their box is not coming, and the corpse it leaves is cleared by
+      // whichever caller arrives next, through this very branch.
+      //
+      // DECLARED SIZING AND A DEAD SNAPSHOT: FIRST BUILDER WINS. The sizing
+      // refusal above deliberately does not fire here — it guards an existing
+      // snapshot whose resources are already pinned, and a dead one pins
+      // nothing. So a caller declaring resources rebuilds the name at THEIR
+      // sizing, and every later caller inherits it until the snapshot dies
+      // again. That is the same first-builder-wins wart the whole
+      // content-address-free naming scheme has (a name is one image, not one
+      // image per sizing); it is recorded rather than fixed because fixing it
+      // means content-addressing the name, which is the eval platform's
+      // approach one floor up, not this provider's.
+      if (snapshot && DAYTONA_SNAPSHOT_DEAD_STATES.has(snapshotState ?? "")) {
+        if (providerCanRebuildSnapshot(imageName)) {
+          // The build below is skipped unless the name is CONFIRMED clear, the
+          // same rule the join path follows: a create over a corpse that is
+          // still there loses the name and buys a wasted round trip.
+          deadNameCleared = await deleteDeadSnapshot(
+            this.client,
+            imageName,
+            snapshot,
+            this.snapshotDeleteTiming
+          );
+        } else {
+          console.warn(
+            `[daytona] Snapshot "${imageName}" is dead (state "${snapshotState}") but this provider ` +
+              "cannot rebuild that name — delete it in the Daytona dashboard (Snapshots page), or " +
+              "rebuild it with the tooling that created it."
+          );
+        }
       }
       if (snapshot && snapshotState === "active") {
         console.log(`[daytona] Using cached snapshot: ${imageName}`);
@@ -2559,18 +2843,18 @@ export class DaytonaProvider implements SandboxProvider {
       }
 
       try {
+        if (deadNameCleared === false) {
+          throw new Error(
+            `dead snapshot "${imageName}" was not confirmed removed — not racing its removal`
+          );
+        }
         // Step 1: Create named snapshot (blocking — so it's available for all future runs)
         // Use Image.base() — snapshot.create() requires a Daytona Image object, not a raw string
-        if (inFlightState !== undefined) {
-          if (!joinInFlightBuild) {
-            throw new Error(
-              `snapshot "${imageName}" is mid-build (state "${inFlightState}") and cannot be resized`
-            );
-          }
-          await this.joinInFlightSnapshotBuild(imageName);
-        } else {
-          try {
-            await this.client.snapshot.create(
+        // The build, as a closure: the two routes that discover a DEAD name mid
+        // flight both have to run it after clearing that name, and Harbor's
+        // _SnapshotNeedsCreate sends its caller back to exactly this step.
+        const buildSnapshot = () =>
+          this.client.snapshot.create(
               {
                 name: imageName,
                 image: Image.base(publicImage),
@@ -2596,6 +2880,26 @@ export class DaytonaProvider implements SandboxProvider {
               },
               { onLogs: (log: string) => console.log(`[daytona] ${log}`) },
             );
+
+        // A join that reports NEEDS-CREATE found the name dead and cleared it,
+        // so the build it was waiting for has to be run here. Harbor routes the
+        // same discovery the same way, with _SnapshotNeedsCreate sending its
+        // caller back to create (snapshots.py:200-212).
+        const buildAfterClearedName = async (): Promise<void> => {
+          await buildSnapshot();
+          console.log(`[daytona] Snapshot "${imageName}" ready (rebuilt here after a dead build).`);
+        };
+
+        if (inFlightState !== undefined) {
+          if (!joinInFlightBuild) {
+            throw new Error(
+              `snapshot "${imageName}" is mid-build (state "${inFlightState}") and cannot be resized`
+            );
+          }
+          if (await this.joinInFlightSnapshotBuild(imageName)) await buildAfterClearedName();
+        } else {
+          try {
+            await buildSnapshot();
             console.log(`[daytona] Snapshot "${imageName}" ready (built here).`);
           } catch (createErr) {
             // WAIT-ON-CONFLICT. Losing the name means another process is ALREADY
@@ -2615,7 +2919,7 @@ export class DaytonaProvider implements SandboxProvider {
             // and it is what this case has always done.
             if (wantsResources) throw createErr;
 
-            await this.joinInFlightSnapshotBuild(imageName);
+            if (await this.joinInFlightSnapshotBuild(imageName)) await buildAfterClearedName();
           }
         }
 
@@ -2686,23 +2990,42 @@ export class DaytonaProvider implements SandboxProvider {
    * Join a snapshot build another process is already running, and leave the
    * name usable — or say why it is not.
    *
-   * Returns normally when the snapshot can be used by name after this call.
-   * Throws a plain Error when the in-flight build produced nothing usable,
-   * which is the ONE case create()'s direct image pull is still right: nobody
-   * is going to produce this snapshot, so waiting longer buys nothing. The
-   * typed errors (conflict, activation) pass straight through create()'s
-   * fallback as final verdicts.
+   * Returns FALSE when the snapshot can be used by name as it stands, and TRUE
+   * when the name was found dead, deleted, and now needs building: the caller
+   * runs the build it was waiting for. That is Harbor's _SnapshotNeedsCreate
+   * signal, which its resolve raises after deleting an ERROR-state snapshot
+   * (REFERENCES/Harbor/src/harbor/environments/daytona/snapshots.py:200-212).
+   *
+   * DELIBERATELY STRICTER THAN UPSTREAM ON ONE POINT. Harbor raises
+   * _SnapshotNeedsCreate whether or not its delete succeeded — _delete_snapshot
+   * logs a failure and returns, and the caller creates regardless (:213-224).
+   * This returns NEEDS-CREATE only when the name is CONFIRMED clear. A create
+   * fired over a corpse that is still there loses the name and lands back in
+   * the conflict wait, which is a slower way of reaching the same fallback with
+   * one wasted round trip; when the name is genuinely gone, the create is the
+   * whole point. Swallowing a FAILED delete, by contrast, is not a divergence
+   * at all — that matches Harbor exactly.
+   *
+   * Throws a plain Error when the in-flight build produced nothing usable AND
+   * the name could not be cleared, which is the ONE case create()'s direct
+   * image pull is still right: nobody is going to produce this snapshot, so
+   * waiting longer buys nothing. The typed errors (conflict, activation) pass
+   * straight through create()'s fallback as final verdicts.
    */
-  private async joinInFlightSnapshotBuild(imageName: string): Promise<void> {
+  private async joinInFlightSnapshotBuild(imageName: string): Promise<boolean> {
     const winner = await waitForSnapshotConflictWinner(
       this.client,
       imageName,
       this.snapshotConflictTiming,
     );
 
+    // The name was cleared while we waited (a healer, here or in another
+    // process). Nothing to join and nothing to reuse — build it.
+    if (winner === DAYTONA_SNAPSHOT_GONE) return true;
+
     if (winner.state === "active") {
       console.log(`[daytona] Snapshot "${imageName}" ready (built by another process) — reusing it.`);
-      return;
+      return false;
     }
 
     // Won the race, then slept: Daytona deactivates a snapshot unused for two
@@ -2713,7 +3036,19 @@ export class DaytonaProvider implements SandboxProvider {
     if (winner.state === "inactive") {
       await activateSnapshot(this.client, imageName, winner);
       console.log(`[daytona] Snapshot "${imageName}" ready (built by another process) — reusing it.`);
-      return;
+      return false;
+    }
+
+    // THE BUILD WE WAITED FOR DIED, and it left its corpse holding the name.
+    // Falling straight to the direct pull (what this did before) meant every
+    // later run pulled the same bytes the slow way forever, because nothing
+    // ever removed the failed record. Clear it and tell the caller to build.
+    if (
+      DAYTONA_SNAPSHOT_DEAD_STATES.has(winner.state ?? "") &&
+      providerCanRebuildSnapshot(imageName) &&
+      (await deleteDeadSnapshot(this.client, imageName, winner, this.snapshotDeleteTiming))
+    ) {
+      return true;
     }
 
     throw new Error(
@@ -2944,6 +3279,7 @@ export const _testDaytonaStateToEvolveState = daytonaStateToEvolveState;
 export const _testActivateSnapshot = activateSnapshot;
 export const _testWaitForSnapshotConflictWinner = waitForSnapshotConflictWinner;
 export const _testIsSnapshotNameConflict = isSnapshotNameConflict;
+export const _testProviderCanRebuildSnapshot = providerCanRebuildSnapshot;
 export const _testImageMap = IMAGE_MAP;
 export const _testWithEndOfOutputSentinel = withEndOfOutputSentinel;
 export const _testStripEndOfOutputSentinel = stripEndOfOutputSentinel;

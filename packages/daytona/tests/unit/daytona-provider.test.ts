@@ -22,6 +22,9 @@ import {
   _testActivateSnapshot,
   _testWaitForSnapshotConflictWinner,
   _testIsSnapshotNameConflict,
+  _testProviderCanRebuildSnapshot,
+  _testImageMap,
+  EVOLVE_IMAGE_VERSION,
   _testWrapCommand,
   _testMapNetworkPolicy,
   _testImageRegistryHost,
@@ -35,6 +38,7 @@ import {
   DaytonaImagePullError,
   DaytonaSnapshotActivationError,
   DaytonaSnapshotConflictError,
+  DAYTONA_SNAPSHOT_GONE,
   DaytonaCommands,
   DaytonaProvider,
   createDaytonaProvider,
@@ -1033,7 +1037,13 @@ async function silenceNoise<T>(fn: () => Promise<T>): Promise<T> {
 
 /** Production conflict clocks are 10 minutes; the tests measure the SHAPE. */
 class FastConflictProvider extends DaytonaProvider {
-  protected override snapshotConflictTiming = { timeoutMs: 50, pollMs: 1 };
+  // DELIBERATELY DIFFERENT NUMBERS. When both clocks were 50ms, a delete poll
+  // handed the CONFLICT budget by mistake looked exactly like one on its own —
+  // which is how the shared-field bug survived a green suite. An order of
+  // magnitude between them makes the wrong clock measurable, and [6an] asserts
+  // on it.
+  protected override snapshotConflictTiming = { timeoutMs: 300, pollMs: 1 };
+  protected override snapshotDeleteTiming = { timeoutMs: 30, pollMs: 1 };
 }
 
 /**
@@ -1047,6 +1057,7 @@ function createConflictClient(
 ) {
   const state = {
     gets: 0,
+    deletes: 0,
     snapshotCreateCalls: 0,
     createParams: undefined as
       | { snapshot?: string; image?: string; resources?: { cpu?: number; memory?: number } }
@@ -1058,6 +1069,12 @@ function createConflictClient(
         const answer = script[state.gets++];
         if (answer === null || answer === undefined) throw new Error("snapshot not found");
         return answer;
+      },
+      // The healer can reach every path this client drives, so the verb has to
+      // exist here too — a missing one would fail as a TypeError rather than
+      // exercising the behaviour under test.
+      delete: async () => {
+        state.deletes++;
       },
       create: async () => {
         state.snapshotCreateCalls++;
@@ -1073,6 +1090,404 @@ function createConflictClient(
     },
   };
   return { client, state };
+}
+
+// =============================================================================
+// [6.7] DEAD SNAPSHOTS ARE DELETED, THEN REBUILT (Harbor snapshots.py:200-212)
+// =============================================================================
+
+/**
+ * A client whose snapshot.get answers a SCRIPT and whose delete/create are
+ * recorded. Separate from createConflictClient because these cases need the
+ * delete verb and a create that can SUCCEED once the name is free.
+ */
+function createDeadSnapshotClient(
+  script: Array<{ state?: string; name?: string } | null>,
+  opts?: { deleteError?: unknown; createError?: unknown },
+) {
+  const state = {
+    gets: 0,
+    deletes: 0,
+    deleted: undefined as unknown,
+    snapshotCreateCalls: 0,
+    createParams: undefined as { snapshot?: string; image?: string } | undefined,
+  };
+  const client = {
+    snapshot: {
+      get: async () => {
+        const answer = script[state.gets++];
+        if (answer === null || answer === undefined) throw new Error("snapshot not found");
+        return answer;
+      },
+      delete: async (snapshot: unknown) => {
+        state.deletes++;
+        state.deleted = snapshot;
+        if (opts?.deleteError) throw opts.deleteError;
+      },
+      create: async () => {
+        state.snapshotCreateCalls++;
+        if (opts?.createError) throw opts.createError;
+      },
+    },
+    create: async (params: { snapshot?: string; image?: string }) => {
+      state.createParams = params;
+      return { id: params.snapshot ? "sb-from-snapshot" : "sb-direct-pull" };
+    },
+  };
+  return { client, state };
+}
+
+function providerOn(client: unknown): DaytonaProvider {
+  const provider = new FastConflictProvider({ apiKey: "k" });
+  (provider as unknown as { client: unknown }).client = client;
+  return provider;
+}
+
+async function testDeadSnapshotIsDeletedThenRebuilt(): Promise<void> {
+  console.log("\n[6ad] create() - a DEAD snapshot is deleted and rebuilt, not left to poison the name");
+
+  // The bug this fixes: nothing ever removed a failed record, so snapshot.create
+  // lost the name to it on every later run and each one degraded to the slow
+  // direct pull, permanently.
+  // A TAGGED exemplar, because deletability is decided by the resolved ref:
+  // Daytona refuses to build an untagged image, so an untagged one must never
+  // be deleted (see the evolve-all case in [6af]).
+  for (const dead of ["error", "build_failed"]) {
+    const { client, state } = createDeadSnapshotClient([{ state: dead, name: "ubuntu:24.04" }]);
+    const sandbox = await silenceNoise(() =>
+      providerOn(client).create({ image: "ubuntu:24.04" })
+    );
+
+    assertEqual(state.deletes, 1, `a "${dead}" snapshot is deleted`);
+    assertEqual(state.snapshotCreateCalls, 1, `and then REBUILT under the same name ("${dead}")`);
+    // The whole point: the sandbox comes from the snapshot, not the slow pull.
+    assertEqual(
+      state.createParams?.snapshot,
+      "ubuntu:24.04",
+      `the box boots from the rebuilt snapshot, not a direct image pull ("${dead}")`
+    );
+    assert(sandbox !== undefined, "a sandbox is returned");
+  }
+}
+
+async function testDeadSnapshotDeletePassesTheRecordItRead(): Promise<void> {
+  console.log("\n[6ae] create() - the delete targets the snapshot record the GET returned");
+
+  const record = { state: "error", name: "ubuntu:24.04", errorReason: "base image gone" };
+  const { client, state } = createDeadSnapshotClient([record]);
+  await silenceNoise(() => providerOn(client).create({ image: "ubuntu:24.04" }));
+
+  // Daytona's delete takes the snapshot object, not the bare name.
+  assertEqual(state.deleted, record, "the record read by the fast path is what gets deleted");
+}
+
+async function testUnrebuildableDeadNameIsPreserved(): Promise<void> {
+  console.log("\n[6af] create() - a dead name this provider CANNOT rebuild is never deleted");
+
+  // Harbor refuses to auto-delete under EXPLICIT because the name may be a
+  // snapshot the user manages. Our equivalent is "can we put it back?" — a bare
+  // label resolves to no Docker image, so deleting it would destroy something
+  // nothing here could recreate.
+  // The dead record still owns the name, so the build path's create loses it —
+  // which is precisely why the name was poisoned in the first place.
+  const { client, state } = createDeadSnapshotClient(
+    [
+      { state: "error", name: "my-team-env" }, // fast path
+      { state: "error", name: "my-team-env" }, // the conflict wait
+    ],
+    { createError: new Error('Snapshot with name "my-team-env" already exists') }
+  );
+  await silenceNoise(() => providerOn(client).create({ image: "my-team-env" }));
+
+  assertEqual(state.deletes, 0, "the user's own snapshot survives");
+  assertEqual(state.createParams?.snapshot, undefined, "and the old direct-pull fallback still runs");
+  assertEqual(state.createParams?.image, "my-team-env", "pulling the name as an image, exactly as before");
+}
+
+async function testDeadSnapshotDeleteFailureFallsBackInsteadOfThrowing(): Promise<void> {
+  console.log("\n[6ag] create() - a delete that FAILS leaves the pre-existing fallback, not a hard error");
+
+  // This provider still has a working direct pull, so a refused delete must not
+  // turn a degraded path into a failure for callers who get boxes today.
+  const { client, state } = createDeadSnapshotClient(
+    [
+      { state: "error", name: "ubuntu:24.04" }, // fast path
+      { state: "error", name: "ubuntu:24.04" }, // the conflict wait, name still held
+    ],
+    {
+      deleteError: new Error("403 forbidden"),
+      createError: new Error('Snapshot with name "ubuntu:24.04" already exists'),
+    }
+  );
+  const sandbox = await silenceNoise(() => providerOn(client).create({ image: "ubuntu:24.04" }));
+
+  // ONCE: the fast path tries to clear the corpse and cannot, so the build is
+  // skipped rather than raced — which is also why the join that used to follow
+  // a lost create never runs. Refused, and still not fatal.
+  assertEqual(state.deletes, 1, "the delete was attempted and failed, without throwing");
+  assertEqual(state.createParams?.image, "ubuntu:24.04", "and the direct pull carried on");
+  assert(sandbox !== undefined, "a sandbox is still returned");
+}
+
+async function testDeadWinnerOfAJoinIsClearedThenBuilt(): Promise<void> {
+  console.log("\n[6ah] joinInFlightSnapshotBuild() - a build that DIES mid-wait is cleared, then rebuilt here");
+
+  // The second poisoning route: the name was mid-build when we looked, so we
+  // waited — and the winner's build failed, leaving the corpse holding the name.
+  const { client, state } = createDeadSnapshotClient([
+    { state: "building", name: "ubuntu:24.04" }, // fast path: in flight, so JOIN it
+    { state: "build_failed", name: "ubuntu:24.04" }, // the wait: it died
+  ]);
+  await silenceNoise(() => providerOn(client).create({ image: "ubuntu:24.04" }));
+
+  assertEqual(state.deletes, 1, "the dead winner is deleted");
+  assertEqual(state.snapshotCreateCalls, 1, "and the build it was waiting for runs here");
+  assertEqual(state.createParams?.snapshot, "ubuntu:24.04", "the box boots from the rebuilt snapshot");
+}
+
+async function testMissingSnapshotMidWaitIsAnAnswerNotAFailure(): Promise<void> {
+  console.log("\n[6aj] waitForSnapshotConflictWinner() - a name that VANISHES mid-wait is resolved, not failed");
+
+  // One process healing a dead name is exactly what should happen. The waiter
+  // must read the resulting 404s as "the name is clear", never as three
+  // identical poll failures meaning the control plane is down.
+  let gets = 0;
+  const client = {
+    snapshot: {
+      get: async () => {
+        gets++;
+        if (gets === 1) return { state: "building" };
+        throw new Error("404: snapshot not found");
+      },
+    },
+  };
+  const result = await silenceNoise(() =>
+    _testWaitForSnapshotConflictWinner(client, "ubuntu:24.04", { timeoutMs: 5_000, pollMs: 1 })
+  );
+  assertEqual(result, DAYTONA_SNAPSHOT_GONE, "the wait reports the name as GONE");
+  assertEqual(gets, 2, "and answers on the first 404, without spending the failure budget");
+}
+
+async function testVanishedNameIsBuiltRatherThanPulled(): Promise<void> {
+  console.log("\n[6ak] create() - a name cleared by another healer mid-wait is BUILT here");
+
+  // End to end: the corpse disappears while we wait, so this run builds the
+  // snapshot rather than falling back to the slow direct pull.
+  const { client, state } = createDeadSnapshotClient([
+    { state: "building", name: "ubuntu:24.04" }, // fast path: in flight, join it
+    // the wait's first poll: the script is exhausted, so the GET throws
+    // "snapshot not found" — another process cleared the name.
+  ]);
+  await silenceNoise(() => providerOn(client).create({ image: "ubuntu:24.04" }));
+
+  assertEqual(state.deletes, 0, "nothing to delete — someone else already did");
+  assertEqual(state.snapshotCreateCalls, 1, "the name is free, so it is built");
+  assertEqual(state.createParams?.snapshot, "ubuntu:24.04", "and the box boots from that snapshot");
+}
+
+async function testHealedRebuildIsTriedOnceAndNeverLoops(): Promise<void> {
+  console.log("\n[6al] create() - the heal adds ONE bounded retry, never a loop");
+
+  // Worst case, end to end: the corpse is cleared, the build loses the name to
+  // a third process anyway, the wait finds that name gone too, and the post-heal
+  // rebuild loses AGAIN. Each create is driven by fresh evidence that the name
+  // was free, so two is correct — what matters is that it STOPS there and takes
+  // the existing fallback instead of delete-build-repeat.
+  const { client, state } = createDeadSnapshotClient(
+    [
+      { state: "error", name: "ubuntu:24.04" }, // fast path: dead
+      // delete-confirmation poll: script exhausted, GET throws => name is gone
+    ],
+    { createError: new Error('Snapshot with name "ubuntu:24.04" already exists') }
+  );
+  await silenceNoise(() => providerOn(client).create({ image: "ubuntu:24.04" }));
+
+  assertEqual(state.deletes, 1, "the corpse is cleared exactly once");
+  assertEqual(
+    state.snapshotCreateCalls,
+    2,
+    "the build and ONE post-heal rebuild — bounded, never a delete-build loop"
+  );
+  assertEqual(state.createParams?.image, "ubuntu:24.04", "and the run ends on the direct pull");
+}
+
+async function testDeleteConfirmationWaitsForTheRecordToVanish(): Promise<void> {
+  console.log("\n[6am] deleteDeadSnapshot() - the create waits for the delete to actually take effect");
+
+  // Daytona's delete is asynchronous: it acknowledges and moves the snapshot to
+  // "Removing". A create fired immediately loses the name to a corpse still
+  // being carried out, which deferred every heal by a run.
+  let gets = 0;
+  const { client, state } = createDeadSnapshotClient([{ state: "error", name: "ubuntu:24.04" }]);
+  const lingering = {
+    ...client,
+    snapshot: {
+      ...client.snapshot,
+      get: async () => {
+        gets++;
+        if (gets === 1) return { state: "error", name: "ubuntu:24.04" }; // fast path
+        if (gets <= 3) return { state: "removing", name: "ubuntu:24.04" }; // still going
+        throw new Error("404: snapshot not found"); // finally gone
+      },
+    },
+  };
+  await silenceNoise(() => providerOn(lingering).create({ image: "ubuntu:24.04" }));
+
+  assert(gets >= 4, "the poll kept looking until the record stopped resolving");
+  assertEqual(state.snapshotCreateCalls, 1, "and only then was the name rebuilt");
+  assertEqual(state.createParams?.snapshot, "ubuntu:24.04", "the box boots from that rebuild");
+}
+
+async function testDeleteConfirmationGivesUpOnItsOwnBudget(): Promise<void> {
+  console.log("\n[6an] deleteDeadSnapshot() - a record that never vanishes ends on the DELETE budget");
+
+  // The branch no test reached before: every earlier case exhausted the GET
+  // script and took the immediate-gone return, so a delete poll running on the
+  // ten-minute conflict clock looked exactly like one running on its own.
+  let gets = 0;
+  const { client, state } = createDeadSnapshotClient([{ state: "error", name: "ubuntu:24.04" }]);
+  const neverGone = {
+    ...client,
+    snapshot: {
+      ...client.snapshot,
+      // Dead on arrival, then stuck in Removing forever: the corpse never goes.
+      get: async () => {
+        gets++;
+        return gets === 1
+          ? { state: "error", name: "ubuntu:24.04" }
+          : { state: "removing", name: "ubuntu:24.04" };
+      },
+    },
+  };
+  const started = Date.now();
+  await silenceNoise(() => providerOn(neverGone).create({ image: "ubuntu:24.04" }));
+  const elapsed = Date.now() - started;
+
+  // The delete clock is 30ms here, the conflict clock 300ms. Landing under
+  // ~150ms proves the poll ended on ITS budget and not the one it used to
+  // borrow — the assertion the previous equal-valued clocks could not make.
+  assert(elapsed < 150, `the delete poll ended on its OWN budget (took ${elapsed}ms)`);
+  assertEqual(state.snapshotCreateCalls, 0, "an unconfirmed delete does NOT race the removal");
+  assertEqual(state.createParams?.image, "ubuntu:24.04", "the run ends on the direct pull instead");
+}
+
+async function testDeletePollTreatsOnlyNotFoundAsGone(): Promise<void> {
+  console.log("\n[6ao] deleteDeadSnapshot() - a 403 during the poll is not 'gone'");
+
+  // A permission failure says nothing about whether the record survived.
+  // Reading it as success would hand back a name a corpse still holds.
+  let gets = 0;
+  const { client, state } = createDeadSnapshotClient([{ state: "error", name: "ubuntu:24.04" }]);
+  const forbidden = {
+    ...client,
+    snapshot: {
+      ...client.snapshot,
+      get: async () => {
+        gets++;
+        if (gets === 1) return { state: "error", name: "ubuntu:24.04" };
+        throw new Error("403 forbidden");
+      },
+    },
+  };
+  await silenceNoise(() => providerOn(forbidden).create({ image: "ubuntu:24.04" }));
+
+  assertEqual(state.snapshotCreateCalls, 0, "a blip is never mistaken for a cleared name");
+  assertEqual(state.createParams?.image, "ubuntu:24.04", "so the run takes the direct pull");
+}
+
+async function testJoinPathDeleteRefusedFallsBack(): Promise<void> {
+  console.log("\n[6ap] joinInFlightSnapshotBuild() - a dead winner whose delete is REFUSED takes the fallback");
+
+  // The join path's own failure branch, which lost its coverage when the fast
+  // path started refusing to race an unconfirmed removal. A 403 is not a
+  // not-found, so it is a real refusal: nothing to build over, take the pull.
+  const { client, state } = createDeadSnapshotClient(
+    [
+      { state: "building", name: "ubuntu:24.04" }, // fast path: in flight, join it
+      { state: "build_failed", name: "ubuntu:24.04" }, // the wait: it died
+    ],
+    { deleteError: new Error("403 forbidden") }
+  );
+  await silenceNoise(() => providerOn(client).create({ image: "ubuntu:24.04" }));
+
+  assertEqual(state.deletes, 1, "the delete was attempted on the dead winner");
+  assertEqual(state.snapshotCreateCalls, 0, "a refused delete never leads to a build over the corpse");
+  assertEqual(state.createParams?.image, "ubuntu:24.04", "the run ends on the direct pull");
+}
+
+async function testDeleteRaceLoserStillBuilds(): Promise<void> {
+  console.log("\n[6aq] deleteDeadSnapshot() - LOSING a heal race is a success, not a demotion");
+
+  // Two healers meet the same corpse. The loser's delete answers not-found,
+  // which means the removal is done or under way by someone else — the outcome
+  // it wanted. Reading that as a failure made the loser skip its build and eat
+  // the slow pull, which is worse than the pre-heal behaviour.
+  let gets = 0;
+  const { client, state } = createDeadSnapshotClient([{ state: "error", name: "ubuntu:24.04" }], {
+    deleteError: new Error("404: snapshot not found"),
+  });
+  const raced = {
+    ...client,
+    snapshot: {
+      ...client.snapshot,
+      get: async () => {
+        gets++;
+        if (gets === 1) return { state: "error", name: "ubuntu:24.04" };
+        throw new Error("404: snapshot not found"); // the winner already cleared it
+      },
+    },
+  };
+  await silenceNoise(() => providerOn(raced).create({ image: "ubuntu:24.04" }));
+
+  assertEqual(state.snapshotCreateCalls, 1, "the loser still builds the name it is entitled to");
+  assertEqual(state.createParams?.snapshot, "ubuntu:24.04", "and boots from that snapshot, not a pull");
+}
+
+async function testProviderCanRebuildSnapshotRule(): Promise<void> {
+  console.log("\n[6ai] providerCanRebuildSnapshot() - deletable means REBUILDABLE, judged on the RESOLVED ref");
+
+  // Daytona's builder requires a tag or digest and rejects latest/lts/stable
+  // (https://www.daytona.io/docs/en/snapshots/), so those are the only refs we
+  // may destroy in order to remake.
+  for (const rebuildable of [
+    `evolve-all-${EVOLVE_IMAGE_VERSION}`, // IMAGE_MAP -> evolvingmachines/evolve-all:<version>
+    "ubuntu:24.04",
+    "ghcr.io/org/img:v1",
+    "905418019965.dkr.ecr.us-west-2.amazonaws.com/x:tag",
+    // A REAL 64-hex digest. The old 16-hex fixture was parsed as a TAG, so the
+    // digest branch was never exercised and reverting its regex stayed green.
+    "ubuntu@sha256:5d3c1a2b4e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809",
+    "ghcr.io/org/img@sha256:5d3c1a2b4e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809",
+    "localhost:5000/img:v1",
+  ]) {
+    assert(_testProviderCanRebuildSnapshot(rebuildable), `"${rebuildable}" is rebuildable`);
+  }
+
+  // PRESERVED. Every one of these would be destroyed by a delete this provider
+  // could not undo — including the platform's OWN legacy alias, whose IMAGE_MAP
+  // entry resolves to an UNTAGGED ref that Daytona refuses to build. Testing
+  // the name rather than the resolved ref got exactly this case wrong.
+  for (const preserved of [
+    "evolve-all", // IMAGE_MAP -> evolvingmachines/evolve-all, untagged
+    "ghcr.io/org/img", // registry path, no tag
+    "localhost:5000/img", // a PORT is not a tag
+    "ubuntu:latest",
+    "ubuntu:lts",
+    "ubuntu:stable",
+    "team@prod", // an '@' is not a digest
+    "ubuntu@sha256:0123456789abcdef", // too short to be one either
+    "eval-env-cafe", // the eval platform heals its own aliases
+    "my-team-env",
+  ]) {
+    assert(!_testProviderCanRebuildSnapshot(preserved), `"${preserved}" is NOT ours to delete`);
+  }
+
+  // The untagged legacy alias really is in IMAGE_MAP — the trap is real, not hypothetical.
+  assert(_testImageMap["evolve-all"] !== undefined, "evolve-all IS an IMAGE_MAP key");
+  assert(
+    !_testImageMap["evolve-all"].includes(":"),
+    "and it resolves to an UNTAGGED ref, which is why the name alone could not decide this"
+  );
 }
 
 async function testConflictWaitsThenReusesWinner(): Promise<void> {
@@ -1717,6 +2132,21 @@ const tests = [
   testWaitToleratesTransientPollFailures,
   testWaitIsBoundedByItsBudget,
   testConflictDetection,
+  // [6.7] dead snapshots are deleted, then rebuilt
+  testDeadSnapshotIsDeletedThenRebuilt,
+  testDeadSnapshotDeletePassesTheRecordItRead,
+  testUnrebuildableDeadNameIsPreserved,
+  testDeadSnapshotDeleteFailureFallsBackInsteadOfThrowing,
+  testDeadWinnerOfAJoinIsClearedThenBuilt,
+  testMissingSnapshotMidWaitIsAnAnswerNotAFailure,
+  testVanishedNameIsBuiltRatherThanPulled,
+  testHealedRebuildIsTriedOnceAndNeverLoops,
+  testDeleteConfirmationWaitsForTheRecordToVanish,
+  testDeleteConfirmationGivesUpOnItsOwnBudget,
+  testDeletePollTreatsOnlyNotFoundAsGone,
+  testJoinPathDeleteRefusedFallsBack,
+  testDeleteRaceLoserStillBuilds,
+  testProviderCanRebuildSnapshotRule,
   // [7] DaytonaCommands
   testCommandsRunAsRootUsesSudoWrapper,
   testCommandsRunDefaultUserNoWrapper,
