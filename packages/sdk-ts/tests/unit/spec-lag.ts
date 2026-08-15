@@ -243,6 +243,9 @@ export function assessSpecLag(options: {
 const TEAMS_WHY =
   "x-wave: 4 — the server lands team accounts first, the SDK serves them at its next publish";
 
+const TASK_ENV_CONSENT_WHY =
+  "parity wave — the server lands the task-env consent gate first, the SDK serves it at its next publish";
+
 /**
  * The operations axis — spec operationId against the hand-maintained
  * operationId -> client-method map. These twelve are the spec's complete
@@ -291,5 +294,22 @@ export const ERROR_CODE_LAG_LANES: readonly LagLane[] = [
       "invite_not_found",
       "invite_invalid",
     ],
+  },
+  {
+    // A task's [environment.env] may ask for a secret by name; the job's
+    // owner satisfies it by ATTACHING one. A selected task whose request
+    // nothing satisfies — and whose declaration states no `${VAR:-default}`
+    // fallback — is refused at job create with this code. Deliberately not
+    // `secret_not_found`: the row usually DOES exist in the owner's vault, and
+    // the remedy is to attach it to the job rather than to create it, so a
+    // client that branches on the code would send the caller the wrong way.
+    //
+    // ONE MEMBER, so the self-arming rule is at its sharpest here: the moment
+    // the SDK learns this code, this lane must be deleted rather than adjusted.
+    // The shadow regeneration (hosted-error-codes.json) is the staging
+    // assembly's lockstep commit under strict mode, not this branch's.
+    name: "task-env consent gate (attach-is-consent)",
+    why: TASK_ENV_CONSENT_WHY,
+    members: ["secret_not_attached"],
   },
 ];
