@@ -1343,6 +1343,23 @@ export interface SandboxCreateOptions {
     allowedDestinations?: string[];
   };
   /**
+   * Every policy `updateNetwork()` may later be asked for on this box.
+   *
+   * ACCEPTED AND IGNORED HERE, deliberately. It exists because on modal the
+   * create call decides whether switching is possible at all, and a box built
+   * the blunt way can never be widened. Daytona has no such constraint — it
+   * switches freely at any time — so this changes nothing about the sandbox
+   * it creates.
+   *
+   * Declared anyway so the option means the SAME thing in every provider
+   * package: a caller reading these types must not conclude that Daytona
+   * cannot do phase switching because the option is missing here.
+   */
+  phaseNetworkPolicies?: Array<{
+    outbound: "open" | "blocked";
+    allowedDestinations?: string[];
+  }>;
+  /**
    * OS user for the sandbox, applied at CREATE time (Daytona's osUser field)
    * — Daytona has no per-exec user switch, so the user commands actually run
    * as is governed by the sandbox image (USER directive; default Daytona
@@ -3097,3 +3114,13 @@ export const _testCreateSentinelFilter = createSentinelFilter;
 export const _testCreateLogDemuxer = createLogDemuxer;
 export const _testFollowManagedSessionLogs = followManagedSessionLogs;
 export const _testReadCommandStreams = readCommandStreams;
+
+/**
+ * TYPE-ONLY handle on the concrete sandbox class, for the contract-conformance
+ * seam. create() is declared to return the local SandboxInstance INTERFACE, so
+ * a seam reading create()'s return type checks the interface and never the
+ * class — which let a narrowed method on the class pass unnoticed. Exporting
+ * the type (never the constructor) gives the seam the real methods to pin.
+ */
+export type _testDaytonaSandboxImpl = DaytonaSandboxImpl;
+

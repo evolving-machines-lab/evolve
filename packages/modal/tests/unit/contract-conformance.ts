@@ -31,7 +31,7 @@ import type {
   SandboxCreateOptions as ModalSandboxCreateOptions,
 } from "../../src/index";
 
-import type { ModalProvider, ModalCommands, ModalFiles } from "../../src/index";
+import type { _testModalSandboxImpl, ModalProvider, ModalCommands, ModalFiles } from "../../src/index";
 
 /** Fails to compile unless `Sub` is assignable to `Sup`. */
 type AssertAssignable<Sup, Sub extends Sup> = Sub;
@@ -59,3 +59,39 @@ export type _FilesInterface = AssertAssignable<SdkSandboxFiles, ModalSandboxFile
 // direction, which TypeScript's bivariant method parameters do not check.
 
 export type _CreateOptions = AssertAssignable<ModalSandboxCreateOptions, SdkSandboxCreateOptions>;
+
+
+// ─── Optional capabilities keep ONE signature across every package ──
+// A member declared `updateNetwork?()` on the SDK contract is satisfied by a
+// provider that OMITS it, so plain assignability cannot catch a provider that
+// ships the capability with the wrong shape — and the whole promise of an
+// optional capability is that every provider offering it offers the same one.
+//
+// Two things are pinned, because two different mistakes are possible.
+//
+// The INTERFACE copy is the surface callers read. The IMPL class is what
+// actually runs, and it needs its own check: create() is declared to return
+// the local interface, so a seam reading create()'s return type never sees the
+// class at all. TypeScript's bivariant method parameters then let a narrowed
+// method satisfy `implements` silently — verified by narrowing the modal impl
+// to `{ outbound: "open" }` and watching the whole suite stay green until
+// these lines existed.
+//
+// The parameter comparison runs in the direction that matters: whatever the
+// SDK would hand the provider must be ACCEPTED by it. Comparing the parameter
+// TYPES rather than the function types is what defeats the bivariance.
+
+type SdkUpdateNetwork = NonNullable<SdkSandboxInstance["updateNetwork"]>;
+type SdkNetworkPolicyParam = Parameters<SdkUpdateNetwork>[0];
+
+type ModalInterfaceUpdateNetwork = ModalSandboxInstanceInterface["updateNetwork"];
+type ModalImplUpdateNetwork = _testModalSandboxImpl["updateNetwork"];
+
+export type _UpdateNetworkOnInterface = AssertAssignable<
+  Parameters<ModalInterfaceUpdateNetwork>[0],
+  SdkNetworkPolicyParam
+>;
+export type _UpdateNetworkOnImpl = AssertAssignable<
+  Parameters<ModalImplUpdateNetwork>[0],
+  SdkNetworkPolicyParam
+>;

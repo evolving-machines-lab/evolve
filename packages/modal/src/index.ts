@@ -1917,3 +1917,13 @@ export const _testBuildSandboxInfo = buildSandboxInfo;
 export const _testCollectSandboxes = collectSandboxes;
 export const _testValidateTimeout = validateTimeout;
 export const _testMapIdleTimeout = mapIdleTimeout;
+
+/**
+ * TYPE-ONLY handle on the concrete sandbox class, for the contract-conformance
+ * seam. create() is declared to return the local SandboxInstance INTERFACE, so
+ * a seam reading create()'s return type checks the interface and never the
+ * class — which let a narrowed method on the class pass unnoticed. Exporting
+ * the type (never the constructor) gives the seam the real methods to pin.
+ */
+export type _testModalSandboxImpl = ModalSandboxImpl;
+
