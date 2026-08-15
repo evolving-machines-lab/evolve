@@ -28,6 +28,7 @@ import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import type { LifecycleEvent } from "../../dist/index.js";
+import { e2eSandboxOptions, hardKill } from "./teardown.js";
 import {
   getDefaultAgentConfig,
   getSandboxProviderByName,
@@ -304,6 +305,7 @@ async function main() {
     const evolve2 = new Evolve()
       .withAgent(agentConfig)
       .withSandbox(provider)
+      .withSandboxCreateOptions(e2eSandboxOptions("04-session-lifecycle"))
       .withSession(sessionId);
     evolve2.on("lifecycle", (e) => events2.push(e));
 
@@ -351,7 +353,7 @@ async function main() {
 
     // Cleanup remaining original session sandbox
     await evolve.kill();
-    await evolve3.kill().catch(() => {});
+    await hardKill(evolve3, "04-session-lifecycle session");
 
     // ── Save all events ───────────────────────────────────────────────
     save("lifecycle-events.jsonl", events.map(e => JSON.stringify(e)).join("\n"));
@@ -366,7 +368,7 @@ async function main() {
     const msg = err instanceof Error ? err.message : String(err);
     save("error.txt", err instanceof Error ? err.stack || msg : msg);
     save("lifecycle-events.jsonl", events.map(e => JSON.stringify(e)).join("\n"));
-    await evolve.kill().catch(() => {});
+    await hardKill(evolve, "04-session-lifecycle session");
 
     const duration = ((Date.now() - start) / 1000).toFixed(1);
     log(`\n============================================================`);

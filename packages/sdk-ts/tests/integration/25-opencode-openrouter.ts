@@ -19,6 +19,7 @@ import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { getSandboxProvider } from "./test-config.js";
+import { e2eSandboxOptions, hardKill } from "./teardown.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, "../../../../.env") });
@@ -108,7 +109,7 @@ async function runTest(
     save(`${logPrefix}-error.txt`, redactSecrets(msg, secrets));
     return { pass: false, error: msg };
   } finally {
-    await evolve.kill().catch(() => {});
+    await hardKill(evolve, "25-opencode-openrouter session");
   }
 }
 

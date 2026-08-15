@@ -14,6 +14,7 @@ import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { getDefaultAgentConfig, getTestEnv } from "./test-config.js";
+import { e2eSandboxOptions, hardKill, reportLeaks, teardownFailed } from "./teardown.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, "../../../../.env") });
@@ -38,9 +39,11 @@ async function main() {
   log("Starting test...");
   const start = Date.now();
 
+  const provider = createE2BProvider({ apiKey: env.E2B_API_KEY });
   const evolve = new Evolve()
     .withAgent(agentConfig)
-    .withSandbox(createE2BProvider({ apiKey: env.E2B_API_KEY }));
+    .withSandbox(provider)
+    .withSandboxCreateOptions(e2eSandboxOptions("08-network"));
 
   try {
     // Test 1: Initial run to create sandbox
@@ -104,17 +107,21 @@ async function main() {
       log("  Different URLs returned for different ports (expected)");
     }
 
-    await evolve.kill();
+    await hardKill(evolve, "08-network session");
+    await reportLeaks(provider, "08-network");
 
     const duration = ((Date.now() - start) / 1000).toFixed(1);
     log(`\n============================================================`);
     log(`PASS - All network tests passed (${duration}s)`);
     log(`============================================================\n`);
-    process.exit(0);
+    // A green test that could not clean up after itself is not green: the
+    // sandbox is still billing and nothing else will say so.
+    process.exit(teardownFailed() ? 1 : 0);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     save("error.txt", err instanceof Error ? err.stack || msg : msg);
-    await evolve.kill().catch(() => {});
+    await hardKill(evolve, "08-network session");
+    await reportLeaks(provider, "08-network");
 
     const duration = ((Date.now() - start) / 1000).toFixed(1);
     log(`\n============================================================`);

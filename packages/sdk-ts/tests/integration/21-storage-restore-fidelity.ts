@@ -33,6 +33,7 @@ import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { getAgentConfig, getSandboxProvider, getSandboxProviderByName, type ProviderName } from "./test-config.js";
+import { e2eSandboxOptions, hardKill } from "./teardown.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, "../../../../.env") });
@@ -188,6 +189,7 @@ async function main() {
     const evolve1 = new Evolve()
       .withAgent(agentConfig)
       .withSandbox(provider)
+      .withSandboxCreateOptions(e2eSandboxOptions("21-storage-restore-fidelity"))
       .withStorage(getStorageConfig())
       .withSkills([SKILL_FIXTURE_DIR])
       .withWorkspaceMode("swe");
@@ -222,6 +224,7 @@ async function main() {
     evolve2 = new Evolve()
       .withAgent(agentConfig)
       .withSandbox(provider)
+      .withSandboxCreateOptions(e2eSandboxOptions("21-storage-restore-fidelity"))
       .withStorage(getStorageConfig())
       .withSkills([SKILL_FIXTURE_DIR])
       .withWorkspaceMode("swe");
@@ -307,6 +310,7 @@ async function main() {
     const evolve3 = new Evolve()
       .withAgent(agentConfig)
       .withSandbox(provider)
+      .withSandboxCreateOptions(e2eSandboxOptions("21-storage-restore-fidelity"))
       .withStorage(getStorageConfig());
 
     await assertThrows(
@@ -314,7 +318,7 @@ async function main() {
       "not found",
       "from with nonexistent ID throws 'not found'"
     );
-    await evolve3.kill().catch(() => {});
+    await hardKill(evolve3, "21-storage-restore-fidelity session");
 
     // 4b. from + withSession() mutual exclusivity
     await assertThrows(
@@ -322,6 +326,7 @@ async function main() {
         const e = new Evolve()
           .withAgent(agentConfig)
           .withSandbox(provider)
+          .withSandboxCreateOptions(e2eSandboxOptions("21-storage-restore-fidelity"))
           .withStorage(getStorageConfig())
           .withSession("some-sandbox-id");
         return e.run({ prompt: "test", from: checkpoint1.id, timeoutMs: 30000 });
@@ -346,7 +351,7 @@ async function main() {
 
     // Clean up evolve2 if still alive
     if (evolve2) {
-      await evolve2.kill().catch(() => {});
+      await hardKill(evolve2, "21-storage-restore-fidelity session");
     }
 
     await cleanupS3Prefix();

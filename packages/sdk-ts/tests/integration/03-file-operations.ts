@@ -17,6 +17,7 @@ import { resolve, dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { getDefaultAgentConfig, getTestEnv } from "./test-config.js";
+import { e2eSandboxOptions, hardKill, reportLeaks, teardownFailed } from "./teardown.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, "../../../../.env") });
@@ -24,6 +25,7 @@ config({ path: resolve(__dirname, "../../../../.env") });
 const LOGS_DIR = resolve(__dirname, "../test-logs/03-file-operations");
 const agentConfig = getDefaultAgentConfig();
 const env = getTestEnv();
+const e2eProvider = createE2BProvider({ apiKey: env.E2B_API_KEY });
 
 function log(msg: string) {
   console.log(`[03-file-operations] ${msg}`);
@@ -43,7 +45,8 @@ async function main() {
 
   const evolve = new Evolve()
     .withAgent(agentConfig)
-    .withSandbox(createE2BProvider({ apiKey: env.E2B_API_KEY }));
+    .withSandbox(e2eProvider)
+    .withSandboxCreateOptions(e2eSandboxOptions('03-file-operations'));
 
   try {
     // Test 1: run() first to initialize sandbox
@@ -220,11 +223,15 @@ async function main() {
     log(`\n============================================================`);
     log(`PASS - All file operation tests passed (${duration}s)`);
     log(`============================================================\n`);
-    process.exit(0);
+    await reportLeaks(e2eProvider, '03-file-operations');
+    // A green test that could not clean up after itself is not green:
+    // the sandbox is still billing and nothing else will say so.
+    process.exit(teardownFailed() ? 1 : 0);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     save("error.txt", err instanceof Error ? err.stack || msg : msg);
-    await evolve.kill().catch(() => {});
+    await hardKill(evolve, '03-file-operations session');
+    await reportLeaks(e2eProvider, '03-file-operations');
 
     const duration = ((Date.now() - start) / 1000).toFixed(1);
     log(`\n============================================================`);

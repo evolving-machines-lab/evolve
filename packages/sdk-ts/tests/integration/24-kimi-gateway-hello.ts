@@ -20,6 +20,7 @@ import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { getTestEnv, getSandboxProvider, getAgentConfig } from "./test-config.js";
+import { e2eSandboxOptions, hardKill } from "./teardown.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, "../../../../.env") });
@@ -158,9 +159,13 @@ async function main(): Promise<void> {
       success,
       failureMessage: failureMessage ?? null,
     }, null, 2));
-    await evolve.kill().catch((e) => {
-      save("kill-error.txt", String(e));
-    });
+    // Was: a catch that saved the error to a file and carried on — better
+    // than silence, but the run still reported its own verdict as if the
+    // sandbox were gone. hardKill keeps the file AND makes the failure count.
+    await hardKill(
+      { kill: () => evolve.kill().catch((e) => { save("kill-error.txt", String(e)); throw e; }) },
+      "24-kimi-gateway-hello session",
+    );
   }
 
   if (!success) {

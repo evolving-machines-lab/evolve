@@ -17,6 +17,7 @@ import { fileURLToPath } from "url";
 import { writeFileSync, mkdirSync, rmSync, existsSync, readdirSync } from "fs";
 import { homedir } from "os";
 import { getDefaultAgentConfig, getTestEnv } from "./test-config.js";
+import { e2eSandboxOptions, hardKill, reportLeaks, teardownFailed } from "./teardown.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, "../../../../.env") });
@@ -24,6 +25,7 @@ config({ path: resolve(__dirname, "../../../../.env") });
 const LOGS_DIR = resolve(__dirname, "../test-logs/06-observability");
 const agentConfig = getDefaultAgentConfig();
 const env = getTestEnv();
+const e2eProvider = createE2BProvider({ apiKey: env.E2B_API_KEY });
 const SESSION_LOGS_PATH = join(homedir(), ".evolve/observability/sessions");
 
 function log(msg: string) {
@@ -46,7 +48,8 @@ async function main() {
 
   const evolve = new Evolve()
     .withAgent(agentConfig)
-    .withSandbox(createE2BProvider({ apiKey: env.E2B_API_KEY }))
+    .withSandbox(e2eProvider)
+    .withSandboxCreateOptions(e2eSandboxOptions('06-observability'))
     .withSessionTagPrefix(tagPrefix);
 
   try {
@@ -143,11 +146,15 @@ async function main() {
     log(`\n============================================================`);
     log(`PASS - All observability tests passed (${duration}s)`);
     log(`============================================================\n`);
-    process.exit(0);
+    await reportLeaks(e2eProvider, '06-observability');
+    // A green test that could not clean up after itself is not green:
+    // the sandbox is still billing and nothing else will say so.
+    process.exit(teardownFailed() ? 1 : 0);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     save("error.txt", err instanceof Error ? err.stack || msg : msg);
-    await evolve.kill().catch(() => {});
+    await hardKill(evolve, '06-observability session');
+    await reportLeaks(e2eProvider, '06-observability');
 
     const duration = ((Date.now() - start) / 1000).toFixed(1);
     log(`\n============================================================`);

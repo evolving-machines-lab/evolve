@@ -15,6 +15,7 @@
 
 import { Evolve } from "../../dist/index.js";
 import { createE2BProvider } from "../../../e2b/src/index.js";
+import { e2eSandboxOptions, hardKill } from "./teardown.js";
 import { config } from "dotenv";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -75,13 +76,15 @@ async function testOAuth(): Promise<{ ok: boolean; error?: string; duration: num
   console.log("[claude] Model: sonnet");
 
   // Build Evolve with explicit oauthToken
+  const e2eProvider = createE2BProvider({ apiKey: env.E2B_API_KEY });
   const evolve = new Evolve()
     .withAgent({
       type: "claude",
       oauthToken: env.CLAUDE_CODE_OAUTH_TOKEN,
       model: "sonnet",
     })
-    .withSandbox(createE2BProvider({ apiKey: env.E2B_API_KEY }))
+    .withSandbox(e2eProvider)
+    .withSandboxCreateOptions(e2eSandboxOptions('15-oauth-mode'))
     .withSystemPrompt("You are a helpful assistant. Be concise.");
 
   try {
@@ -110,7 +113,7 @@ async function testOAuth(): Promise<{ ok: boolean; error?: string; duration: num
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     save("error.txt", err instanceof Error ? err.stack || msg : msg);
-    await evolve.kill().catch(() => {});
+    await hardKill(evolve, '15-oauth-mode session');
     return { ok: false, error: msg, duration: Date.now() - start };
   }
 }

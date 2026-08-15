@@ -27,6 +27,7 @@ import {
 import { createE2BProvider } from "../../../e2b/src/index.js";
 import { createDaytonaProvider } from "../../../daytona/src/index.js";
 import { createModalProvider } from "../../../modal/src/index.js";
+import { e2eSandboxOptions, hardKill } from "./teardown.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, "../../../../.env") });
@@ -80,6 +81,7 @@ async function testProvider(provider: ProviderName): Promise<TestResult> {
   const evolve = new Evolve()
     .withAgent(getAgentConfig("claude"))
     .withSandbox(getSandboxProviderByName(provider))
+    .withSandboxCreateOptions(e2eSandboxOptions("17-provider-test"))
     .withSkills(["pdf", "slides-as-code"])
     .withContext({
       "data.xlsx": load("AMPX_Financial_Analysis.xlsx"),
@@ -284,7 +286,7 @@ async function testProvider(provider: ProviderName): Promise<TestResult> {
     }
 
     // Cleanup
-    await shortLivedEvolve.kill().catch(() => {});
+    await hardKill(shortLivedEvolve, "17-provider-test session");
 
     // =========================================================================
     // RESULT
@@ -295,7 +297,7 @@ async function testProvider(provider: ProviderName): Promise<TestResult> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     save(provider, "error.txt", err instanceof Error ? err.stack || msg : msg);
-    await evolve.kill().catch(() => {});
+    await hardKill(evolve, "17-provider-test session");
     return { provider, ok: false, error: msg, duration: Date.now() - start, checks };
   }
 }
