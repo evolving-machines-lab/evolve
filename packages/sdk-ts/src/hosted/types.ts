@@ -1362,6 +1362,24 @@ export interface DatasetVersionGate {
    * predate the field, which never truncated without it.
    */
   failed_task_count: number;
+  /**
+   * Present only when `status` is UNPROVEN: the version activated with no
+   * oracle-conformance proof because the gate had no reference solutions to
+   * run. The server's own stamp — the honest reason sentence and when it was
+   * stamped. Null on every other status and on servers that predate the
+   * field: absence is "nothing to report", never a crash.
+   */
+  unproven: DatasetVersionGateUnproven | null;
+}
+
+/**
+ * The UNPROVEN stamp on a version's activation gate: `reason` is the server's
+ * own sentence for why no proof ran (today: "no reference solutions to run"),
+ * `at` is when the stamp was written (null when the server omits it).
+ */
+export interface DatasetVersionGateUnproven {
+  reason: string;
+  at: string | null;
 }
 
 /**

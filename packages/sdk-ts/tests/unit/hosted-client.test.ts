@@ -398,12 +398,13 @@ async function testDatasetGateMapping() {
           { task_name: "bare-task", outcome: null, reasons: [] },
         ],
         failed_task_count: 2,
+        unproven: null,
       },
       "nested failure form maps to {status, attempts, code, message, failed_tasks, failed_task_count}; nameless/garbage entries dropped, non-string reasons filtered; absent count falls back to the mapped list's length"
     );
     assertEqual(
       running.gate,
-      { status: "RUNNING", attempts: 1, code: null, message: null, failed_tasks: [], failed_task_count: 0 },
+      { status: "RUNNING", attempts: 1, code: null, message: null, failed_tasks: [], failed_task_count: 0, unproven: null },
       "flat form maps unchanged; healthy gate carries null code/message, no failed tasks, count 0"
     );
     assertEqual(none.gate, null, "a version without a gate field maps to gate null (older server: no crash)");

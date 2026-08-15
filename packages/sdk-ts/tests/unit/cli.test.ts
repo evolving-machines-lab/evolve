@@ -4112,6 +4112,20 @@ async function testDatasetShowGate() {
             task_count: 1,
             gate: { status: "RUNNING", attempts: 1 },
           },
+          // U2: a solution-less version activates READY with gate UNPROVEN and
+          // the server's own {reason, at} stamp — the reason must reach both
+          // the human view and --json, not stay API-only.
+          {
+            version: "0.8",
+            state: "READY",
+            created_at: "2026-07-30T00:00:00.000Z",
+            task_count: 1,
+            gate: {
+              status: "UNPROVEN",
+              attempts: 0,
+              unproven: { reason: "no reference solutions to run", at: "2026-08-15T19:24:02.985Z" },
+            },
+          },
         ],
         selected_version: null,
         tasks: { items: [], nextCursor: null, hasMore: false },
@@ -4143,6 +4157,10 @@ async function testDatasetShowGate() {
       !text.includes("… and"),
       "when the failed-task list is complete (count equals the list length) no truncation line appears"
     );
+    assert(
+      text.includes("version 0.8 gate UNPROVEN: no reference solutions to run"),
+      "an unproven gate prints its reason line — the stamp is not API-only (U2)"
+    );
 
     const json = captureIO();
     assertEqual(await runCli(["dataset", "show", "r1-init", "--json", ...AUTH], json.io), 0, "show --json exits 0");
@@ -4160,13 +4178,27 @@ async function testDatasetShowGate() {
           { task_name: "quiet-task", outcome: "FAIL", reasons: [] },
         ],
         failed_task_count: 2,
+        unproven: null,
       },
       "--json carries the gate: status, attempts, code, message, the full failed_tasks array, and the true count"
     );
     assertEqual(
       body.versions[1].gate,
-      { status: "RUNNING", attempts: 1, code: null, message: null, failed_tasks: [], failed_task_count: 0 },
+      { status: "RUNNING", attempts: 1, code: null, message: null, failed_tasks: [], failed_task_count: 0, unproven: null },
       "--json carries a healthy gate with null code/message, no failed tasks, count 0"
+    );
+    assertEqual(
+      body.versions[2].gate,
+      {
+        status: "UNPROVEN",
+        attempts: 0,
+        code: null,
+        message: null,
+        failed_tasks: [],
+        failed_task_count: 0,
+        unproven: { reason: "no reference solutions to run", at: "2026-08-15T19:24:02.985Z" },
+      },
+      "--json carries the UNPROVEN stamp verbatim: {reason, at} (U2)"
     );
   } finally {
     restoreFetch();

@@ -624,6 +624,14 @@ function mapVersionGate(raw: unknown): DatasetVersionGate | null {
     typeof value.failed_task_count === "number"
       ? value.failed_task_count
       : failure.failed_task_count;
+  // The UNPROVEN stamp ({reason, at}) — the server's honest sentence for a
+  // version that activated with no oracle-conformance proof. U2: this used to
+  // be dropped at the map, leaving the reason API-only. Same tolerance as the
+  // gate itself: anything unreadable, or a stamp without its reason, is null.
+  const unproven =
+    value.unproven && typeof value.unproven === "object" && !Array.isArray(value.unproven)
+      ? (value.unproven as Record<string, unknown>)
+      : null;
   return {
     status: value.status,
     attempts: typeof value.attempts === "number" ? value.attempts : 0,
@@ -633,6 +641,10 @@ function mapVersionGate(raw: unknown): DatasetVersionGate | null {
     // The TRUE total behind the 25-task cap on failed_tasks. An older server
     // never truncated without the count, so its absence reads as the length.
     failed_task_count: typeof rawCount === "number" ? rawCount : failedTasks.length,
+    unproven:
+      unproven && typeof unproven.reason === "string"
+        ? { reason: unproven.reason, at: typeof unproven.at === "string" ? unproven.at : null }
+        : null,
   };
 }
 

@@ -3647,6 +3647,14 @@ function datasetDetailLines(b: Dataset): string[] {
           );
         }
       }
+      // UNPROVEN is not a failure — the version is READY and runnable — but
+      // the GATE word alone hides WHY no proof backs it. The server stamps
+      // the reason (U2: it used to be readable only on the raw API); print it
+      // the way FAILED prints its message, one quiet line per such version.
+      // A server that predates the stamp prints nothing, as everywhere else.
+      if (v.gate?.status === "UNPROVEN" && v.gate.unproven) {
+        lines.push(`version ${v.version} gate UNPROVEN: ${v.gate.unproven.reason}`);
+      }
     }
   }
   if (b.tasks && b.tasks.items.length > 0) {
