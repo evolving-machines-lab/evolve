@@ -1035,6 +1035,60 @@ async function testDefaultImageNameIsVersioned(): Promise<void> {
   );
 }
 
+async function testPrepareImageSharesCreatesResolution(): Promise<void> {
+  console.log("\n[10c] prepareImage() - prewarm and create resolve the SAME image identity");
+
+  // A prewarm that resolved images differently from the create it serves
+  // would fail silently: it would build one image while trials launched from
+  // another, and the only symptom would be the cold start prewarm was meant
+  // to remove. So the test is not "prepareImage builds something" — it is
+  // "prepareImage and create ask Modal for the identical reference".
+  const fromRegistry: string[] = [];
+  let builds = 0;
+  const image = { build: async () => { builds++; return image; } };
+  const client = {
+    apps: { fromName: async () => ({ appId: "ap-mock" }) },
+    images: { fromRegistry: async (tag: string) => { fromRegistry.push(tag); return image; } },
+    sandboxes: {
+      create: async () => ({ sandboxId: "sb-mock", exec: async () => ({ wait: async () => 0 }) }),
+    },
+  };
+
+  const provider = createModalProvider({ tokenId: "ak-test", tokenSecret: "as-test" });
+  (provider as any).client = client;
+
+  // The legacy alias, which IMAGE_MAP rewrites — the case where a
+  // reconstruction of the name would diverge from create()'s answer.
+  await (provider as any).prepareImage("evolve-all");
+  assertEqual(fromRegistry, ["evolvingmachines/evolve-all"], "prepareImage resolves through IMAGE_MAP");
+  assertEqual(builds, 1, "and eagerly builds it once (Image.build)");
+
+  await provider.create({ image: "evolve-all", user: "root" });
+  assertEqual(
+    fromRegistry,
+    ["evolvingmachines/evolve-all", "evolvingmachines/evolve-all"],
+    "create() asks for the identical reference prepareImage warmed"
+  );
+
+  // No argument means the provider's configured default — again create()'s own
+  // choice when options.image is absent.
+  await (provider as any).prepareImage();
+  assertEqual(
+    fromRegistry[2],
+    `evolvingmachines/evolve-all:${EVOLVE_IMAGE_VERSION}`,
+    "prepareImage() with no argument warms the versioned default image"
+  );
+
+  // Sizing is a create-time sandbox option on Modal, never part of image
+  // identity, so one eager build serves every sizing.
+  await provider.create({ image: "evolve-all", user: "root", resources: { cpu: 8, memory: 16 } });
+  assertEqual(
+    fromRegistry[3],
+    "evolvingmachines/evolve-all",
+    "a different sizing still resolves the same image — no per-sizing prewarm needed"
+  );
+}
+
 // =============================================================================
 // [11] ModalFiles — upload message SIZE (what actually costs wall-clock time)
 //
@@ -1247,6 +1301,7 @@ const tests = [
   // [10] versioned image pipeline
   testImageMapUsesVersionedTag,
   testDefaultImageNameIsVersioned,
+  testPrepareImageSharesCreatesResolution,
   // [11] ModalFiles upload message size (round trips, not correctness)
   testFilesWriteFromPathUsesChunkSizedMessages,
   testFilesWriteFromPathAvoidsNativeCopy,

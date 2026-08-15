@@ -769,6 +769,15 @@ export interface SandboxProvider {
   list(options?: SandboxListOptions): Promise<SandboxInfo[]>;
   /** The same enumeration for fleet bookkeeping: never throws, reports completeness. */
   listAll(options?: SandboxListOptions): Promise<SandboxListPage>;
+
+  /**
+   * Build or pull the sandbox image ahead of time so a later create() does not
+   * wait for it. Takes what `create({ image })` takes, resolved by the same
+   * path, and defaults to the provider's configured image. Optional on the
+   * same terms as the SDK contract: declared so every provider offering it
+   * offers the same signature.
+   */
+  prepareImage?(image?: string): Promise<void>;
 }
 
 // ============================================================
@@ -1371,6 +1380,53 @@ export class ModalProvider implements SandboxProvider {
       : this.client.images.fromGcpArtifactRegistry(tag, secret);
   }
 
+  /**
+   * Resolve a requested image name to the Modal image identity and eagerly
+   * build it. The ONE place that pair happens, because create() and
+   * prepareImage() drifting apart is a silent failure: the prewarm would
+   * populate one image while trials created against another, and nothing
+   * would report the mismatch — only the cold-start cost prewarm was meant
+   * to remove would quietly come back.
+   *
+   * "Eagerly builds an Image on Modal" — the SDK's own description of
+   * Image.build(app) (modal@0.9.0, dist/index.d.ts). The call is idempotent:
+   * the same reference returns the same cached imageId, so the first caller
+   * pays the registry pull and later ones resolve quickly.
+   */
+  private async resolveAndBuildImage(imageName: string): Promise<{ tag: string; image: Image }> {
+    const app = await this.getApp();
+    // Resolve image name through IMAGE_MAP (e.g., "evolve-all" -> "evolvingmachines/evolve-all")
+    const tag = IMAGE_MAP[imageName] ?? imageName;
+    const image = await this.resolveImage(tag);
+    return { tag, image: await image.build(app) };
+  }
+
+  /**
+   * Build (or pull) an image on Modal ahead of time, so the sandbox that
+   * needs it later does not wait for it.
+   *
+   * Modal's own guidance: "To avoid blocking creation of new Sandboxes on
+   * rebuilding an invalidated Image, it's recommended to use Modal's named
+   * Images with sandboxes, rather than using inline Image definitions", and
+   * "Use `Image.build` to trigger Image builds as part of a deployment flow
+   * or at a regular interval (e.g., in a scheduled job or CI pipeline)"
+   * (https://modal.com/docs/guide/sandbox). This is that deployment-flow
+   * call: run it at publish time, and trial-time create() finds the image
+   * already built.
+   *
+   * `imageName` takes exactly what `create({ image })` takes and is resolved
+   * by the identical path, so callers prewarm the image they will actually
+   * run on rather than a reconstruction of it. Omitted, it prewarms the
+   * provider's configured default — again what create() would have chosen.
+   *
+   * There is deliberately no sizing parameter: on Modal, image identity is
+   * the registry reference alone, and CPU/memory/GPU are create-time sandbox
+   * options, so one eager build serves every sizing.
+   */
+  async prepareImage(imageName?: string): Promise<void> {
+    await this.resolveAndBuildImage(imageName ?? this.imageName);
+  }
+
   async create(options: SandboxCreateOptions): Promise<SandboxInstance> {
     // Validate before any network call so misconfigurations fail fast
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
@@ -1384,14 +1440,11 @@ export class ModalProvider implements SandboxProvider {
 
     const app = await this.getApp();
 
-    // Resolve image name through IMAGE_MAP (e.g., "evolve-all" -> "evolvingmachines/evolve-all")
-    const imageName = options.image || this.imageName;
-    const resolvedImage = IMAGE_MAP[imageName] ?? imageName;
-
-    // Eagerly build image on Modal's infra (idempotent — same tag returns same cached imageId).
-    // First run pulls from the registry and caches; subsequent runs resolve quickly.
-    const image = await this.resolveImage(resolvedImage);
-    const builtImage = await image.build(app);
+    // The SAME resolve-and-build pair prepareImage() calls, so a prewarmed
+    // image and the image a trial creates against cannot drift apart.
+    const { tag: resolvedImage, image: builtImage } = await this.resolveAndBuildImage(
+      options.image || this.imageName
+    );
 
     // Filter out undefined values and only pass env if non-empty
     // Modal SDK throws if env is empty object or contains undefined values
