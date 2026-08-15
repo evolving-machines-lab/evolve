@@ -15,6 +15,8 @@
  * test file, which no bundle ever sees.
  */
 
+import type { AssertAssignable, NarrowedParams } from "../../../sdk-ts/tests/unit/conformance-helpers";
+
 import type {
   SandboxProvider as SdkSandboxProvider,
   SandboxInstance as SdkSandboxInstance,
@@ -33,8 +35,6 @@ import type {
 
 import type { _testE2BSandboxImpl, E2BProvider, E2BCommands, E2BFiles } from "../../src/index";
 
-/** Fails to compile unless `Sub` is assignable to `Sup`. */
-type AssertAssignable<Sup, Sub extends Sup> = Sub;
 
 // ─── Concrete classes satisfy the SDK contract ──────────────────
 // The strongest check: what createE2BProvider() actually hands the SDK.
@@ -65,37 +65,41 @@ export type _FilesInterface = AssertAssignable<SdkSandboxFiles, E2BSandboxFilesI
 export type _CreateOptions = AssertAssignable<E2BSandboxCreateOptions, SdkSandboxCreateOptions>;
 
 
-// ─── Optional capabilities keep ONE signature across every package ──
-// A member declared `updateNetwork?()` on the SDK contract is satisfied by a
-// provider that OMITS it, so plain assignability cannot catch a provider that
-// ships the capability with the wrong shape — and the whole promise of an
-// optional capability is that every provider offering it offers the same one.
+// ─── Every member's parameters, pinned against the contract ──
+// WHY A GENERIC AND NOT A LIST: the checks above prove the provider is
+// ASSIGNABLE to the contract, which sounds like it covers parameters and does
+// not. TypeScript compares method parameters BIVARIANTLY, so a member that
+// accepts LESS than the contract promises still satisfies `implements` and
+// still satisfies assignability — it fails only at runtime, on the caller who
+// passes the value the contract said was legal.
 //
-// Two things are pinned, because two different mistakes are possible.
+// Demonstrated, not assumed: narrowing `getHost(port: number)` to
+// `getHost(port: 8080)`, and `prepareImage(image?: string)` to a single string
+// literal, both left this entire suite green before these lines existed.
 //
-// The INTERFACE copy is the surface callers read. The IMPL class is what
-// actually runs, and it needs its own check: create() is declared to return
-// the local interface, so a seam reading create()'s return type never sees the
-// class at all. TypeScript's bivariant method parameters then let a narrowed
-// method satisfy `implements` silently — verified by narrowing the modal impl
-// to `{ outbound: "open" }` and watching the whole suite stay green until
-// these lines existed.
+// So parameters are compared as TUPLE TYPES, which are not subject to the
+// bivariance, in the one direction that matters: whatever the SDK would pass
+// must be ACCEPTED. Accepting more than the contract is fine and stays legal.
+// The generic form means a member added to the contract tomorrow is covered
+// the day it lands, with nobody remembering to extend a list.
+
+
+// Each assertion below is written OUT, with AssertAssignable applied to
+// concrete types. Wrapping it in a generic helper looks tidier and silently
+// stops working: a constraint inside a generic alias body is checked against
+// the alias's own type PARAMETERS, and with a deferred conditional in the way
+// it is never re-checked per instantiation — so the helper compiled happily
+// while every narrowing sailed through. Verified by narrowing getHost,
+// prepareImage and updateNetwork in turn.
 //
-// The parameter comparison runs in the direction that matters: whatever the
-// SDK would hand the provider must be ACCEPTED by it. Comparing the parameter
-// TYPES rather than the function types is what defeats the bivariance.
+// Failure reads: `Type '"getHost"' does not satisfy the constraint 'never'`,
+// which names the offending member.
 
-type SdkUpdateNetwork = NonNullable<SdkSandboxInstance["updateNetwork"]>;
-type SdkNetworkPolicyParam = Parameters<SdkUpdateNetwork>[0];
-
-type E2BInterfaceUpdateNetwork = E2BSandboxInstanceInterface["updateNetwork"];
-type E2BImplUpdateNetwork = _testE2BSandboxImpl["updateNetwork"];
-
-export type _UpdateNetworkOnInterface = AssertAssignable<
-  Parameters<E2BInterfaceUpdateNetwork>[0],
-  SdkNetworkPolicyParam
->;
-export type _UpdateNetworkOnImpl = AssertAssignable<
-  Parameters<E2BImplUpdateNetwork>[0],
-  SdkNetworkPolicyParam
->;
+export type _ParamsInstanceInterface = AssertAssignable<never, NarrowedParams<SdkSandboxInstance, E2BSandboxInstanceInterface>>;
+export type _ParamsInstanceImpl = AssertAssignable<never, NarrowedParams<SdkSandboxInstance, _testE2BSandboxImpl>>;
+export type _ParamsProviderInterface = AssertAssignable<never, NarrowedParams<SdkSandboxProvider, E2BSandboxProviderInterface>>;
+// The provider CLASS carries prepareImage — optional AND parameterized, the
+// exact shape that proved vulnerable.
+export type _ParamsProviderClass = AssertAssignable<never, NarrowedParams<SdkSandboxProvider, E2BProvider>>;
+export type _ParamsCommands = AssertAssignable<never, NarrowedParams<SdkSandboxCommands, E2BCommands>>;
+export type _ParamsFiles = AssertAssignable<never, NarrowedParams<SdkSandboxFiles, E2BFiles>>;
