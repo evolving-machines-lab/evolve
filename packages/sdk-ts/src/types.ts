@@ -890,6 +890,34 @@ export interface RunOptions {
   resume?: boolean;
 }
 
+/**
+ * The optional `RunOptions` fields this SDK build actually HONORS, as runtime
+ * data rather than types.
+ *
+ * A caller cannot tell from a type whether the SDK it is linked against
+ * understands a given option: passing an unknown property to `run()` is
+ * silently ignored, so a host that adds one and links an older SDK gets the OLD
+ * behavior with no error. For most options that is a harmless no-op. For
+ * `resume` it is not — an evaluator asking for a fresh conversation per step
+ * and silently getting resumed ones publishes scores from an easier task than
+ * it thinks it ran.
+ *
+ * So the honored set is exported. A host feature-detects against it and
+ * refuses loudly when the installed SDK cannot keep the promise, instead of
+ * running on semantics it did not choose. Read it structurally (the export is
+ * absent on older builds) — see the dashboard's prepareImage() detection for
+ * the same pattern applied to a method.
+ */
+export const SUPPORTED_RUN_OPTIONS = [
+  "timeoutMs",
+  "background",
+  "from",
+  "checkpointComment",
+  "resume",
+] as const;
+
+export type SupportedRunOption = (typeof SUPPORTED_RUN_OPTIONS)[number];
+
 /** Options for executeCommand() */
 export interface ExecuteCommandOptions {
   /** Timeout in milliseconds (default: 1 hour) */

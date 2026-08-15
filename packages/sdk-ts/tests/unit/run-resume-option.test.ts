@@ -29,6 +29,7 @@
  */
 
 import { AGENT_REGISTRY } from "../../src/registry.js";
+import { SUPPORTED_RUN_OPTIONS } from "../../src/types.js";
 
 let passed = 0;
 let failed = 0;
@@ -117,6 +118,24 @@ const droidNoSession = AGENT_REGISTRY.droid.buildCommand({
 assert(
   !droidNoSession.includes("--session-id"),
   "droid with isResume but no session id emits no resume flag (there is no session to name)",
+);
+
+// =============================================================================
+// [4] The honored set a host feature-detects against
+// =============================================================================
+console.log("\n[4] SUPPORTED_RUN_OPTIONS advertises resume as honored");
+
+assert(
+  SUPPORTED_RUN_OPTIONS.includes("resume"),
+  "resume is advertised, so a host can tell this build honors it",
+);
+assert(
+  (SUPPORTED_RUN_OPTIONS as readonly string[]).includes("checkpointComment"),
+  "the set lists the other optional fields too, so it reads as a roster and not a changelog",
+);
+assert(
+  !(SUPPORTED_RUN_OPTIONS as readonly string[]).includes("prompt"),
+  "prompt is required, not an optional field a host would detect",
 );
 
 // =============================================================================
