@@ -2033,13 +2033,18 @@ export class Agent {
   /**
    * Build the CLI command for running the agent
    */
-  private buildCommand(prompt: string): string {
+  private buildCommand(prompt: string, resume?: boolean): string {
     return this.registry.buildCommand({
       prompt: this.agentConfig.type === "droid" ? prompt : escapePrompt(prompt),
       model: this.resolveCommandModel(
         this.agentConfig.model || this.registry.defaultModel,
       ),
-      isResume: this.hasRun,
+      // The caller's explicit choice when they made one, otherwise the
+      // long-standing default: fresh on the first run in a sandbox, resume on
+      // every one after it. An evaluator driving independent tasks against a
+      // shared box passes `resume: false` to keep each one fresh — see
+      // RunOptions.resume for why that could not be expressed before.
+      isResume: resume ?? this.hasRun,
       sessionId:
         this.agentConfig.type === "droid" ? this.droidSessionId : undefined,
       reasoningEffort: this.reasoningEffort(),
@@ -2121,6 +2126,7 @@ export class Agent {
       timeoutMs = DEFAULT_TIMEOUT_MS,
       background = false,
       checkpointComment,
+      resume,
     } = options;
     let { from } = options;
     if (this.activeCommand) {
@@ -2273,7 +2279,7 @@ export class Agent {
     }
 
     // Build command and per-run spend tracking env
-    const command = this.buildCommand(prompt);
+    const command = this.buildCommand(prompt, resume);
     const runId = randomUUID();
     const runEnvs = this.buildRunEnvs(runId);
 

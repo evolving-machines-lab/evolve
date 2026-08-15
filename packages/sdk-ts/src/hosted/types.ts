@@ -873,8 +873,21 @@ export interface ExceptionInfo {
 }
 
 /**
- * Placeholder for multi-step tasks. Always null on trials today — declared so
- * multi-step lands without a wire change.
+ * What ONE step of a multi-step task produced. Present on
+ * `Trial.step_results`, one entry per step the trial actually RAN, in execution
+ * order — a trial that stopped early (a step raised, or its `min_reward` was
+ * not met) carries only the steps that ran, because the ones after an abort did
+ * not happen.
+ *
+ * `verifier_result` null means this step produced no verifier result at all (it
+ * crashed, the step aborted before reaching it, or verification was disabled);
+ * a result whose `rewards` is null means the verifier ran and produced no
+ * reward map. The distinction decides the trial's reward: the mean strategy
+ * excludes a step with no result from its denominator, but counts a result with
+ * no rewards as zero.
+ *
+ * `agent_result` is null when no per-step spend was measured — never a
+ * per-step $0.
  */
 export interface StepResult {
   step_name?: string;
@@ -925,7 +938,11 @@ export interface Trial {
   agent_setup: TimingInfo | null;
   agent_execution: TimingInfo | null;
   verifier: TimingInfo | null;
-  /** Multi-step placeholder; null today. */
+  /**
+   * Per-step results for a multi-step task, in execution order. Null on every
+   * single-step trial — "this trial has no steps", never "it ran zero of
+   * them". A trial that stopped early carries only the steps that ran.
+   */
   step_results: StepResult[] | null;
   /** Which lane `agent_result.cost_usd` came from — see SpendSource; only "measured" is final. */
   spend_source: SpendSource | null;

@@ -621,12 +621,15 @@ export class Evolve extends EventEmitter {
     background,
     from,
     checkpointComment,
+    resume,
   }: {
     prompt: string;
     timeoutMs?: number;
     background?: boolean;
     from?: string;
     checkpointComment?: string;
+    /** Force a fresh conversation (false) or a resume (true); see RunOptions.resume. */
+    resume?: boolean;
   }): Promise<AgentResponse> {
     // Mutual exclusivity: from + withSession()
     if (from && this.config.sandboxId) {
@@ -641,7 +644,10 @@ export class Evolve extends EventEmitter {
 
     const callbacks = this.createStreamCallbacks();
 
-    return this.agent!.run({ prompt, timeoutMs, background, from, checkpointComment }, callbacks);
+    return this.agent!.run(
+      { prompt, timeoutMs, background, from, checkpointComment, resume },
+      callbacks
+    );
   }
 
   /**

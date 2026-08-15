@@ -1389,7 +1389,11 @@ class Trial:
     agent_setup: Optional[TimingInfo]
     agent_execution: Optional[TimingInfo]
     verifier: Optional[TimingInfo]
-    #: Multi-step placeholder; None today.
+    #: Per-step results for a multi-step task, in execution order. ``None`` on
+    #: every single-step trial — "this trial has no steps", never "it ran zero
+    #: of them". A trial that stopped early carries only the steps that ran.
+    #: Each entry: ``step_name``, ``agent_result``, ``verifier_result``,
+    #: ``exception_info``, ``agent_execution``, ``verifier``.
     step_results: Optional[List[Dict[str, Any]]]
     #: Which lane ``agent_result.cost_usd`` came from — see SpendSource; only
     #: ``'measured'`` is final.

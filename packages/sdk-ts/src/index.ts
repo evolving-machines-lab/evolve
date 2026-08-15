@@ -192,6 +192,10 @@ export {
 
 // Agent type constants
 export { AGENT_TYPES } from "./types";
+export {
+  SUPPORTED_RUN_OPTIONS,
+  type SupportedRunOption,
+} from "./types";
 
 // The one skills resolver: reference grammar, pinning, content cache, digest
 // and sandbox mounting — used by the managed-agents runtime and the hosted
