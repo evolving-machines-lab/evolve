@@ -358,6 +358,29 @@ export interface SandboxProvider {
    * one to match the other without deciding which rule they want.
    */
   listAll(options?: SandboxListOptions): Promise<SandboxListPage>;
+
+  /**
+   * Build or pull a sandbox image ahead of time, so the sandbox that needs it
+   * later does not wait for it.
+   *
+   * `image` takes exactly what `create({ image })` takes and MUST be resolved
+   * by the same path the provider's own create() uses — a prewarm that
+   * resolves an image differently from the create it is meant to serve fails
+   * silently, populating one image while sandboxes launch from another.
+   * Omitted, it prewarms the provider's configured default image.
+   *
+   * Sizing is deliberately absent: a provider whose image identity includes
+   * CPU/memory (Daytona content-addresses over image plus sizing) needs a
+   * different shape than one whose identity is the registry reference alone
+   * (Modal), and guessing here would hand callers a prewarm that misses.
+   *
+   * OPTIONAL, on the same terms as `list`: the SDK never calls it, so
+   * requiring it would break third-party providers passed to .withSandbox()
+   * for no gain. Declared here so every provider that offers it offers the
+   * SAME signature, and so callers can feature-detect it in a typed way
+   * rather than casting.
+   */
+  prepareImage?(image?: string): Promise<void>;
 }
 
 // =============================================================================

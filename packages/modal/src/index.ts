@@ -76,12 +76,56 @@ const IMAGE_MAP: Record<string, string> = {
 export const MODAL_MAX_LIFETIME_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Chunk size for stdin uploads. Modal's gRPC transport rejects any single
- * TaskExecStdinWrite message larger than 100MiB (RESOURCE_EXHAUSTED at
- * 104,857,600 bytes), so file payloads are split into 8MiB writeBytes()
- * calls — the same per-chunk pattern writeStream() uses.
+ * Chunk size for stdin uploads, and the reason it is THIS big.
+ *
+ * Every writeBytes() call is one awaited unary TaskExecStdinWrite round trip
+ * to Modal, so upload time is set by how many messages a payload becomes, not
+ * by how many bytes it is. Measured on live sandboxes with a 180MiB file:
+ *
+ *     64KiB   311.6s   (2880 messages — Node's default read size)
+ *     4MiB     36.2s
+ *     8MiB     30.1s   <- this constant
+ *     16MiB    31.4s
+ *
+ * Below roughly 4MiB the upload is round-trip bound and shrinking the chunk
+ * makes it dramatically slower; above it the transport saturates near 6MiB/s
+ * and a bigger chunk buys nothing.
+ *
+ * Modal's 100MiB per-message cap (RESOURCE_EXHAUSTED at 104,857,600 bytes) is
+ * the CEILING this must stay under — it is not the reason for the value. Do
+ * not "play it safe" by trimming this toward the cap-satisfying end: 64KiB is
+ * equally cap-safe and ten times slower, which is exactly the state this
+ * constant was raised to fix.
+ *
+ * STANDING DECISION (chunk size stays 8MiB) and its trigger: a worker running
+ * 16 concurrent uploads buffers about 256MiB at this size, which is real
+ * pressure in a 1GB worker. The re-profile's saturation row runs exactly that
+ * 16-parallel case; the ruling is to move on ITS data, not on precaution. If
+ * that row shows memory pressure, dropping to 4MiB is a measured one-line
+ * change — 36.2s versus 30.1s, about 83% of the throughput for half the
+ * buffer — and everything above still holds.
  */
 export const MODAL_STDIN_CHUNK_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Iterate a web ReadableStream. Node's implementation is async-iterable, but
+ * the DOM lib type it is declared with is not, so the reader is driven by hand
+ * rather than asserting the stream into an AsyncIterable it may not be.
+ */
+async function* streamToAsyncIterable(
+  stream: ReadableStream<Uint8Array>
+): AsyncIterable<Uint8Array> {
+  const reader = stream.getReader();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) yield value;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
 
 /**
  * Default sandbox user. Modal runs everything as root (ignoring the image's
@@ -744,11 +788,19 @@ export interface SandboxProvider {
   /** Connect to existing sandbox */
   connect(sandboxId: string, timeoutMs?: number): Promise<SandboxInstance>;
 
-  /** List sandboxes (first page only, up to limit) */
   /** List sandboxes, walking the whole app. `limit` bounds items returned. */
   list(options?: SandboxListOptions): Promise<SandboxInfo[]>;
   /** The same enumeration for fleet bookkeeping: never throws, reports completeness. */
   listAll(options?: SandboxListOptions): Promise<SandboxListPage>;
+
+  /**
+   * Build or pull the sandbox image ahead of time so a later create() does not
+   * wait for it. Takes what `create({ image })` takes, resolved by the same
+   * path, and defaults to the provider's configured image. Optional on the
+   * same terms as the SDK contract: declared so every provider offering it
+   * offers the same signature.
+   */
+  prepareImage?(image?: string): Promise<void>;
 }
 
 // ============================================================
@@ -966,6 +1018,56 @@ export class ModalFiles implements SandboxFiles {
     }
   }
 
+  /**
+   * Stream a byte source into a process's stdin, buffering it into
+   * MODAL_STDIN_CHUNK_BYTES writes rather than forwarding the source's own
+   * chunk size.
+   *
+   * WHY this exists rather than the SDK's own file copy. Modal documents
+   * "convenience APIs for streaming file copies in both directions"
+   * (https://modal.com/docs/guide/sandbox-files), but the JS
+   * `filesystem.copyFromLocal()` in modal@0.9.0 streams the local file with
+   * a bare `createReadStream(localPath)` — Node's default 64KiB highWaterMark
+   * — and awaits one unary TaskExecStdinWrite per chunk. Modal's own Python
+   * SDK reads TASK_COMMAND_ROUTER_MAX_BUFFER_SIZE (16MiB) per chunk for the
+   * same operation, so the 64KiB default is a JS-side omission, not a
+   * transport limit. Since the size is not a parameter of copyFromLocal(),
+   * the native call cannot be made to send larger messages.
+   *
+   * Measured, 180MiB payload: 64KiB 311.6s (2880 messages), native
+   * copyFromLocal 308.7s, 4MiB 36.2s, 8MiB 30.1s, 16MiB 31.4s. The upload is
+   * round-trip bound until roughly 4MiB and throughput bound after it, so the
+   * fix is message SIZE rather than which sink receives the bytes — the
+   * exec-stdin sink stays and the chunking changes.
+   *
+   * Peak memory stays at one chunk plus the source's own, never the whole
+   * payload: bundles run to hundreds of MB while workers hold many trials in
+   * a small heap.
+   */
+  private async writeStdinCoalesced(
+    stdin: { writeBytes(data: Uint8Array): Promise<void> },
+    source: AsyncIterable<Uint8Array>
+  ): Promise<void> {
+    let pending: Uint8Array[] = [];
+    let pendingBytes = 0;
+
+    const flush = async (): Promise<void> => {
+      if (pendingBytes === 0) return;
+      const merged =
+        pending.length === 1 ? pending[0] : Buffer.concat(pending, pendingBytes);
+      pending = [];
+      pendingBytes = 0;
+      await this.writeStdinChunked(stdin, merged);
+    };
+
+    for await (const chunk of source) {
+      pending.push(chunk);
+      pendingBytes += chunk.length;
+      if (pendingBytes >= MODAL_STDIN_CHUNK_BYTES) await flush();
+    }
+    await flush();
+  }
+
   async read(path: string): Promise<string | Uint8Array> {
     // Always read raw bytes and decide text-vs-binary from CONTENT, never
     // from the file's name: the SandboxFiles contract is "read returns
@@ -1013,7 +1115,6 @@ export class ModalFiles implements SandboxFiles {
 
   async writeBatch(files: Array<{ path: string; data: string | Buffer | ArrayBuffer | Uint8Array }>): Promise<void> {
     const tarPack = pack();
-    const chunks: Buffer[] = [];
 
     // Collect unique parent directories for chown
     const dirs = new Set<string>();
@@ -1031,14 +1132,12 @@ export class ModalFiles implements SandboxFiles {
     }
     tarPack.finalize();
 
-    for await (const chunk of tarPack) {
-      chunks.push(Buffer.from(chunk));
-    }
-    const tarBuffer = Buffer.concat(chunks);
-
     const p = await this.sandbox.exec(["tar", "-xf", "-", "-C", "/"], { mode: "binary" });
-    // Chunked writeBytes(): one gRPC message per chunk, under Modal's 100MiB cap
-    await this.writeStdinChunked(p.stdin, new Uint8Array(tarBuffer));
+    // The archive streams into tar's stdin in MODAL_STDIN_CHUNK_BYTES writes
+    // (one gRPC message each, under Modal's 100MiB cap) instead of being
+    // concatenated into one Buffer first: tar-stream emits the archive as it
+    // is packed, so nothing needs to hold every file at once.
+    await this.writeStdinCoalesced(p.stdin, tarPack as AsyncIterable<Uint8Array>);
     const writer = p.stdin.getWriter();
     await writer.close();
     await p.wait();
@@ -1116,19 +1215,12 @@ export class ModalFiles implements SandboxFiles {
     const escapedPath = path.replace(/'/g, "'\\''");
     const p = await this.sandbox.exec(["bash", "-c", `cat > '${escapedPath}'`], { mode: "binary" });
 
-    const reader = stream.getReader();
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        // Split per chunk, not just per call: a source yielding >100MiB in one
-        // chunk would otherwise blow Modal's gRPC message cap. fs read streams
-        // (what writeFromPath feeds in) stay at 64KiB, so this is a no-op there.
-        await this.writeStdinChunked(p.stdin, value);
-      }
-    } finally {
-      reader.releaseLock();
-    }
+    // Coalesced, not forwarded chunk-for-chunk: a source that yields small
+    // pieces (an fs stream's 64KiB default is the common one) would otherwise
+    // cost one awaited gRPC round trip each. writeStdinCoalesced also splits
+    // anything oversized, so a source yielding >100MiB in one piece still
+    // cannot blow Modal's gRPC message cap.
+    await this.writeStdinCoalesced(p.stdin, streamToAsyncIterable(stream));
 
     const writer = p.stdin.getWriter();
     await writer.close();
@@ -1142,12 +1234,19 @@ export class ModalFiles implements SandboxFiles {
    * Upload a local file by PATH, chunk by chunk into the same `cat >` sink
    * writeStream() uses — so peak memory is one chunk rather than the whole
    * file, which is what makes a large artifact safe under concurrency.
+   *
+   * The read is sized to MODAL_STDIN_CHUNK_BYTES instead of Node's 64KiB
+   * default because every chunk costs one awaited round trip to Modal: the
+   * same 180MiB bundle took 311.6s at 64KiB and 30.1s at 8MiB (measured, one
+   * sandbox, same file). writeStdinCoalesced would batch a small-chunk stream
+   * anyway; asking the filesystem for whole chunks just avoids assembling
+   * them from 128 pieces.
    */
   async writeFromPath(sandboxPath: string, localPath: string): Promise<void> {
     const { createReadStream } = await import("node:fs");
     const { Readable } = await import("node:stream");
     const web = Readable.toWeb(
-      createReadStream(localPath)
+      createReadStream(localPath, { highWaterMark: MODAL_STDIN_CHUNK_BYTES })
     ) as ReadableStream<Uint8Array>;
     await this.writeStream(sandboxPath, web);
   }
@@ -1304,6 +1403,74 @@ export class ModalProvider implements SandboxProvider {
       : this.client.images.fromGcpArtifactRegistry(tag, secret);
   }
 
+  /**
+   * Resolve a requested image name to the Modal image identity and eagerly
+   * build it. The ONE place that pair happens, because create() and
+   * prepareImage() drifting apart is a silent failure: the prewarm would
+   * populate one image while trials created against another, and nothing
+   * would report the mismatch — only the cold-start cost prewarm was meant
+   * to remove would quietly come back.
+   *
+   * "Eagerly builds an Image on Modal" — the SDK's own description of
+   * Image.build(app) (modal@0.9.0, dist/index.d.ts). The call is idempotent:
+   * the same reference returns the same cached imageId, so the first caller
+   * pays the registry pull and later ones resolve quickly.
+   */
+  private async resolveAndBuildImage(imageName: string): Promise<{ tag: string; image: Image }> {
+    const app = await this.getApp();
+    // Resolve image name through IMAGE_MAP (e.g., "evolve-all" -> "evolvingmachines/evolve-all")
+    const tag = IMAGE_MAP[imageName] ?? imageName;
+    const image = await this.resolveImage(tag);
+    return { tag, image: await image.build(app) };
+  }
+
+  /**
+   * Build (or pull) an image on Modal ahead of time, so the sandbox that
+   * needs it later does not wait for it.
+   *
+   * Modal's own guidance: "To avoid blocking creation of new Sandboxes on
+   * rebuilding an invalidated Image, it's recommended to use Modal's named
+   * Images with sandboxes, rather than using inline Image definitions", and
+   * "Use `Image.build` to trigger Image builds as part of a deployment flow
+   * or at a regular interval (e.g., in a scheduled job or CI pipeline)"
+   * (https://modal.com/docs/guide/sandbox). This is that deployment-flow
+   * call: run it at publish time, and trial-time create() finds the image
+   * already built.
+   *
+   * `imageName` takes exactly what `create({ image })` takes and is resolved
+   * by the identical path, so callers prewarm the image they will actually
+   * run on rather than a reconstruction of it. Omitted, it prewarms the
+   * provider's configured default — again what create() would have chosen.
+   *
+   * There is deliberately no sizing parameter: on Modal, image identity is
+   * the registry reference alone, and CPU/memory/GPU are create-time sandbox
+   * options, so one eager build serves every sizing.
+   *
+   * OPERATIONAL TRAP, and prewarming at publish time is what makes it likely.
+   * From the same guide: "Modal treats external Image tags as immutable once
+   * pulled" and "Modal does not detect upstream changes to mutable tags like
+   * `:latest`". So prewarming a MUTABLE tag after re-pushing that tag warms
+   * the OLD image, and every later create() keeps launching the old image —
+   * quietly, because the reference still resolves. Modal's own remedy is to
+   * "update the tag in your deploy script (for example, `ubuntu:24.04` →
+   * `ubuntu:24.04-20240523`)".
+   *
+   * The versioned default (evolve-all-<c-hash>) is immune, because a content
+   * change moves the tag. The exposed legacy alias "evolve-all" is NOT: it
+   * maps to the mutable Docker Hub name, so prewarming it after a re-push
+   * warms the stale image. That alias is precisely why EVOLVE_IMAGE_VERSION
+   * exists — prewarm the versioned name unless you specifically want the
+   * account's already-pulled copy.
+   */
+  async prepareImage(imageName?: string): Promise<void> {
+    // `||`, not `??`, so an empty string falls back to the default exactly as
+    // create()'s `options.image || this.imageName` does. Two different
+    // emptiness rules would put the prewarm on a different image than the
+    // create it is meant to serve — the one divergence this method exists to
+    // prevent.
+    await this.resolveAndBuildImage(imageName || this.imageName);
+  }
+
   async create(options: SandboxCreateOptions): Promise<SandboxInstance> {
     // Validate before any network call so misconfigurations fail fast
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
@@ -1317,14 +1484,11 @@ export class ModalProvider implements SandboxProvider {
 
     const app = await this.getApp();
 
-    // Resolve image name through IMAGE_MAP (e.g., "evolve-all" -> "evolvingmachines/evolve-all")
-    const imageName = options.image || this.imageName;
-    const resolvedImage = IMAGE_MAP[imageName] ?? imageName;
-
-    // Eagerly build image on Modal's infra (idempotent — same tag returns same cached imageId).
-    // First run pulls from the registry and caches; subsequent runs resolve quickly.
-    const image = await this.resolveImage(resolvedImage);
-    const builtImage = await image.build(app);
+    // The SAME resolve-and-build pair prepareImage() calls, so a prewarmed
+    // image and the image a trial creates against cannot drift apart.
+    const { tag: resolvedImage, image: builtImage } = await this.resolveAndBuildImage(
+      options.image || this.imageName
+    );
 
     // Filter out undefined values and only pass env if non-empty
     // Modal SDK throws if env is empty object or contains undefined values
