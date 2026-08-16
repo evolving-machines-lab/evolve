@@ -174,9 +174,9 @@ waiting for it — and treats a PR that does not merge as fatal, precisely so th
 fleet is never moved ahead of the record.
 
 Two knobs worth knowing: the release type and bump live in the workflow's `env`
-block, and adding a `RELEASE_PAT` repository secret makes the PR come from a
-real account, which both sidesteps the org's restriction on Actions opening PRs
-and lets normal CI run on it.
+block, and adding a `RELEASE_PAT` repository secret makes any fallback PR come
+from a real account, so ordinary CI runs on it instead of being held for a
+human to approve.
 
 **The managed Daytona swap.** Daytona has no rename and no in-place update for
 a snapshot ([daytonaio/daytona#2661][d2661], open), so the stable `evolve-all`

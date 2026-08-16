@@ -105,6 +105,16 @@ jobs:
     name: Refresh evolve-all everywhere
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    # Never react to our OWN constants commit. It lands on main and touches
+    # assets/docker/**, which is precisely this workflow's push trigger, so it
+    # matches by construction. Today a GITHUB_TOKEN push does not re-trigger
+    # anything (GitHub's recursion rule), which makes this guard inert — but the
+    # moment a RELEASE_PAT is added the same push WOULD start a run, and that
+    # run would re-derive the version it just wrote and repeat every live check
+    # for nothing. Cheap to guard now, easy to forget later.
+    if: >-
+      github.event_name != 'push' ||
+      !startsWith(github.event.head_commit.message, 'chore(image): refresh evolve-all to')
     steps:
       # persist-credentials: false — third-party install scripts run in this job
       # (npm ci, and the image build itself), and the workflow token should not
@@ -229,21 +239,29 @@ jobs:
           git ls-files --others --exclude-standard >> /tmp/changed.txt
           echo "Working-tree changes:"
           sed 's/^/  /' /tmp/changed.txt
-          if [ ! -s /tmp/changed.txt ]; then
-            echo "::error::The version step reported a change but the working tree is clean — refusing to guess."
-            exit 1
-          fi
           unexpected=0
-          while IFS= read -r path; do
+          seen=0
+          # `|| [ -n "$path" ]` so a final line with no trailing newline is still
+          # examined; without it the last path could slip through unchecked.
+          while IFS= read -r path || [ -n "$path" ]; do
             [ -z "$path" ] && continue
+            seen=$((seen + 1))
             if is_allowed "$path"; then continue; fi
             echo "  ^ NOT a generated constant"
             unexpected=1
           done < /tmp/changed.txt
+          # Count actual PATHS, not bytes: a file holding nothing but a newline
+          # is non-empty to `test -s` yet yields no path to check, and "nothing
+          # to object to" must never come from having looked at nothing.
+          if [ "$seen" -eq 0 ]; then
+            echo "::error::The version step reported a change but no changed path could be read — refusing to guess."
+            exit 1
+          fi
           if [ "$unexpected" -eq 1 ]; then
             echo "::error::This run would commit files beyond the generated constants — refusing to touch main or anything live."
             exit 1
           fi
+          echo "Verified ${seen} changed path(s), all generated constants."
 
       # main has no required status checks, and a PR opened with GITHUB_TOKEN
       # has its CI held in an approval-required state, so there is no external
@@ -289,6 +307,13 @@ jobs:
           echo "::notice::Direct push to main was refused — falling back to a pull request."
           branch="image-refresh/${VERSION}"
           git push "$remote" "HEAD:refs/heads/${branch}"
+          # The exact commit the gates above inspected and tested. Every merge
+          # below is pinned to it with --match-head-commit, so anything pushed
+          # to the branch after this point makes the merge FAIL rather than
+          # silently ship content nothing examined. That matters most for
+          # --auto, which can sit pending and merge minutes later.
+          head_sha="$(git rev-parse HEAD)"
+          echo "Head pinned to ${head_sha}"
           {
             echo "Automated by \`.github/workflows/image-refresh.yml\` (run ${GITHUB_RUN_ID})."
             echo
@@ -314,11 +339,11 @@ jobs:
           # rather than bypassed; GitHub refuses auto-merge when nothing blocks
           # the PR, and then a direct merge is correct because the gates above
           # already ran.
-          if gh pr merge "$number" --auto --squash --delete-branch; then
-            echo "Auto-merge enabled on #${number}."
+          if gh pr merge "$number" --auto --squash --delete-branch --match-head-commit "$head_sha"; then
+            echo "Auto-merge enabled on #${number}, pinned to ${head_sha}."
           else
             echo "::notice::Auto-merge unavailable — merging directly, gated by the steps above."
-            gh pr merge "$number" --squash --delete-branch || true
+            gh pr merge "$number" --squash --delete-branch --match-head-commit "$head_sha" || true
           fi
           for _ in $(seq 1 60); do
             if [ "$(gh pr view "$number" --json merged --jq '.merged')" = "true" ]; then
@@ -442,14 +467,24 @@ jobs:
             -f release_type="${PUBLISH_RELEASE_TYPE}" \
             -f version_bump="${PUBLISH_VERSION_BUMP}" \
             -f dry_run=false
+          # Say only what this run actually verified. The four bullets above the
+          # release each had their result checked; `gh workflow run` proves the
+          # dispatch was ACCEPTED and nothing more — whether the release itself
+          # succeeds is decided in that other run, and claiming it here would
+          # report a shipment on the strength of a request.
           {
-            echo "### Image refreshed to \`${VERSION}\` — shipped end to end"
+            echo "### Image refreshed to \`${VERSION}\`"
+            echo
+            echo "Verified in this run:"
             echo
             echo "- Constants landed on \`main\` BEFORE anything live moved"
-            echo "- Image built and pushed to Docker Hub"
-            echo "- E2B template rebuilt and verified ready"
-            echo "- Managed Daytona snapshot repointed and verified active"
-            echo "- \`publish.yml\` dispatched (${PUBLISH_RELEASE_TYPE}/${PUBLISH_VERSION_BUMP}) to move Modal and direct Daytona"
+            echo "- Image on Docker Hub"
+            echo "- E2B template rebuilt, confirmed as a new \`ready\` build"
+            echo "- Managed Daytona snapshot repointed, confirmed \`active\`"
+            echo
+            echo "Requested, not yet verified:"
+            echo
+            echo "- \`publish.yml\` dispatch accepted (${PUBLISH_RELEASE_TYPE}/${PUBLISH_VERSION_BUMP}). Modal and direct Daytona move only if THAT run succeeds — check it before assuming they have."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Say what happened when nothing needed a release
