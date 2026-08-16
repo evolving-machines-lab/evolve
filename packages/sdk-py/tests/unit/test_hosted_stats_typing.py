@@ -111,6 +111,11 @@ def test_field_types_match_the_ts_interfaces() -> None:
         assert stats_hints[nullable] == Optional[int], nullable
     for money in ('cost_usd', 'gpu_cost_usd', 'judge_cost_usd'):
         assert stats_hints[money] == Optional[float], money
+    # The unmeasured-spend counters are plain ints on purpose: the money
+    # fields beside them are Optional because None means "nothing settled",
+    # where a count of 0 is already the honest answer to the same moment.
+    for honesty in ('n_unmeasured_trials', 'n_unmeasured_judge_trials'):
+        assert stats_hints[honesty] is int, honesty
 
     group_hints = typing.get_type_hints(AgentDatasetStats)
     assert group_hints['n_trials'] is int

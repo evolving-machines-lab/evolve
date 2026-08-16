@@ -624,6 +624,25 @@ export interface JobStats {
    * anything settled, like `cost_usd`.
    */
   judge_cost_usd?: number | null;
+  /**
+   * HOW MANY SETTLED TRIALS `cost_usd` CANNOT ACCOUNT FOR — trials whose
+   * `spend_source` lane is `assumed_cap`, meaning nobody ever measured their
+   * gateway spend. Such a trial stores 0, and the job total is the sum of its
+   * trials, so each one folds a zero in and `cost_usd` comes out LOWER than
+   * what was really spent. A plain count, never null: before anything settles
+   * it is honestly 0, where `cost_usd` is null. It is a FLOOR — a
+   * retried-away attempt's lineage snapshot keeps no spend-source column, so
+   * an earlier attempt nobody measured cannot be counted here. Absent on
+   * servers predating the field.
+   */
+  n_unmeasured_trials?: number;
+  /**
+   * The judge half of the same fact, itemized the way `judge_cost_usd`
+   * itemizes `cost_usd`: trials that ran a judge whose spend was never
+   * measured (`judge_spend_source` `assumed_cap`). 0 on jobs with no
+   * judge-enabled tasks.
+   */
+  n_unmeasured_judge_trials?: number;
 }
 
 /**
