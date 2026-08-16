@@ -445,6 +445,67 @@ async function testRollbackClearsTheFailedRowFirst(): Promise<void> {
   );
 }
 
+function testEverySdkCallIsBounded(): void {
+  console.log("\n[B14] LAW: no Daytona call is left unbounded");
+
+  // A single hung REST call burns the whole job clock, and if it hangs during
+  // the swap the job is killed with the platform snapshot deleted and no
+  // rollback ever run — the one failure with no recovery. So the rule is that
+  // NO raw client call appears outside a withDeadline wrapper. Asserted against
+  // the source, because the next raw `daytona.snapshot.x(...)` someone adds is
+  // exactly the one that would slip through review.
+  const source = readFileSync(
+    resolve(REPO_ROOT, "assets/daytona/refresh-platform-snapshot.ts"),
+    "utf-8"
+  );
+  const raw = source
+    .split("\n")
+    .map((line, i) => ({ line: line.trim(), n: i + 1 }))
+    .filter(({ line }) => /\bawait\s+daytona\.snapshot\.\w+\(/.test(line));
+  for (const { line, n } of raw) console.log(`    unbounded call at line ${n}: ${line}`);
+  assertEqual(raw.length, 0, "every client call goes through a deadline-bounded helper");
+
+  // And the helpers themselves really do wrap one.
+  for (const call of ["get", "activate", "delete"]) {
+    assert(
+      new RegExp(`withDeadline\\(\\s*\\n?\\s*daytona\\.snapshot\\.${call}\\(`).test(source),
+      `snapshot.${call}() is wrapped in withDeadline`
+    );
+  }
+}
+
+function testWorkflowRunsOnlyOnMain(): void {
+  console.log("\n[B15] REGRESSION: the pipeline refuses to run off main");
+
+  // THE HOLE THIS CLOSES. The landing step runs `git push HEAD:main`, and git
+  // fast-forwards main to ANY descendant — so a workflow_dispatch picked from a
+  // feature branch would push that whole branch onto main, then repoint
+  // production at an image built from it and cut a release. The allowlist gate
+  // cannot see it: that gate inspects the working-tree diff this run produced,
+  // never the commits the branch already carried. Only the ref distinguishes
+  // the two cases.
+  const workflow = readFileSync(
+    resolve(REPO_ROOT, ".github/workflows/image-refresh.yml"),
+    "utf-8"
+  );
+  assert(
+    /if:\s*>-[\s\S]{0,400}?github\.ref\s*==\s*'refs\/heads\/main'/.test(workflow),
+    "the job is gated on github.ref == 'refs/heads/main'"
+  );
+  // Guard the guard: it has to sit on the JOB, so it covers the push, the
+  // repointing and the release dispatch at once. On a single step it would
+  // leave the others reachable.
+  const jobBlock = workflow.slice(workflow.indexOf("jobs:"), workflow.indexOf("steps:"));
+  assert(
+    jobBlock.includes("github.ref == 'refs/heads/main'"),
+    "and it sits at job level, not on one step, so nothing downstream is reachable off main"
+  );
+  assert(
+    /git push "\$remote" HEAD:main/.test(workflow),
+    "precondition: the landing step really does push straight to main (what the guard protects)"
+  );
+}
+
 const tests = [
   testStampRoundTrips,
   testStampIsARealBuildInput,
@@ -463,6 +524,8 @@ const tests = [
   testPreservedShapeKeepsTheContract,
   testDeadlineBoundsAnUnboundedBuild,
   testRollbackClearsTheFailedRowFirst,
+  testEverySdkCallIsBounded,
+  testWorkflowRunsOnlyOnMain,
 ];
 
 (async () => {

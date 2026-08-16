@@ -105,16 +105,30 @@ jobs:
     name: Refresh evolve-all everywhere
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    # Never react to our OWN constants commit. It lands on main and touches
-    # assets/docker/**, which is precisely this workflow's push trigger, so it
-    # matches by construction. Today a GITHUB_TOKEN push does not re-trigger
-    # anything (GitHub's recursion rule), which makes this guard inert — but the
-    # moment a RELEASE_PAT is added the same push WOULD start a run, and that
-    # run would re-derive the version it just wrote and repeat every live check
-    # for nothing. Cheap to guard now, easy to forget later.
+    # THIS JOB RUNS ONLY ON main, AND ONLY WHEN NOT REACTING TO ITSELF.
+    #
+    # The main guard is not hygiene, it is the fence around the landing step.
+    # That step runs `git push HEAD:main`, and git will happily fast-forward
+    # main to ANY descendant of it — so a workflow_dispatch chosen from a
+    # feature branch would push that entire branch, every unrelated commit on
+    # it, onto main. The allowlist gate cannot catch that: it inspects the
+    # WORKING-TREE diff (what this run regenerated), never the commits the
+    # branch already carried. Production would then be repointed to an image
+    # built from that branch's Dockerfile and a stable release cut from it.
+    # `github.ref` is the only thing that distinguishes the case, and one line
+    # here closes the push, the repointing and the release dispatch together.
+    #
+    # The second clause stops the workflow reacting to its OWN constants
+    # commit, which lands on main and touches assets/docker/** — precisely this
+    # workflow's push trigger, so it matches by construction. Inert today
+    # (a GITHUB_TOKEN push does not re-trigger anything, per GitHub's recursion
+    # rule), but the moment a RELEASE_PAT is added that push WOULD start a run
+    # which re-derives the version it just wrote and repeats every live check
+    # for nothing.
     if: >-
-      github.event_name != 'push' ||
-      !startsWith(github.event.head_commit.message, 'chore(image): refresh evolve-all to')
+      github.ref == 'refs/heads/main' &&
+      (github.event_name != 'push' ||
+       !startsWith(github.event.head_commit.message, 'chore(image): refresh evolve-all to'))
     steps:
       # persist-credentials: false — third-party install scripts run in this job
       # (npm ci, and the image build itself), and the workflow token should not

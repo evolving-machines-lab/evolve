@@ -105,6 +105,18 @@ const ACTIVE_POLL_MS = 5000
 const DELETE_GONE_TIMEOUT_MS = 5 * 60 * 1000
 const DELETE_GONE_POLL_MS = 3000
 
+/**
+ * Ceiling on any SINGLE Daytona REST call. These are one-shot reads and writes
+ * that normally answer in well under a second, so a minute is already absurdly
+ * generous — the number exists only to guarantee the call ENDS. An SDK call
+ * that hangs (a dropped connection with no socket timeout, a wedged server)
+ * would otherwise burn the whole job clock on one request, and if it hangs
+ * during the swap the job is killed with the platform snapshot deleted and no
+ * rollback ever run. That is the one failure mode with no recovery, so every
+ * call on the destructive path is bounded, not just the build.
+ */
+const API_CALL_TIMEOUT_MS = 60_000
+
 /** Daytona's own SnapshotState enum, split by what it means for this script. */
 const TRANSITIONAL_STATES = new Set(['pending', 'building', 'pulling', 'snapshotting', 'removing'])
 const FAILED_STATES = new Set(['error', 'build_failed'])
@@ -266,12 +278,29 @@ export interface SnapshotClient {
  *  reading "cannot tell" as "absent" would turn an outage into a create. */
 async function getSnapshot(daytona: SnapshotClient, name: string): Promise<SnapshotHandle | undefined> {
   try {
-    return await daytona.snapshot.get(name)
+    return await withDeadline(
+      daytona.snapshot.get(name),
+      API_CALL_TIMEOUT_MS,
+      `Reading Daytona snapshot "${name}" did not answer within ${API_CALL_TIMEOUT_MS / 1000}s`
+    )
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     if (isMissingSnapshot(message)) return undefined
     throw new Error(`Reading Daytona snapshot "${name}" failed: ${message}`)
   }
+}
+
+/** Bring an inactive snapshot back, on a bounded clock. */
+async function activateSnapshot(
+  daytona: SnapshotClient,
+  handle: SnapshotHandle,
+  name: string
+): Promise<void> {
+  await withDeadline(
+    daytona.snapshot.activate(handle),
+    API_CALL_TIMEOUT_MS,
+    `Activating Daytona snapshot "${name}" did not answer within ${API_CALL_TIMEOUT_MS / 1000}s`
+  )
 }
 
 const facts = (handle: SnapshotHandle): SnapshotFacts => handle as unknown as SnapshotFacts
@@ -444,7 +473,11 @@ async function deleteAndConfirmGone(
   name: string
 ): Promise<boolean> {
   try {
-    await daytona.snapshot.delete(handle)
+    await withDeadline(
+      daytona.snapshot.delete(handle),
+      API_CALL_TIMEOUT_MS,
+      `Deleting Daytona snapshot "${name}" did not answer within ${API_CALL_TIMEOUT_MS / 1000}s`
+    )
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     if (!isMissingSnapshot(message)) throw new Error(`Deleting snapshot "${name}" failed: ${message}`)
@@ -471,19 +504,34 @@ async function deleteAndConfirmGone(
  */
 async function ensureVersionedSnapshot(daytona: SnapshotClient, dryRun: boolean): Promise<void> {
   console.log(`\n▸ Versioned snapshot "${SNAPSHOT_NAME}" (direct-mode default, and the swap's safety proof)`)
-  const existing = await getSnapshot(daytona, SNAPSHOT_NAME)
-  const plan = planPlatformSnapshot(existing ? facts(existing) : undefined, EVOLVE_IMAGE_REF)
+  let existing = await getSnapshot(daytona, SNAPSHOT_NAME)
+  let plan = planPlatformSnapshot(existing ? facts(existing) : undefined, EVOLVE_IMAGE_REF)
   console.log(`  ${existing ? describe(existing) : 'absent'} → ${plan.action} (${plan.reason})`)
 
   if (dryRun) return
+
+  // Waiting proves a build FINISHED, never that it finished on the image we
+  // want — so re-read and decide again, exactly as the platform path does.
+  // Returning straight out of the wait would let this step report the release
+  // image as proven when what actually went active was somebody else's build
+  // of something else, and this step IS the proof the swap below relies on.
+  if (plan.action === 'wait') {
+    await waitForActive(daytona, SNAPSHOT_NAME)
+    existing = await getSnapshot(daytona, SNAPSHOT_NAME)
+    plan = planPlatformSnapshot(existing ? facts(existing) : undefined, EVOLVE_IMAGE_REF)
+    console.log(`  re-planned after waiting → ${plan.action} (${plan.reason})`)
+  }
+
   switch (plan.action) {
     case 'noop':
       return
     case 'wait':
-      await waitForActive(daytona, SNAPSHOT_NAME)
-      return
+      throw new Error(
+        `Snapshot "${SNAPSHOT_NAME}" is still mid-transition after waiting — this run cannot prove ` +
+          `${EVOLVE_IMAGE_REF} builds in this org, so it will not go on to touch the platform snapshot.`
+      )
     case 'activate':
-      await daytona.snapshot.activate(existing!)
+      await activateSnapshot(daytona, existing!, SNAPSHOT_NAME)
       await waitForActive(daytona, SNAPSHOT_NAME)
       return
     case 'create':
@@ -548,7 +596,7 @@ async function refreshPlatformSnapshot(daytona: SnapshotClient, dryRun: boolean)
     case 'blocked':
       throw new Error(`Refusing to touch "${PLATFORM_SNAPSHOT_NAME}": ${plan.reason}.`)
     case 'activate':
-      await daytona.snapshot.activate(existing!)
+      await activateSnapshot(daytona, existing!, PLATFORM_SNAPSHOT_NAME)
       await waitForActive(daytona, PLATFORM_SNAPSHOT_NAME)
       console.log('  Reactivated.')
       return
