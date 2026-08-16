@@ -164,7 +164,9 @@ RUN npx playwright install chromium
 # into the derived c-<12hex> tag like any other file, and it is COPY'd here so
 # it is genuine image content rather than a hash decoration —
 # `cat /etc/evolve-image-refresh` in a sandbox reports which refresh built it.
-# Last, so a stamp bump rebuilds only this layer.
+# Last because nothing above should depend on it — not to save a rebuild:
+# build.ts builds with --no-cache, so every layer is rebuilt regardless, which
+# is the point of a forced refresh (it is how the @latest tools actually move).
 USER root
 COPY refresh-stamp /etc/evolve-image-refresh
 RUN chmod 0644 /etc/evolve-image-refresh

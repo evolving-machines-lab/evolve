@@ -41,8 +41,15 @@ import {
   backingImageRef,
   normalizeImageRef,
   planPlatformSnapshot,
+  preservedShape,
+  replacePlatformSnapshot,
+  withDeadline,
+  type SnapshotClient,
   type SnapshotFacts,
 } from "../../../../assets/daytona/refresh-platform-snapshot.ts";
+// The executor builds from the repo's CURRENT release ref, so the fake below
+// must fail that exact ref rather than a literal that drifts every refresh.
+import { EVOLVE_IMAGE_REF } from "../../../../assets/daytona/template.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "../../../..");
@@ -266,15 +273,175 @@ function testRefNormalization(): void {
   );
 }
 
-function testUnrecordedImageIsReplaced(): void {
-  console.log("\n[B9] A snapshot that records no image at all is replaced, with no rollback ref");
+function testUnrecordedImageIsRefused(): void {
+  console.log("\n[B9] A snapshot that records no image at all is REFUSED, never replaced");
 
+  // The decision has to happen HERE, before anything is deleted. The earlier
+  // design let this through as a replace carrying `from: undefined` and only
+  // discovered there was no way back inside the failure handler — by which
+  // point the snapshot was already gone and the fleet had nothing to boot.
   const plan = planPlatformSnapshot({ name: "evolve-all", state: "active" }, TARGET);
-  assertEqual(plan.action, "replace", "no recoverable ref → replace");
-  assertEqual(
-    plan.action === "replace" ? plan.from : "unset",
-    undefined,
-    "and the plan admits it has nothing to roll back to"
+  assertEqual(plan.action, "blocked", "no recoverable ref → blocked, not replace");
+  assert(
+    plan.action === "blocked" && plan.reason.includes("records no image ref"),
+    "and it says why, so an operator knows what to fix"
+  );
+}
+
+function testEveryReplaceCarriesARollbackRef(): void {
+  console.log("\n[B10] LAW: a replace can never exist without somewhere to roll back to");
+
+  // Swept across every state, because this is the invariant that makes the
+  // destructive path survivable — a `replace` with nothing to return to must be
+  // unreachable, not merely unlikely.
+  const states = ["active", "inactive", "error", "build_failed", "pending", "building", "unknown"];
+  let replaces = 0;
+  let violations = 0;
+  for (const state of states) {
+    for (const facts of [
+      builtFromImage("evolvingmachines/evolve-all", state),
+      builtFromImage(TARGET, state),
+      { name: "evolve-all", state } as SnapshotFacts,
+      { name: "evolve-all", state, imageName: "" } as SnapshotFacts,
+    ]) {
+      const plan = planPlatformSnapshot(facts, TARGET);
+      if (plan.action !== "replace") continue;
+      replaces++;
+      if (typeof plan.from !== "string" || plan.from.length === 0) violations++;
+    }
+  }
+  assert(replaces > 0, `the sweep actually produced replace plans (${replaces} of them)`);
+  assertEqual(violations, 0, "not one of them lacked a rollback ref");
+}
+
+function testPreservedShapeKeepsTheContract(): void {
+  console.log("\n[B11] A replacement keeps everything except the image");
+
+  // These four values are what the live records actually report back on GET
+  // after an Image-based create — verified against evolve-all and
+  // evolve-all-c-6cd57962a3d9. A field that did not round-trip would be a field
+  // the next replace silently dropped.
+  const shape = preservedShape({
+    cpu: 8,
+    mem: 16,
+    disk: 50,
+    entrypoint: ["sleep", "infinity"],
+    regionIds: ["us"],
+    sandboxClass: "container",
+  });
+  assertEqual(shape.resources, { cpu: 8, memory: 16, disk: 50 }, "sizing is carried over, not defaulted");
+  assertEqual(shape.entrypoint, ["sleep", "infinity"], "entrypoint is carried over");
+  assertEqual(shape.regionId, "us", "a single region is carried over");
+  assertEqual(shape.sandboxClass, "container", "sandbox class is carried over");
+
+  const bare = preservedShape({});
+  assertEqual(bare.resources, { cpu: 4, memory: 4, disk: 10 }, "a record with no sizing falls back to the repo default");
+  assertEqual(bare.entrypoint, undefined, "and omits what it cannot know");
+
+  // Daytona's create takes ONE region while the record lists many. Narrowing to
+  // whichever sorts first would quietly unpublish the snapshot elsewhere.
+  const multi = preservedShape({ regionIds: ["us", "eu"] });
+  assertEqual(multi.regionId, undefined, "multiple regions are NOT narrowed to the first one");
+}
+
+async function testDeadlineBoundsAnUnboundedBuild(): Promise<void> {
+  console.log("\n[B12] The build wait is bounded here, because the SDK does not bound it");
+
+  // The SDK's create polls until a terminal state with no deadline — its
+  // `timeout` option only covers the initial POST. Unbounded, a wedged build
+  // hangs until the job is killed, and being killed mid-swap is the one failure
+  // with no recovery: the snapshot is already deleted and no rollback runs.
+  const settled = await withDeadline(Promise.resolve("done"), 1000, "should not fire");
+  assertEqual(settled, "done", "work that finishes in time passes straight through");
+
+  let message = "";
+  try {
+    await withDeadline(new Promise(() => {}), 20, "build exceeded its deadline");
+    message = "(no error thrown)";
+  } catch (err) {
+    message = err instanceof Error ? err.message : String(err);
+  }
+  assertEqual(message, "build exceeded its deadline", "work that never settles rejects, so the caller can roll back");
+}
+
+/** A Daytona stand-in that records every call, and can be told to fail creates. */
+function fakeClient(options: {
+  initial: SnapshotFacts | undefined;
+  failCreatesFrom: string[];
+}): { client: SnapshotClient; calls: string[] } {
+  const calls: string[] = [];
+  let current: SnapshotFacts | undefined = options.initial;
+  const client: SnapshotClient = {
+    snapshot: {
+      async get(name: string) {
+        calls.push(`get ${name}`);
+        if (!current) throw new Error("Snapshot not found");
+        return current as never;
+      },
+      async create(params: { name: string; image: unknown }) {
+        const ref = (params.image as { dockerfile?: string })?.dockerfile ?? String(params.image);
+        const from = /FROM\s+(\S+)/.exec(ref)?.[1] ?? ref;
+        calls.push(`create ${params.name} from ${from}`);
+        if (current) throw new Error("409 conflict: a snapshot with this name already exists");
+        if (options.failCreatesFrom.includes(from)) {
+          // Exactly how the SDK fails: the row EXISTS, in a terminal failed
+          // state, and only then does create() throw.
+          current = { name: params.name, state: "build_failed", buildInfo: { dockerfileContent: `FROM ${from}\n` } };
+          throw new Error(`Failed to create snapshot. Name: ${params.name} Reason: build failed`);
+        }
+        current = { name: params.name, state: "active", buildInfo: { dockerfileContent: `FROM ${from}\n` } };
+        return current as never;
+      },
+      async delete() {
+        calls.push("delete");
+        current = undefined;
+        return undefined;
+      },
+      async activate() {
+        calls.push("activate");
+        return undefined;
+      },
+    },
+  };
+  return { client, calls };
+}
+
+async function testRollbackClearsTheFailedRowFirst(): Promise<void> {
+  console.log("\n[B13] REGRESSION: the rollback deletes the failed row before rebuilding");
+
+  // THE BUG THIS PINS. The SDK only throws once the snapshot has reached
+  // ERROR/BUILD_FAILED, so when the catch block runs, a row ALREADY EXISTS
+  // under the name. A rollback that creates straight over it hits a 409 — and
+  // the fleet, whose snapshot was deleted moments earlier, is left with
+  // nothing at all. The rollback must clear the wreckage first.
+  const OLD = "evolvingmachines/evolve-all";
+  const live: SnapshotFacts = {
+    name: "evolve-all",
+    state: "active",
+    cpu: 4,
+    mem: 4,
+    disk: 10,
+    entrypoint: ["sleep", "infinity"],
+    buildInfo: { dockerfileContent: `FROM ${OLD}\n` },
+  };
+  const { client, calls } = fakeClient({ initial: live, failCreatesFrom: [EVOLVE_IMAGE_REF] });
+
+  let threw = false;
+  try {
+    await replacePlatformSnapshot(client, live as never, OLD);
+  } catch {
+    threw = true;
+  }
+
+  const creates = calls.filter((c) => c.startsWith("create"));
+  const deletes = calls.filter((c) => c === "delete").length;
+  assert(threw, "a failed refresh still fails the run — rolling back is not succeeding");
+  assertEqual(creates.length, 2, "it tried the new image, then the rollback");
+  assert(creates[1].includes(OLD), "the second create is the rollback to the previous image");
+  assertEqual(deletes, 2, "TWO deletes: the original swap, and the failed row before the rollback");
+  assert(
+    calls.lastIndexOf("delete") < calls.lastIndexOf(creates[1]),
+    "and the failed row is cleared BEFORE the rollback create, not after"
   );
 }
 
@@ -291,7 +458,11 @@ const tests = [
   testInFlightBuildsAreNotInterrupted,
   testDeadBuildOnTheRightImageIsRebuilt,
   testRefNormalization,
-  testUnrecordedImageIsReplaced,
+  testUnrecordedImageIsRefused,
+  testEveryReplaceCarriesARollbackRef,
+  testPreservedShapeKeepsTheContract,
+  testDeadlineBoundsAnUnboundedBuild,
+  testRollbackClearsTheFailedRowFirst,
 ];
 
 (async () => {

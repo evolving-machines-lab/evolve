@@ -184,7 +184,177 @@ jobs:
           fi
 
       # -----------------------------------------------------------------------
-      # (b) DOCKER HUB — build and push the derived tag if it is not there yet
+      # (b) LAND THE CONSTANTS ON main — BEFORE anything live moves
+      # -----------------------------------------------------------------------
+      #
+      # ORDERING IS THE SAFETY PROPERTY, and it is the opposite of what feels
+      # natural. "Ship it, then record it" opens a window where the live systems
+      # are on the new tag while main still derives the OLD one. The next
+      # non-forcing run derives from main's content, and would then realign
+      # :latest BACKWARD onto the old tag and delete-and-rebuild the managed
+      # snapshot on the OLD image. An unattended downgrade of the whole fleet,
+      # caused by nothing worse than constants that did not land.
+      #
+      # So the record moves first, because the two possible skews are NOT
+      # symmetric:
+      #   main ahead of the world — the constants name a tag not built yet.
+      #                             Nobody is affected: Modal and direct Daytona
+      #                             read the PUBLISHED packages, which have not
+      #                             moved. The next run builds it. Self-healing.
+      #   world ahead of main     — the downgrade above. Not self-healing; it
+      #                             actively undoes itself on the next run.
+      # Only the first is tolerable. If landing fails, the job stops here having
+      # changed nothing live.
+
+      # The owner's auto-merge guardrail, applied to the exact diff about to be
+      # committed. Here an unexpected file is a HARD FAILURE rather than
+      # "leave it for a human": this path writes to main directly, so there is
+      # no PR to leave open, and the only safe response to an unrecognised file
+      # is to touch nothing at all.
+      - name: Gate — the change may contain only the generated constants
+        id: guard
+        if: steps.version.outputs.constants_changed == 'true' && inputs.dry_run != true
+        run: |
+          set -euo pipefail
+          is_allowed() {
+            case "$1" in
+              assets/docker/refresh-stamp) return 0 ;;
+              assets/docker/image-version.ts) return 0 ;;
+              packages/modal/src/image-version.ts) return 0 ;;
+              packages/daytona/src/image-version.ts) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+          git diff --name-only > /tmp/changed.txt
+          git ls-files --others --exclude-standard >> /tmp/changed.txt
+          echo "Working-tree changes:"
+          sed 's/^/  /' /tmp/changed.txt
+          if [ ! -s /tmp/changed.txt ]; then
+            echo "::error::The version step reported a change but the working tree is clean — refusing to guess."
+            exit 1
+          fi
+          unexpected=0
+          while IFS= read -r path; do
+            [ -z "$path" ] && continue
+            if is_allowed "$path"; then continue; fi
+            echo "  ^ NOT a generated constant"
+            unexpected=1
+          done < /tmp/changed.txt
+          if [ "$unexpected" -eq 1 ]; then
+            echo "::error::This run would commit files beyond the generated constants — refusing to touch main or anything live."
+            exit 1
+          fi
+
+      # main has no required status checks, and a PR opened with GITHUB_TOKEN
+      # has its CI held in an approval-required state, so there is no external
+      # gate to wait on. This job is the gate, run against exactly the content
+      # about to be committed.
+      - name: Gate — build and unit tests must pass before anything ships
+        if: steps.version.outputs.constants_changed == 'true' && inputs.dry_run != true
+        run: |
+          npm run build
+          npm run test:ts:unit
+
+      - name: Land the constants on main
+        id: land
+        if: steps.version.outputs.constants_changed == 'true' && inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          IMAGE: ${{ steps.version.outputs.image }}
+        run: |
+          set -euo pipefail
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add assets/docker/refresh-stamp \
+                  assets/docker/image-version.ts \
+                  packages/modal/src/image-version.ts \
+                  packages/daytona/src/image-version.ts
+          git commit -m "chore(image): refresh evolve-all to ${VERSION}"
+
+          # FAST PATH — straight onto main. This cannot loop: GitHub's recursion
+          # rule is that events triggered by GITHUB_TOKEN do not start new
+          # workflow runs, and its only exceptions are workflow_dispatch and
+          # repository_dispatch. So this push does not re-trigger the workflow.
+          if git push "$remote" HEAD:main; then
+            echo "Constants are on main."
+            exit 0
+          fi
+
+          # FALLBACK — main refuses direct pushes (a protection rule was added).
+          # Open a PR, merge it, and WAIT. Not merging is fatal here on purpose:
+          # continuing would move the live systems ahead of main, which is the
+          # exact downgrade this whole section exists to prevent.
+          echo "::notice::Direct push to main was refused — falling back to a pull request."
+          branch="image-refresh/${VERSION}"
+          git push "$remote" "HEAD:refs/heads/${branch}"
+          {
+            echo "Automated by \`.github/workflows/image-refresh.yml\` (run ${GITHUB_RUN_ID})."
+            echo
+            echo "Regenerated constants for \`${IMAGE}\`. Merged by the pipeline that opened it, under the owner ruling of 2026-08-16; the diff is verified to contain nothing but the generated version constants and the refresh stamp."
+            echo
+            echo "Nothing live has moved yet — this run repoints E2B, managed Daytona and Docker Hub only AFTER this lands, so the record can never trail the fleet."
+          } > /tmp/pr-body.md
+          url="$(gh pr create --base main --head "$branch" \
+                   --title "chore(image): refresh evolve-all to ${VERSION}" \
+                   --body-file /tmp/pr-body.md)"
+          echo "Opened ${url}"
+          number="$(printf '%s\n' "$url" | tail -n 1)"
+          number="${number##*/}"
+          if ! printf '%s' "$number" | grep -Eq '^[0-9]+$'; then
+            number="$(gh pr view "$branch" --json number --jq '.number')"
+          fi
+          if ! printf '%s' "$number" | grep -Eq '^[0-9]+$'; then
+            echo "::error::Opened a PR but could not determine its number."
+            exit 1
+          fi
+
+          # --auto first so a required check, if one is ever added, is respected
+          # rather than bypassed; GitHub refuses auto-merge when nothing blocks
+          # the PR, and then a direct merge is correct because the gates above
+          # already ran.
+          if gh pr merge "$number" --auto --squash --delete-branch; then
+            echo "Auto-merge enabled on #${number}."
+          else
+            echo "::notice::Auto-merge unavailable — merging directly, gated by the steps above."
+            gh pr merge "$number" --squash --delete-branch || true
+          fi
+          for _ in $(seq 1 60); do
+            if [ "$(gh pr view "$number" --json merged --jq '.merged')" = "true" ]; then
+              echo "PR #${number} merged."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::PR #${number} did not merge. Stopping BEFORE any live change, so the fleet is never ahead of main."
+          exit 1
+
+      # The invariant every later step depends on, checked rather than assumed —
+      # and checked on every run, including the ones that changed nothing, since
+      # "main already agrees" is exactly the claim being relied upon.
+      - name: Verify main records this version
+        if: inputs.dry_run != true
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          git fetch origin main --depth=1
+          git show origin/main:assets/docker/image-version.ts > /tmp/main-image-version.ts
+          on_main="$(node -e "
+            const s = require('fs').readFileSync('/tmp/main-image-version.ts', 'utf8');
+            const m = /EVOLVE_IMAGE_VERSION\s*=\s*'([^']+)'/.exec(s);
+            if (!m) process.exit(1);
+            process.stdout.write(m[1]);
+          ")"
+          if [ "$on_main" != "$VERSION" ]; then
+            echo "::error::main records '${on_main}' but this run derived '${VERSION}'. Refusing to move the live systems ahead of the record — that is how an unattended downgrade starts."
+            exit 1
+          fi
+          echo "main records ${VERSION}. Safe to move the live systems."
+
+      # -----------------------------------------------------------------------
+      # (c) DOCKER HUB — build and push the derived tag if it is not there yet
       # -----------------------------------------------------------------------
 
       # Hard failure, not the publish workflow's warn-and-skip: that one can
@@ -212,7 +382,7 @@ jobs:
       # build.ts stays the single source of the tag/push rules — this workflow
       # never reimplements them. It is idempotent by design: when the derived
       # tag is already on Docker Hub the build is skipped and only :latest is
-      # realigned server-side, so an unchanged weekly run costs one API call.
+      # realigned server-side, so an unchanged scheduled run costs one API call.
       - name: Build and push the image
         if: inputs.dry_run != true
         run: npx tsx assets/docker/build.ts
@@ -222,7 +392,7 @@ jobs:
         run: echo "DRY RUN — would run 'npx tsx assets/docker/build.ts' for ${{ steps.version.outputs.image }}"
 
       # -----------------------------------------------------------------------
-      # (c) E2B — rebuilt in place; users move the moment this lands
+      # (d) E2B — rebuilt in place; users move the moment this lands
       # -----------------------------------------------------------------------
 
       # build.ts verifies against E2B's own record afterwards (a NEW build id
@@ -235,14 +405,15 @@ jobs:
         run: npx tsx assets/e2b/build.ts
 
       # -----------------------------------------------------------------------
-      # (d) DAYTONA — versioned snapshot, then the managed platform name
+      # (e) DAYTONA — versioned snapshot, then the managed platform name
       # -----------------------------------------------------------------------
 
       # Daytona has no rename and no in-place update for a snapshot, so the
       # stable managed name can only be moved by delete-then-create. The script
       # builds the versioned snapshot FIRST and refuses to continue unless it
       # goes active, so the release image is proven in this org before anything
-      # live is deleted, and it rolls the name back to the previous image if the
+      # live is deleted; it refuses outright when the snapshot records no image
+      # to roll back to, and clears the failed row before rolling back when a
       # rebuild fails. See its header for the full reasoning and citations.
       - name: Repoint managed Daytona
         env:
@@ -250,214 +421,21 @@ jobs:
         run: npx tsx assets/daytona/refresh-platform-snapshot.ts ${{ inputs.dry_run == true && '--dry-run' || '' }}
 
       # -----------------------------------------------------------------------
-      # (e) THE PR — opened, gated, merged and released without a human
+      # (f) THE RELEASE — the last thing, and the only thing left owed
       # -----------------------------------------------------------------------
 
-      # TOKEN CHOICE. RELEASE_PAT when it exists, GITHUB_TOKEN otherwise, and
-      # the difference is not cosmetic. GitHub documents two limits on
-      # GITHUB_TOKEN that both bite exactly here:
-      #   - the org setting "Allow GitHub Actions to create and approve pull
-      #     requests" governs whether GITHUB_TOKEN may CREATE a PR at all, and
-      #     this org currently says no;
-      #   - a PR opened with GITHUB_TOKEN gets its `pull_request` CI runs
-      #     created in an approval-required state, waiting on a human click.
-      # A PAT is the documented way out of both. The flow is written to work
-      # either way, so adding the secret upgrades it with no code change.
-      - name: Open a PR for the regenerated constants
-        id: pr
+      # Last on purpose. Publishing is what actually moves Modal and direct
+      # Daytona onto the new constants, so it must not happen until the image it
+      # names is really on Docker Hub — otherwise a direct-Daytona user would
+      # try to build a snapshot from a tag that does not exist yet.
+      - name: Cut the release that moves Modal and direct Daytona
         if: steps.version.outputs.constants_changed == 'true' && inputs.dry_run != true
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
-          IMAGE: ${{ steps.version.outputs.image }}
         run: |
           set -euo pipefail
-          branch="image-refresh/${VERSION}"
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -b "$branch"
-          git add assets/docker/refresh-stamp \
-                  assets/docker/image-version.ts \
-                  packages/modal/src/image-version.ts \
-                  packages/daytona/src/image-version.ts
-          git commit -m "chore(image): refresh evolve-all to ${VERSION}"
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$branch"
-          {
-            echo "Automated by \`.github/workflows/image-refresh.yml\` (run ${GITHUB_RUN_ID})."
-            echo
-            echo "The image \`${IMAGE}\` is already built and pushed to Docker Hub."
-            echo
-            echo "**Already moved — no release needed**"
-            echo
-            echo "- **E2B** — the \`evolve-all\` template was rebuilt in place and verified ready against the E2B API. E2B users are on it now."
-            echo "- **Managed Daytona** — the platform snapshot \`evolve-all\` was repointed at this image and verified active. Managed users are on it now."
-            echo
-            echo "**Waiting on this PR**"
-            echo
-            echo "- **Modal** and **direct Daytona** resolve their defaults from the constants in this diff, and those ship compiled into the published packages. They move when this merges and the release publishes."
-            echo
-            echo "The versioned Daytona snapshot \`evolve-all-${VERSION}\` is already pre-built, so direct users get a warm snapshot instead of a first-use build."
-            echo
-            echo "---"
-            echo
-            echo "This PR is merged and released by the pipeline that opened it, with no human step, under the owner ruling of 2026-08-16. That applies only to a PR like this one, whose diff is nothing but the generated version constants and the refresh stamp — the workflow reads the file list back from the API and refuses to merge if anything else appears."
-          } > /tmp/image-refresh-pr-body.md
-          # The PR is attempted, not assumed. The organization currently blocks
-          # "Allow GitHub Actions to create and approve pull requests", which
-          # makes `gh pr create` fail with the branch already pushed — and the
-          # image already live everywhere it does not need a release. Failing
-          # the job there would report a broken refresh that in fact succeeded,
-          # so this degrades to a one-click link instead. Turn the org setting
-          # on and this branch stops being needed.
-          compare="https://github.com/${GITHUB_REPOSITORY}/compare/main...${branch}?expand=1"
-          if url="$(gh pr create \
-               --base main \
-               --head "$branch" \
-               --title "chore(image): refresh evolve-all to ${VERSION}" \
-               --body-file /tmp/image-refresh-pr-body.md)"
-          then
-            echo "Opened ${url}"
-            # gh prints the PR URL, but it is not contractually the ONLY thing
-            # on stdout — a notice or a hint can ride along. Take the last line,
-            # keep the trailing path segment, and require it to be digits;
-            # anything else means the parse is not trustworthy, so ask the API
-            # for the number instead of merging against a guess.
-            number="$(printf '%s\n' "$url" | tail -n 1)"
-            number="${number##*/}"
-            if ! printf '%s' "$number" | grep -Eq '^[0-9]+$'; then
-              echo "Could not read a PR number from gh output; asking the API."
-              number="$(gh pr view "$branch" --json number --jq '.number')"
-            fi
-            if ! printf '%s' "$number" | grep -Eq '^[0-9]+$'; then
-              echo "::error::Opened a PR but could not determine its number — refusing to continue."
-              exit 1
-            fi
-            echo "PR number: ${number}"
-            echo "opened=true" >> "$GITHUB_OUTPUT"
-            echo "number=${number}" >> "$GITHUB_OUTPUT"
-          else
-            # The branch is pushed and the image is already live everywhere that
-            # does not need a release, so a refusal here is not a broken
-            # refresh. Degrade to a one-click link rather than failing red.
-            echo "opened=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Could not open the PR automatically. Branch '${branch}' IS pushed; open it at ${compare}"
-            {
-              echo "### Image refreshed to \`${VERSION}\` — PR needs one click"
-              echo
-              echo "Branch \`${branch}\` is pushed but the pull request could not be opened, so open it here: [${compare}](${compare})"
-              echo
-              echo "The usual cause is the **Allow GitHub Actions to create and approve pull requests** setting being off at the organization or repository level. Check the step log above for what \`gh\` actually said. Adding a \`RELEASE_PAT\` repository secret also sidesteps it."
-              echo
-              echo "E2B and managed Daytona users are already on this image. This PR only moves Modal and direct Daytona."
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      # GATE 1. main carries no required status checks, and a GITHUB_TOKEN-
-      # authored PR has its `pull_request` CI held in an approval-required
-      # state — so waiting on "the PR's checks" would wait forever. This job
-      # runs the suite itself instead, against exactly the content about to be
-      # merged, and a failure here stops the merge by stopping the job.
-      - name: Gate — build and unit tests must pass before anything merges
-        if: steps.pr.outputs.opened == 'true'
-        run: |
-          npm run build
-          npm run test:ts:unit
-
-      # GATE 2. The narrow scope of the owner's auto-merge authorization, made
-      # mechanical. The PR's OWN file list is read back from the API — not the
-      # list this job thinks it committed — and every path must be one of the
-      # four generated artefacts. Anything else means something unexpected got
-      # swept in, and unexpected is a human's problem, not a merge candidate.
-      - name: Gate — the PR may contain only the generated constants
-        id: guard
-        if: steps.pr.outputs.opened == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
-          PR: ${{ steps.pr.outputs.number }}
-        run: |
-          set -euo pipefail
-          is_allowed() {
-            case "$1" in
-              assets/docker/refresh-stamp) return 0 ;;
-              assets/docker/image-version.ts) return 0 ;;
-              packages/modal/src/image-version.ts) return 0 ;;
-              packages/daytona/src/image-version.ts) return 0 ;;
-              *) return 1 ;;
-            esac
-          }
-          gh pr view "$PR" --json files --jq '.files[].path' > /tmp/pr-files.txt
-          echo "Files in PR #${PR}:"
-          sed 's/^/  /' /tmp/pr-files.txt
-          # An empty list is not "nothing unexpected" — it is a read that told
-          # us nothing, and merging on it would defeat the whole check.
-          if [ ! -s /tmp/pr-files.txt ]; then
-            echo "::warning::PR #${PR} reported no files — refusing to auto-merge."
-            echo "safe=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          unexpected=0
-          while IFS= read -r path; do
-            [ -z "$path" ] && continue
-            if is_allowed "$path"; then continue; fi
-            echo "  ^ NOT a generated constant"
-            unexpected=1
-          done < /tmp/pr-files.txt
-          if [ "$unexpected" -eq 1 ]; then
-            echo "safe=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::PR #${PR} touches files outside the generated constants — leaving it open for a human."
-            {
-              echo "### PR #${PR} left open on purpose"
-              echo
-              echo "It contains files beyond the generated version constants, so the pipeline did not merge it. Review it by hand."
-            } >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "safe=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Merge the constants PR and cut the release
-        if: steps.pr.outputs.opened == 'true' && steps.guard.outputs.safe == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
-          PR: ${{ steps.pr.outputs.number }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          set -euo pipefail
-          # Auto-merge FIRST, so that the day main gains a required check this
-          # starts respecting it instead of bypassing it. When nothing blocks
-          # the PR, GitHub refuses to enable auto-merge at all — the option
-          # exists only for a PR that cannot merge immediately — so fall back to
-          # merging outright. The two gates above are what stands in for the
-          # missing required check, which is the whole reason they are gates and
-          # not conveniences.
-          if gh pr merge "$PR" --auto --squash --delete-branch; then
-            echo "Auto-merge enabled on #${PR}."
-          else
-            echo "::notice::Auto-merge unavailable (nothing on main blocks this PR) — merging directly, gated by the build/test step above."
-            gh pr merge "$PR" --squash --delete-branch || true
-          fi
-
-          merged=false
-          for _ in $(seq 1 60); do
-            if [ "$(gh pr view "$PR" --json merged --jq '.merged')" = "true" ]; then
-              merged=true
-              break
-            fi
-            sleep 10
-          done
-
-          # Not merging is not a failed refresh: the image is built, E2B and
-          # managed Daytona are already serving it. Only the release is owed.
-          if [ "$merged" != "true" ]; then
-            echo "::warning::PR #${PR} did not merge within 10 minutes — the release was NOT dispatched."
-            {
-              echo "### Image \`${VERSION}\` is live, release still owed"
-              echo
-              echo "PR #${PR} is open and did not merge automatically, so \`publish.yml\` was not dispatched. E2B and managed Daytona users are already on this image; Modal and direct Daytona move once it merges and publishes."
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
-          echo "Merged. Dispatching publish.yml (${PUBLISH_RELEASE_TYPE}/${PUBLISH_VERSION_BUMP})..."
+          echo "Dispatching publish.yml (${PUBLISH_RELEASE_TYPE}/${PUBLISH_VERSION_BUMP})..."
           # workflow_dispatch is one of the two documented exceptions to the
           # GITHUB_TOKEN recursion rule, so this really does start a run.
           gh workflow run publish.yml --ref main \
@@ -467,12 +445,19 @@ jobs:
           {
             echo "### Image refreshed to \`${VERSION}\` — shipped end to end"
             echo
+            echo "- Constants landed on \`main\` BEFORE anything live moved"
+            echo "- Image built and pushed to Docker Hub"
             echo "- E2B template rebuilt and verified ready"
             echo "- Managed Daytona snapshot repointed and verified active"
-            echo "- PR #${PR} merged"
             echo "- \`publish.yml\` dispatched (${PUBLISH_RELEASE_TYPE}/${PUBLISH_VERSION_BUMP}) to move Modal and direct Daytona"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Say what still needs a release
-        if: steps.version.outputs.constants_changed != 'true'
-        run: echo "Constants unchanged (${{ steps.version.outputs.version }}) — E2B and managed Daytona were refreshed in place; nothing to release."
+      - name: Say what happened when nothing needed a release
+        if: steps.version.outputs.constants_changed != 'true' && inputs.dry_run != true
+        run: |
+          echo "Constants unchanged (${{ steps.version.outputs.version }}) — main already recorded this image."
+          {
+            echo "### Refresh complete — no release needed"
+            echo
+            echo "\`main\` already records \`${{ steps.version.outputs.version }}\`. The E2B template and the managed Daytona snapshot were re-verified against it; no package release was cut because nothing users resolve from has changed."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -144,19 +144,34 @@ npx tsx assets/docker/write-refresh-stamp.ts "picking up today's CLI releases"
 npm run generate:image-version
 ```
 
-**The constants PR merges itself.** Per the owner ruling of 2026-08-16 the
-release does not wait on a human: the workflow opens the PR, runs the build and
-unit tests itself as the gate, merges, and dispatches `publish.yml`
-(`stable`/`patch`) so Modal and direct-Daytona users actually move.
+**The constants land without a human, and they land FIRST.** Per the owner
+ruling of 2026-08-16 the release does not wait on a person: the workflow commits
+the regenerated constants to `main` itself, then dispatches `publish.yml`
+(`stable`/`patch`) at the end so Modal and direct-Daytona users actually move.
 
-That authorization is deliberately narrow, and two gates keep it there. The
-workflow reads the PR's own file list back from the API and refuses to merge
-unless every path is one of the four generated artefacts — the three
-`image-version.ts` constants and `refresh-stamp`. Anything else in the diff
-leaves the PR open for a person. The gate is the workflow's own test run
-because `main` has no required status checks, and because a PR opened with the
-built-in `GITHUB_TOKEN` has its CI held in an approval-required state, so
-waiting on the PR's own checks would wait forever.
+The ordering is the part worth understanding, because the natural order is
+wrong. If the image, the E2B template and the Daytona snapshot moved first and
+the constants failed to land, `main` would still derive the OLD tag — and the
+next ordinary push to `main` would realign `:latest` backward and rebuild the
+managed snapshot on the old image. An unattended downgrade of the whole fleet,
+triggered by nothing worse than a commit that did not land.
+
+So the record moves first, and the two possible mismatches are not equally bad:
+`main` naming an image that is not built yet affects nobody and is fixed by the
+next run, while the world running ahead of `main` actively undoes itself. The
+workflow verifies `main` actually records the derived version before it touches
+anything live, and stops if it does not.
+
+Two gates keep the automatic commit narrow. Every changed path must be one of
+the four generated artefacts — the three `image-version.ts` constants and
+`refresh-stamp` — and anything else fails the run without touching `main` or
+any live system. The other gate is the workflow's own build and test run,
+which stands in for a required check because `main` has none, and because a PR
+opened with the built-in `GITHUB_TOKEN` has its CI held in an approval-required
+state, so waiting on it would wait forever. If a protection rule ever blocks the
+direct push, the workflow falls back to opening a PR, enabling auto-merge and
+waiting for it — and treats a PR that does not merge as fatal, precisely so the
+fleet is never moved ahead of the record.
 
 Two knobs worth knowing: the release type and bump live in the workflow's `env`
 block, and adding a `RELEASE_PAT` repository secret makes the PR come from a

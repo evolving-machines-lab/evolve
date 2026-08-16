@@ -55,13 +55,24 @@
  *   2. DO NOTHING IF NOTHING CHANGED. The platform snapshot records which ref
  *      built it, so a re-run on an unchanged release is a read and a no-op.
  *      The dangerous path is not entered out of habit.
- *   3. PRESERVE THE CONTRACT. The replacement is created with the sizing and
- *      entrypoint read off the snapshot being replaced, not with this repo's
- *      defaults. Only the image is allowed to change.
- *   4. ROLL BACK. The ref that backed the old snapshot is captured before the
- *      delete, so a failed create is followed by an immediate attempt to
- *      rebuild the name from the OLD image. The job still fails; the fleet
- *      gets its bootable snapshot back.
+ *   3. PRESERVE THE CONTRACT. The replacement is created with the sizing,
+ *      entrypoint, region and sandbox class read off the snapshot being
+ *      replaced, not with this repo's defaults. Only the image may change.
+ *   4. NEVER ENTER THE DESTRUCTIVE PATH WITHOUT A WAY OUT. The planner refuses
+ *      (`blocked`) when the snapshot records no image ref, because that is the
+ *      one case where a failed rebuild could not be undone. So the decision is
+ *      made BEFORE the delete, not discovered in the failure handler once the
+ *      snapshot is already gone — which is why `replace` carries a REQUIRED
+ *      `from` rather than an optional one.
+ *   5. ROLL BACK, AND CLEAR THE WRECKAGE FIRST. A failed create leaves a row
+ *      under the name in ERROR/BUILD_FAILED (the SDK only throws once it has
+ *      reached a terminal state), so the rollback deletes that row before
+ *      rebuilding from the old ref — otherwise the rollback itself would 409
+ *      and the fleet would be left with nothing. The job still fails; the
+ *      fleet gets its bootable snapshot back.
+ *   6. BOUND EVERY WAIT. The SDK's create polls forever (its `timeout` covers
+ *      only the initial POST), and being killed by the job timeout mid-swap is
+ *      the one outcome with no recovery, because no rollback would run.
  *
  * WHAT IS STILL LOST, HONESTLY. Deleting a snapshot also deletes its warm
  * pools and destroys their unclaimed warm sandboxes (Daytona's own docs).
@@ -108,6 +119,10 @@ export type SnapshotFacts = {
   cpu?: number
   mem?: number
   disk?: number
+  /** Regions the snapshot is published to. Create takes ONE (`regionId`). */
+  regionIds?: string[] | null
+  /** Which runners may host sandboxes from it — 'container', 'linux-vm', ... */
+  sandboxClass?: string | null
   buildInfo?: { dockerfileContent?: string | null } | null
 }
 
@@ -117,7 +132,20 @@ export type SnapshotPlan =
   | { action: 'wait'; reason: string }
   | { action: 'activate'; reason: string }
   | { action: 'create'; reason: string }
-  | { action: 'replace'; reason: string; from: string | undefined }
+  /**
+   * Delete and rebuild. `from` is REQUIRED, not optional, and that is the
+   * safety property rather than a typing detail: the only way back out of the
+   * destructive path is rebuilding the old image, so a replace that cannot name
+   * one must never be representable. When there is no recoverable ref the
+   * planner returns `blocked` instead — see below.
+   */
+  | { action: 'replace'; reason: string; from: string }
+  /**
+   * The snapshot is wrong AND records no image ref to return to. Refusing is
+   * the right answer: deleting here trades a stale fleet for a fleet with no
+   * bootable snapshot and no way to restore one. An operator has to look.
+   */
+  | { action: 'blocked'; reason: string }
 
 /**
  * Compare image refs the way a registry would. Daytona echoes back what it was
@@ -156,7 +184,7 @@ export function backingImageRef(facts: SnapshotFacts): string | undefined {
 /**
  * The single decision this script makes about the platform snapshot. Pure, so
  * the dangerous branch can be tested without a Daytona account — see
- * packages/daytona/tests/unit/daytona-platform-snapshot-plan.test.ts.
+ * packages/daytona/tests/unit/daytona-image-refresh.test.ts.
  */
 export function planPlatformSnapshot(
   current: SnapshotFacts | undefined,
@@ -184,9 +212,20 @@ export function planPlatformSnapshot(
   if (TRANSITIONAL_STATES.has(state)) {
     return { action: 'wait', reason: `state "${state}" — a build is already in flight for this name` }
   }
+  // No recorded ref means no way back, and that has to be decided HERE, before
+  // anything is deleted — not discovered in the failure handler once the
+  // snapshot is already gone.
+  if (backing === undefined) {
+    return {
+      action: 'blocked',
+      reason:
+        `it records no image ref, so a delete-and-rebuild could not be undone if the rebuild failed. ` +
+        `Rebuild "${PLATFORM_SNAPSHOT_NAME}" by hand from a known-good image, or delete it deliberately`,
+    }
+  }
   return {
     action: 'replace',
-    reason: `built from ${backing ?? 'an unrecorded image'}, wanted ${targetRef}`,
+    reason: `built from ${backing}, wanted ${targetRef}`,
     from: backing,
   }
 }
@@ -203,9 +242,29 @@ function isMissingSnapshot(message: string): boolean {
 
 type SnapshotHandle = Awaited<ReturnType<Daytona['snapshot']['get']>>
 
+/**
+ * The slice of the Daytona client this script uses. Structural rather than the
+ * concrete class so the destructive path can be driven by a fake in
+ * packages/daytona/tests/unit/daytona-image-refresh.test.ts — the rollback
+ * sequence is the one piece of this file that must never be wrong and can never
+ * be rehearsed against the real org, because rehearsing it means deleting the
+ * production snapshot. `Daytona` satisfies this as-is.
+ */
+export interface SnapshotClient {
+  snapshot: {
+    get(name: string): Promise<SnapshotHandle>
+    create(
+      params: { name: string; image: unknown; resources?: unknown; entrypoint?: string[] },
+      options?: { onLogs?: (chunk: string) => void; timeout?: number }
+    ): Promise<unknown>
+    delete(snapshot: SnapshotHandle): Promise<unknown>
+    activate(snapshot: SnapshotHandle): Promise<unknown>
+  }
+}
+
 /** The snapshot, or undefined when absent. Throws on an API that cannot answer:
  *  reading "cannot tell" as "absent" would turn an outage into a create. */
-async function getSnapshot(daytona: Daytona, name: string): Promise<SnapshotHandle | undefined> {
+async function getSnapshot(daytona: SnapshotClient, name: string): Promise<SnapshotHandle | undefined> {
   try {
     return await daytona.snapshot.get(name)
   } catch (err) {
@@ -223,7 +282,7 @@ function describe(handle: SnapshotHandle): string {
 }
 
 /** Poll until the snapshot reports `active`, or say exactly why it never did. */
-async function waitForActive(daytona: Daytona, name: string): Promise<SnapshotHandle> {
+async function waitForActive(daytona: SnapshotClient, name: string): Promise<SnapshotHandle> {
   const deadline = Date.now() + ACTIVE_TIMEOUT_MS
   let last = ''
   for (;;) {
@@ -245,6 +304,43 @@ async function waitForActive(daytona: Daytona, name: string): Promise<SnapshotHa
 }
 
 /**
+ * Fail `work` if it has not settled within `ms`.
+ *
+ * Exists because the Daytona SDK's snapshot create is UNBOUNDED: its `timeout`
+ * option is passed only as the axios timeout on the initial POST, and the loop
+ * that follows polls `get()` every second until a terminal state with no
+ * deadline at all (node_modules/@daytonaio/sdk/esm/Snapshot.js). A build wedged
+ * in `building` would hang until the JOB is killed — and being killed mid-swap
+ * is the one outcome with no recovery, because the platform snapshot is already
+ * deleted by then and no rollback would ever run. This turns that into an
+ * ordinary rejection the caller can roll back from.
+ *
+ * The timer is always cleared, so a resolved race never holds the event loop
+ * open — this runs in a one-shot script that must exit.
+ */
+export async function withDeadline<T>(work: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), ms)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+/** Everything about a snapshot except its image — what a replacement must keep. */
+export type SnapshotShape = {
+  resources: { cpu: number; memory: number; disk: number }
+  entrypoint: string[] | undefined
+  regionId: string | undefined
+  sandboxClass: string | undefined
+}
+
+/**
  * Create the snapshot and wait for it to be usable.
  *
  * `Image.base(ref)` rather than the plain ref string on purpose: it is what
@@ -253,35 +349,117 @@ async function waitForActive(daytona: Daytona, name: string): Promise<SnapshotHa
  * `buildInfo.dockerfileContent = "FROM <ref>\n"`, which is exactly what
  * backingImageRef() reads back. Creating one way and reading another is how an
  * idempotent check quietly becomes a swap-every-run.
+ *
+ * THE CREATE IS BOUNDED HERE, BECAUSE THE SDK DOES NOT BOUND IT. Its `timeout`
+ * option is passed only as the axios timeout on the initial POST
+ * (node_modules/@daytonaio/sdk/esm/Snapshot.js) — the loop that follows polls
+ * `get()` every second until a terminal state with no deadline at all. A build
+ * wedged in `building` would therefore hang until the JOB is killed, and being
+ * killed mid-swap is the one outcome this script exists to avoid: the platform
+ * snapshot is already deleted by then, and no rollback would ever run. The race
+ * below converts that into an ordinary failure the caller can roll back from.
  */
 async function createSnapshot(
-  daytona: Daytona,
+  daytona: SnapshotClient,
   name: string,
   ref: string,
-  resources: { cpu: number; memory: number; disk: number },
-  entrypoint: string[] | undefined
+  shape: SnapshotShape
 ): Promise<void> {
-  await daytona.snapshot.create(
-    {
-      name,
-      image: Image.base(ref),
-      resources,
-      ...(entrypoint && entrypoint.length > 0 ? { entrypoint } : {}),
-    },
-    { onLogs: (log) => console.log(`    ${log}`), timeout: CREATE_TIMEOUT_S }
+  const { resources, entrypoint, regionId, sandboxClass } = shape
+  await withDeadline(
+    daytona.snapshot.create(
+      {
+        name,
+        image: Image.base(ref),
+        resources,
+        ...(entrypoint && entrypoint.length > 0 ? { entrypoint } : {}),
+        ...(regionId ? { regionId } : {}),
+        ...(sandboxClass ? { sandboxClass: sandboxClass as never } : {}),
+      },
+      { onLogs: (log) => console.log(`    ${log}`), timeout: CREATE_TIMEOUT_S }
+    ),
+    CREATE_TIMEOUT_S * 1000,
+    `Snapshot "${name}" build exceeded ${CREATE_TIMEOUT_S}s and was abandoned`
   )
   await waitForActive(daytona, name)
 }
 
-/** Delete, then poll until the name stops resolving — Daytona's delete is
- *  asynchronous, and a create fired at a name still being carried out loses. */
-async function deleteAndConfirmGone(daytona: Daytona, handle: SnapshotHandle, name: string): Promise<void> {
-  await daytona.snapshot.delete(handle)
+/** The default shape for a snapshot this repo owns outright (versioned names). */
+const REPO_SHAPE: SnapshotShape = {
+  resources: { ...SNAPSHOT_RESOURCES },
+  entrypoint: undefined,
+  regionId: undefined,
+  sandboxClass: undefined,
+}
+
+/**
+ * Everything a replacement must carry over from the snapshot it replaces. Only
+ * the IMAGE is allowed to change; falling back to this repo's defaults would
+ * silently resize managed sandboxes, drop the entrypoint that keeps the
+ * container alive, or publish the replacement to a different region or runner
+ * class than the fleet books against.
+ *
+ * VERIFIED AGAINST THE LIVE RECORDS, because the round-trip is the whole
+ * question here — a field Daytona does not report back on GET is a field the
+ * NEXT replace would silently drop. Both `evolve-all` and
+ * `evolve-all-c-6cd57962a3d9` were created from an `Image` passing none of
+ * these, and Daytona still reports entrypoint ["sleep","infinity"], regionIds
+ * ["us"] and sandboxClass "container" on GET. So reading them back and
+ * re-passing them genuinely preserves them.
+ */
+export function preservedShape(before: SnapshotFacts): SnapshotShape {
+  return {
+    resources: {
+      cpu: before.cpu ?? SNAPSHOT_RESOURCES.cpu,
+      memory: before.mem ?? SNAPSHOT_RESOURCES.memory,
+      disk: before.disk ?? SNAPSHOT_RESOURCES.disk,
+    },
+    entrypoint: before.entrypoint ?? undefined,
+    // Create accepts a single regionId while the record lists many. One region
+    // is the only case that round-trips exactly; more than one cannot be
+    // expressed, so leave it to the org default rather than silently narrowing
+    // the fleet to whichever region happens to sort first.
+    regionId: before.regionIds?.length === 1 ? before.regionIds[0] : undefined,
+    sandboxClass: before.sandboxClass ?? undefined,
+  }
+}
+
+/**
+ * Delete, then poll until the name stops resolving — Daytona's delete is
+ * asynchronous, and a create fired at a name still being carried out loses it.
+ *
+ * Returns whether the name is CONFIRMED clear. A timeout is deliberately NOT a
+ * throw: by the time we are here the snapshot is already deleted or dying, so
+ * refusing to go on would strand the fleet with no snapshot and no attempt to
+ * rebuild one. The caller tries the create anyway — it may well succeed, and if
+ * it does not, the ordinary rollback path runs. What a timeout does earn is a
+ * loud line, because it means managed creates are probably failing right now.
+ *
+ * Tolerates an already-gone snapshot: deleting a row that vanished underneath
+ * us is the outcome we wanted, not an error.
+ */
+async function deleteAndConfirmGone(
+  daytona: SnapshotClient,
+  handle: SnapshotHandle,
+  name: string
+): Promise<boolean> {
+  try {
+    await daytona.snapshot.delete(handle)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    if (!isMissingSnapshot(message)) throw new Error(`Deleting snapshot "${name}" failed: ${message}`)
+    console.log(`    "${name}" was already gone.`)
+  }
   const deadline = Date.now() + DELETE_GONE_TIMEOUT_MS
   for (;;) {
-    if ((await getSnapshot(daytona, name)) === undefined) return
+    if ((await getSnapshot(daytona, name)) === undefined) return true
     if (Date.now() > deadline) {
-      throw new Error(`Snapshot "${name}" still resolves ${DELETE_GONE_TIMEOUT_MS / 1000}s after it was deleted`)
+      console.error(
+        `::warning::Snapshot "${name}" still resolves ${DELETE_GONE_TIMEOUT_MS / 1000}s after deletion. ` +
+          `MANAGED CREATES MAY BE FAILING RIGHT NOW. Attempting the rebuild anyway — a create that loses ` +
+          `the name to the dying row will fail and be rolled back.`
+      )
+      return false
     }
     await new Promise((r) => setTimeout(r, DELETE_GONE_POLL_MS))
   }
@@ -291,7 +469,7 @@ async function deleteAndConfirmGone(daytona: Daytona, handle: SnapshotHandle, na
  * STEP 1 — the versioned snapshot. A new name, so nothing live is touched, and
  * reaching `active` is the proof that the release image works in this org.
  */
-async function ensureVersionedSnapshot(daytona: Daytona, dryRun: boolean): Promise<void> {
+async function ensureVersionedSnapshot(daytona: SnapshotClient, dryRun: boolean): Promise<void> {
   console.log(`\n▸ Versioned snapshot "${SNAPSHOT_NAME}" (direct-mode default, and the swap's safety proof)`)
   const existing = await getSnapshot(daytona, SNAPSHOT_NAME)
   const plan = planPlatformSnapshot(existing ? facts(existing) : undefined, EVOLVE_IMAGE_REF)
@@ -309,19 +487,22 @@ async function ensureVersionedSnapshot(daytona: Daytona, dryRun: boolean): Promi
       await waitForActive(daytona, SNAPSHOT_NAME)
       return
     case 'create':
-      await createSnapshot(daytona, SNAPSHOT_NAME, EVOLVE_IMAGE_REF, { ...SNAPSHOT_RESOURCES }, undefined)
+      await createSnapshot(daytona, SNAPSHOT_NAME, EVOLVE_IMAGE_REF, REPO_SHAPE)
       return
     case 'replace':
-      // A versioned name is content-addressed, so a wrong/dead build under it
-      // is junk with no users to protect — unlike the platform name.
+    case 'blocked':
+      // A versioned name is content-addressed, so a wrong or dead build under
+      // it is junk with no users to protect — unlike the platform name, whose
+      // `blocked` verdict is a genuine refusal. Here there is nothing to
+      // preserve and nothing to roll back to, so rebuild it outright.
       await deleteAndConfirmGone(daytona, existing!, SNAPSHOT_NAME)
-      await createSnapshot(daytona, SNAPSHOT_NAME, EVOLVE_IMAGE_REF, { ...SNAPSHOT_RESOURCES }, undefined)
+      await createSnapshot(daytona, SNAPSHOT_NAME, EVOLVE_IMAGE_REF, REPO_SHAPE)
       return
   }
 }
 
 /** STEP 2 — the stable managed name. The only destructive path in this file. */
-async function refreshPlatformSnapshot(daytona: Daytona, dryRun: boolean): Promise<void> {
+async function refreshPlatformSnapshot(daytona: SnapshotClient, dryRun: boolean): Promise<void> {
   console.log(`\n▸ Platform snapshot "${PLATFORM_SNAPSHOT_NAME}" (what MANAGED creates ask for)`)
   let existing = await getSnapshot(daytona, PLATFORM_SNAPSHOT_NAME)
   let plan = planPlatformSnapshot(existing ? facts(existing) : undefined, EVOLVE_IMAGE_REF)
@@ -329,11 +510,16 @@ async function refreshPlatformSnapshot(daytona: Daytona, dryRun: boolean): Promi
 
   if (dryRun) {
     if (plan.action === 'replace') {
+      const f = facts(existing!)
       console.log(
-        `  DRY RUN: would delete and rebuild "${PLATFORM_SNAPSHOT_NAME}" from ${EVOLVE_IMAGE_REF}, ` +
-          `preserving sizing ${facts(existing!).cpu}cpu/${facts(existing!).mem}gb/${facts(existing!).disk}gb ` +
-          `and entrypoint ${JSON.stringify(facts(existing!).entrypoint)}.`
+        `  DRY RUN: would delete and rebuild "${PLATFORM_SNAPSHOT_NAME}" from ${EVOLVE_IMAGE_REF},\n` +
+          `  preserving ${f.cpu}cpu/${f.mem}gb/${f.disk}gb, entrypoint ${JSON.stringify(f.entrypoint)}, ` +
+          `regions ${JSON.stringify(f.regionIds)}, class ${JSON.stringify(f.sandboxClass)},\n` +
+          `  and rolling back to ${plan.from} if the rebuild fails.`
       )
+    }
+    if (plan.action === 'blocked') {
+      console.log(`  DRY RUN: would REFUSE to act — ${plan.reason}.`)
     }
     return
   }
@@ -352,20 +538,22 @@ async function refreshPlatformSnapshot(daytona: Daytona, dryRun: boolean): Promi
       console.log('  Nothing to do — managed users are already on this release.')
       return
     case 'wait':
-      return
+      // Reached only when the re-plan above STILL says wait: we waited, and the
+      // name is somehow transitional again. That is not a refresh, and calling
+      // it one would report managed users as moved when nobody checked.
+      throw new Error(
+        `Snapshot "${PLATFORM_SNAPSHOT_NAME}" is still mid-transition after waiting — this run does not ` +
+          `know whether managed Daytona is on ${EVOLVE_IMAGE_REF}. Re-run once it settles.`
+      )
+    case 'blocked':
+      throw new Error(`Refusing to touch "${PLATFORM_SNAPSHOT_NAME}": ${plan.reason}.`)
     case 'activate':
       await daytona.snapshot.activate(existing!)
       await waitForActive(daytona, PLATFORM_SNAPSHOT_NAME)
       console.log('  Reactivated.')
       return
     case 'create':
-      await createSnapshot(
-        daytona,
-        PLATFORM_SNAPSHOT_NAME,
-        EVOLVE_IMAGE_REF,
-        { ...SNAPSHOT_RESOURCES },
-        undefined
-      )
+      await createSnapshot(daytona, PLATFORM_SNAPSHOT_NAME, EVOLVE_IMAGE_REF, REPO_SHAPE)
       console.log('  Created.')
       return
     case 'replace':
@@ -379,47 +567,51 @@ async function refreshPlatformSnapshot(daytona: Daytona, dryRun: boolean): Promi
  * done here; the gap between the delete and the new snapshot going active is
  * the part that cannot be removed (see the header).
  */
-async function replacePlatformSnapshot(
-  daytona: Daytona,
+export async function replacePlatformSnapshot(
+  daytona: SnapshotClient,
   existing: SnapshotHandle,
-  previousRef: string | undefined
+  previousRef: string
 ): Promise<void> {
   const before = facts(existing)
-  // Preserve the CONTRACT of the snapshot being replaced — only the image may
-  // change. Falling back to this repo's defaults would silently resize managed
-  // sandboxes, or drop the entrypoint that keeps the container alive.
-  const resources = {
-    cpu: before.cpu ?? SNAPSHOT_RESOURCES.cpu,
-    memory: before.mem ?? SNAPSHOT_RESOURCES.memory,
-    disk: before.disk ?? SNAPSHOT_RESOURCES.disk,
+  const shape = preservedShape(before)
+  if ((before.regionIds?.length ?? 0) > 1) {
+    console.error(
+      `::warning::"${PLATFORM_SNAPSHOT_NAME}" is published to ${JSON.stringify(before.regionIds)} but ` +
+        `Daytona's create takes only one region — the replacement will use the organization default.`
+    )
   }
-  const entrypoint = before.entrypoint ?? undefined
 
   console.log(
     `  Daytona has no rename and no in-place update (issue #2661), so the stable name is\n` +
       `  delete-then-create. Managed creates can fail until the new build is active.\n` +
-      `  Preserving ${resources.cpu}cpu/${resources.memory}gb/${resources.disk}gb, entrypoint ${JSON.stringify(entrypoint)}.\n` +
-      `  Rollback ref if the create fails: ${previousRef ?? 'NONE — cannot roll back'}`
+      `  Preserving ${shape.resources.cpu}cpu/${shape.resources.memory}gb/${shape.resources.disk}gb, ` +
+      `entrypoint ${JSON.stringify(shape.entrypoint)}, region ${shape.regionId ?? '(default)'}, ` +
+      `class ${shape.sandboxClass ?? '(default)'}.\n` +
+      `  Rollback ref if the create fails: ${previousRef}`
   )
 
   await deleteAndConfirmGone(daytona, existing, PLATFORM_SNAPSHOT_NAME)
   console.log(`  Deleted. Building "${PLATFORM_SNAPSHOT_NAME}" from ${EVOLVE_IMAGE_REF}...`)
 
   try {
-    await createSnapshot(daytona, PLATFORM_SNAPSHOT_NAME, EVOLVE_IMAGE_REF, resources, entrypoint)
+    await createSnapshot(daytona, PLATFORM_SNAPSHOT_NAME, EVOLVE_IMAGE_REF, shape)
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     console.error(`::error::Rebuilding "${PLATFORM_SNAPSHOT_NAME}" from ${EVOLVE_IMAGE_REF} failed: ${message}`)
-    if (!previousRef) {
-      throw new Error(
-        `Managed Daytona has NO "${PLATFORM_SNAPSHOT_NAME}" snapshot and this run cannot restore one — ` +
-          `the replaced snapshot recorded no image ref to roll back to. Managed creates fail until an ` +
-          `operator rebuilds it.`
-      )
-    }
     console.error(`::warning::Rolling "${PLATFORM_SNAPSHOT_NAME}" back to ${previousRef}...`)
     try {
-      await createSnapshot(daytona, PLATFORM_SNAPSHOT_NAME, previousRef, resources, entrypoint)
+      // CLEAR THE FAILED ROW FIRST. The SDK only throws once the snapshot has
+      // reached ERROR or BUILD_FAILED, which means the row EXISTS under this
+      // name at the moment we get here — so a rollback create would collide
+      // with it and 409, turning a recoverable failure into a fleet with no
+      // snapshot. The same applies when the create timed out above: whatever
+      // is sitting under the name has to go before the name is free.
+      const failed = await getSnapshot(daytona, PLATFORM_SNAPSHOT_NAME)
+      if (failed) {
+        console.error(`  Clearing the failed "${PLATFORM_SNAPSHOT_NAME}" row before rebuilding...`)
+        await deleteAndConfirmGone(daytona, failed, PLATFORM_SNAPSHOT_NAME)
+      }
+      await createSnapshot(daytona, PLATFORM_SNAPSHOT_NAME, previousRef, shape)
     } catch (rollbackErr) {
       const detail = rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)
       throw new Error(
