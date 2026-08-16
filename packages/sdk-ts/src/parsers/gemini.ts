@@ -16,6 +16,7 @@
  */
 
 import {
+  harnessErrorText,
   OutputEvent,
   SessionUpdate,
   ToolKind,
@@ -76,8 +77,29 @@ export function createGeminiParser(): (jsonLine: string) => OutputEvent[] | null
     switch (data.type) {
       // Session lifecycle - skip
       case "init":
-      case "result":
         return null;
+
+      // THE TERMINAL FAILURE. Unlike every other harness here, gemini does not
+      // report the failure that ENDS a run on its "error" channel — that
+      // channel carries warnings the run continues past (see handleError). The
+      // run's verdict is the result event's status, and a status of "error"
+      // with the flat error:{type,message} is the only place a fatal gemini
+      // failure ever appears (types.ts:91-99 ResultEvent). This case used to
+      // fall in with "init" and return null, so a gemini run that never reached
+      // the model produced no events at all — the drop the AgentError variant
+      // exists to end.
+      case "result": {
+        if (data.status !== "error") return null;
+        events.push({
+          sessionId,
+          update: {
+            sessionUpdate: "error",
+            message: harnessErrorText([data.error?.message], data.error ?? data),
+            fatal: true,
+          },
+        });
+        break;
+      }
 
       // Messages
       case "message": {
@@ -206,18 +228,27 @@ export function createGeminiParser(): (jsonLine: string) => OutputEvent[] | null
   /**
    * Handle error events (types.ts:74-78 ErrorEvent)
    * severity: 'warning' | 'error', message: string
+   *
+   * A FAILURE THE HARNESS REPORTED, so it is the `error` variant — it used to
+   * be an agent_message_chunk carrying a "⚠️ Warning"/"❌ Error" prefix, which
+   * broke the honesty law twice over: a consumer counting "did the agent do any
+   * work" counted gemini's own complaint as work, and the harness's words were
+   * rewritten on the way through.
+   *
+   * NOT fatal, at either severity. gemini pushes both onto a `warnings` list
+   * and keeps going (nonInteractiveCli.ts) — "Maximum session turns exceeded"
+   * arrives with severity "error" and still does not end the run. The severity
+   * is deliberately not folded into the message or the flag: `fatal` records
+   * what the harness did, and the harness did not stop.
    */
   function handleError(data: any): SessionUpdate | null {
-    const severity = data.severity;
-    const message = data.message;
-
-    if (!message) return null;
-
-    // Emit as agent message with error formatting
-    const prefix = severity === "warning" ? "⚠️ Warning" : "❌ Error";
+    // A message-less error event still surfaces (as a dump of the raw line)
+    // rather than returning null the way this used to: swallowing a malformed
+    // failure is the same blindness as swallowing a well-formed one.
     return {
-      sessionUpdate: "agent_message_chunk",
-      content: { type: "text", text: `${prefix}: ${message}` },
+      sessionUpdate: "error",
+      message: harnessErrorText([data.message], data),
+      fatal: false,
     };
   }
 

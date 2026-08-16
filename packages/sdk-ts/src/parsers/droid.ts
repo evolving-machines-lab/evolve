@@ -5,6 +5,7 @@
  * raw `stream-jsonrpc` notification envelope used by Droid's low-level SDK.
  */
 
+import { harnessErrorText } from "./types";
 import type {
   OutputEvent,
   PlanEntryStatus,
@@ -77,7 +78,11 @@ export function createDroidParser(): (jsonLine: string) => OutputEvent[] | null 
 
     const rpcResponse = parseJsonRpcResponse(data);
     if (rpcResponse.sessionId) sessionId = rpcResponse.sessionId;
-    if (rpcResponse.errorText) return [agentText(sessionId, rpcResponse.errorText)];
+    // A JSON-RPC response carries either a result or an error, never both, so an
+    // error here is the call definitively over — fatal. It used to arrive as
+    // agent text, which made a request that never reached the model look like
+    // the model answering.
+    if (rpcResponse.errorText) return [harnessError(sessionId, rpcResponse.errorText, true)];
     if (rpcResponse.resultText) {
       lastAssistantText = rpcResponse.resultText;
       emittedAssistantText = true;
@@ -201,6 +206,21 @@ export function createDroidParser(): (jsonLine: string) => OutputEvent[] | null 
       }
 
       case "result": {
+        // `--output-format json` ends with {type:"result", subtype:"success"|
+        // "failure", is_error, result}. On a failure `result` holds the failure
+        // text ("Exec failed"), so emitting it as agent text published droid's
+        // own error as if the model had said it.
+        if (event.is_error === true || event.subtype === "failure") {
+          events.push(harnessError(
+            sessionId,
+            harnessErrorText(
+              [stringify(event.result), stringify(event.error), stringify(event.subtype)],
+              event,
+            ),
+            true,
+          ));
+          break;
+        }
         const text = stringify(event.result ?? event.text ?? event.error);
         if (text) {
           emittedAssistantText = true;
@@ -210,9 +230,18 @@ export function createDroidParser(): (jsonLine: string) => OutputEvent[] | null 
         break;
       }
 
+      // {type:"error", source:"agent_loop"|"cli", message, timestamp,
+      // session_id} — droid's only failure signal in stream-json, and it emits
+      // TWO of them per failure: the cause from "agent_loop", then the
+      // wrapper's generic "Exec failed" from "cli". Neither is a turn-ended
+      // event (stream-json has no terminal line on failure at all), so `fatal`
+      // stays false rather than inferring terminality from the source string.
       case "error": {
-        const text = stringify(event.message ?? event.error ?? event);
-        if (text) events.push(agentText(sessionId, text));
+        events.push(harnessError(
+          sessionId,
+          harnessErrorText([stringify(event.message), stringify(event.error)], event),
+          false,
+        ));
         break;
       }
 
@@ -459,6 +488,14 @@ function agentText(sessionId: string | undefined, text: string): OutputEvent {
       sessionUpdate: "agent_message_chunk",
       content: { type: "text", text },
     },
+  };
+}
+
+/** A failure droid reported about itself — never agent work. See types.ts AgentError. */
+function harnessError(sessionId: string | undefined, message: string, fatal: boolean): OutputEvent {
+  return {
+    sessionId,
+    update: { sessionUpdate: "error", message, fatal },
   };
 }
 

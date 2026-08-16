@@ -30,6 +30,7 @@
  */
 
 import {
+  harnessErrorText,
   OutputEvent,
   PlanEntry,
   ToolKind,
@@ -281,9 +282,29 @@ export function createKimiParser() {
     if (!data || typeof data !== "object") return null;
     const role = data.role as string | undefined;
 
-    // Skip metadata lines
-    if ("_meta" in data || "_prompt" in data || role === "meta") {
+    // Skip OUR session logger's metadata lines. Checked before kimi's own meta
+    // line below, because these are ours and carry no harness content.
+    if ("_meta" in data || "_prompt" in data) {
       return null;
+    }
+
+    // A FAILED PROVIDER ATTEMPT — the only failure kimi puts on stdout.
+    // PromptJsonWriter writes exactly three line kinds (prompt-render.ts:
+    // assistant, tool, and this meta line); a fatal error never reaches stdout
+    // at all, it rejects the run and goes to stderr. So this retry notice is
+    // the whole of kimi's self-reported failure surface, and skipping it with
+    // the rest of the meta lines threw it away. Non-fatal by construction: the
+    // line exists to announce the NEXT attempt, exactly like codex's
+    // "Reconnecting… n/5".
+    if (role === "meta") {
+      if (data.type !== "turn.step.retrying") return null;
+      return [{
+        update: {
+          sessionUpdate: "error",
+          message: harnessErrorText([data.error_message, data.error_name], data),
+          fatal: false,
+        },
+      }];
     }
 
     // Kosong Messages format: { role, content, tool_calls?, tool_call_id? }

@@ -199,6 +199,35 @@ export function isAgentWorkUpdate(update: { sessionUpdate?: unknown } | null | u
 }
 
 /**
+ * The harness's failure text for an AgentError.message, in ITS OWN WORDS.
+ *
+ * The seven harnesses put that text in seven different places — codex in
+ * `message`, gemini in `error.message`, opencode in `error.data.message` (and
+ * in `error.name` when data is empty), claude in an `errors: string[]`, droid
+ * in `message`, kimi in `error_message`, qwen in `error.message` — so each
+ * parser passes its own fields, in its own preference order, as `candidates`.
+ *
+ * THE ONE RULE THIS HOLDS FOR ALL OF THEM: the result is never empty. A
+ * failure that arrives with no text would render as an event that says
+ * nothing, which reads exactly like the "nothing happened" this variant exists
+ * to distinguish from — so when no candidate carries text, we dump the raw
+ * event rather than emit a blank. This picks among the wire's own strings and
+ * never classifies: no severity is folded in, no prefix is added.
+ */
+export function harnessErrorText(candidates: unknown[], raw: unknown): string {
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.length > 0) return candidate;
+  }
+  try {
+    const dumped = JSON.stringify(raw);
+    if (typeof dumped === "string" && dumped.length > 0) return dumped;
+  } catch {
+    // Circular or otherwise unserializable — fall through to String().
+  }
+  return String(raw);
+}
+
+/**
  * Streaming text/image from agent.
  * May arrive in multiple chunks - concatenate text.
  */

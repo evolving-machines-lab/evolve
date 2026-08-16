@@ -10,7 +10,7 @@
  * - "reasoning"   → agent_thought_chunk
  * - "tool_use"    → tool_call + tool_call_update (tools arrive completed or error)
  * - "step_finish" → lifecycle (skip)
- * - "error"       → agent_message_chunk (error text)
+ * - "error"       → error (the harness's own reported failure, never work)
  *
  * Key differences from other parsers:
  * - tool_use events arrive already completed/error (not pending→result like Claude),
@@ -24,6 +24,7 @@
  */
 
 import {
+  harnessErrorText,
   OutputEvent,
   PlanEntry,
   SessionUpdate,
@@ -352,15 +353,30 @@ export function createOpenCodeParser(): (jsonLine: string) => OutputEvent[] | nu
 
   /**
    * Handle error events
-   * { type: "error", error: { name, data: { message } } }
+   * { type: "error", timestamp, sessionID, error: { name, data: { message? } } }
+   *
+   * A FAILURE THE HARNESS REPORTED, so it is the `error` variant — it used to
+   * be an agent_message_chunk reading "❌ ${name}: ${message}", which let
+   * opencode's own failures count as evidence the agent did work.
+   *
+   * The message follows opencode's OWN precedence (run.ts:779-782): the CLI
+   * reads error.data.message and falls back to error.name, because `data` is
+   * empty for some named errors — MessageOutputLengthError declares no fields
+   * at all. We reuse that ladder rather than splicing name and message into one
+   * decorated string, so the text stays the harness's own.
+   *
+   * NOT fatal: opencode appends each error to a running list and continues the
+   * event loop, setting a non-zero exit code only once the stream ends
+   * (run.ts:783-784, 837). No single error line is the turn giving up.
    */
   function handleError(data: any): SessionUpdate | null {
-    const errorName = data.error?.name ?? "Error";
-    const message = data.error?.data?.message ?? data.error?.message ?? "Unknown error";
-
     return {
-      sessionUpdate: "agent_message_chunk",
-      content: { type: "text", text: `❌ ${errorName}: ${message}` },
+      sessionUpdate: "error",
+      message: harnessErrorText(
+        [data.error?.data?.message, data.error?.message, data.error?.name],
+        data.error ?? data,
+      ),
+      fatal: false,
     };
   }
 

@@ -19,6 +19,7 @@
  */
 
 import {
+  harnessErrorText,
   OutputEvent,
   SessionUpdate,
   ToolKind,
@@ -70,13 +71,12 @@ export function createCodexParser() {
       // stream (it emits "Reconnecting… n/5" as one), while `turn.failed` is the
       // turn giving up — hence the fatal flag rather than two variants.
       case "error": {
-        const message = typeof data.message === "string" ? data.message : JSON.stringify(data);
+        const message = harnessErrorText([data.message], data);
         events.push({ update: { sessionUpdate: "error", message, fatal: false } });
         break;
       }
       case "turn.failed": {
-        const message =
-          typeof data.error?.message === "string" ? data.error.message : JSON.stringify(data.error ?? data);
+        const message = harnessErrorText([data.error?.message], data.error ?? data);
         events.push({ update: { sessionUpdate: "error", message, fatal: true } });
         break;
       }
@@ -223,8 +223,7 @@ export function createCodexParser() {
       // transport fallback this way, e.g. "Falling back from WebSockets to HTTPS
       // transport…"). Non-fatal: the turn may still succeed after it.
       case "error": {
-        const message = typeof item.message === "string" ? item.message : JSON.stringify(item);
-        return { sessionUpdate: "error", message, fatal: false };
+        return { sessionUpdate: "error", message: harnessErrorText([item.message], item), fatal: false };
       }
 
       // exec_events.rs:134 ReasoningItem { text: String }

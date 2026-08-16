@@ -22,6 +22,7 @@
  */
 
 import {
+  harnessErrorText,
   OutputEvent,
   SessionUpdate,
   ToolKind,
@@ -206,10 +207,31 @@ export function createQwenParser() {
         break;
       }
 
-      // System and result messages - skip
+      // System messages - skip
       case "system":
-      case "result":
         return null;
+
+      // THE RUN'S VERDICT (protocol.ts:152-170 SDKResultMessageError). A
+      // success stays silent — its text already streamed. A failure
+      // (is_error: true, subtype error_max_turns | error_during_execution) is
+      // qwen reporting that the run itself failed, and skipping it dropped that
+      // failure entirely, leaving an unreachable-model run indistinguishable
+      // from one that produced nothing. `error` is optional on the wire, so the
+      // subtype is the fallback — qwen's own word for what went wrong, not an
+      // invented classification.
+      case "result": {
+        if (msg.is_error !== true) return null;
+        const error = msg.error as { message?: unknown } | undefined;
+        events.push({
+          sessionId,
+          update: {
+            sessionUpdate: "error",
+            message: harnessErrorText([error?.message, msg.subtype], msg.error ?? msg),
+            fatal: true,
+          },
+        });
+        break;
+      }
 
       default:
         return null;

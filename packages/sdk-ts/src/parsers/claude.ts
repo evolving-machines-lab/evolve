@@ -14,6 +14,7 @@
  */
 
 import {
+  harnessErrorText,
   OutputEvent,
   SessionUpdate,
   ToolKind,
@@ -84,8 +85,28 @@ export function createClaudeParser() {
         return toAcpNotifications(content, "user", sessionId);
       }
 
-      case "result":
-        return null;
+      // THE RUN'S VERDICT. A successful result stays silent — its text already
+      // streamed as assistant messages, so re-emitting it would double the
+      // transcript. A FAILED result is the only place claude reports that the
+      // run itself failed (subtype error_during_execution / error_max_turns /
+      // error_max_budget_usd / error_max_structured_output_retries), and
+      // returning null for it dropped that failure entirely: a run that never
+      // reached the model produced no events and looked like a run that simply
+      // did nothing. Claude carries the text in `errors: string[]` — there is
+      // no error.message here, and no `result` field at all on a failure.
+      case "result": {
+        if (data.is_error !== true) return null;
+        const errors: unknown[] = Array.isArray(data.errors) ? data.errors : [];
+        const text = errors.filter((e): e is string => typeof e === "string" && e.length > 0).join("\n");
+        return [{
+          sessionId,
+          update: {
+            sessionUpdate: "error",
+            message: harnessErrorText([text, data.subtype], data),
+            fatal: true,
+          },
+        }];
+      }
 
       default:
         return null;
