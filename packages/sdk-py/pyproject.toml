@@ -50,8 +50,12 @@ exclude = ["tests*"]
 [tool.setuptools.package-data]
 # Only include bundled bridge (no source files)
 bridge = ["dist/bridge.bundle.cjs"]
-# Include prompt templates (in subdirectories)
-evolve = ["prompts/agent_md/*.md", "prompts/user/*.md"]
+# Include prompt templates (in subdirectories), and the PEP 561 marker:
+# without py.typed in the INSTALLED package, mypy treats evolve as untyped and
+# discards every annotation in it — the typed error-code vocabulary, the closed
+# status Literals, the TypedDicts. The marker covers the subpackages too, so
+# this one entry is what makes the whole typing surface reach a type checker.
+evolve = ["prompts/agent_md/*.md", "prompts/user/*.md", "py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
