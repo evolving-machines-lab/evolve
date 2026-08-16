@@ -549,18 +549,42 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     // Roster policy (owner, 2026-08-15): only the latest flash, latest
     // flash-lite, and latest pro — never the whole version sequence.
     // "Latest" means the latest the STABLE gemini CLI actually serves, not
-    // the latest model Google has launched. Live probe 2026-08-15: requesting
-    // gemini-3.7-flash through the stable CLI (0.55.1) served gemini-3.5-flash
-    // — confirmed by the CLI's own session stats and by the gateway spend log.
-    // 0.55.1 predates 3.7-flash's launch; only nightlies know the model. Same
-    // failure mode that killed the 3.6-flash arm (silent substitution, hosted
-    // wrong-model integrity guard refuses every trial). gemini-3.5-flash is
-    // therefore the default. gemini-3.7-flash pending stable CLI support
-    // (0.55.1 predates the model; nightlies only) — gateway already carries
-    // the priced entry; flip the default when the stable release lands
-    // (2026-08-15). gemini-3.5-flash-lite remains live-proven end to end
-    // under its own name (trial e303b985: SCORED, metered, ATIF agent block
-    // records the served model).
+    // the latest model Google has launched.
+    //
+    // WHY A NEWER FLASH CANNOT SIMPLY BE ADDED. The CLI rewrites the model
+    // CLIENT-SIDE before any request leaves the box. Source-verified in the
+    // published @google/gemini-cli 0.55.1 bundle: resolveModel() ends with
+    // `if (useGemini3_5Flash && isFlashModel(resolved) && normalizedModel !==
+    // PREVIEW_GEMINI_FLASH_MODEL) return DEFAULT_GEMINI_FLASH_MODEL`, and
+    // isFlashModel() matches by `model.endsWith("flash")`. So EVERY name
+    // ending in "flash" collapses onto the CLI's own current flash model —
+    // gemini-3.5-flash on our path, because hasGemini35FlashGAAccess() calls
+    // setFlashModels() under API-key auth. A name that does not end in
+    // "flash" skips the branch untouched, which is exactly why
+    // gemini-3.5-flash-lite and gemini-3.1-pro-preview serve under their own
+    // names while gemini-3.6-flash and gemini-3.7-flash do not.
+    //
+    // Two explanations recorded here before were WRONG (probe 2026-08-16).
+    // It is NOT that the CLI predates the model: gemini-3.6-flash launched
+    // 2026-07-21, three weeks BEFORE 0.55.1 shipped on 08-11, and is still
+    // swapped. It is NOT that the CLI only serves names it knows: the 0.55.1
+    // bundle never mentions gemini-3.5-flash-lite either, yet serves it
+    // correctly. And nothing upstream rejects the model — from inside one
+    // sandbox, on the same door with the same bound runtime token, a raw call
+    // for gemini-3.6-flash returned HTTP 200 with "modelVersion":
+    // "gemini-3.6-flash" while the CLI in that very sandbox (run a6802b8f)
+    // reported every token served by gemini-3.5-flash. The gateway carries
+    // correct priced entries for 3.6 and 3.7; the CLI is the only layer
+    // refusing to ask.
+    //
+    // Consequence: a new gemini "-flash" model becomes selectable only once
+    // the CLI's own default flash advances to it — a newer CLI release alone
+    // is not enough, so verify with a live probe before adding one.
+    // gemini-3.5-flash is therefore the default, and the hosted wrong-model
+    // integrity guard is what stops a silent swap from ever being scored.
+    // gemini-3.5-flash-lite remains live-proven end to end under its own name
+    // (trial e303b985: SCORED, metered, ATIF agent block records the served
+    // model).
     defaultModel: "gemini-3.5-flash",
     models: [
       { alias: "gemini-3.5-flash", modelId: "gemini-3.5-flash", description: "Latest flash the stable gemini CLI serves: coding + agentic planning" },
