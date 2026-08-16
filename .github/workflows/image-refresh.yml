@@ -317,8 +317,24 @@ jobs:
                --body-file /tmp/image-refresh-pr-body.md)"
           then
             echo "Opened ${url}"
+            # gh prints the PR URL, but it is not contractually the ONLY thing
+            # on stdout — a notice or a hint can ride along. Take the last line,
+            # keep the trailing path segment, and require it to be digits;
+            # anything else means the parse is not trustworthy, so ask the API
+            # for the number instead of merging against a guess.
+            number="$(printf '%s\n' "$url" | tail -n 1)"
+            number="${number##*/}"
+            if ! printf '%s' "$number" | grep -Eq '^[0-9]+$'; then
+              echo "Could not read a PR number from gh output; asking the API."
+              number="$(gh pr view "$branch" --json number --jq '.number')"
+            fi
+            if ! printf '%s' "$number" | grep -Eq '^[0-9]+$'; then
+              echo "::error::Opened a PR but could not determine its number — refusing to continue."
+              exit 1
+            fi
+            echo "PR number: ${number}"
             echo "opened=true" >> "$GITHUB_OUTPUT"
-            echo "number=${url##*/}" >> "$GITHUB_OUTPUT"
+            echo "number=${number}" >> "$GITHUB_OUTPUT"
           else
             # The branch is pushed and the image is already live everywhere that
             # does not need a release, so a refusal here is not a broken
@@ -328,9 +344,9 @@ jobs:
             {
               echo "### Image refreshed to \`${VERSION}\` — PR needs one click"
               echo
-              echo "Branch \`${branch}\` is pushed. GitHub Actions is not permitted to open pull requests in this organization, so open it here: [${compare}](${compare})"
+              echo "Branch \`${branch}\` is pushed but the pull request could not be opened, so open it here: [${compare}](${compare})"
               echo
-              echo "Fix it permanently by either enabling **Allow GitHub Actions to create and approve pull requests** in the org's Actions settings, or adding a \`RELEASE_PAT\` repository secret."
+              echo "The usual cause is the **Allow GitHub Actions to create and approve pull requests** setting being off at the organization or repository level. Check the step log above for what \`gh\` actually said. Adding a \`RELEASE_PAT\` repository secret also sidesteps it."
               echo
               echo "E2B and managed Daytona users are already on this image. This PR only moves Modal and direct Daytona."
             } >> "$GITHUB_STEP_SUMMARY"
