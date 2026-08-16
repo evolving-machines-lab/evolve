@@ -18,7 +18,8 @@ npx tsx build.ts
 
 Normally neither is needed by hand: `.github/workflows/image-refresh.yml` does
 this, plus E2B and managed Daytona, on every push to `main` that touches this
-folder. See the pipeline section in `../README.md`.
+folder and again every Monday and Thursday. It also merges the regenerated
+constants and cuts the release. See the pipeline section in `../README.md`.
 
 ### Forcing a refresh
 
@@ -34,7 +35,8 @@ npm run generate:image-version   # from the repo root
 
 The stamp is an ordinary build input and the Dockerfile COPYs it to
 `/etc/evolve-image-refresh`, so the new tag describes a genuinely different
-image. The workflow does the same thing when dispatched with `force_refresh`.
+image. The workflow does the same thing on every scheduled run, and on manual
+dispatch with `force_refresh`.
 
 ## Image
 

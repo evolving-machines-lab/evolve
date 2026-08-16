@@ -102,13 +102,15 @@ Steps 2–4 are automated. See below.
 ### The automated pipeline
 
 `.github/workflows/image-refresh.yml` takes a change to the image all the way
-to users with no manual step. It runs on a push to `main` touching
-`assets/docker/**` or `assets/e2b/**`, on a weekly cron, and on manual dispatch.
+to users with no manual step — including merging the constants and cutting the
+release.
 
-It pushes the derived tag to Docker Hub (via `docker/build.ts`, so the tag and
+It runs on a push to `main` touching `assets/docker/**` or `assets/e2b/**`, on a
+cron every **Monday and Thursday at 05:17 UTC**, and on manual dispatch. Each
+run pushes the derived tag to Docker Hub (via `docker/build.ts`, so the tag and
 push rules stay in one place), rebuilds the E2B template, repoints managed
-Daytona, and — when the derived tag moved — opens a PR with the regenerated
-constants.
+Daytona, and — when the derived tag moved — opens, merges and releases a PR with
+the regenerated constants.
 
 **Who is moved, and when.** The four consumers do not travel together, and this
 is the part worth knowing before you wait on the wrong thing:
@@ -117,30 +119,49 @@ is the part worth knowing before you wait on the wrong thing:
 |---|---|---|
 | E2B | the workflow finishes | no — the `evolve-all` alias is rebuilt in place |
 | Managed Daytona | the workflow finishes | no — the platform snapshot is repointed |
-| Direct Daytona | the next npm release | yes — its default snapshot name is a compiled-in constant |
-| Modal | the next npm release | yes — same constant |
+| Direct Daytona | the release the workflow triggers | yes — its default snapshot name is a compiled-in constant |
+| Modal | the release the workflow triggers | yes — same constant |
 
 The workflow pre-builds the versioned Daytona snapshot `evolve-all-c-<12hex>`,
 so direct users get a warm snapshot rather than paying a build on first use.
 
-**`force_refresh`.** Content addressing cannot see that `@latest` moved
-upstream: the Dockerfile text is unchanged, so the tag is unchanged, so the
-release is correctly skipped — and new CLI versions never ship. Run the
-workflow with `force_refresh: true` to rewrite `docker/refresh-stamp`, an
-ordinary build input that the Dockerfile COPYs to `/etc/evolve-image-refresh`.
-The stamp is real image content, so the new tag it derives is honest rather
-than a nudged hash. By hand, the same thing:
+**Forcing, and why the schedule always forces.** Content addressing cannot see
+that `@latest` moved upstream: the Dockerfile text is unchanged, so the tag is
+unchanged, so the release is correctly skipped — and new CLI versions never
+ship. The way out is `docker/refresh-stamp`, an ordinary build input that the
+Dockerfile COPYs to `/etc/evolve-image-refresh`. It is real image content, so
+the new tag it derives is honest rather than a nudged hash.
+
+**Scheduled runs always bump the stamp.** A twice-weekly run that derived the
+same tag would rebuild nothing and ship nothing, which is not a schedule worth
+having. So Monday and Thursday each produce a new image built from that day's
+upstream tools, and carry it through to a release. Manual dispatch does the same
+on demand with `force_refresh: true`. A push to `main` does **not** force — the
+edit already moved the hash. By hand:
 
 ```bash
 npx tsx assets/docker/write-refresh-stamp.ts "picking up today's CLI releases"
 npm run generate:image-version
 ```
 
-The weekly cron deliberately does **not** bump the stamp — re-pushing an
-immutable tag with different content is exactly what content addressing exists
-to prevent. It rebuilds the E2B template (which reinstalls the `@latest` CLIs,
-so E2B users do get newer tools) and heals snapshot drift, such as a snapshot
-Daytona deactivated after two idle weeks.
+**The constants PR merges itself.** Per the owner ruling of 2026-08-16 the
+release does not wait on a human: the workflow opens the PR, runs the build and
+unit tests itself as the gate, merges, and dispatches `publish.yml`
+(`stable`/`patch`) so Modal and direct-Daytona users actually move.
+
+That authorization is deliberately narrow, and two gates keep it there. The
+workflow reads the PR's own file list back from the API and refuses to merge
+unless every path is one of the four generated artefacts — the three
+`image-version.ts` constants and `refresh-stamp`. Anything else in the diff
+leaves the PR open for a person. The gate is the workflow's own test run
+because `main` has no required status checks, and because a PR opened with the
+built-in `GITHUB_TOKEN` has its CI held in an approval-required state, so
+waiting on the PR's own checks would wait forever.
+
+Two knobs worth knowing: the release type and bump live in the workflow's `env`
+block, and adding a `RELEASE_PAT` repository secret makes the PR come from a
+real account, which both sidesteps the org's restriction on Actions opening PRs
+and lets normal CI run on it.
 
 **The managed Daytona swap.** Daytona has no rename and no in-place update for
 a snapshot ([daytonaio/daytona#2661][d2661], open), so the stable `evolve-all`
