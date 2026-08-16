@@ -94,7 +94,22 @@ export function createGeminiParser(): (jsonLine: string) => OutputEvent[] | null
           sessionId,
           update: {
             sessionUpdate: "error",
-            message: harnessErrorText([data.error?.message], data.error ?? data),
+            // Gemini's own words first — the message, then the error's type
+            // name. The third candidate is ours, and it exists so this ladder
+            // never reaches harnessErrorText's raw dump: the raw here is the
+            // result event, whose body is the run's token STATS, so a fatal
+            // result that arrived without an error object rendered as a blob
+            // of counts that says nothing about the failure. The sentence
+            // reports the status and stops there — no severity, no cause, no
+            // classification gemini did not make itself.
+            message: harnessErrorText(
+              [
+                data.error?.message,
+                data.error?.type,
+                'gemini ended the run with result status "error" and no error text',
+              ],
+              data.error ?? data,
+            ),
             fatal: true,
           },
         });

@@ -1843,7 +1843,30 @@ async function testTrials() {
       status: 200,
       body: {
         items: [
-          wireTrial(),
+          // A settled GPU trial: it carries the estimate object the contract
+          // documents (openapi.yaml Trial.gpu_cost). This is the ONLY path
+          // that proves the mapper carries it — the CLI fixtures build Trial
+          // objects directly and never go through mapTrial, which is exactly
+          // how a declared-but-unmapped field survived.
+          wireTrial({
+            gpu_cost: {
+              estimate_usd: 0.023421,
+              unpriced_reason: null,
+              provider: "modal",
+              gpu_type: "H100",
+              declared_gpu_type: "H100",
+              gpu_count: 1,
+              duration_sec: 42.5,
+              rate_usd_per_gpu_sec: 0.000551,
+              rate_card: {
+                version: 3,
+                source: "https://modal.com/pricing",
+                source_date: "2026-07-30",
+              },
+              measured_from: "2026-07-22T00:00:40.000Z",
+              measured_to: "2026-07-22T00:01:22.500Z",
+            },
+          }),
           wireTrial({
             id: "run-2",
             attempt: 2,
@@ -1868,6 +1891,9 @@ async function testTrials() {
             image_prepare: null,
             harness_bundle_cache_hit: null,
           }),
+          // A malformed estimate: the mapper answers null rather than handing
+          // a caller a partial row it would then read fields off.
+          wireTrial({ id: "run-3", gpu_cost: "0.02" }),
         ],
         nextCursor: "run-2",
         hasMore: true,
@@ -1943,6 +1969,41 @@ async function testTrials() {
       page.items[1].harness_bundle_cache_hit,
       null,
       "null harness_bundle_cache_hit is UNRECORDED, never a miss"
+    );
+    // gpu_cost: declared on Trial and mapped by the Python client, but dropped
+    // by this one — so a TypeScript caller reading the documented field found
+    // undefined on exactly the GPU trials that have an estimate, and the
+    // separate-figure law (never merged into agent_result.cost_usd) had
+    // nothing to show. These three cases are the whole contract.
+    assertEqual(
+      page.items[0].gpu_cost?.estimate_usd,
+      0.023421,
+      "gpu_cost maps through — the settled GPU trial's estimate reaches the caller"
+    );
+    assertEqual(
+      page.items[0].gpu_cost?.rate_card,
+      { version: 3, source: "https://modal.com/pricing", source_date: "2026-07-30" },
+      "the nested rate_card rides along, so a stored estimate stays auditable"
+    );
+    assertEqual(
+      page.items[0].gpu_cost?.unpriced_reason,
+      null,
+      "exactly one of estimate_usd / unpriced_reason is set"
+    );
+    assertEqual(
+      page.items[0].agent_result?.cost_usd,
+      0.93,
+      "the GPU estimate is NEVER folded into agent_result.cost_usd — metered model spend is untouched"
+    );
+    assertEqual(
+      page.items[1].gpu_cost,
+      null,
+      "an absent gpu_cost reads null — a non-GPU trial, or a server predating the field, never undefined"
+    );
+    assertEqual(
+      page.items[2].gpu_cost,
+      null,
+      "a malformed gpu_cost reads null too: never a crash, never a partial row"
     );
     assertEqual(page.items[1].status, "INFRASTRUCTURE_ERROR", "maps failure status");
     assertEqual(

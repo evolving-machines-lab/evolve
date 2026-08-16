@@ -423,6 +423,13 @@ export {
   type Dataset,
   type ActiveDataset,
   type DatasetVersion,
+  // The activation gate and its two detail shapes. They reached the hosted
+  // barrel but not this one, so a caller could read `version.gate.unproven`
+  // and have no way to name what it holds — the UNPROVEN stamp especially,
+  // which is the whole point of the three-word terminal vocabulary.
+  type DatasetVersionGate,
+  type DatasetVersionGateFailedTask,
+  type DatasetVersionGateUnproven,
   type DatasetVersionSource,
   type DatasetVersionState,
   type DatasetRef,
@@ -450,6 +457,9 @@ export {
   type JobStatus,
   type EvalSandboxProvider,
   type Trial,
+  // Trial.gpu_cost's own type — nameable now that the mapper actually hands
+  // the object over.
+  type TrialGpuCost,
   type TrialArtifactStream,
   type TrialStatus,
   type TrialCounts,

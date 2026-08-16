@@ -115,8 +115,9 @@ function assertLaw(
 async function testClaude(): Promise<void> {
   console.log("\n[claude] the failed result message");
 
-  // Live capture, claude 2.1.233. The failure carrier is `errors: string[]` —
-  // there is no error.message, and no `result` field at all on a failure.
+  // Live capture, claude 2.1.233. The failure carrier is `errors: string[]`,
+  // and there is no error.message. The error subtypes carry no `result` field;
+  // the success subtype does, and the case below is why that matters.
   const events = parseAll(createClaudeParser(), [
     `{"type":"result","subtype":"error_max_turns","is_error":true,"duration_ms":2621,"duration_api_ms":3054,"num_turns":2,"stop_reason":"tool_use","session_id":"0cb2912b-eaa2-4c17-9d7c-a5bcbca4afa6","total_cost_usd":0.254125,"permission_denials":[],"terminal_reason":"max_turns","errors":["Reached maximum number of turns (1)"],"uuid":"4ab4934c-b758-4a63-bc0b-1a889dd9ecf4"}`,
   ]);
@@ -139,6 +140,27 @@ async function testClaude(): Promise<void> {
   ]));
   assert(bare.length === 1, "claude: surfaced even with no error text");
   assert((bare[0]?.message ?? "").length > 0, "claude: falls back to the harness's own subtype rather than an empty string");
+
+  console.log("\n[claude] the success-subtype result that is_error flags as failed");
+
+  // A LEGAL SHAPE, and the one the ladder used to lose: the result union's
+  // success member carries `result: string` and its own `is_error` flag, so a
+  // turn that ended normally can still report failure. On that shape `errors`
+  // never appears and `result` holds the only words claude supplied — and
+  // reading `subtype` next published the literal message "success" for a run
+  // that failed, which is worse than silence: it reads as a passing run.
+  const flagged = parseAll(createClaudeParser(), [
+    `{"type":"result","subtype":"success","is_error":true,"duration_ms":8134,"duration_api_ms":7901,"num_turns":3,"result":"Execution error: EACCES: permission denied, open '/workspace/out.txt'","session_id":"s2","total_cost_usd":0.0412,"permission_denials":[],"uuid":"9a1f0b2c-1d3e-4f5a-8b7c-6d5e4f3a2b1c"}`,
+  ]);
+  assertLaw("claude/is_error-success", flagged, {
+    count: 1,
+    contains: ["EACCES: permission denied"],
+    fatal: [true],
+  });
+  assert(
+    errorsOf(flagged)[0]?.message !== "success",
+    'claude: never the subtype word — a failure whose whole message reads "success" reports nothing',
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -217,6 +239,35 @@ async function testGemini(): Promise<void> {
     contains: ["no space left on device"],
     fatal: [true],
   });
+
+  console.log("\n[gemini] a textless fatal result names the status instead of dumping stats");
+
+  // The same terminal failure with no error object on it. The raw fallback
+  // dumps the event, and a gemini result event's body IS the run's token
+  // stats — so this shape used to report a failure by printing a blob of
+  // counts. The message now states the status and nothing else.
+  const textless = parseAll(createGeminiParser(), [
+    `{"type":"result","timestamp":"2026-08-15T12:34:56.789Z","status":"error","stats":{"models":{"gemini-3-pro":{"tokens":{"prompt":18422,"candidates":331,"total":18753}}},"tools":{"totalCalls":4,"totalSuccess":3,"totalFail":1}}}`,
+  ]);
+  assertLaw("gemini/textless", textless, {
+    count: 1,
+    contains: ['status "error"'],
+    fatal: [true],
+  });
+  const textlessMessage = errorsOf(textless)[0]?.message ?? "";
+  assert(
+    !textlessMessage.includes("18422") && !textlessMessage.includes("totalCalls"),
+    "gemini: the message is a sentence about the failure, never the token-stats blob",
+  );
+
+  console.log("\n[gemini] the error's own type name is preferred over any words of ours");
+  const typedOnly = errorsOf(parseAll(createGeminiParser(), [
+    `{"type":"result","status":"error","error":{"type":"FatalTurnLimitedError"},"stats":{}}`,
+  ]));
+  assert(
+    typedOnly[0]?.message === "FatalTurnLimitedError",
+    "gemini: a message-less error still answers in gemini's own vocabulary",
+  );
 
   console.log("\n[gemini] error events are non-fatal warnings, but still never work");
   const warnings = parseAll(createGeminiParser(), [

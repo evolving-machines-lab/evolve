@@ -3,6 +3,16 @@
  *
  * Supports the documented headless `--output-format stream-json` lines and the
  * raw `stream-jsonrpc` notification envelope used by Droid's low-level SDK.
+ *
+ * PROVENANCE OF THE FAILURE SEMANTICS. Every other parser here cites a vendor
+ * schema by file and line (see parsers/gemini.ts, opencode.ts, qwen.ts). Droid
+ * publishes none we can read: there is no droid source, schema, or type
+ * package in this repo or its dependencies. So the failure rules below — which
+ * line kinds are failures, how many arrive per failure, and which of them is
+ * terminal — were read off LIVE CAPTURE of droid 0.182.0 and are UNVERIFIED
+ * against vendor source. They match every capture we have; they are not a
+ * contract droid has published, and a droid release may change them without
+ * anything here failing to compile.
  */
 
 import { harnessErrorText } from "./types";
@@ -81,7 +91,9 @@ export function createDroidParser(): (jsonLine: string) => OutputEvent[] | null 
     // A JSON-RPC response carries either a result or an error, never both, so an
     // error here is the call definitively over — fatal. It used to arrive as
     // agent text, which made a request that never reached the model look like
-    // the model answering.
+    // the model answering. (Terminality here is the JSON-RPC rule, but that
+    // this envelope is what droid sends is live capture, droid 0.182.0,
+    // unverified against vendor source — see the file header.)
     if (rpcResponse.errorText) return [harnessError(sessionId, rpcResponse.errorText, true)];
     if (rpcResponse.resultText) {
       lastAssistantText = rpcResponse.resultText;
@@ -209,7 +221,12 @@ export function createDroidParser(): (jsonLine: string) => OutputEvent[] | null 
         // `--output-format json` ends with {type:"result", subtype:"success"|
         // "failure", is_error, result}. On a failure `result` holds the failure
         // text ("Exec failed"), so emitting it as agent text published droid's
-        // own error as if the model had said it.
+        // own error as if the model had said it. Shape and semantics: live
+        // capture, droid 0.182.0, unverified against vendor source (file
+        // header). In particular "failure is the only non-success subtype" is
+        // an observation, not a documented closed set — which is why the test
+        // is `is_error === true || subtype === "failure"` and not a match on
+        // the subtype word alone.
         if (event.is_error === true || event.subtype === "failure") {
           events.push(harnessError(
             sessionId,
@@ -236,6 +253,12 @@ export function createDroidParser(): (jsonLine: string) => OutputEvent[] | null 
       // wrapper's generic "Exec failed" from "cli". Neither is a turn-ended
       // event (stream-json has no terminal line on failure at all), so `fatal`
       // stays false rather than inferring terminality from the source string.
+      //
+      // ALL OF THAT IS LIVE CAPTURE, droid 0.182.0, unverified against vendor
+      // source (file header). "Two lines per failure" and "no terminal line at
+      // all" are what every capture shows, not something droid documents —
+      // fatal:false is the conservative reading of that, since claiming a
+      // terminality we never observed would be the worse error.
       case "error": {
         events.push(harnessError(
           sessionId,

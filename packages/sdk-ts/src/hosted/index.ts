@@ -102,6 +102,7 @@ import type {
   TrialFile,
   TrialFilePage,
   TrialFileRange,
+  TrialGpuCost,
   TrialList,
   TrialPage,
   TrialRetry,
@@ -245,6 +246,7 @@ export type {
   TrialFile,
   TrialFilePage,
   TrialFileRange,
+  TrialGpuCost,
   TrialList,
   TrialPage,
   TrialRetry,
@@ -975,6 +977,15 @@ function mapTrial(raw: Record<string, unknown>): Trial {
     // GPU degrade record — defensive: a malformed object reads as null,
     // never a crash or a partial row.
     sandbox_provider_degrade: mapProviderDegrade(raw.sandbox_provider_degrade),
+    // The GPU compute estimate. Same defensive rule; absent (an older server)
+    // reads as null too. It was declared on the Trial type before the mapper
+    // carried it, so a caller reading the documented field found undefined on
+    // exactly the GPU trials that have one — the Python mapper had it all
+    // along (hosted.py `_map_trial`), which is why the gap was one-sided.
+    gpu_cost:
+      raw.gpu_cost && typeof raw.gpu_cost === "object" && !Array.isArray(raw.gpu_cost)
+        ? (raw.gpu_cost as TrialGpuCost)
+        : null,
     // Where the trial ran. Absent reads the same as "never booted a box": null.
     sandbox_id: (raw.sandbox_id as string | null) ?? null,
     verifier_sandbox_id: (raw.verifier_sandbox_id as string | null) ?? null,

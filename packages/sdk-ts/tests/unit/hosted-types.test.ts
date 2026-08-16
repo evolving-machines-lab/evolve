@@ -35,12 +35,16 @@ import type {
   AgentPage as RootAgentPage,
   DatasetList as RootDatasetList,
   DatasetPage as RootDatasetPage,
+  DatasetVersionGate as RootDatasetVersionGate,
+  DatasetVersionGateFailedTask as RootDatasetVersionGateFailedTask,
+  DatasetVersionGateUnproven as RootDatasetVersionGateUnproven,
   GetDatasetOptions as RootGetDatasetOptions,
   JobFailure as RootJobFailure,
   ListAgentsOptions as RootListAgentsOptions,
   ListDatasetsOptions as RootListDatasetsOptions,
   Page as RootPage,
   PageOptions as RootPageOptions,
+  TrialGpuCost as RootTrialGpuCost,
 } from "../../src/index.ts";
 
 // ---------------------------------------------------------------------------
@@ -192,8 +196,29 @@ type RootSurface = [
   RootListAgentsOptions,
   RootGetDatasetOptions,
   RootJobFailure,
+  // The gate sub-tree behind DatasetVersion.gate, and the estimate object
+  // behind Trial.gpu_cost. Both hang off shapes the root already exports, and
+  // both were reachable only through the hosted barrel — so a caller could
+  // hold a `gate.unproven` or a `gpu_cost` and have no name to write for it.
+  RootDatasetVersionGate,
+  RootDatasetVersionGateFailedTask,
+  RootDatasetVersionGateUnproven,
+  RootTrialGpuCost,
 ];
 const rootSurface: RootSurface | undefined = undefined;
+
+// The nameability is the assertion, and these are the fields that need it:
+// each annotation is written with the root-imported name, so dropping any one
+// of the exports above stops this file compiling.
+function readsTheGateStamp(gate: RootDatasetVersionGate): string {
+  const unproven: RootDatasetVersionGateUnproven | null = gate.unproven;
+  const failed: RootDatasetVersionGateFailedTask[] = gate.failed_tasks;
+  return `${unproven?.reason ?? "-"} ${failed.length}`;
+}
+
+function readsTheGpuEstimate(cost: RootTrialGpuCost): number | null {
+  return cost.estimate_usd;
+}
 
 // Reference every binding so `noUnusedLocals` cannot fire instead of the
 // directives above doing their job.
@@ -212,6 +237,8 @@ void [
   managedDoor,
   bareDoorName,
   rootSurface,
+  readsTheGateStamp,
+  readsTheGpuEstimate,
 ];
 
 console.log("=== Hosted SDK Type-Level Tests ===");

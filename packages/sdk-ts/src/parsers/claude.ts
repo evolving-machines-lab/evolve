@@ -92,8 +92,15 @@ export function createClaudeParser() {
       // error_max_budget_usd / error_max_structured_output_retries), and
       // returning null for it dropped that failure entirely: a run that never
       // reached the model produced no events and looked like a run that simply
-      // did nothing. Claude carries the text in `errors: string[]` — there is
-      // no error.message here, and no `result` field at all on a failure.
+      // did nothing. Claude carries the text in `errors: string[]`, and there
+      // is no error.message here.
+      //
+      // `result` IS a carrier though, on one shape: subtype "success" with
+      // is_error true — the run finished its turn and the turn's own text is
+      // the failure report, so `errors` is empty and `result` holds the only
+      // words claude supplied. It sits between the two: after `errors`, which
+      // is the dedicated failure channel, and before `subtype`, which is a
+      // single word and on this shape the actively misleading word "success".
       case "result": {
         if (data.is_error !== true) return null;
         const errors: unknown[] = Array.isArray(data.errors) ? data.errors : [];
@@ -102,7 +109,7 @@ export function createClaudeParser() {
           sessionId,
           update: {
             sessionUpdate: "error",
-            message: harnessErrorText([text, data.subtype], data),
+            message: harnessErrorText([text, data.result, data.subtype], data),
             fatal: true,
           },
         }];
