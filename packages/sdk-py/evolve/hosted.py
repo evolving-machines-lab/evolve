@@ -367,11 +367,25 @@ class DatasetVersionGateFailedTask:
 
 
 @dataclass
+class DatasetVersionGateUnproven:
+    """The UNPROVEN stamp on a version's activation gate.
+
+    ``reason`` is the server's own sentence for why no proof ran (today: "no
+    reference solutions to run"), ``at`` is when the stamp was written
+    (``None`` when the server omits it).
+    """
+    reason: str
+    at: Optional[str] = None
+
+
+@dataclass
 class DatasetVersionGate:
     """The activation gate's progress for one dataset version.
 
-    ``status`` is the gate's own lifecycle (``PENDING`` → ``RUNNING`` →
-    ``PASSED``/``FAILED`` as wire values). ``code`` and ``message`` are set on
+    ``status`` is the gate's own lifecycle as wire values: ``PENDING`` →
+    ``RUNNING`` → ``PASSED``/``FAILED``, plus ``UNPROVEN`` — the third terminal
+    word, for a version activated with nothing to prove. ``code`` and
+    ``message`` are set on
     failure — one machine word and one human sentence — and are ``None`` while
     the gate is healthy. ``attempts`` counts gate runs so far.
     ``failed_tasks`` names each ineligible task with the gate's own reasons
@@ -381,7 +395,8 @@ class DatasetVersionGate:
     tasks: the list is capped at 25, so a gate that failed more tasks than
     that is under-counted by ``len(failed_tasks)`` — this number never is (it
     falls back to the length on servers that predate the field, which never
-    truncated without it).
+    truncated without it). ``unproven`` carries the UNPROVEN stamp and is
+    ``None`` on every other status.
     """
     status: str
     attempts: int
@@ -389,6 +404,14 @@ class DatasetVersionGate:
     message: Optional[str] = None
     failed_tasks: List[DatasetVersionGateFailedTask] = field(default_factory=list)
     failed_task_count: int = 0
+    #: Present only when ``status`` is ``UNPROVEN``: the version activated with
+    #: no oracle-conformance proof because the gate had no reference solutions
+    #: to run. The server's own stamp — the honest reason sentence and when it
+    #: was stamped. ``None`` on every other status and on servers that predate
+    #: the field: absence is "nothing to report", never a crash. It is
+    #: deliberately not the same field as ``code``/``message``: an absent proof
+    #: is not a failed one, and the two details are mutually exclusive.
+    unproven: Optional[DatasetVersionGateUnproven] = None
 
 
 @dataclass
@@ -1403,7 +1426,44 @@ class Trial:
     environment_setup: Optional[TimingInfo]
     agent_setup: Optional[TimingInfo]
     agent_execution: Optional[TimingInfo]
+    #: The verifier COMMAND window — the graded command alone, and not the work
+    #: that prepared it. On a SHARED-mode trial the preparation that runs first
+    #: is reported beside this pair as ``shared_verify_setup``. Read this pair
+    #: against ``verifier_timeout_sec`` and nothing else.
     verifier: Optional[TimingInfo]
+    #: How long the trial sat claimable before a worker began it. It ends at
+    #: the run's beginning, which is APPROXIMATELY — not exactly — where
+    #: ``environment_setup`` starts, so never treat the two pairs as adjacent.
+    #: The open bound is when the row became claimable, which for a retried
+    #: trial is its backoff deadline rather than its creation: this never bills
+    #: the attempt that failed before it.
+    queue_wait: Optional[TimingInfo]
+    #: The harness bundle resolve, NESTED inside ``environment_setup``. A miss
+    #: that actually BUILT also carries the publish upload back to the shared
+    #: bundle store, which the building caller waits out inside this window — a
+    #: trial that joined someone else's build, or hydrated the bytes from that
+    #: store, pays neither. Read with ``harness_bundle_cache_hit``.
+    harness_bundle: Optional[TimingInfo]
+    #: The provider image/snapshot/template ensure, also NESTED inside
+    #: ``environment_setup`` and excluding the boot that follows it. Near-zero
+    #: on modal BY DESIGN — modal pre-builds nothing, so the real
+    #: pull-and-cache happens provider-side when the box is created — so never
+    #: compare it across providers raw.
+    image_prepare: Optional[TimingInfo]
+    #: What a SHARED-mode verify did BEFORE its command — the judge key mint,
+    #: the rewardkit bundle resolve and upload, the test-file uploads, the env
+    #: write. It ends exactly where ``verifier`` begins, and the two never
+    #: overlap. ``None`` on separate-mode trials, on multi-step trials (which
+    #: verify per step and report no trial-level verifier window), and on
+    #: anything that settled before the pair was recorded — never a zero-length
+    #: pair standing in for "did not happen".
+    shared_verify_setup: Optional[TimingInfo]
+    #: ``True`` when the bundle resolve served bytes already on the worker.
+    #: ``False`` covers every path that had to produce them — a shared-store
+    #: hydrate, a builder run, or joining another trial's in-flight build.
+    #: ``None`` is unrecorded (a trial older than these timers, or one whose
+    #: resolve failed), never "miss".
+    harness_bundle_cache_hit: Optional[bool]
     #: Per-step results for a multi-step task, in execution order. ``None`` on
     #: every single-step trial — "this trial has no steps", never "it ran zero
     #: of them". A trial that stopped early carries only the steps that ran.
@@ -2012,6 +2072,15 @@ def _map_version_gate(data: Any) -> Optional[DatasetVersionGate]:
     raw_count = data.get('failed_task_count')
     if not isinstance(raw_count, int) or isinstance(raw_count, bool):
         raw_count = failure.get('failed_task_count')
+    # The UNPROVEN stamp ({reason, at}) — the server's honest sentence for a
+    # version that activated with no oracle-conformance proof. It used to be
+    # dropped here, which left the reason API-only and made the docs' "read it
+    # off the gate" unfollowable. Same tolerance as the gate itself: anything
+    # unreadable, or a stamp without its reason, is None.
+    raw_unproven = data.get('unproven')
+    raw_unproven = raw_unproven if isinstance(raw_unproven, dict) else {}
+    unproven_reason = raw_unproven.get('reason')
+    unproven_at = raw_unproven.get('at')
     return DatasetVersionGate(
         status=data['status'],
         attempts=attempts if isinstance(attempts, int) and not isinstance(attempts, bool) else 0,
@@ -2025,6 +2094,14 @@ def _map_version_gate(data: Any) -> Optional[DatasetVersionGate]:
             raw_count
             if isinstance(raw_count, int) and not isinstance(raw_count, bool)
             else len(failed_tasks)
+        ),
+        unproven=(
+            DatasetVersionGateUnproven(
+                reason=unproven_reason,
+                at=unproven_at if isinstance(unproven_at, str) else None,
+            )
+            if isinstance(unproven_reason, str)
+            else None
         ),
     )
 
@@ -2518,6 +2595,23 @@ def _map_trial(data: Dict[str, Any]) -> Trial:
         agent_setup=_map_timing(data.get('agent_setup')),
         agent_execution=_map_timing(data.get('agent_execution')),
         verifier=_map_timing(data.get('verifier')),
+        # The finer pairs beside the four phase pairs — NOT a partition of
+        # them, and never summed with them. They were documented on this shape
+        # before they were mapped, so a caller reading the reference block
+        # found nothing where the server had sent a pair; an absent one still
+        # reads None, the same "nothing to report" every other timing pair
+        # answers.
+        queue_wait=_map_timing(data.get('queue_wait')),
+        harness_bundle=_map_timing(data.get('harness_bundle')),
+        image_prepare=_map_timing(data.get('image_prepare')),
+        shared_verify_setup=_map_timing(data.get('shared_verify_setup')),
+        # None is unrecorded, never "miss": only a real bool is a reading, so a
+        # stray 0/1 reads as no reading rather than as False.
+        harness_bundle_cache_hit=(
+            data['harness_bundle_cache_hit']
+            if isinstance(data.get('harness_bundle_cache_hit'), bool)
+            else None
+        ),
         step_results=data.get('step_results'),
         spend_source=data.get('spend_source'),
         # Mid-run lower bound, kept beside the settled pair and never folded

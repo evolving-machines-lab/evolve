@@ -50,6 +50,7 @@ from evolve import (
     DatasetSelector,
     DatasetVersionGate,
     DatasetVersionGateFailedTask,
+    DatasetVersionGateUnproven,
     DatasetVersionSource,
     EvolveAPIError,
     EvolveDigestMismatchError,
@@ -228,6 +229,11 @@ def wire_trial(**overrides):
         'agent_setup': {'started_at': '2026-07-22T00:00:30.000Z', 'finished_at': '2026-07-22T00:00:40.000Z'},
         'agent_execution': {'started_at': '2026-07-22T00:00:40.000Z', 'finished_at': '2026-07-22T00:04:03.000Z'},
         'verifier': {'started_at': '2026-07-22T00:04:03.000Z', 'finished_at': '2026-07-22T00:04:34.000Z'},
+        'queue_wait': {'started_at': '2026-07-21T23:59:30.000Z', 'finished_at': '2026-07-22T00:00:00.000Z'},
+        'harness_bundle': {'started_at': '2026-07-22T00:00:02.000Z', 'finished_at': '2026-07-22T00:00:11.000Z'},
+        'image_prepare': {'started_at': '2026-07-22T00:00:11.000Z', 'finished_at': '2026-07-22T00:00:26.000Z'},
+        'shared_verify_setup': None,
+        'harness_bundle_cache_hit': False,
         'step_results': None,
         'spend_source': 'measured',
         'live_spent_usd': None,
@@ -1078,6 +1084,99 @@ class TestDatasets:
         assert len(gate.failed_tasks) == 25
         assert gate.failed_task_count == 40
 
+    @pytest.mark.asyncio
+    async def test_unproven_gate_carries_the_stamp(self):
+        """UNPROVEN is the third terminal word, and its stamp reaches the caller.
+
+        A version whose import archived no reference solutions is activated with
+        nothing proved, and the server stamps WHY. The stamp used to be dropped
+        at the mapper, which left the reason readable only off the raw HTTP
+        response — so a Python caller could see the word UNPROVEN and never the
+        sentence behind it.
+        """
+        fake = FakeUrlopen([
+            ('/api/datasets/no-solutions', {
+                'name': 'no-solutions',
+                'title': None,
+                'description': None,
+                # The active-version object is not what this test is about; the
+                # gate rides on the versions list either way.
+                'active_version': None,
+                'versions': [
+                    {
+                        'version': '1.0', 'state': 'READY',
+                        'created_at': '2026-08-03', 'task_count': 12,
+                        'gate': {
+                            'status': 'UNPROVEN',
+                            # No run ever happened, so attempts stays 0.
+                            'attempts': 0,
+                            'failure': None,
+                            'unproven': {
+                                'reason': 'no reference solutions to run',
+                                'at': '2026-08-03T00:00:10.000Z',
+                            },
+                        },
+                    },
+                ],
+                'selected_version': None,
+                'tasks': {'items': [], 'nextCursor': None, 'hasMore': False},
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            detail = await datasets_factory(CONFIG).get('no-solutions')
+
+        gate = detail.versions[0].gate
+        assert gate.status == 'UNPROVEN'
+        assert gate.attempts == 0
+        assert gate.unproven == DatasetVersionGateUnproven(
+            reason='no reference solutions to run',
+            at='2026-08-03T00:00:10.000Z',
+        )
+        # An absent proof is not a failed one: the two details never coexist.
+        assert gate.code is None
+        assert gate.message is None
+        assert gate.failed_tasks == []
+
+    @pytest.mark.asyncio
+    async def test_gate_without_a_stamp_reads_none(self):
+        """No stamp is None — the same "nothing to report" every other gate
+        detail answers, and never a fabricated reason."""
+        fake = FakeUrlopen([
+            ('/api/datasets/proven', {
+                'name': 'proven',
+                'title': None,
+                'description': None,
+                # The active-version object is not what this test is about; the
+                # gate rides on the versions list either way.
+                'active_version': None,
+                'versions': [
+                    {
+                        'version': '1.0', 'state': 'READY',
+                        'created_at': '2026-08-03', 'task_count': 12,
+                        # A PASSED gate on a server that predates the stamp:
+                        # no `unproven` key at all.
+                        'gate': {'status': 'PASSED', 'attempts': 1},
+                    },
+                    {
+                        'version': '0.9', 'state': 'READY',
+                        'created_at': '2026-08-02', 'task_count': 12,
+                        # A stamp without its reason is not a stamp.
+                        'gate': {
+                            'status': 'UNPROVEN', 'attempts': 0,
+                            'unproven': {'at': '2026-08-02T00:00:10.000Z'},
+                        },
+                    },
+                ],
+                'selected_version': None,
+                'tasks': {'items': [], 'nextCursor': None, 'hasMore': False},
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            detail = await datasets_factory(CONFIG).get('proven')
+
+        assert detail.versions[0].gate.unproven is None
+        assert detail.versions[1].gate.unproven is None
+
 
 REGISTERED_AGENT = {
     'name': 'acme-cli',
@@ -1768,6 +1867,17 @@ class TestJobs:
         # Phase wall-clock is start/stop pairs, never durations.
         assert trial.agent_execution.started_at == '2026-07-22T00:00:40.000Z'
         assert trial.agent_execution.finished_at == '2026-07-22T00:04:03.000Z'
+        # The finer pairs beside the four phase pairs — documented on this shape
+        # before the mapper carried them, so a caller following the reference
+        # block found nothing where the server had sent a pair.
+        assert trial.queue_wait.started_at == '2026-07-21T23:59:30.000Z'
+        assert trial.queue_wait.finished_at == '2026-07-22T00:00:00.000Z'
+        assert trial.harness_bundle.finished_at == '2026-07-22T00:00:11.000Z'
+        assert trial.image_prepare.finished_at == '2026-07-22T00:00:26.000Z'
+        # Separate-mode trial: no shared-verify preparation segment exists.
+        assert trial.shared_verify_setup is None
+        # False is a real reading (the resolve produced the bytes), not absence.
+        assert trial.harness_bundle_cache_hit is False
         # First-class run facts on list rows — same shape as the detail route
         assert trial.sandbox_provider == 'daytona'
         # Not a GPU-degraded trial; the field is honestly None, never absent-crash.
@@ -1812,6 +1922,43 @@ class TestJobs:
         # The agent figure stays the agent's alone — the split is the point.
         assert trial.agent_result.cost_usd == 0.93
 
+    @pytest.mark.asyncio
+    async def test_trial_finer_timing_pairs_absence_is_none(self):
+        """The finer pairs answer None when there is nothing to report.
+
+        An older server sends none of these keys; a SHARED-mode verify that
+        settled before its preparation pair was recorded sends the key as null.
+        Both read None — never a zero-length pair, which would claim the
+        segment ran and took no time.
+        """
+        older = wire_trial(id='trial-old')
+        for key in (
+            'queue_wait', 'harness_bundle', 'image_prepare',
+            'shared_verify_setup', 'harness_bundle_cache_hit',
+        ):
+            del older[key]
+        fake = FakeUrlopen([
+            ('/api/jobs/job-1/trials', {
+                'items': [
+                    older,
+                    # A stray 0/1 is not a reading: cache-hit is a bool or it
+                    # is unrecorded, and False must never be inferred.
+                    wire_trial(id='trial-int', harness_bundle_cache_hit=1),
+                ],
+                'nextCursor': None,
+                'hasMore': False,
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            page = await jobs_factory(CONFIG).trials('job-1')
+
+        old, stray = page.items
+        assert old.queue_wait is None
+        assert old.harness_bundle is None
+        assert old.image_prepare is None
+        assert old.shared_verify_setup is None
+        assert old.harness_bundle_cache_hit is None
+        assert stray.harness_bundle_cache_hit is None
 
     @pytest.mark.asyncio
     async def test_trial_gpu_cost_mapping(self):

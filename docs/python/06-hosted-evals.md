@@ -1850,8 +1850,12 @@ class DatasetVersionGate:           # the activation gate's progress
     message: Optional[str]          # the human reason, set on failure
     failed_tasks: List[DatasetVersionGateFailedTask]  # the ineligible tasks, first 25
     failed_task_count: int          # the TRUE total behind the 25-task cap
-                                    # on UNPROVEN the wire carries the stamp beside these as
-                                    #   unproven: { reason, at } — read it off the raw gate payload
+    unproven: Optional[DatasetVersionGateUnproven]  # the UNPROVEN stamp; None on every other status
+
+@dataclass
+class DatasetVersionGateUnproven:   # why a version activated with no proof
+    reason: str                     # today always "no reference solutions to run"
+    at: Optional[str]               # when the stamp was written; None on older rows
 
 @dataclass
 class DatasetVersionGateFailedTask:

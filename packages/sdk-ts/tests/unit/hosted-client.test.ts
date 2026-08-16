@@ -1813,6 +1813,11 @@ function wireTrial(overrides: Record<string, unknown> = {}): Record<string, unkn
     agent_setup: { started_at: "2026-07-22T00:00:30.000Z", finished_at: "2026-07-22T00:00:40.000Z" },
     agent_execution: { started_at: "2026-07-22T00:00:40.000Z", finished_at: "2026-07-22T00:04:03.000Z" },
     verifier: { started_at: "2026-07-22T00:04:03.000Z", finished_at: "2026-07-22T00:04:34.000Z" },
+    queue_wait: { started_at: "2026-07-21T23:59:30.000Z", finished_at: "2026-07-22T00:00:00.000Z" },
+    harness_bundle: { started_at: "2026-07-22T00:00:02.000Z", finished_at: "2026-07-22T00:00:11.000Z" },
+    image_prepare: { started_at: "2026-07-22T00:00:11.000Z", finished_at: "2026-07-22T00:00:26.000Z" },
+    shared_verify_setup: null,
+    harness_bundle_cache_hit: false,
     step_results: null,
     spend_source: "measured",
     live_spent_usd: null,
@@ -1858,6 +1863,10 @@ async function testTrials() {
             verifier_environment_mode: null,
             attempt_phase: "boot",
             session_ref: null,
+            queue_wait: null,
+            harness_bundle: null,
+            image_prepare: null,
+            harness_bundle_cache_hit: null,
           }),
         ],
         nextCursor: "run-2",
@@ -1895,6 +1904,45 @@ async function testTrials() {
       page.items[0].agent_execution,
       { started_at: "2026-07-22T00:00:40.000Z", finished_at: "2026-07-22T00:04:03.000Z" },
       "phase timings are start/stop pairs, never durations"
+    );
+    // The finer pairs beside the four phase pairs. They were documented on the
+    // Trial type before the mapper carried them, so a caller following the docs
+    // read undefined for every one of them; these assertions are what makes the
+    // doc true.
+    assertEqual(
+      page.items[0].queue_wait,
+      { started_at: "2026-07-21T23:59:30.000Z", finished_at: "2026-07-22T00:00:00.000Z" },
+      "queue_wait maps through — the claimable window before the run began"
+    );
+    assertEqual(
+      page.items[0].harness_bundle,
+      { started_at: "2026-07-22T00:00:02.000Z", finished_at: "2026-07-22T00:00:11.000Z" },
+      "harness_bundle maps through — the resolve nested inside environment_setup"
+    );
+    assertEqual(
+      page.items[0].image_prepare,
+      { started_at: "2026-07-22T00:00:11.000Z", finished_at: "2026-07-22T00:00:26.000Z" },
+      "image_prepare maps through — the provider ensure, boot excluded"
+    );
+    assertEqual(
+      page.items[0].shared_verify_setup,
+      null,
+      "shared_verify_setup is null on a separate-mode trial: no such segment exists"
+    );
+    assertEqual(
+      page.items[0].harness_bundle_cache_hit,
+      false,
+      "harness_bundle_cache_hit maps through — false is a real reading, not absence"
+    );
+    assertEqual(
+      page.items[1].queue_wait,
+      null,
+      "an unrecorded finer pair stays null — nothing to report, never a zero-length pair"
+    );
+    assertEqual(
+      page.items[1].harness_bundle_cache_hit,
+      null,
+      "null harness_bundle_cache_hit is UNRECORDED, never a miss"
     );
     assertEqual(page.items[1].status, "INFRASTRUCTURE_ERROR", "maps failure status");
     assertEqual(

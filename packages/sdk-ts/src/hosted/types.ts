@@ -956,7 +956,56 @@ export interface Trial {
   environment_setup: TimingInfo | null;
   agent_setup: TimingInfo | null;
   agent_execution: TimingInfo | null;
+  /**
+   * The verifier COMMAND window — the graded command alone, and not the work
+   * that prepared it. On a SHARED-mode trial the preparation that runs first
+   * is reported beside this pair as `shared_verify_setup`. Read this pair
+   * against `verifier_timeout_sec` and nothing else.
+   */
   verifier: TimingInfo | null;
+  /**
+   * How long the trial sat claimable before a worker began it. It ends at the
+   * run's beginning, which is APPROXIMATELY — not exactly — where
+   * `environment_setup` starts, so never treat the two pairs as adjacent. The
+   * open bound is when the row became claimable, which for a retried trial is
+   * its backoff deadline rather than its creation: this never bills the
+   * attempt that failed before it.
+   */
+  queue_wait: TimingInfo | null;
+  /**
+   * The harness bundle resolve, NESTED inside `environment_setup`. A miss that
+   * actually BUILT also carries the publish upload back to the shared bundle
+   * store, which the building caller waits out inside this window — a trial
+   * that joined someone else's build, or hydrated the bytes from that store,
+   * pays neither. Read with `harness_bundle_cache_hit`.
+   */
+  harness_bundle: TimingInfo | null;
+  /**
+   * The provider image/snapshot/template ensure, also NESTED inside
+   * `environment_setup` and excluding the boot that follows it. Near-zero on
+   * modal BY DESIGN — modal pre-builds nothing, so the real pull-and-cache
+   * happens provider-side when the box is created — so never compare it across
+   * providers raw.
+   */
+  image_prepare: TimingInfo | null;
+  /**
+   * What a SHARED-mode verify did BEFORE its command — the judge key mint, the
+   * rewardkit bundle resolve and upload, the test-file uploads, the env write.
+   * It ends exactly where `verifier` begins, and the two never overlap.
+   * Null on separate-mode trials, on multi-step trials (which verify per step
+   * and report no trial-level verifier window), and on anything that settled
+   * before the pair was recorded — never a zero-length pair standing in for
+   * "did not happen".
+   */
+  shared_verify_setup: TimingInfo | null;
+  /**
+   * True when the bundle resolve served bytes already on the worker. False
+   * covers every path that had to produce them — a shared-store hydrate, a
+   * builder run, or joining another trial's in-flight build. Null is
+   * unrecorded (a trial older than these timers, or one whose resolve failed),
+   * never "miss".
+   */
+  harness_bundle_cache_hit: boolean | null;
   /**
    * Per-step results for a multi-step task, in execution order. Null on every
    * single-step trial — "this trial has no steps", never "it ran zero of
@@ -1356,10 +1405,11 @@ export type DatasetVersionState =
 /**
  * The activation gate's progress for one dataset version — the gold-run check
  * a version must pass before it can be activated. `status` is the gate's own
- * lifecycle (PENDING → RUNNING → PASSED/FAILED as wire values; render unknown
- * values as-is). `code` and `message` are populated on failure and explain it
- * in one machine word and one human sentence; both are null while the gate is
- * healthy. `attempts` counts gate runs so far.
+ * lifecycle as wire values: PENDING → RUNNING → PASSED/FAILED, plus UNPROVEN —
+ * the third terminal word, for a version activated with nothing to prove
+ * (render unknown values as-is). `code` and `message` are populated on failure
+ * and explain it in one machine word and one human sentence; both are null
+ * while the gate is healthy. `attempts` counts gate runs so far.
  */
 export interface DatasetVersionGate {
   status: string;

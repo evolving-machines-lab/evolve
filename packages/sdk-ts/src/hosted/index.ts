@@ -37,6 +37,7 @@ import type {
   DatasetVersion,
   DatasetVersionGate,
   DatasetVersionGateFailedTask,
+  DatasetVersionGateUnproven,
   DatasetVersionSource,
   DatasetVersionState,
   DatasetsClient,
@@ -167,6 +168,7 @@ export type {
   DatasetVersion,
   DatasetVersionGate,
   DatasetVersionGateFailedTask,
+  DatasetVersionGateUnproven,
   DatasetVersionSource,
   DatasetVersionState,
   DatasetsClient,
@@ -949,6 +951,18 @@ function mapTrial(raw: Record<string, unknown>): Trial {
     agent_setup: mapTimingInfo(raw.agent_setup),
     agent_execution: mapTimingInfo(raw.agent_execution),
     verifier: mapTimingInfo(raw.verifier),
+    // The finer pairs beside the four phase pairs — NOT a partition of them,
+    // and never summed with them. They were documented on this type before
+    // they were mapped, so a caller reading the reference block found
+    // undefined where the server had sent a pair; an absent one still reads
+    // null, the same "nothing to report" every other timing pair answers.
+    queue_wait: mapTimingInfo(raw.queue_wait),
+    harness_bundle: mapTimingInfo(raw.harness_bundle),
+    image_prepare: mapTimingInfo(raw.image_prepare),
+    shared_verify_setup: mapTimingInfo(raw.shared_verify_setup),
+    // Null is unrecorded, never "miss": only a real boolean is a reading.
+    harness_bundle_cache_hit:
+      typeof raw.harness_bundle_cache_hit === "boolean" ? raw.harness_bundle_cache_hit : null,
     step_results: (raw.step_results as StepResult[] | null) ?? null,
     spend_source: (raw.spend_source as SpendSource | null) ?? null,
     judge_spend_source: (raw.judge_spend_source as SpendSource | null) ?? null,
