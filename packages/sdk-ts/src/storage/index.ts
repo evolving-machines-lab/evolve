@@ -1133,28 +1133,67 @@ async function downloadArchiveToLocal(
 }
 
 /**
- * List regular files inside a tar.gz archive with entry type validation.
+ * Thrown when a line of `tar -tvzf` output carries no path we can read.
  *
- * Uses `tar -tvzf` (verbose) for type checking and `tar -tzf` (compact) for
- * path listing. Allows regular files ('-'), directories ('d'), and symlinks ('l')
- * but only returns paths of regular files. Symlinks are allowed to exist in the
- * archive (needed for sandbox environments) but excluded from the file list to
- * prevent symlink-following attacks in downloadFiles().
+ * This used to be a silent `continue`, and silence was the wrong answer: the
+ * entry simply vanished from the listing, so downloadFiles() returned FEWER
+ * files than the archive holds and reported success. Wrong data, no error.
+ * A thrown error is worse for one caller and far better for everyone: the
+ * unreadable line is named, so the tar variant that produced it can be added.
  */
-async function listTarFiles(archivePath: string): Promise<string[]> {
-  await ensureTarAvailable();
+export class TarListingParseError extends Error {
+  constructor(public readonly line: string) {
+    super(
+      `Could not read a file path out of this 'tar -tvzf' line: ${JSON.stringify(line)}. ` +
+      "The listing is produced by the tar on THIS machine, so an unrecognised " +
+      "layout means an unsupported tar variant (busybox, a very old BSD tar) " +
+      "rather than a corrupt archive. Refusing to return a partial file list."
+    );
+    this.name = "TarListingParseError";
+  }
+}
 
-  // Single tar process — verbose output contains both type info and paths.
-  // Uses execFileAsync (no shell) for cross-platform safety.
-  const { stdout } = await execFileAsync(
-    "tar", ["-tvzf", archivePath], { maxBuffer: TAR_MAX_BUFFER }
-  );
+/**
+ * The locale the tar listing is read under.
+ *
+ * This matters because `tar -tvzf` runs on the USER'S machine, and the date
+ * column it prints is LOCALIZED: bsdtar under fr_FR.UTF-8 writes
+ * `1 janv.  2020` where the C locale writes `Jan  1  2020` (verified on
+ * bsdtar 3.5.3). The parse below knows only the C form, so without this pin a
+ * user's locale silently decided which of their files came back. Exported so
+ * the unit test can list a real archive exactly the way this module does.
+ */
+export const TAR_LISTING_ENV = { LC_ALL: "C", LANG: "C" } as const;
 
-  // Parse verbose output: validate entry types, extract paths, track symlinks.
-  // Verbose format: "drwxr-xr-x user/group 0 2025-01-01 00:00 path/"
-  //                 "-rw-r--r-- user/group 1234 2025-01-01 00:00 path/file"
-  //                 "lrwxrwxrwx user/group 0 2025-01-01 00:00 link -> target"
-  const symlinkPaths = new Set<string>();
+/** What a verbose tar listing says the archive holds. */
+export interface TarListingEntries {
+  /** Regular files ('-') — the only entries downloadFiles() will fetch. */
+  filePaths: string[];
+  /** Directories ('d'), trailing slash removed. */
+  dirPaths: string[];
+  /** Symlinks ('l'), target stripped — allowed to exist, never followed. */
+  symlinkPaths: string[];
+}
+
+/**
+ * Parse `tar -tvzf` verbose output into entries, by type.
+ *
+ * Exported for tests: this is the one place in the SDK where a foreign
+ * program's TEXT decides which files a caller gets, so its assumptions are
+ * pinned by fixtures per tar variant rather than discovered in production.
+ *
+ * Two layouts are recognised, and both need the C locale to hold (listTarFiles
+ * pins LC_ALL/LANG — a localized BSD tar prints e.g. "janv." for January and
+ * matches neither):
+ *
+ *   GNU tar:              "-rw-r--r-- u/g 1234 2025-01-01 14:23 path/file"
+ *   BSD tar, recent:      "-rw-r--r--  1 u  g  1234 Mar  1 14:23 path/file"
+ *   BSD tar, >6 months:   "-rw-r--r--  1 u  g  1234 Jan  1  2020 path/file"
+ *
+ * Anything else throws TarListingParseError naming the line.
+ */
+export function parseTarListing(stdout: string): TarListingEntries {
+  const symlinkPaths: string[] = [];
   const dirPaths: string[] = [];
   const filePaths: string[] = [];
 
@@ -1164,19 +1203,17 @@ async function listTarFiles(archivePath: string): Promise<string[]> {
     if (typeChar !== "-" && typeChar !== "d" && typeChar !== "l") {
       throw new Error(`Archive contains unsupported entry type: "${typeChar}"`);
     }
-    // Extract path from verbose tar output.
-    // GNU tar:            "2025-01-01 14:23 path"     → match HH:MM
-    // BSD tar (recent):   "Mar  1 14:23 path"         → match HH:MM
-    // BSD tar (>6 months): "Jan  1  2020 path"        → match Mon DD YYYY
-    // For symlinks, strip " -> target" suffix.
+    // The path is whatever follows the timestamp column. Time-of-day first
+    // (both tars use it for recent entries), then BSD's year form.
     const pathMatch = line.match(/\d{2}:\d{2}\s+(.+)/)
       ?? line.match(/[A-Z][a-z]{2}\s+\d{1,2}\s+\d{4}\s+(.+)/);
-    if (!pathMatch) continue;
+    if (!pathMatch) throw new TarListingParseError(line);
     let entryPath = pathMatch[1];
     if (typeChar === "l") {
+      // "link -> target": the target is the archive's business, not ours.
       const arrowIdx = entryPath.indexOf(" -> ");
       if (arrowIdx !== -1) entryPath = entryPath.slice(0, arrowIdx);
-      symlinkPaths.add(entryPath);
+      symlinkPaths.push(entryPath);
     } else if (typeChar === "d") {
       dirPaths.push(entryPath.replace(/\/$/, ""));
     } else {
@@ -1184,11 +1221,37 @@ async function listTarFiles(archivePath: string): Promise<string[]> {
     }
   }
 
+  return { filePaths, dirPaths, symlinkPaths: [...new Set(symlinkPaths)] };
+}
+
+/**
+ * List regular files inside a tar.gz archive with entry type validation.
+ *
+ * Uses `tar -tvzf` (verbose) for type checking and path listing. Allows
+ * regular files ('-'), directories ('d'), and symlinks ('l') but only returns
+ * paths of regular files. Symlinks are allowed to exist in the archive (needed
+ * for sandbox environments) but excluded from the file list to prevent
+ * symlink-following attacks in downloadFiles().
+ */
+async function listTarFiles(archivePath: string): Promise<string[]> {
+  await ensureTarAvailable();
+
+  // Single tar process — verbose output contains both type info and paths.
+  // Uses execFileAsync (no shell) for cross-platform safety.
+  //
+  // TAR_LISTING_ENV pins the locale — see its own comment.
+  const { stdout } = await execFileAsync(
+    "tar", ["-tvzf", archivePath],
+    { maxBuffer: TAR_MAX_BUFFER, env: { ...process.env, ...TAR_LISTING_ENV } }
+  );
+
+  const { filePaths, dirPaths, symlinkPaths } = parseTarListing(stdout);
+
   // Validate ALL entry paths — not just regular files.
   // Directories and symlinks are extracted by downloadCheckpoint, so their
   // paths must also be free of traversal (../, absolute, null bytes).
   assertSafePaths(dirPaths);
-  assertSafePaths([...symlinkPaths]);
+  assertSafePaths(symlinkPaths);
   return assertSafePaths(filePaths);
 }
 
