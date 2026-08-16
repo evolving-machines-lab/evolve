@@ -248,6 +248,22 @@ export interface ToolCall {
   toolCallId: string;
   /** Human-readable title (e.g., "`npm install`", "Read /path/file.ts") */
   title: string;
+  /**
+   * The harness-native tool name, verbatim (e.g. "Bash",
+   * "mcp__mcp-server__get_secret").
+   *
+   * DELIBERATE EXTENSION BEYOND ACP. ACP's ToolCall has no name field: it
+   * describes `title` (for humans) and `kind` (for icons), both lossy. A
+   * trajectory consumer needs the identifier the model actually called, and
+   * every MCP tool collapses to kind "other" — so an ATIF trajectory built
+   * from these events could only ever report "other" as its function_name.
+   * We add the name rather than re-deriving it from `title`, because titles
+   * are formatted per tool and are not round-trippable.
+   *
+   * Optional so old traces (and any parser path that genuinely has no name)
+   * stay valid; consumers should fall back to `kind`.
+   */
+  toolName?: string;
   /** Tool category for UI grouping */
   kind: ToolKind;
   /** Execution status */

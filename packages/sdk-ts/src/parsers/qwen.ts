@@ -444,6 +444,7 @@ export function createQwenParser() {
       sessionUpdate: "tool_call",
       toolCallId: toolId,
       title,
+      toolName,
       kind,
       status: "pending",
       rawInput: input,

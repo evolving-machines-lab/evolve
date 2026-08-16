@@ -134,6 +134,14 @@ export function createCodexParser() {
           sessionUpdate: "tool_call",
           toolCallId: itemId,
           title: `${item.server}: ${item.tool}`,
+          // Codex is the one harness that splits an MCP name across two wire
+          // fields (server + tool) instead of sending one string. We rejoin
+          // them as mcp__<server>__<tool> — the exact literal Claude Code puts
+          // on the wire for the same tool — so a trajectory reports one name
+          // per tool regardless of which harness ran it. Exact-match
+          // consumers (Harbor's trajectory_tool_used compares function_name
+          // by string equality) would otherwise need per-harness spellings.
+          toolName: `mcp__${item.server}__${item.tool}`,
           kind: "other" as ToolKind,
           status: "in_progress",
           rawInput: item.arguments,
@@ -148,6 +156,8 @@ export function createCodexParser() {
           sessionUpdate: "tool_call",
           toolCallId: itemId,
           title: item.command ? `\`${item.command}\`` : "Execute Command",
+          // Codex names non-MCP actions by item type, not by a tool name field.
+          toolName: "command_execution",
           kind: "execute" as ToolKind,
           status: "in_progress",
           rawInput: { command: item.command },
@@ -162,6 +172,7 @@ export function createCodexParser() {
           sessionUpdate: "tool_call",
           toolCallId: itemId,
           title: `Search: ${item.query ?? ""}`,
+          toolName: "web_search",
           kind: "fetch" as ToolKind,
           status: "in_progress",
           content: [],
@@ -281,6 +292,7 @@ export function createCodexParser() {
           sessionUpdate: "tool_call",
           toolCallId: itemId,
           title,
+          toolName: "file_change",
           kind: "edit" as ToolKind,
           status: item.status === "completed" ? "completed" : "failed",
           content: changes.map((c) => ({
@@ -299,6 +311,7 @@ export function createCodexParser() {
           sessionUpdate: "tool_call",
           toolCallId: itemId,
           title: `Search: ${item.query ?? ""}`,
+          toolName: "web_search",
           kind: "fetch" as ToolKind,
           status: "completed",
           content: [],

@@ -272,7 +272,10 @@ export function createOpenCodeParser(): (jsonLine: string) => OutputEvent[] | nu
 
     const callId = typeof part.callID === "string" ? part.callID : "";
     if (callId.length === 0) return [];
-    const toolName = typeof part.tool === "string" ? part.tool.toLowerCase() : "";
+    // Keep the wire spelling: the lowercased form below is only for matching
+    // tool kinds, but an MCP name like mcp__Sentry__getIssue is case-sensitive.
+    const nativeToolName = typeof part.tool === "string" ? part.tool : "";
+    const toolName = nativeToolName.toLowerCase();
     const state = typeof part.state === "object" && part.state ? part.state : {};
     const input = typeof state.input === "object" && state.input ? state.input : {};
     const status = state.status;
@@ -288,6 +291,7 @@ export function createOpenCodeParser(): (jsonLine: string) => OutputEvent[] | nu
       sessionUpdate: "tool_call",
       toolCallId: callId,
       title,
+      toolName: nativeToolName,
       kind,
       status: "pending",
       rawInput: input,

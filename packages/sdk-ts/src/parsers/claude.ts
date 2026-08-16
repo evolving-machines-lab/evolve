@@ -180,6 +180,9 @@ export function createClaudeParser() {
               toolCallId: chunk.id,
               status: "pending",
               ...toolInfo,
+              // After the spread: the wire name is authoritative, and
+              // toolInfoFromToolUse only derives display fields from it.
+              toolName: chunk.name,
             };
           }
           break;

@@ -345,6 +345,7 @@ function handleToolUse(
     sessionUpdate: "tool_call",
     toolCallId,
     title,
+    toolName: name,
     kind,
     status: "pending",
     rawInput: input,

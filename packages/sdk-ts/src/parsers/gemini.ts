@@ -155,6 +155,7 @@ export function createGeminiParser(): (jsonLine: string) => OutputEvent[] | null
       sessionUpdate: "tool_call",
       toolCallId: toolId,
       title,
+      toolName,
       kind,
       status: "pending",
       rawInput: params,
