@@ -1,0 +1,276 @@
+# =============================================================================
+# Image refresh — from "a maintainer changed the image" to "users have it",
+# with no human step in between.
+# =============================================================================
+#
+# WHAT EACH KIND OF USER GETS, AND WHEN. The four consumers of this image do
+# not move the same way, and pretending they do is what used to leave one of
+# them behind:
+#
+#   E2B              rebuilt in place here. The alias `evolve-all` resolves to
+#                    the newest successful build, so E2B users are moved when
+#                    this workflow finishes. Nothing to release.
+#   managed Daytona  repointed here (see the refresh script). Managed users are
+#                    moved when this workflow finishes. Nothing to release.
+#   direct Daytona   default snapshot name is `evolve-all-c-<12hex>`, which
+#                    comes from a constant compiled into the published package.
+#                    They move on the NEXT npm release. This workflow pre-builds
+#                    that snapshot so it is warm when they arrive.
+#   Modal            default image ref carries the same constant. Same story:
+#                    they move on the next npm release.
+#
+# So steps c/d below finish the job for two providers, and the PR in step e is
+# what eventually finishes it for the other two.
+#
+# TRIGGERS
+#   push to main touching assets/docker/** or assets/e2b/**
+#                    the normal path: a maintainer edited the image.
+#   weekly cron      the freshness backstop. It does NOT bump the tag — same
+#                    inputs still derive the same tag, and re-pushing an
+#                    immutable tag with different content is exactly what the
+#                    content-addressing exists to prevent. What it does is
+#                    rebuild the E2B template (which reinstalls the @latest
+#                    CLIs, so E2B users get genuinely newer tools) and heal any
+#                    drift in the Daytona snapshots — a snapshot that Daytona
+#                    deactivated after two idle weeks, or a platform name left
+#                    on an older release.
+#   workflow_dispatch
+#                    force_refresh: the only way to get a NEW image out of an
+#                    unchanged Dockerfile. It rewrites assets/docker/
+#                    refresh-stamp, a real build input that the Dockerfile
+#                    COPYs into the image, so the derived tag moves honestly
+#                    rather than by faking an edit. Use it to pick up new
+#                    upstream CLI releases.
+#                    dry_run: report what every step would do, change nothing.
+
+name: Image refresh
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'assets/docker/**'
+      - 'assets/e2b/**'
+  schedule:
+    # Mondays, 06:17 UTC. Off the hour so it does not queue behind everyone
+    # else's midnight cron.
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      force_refresh:
+        description: 'Bump the refresh stamp so a new image tag is derived and everything rebuilds from today''s upstream tools'
+        type: boolean
+        default: false
+      dry_run:
+        description: 'Report what each step would do and change nothing'
+        type: boolean
+        default: false
+
+# One refresh at a time, and never cancel one midway: a cancelled run can leave
+# the platform snapshot deleted and not yet rebuilt.
+concurrency:
+  group: image-refresh
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh:
+    name: Refresh evolve-all everywhere
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      # persist-credentials: false — third-party install scripts run in this job
+      # (npm ci, and the image build itself), and the workflow token should not
+      # be sitting in .git/config while they do. The PR step at the end pushes
+      # with an explicit, short-lived remote URL instead.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # -----------------------------------------------------------------------
+      # (a) THE CONTENT VERSION
+      # -----------------------------------------------------------------------
+
+      # force_refresh is the CODED force: the stamp is an ordinary file in the
+      # docker build context, so image-digest.ts already hashes it, and the
+      # Dockerfile COPYs it to /etc/evolve-image-refresh so it is real image
+      # content. The writer exits non-zero if the stamp did not actually move.
+      - name: Bump the refresh stamp
+        if: inputs.force_refresh == true
+        run: npx tsx assets/docker/write-refresh-stamp.ts "workflow run ${{ github.run_id }} attempt ${{ github.run_attempt }}"
+
+      - name: Derive the image version
+        id: version
+        run: |
+          set -euo pipefail
+          npx tsx assets/docker/generate-image-version.ts
+          # Read the version back out of the constant the generator just wrote,
+          # with the same regex the coherence test uses — no dependence on the
+          # generator's log wording.
+          version="$(node -e "
+            const s = require('fs').readFileSync('assets/docker/image-version.ts', 'utf8');
+            const m = /EVOLVE_IMAGE_VERSION\s*=\s*'([^']+)'/.exec(s);
+            if (!m) process.exit(1);
+            process.stdout.write(m[1]);
+          ")"
+          if [ -z "$version" ]; then
+            echo "::error::Could not derive the image version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "image=evolvingmachines/evolve-all:$version" >> "$GITHUB_OUTPUT"
+          echo "Derived $version"
+          # Did generation change the checked-in constants? Only a stamp bump
+          # (or a Dockerfile edit pushed without regenerating) can do that.
+          if git diff --quiet -- assets/docker/image-version.ts packages/modal/src/image-version.ts packages/daytona/src/image-version.ts; then
+            echo "constants_changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "constants_changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # -----------------------------------------------------------------------
+      # (b) DOCKER HUB — build and push the derived tag if it is not there yet
+      # -----------------------------------------------------------------------
+
+      # Hard failure, not the publish workflow's warn-and-skip: that one can
+      # fall back on "an operator will push it", while this workflow's whole
+      # purpose is that no operator has to. Everything after this step assumes
+      # the image is on Docker Hub.
+      - name: Check Docker Hub credentials
+        if: inputs.dry_run != true
+        env:
+          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -z "${DH_USER:-}" ] || [ -z "${DH_TOKEN:-}" ]; then
+            echo "::error::DOCKERHUB_USERNAME/DOCKERHUB_TOKEN are not configured — the image cannot be pushed and the Daytona/E2B steps would ship a stale image."
+            exit 1
+          fi
+
+      - name: Log in to Docker Hub
+        if: inputs.dry_run != true
+        env:
+          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: echo "$DH_TOKEN" | docker login --username "$DH_USER" --password-stdin
+
+      # build.ts stays the single source of the tag/push rules — this workflow
+      # never reimplements them. It is idempotent by design: when the derived
+      # tag is already on Docker Hub the build is skipped and only :latest is
+      # realigned server-side, so an unchanged weekly run costs one API call.
+      - name: Build and push the image
+        if: inputs.dry_run != true
+        run: npx tsx assets/docker/build.ts
+
+      - name: Report what would be pushed
+        if: inputs.dry_run == true
+        run: echo "DRY RUN — would run 'npx tsx assets/docker/build.ts' for ${{ steps.version.outputs.image }}"
+
+      # -----------------------------------------------------------------------
+      # (c) E2B — rebuilt in place; users move the moment this lands
+      # -----------------------------------------------------------------------
+
+      # build.ts verifies against E2B's own record afterwards (a NEW build id
+      # whose status is `ready`), because the builder resolving is only the
+      # builder's opinion — and because this script used to exit 0 on failure.
+      - name: Rebuild the E2B template
+        if: inputs.dry_run != true
+        env:
+          E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
+        run: npx tsx assets/e2b/build.ts
+
+      # -----------------------------------------------------------------------
+      # (d) DAYTONA — versioned snapshot, then the managed platform name
+      # -----------------------------------------------------------------------
+
+      # Daytona has no rename and no in-place update for a snapshot, so the
+      # stable managed name can only be moved by delete-then-create. The script
+      # builds the versioned snapshot FIRST and refuses to continue unless it
+      # goes active, so the release image is proven in this org before anything
+      # live is deleted, and it rolls the name back to the previous image if the
+      # rebuild fails. See its header for the full reasoning and citations.
+      - name: Repoint managed Daytona
+        env:
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+        run: npx tsx assets/daytona/refresh-platform-snapshot.ts ${{ inputs.dry_run == true && '--dry-run' || '' }}
+
+      # -----------------------------------------------------------------------
+      # (e) THE PR — only Modal and direct Daytona still need a release
+      # -----------------------------------------------------------------------
+
+      - name: Open a PR for the regenerated constants
+        if: steps.version.outputs.constants_changed == 'true' && inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          IMAGE: ${{ steps.version.outputs.image }}
+        run: |
+          set -euo pipefail
+          branch="image-refresh/${VERSION}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add assets/docker/refresh-stamp \
+                  assets/docker/image-version.ts \
+                  packages/modal/src/image-version.ts \
+                  packages/daytona/src/image-version.ts
+          git commit -m "chore(image): refresh evolve-all to ${VERSION}"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$branch"
+          {
+            echo "Automated by \`.github/workflows/image-refresh.yml\` (run ${GITHUB_RUN_ID})."
+            echo
+            echo "The image \`${IMAGE}\` is already built and pushed to Docker Hub."
+            echo
+            echo "**Already moved — no release needed**"
+            echo
+            echo "- **E2B** — the \`evolve-all\` template was rebuilt in place and verified ready against the E2B API. E2B users are on it now."
+            echo "- **Managed Daytona** — the platform snapshot \`evolve-all\` was repointed at this image and verified active. Managed users are on it now."
+            echo
+            echo "**Waiting on this PR**"
+            echo
+            echo "- **Modal** and **direct Daytona** resolve their defaults from the constants in this diff, and those ship compiled into the published packages. They move on the next npm release, not on this merge."
+            echo
+            echo "The versioned Daytona snapshot \`evolve-all-${VERSION}\` is already pre-built, so direct users get a warm snapshot instead of a first-use build."
+          } > /tmp/image-refresh-pr-body.md
+          # The PR is attempted, not assumed. The organization currently blocks
+          # "Allow GitHub Actions to create and approve pull requests", which
+          # makes `gh pr create` fail with the branch already pushed — and the
+          # image already live everywhere it does not need a release. Failing
+          # the job there would report a broken refresh that in fact succeeded,
+          # so this degrades to a one-click link instead. Turn the org setting
+          # on and this branch stops being needed.
+          compare="https://github.com/${GITHUB_REPOSITORY}/compare/main...${branch}?expand=1"
+          if gh pr create \
+               --base main \
+               --head "$branch" \
+               --title "chore(image): refresh evolve-all to ${VERSION}" \
+               --body-file /tmp/image-refresh-pr-body.md
+          then
+            echo "### Image refreshed to \`${VERSION}\` — PR opened" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::Could not open the PR automatically. Branch '${branch}' IS pushed; open it at ${compare}"
+            {
+              echo "### Image refreshed to \`${VERSION}\` — PR needs one click"
+              echo
+              echo "Branch \`${branch}\` is pushed. GitHub Actions is not permitted to open pull requests in this organization, so open it here: [${compare}](${compare})"
+              echo
+              echo "E2B and managed Daytona users are already on this image. This PR only moves Modal and direct Daytona, and only at the next npm release."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Say what still needs a release
+        if: steps.version.outputs.constants_changed != 'true'
+        run: echo "Constants unchanged (${{ steps.version.outputs.version }}) — E2B and managed Daytona were refreshed in place; nothing to release."
