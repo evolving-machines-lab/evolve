@@ -288,7 +288,7 @@ async for item in evals.list(search='nightly'):
     print(item.id, item.job_name, item.status, item.stats.get('cost_usd'))
 ```
 
-`list(search=...)` is a server-side free-text filter over the job name and its dataset names. `stats` is the aggregate block, typed as `JobStats` — a `TypedDict`, so at runtime it is still the plain wire dict, read by key, and the class only teaches type checkers the keys: progress counters (cumulative, Harbor-style: errored trials are a subset of completed, cancelled a subset of errored — the disjoint breakdown is `trials.by_status`), token totals (`n_input_tokens` includes cache tokens; `n_cache_tokens` and `n_output_tokens` beside it), measured `cost_usd` — the whole model bill, with the judge share itemized beside it as `judge_cost_usd` (see [LLM judges](#llm-judges)) — and `evals` — per-(agent, model, dataset) statistics keyed `agent__model__effort__dataset` — the dataset ref is always the LAST `__` segment, which is where Harbor-compatible readers recover it. The effort segment is always there, inserted before the dataset: a declared effort stamps itself, an omitted one stamps the agent's default (`__high`, `__max`, …) — see [Agent arms](#agent-arms). A failed job says why on `failure`, as a `JobFailure(code, message)` — the same grammar an API error uses, under a different key so that "error means this request failed" stays true on a healthy read. In practice you will not see it fire: `FAILED` is a [reserved job status](#statuses) that nothing sets today; read `trials.by_status` for where a job actually went wrong.
+`list(search=...)` is a server-side free-text filter over the job name and its dataset names. `stats` is the aggregate block, typed as `JobStats` — a `TypedDict`, so at runtime it is still the plain wire dict, read by key, and the class only teaches type checkers the keys: progress counters (cumulative, Harbor-style: errored trials are a subset of completed, cancelled a subset of errored — the disjoint breakdown is `trials.by_status`), token totals (`n_input_tokens` includes cache tokens; `n_cache_tokens` and `n_output_tokens` beside it), measured `cost_usd` — the whole model bill, with the judge share itemized beside it as `judge_cost_usd` (see [LLM judges](#llm-judges)) — the two honesty counters `n_unmeasured_trials` and `n_unmeasured_judge_trials`, which say how many settled trials that total cannot account for because nobody measured their spend (a plain count, never None; 0 means every settled trial's spend was read, not that the total has stopped moving — a `'measured_provisional'` figure is still a floor), and `evals` — per-(agent, model, dataset) statistics keyed `agent__model__effort__dataset` — the dataset ref is always the LAST `__` segment, which is where Harbor-compatible readers recover it. The effort segment is always there, inserted before the dataset: a declared effort stamps itself, an omitted one stamps the agent's default (`__high`, `__max`, …) — see [Agent arms](#agent-arms). A failed job says why on `failure`, as a `JobFailure(code, message)` — the same grammar an API error uses, under a different key so that "error means this request failed" stays true on a healthy read. In practice you will not see it fire: `FAILED` is a [reserved job status](#statuses) that nothing sets today; read `trials.by_status` for where a job actually went wrong.
 
 ### pass@k
 
@@ -362,9 +362,9 @@ if trial.exception_info:                     # why it failed, when it did
           trial.exception_info.exception_message)  # untruncated in this response
 ```
 
-Every phase's wall-clock is a **start/stop pair**, never a duration: `environment_setup`, `agent_setup`, `agent_execution`, and `verifier` are each a `TimingInfo(started_at, finished_at)`, either bound `None` while the phase has not reached it. Durations you compute yourself keep their provenance — you always know which clock produced them.
+Every phase's wall-clock is a **start/stop pair**, never a duration: `environment_setup`, `agent_setup`, `agent_execution`, and `verifier` are each a `TimingInfo(started_at, finished_at)`, either bound `None` while the phase has not reached it. Durations you compute yourself keep their provenance — you always know which clock produced them. `verifier` is the verifier **command** window — the graded command alone, and not the work that prepared it — so read it against `verifier_timeout_sec` and nothing else.
 
-Three finer pairs sit beside those four and are **not** a partition of them — never sum the two sets. `queue_wait` is the time the trial sat claimable before a worker began it (for a retried trial it restarts at the retry's own backoff deadline, so a failed first attempt is never billed to the second attempt's wait; its open bound is a database clock and its close a worker clock, so a sub-second wait can read marginally negative — published raw rather than laundered). `harness_bundle` brackets fetching the agent's install bundle, and its companion `harness_bundle_cache_hit` tells you what the number means: `True` explains a pair of milliseconds, `False` on a pair of minutes is a real build this trial waited out (a miss that *built* also carries the upload that shares the result with the fleet; a trial that joined another's build, or fetched a ready result from the store, pays neither). `image_prepare` brackets readying the task's machine image on the provider — real work on E2B and Daytona, and **near-zero on Modal by design** (Modal does that work inside sandbox creation instead, where `environment_setup` records it), so never compare this field across providers raw. All three are additive: older readers that ignore them lose nothing.
+Four finer pairs sit beside the phase pairs and are **not** a partition of them — never sum the two sets. `queue_wait` is the time the trial sat claimable before a worker began it (for a retried trial it restarts at the retry's own backoff deadline, so a failed first attempt is never billed to the second attempt's wait; its open bound is a database clock and its close a worker clock, so a sub-second wait can read marginally negative — published raw rather than laundered). `harness_bundle` brackets fetching the agent's install bundle, and its companion `harness_bundle_cache_hit` tells you what the number means: `True` explains a pair of milliseconds, `False` on a pair of minutes is a real build this trial waited out (a miss that *built* also carries the upload that shares the result with the fleet; a trial that joined another's build, or fetched a ready result from the store, pays neither). `image_prepare` brackets readying the task's machine image on the provider — real work on E2B and Daytona, and **near-zero on Modal by design** (Modal does that work inside sandbox creation instead, where `environment_setup` records it), so never compare this field across providers raw. `shared_verify_setup` is the **shared-mode** verify's preparation — the judge key mint, the rewardkit bundle resolve and upload, the test-file uploads, the env write — and it ends exactly where `verifier` begins, so the two never overlap. It is published because its absence is what misled: that segment used to be reported inside `verifier`, which made a judge task whose setup ran for minutes look like a verifier command ignoring its own timeout. It is `None` on separate-mode trials (no such segment exists), on multi-step trials (which verify per step and report no trial-level verifier window), and on anything that settled before the pair was recorded — never a zero-length pair standing in for work that did not happen. All four are additive: older readers that ignore them lose nothing.
 
 > **Reading spend:** `spend_source` is the lane the figure came from, and only `'measured'` is final. `'measured_provisional'` is a real reading taken inside the gateway's asynchronous spend flush — an honest floor that a deferred pass later confirms or raises into `'measured'`. `'assumed_cap'` means nobody measured this trial's spend; the number it holds is zero — a placeholder, never an observation (the platform under-bills rather than publish an invented figure), and the deferred pass replaces it when a real reading lands. So a read taken shortly after settle can show `'measured_provisional'`, or `'assumed_cap'` with `$0` — treat anything but `'measured'` as not yet final. `agent_result.cost_usd is None` means the trial never ran — a queued or cancelled trial — and is not the same as `0`, which is a real measurement. `trial.max_trial_spend_usd` is the cap *this* trial's key carried, which can differ from the job's current cap on rows settled before a change. A [judge-enabled task](#llm-judges)'s verifier spends on its own key, itemized apart: `judge_result.cost_usd` with its own `judge_spend_source` lane (same three-lane rules), None on every trial where no judge ever ran — and `agent_result.cost_usd` stays the agent's alone, so the trial's whole bill is the sum.
 
@@ -902,7 +902,7 @@ A verifier can grade with a language model. The task asks for the credential the
 ANTHROPIC_API_KEY = "${ANTHROPIC_API_KEY}"
 ```
 
-Harbor resolves that template from the machine's own environment and hands the raw provider key into the sandbox. This platform honors the same task file without ever doing that: at verify start the trial mints a **distinct, short-lived gateway credential** — scoped to the requested key's model family only, capped with its own budget, revoked the moment scoring ends — and the requested variable resolves to it. The matching base-URL variable is set alongside automatically, so `litellm`-style clients (including Harbor's `rewardkit`, which is available offline in the verifier box — a `test.sh` running `uvx --from harbor-rewardkit… rewardkit /tests` works unchanged, with no network) call the platform's gateway without the task changing a line. The recognized templates are `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` and their base-URL companions (`ANTHROPIC_API_BASE`, `ANTHROPIC_BASE_URL`, `OPENAI_API_BASE`, `OPENAI_BASE_URL`); any other `${VAR}` template is refused at import — there is no host environment to resolve it from.
+Harbor resolves that template from the machine's own environment and hands the raw provider key into the sandbox. This platform honors the same task file without ever doing that: at verify start the trial mints a **distinct, short-lived gateway credential** — scoped to the requested key's model family only, capped with its own budget, revoked the moment scoring ends — and the requested variable resolves to it. The matching base-URL variable is set alongside automatically, so `litellm`-style clients (including Harbor's `rewardkit`, which is available offline in the verifier box — a `test.sh` running `uvx --from harbor-rewardkit… rewardkit /tests` works unchanged, with no network) call the platform's gateway without the task changing a line. The recognized templates are `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` and their base-URL companions (`ANTHROPIC_API_BASE`, `ANTHROPIC_BASE_URL`, `OPENAI_API_BASE`, `OPENAI_BASE_URL`), and each is honored only as the **entire** value — `"Bearer ${ANTHROPIC_API_KEY}"` is refused at import rather than delivered as a bare credential with the prefix dropped, so let the verifier add any prefix itself. Any other `${VAR}` template resolves to its declared default: `${JUDGE_MODEL:-o3-mini-2025-01-31}` imports as that model name, which is upstream's own fallback and is simply literal text here. That too is honored only as the **entire** value — `"prefix ${VAR:-x}"` is refused, because substituting the default into part of a value would drop the text around it. A non-judge template with **no** default (`${VLM_API_KEY}`) is refused at import — there is no host environment to resolve it from.
 
 Judge model selection is Harbor-exact: the platform never chooses a judge model. Your rubric names one exactly as it would under Harbor, and when it names nothing, `rewardkit`'s own library default (`anthropic/claude-sonnet-4-6`) applies — applied by the library inside the box, never injected by the platform; a verifier that names no model anywhere fails the same way it would on Harbor. Judge calls travel the gateway's normal provider routes on the trial's judge credential, whose model scope is the family of the key the task requested — `ANTHROPIC_API_KEY` admits Anthropic models, `OPENAI_API_KEY` admits OpenAI models — so a model outside the requested family is refused by the key, exactly as an agent's key refuses a model outside its arm. If your account [brings its own provider key](./01-getting-started.md#managed-byo-provider-keys), judge calls ride the same provider preference as every other call, pinned to your key's provider — the gateway can never swap your injected key for another vendor's.
 
@@ -922,6 +922,115 @@ job = await evals.start(
 From the CLI it is Harbor's own flag: `--ve REWARDKIT_JUDGE=claude-code --ve REWARDKIT_MODEL=anthropic/claude-sonnet-4-6`.
 
 The judge's money is measured at the gateway off its own key — never taken from anything the verifier reports — and itemized apart from the agent's everywhere: `judge_result` / `judge_spend_source` on the trial, `stats['judge_cost_usd']` on the job (a share of `stats['cost_usd']`, which is the whole bill). Works in both verifier modes. Judge-enabled tasks are not regradable yet — the regrade lane refuses them with a typed error instead of re-scoring without a judge.
+
+### Multi-step tasks
+
+A task can walk the agent through **ordered steps in one shared environment**. The layout is the task format's own: a `steps/` directory holds one sub-directory per step in place of the root `instruction.md`, `tests/` and `solution/`, and a `[[steps]]` entry in `task.toml` declares each step in order. `environment/` stays at the root — the environment is built once and shared, and the container filesystem persists from step to step, which is how later steps build on earlier work.
+
+```
+tasks/migrate-then-prove/
+├── task.toml                # [[steps]] entries, one per step, in order
+├── environment/             # built ONCE, shared by every step
+│   └── Dockerfile
+├── tests/                   # optional shared helpers every step's verifier can use
+└── steps/
+    ├── 01-migrate/
+    │   ├── instruction.md
+    │   ├── tests/           # this step's verifier files, merged over the shared tests/
+    │   └── workdir/         # optional files landed before the step; its setup.sh runs first
+    └── 02-prove/
+        ├── instruction.md
+        └── tests/
+```
+
+Each step carries its own instruction, its own verifier (`tests/` merged over the task-level `tests/`), an optional `workdir/` upload whose reserved `setup.sh` runs before the step's agent starts, its own [readiness healthcheck](#healthchecks-and-the-agent-user), its own `[steps.agent]` / `[steps.verifier]` `timeout_sec` overriding the task-level values, its own `[steps.verifier].env` (the [judge-credential templates](#llm-judges) included), and its own per-step `artifacts` list. The step's verifier runs when the step ends, so a multi-step trial produces one verifier result per executed step.
+
+```toml
+multi_step_reward_strategy = "mean"    # "mean" (default) or "final"
+
+[[steps]]
+name = "01-migrate"
+min_reward = 0.5                       # score below this and the trial stops here
+
+[[steps]]
+name = "02-prove"
+
+[steps.agent]
+timeout_sec = 600                      # this step's override of the task-level timeout
+```
+
+Two declarations shape the score. **`multi_step_reward_strategy`** rolls the per-step results into the trial's reward: `"mean"` — the default — takes per-key means across the steps that produced a verifier result, and `"final"` takes the last executed step's result verbatim. **`min_reward`** on a step ends the trial early when the step under-scores: a number gates the primary `reward` key, a map gates each named key. Separately from both, a step that raises without producing a verifier result ends the trial where it stands — later steps never run — and a step whose healthcheck fails does the same.
+
+What each step recorded lands on the trial as `step_results`, in execution order: the step's name, its verifier result, its timing pairs, and its exception when the step raised. A trial that stopped early carries only the steps that ran; a single-step trial carries null there — "this trial has no steps", never "it ran zero of them" ([Types](#types)). An [automatic retry](#automatic-retries) restarts the whole trial from the first step in a fresh environment — there is no partial-step resume.
+
+Three per-step declarations are refused at import with the reason named rather than approximated: a per-step `user`, per-step network declarations, and a per-step verifier environment or mode — every step inherits the task-level [verifier mode](#verifier-modes) and runs against the task's one environment. And the two halves of the layout must agree, both ways: `[[steps]]` without a `steps/` directory, a `steps/` directory without `[[steps]]`, and a `steps/` sub-directory no entry declares are each named at import — a step nobody declared must not sit on disk looking like it runs.
+
+### Task environment variables
+
+A task's `[environment.env]` table is honored, and its two value kinds do different things:
+
+```toml
+[environment.env]
+APP_MODE = "ci"                        # literal — lands in the box as written
+GITHUB_TOKEN = "${GITHUB_TOKEN}"       # template — a secret THIS job must attach
+LOG_LEVEL = "${LOG_LEVEL:-info}"       # template with fallback — the attached value, else "info"
+```
+
+A **literal** value is delivered into the agent's environment exactly as written — it is dataset content, readable by everyone the dataset is published to, so it must never be a secret. A **template** — `${VAR}`, the whole value, nothing around it — is a request for a secret. The task format resolves templates from the environment of the machine that launched the run; a managed trial has no such machine, and the obvious substitute — reading `VAR` from your vault — is one this platform deliberately refuses. A dataset and the job running it routinely belong to **different people**: a public `task.toml` could declare `X = "${AWS_SECRET_ACCESS_KEY:-none}"`, a vault lookup would hand that dataset's author your live credential, and the fallback would hide that it ever happened. So a template resolves only against the secrets **attached to the job** — the `secrets` slot on the job body ([Shape and ceilings](#shape-and-ceilings)), the same [env secrets](#env-secrets) the CLI attaches with `--secret`. Attaching is one deliberate act per secret per job — this platform's translation of exporting the variable in your own shell.
+
+The mechanics: a template matches an attached secret by its **env name** — the attachment's `as`, defaulting to the secret's stored name — so `as` lets a vault entry called anything satisfy a task's `${GITHUB_TOKEN}`. `${VAR:-default}` is the attached value when the job carries one and the literal default when it does not — safe under attachment, because the fallback can only ever substitute for a secret you chose not to attach. A job that cannot satisfy a selected task's templates is refused at create as the typed `secret_not_attached`, naming the variable — never accepted and then failed per-trial. And only a whole-value template is a reference — the format's own rule. A value that embeds `${...}` inside a larger string is refused at import: this platform does not interpolate inside strings, and storing the value as a literal would deliver the template text itself into the box. Write the reference as the whole value, or state a literal.
+
+One delivery boundary to know: the table is delivered when the agent starts, not at container creation, so the agent and every process it spawns read the variables — a build step or an image entrypoint does not. And a [readiness healthcheck](#healthchecks-and-the-agent-user) sees the table only in one task shape — the split is spelled out in that section.
+
+### MCP servers
+
+A task can hand its agent MCP tools: `[[environment.mcp_servers]]` entries are registered into the harness's **native** MCP configuration alongside any servers the arm itself carries, so the agent discovers them the way that harness discovers any MCP server.
+
+```toml
+[[environment.mcp_servers]]
+name = "docs-search"
+transport = "streamable-http"          # or "sse" (the default when omitted); "http" is accepted as a spelling
+url = "http://mcp-server:8000/mcp"     # a compose service — reachable with no egress
+
+[[environment.mcp_servers]]
+name = "sqlite"
+transport = "stdio"                    # launched inside the box by the harness
+command = "uvx"
+args = ["mcp-server-sqlite", "--db-path", "/app/data.db"]
+```
+
+A `stdio` server declares a `command` (and `args`); the harness launches it as a child process, so it inherits the task's [`[environment.env]`](#task-environment-variables) variables — there is deliberately no `env` field on a server, because one door into the box's environment is enough. A remote server (`sse`, `streamable-http`) declares an `http`/`https` `url`; a credential written into the URL's authority (`user:token@host`) is refused at import, because a `task.toml` is published content and a secret in it is a published secret.
+
+A remote server must also be **reachable under the task's own declarations**, and that is checked at import rather than discovered as a dead tool at run time. Three shapes pass: a URL addressing the agent's own container (the `localhost` family — something the task's image starts itself), a URL addressing a [compose service](#what-runs) by name (resolved inside the sandbox, no egress involved), and a public host the task's [network policy](#network-modes) admits — `public`, or an `allowlist` naming the host (IPv4 and CIDR entries match IP-addressed URLs). Anything else is refused naming the server and the contradiction — an agent that meets a dead endpoint scores as if the tool simply did not help, which is the silent failure the refusal exists to prevent. One limit is named rather than papered over: a `stdio` command's own network use cannot be read off a string at import, so a stdio server that fetches itself from a package index (`npx …`, `uvx …`) imports under a `no-network` task and then fails at run time when the sealed box refuses its download — bake such servers into the task image.
+
+### Healthchecks and the agent user
+
+Two `task.toml` declarations govern the box the agent lands in — one about when it is ready, one about who the agent is inside it.
+
+**`[environment.healthcheck]`** keeps a slow-starting environment from meeting the agent too early: the command runs after the environment starts and before the agent is installed, with Docker `HEALTHCHECK` semantics, and the agent starts only once it exits `0`.
+
+```toml
+[environment.healthcheck]
+command = "curl -fsS http://localhost:8000/health"
+interval_sec = 5           # every field below command is optional; these are the defaults
+timeout_sec = 30
+start_period_sec = 0
+start_interval_sec = 5
+retries = 3
+```
+
+Exit `0` ends the wait immediately. Inside `start_period_sec` a failure does not count toward `retries` and the next attempt waits `start_interval_sec`; after that grace, consecutive failures count and attempts are spaced by `interval_sec`, each attempt bounded by `timeout_sec`. Reaching `retries` fails the trial **before any agent spend** — a box that never became ready surfaces as an infrastructure failure with the check named, never as a zero that looks like a wrong answer. The whole gate is additionally bounded by a budget derived from the declared numbers, so a broken check cannot hang a trial. A [multi-step task](#multi-step-tasks) may declare one per step as well — checked after the step's `setup.sh`, before the step's agent.
+
+One visibility rule before writing a check that reads your own variables: whether the command sees [`[environment.env]`](#task-environment-variables) depends on the task's shape. On a **multi-container** task the literal values are visible — they ride the compose bring-up the check executes under. On a **single-container** task they are not: the table is delivered with the agent, which does not exist yet when the check runs. Template (`${VAR}`) values are visible to no healthcheck in any shape — a secret is never written where it could outlive the credential seal. Point the check at the service, not at the env table.
+
+**`[agent] user`** declares who the agent runs as:
+
+```toml
+[agent]
+user = "dev"
+```
+
+The agent — and only the agent — runs as that user: `whoami` inside the agent's session prints `dev`, while everything the platform does around it (environment start, verification, artifact collection) keeps the box's default. The user must exist in the task's image — create it in the Dockerfile (`RUN useradd -m dev`) — and a preflight proves the account, its home, and the switch itself before the agent starts, so a missing user is a typed infrastructure refusal before any model spend, never an agent that silently ran as root against a task that asked for someone else. Declare a **name**, not a bare uid — a numeric uid is refused at import so the agent gets its own home. Omitted, `root`, and `0` all mean the default. Two neighboring declarations stay refusals with the reason named: `[verifier] user` (the verifier always runs as root here), and an `environment/Dockerfile` whose final stage drops to a non-root `USER` — the platform's boxes boot as root, so that image would run more privileged than it declares; say who the *agent* is with `[agent] user` instead.
 
 ### Compute sizing
 
@@ -989,6 +1098,14 @@ Because GPU compute is platform-paid, the fleet runs a **GPU concurrency cap**: 
 
 **What the GPU time was worth.** Every settled GPU trial states its compute as an estimate: the measured sandbox lifetime (observed boot to observed kill) multiplied by a versioned rate card — the provider's own published list price per GPU-second, with the pricing page and the date it was read recorded on the figure. It arrives as `trial.gpu_cost` (a dict with the wire's own keys) and, summed per job, as `stats['gpu_cost_usd']`, and it is deliberately a **separate labeled figure**: it is never added into `agent_result.cost_usd` or `stats['cost_usd']`, which are metered model spend. When no honest number exists the platform says so instead of guessing — `gpu_cost['unpriced_reason']` names why (a run whose worker died has no measured lifetime; a task that accepts *any* GPU type has no single list price) and `estimate_usd` stays None. A GPU trial that provably never booted a sandbox reports a real `estimate_usd: 0`. Non-GPU trials carry no `gpu_cost` at all — CPU sandbox time is not priced today. The CLI shows the same pair: `evolve trial show` prints a `gpu compute (est.)` row with the full audit sentence, and `evolve job show` prints the job's summed estimate beside — never inside — its `spent` row.
 
+### Not yet supported
+
+Four task shapes the platform does not run today. The first and the last are **refused at import**, with the declaration and the reason named, because a task that runs without them would score a zero that looks exactly like a wrong answer. The middle two are shapes nothing in the task package identifies, so they import and run — the limit is recorded here rather than enforced, and it is a real one.
+
+- **Services started by the image's `ENTRYPOINT`.** The task image is booted through the sandbox provider's own init and every later command arrives by `exec`, so an `ENTRYPOINT` that starts a database, an HTTP API, or any other daemon never runs, and the agent finds nothing listening. This is refused at import from **all three** places the declaration can live. Two are read from the task's own `environment/Dockerfile`: an `ENTRYPOINT`/`CMD` written in its final stage, and — the one authors hit by accident — an `ENTRYPOINT` written in an *earlier* build stage that the final stage inherits by declaring none of its own (`FROM base` after a stage that set one; Docker carries it into the built image, and resetting it with `ENTRYPOINT []` in the final stage is the fix). The third is read from the image's own configuration in its registry: a prebuilt `docker_image`'s entrypoint, or the one a built task inherits from its base image (`FROM postgres:16` declaring nothing itself — a `${BASE}` argument with a default is resolved and checked the same way). Keep-alive forms import normally: `["sleep", "infinity"]`, a shell with or without login flags, `["tail", "-f", "/dev/null"]`, an empty `ENTRYPOINT`, and any of these behind a `tini`/`dumb-init` shim. An inherited **`CMD`** is deliberately not judged — every keep-alive convention replaces `CMD`, upstream Harbor's included, so `FROM python:3.12-slim` (whose `CMD` is `python3`) is not a service task. Declare a real service in `environment/docker-compose.yaml`, where every service is started for real. If the registry cannot be read — an unreachable host, a private image, or an image published for no `linux/amd64` platform — the import fails naming the image and the step, because "we could not look" and "there is nothing there" are not the same answer. (Upstream Harbor behaves the same way on the three providers this platform runs on, and offers one affordance we do not: a `keepalive` environment argument that lets an author opt back into the image's own entrypoint on Modal.)
+- **Computer-use and desktop tasks.** Nothing in the task package marks a task as computer-use: upstream it is a run-time choice of agent and environment, not a task-config field, and a category or tag is free-form author text. A task whose instruction assumes a desktop imports and runs, and a coding agent with no display scores zero on it. Only the pieces such a task usually also declares are refused by name — `[environment].os` other than Linux.
+- **Trajectory seeding.** Seeding an agent's session from a recorded trajectory before it starts is a run-time flag upstream, not a task property, and a task that expects a seeded session carries no marker saying so (a trajectory file shipped inside `environment/` is a demonstration artifact, which upstream's own examples say in their `task.toml`). Such a task imports, runs with an empty session, and scores what an unseeded agent earns.
+- **Verifier scripts whose PEP-723 header needs a package index.** A `# /// script` header asks `uv` to build the script's environment at verify time. When the verifier runs in a sealed box — a `separate` verifier always, or a `shared` verifier on a `no-network` task — there is no index to reach, and the refusal names what the box can actually resolve: a task that requests an LLM-judge credential gets an offline bundle carrying `harbor-rewardkit` and its `litellm` dependency, and a task that requests no judge gets no bundle at all and can resolve nothing. Two cases are deliberately left alone: a `shared` verifier on a task declaring `allowlist` or `public`, which granted the network its header needs and resolves exactly as it does upstream; and a `tests/` tree where no file invokes `uv run` or `uvx`, where the header is inert metadata that plain `python3` ignores.
 ---
 
 ## Bring your own dataset
@@ -1103,13 +1220,15 @@ A **git** publish still requires both: the repository is only cloned server-side
 What happens next:
 
 - **All-or-nothing parse.** Every task is parsed before anything lands; one bad task fails the whole publish, with each failure named in `failure.failures`. No partial corpus ever exists.
-- **Strict by design.** Every task-config field is either honored or the publish is refused with the field and reason named — a task never silently runs on weaker semantics than it declares. GPU declarations (`gpus`, `gpu_types`) are honored — see [GPU tasks](#gpu-tasks); a GPU count no provider can allocate is refused at import with the numbers. Notably not yet supported: multi-step tasks (`step_results` is a declared placeholder on the wire, always None today).
+- **Strict by design.** Every task-config field is either honored or the publish is refused with the field and reason named — a task never silently runs on weaker semantics than it declares. GPU declarations (`gpus`, `gpu_types`) are honored — see [GPU tasks](#gpu-tasks); a GPU count no provider can allocate is refused at import with the numbers. Multi-step `[[steps]]` tasks, `[environment.env]` variables, MCP servers, readiness healthchecks, and `[agent] user` all import and run — see [What runs](#what-runs).
 - **Environments are prepared at import.** Dockerfile-defined environments are built once; multi-container service images are resolved and pinned so runs are reproducible.
 - **The activation gate certifies every task** before the version goes live:
   - **gold** — the task's reference solution (`solution/`) is pushed through the real agent-side + verifier path and must score exactly `1.0`. Proof the task is solvable as written.
   - **no-op** — an empty submission goes straight to the verifier and must *not* score `1.0`. A task a do-nothing agent passes measures nothing.
 
 `COMPLETED` is the import's terminal success: the corpus landed as a dataset version, visible in the catalog (`catalog.get('my-swe@1.0')`) in state `VALIDATING`. The gate then runs, and a version that passes it in full reaches `READY` — the one state that accepts jobs — and becomes the dataset's active version in the same step. A publish is therefore finished when its gate passes: nothing else to call, and `{'name': 'my-swe'}` in a job already resolves to what you just published. A version that fails its gate terminally lands in state `FAILED`, with the reason attached: every version row carries a `gate` field — a `DatasetVersionGate` with `status`, `attempts`, `code`, `message`, `failed_tasks` (a list of `DatasetVersionGateFailedTask` naming each ineligible task with the gate's own `outcome` and `reasons`, the first 25), and `failed_task_count` — the true total, so a gate that failed more than 25 tasks is never under-reported by the list's length — and `evolve dataset show` prints a failed gate as its own line (`version 1.0 activation gate FAILED: <the server's reason>`) followed by one indented line per failed task (`  starter-task: gold run produced no usable score …`), so a dead publish is never mistaken for one still validating and the cause is on the page, not just the count. The failure changes nothing else — the dataset keeps serving whatever it served before. `evals.start()` against any other state is rejected with a `409 version_not_ready` naming it.
+
+One corpus shape skips the gate honestly: a publish whose tasks ship **no reference solutions at all**. There is nothing to prove — no gold solution exists, so no gold run is possible — and Harbor publishes solution-less tasks with zero ceremony, so this platform does too: shortly after the import completes, the version activates on its own with its gate stamped `UNPROVEN` and the reason recorded. Never `PASSED`, because nothing passed; never `FAILED`, because nothing failed — the third word exists so a proof that ran can never be confused with one that could not. The version reaches `READY` and serves jobs like any other. The label is visible everywhere the gate is: the version row's `gate.status` reads `UNPROVEN` with the stamp beside it (`unproven: { reason, at }` on the wire), and `evolve dataset show` prints it as its own line — `version 1.0 gate UNPROVEN: no reference solutions to run`. The lane is all-or-nothing: a corpus where only *some* tasks carry a `solution/` runs the real gate, and the tasks without solutions fail it — a partial archive is a failed proof, never half of an unproven one.
 
 The gate is queued work, and the queue says so: within seconds of the import completing, the version's `gate` field shows `PENDING`. Each worker proves one version's gate at a time, and a single gate run can take minutes to hours of real sandbox work, so a `PENDING` gate may wait while another version's gate finishes ahead of it. `PENDING` means scheduled and waiting; `RUNNING` means your tasks are being proven right now. Neither means stuck.
 
@@ -1130,7 +1249,7 @@ await catalog.activate('my-swe', '1.0')
 evolve dataset activate my-swe 1.0
 ```
 
-From then on `{'name': 'my-swe'}` in a job resolves to that version, and asking for the version that is already active succeeds without changing anything. While the version's activation gate is still scheduled or running the API answers 202 `gate_running` — a healthy "not yet", deliberately not the error envelope — and the SDK raises it as the typed `GateRunningError`: `err.gate` carries the gate's progress (a `GateRunningProgress` with `status`, `tasks`, `unverified`, `ineligible`), and there is normally nothing to do but wait, because a gate that passes activates the version itself. Once the gate has landed, activating is refused with `version_not_ready` for a version whose gate failed (the gate's failure detail rides `details['gate_failure']`), and with `version_not_activatable` for a version that can never activate (no reference solutions were archived — the import's `warnings` told you at publish time).
+From then on `{'name': 'my-swe'}` in a job resolves to that version, and asking for the version that is already active succeeds without changing anything. While the version's activation gate is still scheduled or running the API answers 202 `gate_running` — a healthy "not yet", deliberately not the error envelope — and the SDK raises it as the typed `GateRunningError`: `err.gate` carries the gate's progress (a `GateRunningProgress` with `status`, `tasks`, `unverified`, `ineligible`), and there is normally nothing to do but wait, because a gate that passes activates the version itself. Once the gate has landed, activating is refused with `version_not_ready` for a version whose gate failed (the gate's failure detail rides `details['gate_failure']`), and with `version_not_activatable` for a version in a dead state (`FAILED`, or archived). A version whose import archived no reference solutions is not a dead end: the platform activates it itself with its gate stamped `UNPROVEN` ([Publishing](#publishing)), and an activate call that lands in the short window before that happens answers the same 202 `gate_running`.
 
 ### Getting your corpus back
 
@@ -1290,7 +1409,7 @@ That's the whole format. The rules that matter when converting:
 - `tests/Dockerfile` is built for real whenever the verifier can own its own image: a `separate` verifier on a task that builds from `environment/Dockerfile` — no pinned `docker_image`, no compose — gets a verifier image built from `tests/`, so grader dependencies installed there are genuinely present. Everywhere else the verifier reuses the task image and the test files are uploaded onto it. The Dockerfile is not built on that path, so it is accepted only while it stays trivial (`FROM`, `COPY`, `WORKDIR`, `LABEL`, and permission-only `RUN chmod` lines) — a richer recipe's dependencies would be silently missing, so it is refused by name.
 - The environment is `environment/Dockerfile` (built at import), a pinned `docker_image`, or `environment/docker-compose.yaml` for multi-container tasks (the agent runs in the `main` service). Any valid public image reference works for `docker_image` — Docker Hub, GHCR, ECR Public, or any other registry a pull can reach without credentials — with the tag pinned, never `:latest`. A reference that does not parse as an image reference is refused at import with the reference named; a reference that parses but cannot be pulled surfaces as an infrastructure error naming the pull, never as a task that quietly scores zero.
 - Timeouts are optional: agent defaults to 3600 s, verifier to 600 s, both published as `limits['job']['default_agent_timeout_sec']` and `default_verifier_timeout_sec`. A declared `timeout_sec` always wins — the corpus is the authority on how long its own task needs, and the fallback never shortens one.
-- `solution/` (`solve.sh`, or a `solution.patch` to apply) is what the gate certifies with — without it the version cannot reach `READY`.
+- `solution/` (`solve.sh`, or a `solution.patch` to apply) is what the gate certifies with. A corpus that ships none anywhere still publishes and activates, with its gate stamped `UNPROVEN` instead of a proof — see [Publishing](#publishing).
 
 Then publish and run it — exactly the [flow above](#publishing).
 
@@ -1552,6 +1671,8 @@ class JobStats(TypedDict, total=False):   # the wire dict itself, keys typed; ev
     cost_usd: Optional[float]             # the WHOLE model bill (agent + judge); None before any settled
     gpu_cost_usd: Optional[float]         # summed GPU compute ESTIMATE — separate, never inside cost_usd
     judge_cost_usd: Optional[float]       # the judge share of cost_usd; 0 with no judge tasks
+    n_unmeasured_trials: int              # settled trials cost_usd cannot account for; a count, never None
+    n_unmeasured_judge_trials: int        # the judge half of the same fact
 
 class AgentDatasetStats(TypedDict, total=False):   # one evals group
     n_trials: int                         # trials that produced a rewards map
@@ -1626,12 +1747,16 @@ class Trial:                        # list rows and detail, one shape
     environment_setup: Optional[TimingInfo]       # the four phase timing pairs
     agent_setup: Optional[TimingInfo]
     agent_execution: Optional[TimingInfo]
-    verifier: Optional[TimingInfo]
+    verifier: Optional[TimingInfo]                # the COMMAND window alone; read against verifier_timeout_sec
     queue_wait: Optional[TimingInfo]              # finer pairs beside the four — not a partition of them
     harness_bundle: Optional[TimingInfo]
     image_prepare: Optional[TimingInfo]           # ~0 on Modal by design; its work lands in environment_setup
+    shared_verify_setup: Optional[TimingInfo]     # shared-mode verify prep; ends where verifier begins; None otherwise
     harness_bundle_cache_hit: Optional[bool]      # True explains ms; False on minutes = a real build; None = unrecorded
-    step_results: Optional[List[Dict[str, Any]]]  # multi-step placeholder; None today
+    step_results: Optional[List[Dict[str, Any]]]  # per-step results, execution order; None =
+                                                  #   single-step trial. Keys per entry: step_name,
+                                                  #   agent_result, verifier_result, exception_info,
+                                                  #   agent_execution, verifier
     spend_source: Optional[SpendSource]
     judge_spend_source: Optional[SpendSource]     # the judge figure's lane; None == no judge ever ran
     live_spent_usd: Optional[float]               # mid-run LOWER BOUND; cleared at settle
@@ -1719,12 +1844,18 @@ class DatasetVersionSource:         # served on EVERY git-imported version, acti
 
 @dataclass
 class DatasetVersionGate:           # the activation gate's progress
-    status: str                     # PENDING | RUNNING | PASSED | FAILED
+    status: str                     # PENDING | RUNNING | PASSED | FAILED | UNPROVEN
     attempts: int
     code: Optional[str]             # set on failure, e.g. "gate_failed"
     message: Optional[str]          # the human reason, set on failure
     failed_tasks: List[DatasetVersionGateFailedTask]  # the ineligible tasks, first 25
     failed_task_count: int          # the TRUE total behind the 25-task cap
+    unproven: Optional[DatasetVersionGateUnproven]  # the UNPROVEN stamp; None on every other status
+
+@dataclass
+class DatasetVersionGateUnproven:   # why a version activated with no proof
+    reason: str                     # today always "no reference solutions to run"
+    at: Optional[str]               # when the stamp was written; None on older rows
 
 @dataclass
 class DatasetVersionGateFailedTask:

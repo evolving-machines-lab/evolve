@@ -149,6 +149,7 @@ class ToolCall(TypedDict):
     sessionUpdate: Literal["tool_call"]
     toolCallId: str
     title: str
+    toolName: NotRequired[str]   # harness-native tool name, e.g. "mcp__mcp-server__get_secret"
     kind: ToolKind
     status: ToolCallStatus
     rawInput: NotRequired[dict]
@@ -191,6 +192,8 @@ class OutputEvent(TypedDict):
     sessionId: NotRequired[str]
     update: SessionUpdate
 ```
+
+`toolName` is the harness-native tool name, verbatim — `Bash`, `Read`, or the joined `mcp__<server>__<tool>` an MCP call carries. Prefer it over parsing `title`, which is formatted per tool for people to read and is not round-trippable; `toolName` is the identifier the model actually called. It is a deliberate addition to the ACP shape, which names no tool and whose `kind` collapses every MCP tool to `other`, and it is optional — absent on traces recorded before the SDK carried it, and on the occasional call a harness cannot name, so fall back to `kind` there.
 
 ---
 
@@ -324,8 +327,9 @@ evolve.on("content", handle_event)
 4. **Concatenate chunks** — Message text arrives incrementally
 5. **Support images** — `ContentBlock` includes `ImageContent`
 6. **Use `kind` for icons** — Categorize tools visually (read, edit, execute, etc.)
-7. **Track `locations`** — Show affected file paths in UI
-8. **Use `cast()` for narrowing** — TypedDict unions need explicit casting after checking `sessionUpdate`
+7. **Identify tools by `toolName`** — The harness-native name, not the human-readable `title`; fall back to `kind` when it is absent
+8. **Track `locations`** — Show affected file paths in UI
+9. **Use `cast()` for narrowing** — TypedDict unions need explicit casting after checking `sessionUpdate`
 
 ---
 

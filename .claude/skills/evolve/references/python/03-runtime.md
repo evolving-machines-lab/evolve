@@ -37,6 +37,7 @@ result = await evolve.run(
     background=False,                          # (optional) Run in background
     from_checkpoint='ckpt_abc123',             # (optional) Restore from checkpoint ID or 'latest'
     checkpoint_comment='after analysis',       # (optional) Label for the auto-checkpoint
+    resume=False,                              # (optional) Force a fresh conversation
 )
 
 print(result.exit_code)
@@ -49,6 +50,7 @@ print(result.checkpoint.id if result.checkpoint else None)  # Checkpoint ID (if 
 - If `from_checkpoint` is set, the SDK restores a checkpoint into a fresh sandbox before running. Pass a checkpoint ID or `'latest'` to restore the most recent. Requires `storage=`. Cannot be used with `sandbox_id=`.
 - If `checkpoint_comment` is set, the auto-checkpoint created after a successful run is labeled with this string. Requires `storage=`.
 - Calling `run()` multiple times maintains the agent context / history.
+- `resume` overrides that. Omitted, the first run in a sandbox starts a fresh conversation and every run after it continues the previous one (an attached `sandbox_id=` sandbox counts as "has already run"). Pass `resume=False` to force a fresh conversation in a sandbox the agent has already worked in — the shape a sequence of INDEPENDENT tasks against one shared sandbox needs, where the environment should persist but the context should not. Pass `resume=True` only when a previous run really happened; asking a CLI to continue a session that does not exist is its own kind of error.
 - Calling `run()` while another run or command is active throws immediately. Call `interrupt()` first or wait for the active operation to finish.
 
 ### execute_command
