@@ -86,9 +86,7 @@ derives a new tag automatically. Nobody bumps a version:
    default snapshot name), so Modal pulls the new tag on its next create and
    Daytona auto-builds the new snapshot on first use. Callers who pinned a
    name explicitly (for example `evolve-all`) keep exactly what they pinned,
-   on both providers. Managed Daytona is separate: it names the platform's
-   stable `evolve-all` snapshot, and which release backs that name is the
-   platform's decision, not this pipeline's.
+   on both providers.
 
 4. Rebuild the E2B template (E2B is not part of this law — its public
    template is rebuilt in place):
@@ -96,6 +94,71 @@ derives a new tag automatically. Nobody bumps a version:
    ```bash
    cd assets && ./build.sh e2b
    ```
+
+Steps 2–4 are automated. See below.
+
+---
+
+### The automated pipeline
+
+`.github/workflows/image-refresh.yml` takes a change to the image all the way
+to users with no manual step. It runs on a push to `main` touching
+`assets/docker/**` or `assets/e2b/**`, on a weekly cron, and on manual dispatch.
+
+It pushes the derived tag to Docker Hub (via `docker/build.ts`, so the tag and
+push rules stay in one place), rebuilds the E2B template, repoints managed
+Daytona, and — when the derived tag moved — opens a PR with the regenerated
+constants.
+
+**Who is moved, and when.** The four consumers do not travel together, and this
+is the part worth knowing before you wait on the wrong thing:
+
+| Consumer | Moves when | Needs a release? |
+|---|---|---|
+| E2B | the workflow finishes | no — the `evolve-all` alias is rebuilt in place |
+| Managed Daytona | the workflow finishes | no — the platform snapshot is repointed |
+| Direct Daytona | the next npm release | yes — its default snapshot name is a compiled-in constant |
+| Modal | the next npm release | yes — same constant |
+
+The workflow pre-builds the versioned Daytona snapshot `evolve-all-c-<12hex>`,
+so direct users get a warm snapshot rather than paying a build on first use.
+
+**`force_refresh`.** Content addressing cannot see that `@latest` moved
+upstream: the Dockerfile text is unchanged, so the tag is unchanged, so the
+release is correctly skipped — and new CLI versions never ship. Run the
+workflow with `force_refresh: true` to rewrite `docker/refresh-stamp`, an
+ordinary build input that the Dockerfile COPYs to `/etc/evolve-image-refresh`.
+The stamp is real image content, so the new tag it derives is honest rather
+than a nudged hash. By hand, the same thing:
+
+```bash
+npx tsx assets/docker/write-refresh-stamp.ts "picking up today's CLI releases"
+npm run generate:image-version
+```
+
+The weekly cron deliberately does **not** bump the stamp — re-pushing an
+immutable tag with different content is exactly what content addressing exists
+to prevent. It rebuilds the E2B template (which reinstalls the `@latest` CLIs,
+so E2B users do get newer tools) and heals snapshot drift, such as a snapshot
+Daytona deactivated after two idle weeks.
+
+**The managed Daytona swap.** Daytona has no rename and no in-place update for
+a snapshot ([daytonaio/daytona#2661][d2661], open), so the stable `evolve-all`
+name can only be moved by delete-then-create, and there is a real window where
+a managed create would fail. `daytona/refresh-platform-snapshot.ts` makes that
+window as survivable as the API allows: it builds the versioned snapshot first
+and refuses to continue unless it goes active (proving the image works in this
+org before anything live is deleted), does nothing when the snapshot already
+serves the target image, preserves the replaced snapshot's sizing and
+entrypoint, and rolls the name back to the previous image if the rebuild fails.
+Deleting a snapshot also destroys its warm pools, so the first managed creates
+after a swap pay a cold start. Run it with `--dry-run` to see what it would do:
+
+```bash
+npx tsx assets/daytona/refresh-platform-snapshot.ts --dry-run
+```
+
+[d2661]: https://github.com/daytonaio/daytona/issues/2661
 
 ---
 
