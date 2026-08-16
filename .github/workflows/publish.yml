@@ -365,7 +365,10 @@ jobs:
 
       - name: Log in to Docker Hub
         if: inputs.dry_run != true && steps.dockerhub.outputs.present == 'true'
-        run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login --username "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+        env:
+          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: echo "$DH_TOKEN" | docker login --username "$DH_USER" --password-stdin
 
       # Idempotent: build.ts skips the build when evolve-all:c-<12hex> is
       # already on Docker Hub (same content → same tag) and only realigns
