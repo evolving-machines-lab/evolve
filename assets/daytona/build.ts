@@ -11,7 +11,7 @@ import { config } from 'dotenv'
 import { dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { Daytona } from '@daytonaio/sdk'
-import { image, SNAPSHOT_NAME } from './template'
+import { image, SNAPSHOT_NAME, SNAPSHOT_RESOURCES } from './template'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 config({ path: resolve(__dirname, '../../.env') })
@@ -64,11 +64,7 @@ async function main() {
     {
       name: SNAPSHOT_NAME,
       image,
-      resources: {
-        cpu: 4,
-        memory: 4,
-        disk: 10,
-      },
+      resources: { ...SNAPSHOT_RESOURCES },
     },
     {
       onLogs: (log) => console.log(`  ${log}`),
@@ -79,4 +75,9 @@ async function main() {
   console.log('  Subsequent sandbox creations will be instant.')
 }
 
-main().catch(console.error)
+// Exit NON-ZERO on failure. `catch(console.error)` printed the error and then
+// exited 0, so a failed build reported success to every caller — including CI.
+main().catch((err) => {
+  console.error(err)
+  process.exit(1)
+})

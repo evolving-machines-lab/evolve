@@ -40,4 +40,9 @@ async function main() {
   console.log('  Subsequent sandbox creations will be instant.')
 }
 
-main().catch(console.error)
+// Exit NON-ZERO on failure. `catch(console.error)` printed the error and then
+// exited 0, so a failed cache reported success to every caller — including CI.
+main().catch((err) => {
+  console.error(err)
+  process.exit(1)
+})
