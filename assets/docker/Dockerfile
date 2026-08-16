@@ -156,6 +156,21 @@ RUN timeout 30s sh -c 'printf "y\ny\n\n" | gemini extensions install https://git
 RUN npx playwright install chromium
 
 # ---------------------------------------------------------------------------
+# Refresh stamp (see assets/docker/write-refresh-stamp.ts)
+# ---------------------------------------------------------------------------
+# Everything above installs its tools with @latest, so this Dockerfile's text
+# can stay identical while the image it describes moves underneath it. The
+# stamp is the supported way to say so: it is an ordinary build input, hashing
+# into the derived c-<12hex> tag like any other file, and it is COPY'd here so
+# it is genuine image content rather than a hash decoration —
+# `cat /etc/evolve-image-refresh` in a sandbox reports which refresh built it.
+# Last, so a stamp bump rebuilds only this layer.
+USER root
+COPY refresh-stamp /etc/evolve-image-refresh
+RUN chmod 0644 /etc/evolve-image-refresh
+USER user
+
+# ---------------------------------------------------------------------------
 # Default command
 # ---------------------------------------------------------------------------
 CMD ["/bin/bash"]

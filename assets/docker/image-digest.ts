@@ -12,10 +12,15 @@
  *   image-version.ts            the generated OUTPUT (hashing it would be circular)
  *   image-digest.ts             this file
  *   generate-image-version.ts   the generator
+ *   write-refresh-stamp.ts      the stamp WRITER (the stamp it writes is an input; the pen is not)
  *   build.ts                    push tooling — changes how we push, not what the image holds
  *   README.md                   docs
  * A future COPY'd file dropped anywhere under assets/docker/ joins the hash
- * with no code change.
+ * with no code change. `refresh-stamp` is exactly that case and needs no entry
+ * here: it is an ordinary context file, COPY'd into the image, and rewriting it
+ * is the supported way to force a genuinely new release when the Dockerfile
+ * text is unchanged but its `@latest` tools have moved (see
+ * ./write-refresh-stamp.ts for why that hole exists).
  *
  * FRAMING (matches the platform's build-context digest): for each regular
  * file, sorted by relative path, fold in a length-framed record — 4-byte
@@ -37,6 +42,7 @@ const NON_INPUTS = new Set([
   'image-version.ts',
   'image-digest.ts',
   'generate-image-version.ts',
+  'write-refresh-stamp.ts',
   'build.ts',
   'README.md',
   '.DS_Store',

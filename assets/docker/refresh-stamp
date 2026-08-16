@@ -1,0 +1,16 @@
+# Image refresh stamp — A BUILD INPUT BY DESIGN. Not generated code:
+# edit it, by hand or via `npx tsx write-refresh-stamp.ts "<reason>"`.
+#
+# assets/docker/image-digest.ts hashes every file in this directory that
+# the build context can carry, so changing the line below derives a new
+# c-<12hex> tag and the pipeline rebuilds and re-releases the image. That
+# is the point: the Dockerfile installs its tools with @latest, so the
+# same Dockerfile text can describe a materially different image once
+# upstream moves, and the content hash alone would never notice. Bumping
+# this stamp is how a maintainer says "the inputs really did change".
+#
+# The Dockerfile COPYs this file to /etc/evolve-image-refresh, so it is
+# genuine image content and not a hash decoration — a running sandbox can
+# report which refresh built it.
+
+refreshed: 2026-08-16T02:07:55Z — initial stamp — pipeline introduced
