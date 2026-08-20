@@ -28,6 +28,7 @@ import {
   EVAL_SANDBOX_PROVIDERS,
   EvolveApiError,
   GateRunningError,
+  ImportSettleError,
   TRIAL_ARTIFACT_STREAMS,
   TRIAL_STATUSES,
   agents,
@@ -55,6 +56,7 @@ import type {
   Dataset,
   DatasetImport,
   DatasetSelector,
+  DatasetVersion,
   EvalSandboxProvider,
   GrepJobOptions,
   HostedClientConfig,
@@ -599,7 +601,7 @@ const GROUPS: Record<string, GroupSpec> = {
           dir: { kind: "string", value: "<path>", help: "Local corpus directory (tarred + uploaded)" },
           name: { kind: "string", value: "<dataset>", help: "Catalog dataset name to create or extend (optional with --dir when the corpus carries a dataset.toml manifest; required with --git)" },
           version: { kind: "string", value: "<v>", help: "Version label for the published version (optional with --dir when dataset.toml declares one; required with --git)" },
-          watch: { kind: "boolean", help: "Poll until the publish is COMPLETED or FAILED" },
+          watch: { kind: "boolean", help: "Poll until the published version settles: READY (gate PASSED/UNPROVEN) or FAILED" },
         },
         minPositionals: 0,
         maxPositionals: 0,
@@ -2750,6 +2752,60 @@ export function importStatusLine(job: DatasetImport): string {
   return `status ${job.status.padEnd(12)} ${parts.join(" ")}`.trimEnd();
 }
 
+/**
+ * Compact one-line rendering of one version {state, gate} change for
+ * --watch's settle phase — the half of a publish the import status cannot
+ * show: VALIDATING while the activation gate proves the version, then
+ * READY/ARCHIVED/FAILED.
+ */
+export function versionStatusLine(version: DatasetVersion): string {
+  const gate = version.gate ? `gate=${version.gate.status}` : "gate not scheduled yet";
+  return `state  ${version.state.padEnd(12)} ${gate}`.trimEnd();
+}
+
+/**
+ * The settled version's facts for the final --watch block: state, the gate's
+ * verdict (with the UNPROVEN reason printed, never disguised), the failing
+ * tasks on a FAILED gate (the message itself already rides the import's
+ * failure row), and whether the dataset's ACTIVE version is now this publish
+ * — the fact a re-publisher needs, because a bare name resolves to the
+ * active version.
+ */
+function versionSettleLines(version: DatasetVersion, detail: Dataset | null): string[] {
+  const rows: string[][] = [["state", version.state]];
+  const gate = version.gate;
+  if (gate === null) {
+    rows.push(["gate", "not scheduled"]);
+  } else if (gate.status === "UNPROVEN") {
+    rows.push([
+      "gate",
+      `UNPROVEN — activated without proof (${gate.unproven?.reason ?? "no reference solutions to run"})`,
+    ]);
+  } else if (gate.status === "FAILED") {
+    rows.push(["gate", `FAILED — ${gate.failed_task_count} task(s) not activation-eligible`]);
+    for (const task of gate.failed_tasks) {
+      rows.push([`  ${task.task_name}`, `${task.outcome ?? ""} ${task.reasons.join("; ")}`.trim()]);
+    }
+    if (gate.failed_task_count > gate.failed_tasks.length) {
+      rows.push(["", `… and ${gate.failed_task_count - gate.failed_tasks.length} more`]);
+    }
+  } else {
+    rows.push(["gate", gate.status]);
+  }
+  if (detail) {
+    const active = detail.active_version?.version ?? null;
+    rows.push([
+      "active",
+      active === version.version
+        ? `${active} (this publish)`
+        : active
+          ? `${active} (unchanged)`
+          : "none",
+    ]);
+  }
+  return table(rows);
+}
+
 /** Compact one-line rendering of one SSE event for --watch. */
 export function eventLine(event: JobEvent): string {
   // JobEvent is a discriminated union, so `data` is a different shape per
@@ -3862,17 +3918,47 @@ async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
     io.out(`Publish ${created.id} (${created.name}) ${created.status} — watching…`);
   }
 
-  const final = await client.watchImport(created.id, {
-    onStatus: (job) => {
-      io.out(json ? JSON.stringify({ kind: "import.status", datasetImport: job }) : importStatusLine(job));
-    },
-  });
+  // The watch follows the publish to a SETTLED end: import COMPLETED only
+  // means the corpus landed as a VALIDATING version, and exiting 0 there let
+  // a chained `evolve run` hit no_active_version — or, on a re-publish,
+  // silently run the OLD active version. So the version's own settle
+  // (activation gate included) is part of the watch, and of the exit code.
+  let lastVersion: DatasetVersion | null = null;
+  let lastDetail: Dataset | null = null;
+  let final: DatasetImport;
+  try {
+    final = await client.watchImport(created.id, {
+      onStatus: (job) => {
+        io.out(json ? JSON.stringify({ kind: "import.status", datasetImport: job }) : importStatusLine(job));
+      },
+      onVersion: (version, dataset) => {
+        lastVersion = version;
+        lastDetail = dataset;
+        io.out(json ? JSON.stringify({ kind: "import.version", version }) : versionStatusLine(version));
+      },
+    });
+  } catch (error) {
+    // A typed settle refusal is an outcome, not a crash: nothing settled, so
+    // the exit code is 1 and the named cause plus the follow-up command are
+    // printed — never exit 0 on an unproven wait.
+    if (error instanceof ImportSettleError) {
+      // jsonErrorBody is the ONE home for the --json error body's shape.
+      if (json) io.out(JSON.stringify({ error: jsonErrorBody(error) }));
+      io.err(`Error: ${error.message}`);
+      io.err(`Follow it with: evolve dataset show ${error.dataset}@${error.version}`);
+      return 1;
+    }
+    throw error;
+  }
 
   if (json) {
     io.out(JSON.stringify({ kind: "import.final", datasetImport: final }));
   } else {
     io.out("");
     for (const line of importLines(final)) io.out(line);
+    if (lastVersion !== null) {
+      for (const line of versionSettleLines(lastVersion, lastDetail)) io.out(line);
+    }
   }
   return final.status === "FAILED" ? 1 : 0;
 }
@@ -4291,6 +4377,11 @@ function jsonErrorBody(error: unknown): Record<string, unknown> {
       ...(error.retryAfterSec !== undefined ? { retryAfterSec: error.retryAfterSec } : {}),
       ...(error.requestId !== undefined ? { request_id: error.requestId } : {}),
     };
+  }
+  // A settle refusal carries its own named cause — not an invented code, the
+  // SDK's typed one (gate_unschedulable / settle_timeout).
+  if (error instanceof ImportSettleError) {
+    return { code: error.code, message: error.message };
   }
   return { message: error instanceof Error ? error.message : String(error) };
 }

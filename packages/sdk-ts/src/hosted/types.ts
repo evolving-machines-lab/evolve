@@ -2096,12 +2096,30 @@ export interface TrialFileRange {
 
 /** Options for datasets().watchImport() */
 export interface WatchImportOptions {
-  /** Called on every observed status change (including the first status seen) */
+  /** Called on every observed import status change (including the first status seen) */
   onStatus?: (datasetImport: DatasetImport) => void;
+  /**
+   * Called on every observed change of the imported VERSION's {state, gate
+   * status} while the watch waits for the version to settle after the import
+   * itself COMPLETED — VALIDATING with the gate PENDING/RUNNING, then
+   * READY/ARCHIVED/FAILED (or gate UNPROVEN, the activated-without-proof
+   * fact). `dataset` is the detail read the observation came from: its
+   * `active_version` says whether the settled version is now the one a bare
+   * dataset name resolves to.
+   */
+  onVersion?: (version: DatasetVersion, dataset: Dataset) => void;
   /** Abort the watch (rejects with the abort reason) */
   signal?: AbortSignal;
-  /** Poll interval between getImport() calls (default: 2000ms) */
+  /** Poll interval between polls (default: 2000ms) */
   pollIntervalMs?: number;
+  /**
+   * Backstop bound on the settle phase — how long past import COMPLETED the
+   * watch may wait for the version to settle before refusing with
+   * ImportSettleError("settle_timeout") (default: 30 minutes). A bound on
+   * the WAIT, never a verdict on the gate: the gate keeps running
+   * server-side, and the error carries the last observed state.
+   */
+  settleTimeoutMs?: number;
 }
 
 /** Options for jobs().watch() */
@@ -2165,8 +2183,15 @@ export interface DatasetsClient {
   /** Get an import job's status (failure, warnings, and task_count when available) */
   getImport(id: string): Promise<DatasetImport>;
   /**
-   * Poll getImport() until the import reaches a terminal status ("COMPLETED"
-   * or "FAILED") and resolve with the final import.
+   * Watch a publish to a SETTLED end, not merely a finished upload: poll
+   * getImport() until the import is terminal, then — because COMPLETED only
+   * means the corpus landed as a VALIDATING version — keep polling the
+   * dataset detail until the version settles: READY (gate PASSED, or
+   * UNPROVEN for a solution-less corpus), ARCHIVED, or FAILED (the gate's
+   * failure rides the returned import's `failure`). Throws
+   * ImportSettleError, with the cause named, when no gate can ever be
+   * scheduled ("gate_unschedulable" — solutions archiving disabled) or when
+   * settleTimeoutMs elapses first ("settle_timeout").
    */
   watchImport(id: string, options?: WatchImportOptions): Promise<DatasetImport>;
   /**

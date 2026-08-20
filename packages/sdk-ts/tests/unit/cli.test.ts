@@ -4471,6 +4471,43 @@ async function testDatasetShowGateTruncation() {
   }
 }
 
+/**
+ * A wire dataset-detail body holding exactly one version, for publish
+ * --watch's settle phase: import COMPLETED only means the corpus landed as a
+ * VALIDATING version, and the watch follows the version here until it
+ * settles.
+ */
+function publishDetailBody(opts: {
+  name: string;
+  version: string;
+  state: string;
+  gate?: unknown;
+  active?: boolean;
+}): Record<string, unknown> {
+  const versionBody = {
+    version: opts.version,
+    state: opts.state,
+    created_at: "2026-08-20T00:00:00Z",
+    task_count: 12,
+    manifest: null,
+    source: null,
+    gate: opts.gate ?? null,
+  };
+  return {
+    name: opts.name,
+    title: null,
+    description: null,
+    visibility: "private",
+    active_version: opts.active ? versionBody : null,
+    versions: [versionBody],
+    selected_version: versionBody,
+    tasks: { items: [], next_cursor: null, has_more: false },
+    upstream: null,
+    created_at: "2026-08-20T00:00:00Z",
+    updated_at: "2026-08-20T00:00:00Z",
+  };
+}
+
 async function testDatasetPublishWatch() {
   console.log("\n--- runCli: dataset publish --watch, git source ---");
   installMockFetch();
@@ -4482,6 +4519,18 @@ async function testDatasetPublishWatch() {
     setMockResponse("/api/datasets/publish", {
       status: 202,
       body: { id: "imp-1", status: "QUEUED", name: "my-bench", version: "1.0", failure: null, warnings: [] },
+    });
+    // COMPLETED is not the end of the watch: the version must settle. Served
+    // READY + gate PASSED + active, so the watch ends on its first settle poll.
+    setMockResponse("/api/datasets/my-bench?", {
+      status: 200,
+      body: publishDetailBody({
+        name: "my-bench",
+        version: "1.0",
+        state: "READY",
+        gate: { status: "PASSED", attempts: 1, failure: null, unproven: null },
+        active: true,
+      }),
     });
 
     const { io, out, err } = captureIO();
@@ -4497,7 +4546,7 @@ async function testDatasetPublishWatch() {
       ],
       io
     );
-    assertEqual(code, 0, "exit code 0 on COMPLETED");
+    assertEqual(code, 0, "exit code 0 once the version is READY — not at bare COMPLETED");
     assertEqual(err, [], "nothing on stderr");
 
     const createCall = fetchCalls.find((c) => c.url === `${BASE}/api/datasets/publish`);
@@ -4509,6 +4558,151 @@ async function testDatasetPublishWatch() {
     assertEqual(form.get("name"), "my-bench", "name part");
     assertEqual(form.get("version"), "1.0", "version part");
     assert(out.some((l) => l.includes("COMPLETED") && l.includes("tasks=12")), "renders the COMPLETED status line");
+    assert(
+      fetchCalls.some((c) => c.url.includes("/api/datasets/my-bench?") && c.url.includes("version=1.0")),
+      "polls the dataset detail for THIS version after import COMPLETED"
+    );
+    assert(
+      out.some((l) => l.includes("READY") && l.includes("gate=PASSED")),
+      "the watch stream shows the version settling (state + gate)"
+    );
+    assert(
+      out.some((l) => l.includes("gate") && l.includes("PASSED")),
+      "the final block prints the gate verdict — the information importLines alone never had"
+    );
+    assert(
+      out.some((l) => l.includes("active") && l.includes("1.0 (this publish)")),
+      "the final block says the ACTIVE version is now this publish"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * The audit's headline defect: publish --watch exited 0 at import COMPLETED
+ * while the activation gate was still to run — and when the gate then FAILED
+ * the version, the user had already been told success (a re-publish silently
+ * kept serving the OLD active version). The watch must follow the version to
+ * FAILED and exit 1 with the gate's cause.
+ */
+async function testDatasetPublishWatchGateFailure() {
+  console.log("\n--- runCli: dataset publish --watch exits 1 when the activation gate fails the version ---");
+  installMockFetch();
+  try {
+    const job = { id: "imp-7", name: "my-bench", version: "2.0", warnings: [] };
+    const importBodies = [
+      { ...job, status: "COMPLETED", failure: null, task_count: 12 },
+      { ...job, status: "FAILED", failure: { code: "gate_failed", message: "1/12 task(s) are not activation-eligible" }, task_count: 12 },
+    ];
+    const detailBodies = [
+      publishDetailBody({
+        name: "my-bench",
+        version: "2.0",
+        state: "VALIDATING",
+        gate: { status: "RUNNING", attempts: 1, failure: null, unproven: null },
+      }),
+      publishDetailBody({
+        name: "my-bench",
+        version: "2.0",
+        state: "FAILED",
+        gate: {
+          status: "FAILED",
+          attempts: 1,
+          failure: {
+            code: "gate_failed",
+            message: "1/12 task(s) are not activation-eligible",
+            failed_tasks: [{ task_name: "task-3", outcome: "FAIL", reasons: ["gold solution scored 0.0"] }],
+          },
+          unproven: null,
+        },
+      }),
+    ];
+    let importCalls = 0;
+    let detailCalls = 0;
+    (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+      const urlStr = url.toString();
+      fetchCalls.push({ url: urlStr, init });
+      if (urlStr.endsWith("/api/datasets/publish")) {
+        return buildMockResponse({ status: 202, body: { ...job, status: "QUEUED", failure: null } });
+      }
+      if (urlStr.includes("/api/datasets/imports/")) {
+        return buildMockResponse({ status: 200, body: importBodies[Math.min(importCalls++, importBodies.length - 1)] });
+      }
+      return buildMockResponse({ status: 200, body: detailBodies[Math.min(detailCalls++, detailBodies.length - 1)] });
+    };
+
+    const { io, out } = captureIO();
+    const code = await runCli(
+      ["dataset", "publish", "--git", "g", "--ref", "main", "--name", "my-bench", "--version", "2.0", "--watch", ...AUTH],
+      io
+    );
+    assertEqual(code, 1, "exit code 1 — a gate-failed publish is a failed publish, never a silent 0");
+    assert(
+      out.some((l) => l.includes("gate_failed") || l.includes("not activation-eligible")),
+      "the final block carries the gate's failure"
+    );
+    assert(out.some((l) => l.includes("task-3")), "the failing task is named");
+    assert(
+      out.some((l) => l.includes("active") && l.includes("none")),
+      "the final block says no version became active"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * The known trap, refused by name at the CLI: with solutions archiving
+ * disabled no gate is ever scheduled and the version sits VALIDATING forever
+ * — the watch must exit 1 with the named cause, never hang and never exit 0.
+ */
+async function testDatasetPublishWatchUnschedulable() {
+  console.log("\n--- runCli: dataset publish --watch refuses, exit 1, when no gate can ever run ---");
+  installMockFetch();
+  try {
+    const job = {
+      id: "imp-8",
+      name: "my-bench",
+      version: "3.0",
+      failure: null,
+      warnings: [{ code: "solutions_archiving_disabled", message: "solutions archiving is disabled" }],
+    };
+    setMockResponse("/api/datasets/publish", { status: 202, body: { ...job, status: "QUEUED" } });
+    setMockResponse("/api/datasets/imports/imp-8", {
+      status: 200,
+      body: { ...job, status: "COMPLETED", task_count: 12 },
+    });
+    setMockResponse("/api/datasets/my-bench?", {
+      status: 200,
+      body: publishDetailBody({ name: "my-bench", version: "3.0", state: "VALIDATING", gate: null }),
+    });
+
+    const { io, err } = captureIO();
+    const code = await runCli(
+      ["dataset", "publish", "--git", "g", "--ref", "main", "--name", "my-bench", "--version", "3.0", "--watch", ...AUTH],
+      io
+    );
+    assertEqual(code, 1, "exit code 1 — an unsettleable publish is not a success");
+    assert(
+      err.some((l) => l.includes("solutions_archiving_disabled")),
+      "stderr names the cause: the archiving-disabled warning"
+    );
+    assert(
+      err.some((l) => l.includes("dataset show my-bench@3.0")),
+      "stderr points at the follow-up command"
+    );
+
+    // --json: the refusal is machine-readable with the SDK's own named cause.
+    const jsonIO = captureIO();
+    const jsonCode = await runCli(
+      ["dataset", "publish", "--git", "g", "--ref", "main", "--name", "my-bench", "--version", "3.0", "--watch", "--json", ...AUTH],
+      jsonIO.io
+    );
+    assertEqual(jsonCode, 1, "exit code 1 under --json too");
+    const errorLine = jsonIO.out.map((l) => { try { return JSON.parse(l); } catch { return null; } })
+      .find((o) => o && typeof o === "object" && "error" in o) as { error?: { code?: string } } | undefined;
+    assertEqual(errorLine?.error?.code, "gate_unschedulable", "the --json error object carries the named cause");
   } finally {
     restoreFetch();
   }
@@ -5320,6 +5514,8 @@ async function main() {
   await testDatasetShowGate();
   await testDatasetShowGateTruncation();
   await testDatasetPublishWatch();
+  await testDatasetPublishWatchGateFailure();
+  await testDatasetPublishWatchUnschedulable();
   await testDatasetPublishFailedAndErrors();
   await testDatasetDownloadAndActivate();
   await testAgentAdd();
