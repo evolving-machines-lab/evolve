@@ -9,7 +9,10 @@ Coverage:
   NoActiveVersionError
 - datasets().publish()/get_import()/watch_import() — async publish flow
   (self-describing imports; the shared job vocabulary QUEUED -> RUNNING ->
-  COMPLETED | FAILED, with COMPLETED/FAILED terminal), warnings surfaced
+  COMPLETED | FAILED), warnings surfaced, and the watch's SETTLE phase:
+  past import COMPLETED the version is followed on the dataset detail to
+  READY/ARCHIVED/FAILED (gate PASSED/UNPROVEN/FAILED), with the typed
+  ImportSettleError refusals (gate_unschedulable, settle_timeout)
 - datasets().download() — owner-only corpus retrieval by name[@version] ref,
   with the full integrity dance (digest, truncation, safe filename)
 - agents().create()/list()/get()/delete() — ONE registration body grammar
@@ -148,6 +151,53 @@ class FakeUrlopen:
 
 
 CONFIG = HostedClientConfig(api_key='test-key', base_url='http://localhost:3000')
+
+
+def _settle_detail_body(*, name='my-set', version='1.2', state, gate=None, active=False):
+    """A wire dataset-detail body holding exactly one version, for the
+    watch_import settle tests: import COMPLETED only means the corpus landed
+    as a VALIDATING version, and the watch follows the version here until it
+    settles."""
+    version_body = {
+        'version': version,
+        'state': state,
+        'created_at': '2026-08-20T00:00:00Z',
+        'task_count': 113,
+        'manifest': None,
+        'source': None,
+        'gate': gate,
+    }
+    return {
+        'name': name,
+        'title': None,
+        'description': None,
+        'visibility': 'private',
+        'active_version': version_body if active else None,
+        'versions': [version_body],
+        'selected_version': version_body,
+        'tasks': {'items': [], 'next_cursor': None, 'has_more': False},
+        'upstream': None,
+        'created_at': '2026-08-20T00:00:00Z',
+        'updated_at': '2026-08-20T00:00:00Z',
+    }
+
+
+def _settle_urlopen(import_bodies, detail_bodies):
+    """Route a settle test's requests: import reads by id, detail reads by name."""
+    calls = {'import': 0, 'detail': 0}
+    seen_urls = []
+
+    def fake(request, timeout=None):
+        seen_urls.append(request.full_url)
+        if '/api/datasets/imports/' in request.full_url:
+            body = import_bodies[min(calls['import'], len(import_bodies) - 1)]
+            calls['import'] += 1
+            return FakeResponse(body)
+        body = detail_bodies[min(calls['detail'], len(detail_bodies) - 1)]
+        calls['detail'] += 1
+        return FakeResponse(body)
+
+    return fake, calls, seen_urls
 
 ZERO_TRIAL_STATUSES = {
     'QUEUED': 0,
@@ -827,15 +877,23 @@ class TestDatasets:
             {**job, 'status': 'RUNNING', 'task_count': 0},
             {**job, 'status': 'COMPLETED', 'task_count': 113},
         ])
+        # After COMPLETED the watch follows the VERSION on the dataset detail;
+        # an already-settled READY answer ends it on the first settle poll.
+        detail = _settle_detail_body(
+            state='READY',
+            gate={'status': 'PASSED', 'attempts': 1, 'failure': None, 'unproven': None},
+            active=True,
+        )
+        seen_urls = []
 
-        class SequenceUrlopen(FakeUrlopen):
-            def __call__(self, request, timeout=None):
-                self.requests.append(request)
+        def sequence_then_detail(request, timeout=None):
+            seen_urls.append(request.full_url)
+            if '/api/datasets/imports/' in request.full_url:
                 return FakeResponse(next(responses))
+            return FakeResponse(detail)
 
-        fake = SequenceUrlopen([])
         statuses = []
-        with patch('evolve._http.urlopen', fake):
+        with patch('evolve._http.urlopen', sequence_then_detail):
             done = await datasets_factory(CONFIG).watch_import(
                 'imp-1',
                 on_status=lambda j: statuses.append(j.status),
@@ -844,7 +902,7 @@ class TestDatasets:
 
         assert done.status == 'COMPLETED'
         assert done.task_count == 113
-        assert len(fake.requests) == 3
+        assert len([u for u in seen_urls if '/api/datasets/imports/' in u]) == 3
         assert statuses == ['QUEUED', 'RUNNING', 'COMPLETED']
 
     @pytest.mark.asyncio
@@ -859,11 +917,31 @@ class TestDatasets:
         import urllib.error
 
         job = {'id': 'imp-1', 'name': 'my-set', 'version': '1.2'}
-        calls = {'count': 0}
+        calls = {'import': 0, 'detail': 0}
+        detail = _settle_detail_body(
+            state='READY',
+            gate={'status': 'PASSED', 'attempts': 1, 'failure': None, 'unproven': None},
+            active=True,
+        )
 
         def rate_limited_then_done(request, timeout=None):
-            calls['count'] += 1
-            if calls['count'] == 1:
+            # The SETTLE phase lives under the same law: its first detail
+            # poll is rate-limited too, and the watch sleeps the server's
+            # delay and polls on.
+            if '/api/datasets/imports/' not in request.full_url:
+                calls['detail'] += 1
+                if calls['detail'] == 1:
+                    raise urllib.error.HTTPError(
+                        request.full_url, 429, 'Too Many Requests', {},
+                        io.BytesIO(json.dumps({'error': {
+                            'code': 'rate_limited',
+                            'message': 'slow down',
+                            'retryAfterSec': 0.05,
+                        }}).encode('utf-8')),
+                    )
+                return FakeResponse(detail)
+            calls['import'] += 1
+            if calls['import'] == 1:
                 raise urllib.error.HTTPError(
                     request.full_url, 429, 'Too Many Requests', {},
                     io.BytesIO(json.dumps({'error': {
@@ -872,7 +950,7 @@ class TestDatasets:
                         'retryAfterSec': 0.05,
                     }}).encode('utf-8')),
                 )
-            if calls['count'] == 2:
+            if calls['import'] == 2:
                 raise urllib.error.HTTPError(
                     request.full_url, 503, 'Service Unavailable',
                     {'Retry-After': '0.05'},
@@ -887,11 +965,12 @@ class TestDatasets:
             )
         elapsed = time.monotonic() - started
 
-        assert calls['count'] == 3
+        assert calls['import'] == 3
+        assert calls['detail'] == 2
         assert done.status == 'COMPLETED'
         assert done.task_count == 113
-        # Both delays were slept, not the 1ms poll interval.
-        assert elapsed >= 0.08
+        # All three delays were slept, not the 1ms poll interval.
+        assert elapsed >= 0.12
 
         # Every other failure still ends the watch — survival is scoped to the
         # two statuses that MEAN "wait", never to a refusal.
@@ -909,6 +988,369 @@ class TestDatasets:
                     'imp-2', poll_interval_s=0.001
                 )
         assert exc.value.status == 404
+
+    @pytest.mark.asyncio
+    async def test_watch_import_settles_past_completed(self):
+        """THE DEFECT THIS GUARDS AGAINST: watch_import used to return at
+        import COMPLETED — but COMPLETED only means the corpus landed as a
+        version. The version then sits VALIDATING while the activation gate
+        proves it, so a caller who chained a job start off the resolved watch
+        was answered no_active_version / version_not_ready — and on a
+        RE-publish, the bare name still resolved to the OLD active version,
+        silently running stale content. The watch must keep polling the
+        dataset detail until the VERSION settles."""
+        job = {'id': 'imp-1', 'name': 'my-set', 'version': '1.2',
+               'failure': None, 'warnings': []}
+        fake, calls, seen_urls = _settle_urlopen(
+            [
+                {**job, 'status': 'RUNNING', 'task_count': 0},
+                {**job, 'status': 'COMPLETED', 'task_count': 113},
+            ],
+            [
+                _settle_detail_body(state='VALIDATING', gate=None),
+                _settle_detail_body(state='VALIDATING', gate={
+                    'status': 'PENDING', 'attempts': 0, 'failure': None, 'unproven': None,
+                }),
+                _settle_detail_body(state='VALIDATING', gate={
+                    'status': 'RUNNING', 'attempts': 1, 'failure': None, 'unproven': None,
+                }),
+                _settle_detail_body(state='READY', active=True, gate={
+                    'status': 'PASSED', 'attempts': 1, 'failure': None, 'unproven': None,
+                }),
+            ],
+        )
+
+        transitions = []
+        active_after_settle = []
+        with patch('evolve._http.urlopen', fake):
+            done = await datasets_factory(CONFIG).watch_import(
+                'imp-1',
+                poll_interval_s=0.001,
+                on_version=lambda v, d: (
+                    transitions.append(f'{v.state}:{v.gate.status if v.gate else "none"}'),
+                    active_after_settle.append(
+                        d.active_version.version if d.active_version else None
+                    ),
+                ),
+            )
+
+        assert done.status == 'COMPLETED'
+        detail_urls = [u for u in seen_urls if '/api/datasets/my-set?' in u]
+        # COMPLETED alone is not a settled publish: the detail is polled,
+        # pinned to the version this publish created, until READY.
+        assert detail_urls, 'no dataset-detail poll happened after COMPLETED'
+        assert 'version=1.2' in detail_urls[0]
+        assert calls['detail'] == 4
+        assert transitions == [
+            'VALIDATING:none', 'VALIDATING:PENDING', 'VALIDATING:RUNNING', 'READY:PASSED',
+        ]
+        assert active_after_settle[-1] == '1.2'
+
+    @pytest.mark.asyncio
+    async def test_watch_import_surfaces_gate_failure(self):
+        """A gate that FAILS the version fails the WATCH: the version moves
+        VALIDATING -> FAILED with the gate's structured cause on the same row
+        the import surface reads, so the watch re-reads the import and
+        returns it FAILED — never a silent success."""
+        job = {'id': 'imp-9', 'name': 'my-set', 'version': '2.0', 'warnings': []}
+        gate_failure = {
+            'code': 'gate_failed',
+            'message': '1/113 task(s) are not activation-eligible',
+            'failed_tasks': [{'task_name': 'task-7', 'outcome': 'FAIL',
+                              'reasons': ['gold solution scored 0.0']}],
+        }
+        fake, calls, seen_urls = _settle_urlopen(
+            [
+                {**job, 'status': 'COMPLETED', 'failure': None, 'task_count': 113},
+                {**job, 'status': 'FAILED', 'task_count': 113,
+                 'failure': {'code': 'gate_failed',
+                             'message': gate_failure['message']}},
+            ],
+            [
+                _settle_detail_body(version='2.0', state='VALIDATING', gate={
+                    'status': 'RUNNING', 'attempts': 1, 'failure': None, 'unproven': None,
+                }),
+                _settle_detail_body(version='2.0', state='FAILED', gate={
+                    'status': 'FAILED', 'attempts': 1, 'failure': gate_failure,
+                    'unproven': None,
+                }),
+            ],
+        )
+
+        transitions = []
+        with patch('evolve._http.urlopen', fake):
+            done = await datasets_factory(CONFIG).watch_import(
+                'imp-9',
+                poll_interval_s=0.001,
+                on_version=lambda v, d: transitions.append(
+                    f'{v.state}:{v.gate.status if v.gate else "none"}'
+                ),
+            )
+
+        assert done.status == 'FAILED'
+        assert done.failure is not None
+        assert done.failure.code == 'gate_failed'
+        assert transitions == ['VALIDATING:RUNNING', 'FAILED:FAILED']
+
+    @pytest.mark.asyncio
+    async def test_watch_import_unproven_settles_as_success(self):
+        """UNPROVEN is a SUCCESS end-state: a solution-less corpus is
+        auto-activated with its gate stamped UNPROVEN (Harbor parity), and
+        the watch resolves with that fact observable on the version — never
+        disguised as PASSED and never a hang."""
+        job = {'id': 'imp-2', 'name': 'my-set', 'version': '1.3', 'failure': None,
+               'warnings': [{'code': 'no_solutions_archived',
+                             'message': 'no reference solutions were archived'}]}
+        fake, calls, seen_urls = _settle_urlopen(
+            [{**job, 'status': 'COMPLETED', 'task_count': 4}],
+            [
+                _settle_detail_body(version='1.3', state='VALIDATING', gate=None),
+                _settle_detail_body(version='1.3', state='READY', active=True, gate={
+                    'status': 'UNPROVEN', 'attempts': 0, 'failure': None,
+                    'unproven': {'reason': 'no reference solutions to run',
+                                 'at': '2026-08-20T00:01:00Z'},
+                }),
+            ],
+        )
+
+        settled = []
+        with patch('evolve._http.urlopen', fake):
+            done = await datasets_factory(CONFIG).watch_import(
+                'imp-2',
+                poll_interval_s=0.001,
+                on_version=lambda v, d: settled.append(v),
+            )
+
+        assert done.status == 'COMPLETED'
+        assert settled[-1].state == 'READY'
+        assert settled[-1].gate is not None
+        assert settled[-1].gate.status == 'UNPROVEN'
+        assert settled[-1].gate.unproven is not None
+        assert settled[-1].gate.unproven.reason == 'no reference solutions to run'
+
+    @pytest.mark.asyncio
+    async def test_watch_import_refuses_unschedulable_gate(self):
+        """THE KNOWN TRAP, refused by name: with solutions archiving disabled
+        the import lands VALIDATING with no archived solutions — the gate
+        sweep can NEVER select the row, so no gate will ever be scheduled and
+        the version sits VALIDATING forever. A settle loop that only exits on
+        READY/FAILED polls forever on that configuration; the watch instead
+        refuses immediately with the named cause after ONE detail probe."""
+        # Resolved dynamically (like the TS tests' dynamic import) so this
+        # file still collects — and the settle tests still prove the BEHAVIOR
+        # red — on a build that predates the class.
+        import evolve as evolve_pkg
+        settle_error = getattr(evolve_pkg, 'ImportSettleError', None)
+
+        job = {'id': 'imp-3', 'name': 'my-set', 'version': '1.4', 'failure': None,
+               'warnings': [{'code': 'solutions_archiving_disabled',
+                             'message': 'solutions archiving is disabled'}]}
+        fake, calls, seen_urls = _settle_urlopen(
+            [{**job, 'status': 'COMPLETED', 'task_count': 4}],
+            [_settle_detail_body(version='1.4', state='VALIDATING', gate=None)],
+        )
+
+        with patch('evolve._http.urlopen', fake):
+            with pytest.raises(Exception) as exc:
+                await datasets_factory(CONFIG).watch_import(
+                    'imp-3', poll_interval_s=0.001
+                )
+
+        assert settle_error is not None and isinstance(exc.value, settle_error)
+        assert exc.value.code == 'gate_unschedulable'
+        assert exc.value.dataset == 'my-set'
+        assert exc.value.version == '1.4'
+        assert exc.value.state == 'VALIDATING'
+        assert 'solutions_archiving_disabled' in str(exc.value)
+        # ONE detail probe — the dead end is known, waiting cannot change it.
+        assert calls['detail'] == 1
+
+    @pytest.mark.asyncio
+    async def test_watch_import_settle_timeout_backstop(self):
+        """The bounded backstop: whatever else goes wrong (a worker fleet
+        that is down leaves the gate PENDING indefinitely), the settle wait
+        is a bounded await — it ends with the named settle_timeout cause
+        carrying the last observed state, never an unbounded hang."""
+        import evolve as evolve_pkg
+        settle_error = getattr(evolve_pkg, 'ImportSettleError', None)
+
+        job = {'id': 'imp-4', 'name': 'my-set', 'version': '1.5',
+               'failure': None, 'warnings': []}
+        fake, calls, seen_urls = _settle_urlopen(
+            [{**job, 'status': 'COMPLETED', 'task_count': 4}],
+            [_settle_detail_body(version='1.5', state='VALIDATING', gate={
+                'status': 'PENDING', 'attempts': 0, 'failure': None, 'unproven': None,
+            })],
+        )
+
+        with patch('evolve._http.urlopen', fake):
+            with pytest.raises(Exception) as exc:
+                await datasets_factory(CONFIG).watch_import(
+                    'imp-4', poll_interval_s=0.001, settle_timeout_s=0.05
+                )
+
+        assert settle_error is not None and isinstance(exc.value, settle_error)
+        assert exc.value.code == 'settle_timeout'
+        assert exc.value.state == 'VALIDATING'
+        assert exc.value.gate is not None
+        assert exc.value.gate.status == 'PENDING'
+
+    @pytest.mark.asyncio
+    async def test_watch_import_settle_timeout_bounds_rate_limited_polls(self):
+        """THE HOLE A REVIEW FOUND: the settle poll's 429/503 retry path
+        skipped the deadline check, so a server answering nothing but rate
+        limits turned the bounded settle wait into an infinite loop —
+        ``publish --watch`` hung forever while a deploy answered 503. Both
+        laws hold AT THE SAME TIME: a 429/503 is a delay, not an outcome,
+        AND the settle deadline bounds the whole wait, retries included."""
+        import io
+        import urllib.error
+        import evolve as evolve_pkg
+        settle_error = getattr(evolve_pkg, 'ImportSettleError', None)
+
+        job = {'id': 'imp-5', 'name': 'my-set', 'version': '1.6',
+               'failure': None, 'warnings': []}
+        calls = {'detail': 0}
+
+        def rate_limited_settle(request, timeout=None):
+            if '/api/datasets/imports/' in request.full_url:
+                return FakeResponse({**job, 'status': 'COMPLETED', 'task_count': 4})
+            calls['detail'] += 1
+            raise urllib.error.HTTPError(
+                request.full_url, 429, 'Too Many Requests', {},
+                io.BytesIO(json.dumps({'error': {
+                    'code': 'rate_limited', 'message': 'slow down',
+                }}).encode('utf-8')),
+            )
+
+        with patch('evolve._http.urlopen', rate_limited_settle):
+            with pytest.raises(Exception) as exc:
+                # The proof itself is bounded: pre-fix this watch never
+                # exits, so a hard cap turns the hang into a TimeoutError
+                # instead of hanging the whole suite.
+                await asyncio.wait_for(
+                    datasets_factory(CONFIG).watch_import(
+                        'imp-5', poll_interval_s=0.001, settle_timeout_s=0.05
+                    ),
+                    timeout=2,
+                )
+
+        assert settle_error is not None and isinstance(exc.value, settle_error)
+        assert exc.value.code == 'settle_timeout'
+        assert exc.value.state is None
+        assert 'never observed' in str(exc.value)
+        # The 429s WERE retried (delay, not outcome) before the deadline
+        # ended the wait.
+        assert calls['detail'] >= 2
+
+    @pytest.mark.asyncio
+    async def test_watch_import_gate_failure_reread_survives_rate_limit(self):
+        """The delay-not-outcome law covers the LAST read too: with the
+        version settled FAILED, the final import re-read (the one that
+        fetches the gate's structured cause) can itself be rate-limited — a
+        transient 429 there must not turn a settled gate failure into a
+        thrown rate-limit error."""
+        import io
+        import urllib.error
+
+        job = {'id': 'imp-6', 'name': 'my-set', 'version': '2.1', 'warnings': []}
+        gate_failure = {
+            'code': 'gate_failed',
+            'message': '1/4 task(s) are not activation-eligible',
+            'failed_tasks': [{'task_name': 'task-2', 'outcome': 'FAIL',
+                              'reasons': ['gold solution scored 0.0']}],
+        }
+        detail = _settle_detail_body(version='2.1', state='FAILED', gate={
+            'status': 'FAILED', 'attempts': 1, 'failure': gate_failure,
+            'unproven': None,
+        })
+        calls = {'import': 0}
+
+        def rate_limited_reread(request, timeout=None):
+            if '/api/datasets/imports/' not in request.full_url:
+                return FakeResponse(detail)
+            calls['import'] += 1
+            if calls['import'] == 1:
+                return FakeResponse({**job, 'status': 'COMPLETED',
+                                     'failure': None, 'task_count': 4})
+            if calls['import'] == 2:
+                raise urllib.error.HTTPError(
+                    request.full_url, 429, 'Too Many Requests', {},
+                    io.BytesIO(json.dumps({'error': {
+                        'code': 'rate_limited', 'message': 'slow down',
+                    }}).encode('utf-8')),
+                )
+            return FakeResponse({**job, 'status': 'FAILED',
+                                 'failure': {'code': 'gate_failed',
+                                             'message': gate_failure['message']},
+                                 'task_count': 4})
+
+        with patch('evolve._http.urlopen', rate_limited_reread):
+            final = await datasets_factory(CONFIG).watch_import(
+                'imp-6', poll_interval_s=0.001
+            )
+
+        assert calls['import'] == 3
+        assert final.status == 'FAILED'
+        assert final.failure is not None
+        assert final.failure.code == 'gate_failed'
+
+    @pytest.mark.asyncio
+    async def test_watch_import_gate_failure_reread_is_bounded(self):
+        """And when the rate limiting never relents, the final re-read is
+        bounded by the SAME settle deadline — refusing with facts that stay
+        true: the version settled FAILED (state and gate ride the error),
+        the watch just could not fetch the final import body inside its
+        budget."""
+        import io
+        import urllib.error
+        import evolve as evolve_pkg
+        settle_error = getattr(evolve_pkg, 'ImportSettleError', None)
+
+        job = {'id': 'imp-7', 'name': 'my-set', 'version': '2.2', 'warnings': []}
+        gate_failure = {
+            'code': 'gate_failed',
+            'message': '1/4 task(s) are not activation-eligible',
+            'failed_tasks': [{'task_name': 'task-2', 'outcome': 'FAIL',
+                              'reasons': ['gold solution scored 0.0']}],
+        }
+        detail = _settle_detail_body(version='2.2', state='FAILED', gate={
+            'status': 'FAILED', 'attempts': 1, 'failure': gate_failure,
+            'unproven': None,
+        })
+        calls = {'import': 0}
+
+        def always_rate_limited_reread(request, timeout=None):
+            if '/api/datasets/imports/' not in request.full_url:
+                return FakeResponse(detail)
+            calls['import'] += 1
+            if calls['import'] == 1:
+                return FakeResponse({**job, 'status': 'COMPLETED',
+                                     'failure': None, 'task_count': 4})
+            raise urllib.error.HTTPError(
+                request.full_url, 429, 'Too Many Requests', {},
+                io.BytesIO(json.dumps({'error': {
+                    'code': 'rate_limited', 'message': 'slow down',
+                }}).encode('utf-8')),
+            )
+
+        with patch('evolve._http.urlopen', always_rate_limited_reread):
+            with pytest.raises(Exception) as exc:
+                await asyncio.wait_for(
+                    datasets_factory(CONFIG).watch_import(
+                        'imp-7', poll_interval_s=0.001, settle_timeout_s=0.05
+                    ),
+                    timeout=2,
+                )
+
+        assert settle_error is not None and isinstance(exc.value, settle_error)
+        assert exc.value.code == 'settle_timeout'
+        assert exc.value.state == 'FAILED'
+        assert exc.value.gate is not None
+        assert exc.value.gate.status == 'FAILED'
+        assert exc.value.gate.code == 'gate_failed'
+        assert 'settled FAILED' in str(exc.value)
+        assert 'get_import("imp-7")' in str(exc.value)
 
     @pytest.mark.asyncio
     async def test_publish_requires_complete_git_source(self):

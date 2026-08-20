@@ -783,7 +783,7 @@ A rate limit is a delay, not a mystery: a `429` prints one line naming the limit
 
 Closed sets are validated at the keyboard: a typo in `--stream`, `--status`, or `-e/--env` is a usage error naming the legal values, never a round trip.
 
-Credentials: `$EVOLVE_API_KEY`, or `--api-key`; `--base-url` targets a non-default deployment. Exit codes: `0` success (with `--watch`: the job `COMPLETED`, or a publish `COMPLETED`), `1` runtime failure (with `--watch`: `FAILED` or `CANCELLED`), `2` usage error.
+Credentials: `$EVOLVE_API_KEY`, or `--api-key`; `--base-url` targets a non-default deployment. Exit codes: `0` success (with `--watch`: the job `COMPLETED`, or a publish SETTLED — version `READY`, gate `PASSED` or `UNPROVEN`), `1` runtime failure (with `--watch`: `FAILED` or `CANCELLED`; for a publish, also a failed activation gate or a version that cannot settle), `2` usage error.
 
 ### Signing in
 
@@ -1186,10 +1186,16 @@ const localPublish = await catalog.publish({
 // tarball's sha256 — the version's source identity on the server — is
 // reproducible.
 
-// Block until COMPLETED or FAILED
+// Block until the publish SETTLES — not merely until the import finishes.
+// COMPLETED only means the corpus landed as a VALIDATING version; the watch
+// then follows the version itself until the activation gate settles it: READY
+// (gate PASSED, or UNPROVEN for a solution-less corpus), ARCHIVED, or FAILED
+// (the gate's failure rides `failure`).
 const done = await catalog.watchImport(publishJob.id, {
     onStatus: (imp) => console.log(imp.status, imp.task_count),
+    onVersion: (v, d) => console.log(v.state, v.gate?.status ?? null),
     pollIntervalMs: 2_000,        // (optional) default 2s
+    settleTimeoutMs: 30 * 60_000, // (optional) settle-phase backstop, default 30min
 });
 
 if (done.status === "FAILED") {
@@ -1210,7 +1216,9 @@ for await (const imp of catalog.listImports({ status: "FAILED" })) {
 const history = await catalog.listImports({ dataset: "my-swe", limit: 20 });
 ```
 
-`getImport(id)` is the single read behind all of this — status, `task_count`, `failure` once there is one, and `warnings`. `watchImport()` is a poll loop over it, so reach for `getImport()` when you drive your own scheduler. A terminal import stays readable, id included, for as long as its dataset exists — deleting the dataset takes its import records with it, and a later `getImport` answers the same not-found as an id that never existed.
+`getImport(id)` is the single read behind the import phase — status, `task_count`, `failure` once there is one, and `warnings`. `watchImport()` polls it to a terminal import status, then keeps polling `get()` until the version settles (the settle phase above), so reach for `getImport()` when you drive your own scheduler. A terminal import stays readable, id included, for as long as its dataset exists — deleting the dataset takes its import records with it, and a later `getImport` answers the same not-found as an id that never existed.
+
+A version that cannot settle on its own ends the watch with the typed `ImportSettleError`, its `code` naming the cause: `gate_unschedulable` when the import's warnings say solutions archiving is disabled for the deployment (no activation gate can ever be scheduled, so the version would sit `VALIDATING` until an operator activates it), or `settle_timeout` when the `settleTimeoutMs` backstop elapses first — a bound on the wait, not a verdict on the gate. The same deadline bounds the watch's 429/503 patience, so a server that answers nothing but rate limits still ends the wait typed instead of hanging it. Usually the gate is still at work server-side; when the error's `state` reads `FAILED` the version did settle and the budget was spent retrying the final import read through rate limits — read the failure with `getImport(importId)`. The error carries the last observed `state` and `gate`.
 
 `warnings` is worth reading even on success: an import whose warnings include `no_solutions_archived` produced a version that can never be activated through this API (`version_not_activatable`) — an import that will never become runnable must not look identical to one that will.
 

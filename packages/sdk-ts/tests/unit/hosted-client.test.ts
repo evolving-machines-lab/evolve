@@ -10,7 +10,9 @@
  * regrade-returns-a-Job, the download surfaces (buffer / file / stream, with
  * truncation + digest verification on BOTH), SSE watch with Last-Event-ID
  * resume + reconnect backoff, the publish trio (publish/getImport/watchImport)
- * with import warnings, compare aggregates + task matrix, globally addressable
+ * with import warnings and the watch's SETTLE phase (past import COMPLETED the
+ * version is followed on the dataset detail to READY/ARCHIVED/FAILED, with the
+ * typed ImportSettleError refusals), compare aggregates + task matrix, globally addressable
  * trials (get / trace / artifact / regrade / stop), internal-field leak
  * sentinels, per-task provider verdicts, and the typed EvolveApiError mapping
  * of { error: { code, message } } bodies.
@@ -975,13 +977,15 @@ async function testWatchImportPollsToTerminal() {
       { ...job, status: "RUNNING", failure: null, task_count: 0 },
       { ...job, status: "COMPLETED", failure: null, task_count: 113 },
     ];
-    let calls = 0;
-    (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
-      fetchCalls.push({ url: url.toString(), init });
-      const body = statuses[Math.min(calls, statuses.length - 1)];
-      calls++;
-      return buildMockResponse({ status: 200, body });
-    };
+    // After COMPLETED the watch follows the VERSION on the dataset detail;
+    // an already-settled READY answer ends it on the first settle poll.
+    const counters = installSettleFetch(statuses, [
+      settleDetailBody({
+        state: "READY",
+        gate: { status: "PASSED", attempts: 1, failure: null, unproven: null },
+        active: true,
+      }),
+    ]);
 
     const d = datasets({ apiKey: "test-key", baseUrl: BASE });
     const seen: string[] = [];
@@ -990,7 +994,7 @@ async function testWatchImportPollsToTerminal() {
       pollIntervalMs: 1,
     });
 
-    assertEqual(calls, 3, "polled until the terminal status");
+    assertEqual(counters.importCalls(), 3, "polled the import until its terminal status");
     assertEqual(seen, ["QUEUED", "RUNNING", "COMPLETED"], "onStatus fires on every status change");
     assertEqual(final.status, "COMPLETED", "resolves with the terminal import");
     assertEqual(final.task_count, 113, "terminal import carries task_count");
@@ -1036,10 +1040,31 @@ async function testWatchImportSurvivesRateLimit() {
       },
       { status: 200, body: { ...job, status: "COMPLETED", failure: null, task_count: 113 } },
     ];
-    let calls = 0;
+    // The SETTLE phase lives under the same law: its first detail poll is
+    // rate-limited too, and the watch sleeps the server's delay and polls on.
+    const detailReplies: MockResponse[] = [
+      {
+        status: 429,
+        body: { error: { code: "rate_limited", message: "slow down", retryAfterSec: 0.05 } },
+      },
+      {
+        status: 200,
+        body: settleDetailBody({
+          state: "READY",
+          gate: { status: "PASSED", attempts: 1, failure: null, unproven: null },
+          active: true,
+        }),
+      },
+    ];
+    let importCalls = 0;
+    let detailCalls = 0;
     (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
-      fetchCalls.push({ url: url.toString(), init });
-      return buildMockResponse(replies[Math.min(calls++, replies.length - 1)]);
+      const urlStr = url.toString();
+      fetchCalls.push({ url: urlStr, init });
+      if (urlStr.includes("/api/datasets/imports/")) {
+        return buildMockResponse(replies[Math.min(importCalls++, replies.length - 1)]);
+      }
+      return buildMockResponse(detailReplies[Math.min(detailCalls++, detailReplies.length - 1)]);
     };
 
     const d = datasets({ apiKey: "test-key", baseUrl: BASE });
@@ -1047,11 +1072,12 @@ async function testWatchImportSurvivesRateLimit() {
     const final = await d.watchImport("imp-1", { pollIntervalMs: 1 });
     const elapsedMs = Date.now() - startedAt;
 
-    assertEqual(calls, 3, "the 429 and the 503 are survived, not surfaced");
+    assertEqual(importCalls, 3, "the 429 and the 503 are survived, not surfaced");
+    assertEqual(detailCalls, 2, "the settle poll's 429 is survived the same way");
     assertEqual(final.status, "COMPLETED", "resolves with the terminal import the 429 would have hidden");
     assert(
-      elapsedMs >= 80,
-      `slept both 50ms Retry-After delays, not the 1ms poll interval (waited ${elapsedMs}ms)`
+      elapsedMs >= 120,
+      `slept all three 50ms Retry-After delays, not the 1ms poll interval (waited ${elapsedMs}ms)`
     );
 
     // Every other failure still ends the watch — the survival is scoped to the
@@ -1068,6 +1094,514 @@ async function testWatchImportSurvivesRateLimit() {
       threw = error instanceof EvolveApiError && error.status === 404;
     }
     assert(threw, "a 404 still ends the watch with the typed error");
+  } finally {
+    restoreFetch();
+  }
+}
+
+// =============================================================================
+// WATCH-IMPORT SETTLE TESTS — the publish is not over at import COMPLETED
+// =============================================================================
+
+/**
+ * A wire dataset-detail body holding exactly one version, for the settle
+ * tests: import COMPLETED only means the corpus landed as a version — the
+ * version then sits VALIDATING while the activation gate proves it, and the
+ * watch follows it here, on the dataset detail, until it settles.
+ */
+function settleDetailBody(opts: {
+  name?: string;
+  version?: string;
+  state: string;
+  gate?: unknown;
+  active?: boolean;
+}): Record<string, unknown> {
+  const versionBody = {
+    version: opts.version ?? "1.2",
+    state: opts.state,
+    created_at: "2026-08-20T00:00:00Z",
+    task_count: 113,
+    manifest: null,
+    source: null,
+    gate: opts.gate ?? null,
+  };
+  return {
+    name: opts.name ?? "deep-swe",
+    title: null,
+    description: null,
+    visibility: "private",
+    active_version: opts.active ? versionBody : null,
+    versions: [versionBody],
+    selected_version: versionBody,
+    tasks: { items: [], next_cursor: null, has_more: false },
+    upstream: null,
+    created_at: "2026-08-20T00:00:00Z",
+    updated_at: "2026-08-20T00:00:00Z",
+  };
+}
+
+/** Route a settle test's fetches: import reads by id, detail reads by name. */
+function installSettleFetch(
+  importBodies: unknown[],
+  detailBodies: unknown[]
+): { importCalls: () => number; detailCalls: () => number } {
+  let importCalls = 0;
+  let detailCalls = 0;
+  (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+    const urlStr = url.toString();
+    fetchCalls.push({ url: urlStr, init });
+    if (urlStr.includes("/api/datasets/imports/")) {
+      const body = importBodies[Math.min(importCalls, importBodies.length - 1)];
+      importCalls++;
+      return buildMockResponse({ status: 200, body });
+    }
+    const body = detailBodies[Math.min(detailCalls, detailBodies.length - 1)];
+    detailCalls++;
+    return buildMockResponse({ status: 200, body });
+  };
+  return { importCalls: () => importCalls, detailCalls: () => detailCalls };
+}
+
+/**
+ * THE DEFECT THIS GUARDS AGAINST: watchImport used to return at import
+ * COMPLETED — but COMPLETED only means the corpus landed as a version. The
+ * version then sits VALIDATING while the activation gate proves it, so a
+ * caller who chained a job start off the resolved watch was answered
+ * no_active_version / version_not_ready — and on a RE-publish, the bare name
+ * still resolved to the OLD active version, silently running stale content.
+ * The watch must keep polling the dataset detail until the VERSION settles.
+ */
+async function testWatchImportSettlesToReady() {
+  console.log("\n--- datasets().watchImport() keeps watching past COMPLETED until the version is READY ---");
+  installMockFetch();
+  try {
+    const job = { id: "imp-1", name: "deep-swe", version: "1.2", failure: null, warnings: [] };
+    const counters = installSettleFetch(
+      [
+        { ...job, status: "RUNNING", task_count: 0 },
+        { ...job, status: "COMPLETED", task_count: 113 },
+      ],
+      [
+        settleDetailBody({ state: "VALIDATING", gate: null }),
+        settleDetailBody({ state: "VALIDATING", gate: { status: "PENDING", attempts: 0, failure: null, unproven: null } }),
+        settleDetailBody({ state: "VALIDATING", gate: { status: "RUNNING", attempts: 1, failure: null, unproven: null } }),
+        settleDetailBody({ state: "READY", gate: { status: "PASSED", attempts: 1, failure: null, unproven: null }, active: true }),
+      ]
+    );
+
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    const transitions: string[] = [];
+    let activeAfterSettle: string | null = null;
+    const final = await d.watchImport("imp-1", {
+      pollIntervalMs: 1,
+      onVersion: (version, dataset) => {
+        transitions.push(`${version.state}:${version.gate?.status ?? "none"}`);
+        activeAfterSettle = dataset.active_version?.version ?? null;
+      },
+    });
+
+    assertEqual(final.status, "COMPLETED", "resolves with the COMPLETED import");
+    const detailCall = fetchCalls.find((c) => c.url.includes("/api/datasets/deep-swe?"));
+    assert(
+      detailCall !== undefined,
+      "polls the dataset detail after import COMPLETED — COMPLETED alone is not a settled publish"
+    );
+    assert(
+      detailCall?.url.includes("version=1.2") === true,
+      "the detail poll pins ?version= to the version this publish created"
+    );
+    assertEqual(counters.detailCalls(), 4, "keeps polling until the version state settles to READY");
+    assertEqual(
+      transitions,
+      ["VALIDATING:none", "VALIDATING:PENDING", "VALIDATING:RUNNING", "READY:PASSED"],
+      "onVersion fires on every observed {state, gate} change"
+    );
+    assertEqual(activeAfterSettle, "1.2", "the settled detail names the new version as the active one");
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * A gate that FAILS the version fails the WATCH: the version moves
+ * VALIDATING -> FAILED with the gate's structured cause on the same row the
+ * import surface reads, so the watch re-reads the import and returns it
+ * FAILED — the one import shape, exactly like an import that failed before
+ * the gate ever ran. Never a silent success.
+ */
+async function testWatchImportSurfacesGateFailure() {
+  console.log("\n--- datasets().watchImport() ends FAILED when the activation gate fails the version ---");
+  installMockFetch();
+  try {
+    const job = { id: "imp-9", name: "deep-swe", version: "2.0", warnings: [] };
+    const gateFailure = {
+      code: "gate_failed",
+      message: "1/113 task(s) are not activation-eligible",
+      failed_tasks: [{ task_name: "task-7", outcome: "FAIL", reasons: ["gold solution scored 0.0"] }],
+    };
+    installSettleFetch(
+      [
+        { ...job, status: "COMPLETED", failure: null, task_count: 113 },
+        { ...job, status: "FAILED", failure: { code: "gate_failed", message: gateFailure.message }, task_count: 113 },
+      ],
+      [
+        settleDetailBody({ version: "2.0", state: "VALIDATING", gate: { status: "RUNNING", attempts: 1, failure: null, unproven: null } }),
+        settleDetailBody({ version: "2.0", state: "FAILED", gate: { status: "FAILED", attempts: 1, failure: gateFailure, unproven: null } }),
+      ]
+    );
+
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    const transitions: string[] = [];
+    const final = await d.watchImport("imp-9", {
+      pollIntervalMs: 1,
+      onVersion: (version) => transitions.push(`${version.state}:${version.gate?.status ?? "none"}`),
+    });
+
+    assertEqual(final.status, "FAILED", "a gate-failed version fails the watch — never exit-0 on stale content");
+    assertEqual(final.failure?.code, "gate_failed", "the gate's structured cause rides the import's own failure field");
+    assertEqual(
+      transitions,
+      ["VALIDATING:RUNNING", "FAILED:FAILED"],
+      "the failing gate is observed on the version before the import re-read"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * UNPROVEN is a SUCCESS end-state: a solution-less corpus is auto-activated
+ * with its gate stamped UNPROVEN (Harbor parity — a publish without reference
+ * solutions just works), and the watch resolves with that fact observable on
+ * the version, never disguised as PASSED and never a hang.
+ */
+async function testWatchImportUnprovenSettlesAsSuccess() {
+  console.log("\n--- datasets().watchImport() treats READY + gate UNPROVEN as settled success ---");
+  installMockFetch();
+  try {
+    const job = {
+      id: "imp-2",
+      name: "deep-swe",
+      version: "1.3",
+      failure: null,
+      warnings: [{ code: "no_solutions_archived", message: "no reference solutions were archived" }],
+    };
+    installSettleFetch(
+      [{ ...job, status: "COMPLETED", task_count: 4 }],
+      [
+        settleDetailBody({ version: "1.3", state: "VALIDATING", gate: null }),
+        settleDetailBody({
+          version: "1.3",
+          state: "READY",
+          active: true,
+          gate: {
+            status: "UNPROVEN",
+            attempts: 0,
+            failure: null,
+            unproven: { reason: "no reference solutions to run", at: "2026-08-20T00:01:00Z" },
+          },
+        }),
+      ]
+    );
+
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    let settled: { state: string; gate: string | null; reason: string | null } | null = null;
+    const final = await d.watchImport("imp-2", {
+      pollIntervalMs: 1,
+      onVersion: (version) => {
+        settled = {
+          state: version.state,
+          gate: version.gate?.status ?? null,
+          reason: version.gate?.unproven?.reason ?? null,
+        };
+      },
+    });
+
+    assertEqual(final.status, "COMPLETED", "an UNPROVEN activation is a successful watch");
+    assertEqual(
+      settled,
+      { state: "READY", gate: "UNPROVEN", reason: "no reference solutions to run" },
+      "the unproven fact is observable on the settled version, never disguised as PASSED"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * THE KNOWN TRAP, refused by name: with solutions archiving disabled the
+ * import lands VALIDATING with solutions_archive_ref NULL — the gate sweep
+ * can NEVER select the row, so no gate will ever be scheduled and the version
+ * sits VALIDATING forever. A settle loop that only exits on READY/FAILED
+ * polls forever on that configuration; the watch instead refuses immediately
+ * with the named cause after ONE detail probe.
+ */
+async function testWatchImportRefusesUnschedulableGate() {
+  console.log("\n--- datasets().watchImport() refuses (typed, at once) when no gate can ever be scheduled ---");
+  installMockFetch();
+  try {
+    const job = {
+      id: "imp-3",
+      name: "deep-swe",
+      version: "1.4",
+      failure: null,
+      warnings: [{ code: "solutions_archiving_disabled", message: "solutions archiving is disabled" }],
+    };
+    const counters = installSettleFetch(
+      [{ ...job, status: "COMPLETED", task_count: 4 }],
+      [settleDetailBody({ version: "1.4", state: "VALIDATING", gate: null })]
+    );
+
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    const hosted = (await import("../../src/hosted/index.ts")) as Record<string, any>;
+    let thrown: unknown = null;
+    try {
+      await d.watchImport("imp-3", { pollIntervalMs: 1 });
+    } catch (error) {
+      thrown = error;
+    }
+
+    assert(
+      hosted.ImportSettleError !== undefined && thrown instanceof hosted.ImportSettleError,
+      "throws the typed ImportSettleError, never a hang and never a fake success"
+    );
+    assertEqual((thrown as any)?.code, "gate_unschedulable", "the cause is named: gate_unschedulable");
+    assertEqual((thrown as any)?.dataset, "deep-swe", "the error names the dataset");
+    assertEqual((thrown as any)?.version, "1.4", "the error names the version");
+    assertEqual((thrown as any)?.state, "VALIDATING", "the error carries the observed state");
+    assertEqual(counters.detailCalls(), 1, "ONE detail probe — the dead end is known, waiting cannot change it");
+    assert(
+      String((thrown as Error)?.message ?? "").includes("solutions_archiving_disabled"),
+      "the message names the import warning that proves the dead end"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * The bounded backstop: whatever else goes wrong (a worker fleet that is
+ * down leaves the gate PENDING indefinitely), the settle wait is a bounded
+ * await — it ends with the named settle_timeout cause carrying the last
+ * observed state, never an unbounded hang.
+ */
+async function testWatchImportSettleTimeoutBackstop() {
+  console.log("\n--- datasets().watchImport() bounds the settle wait with a typed settle_timeout ---");
+  installMockFetch();
+  try {
+    const job = { id: "imp-4", name: "deep-swe", version: "1.5", failure: null, warnings: [] };
+    installSettleFetch(
+      [{ ...job, status: "COMPLETED", task_count: 4 }],
+      [settleDetailBody({ version: "1.5", state: "VALIDATING", gate: { status: "PENDING", attempts: 0, failure: null, unproven: null } })]
+    );
+
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    const hosted = (await import("../../src/hosted/index.ts")) as Record<string, any>;
+    let thrown: unknown = null;
+    try {
+      await d.watchImport("imp-4", { pollIntervalMs: 1, settleTimeoutMs: 40 });
+    } catch (error) {
+      thrown = error;
+    }
+
+    assert(
+      hosted.ImportSettleError !== undefined && thrown instanceof hosted.ImportSettleError,
+      "the settle wait is bounded: it ends with the typed ImportSettleError"
+    );
+    assertEqual((thrown as any)?.code, "settle_timeout", "the cause is named: settle_timeout");
+    assertEqual((thrown as any)?.state, "VALIDATING", "the error carries the last observed version state");
+    assertEqual((thrown as any)?.gate?.status, "PENDING", "the error carries the last observed gate");
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * THE HOLE A REVIEW FOUND: the settle poll's 429/503 retry path skipped the
+ * deadline check, so a server answering nothing but rate limits turned the
+ * bounded settle wait into an infinite loop — `publish --watch` hung forever
+ * while a deploy answered 503. Both laws hold AT THE SAME TIME: a 429/503 is
+ * a delay, not an outcome, AND the settle deadline bounds the whole wait,
+ * retries included.
+ */
+async function testWatchImportSettleTimeoutBoundsRateLimitedPolls() {
+  console.log("\n--- datasets().watchImport() settle_timeout fires even when the server answers only 429s ---");
+  installMockFetch();
+  try {
+    const job = { id: "imp-5", name: "deep-swe", version: "1.6", failure: null, warnings: [] };
+    let detailCalls = 0;
+    (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+      const urlStr = url.toString();
+      fetchCalls.push({ url: urlStr, init });
+      if (urlStr.includes("/api/datasets/imports/")) {
+        return buildMockResponse({ status: 200, body: { ...job, status: "COMPLETED", task_count: 4 } });
+      }
+      detailCalls++;
+      return buildMockResponse({
+        status: 429,
+        body: { error: { code: "rate_limited", message: "slow down" } },
+      });
+    };
+
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    const hosted = (await import("../../src/hosted/index.ts")) as Record<string, any>;
+    // The proof itself is bounded: pre-fix this watch never exits, so it is
+    // raced against a hard cap instead of hanging the whole suite.
+    let thrown: unknown = null;
+    const outcome = await Promise.race([
+      d.watchImport("imp-5", { pollIntervalMs: 1, settleTimeoutMs: 40 }).then(
+        () => "resolved",
+        (error) => {
+          thrown = error;
+          return "rejected";
+        }
+      ),
+      new Promise<string>((resolve) => {
+        setTimeout(() => resolve("still-looping"), 1500).unref();
+      }),
+    ]);
+
+    assertEqual(outcome, "rejected", "the watch ends instead of looping forever on endless 429s");
+    assert(
+      hosted.ImportSettleError !== undefined && thrown instanceof hosted.ImportSettleError,
+      "the bounded end is the typed ImportSettleError"
+    );
+    assertEqual((thrown as any)?.code, "settle_timeout", "the cause is named: settle_timeout");
+    assertEqual((thrown as any)?.state, null, "no version state was ever observed through the rate limits");
+    assert(
+      String((thrown as Error)?.message ?? "").includes("never observed"),
+      "the message says honestly that nothing was observed"
+    );
+    assert(detailCalls >= 2, "the 429s WERE retried (delay, not outcome) before the deadline ended the wait");
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * The delay-not-outcome law covers the LAST read too: with the version
+ * settled FAILED, the final import re-read (the one that fetches the gate's
+ * structured cause) can itself be rate-limited — a transient 429 there must
+ * not turn a settled gate failure into a thrown rate-limit error.
+ */
+async function testWatchImportGateFailureReReadSurvivesRateLimit() {
+  console.log("\n--- datasets().watchImport() retries a rate-limited final re-read after a gate failure ---");
+  installMockFetch();
+  try {
+    const job = { id: "imp-6", name: "deep-swe", version: "2.1", warnings: [] };
+    const gateFailure = {
+      code: "gate_failed",
+      message: "1/4 task(s) are not activation-eligible",
+      failed_tasks: [{ task_name: "task-2", outcome: "FAIL", reasons: ["gold solution scored 0.0"] }],
+    };
+    const importReplies: MockResponse[] = [
+      { status: 200, body: { ...job, status: "COMPLETED", failure: null, task_count: 4 } },
+      { status: 429, body: { error: { code: "rate_limited", message: "slow down" } } },
+      {
+        status: 200,
+        body: { ...job, status: "FAILED", failure: { code: "gate_failed", message: gateFailure.message }, task_count: 4 },
+      },
+    ];
+    let importCalls = 0;
+    (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+      const urlStr = url.toString();
+      fetchCalls.push({ url: urlStr, init });
+      if (urlStr.includes("/api/datasets/imports/")) {
+        return buildMockResponse(importReplies[Math.min(importCalls++, importReplies.length - 1)]);
+      }
+      return buildMockResponse({
+        status: 200,
+        body: settleDetailBody({
+          version: "2.1",
+          state: "FAILED",
+          gate: { status: "FAILED", attempts: 1, failure: gateFailure, unproven: null },
+        }),
+      });
+    };
+
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    let thrown: unknown = null;
+    let final: Awaited<ReturnType<typeof d.watchImport>> | null = null;
+    try {
+      final = await d.watchImport("imp-6", { pollIntervalMs: 1 });
+    } catch (error) {
+      thrown = error;
+    }
+
+    assertEqual(thrown, null, "nothing thrown — the re-read's 429 was a delay, not an outcome");
+    assertEqual(importCalls, 3, "the rate-limited re-read was retried");
+    assertEqual(final?.status, "FAILED", "the settled gate failure is still the reported outcome");
+    assertEqual(final?.failure?.code, "gate_failed", "with the gate's structured cause, not a rate-limit error");
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * And when the rate limiting never relents, the final re-read is bounded by
+ * the SAME settle deadline — refusing with facts that stay true: the version
+ * settled FAILED (state and gate ride the error), the watch just could not
+ * fetch the final import body inside its budget.
+ */
+async function testWatchImportGateFailureReReadIsBounded() {
+  console.log("\n--- datasets().watchImport() bounds a rate-limited final re-read with the same settle deadline ---");
+  installMockFetch();
+  try {
+    const job = { id: "imp-7", name: "deep-swe", version: "2.2", warnings: [] };
+    const gateFailure = {
+      code: "gate_failed",
+      message: "1/4 task(s) are not activation-eligible",
+      failed_tasks: [{ task_name: "task-2", outcome: "FAIL", reasons: ["gold solution scored 0.0"] }],
+    };
+    let importCalls = 0;
+    (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+      const urlStr = url.toString();
+      fetchCalls.push({ url: urlStr, init });
+      if (urlStr.includes("/api/datasets/imports/")) {
+        importCalls++;
+        if (importCalls === 1) {
+          return buildMockResponse({ status: 200, body: { ...job, status: "COMPLETED", failure: null, task_count: 4 } });
+        }
+        return buildMockResponse({ status: 429, body: { error: { code: "rate_limited", message: "slow down" } } });
+      }
+      return buildMockResponse({
+        status: 200,
+        body: settleDetailBody({
+          version: "2.2",
+          state: "FAILED",
+          gate: { status: "FAILED", attempts: 1, failure: gateFailure, unproven: null },
+        }),
+      });
+    };
+
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    const hosted = (await import("../../src/hosted/index.ts")) as Record<string, any>;
+    let thrown: unknown = null;
+    const outcome = await Promise.race([
+      d.watchImport("imp-7", { pollIntervalMs: 1, settleTimeoutMs: 40 }).then(
+        () => "resolved",
+        (error) => {
+          thrown = error;
+          return "rejected";
+        }
+      ),
+      new Promise<string>((resolve) => {
+        setTimeout(() => resolve("still-looping"), 1500).unref();
+      }),
+    ]);
+
+    assertEqual(outcome, "rejected", "the re-read ends (typed) instead of retrying forever");
+    assert(
+      hosted.ImportSettleError !== undefined && thrown instanceof hosted.ImportSettleError,
+      "the bounded end is the typed ImportSettleError"
+    );
+    assertEqual((thrown as any)?.code, "settle_timeout", "the cause is named: settle_timeout");
+    assertEqual((thrown as any)?.state, "FAILED", "the error carries the settled FAILED state — the fact survives");
+    assertEqual((thrown as any)?.gate?.status, "FAILED", "and the observed gate");
+    assertEqual((thrown as any)?.gate?.code, "gate_failed", "with the gate's structured cause riding the error");
+    const message = String((thrown as Error)?.message ?? "");
+    assert(message.includes("settled FAILED"), "the message states the version DID settle FAILED");
+    assert(message.includes('getImport("imp-7")'), "and names the read that fetches the failed import");
   } finally {
     restoreFetch();
   }
@@ -4036,6 +4570,14 @@ async function main() {
   await testGetImport();
   await testWatchImportPollsToTerminal();
   await testWatchImportSurvivesRateLimit();
+  await testWatchImportSettlesToReady();
+  await testWatchImportSurfacesGateFailure();
+  await testWatchImportUnprovenSettlesAsSuccess();
+  await testWatchImportRefusesUnschedulableGate();
+  await testWatchImportSettleTimeoutBackstop();
+  await testWatchImportSettleTimeoutBoundsRateLimitedPolls();
+  await testWatchImportGateFailureReReadSurvivesRateLimit();
+  await testWatchImportGateFailureReReadIsBounded();
   await testAgentCreateInstallScript();
   await testAgentCreateTarball();
   await testSkillsUploadCarriesFolderName();

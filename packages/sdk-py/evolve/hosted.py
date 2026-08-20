@@ -76,8 +76,26 @@ PACKAGE_DIGEST_HEADER = 'x-package-sha256'
 
 _TERMINAL_JOB_STATUSES = {'COMPLETED', 'CANCELLED', 'FAILED'}
 
-# Terminal import job statuses.
-_TERMINAL_IMPORT_STATUSES = {'COMPLETED', 'FAILED'}
+#: Backstop bound on watch_import's settle phase — how long past import
+#: COMPLETED the watch may wait for the version to settle before refusing
+#: with ``ImportSettleError('settle_timeout')``. A bound on the WATCH, never
+#: a verdict on the gate: the gate keeps running server-side, and the error
+#: says where it stood. Generous because a gate run proves gold solutions
+#: through the real execution path (minutes to long); overridable per call.
+_DEFAULT_SETTLE_TIMEOUT_S = 30 * 60.0
+
+#: The gate verdicts that settle a watch WITHOUT the version state reaching
+#: READY first: on a platform-curated dataset the default moves only by
+#: operator action, so a resting PASSED is where the automatic machinery
+#: stops. UNPROVEN is belt-and-braces: the gate runner stamps it in the same
+#: write that promotes the version, so a version should never REST at
+#: VALIDATING+UNPROVEN — treating it as settled is safe if one ever does.
+#: (A FAILED gate moves the version state itself to FAILED in the same
+#: write, so the state check owns that case.)
+_SETTLED_GATE_STATUSES = {'PASSED', 'UNPROVEN'}
+
+#: The import warning that proves NO activation gate can ever be scheduled.
+_ARCHIVING_DISABLED_WARNING = 'solutions_archiving_disabled'
 
 # Seeing one of these on the wire is the authoritative end-of-stream signal.
 _TERMINAL_EVENT_TYPES = {'job.completed', 'job.cancelled', 'job.failed'}
@@ -315,6 +333,57 @@ class GateRunningError(Exception):
         #: The version the gate is proving.
         self.version = version
         #: Gate progress at the moment of the call.
+        self.gate = gate
+
+
+class ImportSettleError(Exception):
+    """Raised by ``datasets().watch_import()`` when the import COMPLETED but
+    the WATCH cannot truthfully report the version settled.
+
+    ``code`` names the cause:
+
+    - ``'gate_unschedulable'``: the import's warnings say solutions archiving
+      was disabled for this deployment, so NO activation gate can ever be
+      scheduled — the version sits VALIDATING until an operator proves and
+      activates it. Waiting longer can never change that, so the watch
+      refuses after one confirming read instead of polling forever.
+    - ``'settle_timeout'``: the ``settle_timeout_s`` backstop elapsed first.
+      Usually the gate is still at work server-side — this bounds the WAIT,
+      not the gate; keep following with ``get("name@version")``: every
+      version carries ``gate``. When ``state`` is ``'FAILED'`` the version
+      DID settle and the budget was spent retrying the final import read
+      through rate limits — read the failure with ``get_import(import_id)``.
+
+    NOT an :class:`EvolveAPIError`: no request failed — the caller's wait
+    could not be honestly satisfied. Carries the last observed version
+    ``state`` and ``gate`` so a handler can say exactly where the publish
+    stands.
+    """
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        import_id: str,
+        dataset: str,
+        version: str,
+        state: Optional[str],
+        gate: Optional['DatasetVersionGate'],
+    ):
+        super().__init__(message)
+        #: The named cause: 'gate_unschedulable' or 'settle_timeout'.
+        self.code = code
+        #: The import job whose version did not settle.
+        self.import_id = import_id
+        #: The dataset the import published into.
+        self.dataset = dataset
+        #: The version the import created.
+        self.version = version
+        #: The last observed version state (e.g. 'VALIDATING'); None when the
+        #: version was never observed.
+        self.state = state
+        #: The last observed activation gate; None when none was scheduled.
         self.gate = gate
 
 
@@ -3573,14 +3642,34 @@ class DatasetsClient:
         id: str,
         *,
         on_status: Optional[Callable[[DatasetImport], None]] = None,
+        on_version: Optional[Callable[[DatasetVersion, Dataset], None]] = None,
         poll_interval_s: float = 2.0,
         timeout_s: Optional[float] = None,
+        settle_timeout_s: float = _DEFAULT_SETTLE_TIMEOUT_S,
     ) -> DatasetImport:
-        """Poll ``get_import()`` until the import reaches a terminal status.
+        """Watch a publish to a SETTLED end, not merely a finished upload.
 
-        Terminal statuses: "COMPLETED" or "FAILED" (``failure`` populated).
-        ``on_status`` fires on every observed status change, including the
-        first status seen.
+        Polls ``get_import()`` until the import is terminal, then — because
+        COMPLETED only means the corpus landed as a VALIDATING version —
+        keeps polling the dataset detail until the VERSION settles: READY
+        (gate PASSED, or UNPROVEN for a solution-less corpus), ARCHIVED, or
+        FAILED (the gate's failure rides the returned import's ``failure``).
+
+        ``on_status`` fires on every observed import status change (including
+        the first status seen). ``on_version`` fires on every observed change
+        of the version's {state, gate status} during the settle phase, with
+        the detail read it came from — its ``active_version`` says whether
+        the settled version is now the one a bare dataset name resolves to.
+
+        Bounded on purpose (fail closed, never an infinite poll): raises the
+        typed :class:`ImportSettleError` with the cause named —
+        ``'gate_unschedulable'`` when the import's warnings say solutions
+        archiving was disabled (no activation gate can ever be scheduled, so
+        the version would sit VALIDATING forever), or ``'settle_timeout'``
+        when the ``settle_timeout_s`` backstop elapses first (a bound on the
+        WAIT, never a verdict on the gate — keep following with ``get()``).
+        ``timeout_s`` still bounds the whole watch and raises
+        :class:`TimeoutError`, exactly as before.
 
         A rate limit or transient outage mid-watch is a delay, not an outcome:
         a 429/503 sleeps the server's ``retry_after_sec`` and keeps watching
@@ -3608,10 +3697,201 @@ class DatasetsClient:
                 last_status = dataset_import.status
                 if on_status is not None:
                     on_status(dataset_import)
-            if dataset_import.status in _TERMINAL_IMPORT_STATUSES:
+            if dataset_import.status == 'FAILED':
                 return dataset_import
+            if dataset_import.status == 'COMPLETED':
+                # COMPLETED is not settled: the corpus landed as a version,
+                # but the version sits VALIDATING while the activation gate
+                # proves it. The watch is only over once the VERSION settles.
+                return await self._settle_import(
+                    dataset_import,
+                    on_version=on_version,
+                    poll_interval_s=poll_interval_s,
+                    overall_deadline=deadline,
+                    overall_timeout_s=timeout_s,
+                    settle_timeout_s=settle_timeout_s,
+                )
             if deadline is not None and time.monotonic() >= deadline:
                 raise TimeoutError(f'watch_import({id!r}) timed out after {timeout_s}s')
+            await asyncio.sleep(poll_interval_s)
+
+    async def _settle_import(
+        self,
+        imported: DatasetImport,
+        *,
+        on_version: Optional[Callable[[DatasetVersion, Dataset], None]],
+        poll_interval_s: float,
+        overall_deadline: Optional[float],
+        overall_timeout_s: Optional[float],
+        settle_timeout_s: float,
+    ) -> DatasetImport:
+        """Phase two of ``watch_import`` — the part the import surface cannot see.
+
+        Import COMPLETED only means the corpus landed as a dataset version;
+        the version then sits VALIDATING while the activation gate proves it
+        (VALIDATING -> READY on PASSED/UNPROVEN, -> FAILED on a terminal gate
+        failure). Returning at COMPLETED reported success while the dataset
+        was not yet runnable — a chained job start answered
+        ``no_active_version`` / ``version_not_ready``, and a RE-publish
+        silently kept running the OLD active version. So the watch keeps
+        polling the dataset detail (each version carries ``state`` and
+        ``gate``) until the version settles:
+
+        - state READY or ARCHIVED: settled success (ARCHIVED = superseded by
+          a newer publish while we watched — it completed all the same)
+        - state FAILED: the gate's terminal failure moved the version,
+          landing its structured cause on the same row the import surface
+          reads — re-read the import and return it FAILED, the one import
+          shape
+        - gate PASSED or UNPROVEN: settled even before READY — on a
+          platform-curated dataset promotion is an operator action, and the
+          gate's verdict is where the machinery stops
+
+        Bounded on purpose (fail closed, never an infinite poll): the
+        ``solutions_archiving_disabled`` warning means NO gate can ever be
+        scheduled (the sweep requires an archived solution set, and this
+        import has none by configuration) — one detail read distinguishes
+        "already settled some other way" from that dead end, and the dead end
+        is a typed refusal, ``ImportSettleError('gate_unschedulable')``.
+        ``settle_timeout_s`` backstops every other stall (a worker fleet that
+        is down leaves the gate PENDING indefinitely; a server that answers
+        nothing but 429/503 stalls the polling itself):
+        ``ImportSettleError('settle_timeout')`` with the last observed state
+        and gate.
+        """
+        settle_deadline = time.monotonic() + settle_timeout_s
+        archiving_disabled = any(
+            warning.code == _ARCHIVING_DISABLED_WARNING
+            for warning in imported.warnings
+        )
+        ref = f'{imported.name}@{imported.version}'
+        last_seen: Optional[str] = None
+        last_version: Optional[DatasetVersion] = None
+
+        def settle_timeout_error() -> ImportSettleError:
+            """ONE home for the settle_timeout refusal, built from whatever
+            was last observed. Two true stories share the code: usually the
+            version never settled inside the budget; after a FAILED
+            observation the version DID settle — it is the final import read
+            the server kept refusing."""
+            if last_version is not None and last_version.state == 'FAILED':
+                gate_status = (
+                    last_version.gate.status if last_version.gate is not None
+                    else 'not scheduled'
+                )
+                return ImportSettleError(
+                    'settle_timeout',
+                    f'Import {imported.id}\'s dataset "{imported.name}" version '
+                    f'"{imported.version}" settled FAILED (gate {gate_status}), '
+                    f'but the final import read kept answering '
+                    f'rate-limited/unavailable past the {settle_timeout_s}s '
+                    f'settle budget. Read the failure with '
+                    f'datasets().get_import("{imported.id}").',
+                    import_id=imported.id,
+                    dataset=imported.name,
+                    version=imported.version,
+                    state=last_version.state,
+                    gate=last_version.gate,
+                )
+            last_state = last_version.state if last_version is not None else 'never observed'
+            last_gate = (
+                last_version.gate.status
+                if last_version is not None and last_version.gate is not None
+                else 'not scheduled'
+            )
+            return ImportSettleError(
+                'settle_timeout',
+                f'Import {imported.id} completed, but dataset '
+                f'"{imported.name}" version "{imported.version}" did not '
+                f'settle within {settle_timeout_s}s: last observed state '
+                f'{last_state}, gate {last_gate}. The activation gate may '
+                f'still be at work server-side — keep following with '
+                f'datasets().get("{ref}").',
+                import_id=imported.id,
+                dataset=imported.name,
+                version=imported.version,
+                state=last_version.state if last_version is not None else None,
+                gate=last_version.gate if last_version is not None else None,
+            )
+
+        async def read_through_rate_limits(read):
+            """ONE home for the settle phase's delay-not-outcome law: every
+            read — the detail poll and the final import re-read alike —
+            survives a 429/503 by sleeping the server's delay, and the SAME
+            settle deadline bounds the retrying (a server answering nothing
+            but rate limits must not turn this bounded wait into an infinite
+            loop)."""
+            while True:
+                try:
+                    return await read()
+                except EvolveAPIError as error:
+                    if error.status not in (429, 503):
+                        raise
+                    remaining = settle_deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise settle_timeout_error() from error
+                    if overall_deadline is not None and time.monotonic() >= overall_deadline:
+                        raise TimeoutError(
+                            f'watch_import({imported.id!r}) timed out after {overall_timeout_s}s'
+                        ) from error
+                    await asyncio.sleep(
+                        min(max(error.retry_after_sec or 0.0, poll_interval_s), remaining)
+                    )
+
+        while True:
+            # limit=1: the watch reads the version's state and gate, never
+            # the task list — keep the poll as small as the route allows.
+            detail = await read_through_rate_limits(lambda: self.get(ref, limit=1))
+            version = detail.selected_version
+            if version is not None:
+                last_version = version
+                gate_status = version.gate.status if version.gate is not None else ''
+                key = f'{version.state}:{gate_status}'
+                if key != last_seen:
+                    last_seen = key
+                    if on_version is not None:
+                        on_version(version, detail)
+                if version.state == 'FAILED':
+                    # The failed version's row is what the import surface
+                    # reads, so the import now answers FAILED with the gate's
+                    # structured cause on ``failure`` — return that, exactly
+                    # like an import that failed before the gate ever ran.
+                    # The read lives under the same delay-not-outcome law: a
+                    # transient 429 here must not turn a settled gate failure
+                    # into a thrown rate-limit error.
+                    return await read_through_rate_limits(
+                        lambda: self.get_import(imported.id)
+                    )
+                if version.state in ('READY', 'ARCHIVED'):
+                    return imported
+                if version.gate is not None and version.gate.status in _SETTLED_GATE_STATUSES:
+                    return imported
+                if (
+                    archiving_disabled
+                    and version.gate is None
+                    and version.state == 'VALIDATING'
+                ):
+                    raise ImportSettleError(
+                        'gate_unschedulable',
+                        f'Import {imported.id} completed, but dataset '
+                        f'"{imported.name}" version "{imported.version}" cannot '
+                        f'settle on its own: solutions archiving was disabled for '
+                        f'this import (warning {_ARCHIVING_DISABLED_WARNING}), so '
+                        f'no activation gate will ever be scheduled — the version '
+                        f'stays VALIDATING until an operator proves and activates '
+                        f'it.',
+                        import_id=imported.id,
+                        dataset=imported.name,
+                        version=imported.version,
+                        state=version.state,
+                        gate=version.gate,
+                    )
+            if time.monotonic() >= settle_deadline:
+                raise settle_timeout_error()
+            if overall_deadline is not None and time.monotonic() >= overall_deadline:
+                raise TimeoutError(
+                    f'watch_import({imported.id!r}) timed out after {overall_timeout_s}s'
+                )
             await asyncio.sleep(poll_interval_s)
 
     async def download(
